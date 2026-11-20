@@ -11,6 +11,7 @@
  * metrics/growth-releases.jsonl (releases). Read-only; nothing is typed in by
  * hand. A missing, unreadable or stale signal is `unknown`, never zero.
  */
+import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readGrowthJsonl } from '../growth/read.js';
 import { runsRoot } from '../metrics/loop-collect.js';
@@ -35,6 +36,8 @@ export interface GoalTargets {
   releasesPerRepoPer7d: number;
   /** Included pools follow the Nov 5, 2026 no-reserve order: spend the pool before it resets. */
   poolUsedByResetPercent: number;
+  /** Largest share of finished jobs in a rolling 24 hours that may end EMPTY (0 to 1). */
+  wastedLaunchRate: number;
 }
 export const DEFAULT_GOAL_TARGETS: Readonly<GoalTargets> = Object.freeze({
   mergesPerDay: 96,
@@ -42,6 +45,7 @@ export const DEFAULT_GOAL_TARGETS: Readonly<GoalTargets> = Object.freeze({
   launchesMergedPercent: 50,
   releasesPerRepoPer7d: 1,
   poolUsedByResetPercent: 90,
+  wastedLaunchRate: 0.2,
 });
 /** A pool reading older than this no longer says how the pool is doing. */
 export const POOL_READING_STALE_MS = 6 * HOUR;
@@ -109,7 +113,38 @@ export interface GoalScorecard {
   endState: string;
   /** Behind first, then unknown, then on track; ties keep their natural order. */
   goals: FleetGoal[];
+  /** Additive (RQ-GOALSV4N21AQ8), still v3: v3 readers ignore these. The vision file's first line; null when there is no vision file. */
+  end_state_text?: string | null;
+  /** The leader's current READY bets, in file order; empty when the vision file is missing or has none. */
+  bets?: GoalBet[];
+  /** Vision file the bets came from, relative to the runs dir; null when it could not be read. */
+  bets_source?: string | null;
+  /** Plain reason when `bets` is empty or the file is missing; null otherwise. */
+  bets_reason?: string | null;
+  /** When the vision file was last written; null when unknown. */
+  as_of?: string | null;
 }
+export interface GoalBet { id: string; pool: string | null; repo: string | null; goal: string }
+export const VISION_SOURCE = 'leader/VISION.md';
+const MAX_BETS = 100;
+
+/** `- READY RQ-X (P1, pool=claude, tier=work, repo=phantom, ...): goal text` lines, in file order, first of an id wins. */
+export function parseVisionBets(text: string): GoalBet[] {
+  const bets: GoalBet[] = []; const seen = new Set<string>();
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^- READY (RQ-[A-Za-z0-9_-]+)\s*(?:\(([^)]*)\))?\s*:?\s*(.*)$/.exec(line);
+    if (!m || seen.has(m[1]!)) continue;
+    seen.add(m[1]!);
+    const meta = m[2] ?? '';
+    const field = (k: string) => new RegExp(`(?:^|,\\s*)${k}=([A-Za-z0-9._/-]+)`).exec(meta)?.[1] ?? null;
+    bets.push({ id: m[1]!, pool: field('pool'), repo: field('repo'), goal: m[3]!.trim().slice(0, 400) });
+    if (bets.length >= MAX_BETS) break;
+  }
+  return bets;
+}
+/** The vision's first non-empty line, without markdown heading marks; null when there is none. */
+export const visionEndState = (text: string): string | null =>
+  text.split(/\r?\n/).map(l => l.trim()).find(Boolean)?.replace(/^#+\s*/, '').slice(0, 300) || null;
 
 /** What one pass over metrics/jobs.jsonl learned. Null fields mean the ledger was not read. */
 export interface JobsFacts {
@@ -121,6 +156,8 @@ export interface JobsFacts {
   publishToMerge: { at: number; minutes: number }[];
   /** Jobs launched 8 to 1 days ago (settled), by launch time, and whether each merged a PR. */
   launches: { at: number; merged: boolean }[];
+  /** Jobs whose outcome (anything but OPEN) landed in the last 7 days; `empty` is an EMPTY outcome. Lane is null when no row names it. */
+  finished?: { at: number; empty: boolean; lane: string | null }[];
 }
 
 const rec = (v: unknown): Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
@@ -147,6 +184,8 @@ export function jobsGoalTally(now: number) {
   /** Same identity as the metrics series: the PR url when present, else the job. */
   const mergedPrs = new Map<string, number>();
   const launched = new Map<string, number>();
+  const finished = new Map<string, { at: number; empty: boolean }>();
+  const lanes = new Map<string, string>();
   let latestAt: number | null = null;
   const keepFirst = (map: Map<string, number>, key: string, at: number) => { if (!map.has(key) || at < map.get(key)!) map.set(key, at); };
   return {
@@ -160,6 +199,11 @@ export function jobsGoalTally(now: number) {
       if (at >= since24) latestAt = Math.max(latestAt ?? at, at);
       if (typeof job !== 'string' || !job) return;
       const state = String(r.state ?? r.outcome ?? r.status ?? '').toUpperCase();
+      if (typeof r.lane === 'string' && /^[\w.-]{1,40}$/.test(r.lane) && (r.event === 'launch' || !lanes.has(job))) lanes.set(job, r.lane);
+      if (r.event === 'outcome' && state && state !== 'OPEN') {
+        const old = finished.get(job);
+        if (!old || at < old.at) finished.set(job, { at, empty: state === 'EMPTY' });
+      }
       if (r.event === 'launch') keepFirst(launched, job, at);
       else if (r.event === 'publish') keepFirst(published, job, at);
       else if (r.event === 'outcome' && state === 'MERGED') {
@@ -178,7 +222,8 @@ export function jobsGoalTally(now: number) {
       const merges = [...mergedPrs.values()].filter(at => at >= since7).map(at => ({ at }));
       // A job's first launch is its launch; a retry under the same id is the same attempt at a PR.
       const launches = [...launched].filter(([, at]) => at >= launchedSince && at <= settled).map(([job, at]) => ({ at, merged: merged.has(job) }));
-      return { series: series.report(true), latestAt, merges, publishToMerge, launches };
+      const done = [...finished].filter(([, f]) => f.at >= since7).map(([job, f]) => ({ at: f.at, empty: f.empty, lane: lanes.get(job) ?? null }));
+      return { series: series.report(true), latestAt, merges, publishToMerge, launches, finished: done };
     },
   };
 }
@@ -273,6 +318,8 @@ export interface GoalScorecardInput {
   targets?: Partial<GoalTargets>;
   /** Next planned step by goal id; a goal with no entry has none linked. */
   nextSteps?: Readonly<Record<string, string>>;
+  /** The leader vision file: text and last-write time; null when it could not be read. Omitted is the same as null. */
+  vision?: { text: string; at: number | null } | null;
 }
 
 export function buildGoalScorecard(input: GoalScorecardInput): GoalScorecard {
@@ -326,6 +373,27 @@ export function buildGoalScorecard(input: GoalScorecardInput): GoalScorecard {
     ...(jobs === null ? { status: 'unknown' as const, reason: 'The jobs ledger could not be read.' }
       : launchShare === null ? { status: 'unknown' as const, reason: 'No job was launched between 8 days and 1 day ago.' } : {}),
     ok: 'Most launches end in a merged PR.', short: 'Too many launches end without a merged PR.',
+  }));
+
+  // Share of finished jobs that ended EMPTY: zero finished jobs is unknown, never 0.
+  const done24 = within(jobs?.finished ?? [], now, DAY);
+  const emptyRate = (rows: { empty: boolean }[]) => round(rows.filter(r => r.empty).length / rows.length, 3);
+  const wasted = done24.length ? emptyRate(done24) : null;
+  const laneParts = [...new Set(done24.map(r => r.lane ?? 'lane not recorded'))].sort().map(name => {
+    const rows = done24.filter(r => (r.lane ?? 'lane not recorded') === name);
+    return { name, value: emptyRate(rows) };
+  }).sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
+  const pctText = (v: number) => `${round(v * 100)}%`;
+  goals.push(goal({
+    id: 'wasted-launch-rate', title: 'Jobs that finish empty', why: 'A job that ends EMPTY used a launch and changed nothing.',
+    metric: 'Share of jobs finished in the last 24 hours that ended EMPTY', unit: 'share',
+    target: T.wastedLaunchRate, targetText: `${pctText(T.wastedLaunchRate)} or less`, better: 'lower',
+    current: wasted, currentText: `${pctText(wasted ?? 0)} of ${done24.length} finished jobs ended EMPTY`, updated_at: jobsAsOf, source: 'metrics/jobs.jsonl',
+    trend24h: trend(hourly(jobs?.finished ?? [], emptyRate), T.wastedLaunchRate), trend7d: trend(daily(jobs?.finished ?? [], emptyRate), T.wastedLaunchRate),
+    parts: laneParts, evidencePane: 'fleet-metrics',
+    ...(jobs === null ? { status: 'unknown' as const, reason: 'The jobs ledger could not be read.' }
+      : wasted === null ? { status: 'unknown' as const, reason: 'No job finished in the last 24 hours.' } : {}),
+    ok: 'Few finished jobs end EMPTY.', short: 'Too many finished jobs end EMPTY.',
   }));
 
   const repos = mains?.source === 'ok' ? mains.repos : [];
@@ -403,7 +471,15 @@ export function buildGoalScorecard(input: GoalScorecardInput): GoalScorecard {
     }));
   }
   const ordered = orderGoals(goals.map(g => ({ ...g, next: input.nextSteps?.[g.id]?.trim() || null })));
-  return { schema: 'fleet.goal-scorecard.v3', version: GOAL_SCORECARD_VERSION, generatedAt: new Date(now).toISOString(), malformedLines, targets: T, endState: goalsEndState(ordered), goals: ordered };
+  const vision = input.vision ?? null;
+  const bets = vision ? parseVisionBets(vision.text) : [];
+  return {
+    schema: 'fleet.goal-scorecard.v3', version: GOAL_SCORECARD_VERSION, generatedAt: new Date(now).toISOString(), malformedLines, targets: T, endState: goalsEndState(ordered), goals: ordered,
+    end_state_text: vision ? visionEndState(vision.text) : null,
+    bets, bets_source: vision ? VISION_SOURCE : null,
+    bets_reason: !vision ? 'The leader vision file is missing or could not be read.' : bets.length ? null : 'The leader vision file lists no READY bets.',
+    as_of: vision ? iso(vision.at) : null,
+  };
 }
 
 export interface ReadGoalScorecardOptions {
@@ -415,7 +491,14 @@ export interface ReadGoalScorecardOptions {
   nextSteps?: Readonly<Record<string, string>>;
   readMains?: (root: string, now: number) => Promise<FleetMainHealthV1 | null>;
   readReleaseLines?: (path: string) => Promise<readonly string[] | null>;
+  /** Reads the vision file; null when missing or unreadable. */
+  readVision?: (path: string) => Promise<{ text: string; at: number | null } | null>;
 }
+
+const readVisionFile = async (path: string): Promise<{ text: string; at: number | null } | null> => {
+  const [text, info] = await Promise.all([readFile(path, 'utf8'), stat(path).catch(() => null)]);
+  return { text, at: info ? info.mtimeMs : null };
+};
 
 const readStatusJson = (path: string): Promise<unknown> => readSource(path, 1024 * 1024, false)
   .then(s => s.state === 'healthy' ? JSON.parse(s.text) as unknown : null);
@@ -424,13 +507,14 @@ export async function readGoalScorecard(opts: ReadGoalScorecardOptions = {}): Pr
   const root = opts.runsDir ?? runsRoot();
   const now = (opts.now ?? Date.now)();
   const tally = jobsGoalTally(now);
-  const [known, status, mains, releaseLines] = await Promise.all([
+  const [known, status, mains, releaseLines, vision] = await Promise.all([
     (opts.readLines ?? readLedgerLines)(join(root, 'metrics', 'jobs.jsonl'), line => tally.add(line)).catch(() => false),
     (opts.readStatus ?? readStatusJson)(join(root, 'queue', 'status.json')).catch(() => null),
     (opts.readMains ?? ((runsDir, at) => readFleetMainHealth({ runsDir, now: () => at })))(root, now).catch(() => null),
     (opts.readReleaseLines ?? readGrowthJsonl)(join(root, 'metrics', 'growth-releases.jsonl')).catch(() => null),
+    (opts.readVision ?? readVisionFile)(join(root, VISION_SOURCE)).catch(() => null),
   ]);
-  return buildGoalScorecard({ now, jobs: tally.report(known), status, mains, releaseLines, ...(opts.targets ? { targets: opts.targets } : {}), ...(opts.nextSteps ? { nextSteps: opts.nextSteps } : {}) });
+  return buildGoalScorecard({ now, jobs: tally.report(known), status, mains, releaseLines, vision, ...(opts.targets ? { targets: opts.targets } : {}), ...(opts.nextSteps ? { nextSteps: opts.nextSteps } : {}) });
 }
 
 /** The trend mark people see; agents read `trend`. */
@@ -440,7 +524,7 @@ const TREND_WORDS: Record<TrendDirection, string> = { up: 'rising', down: 'falli
 /** Plain text for people: one block per goal, behind first. */
 export function renderGoalScorecard(card: GoalScorecard): string {
   if (!card.goals.length) return 'No goals yet.';
-  const lines = [card.endState, ...card.goals.flatMap(g => [
+  const lines = [...(card.end_state_text ? [`Vision: ${card.end_state_text}`] : []), card.endState, ...card.goals.flatMap(g => [
     `${g.title}: ${g.statusText}`,
     `  Now ${g.currentText} ${TREND_MARK[g.trend]} · target ${g.targetText} · 24 h ${TREND_WORDS[g.trend24h.direction]} · 7 d ${TREND_WORDS[g.trend7d.direction]}`,
     `  Why it matters: ${g.why}`,
@@ -448,6 +532,8 @@ export function renderGoalScorecard(card: GoalScorecard): string {
     ...(g.next ? [`  Next: ${g.next}`] : []),
     `  As of ${g.updated_at ?? 'unknown'} from ${g.source}.`,
   ])];
+  if (card.bets?.length) lines.push('Current bets:', ...card.bets.map(b => `  ${b.id}${b.pool ? ` (${b.pool}${b.repo ? `, ${b.repo}` : ''})` : ''}: ${b.goal}`));
+  else if (card.bets_reason) lines.push(`Current bets: none. ${card.bets_reason}`);
   if (card.malformedLines) lines.push(`${card.malformedLines} unreadable metrics line${card.malformedLines === 1 ? ' was' : 's were'} skipped.`);
   return lines.join('\n');
 }
