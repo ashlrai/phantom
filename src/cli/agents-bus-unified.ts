@@ -13,7 +13,7 @@ import { WORK_STATUSES, parseClaimKey, type WorkJob } from '../core/agents/bus-v
 import { busWorkFeedOwnerMatcher, busWorkFeedToMatcher, formatBusWorkFeed, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
-  type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult } from '../core/agents/bus-claims.js';
+  type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope } from '../core/agents/bus-claims.js';
 import { formatBusWorkMine, readBusWorkMine } from '../core/agents/bus-work-mine.js';
 import { readUnifiedBusStatus } from '../core/agents/bus-status.js';
 import { scrubSecrets } from '../core/util/scrub.js';
@@ -72,7 +72,8 @@ routing label and --owner keeps jobs announced by that agent, each under
 every label of one agent identity, while --job keeps one job id. work claim
 takes one of
 a shown job's declared claim keys — queue:<jobId> preferred, --key picks
-another declared key — into the shared coordination table; claims coordinate,
+another declared key — into the shared coordination table, reporting live
+holds on the job's other declared keys; claims coordinate,
 never authenticate. work mine is a read-only per-agent digest — the live
 claims it holds under any of its labels, the open feed jobs still claimable
 for it, the feed jobs it announced that have not finished (done and
@@ -161,14 +162,20 @@ function claimHuman(result: BusClaimResult): string {
 }
 
 /** `work claim` human lines: the job named by its announcement title, the fencing token only on acquire. */
+function claimScopeSuffix(scope: BusWorkJobClaimScope): string {
+  if (scope.source === 'unavailable') return ' scope=unknown';
+  if (scope.holds.length === 0) return '';
+  return ` scope-held=${scope.holds.map(hold => `${hold.claimKey}@${hold.owner}`).join(',')}`;
+}
+
 function workJobClaimHuman(result: BusWorkJobClaimResult): string {
   if (result.status === 'acquired') {
     return `acquired ${result.claim.claimKey} for ${claimJobLabel(result.job)} owner=${result.claim.owner} ` +
-      `leaseUntil=${new Date(result.claim.leaseUntil).toISOString()} token=${result.claim.token}`;
+      `leaseUntil=${new Date(result.claim.leaseUntil).toISOString()} token=${result.claim.token}${claimScopeSuffix(result.scope)}`;
   }
   if (result.status === 'conflict') {
     return `conflict ${result.holder.claimKey} for ${claimJobLabel(result.job)} held by ${result.holder.owner} ` +
-      `until ${new Date(result.holder.leaseUntil).toISOString()}`;
+      `until ${new Date(result.holder.leaseUntil).toISOString()}${claimScopeSuffix(result.scope)}`;
   }
   return `${result.status}: ${result.reason}${result.job === undefined ? '' : ` (${claimJobLabel(result.job)})`}`;
 }

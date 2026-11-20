@@ -1762,8 +1762,15 @@ decides in one place. `BusWorkJobClaimResult` echoes the announced job
 `invalid`/`refused`/`unavailable`/`retryable`/`full` carry a slug `reason`
 (`invalid-job`/`invalid-owner`/`invalid-lease`/`invalid-key`, `unknown-job`,
 `job-not-open`, `no-claim-keys`, `undeclared-key`, `work-feed-*`,
-`claim-*`). A feed that cannot be read refuses rather than claiming against a
-guessed job. `phm agents bus work claim --job <id> --lease-ms <ms> [--key]
+`claim-*`). `acquired` and `conflict` also carry `scope`
+(`BusWorkJobClaimScope` `{source, holds}`): the live coordination holds on the
+job's other declared claim keys — the targeted key excluded — each
+`{claimKey, owner, leaseUntil}` found through the same `coordinationRowBlocks`
+overlap the feed's `--claims` join applies, so a sibling `repo:`/`path:`/`pr:`
+scope already held is visible in the claim result itself. `source` is
+`missing`, `available` or `unavailable`; an unavailable table means sibling
+holds are unknown, never an empty free set. A feed that cannot be read refuses
+rather than claiming against a guessed job. `phm agents bus work claim --job <id> --lease-ms <ms> [--key]
 [--owner] [--id]` prints it, exit 0 acquired, 2 invalid, 1 otherwise.
 `work.claim` acquire/renew run through `acquireCoordination`/`renewCoordination`
 and `work.release` through `settleCoordination` on the one coordination table

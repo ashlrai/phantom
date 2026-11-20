@@ -360,7 +360,15 @@ conventions. An undeclared `--key`, a job the feed does not show, a non-open
 status or a job with no claim keys refuses before any lease; a refused or
 unreadable feed refuses rather than claiming against a guessed job. The
 result echoes the announced job and, on `acquired`, the fencing token for its
-acquirer only; a conflict names the holder, never a token. Exit 0 acquired,
+acquirer only; a conflict names the holder, never a token. `acquired` and
+`conflict` also carry `scope` — the live coordination holds on the job's
+*other* declared claim keys (the targeted key excluded), each
+`{claimKey, owner, leaseUntil}` under the same overlap rule `work feed
+--claims` applies, so a sibling `repo:`/`path:`/`pr:` scope already held by
+another participant is visible in the claim result itself rather than on a
+later feed or claim-list read. `scope.source` is `missing`, `available` or
+`unavailable`; an unreadable table means sibling holds are unknown, never a
+free set. Exit 0 acquired,
 2 invalid, 1 otherwise. Claims still coordinate scope only — holding one
 never permits a merge, a push, or spending.
 

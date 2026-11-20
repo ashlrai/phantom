@@ -280,6 +280,7 @@ describe('claimBusWorkJob', () => {
     const result = claimBusWorkJob({ root, now: NOW, job: 'RQ-J1', owner: 'worker-1', leaseMs: 600_000, id: 'op-j1' });
     expect(result).toMatchObject({ status: 'acquired',
       job: { id: 'RQ-J1', owner: 'agent-1', repo: 'a/b', title: 'Job RQ-J1', status: 'queued' },
+      scope: { source: 'missing', holds: [] },
       claim: { claimKey: 'queue:RQ-J1', owner: 'worker-1', leaseMs: 600_000, leaseUntil: NOW + 600_000 } });
     if (result.status !== 'acquired') throw new Error('expected acquired');
     expect(result.claim.token).toMatch(TOKEN_RE);
@@ -331,8 +332,37 @@ describe('claimBusWorkJob', () => {
     const second = claimBusWorkJob({ root, now: NOW, job: 'RQ-C', owner: 'worker-2', leaseMs: 600_000, id: 'op-c2' });
     expect(second).toEqual({ status: 'conflict',
       job: { id: 'RQ-C', owner: 'agent-1', repo: 'a/b', title: 'Job RQ-C', status: 'queued' },
+      scope: { source: 'available', holds: [] },
       holder: { owner: 'worker-1', claimKey: 'queue:RQ-C', leaseUntil: NOW + 600_000 } });
     expect(JSON.stringify(second)).not.toContain(first.claim.token);
+  });
+
+  it('reports live holds on the job\'s other declared keys in the claim scope', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-S', ['queue:RQ-S', 'repo:a/b', 'pr:c/d#7'], 'a/b');
+    // Another participant already holds the repo scope; the queue key is free.
+    acquire('repo:a/b', 'other-owner', 600_000, 'op-hold', root);
+    const result = claimBusWorkJob({ root, now: NOW, job: 'RQ-S', owner: 'worker-1', leaseMs: 600_000, id: 'op-s' });
+    expect(result).toMatchObject({ status: 'acquired', claim: { claimKey: 'queue:RQ-S' },
+      scope: { source: 'available',
+        holds: [{ claimKey: 'repo:a/b', owner: 'other-owner', leaseUntil: NOW + 600_000 }] } });
+    // The targeted queue key never appears among its own sibling holds.
+    if (result.status !== 'acquired') throw new Error('expected acquired');
+    expect(result.scope.holds.some(hold => hold.claimKey === 'queue:RQ-S')).toBe(false);
+  });
+
+  it('carries sibling scope holds on a conflict and drops expired holds', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-Y', ['queue:RQ-Y', 'repo:a/b', 'repo:e/f']);
+    acquire('queue:RQ-Y', 'worker-1', 600_000, 'op-yq', root);
+    acquire('repo:a/b', 'worker-1', 600_000, 'op-yr', root);
+    // repo:e/f is held but already expired at the claim instant: not a live hold.
+    acquire('repo:e/f', 'worker-9', 1_000, 'op-ye', root);
+    const conflict = claimBusWorkJob({ root, now: NOW + 2_000, job: 'RQ-Y', owner: 'worker-2', leaseMs: 600_000, id: 'op-y2' });
+    expect(conflict).toMatchObject({ status: 'conflict',
+      holder: { owner: 'worker-1', claimKey: 'queue:RQ-Y' },
+      scope: { source: 'available',
+        holds: [{ claimKey: 'repo:a/b', owner: 'worker-1', leaseUntil: NOW + 600_000 }] } });
   });
 
   it('refuses malformed input before touching the feed', () => {
