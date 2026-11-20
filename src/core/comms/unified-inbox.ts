@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates seven local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates eight local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), act: `phm fleet needs-resolve`.
@@ -36,6 +36,15 @@
  *               cannot be read the section reports 'degraded' and still lists
  *               candidates rather than hiding possibly unclaimed work; a
  *               refused or unreadable feed degrades it the same way.
+ *   conversations  agent-to-agent conversation threads still waiting on a
+ *               reply — the same `state:'waiting'` threads
+ *               `agents conversations --waiting` computes from the one shared
+ *               conversations projection, fleet-wide. A thread whose waiting
+ *               message is already a pending bus item (an unclaimed work
+ *               envelope or a live worker-handoff) or whose `job:` thread the
+ *               feed already lists stays under the bus source: one pending
+ *               thing, one item. Act: `phm agents conversations`,
+ *               `phm agents bus show`, `phm agents bus post --thread`.
  *   gmail       one item per inbox in the saved Gmail archive plan whose unread
  *               count is over its target (`phm fleet gmail-archive-plan`). A
  *               read of the saved plan only: no mail is read, moved or deleted.
@@ -68,6 +77,8 @@ import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '
 import { gmailArchivePlanLatestPath, readGmailArchivePlanLatest } from './gmail-archive-plan-latest.js';
 import { readLinkedInDrop, type LinkedInMessage } from './linkedin-drop.js';
 import { readOwnerAwaitingReplies, type OwnerAwaitingReplies } from './owner-thread.js';
+import { readAgentConversations, plainAge, type AgentConversations } from '../fleet/agent-conversations.js';
+import { JOB_THREAD_PREFIX } from '../fleet/agent-messages.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { classifyTeammateIntent, readTeammateTexts, type TeammateText } from './imessage-teammate-inbox.js';
 
@@ -76,9 +87,9 @@ const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
 
-export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'owner-thread' | 'drafts' | 'bus' | 'gmail' | 'linkedin';
+export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'owner-thread' | 'drafts' | 'bus' | 'conversations' | 'gmail' | 'linkedin';
 export type UnifiedInboxSourceState = 'healthy' | 'missing' | 'degraded' | 'unavailable';
-export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'owner-message' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'gmail-over-target' | 'linkedin-message';
+export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'owner-message' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'agent-thread' | 'gmail-over-target' | 'linkedin-message';
 
 export interface UnifiedInboxItem extends AttentionItem {
   /** Stable, namespaced: `<source>:<ref>` (e.g. `drafts:d-0123…`). */
@@ -133,6 +144,7 @@ export interface UnifiedInboxOptions {
   readGmailPlans?: typeof readGmailArchivePlanLatest;
   readLinkedIn?: typeof readLinkedInDrop;
   readOwnerAwaiting?: (options: { runsDir: string }) => OwnerAwaitingReplies;
+  readConversations?: typeof readAgentConversations;
 }
 
 const cap = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
@@ -368,12 +380,19 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
   return { state: holdsKnown ? 'ok' : 'degraded', items };
 }
 
-function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+/** Pending bus items a waiting conversation thread must not repeat: the envelope ids behind `bus:`/`bus-handoff:` items and the job ids behind `bus-feed:` items. */
+interface BusItemCoverage {
+  readonly envelopes: ReadonlySet<string>;
+  readonly feedJobs: ReadonlySet<string>;
+}
+
+function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[]; covered: BusItemCoverage } {
+  const covered: { envelopes: Set<string>; feedJobs: Set<string> } = { envelopes: new Set(), feedJobs: new Set() };
   const bus: BusInboxOptions = { root: options.busRoot, now: options.now };
   let inspection: BusInboxInspection;
   try { inspection = (options.inspectBus ?? inspectBusInbox)(bus); }
   catch { inspection = { source: 'unavailable', retainedCount: null, retainedBytes: null, maxMessages: BUS_INBOX_MAX_MESSAGES, maxBytes: BUS_INBOX_MAX_BYTES, liveCount: null, expiredCount: null }; }
-  if (inspection.source !== 'available') return { report: { state: inspection.source === 'missing' ? 'missing' : 'unavailable', pending: 0 }, items: [] };
+  if (inspection.source !== 'available') return { report: { state: inspection.source === 'missing' ? 'missing' : 'unavailable', pending: 0 }, items: [], covered };
 
   const now = (options.now ?? Date.now)();
   const claims = (options.readClaims ?? inspectBusWorkClaims)(options.busRoot);
@@ -474,7 +493,71 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
   items.push(...feed.items);
   if (feed.state === 'unavailable') state = 'unavailable';
   else if (feed.state === 'degraded' && state === 'healthy') state = 'degraded';
-  return { report: { state, pending: items.length }, items };
+  for (const item of items) {
+    if (item.id.startsWith('bus-feed:')) covered.feedJobs.add(item.id.slice('bus-feed:'.length));
+    else if (item.id.startsWith('bus-handoff:')) covered.envelopes.add(item.id.slice('bus-handoff:'.length));
+    else if (item.id.startsWith('bus:')) covered.envelopes.add(item.id.slice('bus:'.length));
+  }
+  return { report: { state, pending: items.length }, items, covered };
+}
+
+/** The `--thread` label rule `agents bus post` enforces: printable ASCII, 1-128 chars. */
+const THREAD_LABEL = /^[\x21-\x7e]{1,128}$/;
+
+/**
+ * Agent-to-agent conversation threads still waiting on a reply — the same
+ * `state:'waiting'` threads `agents conversations --waiting` computes, read
+ * through the one shared conversations projection so thread state, subjects
+ * and wait ages can never disagree with that surface. A thread whose waiting
+ * message is already a pending bus item — an unclaimed work envelope or a
+ * live worker-handoff — or whose `job:` thread the feed already lists stays
+ * under the bus source: one pending thing, one item. The source state follows
+ * the projection honestly: 'missing' is a verified-empty store, 'unavailable'
+ * an unreadable one (never an empty list passed off as fact), and damaged
+ * rows the tolerant scan skipped degrade the read rather than let partial
+ * coverage pass as complete. `since` is the wait's start; the retained
+ * envelope TTL is not part of the projection, so `expiresAt` stays null —
+ * unknown, never invented.
+ */
+function conversationItems(read: NonNullable<UnifiedInboxOptions['readConversations']>,
+  options: UnifiedInboxOptions, now: () => number,
+  covered: BusItemCoverage): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let result: AgentConversations;
+  try { result = read({ waitingOnly: true }, { root: options.busRoot, now }); }
+  catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
+  if (result.source === 'unavailable' || result.conversations === null) {
+    return { report: { state: 'unavailable', pending: 0 }, items: [] };
+  }
+  if (result.source === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  for (const thread of result.conversations) {
+    const last = thread.messages[thread.messages.length - 1];
+    if (thread.waiting === null || last === undefined) continue;
+    if (covered.envelopes.has(last.id)) continue;
+    if (thread.id.startsWith(JOB_THREAD_PREFIX) && covered.feedJobs.has(thread.id.slice(JOB_THREAD_PREFIX.length))) continue;
+    const act = ['phm agents conversations', `phm agents bus show ${last.id}`];
+    // The reply template only prints when the conversation key is itself a
+    // label `agents bus post --thread` accepts; a key beyond the label bound
+    // keeps the inspect acts rather than a command that cannot run.
+    if (THREAD_LABEL.test(thread.id)) {
+      act.push(`phm agents bus post --to <sender-label> --text "<reply>" --thread ${thread.id}`);
+    }
+    items.push({
+      id: `conversations:${thread.id}`,
+      source: 'conversations',
+      kind: 'agent-thread',
+      // A handoff waiting on a recipient is delegated work nobody picked up;
+      // an ask is ordinary coordination. Neither blocks Mason, so never `blocking`.
+      severity: last.kind === 'handoff' ? 'warn' : 'info',
+      blocking: false,
+      title: oneLine(thread.subject, TITLE_MAX) || `agent thread ${thread.id}`,
+      detail: cap(`from ${last.from} · waiting on ${thread.waiting.on} · ${thread.messageCount} message${thread.messageCount === 1 ? '' : 's'} · waiting ${plainAge(thread.waiting.ms)}`, DETAIL_MAX),
+      since: thread.waiting.since,
+      expiresAt: null,
+      act,
+    });
+  }
+  return { report: { state: result.skipped > 0 ? 'degraded' : 'healthy', pending: items.length }, items };
 }
 
 function gmailItems(read: typeof readGmailArchivePlanLatest, runsDir: string | undefined): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
@@ -533,6 +616,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const ownerThread = ownerThreadItems(options.readOwnerAwaiting ?? readOwnerAwaitingReplies, options.runsDir);
   const drafts = await draftItems(options.listPendingDrafts ?? listDrafts, options.runsDir);
   const bus = busItems(options);
+  const conversations = conversationItems(options.readConversations ?? readAgentConversations, options, now, bus.covered);
   const gmail = gmailItems(options.readGmailPlans ?? readGmailArchivePlanLatest, options.runsDir);
   const linkedin = linkedInItems(options.readLinkedIn ?? readLinkedInDrop, options.runsDir, now);
 
@@ -542,10 +626,11 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'owner-thread': ownerThread.report,
     drafts: drafts.report,
     bus: bus.report,
+    conversations: conversations.report,
     gmail: gmail.report,
     linkedin: linkedin.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...ownerThread.items, ...drafts.items, ...bus.items, ...gmail.items, ...linkedin.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...ownerThread.items, ...drafts.items, ...bus.items, ...conversations.items, ...gmail.items, ...linkedin.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

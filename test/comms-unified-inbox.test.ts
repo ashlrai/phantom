@@ -17,6 +17,7 @@ import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOp
 import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type UnifiedInbox } from '../src/core/comms/unified-inbox.js';
 import { markTeammateTextsAnswered, recordTeammateText } from '../src/core/comms/imessage-teammate-inbox.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import type { AgentConversations } from '../src/core/fleet/agent-conversations.js';
 import type { BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { listNeedsMason } from '../src/core/fleet/needs-mason-resolve.js';
@@ -94,6 +95,7 @@ describe('readUnifiedInbox sources', () => {
         imessage: { state: 'missing', pending: 0 },
         drafts: { state: 'healthy', pending: 0 },
         bus: { state: 'missing', pending: 0 },
+        conversations: { state: 'missing', pending: 0 },
       },
     });
   });
@@ -424,6 +426,102 @@ describe('worker-handoff assignments in the bus source', () => {
     expect(items.map(i => i.id).sort()).toEqual([`bus-handoff:${id}`, 'bus:still-work']);
     expect(items.find(i => i.id === `bus-handoff:${id}`)).toMatchObject({ kind: 'bus-handoff', severity: 'info' });
     expect(items.find(i => i.id === 'bus:still-work')).toMatchObject({ kind: 'bus-work' });
+  });
+});
+
+describe('agent conversation threads in the unified inbox', () => {
+  const ask = (text: string, thread: string, extra: { from?: string; to?: string; at?: number } = {}) =>
+    postV2Body({ kind: 'note', text, thread }, { from: extra.from ?? 'agent:asker', to: extra.to ?? 'agent:reviewer', at: extra.at });
+
+  it('lists waiting agent threads with inspect and reply deep links', async () => {
+    const id = ask('can you review the diff?', 'review-7', { at: now - 3_600_000 });
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'conversations');
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: 'conversations:review-7', kind: 'agent-thread', severity: 'info', blocking: false,
+      title: 'can you review the diff?',
+      detail: 'from asker · waiting on reviewer · 1 message · waiting 1h 0m',
+      since: new Date(now - 3_600_000).toISOString(),
+      expiresAt: null,
+      act: ['phm agents conversations', `phm agents bus show ${id}`,
+        'phm agents bus post --to <sender-label> --text "<reply>" --thread review-7'],
+    });
+    expect(inbox.sources.conversations).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('warns on handoff-kind waits that are not receivable worker-handoffs', async () => {
+    ask('take this over?', 'esc-3');
+    postV2Body({ kind: 'handoff', text: 'please take this', thread: 'esc-3' }, { from: 'agent:lead', to: 'agent:worker' });
+    const inbox = await read();
+    const item = inbox.items.find(i => i.id === 'conversations:esc-3')!;
+    expect(item).toMatchObject({ kind: 'agent-thread', severity: 'warn', title: 'please take this' });
+    expect(item.detail).toContain('waiting on worker');
+  });
+
+  it('clears the item once the thread is answered', async () => {
+    ask('can you review the diff?', 'review-7');
+    postV2Body({ kind: 'context', text: 'done — shipped', thread: 'review-7' }, { from: 'agent:reviewer', to: 'agent:asker' });
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'conversations')).toHaveLength(0);
+    expect(inbox.sources.conversations).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('keeps one item when the waiting message is already pending bus work', async () => {
+    // A claimable work body ending in a question is both unclaimed work and an
+    // unanswered ask; the bus item carries the claim act, so no thread repeats it.
+    const id = postV2Body({ kind: 'work', text: 'fake work — can you take it?' }, { from: 'agent:lead', to: 'agent:worker' });
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual([`bus:${id}`]);
+    expect(inbox.items.filter(i => i.source === 'conversations')).toHaveLength(0);
+    expect(inbox.sources.conversations).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('keeps one item when the waiting message is a live worker-handoff', async () => {
+    const id = postV2Body({ kind: 'worker-handoff', taskId: 'RQ-H-9', prompt: 'fake handoff' }, { from: 'agent:lead', to: 'agent:worker-9' });
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual([`bus-handoff:${id}`]);
+    expect(inbox.items.filter(i => i.source === 'conversations')).toHaveLength(0);
+    expect(inbox.sources.conversations).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('keeps one item when the feed already lists the job thread', async () => {
+    postV2Body({ kind: 'work.post', jobId: 'RQ-FEED-1', title: 'fake feed job', provider: 'codex-cmp',
+      repo: 'ashlrai/phantom', claimKeys: ['queue:RQ-FEED-1'] }, { from: 'agent:peer', to: 'agent:worker' });
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual(['bus-feed:RQ-FEED-1']);
+    expect(inbox.items.filter(i => i.source === 'conversations')).toHaveLength(0);
+    expect(inbox.sources.conversations).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('lists a job announcement thread the feed does not cover', async () => {
+    // No claim keys means no feed item and no claim act — the unanswered
+    // announcement is exactly what this source exists to surface.
+    postV2Body({ kind: 'work.post', jobId: 'RQ-SILENT', title: 'fake silent job', provider: 'codex-cmp',
+      repo: 'ashlrai/phantom', claimKeys: [] }, { from: 'agent:peer', to: 'agent:worker' });
+    const inbox = await read();
+    const item = inbox.items.find(i => i.id === 'conversations:job:RQ-SILENT')!;
+    expect(item).toMatchObject({ kind: 'agent-thread', severity: 'info', source: 'conversations' });
+    expect(item.act).toContain('phm agents bus post --to <sender-label> --text "<reply>" --thread job:RQ-SILENT');
+    expect(inbox.sources.conversations).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('reports unavailable and degraded reads honestly and uses the seam', async () => {
+    const convStub = (over: Partial<AgentConversations>): AgentConversations => ({
+      schema: 'agents.conversations.v1', version: 1, generatedAt: new Date(now).toISOString(),
+      source: 'available', conversations: [], waiting: 0, skipped: 0, ...over,
+    });
+    const seen: unknown[] = [];
+    const degraded = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
+      readConversations: (query) => { seen.push(query); return convStub({ skipped: 2 }); } });
+    expect(seen).toEqual([{ waitingOnly: true }]);
+    expect(degraded.sources.conversations).toEqual({ state: 'degraded', pending: 0 });
+    const unavailable = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
+      readConversations: () => convStub({ source: 'unavailable', conversations: null, waiting: null }) });
+    expect(unavailable.sources.conversations).toEqual({ state: 'unavailable', pending: 0 });
+    const throwing = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
+      readConversations: () => { throw new Error('boom'); } });
+    expect(throwing.sources.conversations).toEqual({ state: 'unavailable', pending: 0 });
   });
 });
 

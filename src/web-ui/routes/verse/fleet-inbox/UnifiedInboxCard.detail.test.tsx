@@ -10,7 +10,7 @@ const item = (n: number, over: Record<string, unknown> = {}) => ({
 const healthy = { state: 'healthy', pending: 0 };
 const inbox = (items: unknown[], over: Record<string, unknown> = {}) => Response.json({
   schema: 'comms.unified-inbox.v1', total: items.length, omitted: 0,
-  sources: { 'needs-you': healthy, imessage: healthy, 'owner-thread': healthy, drafts: healthy, bus: healthy, gmail: healthy },
+  sources: { 'needs-you': healthy, imessage: healthy, 'owner-thread': healthy, drafts: healthy, bus: healthy, conversations: healthy, gmail: healthy },
   items, ...over,
 });
 
@@ -19,7 +19,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it('renders the detail line and a copyable fix for an unhealthy source', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => inbox([item(1, { detail: 'teammate-a · waiting 12m' })], {
-    sources: { 'needs-you': healthy, imessage: healthy, 'owner-thread': healthy, drafts: healthy, bus: healthy, gmail: { state: 'missing', pending: 0 } },
+    sources: { 'needs-you': healthy, imessage: healthy, 'owner-thread': healthy, drafts: healthy, bus: healthy, conversations: healthy, gmail: { state: 'missing', pending: 0 } },
   })));
   render(<UnifiedInboxCard visible />);
   expect(await screen.findByText('teammate-a · waiting 12m')).toBeInTheDocument();

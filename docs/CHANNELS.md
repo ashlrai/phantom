@@ -236,14 +236,23 @@ open agent-bus v2 work-feed jobs (queued or rescheduled
 jobs the feed shows `blocked` or `failed` — stuck work needs a decision, so
 those list with the newest status report's scrubbed detail and `bus show` /
 `work feed --job` links instead of a claim act — read
-through the same projection as `phm agents bus work feed`) — plus Gmail
+through the same projection as `phm agents bus work feed`), plus agent
+conversation threads still waiting on a reply — the same `waiting` threads
+`phm agents conversations --waiting` computes from the one shared
+conversations projection, fleet-wide, each item naming who must answer, how
+long it has waited and deep-linking `phm agents conversations`,
+`phm agents bus show` and a `phm agents bus post --thread` reply template;
+a thread whose waiting message is already a pending bus item or whose `job:`
+thread the feed already lists stays under the bus source, one pending thing
+one item — plus Gmail
 archive-plan overages and LinkedIn messages saved as
 JSON files under `<runsDir>/comms/linkedin/inbox/` (answered when a file of the
 same id exists in `.../linkedin/answered/`; replies stay drafts) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm comms thread`,
 `phm comms send-owner`, `phm drafts approve`,
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
-`phm fleet handoff-receive`). It never claims, replies, or mutates; a source
+`phm fleet handoff-receive`, `phm agents conversations`,
+`phm agents bus post`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. `phm comms inbox read` and
