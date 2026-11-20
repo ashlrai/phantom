@@ -39,7 +39,7 @@ export const fleetMessageGraphQuery: QueryDef<FleetMessageGraph & { groups: NonN
 };
 
 /** One computer's badge from `phm nodes plan --json`; "unknown" is kept as unknown. */
-export interface NodeBadge { name: string; online: boolean | 'unknown'; slots: number | 'unknown'; why: string }
+export interface NodeBadge { name: string; online: boolean | 'unknown'; slots: number | 'unknown'; running: number | 'unknown'; why: string }
 /** Narrow a phantom.nodes-plan.v1 body to badges; malformed rows are dropped, malformed fields become unknown. */
 export function narrowNodeBadges(value: unknown): NodeBadge[] | null {
   if (!record(value) || value.schema !== 'phantom.nodes-plan.v1' || !Array.isArray(value.nodes)) return null;
@@ -49,6 +49,7 @@ export function narrowNodeBadges(value: unknown): NodeBadge[] | null {
       name: (r.name as string).slice(0, 160),
       online: typeof r.online === 'boolean' ? r.online : 'unknown',
       slots: typeof r.suggested_slots === 'number' && Number.isFinite(r.suggested_slots) && r.suggested_slots >= 0 ? r.suggested_slots : 'unknown',
+      running: typeof r.jobs_running === 'number' && Number.isFinite(r.jobs_running) && r.jobs_running >= 0 ? r.jobs_running : 'unknown',
       why: typeof r.why === 'string' ? r.why.slice(0, 200) : '',
     };
   });

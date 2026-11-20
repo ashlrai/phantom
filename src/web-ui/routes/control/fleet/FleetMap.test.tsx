@@ -129,6 +129,20 @@ describe('FleetMap', () => {
     expect(screen.getByLabelText('Plan: online unknown, slots unknown')).toHaveTextContent('? slots');
   });
 
+  it('tags a remote computer that is running jobs with "Running on <name>", never this one or an unknown count', async () => {
+    plan = { schema: 'phantom.nodes-plan.v1', as_of: iso, assignable: [], reasons: [],
+      nodes: [{ name: 'mini', online: true, suggested_slots: 1, jobs_running: 2, why: '' }] };
+    machine.nodes[0]!.local = false;
+    await mount();
+    expect(screen.getByLabelText('Plan: online, 1 suggested slot')).toHaveTextContent('Running on mini');
+    cleanup(); evictAll(); machine = compute(); await mount();
+    expect(screen.getByLabelText('Plan: online, 1 suggested slot')).not.toHaveTextContent('Running on');
+    plan = { schema: 'phantom.nodes-plan.v1', nodes: [{ name: 'mini', online: true, suggested_slots: 1, jobs_running: 'unknown', why: '' }] };
+    machine.nodes[0]!.local = false;
+    cleanup(); evictAll(); await mount();
+    expect(screen.getByLabelText('Plan: online, 1 suggested slot')).not.toHaveTextContent('Running on');
+  });
+
   it('shows no badge when the plan is unavailable', async () => {
     await mount();
     expect(screen.queryByLabelText(/^Plan:/)).not.toBeInTheDocument();

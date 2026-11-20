@@ -29,10 +29,12 @@ export interface PlanNode {
   lanes: string[] | Unknown;
   /** How many more jobs this computer could take now; 0 when offline or held; "unknown" when not measured or its state is unconfirmed. */
   suggested_slots: number | Unknown;
+  /** How many jobs that computer is running now; "unknown" when not read. Feeds the "Running on" tag. */
+  jobs_running: number | Unknown;
   /** Plain words. */
   why: string;
 }
-export interface PlanAssignment { job: string; node: string; why: string }
+export interface PlanAssignment { job: string; node: string; lane: string; why: string }
 export interface NodesPlan {
   schema: typeof NODES_PLAN_SCHEMA;
   as_of: string;
@@ -56,7 +58,7 @@ function planNode(node: NodeRow): PlanNode {
     : slots === UNKNOWN ? `${node.state}; free slots unknown`
       : slots === 0 ? node.state
         : `${node.state}; room for ${slots} more ${slots === 1 ? 'job' : 'jobs'}`;
-  return { name: node.name, online: node.reachable, free_mem_pct: node.freeMemoryPercent, load: node.load, lanes: node.lanes, suggested_slots: slots, why };
+  return { name: node.name, online: node.reachable, free_mem_pct: node.freeMemoryPercent, load: node.load, lanes: node.lanes, suggested_slots: slots, jobs_running: node.jobsRunning === UNKNOWN ? UNKNOWN : node.jobsRunning.length, why };
 }
 
 /** Pure: greedy launch-order assignment over the slots the plan suggests. */
@@ -78,7 +80,7 @@ export function buildNodesPlan(view: NodesView, queue: QueueOrderV1 | null, extr
       if (!placement.node) { unassigned += 1; continue; }
       const left = remaining.get(placement.node);
       if (typeof left === 'number') remaining.set(placement.node, left - 1);
-      assignable.push({ job: job.id, node: placement.node, why: `${job.lane} lane: ${placement.explanation}` });
+      assignable.push({ job: job.id, node: placement.node, lane: job.lane, why: `${job.lane} lane: ${placement.explanation}` });
     }
   }
   return { schema: NODES_PLAN_SCHEMA, as_of: view.asOf, nodes, assignable, unassigned, reasons };

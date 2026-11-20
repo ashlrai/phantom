@@ -289,6 +289,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{schema:"phantom.nodes-plan.v1", as_of, nodes:[{name,online,free_mem_pct,load,lanes,suggested_slots,why}], assignable:[{job,node,why}], unassigned, reasons}',
   },
   {
+    usage: 'phm nodes dispatch <job-id> --node <name> [--dry-run] [--json]',
+    description: 'Hand one job from the plan to another computer. It checks first: an unreachable computer, a missing lane CLI or an unknown login only shows the plan (a dry run, the default whenever nothing can be confirmed); a computer that is not signed in to the lane is refused with "<name> is not signed in to <lane>". Logins are never copied, and Tailscale and ssh settings are never changed. The job comes back as its branch and goes out through the usual publisher. No remote runner is connected yet, so today every answer is a dry run. Creating <runs dir>/queue/nodes-dispatch.off (or ORCH_OFF) switches it off. Exit 0 started or dry run, 1 refused, 2 bad usage.',
+    safety: 'write',
+    jsonShape: '{schema:"phantom.nodes-dispatch.v1", job, node, lane, accepted, outcome:"started"|"dry-run"|"refused", why, steps, kill_switch}',
+  },
+  {
     usage: 'phm node bootstrap --dry-run [--json]',
     description: 'Print persistent Linux node setup and future registry lease steps; no provisioning or registry calls. Exit 0 plan, 2 bad usage.',
     safety: 'read',
@@ -1387,6 +1393,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'autofix [--apply] [--dry-run] [--json] [--only <fixer>]', desc: 'Act on Eng Ops incident files (prefix a, b, d, e; g is detect-only). Dry run unless --apply. Refuses when ~/.ashlr/KILL exists. Never reads the incident body into a command. See docs/AUTOFIX.md.', topic: 'safety' },
   { cmd: 'nodes [--json] [--can-take <lane>]', desc: 'Your computers as one pool: which are reachable, running Phantom and ready for work. Read only.', topic: 'safety' },
   { cmd: 'nodes plan [--json]', desc: 'Plan which queued job fits which computer, with suggested free slots per computer. Read only: it launches and moves nothing.', topic: 'safety' },
+  { cmd: 'nodes dispatch <job-id> --node <name> [--dry-run] [--json]', desc: 'Hand one planned job to another computer. Shows the plan first; an unreachable computer, no lane CLI or an unknown login stays a dry run, and one not signed in to the lane is refused. Never copies logins.', topic: 'safety' },
   { cmd: 'node join|beat|enqueue|plan|pull|complete|status [--json]', desc: 'Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases.', topic: 'safety' },
   { cmd: 'node bootstrap --dry-run [--json]', desc: 'Plan a persistent Linux node; registry integration is a stub, no provisioning.', topic: 'safety' },
   { cmd: 'sandbox list',                 desc: 'List active git-worktree sandboxes (M21 safety foundation).', topic: 'safety' },
