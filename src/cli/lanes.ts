@@ -9,11 +9,14 @@ import { computeLaneHealth, laneHealthLine, stuckBadge } from '../core/fleet/lan
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const USAGE = `Usage: phm lanes --json | phm lanes health [--json] | phm lanes fit --lane <lane> [--json]
-       phm lanes yield [--json]
+       phm lanes yield [--json] | phm lanes auth [--json]
 Calls, error rate, p50 latency and deployed commit per lane over the last 12 h,
 plus a "stuck" badge with phase age for any run past its phase timeout.
 "phm lanes yield" shows merged PRs per launch over each lane's last 50 jobs, the empty rate and the
 weight the router uses (1 = neutral; unknown below 10 jobs).
+"phm lanes auth" says per lane whether it can sign in: ok, missing_signin, expired or unknown, from whether the
+sign-in exists and from job outcomes in the last 24 h (never a credential value), with one fix line per lane that is
+not ok. A blocked lane with unused plan is also put on the Asks card. JSON is lanes.auth.v1.
 Figures that cannot be measured print "unknown".`;
 
 const pct = (n: number | null): string => n === null ? 'unknown' : `${Math.round(n * 100)}%`;
@@ -33,6 +36,15 @@ export async function cmdLanes(args: string[]): Promise<number> {
   if (args.length === 0 || ['--help', '-h'].includes(args[0]!)) {
     console.log(USAGE);
     return args.length === 0 ? 2 : 0;
+  }
+  if (args[0] === 'auth') {
+    const flags = args.slice(1);
+    if (flags.some(x => x !== '--json') || flags.length > 1) { console.error(USAGE); return 2; }
+    const { readLaneAuth, formatLaneAuthText, raiseLaneAuthAsks } = await import('../core/fleet/lane-auth.js');
+    const report = await readLaneAuth();
+    await raiseLaneAuthAsks(report);
+    console.log(flags.length ? JSON.stringify(sanitizePublicJson(report)) : formatLaneAuthText(report));
+    return 0;
   }
   if (args[0] === 'yield') {
     const flags = args.slice(1);

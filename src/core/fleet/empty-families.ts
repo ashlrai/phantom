@@ -71,7 +71,7 @@ export function summarizeEmptyFamilies(launches: ReadonlyArray<{ id: string; lan
   return { schema: EMPTY_FAMILIES_SCHEMA, hours, total_empty: families.reduce((n, r) => n + r.empty, 0), families };
 }
 
-async function tail(path: string, size: number): Promise<string | null> {
+export async function tail(path: string, size: number): Promise<string | null> {
   let file;
   try {
     file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);

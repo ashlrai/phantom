@@ -26,9 +26,13 @@ Agents and scripts should use the commands, not this page:
 phm lanes health --json
 phm lanes fit --lane codex-personal --json
 phm lanes yield --json
+phm lanes auth --json
 ```
 
-`phm lanes health` shows calls, error rate and latency per lane over the last
+`phm lanes auth` says per lane whether it can sign in (`ok`, `missing_signin`, `expired` or
+`unknown`) from whether the sign-in exists and from job outcomes in the last 24 hours, never from a
+credential value, with one fix line per lane that is not ok. A blocked lane with unused plan is also
+put on the Asks card and in the hourly digest. `phm lanes health` shows calls, error rate and latency per lane over the last
 12 hours. `phm lanes fit` shows which job kinds a lane should take and which
 to avoid. `phm lanes yield` shows, per lane and size, merged PRs per launch over the
 last 50 jobs, the empty rate and the weight the router uses (1 is neutral; a lane with

@@ -1384,6 +1384,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'steward disk [--apply] [--json]', desc: 'Measure Codex/Claude/Phantom log roots against retention + quota; dry run unless --apply (deletes oldest eligible files only).', topic: 'integrations' },
   { cmd: 'lanes fit --lane <lane> [--json]', desc: 'Show job kinds to send or avoid from measured PR rates.', topic: 'observability' },
   { cmd: 'lanes yield [--json]', desc: 'Merged PRs per launch over each lane\'s last 50 jobs, by size, with empty rate and the weight the router uses (unknown below 10 jobs = neutral 1).', topic: 'observability' },
+  { cmd: 'lanes auth [--json]', desc: 'Per lane: ok, missing_signin, expired or unknown, judged from whether the sign-in exists and from job outcomes in the last 24 h (never a credential value), with one fix line per lane that is not ok. A blocked lane with unused plan also goes on the Asks card. JSON is lanes.auth.v1.', topic: 'observability' },
   { cmd: 'lanes --json', desc: 'Read dispatcher pools, slot caps and local endpoint health.', topic: 'observability' },
   { cmd: 'lanes health [--json]', desc: 'Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.', topic: 'observability' },
   { cmd: 'approvals [--team <id>] [--json]', desc: 'What needs a human: decisions only Mason can make first, then pending team approvals, the Security pin queue (read-only) and explicit holds; same projection as the desktop Approvals panel.', topic: 'integrations' },
