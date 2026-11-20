@@ -16,7 +16,7 @@ export interface RouteBackend {
   ask(input: RouteBackendInput): Promise<unknown>;
 }
 export const candidateDecision = (c: RouteCandidate): RouteDecision => ({
-  lane: c.lane, model: c.model, mode_tier: c.mode_tier, effort: c.effort, speed_tier: c.speed_tier, reason_codes: ['adequate-tier'],
+  lane: c.lane, model: c.model, mode_tier: c.mode_tier, effort: c.effort, speed_tier: c.speed_tier, ...(c.fallback_from ? { fallback_from: c.fallback_from } : {}), reason_codes: ['adequate-tier'],
 });
 
 export function routeModelsDisabled(): boolean {

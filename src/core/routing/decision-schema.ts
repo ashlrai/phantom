@@ -52,6 +52,8 @@ export const routeDecisionSchema = z.object({
   mode_tier: modelModeTierSchema.nullable().default(null),
   effort: effortSchema.nullable(),
   speed_tier: speedTierSchema.nullable(),
+  /** The capped model this job left (routing/model-caps.ts). Absent when no fallback happened. */
+  fallback_from: routeModelSchema.optional(),
   reason_codes: z.array(routeReasonSchema).min(1).max(16),
 }).strict().refine(d => [d.lane, d.model, d.effort, d.speed_tier, d.mode_tier].every(v => v === null)
   || [d.lane, d.model, d.effort, d.speed_tier].every(v => v !== null), 'Incomplete route');
@@ -64,6 +66,8 @@ export interface RouteCandidate {
   capacity?: ResetCalendarPool;
   lane: string;
   model: string;
+  /** Set when the configured model was capped and this one replaced it. */
+  fallback_from?: string;
   effort: z.infer<typeof effortSchema>;
   speed_tier: z.infer<typeof speedTierSchema>;
   /** Ordinal policy priors, never measured dollars or milliseconds. */

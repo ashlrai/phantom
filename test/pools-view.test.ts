@@ -56,7 +56,7 @@ describe('buildPoolsView', () => {
     expect(one(FIXTURE[1]!)).toEqual({
       id: 'on-pace', kind: 'subscription', usedPct: 60, resetAt: at(60), hoursLeft: 60, elapsedPct: 64.3, burnPctPerHour: 0.7,
       burnBasis: 'reported', burn: { samples: 1, window_h: 0, method: 'reported' }, projectedUnusedPct: 0, projectedEmptyAt: at(60 + 0) === '' ? null : expect.any(String), verdict: 'on pace', wasteRisk: 'low', creditsRemaining: null, held: false,
-      running: 1, target: 2, source: 'claude-native-usage', scopes: [], asOf: at(-0.1), reason: null, summary: 'On pace: on pace',
+      running: 1, target: 2, source: 'claude-native-usage', scopes: [], modelCaps: [], asOf: at(-0.1), reason: null, summary: 'On pace: on pace',
     });
   });
 
