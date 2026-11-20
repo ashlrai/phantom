@@ -419,10 +419,10 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{status:posted|duplicate, id, cursor, to, wake} | {status, reason}',
   },
   {
-    usage: 'ashlr agents bus inbox|wakes|adapters [<agent>] [--after <n>] [--limit <n>] [--frame <cli>] [--since <ms>] [--root <abs>] [--json]',
-    description: 'Read one identity inbox (DMs, handoffs, channels, legacy aliases; highest priority first), its wake hints, or the claude/codex/devin/cursor/grok session adapters. Read-only.',
+    usage: 'ashlr agents bus inbox|wakes|show|adapters [<agent|id>] [--after <n>] [--limit <n>] [--frame <cli>] [--since <ms>] [--root <abs>] [--json]',
+    description: 'Read one identity inbox (DMs, handoffs, channels, legacy aliases; highest priority first), its wake hints, one retained envelope by wire id, or the claude/codex/devin/cursor/grok session adapters. Read-only.',
     safety: 'read',
-    jsonShape: '{status:ok, agent, messages[], nextCursor} | {status:ok, agent, wakes[]} | {adapters[]}',
+    jsonShape: '{status:ok, agent, messages[], nextCursor} | {status:ok, agent, wakes[]} | {status:ok, id, message} | {status:not-found, id} | {adapters[]}',
   },
   {
     usage: 'ashlr agents messages [--since 1h] [--limit N] [--json]',
@@ -1219,7 +1219,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'agents bus contract [--json]', desc: 'Print the Agent Bus v2 contract: schema version, providers, body kinds, work statuses, claim key forms. Read-only.', topic: 'autonomy' },
   { cmd: 'agents bus id register|list [<handle>] [--json]', desc: 'Stable agent identity registry: one agt_ id per handle across providers and models.', topic: 'autonomy' },
   { cmd: 'agents bus dm|channel|handoff ... [--json]', desc: 'Unified agent bus: DMs, member-only channels and handoffs on the one local bus store, with priority wake.', topic: 'autonomy' },
-  { cmd: 'agents bus inbox|wakes|adapters [<agent>] [--json]', desc: 'Read an identity inbox or wake hints, or list the claude/codex/devin/cursor/grok session adapters. Read-only.', topic: 'autonomy' },
+  { cmd: 'agents bus inbox|wakes|show|adapters [<agent|id>] [--json]', desc: 'Read an identity inbox or wake hints, one retained envelope by id, or list the claude/codex/devin/cursor/grok session adapters. Read-only.', topic: 'autonomy' },
   { cmd: 'agents roster [--json]', desc: 'Unified live session roster. One probe per source, about 5s each, unknown on timeout or an unverified command. Read-only.', topic: 'autonomy' },
   { cmd: 'agents mesh status [--json]', desc: 'Flat agent mesh: direct addresses, lanes, last-seen and current tasks. Read-only.', topic: 'autonomy' },
   { cmd: 'bus thread|task <verb> [--peer <id>] [--json]', desc: 'Shared task board: local threads plus task claim, handoff, renew and release tied to fenced fleet queue claims. Cooperative labels only; no execution authority.', topic: 'autonomy' },
