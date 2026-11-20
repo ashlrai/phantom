@@ -6,9 +6,10 @@ import { JOB_KEEP_RATE, JOB_RECENT_LAUNCHES, JOB_STOP_MIN_LAUNCHES, JOB_STOP_RAT
 import { planStopFile, readStopFileText, STOP_FILE_ENV, STOP_FILE_SCHEMA, STOP_TTL_HOURS, STOP_TTL_MAX_HOURS, stopFilePath, stopRows, writeStopFile } from '../core/fleet/stop-file.js';
 import { runsRoot } from '../core/metrics/loop-collect.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
+import { readYieldBy, yieldByLines, type YieldBy } from '../core/fleet/yield-by.js';
 import { emptyWhyLines, readJobsEmptyWhy } from '../core/fleet/jobs-empty-why.js';
 
-const yieldUsage = 'Usage: phm jobs yield [--since 24h] [--metrics <jobs.jsonl>] [--stop-list | --stop-file [--ttl-hours N] [--out PATH] [--dry-run]] [--json]';
+const yieldUsage = 'Usage: phm jobs yield [--since 24h|7d] [--by source|lane|family] [--metrics <jobs.jsonl>] [--stop-list | --stop-file [--ttl-hours N] [--out PATH] [--dry-run]] [--json]';
 
 /** `--stop-file`: turn every stop verdict into a stop-file row. Exit 1 when the yield or the file is unknown. */
 async function writeStops(parts: Awaited<ReturnType<typeof readJobYieldParts>>, opts: { ttl: number; out: string | null; dryRun: boolean; json: boolean; now: number }): Promise<number> {
@@ -59,6 +60,10 @@ export async function cmdJobsYield(args: string[], read?: YieldLineReader, now =
     console.log(`${usage}
 Which kinds of jobs are worth launching. Reads the job metrics file
 (default: <fleet runs dir>/metrics/jobs.jsonl) and counts each launch in the window once.
+Run phm jobs yield --by source (or --by lane) for a scoreboard per producer or lane instead of per job kind:
+launches, PRs opened, merged, empty, aborted, merged per launch and median minutes to merge, lowest merged per launch first,
+then one verdict line for the worst. A source is the job's src= tag, else its id prefix: leader, core (RQ-PHX), cl-stream (RQ-CL),
+guardian (FIXUP), filler or other. JSON is jobs.yield-by.v1; unknown medians are null. --by family is the default view.
 Run phm jobs yield --stop-list to print only the job kinds to stop, one per line.
 The list includes every stop kind; no matches prints nothing. An unreadable file reports an error and exits 1.
 With --json, the full report is unchanged, even with --stop-list.
@@ -75,11 +80,15 @@ JSON is jobs.yield.v1 with version 1. An unreadable file prints unknown, never z
     return 0;
   }
   let hours = 24, json = false, stopList = false, seenSince = false, metrics: string | null = null;
-  let stopFile = false, dryRun = false, out: string | null = null, ttl: number | null = null;
+  let by: YieldBy | 'family' | null = null, stopFile = false, dryRun = false, out: string | null = null, ttl: number | null = null;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--json' && !json) json = true;
-    else if (arg === '--stop-list' && !stopList && !emptyWhy) stopList = true;
+    else if (arg === '--by' && by === null && !emptyWhy) {
+      const value = args[++i];
+      if (value !== 'source' && value !== 'lane' && value !== 'family') { console.error(usage); return 2; }
+      by = value;
+    } else if (arg === '--stop-list' && !stopList && !emptyWhy) stopList = true;
     else if (arg === '--stop-file' && !stopFile && !emptyWhy) stopFile = true;
     else if (arg === '--dry-run' && !dryRun && !emptyWhy) dryRun = true;
     else if (arg === '--out' && out === null && !emptyWhy) {
@@ -100,6 +109,14 @@ JSON is jobs.yield.v1 with version 1. An unreadable file prints unknown, never z
   }
   if (!Number.isFinite(hours) || hours <= 0 || hours > 8760) { console.error(usage); return 2; }
   if (stopFile ? stopList : dryRun || out !== null || ttl !== null) { console.error(usage); return 2; }
+  if (by === 'source' || by === 'lane') {
+    if (stopList || stopFile || emptyWhy) { console.error(usage); return 2; }
+    const scoreboard = await readYieldBy({ by, hours, now, ...(metrics ? { metrics: resolve(metrics) } : {}), ...(read ? { read } : {}) });
+    if (json) console.log(JSON.stringify(sanitizePublicJson(scoreboard)));
+    else if (!scoreboard.known) { console.error(scoreboard.verdict); return 1; }
+    else console.log(yieldByLines(scoreboard).join('\n'));
+    return scoreboard.known ? 0 : 1;
+  }
   const parts = await readJobYieldParts(metrics ?? join(runsRoot(), 'metrics', 'jobs.jsonl'), hours, now, read, emptyWhy || json);
   if (stopFile) return writeStops(parts, { ttl: ttl ?? STOP_TTL_HOURS, out, dryRun, json, now });
   const report = parts.report;
