@@ -16,7 +16,7 @@ import { scrubSecrets } from '../util/scrub.js';
 import { ledgerFinishes } from './empties.js';
 import { EMPTY_CAUSE_TAIL_LINES, readText } from './empty-cause.js';
 import { extractAllGaps, readJobGaps, type GapCandidate, type JobGapsReport } from './job-gaps.js';
-import { leaderBets, type LeaderBetStage } from './leader-batches.js';
+import { leaderBets, LEADER_STALE_AFTER_HOURS, readLeaderRunEvidence, type EndedRule, type LeaderBetStage, type LeaderRunEvidence } from './leader-batches.js';
 import type { PoolRow, PoolsViewV1, PoolWasteRisk } from './pools-view.js';
 
 export const LEADER_BRIEF_SCHEMA = 'leader.brief.v1';
@@ -25,7 +25,7 @@ export const BRIEF_MAX_HOURS = 8760;
 export const BRIEF_TOP_GAPS = 5;
 const GAP_WINDOW_HOURS = 24;
 
-export type BriefJobResult = 'published' | 'no_change' | 'running' | 'queued' | 'failed';
+export type BriefJobResult = 'published' | 'no_change' | 'running' | 'queued' | 'failed' | 'ended_no_result';
 export interface BriefJob {
   id: string;
   result: BriefJobResult;
@@ -36,6 +36,8 @@ export interface BriefJob {
   gap: string | null;
   /** Why it ended with no change, when the ledger says. */
   reason: string | null;
+  /** For `ended_no_result`: which rule fired (exit_code or stale); else null. */
+  ended_rule: EndedRule | null;
   at: string | null;
 }
 export interface BriefLane { lane: string; running: number; target: number; queued: number; held: boolean }
@@ -68,29 +70,31 @@ export interface JobBriefInputs {
   gaps: JobGapsReport | null;
   now: number;
   hours: number;
+  /** Run-folder evidence for jobs that died without a finish row; absent means every launched job reads as running. */
+  evidence?: LeaderRunEvidence;
 }
 
 const clip = (text: string, max = 160): string => scrubSecrets(text).replace(/\s+/g, ' ').trim().slice(0, max);
 
-const RESULT_OF: Record<LeaderBetStage, BriefJobResult> = { queued: 'queued', running: 'running', pr_open: 'published', merged: 'published', empty: 'no_change' };
+const RESULT_OF: Record<LeaderBetStage, BriefJobResult> = { queued: 'queued', running: 'running', pr_open: 'published', merged: 'published', empty: 'no_change', ended: 'ended_no_result' };
 
 /** Ids of the leader jobs that ended with no change inside the window, so the caller reads only their notes. */
-export function noChangeIds(queue: string | null, ledger: string | null, now: number, hours: number): string[] {
-  return leaderBets(queue, ledger, now, hours).batches.flatMap(b => b.bets).filter(b => b.stage === 'empty').map(b => b.id);
+export function noChangeIds(queue: string | null, ledger: string | null, now: number, hours: number, evidence?: LeaderRunEvidence): string[] {
+  return leaderBets(queue, ledger, now, hours, evidence).batches.flatMap(b => b.bets).filter(b => b.stage === 'empty').map(b => b.id);
 }
 
 function jobsSection(i: JobBriefInputs): LeaderBriefV1['jobs'] {
   if (i.ledger === null) return { known: false, reason: 'the job metrics file could not be read', rows: [] };
-  const report = leaderBets(i.queue, i.ledger, i.now, i.hours);
+  const report = leaderBets(i.queue, i.ledger, i.now, i.hours, i.evidence);
   const failed = new Set(ledgerFinishes(i.ledger, i.now, i.hours).finishes
     .filter(f => !f.empty && !f.skipped && f.exitCode !== null && f.exitCode !== 0).map(f => f.id));
   const rows = report.batches.flatMap(b => b.bets).map((bet): BriefJob => {
-    const stuck = failed.has(bet.id) && (bet.stage === 'running' || bet.stage === 'queued');
+    const stuck = failed.has(bet.id) && (bet.stage === 'running' || bet.stage === 'queued' || bet.stage === 'ended');
     const result = stuck ? 'failed' : RESULT_OF[bet.stage];
     const gaps = result === 'no_change' ? i.notes.get(bet.id) : undefined;
     const first = gaps ? extractAllGaps(gaps.notes ?? '', gaps.log ? gaps.log.split(/\r?\n/).slice(-EMPTY_CAUSE_TAIL_LINES).join('\n') : '')[0] : undefined;
     return {
-      id: bet.id, result, at: bet.at, reason: result === 'no_change' ? bet.reason : null, gap: first ? clip(first.title) : null,
+      id: bet.id, result, at: bet.at, reason: result === 'no_change' || result === 'ended_no_result' ? bet.reason : null, ended_rule: result === 'ended_no_result' ? bet.ended_rule : null, gap: first ? clip(first.title) : null,
       pr_state: result !== 'published' ? null : bet.stage === 'merged' ? 'merged' : 'open', pr_url: result === 'published' ? bet.url : null,
     };
   }).sort((a, b) => (b.at ?? '9').localeCompare(a.at ?? '9') || a.id.localeCompare(b.id));
@@ -134,12 +138,12 @@ export function buildJobBrief(i: JobBriefInputs): LeaderBriefV1 {
     : { known: false, reason: 'the resource ledger could not be read', rows: [] };
   const gaps = gapsSection(i.gaps);
   const summary = jobs.known
-    ? `Last ${i.hours}h: ${count(jobs.rows, 'published')} published, ${count(jobs.rows, 'no_change')} no change, ${count(jobs.rows, 'failed')} failed, ${count(jobs.rows, 'running')} running, ${count(jobs.rows, 'queued')} queued. Admission ${admission.state}. ${gaps.known ? `${gaps.total} open gap${gaps.total === 1 ? '' : 's'}.` : 'Open gaps unknown.'}`
+    ? `Last ${i.hours}h: ${count(jobs.rows, 'published')} published, ${count(jobs.rows, 'no_change')} no change, ${count(jobs.rows, 'failed')} failed, ${count(jobs.rows, 'ended_no_result') ? `${count(jobs.rows, 'ended_no_result')} ended with no result, ` : ''}${count(jobs.rows, 'running')} running, ${count(jobs.rows, 'queued')} queued. Admission ${admission.state}. ${gaps.known ? `${gaps.total} open gap${gaps.total === 1 ? '' : 's'}.` : 'Open gaps unknown.'}`
     : `Leader jobs unknown (${jobs.reason}). Admission ${admission.state}.`;
   return { schema: LEADER_BRIEF_SCHEMA, version: 1, generated_at: new Date(i.now).toISOString(), window_hours: i.hours, jobs, lanes, admission, pools, gaps, summary };
 }
 
-const RESULT_TEXT: Record<BriefJobResult, string> = { published: 'published', no_change: 'no change', running: 'running', queued: 'queued', failed: 'failed' };
+const RESULT_TEXT: Record<BriefJobResult, string> = { published: 'published', no_change: 'no change', running: 'running', queued: 'queued', failed: 'failed', ended_no_result: 'ended, no result' };
 
 /** Plain words, one section each; unknown says unknown and why. */
 export function jobBriefLines(b: LeaderBriefV1): string[] {
@@ -149,7 +153,8 @@ export function jobBriefLines(b: LeaderBriefV1): string[] {
     if (!b.jobs.rows.length) lines.push('  none in this window');
     for (const j of b.jobs.rows) {
       const tail = j.result === 'published' ? `${j.pr_state === 'merged' ? 'merged' : 'PR open'}${j.pr_url ? `  ${j.pr_url}` : ''}`
-        : j.result === 'no_change' ? `gap: ${j.gap ?? `unknown (no gap in the notes or log${j.reason ? `; ledger says: ${j.reason}` : ''})`}` : '';
+        : j.result === 'no_change' ? `gap: ${j.gap ?? `unknown (no gap in the notes or log${j.reason ? `; ledger says: ${j.reason}` : ''})`}`
+        : j.result === 'ended_no_result' ? `(${j.reason ?? 'no reason recorded'})` : '';
       lines.push(`  ${j.id}  ${RESULT_TEXT[j.result]}${tail ? `  ${tail}` : ''}`);
     }
     if (b.jobs.reason) lines.push(`  note: ${b.jobs.reason}`);
@@ -177,6 +182,8 @@ export interface ReadJobBriefOptions {
   runsDir?: string;
   wtDir?: string;
   hours?: number;
+  /** A launched job running longer than this with no live process reads as ended. Default 3 h. */
+  staleAfterHours?: number;
   now?: number;
   read?: (path: string, max: number) => Promise<string | null>;
   pools?: (now: number) => Promise<PoolsViewV1 | null>;
@@ -204,11 +211,12 @@ export async function readJobBrief(opts: ReadJobBriefOptions = {}): Promise<Lead
     safe(() => (opts.pools ?? defaultPools)(now)),
     safe(() => (opts.gaps ?? ((h: number) => readJobGaps(h, { runsDir: runs, wtDir: wt, now, read })))(Math.max(hours, GAP_WINDOW_HOURS))),
   ]);
+  const evidence = await safe(() => readLeaderRunEvidence(runs, opts.staleAfterHours ?? LEADER_STALE_AFTER_HOURS)) ?? undefined;
   const notes = new Map<string, { notes: string | null; log: string | null }>();
-  for (const id of noChangeIds(queue, ledger, now, hours)) {
+  for (const id of noChangeIds(queue, ledger, now, hours, evidence)) {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id)) continue;
     const [n, log] = await Promise.all([safe(() => read(join(wt, id, 'BRIDGE_NOTES.md'), 65536)), safe(() => read(join(runs, `${id}.log`), 16384))]);
     notes.set(id, { notes: n, log });
   }
-  return buildJobBrief({ queue, ledger, status, notes, pools, gaps, now, hours });
+  return buildJobBrief({ queue, ledger, status, notes, pools, gaps, now, hours, evidence });
 }

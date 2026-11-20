@@ -70,6 +70,22 @@ describe('leader job brief', () => {
     expect(brief.summary).toContain('1 published, 1 no change, 1 failed, 1 running, 1 queued');
   });
 
+  it('a job with an exit code sidecar and no publish is ended with no result, and the rule is named', async () => {
+    await mkdir(join(runs, 'queue', 'run'), { recursive: true });
+    await writeFile(join(runs, 'queue', 'run', 'RQ-RUNN21QQ8.rc'), '137\n');
+    const brief = await read();
+    expect(brief.jobs.rows.find(j => j.id === 'RQ-RUNN21QQ8')).toMatchObject({ result: 'ended_no_result', ended_rule: 'exit_code', reason: 'exit code 137 recorded, no result' });
+    expect(brief.summary).toContain('1 ended with no result');
+    expect(jobBriefLines(brief).join('\n')).toContain('RQ-RUNN21QQ8  ended, no result  (exit code 137 recorded, no result)');
+  });
+
+  it('a normal running job stays running, and --stale-after is honoured', async () => {
+    await mkdir(join(runs, 'queue', 'run', 'resource-sessions'), { recursive: true });
+    expect((await read()).jobs.rows.find(j => j.id === 'RQ-RUNN21QQ8')?.result).toBe('running');
+    // Launched 1 h ago with no live process record: over a 30 m limit it is ended, not running.
+    expect((await read({ staleAfterHours: 0.5 })).jobs.rows.find(j => j.id === 'RQ-RUNN21QQ8')).toMatchObject({ result: 'ended_no_result', ended_rule: 'stale' });
+  });
+
   it('reports lanes, admission, pools and only the top 5 gaps', async () => {
     const brief = await read();
     expect(brief.lanes.rows).toEqual([{ lane: 'claude', running: 2, target: 4, queued: 5, held: false }, { lane: 'zai', running: 0, target: 3, queued: 0, held: true }]);
