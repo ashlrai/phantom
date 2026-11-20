@@ -1,0 +1,173 @@
+/**
+ * routes/verse/fleet-router/FleetRouterPane.tsx: where every kind of fleet work would go, and
+ * where recent work went. The route table is the router's own answer for each task at each
+ * difficulty, one unlogged preview per cell; choosing a cell draws that answer as the order seats would
+ * be tried, each with its provider mark, the share of its usage window already used and its
+ * reset, then the seats held back with the router's reason. Below, the recorded decision log
+ * is counted by chosen seat. The pane decides nothing.
+ */
+import { useState, type KeyboardEvent } from 'react';
+import type { ShadowDecisionRecord } from '../../../../core/routing/budget-store.js';
+import type { BudgetView } from '../../../../core/routing/policy.js';
+import type { RoutingDifficulty, RoutingTask, SeatDecision } from '../../../../core/routing/types.js';
+import { describeResetAt } from '../../../../core/verse/seat-readiness.js';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
+import { Segmented } from '../../../components/primitives/Segmented.js';
+import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { budgetQuery } from '../budget/budget-queries.js';
+import { decisionSummary, describeEligibleAgain, eligibleAgain, heldBackText } from '../fleet/why-seat-model.js';
+import type { PaneProps } from '../panes/pane-registry.js';
+import { usedPercentText } from '../percent-text.js';
+import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { formatRelative } from '../verse-model.js';
+import styles from './fleet-router.module.css';
+import { ROUTER_DIFFICULTIES, ROUTER_TASKS, routeAt, routeSeats, routerDecisionsQuery, routerRoutesQuery, seatBrand, summarizeDecisions, tableShares, type BudgetRoute, type RouteSeat } from './router-model.js';
+
+const KINDS = ROUTER_TASKS.length * ROUTER_DIFFICULTIES.length;
+
+const RECENT = 6;
+const AUDIENCES = [{ value: 'fleet', label: 'Fleet work' }, { value: 'owner', label: 'Your request' }] as const;
+type Audience = typeof AUDIENCES[number]['value'];
+const labelOf = (view: BudgetView | null, seatId: string | null): string =>
+  seatId === null ? 'No seat' : view?.seatInfo.find(seat => seat.seatId === seatId)?.label ?? seatId;
+const ago = (iso: string, now: number): string => { const text = formatRelative(iso, now); return text === '' ? 'time unknown' : text === 'now' ? 'just now' : `${text} ago`; };
+
+function Usage({ seat, now }: { seat: RouteSeat; now: number }) {
+  if (seat.free) return <span className={styles.usage}>Local: no usage window</span>;
+  if (seat.usedPercent === null) return <span className={styles.usage}><span className={styles.track} data-unknown role="img" aria-label={`${seat.label} usage unknown`} />Usage unknown</span>;
+  const used = Math.max(0, Math.min(100, seat.usedPercent));
+  const text = `${usedPercentText(seat.usedPercent)} of the ${seat.window} window used`;
+  return <span className={styles.usage}>
+    <span className={styles.track} role="img" aria-label={`${seat.label}: ${text}`}><span className={styles.fill} data-high={used >= 90 || undefined} style={{ width: `${used}%` }} /></span>
+    {text}{seat.resetAt ? ` · resets ${describeResetAt(seat.resetAt, now) ?? seat.resetAt}` : ' · reset unknown'}
+  </span>;
+}
+
+/** Arrow keys walk the table's cells; Home and End jump along the row. Enter or Space chooses, as on any button. */
+function moveFocus(event: KeyboardEvent<HTMLTableElement>) {
+  const step: Record<string, [number, number]> = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1], Home: [0, -9], End: [0, 9] };
+  const delta = step[event.key], from = (event.target as HTMLElement).closest<HTMLElement>('[data-cell]');
+  if (!delta || !from) return;
+  const [row, col] = from.dataset['cell']!.split('-').map(Number) as [number, number];
+  const clamp = (value: number, size: number) => Math.max(0, Math.min(size - 1, value));
+  const next = event.currentTarget.querySelector<HTMLElement>(`[data-cell="${clamp(row + delta[0], ROUTER_TASKS.length)}-${clamp(col + delta[1], ROUTER_DIFFICULTIES.length)}"]`);
+  if (next) { event.preventDefault(); next.focus(); }
+}
+
+function RouteTable({ routes, view, task, difficulty, onPick }: { routes: readonly BudgetRoute[]; view: BudgetView | null; task: RoutingTask; difficulty: RoutingDifficulty;
+  onPick: (task: RoutingTask, difficulty: RoutingDifficulty) => void }) {
+  return <table className={styles.table} aria-label="Route table" onKeyDown={moveFocus}>
+    <thead><tr><td />{ROUTER_DIFFICULTIES.map(column => <th key={column.value} scope="col">{column.label}</th>)}</tr></thead>
+    <tbody>{ROUTER_TASKS.map((row, r) => <tr key={row.value}>
+      <th scope="row">{row.label}</th>
+      {ROUTER_DIFFICULTIES.map((column, c) => {
+        const decision = routeAt(routes, row.value, column.value);
+        const chosen = row.value === task && column.value === difficulty;
+        const kind = `${row.label}, ${column.label.toLowerCase()}`;
+        // A cell the table does not hold is unknown, never "no seat".
+        if (!decision) return <td key={column.value}><span className={styles.cell} data-route="unknown">Unknown</span></td>;
+        const then = decision.seatId === null ? undefined : decision.candidates.find(seatId => seatId !== decision.seatId);
+        return <td key={column.value}>
+          <button type="button" className={styles.cell} data-cell={`${r}-${c}`} data-route={decision.seatId === null ? 'none' : 'ok'} aria-pressed={chosen}
+            tabIndex={chosen ? 0 : -1} onClick={() => onPick(row.value, column.value)}
+            aria-label={`${kind}: ${decision.seatId === null ? 'no seat can take it' : `goes to ${labelOf(view, decision.seatId)}`}${then ? `, then ${labelOf(view, then)}` : ''}`}>
+            <span className={styles.name}>{decision.seatId === null ? null : <BrandMark brand={seatBrand(view, decision.seatId)} size={14} />}{labelOf(view, decision.seatId)}</span>
+            <span className={styles.then}>{decision.seatId === null ? 'nothing eligible' : then ? `then ${labelOf(view, then)}` : 'no second seat'}</span>
+          </button>
+        </td>;
+      })}
+    </tr>)}</tbody>
+  </table>;
+}
+
+function Route({ decision, view, now }: { decision: SeatDecision; view: BudgetView | null; now: number }) {
+  const seats = routeSeats(decision, view);
+  const tried = seats.filter(seat => seat.rank !== null), held = seats.filter(seat => seat.rank === null);
+  return <>
+    <p className={styles.headline} data-route={decision.seatId === null ? 'none' : 'ok'}>
+      {decision.seatId === null ? 'No seat can take this right now' : <><BrandMark brand={seatBrand(view, decision.seatId)} size={18} />Goes to {labelOf(view, decision.seatId)}</>}
+      <span className={styles.chip}>{decision.mode}</span>
+    </p>
+    <p className={styles.meta}>{decisionSummary(decision)}</p>
+    {tried.length ? <ol className={styles.route} aria-label="Try order">{tried.map(seat => <li key={seat.seatId} className={styles.seat} data-first={seat.rank === 1 || undefined}>
+      <span className={styles.rank} aria-hidden="true">{seat.rank}</span>
+      <span className={styles.name}><BrandMark brand={seat.brand} size={16} />{seat.label}</span>
+      <Usage seat={seat} now={now} />
+    </li>)}</ol> : null}
+    {held.length ? <>
+      <h3 className={styles.sub}>Held back</h3>
+      <ul className={styles.route} aria-label="Held back">{held.map(seat => <li key={seat.seatId} className={styles.seat} data-held>
+        <span className={styles.rank} aria-hidden="true">–</span>
+        <span className={styles.name}><BrandMark brand={seat.brand} size={16} />{seat.label}</span>
+        <span className={styles.usage}>{heldBackText(seat.held!) || 'The router gave no reason.'} Eligible again: {describeEligibleAgain(eligibleAgain(seat.held!), now)}.</span>
+        <Usage seat={seat} now={now} />
+      </li>)}</ul>
+    </> : null}
+    {view ? null : <p className={styles.note}>Seat usage is unknown: the budget reading did not answer.</p>}
+  </>;
+}
+
+function Log({ records, view, now }: { records: readonly ShadowDecisionRecord[]; view: BudgetView | null; now: number }) {
+  if (records.length === 0) return <p className={styles.meta}>No routing decisions are recorded yet.</p>;
+  const log = summarizeDecisions(records);
+  return <>
+    <p className={styles.meta}>Last {log.total} recorded{log.from ? `, since ${ago(log.from, now)}` : ''}. {log.ranKnown === 0 ? 'None of them records which seat actually ran.'
+      : `${log.ranKnown} record the seat that ran; ${log.ranElsewhere} of those ran on a different seat than the one chosen.`}</p>
+    <ul className={styles.bars} aria-label="Decisions by chosen seat">{log.seats.map(seat => {
+      const percent = Math.round(seat.share * 100);
+      return <li key={String(seat.seatId)} className={styles.bar} aria-label={`${labelOf(view, seat.seatId)}: ${seat.count} of ${log.total} decisions`}>
+        <span className={styles.name}>{seat.seatId === null ? null : <BrandMark brand={seatBrand(view, seat.seatId)} size={16} />}{labelOf(view, seat.seatId)}</span>
+        <span className={styles.track}><span className={styles.fill} data-none={seat.seatId === null || undefined} style={{ width: `${seat.share * 100}%` }} /></span>
+        <span className={styles.count}>{seat.count} · {percent === 0 ? '<1' : percent}%</span>
+      </li>;
+    })}</ul>
+    <h3 className={styles.sub}>Latest</h3>
+    <ul className={styles.recent} aria-label="Latest decisions">{records.slice(0, RECENT).map((record, index) => {
+      const chosen = record.decision?.seatId ?? null, ran = record.actual?.seatId ?? null;
+      return <li key={`${record.at}-${index}`}>
+        <span className={styles.when}>{ago(record.at, now)}</span>
+        <span>{record.request.difficulty} {record.request.task} · {record.source}</span>
+        <span className={styles.name}>{chosen === null ? null : <BrandMark brand={seatBrand(view, chosen)} size={14} />}{labelOf(view, chosen)}</span>
+        {ran !== null && ran !== chosen ? <span className={styles.ran}>ran on {labelOf(view, ran)}</span> : null}
+      </li>;
+    })}</ul>
+  </>;
+}
+
+export function FleetRouterPane({ visible }: PaneProps) {
+  const [audience, setAudience] = useState<Audience>('fleet');
+  const [task, setTask] = useState<RoutingTask>('code');
+  const [difficulty, setDifficulty] = useState<RoutingDifficulty>('medium');
+  const routesQuery = routerRoutesQuery(audience === 'fleet');
+  const table = useQuery(routesQuery, { enabled: visible, freshMs: 0 });
+  const budget = useQuery(budgetQuery, { enabled: visible, freshMs: 15_000 });
+  const decisions = useQuery(routerDecisionsQuery, { enabled: visible, freshMs: 0 });
+  const refetchRoutes = useRefetch(routesQuery), refetchBudget = useRefetch(budgetQuery), refetchDecisions = useRefetch(routerDecisionsQuery);
+  usePollWhileVisible(() => { refetchRoutes(); refetchBudget(); refetchDecisions(); }, 30_000, { enabled: visible });
+  const now = Date.now();
+  const view = budget.data && Array.isArray(budget.data.seatInfo) && Array.isArray(budget.data.headroom) ? budget.data : null;
+  const stale = <p className={styles.note} data-stale role="status">Could not refresh. Showing the last reading.</p>;
+  const routes = table.data?.routes ?? null, decision = routes ? routeAt(routes, task, difficulty) : null;
+  return <section className={styles.root} aria-label="Router">
+    <div className={styles.head}>
+      <h2>Where each kind of work goes</h2>
+      <Segmented size="sm" aria-label="Routed for" options={AUDIENCES} value={audience} onChange={setAudience} />
+    </div>
+    {/* The audience switch stays put while a table is read, so a slow or failed read never takes the way back with it. */}
+    {routes ? <>
+      {table.status === 'error' ? stale : null}
+      <ul className={styles.shares} aria-label="First choice by seat">{tableShares(routes).map(share => <li key={String(share.seatId)} data-none={share.seatId === null || undefined}>
+        {share.seatId === null ? null : <BrandMark brand={seatBrand(view, share.seatId)} size={14} />}{labelOf(view, share.seatId)}<b>{share.count}</b>
+      </li>)}<li className={styles.of}>of {routes.length} kinds of work</li></ul>
+      {routes.length < KINDS ? <p className={styles.note} data-stale role="status">{KINDS - routes.length} of {KINDS} kinds of work got no answer from the router.</p> : null}
+      <RouteTable routes={routes} view={view} task={task} difficulty={difficulty} onPick={(nextTask, nextDifficulty) => { setTask(nextTask); setDifficulty(nextDifficulty); }} />
+      <div className={styles.head}><h2>Next {difficulty} {task} task</h2></div>
+      {decision ? <Route decision={decision} view={view} now={now} /> : <p className={styles.meta}>Unknown: the route table does not hold this kind of work.</p>}
+    </> : <p className={styles.meta} role="status">{table.status === 'error' ? 'Route table: unknown (the router did not answer).' : 'Asking the router…'}</p>}
+    <p className={styles.note}>Routed for {audience === 'fleet' ? 'autonomous fleet work' : 'your own request'}. Seat usage was read {view && typeof view.sampledAt === 'string' ? ago(view.sampledAt, now) : 'at an unknown time'}. Nothing is launched or reserved.</p>
+    <div className={styles.head}><h2>Recorded decisions</h2></div>
+    {decisions.data ? <>{decisions.status === 'error' ? stale : null}<Log records={decisions.data} view={view} now={now} /></>
+      : <p className={styles.meta} role="status">{decisions.status === 'error' ? 'Decision log: unknown (it could not be read).' : 'Reading the decision log…'}</p>}
+    <p className={styles.note}>A decision is the seat the router chose for a request, not proof the work ran there. Same reads: <code>GET /api/verse/budget/preview</code> and <code>GET /api/verse/budget/decisions</code>.</p>
+  </section>;
+}
