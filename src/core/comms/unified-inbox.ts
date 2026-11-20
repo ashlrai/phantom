@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates eleven local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates thirteen local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), act: `phm fleet needs-resolve`.
@@ -86,6 +86,24 @@
  *               invalid config, a missing outbox and an unreadable one keep
  *               their own source state — never an empty outbox passed off
  *               as fact.
+ *   team-approvals  pending team approvals — access requests and
+ *               consequential handoffs only an owner/admin can decide — from
+ *               the team event log, the same `readTeamApprovals` section
+ *               `phm approvals` and the desktop Approvals panel project,
+ *               scoped to DEFAULT_TEAM like the bare command. The requested
+ *               action is held until `phm team approve|deny` records the
+ *               decision, so each lists as a blocking warn; the projection
+ *               carries no timestamp, so `since`/`expiresAt` stay null. A
+ *               throwing or refused read reports 'unavailable', never an
+ *               empty approvals list passed off as fact.
+ *   proposals  pending inbox proposals (`~/.ashlr/inbox`), the same
+ *               `readPendingProposals` section — proposed outward actions
+ *               that never auto-apply and wait on review. Info items
+ *               deep-link `phm inbox show|approve|reject`; a partial capture
+ *               can be rejected but never approved, so its acts drop
+ *               `approve`. A truncated or incomplete read reports 'degraded'
+ *               with the items it did find — never an empty list passed off
+ *               as fact.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -102,6 +120,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
 import { coordinationRowBlocks, listCoordination } from '../agents/claim-store.js';
+import { readPendingProposals, readTeamApprovals, type ProposalApprovalItem, type TeamApprovalItem } from '../approvals/surface.js';
 import { listDrafts, type Draft } from '../cos/drafts.js';
 import { compareRanked, needsYouPriorityHeuristic, type AttentionItem, type NeedsYouPriority, type RankedAttentionItem } from '../decide/needs-you.js';
 import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxInspection, type BusInboxOptions, type BusInboxReceipt } from '../fleet/bus-inbox.js';
@@ -119,6 +138,7 @@ import { commsRequestAgeStartMs, commsRequestTtlMs, DEFAULT_REQUEST_TTL_HOURS, r
 import { readAgentConversations, plainAge, type AgentConversations } from '../fleet/agent-conversations.js';
 import { JOB_THREAD_PREFIX } from '../fleet/agent-messages.js';
 import { planSeatHandoffs, type SeatHandoffsPlan } from '../bots/seats.js';
+import { DEFAULT_TEAM } from '../teams/tools.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { classifyTeammateIntent, readTeammateTexts, type TeammateText } from './imessage-teammate-inbox.js';
 
@@ -127,9 +147,9 @@ const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
 
-export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'owner-thread' | 'drafts' | 'bus' | 'conversations' | 'seats' | 'gmail' | 'linkedin' | 'requests' | 'email-outbox';
+export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'owner-thread' | 'drafts' | 'bus' | 'conversations' | 'seats' | 'gmail' | 'linkedin' | 'requests' | 'email-outbox' | 'team-approvals' | 'proposals';
 export type UnifiedInboxSourceState = 'healthy' | 'missing' | 'degraded' | 'unavailable';
-export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'owner-message' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-stuck';
+export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'owner-message' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-stuck' | 'team-approval' | 'inbox-proposal';
 
 export interface UnifiedInboxItem extends AttentionItem {
   /** Stable, namespaced: `<source>:<ref>` (e.g. `drafts:d-0123…`). */
@@ -199,6 +219,10 @@ export interface UnifiedInboxOptions {
   /** Test seam: the request TTL `expiresAt` uses; default resolves cfg.comms.requestTtlHours like dispatch. */
   requestTtlMs?: number;
   readEmailOutbox?: (options: { runsDir?: string }) => Promise<EmailOutboxSourceRead>;
+  /** Team-approvals seam; default reads the DEFAULT_TEAM event log like `phm approvals`. */
+  readTeamApprovals?: typeof readTeamApprovals;
+  /** Pending-proposals seam; default reads the inbox store like `phm approvals`. */
+  readInboxProposals?: typeof readPendingProposals;
 }
 
 const cap = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
@@ -792,6 +816,82 @@ function requestItems(read: typeof readCommsRequests, now: () => number, ttlOver
 }
 
 /**
+ * Pending team approvals — access requests and consequential handoffs only
+ * an owner/admin can decide — from the same `readTeamApprovals` section
+ * `phm approvals` and the desktop Approvals panel project, scoped to
+ * DEFAULT_TEAM like the bare command. The requested action is held until
+ * `phm team approve|deny` records the decision, so each lists as a blocking
+ * warn with the projection's own approve command first and the matching deny
+ * command second. The item carries no timestamp, so `since`/`expiresAt` stay
+ * null — unknown, never invented. A throwing or refused read reports
+ * 'unavailable', never an empty approvals list passed off as fact.
+ */
+function teamApprovalItems(read: NonNullable<UnifiedInboxOptions['readTeamApprovals']>): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let section: ReturnType<typeof readTeamApprovals>;
+  try { section = read(DEFAULT_TEAM); } catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
+  if (section.state !== 'ok') return { report: { state: 'unavailable', pending: 0 }, items: [] };
+  const items = section.items.map((approval: TeamApprovalItem): Omit<UnifiedInboxItem, 'priority'> => ({
+    id: `team-approvals:${approval.id}`,
+    source: 'team-approvals',
+    kind: 'team-approval',
+    severity: 'warn',
+    // The access request or handoff stays held until an owner/admin decides.
+    blocking: true,
+    title: oneLine(approval.summary, TITLE_MAX) || `team approval ${approval.id}`,
+    detail: oneLine(`from ${approval.requestedBy}${approval.note ? ` · "${approval.note}"` : ''}`, DETAIL_MAX) || null,
+    since: null,
+    expiresAt: null,
+    act: [approval.command, `phm team deny ${approval.id} --team ${DEFAULT_TEAM}`, 'phm approvals'],
+  }));
+  return { report: { state: 'healthy', pending: items.length }, items };
+}
+
+/**
+ * Pending inbox proposals — proposed outward actions that never auto-apply —
+ * from the same `readPendingProposals` section `phm approvals` and the
+ * desktop Approvals panel project. Each lists as info: a review backlog, not
+ * an urgent decision. `phm inbox show` reviews first, then approve and
+ * reject; a partial capture can be denied but never approved, so its acts
+ * drop `approve`. A proposal id that fails the inbox-show shape guard keeps
+ * only the bare `phm inbox` list link rather than a command that cannot
+ * run. `since` is the proposal's real createdAt — null when it does not
+ * parse, never invented; `expiresAt` stays null. An 'ok' read whose coverage
+ * was truncated, or an 'unavailable' read that still returned items, reports
+ * 'degraded': the items found are real and list while the missing remainder
+ * is honestly unknown — never an empty list passed off as fact.
+ */
+function proposalItems(read: NonNullable<UnifiedInboxOptions['readInboxProposals']>): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let section: ReturnType<typeof readPendingProposals>;
+  try { section = read(); } catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
+  const items = section.items.map((proposal: ProposalApprovalItem): Omit<UnifiedInboxItem, 'priority'> => {
+    const idOk = PROPOSAL_ID.test(proposal.id);
+    const act = idOk
+      ? [`phm inbox show ${proposal.id}`,
+        ...(proposal.partial ? [] : [`phm inbox approve ${proposal.id}`]),
+        `phm inbox reject ${proposal.id}`]
+      : ['phm inbox'];
+    const created = typeof proposal.createdAt === 'string' ? Date.parse(proposal.createdAt) : Number.NaN;
+    return {
+      id: `proposals:${proposal.id}`,
+      source: 'proposals',
+      kind: 'inbox-proposal',
+      severity: 'info',
+      blocking: false,
+      title: oneLine(proposal.title, TITLE_MAX) || `inbox proposal ${proposal.id}`,
+      detail: oneLine(`${proposal.kind} proposal${proposal.partial ? ' · partial capture' : ''}` +
+        (proposal.detail === null ? '' : ` — ${proposal.detail}`), DETAIL_MAX) || null,
+      since: Number.isFinite(created) ? proposal.createdAt : null,
+      expiresAt: null,
+      act,
+    };
+  });
+  const state: UnifiedInboxSourceState = section.state !== 'ok'
+    ? (items.length > 0 ? 'degraded' : 'unavailable')
+    : section.truncated ? 'degraded' : 'healthy';
+  return { report: { state, pending: items.length }, items };
+}
+
+/**
  * The same read `phm fleet email-outbox` serves, resolved at the shared runs
  * dir: saved email-drop config → outbox dir (`outboxDir`, else the sibling of
  * `inboxDir`, the rule every consumer applies) → availability probe →
@@ -872,6 +972,8 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const emailOutbox = await emailOutboxItems(
     options.readEmailOutbox ?? (async (opts: { runsDir?: string }) => readEmailOutboxSource(opts.runsDir ?? join(homedir(), '.ashlr-runs'))),
     options.runsDir);
+  const teamApprovals = teamApprovalItems(options.readTeamApprovals ?? readTeamApprovals);
+  const proposals = proposalItems(options.readInboxProposals ?? readPendingProposals);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -885,8 +987,10 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     linkedin: linkedin.report,
     requests: requests.report,
     'email-outbox': emailOutbox.report,
+    'team-approvals': teamApprovals.report,
+    proposals: proposals.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...ownerThread.items, ...drafts.items, ...bus.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailOutbox.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...ownerThread.items, ...drafts.items, ...bus.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
