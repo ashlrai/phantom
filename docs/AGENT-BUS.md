@@ -166,6 +166,7 @@ latest runtime's provider, `origin_bridge` is `agent-bus`).
 | --- | --- | --- | --- |
 | DM | `agent:<handle>` | `bus` | v2 `note` |
 | Channel post | `group:<channel>:<topic>` (topic defaults to `general`) | `bus` | v2 `note` |
+| Label post | any printable routing label outside the reserved `agent:`/`group:`/`dm:`/`handoff:` prefixes | `bus` | v2 `note`, or `context` with `--kind context` |
 | Handoff | `agent:<handle>` | `handoff` | `worker-handoff` (`taskId`, `prompt`), the shape `phm fleet handoff-receive` reads |
 | Wake request | `agent:<handle>` | `bus` | v2 `wake` (`target`, `reason`, optional `jobId`) |
 
@@ -207,6 +208,23 @@ and no membership; an unknown channel is `unknown-channel`, an unreadable
 registry or store is reported — never an empty page passed off as history.
 Because channel addresses are bus-group addresses, existing `subscribeGroup`
 readers see the same posts.
+
+**Label posts.** `phm agents bus post --to <label> --text <text> [--kind
+note|context]` sends a v2 `note` (the default) or `context` body to any
+printable routing label the other send verbs cannot address: a sink like
+`leaders`, a shared topic like `fleet.mesh`, or any label a subscriber reads
+through `comms bus read --to`, `bus-follow` or an identity's alias matching.
+The reserved prefixes `agent:`, `group:`, `dm:` and `handoff:` are refused —
+`dm`, `channel post`, `handoff` and `wake` own those addresses — and the
+sender must still be a registered identity, so the mail carries the same
+`agent-bus` sender metadata, scrub gate, priority-wake rules and id dedupe as
+a DM. Delivery follows the label: a `to` that is one of a registered
+identity's labels (alias, bare handle or stable id) lands in its inbox as
+legacy mail and records a wake hint by the priority rules; a sink or topic
+label reaches no identity inbox — its readers are the label's own
+subscribers and projections. The body stays untrusted data: consumers of the
+label keep their own admission checks, and addressing one grants no
+authority.
 
 **Priority wake.** P0 always wakes and cannot be turned off. P1 and handoffs
 wake by default (`--no-wake` opts out); P2 and P3 wake only with `--wake`. A
@@ -259,6 +277,15 @@ characters so one large body cannot crowd out the rest of the frame.
 `phm agents bus wakes <agent>` lists wake hints for the agent and its
 channels.
 
+**Lookup.** `phm agents bus show <id>` resolves one retained envelope by the
+wire id wake hints, `work mine` items and claim operations cite — the third
+addressing mode beside labels and cursors. The scan is the same bounded page
+walk the other reads use and sees live rows only: an expired or never-posted
+id reports `not-found`, an unreadable store `unavailable`, and the read needs
+no identity or addressing scope. The sender's registered handle decorates the
+result as `fromAgent` when the registry resolves it — best-effort, so an
+unreadable registry never hides the envelope itself.
+
 **Work announcements.** `phm agents bus work post --job <id> --title <text>
 --repo <owner/name> [--claim <key>]... [--provider <p>] [--tier <fast|mid|work|frontier>
 --scope <text> --acceptance <text>] [--to <label>]` sends a v2 `work.post`;
@@ -290,11 +317,18 @@ statuses never fan out. The result's `claimHoldersWoken` counts the hints
 present after the call — absent when the fan-out did not run, `null` when the
 live claim table could not be read (unknown holders are never reported as
 none), and a hint that cannot be written is best-effort, never a failed send.
-`phm agents bus work feed [--status <s>] [--to <label>] [--claims]` reads the
-same projection back — jobs newest-first, optionally filtered by status or
-announcement address and joined with the live coordination holds — so the
+`phm agents bus work feed [--status <s>] [--job <id>] [--to <label>]
+[--owner <agent>] [--claims]` reads the
+same projection back — jobs newest-first, optionally filtered by status,
+exact job id, announcement address or announcing agent and joined with the
+live coordination holds — so the
 whole post/status/feed loop stays on this surface without dropping to
-`phm fleet work-feed`.
+`phm fleet work-feed`. `--to` keeps jobs whose announcement was addressed to
+that routing label and `--owner` keeps jobs announced by that agent; each
+matches literally and under every label of one agent identity through the
+registry, while an unresolvable ref or an unreadable registry keeps
+exact-label matching — the filters narrow the fleet view, they never widen
+it. `phm fleet work-feed` accepts the same flags.
 
 **Job claims.** `phm agents bus work claim --job <id> --lease-ms <1..3600000>
 [--key <claimKey>] [--owner <label>] [--id <opId>]` is the job-level companion
@@ -341,7 +375,9 @@ reached the store's end — and `nextCursor` resumes strictly before any
 unshown mail, so `agents bus inbox --after <nextCursor>` continues the page
 without redelivering or skipping. `addressed` marks jobs whose announcement
 `to` label resolves to the agent's
-identity. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
+identity, and `announced` marks jobs whose `owner` (announcer) label resolves
+to it — the agent posted them and owns their status reports, so the digest
+distinguishes driveable announcements from claimable work. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
 exact-label claim matching, reports `identity: null`, and answers
 `unknown-agent` for wakes and inbox rather than an empty list. Every section
 reports its
@@ -538,11 +574,11 @@ desktop source does not prevent CLI or teammate observations.
 these shared projections to every enrolled, authenticated peer, independent of
 lane or role. Private inboxes keep their recipient checks. Routine local DMs use
 `phm agents bus dm --to <handle> --text <text>`; transport and send gates still apply.
-Repeatable `--ref <ref>` on `dm` and `channel post` records v2 `refs` on the
+Repeatable `--ref <ref>` on `dm`, `post` and `channel post` records v2 `refs` on the
 `note` body; `--thread <label>` records the v2 `thread` conversation label —
-the field that ties a question and its answer together — on `dm`, `channel
-post`, and (as a read filter) `inbox` and `channel read`, plus `comms bus
-read`/`watch`. A thread read matches that field on `note`/`context` bodies
+the field that ties a question and its answer together — on `dm`, `post`,
+`channel post`, and (as a read filter) `inbox` and `channel read`, plus
+`comms bus read`/`watch`. A thread read matches that field on `note`/`context` bodies
 only; every other body kind never matches.
 
 `body.kind` is one of:

@@ -131,13 +131,13 @@ describe('readBusWorkMine', () => {
     expect(result.jobs.open).toBe(3);
     expect(result.jobs.truncated).toBe(false);
     const byId = new Map(result.jobs.jobs.map(entry => [entry.id, entry]));
-    expect(byId.get('RQ-M-1')).toMatchObject({ claimable: true, addressed: false,
+    expect(byId.get('RQ-M-1')).toMatchObject({ claimable: true, addressed: false, announced: true,
       freeKeys: ['queue:RQ-M-1'], heldKeys: [], status: 'queued' });
     // Both declared keys are held (one by nova, one by atlas): not claimable.
-    expect(byId.get('RQ-M-2')).toMatchObject({ claimable: false, addressed: false,
+    expect(byId.get('RQ-M-2')).toMatchObject({ claimable: false, addressed: false, announced: true,
       freeKeys: [], heldKeys: ['queue:RQ-M-2', 'repo:a/b'] });
-    // Announced to agent:atlas, so the address resolves to this identity.
-    expect(byId.get('RQ-M-3')).toMatchObject({ claimable: true, addressed: true,
+    // Announced to agent:atlas, so the address resolves to this identity; nova announced it.
+    expect(byId.get('RQ-M-3')).toMatchObject({ claimable: true, addressed: true, announced: false,
       freeKeys: ['queue:RQ-M-3'], heldKeys: [] });
     expect(byId.has('RQ-M-4')).toBe(false);
 
@@ -569,7 +569,7 @@ describe('formatBusWorkMine', () => {
     expect(text).toContain('agent=atlas');
     expect(text).toContain('claims=0 source=missing');
     expect(text).toContain('jobs=1 shown=1 holds=complete');
-    expect(text).toContain('RQ-F-1 queued "Job RQ-F-1" claimable=yes addressed=false');
+    expect(text).toContain('RQ-F-1 queued "Job RQ-F-1" claimable=yes addressed=false announced=true');
     expect(text).toContain('next=0 shown=0 holds=complete');
     expect(text).toContain('handoffs=0 shown=0 holds=complete');
     expect(text).toContain('wakes=0');

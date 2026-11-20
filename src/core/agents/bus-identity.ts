@@ -35,8 +35,9 @@ export const AGENT_MAX_RUNTIMES = 16;
 export const CHANNEL_MAX_MEMBERS = 64;
 /** DM routing label prefix. `agent:<handle>` is the address every adapter writes to. */
 export const AGENT_ADDRESS_PREFIX = 'agent:';
-/** Prefixes owned by the unified bus; an alias may never shadow them. */
-const RESERVED_PREFIXES = ['agent:', 'group:', 'dm:', 'handoff:'];
+/** Prefixes owned by the unified bus; an alias may never shadow them, and a
+ *  label-addressed post may never claim one — each has a dedicated verb. */
+export const RESERVED_PREFIXES = ['agent:', 'group:', 'dm:', 'handoff:'];
 
 /** The CLIs that have a session adapter (src/core/agents/bus-cli-adapters.ts). */
 export const BUS_CLIS = ['claude', 'codex', 'devin', 'cursor', 'grok'] as const;

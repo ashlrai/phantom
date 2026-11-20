@@ -5,11 +5,12 @@ import {
   type BusCli, type BusProvider,
 } from '../core/agents/bus-identity.js';
 import {
-  announceWork, listBusChannels, postChannelMessage, readAgentChannel, readAgentInbox, readAgentWakes, sendDirectMessage,
-  sendHandoff, sendWakeRequest, updateWorkStatus, type UnifiedBusOptions, type WorkStatusInput,
+  announceWork, busBodyFallbackSummary, listBusChannels, postChannelMessage, postLabelMessage, readAgentChannel,
+  readAgentInbox, readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
+  updateWorkStatus, type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { WORK_STATUSES, parseClaimKey, type WorkJob } from '../core/agents/bus-v2-schema.js';
-import { busWorkFeedToMatcher, formatBusWorkFeed, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
+import { busWorkFeedOwnerMatcher, busWorkFeedToMatcher, formatBusWorkFeed, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult } from '../core/agents/bus-claims.js';
@@ -19,11 +20,12 @@ import { scrubSecrets } from '../core/util/scrub.js';
 import type { BusPriority } from '../core/fleet/bus-envelope.js';
 import { seatParticipants } from '../core/bots/seats.js';
 
-export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'channel', 'handoff', 'wake', 'inbox', 'wakes', 'adapters', 'claim', 'work', 'status']);
+export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'post', 'channel', 'handoff', 'wake', 'inbox', 'wakes', 'show', 'adapters', 'claim', 'work', 'status']);
 
 export const AGENTS_BUS_UNIFIED_HELP = `ashlr agents bus id register [<handle>] [--cli <cli>] [--provider <p>] [--model <m>] [--alias <label>]... [--display <name>]
 ashlr agents bus id list
 ashlr agents bus dm --to <agent> --text <text> [--from <agent>] [--priority P0..P3] [--thread <t>] [--ref <ref>]... [--id <id>] [--ttl <ms>] [--wake|--no-wake]
+ashlr agents bus post --to <label> --text <text> [--kind note|context] [--from <agent>] [--priority P0..P3] [--thread <t>] [--ref <ref>]... [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus channel create <name> [--from <agent>] [--member <agent>]...
 ashlr agents bus channel join|leave <name> [--agent <agent>]
 ashlr agents bus channel post <name> --text <text> [--from <agent>] [--topic <t>] [--ref <ref>]... [--priority ..] [--wake|--no-wake]
@@ -33,6 +35,7 @@ ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <a
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--frame <cli>]
 ashlr agents bus wakes [<agent>] [--since <epoch ms>]
+ashlr agents bus show <id>
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
 ashlr agents bus claim renew --key <claimKey> --token <64hex> --lease-ms <1..3600000>
@@ -43,7 +46,7 @@ ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--clai
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
-ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--to <label>] [--claims]
+ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--to <label>] [--owner <agent>] [--claims]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work mine [<agent>]
 ashlr agents bus status
@@ -51,14 +54,23 @@ Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
 names, never authentication. Messages land in the one local bus store; P0 always
 wakes, P1 and handoffs wake by default, and wake always records its hint.
---thread on dm, channel post, inbox and channel read is the v2 conversation
+post sends a v2 note (or context with --kind context) to any printable routing
+label outside the reserved agent:/group:/dm:/handoff: prefixes — the sink and
+topic mail dm, channel post and the work verbs cannot carry; the sender is
+still a registered identity under the same scrub and wake rules.
+--thread on dm, post, channel post, inbox and channel read is the v2 conversation
 label carried by note/context bodies; reads match that field only. --from on
 inbox and channel read narrows to one sender — a handle, agent:<handle>,
-stable id or alias; an unresolvable ref keeps exact-label matching.
+stable id or alias; an unresolvable ref keeps exact-label matching. show
+resolves one retained envelope by the wire id wake hints, work mine items
+and claim operations cite; an expired id reports not-found, and the read
+needs no identity.
 A terminal work status also queues a routing-only wake hint for each live claim
 holder on the job's keys; --no-wake opts out. work feed and claim list are
 read-only and need no identity; work feed --to keeps jobs announced to that
-routing label under every label of one agent identity. work claim takes one of
+routing label and --owner keeps jobs announced by that agent, each under
+every label of one agent identity, while --job keeps one job id. work claim
+takes one of
 a shown job's declared claim keys — queue:<jobId> preferred, --key picks
 another declared key — into the shared coordination table; claims coordinate,
 never authenticate. work mine is a read-only per-agent digest — the live
@@ -77,7 +89,8 @@ No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
   '--frame', '--since', '--root', '--key', '--owner', '--lease-ms', '--token', '--outcome', '--reason',
-  '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref']);
+  '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
+  '--kind']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
 const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--jobs']);
 
@@ -244,6 +257,16 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         thread: one('--thread'), refs: p.values.get('--ref') }, options);
       return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
     }
+    if (verb === 'post') {
+      noExtra(1);
+      const kind = one('--kind');
+      if (kind !== undefined && kind !== 'note' && kind !== 'context') {
+        throw new UsageError('--kind must be note or context.');
+      }
+      const result = await postLabelMessage({ ...send, from: actor('--from'), to: required('--to'), text: required('--text'),
+        kind: kind as 'note' | 'context' | undefined, thread: one('--thread'), refs: p.values.get('--ref') }, options);
+      return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
+    }
     if (verb === 'channel' && sub === 'list') {
       noExtra(2);
       const result = listBusChannels(one('--agent'), options);
@@ -310,6 +333,24 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       ].join('\n'));
       return 0;
     }
+    if (verb === 'show') {
+      noExtra(2);
+      if (sub === undefined) throw new UsageError('A message id is required.');
+      const result = readBusEnvelopeById(sub, options);
+      if (result.status !== 'ok') {
+        if (result.status === 'not-found') {
+          out(json ? JSON.stringify(result) : `not-found: ${result.id}`);
+          return 1;
+        }
+        return finish(result, '');
+      }
+      const m = result.message;
+      out(json ? JSON.stringify(result) : [
+        `${m.cursor} ${m.envelope.priority} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from} -> ${m.envelope.to}`,
+        `  ${busBodyFallbackSummary(m.envelope.body)}`,
+      ].join('\n'));
+      return 0;
+    }
     if (verb === 'wakes') {
       noExtra(2);
       const agent = sub ?? self;
@@ -325,14 +366,19 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (status !== undefined && !(WORK_STATUSES as readonly string[]).includes(status)) {
         throw new UsageError(`--status must be one of ${WORK_STATUSES.join(', ')}.`);
       }
-      const to = one('--to');
-      if (to !== undefined && !/^[\x21-\x7e]{1,128}(?![\s\S])/.test(to)) {
-        throw new UsageError('--to must be a printable routing label of 1-128 characters.');
-      }
-      const toMatch = to === undefined ? undefined : busWorkFeedToMatcher(to, { root: options.root });
+      const labelArg = (flag: string): string | undefined => {
+        const value = one(flag);
+        if (value !== undefined && !/^[\x21-\x7e]{1,128}(?![\s\S])/.test(value)) {
+          throw new UsageError(`${flag} must be a printable routing label of 1-128 characters.`);
+        }
+        return value;
+      };
+      const to = labelArg('--to'), owner = labelArg('--owner'), jobId = labelArg('--job');
       const result = projectBusWorkFeedView(
         readBusWorkFeed({ root: options.root, claims: p.bools.has('--claims') }),
-        status as WorkJob['status'] | undefined, toMatch);
+        { status: status as WorkJob['status'] | undefined, jobId,
+          toMatch: to === undefined ? undefined : busWorkFeedToMatcher(to, { root: options.root }),
+          ownerMatch: owner === undefined ? undefined : busWorkFeedOwnerMatcher(owner, { root: options.root }) });
       out(json ? JSON.stringify(result) : formatBusWorkFeed(result).join('\n'));
       return result.status === 'ok' ? 0 : 1;
     }

@@ -1627,17 +1627,21 @@ open for a worker (`queued`, `rescheduled`); the comms inbox pending-work view
 and `claimBusWorkJob` share it so "claimable" means one thing.
 `coordinationRowBlocks(row, key)` in `src/core/agents/claim-store.ts` is the
 exported read-only overlap predicate; acquisition and observation now share one
-structural overlap rule. `projectBusWorkFeedView(result, status?, toMatch?)` applies the
-client-side status and announcement-address filters, newest-first order and
-per-job hold regrouping; `toMatch` is the predicate `busWorkFeedToMatcher(to,
-{root?})` builds, matching a job's `to` label literally and under every label
-of one agent identity (an unresolvable ref or unreadable registry keeps
+structural overlap rule. `projectBusWorkFeedView(result, filters?)` applies the
+client-side feed filters (`{status?, jobId?, toMatch?, ownerMatch?}`),
+newest-first order and per-job hold regrouping; `toMatch` is the predicate
+`busWorkFeedToMatcher(to, {root?})` builds over a job's `to` label and
+`ownerMatch` the predicate `busWorkFeedOwnerMatcher(owner, {root?})` builds
+over its `owner` (announcer) label — each matching literally and under every
+label of one agent identity (an unresolvable ref or unreadable registry keeps
 exact-label matching). `formatBusWorkFeed(result)` renders the shared human
 lines — each job as `<id> <status> "<title>" owner=… keys=<claim keys>` with
 title and keys scrubbed, single-lined and display-clipped (JSON keeps the full
-values) — both feed CLIs use them, and both accept `--to <label>` beside
-`--status`. `phm fleet work-feed [--claims] [--to <label>]` and
-`phm agents bus work feed [--status] [--claims] [--to <label>]` print the same
+values) — both feed CLIs use them, and both accept `--to <label>`, `--owner
+<agent>` and `--job <id>` beside `--status`. `phm fleet work-feed [--claims]
+[--to <label>] [--owner <agent>] [--job <id>]` and
+`phm agents bus work feed [--status] [--claims] [--to <label>] [--owner
+<agent>] [--job <id>]` print the same
 projection — hold lines plus a `claims=` footer — and non-ok reads print
 `jobs=unknown` rather than a fabricated count.
 
@@ -1708,12 +1712,16 @@ each claim row is a `BusClaimsListClaim` that gains `jobs` (the announced jobs
 its keys block, `{id, owner, status, title}`) only when the feed read is `ok`,
 absent otherwise. `jobs` reports the open feed jobs
 (`BUS_FEED_OPEN_STATUSES`, at least one claim key, newest 50 of `open`) as
-`BusWorkMineJob` (`WorkJob` plus `addressed`, `freeKeys`, `heldKeys`,
-`claimable`): `holds` is `complete`/`truncated`/`unknown` from the feed's
+`BusWorkMineJob` (`WorkJob` plus `addressed`, `announced`, `freeKeys`,
+`heldKeys`, `claimable`): `addressed` marks a `to` label resolving to the
+agent's identity and `announced` an `owner` label resolving to it (the agent
+posted the job and owns its status reports) — both through the same
+identity-label contract the feed `--to`/`--owner` filters use;
+`holds` is `complete`/`truncated`/`unknown` from the feed's
 claims join, and `claimable` is `true` only on a provably free key, `false`
 only when every declared key is provably held, `null` when coverage is
 `truncated` or `unknown` — `busWorkMineJobAnnotation(job, held, coverage,
-addressed)` is the exported pure rule. A non-ok feed collapses the section to
+addressed, announced?)` is the exported pure rule. A non-ok feed collapses the section to
 its own status (`refused` keeps `reason`/`receipts`). `next` lists the
 claimable work envelopes addressed to the agent — every live receipt whose
 `isClaimableWork` body (`kind:'work'` or a protocol-v1 `task`) and whose `to`
@@ -1775,6 +1783,8 @@ an invalid agent.
 `src/core/agents/bus-identity.ts`: `stableAgentId(handle): string` (`agt_` + 20 hex),
 `agentAddress(handle)`, `resolveAgent(registry, ref)`, `agentLabels(identity)`,
 `agentIdentityKeys(options?)`, `agentAddressMatcher(identityOf, label)`,
+`RESERVED_PREFIXES` (the `agent:`/`group:`/`dm:`/`handoff:` label prefixes no
+alias and no label post may claim),
 `readAgentRegistry(options?)`, `registerAgentIdentity(input, options?)`,
 `createAgentChannel(input, options?)`, `joinAgentChannel(name, agent, options?)`,
 `leaveAgentChannel(name, agent, options?)`. Results are status objects
@@ -1782,7 +1792,8 @@ an invalid agent.
 with a `reason`); they never throw for bad input or storage faults.
 
 `src/core/agents/bus-unified.ts`: `sendDirectMessage`, `postChannelMessage`,
-`sendHandoff`, `sendWakeRequest`, `announceWork`, `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
+`postLabelMessage`, `sendHandoff`, `sendWakeRequest`, `announceWork`,
+`updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
 carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label and
@@ -1802,6 +1813,12 @@ excluded; `from` filters by sender through identity-label matching and
 `nextCursor` covers every scanned row, a missing registry answers
 `unknown-channel`, and an unreadable registry or store answers
 `unavailable`/`retryable`, never an empty page passed off as history),
+`readBusEnvelopeById(id, options?)` (one retained envelope by its wire id —
+the key wake hints, claim operations and `work mine` items cite — via the
+same bounded page walk; live rows only so an expired or never-posted id
+answers `not-found`, an unreadable store `unavailable`/`retryable`, the read
+needs no identity, and `fromAgent` sender decoration is best-effort so an
+unreadable registry never hides the envelope),
 `shouldWake(priority, requested, handoff?)`
 and `busBodySummary(body)` — a pure, secret-scrubbed read of a bus body for
 inbox surfaces (`note`/`context`/`worker-handoff` return their message text,
@@ -1835,7 +1852,12 @@ schema-checked v2 `wake` body to `agent:<handle>` for a registered recipient
 and always records the routing-only wake hint for that same address — the
 body's purpose is the hint, so `wake: false` is refused — with `reason` capped
 at 512 characters and an optional `jobId` that only threads the message, never
-a feed lookup.
+a feed lookup. `postLabelMessage(LabelPostInput)` posts a schema-checked v2
+`note` (or `context` with `kind`) to any printable routing label outside
+`RESERVED_PREFIXES` — the sink/topic mail the identity and channel verbs
+cannot carry — under the same registered-sender, scrub, wake and dedupe rules;
+a `to` matching one of a registered identity's labels lands in its inbox as
+legacy mail.
 
 `src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
 `detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,
