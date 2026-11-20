@@ -226,6 +226,16 @@ phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky
   govern memo/check-in cadence; they do not create a second conversation cap.
 - A reply goes to Telegram only when you wrote from Telegram. Memos, questions
   and updates are sent to Telegram as well as shown in the thread.
+- **Since you last looked:** when you come back to the Leader pane after two
+  minutes or more away, a card above the conversation counts what arrived in
+  between: Leader messages, how many of them need you, questions the Leader
+  asked that are still unanswered, bus replies, merged PRs and lanes that were
+  held or resumed. It shows the newest thing the Leader said. **Jump to first
+  new** scrolls to the first new line; **Caught up** or Esc closes the card.
+  The merged PR count covers the last hour only and says so after a longer
+  absence; it reads unknown when the fleet read has not answered. The first
+  visit shows no card. The last-looked time is kept in this browser profile
+  only.
 
 ---
 
