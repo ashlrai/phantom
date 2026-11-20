@@ -75,5 +75,6 @@ describe('runSwiftSyntaxCheck', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  // Cold swiftc startup on CI can exceed the default 5s test budget.
+  }, 30_000);
 });
