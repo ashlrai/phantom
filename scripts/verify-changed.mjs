@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,6 +48,65 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     docsCheck: changed.some((path) => DOC_MARKDOWN.test(path) || !existing.has(path)),
     quarantineCheck: changed.some((path) => QUARANTINE_TEST_FILE.test(path) || path === QUARANTINE_LEDGER),
   };
+}
+
+/**
+ * Extensionless executables carry their language in the shebang, not the
+ * filename, so the extension rules above never see them: `bin/ashlr` (node),
+ * `contrib/mac/metrics-outcomes` (python3) and `contrib/router/ashlr-router`
+ * (bash) all escaped every syntax check. Classify the interpreter from the
+ * first line; `env` forwards its own options (`-S`, `VAR=value`) before the
+ * real command. Only interpreters with a matching grammar step classify —
+ * python, node, and the POSIX shells `bash -n` parses (sh/bash/dash). zsh,
+ * ksh, perl and friends return null and stay unchecked, exactly as before.
+ */
+export function shebangInterpreter(firstLine) {
+  if (typeof firstLine !== 'string' || !firstLine.startsWith('#!')) return null;
+  const tokens = firstLine.slice(2).trim().split(/\s+/).filter(Boolean);
+  let index = 0;
+  let command = tokens[index] ?? '';
+  if (/(^|\/)env$/.test(command)) {
+    index += 1;
+    while (index < tokens.length && (tokens[index].startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index]))) index += 1;
+    command = tokens[index] ?? '';
+  }
+  const base = command.split('/').pop() ?? '';
+  if (/^python(?:\d+(?:\.\d+)*)?$/.test(base)) return 'python';
+  if (/^node(?:js)?(?:\d+(?:\.\d+)*)?$/.test(base)) return 'node';
+  if (['sh', 'bash', 'dash'].includes(base)) return 'shell';
+  return null;
+}
+
+/** First line of a repo file, capped at 4 KiB so binary blobs never load whole. */
+export function readFirstLine(root, path) {
+  const fd = openSync(resolve(root, path), 'r');
+  try {
+    const buffer = Buffer.alloc(4096);
+    return buffer.subarray(0, readSync(fd, buffer, 0, buffer.length, 0)).toString('utf8').split('\n', 1)[0] ?? '';
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Bucket changed, existing files whose basename carries no dot by shebang
+ * interpreter. Dotted names are already covered by the extension rules (or
+ * are documents, data and dotfiles this check must not misread), deleted
+ * paths never reach the reader, and an unreadable first line classifies to
+ * nothing rather than failing the run.
+ */
+export function selectShebangScripts(changedPaths, existingPaths, readLine) {
+  const existing = new Set(existingPaths);
+  const buckets = { python: [], shell: [], node: [] };
+  for (const path of [...new Set(changedPaths)].filter(Boolean).sort()) {
+    if (!existing.has(path) || path.split('/').pop().includes('.')) continue;
+    let kind = null;
+    try {
+      kind = shebangInterpreter(readLine(path));
+    } catch { /* unreadable file: nothing to classify */ }
+    if (kind) buckets[kind].push(path);
+  }
+  return buckets;
 }
 
 /**
@@ -199,6 +258,29 @@ export function runShellSyntaxCheck(root, files, spawn = spawnSync) {
     return false;
   }
   console.log('PASS shell syntax check');
+  return true;
+}
+
+/**
+ * `node --check` is the grammar step for extensionless node launchers like
+ * bin/ashlr: it parses the shebang and module syntax without executing. One
+ * spawn per file keeps the diagnostic pointed at the failing path; the check
+ * runs under node itself, so no interpreter preflight or SKIP path exists.
+ */
+export function runNodeSyntaxCheck(root, files, spawn = spawnSync) {
+  for (const path of files) {
+    const result = spawn(process.execPath, ['--check', path], {
+      cwd: root, encoding: 'utf8', timeout: 120000,
+    });
+    if (result.error || result.signal || result.status !== 0) {
+      if (result.stdout) console.log(result.stdout.trimEnd());
+      if (result.stderr) console.error(result.stderr.trimEnd());
+      if (result.error) console.error(result.error.message);
+      console.log(`FAIL node syntax check: ${path}`);
+      return false;
+    }
+  }
+  console.log('PASS node syntax check');
   return true;
 }
 
@@ -616,6 +698,9 @@ function main() {
   }
   let selection;
   let changed;
+  let pythonFiles = [];
+  let shellFiles = [];
+  let nodeFiles = [];
   try {
     changed = collectChangedPaths(root);
     const existing = changed.filter((path) => {
@@ -627,6 +712,10 @@ function main() {
       }
     });
     selection = selectChangedFiles(changed, existing);
+    const shebangScripts = selectShebangScripts(changed, existing, (path) => readFirstLine(root, path));
+    pythonFiles = [...new Set([...selection.pythonFiles, ...shebangScripts.python])];
+    shellFiles = [...new Set([...selection.shellFiles, ...shebangScripts.shell])];
+    nodeFiles = shebangScripts.node;
     console.log('PASS file selection');
     const emptyTests = emptyChangedTests(existing.map((path) => resolve(root, path)));
     if (emptyTests.length) {
@@ -699,25 +788,30 @@ function main() {
   } else {
     console.log('PASS eslint skipped: no lintable file changed');
   }
-  if (selection.pythonFiles.length === 0) {
+  if (pythonFiles.length === 0) {
     console.log('PASS python syntax check skipped: no python change');
   } else {
     const python = pythonPreflight();
     if (!python.ok) {
       console.log(`SKIP python syntax check: ${python.reason}`);
-    } else if (!runPythonSyntaxCheck(root, selection.pythonFiles)) {
+    } else if (!runPythonSyntaxCheck(root, pythonFiles)) {
       process.exitCode = 1;
     }
   }
-  if (selection.shellFiles.length === 0) {
+  if (shellFiles.length === 0) {
     console.log('PASS shell syntax check skipped: no shell change');
   } else {
     const shell = shellPreflight();
     if (!shell.ok) {
       console.log(`SKIP shell syntax check: ${shell.reason}`);
-    } else if (!runShellSyntaxCheck(root, selection.shellFiles)) {
+    } else if (!runShellSyntaxCheck(root, shellFiles)) {
       process.exitCode = 1;
     }
+  }
+  if (nodeFiles.length === 0) {
+    console.log('PASS node syntax check skipped: no node-shebang script changed');
+  } else if (!runNodeSyntaxCheck(root, nodeFiles)) {
+    process.exitCode = 1;
   }
   if (selection.jsonFiles.length === 0) {
     console.log('PASS json syntax check skipped: no json change');
