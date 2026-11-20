@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { appendBusInbox, type BusEnvelope } from '../src/core/fleet/bus-inbox.js';
+import { publishGroupPresence } from '../src/core/fleet/bus-group.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { postBusReply } from '../src/core/fleet/bus-reply-post.js';
 import { listWorkBoard } from '../src/core/comms/work-board.js';
@@ -86,6 +87,14 @@ describe('listWorkBoard on real durable stores', { timeout: 60_000 }, () => {
     const one = listWorkBoard({ root, now, limit: 1 });
     expect(one.items.map(i => i.id)).toEqual(['bus-request-c']);
     expect(one.truncated).toBe(true);
+  });
+
+  it('a group.presence heartbeat is an observation, never a board request', () => {
+    seed();
+    expect(publishGroupPresence({ room: 'release', topic: 'general', id: 'presence-1',
+      member: 'fake-member', state: 'online' }, { root, now: () => now }).status).toBe('posted');
+    const board = listWorkBoard({ root, now });
+    expect(board.items.map(item => item.id)).toEqual(['bus-request-c', 'slack-request-b', 'slack-request-a']);
   });
 
   it('an empty root yields zero items and never throws', () => {

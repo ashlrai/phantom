@@ -252,7 +252,9 @@ untrusted data: a wake is a hint to read the inbox and grants no authority.
 **Inbox.** `phm agents bus inbox <agent> [--thread <t>] [--from <agent>]`
 returns one page of
 DMs, handoffs,
-posts in the agent's channels (minus its own) and traffic still addressed to
+posts in the agent's channels (minus its own and minus `group.presence`
+heartbeats, which are observations with their own read, never mail) and
+traffic still addressed to
 its bare handle, stable id or aliases — every ref `resolveAgent` accepts —
 highest priority first; `--thread` keeps only `note`/`context` bodies
 carrying that v2 thread label, and `--from` narrows by sender through the
@@ -923,7 +925,8 @@ contains routing labels, a message count and the latest receipt time; it never
 includes message bodies. Provider labels come from sender metadata observed on
 live receipts. A missing or conflicting provider is `null` (unknown). Labels
 are not authenticated identities. Broadcasts to `leaders`, human/external
-messages and self-messages are excluded. The local bus retains and expires
+messages, self-messages and `group.presence` heartbeats — observations with
+their own read, never agent-to-agent mail — are excluded. The local bus retains and expires
 messages, so these links are not a complete history; A2A events are not yet
 included. A missing or unreadable bus reports unknown edges, not an empty list.
 

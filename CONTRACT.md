@@ -1929,7 +1929,9 @@ with a `reason`); they never throw for bad input or storage faults.
 carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label and
 `from` filters by sender through identity-label matching, an unresolvable ref
-keeping exact-label matching; claimable work and worker-handoff items
+keeping exact-label matching; `group.presence` heartbeats are observations
+with their own read and never appear as mail of any kind; claimable work and
+worker-handoff items
 additionally carry `held`/`holder` — the same hold evidence
 `readBusEnvelopeById` reports, read once per page, `held` null when a hold
 store cannot be read),

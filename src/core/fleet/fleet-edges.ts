@@ -1,12 +1,14 @@
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
+import { isGroupPresenceBody } from './bus-group.js';
 
 export interface FleetEdgeEndpoint { address: string; provider: string | null }
 export interface FleetEdge { from: FleetEdgeEndpoint; to: FleetEdgeEndpoint; messages: number; messagesLastHour: number; lastAt: number }
 export interface FleetEdges { schema: 'fleet.edges.v1'; source: 'available' | 'missing' | 'unavailable'; edges: FleetEdge[] | null }
 
-/** One agent wrote to another: not a note to self, a broadcast to `leaders`, a person or an outside channel. */
+/** One agent wrote to another: not a note to self, a broadcast to `leaders`, a person, an outside channel or a presence observation (those have their own read, never a message slot). */
 export const agentToAgent = (envelope: BusInboxReceipt['envelope']): boolean =>
-  !(envelope.from === envelope.to || envelope.to === 'leaders' || envelope.sender?.human || envelope.external);
+  !(envelope.from === envelope.to || envelope.to === 'leaders' || envelope.sender?.human || envelope.external ||
+    isGroupPresenceBody(envelope.body));
 
 /** Routing labels are claims, not authenticated identities. Never expose message bodies. */
 export function projectFleetEdges(rows: BusInboxReceipt[], now = Date.now(), windowMinutes?: number): FleetEdge[] {
