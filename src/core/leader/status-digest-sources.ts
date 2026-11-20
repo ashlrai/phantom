@@ -44,6 +44,8 @@ export interface StatusDigestSources {
   supplyLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
   /** The top `pools.waste.v1` alert as one line; also raises the Asks card when the fix needs Mason. Null when none. */
   wasteLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
+  /** The `Not live yet` line from `fleet.drift.v1` when merged fleet files are not installed; null when all live or unreadable. */
+  notLiveLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
   blocker?: (runsDir: string, nowMs: number, lanes: Array<{ lane: string; running: number; target: number; held: boolean }> | null) => Promise<DigestBlocker>;
 }
 
@@ -83,6 +85,14 @@ const defaults: StatusDigestSources = {
     const waste = await readPoolsWaste({ runsDir, now: () => nowMs });
     await raiseWasteAsk(waste, { runsDir, now: () => nowMs });
     return wasteDigestLine(waste);
+  },
+  notLiveLine: async runsDir => {
+    const { findFleetRepo, fleetDrift, notLiveLine } = await import('../fleet/drift.js');
+    const { access } = await import('node:fs/promises');
+    const bin = process.env.ASHLR_RUNS_BIN || join(runsDir, 'bin');
+    const repo = await findFleetRepo();
+    // No runtime directory means this is not a fleet host: nothing to compare, so no line.
+    return repo && await access(bin).then(() => true, () => false) ? notLiveLine(await fleetDrift(repo, bin)) : null;
   },
   blocker: readBlocker,
 };
@@ -194,7 +204,8 @@ export async function gatherStatusDigestInput(runsDir: string, now: Date, overri
   const disk = await fact(() => src.diskLine?.(runsDir, nowMs) ?? null, 'disk check failed');
   const supply = await fact(() => src.supplyLine?.(runsDir, nowMs) ?? null, 'supply check failed');
   const waste = await fact(() => src.wasteLine?.(runsDir, nowMs) ?? null, 'waste check failed');
+  const notLive = await fact(() => src.notLiveLine?.(runsDir, nowMs) ?? null, 'drift check failed');
   const blocker = await fact(() => src.blocker?.(runsDir, nowMs, lanes.ok ? lanes.value : null) ?? undefined, 'blocker check failed');
   const updatePending = installed.ok && published.ok ? versionNewer(published.value, installed.value) : null;
-  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, ...(mergeTime ? { mergeTime } : {}), lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}), ...(supply.ok && supply.value ? { supplyLine: supply.value } : {}), ...(waste.ok && waste.value ? { wasteLine: waste.value } : {}), ...(blocker.ok && blocker.value ? { blocker: blocker.value } : {}) };
+  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, ...(mergeTime ? { mergeTime } : {}), lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}), ...(supply.ok && supply.value ? { supplyLine: supply.value } : {}), ...(waste.ok && waste.value ? { wasteLine: waste.value } : {}), ...(notLive.ok && notLive.value ? { notLiveLine: notLive.value } : {}), ...(blocker.ok && blocker.value ? { blocker: blocker.value } : {}) };
 }
