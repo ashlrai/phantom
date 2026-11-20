@@ -1,8 +1,9 @@
 /**
  * Unified comms inbox (`phm comms inbox [--json]`): aggregates unresolved
- * needs-you lines, unanswered teammate texts, pending drafts and unclaimed bus
- * work into one prioritized list with deep links. Hermetic: every store lives
- * under a temp dir; no network, no model calls.
+ * needs-you lines, unanswered teammate texts, owner-thread messages awaiting
+ * a recorded reply, pending drafts and unclaimed bus work into one prioritized
+ * list with deep links. Hermetic: every store lives under a temp dir; no
+ * network, no model calls.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -11,6 +12,8 @@ import { join } from 'node:path';
 
 import { createDraft } from '../src/core/cos/drafts.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
+import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
+import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
 import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type UnifiedInbox } from '../src/core/comms/unified-inbox.js';
 import { markTeammateTextsAnswered, recordTeammateText } from '../src/core/comms/imessage-teammate-inbox.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
@@ -421,6 +424,85 @@ describe('worker-handoff assignments in the bus source', () => {
     expect(items.map(i => i.id).sort()).toEqual([`bus-handoff:${id}`, 'bus:still-work']);
     expect(items.find(i => i.id === `bus-handoff:${id}`)).toMatchObject({ kind: 'bus-handoff', severity: 'info' });
     expect(items.find(i => i.id === 'bus:still-work')).toMatchObject({ kind: 'bus-work' });
+  });
+});
+
+describe('owner-thread awaiting replies in the unified inbox', () => {
+  const ownerSettings: OwnerThreadSettings = {
+    ...emptyOwnerSettings(),
+    owners: { desktop: 'local-owner' },
+    confirmed: true,
+    team: [{ channel: 'bus', id: 'local-owner' }],
+  };
+  const ownerOptions = (): OwnerThreadOptions => ({
+    runsDir, busRoot, now: () => now, settings: ownerSettings, halted: false, paused: false,
+    mailbox: { async accept() { return { status: 'accepted' as const }; } },
+  });
+  const acceptOwner = (text: string, key: string, at = now) => acceptOwnerInbound(
+    { channel: 'desktop', senderId: 'local-owner', text, idempotencyKey: key, at }, ownerOptions());
+
+  it('lists each awaiting inbound as a warn item with thread and reply deep links', async () => {
+    await acceptOwner('first owner ping', 'desktop-msg-0001');
+    await acceptOwner('second owner ping', 'desktop-msg-0002', now + 1_000);
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'owner-thread');
+    expect(items.map(i => i.id).sort()).toEqual(['owner-thread:m1', 'owner-thread:m2']);
+    expect(items.find(i => i.id === 'owner-thread:m1')).toMatchObject({
+      kind: 'owner-message', severity: 'warn', blocking: false,
+      title: 'first owner ping',
+      detail: 'via desktop · awaiting recorded reply',
+      since: new Date(now).toISOString(),
+      expiresAt: null,
+      act: ['phm comms thread', 'phm comms send-owner --text "<reply>" --reply-to desktop-msg-0001'],
+    });
+    expect(inbox.sources['owner-thread']).toEqual({ state: 'healthy', pending: 2 });
+  });
+
+  it('clears an item once a recorded reply cites the inbound', async () => {
+    await acceptOwner('ping the leader', 'desktop-msg-0001');
+    expect((await read()).items.filter(i => i.source === 'owner-thread')).toHaveLength(1);
+    // No transports attached: the reply records as refused yet still answers
+    // the inbound — the same mark `phm comms status` reports.
+    const reply = await sendOwnerReply({ text: 'leader answer', replyTo: 'desktop-msg-0001', idempotencyKey: 'reply-owner-01' }, ownerOptions());
+    expect(reply.status).toBe('refused');
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'owner-thread')).toHaveLength(0);
+    expect(inbox.sources['owner-thread']).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('does not clear the item for a proactive notice', async () => {
+    await acceptOwner('still waiting', 'desktop-msg-0001');
+    await postOwnerNotice({ text: 'leader line', idempotencyKey: 'notice-owner-01' }, ownerOptions());
+    expect((await read()).items.filter(i => i.source === 'owner-thread')).toHaveLength(1);
+  });
+
+  it('reports an unreadable thread as unavailable and still lists the other sources', async () => {
+    mkdirSync(join(runsDir, 'leader'), { recursive: true });
+    writeFileSync(join(runsDir, 'leader', 'owner-thread.json'), 'not json', { mode: 0o600 });
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const inbox = await read();
+    expect(inbox.sources['owner-thread']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'owner-thread')).toHaveLength(0);
+    expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+
+  it('degrades on a throwing seam and builds items from a stubbed read', async () => {
+    const throwing = await readUnifiedInbox({ runsDir, busRoot, now: () => now, readOwnerAwaiting: () => { throw new Error('boom'); } });
+    expect(throwing.sources['owner-thread']).toEqual({ state: 'unavailable', pending: 0 });
+    const stubbed = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now,
+      readOwnerAwaiting: () => ({ status: 'ok', items: [{
+        id: 'm9', idempotencyKey: 'stub-key-0001', channel: 'telegram' as const,
+        at: new Date(now - 60_000).toISOString(), text: 'stubbed owner text',
+      }] }),
+    });
+    const item = stubbed.items.find(i => i.source === 'owner-thread')!;
+    expect(item).toMatchObject({
+      id: 'owner-thread:m9', kind: 'owner-message', severity: 'warn',
+      title: 'stubbed owner text', detail: 'via telegram · awaiting recorded reply',
+      act: ['phm comms thread', 'phm comms send-owner --text "<reply>" --reply-to stub-key-0001'],
+    });
+    expect(stubbed.sources['owner-thread']).toEqual({ state: 'healthy', pending: 1 });
   });
 });
 

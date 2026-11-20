@@ -151,7 +151,7 @@ function paused(options: OwnerThreadOptions): boolean {
   return options.paused === true || isPaused();
 }
 
-function threadDir(options: OwnerThreadOptions): string {
+function threadDir(options: { runsDir: string }): string {
   return join(options.runsDir, 'leader');
 }
 
@@ -165,7 +165,7 @@ function validMessage(value: OwnerThreadMessage, seq: number): boolean {
     typeof value.at === 'string' && typeof value.text === 'string' && typeof value.senderId === 'string';
 }
 
-function readState(options: OwnerThreadOptions): ThreadState {
+function readState(options: { runsDir: string }): ThreadState {
   const file = join(threadDir(options), 'owner-thread.json');
   try { lstatSync(file); } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return blank();
@@ -559,14 +559,17 @@ export type OwnerThreadReceipts = Record<string, MessageReceipts>;
  * counts as answered — channel delivery stays with the receipts. Archived
  * inbound messages are outside the live window and are not reported.
  */
-function awaitingReplyIds(state: ThreadState): string[] {
+function awaitingReplyMessages(state: ThreadState): OwnerThreadMessage[] {
   const answered = new Set(
     state.messages.filter(message => message.direction === 'outbound' && message.replyTo !== undefined)
       .map(message => message.replyTo!),
   );
   return state.messages
-    .filter(message => message.direction === 'inbound' && !answered.has(message.idempotencyKey))
-    .map(message => message.id);
+    .filter(message => message.direction === 'inbound' && !answered.has(message.idempotencyKey));
+}
+
+function awaitingReplyIds(state: ThreadState): string[] {
+  return awaitingReplyMessages(state).map(message => message.id);
 }
 
 export function readOwnerThread(options: OwnerThreadOptions, limit = 200):
@@ -583,6 +586,48 @@ export function readOwnerThread(options: OwnerThreadOptions, limit = 200):
     };
   } catch {
     return { schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages: [], receipts: {}, awaitingReply: null, unavailable: true };
+  }
+}
+
+/** One live inbound owner message no recorded outbound reply cites. */
+export interface OwnerAwaitingReply {
+  /** Thread message id (`m<seq>`). */
+  id: string;
+  /** The inbound's idempotency key — the value `send-owner --reply-to` accepts. */
+  idempotencyKey: string;
+  channel: OwnerChannel;
+  /** ISO time the owner message landed. */
+  at: string;
+  /** Stored message text; scrubbed at intake, never a secret value. */
+  text: string;
+}
+
+export type OwnerAwaitingReplies =
+  | { status: 'ok'; items: OwnerAwaitingReply[] }
+  | { status: 'unavailable' };
+
+/**
+ * The item-level form of the awaiting-reply mark `readOwnerThread` reports as
+ * ids and `readOwnerCommsStatus` reports as a count: every live inbound owner
+ * message in thread order, with the fields a pending-comms surface needs. An
+ * unreadable thread reports `unavailable` — never an empty list passed off as
+ * fact. Archived inbound messages stay outside the live window.
+ */
+export function readOwnerAwaitingReplies(options: { runsDir: string }): OwnerAwaitingReplies {
+  try {
+    const state = readState(options);
+    return {
+      status: 'ok',
+      items: awaitingReplyMessages(state).map(message => ({
+        id: message.id,
+        idempotencyKey: message.idempotencyKey,
+        channel: message.channel,
+        at: message.at,
+        text: message.text,
+      })),
+    };
+  } catch {
+    return { status: 'unavailable' };
   }
 }
 

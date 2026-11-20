@@ -36,6 +36,15 @@ describe('commsBriefFacts', () => {
     expect(r.blocker).toBeNull();
   });
 
+  it('lists owner-thread messages awaiting a recorded reply with the oldest age', () => {
+    const since = new Date(NOW - 40 * 60_000).toISOString();
+    const r = commsBriefFacts(inbox({ 'owner-thread': rep('healthy', 2) }, [
+      { source: 'owner-thread', since }, { source: 'owner-thread', since: new Date(NOW - 5 * 60_000).toISOString() },
+    ]));
+    expect(r.line).toBe('Comms: 2 owner messages awaiting reply (oldest 40m)');
+    expect(r.blocker).toBeNull();
+  });
+
   it('names a degraded or unavailable source as unreadable, not zero', () => {
     const r = commsBriefFacts(inbox({ drafts: rep('unavailable'), imessage: rep('degraded') }));
     expect(r.line).toBe('Comms: imessage unreadable, drafts unreadable');

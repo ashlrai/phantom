@@ -2,13 +2,16 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates six local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates seven local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), act: `phm fleet needs-resolve`.
  *   imessage    unanswered allowlisted teammate texts in teammates.jsonl
  *               (`phm fleet teammate-texts`), act: mark answered or claim the
  *               mirrored bus envelope `imessage-teammate-<rowid>`.
+ *   owner-thread  live inbound owner-thread messages no recorded outbound
+ *               reply cites (`phm comms thread`), the same awaiting-reply mark
+ *               `comms status` counts, act: `phm comms send-owner --reply-to`.
  *   drafts      outbound email drafts still pending approval
  *               (`phm drafts list --status pending`), act: show/approve/reject.
  *   bus         live envelopes whose body the claim contract accepts
@@ -64,6 +67,7 @@ import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
 import { gmailArchivePlanLatestPath, readGmailArchivePlanLatest } from './gmail-archive-plan-latest.js';
 import { readLinkedInDrop, type LinkedInMessage } from './linkedin-drop.js';
+import { readOwnerAwaitingReplies, type OwnerAwaitingReplies } from './owner-thread.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { classifyTeammateIntent, readTeammateTexts, type TeammateText } from './imessage-teammate-inbox.js';
 
@@ -72,9 +76,9 @@ const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
 
-export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'drafts' | 'bus' | 'gmail' | 'linkedin';
+export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'owner-thread' | 'drafts' | 'bus' | 'gmail' | 'linkedin';
 export type UnifiedInboxSourceState = 'healthy' | 'missing' | 'degraded' | 'unavailable';
-export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'gmail-over-target' | 'linkedin-message';
+export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'owner-message' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'gmail-over-target' | 'linkedin-message';
 
 export interface UnifiedInboxItem extends AttentionItem {
   /** Stable, namespaced: `<source>:<ref>` (e.g. `drafts:d-0123…`). */
@@ -128,6 +132,7 @@ export interface UnifiedInboxOptions {
   readFeed?: typeof readBusWorkFeed;
   readGmailPlans?: typeof readGmailArchivePlanLatest;
   readLinkedIn?: typeof readLinkedInDrop;
+  readOwnerAwaiting?: (options: { runsDir: string }) => OwnerAwaitingReplies;
 }
 
 const cap = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
@@ -171,6 +176,34 @@ function teammateItems(read: typeof readTeammateTexts, runsDir: string | undefin
       `phm fleet bus-claim acquire --id imessage-teammate-${text.rowid} --owner <label> --lease-ms ${SUGGESTED_LEASE_MS}`],
   }));
   return { report: { state: result.sourceState, pending: items.length }, items };
+}
+
+/**
+ * Live inbound owner-thread messages no recorded outbound reply cites — the
+ * same awaiting-reply mark `readOwnerThread`/`readOwnerCommsStatus` report,
+ * here as items. The owner is waiting on the leader, so each lists as a warn
+ * with the thread read and a `send-owner --reply-to` deep link keyed by the
+ * inbound's idempotency key. An unreadable thread reports 'unavailable'; it
+ * never passes an empty list off as fact.
+ */
+function ownerThreadItems(read: NonNullable<UnifiedInboxOptions['readOwnerAwaiting']>, runsDir: string | undefined): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  const dir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: OwnerAwaitingReplies;
+  try { result = read({ runsDir: dir }); } catch { result = { status: 'unavailable' }; }
+  if (result.status !== 'ok') return { report: { state: 'unavailable', pending: 0 }, items: [] };
+  const items = result.items.map((reply): Omit<UnifiedInboxItem, 'priority'> => ({
+    id: `owner-thread:${reply.id}`,
+    source: 'owner-thread',
+    kind: 'owner-message',
+    severity: 'warn',
+    blocking: false,
+    title: oneLine(reply.text, TITLE_MAX) || `owner message ${reply.id}`,
+    detail: cap(`via ${reply.channel} · awaiting recorded reply`, DETAIL_MAX),
+    since: reply.at,
+    expiresAt: null,
+    act: ['phm comms thread', `phm comms send-owner --text "<reply>" --reply-to ${reply.idempotencyKey}`],
+  }));
+  return { report: { state: 'healthy', pending: items.length }, items };
 }
 
 async function draftItems(list: typeof listDrafts, runsDir: string | undefined): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
@@ -497,6 +530,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const now = options.now ?? Date.now;
   const needs = needsYouItems(options.readNeeds ?? readNeedsMason, options.runsDir);
   const teammates = teammateItems(options.readTexts ?? readTeammateTexts, options.runsDir, now);
+  const ownerThread = ownerThreadItems(options.readOwnerAwaiting ?? readOwnerAwaitingReplies, options.runsDir);
   const drafts = await draftItems(options.listPendingDrafts ?? listDrafts, options.runsDir);
   const bus = busItems(options);
   const gmail = gmailItems(options.readGmailPlans ?? readGmailArchivePlanLatest, options.runsDir);
@@ -505,12 +539,13 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
     imessage: teammates.report,
+    'owner-thread': ownerThread.report,
     drafts: drafts.report,
     bus: bus.report,
     gmail: gmail.report,
     linkedin: linkedin.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...drafts.items, ...bus.items, ...gmail.items, ...linkedin.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...ownerThread.items, ...drafts.items, ...bus.items, ...gmail.items, ...linkedin.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

@@ -1,7 +1,8 @@
 /**
  * The Comms line of the Leader's brief (RQ-PHX-BRIEFCOMMSLINE47): Dot texts
- * waiting, drafts awaiting Mason, Gmail inboxes over target, Needs-you items,
- * and a blocker when a Dot (Ashlr.) text has waited too long.
+ * waiting, owner-thread messages awaiting a recorded reply, drafts awaiting
+ * Mason, Gmail inboxes over target, Needs-you items, and a blocker when a
+ * Dot (Ashlr.) text has waited too long.
  *
  * Pure over a UnifiedInbox. Only counts and ages reach the output; text and
  * mail bodies are untrusted and never copied. Sources are iterated
@@ -64,6 +65,10 @@ export function commsBriefFacts(inbox: UnifiedInbox, opts: { overdueMinutes?: nu
       if (oldest !== null && oldest > overdue) {
         blocker = `Dot (Ashlr.) waiting ${formatAge(oldest)} on ${plural(report.pending, 'text')}`;
       }
+    } else if (name === 'owner-thread') {
+      const ages = items.map((i) => waitedMinutes(i, nowMs)).filter((a): a is number => a !== null);
+      const oldest = ages.length > 0 ? Math.max(...ages) : null;
+      parts.push(`${plural(report.pending, 'owner message')} awaiting reply${oldest !== null ? ` (oldest ${formatAge(oldest)})` : ''}`);
     } else if (name === 'drafts') {
       parts.push(`${plural(report.pending, 'draft')} to approve`);
     } else if (name === 'gmail') {
