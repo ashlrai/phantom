@@ -3,6 +3,7 @@
  * dir lane state, merge truth, release facts, NEEDS-MASON, MASON-INBOX); any
  * reader that throws or reports itself unavailable becomes an "unknown" fact.
  */
+import { join } from 'node:path';
 import { readInstalledBundleVersion, versionNewer } from '../app-update-status.js';
 import { readPeerLedger, type PeerLedgerReport } from '../agentnet/peer-ledger.js';
 import { gatherBriefFacts, type BriefFacts } from '../comms/leader-brief.js';
@@ -12,6 +13,7 @@ import { readFleetRunsDirState, type FleetRunsDirState } from '../fleet/runs-dir
 import { readInboxEntries, type InboxEntry } from '../fleet/mason-inbox.js';
 import { defaultReleasePublicReader, verifyLatestWorkbenchRelease } from '../release-public-facts.js';
 import { readBlocker, type DigestBlocker } from '../fleet/digest-blocker.js';
+import { readMergeLatency, type MergeLatencyReport } from '../fleet/merge-latency.js';
 import { readDiskLowLine } from '../fleet/host-disk.js';
 import { DIGEST_GAP_MINUTES, readFleetGaps } from '../fleet/sleep-gaps.js';
 import { readNodeResults, type NodeResultsSummary } from '../drive/nodes/results-read.js';
@@ -22,6 +24,8 @@ export interface StatusDigestSources {
   /** Newest published release with its desktop asset; throws when unreadable. */
   publishedVersion: (nowMs: number) => Promise<string>;
   mergeFacts: (sinceMs: number, nowMs: number) => Promise<Pick<BriefFacts, 'shipped' | 'mergeCountUnavailable'>>;
+  /** True open-to-merge time over the last 24h from the job metrics file under the runs dir. Override with undefined to drop the line. */
+  mergeLatency?: (runsDir: string, nowMs: number) => Promise<MergeLatencyReport>;
   runsState: (runsDir: string, nowMs: number) => Promise<Pick<FleetRunsDirState, 'lanes' | 'sources' | 'runsDirPresent'>>;
   needs: (runsDir: string) => { status: string; items: Array<{ text: string }> };
   inbox: (runsDir: string) => Promise<{ sourceState: string; entries: InboxEntry[] }>;
@@ -57,6 +61,7 @@ const defaults: StatusDigestSources = {
     return release.version;
   },
   mergeFacts: (sinceMs, nowMs) => gatherBriefFacts(sinceMs, nowMs),
+  mergeLatency: (runsDir, nowMs) => readMergeLatency({ metricsPath: join(runsDir, 'metrics', 'jobs.jsonl'), hours: 24, by: 'lane', now: nowMs }),
   runsState: (runsDir, nowMs) => readFleetRunsDirState({ runsDir, now: () => nowMs }),
   needs: runsDir => readNeedsMason({ runsDir }),
   inbox: runsDir => readInboxEntries({ runsDir, limit: 200 }),
@@ -150,6 +155,12 @@ export async function gatherStatusDigestInput(runsDir: string, now: Date, overri
     return facts.shipped.filter(item => /^ashlrai\/phantom#\d+/.test(item.text)).length;
   }, 'GitHub merge count unavailable or incomplete');
 
+  const readMergeTime = src.mergeLatency;
+  const mergeTime: StatusDigestInput['mergeTime'] = readMergeTime === undefined ? undefined : await fact(async () => {
+    const report = await readMergeTime(runsDir, nowMs);
+    if (report.metrics !== 'ok' || !report.open_to_merge) throw new Error('unreadable');
+    return { medianSeconds: report.open_to_merge.p50_s, known: report.open_to_merge.known, merged: report.merged ?? 0 };
+  }, 'job metrics file not readable');
   const [installed, published, hour, day, runs, inbox, workClaims] = await Promise.all([
     fact(() => { const v = src.installedVersion(); if (!v) throw new Error('none'); return v; }, 'installed app version not readable'),
     fact(() => src.publishedVersion(nowMs), 'published release not readable'),
@@ -185,5 +196,5 @@ export async function gatherStatusDigestInput(runsDir: string, now: Date, overri
   const waste = await fact(() => src.wasteLine?.(runsDir, nowMs) ?? null, 'waste check failed');
   const blocker = await fact(() => src.blocker?.(runsDir, nowMs, lanes.ok ? lanes.value : null) ?? undefined, 'blocker check failed');
   const updatePending = installed.ok && published.ok ? versionNewer(published.value, installed.value) : null;
-  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}), ...(supply.ok && supply.value ? { supplyLine: supply.value } : {}), ...(waste.ok && waste.value ? { wasteLine: waste.value } : {}), ...(blocker.ok && blocker.value ? { blocker: blocker.value } : {}) };
+  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, ...(mergeTime ? { mergeTime } : {}), lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}), ...(supply.ok && supply.value ? { supplyLine: supply.value } : {}), ...(waste.ok && waste.value ? { wasteLine: waste.value } : {}), ...(blocker.ok && blocker.value ? { blocker: blocker.value } : {}) };
 }
