@@ -28,7 +28,7 @@ export function shippedPage(report: ShippedReport): string {
   const [headline, ...rest] = shippedSummary(report);
   const items = shippedItems(report);
   const listed = report.areas.reduce((sum, area) => sum + area.count, 0);
-  const list = items.length === 0 ? '<p class="muted">No changes to list.</p>' : `<ol>\n${items.map(item => {
+  const list = items.length === 0 ? '<p class="muted">Nothing shipped yet this week.</p>' : `<ol>\n${items.map(item => {
     const ref = [item.repo ?? '', ...item.prs.map(number => `#${number}`)].filter(Boolean).join(' ');
     return `<li><time datetime="${escape(item.mergedAt)}">${escape(item.mergedAt.slice(0, 10))}</time><span class="area">${escape(item.area)}</span>${ref ? `<span class="ref">${escape(ref)}</span>` : ''}<p class="item">${escape(item.text)}</p></li>`;
   }).join('\n')}\n</ol>${listed > items.length ? `\n<p class="muted">Showing the newest ${items.length} of ${listed} changes.</p>` : ''}`;

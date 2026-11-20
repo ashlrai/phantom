@@ -197,7 +197,10 @@ describe('bet store and CLI', () => {
     expect(await cmdBets(['launch', '--id', 'RQ-BET-Z', '--hypothesis', 'h', '--metric', 'spare_slots', '--max-lane-hours', 'x', '--max-cycles', '1'], io)).toBe(2);
     expect(await cmdBets(['kill', 'RQ-BET-NONE', '--reason', 'r'], io)).toBe(2);
     expect(await cmdBets(['frob'], io)).toBe(2);
-    expect(await cmdBets([], io)).toBe(2);
+    // No verb is the leader batch view now (phm bets); an unknown flag is still a usage error.
+    expect(await cmdBets(['--bogus'], io)).toBe(2);
+    expect(await cmdBets([], { ...io, leaderBets: async o => ({ schema: 'fleet.leader-bets.v1', version: 1, window_hours: o.hours, known: true, queue_known: true, batches: [], summary: 'No leader bets in this window.' }) })).toBe(0);
+    expect(out.pop()).toBe('No leader bets in this window.');
     expect(await cmdBets(['--help'], io)).toBe(0);
     expect(out.pop()).toContain('Usage: phm bets');
   });

@@ -80,3 +80,7 @@
 .threadLine[data-selected='true'] { opacity: 1; }
 .waiting { position: absolute; transform: translate(-50%, -50%); padding: 0 var(--space-1); border: 1px solid var(--status-danger-solid); border-radius: var(--radius-sm);
   background: var(--surface-raised, var(--surface-1, Canvas)); color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
+.filterBar { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.filterPick { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text-secondary); }
+.filterPick select { max-width: 11rem; font: inherit; }
+.filterBar button { padding: 2px var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: none; color: var(--text-secondary); font: inherit; cursor: pointer; }

@@ -209,6 +209,8 @@ export interface DigestReport {
    * LLM). Always present.
    */
   headline: string;
+  /** Present only when more than 15% of recent fleet jobs ended empty: the rate and the top reason in plain words. */
+  emptyJobs?: string;
   /**
    * Optional LLM-assisted narrative summary. ABSENT on the default path
    * (deterministic-only). Populated ONLY when narrative generation is requested

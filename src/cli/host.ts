@@ -1,10 +1,14 @@
-/** `phm host load` and `phm host top`: what is loading and using this computer. Thin: the grouping lives in core/fleet/host-load and host-top. */
+/** `phm host load`, `phm host top`, `phm host disk` and `phm host memory`: what is loading and using this computer. Thin: the grouping lives in core/fleet/host-load and host-top. */
 import { readHostLoadReport, type HostLoadDeps, type HostLoadReport, type HostLoadTrees } from '../core/fleet/host-load.js';
 import { describeHostTop, hostDiskWarningLine, hostTopMemory, readHostTopReport, HOST_DISK_FLOOR_GB, type HostTopDeps, type HostTopReport } from '../core/fleet/host-top.js';
+import { formatHostDisk, readHostDisk, type HostDiskDeps, type HostDiskReport } from '../core/fleet/host-disk.js';
+import { formatHostMemory, readHostMemory, type HostMemoryDeps, type HostMemoryReport } from '../core/fleet/host-memory.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const USAGE = `Usage: phm host top [--json] [--groups] [--floor GB]
        phm host load [--json] [--by-tree]
+       phm host disk [--json] [--history]
+       phm host memory [--json]
 top   What is using this Mac: fleet workers, the local model server, Docker, each desktop app, Phantom, indexing and other,
       with load, memory pressure, swap used, the free-disk trend (GB per hour and hours to the floor) and one suggestion.
       --groups adds the busiest processes in each bucket. --floor sets the GB floor the trend measures to (default ${HOST_DISK_FLOOR_GB});
@@ -13,7 +17,13 @@ load  What is loading this computer, with fleet workers listed per job. --by-tre
       with it and says what share of CPU the fleet's own jobs use. --json has owners (schema host.load.owners.v1): load share by
       producer (fleet jobs, Claude loop, Devin cloud, local model, main guardian, other), the admission guard's state from
       queue/admission-ctl.json, jobs idle over 45 minutes that still use CPU, and one next step.
-Read-only: nothing is ever stopped or quit. Exits 0 with a report, 1 when the process list cannot be read, 2 on bad usage.`;
+disk  How fast free disk is falling and when the lanes freeze: free GB now, GB per hour over the last 6 hours, hours until the
+      freeze line (compact.lanes.raise_freeze_below_gb), the 5 largest job folders with age and finished or running, and one
+      line saying what to run. --history adds the samples. --json is host.disk.v1. Unknown is said as unknown.
+memory  Is this Mac really short of memory? Free %, swap used, swap growth per minute, swapouts per minute, the 5 largest processes
+      by memory and one verdict: real pressure (free memory under 35% or swapouts above 0), swap growing but memory is free
+      (likely a false alarm), fine, or unknown. --json is host.memory.v1. Unknown is said as unknown.
+Read-only: nothing is ever stopped, deleted or quit. Exits 0 with a report, 1 when the process list (or free disk, for disk; too few memory readings, for memory) cannot be read, 2 on bad usage.`;
 
 export function formatHostTop(report: HostTopReport, groups = false): string {
   const row = (name: string, cpu: number, mb: number, count: number) =>
@@ -55,7 +65,7 @@ export function formatHostLoad(report: HostLoadReport): string {
   return [...lines, ...report.gaps.map(gap => `Note: ${gap}`)].join('\n');
 }
 
-export async function cmdHost(args: string[], deps: HostLoadDeps & HostTopDeps & { write?: (text: string) => void } = {}): Promise<number> {
+export async function cmdHost(args: string[], deps: HostLoadDeps & HostTopDeps & HostDiskDeps & HostMemoryDeps & { write?: (text: string) => void } = {}): Promise<number> {
   const write = deps.write ?? ((text: string) => { process.stdout.write(text); });
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) { write(`${USAGE}\n`); return 0; }
   const [verb, ...flags] = args;
@@ -75,6 +85,18 @@ export async function cmdHost(args: string[], deps: HostLoadDeps & HostTopDeps &
     const top = sanitizePublicJson(await readHostTopReport({ ...deps, floorGb: floor })) as HostTopReport;
     write(`${json ? JSON.stringify(top) : formatHostTop(top, groups)}\n`);
     return top.state === 'unknown' ? 1 : 0;
+  }
+  if (verb === 'memory') {
+    if (new Set(flags).size !== flags.length || flags.some(flag => flag !== '--json')) { console.error('Usage: phm host memory [--json]'); return 2; }
+    const memory = sanitizePublicJson(await readHostMemory(deps)) as HostMemoryReport;
+    write(`${flags.includes('--json') ? JSON.stringify(memory) : formatHostMemory(memory)}\n`);
+    return memory.verdict === 'unknown' ? 1 : 0;
+  }
+  if (verb === 'disk') {
+    if (new Set(flags).size !== flags.length || flags.some(flag => flag !== '--json' && flag !== '--history')) { console.error(USAGE.split('\n')[2]); return 2; }
+    const disk = sanitizePublicJson(await readHostDisk(deps, flags.includes('--history'))) as HostDiskReport;
+    write(`${flags.includes('--json') ? JSON.stringify(disk) : formatHostDisk(disk).join('\n')}\n`);
+    return disk.freeGb === null ? 1 : 0;
   }
   if (verb !== 'load' || new Set(flags).size !== flags.length || flags.some(flag => flag !== '--json' && flag !== '--by-tree')) { console.error(USAGE.split('\n')[1]); return 2; }
   const report = sanitizePublicJson(await readHostLoadReport(deps, { byTree: flags.includes('--by-tree') })) as HostLoadReport;

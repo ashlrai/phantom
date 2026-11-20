@@ -18,6 +18,7 @@ import type { QueryDef } from '../../../../data/queries.js';
 import { BriefTiles, briefQuery } from '../BriefTiles.js';
 import { ApprovalsCard, approvalAsksQuery } from '../../home/ApprovalsCard.js';
 import { LeaderRepliesCard, leaderRepliesQuery } from '../../home/LeaderRepliesCard.js';
+import { MachinesCard } from '../../home/MachinesCard.js';
 import { PoolsCard, poolsQuery } from '../../home/PoolsCard.js';
 import { PulseCard, pulseQuery } from '../../home/PulseCard.js';
 import { PulseStrip, pulseLanesQuery } from '../../home/PulseStrip.js';
@@ -89,6 +90,7 @@ export function HomeGlance() {
       <ApprovalsCard from="phone" canAnswer={canShowActions(permissions)} limit={APPROVALS_SHOWN} />
       <LeaderRepliesCard limit={1} />
       <PoolsCard onOpenJob={job => navigate({ screen: 'worker', job })} />
+      <MachinesCard className={ui.card} />
       <MobileInterject compact title="Message the leader" placeholder="Say it in plain words." />
       <ShippedCard days={1} />
     </>

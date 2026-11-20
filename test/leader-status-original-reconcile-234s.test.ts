@@ -45,6 +45,7 @@ const originalFacts: Partial<StatusDigestSources> = {
   // The claims line postdates the original contract; disabling the reader keeps
   // the original digest facts unchanged (covered by -claims-314).
   workClaims: undefined,
+  mergeLatency: undefined,
 };
 
 /** Same construction as the production digestBrief: real gather + real build, readers injected. */
@@ -77,6 +78,7 @@ describe('composeOwnerStatusReply preserves PR #4885 facts with later status add
       needs: () => { throw new Error('fake needs read'); },
       inbox: async () => { throw new Error('fake inbox read'); },
       workClaims: undefined,
+      mergeLatency: undefined,
     };
     const reply = await composeOwnerStatusReply(RUNS_DIR, NOW, { brief: briefFrom(dead), board: emptyBoard });
     expect(reply).toBe([

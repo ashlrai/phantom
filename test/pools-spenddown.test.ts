@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cmdPools } from '../src/cli/pools.js';
 import { buildPoolsView } from '../src/core/fleet/pools-view.js';
-import { buildSpendDown, formatSpendDownText, SPENDDOWN_SCHEMA } from '../src/core/fleet/pools-spenddown.js';
+import { buildSpendDown, formatSpendDownText, queuedHours, SPENDDOWN_SCHEMA, type SpendDownExtras } from '../src/core/fleet/pools-spenddown.js';
 import type { ResourceLaneRow, ResourceLedgerV1 } from '../src/core/fleet/runs-resource-ledger.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00.000Z');
@@ -56,12 +56,58 @@ describe('buildSpendDown', () => {
     });
   });
 
+  it('stale reading: says unknown with the reading age, never a stale number', () => {
+    const row = only(lane('claude', { usedPct: 60, observation: { source: 'claude-native-usage' as const, asOf: at(-3) } }));
+    expect(row).toMatchObject({ state: 'unknown', used_frac: null, reading_age_min: 180, verdict: 'unknown: no fresh reading (3 h old)' });
+  });
+
+  it('says when it resets, in hours', () => {
+    expect(only(lane('claude', { usedPct: 50, resetAt: at(22), burnPctPerHour: 0.6 })).resets_in_h).toBe(22);
+    expect(only(lane('zai', { usedPct: null, resetAt: null })).resets_in_h).toBeNull();
+  });
+
   it('keeps pools.v1 order and prints one plain line per pool', () => {
     const data = chart(lane('claude', { usedPct: 50, burnPctPerHour: 0.6 }), lane('zai', { usedPct: null }));
     expect(data.schema).toBe(SPENDDOWN_SCHEMA);
     expect(data.generated_at).toBe(at(0));
-    expect(formatSpendDownText(data).split('\n')).toEqual(['Claude: 50% used, even pace 50%, ends near 100%: on pace', 'Zai: no reading']);
+    expect(formatSpendDownText(data).split('\n')).toEqual(['Claude: 50% used, even pace 50%, ends near 100%: on pace; queued: unknown', 'Zai: no reading; queued: unknown']);
     expect(formatSpendDownText({ ...data, pools: [] })).toBe('No plans reported.');
+  });
+});
+
+const withExtras = (extras: SpendDownExtras, ...lanes: ResourceLaneRow[]) => buildSpendDown(buildPoolsView(ledger(...lanes), NOW), extras);
+const supply = (id: string, ready: number | null): NonNullable<SpendDownExtras['supply']> => ({ pools: [{ id, ready } as never] });
+
+describe('queued_hours', () => {
+  it('known: queued jobs times the median job time, one decimal', () => {
+    const row = withExtras({ supply: supply('claude', 7), medianJobMinByLane: { claude: 30 } }, lane('claude', { burnPctPerHour: 0.6 })).pools[0]!;
+    expect(row.queued_hours).toBe(3.5);
+    expect(formatSpendDownText({ schema: SPENDDOWN_SCHEMA, generated_at: at(0), pools: [row] })).toMatch(/; 3\.5 h queued$/);
+  });
+
+  it('an empty queue is 0, not unknown', () => {
+    expect(queuedHours(0, null)).toBe(0);
+  });
+
+  it('unknown: no job times, no queue read, or nothing passed at all', () => {
+    expect(withExtras({ supply: supply('claude', 4), medianJobMinByLane: {} }, lane('claude')).pools[0]!.queued_hours).toBeNull();
+    expect(withExtras({ supply: supply('claude', null), medianJobMinByLane: { claude: 30 } }, lane('claude')).pools[0]!.queued_hours).toBeNull();
+    const bare = only(lane('claude'));
+    expect(bare.queued_hours).toBeNull();
+    expect(formatSpendDownText({ schema: SPENDDOWN_SCHEMA, generated_at: at(0), pools: [bare] })).toMatch(/; queued: unknown$/);
+  });
+});
+
+describe('blocked: sign-in', () => {
+  const held = lane('gemini', { held: true, usedPct: 20 });
+  it('says blocked: sign-in with the one step when the lane is held for a sign-in', () => {
+    const row = withExtras({ heldReasons: { gemini: 'Gemini logged out' } }, held).pools[0]!;
+    expect(row).toMatchObject({ verdict: 'blocked: sign-in', blocked: 'sign-in', blocked_fix: 'sign in to Gemini once: run gemini in a terminal' });
+  });
+
+  it('a lane held for another reason, or an unheld lane, is not blocked', () => {
+    expect(withExtras({ heldReasons: { gemini: 'paused by hand' } }, held).pools[0]).toMatchObject({ blocked: null, blocked_fix: null });
+    expect(withExtras({ heldReasons: { gemini: 'logged out' } }, lane('gemini', { usedPct: 20 })).pools[0]!.blocked).toBeNull();
   });
 });
 

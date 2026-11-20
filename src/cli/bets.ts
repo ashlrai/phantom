@@ -6,12 +6,15 @@ import { readFileSync } from 'node:fs';
 import { checkGoal, GATE_EXIT, goalFromPrompt, goalTerms, helpItems, readApiRoutes, readDocHeadings, readPanes, type BetsCheckReport } from '../core/fleet/bets-check.js';
 import { DEFAULT_PROPOSE_COUNT, gatherCandidates, MAX_PROPOSE_COUNT, proposeBets, proposeLines, readRepoName } from '../core/fleet/bets-propose.js';
 import { explainBetLines, nextBetsLines, readNextBets, type BetReaders } from '../core/fleet/next-bets.js';
+import { leaderBetsLines, LEADER_BETS_DEFAULT_HOURS, LEADER_BETS_MAX_HOURS, readLeaderBets, type LeaderBetsReport } from '../core/fleet/leader-batches.js';
+import { sanitizePublicJson } from '../core/util/public-json.js';
 import { BetInputError, type Bet, type BetDirection } from '../core/metrics/bets.js';
 import { killBet, launchBet, readBets, scoreCycle } from '../core/metrics/bets-store.js';
 import { defaultLoopReaders, type LoopReaders } from '../core/metrics/loop-collect.js';
 import { LOOP_METRIC_KEYS } from '../core/metrics/loop.js';
 
-export const BETS_USAGE = `Usage: phm bets <check|propose|suggest|explain|list|launch|score|kill> [--json]
+export const BETS_USAGE = `Usage: phm bets [--since 24h] [--json]
+       phm bets <check|propose|suggest|explain|list|launch|score|kill> [--json]
   phm bets check "<goal text>" [--json]
   phm bets check --from-prompt <file> [--gate] [--json]
   phm bets propose [--lane <lane>] [--count <n>] [--json]
@@ -22,6 +25,9 @@ export const BETS_USAGE = `Usage: phm bets <check|propose|suggest|explain|list|l
                   [--direction up|down] [--baseline <n>] [--min-delta <n>] [--kill <criterion>] [--json]
   phm bets score [--dry-run] [--json]
   phm bets kill <RQ-BET-id> --reason <text> [--json]
+With no verb, phm bets shows what the leader decided: its jobs grouped by batch (ids ending in the same N<day><letter>Q8 suffix, src=leader),
+each bet as queued, running, PR open, merged or empty (with the reason when known), and the batch hit rate: merged / (merged + empty).
+Nothing judged yet reads "unknown", not 0%. --since takes 1h to 365d (default 24h). JSON is fleet.leader-bets.v1. Read-only.
 check looks the goal up in this checkout's CLI help, API routes, web-ui panes and docs headings and says new, partial or
 exists with up to 10 matches and one suggested delta line (schema bets.check.v1). Read-only and offline: run it before queuing work.
 --from-prompt reads a queue prompt file: the goal is the task after the closing parenthesis on the line after "verbatim:", up to "Acceptance:".
@@ -38,7 +44,7 @@ suggest ranks the next jobs worth queuing from lane status, usage pace, launch y
 the autonomy score; explain shows one suggestion's inputs and score. Both only read: nothing is queued.
 Exit 0 ok, 1 read or write failure (or explain id not on the list), 2 bad usage or refused input.`;
 
-export interface BetsCliDeps { root?: string; out?: (line: string) => void; err?: (line: string) => void; readers?: LoopReaders; now?: () => Date; betReaders?: BetReaders }
+export interface BetsCliDeps { root?: string; out?: (line: string) => void; err?: (line: string) => void; readers?: LoopReaders; now?: () => Date; betReaders?: BetReaders; leaderBets?: (opts: { hours: number; now: number }) => Promise<LeaderBetsReport> }
 
 function flags(args: string[], allowed: readonly string[], booleans: readonly string[] = ['--json']): Map<string, string> | null {
   const out = new Map<string, string>();
@@ -67,13 +73,26 @@ function checkLines(r: BetsCheckReport): string[] {
   return lines;
 }
 
+/** `phm bets [--since 24h] [--json]`: the leader's batches, each bet's stage and the hit rate. */
+async function leaderBatchView(args: string[], deps: BetsCliDeps, out: (line: string) => void, err: (line: string) => void, now: () => Date): Promise<number> {
+  const f = flags(args, ['--since']);
+  const since = f?.get('--since') ?? `${LEADER_BETS_DEFAULT_HOURS}h`;
+  const m = /^(\d+(?:\.\d+)?)([hd])$/.exec(since);
+  const hours = m ? Number(m[1]) * (m[2] === 'd' ? 24 : 1) : NaN;
+  if (!f || !(hours > 0 && hours <= LEADER_BETS_MAX_HOURS)) { err(BETS_USAGE); return 2; }
+  try {
+    const report = await (deps.leaderBets ?? (o => readLeaderBets(o)))({ hours, now: now().getTime() });
+    out(f.has('--json') ? JSON.stringify(sanitizePublicJson(report)) : leaderBetsLines(report).join('\n'));
+    return 0;
+  } catch { err('Unable to read the leader queue or jobs ledger.'); return 1; }
+}
+
 export async function cmdBets(argv: string[], deps: BetsCliDeps = {}): Promise<number> {
   const out = deps.out ?? console.log, err = deps.err ?? console.error;
   const now = deps.now ?? (() => new Date());
-  if (argv.length === 0 || argv.includes('--help') || argv.includes('-h') || argv[0] === 'help') {
-    (argv.length === 0 ? err : out)(BETS_USAGE);
-    return argv.length === 0 ? 2 : 0;
-  }
+  const wantsHelp = argv.includes('--help') || argv.includes('-h') || argv[0] === 'help';
+  if (!wantsHelp && (argv.length === 0 || argv[0]!.startsWith('--'))) return leaderBatchView(argv, deps, out, err, now);
+  if (wantsHelp) { out(BETS_USAGE); return 0; }
   const readers = deps.readers ?? defaultLoopReaders();
   const runs = readers.runsDir;
   const [verb, ...rest] = argv;

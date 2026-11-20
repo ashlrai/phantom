@@ -8,9 +8,14 @@
  * "open a PR" and "turn on auto-merge through the merge queue" (`gh pr merge
  * --auto --squash --match-head-commit`, never `--admin`). Branches must live
  * under `codex-bridge/` on the signed-in user's own fork.
+ *
+ * Reads retry transient GitHub failures a bounded number of times (see
+ * `retry.ts`). If GitHub stays down the result is `deferred`: the pushed branch
+ * is untouched, the reason is plain, and the same command is safe to run again.
  */
 import { assertRepo, createPr, defaultGh, queuePrMerge, readViewer, type Gh } from '../autopilot/github.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { FetchDeferredError, retryReads, type RetryOptions } from './retry.js';
 
 export const PUBLISH_RESUME_SCHEMA = 'publish.resume.v1';
 export const PUBLISH_ORPHANS_SCHEMA = 'publish.orphans.v1';
@@ -21,7 +26,7 @@ export const PUBLISH_REPOS = ['phantom', 'phantom-secrets', 'ashlr-plugin', 'loc
 export const ORPHAN_WINDOW_MS = 48 * 3_600_000;
 const BRANCH = /^codex-bridge\/[A-Za-z0-9._-]{1,80}$/;
 
-export type PublishResumeStatus = 'opened' | 'already-open' | 'already-merged' | 'already-on-main' | 'missing';
+export type PublishResumeStatus = 'opened' | 'already-open' | 'already-merged' | 'already-on-main' | 'missing' | 'deferred';
 
 export interface PublishResumeResult {
   schema: typeof PUBLISH_RESUME_SCHEMA;
@@ -31,6 +36,8 @@ export interface PublishResumeResult {
   repo: string;
   /** Only for `opened`: whether auto-merge is now on, and one plain sentence why not. */
   auto_merge?: { on: boolean; detail: string };
+  /** Only for `deferred`: why, how many tries were made, and the command to run later. The branch is kept. */
+  deferred?: { reason: string; attempts: number; retry: string };
 }
 
 export interface PublishOrphan { branch: string; sha: string; pushed_at: string; age_hours: number }
@@ -91,17 +98,33 @@ export function prTitle(branch: string, commitSubjects: string[]): string {
   return scrubSecrets(`bridge(${job}): ${subject || job}`).slice(0, 200);
 }
 
+/** Open the PR for a pushed fork branch; a persistent GitHub outage returns `deferred` and keeps the branch. */
 export async function resumePublish(
-  opts: { branch: string; repo?: string },
-  gh: Gh = defaultGh,
+  opts: { branch: string; repo?: string; retry?: RetryOptions },
+  rawGh: Gh = defaultGh,
 ): Promise<PublishResumeResult> {
+  const gh = retryReads(rawGh, opts.retry);
   const name = resolveRepoName(opts.repo);
   const branch = resolveBranch(opts.branch);
   const upstream = assertRepo(`${PUBLISH_UPSTREAM_OWNER}/${name}`);
-  const owner = await readViewer(gh);
-  const fork = assertRepo(`${owner}/${name}`);
   const base = (result: PublishResumeStatus, pr_url: string | null): PublishResumeResult =>
     ({ schema: PUBLISH_RESUME_SCHEMA, status: result, pr_url, branch, repo: upstream });
+  try {
+    const owner = await readViewer(gh);
+    return await resumeChecked(gh, { owner, fork: assertRepo(`${owner}/${name}`), upstream, branch, base });
+  } catch (error) {
+    if (!(error instanceof FetchDeferredError)) throw error;
+    const result = base('deferred', null);
+    result.deferred = { reason: scrubSecrets(error.reason), attempts: error.attempts, retry: `phm publish resume --branch ${branch}` };
+    return result;
+  }
+}
+
+async function resumeChecked(
+  gh: Gh,
+  c: { owner: string; fork: string; upstream: string; branch: string; base: (s: PublishResumeStatus, url: string | null) => PublishResumeResult },
+): Promise<PublishResumeResult> {
+  const { owner, fork, upstream, branch, base } = c;
 
   // 1. The branch must still be on the fork, and must not already have a live PR.
   const headSha = await forkRef(gh, fork, branch);
@@ -140,9 +163,10 @@ export async function resumePublish(
 
 /** Fork `codex-bridge/*` branches pushed in the last 48 h that have no PR in any state. */
 export async function listPublishOrphans(
-  opts: { repo?: string; now?: () => Date } = {},
-  gh: Gh = defaultGh,
+  opts: { repo?: string; now?: () => Date; retry?: RetryOptions } = {},
+  rawGh: Gh = defaultGh,
 ): Promise<PublishOrphansResult> {
+  const gh = retryReads(rawGh, opts.retry);
   const name = resolveRepoName(opts.repo);
   const upstream = assertRepo(`${PUBLISH_UPSTREAM_OWNER}/${name}`);
   const owner = await readViewer(gh);

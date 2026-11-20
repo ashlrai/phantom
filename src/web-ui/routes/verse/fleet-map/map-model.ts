@@ -7,6 +7,7 @@
 import type { FleetLiveMap, LiveMapEdge, LiveMapEdgeKind, LiveMapNode, LiveMapNodeKind } from '../../../../core/fleet/live-map.js';
 import type { MapEdge, MapEdgeAgent, MapEdgeRole } from '../../../../core/fleet/map-edges.js';
 import type { AgentsMessagePair } from '../../../../core/fleet/agents-messages.js';
+import { MAP_STATES, type MapFilter, type MapState } from '../../../../core/fleet/map-filter.js';
 import { narrowLaneHealth } from '../../../../core/fleet/lane-badge.js';
 import { apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
@@ -36,6 +37,8 @@ export function narrowLiveMap(raw: unknown): FleetLiveMap | null {
       detail: text(row.detail) ?? 'unknown', live: typeof row.live === 'boolean' ? row.live : null,
       ...(kind === 'lane' && narrowLaneHealth(row.health) ? { health: narrowLaneHealth(row.health) } : {}),
       ...(kind === 'lane' && (row.mergedPerHour === null || typeof row.mergedPerHour === 'number') ? { mergedPerHour: row.mergedPerHour } : {}),
+      ...(kind === 'job' ? { lane: text(row.lane), repo: text(row.repo), ...(MAP_STATES.includes(row.state as MapState) ? { state: row.state as MapState } : {}) } : {}),
+      ...(kind === 'computer' && row.remote === true ? { remote: true } : {}),
       ...(kind === 'resource' && (row.usedPct === null || typeof row.usedPct === 'number') ? { usedPct: row.usedPct } : {}) });
   }
   const edges: LiveMapEdge[] = [];
@@ -108,7 +111,9 @@ export const messagePairsQuery: QueryDef<Map<string, AgentsMessagePair> | null> 
 export const NODE_W = 140, NODE_H = 52;
 const COLUMN = 156, ROW = 104, PAD = 16;
 export interface PlacedNode extends LiveMapNode { x: number; y: number }
-export interface MapLayout { width: number; height: number; nodes: PlacedNode[]; at: Map<string, PlacedNode> }
+/** A labelled box around nodes that belong together: the other Macs, drawn apart from this one. */
+export interface MapGroupBox { id: string; label: string; x: number; y: number; width: number; height: number }
+export interface MapLayout { width: number; height: number; nodes: PlacedNode[]; at: Map<string, PlacedNode>; groups?: MapGroupBox[] }
 
 /**
  * Rows by org level (leader, lanes, jobs, computers, resources), empty rows skipped. Each job sits in
@@ -126,14 +131,27 @@ export function layoutLiveMap(map: FleetLiveMap): MapLayout {
   const at = new Map<string, PlacedNode>(), placed: PlacedNode[] = [];
   rows.forEach((row, index) => {
     const rank = (node: LiveMapNode) => { const up = parent.get(node.id); return up && at.has(up) ? at.get(up)!.x : Number.MAX_SAFE_INTEGER; };
-    const ordered = row.map((node, order) => ({ node, order })).sort((a, b) => rank(a.node) - rank(b.node) || a.order - b.order);
+    // Other Macs sit together to the right of this Mac, so they can be boxed as one group.
+    const ordered = row.map((node, order) => ({ node, order })).sort((a, b) => Number(a.node.remote === true) - Number(b.node.remote === true)
+      || rank(a.node) - rank(b.node) || a.order - b.order);
     const step = (width - PAD * 2) / ordered.length;
     ordered.forEach(({ node }, i) => {
       const place = { ...node, x: Math.round(PAD + step * (i + 0.5)), y: PAD + NODE_H / 2 + index * ROW };
       at.set(node.id, place); placed.push(place);
     });
   });
-  return { width, height: PAD * 2 + NODE_H + Math.max(0, rows.length - 1) * ROW, nodes: placed, at };
+  return { width, height: PAD * 2 + NODE_H + Math.max(0, rows.length - 1) * ROW, nodes: placed, at, groups: remoteGroup(placed) };
+}
+
+/** The box around every other Mac, labelled with how many are online; none when this is the only Mac. */
+export function remoteGroup(placed: readonly PlacedNode[]): MapGroupBox[] {
+  const remote = placed.filter(node => node.kind === 'computer' && node.remote === true);
+  if (!remote.length) return [];
+  const left = Math.min(...remote.map(node => node.x)) - NODE_W / 2 - 8, right = Math.max(...remote.map(node => node.x)) + NODE_W / 2 + 8;
+  const top = Math.min(...remote.map(node => node.y)) - NODE_H / 2 - 24, bottom = Math.max(...remote.map(node => node.y)) + NODE_H / 2 + 8;
+  const down = remote.filter(node => node.status === 'offline').length, unsure = remote.filter(node => node.status === 'unknown').length;
+  const label = `Other Macs: ${remote.length}${down ? `, ${down} offline` : ''}${unsure ? `, ${unsure} unknown` : ''}`;
+  return [{ id: 'remote-macs', label, x: Math.max(0, left), y: Math.max(0, top), width: right - Math.max(0, left), height: bottom - Math.max(0, top) }];
 }
 
 /**
@@ -145,6 +163,16 @@ export function pulsing(edge: LiveMapEdge, map: FleetLiveMap, now: number, reduc
   if (!edge.lastMessageAt) return edge.pulse;
   const age = now - Date.parse(edge.lastMessageAt);
   return age <= map.pulseSeconds * 1000 && age >= -map.pulseSeconds * 1000;
+}
+
+/**
+ * How solid a message line draws: 1 for a message just now, falling in a straight line to 0.25 at the
+ * edge of the window. A line with no known time stays at 0.6 (unknown, not fresh).
+ */
+export function edgeOpacity(edge: LiveMapEdge, map: FleetLiveMap, now: number): number {
+  if (!edge.lastMessageAt) return 0.6;
+  const span = map.windowMinutes * 60_000, age = Math.min(Math.max(now - Date.parse(edge.lastMessageAt), 0), span);
+  return Math.round((1 - 0.75 * (age / span)) * 100) / 100;
 }
 
 /** "2 jobs on 3 computers · 5 messages in 15 minutes", with unknown spelled out. */
@@ -178,4 +206,17 @@ export function messageCurve(a: { x: number; y: number }, b: { x: number; y: num
   const cx = (a.x + b.x) / 2 + (row ? 0 : 40 * (a.x <= b.x ? 1 : -1));
   const cy = (a.y + b.y) / 2 - (row ? NODE_H + 36 : 40);
   return { d: `M${a.x},${a.y} Q${cx},${cy} ${b.x},${b.y}`, mid: { x: (a.x + 2 * cx + b.x) / 4, y: (a.y + 2 * cy + b.y) / 4 } };
+}
+
+export const MAP_FILTER_KEY = 'phantom.fleet-map.filter';
+/** The filters picked earlier in this browser session; none when nothing was picked or storage is blocked. */
+export function readMapFilter(): MapFilter {
+  try {
+    const raw: unknown = JSON.parse(globalThis.sessionStorage?.getItem(MAP_FILTER_KEY) ?? 'null');
+    if (!object(raw)) return {};
+    return { lane: text(raw.lane), repo: text(raw.repo), state: MAP_STATES.find(state => state === raw.state) ?? null };
+  } catch { return {}; }
+}
+export function saveMapFilter(filter: MapFilter): void {
+  try { globalThis.sessionStorage?.setItem(MAP_FILTER_KEY, JSON.stringify(filter)); } catch { /* storage blocked: the filter lasts until the page closes */ }
 }

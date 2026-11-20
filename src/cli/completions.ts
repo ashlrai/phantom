@@ -19,7 +19,7 @@ import { makeColors, isTty } from './ui.js';
  */
 export const TOP_LEVEL_COMMANDS: string[] = [
   'graph',
-  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'approvals', 'decisions', 'org', 'lanes', 'steward', 'improve', 'autopilot', 'metrics', 'jobs', 'recut', 'self', 'empties', 'shipped', 'mobile', 'throughput', 'home', 'asks', 'needs-you', 'subagent', 'init',
+  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'approvals', 'decisions', 'org', 'lanes', 'steward', 'improve', 'autopilot', 'metrics', 'jobs', 'recut', 'self', 'empties', 'shipped', 'mobile', 'throughput', 'merges', 'home', 'asks', 'needs-you', 'subagent', 'init',
   'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test', 'land',
   'new', 'ship', 'recall', 'learn', 'genome',
   'self-swap', 'update', 'upgrade', 'desktop', 'desktop-update', 'desktopctl', 'apps', 'browser', 'app', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
@@ -96,7 +96,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   check: ['--base', '--json', '--help'],
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
   disk: ['--wt-dir', '--runs-dir', '--tmp-dir', '--json', '--help'],
-  nodes: ['plan', '--json', '--can-take', '--help'],
+  nodes: ['plan', 'doctor', '--json', '--can-take', '--node', '--help'],
   map: ['--json', '--help'],
   'disk-maint': ['schedule', '--apply', '--json', '--only', '--allow', '--compress-days', '--prune-days', '--help'],
   autofix: ['--apply', '--dry-run', '--json', '--only', '--older-than', '--stuck-minutes', 'release-stuck-draft', 'launchd-crashloop', 'stuck-lane', 'outside-load', '--help'],
@@ -130,7 +130,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   job: ['cost', '--help'],
   admission: ['explain', '--json', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
-  metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'levers', 'leverage-mix', 'idle', 'impact', 'prod', 'loop', 'help'],
+  metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'levers', 'leverage', 'leverage-mix', 'idle', 'impact', 'prod', 'loop', 'help'],
   plan: ['check', 'dup', 'help'],
   bets: ['check', 'propose', 'list', 'launch', 'score', 'kill', 'help'],
   config: ['get', 'set', 'path', 'effective'],

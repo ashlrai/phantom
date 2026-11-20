@@ -26,6 +26,20 @@ export interface MergeRecoverDeps {
   /** Limit the plan to these `number:head` pairs (used by `queue-latency --recover`). */
   only?: ReadonlySet<string>;
 }
+/** Plain-words reason for every row that is not progress. The original PR and its work are never closed or edited. */
+export const MERGE_RECOVER_REASONS: Readonly<Record<string, string>> = {
+  'replacement-conflict': 'The recut still conflicts with the default branch. The original PR stays open with all its work; a person or agent must resolve it.',
+  'replacement-changed': 'The replacement PR was renamed or retargeted, so it is left alone. The original PR stays open.',
+  'retry-limit': 'Recovery attempts for this PR are used up. The original PR stays open with all its work.',
+  'source-changed': 'The PR moved since it was inspected. Run again to recover its new head.',
+  'already-present-on-base': 'The default branch already has this work; nothing to recover.',
+  'too-wide': 'More than 20 files remain, too wide for an automatic recut. The original PR stays open.',
+  'owner-path': 'The PR touches owner-only paths, so only a person may recut it. The original PR stays open.',
+  title: 'Not a fleet agent PR (`bridge: RQ-...`), so it is left alone.',
+  held: 'On the hold list; never recovered automatically.',
+  capped: 'Two recuts are queued per run; run again for the rest.',
+  failed: 'A GitHub read or write failed. Nothing was changed; run again.',
+};
 export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDeps = {}): Promise<number> {
   const output = deps.output ?? console.log;
   if (args.length === 1 && args[0] === '--help') { output(USAGE); return 0; }
@@ -140,7 +154,8 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
       } catch { failed = true; rows.push({ pr: pr.number, action: 'failed' }); }
     }
   } catch { failed = true; }
-  const report = { schema: 'fleet.merge-recover.v1', dryRun: !apply, ok: !failed, queue, rows };
-  output(json ? JSON.stringify(report) : `${USAGE}\n${queue ? queue.entries.map(e => `#${e.number}: ${e.ageSeconds === null ? 'unknown wait' : `${e.ageSeconds}s queued`}`).join('\n') + '\n' : ''}${rows.map(r => `#${r.pr}: ${r.action}`).join('\n')}`);
+  const detailed = rows.map(r => MERGE_RECOVER_REASONS[r.action] ? { ...r, reason: MERGE_RECOVER_REASONS[r.action] } : r);
+  const report = { schema: 'fleet.merge-recover.v1', dryRun: !apply, ok: !failed, queue, rows: detailed };
+  output(json ? JSON.stringify(report) : `${USAGE}\n${queue ? queue.entries.map(e => `#${e.number}: ${e.ageSeconds === null ? 'unknown wait' : `${e.ageSeconds}s queued`}`).join('\n') + '\n' : ''}${detailed.map(r => `#${r.pr}: ${r.action}${'reason' in r ? ` (${r.reason})` : ''}`).join('\n')}`);
   return failed ? 1 : 0;
 }

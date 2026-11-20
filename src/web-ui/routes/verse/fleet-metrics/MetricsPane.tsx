@@ -1,5 +1,4 @@
 import type { MetricsPanel } from '../../../../core/fleet/metrics-panel.js';
-import type { ReleasesReport } from '../../../../core/release/status.js';
 import { ChartContainer } from '../../../components/charts/ChartContainer.js';
 import { LineChart } from '../../../components/charts/LineChart.js';
 import { apiGet } from '../../../data/client.js';
@@ -8,11 +7,12 @@ import type { QueryDef } from '../../../data/queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { JobYieldCard } from './JobYieldCard.js';
+import { LeverageTile } from './LeverageTile.js';
 import { MetricsGlance } from './MetricsGlance.js';
 import { ReleasesCard } from './ReleasesCard.js';
+import { releasesQuery } from './releases-query.js';
 
 const query: QueryDef<MetricsPanel> = { key: 'fleet-metrics-panel', fetch: signal => apiGet('/api/verse/fleet/runs/metrics', signal) };
-const releasesQuery: QueryDef<ReleasesReport> = { key: 'fleet-releases', fetch: signal => apiGet('/api/fleet/releases', signal) };
 export function MetricsPane({ visible }: PaneProps) {
   // Tags move slowly, so this is read when the pane opens and kept for five minutes.
   const releases = useQuery(releasesQuery, { enabled: visible, freshMs: 300_000 });
@@ -31,6 +31,7 @@ export function MetricsPane({ visible }: PaneProps) {
   return <section aria-label="Metrics"><h2>Metrics</h2>
     {!data ? <p>{read.status === 'error' ? 'Metrics are unknown.' : 'Reading metrics…'}</p> : null}
     <MetricsGlance report={data?.glance} capacity={capacity} />
+    <LeverageTile report={data?.leverage} />
     <JobYieldCard report={data?.jobYield} stopped={data?.stopped} />
     <ReleasesCard report={releases.data} />
     <p>Merged PRs: {history?.mergesLastHour ?? 'unknown'} in the last hour · {history?.mergesLast24h ?? 'unknown'} in the last 24 hours.</p>
