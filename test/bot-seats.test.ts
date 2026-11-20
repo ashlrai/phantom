@@ -307,6 +307,37 @@ it('routes seat-to-seat messages through the seat fleet root and clock', async (
   expect(rows[0]!.envelope.to).toBe('agent:reviewer');
   expect(rows[0]!.receivedAt).toBe(now);
 });
+it('CLI message routes seat DMs by seat id and owner notices through the configured thread', async () => {
+  const reviewer = { id: 'reviewer', kind: 'local', displayName: 'Reviewer', participantId: 'seat-reviewer', capabilities: ['review'], quota: { source: 'none' } };
+  const o = await fixture([seat(), reviewer]);
+  const fleetRoot = join(o.home, '.ashlr', 'fleet');
+  for (const handle of ['helper', 'seat-reviewer']) {
+    expect(registerAgentIdentity({ handle }, { root: fleetRoot, now: o.now }).status).toBe('created');
+  }
+  const out: string[] = [], emit = (text: string) => out.push(text);
+  // --to accepts the seat id; the DM still addresses the participantId.
+  expect(await runBotsCli(['message', '--from', 'helper', '--to', 'reviewer', '--text', 'please review', '--json'], emit, o.home)).toBe(0);
+  expect(JSON.parse(out.pop()!)).toMatchObject({ status: 'posted', to: 'agent:seat-reviewer' });
+  const page = listBusInboxAfter(0, 100, { root: fleetRoot, now: o.now });
+  const rows = page.status === 'ok' ? page.messages : [];
+  expect(rows).toHaveLength(1);
+  expect(rows[0]!.envelope.from).toBe('agent:helper');
+  expect(rows[0]!.envelope.to).toBe('agent:seat-reviewer');
+
+  expect(await runBotsCli(['message', '--from', 'helper', '--to', 'owner', '--text', 'seat check-in', '--json'], emit, o.home)).toBe(0);
+  expect(JSON.parse(out.pop()!)).toMatchObject({ status: 'accepted' });
+  const thread = readOwnerThread({ runsDir: join(o.home, '.ashlr-runs'), settings: emptyOwnerSettings() });
+  expect(thread.messages.map(m => m.text)).toContain('seat check-in');
+  // The owner notice mirrors onto the same fleet root the seat DMs use.
+  const mirrored = listBusInboxAfter(0, 100, { root: fleetRoot, now: o.now });
+  const mirrorRows = mirrored.status === 'ok' ? mirrored.messages : [];
+  expect(mirrorRows.some(r => r.envelope.id.startsWith('ot-seat-message:'))).toBe(true);
+
+  expect(await runBotsCli(['message', '--from', 'helper', '--to', 'reviewer'], emit, o.home)).toBe(1);
+  expect(JSON.parse(out.pop()!)).toMatchObject({ ok: false });
+  expect(await runBotsCli(['message', '--from', 'helper', '--to', 'nobody', '--text', 'hi', '--json'], emit, o.home)).toBe(1);
+  expect(JSON.parse(out.pop()!)).toMatchObject({ ok: false, error: 'Unknown seat.' });
+});
 it('counts claims held under any label of the seat identity as open work', async () => {
   const o = await fixture();
   const fleetRoot = join(o.home, '.ashlr', 'fleet');

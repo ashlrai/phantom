@@ -78,7 +78,7 @@ function ownerOptions(o: SeatOptions): OwnerThreadOptions {
   if (o.ownerOptions) return o.ownerOptions;
   const settings = loadOwnerThreadSettings(o.home ? join(o.home, '.ashlr') : fixedOwnerConfigDir());
   const runsDir = o.runs ?? (o.home ? runs(o) : fixedOwnerRunsDir());
-  return { runsDir, settings, transports: liveOwnerTransports(settings, runsDir) };
+  return { runsDir, settings, transports: liveOwnerTransports(settings, runsDir), busRoot: fleet(o) };
 }
 async function safe(o: SeatOptions, file: string) {
   for (const path of [join(o.home ?? homedir(), '.phantom'), root(o)]) {
@@ -369,16 +369,21 @@ export async function applySeatHandoff(id: string, o: SeatOptions = {}) {
 }
 export async function sendSeatMessage(input: { from: string; to: string; text: string }, o: SeatOptions = {}) {
   assertMetadata(input.text);
-  const seats = await roster(o), sender = seats.find(s => s.id === input.from || s.participantId === input.from);
-  if (!sender || (input.to !== 'owner' && !seats.some(s => s.participantId === input.to))) throw new Error('Unknown seat.');
+  const seats = await roster(o);
+  const sender = seats.find(s => s.id === input.from || s.participantId === input.from);
+  // `to` resolves like `from`: a participantId wins over a seat id, so both
+  // roster spellings reach the same seat and 'owner' stays the thread target.
+  const target = input.to === 'owner' ? undefined
+    : seats.find(s => s.participantId === input.to) ?? seats.find(s => s.id === input.to);
+  if (!sender || (input.to !== 'owner' && !target)) throw new Error('Unknown seat.');
   if (input.to === 'owner') {
     const notice = { text: input.text, idempotencyKey: `seat-message:${randomUUID()}` };
     if (o.ownerNotice) return o.ownerNotice(notice);
-    if (o.ownerOptions) return postOwnerNotice(notice, o.ownerOptions);
-    return { status: 'refused', reason: 'owner-thread-not-configured' };
+    return postOwnerNotice(notice, ownerOptions(o));
   }
   // The DM resolves identities and appends through the same fleet root and
   // clock the seat's claims and handoff notices use; runsRoot only places the
   // wake hint queue.
-  return sendDirectMessage({ ...input, from: sender.participantId }, { root: fleet(o), runsRoot: runs(o), now: o.now });
+  return sendDirectMessage({ from: sender.participantId, to: target!.participantId, text: input.text },
+    { root: fleet(o), runsRoot: runs(o), now: o.now });
 }
