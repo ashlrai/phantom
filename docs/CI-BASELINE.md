@@ -147,6 +147,36 @@ carry no audit v2 document and stay unparsed, as do invalid reports
 (non-v2 schema, malformed severity counts), reports with no preceding
 step echo, clean reports (`total: 0`) and unrelated JSON.
 
+The `ci` job's pack-smoke steps on the ubuntu authority 1/3 shard verify
+the same-job build before the suites run and again in `Pack smoke
+(exports map)`: `Capture pack smoke build snapshot` runs
+`npm run check:pack-contracts` (node:test TAP, parsed above),
+`ci-pack-smoke.mjs capture`, `check:first-paint:built` and
+`ci-pack-smoke.mjs prepare`; the exports-map step reuses, verifies and
+captures the retained snapshot through the same script and
+`scripts/hosted-build-artifact.mjs` (also invoked by the
+`attest-ci-build` workflow's `qualify` verb). Both scripts funnel every
+refusal -- stale or mutated build output, a missing artifact, a drifted
+source tree, an unexpected tarball -- through one stderr prefix:
+`pack smoke refused: <assert message>` and
+`hosted artifact refused: <assert message>`. Each script groups under its
+own `<script> > (pack-smoke)` / `<script> > (hosted-artifact)` identity;
+the prefixed header line is the failure identity, so multiline assert
+continuations (a drift list under `source changed after build:`) stay
+excerpt-free rather than minting second groups. The gate script plus the
+repository inputs it reads directly is the unit a master fix restores:
+`package.json` for the pack smoke (it verifies the packed name/version
+against the manifest) and `package.json` plus `package-lock.json` for
+the artifact gate (it hashes the tracked lockfile set it admits), seeded
+as static inputs since the measured dist/ graph has no enumerable
+closure; the vitest harness ambient set does not apply. Like the other
+non-test identities these groups can never resolve through a vitest pass
+line and classify `shared-baseline`, `pr-caused` or `unknown` -- never
+`probable-flake`. Release-only refusals (`release smoke refused:`,
+`isolated release tree refused:`, `same-runner release input refused:`,
+`Offline partition comparison refused:`), empty messages, non-prefixed
+assert output and unrelated lines stay unparsed.
+
 Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
 brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
 with an explicit verbose test pass on master's current run produces

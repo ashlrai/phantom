@@ -229,8 +229,12 @@ error, the advisory perf gate's
 `ashlr.perf-budget-report.v1` JSON document (`fail` and `error` results
 only), and the Dependency Audit job's
 `<lockfile> > (dependency-audit) <package>` rows from npm audit v2 JSON
-reports (advisories outside the exception fixpoint only) -- plus
-summaries. `auditExceptions` is the optional
+reports (advisories outside the exception fixpoint only), and the
+pack-smoke/artifact gate's
+`.github/scripts/ci-pack-smoke.mjs > (pack-smoke)` /
+`scripts/hosted-build-artifact.mjs > (hosted-artifact)` rows from the
+scripts' `pack smoke refused:` / `hosted artifact refused:` stderr
+prefixes -- plus summaries. `auditExceptions` is the optional
 `DependencyAuditException[] | null` list (`{id, package, graph}` with
 graph `full` or `raycast-production`); `null` leaves audit reports
 unparsed. TAP `ok` results carry no
@@ -252,7 +256,13 @@ set is its manifest, shrinkwrap, .npmrc, the lockfile itself,
 harness ambient set does not apply to it either; the analyzer reads the
 exception file once from master and an unreadable or malformed file
 leaves audit reports unparsed rather than risk phantom groups for
-accepted advisories. `enqueueBaselineFixes(report,
+accepted advisories. The pack-smoke gate's dependency set is
+`package.json` and the artifact gate's `package.json` plus
+`package-lock.json` (seeded as static inputs, since the measured dist/
+graph has no enumerable closure), and the harness ambient set does not
+apply to either; refusal continuations stay excerpt-free, empty
+messages and release-only `* refused:` prefixes stay unparsed.
+`enqueueBaselineFixes(report,
 absoluteQueuePath)` explicitly writes work-tier master-fix rows deduplicated
 by queue state via `nextFixGeneration`: a failure whose prior fix generations
 all reached DONE re-queues as the next `RQ-CIBASE-*-G<n>` id while the

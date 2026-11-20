@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -55,7 +55,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     else if (endpoint.includes('/jobs/') && endpoint.endsWith('/logs')) {
       if (options.unreadable) return { ok: false, stdout: '', stderr: '403' };
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.web ? 'web-shared' : 'shared';
       return success(`/usr/bin/git log -1 --format=%H\n${isMaster ? master : head}\n${fixture(name)}`);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
@@ -666,6 +666,80 @@ describe('CI baseline evidence', () => {
       expect(broken.groups).toEqual([]);
       expect(broken.freshness.every(p => p.state === 'unknown')).toBe(true);
     }
+  });
+  it('parses pack-smoke and hosted-artifact refusals as gate failures', () => {
+    const failures = parseBaselineFailures(fixture('pack-shared'));
+    expect(failures.map(f => f.testId)).toEqual([
+      '.github/scripts/ci-pack-smoke.mjs > (pack-smoke)',
+      'scripts/hosted-build-artifact.mjs > (hosted-artifact)',
+    ]);
+    expect(failures[0]).toMatchObject({ file: '.github/scripts/ci-pack-smoke.mjs', names: '(pack-smoke)' });
+    expect(failures[0]?.excerpt).toContain('pack smoke refused: source changed after build:');
+    expect(failures[1]).toMatchObject({ file: 'scripts/hosted-build-artifact.mjs', names: '(hosted-artifact)' });
+    expect(failures[1]?.excerpt).toContain('hosted artifact refused: missing built artifact');
+    // The drift list continuing under the refusal header is not a second
+    // identity and stays out of the excerpt.
+    expect(failures[0]?.excerpt).not.toContain('ci-baseline.ts');
+    // Timestamped job-log lines parse identically.
+    const stamped = fixture('pack-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped).map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    // Release-only refusals, empty messages, non-prefixed assert output and
+    // unrelated lines stay unparsed.
+    for (const bad of [
+      'release smoke refused: tarball missing',
+      'isolated release tree refused: source drift',
+      'Offline partition comparison refused: corpus unreadable',
+      'pack smoke refused:',
+      'pack smoke refused:   ',
+      'AssertionError [ERR_ASSERTION]: expected one npm pack result',
+      'same-runner release input refused: verification_failed',
+    ]) {
+      expect(parseBaselineFailures(bad), bad).toEqual([]);
+    }
+    const secret = 'ghp_' + 'a'.repeat(36);
+    expect(parseBaselineFailures(`pack smoke refused: token ${secret} leaked`)[0]?.excerpt).not.toContain(secret);
+  });
+  it('groups pack-smoke and artifact failures and attributes gate inputs', async () => {
+    const contents = {
+      '.github/scripts/ci-pack-smoke.mjs': "import assert from 'node:assert/strict';\nimport { createBuildIdentity } from '../../scripts/build-identity.mjs';\nimport { sourceDrift } from '../../scripts/release-isolated-tree.mjs';",
+      'scripts/build-identity.mjs': "import { spawnSync } from 'node:child_process';",
+      'scripts/release-isolated-tree.mjs': "import { undeclaredBuildOutputs } from './build-outputs.mjs';",
+      'scripts/build-outputs.mjs': "import { existsSync } from 'node:fs';",
+      'scripts/hosted-build-artifact.mjs': "import assert from 'node:assert/strict';\nimport { observeBuild } from '../.github/scripts/ci-pack-smoke.mjs';",
+    };
+    const report = await analyzeCiBaseline('owner/repo', github({ pack: true, contents }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(2);
+    expect(report.groups.map(g => g.testId)).toEqual([
+      '.github/scripts/ci-pack-smoke.mjs > (pack-smoke)',
+      'scripts/hosted-build-artifact.mjs > (hosted-artifact)',
+    ]);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    // The gate scripts and their direct manifest inputs are PR-caused; the
+    // measured dist/ graph and the vitest harness ambient set cannot reach
+    // these plain-script gates, so unrelated changes share the baseline.
+    const packInputs = ['package.json', '.github/scripts/ci-pack-smoke.mjs', 'scripts/build-identity.mjs', 'scripts/release-isolated-tree.mjs', 'scripts/build-outputs.mjs'];
+    for (const touched of packInputs) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ pack: true, touched, contents }).gh);
+      const packGroup = caused.groups.find(g => g.testId === '.github/scripts/ci-pack-smoke.mjs > (pack-smoke)');
+      expect(packGroup?.action, touched).toBe('pr-caused');
+    }
+    const artifactInputs = ['package.json', 'package-lock.json', 'scripts/hosted-build-artifact.mjs', '.github/scripts/ci-pack-smoke.mjs'];
+    for (const touched of artifactInputs) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ pack: true, touched, contents }).gh);
+      const artifactGroup = caused.groups.find(g => g.testId === 'scripts/hosted-build-artifact.mjs > (hosted-artifact)');
+      expect(artifactGroup?.action, touched).toBe('pr-caused');
+    }
+    for (const touched of ['src/core/status.ts', 'tsconfig.json', 'vitest.config.ts', 'test/setup/home.ts', 'docs/README.md']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ pack: true, touched, contents }).gh);
+      for (const group of shared.groups) expect(group.classification, `${touched} -> ${group.testId}`).toBe('shared-baseline');
+    }
+    // A singleton unaffected failure can never prove a master pass.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ pack: true, count: 1, pass: true, contents }).gh);
+    for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
   });
   it('keeps TAP indentation on timestamped job-log lines', () => {
     const block = [

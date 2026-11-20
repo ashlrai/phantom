@@ -406,6 +406,12 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   // output this analyzer does not parse.
   'package-lock.json': ['package.json', 'npm-shrinkwrap.json', '.npmrc', '.github/dependency-audit-exceptions.json', 'scripts/npm-audit-with-osv-fallback.sh'],
   'src/raycast/package-lock.json': ['src/raycast/package.json', 'src/raycast/npm-shrinkwrap.json', 'src/raycast/.npmrc', '.github/dependency-audit-exceptions.json', 'scripts/npm-audit-with-osv-fallback.sh'],
+  // The pack-smoke gate verifies the packed name/version against
+  // package.json and the measured dist/ graph has no enumerable closure,
+  // so only the manifest is a direct repo input; the artifact gate also
+  // hashes the tracked lockfile set it admits.
+  '.github/scripts/ci-pack-smoke.mjs': ['package.json'],
+  'scripts/hosted-build-artifact.mjs': ['package.json', 'package-lock.json'],
 };
 
 function parseVersionSyncFailures(log: string): Failure[] {
@@ -681,6 +687,53 @@ function parseAuditFailures(log: string, auditExceptions: readonly DependencyAud
   return out;
 }
 
+// The `ci` job's pack-smoke steps on the ubuntu authority 1/3 shard verify
+// the same-job build before the suites run: `Capture pack smoke build
+// snapshot` runs `npm run check:pack-contracts` (node:test TAP, parsed
+// above), `ci-pack-smoke.mjs capture`, `check:first-paint:built` and
+// `ci-pack-smoke.mjs prepare`; `Pack smoke (exports map)` later reuses,
+// verifies and captures the retained snapshot through the same script and
+// `scripts/hosted-build-artifact.mjs`. Both scripts funnel every refusal --
+// stale or mutated build output, a missing artifact, a drifted source tree,
+// an unexpected tarball -- through one stderr prefix:
+//   pack smoke refused: <assert message>
+//   hosted artifact refused: <assert message>
+// Assert messages may continue onto following lines (a drift list under
+// `source changed after build:`); only the prefixed header line is a
+// failure identity, so continuations stay excerpt-free. Each script groups
+// under its own `<script> > (<gate>)` identity: the gate script plus the
+// repository inputs it reads directly (seeded as static inputs, since the
+// measured dist/ graph has no enumerable closure) is the unit a master fix
+// restores, and like the other non-test identities these groups can never
+// resolve through a vitest pass line -- shared-baseline, pr-caused or
+// unknown, never probable-flake. Other `* refused:` prefixes belong to
+// release-only workflows this analyzer's PR observations never see, and
+// stay unparsed, as do empty messages, unrelated refusals and non-prefixed
+// assert output.
+const PACK_SMOKE_FILE = '.github/scripts/ci-pack-smoke.mjs';
+const PACK_SMOKE_NAMES = '(pack-smoke)';
+const HOSTED_ARTIFACT_FILE = 'scripts/hosted-build-artifact.mjs';
+const HOSTED_ARTIFACT_NAMES = '(hosted-artifact)';
+const ARTIFACT_GATE_MAX = 16;
+const ARTIFACT_GATES = [
+  { prefix: 'pack smoke refused: ', file: PACK_SMOKE_FILE, names: PACK_SMOKE_NAMES },
+  { prefix: 'hosted artifact refused: ', file: HOSTED_ARTIFACT_FILE, names: HOSTED_ARTIFACT_NAMES },
+] as const;
+
+function parseArtifactGateFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  for (const line of lines(log)) {
+    if (out.length >= ARTIFACT_GATE_MAX) break;
+    for (const gate of ARTIFACT_GATES) {
+      if (!line.startsWith(gate.prefix)) continue;
+      if (line.slice(gate.prefix.length).trim() === '') break;
+      out.push({ file: gate.file, names: gate.names, testId: `${gate.file} > ${gate.names}`, excerpt: clean(line) });
+      break;
+    }
+  }
+  return out;
+}
+
 export function parseBaselineFailures(log: string, repo?: string, auditExceptions: readonly DependencyAuditException[] | null = []): Failure[] {
   const result: Failure[] = [];
   const typecheck = new Map<string, Failure>();
@@ -735,6 +788,10 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     result.push(failure);
   }
   for (const failure of parseAuditFailures(log, auditExceptions)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseArtifactGateFailures(log)) {
     if (result.length >= 100) break;
     result.push(failure);
   }
@@ -1105,10 +1162,11 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // Generated artifacts are produced by the clean-tree job, not the test
       // runner: the vitest harness ambient set cannot stale them, so only
       // the generator-input deps decide touched. The version-sync gate reads
-      // exactly its enumerated metadata inputs, and the dependency-audit
-      // gate exactly its lockfile input set, so the ambient set cannot
-      // reach either of them.
-      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) ? new Set<string>() : await harnessAmbient(failure.file);
+      // exactly its enumerated metadata inputs, the dependency-audit gate
+      // exactly its lockfile input set, and the pack-smoke/artifact gates
+      // plain .mjs scripts plus their enumerated manifests, so the ambient
+      // set cannot reach any of them.
+      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) ? new Set<string>() : await harnessAmbient(failure.file);
       const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
       observations.push({ pr, failure, touched, runId: failure.runId });
     }
