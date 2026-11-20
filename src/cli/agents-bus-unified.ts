@@ -5,8 +5,9 @@ import {
   type BusCli, type BusProvider,
 } from '../core/agents/bus-identity.js';
 import {
-  announceWork, busBodyFallbackSummary, listBusChannels, postChannelMessage, readAgentChannel, readAgentInbox, readAgentWakes,
-  readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest, updateWorkStatus, type UnifiedBusOptions, type WorkStatusInput,
+  announceWork, busBodyFallbackSummary, listBusChannels, postChannelMessage, postLabelMessage, readAgentChannel,
+  readAgentInbox, readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
+  updateWorkStatus, type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { WORK_STATUSES, parseClaimKey, type WorkJob } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedOwnerMatcher, busWorkFeedToMatcher, formatBusWorkFeed, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
@@ -19,11 +20,12 @@ import { scrubSecrets } from '../core/util/scrub.js';
 import type { BusPriority } from '../core/fleet/bus-envelope.js';
 import { seatParticipants } from '../core/bots/seats.js';
 
-export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'channel', 'handoff', 'wake', 'inbox', 'wakes', 'show', 'adapters', 'claim', 'work', 'status']);
+export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'post', 'channel', 'handoff', 'wake', 'inbox', 'wakes', 'show', 'adapters', 'claim', 'work', 'status']);
 
 export const AGENTS_BUS_UNIFIED_HELP = `ashlr agents bus id register [<handle>] [--cli <cli>] [--provider <p>] [--model <m>] [--alias <label>]... [--display <name>]
 ashlr agents bus id list
 ashlr agents bus dm --to <agent> --text <text> [--from <agent>] [--priority P0..P3] [--thread <t>] [--ref <ref>]... [--id <id>] [--ttl <ms>] [--wake|--no-wake]
+ashlr agents bus post --to <label> --text <text> [--kind note|context] [--from <agent>] [--priority P0..P3] [--thread <t>] [--ref <ref>]... [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus channel create <name> [--from <agent>] [--member <agent>]...
 ashlr agents bus channel join|leave <name> [--agent <agent>]
 ashlr agents bus channel post <name> --text <text> [--from <agent>] [--topic <t>] [--ref <ref>]... [--priority ..] [--wake|--no-wake]
@@ -52,7 +54,11 @@ Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
 names, never authentication. Messages land in the one local bus store; P0 always
 wakes, P1 and handoffs wake by default, and wake always records its hint.
---thread on dm, channel post, inbox and channel read is the v2 conversation
+post sends a v2 note (or context with --kind context) to any printable routing
+label outside the reserved agent:/group:/dm:/handoff: prefixes — the sink and
+topic mail dm, channel post and the work verbs cannot carry; the sender is
+still a registered identity under the same scrub and wake rules.
+--thread on dm, post, channel post, inbox and channel read is the v2 conversation
 label carried by note/context bodies; reads match that field only. --from on
 inbox and channel read narrows to one sender — a handle, agent:<handle>,
 stable id or alias; an unresolvable ref keeps exact-label matching. show
@@ -83,7 +89,8 @@ No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
   '--frame', '--since', '--root', '--key', '--owner', '--lease-ms', '--token', '--outcome', '--reason',
-  '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref']);
+  '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
+  '--kind']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
 const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--jobs']);
 
@@ -248,6 +255,16 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       noExtra(1);
       const result = await sendDirectMessage({ ...send, from: actor('--from'), to: required('--to'), text: required('--text'),
         thread: one('--thread'), refs: p.values.get('--ref') }, options);
+      return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
+    }
+    if (verb === 'post') {
+      noExtra(1);
+      const kind = one('--kind');
+      if (kind !== undefined && kind !== 'note' && kind !== 'context') {
+        throw new UsageError('--kind must be note or context.');
+      }
+      const result = await postLabelMessage({ ...send, from: actor('--from'), to: required('--to'), text: required('--text'),
+        kind: kind as 'note' | 'context' | undefined, thread: one('--thread'), refs: p.values.get('--ref') }, options);
       return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
     }
     if (verb === 'channel' && sub === 'list') {

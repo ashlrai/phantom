@@ -166,6 +166,7 @@ latest runtime's provider, `origin_bridge` is `agent-bus`).
 | --- | --- | --- | --- |
 | DM | `agent:<handle>` | `bus` | v2 `note` |
 | Channel post | `group:<channel>:<topic>` (topic defaults to `general`) | `bus` | v2 `note` |
+| Label post | any printable routing label outside the reserved `agent:`/`group:`/`dm:`/`handoff:` prefixes | `bus` | v2 `note`, or `context` with `--kind context` |
 | Handoff | `agent:<handle>` | `handoff` | `worker-handoff` (`taskId`, `prompt`), the shape `phm fleet handoff-receive` reads |
 | Wake request | `agent:<handle>` | `bus` | v2 `wake` (`target`, `reason`, optional `jobId`) |
 
@@ -207,6 +208,23 @@ and no membership; an unknown channel is `unknown-channel`, an unreadable
 registry or store is reported — never an empty page passed off as history.
 Because channel addresses are bus-group addresses, existing `subscribeGroup`
 readers see the same posts.
+
+**Label posts.** `phm agents bus post --to <label> --text <text> [--kind
+note|context]` sends a v2 `note` (the default) or `context` body to any
+printable routing label the other send verbs cannot address: a sink like
+`leaders`, a shared topic like `fleet.mesh`, or any label a subscriber reads
+through `comms bus read --to`, `bus-follow` or an identity's alias matching.
+The reserved prefixes `agent:`, `group:`, `dm:` and `handoff:` are refused —
+`dm`, `channel post`, `handoff` and `wake` own those addresses — and the
+sender must still be a registered identity, so the mail carries the same
+`agent-bus` sender metadata, scrub gate, priority-wake rules and id dedupe as
+a DM. Delivery follows the label: a `to` that is one of a registered
+identity's labels (alias, bare handle or stable id) lands in its inbox as
+legacy mail and records a wake hint by the priority rules; a sink or topic
+label reaches no identity inbox — its readers are the label's own
+subscribers and projections. The body stays untrusted data: consumers of the
+label keep their own admission checks, and addressing one grants no
+authority.
 
 **Priority wake.** P0 always wakes and cannot be turned off. P1 and handoffs
 wake by default (`--no-wake` opts out); P2 and P3 wake only with `--wake`. A
@@ -556,11 +574,11 @@ desktop source does not prevent CLI or teammate observations.
 these shared projections to every enrolled, authenticated peer, independent of
 lane or role. Private inboxes keep their recipient checks. Routine local DMs use
 `phm agents bus dm --to <handle> --text <text>`; transport and send gates still apply.
-Repeatable `--ref <ref>` on `dm` and `channel post` records v2 `refs` on the
+Repeatable `--ref <ref>` on `dm`, `post` and `channel post` records v2 `refs` on the
 `note` body; `--thread <label>` records the v2 `thread` conversation label —
-the field that ties a question and its answer together — on `dm`, `channel
-post`, and (as a read filter) `inbox` and `channel read`, plus `comms bus
-read`/`watch`. A thread read matches that field on `note`/`context` bodies
+the field that ties a question and its answer together — on `dm`, `post`,
+`channel post`, and (as a read filter) `inbox` and `channel read`, plus
+`comms bus read`/`watch`. A thread read matches that field on `note`/`context` bodies
 only; every other body kind never matches.
 
 `body.kind` is one of:

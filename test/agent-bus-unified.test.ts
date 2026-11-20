@@ -7,8 +7,9 @@ import {
   registerAgentIdentity, resolveAgent, stableAgentId,
 } from '../src/core/agents/bus-identity.js';
 import {
-  announceWork, busBodySummary, listBusChannels, postChannelMessage, readAgentChannel, readAgentInbox, readAgentWakes,
-  readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest, shouldWake, updateWorkStatus, type UnifiedBusOptions,
+  announceWork, busBodySummary, listBusChannels, postChannelMessage, postLabelMessage, readAgentChannel, readAgentInbox,
+  readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest, shouldWake, updateWorkStatus,
+  type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
@@ -512,6 +513,74 @@ describe('DM, channel, handoff and priority wake on the one bus store', () => {
     expect(enqueueBusWake({ kind: 'bus.send', id: 'wake-id', from: 'agent:atlas', to: novaId }, { root: options.runsRoot })).toBe('queued');
     expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok',
       wakes: [{ id: 'wake-bare', to: 'nova' }, { id: 'wake-id', to: novaId }] });
+    expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ status: 'ok', wakes: [] });
+  });
+});
+
+describe('label posts on the one bus store', () => {
+  it('posts a note or context to a plain routing label with identity metadata', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    const sent = await postLabelMessage({ from: 'atlas', to: 'fleet.mesh', text: 'observed drift',
+      thread: 'mesh', refs: ['RQ-X'], id: 'lp-1' }, options);
+    expect(sent).toMatchObject({ status: 'posted', to: 'fleet.mesh', wake: 'not-requested' });
+    const raw = listBusInboxAfter(0, 10, options);
+    if (raw.status !== 'ok') throw new Error('unreadable');
+    expect(raw.messages[0]!.envelope).toMatchObject({
+      from: 'agent:atlas', to: 'fleet.mesh', priority: 'P2', channel: 'bus', channel_ref: 'fleet.mesh',
+      sender: { agent_id: stableAgentId('atlas') }, external: false, origin_bridge: 'agent-bus',
+      body: { kind: 'note', text: 'observed drift', thread: 'mesh', refs: ['RQ-X'] },
+    });
+    // --kind context posts the v2 context body shape on the same label.
+    expect(await postLabelMessage({ from: 'atlas', to: 'fleet.mesh', kind: 'context', text: '{"a":1}', id: 'lp-2' }, options))
+      .toMatchObject({ status: 'posted' });
+    const context = listBusInboxAfter(0, 10, options);
+    if (context.status !== 'ok') throw new Error('unreadable');
+    expect(context.messages.find(row => row.envelope.id === 'lp-2')!.envelope.body).toEqual({ kind: 'context', text: '{"a":1}' });
+    // Same-id retry dedupes; a changed body conflicts, like every other send.
+    expect(await postLabelMessage({ from: 'atlas', to: 'fleet.mesh', text: 'observed drift',
+      thread: 'mesh', refs: ['RQ-X'], id: 'lp-1' }, options)).toMatchObject({ status: 'duplicate' });
+    expect(await postLabelMessage({ from: 'atlas', to: 'fleet.mesh', text: 'changed', id: 'lp-1' }, options))
+      .toMatchObject({ status: 'conflict' });
+  });
+
+  it('refuses reserved prefixes, bad labels, unknown senders and bad kinds', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    for (const to of ['agent:nova', 'group:release:general', 'dm:atlas:nova', 'handoff:RQ-1', 'Agent:nova']) {
+      expect(await postLabelMessage({ from: 'atlas', to, text: 'x' }, options)).toMatchObject({ status: 'invalid' });
+    }
+    for (const to of ['', 'has space', 'x'.repeat(129), 'ghp_' + 'a'.repeat(36)]) {
+      expect(await postLabelMessage({ from: 'atlas', to, text: 'x' }, options)).toMatchObject({ status: 'invalid' });
+    }
+    expect(await postLabelMessage({ from: 'ghost', to: 'fleet.mesh', text: 'x' }, options))
+      .toMatchObject({ status: 'unknown-sender' });
+    expect(await postLabelMessage({ from: 'atlas', to: 'fleet.mesh', text: 'x', kind: 'work.post' as never }, options))
+      .toMatchObject({ status: 'invalid' });
+    expect(await postLabelMessage({ from: 'atlas', to: 'fleet.mesh', text: '' }, options)).toMatchObject({ status: 'invalid' });
+    expect(await postLabelMessage({ from: 'atlas', to: 'fleet.mesh', text: 'token ghp_' + 'b'.repeat(36) }, options))
+      .toMatchObject({ status: 'refused' });
+    // None of the refused sends reached the store.
+    const raw = listBusInboxAfter(0, 10, options);
+    expect(raw).toMatchObject({ status: 'ok', messages: [] });
+  });
+
+  it('reaches an identity inbox and wake queue when the label is one of its labels', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    registerAgentIdentity({ handle: 'nova', aliases: ['fleet-watch'] }, options);
+    // A post to a label that resolves to an identity lands like legacy label mail.
+    const sent = await postLabelMessage({ from: 'atlas', to: 'fleet-watch', text: 'status?', priority: 'P1', id: 'lp-inbox' }, options);
+    expect(sent).toMatchObject({ status: 'posted', wake: 'queued' });
+    expect(readAgentInbox('nova', {}, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'legacy', fromAgent: 'atlas', envelope: { id: 'lp-inbox' } }] });
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok', wakes: [{ id: 'lp-inbox', to: 'fleet-watch' }] });
+    // A sink label reaches no identity inbox and records no agent wake.
+    await postLabelMessage({ from: 'atlas', to: 'leaders', text: 'fyi', id: 'lp-leaders' }, options);
+    const inbox = readAgentInbox('nova', {}, options);
+    if (inbox.status !== 'ok') throw new Error('unreadable');
+    expect(inbox.messages.map(m => m.envelope.id)).toEqual(['lp-inbox']);
+    expect(readAgentInbox('atlas', {}, options)).toMatchObject({ status: 'ok', messages: [] });
     expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ status: 'ok', wakes: [] });
   });
 });
