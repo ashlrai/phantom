@@ -67,7 +67,7 @@ describe('readJobGaps', () => {
   it('with propose writes survivors once as drop jobs and finds them again', async () => {
     await seed({ 'RQ-A': '## Gaps\n- Wire the digest into the weekly report\n' });
     const first = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, ...none });
-    expect(first.proposed).toMatchObject([{ queued: true, skipped: null }]);
+    expect(first.proposed).toMatchObject([{ queued: true, skipped: null, refused: null, path: expect.stringMatching(/RQ-PHX-[A-Z0-9]+\.md$/) }]);
     const files = await readdir(join(root, 'leader', 'drop', 'claude'));
     expect(files).toHaveLength(1);
     const body = await readFile(join(root, 'leader', 'drop', 'claude', files[0]!), 'utf8');

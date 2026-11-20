@@ -16,7 +16,7 @@ import { scrubSecrets } from '../util/scrub.js';
 import { stem, words } from './bets-check.js';
 import {
   countQueuedDropJobPrompts, DROP_JOB_DEFAULT_REPO, DROP_JOB_QUEUE_LIMIT, DROP_JOB_REPOS, dropJobExists, DropJobExistsError, DropJobValidationError,
-  listDropJobs, resolveDropJobRoot, validateDropJob, writeDropJob, type DropJobInput,
+  explainDropJobReasons, listDropJobs, resolveDropJobRoot, validateDropJob, writeDropJob, type DropJobInput,
 } from './drop-job-writer.js';
 import { ledgerFinishes } from './empties.js';
 import { EMPTY_CAUSE_TAIL_LINES, readText } from './empty-cause.js';
@@ -37,7 +37,7 @@ const MERGE_WINDOW_DAYS = 14;
 export type GapDropReason = 'open-idea' | 'queued' | 'recent-merge' | 'duplicate-gap';
 export interface GapCandidate { title: string; repo: string | null; sourceJob: string; why: string }
 export interface DroppedGap extends GapCandidate { reason: GapDropReason; matched: string | null }
-export interface ProposedGap extends GapCandidate { jobId: string | null; queued: boolean; skipped: string | null }
+export interface ProposedGap extends GapCandidate { jobId: string | null; queued: boolean; skipped: string | null; /** Absolute path of the written drop file, or null when nothing was written. */ path: string | null; /** Plain-words reason when the contract refused the job, else null. */ refused: string | null }
 /** `known` is false when the job metrics file cannot be read; `unknownSources` names dedupe sources that could not be read. */
 export interface JobGapsReport {
   schema: typeof JOB_GAPS_SCHEMA;
@@ -271,7 +271,7 @@ async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: J
   const out: ProposedGap[] = [];
   const perRepo = new Map<string, number>();
   for (const gap of candidates) {
-    const row: ProposedGap = { ...gap, jobId: null, queued: false, skipped: null };
+    const row: ProposedGap = { ...gap, jobId: null, queued: false, skipped: null, path: null, refused: null };
     out.push(row);
     const repo = gap.repo ?? DROP_JOB_DEFAULT_REPO;
     if (!DROP_QUEUE_REPOS.includes(repo)) { row.skipped = `repo ${repo} is not a known repo`; continue; }
@@ -279,15 +279,16 @@ async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: J
     const job: DropJobInput = { id: gapJobId(gap.title), repo, lane: 'claude', tier: 'work', body: gapJobBody(gap) };
     row.jobId = job.id;
     const verdict = validateDropJob(job);
-    if (!verdict.ok) { row.skipped = `refused: ${verdict.reasons.join(', ')}`; continue; }
+    if (!verdict.ok) { row.refused = explainDropJobReasons(verdict.reasons); row.skipped = row.refused; continue; }
     try {
       if (await dropJobExists(root, job.id)) { row.skipped = 'already queued'; continue; }
       if (!write && await countQueuedDropJobPrompts(root) >= DROP_JOB_QUEUE_LIMIT) { row.skipped = 'the job queue is full'; continue; }
-      await (write ?? writeDropJob)(root, job);
+      const written = await (write ?? writeDropJob)(root, job);
+      row.path = (written as { file?: string } | undefined)?.file ?? null;
       row.queued = true;
       perRepo.set(repo, (perRepo.get(repo) ?? 0) + 1);
     } catch (e) {
-      row.skipped = e instanceof DropJobExistsError ? 'already queued' : e instanceof DropJobValidationError ? `refused: ${e.reasons.join(', ')}` : 'could not write the job';
+      row.skipped = e instanceof DropJobExistsError ? 'already queued' : e instanceof DropJobValidationError ? (row.refused = explainDropJobReasons(e.reasons)) : 'could not write the job';
     }
   }
   return out;

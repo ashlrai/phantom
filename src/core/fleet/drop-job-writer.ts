@@ -62,6 +62,14 @@ const LIST_READ_BYTES = 16 * 1024;
 export const DROP_JOB_REPOS: readonly string[] = ['phantom', 'phantom-secrets', 'ashlr-plugin', 'ashlr-stack', 'locus', 'lexicon', 'ashlr-md'];
 export const DROP_JOB_DEFAULT_REPO = 'phantom';
 const HEADER_LINE = /^#job repo=(\S+) lane=(\S+) tier=(\S+)$/;
+/**
+ * The host ingest's own patterns (orch-ingest.py), copied verbatim as the one
+ * fixture-able statement of the contract. validateDropJob proves every job it
+ * accepts also matches these, so a writer cannot emit what the ingest drops.
+ */
+export const INGEST_JOB_ID = /^RQ-PHX-[A-Z0-9]{3,40}$/;
+export const INGEST_JOB_FILE = /^RQ-PHX-[A-Z0-9]{3,40}\.md$/;
+export const INGEST_JOB_HEADER = /^#job repo=(phantom|phantom-secrets|ashlr-plugin|ashlr-stack|locus|lexicon|ashlr-md) lane=(\S+) tier=(\S+)\s*$/;
 /** The denied-body tokens the ingest rejects on, spelled out once. */
 const DENIED_TOKENS = ['.github/', '/.codex', 'auth.json', 'CODEOWNERS'] as const;
 const DENIED_CONTENT = new RegExp(
@@ -217,11 +225,41 @@ export function validateDropJob(input: { id: unknown; repo?: unknown; lane: unkn
     if (CONTROL_BESIDES_NL_TAB.test(body)) reasons.push('control-characters');
     if (DENIED_CONTENT.test(body)) reasons.push('denied-content');
   }
+  // Shape of what would land on disk, checked against the ingest's own patterns.
+  if (typeof input.id === 'string' && DROP_JOB_ID.test(input.id)) {
+    const name = `${DROP_JOB_FILE_PREFIX}${input.id}.md`;
+    if (!INGEST_JOB_ID.test(`${DROP_JOB_FILE_PREFIX}${input.id}`) || !INGEST_JOB_FILE.test(name)) reasons.push('file-name');
+  }
+  if (typeof input.lane === 'string' && typeof input.tier === 'string') {
+    const header = dropJobHeader(input.lane, input.tier, typeof input.repo === 'string' ? input.repo : undefined);
+    const parsed = INGEST_JOB_HEADER.exec(header);
+    if (!parsed || !LANES.has(parsed[2]!) || !TIERS.has(parsed[3]!)) {
+      if (!reasons.some((r) => r === 'repo' || r === 'lane' || r === 'tier')) reasons.push('header');
+    }
+  }
   if (typeof input.lane === 'string' && typeof input.tier === 'string' && typeof body === 'string'
     && Buffer.byteLength(composeDropJobFile({ lane: input.lane, tier: input.tier, body, repo: typeof input.repo === 'string' ? input.repo : undefined }), 'utf8') > DROP_JOB_MAX_FILE_BYTES) {
     reasons.push('too-large');
   }
   return reasons.length === 0 ? { ok: true } : { ok: false, reasons };
+}
+
+const REASON_WORDS: Record<string, string> = {
+  'id-shape': 'the job id must be 3 to 40 capital letters or digits after RQ-PHX-',
+  repo: `the repo must be one of ${DROP_JOB_REPOS.join(', ')}`,
+  lane: `the lane must be one of ${DROP_JOB_LANES.join(', ')}`,
+  tier: `the tier must be one of ${DROP_JOB_TIERS.join(', ')}`,
+  'file-name': 'the file name must be RQ-PHX-<id>.md',
+  header: 'the first line must be "#job repo=<repo> lane=<lane> tier=<tier>"',
+  'empty-body': 'the job body is empty',
+  'control-characters': 'the job body has control characters',
+  'denied-content': 'the job body names a protected path',
+  'too-large': `the job is over ${DROP_JOB_MAX_FILE_BYTES} bytes`,
+};
+
+/** Plain-words refusal for a failed validation: one sentence an operator can act on. */
+export function explainDropJobReasons(reasons: readonly string[]): string {
+  return `refused: ${reasons.map((r) => REASON_WORDS[r] ?? r).join('; ')}`;
 }
 
 // ---------------------------------------------------------------------------
