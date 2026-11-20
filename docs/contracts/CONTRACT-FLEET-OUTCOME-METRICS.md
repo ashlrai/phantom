@@ -57,10 +57,20 @@ emits policy. Plain output is Markdown. Nothing schedules or sends a brief.
   Finishes/publications join the preceding launch; orphan rows never invent
   launches. Future events are excluded. Job IDs must not represent concurrent
   attempts; delayed events must retain their original event timestamps.
+  Batch sessions count per member, not per session: a `batch_claim` row opens
+  the member's attempt exactly like `launch` (members never get `launch` rows —
+  the session id does), and the member's `task_outcome` row is its finish
+  boundary whatever the outcome word (done/skipped/failed/deferred/unreported);
+  success still comes only from PR and empty evidence, and member-level cost
+  stays unknown. `claim` rows pair with their `launch` (`launch_dedupe`) and
+  never open attempts. `RQ-BATCH-*` session ids are dispatch infrastructure:
+  their launch/finish rows never form attempts, matching the agent-activity
+  verified-completion convention.
 - `byLane` and `byModelTier` contain `{jobs, finished, finishRate, prRate,
   emptyRate, medianDuration, estCost, samples, evidenceRefs}`. Model-tier names
   are JSON tuples; absent metadata stays null (lane bucket `unknown`).
-  `finishRate` is observed finishes / launched attempts. PR rate is published
+  `finishRate` is observed finishes (`finish` rows, `task_outcome` for batch
+  members) / launched attempts. PR rate is published
   attempts / attempts with explicit PR evidence (valid GitHub publication URL,
   `hasPr` boolean, or `empty: true`). Nonempty alone does not prove a PR.
   Empty rate uses only finishes with an explicit `empty` boolean.
