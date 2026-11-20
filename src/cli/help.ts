@@ -289,6 +289,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{schema:"phantom.nodes-plan.v1", as_of, nodes:[{name,online,free_mem_pct,load,lanes,suggested_slots,why}], assignable:[{job,node,why}], unassigned, reasons}',
   },
   {
+    usage: 'phm nodes offload [--dry-run] [--json]',
+    description: 'Opt-in, off by default. When this computer would hold a launch (over load, or the memory gate holds) and another computer passes `phm nodes doctor` with a free slot for the lane, a ready job is chosen for that computer and one event records why. Running jobs never move, a computer never gets more jobs than its free slots, and with no ready computer the job keeps waiting here. --dry-run only shows what would move. `phm nodes offload on|off` flips the setting.',
+    safety: 'append',
+    jsonShape: '{schema:"phantom.nodes-offload.v1", schemaVersion:1, asOf, enabled, mode:dry-run|live, host:{state:busy|fine|unknown,reasons:[load|memory],why}, moves:[{job,lane,node,reasons,why}], stays:[{job,lane,why}], recorded, summary, reasons}; event: phantom.nodes-offload-event.v1 {at,job,lane,from,to,reasons,why}',
+  },
+  {
     usage: 'phm node bootstrap --dry-run [--json]',
     description: 'Print persistent Linux node setup and future registry lease steps; no provisioning or registry calls. Exit 0 plan, 2 bad usage.',
     safety: 'read',
@@ -1388,6 +1394,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'autofix [--apply] [--dry-run] [--json] [--only <fixer>]', desc: 'Act on Eng Ops incident files (prefix a, b, d, e; g is detect-only). Dry run unless --apply. Refuses when ~/.ashlr/KILL exists. Never reads the incident body into a command. See docs/AUTOFIX.md.', topic: 'safety' },
   { cmd: 'nodes [--json] [--can-take <lane>]', desc: 'Your computers as one pool: which are reachable, running Phantom and ready for work. Read only.', topic: 'safety' },
   { cmd: 'nodes plan [--json]', desc: 'Plan which queued job fits which computer, with suggested free slots per computer. Read only: it launches and moves nothing.', topic: 'safety' },
+  { cmd: 'nodes offload [--dry-run] [--json]', desc: 'Opt-in: when this computer would hold a launch and another passes doctor, choose that computer for a ready job and record why. --dry-run shows what would move; `nodes offload on|off` flips the setting.', topic: 'safety' },
   { cmd: 'node join|beat|enqueue|plan|pull|complete|status [--json]', desc: 'Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases.', topic: 'safety' },
   { cmd: 'node bootstrap --dry-run [--json]', desc: 'Plan a persistent Linux node; registry integration is a stub, no provisioning.', topic: 'safety' },
   { cmd: 'sandbox list',                 desc: 'List active git-worktree sandboxes (M21 safety foundation).', topic: 'safety' },
