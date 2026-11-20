@@ -7,6 +7,7 @@
 import type { FleetLiveMap, LiveMapEdge, LiveMapEdgeKind, LiveMapNode, LiveMapNodeKind } from '../../../../core/fleet/live-map.js';
 import type { MapEdge, MapEdgeAgent, MapEdgeRole } from '../../../../core/fleet/map-edges.js';
 import type { AgentsMessagePair } from '../../../../core/fleet/agents-messages.js';
+import { MAP_STATES, type MapFilter, type MapState } from '../../../../core/fleet/map-filter.js';
 import { narrowLaneHealth } from '../../../../core/fleet/lane-badge.js';
 import { apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
@@ -36,6 +37,7 @@ export function narrowLiveMap(raw: unknown): FleetLiveMap | null {
       detail: text(row.detail) ?? 'unknown', live: typeof row.live === 'boolean' ? row.live : null,
       ...(kind === 'lane' && narrowLaneHealth(row.health) ? { health: narrowLaneHealth(row.health) } : {}),
       ...(kind === 'lane' && (row.mergedPerHour === null || typeof row.mergedPerHour === 'number') ? { mergedPerHour: row.mergedPerHour } : {}),
+      ...(kind === 'job' ? { lane: text(row.lane), repo: text(row.repo), ...(MAP_STATES.includes(row.state as MapState) ? { state: row.state as MapState } : {}) } : {}),
       ...(kind === 'resource' && (row.usedPct === null || typeof row.usedPct === 'number') ? { usedPct: row.usedPct } : {}) });
   }
   const edges: LiveMapEdge[] = [];
@@ -178,4 +180,17 @@ export function messageCurve(a: { x: number; y: number }, b: { x: number; y: num
   const cx = (a.x + b.x) / 2 + (row ? 0 : 40 * (a.x <= b.x ? 1 : -1));
   const cy = (a.y + b.y) / 2 - (row ? NODE_H + 36 : 40);
   return { d: `M${a.x},${a.y} Q${cx},${cy} ${b.x},${b.y}`, mid: { x: (a.x + 2 * cx + b.x) / 4, y: (a.y + 2 * cy + b.y) / 4 } };
+}
+
+export const MAP_FILTER_KEY = 'phantom.fleet-map.filter';
+/** The filters picked earlier in this browser session; none when nothing was picked or storage is blocked. */
+export function readMapFilter(): MapFilter {
+  try {
+    const raw: unknown = JSON.parse(globalThis.sessionStorage?.getItem(MAP_FILTER_KEY) ?? 'null');
+    if (!object(raw)) return {};
+    return { lane: text(raw.lane), repo: text(raw.repo), state: MAP_STATES.find(state => state === raw.state) ?? null };
+  } catch { return {}; }
+}
+export function saveMapFilter(filter: MapFilter): void {
+  try { globalThis.sessionStorage?.setItem(MAP_FILTER_KEY, JSON.stringify(filter)); } catch { /* storage blocked: the filter lasts until the page closes */ }
 }

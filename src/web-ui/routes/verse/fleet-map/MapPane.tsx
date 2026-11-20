@@ -16,7 +16,9 @@
 import { messageLineWidth, type FleetLiveMap, type LiveMapEdge, type LiveMapEdgeKind, type LiveMapNode, type LiveMapNodeKind } from '../../../../core/fleet/live-map.js';
 import type { MapEdge } from '../../../../core/fleet/map-edges.js';
 import type { AgentsMessagePair } from '../../../../core/fleet/agents-messages.js';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { filterLiveMap, MAP_FILTER_EMPTY, type MapFilter } from '../../../../core/fleet/map-filter.js';
+import { MapFilterBar } from './MapFilterBar.js';
 import { ConversationsPanel } from './ConversationsPanel.js';
 import { conversationsQuery, threadLines, type Conversation } from './conversations-model.js';
 import { prefersReducedMotion } from '../../../components/charts/motion.js';
@@ -29,7 +31,7 @@ import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { showMessagePair, type MessagePair } from '../fleet-messages/messages-pair.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { emptyMap, layoutLiveMap, liveMapQuery, mapEdgesQuery, mapHeadline, messageCurve, messagePairs, messagePairsQuery, MAP_POLL_MS, NODE_H, NODE_W, pulsing } from './map-model.js';
+import { emptyMap, layoutLiveMap, liveMapQuery, mapEdgesQuery, mapHeadline, messageCurve, messagePairs, messagePairsQuery, MAP_POLL_MS, NODE_H, NODE_W, pulsing, readMapFilter, saveMapFilter } from './map-model.js';
 import { useViewport } from '../shell/viewport.js';
 import { readMapViewMode, saveMapViewMode, type MapViewMode } from './map3d-model.js';
 import { MapStage3D } from './MapStage3D.js';
@@ -64,7 +66,13 @@ interface MapViewProps {
   /** Phone layout only: what waits on the owner, pinned on top. */
   asks?: readonly OrgAsk[];
 }
-export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pairs, conversations, reducedMotion = false, asks }: MapViewProps) {
+export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => {}, pairs, conversations, reducedMotion = false, asks }: MapViewProps) {
+  const [filter, setFilter] = useState<MapFilter>(readMapFilter);
+  const map = useMemo(() => filterLiveMap(full, filter), [full, filter]);
+  const none = map.filter?.matched === 0;
+  const changeFilter = (next: MapFilter) => { setFilter(next); saveMapFilter(next); };
+  const filterBar = <MapFilterBar map={full} filter={filter} onChange={changeFilter} />;
+  const noMatch = <p className={styles.notice} role="status">{MAP_FILTER_EMPTY}</p>;
   const [selectedThread, setSelectedThread] = useState<string | null>(null);
   const [showMessages, setShowMessages] = useState(true);
   const [hovered, setHovered] = useState<string | null>(null);
@@ -75,8 +83,9 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
   const mode: MapViewMode = compact ? '2d' : chosen;
   const arrange = (next: MapLayoutMode) => { setArrangement(next); setHovered(null); saveMapLayout(next); };
   const choose = (next: MapViewMode) => { setChosen(next); setHovered(null); saveMapViewMode(next); };
-  if (compact && !phoneMap) return <PhoneOrg groups={fleetOrgGroups(map)} asks={asks} onShowMap={() => setPhoneMap(true)}
-    onOpenJob={job => { const node = map.nodes.find(row => row.kind === 'job' && row.label === job); if (node) onOpen(node); }} />;
+  if (compact && !phoneMap) return <>{filterBar}{none ? noMatch
+    : <PhoneOrg groups={fleetOrgGroups(map)} asks={asks} onShowMap={() => setPhoneMap(true)}
+      onOpenJob={job => { const node = map.nodes.find(row => row.kind === 'job' && row.label === job); if (node) onOpen(node); }} />}</>;
   const orgLayout = arrangement === 'org' ? layoutByOrg(map) : null;
   const layout = orgLayout ?? layoutLiveMap(map);
   const pulse = (edge: LiveMapEdge) => pulsing(edge, map, now, reducedMotion) ? 'true' : undefined;
@@ -106,8 +115,9 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
       <button type="button" aria-pressed={showMessages} onClick={() => { setShowMessages(on => !on); setHovered(null); }}>Messages</button>
     </div>
     <p className={styles.notice}>Map as of {Number.isFinite(Date.parse(map.generatedAt)) ? <time dateTime={map.generatedAt}>{map.generatedAt}</time> : 'unknown'}.</p>
-    {emptyMap(map) && <p className={styles.notice} role="status">Nothing to map yet: no lanes, jobs or computers reported.</p>}
-    {mode === '3d' ? <MapStage3D map={map} now={now} onOpen={onOpen} onOpenEdge={edge => onOpenMessages(pairOf(edge))} nameOf={nameOf}
+    {filterBar}
+    {emptyMap(map) && !none && <p className={styles.notice} role="status">Nothing to map yet: no lanes, jobs or computers reported.</p>}
+    {none ? noMatch : mode === '3d' ? <MapStage3D map={map} now={now} onOpen={onOpen} onOpenEdge={edge => onOpenMessages(pairOf(edge))} nameOf={nameOf}
       showMessages={showMessages} reducedMotion={reducedMotion} onHover={setHovered} cardEdge={card}
       card={card ? <MessageCard edge={card} pair={pairs?.get(`${card.from}->${card.to}`)} layout={layout} now={now} title={`${label(card.from)} → ${label(card.to)}`} anchored /> : null} />
       : <div className={styles.scroll}>
@@ -172,7 +182,7 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
       {LEGEND.filter(([kind]) => showMessages || kind !== 'messaged-in-last-15-min').map(([kind, word]) => <li key={kind}><span className={styles.swatch} data-kind={kind} />{word}</li>)}
       {showMessages && !reducedMotion && <li><span className={styles.swatch} data-kind="messaged-in-last-15-min" data-pulse="true" />message in the last minute</li>}
     </ul>
-    {showMessages && <section aria-label="Messages on the map">
+    {showMessages && !none && <section aria-label="Messages on the map">
       {map.counts.messages === null ? <p className={styles.notice}>Messages unknown.</p>
         : talk.length ? <ul className={styles.talk}>{talk.map(edge => <li key={edge.id}>
           <button type="button" title="Open the last 20 messages" data-pulse={pulse(edge)} onClick={() => onOpenMessages(pairOf(edge))} {...hover(edge)}>

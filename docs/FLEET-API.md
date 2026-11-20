@@ -430,6 +430,16 @@ graph to the desktop Map pane with a current read session. The graph adds no
 source of its own. It joins the org map and tree above, `phm nodes` (computers
 and the jobs each one holds) and the pool-usage ledger.
 
+`phm map --lane <lane> --repo <repo> --state <running|waiting|done|failed|unknown>`
+narrows it to the agents (jobs) that match every filter given, with their lane,
+computer and pool; `unknown` finds agents whose lane or repo nobody reported.
+`--json` then adds `filter {lane, repo, state, matched, total}`, and each job node
+carries `lane`, `repo` and `state`. A map with no match prints "No agents match
+these filters." and exits 0. The desktop and phone Map views use the same
+`filterLiveMap` (`src/core/fleet/map-filter.ts`), keep the choice for the
+session and offer Clear. The map has no source for failed or waiting jobs yet,
+so those filters find none until one reports; the `gaps` list says so.
+
 - `orgLayout`: where the 3D map puts each org node, grouped by who it reports
   to (the tree `phm fleet org` prints; anything with no owner is under
   `unassigned`). `positions[]` has `id`, `role`, `label`, `parent`, `depth`, `x`,

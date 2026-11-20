@@ -373,3 +373,64 @@ it('3D preserves message cards, the Messages switch and reduced-motion pulse sup
   expect(stage.querySelectorAll('line[data-kind="reports-to"]').length).toBeGreaterThan(0);
   localStorage.clear();
 });
+
+describe('filter bar', () => {
+  /** RQ-A (claude, phantom, running) plus RQ-Z (zai, docs, done). */
+  const view = () => {
+    const raw = JSON.parse(JSON.stringify(fleet())) as FleetLiveMap;
+    raw.nodes.push({ id: 'job:RQ-Z', kind: 'job', level: 2, label: 'RQ-Z', provider: 'unknown', status: 'running', detail: 'fixture-model · docs', live: null, lane: 'zai', repo: 'docs', state: 'done' });
+    return narrowLiveMap(raw)!;
+  };
+  const choose = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  afterEach(() => sessionStorage.clear());
+
+  it('narrows the desktop map, says so when nothing matches, and Clear restores everything', () => {
+    viewport = mockViewport(1440);
+    render(<MapView map={view()} now={NOW} onOpen={() => {}} />);
+    expect(screen.queryByRole('button', { name: 'Clear' })).toBeNull();
+    choose('Lane', 'claude');
+    expect(screen.getByRole('button', { name: /^Open job RQ-A/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Open computer node-b/ })).toBeNull();
+    choose('State', 'running');
+    choose('Repo', 'phantom');
+    expect(screen.getByRole('button', { name: /^Open job RQ-A/ })).toBeTruthy();
+    choose('State', 'done');
+    expect(screen.getByRole('status').textContent).toBe('No agents match these filters.');
+    expect(screen.queryByRole('button', { name: /^Open job/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(screen.getByRole('button', { name: /^Open computer node-b/ })).toBeTruthy();
+    expect((screen.getByLabelText('Lane') as HTMLSelectElement).value).toBe('');
+    expect(sessionStorage.getItem('phantom.fleet-map.filter')).toBe('{}');
+  });
+
+  it('keeps the choice for the session across a remount', () => {
+    viewport = mockViewport(1440);
+    const first = render(<MapView map={view()} now={NOW} onOpen={() => {}} />);
+    choose('State', 'running');
+    first.unmount();
+    render(<MapView map={view()} now={NOW} onOpen={() => {}} />);
+    expect((screen.getByLabelText('State') as HTMLSelectElement).value).toBe('running');
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeTruthy();
+  });
+
+  it('uses the same filter on the phone list', () => {
+    viewport = mockViewport(390);
+    render(<MapView map={view()} now={NOW} onOpen={() => {}} />);
+    expect(screen.getByRole('group', { name: 'Filter the map' })).toBeTruthy();
+    choose('Lane', 'claude');
+    expect(screen.getByTestId('org-headline')).toBeTruthy();
+    choose('State', 'done');
+    expect(screen.getByRole('status').textContent).toBe('No agents match these filters.');
+    expect(screen.queryByTestId('org-headline')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(screen.getByTestId('org-headline')).toBeTruthy();
+  });
+
+  it('reads a stored filter with a bad state as none', () => {
+    sessionStorage.setItem('phantom.fleet-map.filter', '{"state":"asleep","lane":"claude"}');
+    viewport = mockViewport(1440);
+    render(<MapView map={view()} now={NOW} onOpen={() => {}} />);
+    expect((screen.getByLabelText('State') as HTMLSelectElement).value).toBe('');
+    expect((screen.getByLabelText('Lane') as HTMLSelectElement).value).toBe('claude');
+  });
+});
