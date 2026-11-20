@@ -4,8 +4,8 @@ import { jobGapsLines, readJobGaps, type JobGapsReport } from '../core/fleet/job
 
 const usage = 'Usage: phm jobs gaps [--since 24h] [--propose] [--json]';
 const help = `${usage}
-Turn the gaps that no-change jobs list in their notes into new work. Each gap is one candidate (title, repo, source job, why).
-Gaps already in an open idea, the queue or a recent merge are dropped. --propose queues the rest as drop jobs, the same queue as "phm ideas queue".
+Turn the gaps that no-change jobs list in their notes or final message into new work (gap headings, and sentences like "not done" or "left it"). Each gap is one candidate (title, repo, source job, why).
+Gaps already in an open idea, the queue or a recent merge are dropped. --propose queues the rest as drop jobs, the same queue as "phm ideas queue", for repos that have a drop queue; the others are listed as skipped. The fleet self-tick runs this once per tick.
 Prints plain words; --json prints jobs.gaps.v1. Anything unreadable is unknown. Exit 0 report, 1 job metrics unreadable, 2 bad usage.`;
 
 export async function cmdJobsGaps(args: string[], read: (hours: number, propose: boolean) => Promise<JobGapsReport> = (hours, propose) => readJobGaps(hours, { propose })): Promise<number> {

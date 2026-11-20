@@ -98,6 +98,34 @@ describe('phm agents bus (unified)', () => {
     expect(text.join('\n')).toContain('channels=2 source=available');
   });
 
+  it('reads a channel transcript with topic and sender filters', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova', '--alias', 'lane-nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'first', '--id', 'rd-1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'nova', '--topic', 'deploy', '--text', 'second', '--id', 'rd-2'])).json)
+      .toMatchObject({ status: 'posted' });
+    // Reading needs no identity: the transcript is the shared room history.
+    const page = await run(['channel', 'read', 'release']);
+    expect(page.code).toBe(0);
+    expect(page.json).toMatchObject({ status: 'ok', channel: 'release' });
+    expect(page.json.messages.map((m: { envelope: { id: string }; topic: string; fromAgent: string }) =>
+      `${m.envelope.id}:${m.topic}:${m.fromAgent}`)).toEqual(['rd-1:general:atlas', 'rd-2:deploy:nova']);
+    expect((await run(['channel', 'read', 'release', '--topic', 'deploy'])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['rd-2']);
+    // --from resolves every label of one identity, aliases included.
+    expect((await run(['channel', 'read', 'release', '--from', 'lane-nova'])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['rd-2']);
+    expect(await run(['channel', 'read', 'missing'])).toMatchObject({ code: 1, json: { status: 'unknown-channel' } });
+    expect(await run(['channel', 'read', 'release', 'extra'])).toMatchObject({ code: 2 });
+    // Human output prints cursor, priority, topic, id and resolved sender.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['channel', 'read', 'release', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('#release:deploy rd-2 from nova');
+    expect(text.join('\n')).toContain('nextCursor');
+  });
+
   it('records repeatable --ref values as v2 note refs on dm and channel post', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

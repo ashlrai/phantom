@@ -32,8 +32,8 @@ import { BUS_V2_TEXT_MAX, wakeBodySchema, workPostBodySchema, workStatusBodySche
   type Participant, type WorkJob } from './bus-v2-schema.js';
 import { readBusWorkFeed, runtimeProvider, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import {
-  AGENT_ADDRESS_PREFIX, agentChannelNameSchema, agentLabels, findAgentChannel, readAgentRegistry, resolveAgent,
-  type AgentIdentity, type AgentRegistry, type AgentRegistryOptions,
+  AGENT_ADDRESS_PREFIX, agentAddressMatcher, agentChannelNameSchema, agentLabels, findAgentChannel, readAgentRegistry,
+  resolveAgent, type AgentIdentity, type AgentRegistry, type AgentRegistryOptions,
 } from './bus-identity.js';
 
 export const UNIFIED_BUS_ORIGIN = 'agent-bus';
@@ -1010,4 +1010,100 @@ export function listBusChannels(agent: string | undefined, options: UnifiedBusOp
       members: [...channel.members] }))
     .sort((a, b) => a.name.localeCompare(b.name));
   return { status: 'ok', source: read.source, agent: handle, channels };
+}
+
+export interface ChannelReadMessage {
+  cursor: number;
+  receivedAt: number;
+  priority: BusPriority;
+  /** Topic component of the `group:<channel>:<topic>` address the post was sent to. */
+  topic: string;
+  /** Registered handle of the sender label, or null. A label is never authentication. */
+  fromAgent: string | null;
+  envelope: BusEnvelope;
+}
+export interface ChannelReadOptions {
+  /** Restrict the page to one topic; default every topic of the channel. */
+  topic?: string;
+  /**
+   * Sender filter: a handle, `agent:<handle>`, stable id or alias. A ref that
+   * resolves through the identity registry matches every label of that
+   * identity; an unresolvable ref keeps exact-label matching.
+   */
+  from?: string;
+  after?: number;
+  limit?: number;
+}
+export type ChannelReadPage =
+  | { status: 'ok'; channel: string; messages: ChannelReadMessage[]; nextCursor: number }
+  | { status: 'invalid' | 'unknown-channel' | 'unavailable' | 'retryable'; reason: string };
+
+/**
+ * One page of a channel's posts, oldest first: every live envelope addressed
+ * to `group:<name>:*` — or to one `topic` — except `group.presence`
+ * heartbeats, which are expiring observations with their own read
+ * (`groupPresence`), not messages. Reading needs no identity and no
+ * membership: membership gates posting only, and the rows are the same
+ * shared store `comms bus group read` sees. `from` narrows by sender through
+ * the same identity-label matching `comms bus read` uses. `nextCursor`
+ * covers every scanned row, so callers persist it only after handling the
+ * page; a missing registry means no channel exists, an unreadable one or an
+ * unreadable store is reported, never an empty page passed off as history.
+ */
+export function readAgentChannel(name: string, page: ChannelReadOptions = {}, options: UnifiedBusOptions = {}): ChannelReadPage {
+  const after = page.after ?? 0, limit = page.limit ?? 50;
+  if (typeof name !== 'string' || !agentChannelNameSchema.safeParse(name).success) {
+    return { status: 'invalid', reason: 'Invalid channel name.' };
+  }
+  if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
+    return { status: 'invalid', reason: 'after must be >= 0 and limit 1-100.' };
+  }
+  let exact: string | undefined;
+  if (page.topic !== undefined) {
+    if (typeof page.topic !== 'string') return { status: 'invalid', reason: 'Invalid channel topic.' };
+    try { exact = groupAddress(name, page.topic); }
+    catch { return { status: 'invalid', reason: 'Invalid channel topic.' }; }
+  }
+  const read = readAgentRegistry(options);
+  if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
+  if (!findAgentChannel(read.registry, name)) return { status: 'unknown-channel', reason: 'Channel does not exist.' };
+  const prefix = `group:${name}:`;
+  let fromMatch: ((value: string) => boolean) | undefined;
+  if (page.from !== undefined) {
+    if (typeof page.from !== 'string' || page.from.length === 0 || page.from.length > 128) {
+      return { status: 'invalid', reason: 'Invalid sender filter.' };
+    }
+    const registry = read.registry, resolved = new Map<string, string | undefined>();
+    const identityOf = (label: string): string | undefined => {
+      if (!resolved.has(label)) {
+        resolved.set(label, (resolveAgent(registry, label) ?? resolveAgent(registry, label.toLowerCase()))?.id);
+      }
+      return resolved.get(label);
+    };
+    fromMatch = agentAddressMatcher(identityOf, page.from);
+  }
+  const messages: ChannelReadMessage[] = [];
+  let cursor = after;
+  scan: for (let index = 0; index < MAX_PAGES; index += 1) {
+    const result = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ, { root: options.root, now: options.now });
+    if (result.status !== 'ok') {
+      return { status: result.status === 'retryable' ? 'retryable' : result.status === 'invalid' ? 'invalid' : 'unavailable',
+        reason: 'Bus store is not readable.' };
+    }
+    for (const row of result.messages) {
+      const envelope = row.envelope, body = envelope.body;
+      const presence = body !== null && typeof body === 'object' && !Array.isArray(body) &&
+        (body as Record<string, unknown>).kind === 'group.presence';
+      if (!presence && envelope.to.startsWith(prefix) && (exact === undefined || envelope.to === exact) &&
+          (fromMatch === undefined || fromMatch(envelope.from))) {
+        messages.push({ cursor: row.cursor, receivedAt: row.receivedAt, priority: envelope.priority,
+          topic: envelope.to.slice(prefix.length),
+          fromAgent: resolveAgent(read.registry, envelope.from)?.handle ?? null, envelope });
+      }
+      if (messages.length === limit) { cursor = row.cursor; break scan; }
+    }
+    if (result.nextCursor <= cursor) break;
+    cursor = result.nextCursor;
+  }
+  return { status: 'ok', channel: name, messages, nextCursor: cursor };
 }

@@ -1634,7 +1634,14 @@ handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or
 `available`, `agent` the resolved handle or null, and an unknown ref or
 unreadable registry answers `unknown-agent`/`unavailable`, never an empty
-list), `shouldWake(priority, requested, handoff?)`
+list), `readAgentChannel(name, {topic, from, after, limit}, options?)`
+(one oldest-first page of a registry channel's live posts addressed to
+`group:<name>:*` — or one topic — with `group.presence` heartbeats
+excluded; `from` filters by sender through identity-label matching,
+`nextCursor` covers every scanned row, a missing registry answers
+`unknown-channel`, and an unreadable registry or store answers
+`unavailable`/`retryable`, never an empty page passed off as history),
+`shouldWake(priority, requested, handoff?)`
 and `busBodySummary(body)` — a pure, secret-scrubbed read of a bus body for
 inbox surfaces (`note`/`context`/`worker-handoff` return their message text,
 possibly multi-line; every other recognized kind — the v2 work/wake bodies

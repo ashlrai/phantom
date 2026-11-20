@@ -280,6 +280,16 @@ describe('fleet self-tick', () => {
     expect((quiet.report!.steps.find(step => step.step === 'planner-tick')!.report as { autofill: { reason: string } }).autofill.reason).toBe('No lane is starved.');
   });
 
+  it('planner-tick runs one asks sync per tick, as a dry run without --apply', async () => {
+    const out = (dryRun: boolean) => ({ schema: 'asks.sync.v1' as const, asOf: 'now', dryRun, status: 'ok' as const, reason: null, raised: [], kept: [], resolved: [], unknown: [] });
+    const asksSync = vi.fn(async (o: { dryRun?: boolean }) => out(o.dryRun === true));
+    const applied = await run(['--apply', '--json', '--runs-dir', runsDir], { asksSync, ...quietSweep });
+    expect((applied.report!.steps.find(step => step.step === 'planner-tick')!.report as { asksSync: { dryRun: boolean } }).asksSync.dryRun).toBe(false);
+    expect(asksSync).toHaveBeenCalledOnce();
+    await run(['--json', '--runs-dir', runsDir], { asksSync, ...quietSweep });
+    expect(asksSync).toHaveBeenLastCalledWith(expect.objectContaining({ dryRun: true }));
+  });
+
   it('a held lock reports busy, exits 0 and runs no step', async () => {
     const held = acquireLocalStoreLockWithOutcome(LOCK(), 0, { anchorPath: runsDir, exactPrivateStorage: true });
     expect(held.state).toBe('acquired');
