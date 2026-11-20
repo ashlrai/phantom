@@ -86,9 +86,19 @@ lifecycle transition. Missing node storage is never initialized by observation.
 
 ```sh
 phm bots seats --json
+phm bots handoffs --json
 phm bots handoff --seat devin-review --json
 phm bots handoff --seat devin-review --apply --json
 ```
+
+`phm bots handoffs` is the fleet-wide dry-run: one read reports every roster
+seat's projected state, whether `planSeatHandoff`/`applySeatHandoff` would
+accept it (`eligible`), and the pending handoff records it would journal —
+the same deterministic ids a later per-seat apply dedupes on. Ineligible seats
+(active seats, and idle seats with no open work or handoff history) report
+`eligible: false` with no records instead of erroring, so the whole roster's
+handoff posture reads in one call. It writes nothing: no state transitions,
+releases, journals or notices.
 
 Handoff defaults to a dry-run plan. It refuses active seats; only draining seats
 or idle seats with work may hand off (completed handoffs allow harmless replay).

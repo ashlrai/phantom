@@ -175,6 +175,47 @@ describe('fleet lane-reward', () => {
       lanes: [{ lane: 'lane-a' }, { lane: 'lane-b' }] });
   });
 
+  it('reads the newest bounded tail of an oversized ledger, never the stale head', async () => {
+    home = mkdtempSync(join(tmpdir(), 'lane-reward-tail-'));
+    const file = join(home, 'jobs.jsonl');
+    // Append-only ledger larger than the 16 MiB tail window: the head sentinel
+    // must fall outside the window and the newest row must still be seen.
+    const limit = 16 * 1024 * 1024;
+    writeFileSync(file, 'HEAD-SENTINEL\n' + 'A'.repeat(limit) + '\n' + rows(
+      { event: 'finish', job: 'RQ-FAKE-T9', lane: 'lane-z', tokens_total: 42 },
+    ));
+    const raw = await defaultLaneRewardDeps.jobsText(file);
+    expect(raw).not.toBeNull();
+    const ledger = typeof raw === 'string' ? { text: raw, truncated: false } : raw!;
+    expect(ledger.truncated).toBe(true);
+    expect(ledger.text).toContain('RQ-FAKE-T9');
+    expect(ledger.text).not.toContain('HEAD-SENTINEL');
+    expect(ledger.text).not.toContain('AAAA');
+    const report = await readLaneReward({ jobsPath: file });
+    expect(report).toMatchObject({ truncated: true, attempts: 1 });
+    expect(report.lanes.map(lane => lane.lane)).toEqual(['lane-z']);
+  });
+
+  it('marks a small ledger read as not truncated and surfaces the flag', async () => {
+    home = mkdtempSync(join(tmpdir(), 'lane-reward-small-'));
+    const file = join(home, 'jobs.jsonl');
+    writeFileSync(file, rows(
+      { event: 'finish', job: 'RQ-FAKE-S1', lane: 'lane-a', tokens_total: 10 },
+      { event: 'publish', job: 'RQ-FAKE-S1', lane: 'lane-a', url: URL(8) },
+    ));
+    const raw = await defaultLaneRewardDeps.jobsText(file);
+    const ledger = typeof raw === 'string' ? { text: raw, truncated: false } : raw!;
+    expect(ledger.truncated).toBe(false);
+    const report = await readLaneReward({
+      deps: deps({ jobsText: async () => ({ text: rows(
+        { event: 'finish', job: 'RQ-FAKE-S2', lane: 'lane-a', tokens_total: 10 },
+      ), truncated: true }) }),
+    });
+    expect(report.truncated).toBe(true);
+    const human = await run(['--jobs', file]);
+    expect(human.out).not.toContain('truncated');
+  });
+
   it('reports a missing ledger and rejects bad arguments', async () => {
     const json = await run(['--jobs', '/nonexistent/fake-jobs.jsonl', '--json']);
     expect(json.code).toBe(1);

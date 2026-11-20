@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -55,7 +55,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     else if (endpoint.includes('/jobs/') && endpoint.endsWith('/logs')) {
       if (options.unreadable) return { ok: false, stdout: '', stderr: '403' };
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.web ? 'web-shared' : 'shared';
       return success(`/usr/bin/git log -1 --format=%H\n${isMaster ? master : head}\n${fixture(name)}`);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
@@ -398,6 +398,79 @@ describe('CI baseline evidence', () => {
     expect(caused.groups[0]).toMatchObject({ testId: 'scripts/canonical-launcher-digests.json > (generated)', classification: 'pr-caused', action: 'pr-caused', master: 'fail' });
     const shared = await analyzeCiBaseline('owner/repo', github({ digest: true, touched: 'src/core/x.ts' }).gh);
     expect(shared.groups[0]).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+  });
+  it('parses version-sync drift reports and gate errors', () => {
+    const drift = '{"version":"0.0.1","changed":["package-lock.json","desktop/src-tauri/Cargo.toml","README.md"],"matches":false,"check":true}';
+    const failures = parseBaselineFailures([
+      '> phantom@0.0.0 check:version',
+      '> node scripts/sync-candidate-version.mjs --check',
+      drift,
+      'sync-candidate-version: Candidate package identities do not match Phantom',
+    ].join('\n'));
+    expect(failures.map(f => f.testId)).toEqual([
+      'scripts/sync-candidate-version.mjs > (version-sync)',
+      'scripts/sync-candidate-version.mjs > (version-sync)',
+    ]);
+    expect(failures[0]).toMatchObject({ file: 'scripts/sync-candidate-version.mjs', names: '(version-sync)' });
+    expect(failures[0]?.excerpt).toContain('package-lock.json');
+    expect(failures[1]?.excerpt).toContain('Candidate package identities');
+    // Timestamped job-log lines parse identically.
+    const stamped = [drift, 'sync-candidate-version: Expected exactly one main desktop URL']
+      .map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped)).toHaveLength(2);
+    // Passing reports, write-mode results, empty or unknown changed entries,
+    // non-semver versions, malformed or multi-line JSON, and unrelated
+    // output stay unparsed.
+    for (const bad of [
+      '{"version":"0.0.1","changed":[],"matches":false,"check":true}',
+      '{"version":"0.0.1","changed":["src/core/x.ts"],"matches":false,"check":true}',
+      `{"version":"0.0.1","changed":[${Array.from({ length: 11 }, () => '"package.json"').join(',')}],"matches":false,"check":true}`,
+      '{"version":"v0.0.1","changed":["package.json"],"matches":false,"check":true}',
+      '{"version":"0.0.1","changed":["package.json"],"matches":true,"check":true}',
+      '{"version":"0.0.1","changed":["package.json"],"matches":false,"check":false}',
+      '{"version":"0.0.1","changed":"package.json","matches":false,"check":true}',
+      '{"unrelated":true}',
+      '{\n  "version": "0.0.1",\n  "changed": ["package.json"],\n  "matches": false,\n  "check": true\n}',
+      'sync-candidate-version:',
+      'prefix sync-candidate-version: not at line start',
+    ]) {
+      expect(parseBaselineFailures(bad), bad).toEqual([]);
+    }
+    const secret = 'ghp_' + 'a'.repeat(36);
+    expect(parseBaselineFailures(`sync-candidate-version: token ${secret} leaked`)[0]?.excerpt).not.toContain(secret);
+  });
+  it('groups version-sync failures and attributes them to release metadata', async () => {
+    const contents = {
+      'scripts/sync-candidate-version.mjs': "import { readFileSync, realpathSync, writeFileSync } from 'node:fs';\nimport { dirname, resolve } from 'node:path';\nimport { fileURLToPath } from 'node:url';\nexport const synced = 1;",
+    };
+    const report = await analyzeCiBaseline('owner/repo', github({ version: true, contents }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(1);
+    expect(report.groups[0]).toMatchObject({
+      file: 'scripts/sync-candidate-version.mjs',
+      names: '(version-sync)',
+      testId: 'scripts/sync-candidate-version.mjs > (version-sync)',
+      classification: 'shared-baseline',
+      action: 'queue-master-fix',
+      master: 'fail',
+      prs: [1, 2],
+    });
+    expect(report.groups[0]?.brief).toContain('scripts/sync-candidate-version.mjs > (version-sync)');
+    // Every file the gate reads is an input: touching any one -- or the gate
+    // script itself -- is PR-caused.
+    for (const touched of ['package.json', 'package-lock.json', 'server.json', 'desktop/src-tauri/Cargo.toml', 'docs/QUICKSTART.md', 'scripts/sync-candidate-version.mjs']) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ version: true, touched, contents }).gh);
+      expect(caused.groups[0]?.action, touched).toBe('pr-caused');
+    }
+    // The vitest harness ambient set cannot reach this gate: runner configs,
+    // setup files, toolchain configs and the pnpm lockfile are not inputs.
+    for (const touched of ['vitest.config.ts', 'tsconfig.json', 'pnpm-lock.yaml', 'test/setup/home.ts', 'docs/internal/x.md']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ version: true, touched, contents }).gh);
+      expect(shared.groups[0]?.classification, touched).toBe('shared-baseline');
+    }
+    // A singleton unaffected failure can never prove a master pass.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ version: true, count: 1, pass: true, contents }).gh);
+    expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown' });
   });
   it('keeps TAP indentation on timestamped job-log lines', () => {
     const block = [

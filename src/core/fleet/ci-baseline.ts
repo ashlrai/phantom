@@ -356,6 +356,68 @@ function parseGeneratedFailures(log: string): Failure[] {
   return out;
 }
 
+// `npm run build` opens with `npm run check:version`
+// (scripts/sync-candidate-version.mjs --check), the release-metadata gate.
+// A version bump that reached only some of the tracked files prints one
+// compact JSON drift report on stdout and exits 1:
+//   {"version":"1.2.3","changed":["package-lock.json"],"matches":false,"check":true}
+// naming the stale files; a structural break (missing file, renamed field,
+// ambiguous URL) throws instead and prints `sync-candidate-version:
+// <message>` on stderr. Either way every job that builds goes red on
+// master, but no vitest, typecheck or TAP line names it. Both shapes group
+// under the gate script as `scripts/sync-candidate-version.mjs >
+// (version-sync)`: the check reads exactly the script and the metadata
+// files it rewrites -- VERSION_SYNC_INPUTS, mirrored from the script's
+// file list -- so that closed set, not the vitest harness ambient deps,
+// decides touched. Like the other non-test identities it can never
+// resolve through a vitest pass line: shared-baseline, pr-caused or
+// unknown, never probable-flake. Passing reports (`matches: true`),
+// write-mode results, empty or unknown `changed` entries, non-semver
+// versions, malformed or multi-line JSON and unrelated output stay
+// unparsed.
+const VERSION_SYNC_FILE = 'scripts/sync-candidate-version.mjs';
+const VERSION_SYNC_NAMES = '(version-sync)';
+const VERSION_SYNC_INPUTS = [
+  'package.json', 'package-lock.json', 'desktop/package.json',
+  'desktop/src-tauri/tauri.conf.json', 'desktop/src-tauri/Cargo.toml',
+  'desktop/src-tauri/Cargo.lock', 'server.json',
+  'desktop/README.md', 'README.md', 'docs/QUICKSTART.md',
+] as const;
+const VERSION_SYNC_KNOWN = new Set<string>(VERSION_SYNC_INPUTS);
+const VERSION_SYNC_SEMVER = /^\d+\.\d+\.\d+$/;
+const VERSION_SYNC_PREFIX = 'sync-candidate-version: ';
+const VERSION_SYNC_MAX = 4;
+
+// Failure files whose real inputs sit outside any import closure: a gate
+// script reads data files directly, so the closure walk alone would miss
+// every input a PR could break. dependencies() seeds these before walking.
+const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
+  [VERSION_SYNC_FILE]: VERSION_SYNC_INPUTS,
+};
+
+function parseVersionSyncFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  for (const line of lines(log)) {
+    if (out.length >= VERSION_SYNC_MAX) break;
+    if (line.startsWith('{')) {
+      let doc: unknown;
+      try { doc = JSON.parse(line); } catch { continue; }
+      const report = doc as { version?: unknown; changed?: unknown; matches?: unknown; check?: unknown } | null;
+      if (report === null || typeof report !== 'object') continue;
+      if (report.matches !== false || report.check !== true) continue;
+      if (typeof report.version !== 'string' || !VERSION_SYNC_SEMVER.test(report.version)) continue;
+      if (!Array.isArray(report.changed) || report.changed.length === 0 || report.changed.length > VERSION_SYNC_INPUTS.length) continue;
+      if (!report.changed.every(entry => typeof entry === 'string' && VERSION_SYNC_KNOWN.has(entry))) continue;
+      out.push({ file: VERSION_SYNC_FILE, names: VERSION_SYNC_NAMES, testId: `${VERSION_SYNC_FILE} > ${VERSION_SYNC_NAMES}`, excerpt: clean(line) });
+      continue;
+    }
+    if (line.startsWith(VERSION_SYNC_PREFIX)) {
+      out.push({ file: VERSION_SYNC_FILE, names: VERSION_SYNC_NAMES, testId: `${VERSION_SYNC_FILE} > ${VERSION_SYNC_NAMES}`, excerpt: clean(line) });
+    }
+  }
+  return out;
+}
+
 export function parseBaselineFailures(log: string, repo?: string): Failure[] {
   const result: Failure[] = [];
   const typecheck = new Map<string, Failure>();
@@ -398,6 +460,10 @@ export function parseBaselineFailures(log: string, repo?: string): Failure[] {
     result.push(failure);
   }
   for (const failure of parseGeneratedFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseVersionSyncFailures(log)) {
     if (result.length >= 100) break;
     result.push(failure);
   }
@@ -495,6 +561,10 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     if (cached) return cached;
     const task = (async () => {
       const visited = new Set<string>();
+      // A gate script's inputs can be data files no import closure reaches
+      // (release metadata for sync-candidate-version); seed them so a PR
+      // touching any input counts as touched.
+      for (const input of STATIC_FAILURE_INPUTS[file] ?? []) visited.add(input);
       // Only code has an import closure: a Markdown report, JSON or asset
       // failure file depends on itself alone. Scanning prose for import
       // syntax would let a doc's code sample fail the whole closure closed.
@@ -750,8 +820,10 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       const deps = await dependencies(failure.file);
       // Generated artifacts are produced by the clean-tree job, not the test
       // runner: the vitest harness ambient set cannot stale them, so only
-      // the generator-input deps decide touched.
-      const ambient = failure.names === GENERATED_NAMES ? new Set<string>() : await harnessAmbient(failure.file);
+      // the generator-input deps decide touched. The version-sync gate reads
+      // exactly its enumerated metadata inputs, so the ambient set cannot
+      // reach it either.
+      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES ? new Set<string>() : await harnessAmbient(failure.file);
       const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
       observations.push({ pr, failure, touched, runId: failure.runId });
     }

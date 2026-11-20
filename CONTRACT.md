@@ -15,7 +15,8 @@ Creation requires `--dry-run` and never calls the writer.
 ## External bot seats
 
 `src/core/bots/seats.ts` exports `BotSeat`, `QuotaEvidence`, `SeatAdapter`,
-`SeatState`, `SeatHandoff` and `SeatOptions`. The strict on-disk roster schema is
+`SeatState`, `SeatHandoff`, `SeatHandoffPlanEntry`, `SeatHandoffsPlan` and
+`SeatOptions`. The strict on-disk roster schema is
 `phantom-bot-seats.v1` at `~/.phantom/bots/seats.json`; missing means empty.
 Kinds are devin-bot, grok-bot, openai-bot, local and other; other requires a bus
 provider, all others derive it. Secret handles are names only; secret-shaped
@@ -42,7 +43,14 @@ Exports:
   draining/idle map to idle. `phm agents bus id list` adds these as `participants`
   without modifying stored identities, channels or authority.
 - `planSeatHandoff(id: string, opts?)` is a dry-run projection; active seats are
-  refused. `applySeatHandoff(id, opts?)` uses a stale-safe lock, fsyncs one
+  refused. `planSeatHandoffs(opts?)` is the fleet-wide dry-run: one snapshot
+  returns `{schema:'phantom-bot-handoffs-plan.v1', apply:false, seats}` with one
+  `{seatId, state, eligible, handoffs}` entry per roster seat — ineligible seats
+  report `eligible:false` and no records rather than erroring, and pending
+  handoff ids are the same deterministic ids the single-seat plan and apply
+  journal. Both plans enforce the same eligibility rule (draining seats always;
+  idle seats only while holding work or carrying handoff history). Neither
+  writes state. `applySeatHandoff(id, opts?)` uses a stale-safe lock, fsyncs one
   `phantom-bot-handoff.v1` record per work/lease identity before releasing work,
   retries held releases on replay, declines node sessions and releases bus
   claims by source. Source releases require the current owner; seat handoffs also
@@ -208,14 +216,20 @@ read-only version 1 evidence report, and `parseBaselineFailures(log, repo?)`
 for capped, scrubbed failure identities -- Vitest `file > name` and suite-load
 `file > (suite)`, TypeScript `<file> > (typecheck)`, check:docs
 `<file> > (docs-check)`, node:test TAP `file > suite > test` /
-`file > (suite)` resolved through the Actions checkout marker, and
+`file > (suite)` resolved through the Actions checkout marker,
 clean-tree `<file> > (generated)` rows from the stale-files porcelain dump
-and launcher-digest check -- plus summaries. TAP `ok` results carry no
+and launcher-digest check, and the release-metadata gate
+`scripts/sync-candidate-version.mjs > (version-sync)` from the build's
+`check:version` drift JSON report or `sync-candidate-version: <message>`
+error -- plus summaries. TAP `ok` results carry no
 location, so TAP failures never resolve a master pass or flake
 classification. Generated artifacts carry no import closure: `docs/llms.txt`
 depends on its generator inputs and every public docs page from the master
 tree listing (unreadable or truncated listings fail closed), and
-`scripts/canonical-launcher-digests.json` on `bin/ashlr`. `enqueueBaselineFixes(report,
+`scripts/canonical-launcher-digests.json` on `bin/ashlr`. The version-sync
+gate's dependency set is the script plus the ten metadata files it rewrites
+(seeded as static inputs), and the vitest harness ambient set does not apply
+to it. `enqueueBaselineFixes(report,
 absoluteQueuePath)` explicitly writes work-tier master-fix rows deduplicated
 by queue state via `nextFixGeneration`: a failure whose prior fix generations
 all reached DONE re-queues as the next `RQ-CIBASE-*-G<n>` id while the

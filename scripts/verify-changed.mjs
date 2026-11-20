@@ -42,6 +42,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     pythonFiles: changed.filter((path) => existing.has(path) && /\.py$/.test(path)),
     shellFiles: changed.filter((path) => existing.has(path) && /\.sh$/.test(path)),
     jsonFiles: changed.filter((path) => existing.has(path) && /\.json$/.test(path)),
+    xmlFiles: changed.filter((path) => existing.has(path) && /\.(?:xml|plist|svg)$/.test(path)),
     webTypecheck: changed.some((path) => path.startsWith('src/web-ui/')),
     authorityDrift: changed.some(affectsAuthorityDrift),
     fleetRegistry: changed.some((path) => /^src\/cli\/fleet-[^/]*\.ts$/.test(path)),
@@ -203,10 +204,10 @@ export function docsCheckPreflight(root, exists = existsSync) {
 }
 
 /** Probe for a working python3; the fleet's dispatcher and bridge tooling are Python. */
-export function pythonPreflight(spawn = spawnSync) {
+export function pythonPreflight(spawn = spawnSync, subject = 'changed .py files') {
   const probe = spawn('python3', ['--version'], { encoding: 'utf8', timeout: 15000 });
   if (probe.error || probe.signal || probe.status !== 0) {
-    return { ok: false, reason: 'python3 is unavailable or did not run; changed .py files cannot be syntax-checked locally' };
+    return { ok: false, reason: `python3 is unavailable or did not run; ${subject} cannot be syntax-checked locally` };
   }
   return { ok: true };
 }
@@ -308,6 +309,49 @@ export function runJsonSyntaxCheck(root, files, read = readFileSync) {
     return false;
   }
   console.log('PASS json syntax check');
+  return true;
+}
+
+// ElementTree is the well-formedness grammar plutil, site generators and
+// SVG renderers all enforce on XML-family files: one interpreter run covers
+// the batch and the first parse error fails the check. A .plist has three
+// encodings and only the XML one starts with "<" (after an optional BOM or
+// whitespace), so binary and OpenStep ASCII plists — comments and all —
+// skip the parser instead of failing it; a .xml or .svg that is not XML at
+// all must parse. Named HTML entities like &nbsp; are undefined in XML and
+// fail; that strictness is deliberate — the file is malformed XML even
+// where browsers render it leniently.
+const XML_SYNTAX_CHECK = `import sys
+import xml.etree.ElementTree as ET
+
+for path in sys.argv[1:]:
+    if path.lower().endswith(".plist"):
+        with open(path, "rb") as fh:
+            head = fh.read(512).lstrip()
+        if head.startswith(b"\\xef\\xbb\\xbf"):
+            head = head[3:].lstrip()
+        if head and not head.startswith(b"<"):
+            continue
+    try:
+        ET.parse(path)
+    except Exception as exc:
+        print(f"{path}: {exc}", file=sys.stderr)
+        sys.exit(1)
+`;
+
+/** Syntax-check changed XML-family files (.xml, .plist, .svg); false on any interpreter or parse failure. */
+export function runXmlSyntaxCheck(root, files, spawn = spawnSync) {
+  const result = spawn('python3', ['-c', XML_SYNTAX_CHECK, ...files], {
+    cwd: root, encoding: 'utf8', timeout: 120000,
+  });
+  if (result.status !== 0) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL xml syntax check');
+    return false;
+  }
+  console.log('PASS xml syntax check');
   return true;
 }
 
@@ -882,6 +926,16 @@ function main() {
     console.log('PASS json syntax check skipped: no json change');
   } else if (!runJsonSyntaxCheck(root, selection.jsonFiles)) {
     process.exitCode = 1;
+  }
+  if (selection.xmlFiles.length === 0) {
+    console.log('PASS xml syntax check skipped: no xml, plist or svg change');
+  } else {
+    const python = pythonPreflight(spawnSync, 'changed XML files');
+    if (!python.ok) {
+      console.log(`SKIP xml syntax check: ${python.reason}`);
+    } else if (!runXmlSyntaxCheck(root, selection.xmlFiles)) {
+      process.exitCode = 1;
+    }
   }
   if (selection.rustFiles.length === 0) {
     console.log('PASS rust syntax check skipped: no rust change');
