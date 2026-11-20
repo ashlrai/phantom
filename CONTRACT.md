@@ -63,12 +63,14 @@ Exports:
   value-free statuses, not post-release exceptions.
 - `sendSeatMessage({from, to, text}, opts?)` delegates configured participants to
   unified bus DMs under the seat's fleet root and clock, or owner notices;
-  unknown seats/secret-shaped text are refused.
+  `from`/`to` accept a seat id or participantId (`to: 'owner'` posts an
+  owner-thread notice). Unknown seats/secret-shaped text are refused.
 
 `SeatOptions` injects home, runs, clock, quota reader, node store, node-release
 port, owner-thread options, owner notice and bus post. Default coordination and
-node storage use canonical roots; owner defaults on apply use the same fixed
-settings/runs construction as the comms CLI and retain KILL/pause checks.
+node storage use canonical roots; owner defaults use the same fixed
+settings/runs construction as the comms CLI, mirror onto the seat fleet root
+and retain KILL/pause checks.
 Injected homes relocate storage for hermetic tests. Public handoff metadata
 uses unknown/null when evidence is unavailable; tokens are never serialized.
 

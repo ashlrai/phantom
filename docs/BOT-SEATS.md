@@ -152,12 +152,17 @@ poll wake targets. Neither projection grants membership or authentication.
 Direct messaging still requires the existing bus identities/aliases and channel
 membership; the seat projection does not silently register them.
 
-`sendSeatMessage` sends to another configured participant through the unified
-bus, or to the owner through an injected/configured owner thread. A seat-to-seat
-message resolves the bus identity registry and appends under the same fleet root
+`phm bots message --from <seat> --to <seat|owner> --text <text>` reaches
+`sendSeatMessage`: both ends accept a seat id or participantId, and `owner`
+posts an owner-thread notice. `sendSeatMessage` sends to another configured
+participant through the unified bus, or to the owner through the configured
+owner thread (injected options win in tests). A seat-to-seat message resolves
+the bus identity registry and appends under the same fleet root
 (`<home>/.ashlr/fleet`) and clock the seat's claims and handoff notices use;
-`runsRoot` places only the wake hint queue. Unknown seats and secret-shaped
-text are refused. Provider adapter messaging is separate.
+`runsRoot` places only the wake hint queue. Owner notices use the same
+settings/runs construction as handoff notices and mirror onto that fleet root.
+Unknown seats and secret-shaped text are refused. Provider adapter messaging
+is separate.
 
 The console's `/bots` Seats section reads `GET /api/bots/seats`: display name,
 kind/provider, state, admission, quota evidence, current claims/jobs and recent

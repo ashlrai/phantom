@@ -1,4 +1,4 @@
-import { applySeatHandoff, listSeats, planSeatHandoff, planSeatHandoffs } from '../core/bots/seats.js';
+import { applySeatHandoff, listSeats, planSeatHandoff, planSeatHandoffs, sendSeatMessage } from '../core/bots/seats.js';
 import { explainPhantomBot, listPhantomBots, planPhantomBot, readPhantomBot } from '../core/agents/phantom-bot.js';
 
 function options(args: string[], flags: string[], values: string[]): Record<string, string> {
@@ -15,10 +15,10 @@ export async function runBotsCli(argv: string[], out = console.log, home?: strin
   try {
     const [verb, ...args] = argv;
     if (!verb || ['help', '--help', '-h'].includes(verb) || args.includes('--help')) {
-      out('phm bots list|seats|handoffs|handoff --seat <id> [--apply]|show <id>|explain <id>|create --dry-run --id <id> --outcome <text> --profile <id> [--json]'); return 0;
+      out('phm bots list|seats|handoffs|handoff --seat <id> [--apply]|show <id>|explain <id>|create --dry-run --id <id> --outcome <text> --profile <id>|message --from <seat> --to <seat|owner> --text <text> [--json]'); return 0;
     }
     const name = ['show', 'explain'].includes(verb) ? args.shift()! : '';
-    const opts = options(args, ['--json', '--dry-run', '--apply'], ['--seat', '--id', '--outcome', '--profile', '--needs', '--min-tier', '--max-tier', '--max-cost-class']);
+    const opts = options(args, ['--json', '--dry-run', '--apply'], ['--seat', '--id', '--outcome', '--profile', '--needs', '--min-tier', '--max-tier', '--max-cost-class', '--from', '--to', '--text']);
     let result: unknown;
     if (verb === 'seats') result = await listSeats({ home });
     else if (verb === 'handoffs') result = await planSeatHandoffs({ home });
@@ -31,7 +31,10 @@ export async function runBotsCli(argv: string[], out = console.log, home?: strin
         lanePolicy: { needs: opts['--needs']?.split(',') ?? [], min_tier: opts['--min-tier'] ?? 'fast', max_tier: opts['--max-tier'] ?? 'frontier', max_cost_class: opts['--max-cost-class'] ?? 'included' },
         memory: { pointer: `~/.phantom/bots/${opts['--id']}/memory` }, channels: [], needsYou: [] }, home);
     } else if (verb === 'list') result = await listPhantomBots(home);
-    else if (verb === 'show' || verb === 'explain') {
+    else if (verb === 'message') {
+      if (!opts['--from'] || !opts['--to'] || !opts['--text']) throw new Error('Missing --from, --to or --text.');
+      result = await sendSeatMessage({ from: opts['--from'], to: opts['--to'], text: opts['--text'] }, { home });
+    } else if (verb === 'show' || verb === 'explain') {
       const bot = await readPhantomBot(name, home); result = verb === 'show' ? bot : await explainPhantomBot(bot);
     } else throw new Error('Unknown bots verb.');
     out(JSON.stringify(result, null, 2)); return 0;
