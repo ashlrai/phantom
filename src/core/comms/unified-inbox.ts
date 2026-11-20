@@ -47,9 +47,8 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
+import { BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
 import { coordinationRowBlocks, listCoordination } from '../agents/claim-store.js';
-import type { WorkJob } from '../agents/bus-v2-schema.js';
 import { listDrafts, type Draft } from '../cos/drafts.js';
 import { compareRanked, needsYouPriorityHeuristic, type AttentionItem, type NeedsYouPriority, type RankedAttentionItem } from '../decide/needs-you.js';
 import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxInspection, type BusInboxOptions, type BusInboxReceipt } from '../fleet/bus-inbox.js';
@@ -231,9 +230,6 @@ interface BusFeedPost {
   receivedAt: number;
   expiresAt: number;
 }
-
-/** Statuses that still mean "open for a worker"; running/idle/blocked are progress reports, the rest are terminal. */
-const BUS_FEED_OPEN_STATUSES: ReadonlySet<WorkJob['status']> = new Set(['queued', 'rescheduled']);
 
 /**
  * Open v2 work-feed jobs with claimable scope, from the same read-only
