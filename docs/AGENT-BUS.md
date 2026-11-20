@@ -289,6 +289,16 @@ announcement address and joined with the live coordination holds — so the
 whole post/status/feed loop stays on this surface without dropping to
 `phm fleet work-feed`.
 
+**Status.** `phm agents bus status [--json]` is a read-only probe of the five
+dependencies every verb above touches: the message store (retained/live/expired
+counts against its caps), the identity registry (identity and channel counts),
+the wake queue (state and observed hint count), the shared coordination table
+(live claims and status rows) and the work-feed projection (job count, or the
+refusal reason when the feed is poisoned). Each section reports its own real
+state — a store that cannot be read reports `unavailable` with null counts,
+never zero, and the probe never throws, writes or takes a lock. Use it before a
+session assumes the bus is healthy.
+
 **CLI adapters.** `src/core/agents/bus-cli-adapters.ts` covers `claude`,
 `codex`, `devin`, `cursor` and `grok`. Each one detects its CLI (explicit
 `PHM_AGENT_CLI`, else the runtime markers already used by team approvals, such

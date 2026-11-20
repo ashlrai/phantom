@@ -1686,6 +1686,15 @@ a feed lookup.
 falling back to a secret-scrubbed single-line read of string bodies or a
 bounded 512-character raw JSON render for unrecognized bodies. Identities
 are routing names and grant no authority.
+
+`src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
+read-only probe over the five dependencies the unified verbs touch — the
+message store (`inspectBusInbox` pass-through), the identity registry (counts,
+null when unreadable), the wake queue (`state` plus the observed hint count,
+null unless `ok`), the shared coordination table (`coordinationSummary`) and
+the work-feed projection (job count, or the refusal `reason`). Each section
+reports its own real state, a failed probe degrades only its own section, and
+the read never throws, writes or takes a lock; unknown stays null, never zero.
 See [Unified bus](docs/AGENT-BUS.md#unified-bus-identities-dms-channels-handoffs-and-wake).
 
 `fleet.specialist-identity.v1` adds a read-only identity/outcome projection over
