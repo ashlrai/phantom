@@ -114,7 +114,8 @@ export interface OwnerCommsStatus {
   threadId: typeof OWNER_THREAD_ID;
   kill: boolean;
   paused: boolean;
-  messages: number;
+  /** Live plus archived-base message count; null when the thread is unreadable — unknown stays unknown, never 0. */
+  messages: number | null;
   adapters: OwnerAdapterStatus[];
   /** Additive: how long teammate texts have waited for a reply (metadata only). */
   replyGap: TeammateReplyGap[];
@@ -634,13 +635,13 @@ export function readOwnerAwaitingReplies(options: { runsDir: string }): OwnerAwa
 export function readOwnerCommsStatus(options: OwnerThreadOptions): OwnerCommsStatus {
   const kill = halted(options);
   const hold = paused(options);
-  let messages = 0;
+  let messages: number | null = null;
   let awaitingReply: number | null = null;
   try {
     const state = readState(options);
     messages = (state.base ?? 0) + state.messages.length;
     awaitingReply = awaitingReplyIds(state).length;
-  } catch { messages = 0; }
+  } catch { /* unreadable thread: both counts stay null, never a fabricated 0 */ }
   return {
     schema: 'comms.owner-thread.status.v1',
     claimKey: OWNER_THREAD_CLAIM_KEY,

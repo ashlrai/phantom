@@ -32,13 +32,15 @@ reply: `awaitingReply` lists their message ids (`m<n>`), or `null` when the
 thread is unreadable — unknown stays unknown, never an empty list. `phm comms
 status` reports the count as `awaitingReply` (`null` when unreadable) and the
 human `phm comms thread` output appends `[awaiting reply]` to those inbound
-lines. A message counts as answered once any recorded outbound reply cites its
-idempotency key — including a reply whose channel deliveries all failed, since
-delivery state stays with the receipts — while proactive notices never clear
-the mark. `phm comms inbox` lists each awaiting inbound as an `owner-thread`
-item (kind `owner-message`) with `phm comms thread` and
-`phm comms send-owner --reply-to <key>` deep links, so the unified pending
-view and the Leader's comms brief see the same mark this status reports.
+lines. Its `messages` count follows the same rule — the real total, or `null`,
+never `0`, when the thread cannot be read. A message counts as answered once
+any recorded outbound reply cites its idempotency key — including a reply
+whose channel deliveries all failed, since delivery state stays with the
+receipts — while proactive notices never clear the mark. `phm comms inbox`
+lists each awaiting inbound as an `owner-thread` item (kind `owner-message`)
+with `phm comms thread` and `phm comms send-owner --reply-to <key>` deep
+links, so the unified pending view and the Leader's comms brief see the same
+mark this status reports.
 
 ## Rotation, history and pulling
 
