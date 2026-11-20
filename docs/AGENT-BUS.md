@@ -196,8 +196,16 @@ its member handles, creator and creation time, or only the channels one
 resolved identity belongs to. A missing registry is a verified-empty list
 (`source: missing`), an unreadable one is `unavailable` — never an empty
 list — and membership is a routing label set (who may post), not proof of
-presence or authority. Because channel addresses are bus-group addresses,
-existing `subscribeGroup` readers see the same posts.
+presence or authority. `phm agents bus channel read <name> [--topic <t>]
+[--from <agent>] [--after <cursor>] [--limit <n>]` pages the room's posts
+oldest-first — every live envelope addressed to `group:<name>:*` (or one
+`--topic`), minus `group.presence` heartbeats, which are observations with
+their own read, not messages; `--from` narrows by sender through the same
+identity-label matching `comms bus read` uses. Reading needs no identity
+and no membership; an unknown channel is `unknown-channel`, an unreadable
+registry or store is reported — never an empty page passed off as history.
+Because channel addresses are bus-group addresses, existing `subscribeGroup`
+readers see the same posts.
 
 **Priority wake.** P0 always wakes and cannot be turned off. P1 and handoffs
 wake by default (`--no-wake` opts out); P2 and P3 wake only with `--wake`. A
