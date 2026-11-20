@@ -102,6 +102,7 @@ function printDoctorReport(report: DoctorReport): void {
 const DOCTOR_USAGE = [
   'Usage: phm doctor [--json] [--fix]',
   '       phm doctor merge-path --repo owner/name [--branch branch] [--json]',
+  '       phm doctor worktree [--json]',
   '',
   'One-glance health check: config, Phantom, providers, ecosystem.',
   'Exits 1 when any check fails; warnings (optional pieces) exit 0.',
@@ -129,6 +130,10 @@ export async function cmdDoctor(args: string[]): Promise<number> {
   if (args[0] === 'merge-path') {
     const { cmdDoctorMergePath } = await import('./doctor-merge-path.js');
     return cmdDoctorMergePath(args.slice(1));
+  }
+  if (args[0] === 'worktree') {
+    const { cmdDoctorWorktree } = await import('./doctor-worktree.js');
+    return cmdDoctorWorktree(args.slice(1));
   }
   // Answer --help before loadConfig(), which creates config on a fresh HOME.
   if (wantsHelp(args)) {
