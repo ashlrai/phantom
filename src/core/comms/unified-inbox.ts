@@ -21,9 +21,10 @@
  *               message-id claim consults) also counts as held. The same
  *               section also lists open agent-bus v2 work-feed jobs (queued or
  *               rescheduled `work.post` announcements with at least one claim
- *               key not fully held), read through the same projection
- *               `phm agents bus work feed` serves — act:
- *               `phm agents bus claim acquire` — and every live
+ *               key not fully held) and jobs the feed shows `blocked` or
+ *               `failed` — stuck work needs a decision, not a worker — read
+ *               through the same projection `phm agents bus work feed` serves —
+ *               act: `phm agents bus claim acquire` — and every live
  *               `worker-handoff` envelope (`isWorkerHandoffBody`, the exact
  *               contract `fleet handoff-receive`/`handoff-reply` accept), so a
  *               pending assignment surfaces here instead of only in
@@ -237,17 +238,31 @@ interface BusFeedPost {
   expiresAt: number;
 }
 
+/** The newest `work.status` envelope the scan saw for a job: its wire id (the `agents bus show` handle) and its scrubbed reason. */
+interface BusFeedStatus {
+  id: string;
+  detail: string | null;
+}
+
+/** Feed statuses that need a decision rather than a worker: blocked waits on something, failed broke. */
+const BUS_FEED_STUCK_STATUSES: ReadonlySet<string> = new Set(['blocked', 'failed']);
+/** Display clip for a status report's own detail inside an item detail line. */
+const STATUS_DETAIL_MAX = 160;
+
 /**
- * Open v2 work-feed jobs with claimable scope, from the same read-only
- * projection `phm agents bus work feed` serves. A job counts as pending while
- * it is queued or rescheduled, declares at least one claim key, and — when the
+ * Open and stuck v2 work-feed jobs, from the same read-only projection
+ * `phm agents bus work feed` serves. A job counts as pending while it is
+ * queued or rescheduled, declares at least one claim key, and — when the
  * coordination table is readable — at least one of those keys has no live hold.
- * Unknown holds list candidates under 'degraded' rather than hiding them. A
- * refused, retryable or unreadable feed degrades the section; it never
- * invents jobs.
+ * A job the feed shows `blocked` or `failed` counts as pending too: it cannot
+ * be claimed, it needs a decision, so it lists with the newest status report's
+ * own detail and a `bus show` deep link instead of a claim act. Unknown holds
+ * list candidates under 'degraded' rather than hiding them. A refused,
+ * retryable or unreadable feed degrades the section; it never invents jobs.
  */
 function busFeedJobItems(options: UnifiedInboxOptions, now: number,
-  posts: ReadonlyMap<string, BusFeedPost>): { state: 'ok' | 'degraded' | 'unavailable'; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  posts: ReadonlyMap<string, BusFeedPost>,
+  statuses: ReadonlyMap<string, BusFeedStatus>): { state: 'ok' | 'degraded' | 'unavailable'; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   let feed: BusWorkFeedReadResult;
   try { feed = (options.readFeed ?? readBusWorkFeed)({ root: options.busRoot, claims: true, now: () => now }); }
   catch { return { state: 'unavailable', items: [] }; }
@@ -266,12 +281,35 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
 
   const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
   for (const job of feed.jobs) {
+    const post = posts.get(job.id);
+    // A stuck job cannot be claimed — it needs a decision — so it lists with
+    // the status report that moved it here instead of a claim act. Claim keys
+    // are irrelevant to that read, so empty ones still surface.
+    if (BUS_FEED_STUCK_STATUSES.has(job.status)) {
+      const report = statuses.get(job.id);
+      items.push({
+        id: `bus-feed:${job.id}`,
+        source: 'bus',
+        kind: 'bus-work',
+        severity: job.status === 'failed' || post?.priority === 'P0' ? 'high' : 'warn',
+        blocking: false,
+        title: oneLine(job.title, TITLE_MAX) || `bus work ${job.id}`,
+        detail: cap(`owner ${job.owner} · ${job.provider} · ${job.repo} · ${job.status}` +
+          (report?.detail ? ` — ${report.detail}` : ''), DETAIL_MAX),
+        since: iso(job.updatedAt),
+        expiresAt: post ? iso(post.expiresAt) : null,
+        act: [
+          ...(report === undefined ? [] : [`phm agents bus show ${report.id}`]),
+          `phm agents bus work feed --job ${job.id} --claims`,
+        ],
+      });
+      continue;
+    }
     if (!BUS_FEED_OPEN_STATUSES.has(job.status) || job.claimKeys.length === 0) continue;
     const held = heldKeys.get(job.id);
     const freeKeys = holdsKnown ? job.claimKeys.filter(key => !held?.has(key)) : job.claimKeys;
     if (freeKeys.length === 0) continue;
     const claimKey = freeKeys.find(key => key.startsWith('queue:')) ?? freeKeys[0]!;
-    const post = posts.get(job.id);
     // The feed job carries the announcement's own title; the receipt scan only
     // adds priority and expiry the projection does not keep.
     const title = oneLine(job.title, TITLE_MAX);
@@ -321,6 +359,7 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
   const list = options.listBus ?? listBusInboxAfter;
   const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
   const feedPosts = new Map<string, BusFeedPost>();
+  const feedStatuses = new Map<string, BusFeedStatus>();
   let state: UnifiedInboxSourceState = claims.source === 'unavailable' || coordination.source === 'unavailable' ? 'degraded' : 'healthy';
   let after = 0;
   // Same paging bound the work loop accepts: the store retains at most
@@ -340,6 +379,16 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
             receivedAt: receipt.receivedAt,
             // The reader decrements ttl to what remains; expiry is a real deadline.
             expiresAt: now + envelope.ttl,
+          });
+        }
+        // Cursor order is append order, so the last status seen per job is the
+        // one the feed projection credits — the same rule it applies. The
+        // detail is untrusted body text: scrubbed and clipped here, never raw.
+        if (record.kind === 'work.status' && typeof record.jobId === 'string') {
+          const detail = record.detail;
+          feedStatuses.set(record.jobId, {
+            id: envelope.id,
+            detail: typeof detail === 'string' && detail.trim() !== '' ? oneLine(detail, STATUS_DETAIL_MAX) : null,
           });
         }
       }
@@ -388,7 +437,7 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
     if (result.nextCursor <= after) { state = 'degraded'; break; }
     after = result.nextCursor;
   }
-  const feed = busFeedJobItems(options, now, feedPosts);
+  const feed = busFeedJobItems(options, now, feedPosts, feedStatuses);
   items.push(...feed.items);
   if (feed.state === 'unavailable') state = 'unavailable';
   else if (feed.state === 'degraded' && state === 'healthy') state = 'degraded';

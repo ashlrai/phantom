@@ -229,7 +229,10 @@ live `worker-handoff` envelopes (`isWorkerHandoffBody`, the exact contract
 `fleet handoff-receive`/`handoff-reply` accept — a pending assignment lists
 until its TTL ends, claims are evidence only, never a gate), and
 open agent-bus v2 work-feed jobs (queued or rescheduled
-`work.post` announcements with at least one claim key not fully held, read
+`work.post` announcements with at least one claim key not fully held, plus
+jobs the feed shows `blocked` or `failed` — stuck work needs a decision, so
+those list with the newest status report's scrubbed detail and `bus show` /
+`work feed --job` links instead of a claim act — read
 through the same projection as `phm agents bus work feed`) — plus Gmail
 archive-plan overages and LinkedIn messages saved as
 JSON files under `<runsDir>/comms/linkedin/inbox/` (answered when a file of the
