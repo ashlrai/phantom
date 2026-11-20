@@ -346,12 +346,14 @@ own read state — `missing`/`available`/`unavailable` for claims,
 unreadable dependency degrades only its own section. Exit 0 on a completed
 read, 2 on an invalid agent ref.
 
-**Status.** `phm agents bus status [--json]` is a read-only probe of the five
+**Status.** `phm agents bus status [--json]` is a read-only probe of the six
 dependencies every verb above touches: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
 the wake queue (state and observed hint count), the shared coordination table
-(live claims and status rows) and the work-feed projection (job count, or the
-refusal reason when the feed is poisoned). Each section reports its own real
+(live claims and status rows), the message-id claim journal behind `fleet
+bus-next`/`bus-claim` and the `work mine` hold state (retained claim records),
+and the work-feed projection (job count, or the refusal reason when the feed
+is poisoned). Each section reports its own real
 state — a store that cannot be read reports `unavailable` with null counts,
 never zero, and the probe never throws, writes or takes a lock. Use it before a
 session assumes the bus is healthy.

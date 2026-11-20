@@ -67,9 +67,9 @@ for it, the claimable work envelopes addressed to it in bus-next order with
 their hold state, its pending wake hints and the next page of mail addressed
 to it — where every section reports its own read state and unknown stays
 unknown.
-status is a read-only
-probe of the store, registry, wake queue, coordination table and work feed;
-a section that cannot be read reports unavailable or unknown, never zero.
+status is a read-only probe of the store, registry, wake queue, coordination
+table, message-id claim journal and work feed; a section that cannot be read
+reports unavailable or unknown, never zero.
 No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
 
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
@@ -195,6 +195,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         `registry ${result.registry.source} identities=${result.registry.identities ?? unknown} channels=${result.registry.channels ?? unknown}`,
         `wakes ${result.wakes.state} hints=${result.wakes.hints ?? unknown}`,
         `coordination ${result.coordination.source} liveClaims=${result.coordination.liveClaims ?? unknown} statuses=${result.coordination.statuses ?? unknown}`,
+        `workClaims ${result.workClaims.source} claims=${result.workClaims.claims ?? unknown}`,
         `feed ${result.feed.status}${result.feed.reason === undefined ? '' : `:${result.feed.reason}`} jobs=${result.feed.jobs ?? unknown}`,
         `as-of=${result.asOf}`,
       ].join('\n'));
