@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { BOT_ID_PATTERN } from '../agents/bot-templates.js';
 import { participantSchema, providerSchema, type Participant } from '../agents/bus-v2-schema.js';
 import { coordinationRoot, listCoordination, releaseCoordinationBySource, type CoordinationView } from '../agents/claim-store.js';
+import { agentIdentityKeys } from '../agents/bus-identity.js';
 import { sendDirectMessage } from '../agents/bus-unified.js';
 import { localWriteGate } from '../agents/send-gate.js';
 import { assertMetadata } from '../connectors/profile.js';
@@ -130,9 +131,20 @@ function nodes(o: SeatOptions): NodesStore {
   return o.nodesStore ?? { transaction: fn => new LocalNodesStore(privateDirectory(join(o.home ? join(o.home, '.ashlr') : ashlrHome(), 'nodes'))).transaction(fn) };
 }
 async function openWork(s: BotSeat, o: SeatOptions) {
-  const coordination = listCoordination(fleet(o), (o.now ?? Date.now)());
+  const root = fleet(o);
+  const coordination = listCoordination(root, (o.now ?? Date.now)());
   if (coordination.source === 'unavailable') throw new Error('Coordination store unavailable.');
-  const claims = coordination.claims.filter(c => c.live && c.owner === s.participantId);
+  // A claim names its holder by whatever routing label the acquirer used, so a
+  // seat's open work is every live claim whose owner resolves to the same agent
+  // identity as its participantId — the same label set `bus next`, bus-request
+  // replies, handoff-receive and `bus claim list --owner` match. A
+  // participantId that names no registered identity, and an unreadable
+  // registry, keep exact-label matching: unknown identity state never widens
+  // which claims a drain must release.
+  const identityOf = agentIdentityKeys({ root });
+  const target = identityOf?.(s.participantId);
+  const claims = coordination.claims.filter(c => c.live &&
+    (c.owner === s.participantId || (target !== undefined && identityOf?.(c.owner) === target)));
   let jobs: QueueJobV1[] = [];
   if (s.nodeId) {
     const path = join(o.home ? join(o.home, '.ashlr') : ashlrHome(), 'nodes', 'nodes.json');
