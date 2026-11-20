@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -51,7 +51,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     else if (endpoint.includes('/jobs/') && endpoint.endsWith('/logs')) {
       if (options.unreadable) return { ok: false, stdout: '', stderr: '403' };
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.web ? 'web-shared' : 'shared';
       return success(`/usr/bin/git log -1 --format=%H\n${isMaster ? master : head}\n${fixture(name)}`);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
@@ -284,6 +284,44 @@ describe('CI baseline evidence', () => {
     // failure cannot claim a master pass: it stays unknown, never a flake.
     const singleton = await analyzeCiBaseline('owner/repo', github({ tap: true, count: 1, pass: true }).gh);
     expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
+  });
+  it('parses check:docs JSON reports as per-file documentation failures', () => {
+    const failures = parseBaselineFailures(fixture('docs-shared'));
+    expect(failures.map(f => f.testId)).toEqual([
+      'docs/QUICKSTART.md > (docs-check)',
+      'docs/ARCHITECTURE.md > (docs-check)',
+    ]);
+    expect(failures[0]).toMatchObject({ file: 'docs/QUICKSTART.md', names: '(docs-check)' });
+    expect(failures[0]?.excerpt).toContain('docs/DELETED-GUIDE.md#install');
+    expect(failures[0]?.excerpt).toContain('ENOENT');
+    expect(failures[1]?.excerpt).toContain('#fleet does not exist');
+    // Timestamped job-log lines parse the same way.
+    const stamped = fixture('docs-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped).map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    // Passing reports, malformed blocks, escaping paths and unrelated JSON
+    // stay unparsed.
+    expect(parseBaselineFailures(JSON.stringify({ ok: true, mode: 'source', errors: [] }, null, 2))).toEqual([]);
+    expect(parseBaselineFailures('{\n  "ok": false,\n  "mode": "source",\n  "errors": [\n    {\n      "file": "src/../escape.md",\n      "href": null,\n      "reason": "x"\n    }\n  ]\n}')).toEqual([]);
+    expect(parseBaselineFailures('{\n  "unrelated": true,\n  "nested": {\n    "ok": "yes"\n  }\n}')).toEqual([]);
+  });
+  it('groups documentation-check failures and attributes them to the broken file', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ docs: true }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(2);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ names: '(docs-check)', classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+    }
+    const caused = await analyzeCiBaseline('owner/repo', github({ docs: true, touched: 'docs/QUICKSTART.md' }).gh);
+    const byId = new Map(caused.groups.map(g => [g.testId, g]));
+    expect(byId.get('docs/QUICKSTART.md > (docs-check)')?.action).toBe('pr-caused');
+    expect(byId.get('docs/ARCHITECTURE.md > (docs-check)')?.action).toBe('queue-master-fix');
+    // Markdown has no import closure: import-looking prose in a document must
+    // not fail the dependency check closed.
+    const prose = await analyzeCiBaseline('owner/repo', github({
+      docs: true,
+      contents: { 'docs/QUICKSTART.md': "import x from './gone.js';\nSamples show `from './also-gone'`." },
+    }).gh);
+    expect(prose.groups.find(g => g.testId === 'docs/QUICKSTART.md > (docs-check)')?.classification).toBe('shared-baseline');
   });
   it('resolves bundler-style imports across the dependency closure', async () => {
     const contents = {
