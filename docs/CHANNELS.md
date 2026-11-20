@@ -223,7 +223,12 @@ band, then priority, then expiry, then newest. It aggregates local sources
 live owner-thread inbound messages no recorded outbound reply cites (the same
 awaiting-reply mark `phm comms status` counts, each item deep-linking
 `phm comms thread` and `phm comms send-owner --reply-to`),
-outbound drafts awaiting approval, live bus envelopes whose body the claim
+outbound drafts awaiting approval — `phm drafts` items plus pending
+Comms-agent reply drafts that have no cos mirror (every non-email transport,
+or an email mirror that failed to write; a mirrored copy lists through its
+`phm drafts` item while pending and still suppresses the Comms record once
+decided, so one pending reply is one item, and items never carry the
+recipient, which can be a handle) — live bus envelopes whose body the claim
 contract accepts (`isClaimableWork`: a `kind:"work"` body or a protocol-v1
 transport `task` body) with no
 live claim (a live coordination-table row on the envelope's `queue:<id>` key
@@ -276,7 +281,7 @@ capture drops `approve`, and a truncated or incomplete read reports
 `degraded` with the items it did find) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
-`phm drafts approve`,
+`phm drafts approve`, `phm comms-agent drafts`,
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
 `phm fleet handoff-receive`, `phm agents conversations`,
 `phm bots handoff`, `phm agents bus post`, `phm fleet email-outbox`,
