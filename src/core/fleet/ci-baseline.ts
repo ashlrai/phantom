@@ -30,19 +30,45 @@ const SUITE_FAIL_LINE = /^FAIL\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/[^\s>]+
 const SUITE_NAMES = '(suite)';
 const PASS_LINE = /^[\u2713\u2714\u221a]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/\S+)\s*>\s*(.+?)(?:\s+\d+(?:\.\d+)?m?s)?$/;
 
+// TypeScript diagnostics (tsc/tsgo non-pretty output, identical in CI) name a
+// repo-relative file, position and diagnostic code:
+//   src/core/foo.ts(41,9): error TS2322: Type 'string' is not assignable ...
+// A typecheck or build break prints no vitest FAIL lines, so without this
+// shape a red master marks every open PR unknown and queues no fix. Errors
+// group per file under a `(typecheck)` identity: the file is the unit a
+// master fix restores, positions shift as soon as any fix lands, and a
+// vitest pass line can never resolve one -- a typecheck error is not a flake.
+const TSC_ERROR_LINE = /^([^\s()]+)\(\d+,\d+\):\s*error\s+TS\d{4}:/;
+const TSC_NAMES = '(typecheck)';
+
 export function parseBaselineFailures(log: string): Failure[] {
   const result: Failure[] = [];
+  const typecheck = new Map<string, Failure>();
   let current: Failure | undefined;
   let currentSuite = false;
   for (const line of lines(log)) {
     const match = FAIL_LINE.exec(line);
     const suite = match === null ? SUITE_FAIL_LINE.exec(line) : null;
+    const tsc = match === null && suite === null ? TSC_ERROR_LINE.exec(line) : null;
     if (match !== null || suite !== null) {
       if (result.length >= 100) break;
       const file = (match ?? suite)![1]!, names = match === null ? SUITE_NAMES : clean(match[2]!);
       if (posix.normalize(file) !== file || file.includes('..')) continue;
       current = { file, names, testId: `${file} > ${names}`, excerpt: clean(line) };
       currentSuite = match === null;
+      result.push(current);
+    } else if (tsc !== null) {
+      if (result.length >= 100) break;
+      const file = tsc[1]!;
+      if (posix.normalize(file) !== file || file.includes('..') || posix.isAbsolute(file)) continue;
+      const existing = typecheck.get(file);
+      if (existing !== undefined) {
+        existing.excerpt = clean(`${existing.excerpt}\n${line}`);
+        continue;
+      }
+      current = { file, names: TSC_NAMES, testId: `${file} > ${TSC_NAMES}`, excerpt: clean(line) };
+      currentSuite = false;
+      typecheck.set(file, current);
       result.push(current);
     } else if (current && (/^AssertionError:/.test(line) || (currentSuite && /^[\w$]*Error:/.test(line)))) {
       current.excerpt = clean(`${current.excerpt}\n${line}`);

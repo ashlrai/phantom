@@ -16,6 +16,16 @@ A suite that fails to load (transform, parse, or collection error) prints
 `<file> > (suite)` identity, capture the suite's error line, and count as
 passing on master when the file shows any verbose pass -- the file loading
 and running is what resolves a suite failure.
+TypeScript diagnostics from `tsc`/`tsgo` non-pretty output
+(`src/core/foo.ts(41,9): error TS2322: ...`) group per file under a
+`<file> > (typecheck)` identity: a typecheck or build break prints no vitest
+FAIL lines, so without this shape a red master marked every open PR unknown
+and queued no fix. Diagnostics without a repo-relative file path (global
+errors such as TS2688), escaping paths and absolute paths stay unparsed, and
+every diagnostic line for one file merges into a single failure excerpt. A
+`(typecheck)` identity can never be resolved by a vitest pass line, so these
+groups classify as `shared-baseline`, `pr-caused` or `unknown` -- never
+`probable-flake`.
 
 Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
 brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
