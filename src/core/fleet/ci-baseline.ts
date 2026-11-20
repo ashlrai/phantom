@@ -204,6 +204,55 @@ function parseTapFailures(log: string, repo: string | undefined): Failure[] {
   return out;
 }
 
+// `check:docs` (scripts/check-documentation.mjs) prints its whole verdict as
+// one pretty-printed JSON document -- `{` at column 0, `}` at column 0 -- and
+// exits 1 when `ok` is false. A broken documentation link on master fails the
+// ci and docs jobs on every open PR, but no vitest, typecheck or TAP line
+// names the file, so without this shape a red master marked every PR unknown
+// and queued no fix. Errors group per entrypoint under a `(docs-check)`
+// identity: the file is the unit a master fix restores, and like `(typecheck)`
+// it can never resolve through a vitest pass line, so these groups classify
+// shared-baseline, pr-caused or unknown -- never probable-flake. Passing
+// reports carry an empty errors array; malformed blocks and unrelated JSON
+// stay unparsed.
+const DOCS_CHECK_NAMES = '(docs-check)';
+const DOCS_CHECK_ERRORS_PER_FILE = 8;
+
+function parseDocsCheckFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  // Timestamped job-log lines keep the document's own indentation: the strip
+  // removes the stamp and its single separating space only, so a nested `}`
+  // can never collapse into the column-0 close that ends the report.
+  const raw = stripVTControlCharacters(log).split('\n')
+    .map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+ /, '').replace(/\r$/, ''));
+  const byFile = new Map<string, string[]>();
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] !== '{' || !/"ok"\s*:/.test(raw[i + 1] ?? '')) continue;
+    let end = i + 1;
+    while (end < raw.length && end - i < 20000 && raw[end] !== '}') end++;
+    if (end >= raw.length || raw[end] !== '}') continue;
+    const block = raw.slice(i, end + 1).join('\n');
+    i = end;
+    let doc: unknown;
+    try { doc = JSON.parse(block); } catch { continue; }
+    const report = doc as { ok?: unknown; mode?: unknown; errors?: unknown } | null;
+    if (typeof report?.ok !== 'boolean' || (report.mode !== 'source' && report.mode !== 'package') || !Array.isArray(report.errors)) continue;
+    for (const entry of report.errors as unknown[]) {
+      const e = entry as { file?: unknown; href?: unknown; reason?: unknown } | null;
+      if (typeof e?.file !== 'string' || typeof e.reason !== 'string' || (e.href !== null && typeof e.href !== 'string')) continue;
+      const file = e.file;
+      if (posix.normalize(file) !== file || file.includes('..') || posix.isAbsolute(file)) continue;
+      const parts = byFile.get(file) ?? [];
+      if (parts.length < DOCS_CHECK_ERRORS_PER_FILE) parts.push(typeof e.href === 'string' && e.href !== '' ? `${e.href}: ${e.reason}` : e.reason);
+      byFile.set(file, parts);
+    }
+  }
+  for (const [file, parts] of byFile) {
+    out.push({ file, names: DOCS_CHECK_NAMES, testId: `${file} > ${DOCS_CHECK_NAMES}`, excerpt: clean(parts.join('\n')) });
+  }
+  return out;
+}
+
 export function parseBaselineFailures(log: string, repo?: string): Failure[] {
   const result: Failure[] = [];
   const typecheck = new Map<string, Failure>();
@@ -238,6 +287,10 @@ export function parseBaselineFailures(log: string, repo?: string): Failure[] {
     }
   }
   for (const failure of parseTapFailures(log, repo)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseDocsCheckFailures(log)) {
     if (result.length >= 100) break;
     result.push(failure);
   }
@@ -335,6 +388,10 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     if (cached) return cached;
     const task = (async () => {
       const visited = new Set<string>();
+      // Only code has an import closure: a Markdown report, JSON or asset
+      // failure file depends on itself alone. Scanning prose for import
+      // syntax would let a doc's code sample fail the whole closure closed.
+      if (!isCode(file)) { visited.add(file); return visited; }
       async function visit(path: string): Promise<boolean> {
         if (visited.has(path)) return true;
         if (visited.size >= 100 || path.startsWith('../')) return false;

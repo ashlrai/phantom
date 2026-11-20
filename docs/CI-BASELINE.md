@@ -41,6 +41,21 @@ node:test failure classifies as `shared-baseline`, `pr-caused` or `unknown`
 only -- never `probable-flake` -- and `master` reads `fail` or `unknown`,
 never `pass`.
 
+`npm run check:docs` prints its verdict as one pretty-printed JSON document
+(`{` and `}` at column 0) and exits 1 when `ok` is false; each `errors` entry
+names the entrypoint file, the offending `href` (null for document-level
+problems) and a reason. Errors group per file under a `<file> > (docs-check)`
+identity with up to eight `href: reason` lines per excerpt. A broken doc link
+on master fails the `ci` and `docs` jobs on every open PR, so without this
+shape a red master marked every PR unknown; like `(typecheck)` it can never
+resolve through a vitest pass line and classifies `shared-baseline`,
+`pr-caused` or `unknown` -- never `probable-flake`. Passing reports
+(`ok: true`, empty `errors`), malformed JSON blocks, escaping or absolute
+paths, and unrelated JSON stay unparsed. Failure files that are not code
+(`.md`, `.json`, assets) have no import closure: their dependency set is the
+file itself, so import-looking prose in a document cannot fail the closure
+closed.
+
 Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
 brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
 with an explicit verbose test pass on master's current run produces
