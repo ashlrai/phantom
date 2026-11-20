@@ -63,16 +63,17 @@ so docs, configs and data files get their readers too; `gate:full` remains the
 backstop for readers neither finds. Neither replaces hosted CI or the
 [release guide](RELEASING.md).
 
-**Hosted CI.** A pull request or merge-queue commit runs only the fast gate:
-the secret-shape scan, lane classification, and quick typecheck with
-CODEOWNERS and Tier-1 import-closure drift checks, including docs-only changes,
-all on Ubuntu. `Merge Gate` is the one
-required check and fails unless exactly that selection ran and every full lane
-was skipped. No pull request or merge-queue commit may occupy a macOS or
+**Hosted CI.** A pull request or merge-queue commit runs only the fast path,
+including docs-only changes, all on Ubuntu. `Merge Gate` is the one required
+check. It requires the secret-shape scan, the diff secret scan, lane
+classification, `Check generated files` and
+`Fast gate (typecheck + affected tests)`; Quick typecheck (with CODEOWNERS and
+Tier-1 import-closure drift checks) and `Check authority drift (hermetic)` run
+but are advisory. It fails unless every full lane was skipped. No pull request or merge-queue commit may occupy a macOS or
 Windows runner: the `ci` Ubuntu/Windows matrix, the Mac exhaustive lanes
 (`Mac exhaustive (N/4)`, `Mac exhaustive (isolated)`), the shared-macOS and
-native-broker lanes, and the Windows service authority run only in the daily
-scheduled run on master, on manual dispatch (optionally sliced by `mac_shard`),
+native-broker lanes, and the Windows service authority run only in the six-hour
+scheduled run on master (Mac exhaustive work rotates through daily slices), on manual dispatch (optionally sliced by `mac_shard`),
 or on the reusable release call — where the caller's push event still defers
 the macOS and Windows-service legs to the daily run while the `ci` matrix,
 including its Windows portability legs, stays the release's native gate
