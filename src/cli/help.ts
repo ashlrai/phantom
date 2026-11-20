@@ -289,6 +289,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{schema:"phantom.nodes-plan.v1", as_of, nodes:[{name,online,free_mem_pct,load,lanes,suggested_slots,why}], assignable:[{job,node,why}], unassigned, reasons}',
   },
   {
+    usage: 'phm nodes doctor [--node <name>] [--json]',
+    description: 'What each joined computer is missing before it can take jobs: reachable or not, which lane CLIs (claude, codex, devin, gemini, local model) are installed and signed in, which ashlrai repo clones are present and free disk in GB, with one plain fix line per gap. Uses only each CLI\'s own version/status exit code and never reads credential files. Other computers show unknown with a reason where they cannot be checked yet. Exit 0, 1 unknown --node name, 2 bad usage.',
+    safety: 'read',
+    jsonShape: '{schema:"phantom.nodes-doctor.v1", schemaVersion:1, asOf, nodes:[{name,isSelf,reachable,lanes:[{lane,status:"ready"|"not-installed"|"signed-out"|"unknown",reason?}],repos,missingRepos,diskFreeGb,gaps,unknowns,ready}], reasons}',
+  },
+  {
     usage: 'phm node bootstrap --dry-run [--json]',
     description: 'Print persistent Linux node setup and future registry lease steps; no provisioning or registry calls. Exit 0 plan, 2 bad usage.',
     safety: 'read',
@@ -1386,6 +1392,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'disk-maint [--apply] [--json] [--only <class>] [--allow <class>]', desc: 'Standing disk maintenance: rotate/compress quiet logs, prune dead session leftovers, stale staging and recovery dirs, and remove merged worktrees. Dry run unless --apply; protect-list never touches ~/.codex*, model weights, Docker, client trees or secrets.', topic: 'safety' },
   { cmd: 'autofix [--apply] [--dry-run] [--json] [--only <fixer>]', desc: 'Act on Eng Ops incident files (prefix a, b, d, e; g is detect-only). Dry run unless --apply. Refuses when ~/.ashlr/KILL exists. Never reads the incident body into a command. See docs/AUTOFIX.md.', topic: 'safety' },
   { cmd: 'nodes [--json] [--can-take <lane>]', desc: 'Your computers as one pool: which are reachable, running Phantom and ready for work. Read only.', topic: 'safety' },
+  { cmd: 'nodes doctor [--node <name>] [--json]', desc: 'What each joined computer is missing before it takes jobs: reachable, lane CLIs signed in, repo clones, free disk, one fix line per gap. Read only.', topic: 'safety' },
   { cmd: 'nodes plan [--json]', desc: 'Plan which queued job fits which computer, with suggested free slots per computer. Read only: it launches and moves nothing.', topic: 'safety' },
   { cmd: 'node join|beat|enqueue|plan|pull|complete|status [--json]', desc: 'Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases.', topic: 'safety' },
   { cmd: 'node bootstrap --dry-run [--json]', desc: 'Plan a persistent Linux node; registry integration is a stub, no provisioning.', topic: 'safety' },

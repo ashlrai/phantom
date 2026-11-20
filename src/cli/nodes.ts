@@ -2,10 +2,12 @@
 import { validCap } from '../core/drive/nodes/state.js';
 import { readQueueOrder } from '../core/queue/order.js';
 import { readNodesPlan, type NodesPlan } from '../core/fleet/nodes-plan.js';
+import { defaultNodeProbe, doctorText, readNodesDoctor, type NodeProbe } from '../core/fleet/nodes-doctor.js';
 import { chooseNodeForLane, defaultNodesViewDeps, nodesThatCanTake, readNodesView, type NodeRow, type NodesViewDeps } from '../core/fleet/nodes-view.js';
 
 const USAGE = `Usage: phm nodes [--json] [--can-take <lane>]
        phm nodes plan [--json]
+       phm nodes doctor [--node <name>] [--json]
 
 One row per known computer: reachable or not, whether Phantom is running there,
 free memory, CPU headroom, lanes, running jobs and a plain-words state.
@@ -13,6 +15,10 @@ free memory, CPU headroom, lanes, running jobs and a plain-words state.
 It recommends a ready remote computer, then this computer if no remote is ready.
 plan: how many more jobs each computer could take now, and which queued job fits
 which computer. It only plans; it launches, moves and stops nothing.
+doctor: what each joined computer is missing before it can take jobs: reachable,
+which lane CLIs (claude, codex, devin, gemini, local model) are installed and
+signed in, which ashlrai repo clones exist and free disk, with one fix line per gap.
+Other computers show unknown where they cannot be checked yet.
 Read only: it changes no network, security or pool setting.`;
 
 const unknownOr = <T>(value: T | 'unknown', show: (known: T) => string): string => (value === 'unknown' ? 'unknown' : show(value));
@@ -43,7 +49,24 @@ async function cmdNodesPlan(args: string[], deps: NodesViewDeps, readQueue: type
   return 0;
 }
 
-export async function cmdNodes(args: string[], deps: NodesViewDeps = defaultNodesViewDeps(), readQueue: typeof readQueueOrder = readQueueOrder): Promise<number> {
+/** `phm nodes doctor [--node <name>] [--json]`: read only readiness check per joined computer. */
+async function cmdNodesDoctor(args: string[], deps: NodesViewDeps, probe: NodeProbe): Promise<number> {
+  let json = false, node: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === '--help' || arg === '-h') { console.log(USAGE); return 0; }
+    if (arg === '--json' && !json) json = true;
+    else if (arg === '--node' && node === undefined && args[i + 1] && !args[i + 1]!.startsWith('-')) node = args[++i]!;
+    else { console.error(USAGE); return 2; }
+  }
+  const report = await readNodesDoctor({ view: deps, probe }, node);
+  if (node !== undefined && !report.nodes.length) { console.error(`No computer named ${node}. Run \`phm nodes\` to list them.`); return 1; }
+  console.log(json ? JSON.stringify(report, null, 2) : doctorText(report));
+  return 0;
+}
+
+export async function cmdNodes(args: string[], deps: NodesViewDeps = defaultNodesViewDeps(), readQueue: typeof readQueueOrder = readQueueOrder, probe: NodeProbe = defaultNodeProbe): Promise<number> {
+  if (args[0] === 'doctor') return cmdNodesDoctor(args.slice(1), deps, probe);
   if (args[0] === 'plan') return args.slice(1).includes('--help') ? (console.log(USAGE), 0) : cmdNodesPlan(args.slice(1), deps, readQueue);
   let json = false;
   let lane: string | null = null;
