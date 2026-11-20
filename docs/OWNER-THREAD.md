@@ -20,6 +20,13 @@ MCP tools: `ashlr_comms_thread` (read) and `ashlr_comms_send_owner` (append;
 KILL refuses it). `ashlr_comms` includes the same adapter rollup as
 `phm comms status --json`.
 
+The thread read joins the per-channel delivery receipts written at send time:
+`receipts` maps each outbound message id to `{ channel: { state, reason? } }`
+with `delivered`, `pending` or `failed`. A channel with no record is unknown —
+never reported as delivered — and the human `phm comms thread` output appends
+`[channel:state ...]` to outbound lines that have receipts. The receipt journal
+is bounded, so older messages simply have no entry.
+
 ## Rotation, history and pulling
 
 When the live thread passes its message or byte cap it archives the oldest
