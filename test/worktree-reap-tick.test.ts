@@ -79,11 +79,39 @@ describe('self-tick worktree reap', () => {
     expect(removed).toHaveLength(50);
   });
 
-  it('a dry run removes and records nothing', async () => {
-    const { deps, removed } = fixture(60, 0);
-    expect((await tick(deps, NOW, false)).state).toBe('skipped');
+  it('a dry run lists the candidates first and removes and records nothing', async () => {
+    const { deps, removed } = fixture(60, 3);
+    const result = await tick(deps, NOW, false);
+    expect(result.state).toBe('dry-run');
+    if (result.state !== 'dry-run') return;
+    expect(result.total).toBe(63);
+    expect(result.candidates).toHaveLength(WORKTREE_REAP_CAP);
+    expect(result.candidates.every(c => c.job.startsWith('RQ-M'))).toBe(true);
+    expect(result.waiting).toBe(35);
+    expect(result.held).toEqual({ 'open-pr': 3 });
     expect(removed).toHaveLength(0);
     expect((await readWorktreeReapStatus(runs)).last).toBeNull();
+  });
+
+  it('a dry run still honors the warning level and the kill switch', async () => {
+    expect((await tick(fixture(10, 0).deps, NOW, false)).state).toBe('skipped');
+    await mkdir(join(runs, 'queue'), { recursive: true });
+    await writeFile(join(runs, 'queue', 'worktree-reap.off'), '');
+    expect((await tick(fixture(60, 0).deps, NOW, false)).state).toBe('skipped');
+  });
+
+  it('running and kept worktrees are never removed, even when the audit lists them', async () => {
+    const { deps, removed } = fixture(45, 0);
+    const base = deps.audit;
+    const audit = (async (...a: Parameters<NonNullable<WorktreesDeps['audit']>>) => {
+      const r = await base!(...a);
+      return { ...r, worktrees: [...r.worktrees, entry('RQ-LIVE1', 'live', false), entry('RQ-KEPT1', 'kept', false)] };
+    }) as unknown as WorktreesDeps['audit'];
+    const result = await tick({ ...deps, audit });
+    expect(result.state).toBe('ran');
+    expect(removed).not.toContain('RQ-LIVE1');
+    expect(removed).not.toContain('RQ-KEPT1');
+    expect(removed).toHaveLength(WORKTREE_REAP_CAP);
   });
 });
 
