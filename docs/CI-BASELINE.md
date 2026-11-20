@@ -56,6 +56,26 @@ paths, and unrelated JSON stay unparsed. Failure files that are not code
 file itself, so import-looking prose in a document cannot fail the closure
 closed.
 
+The Merge Gate `clean-tree` job ("Check generated files") reruns the
+tracked-file generators and fails on any dirty `git status --porcelain`
+path, printing `generated files are stale; commit the regenerated tree:`
+followed by porcelain rows; its `canonical-launcher-digests.mjs --check`
+prints `current launcher digest <sha> is missing from the canonical
+launcher digest list`, `canonical launcher digest list is invalid`, or the
+`--check-history` differs line. Each stale path groups under a
+`<file> > (generated)` identity and the digest failures under
+`scripts/canonical-launcher-digests.json > (generated)`; rename rows resolve
+to the new path and C-quoted paths are unescaped, while unparseable rows
+stay unparsed. Generated artifacts have no import closure either, but their
+staleness has a known input set: `docs/llms.txt` depends on
+`docs/llms-source.txt`, `scripts/generate-docs-llms.mjs`,
+`scripts/lib/docs-pages.mjs` and every public docs page (`docs/**/*.md`
+minus `docs/internal/`, read once from the master tree listing -- an
+unreadable or truncated listing fails the closure closed), and the digest
+manifest depends on `bin/ashlr`. Like `(typecheck)` they can never resolve
+through a vitest pass line, so they classify `shared-baseline`,
+`pr-caused` or `unknown` -- never `probable-flake`.
+
 Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
 brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
 with an explicit verbose test pass on master's current run produces

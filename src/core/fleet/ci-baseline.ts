@@ -135,7 +135,10 @@ function isTapFileResult(file: string, title: string, fields: Map<string, string
 function parseTapFailures(log: string, repo: string | undefined): Failure[] {
   const out: Failure[] = [];
   const rawLines = stripVTControlCharacters(log).split('\n')
-    .map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+\s+/, ''));
+    // Timestamped job-log lines keep the result's own indentation: strip the
+    // stamp and its single separating space only, or every nested `not ok`
+    // collapses to column 0 and the suite hierarchy flattens away.
+    .map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+ /, ''));
   const pending = new Map<number, string>();
   const comments: string[] = [];
   let scalarIndent = -1;
@@ -253,6 +256,106 @@ function parseDocsCheckFailures(log: string): Failure[] {
   return out;
 }
 
+// The Merge Gate "Check generated files" job (clean-tree) reruns the
+// tracked-file generators -- canonical launcher digests, docs/llms.txt and
+// friends -- then fails on any dirty `git status --porcelain` path:
+//   generated files are stale; commit the regenerated tree:
+//    M docs/llms.txt
+// Porcelain v1 rows are `XY <path>`: staged/unstaged/unmerged status pairs,
+// `??` untracked, `R`/`C` renames printed as `XY <old> -> <new>`, and
+// C-quoted paths when names carry specials. Each stale path groups under a
+// `<file> > (generated)` identity: regenerating and committing the artifact
+// is the unit a master fix restores. The same step's
+// `canonical-launcher-digests.mjs --check` prints
+// `current launcher digest <sha> is missing from the canonical launcher
+// digest list` or `canonical launcher digest list is invalid`; the manifest
+// that must be regenerated is the failure file, and `bin/ashlr` is its only
+// content input. Like `(typecheck)` and `(docs-check)`, no vitest pass line
+// can name these identities, so they classify shared-baseline, pr-caused or
+// unknown -- never probable-flake.
+const GENERATED_NAMES = '(generated)';
+const GENERATED_DIGEST_FILE = 'scripts/canonical-launcher-digests.json';
+// Static generator inputs per generated artifact. docs/llms.txt additionally
+// depends on every public docs page, which dependencies() unions from the
+// master tree listing at analysis time.
+const GENERATED_FILE_INPUTS: Record<string, readonly string[]> = {
+  'docs/llms.txt': ['docs/llms-source.txt', 'scripts/generate-docs-llms.mjs', 'scripts/lib/docs-pages.mjs'],
+  [GENERATED_DIGEST_FILE]: ['bin/ashlr'],
+};
+const GENERATED_STALE_MARKER = /^\s*generated files are stale\b/;
+const GENERATED_PORCELAIN = /^([ MADRCU?!]{2}) (.+)$/;
+const GENERATED_DIGEST_LINE = /^(?:current launcher digest [a-f0-9]{64} is missing from the canonical launcher digest list|canonical launcher digest list is invalid|canonical launcher digest list differs from bin\/ashlr history)/;
+
+// Git C-quotes a path containing specials and escapes `"`, `\`, newline, tab
+// and return inside the quotes; octal byte escapes are left unparsed rather
+// than guessed at.
+function cUnquote(value: string): string | null {
+  let out = '';
+  for (let i = 1; i < value.length - 1; i++) {
+    const c = value[i]!;
+    if (c !== '\\') { out += c; continue; }
+    const n = value[++i];
+    if (n === 'n') out += '\n';
+    else if (n === 't') out += '\t';
+    else if (n === 'r') out += '\r';
+    else if (n === '"' || n === '\\') out += n;
+    else return null;
+  }
+  return out;
+}
+
+// Porcelain prints renames/copies as `<old> -> <new>` with each side
+// C-quoted independently; a plain `M `/`??` row never contains the separator,
+// so ` -> ` inside such a name stays part of the path. The separator itself
+// is only trusted outside quotes.
+function generatedPath(raw: string, rename: boolean): string | null {
+  let path = raw.trim();
+  if (rename) {
+    let inQuote = false, escaped = false, split = -1;
+    for (let i = 0; i + 3 < path.length; i++) {
+      const c = path[i]!;
+      if (escaped) { escaped = false; continue; }
+      if (inQuote && c === '\\') { escaped = true; continue; }
+      if (c === '"') { inQuote = !inQuote; continue; }
+      if (!inQuote && path.startsWith(' -> ', i)) split = i;
+    }
+    if (split < 0) return null;
+    path = path.slice(split + 4).trim();
+  }
+  if (path.length >= 2 && path.startsWith('"') && path.endsWith('"')) {
+    const unquoted = cUnquote(path);
+    if (unquoted === null) return null;
+    path = unquoted;
+  } else if (path.includes('"') || path.includes('\\')) return null;
+  if (!path || posix.normalize(path) !== path || path.includes('..') || posix.isAbsolute(path)) return null;
+  return path;
+}
+
+function parseGeneratedFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  // Timestamped job-log lines keep the porcelain row's own leading status
+  // column: strip the stamp and its single separating space only, the same
+  // convention as the check:docs report parser.
+  const raw = stripVTControlCharacters(log).split('\n')
+    .map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+ /, '').replace(/\r$/, ''));
+  for (let i = 0; i < raw.length && out.length < 100; i++) {
+    const line = raw[i]!;
+    if (GENERATED_DIGEST_LINE.test(line.trim())) {
+      out.push({ file: GENERATED_DIGEST_FILE, names: GENERATED_NAMES, testId: `${GENERATED_DIGEST_FILE} > ${GENERATED_NAMES}`, excerpt: clean(line.trim()) });
+      continue;
+    }
+    if (!GENERATED_STALE_MARKER.test(line)) continue;
+    for (let k = i + 1; k < raw.length && out.length < 100; k++) {
+      const row = GENERATED_PORCELAIN.exec(raw[k]!);
+      if (row === null) break;
+      const path = generatedPath(row[2]!, row[1]!.includes('R') || row[1]!.includes('C'));
+      if (path === null) continue;
+      out.push({ file: path, names: GENERATED_NAMES, testId: `${path} > ${GENERATED_NAMES}`, excerpt: clean(raw[k]!) });
+    }
+  }
+  return out;
+}
+
 export function parseBaselineFailures(log: string, repo?: string): Failure[] {
   const result: Failure[] = [];
   const typecheck = new Map<string, Failure>();
@@ -291,6 +394,10 @@ export function parseBaselineFailures(log: string, repo?: string): Failure[] {
     result.push(failure);
   }
   for (const failure of parseDocsCheckFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseGeneratedFailures(log)) {
     if (result.length >= 100) break;
     result.push(failure);
   }
@@ -391,7 +498,22 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // Only code has an import closure: a Markdown report, JSON or asset
       // failure file depends on itself alone. Scanning prose for import
       // syntax would let a doc's code sample fail the whole closure closed.
-      if (!isCode(file)) { visited.add(file); return visited; }
+      // Generated artifacts are the exception: they have no import closure
+      // either, but their staleness is caused by a known input set -- the
+      // generator scripts and sources in GENERATED_FILE_INPUTS, plus (for
+      // docs/llms.txt) every public docs page on master.
+      if (!isCode(file)) {
+        visited.add(file);
+        const inputs = GENERATED_FILE_INPUTS[file];
+        if (inputs === undefined) return visited;
+        for (const input of inputs) visited.add(input);
+        if (file === 'docs/llms.txt') {
+          const pages = await publicDocsPages();
+          if (pages === null) return null;
+          for (const page of pages) visited.add(page);
+        }
+        return visited;
+      }
       async function visit(path: string): Promise<boolean> {
         if (visited.has(path)) return true;
         if (visited.size >= 100 || path.startsWith('../')) return false;
@@ -526,6 +648,32 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     return harnessDiscovery;
   }
 
+  // docs/llms.txt renders from every public docs page -- docs/**/*.md minus
+  // the top-level docs/internal/ directory, regular files only, matching
+  // scripts/lib/docs-pages.mjs. The page set comes from one recursive master
+  // tree listing per analysis; an unreadable or truncated tree fails the
+  // generated-file closure closed (unknown), never an empty page set.
+  let docsPagesListing: Promise<Set<string> | null> | null = null;
+  function publicDocsPages(): Promise<Set<string> | null> {
+    docsPagesListing ??= (async () => {
+      try {
+        const r = await gh(['api', `repos/${repo}/git/trees/${ref}?recursive=1`]);
+        if (!r.ok) return null;
+        const data = JSON.parse(r.stdout) as { tree?: unknown; truncated?: unknown } | null;
+        if (!Array.isArray(data?.tree) || data.truncated === true) return null;
+        const pages = new Set<string>();
+        for (const entry of data.tree as { path?: unknown; type?: unknown; mode?: unknown }[]) {
+          if (entry?.type !== 'blob' || (entry.mode !== '100644' && entry.mode !== '100755')) continue;
+          const path = entry.path;
+          if (typeof path !== 'string' || !path.startsWith('docs/') || !path.endsWith('.md') || path.startsWith('docs/internal/')) continue;
+          pages.add(path);
+        }
+        return pages;
+      } catch { return null; }
+    })();
+    return docsPagesListing;
+  }
+
   const harnessFileCache = new Map<string, Promise<Set<string> | null>>();
   function harnessAmbient(file: string): Promise<Set<string> | null> {
     let pending = harnessFileCache.get(file);
@@ -600,7 +748,10 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     if (!known) continue;
     for (const failure of found) {
       const deps = await dependencies(failure.file);
-      const ambient = await harnessAmbient(failure.file);
+      // Generated artifacts are produced by the clean-tree job, not the test
+      // runner: the vitest harness ambient set cannot stale them, so only
+      // the generator-input deps decide touched.
+      const ambient = failure.names === GENERATED_NAMES ? new Set<string>() : await harnessAmbient(failure.file);
       const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
       observations.push({ pr, failure, touched, runId: failure.runId });
     }
