@@ -294,6 +294,104 @@ describe('reverted merges', () => {
   });
 });
 
+describe('outcome-quality evidence', () => {
+  const spendPath = (): string => join(runs, 'metrics', 'api-spend.jsonl');
+  const writeSpend = (rows: object[]): void => writeFileSync(spendPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+  const writeLaneScores = (passPowK: number): void => {
+    const dir = join(root, 'ashlr', 'eval', 'passk');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'lane-scores.json'), `${JSON.stringify({
+      schema: 'eval.lane-scores.v1', generatedAt: '2026-11-19T00:00:00.000Z', reportId: 'synthetic-report', k: 3, trials: 60,
+      lanes: [{ lane: 'alpha', model: 'synthetic-model', tasks: 20, trials: 60, passes: 45, pass1: 0.75, passPowK }],
+    })}\n`);
+  };
+  const signaled = (n: number, lane: string, workClass: string, phase: string, extra: Record<string, unknown>): object[] =>
+    Array.from({ length: n }, (_, i) => event(`synthetic-evq-${lane}-${workClass}-${phase}-${i}`, lane, workClass, phase, extra));
+
+  it('folds recorded CI, review, cost, wall and passk signals per group with coverage counts', async () => {
+    writeLaneScores(0.71);
+    writeLedger([
+      ...Array.from({ length: 10 }, (_, i) => event(`synthetic-evq-a-${i}`, 'alpha', 'code', 'MERGED', {
+        ci_first_pass: i < 8,
+        review_findings: { fixed: 2, rejected: 1, ignored: 0 },
+        cost_usd: 1.5,
+        wall_s: 100,
+      })),
+      ...merged(10),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report.proposals).toHaveLength(1);
+    // Evidence is advisory context: the held-merge weight is unchanged by it.
+    expect(report.proposals[0]).toMatchObject({ status: 'proposed', proposed_weight: 0.6 });
+    expect(report.proposals[0].evidence).toEqual({
+      ci_first_pass_known: 10,
+      ci_first_pass_rate: 0.8,
+      review_findings_known: 10,
+      review_findings: { fixed: 20, rejected: 10, ignored: 0 },
+      cost_known: 10,
+      cost_usd_mean: 1.5,
+      wall_known: 10,
+      wall_s_mean: 100,
+      passk_known: 20,
+      passk_mean: 0.71,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('evidence ci_first_pass=0.8(10)');
+    expect(out).toContain('review_findings=30(10)');
+    expect(out).toContain('cost_usd=1.5(10)');
+    expect(out).toContain('wall_s=100(10)');
+    expect(out).toContain('passk=0.71(20)');
+  });
+
+  it('keeps unrecorded signals null with zero coverage, never zero', async () => {
+    writeLedger(merged(20));
+    const { report } = await runJson();
+    expect(report.proposals[0].evidence).toEqual({
+      ci_first_pass_known: 0, ci_first_pass_rate: null,
+      review_findings_known: 0, review_findings: null,
+      cost_known: 0, cost_usd_mean: null,
+      wall_known: 0, wall_s_mean: null,
+      passk_known: 0, passk_mean: null,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).not.toContain('ci_first_pass=');
+  });
+
+  it('counts spend-derived costs and never folds signals from the unknown cohort', async () => {
+    const mergedJobs = Array.from({ length: 20 }, (_, i) => `synthetic-spend-${i}`);
+    writeLedger([
+      ...mergedJobs.map(job => ({ job, lane: 'alpha', model: 'synthetic-model', work_class: 'code', phase: 'MERGED' })),
+      ...signaled(5, 'alpha', 'code', 'VERIFIED', { ci_first_pass: true, cost_usd: 9 }),
+    ]);
+    writeSpend(mergedJobs.slice(0, 4).map((job, i) => ({ job, cost_usd: 2 + i })));
+    const { report } = await runJson();
+    expect(report.unknown_outcomes).toBe(5);
+    const p = report.proposals[0];
+    expect(p.known_n).toBe(20);
+    expect(p.evidence.cost_known).toBe(4);
+    expect(p.evidence.cost_usd_mean).toBe(3.5);
+    // The VERIFIED rows carried ci_first_pass/cost signals but merged:null keeps them out of every group.
+    expect(p.evidence.ci_first_pass_known).toBe(0);
+    expect(p.evidence.ci_first_pass_rate).toBeNull();
+  });
+
+  it('keeps evidence per group and reports it on refused groups too', async () => {
+    writeLedger([
+      ...signaled(20, 'alpha', 'code', 'MERGED', { ci_first_pass: true }),
+      ...signaled(19, 'beta', 'docs', 'MERGED', {}),
+    ]);
+    const { report } = await runJson();
+    const byKey = Object.fromEntries(report.proposals.map((p: { work_class: string; lane: string }) => [`${p.work_class}/${p.lane}`, p]));
+    expect(byKey['code/alpha'].evidence.ci_first_pass_rate).toBe(1);
+    expect(byKey['code/alpha'].evidence.ci_first_pass_known).toBe(20);
+    expect(byKey['docs/beta'].status).toBe('refused');
+    expect(byKey['docs/beta'].evidence).toMatchObject({
+      ci_first_pass_known: 0, ci_first_pass_rate: null, cost_known: 0, cost_usd_mean: null,
+    });
+  });
+});
+
 describe('missing, unreadable and oversized input', () => {
   it('reports a missing ledger as unavailable, never as an empty measurement', async () => {
     const { code, report } = await runJson();

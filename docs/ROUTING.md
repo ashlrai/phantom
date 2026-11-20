@@ -355,7 +355,14 @@ unknown, never as failures, and jobs with no recorded class count as
 unclassified. When the ledger exceeds the retained tail the
 report carries `truncated: true` and every count covers the newest bytes
 only; `market_state`/`market_truncated` report the decision journal's
-health the same way. The report is advisory-only: it writes nothing, never
+health the same way. Each proposal also carries an `evidence` block folded
+from the same known cohort: the group's CI first-pass rate, summed review
+findings, mean `cost_usd`, mean `wall_s` and mean advisory `passk` — every
+figure with its own coverage count, and `null` (never zero) when the ledger
+recorded nothing for that signal. The weight math still moves on
+held-merge rate alone; the evidence is context for whoever applies a
+proposal, and text output renders it as `name=value(known)` suffixes only
+for signals with coverage. The report is advisory-only: it writes nothing, never
 touches `weights.json`, and changes no live routing, rank or admission. A
 missing or unreadable ledger reports `status: "unavailable"` with null
 counts rather than an empty success.
