@@ -26,7 +26,7 @@ export interface ConversationMessage {
   /** Epoch ms. */
   at: number;
   replyTo: string | null;
-  /** Explicit thread bucket (a `job:<id>` conversation key); overrides reply-chain rooting. */
+  /** Explicit thread bucket: the declared conversation key (a thread label or `job:<id>`), never the synthesized `pair:` fallback; overrides reply-chain rooting. */
   thread?: string | null;
   /** What the sender said about the work itself, when it said. */
   state: 'blocked' | 'done' | null;

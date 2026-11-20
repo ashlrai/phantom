@@ -558,14 +558,20 @@ compute scene draws its message lines at the same thickness.
 #### Agent conversations
 
 `phm agents conversations [--agent <name>] [--waiting] [--json]` groups the
-same bus read into threads by reply chain, longest-waiting first and then
-newest first. `--agent` matches a participant's routing label and, through
+same bus read into threads by reply chain and by the declared conversation
+label a body carries, longest-waiting first and then newest first. `--agent` matches a participant's routing label and, through
 the agent identity registry, every other label of the same registered
 identity (handle, alias or `agent:` address); with no readable registry the
 match stays on the literal label. Messages about one v2 job — a `work.post`, its `work.status`,
 `work.result`, `work.claim` and `work.release` bodies sharing a `jobId`, or a
 claim-key-only body the post lists — form one `job:<id>` thread even without
-replies, and a `failed` or `complete` outcome marks it blocked or done. `--json` prints `agents.conversations.v1` (`version` 1), and
+replies, and a `failed` or `complete` outcome marks it blocked or done. Any
+body carrying a declared label — the v2 `thread` field `--thread` reads
+filter on (the same key `phm agents messages` reports as `threadId`), a
+`threadId`, or a `job:<id>` key — buckets its conversation under that label
+even without `replyTo` links, so a threaded question and its answer are one
+conversation; only the synthesized per-pair fallback stays reply-chain
+rooted. `--json` prints `agents.conversations.v1` (`version` 1), and
 `GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1]`
 serves the same read with a current read session.
 
