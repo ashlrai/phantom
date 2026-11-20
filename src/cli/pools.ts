@@ -23,7 +23,8 @@ export async function cmdPools(args: string[]): Promise<number> {
     import('../core/fleet/runs-resource-ledger.js'), import('../core/fleet/pools-view.js'), import('../core/fleet/usage-history.js'),
   ]);
   const now = Date.now();
-  const view = buildPoolsView(await readResourceLedger({ now: () => now }), now, await readUsageSamples({ nowMs: now }));
+  const { readLiveCaps } = await import('../core/fleet/model-caps.js');
+  const view = buildPoolsView(await readResourceLedger({ now: () => now }), now, await readUsageSamples({ nowMs: now }), await readLiveCaps(now));
   if (spenddown) {
     const { buildSpendDown, formatSpendDownText } = await import('../core/fleet/pools-spenddown.js');
     const chart = buildSpendDown(view);
