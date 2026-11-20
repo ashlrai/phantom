@@ -46,6 +46,7 @@ export async function cmdCommsOwnerStatus(json: boolean, options = ownerThreadOp
   }
   console.log(`owner thread: ${status.threadId} (${status.messages} messages)`);
   console.log(`kill: ${status.kill}  paused: ${status.paused}`);
+  console.log(`awaiting reply: ${status.awaitingReply ?? 'unknown'}`);
   for (const adapter of status.adapters) {
     console.log(`  ${adapter.id}: ${adapter.enabled ? 'enabled' : 'disabled'} — ${adapter.reason}`);
     if (adapter.nextStep !== null) console.log(`    next: ${adapter.nextStep}`);
@@ -66,9 +67,11 @@ export async function cmdCommsOwner(args: string[], options = ownerThreadOptions
     }
     const view = readOwnerThread(options, limit);
     const json = args.includes('--json');
+    const awaiting = new Set(view.awaitingReply ?? []);
     emit(json, view, view.messages.map(message => {
       const line = `${message.seq} ${message.at} ${message.channel} ${message.direction} ${message.text}`;
-      const perChannel = message.direction === 'outbound' ? view.receipts[message.id] : undefined;
+      if (message.direction === 'inbound') return awaiting.has(message.id) ? `${line} [awaiting reply]` : line;
+      const perChannel = view.receipts[message.id];
       if (!perChannel) return line;
       const states = Object.entries(perChannel).sort(([a], [b]) => a.localeCompare(b))
         .map(([channel, receipt]) => `${channel}:${receipt.state}`);

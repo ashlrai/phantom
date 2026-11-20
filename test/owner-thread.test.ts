@@ -6,7 +6,7 @@ import { cmdCommsOwner, cmdCommsOwnerStatus } from '../src/cli/comms-owner-threa
 import { createLeaderMailbox } from '../src/core/comms/leader-mailbox.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings, type OwnerChannelTransport, type OwnerDelivery, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { liveOwnerTransports, proveOwnerDirectMessage, resolveLiveEmailRecipient, resolveLiveIMessageHandle, resolveLiveSlackOwnerId } from '../src/core/comms/owner-live-transport.js';
-import { acceptOwnerInbound, pullOwnerChannel, readOwnerThread, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
+import { acceptOwnerInbound, postOwnerNotice, pullOwnerChannel, readOwnerCommsStatus, readOwnerThread, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
 import { useAccountHomeForTest } from '../src/core/real-home.js';
 import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 
@@ -134,6 +134,67 @@ describe('owner thread', () => {
     const view = readOwnerThread(options);
     expect('unavailable' in view).toBe(true);
     expect(view.receipts).toEqual({});
+  });
+
+  it('marks live inbound messages no recorded reply cites until one does', async () => {
+    const { options } = fixture();
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'first', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
+    await acceptOwnerInbound({ channel: 'email', senderId: 'email:owner@example.com', text: 'second', idempotencyKey: 'email-msg-0002', at: 1_700_000_001_000 }, options);
+    expect(readOwnerThread(options).awaitingReply).toEqual(['m1', 'm2']);
+    expect(readOwnerCommsStatus(options).awaitingReply).toBe(2);
+    await sendOwnerReply({ text: 'answer first', replyTo: 'telegram-msg-1', idempotencyKey: 'reply-owner-01' }, options);
+    expect(readOwnerThread(options).awaitingReply).toEqual(['m2']);
+    expect(readOwnerCommsStatus(options).awaitingReply).toBe(1);
+    await sendOwnerReply({ text: 'answer second', replyTo: 'email-msg-0002', idempotencyKey: 'reply-owner-02' }, options);
+    expect(readOwnerThread(options).awaitingReply).toEqual([]);
+    expect(readOwnerCommsStatus(options).awaitingReply).toBe(0);
+  });
+
+  it('does not let a proactive notice clear the awaiting mark', async () => {
+    const { options } = fixture();
+    await acceptOwnerInbound({ channel: 'desktop', senderId: 'local-owner', text: 'ping', idempotencyKey: 'desktop-msg-01', at: 1_700_000_000_000 }, options);
+    expect((await postOwnerNotice({ text: 'leader line', idempotencyKey: 'notice-owner-01' }, options)).status).toBe('accepted');
+    expect(readOwnerThread(options).awaitingReply).toEqual(['m1']);
+  });
+
+  it('counts a recorded reply as answered even when every channel refuses it', async () => {
+    const { options } = fixture();
+    for (const channel of ['desktop', 'telegram', 'email', 'imessage', 'slack'] as const) {
+      options.transports![channel] = { async pull() { return []; }, async deliver() { return { status: 'refused' as const, reason: 'fixture refusal' }; } };
+    }
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'hello', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
+    expect((await sendOwnerReply({ text: 'answer', idempotencyKey: 'reply-owner-01' }, options)).status).toBe('refused');
+    expect(readOwnerThread(options).awaitingReply).toEqual([]);
+    expect(readOwnerCommsStatus(options).awaitingReply).toBe(0);
+  });
+
+  it('reports awaiting reply as unknown when the thread is unreadable', () => {
+    const { options } = fixture();
+    mkdirSync(join(options.runsDir, 'leader'), { recursive: true });
+    writeFileSync(join(options.runsDir, 'leader', 'owner-thread.json'), 'not json', { mode: 0o600 });
+    const view = readOwnerThread(options);
+    expect('unavailable' in view).toBe(true);
+    expect(view.awaitingReply).toBeNull();
+    expect(readOwnerCommsStatus(options).awaitingReply).toBeNull();
+  });
+
+  it('marks unanswered inbound lines in the human thread and status reads', async () => {
+    const { options } = fixture();
+    await acceptOwnerInbound({ channel: 'desktop', senderId: 'local-owner', text: 'ping', idempotencyKey: 'desktop-msg-01', at: 1_700_000_000_000 }, options);
+    const lines: string[] = [];
+    const write = console.log;
+    console.log = (line?: unknown) => { lines.push(String(line)); };
+    try {
+      expect(await cmdCommsOwner(['thread'], options)).toBe(0);
+      expect(await cmdCommsOwnerStatus(false, options)).toBe(0);
+    } finally { console.log = write; }
+    expect(lines[0]).toContain('inbound ping [awaiting reply]');
+    expect(lines.join('\n')).toContain('awaiting reply: 1');
+    await sendOwnerReply({ text: 'answer', idempotencyKey: 'reply-owner-01' }, options);
+    const after: string[] = [];
+    console.log = (line?: unknown) => { after.push(String(line)); };
+    try { await cmdCommsOwner(['thread'], options); } finally { console.log = write; }
+    expect(after[0]).not.toContain('awaiting reply');
   });
 
   it('halts pulls and sends while KILL or pause is on', async () => {
