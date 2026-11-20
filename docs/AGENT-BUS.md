@@ -398,7 +398,20 @@ identity, and `announced` marks jobs whose `owner` (announcer) label resolves
 to it — the agent posted them and owns their status reports, so the digest
 distinguishes driveable announcements from claimable work. Each job also
 carries the feed's `postId`/`statusId` envelope citations, so the digest
-names the `agents bus show` handles behind every open job. For the
+names the `agents bus show` handles behind every open job. The same feed
+read backs an `announced` section — the outbound side of the jobs view:
+every job whose announcer label resolves to the agent under the same owner
+matcher that has not reached `done` or `terminated`, newest update first
+(the first 50 shown, `matched` the true total, `truncated` definitive).
+`failed` stays listed because only the announcer may move a job and a
+failed one can still be rescheduled or terminated; each item is the feed
+job verbatim with its `postId`/`statusId` citations, so a job still open
+with claim keys appears in both `jobs` (the claimable view) and `announced`
+(the ownership view), while a `running`/`idle`/`blocked`/`failed` or
+claim-key-less announcement the agent posted no longer leaves the digest
+invisible. A non-ok feed reports the section's own
+`refused`/`unavailable`/`retryable`/`invalid` state, never an empty list.
+For the
 `next`/`handoffs` sections "addressed to it" means any label of the resolved
 identity or a `group:<channel>:<topic>` address of a registry channel it
 belongs to — the same membership rule the inbox and wake reads apply, minus

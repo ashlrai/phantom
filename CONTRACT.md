@@ -1722,7 +1722,7 @@ no execution authority; the token returns only to its acquirer.
 `phm agents bus work mine [<agent>]`. `readBusWorkMine(agent, options?)`
 (`BusWorkMineOptions`: `root?`, `runsRoot?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, claims, jobs, next, handoffs, threads, wakes, inbox}` or `{status:'invalid',
+asOf, claims, jobs, announced, next, handoffs, threads, wakes, inbox}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
@@ -1744,7 +1744,18 @@ claims join, and `claimable` is `true` only on a provably free key, `false`
 only when every declared key is provably held, `null` when coverage is
 `truncated` or `unknown` — `busWorkMineJobAnnotation(job, held, coverage,
 addressed, announced?)` is the exported pure rule. A non-ok feed collapses the section to
-its own status (`refused` keeps `reason`/`receipts`). `next` lists the
+its own status (`refused` keeps `reason`/`receipts`). `announced` is the
+outbound side of the same feed read: every job whose `owner` label resolves
+to the agent under the jobs section's owner matcher that has not reached
+`done` or `terminated`, newest update first, capped at the first 50 shown
+with `matched` the true total and `truncated` definitive — `failed` stays
+listed because only the announcer may move a job and a failed one can still
+be rescheduled or terminated. Each item is a `BusWorkFeedJob` verbatim, so
+it carries the feed's `postId`/`statusId` envelope citations; a job still
+open with claim keys appears in both `jobs` (the claimable view) and
+`announced` (the ownership view). A non-ok feed reports the section's own
+`refused`/`unavailable`/`retryable`/`invalid` state, never an empty list.
+`next` lists the
 claimable work envelopes addressed to the agent — every live receipt whose
 `isClaimableWork` body (`kind:'work'` or a protocol-v1 `task`) and whose `to`
 label resolves through the same identity matching `bus next` and the feed
