@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates ten local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates eleven local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), act: `phm fleet needs-resolve`.
@@ -73,6 +73,18 @@
  *               one is queued behind it. Informational reports never await
  *               a reply and never list. `expiresAt` is the real TTL deadline
  *               `expireStaleRequests` applies — never invented.
+ *   email-outbox  `.reply.eml` artifacts the email send pass marked `stuck`
+ *               in the reply outbox (`<runsDir>/queue/email-drop.json` →
+ *               `outboxDir`, else the sibling of `inboxDir`) — interrupted
+ *               send claims, oversized or unreadable files, malformed
+ *               drafted rows. A stuck reply is a recorded delivery failure
+ *               the owner is waiting on, so each lists as warn with the
+ *               fixed reason and a `phm fleet email-outbox` deep link; a
+ *               stuck artifact is never auto-resent. Entries carry no
+ *               timestamp, so `since`/`expiresAt` stay null. Missing or
+ *               invalid config, a missing outbox and an unreadable one keep
+ *               their own source state — never an empty outbox passed off
+ *               as fact.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -96,6 +108,8 @@ import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
 import { loadConfigReadOnly } from '../config.js';
+import { readEmailDropConfig } from './email-drop-config.js';
+import { probeOutboxDir, readEmailOutbox, type EmailOutboxEntry, type EmailOutboxListing } from './email-outbox.js';
 import { gmailArchivePlanLatestPath, readGmailArchivePlanLatest } from './gmail-archive-plan-latest.js';
 import { readLinkedInDrop, type LinkedInMessage } from './linkedin-drop.js';
 import { readOwnerAwaitingReplies, type OwnerAwaitingReplies } from './owner-thread.js';
@@ -111,9 +125,9 @@ const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
 
-export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'owner-thread' | 'drafts' | 'bus' | 'conversations' | 'seats' | 'gmail' | 'linkedin' | 'requests';
+export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'owner-thread' | 'drafts' | 'bus' | 'conversations' | 'seats' | 'gmail' | 'linkedin' | 'requests' | 'email-outbox';
 export type UnifiedInboxSourceState = 'healthy' | 'missing' | 'degraded' | 'unavailable';
-export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'owner-message' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request';
+export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'owner-message' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-stuck';
 
 export interface UnifiedInboxItem extends AttentionItem {
   /** Stable, namespaced: `<source>:<ref>` (e.g. `drafts:d-0123…`). */
@@ -150,6 +164,15 @@ export interface UnifiedInbox {
   items: UnifiedInboxItem[];
 }
 
+/** One reply artifact as the email-outbox source reports it: name, state and the fixed stuck reason — never a recipient, subject, body or path. */
+export type EmailOutboxSourceEntry = Pick<EmailOutboxEntry, 'name' | 'state' | 'reason'>;
+
+/** The resolved email-outbox read: a unified source state plus every artifact row, stuck included. */
+export interface EmailOutboxSourceRead {
+  state: UnifiedInboxSourceState;
+  entries: readonly EmailOutboxSourceEntry[];
+}
+
 export interface UnifiedInboxOptions {
   /** Shared runs context (`~/.ashlr-runs`): needs-you, teammate and draft stores. */
   runsDir?: string;
@@ -173,6 +196,7 @@ export interface UnifiedInboxOptions {
   readRequests?: typeof readCommsRequests;
   /** Test seam: the request TTL `expiresAt` uses; default resolves cfg.comms.requestTtlHours like dispatch. */
   requestTtlMs?: number;
+  readEmailOutbox?: (options: { runsDir?: string }) => Promise<EmailOutboxSourceRead>;
 }
 
 const cap = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
@@ -739,6 +763,67 @@ function requestItems(read: typeof readCommsRequests, now: () => number, ttlOver
 }
 
 /**
+ * The same read `phm fleet email-outbox` serves, resolved at the shared runs
+ * dir: saved email-drop config → outbox dir (`outboxDir`, else the sibling of
+ * `inboxDir`, the rule every consumer applies) → availability probe →
+ * `readEmailOutbox`. A missing config or outbox is 'missing'; a config that
+ * exists but cannot be used is 'degraded' (the gmail plan-file rule); a probe
+ * or listing failure is 'unavailable' — a broken drop folder never reports a
+ * healthy empty outbox. Rows are stripped to name/state/reason so recipients,
+ * subjects, bodies and paths cannot reach the inbox even by accident.
+ */
+async function readEmailOutboxSource(runsDir: string): Promise<EmailOutboxSourceRead> {
+  const none = (state: UnifiedInboxSourceState): EmailOutboxSourceRead => ({ state, entries: [] });
+  let saved: Awaited<ReturnType<typeof readEmailDropConfig>>;
+  try { saved = await readEmailDropConfig(runsDir); } catch { return none('unavailable'); }
+  if (saved.state === 'missing') return none('missing');
+  if (saved.state !== 'ok' || saved.config === undefined) return none('degraded');
+  const outboxDir = saved.config.outboxDir ?? join(saved.config.inboxDir, '..', 'outbox');
+  let availability: ReturnType<typeof probeOutboxDir>;
+  try { availability = probeOutboxDir(outboxDir); } catch { return none('unavailable'); }
+  if (availability === 'missing') return none('missing');
+  if (availability !== 'ok') return none('unavailable');
+  let listing: EmailOutboxListing;
+  try { listing = readEmailOutbox(outboxDir); } catch { return none('unavailable'); }
+  return {
+    state: 'healthy',
+    entries: listing.entries.map((entry): EmailOutboxSourceEntry => entry.reason === undefined
+      ? { name: entry.name, state: entry.state }
+      : { name: entry.name, state: entry.state, reason: entry.reason }),
+  };
+}
+
+/**
+ * `.reply.eml` artifacts the email send pass marked `stuck` — interrupted
+ * send claims, oversized or unreadable files, malformed drafted rows. A stuck
+ * reply is a recorded delivery failure the owner may be waiting on, and today
+ * only `phm fleet email-outbox` and `phm comms diagnose` surface it, so each
+ * lists as a warn with the fixed reason and a deep link. A stuck artifact is
+ * never auto-resent, so items are non-blocking; entries carry no timestamp,
+ * so `since`/`expiresAt` stay null — unknown, never invented. Queued, sent
+ * and drafted rows are the send pass's own concern and never list here.
+ */
+async function emailOutboxItems(read: NonNullable<UnifiedInboxOptions['readEmailOutbox']>,
+  runsDir: string | undefined): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: EmailOutboxSourceRead;
+  try { result = await read({ runsDir: dir }); } catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
+  const items = result.entries.filter(entry => entry.state === 'stuck').map((entry): Omit<UnifiedInboxItem, 'priority'> => ({
+    id: `email-outbox:${entry.name}`,
+    source: 'email-outbox',
+    kind: 'email-stuck',
+    severity: 'warn',
+    blocking: false,
+    title: oneLine(`Stuck email reply ${entry.name}`, TITLE_MAX),
+    detail: oneLine(`reason ${entry.reason ?? 'unknown'}`, DETAIL_MAX),
+    since: null,
+    expiresAt: null,
+    act: ['phm fleet email-outbox', 'phm comms diagnose --json'],
+  }));
+  return { report: { state: result.state, pending: items.length }, items };
+}
+
+/**
  * One read-only pass over every pending comms source. Never throws; a failed
  * source reports its state and the rest still list.
  */
@@ -754,6 +839,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const gmail = gmailItems(options.readGmailPlans ?? readGmailArchivePlanLatest, options.runsDir);
   const linkedin = linkedInItems(options.readLinkedIn ?? readLinkedInDrop, options.runsDir, now);
   const requests = requestItems(options.readRequests ?? readCommsRequests, now, options.requestTtlMs);
+  const emailOutbox = await emailOutboxItems(
+    options.readEmailOutbox ?? (async (opts: { runsDir?: string }) => readEmailOutboxSource(opts.runsDir ?? join(homedir(), '.ashlr-runs'))),
+    options.runsDir);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -766,8 +854,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     gmail: gmail.report,
     linkedin: linkedin.report,
     requests: requests.report,
+    'email-outbox': emailOutbox.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...ownerThread.items, ...drafts.items, ...bus.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...ownerThread.items, ...drafts.items, ...bus.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailOutbox.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

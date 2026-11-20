@@ -18,6 +18,8 @@ import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type UnifiedInbox } from '..
 import type { SeatHandoff, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
 import type { CommsRequest, CommsRequestsRead } from '../src/core/comms/requests.js';
 import { markTeammateTextsAnswered, recordTeammateText } from '../src/core/comms/imessage-teammate-inbox.js';
+import { writeEmailDropConfig, type EmailDropConfig } from '../src/core/comms/email-drop-config.js';
+import { EMAIL_OUTBOX_MAX_BYTES } from '../src/core/comms/email-outbox.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import type { AgentConversations } from '../src/core/fleet/agent-conversations.js';
 import type { BusJsonValue } from '../src/core/fleet/bus-envelope.js';
@@ -105,6 +107,7 @@ describe('readUnifiedInbox sources', () => {
         bus: { state: 'missing', pending: 0 },
         conversations: { state: 'missing', pending: 0 },
         seats: { state: 'missing', pending: 0 },
+        'email-outbox': { state: 'missing', pending: 0 },
       },
     });
   });
@@ -771,6 +774,101 @@ describe('readUnifiedInbox comms requests', () => {
     expect(item.since).toBeNull();
     expect(item.expiresAt).toBeNull();
     expect(item.detail).toBe('approval · manager-approval · awaiting reply · 3 options');
+  });
+});
+
+describe('readUnifiedInbox email outbox', () => {
+  const config = (over: Partial<EmailDropConfig> = {}): EmailDropConfig => ({
+    v: 1, inboxDir: join(root, 'inbox'), outboxDir: join(root, 'outbox'),
+    from: ['operator@example.test'], ...over,
+  });
+  /** A mixed outbox: three stuck artifacts and one row of every non-stuck state. */
+  const seedOutbox = (): string => {
+    const dir = join(root, 'outbox');
+    for (const sub of ['sending', 'sent', 'drafted']) mkdirSync(join(dir, sub), { recursive: true });
+    writeFileSync(join(dir, 'queued.reply.eml'), 'To: person@example.com\nSubject: hi\n\nbody\n', { mode: 0o600 });
+    writeFileSync(join(dir, 'big.reply.eml'), 'x'.repeat(EMAIL_OUTBOX_MAX_BYTES + 1), { mode: 0o600 });
+    writeFileSync(join(dir, 'sending', 'lost.reply.eml'), 'To: person@example.com\nSubject: hi\n\nbody\n', { mode: 0o600 });
+    writeFileSync(join(dir, 'sent', 'done.reply.eml'), 'x', { mode: 0o600 });
+    writeFileSync(join(dir, 'drafted', 'good.reply.eml'), 'To: person@example.com\nSubject: hi\n\nbody\n', { mode: 0o600 });
+    writeFileSync(join(dir, 'drafted', 'broken.reply.eml'), 'Subject: no recipient\n\nbody\n', { mode: 0o600 });
+    return dir;
+  };
+
+  it('lists only stuck reply artifacts as warn items with the fixed reason and deep links', async () => {
+    await writeEmailDropConfig(runsDir, config());
+    seedOutbox();
+    const inbox = await read();
+    expect(inbox.sources['email-outbox']).toEqual({ state: 'healthy', pending: 3 });
+    const items = inbox.items.filter(i => i.source === 'email-outbox');
+    expect(items).toHaveLength(3);
+    expect(items.map(i => i.detail).sort()).toEqual(['reason interrupted-send', 'reason malformed', 'reason oversized']);
+    const lost = items.find(i => i.id === 'email-outbox:lost.reply.eml')!;
+    expect(lost).toMatchObject({
+      kind: 'email-stuck', severity: 'warn', blocking: false, priority: 'today',
+      title: 'Stuck email reply lost.reply.eml',
+      since: null, expiresAt: null,
+      act: ['phm fleet email-outbox', 'phm comms diagnose --json'],
+    });
+    // Queued, sent and drafted rows are the send pass's own concern — never items.
+    expect(items.some(i => /queued|done|good/.test(i.id))).toBe(false);
+  });
+
+  it('resolves the outbox as the sibling of inboxDir when outboxDir is absent', async () => {
+    await writeEmailDropConfig(runsDir, { v: 1, inboxDir: join(root, 'inbox'), from: ['operator@example.test'] });
+    const dir = join(root, 'outbox'); // join(inboxDir, '..', 'outbox')
+    mkdirSync(join(dir, 'sending'), { recursive: true });
+    writeFileSync(join(dir, 'sending', 'lost.reply.eml'), 'x', { mode: 0o600 });
+    const inbox = await read();
+    expect(inbox.sources['email-outbox']).toEqual({ state: 'healthy', pending: 1 });
+    expect(inbox.items.find(i => i.id === 'email-outbox:lost.reply.eml')).toMatchObject({ kind: 'email-stuck' });
+  });
+
+  it('reports missing config, invalid config, a missing outbox and a non-directory outbox honestly', async () => {
+    expect((await read()).sources['email-outbox']).toEqual({ state: 'missing', pending: 0 });
+    mkdirSync(join(runsDir, 'queue'), { recursive: true });
+    writeFileSync(join(runsDir, 'queue', 'email-drop.json'), '{oops', { mode: 0o600 });
+    expect((await read()).sources['email-outbox']).toEqual({ state: 'degraded', pending: 0 });
+    await writeEmailDropConfig(runsDir, config({ outboxDir: join(root, 'no-such-outbox') }));
+    expect((await read()).sources['email-outbox']).toEqual({ state: 'missing', pending: 0 });
+    const file = join(root, 'outbox-is-a-file');
+    writeFileSync(file, 'x', { mode: 0o600 });
+    await writeEmailDropConfig(runsDir, config({ outboxDir: file }));
+    expect((await read()).sources['email-outbox']).toEqual({ state: 'unavailable', pending: 0 });
+  });
+
+  it('builds items from an injected read and reports a throwing seam as unavailable while other sources list', async () => {
+    const pinned = { readRequests: () => ({ status: 'missing' as const, requests: [] }) };
+    const stubbed = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readEmailOutbox: async () => ({ state: 'healthy', entries: [
+        { name: 'a.reply.eml', state: 'stuck', reason: 'oversized' },
+        { name: 'b.reply.eml', state: 'queued' },
+        { name: 'c.reply.eml', state: 'stuck' },
+      ] }),
+    });
+    const items = stubbed.items.filter(i => i.source === 'email-outbox');
+    expect(items.map(i => i.id).sort()).toEqual(['email-outbox:a.reply.eml', 'email-outbox:c.reply.eml']);
+    expect(items.find(i => i.id === 'email-outbox:c.reply.eml')!.detail).toBe('reason unknown');
+    expect(stubbed.sources['email-outbox']).toEqual({ state: 'healthy', pending: 2 });
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const throwing = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readEmailOutbox: async () => { throw new Error('boom'); },
+    });
+    expect(throwing.sources['email-outbox']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(throwing.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+
+  it('scrubs secret-shaped artifact names out of item titles', async () => {
+    await writeEmailDropConfig(runsDir, config());
+    const dir = join(root, 'outbox');
+    mkdirSync(join(dir, 'sending'), { recursive: true });
+    writeFileSync(join(dir, 'sending', 'sk-abcdefghijklmnop.reply.eml'), 'x', { mode: 0o600 });
+    const item = (await read()).items.find(i => i.source === 'email-outbox')!;
+    expect(item.title).toContain('[REDACTED]');
+    expect(item.title).not.toContain('sk-abcdefghijklmnop');
+    expect(item.title).not.toMatch(/\n/);
   });
 });
 

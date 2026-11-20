@@ -39,9 +39,9 @@ it('drops items without id or title and with unknown enum values', () => {
 
 it('summarises sources, marking non-healthy and showing missing as a dash', () => {
   const view = readUnifiedInboxView(raw({ sources: { 'needs-you': report('healthy', 3), imessage: report('healthy', 1), drafts: report('missing', 0), bus: report('degraded', 2), requests: report('healthy', 1) } }));
-  expect(view && !view.unavailable && sourceSummary(view.sources)).toBe('Needs you 3 · iMessage 1 · Owner thread — · Drafts — · Bus degraded 2 · Conversations — · Seats — · Gmail — · LinkedIn — · Requests 1');
+  expect(view && !view.unavailable && sourceSummary(view.sources)).toBe('Needs you 3 · iMessage 1 · Owner thread — · Drafts — · Bus degraded 2 · Conversations — · Seats — · Gmail — · LinkedIn — · Requests 1 · Email outbox —');
   const healthy = readUnifiedInboxView(raw());
-  expect(healthy && !healthy.unavailable && sourceSummary(healthy.sources)).toBe('Needs you 1 · iMessage 0 · Owner thread — · Drafts 1 · Bus 0 · Conversations — · Seats — · Gmail — · LinkedIn — · Requests —');
+  expect(healthy && !healthy.unavailable && sourceSummary(healthy.sources)).toBe('Needs you 1 · iMessage 0 · Owner thread — · Drafts 1 · Bus 0 · Conversations — · Seats — · Gmail — · LinkedIn — · Requests — · Email outbox —');
 });
 
 it('reads comms-request items and labels them', () => {
