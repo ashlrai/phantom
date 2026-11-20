@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; script?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -63,7 +63,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.script ? 'script-shared' : options.web ? 'web-shared' : 'shared';
       return success(`/usr/bin/git log -1 --format=%H\n${isMaster ? master : head}\n${fixture(name)}`);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
@@ -855,6 +855,129 @@ describe('CI baseline evidence', () => {
     // A singleton unaffected failure can never prove a master pass.
     const singleton = await analyzeCiBaseline('owner/repo', github({ trust: true, count: 1, pass: true, contents }).gh);
     for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('parses ci.yml helper-gate step failures', () => {
+    const failures = parseBaselineFailures(fixture('script-shared'), 'owner/repo');
+    expect(failures.map(f => f.testId)).toEqual([
+      '.github/tests/ci-fast-select.test.mjs > warm sparse checkout',
+      '.github/scripts/ci-fetch-range.mjs > (fetch-range)',
+      '.github/scripts/ci-fast-inputs.mjs > (fast-inputs)',
+      '.github/scripts/ci-mcp-selection.mjs > (mcp-selection)',
+    ]);
+    expect(failures[1]).toMatchObject({ file: '.github/scripts/ci-fetch-range.mjs', names: '(fetch-range)' });
+    expect(failures[1]?.excerpt).toContain('pull request base is missing');
+    expect(failures[2]).toMatchObject({ file: '.github/scripts/ci-fast-inputs.mjs', names: '(fast-inputs)' });
+    expect(failures[2]?.excerpt).toContain('tests needs the plan file');
+    expect(failures[3]).toMatchObject({ file: '.github/scripts/ci-mcp-selection.mjs', names: '(mcp-selection)' });
+    expect(failures[3]?.excerpt).toContain('MCP test selection failed: merge base unavailable');
+    // The non-whitelisted ci-fast-select step produced no gate group; its
+    // companion TAP failure is the only evidence and stays TAP-owned.
+    expect(failures.some(f => f.file === '.github/scripts/ci-fast-select.mjs')).toBe(false);
+    // Timestamped job-log lines parse identically.
+    const stamped = fixture('script-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped, 'owner/repo').map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    const secret = 'ghp_' + 'a'.repeat(36);
+    const leaky = [
+      '##[group]Run node .github/scripts/ci-fetch-range.mjs',
+      'node .github/scripts/ci-fetch-range.mjs',
+      'shell: /usr/bin/bash -e {0}',
+      '##[endgroup]',
+      `fatal: token ${secret} rejected`,
+      '##[error]Process completed with exit code 1.',
+    ].join('\n');
+    expect(parseBaselineFailures(leaky)[0]?.excerpt).not.toContain(secret);
+  });
+  it('keeps unattributable ci.yml step failures unparsed', () => {
+    const step = (script: string[], output: string[], error = '##[error]Process completed with exit code 1.') =>
+      ['##[group]Run ' + script[0], ...script.slice(1), 'shell: /usr/bin/bash -e {0}', '##[endgroup]', ...output, error].join('\n');
+    // Mixed bash, uses: actions, non-whitelisted scripts, ambiguous
+    // multi-script steps, cancelled steps and passing steps stay unparsed.
+    for (const bad of [
+      step(['set -euo pipefail', 'npm run build'], ['build failed']),
+      step(['actions/setup-node@820762786026740c76f36085b0efc47a31fe5020'], ['with:', '  node-version: \'22\'']),
+      step(['node .github/scripts/ci-fast-run.mjs'], ['spawn failed']),
+      step(['node .github/scripts/ci-pack-smoke.mjs capture "$RUNNER_TEMP"'], ['Error: Cannot find module']),
+      step(['node .github/scripts/ci-fetch-range.mjs', 'node .github/scripts/ci-dep-graph.mjs update'], ['boom']),
+      step(['node ./.github/scripts/ci-fetch-range.mjs'], ['boom']),
+      step(['node .github/scripts/ci-fetch-range.mjs'], ['ok'], '##[error]The operation was canceled.'),
+      step(['node .github/scripts/ci-fetch-range.mjs'], ['range fetched'], ''),
+    ]) {
+      expect(parseBaselineFailures(bad), bad.slice(0, 60)).toEqual([]);
+    }
+    // A blank line inside the script block does not disqualify the step.
+    const blank = [
+      '##[group]Run node .github/scripts/ci-fetch-range.mjs',
+      'node .github/scripts/ci-fetch-range.mjs',
+      '',
+      'shell: /usr/bin/bash -e {0}',
+      '##[endgroup]',
+      'commit range unavailable after unshallow',
+      '##[error]Process completed with exit code 1.',
+    ].join('\n');
+    expect(parseBaselineFailures(blank).map(f => f.testId)).toEqual(['.github/scripts/ci-fetch-range.mjs > (fetch-range)']);
+    // A companion test failure owns the step: the gate group is suppressed
+    // and the TAP `not ok` without a resolvable location emits nothing.
+    const suppressed = step(
+      ['node --test .github/tests/ci-mcp-selection.test.mjs', 'node --test .github/tests/ci-mcp-selection.test.mjs', 'node .github/scripts/ci-mcp-selection.mjs'],
+      ['TAP version 13', 'not ok 1 - selection'],
+    );
+    expect(parseBaselineFailures(suppressed)).toEqual([]);
+    // A vitest FAIL line in a gate step's output suppresses the gate group;
+    // the vitest failure itself still parses.
+    const vitest = step(
+      ['node .github/scripts/ci-mac-rotation.mjs run general'],
+      ['FAIL  |unit| test/example.test.ts > suite > case'],
+    );
+    expect(parseBaselineFailures(vitest).map(f => f.testId)).toEqual(['test/example.test.ts > suite > case']);
+  });
+  it('groups ci.yml helper-gate failures and attributes workflow and import inputs', async () => {
+    const contents = {
+      '.github/scripts/ci-fetch-range.mjs': "import { execFileSync } from 'node:child_process';\nimport { fileURLToPath } from 'node:url';",
+      '.github/scripts/ci-fast-inputs.mjs': "import { hashParts } from './ci-green-reuse.mjs';\nimport { changedPaths } from './ci-changed-paths.mjs';\nimport { SCHEMA } from './ci-dep-graph.mjs';",
+      '.github/scripts/ci-green-reuse.mjs': "import { createHash } from 'node:crypto';",
+      '.github/scripts/ci-changed-paths.mjs': "import { execFileSync } from 'node:child_process';",
+      '.github/scripts/ci-dep-graph.mjs': "import { execFileSync } from 'node:child_process';",
+      '.github/scripts/ci-mcp-selection.mjs': "import { execFileSync } from 'node:child_process';",
+    };
+    const report = await analyzeCiBaseline('owner/repo', github({ script: true, contents }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(4);
+    expect(report.groups.map(g => g.testId)).toEqual([
+      '.github/scripts/ci-fast-inputs.mjs > (fast-inputs)',
+      '.github/scripts/ci-fetch-range.mjs > (fetch-range)',
+      '.github/scripts/ci-mcp-selection.mjs > (mcp-selection)',
+      '.github/tests/ci-fast-select.test.mjs > warm sparse checkout',
+    ]);
+    for (const group of report.groups.slice(0, 3)) {
+      expect(group).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    // The workflow step definition, the gate script itself and its import
+    // closure are inputs: ci-fast-inputs imports ci-dep-graph, so touching
+    // the graph script is PR-caused for the fast-inputs group only.
+    for (const [touched, id] of [
+      ['.github/workflows/ci.yml', '.github/scripts/ci-fetch-range.mjs > (fetch-range)'],
+      ['.github/scripts/ci-fetch-range.mjs', '.github/scripts/ci-fetch-range.mjs > (fetch-range)'],
+      ['.github/scripts/ci-dep-graph.mjs', '.github/scripts/ci-fast-inputs.mjs > (fast-inputs)'],
+      ['.github/scripts/ci-mcp-selection.mjs', '.github/scripts/ci-mcp-selection.mjs > (mcp-selection)'],
+    ] as const) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ script: true, touched, contents }).gh);
+      const byId = new Map(caused.groups.map(g => [g.testId, g.action]));
+      expect(byId.get(id), touched).toBe('pr-caused');
+    }
+    const depGraph = await analyzeCiBaseline('owner/repo', github({ script: true, touched: '.github/scripts/ci-dep-graph.mjs', contents }).gh);
+    const depById = new Map(depGraph.groups.map(g => [g.testId, g.action]));
+    expect(depById.get('.github/scripts/ci-fetch-range.mjs > (fetch-range)')).toBe('queue-master-fix');
+    expect(depById.get('.github/scripts/ci-mcp-selection.mjs > (mcp-selection)')).toBe('queue-master-fix');
+    // The vitest harness ambient set cannot reach these gates, and unrelated
+    // changes share the baseline.
+    for (const touched of ['tsconfig.json', 'vitest.config.ts', 'src/core/status.ts', 'docs/README.md']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ script: true, touched, contents }).gh);
+      for (const group of shared.groups.slice(0, 3)) expect(group.classification, `${touched} -> ${group.testId}`).toBe('shared-baseline');
+    }
+    // A singleton unaffected failure can never prove a master pass.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ script: true, count: 1, pass: true, contents }).gh);
+    for (const group of singleton.groups.slice(0, 3)) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
   });
   it('keeps TAP indentation on timestamped job-log lines', () => {
     const block = [

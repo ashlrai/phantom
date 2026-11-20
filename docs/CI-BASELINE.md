@@ -213,6 +213,28 @@ Clean scans (`0 allowed=<n>`, `no leaks found`, `leaks found: 0`), the
 provenance pass lines, unrelated `::error::` annotations and unrelated
 lines stay unparsed.
 
+The ci.yml helper gates under `.github/scripts/` fail with only the
+script's `console.error` line plus the runner's
+`##[error]Process completed with exit code` step marker -- no vitest,
+TAP, typecheck or report shape names them. GitHub wraps each `run:`
+step in a `##[group]Run <script>` block, so the analyzer attributes the
+marker to the step's script when every script line is a `node --test`
+invocation or one whitelisted gate script, all gate lines naming the
+same file: `ci-fetch-range`, `ci-source-binding`, `ci-site-lane`,
+`ci-mac-rotation`, `ci-dep-graph`, `ci-fast-inputs`, `ci-green-reuse`
+and `ci-mcp-selection` group under
+`.github/scripts/<script> > (<gate>)`. Mixed bash, `uses:` actions,
+non-whitelisted scripts and ambiguous multi-script steps stay
+unattributed, and a `not ok` or vitest `FAIL` line in the step's own
+output means the companion test runner owns the failure -- the gate
+group is suppressed. Each gate's inputs are the script, its import
+closure and `.github/workflows/ci.yml` (the step definition), with no
+vitest harness ambient set; like the other non-test identities these
+groups classify `shared-baseline`, `pr-caused` or `unknown` -- never
+`probable-flake`. Scripts whose pure steps only appear in jobs the
+analyzer's evidence never sees (macOS/Windows lanes, release
+pipelines, merge-group-only attribution) are not listed.
+
 Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
 brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
 with an explicit verbose test pass on master's current run produces

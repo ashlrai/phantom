@@ -418,6 +418,17 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   // group must resolve. The scanner gates have no enumerable diff/commit
   // inputs and get no static seeds.
   '.github/scripts/release-version-provenance.mjs': ['package.json', '.release-please-manifest.json'],
+  // The ci.yml helper gates run as workflow steps: the workflow file that
+  // defines each command, env wiring and if: condition is a direct input
+  // alongside the script's own import closure.
+  '.github/scripts/ci-fetch-range.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-source-binding.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-site-lane.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-mac-rotation.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-dep-graph.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-fast-inputs.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-green-reuse.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-mcp-selection.mjs': ['.github/workflows/ci.yml'],
 };
 
 function parseVersionSyncFailures(log: string): Failure[] {
@@ -827,6 +838,123 @@ function parseVersionProvenanceFailures(log: string): Failure[] {
   return out;
 }
 
+// The ci.yml helper gates under .github/scripts/ are single-purpose node
+// invocations whose only failure output is the script's console.error
+// line plus the runner's `##[error]Process completed with exit code`
+// step marker: no vitest FAIL, TAP `not ok`, tsc diagnostic or report
+// shape names them, so without step attribution a broken gate leaves
+// every open PR unknown and queues no fix. GitHub wraps each `run:`
+// step in a `##[group]Run <script>` block -- the Run tail and the
+// echoed script lines, then `shell:`/`env:` metadata, then
+// `##[endgroup]` -- and a step qualifies only when every script line
+// is a `node --test` invocation or a whitelisted gate script, all gate
+// lines naming the same file. Mixed bash, heredocs, `uses:` actions,
+// non-whitelisted scripts (ci-pack-smoke and release-version-provenance
+// already have dedicated parsers; ci-fast-select never exits nonzero)
+// and other commands stay unattributed. When the step then fails, a
+// `not ok` or vitest FAIL line in its own output means the companion
+// test runner owns the failure and the gate group is suppressed;
+// otherwise the gate script is the identity -- the file, its import
+// closure and the workflow step that invokes it are the unit a master
+// fix restores. Like the other non-test identities these groups can
+// never resolve through a vitest pass line: shared-baseline, pr-caused
+// or unknown -- never probable-flake. Scripts whose pure steps only
+// appear in jobs the analyzer's evidence never sees (macOS/Windows
+// lanes, release pipelines, merge-group-only attribution) are
+// deliberately not listed.
+const CI_SCRIPT_GATE_MAX = 8;
+const CI_SCRIPT_GATES: Record<string, string> = {
+  'ci-fetch-range.mjs': '(fetch-range)',
+  'ci-source-binding.mjs': '(source-binding)',
+  'ci-site-lane.mjs': '(site-lane)',
+  'ci-mac-rotation.mjs': '(mac-rotation)',
+  'ci-dep-graph.mjs': '(dep-graph)',
+  'ci-fast-inputs.mjs': '(fast-inputs)',
+  'ci-green-reuse.mjs': '(green-reuse)',
+  'ci-mcp-selection.mjs': '(mcp-selection)',
+};
+const CI_SCRIPT_GATE_FILES = new Set(Object.keys(CI_SCRIPT_GATES).map(base => `.github/scripts/${base}`));
+const CI_STEP_GROUP = /^##\[group\]Run(?:\s+(.*))?$/;
+const CI_STEP_END = /^##\[endgroup\]$/;
+const CI_STEP_META = /^(?:shell|env)\s*:/;
+const CI_STEP_NODE_TEST = /^node\s+--test(?:\s|$)/;
+const CI_STEP_GATE = /^node\s+\.github\/scripts\/([A-Za-z0-9][A-Za-z0-9._-]*\.mjs)(?=\s|$)/;
+const CI_STEP_FAILED = /^##\[error\]Process completed with exit code \d+\.$/;
+
+function parseCiScriptGateFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  // idle: no step context. script: collecting a Run block's script lines.
+  // meta: past the shell:/env: marker inside the block. output: scanning a
+  // step's output for failure shapes an earlier parser already owns.
+  let phase: 'idle' | 'script' | 'meta' | 'output' = 'idle';
+  let disqualified = false;
+  const bases = new Set<string>();
+  let gate: { file: string; names: string } | null = null;
+  let suppressed = false;
+  let recent: string[] = [];
+  const noteScriptLine = (line: string) => {
+    if (line === '' || CI_STEP_NODE_TEST.test(line)) return;
+    const match = CI_STEP_GATE.exec(line);
+    const names = match === null ? undefined : CI_SCRIPT_GATES[match[1]!];
+    if (names === undefined) { disqualified = true; return; }
+    bases.add(match![1]!);
+  };
+  // A step attributes to a gate only when its script lines name exactly one
+  // whitelisted helper; node --test companions and blank lines are allowed.
+  const resolveGate = (): { file: string; names: string } | null => {
+    const base = !disqualified && bases.size === 1 ? [...bases][0]! : null;
+    return base === null ? null : { file: `.github/scripts/${base}`, names: CI_SCRIPT_GATES[base]! };
+  };
+  for (const line of lines(log)) {
+    if (out.length >= CI_SCRIPT_GATE_MAX) break;
+    if (line.startsWith('##[group]')) {
+      // Any group boundary ends the current step: a new Run block starts
+      // script collection, anything else leaves the step unattributed.
+      phase = 'idle'; gate = null; disqualified = false; bases.clear(); suppressed = false; recent = [];
+      const run = CI_STEP_GROUP.exec(line);
+      if (run !== null) {
+        phase = 'script';
+        if (run[1] !== undefined) noteScriptLine(run[1]);
+      }
+      continue;
+    }
+    if (phase === 'script') {
+      if (CI_STEP_END.test(line)) {
+        gate = resolveGate();
+        phase = 'output';
+        suppressed = false;
+        recent = [];
+        continue;
+      }
+      if (CI_STEP_META.test(line)) { phase = 'meta'; continue; }
+      noteScriptLine(line);
+      continue;
+    }
+    if (phase === 'meta') {
+      if (CI_STEP_END.test(line)) {
+        gate = resolveGate();
+        phase = 'output';
+        suppressed = false;
+        recent = [];
+      }
+      continue;
+    }
+    if (phase === 'output') {
+      if (CI_STEP_FAILED.test(line)) {
+        if (gate !== null && !suppressed) {
+          const excerpt = recent.length > 0 ? recent.join('\n') : line;
+          out.push({ file: gate.file, names: gate.names, testId: `${gate.file} > ${gate.names}`, excerpt: clean(excerpt) });
+        }
+        phase = 'idle'; gate = null; suppressed = false; recent = [];
+        continue;
+      }
+      if (FAIL_LINE.test(line) || SUITE_FAIL_LINE.test(line) || /^not ok\b/.test(line)) suppressed = true;
+      if (line !== '') { recent.push(line); if (recent.length > 4) recent.shift(); }
+    }
+  }
+  return out;
+}
+
 export function parseBaselineFailures(log: string, repo?: string, auditExceptions: readonly DependencyAuditException[] | null = []): Failure[] {
   const result: Failure[] = [];
   const typecheck = new Map<string, Failure>();
@@ -897,6 +1025,10 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     result.push(failure);
   }
   for (const failure of parseVersionProvenanceFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseCiScriptGateFailures(log)) {
     if (result.length >= 100) break;
     result.push(failure);
   }
@@ -1283,7 +1415,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // plain .mjs scripts plus their enumerated manifests, and the
       // secret-shape/secret-scan/version-provenance trust gates have no
       // vitest harness at all, so the ambient set cannot reach any of them.
-      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) ? new Set<string>() : await harnessAmbient(failure.file);
+      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
       const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
       observations.push({ pr, failure, touched, runId: failure.runId });
     }
