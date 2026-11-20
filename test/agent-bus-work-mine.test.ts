@@ -696,6 +696,167 @@ describe('readBusWorkMine', () => {
     if (result.status !== 'ok') throw new Error('unreachable');
     expect(result.next).toEqual({ status: 'unavailable', reason: 'Bus store is not readable.' });
     expect(result.handoffs).toEqual({ status: 'unavailable', reason: 'Bus store is not readable.' });
+    expect(result.threads).toEqual({ status: 'unavailable', reason: 'Bus store is not readable.' });
+  });
+
+  it('lists conversation threads waiting on the agent and clears them once answered', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'ghost');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+
+    // An ask waits on atlas; a plain note and an ask to someone else do not.
+    expect(await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'can you review the feed?',
+      thread: 't-review', id: 'ask-1' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'fyi only',
+      thread: 't-note', id: 'note-1' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'nova', to: 'ghost', text: 'ghost question?',
+      id: 'ask-ghost' }, options)).toMatchObject({ status: 'posted' });
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.threads).toMatchObject({ status: 'ok', source: 'available', matched: 1,
+      truncated: false, skipped: 0 });
+    if (result.threads.status !== 'ok') throw new Error('unreachable');
+    expect(result.threads.items).toHaveLength(1);
+    const item = result.threads.items[0]!;
+    expect(item).toMatchObject({ id: 't-review', messageId: 'ask-1', kind: 'ask',
+      waitingOn: 'atlas', from: 'nova', fromAgent: 'nova', messageCount: 1 });
+    expect(item.subject).toContain('can you review the feed?');
+    expect(item.waitingMs).toBe(0);
+    expect(item.lastAt).toBe(new Date(options.clock.now).toISOString());
+    // The human line cites the same wait.
+    expect(formatBusWorkMine(result).join('\n')).toContain('waiting=');
+
+    // The sender does not owe itself the answer.
+    const sender = readBusWorkMine('nova', options);
+    if (sender.status !== 'ok' || sender.threads.status !== 'ok') throw new Error('unreachable');
+    expect(sender.threads.matched).toBe(0);
+
+    // Answering in the same thread clears the wait. The clock advances so the
+    // reply sorts after the ask (same-instant messages order by envelope id).
+    options.clock.now += 60_000;
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'reviewed, looks good',
+      thread: 't-review', id: 'ans-1' }, options)).toMatchObject({ status: 'posted' });
+    const after = readBusWorkMine('atlas', options);
+    if (after.status !== 'ok' || after.threads.status !== 'ok') throw new Error('unreachable');
+    expect(after.threads).toMatchObject({ matched: 0, items: [] });
+  });
+
+  it('lists channel waits for members minus the author, and handoffs as waiting threads', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'ghost');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+    registerAgentIdentity({ handle: 'ghost', runtime: { cli: 'grok', provider: 'local', model: null } }, options);
+    // eng: atlas + nova. ops: nova only.
+    expect(createAgentChannel({ name: 'eng', createdBy: 'atlas', members: ['nova'] }, options).status)
+      .toBe('created');
+    expect(createAgentChannel({ name: 'ops', createdBy: 'nova' }, options).status).toBe('created');
+
+    const post = (id: string, from: string, to: string, text: string) => {
+      const posted = appendBusInbox({ id, from, to, priority: 'P2', ttl: 120_000,
+        body: { kind: 'note', text } }, { root: options.root, now: options.now });
+      expect(posted.status).toBe('posted');
+    };
+    post('ch-ask', 'agent:ghost', 'group:eng:general', 'can someone check the deploy?');
+    post('ch-self', 'agent:atlas', 'group:eng:general', 'eng question for the room?');
+    post('ops-ask', 'agent:ghost', 'group:ops:general', 'ops question?');
+    // A handoff waits too — kind handoff in the same thread projection.
+    expect(await sendHandoff({ from: 'nova', to: 'atlas', taskId: 'RQ-T-1',
+      prompt: 'take this', id: 'ho-wait' }, options)).toMatchObject({ status: 'posted' });
+
+    const atlas = readBusWorkMine('atlas', options);
+    if (atlas.status !== 'ok' || atlas.threads.status !== 'ok') throw new Error('unreachable');
+    // The eng ask and the handoff; atlas's own eng post and the ops channel stay out.
+    expect(atlas.threads.matched).toBe(2);
+    const byMessage = new Map(atlas.threads.items.map(item => [item.messageId, item]));
+    expect(byMessage.get('ch-ask')).toMatchObject({ kind: 'ask', waitingOn: 'group:eng:general',
+      from: 'ghost', fromAgent: 'ghost' });
+    expect(byMessage.get('ho-wait')).toMatchObject({ kind: 'handoff', waitingOn: 'atlas',
+      from: 'nova', fromAgent: 'nova' });
+    expect(byMessage.has('ch-self')).toBe(false);
+    expect(byMessage.has('ops-ask')).toBe(false);
+
+    const nova = readBusWorkMine('nova', options);
+    if (nova.status !== 'ok' || nova.threads.status !== 'ok') throw new Error('unreachable');
+    // nova is in eng and ops: both eng asks (including atlas's own), the ops
+    // ask — but not the handoff nova itself sent.
+    expect(nova.threads.matched).toBe(3);
+    const novaIds = nova.threads.items.map(item => item.messageId);
+    expect(novaIds).toEqual(expect.arrayContaining(['ch-ask', 'ch-self', 'ops-ask']));
+    expect(novaIds).not.toContain('ho-wait');
+  });
+
+  it('narrows threads to literal labels when the registry is unreadable', async () => {
+    const options = setup();
+    expect(registerAgentIdentity({ handle: 'atlas', aliases: ['atlas-alias'],
+      runtime: { cli: 'claude', provider: 'claude', model: null } }, options).status).toBe('created');
+    expect(registerAgentIdentity({ handle: 'nova',
+      runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options).status).toBe('created');
+
+    await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'direct question?', id: 'ask-direct' }, options);
+    // Alias-addressed mail keeps the literal alias label only via a raw post —
+    // sendDirectMessage normalizes every recipient to agent:<handle>.
+    const aliasPost = appendBusInbox({ id: 'ask-alias', from: 'agent:nova', to: 'atlas-alias',
+      priority: 'P2', ttl: 120_000, body: { kind: 'note', text: 'alias question?' } },
+      { root: options.root, now: options.now });
+    expect(aliasPost.status).toBe('posted');
+
+    // Both labels resolve to atlas's identity.
+    const full = readBusWorkMine('atlas', options);
+    if (full.status !== 'ok' || full.threads.status !== 'ok') throw new Error('unreachable');
+    expect(full.threads.matched).toBe(2);
+
+    // An unreadable registry narrows to the literal label, never widens.
+    writeFileSync(join(options.root, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+    const narrowed = readBusWorkMine('agent:atlas', options);
+    expect(narrowed.status).toBe('ok');
+    if (narrowed.status !== 'ok' || narrowed.threads.status !== 'ok') throw new Error('unreachable');
+    expect(narrowed.threads.matched).toBe(1);
+    expect(narrowed.threads.items[0]).toMatchObject({ messageId: 'ask-direct', fromAgent: null });
+  });
+
+  it('matches waiting threads by literal label for an unregistered agent', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+    const posted = appendBusInbox({ id: 'ask-ghost', from: 'agent:nova', to: 'agent:ghost',
+      priority: 'P2', ttl: 120_000, body: { kind: 'note', text: 'ghost question?' } },
+      { root: options.root, now: options.now });
+    expect(posted.status).toBe('posted');
+
+    const ghost = readBusWorkMine('ghost', options);
+    expect(ghost.status).toBe('ok');
+    if (ghost.status !== 'ok' || ghost.threads.status !== 'ok') throw new Error('unreachable');
+    expect(ghost.threads.matched).toBe(1);
+    expect(ghost.threads.items[0]).toMatchObject({ messageId: 'ask-ghost', kind: 'ask',
+      waitingOn: 'ghost', from: 'nova', fromAgent: 'nova' });
+    // A registered agent the wait is not on never sees it.
+    const atlas = readBusWorkMine('atlas', options);
+    if (atlas.status !== 'ok' || atlas.threads.status !== 'ok') throw new Error('unreachable');
+    expect(atlas.threads.matched).toBe(0);
+  });
+
+  it('reports threads empty on a missing store and unavailable on an unreadable one', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    // No bus store at all: a verified-empty ok, never unknown.
+    const empty = readBusWorkMine('atlas', options);
+    expect(empty.status).toBe('ok');
+    if (empty.status !== 'ok') throw new Error('unreachable');
+    expect(empty.threads).toMatchObject({ status: 'ok', source: 'missing', matched: 0,
+      items: [], truncated: false, skipped: 0 });
+
+    // A poisoned store is unknown, never an empty list.
+    postClaimable(options, 'w-1');
+    writeFileSync(join(options.root, 'bus-inbox', 'messages.json'), '{invalid', { mode: 0o600 });
+    const down = readBusWorkMine('atlas', options);
+    expect(down.status).toBe('ok');
+    if (down.status !== 'ok') throw new Error('unreachable');
+    expect(down.threads).toEqual({ status: 'unavailable', reason: 'Bus store is not readable.' });
   });
 });
 
@@ -713,6 +874,7 @@ describe('formatBusWorkMine', () => {
     expect(text).toContain('RQ-F-1 queued "Job RQ-F-1" claimable=yes addressed=false announced=true');
     expect(text).toContain('next=0 shown=0 holds=complete');
     expect(text).toContain('handoffs=0 shown=0 holds=complete');
+    expect(text).toContain('threads=0 shown=0');
     expect(text).toContain('wakes=0');
     expect(text).toContain('inbox=0');
     // A non-ok top-level result renders its status line only.
@@ -753,6 +915,7 @@ describe('phm agents bus work mine', () => {
       jobs: { status: 'ok', holds: 'complete', jobs: [] },
       next: { status: 'ok', holds: 'complete', matched: 0, items: [], truncated: false },
       handoffs: { status: 'ok', holds: 'complete', matched: 0, items: [], truncated: false },
+      threads: { status: 'ok', source: 'missing', matched: 0, items: [], truncated: false },
       wakes: { status: 'ok', wakes: [] },
       inbox: { status: 'ok', messages: [], truncated: false } });
   });

@@ -375,8 +375,15 @@ bounded walk and claim order (the first 20 shown, `matched` the true total),
 each carrying the envelope `id` those verbs take as `--id`, the raw `to`
 routing label they take as `--to` (a channel-addressed handoff matches only
 its literal `group:<channel>:<topic>` label), the body's
-`taskId`, sender and the same tri-state hold evidence — the wake hints
-addressed to it, capped at the
+`taskId`, sender and the same tri-state hold evidence — the conversation
+threads waiting on its answer: the same `waiting` threads
+`agents conversations --waiting-only` computes, narrowed to waits the agent
+owes under any of its labels or a `group:<channel>:<topic>` address of a
+channel it belongs to, minus threads whose waiting message it sent itself
+(the first 20 longest-waiting shown, `matched` the true total; each item
+cites the waiting message's envelope `id` for `agents bus show`, its
+`kind`, `waitingOn`, `waitingMs`, sender and scrubbed subject) — the wake
+hints addressed to it, capped at the
 newest 20, and
 the next page of mail in its inbox: the same matching, order and owner-share
 receipt checks `agents bus inbox` applies, capped at the oldest 20 pending
