@@ -49,6 +49,34 @@ describe('SpendDownChart', () => {
   });
 });
 
+// Queue and sign-in fields are optional: known hours, unknown hours, a sign-in block, and an older payload without them.
+const QUEUE_FIXTURE: SpendDownV1 = {
+  ...FIXTURE,
+  pools: [
+    row({ id: 'claude', label: 'Claude', state: 'on-pace', used_frac: 0.5, even_pace_frac: 0.5, projected_at_reset: 1, verdict: 'on pace', queued_hours: 3.5, blocked: null, blocked_fix: null }),
+    row({ id: 'zai', label: 'Zai', state: 'on-pace', used_frac: 0.5, even_pace_frac: 0.5, projected_at_reset: 1, verdict: 'on pace', queued_hours: null }),
+    row({ id: 'gemini', label: 'Gemini', state: 'under', used_frac: 0.2, verdict: 'blocked: sign-in', queued_hours: 0, blocked: 'sign-in', blocked_fix: 'sign in to Gemini once: run gemini in a terminal' }),
+    row({ id: 'grok', label: 'Grok', state: 'on-pace', used_frac: 0.5, verdict: 'on pace' }),
+  ],
+};
+
+describe('queued hours and sign-in block', () => {
+  it('desktop chart shows hours, unknown, nothing queued and the sign-in step; older rows show no queue line', () => {
+    render(<SpendDownChart data={QUEUE_FIXTURE} />);
+    expect(screen.getAllByTestId('spenddown-queued').map(el => el.textContent)).toEqual(['3.5 h queued', 'queued: unknown', 'nothing queued']);
+    expect(screen.getByText('blocked: sign-in')).toBeVisible();
+    expect(screen.getByTestId('spenddown-blocked')).toHaveTextContent('sign in to Gemini once: run gemini in a terminal');
+  });
+
+  it('phone card shows the same words from the JSON', async () => {
+    stubFetch({ 'GET /api/app/pools/spenddown': QUEUE_FIXTURE });
+    renderMobile(<SpendDownCard />);
+    expect(await screen.findByText('3.5 h queued')).toBeVisible();
+    expect(screen.getByText('queued: unknown')).toBeVisible();
+    expect(screen.getByText('blocked: sign-in')).toBeVisible();
+  });
+});
+
 describe('phone Home spend down card', () => {
   it('shows the chart from GET /api/app/pools/spenddown', async () => {
     stubFetch({ 'GET /api/app/pools/spenddown': FIXTURE });

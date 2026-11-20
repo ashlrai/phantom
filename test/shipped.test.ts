@@ -154,7 +154,7 @@ describe('the website page', () => {
   it('empty and unknown: says so, lists nothing', () => {
     const empty = shippedPage(week([]));
     expect(empty).toContain('<p class="lead">Nothing merged in the last 7 days.</p>');
-    expect(empty).toContain('<p class="muted">No changes to list.</p>');
+    expect(empty).toContain('<p class="muted">Nothing shipped yet this week.</p>');
     expect(li(empty)).toBe(0);
     const unknown = shippedPage(buildShipped(recordsShippedSource('nope'), { now: NOW, days: 7 }));
     expect(unknown).toContain('Unknown: what shipped in the last 7 days could not be read.');

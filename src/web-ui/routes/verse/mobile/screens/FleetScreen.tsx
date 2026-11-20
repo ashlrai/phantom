@@ -45,6 +45,7 @@ import { wasteLines } from '../fleet-waste-lines.js';
 import { FleetUsageCard } from '../FleetUsageCard.js';
 import { UsageResourcesCard } from '../UsageResourcesCard.js';
 import { MobileReleaseCard } from '../MobileReleaseCard.js';
+import { MobileReleasesCard } from '../MobileReleasesCard.js';
 import { homeRunsQuery } from '../home-runs-query.js';
 import { formatUsd } from '../format-usd.js';
 import { mergeSpeedLines } from '../merge-speed-lines.js';
@@ -492,6 +493,7 @@ export function FleetScreen() {
         </Section>
       ) : null}
       <MobileReleaseCard />
+      <MobileReleasesCard />
       <Suspense fallback={<SkeletonList rows={2} label="Loading the queue" />}><QueueSection /></Suspense>
       <Section title="Budget mode" flat>{budgetBody}</Section>
       <Section title="Grant" flat footer="Grants are signed on your Mac with Touch ID.">{grantBody}</Section>

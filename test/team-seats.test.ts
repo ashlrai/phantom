@@ -20,7 +20,7 @@ describe('team seats', () => {
     const before = readEvents(team).length, r = addB();
     expect(r).toMatchObject({ schema: 'phantom.team.v1', version: 1 });
     expect(r.member).toEqual({ id: r.person.id, display_name: 'Member B', role: 'member', channels: { slack: ['UMEMBERB'] },
-      pool_share_pct: 30, allowed_repos: ['acme/app'], created_at: expect.stringMatching(/^\d{4}-/) });
+      pools: [], seats: [], pool_share_pct: 30, allowed_repos: ['acme/app'], created_at: expect.stringMatching(/^\d{4}-/) });
     expect(r.note).toContain('phm team join'); expect(r.next).toContain('Nothing was sent');
     // The only effect is one appended directory record by the owner; no membership, invite or message.
     const events = readEvents(team).slice(before);

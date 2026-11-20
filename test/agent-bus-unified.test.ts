@@ -7,8 +7,8 @@ import {
   registerAgentIdentity, resolveAgent, stableAgentId,
 } from '../src/core/agents/bus-identity.js';
 import {
-  announceWork, busBodySummary, listBusChannels, postChannelMessage, readAgentInbox, readAgentWakes, sendDirectMessage,
-  sendHandoff, sendWakeRequest, shouldWake, updateWorkStatus, type UnifiedBusOptions,
+  announceWork, busBodySummary, listBusChannels, postChannelMessage, readAgentChannel, readAgentInbox, readAgentWakes,
+  sendDirectMessage, sendHandoff, sendWakeRequest, shouldWake, updateWorkStatus, type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
@@ -19,7 +19,7 @@ import {
 import type { BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import { enqueueBusWake } from '../src/core/fleet/bus-wake-queue.js';
-import { subscribeGroup } from '../src/core/fleet/bus-group.js';
+import { publishGroupPresence, subscribeGroup } from '../src/core/fleet/bus-group.js';
 import { busV2ContractSummary } from '../src/core/agents/bus-v2-schema.js';
 
 const dirs: string[] = [];
@@ -144,6 +144,108 @@ describe('channel listing', () => {
     // An unreadable registry is unavailable, never an empty list.
     writeFileSync(join(options.root!, 'agent-identities', 'registry.json'), '{broken');
     expect(listBusChannels(undefined, options).status).toBe('unavailable');
+  });
+});
+
+describe('channel reads', () => {
+  it('pages channel posts oldest-first across topics, resolving senders and filtering', async () => {
+    const options = setup();
+    register(options, 'atlas', 'orion');
+    registerAgentIdentity({ handle: 'nova', aliases: ['lane-nova'] }, options);
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    createAgentChannel({ name: 'other', createdBy: 'atlas' }, options);
+    // Noise that must never leak into a channel transcript.
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'dm noise', id: 'dm-1' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'first', id: 'ch-1' }, options);
+    await postChannelMessage({ from: 'nova', channel: 'release', topic: 'deploy', text: 'second', id: 'ch-2' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'other', text: 'elsewhere', id: 'ch-3' }, options);
+    // A presence heartbeat on the channel address is an observation, not a message.
+    expect(publishGroupPresence({ room: 'release', topic: 'general', id: 'pres-1', member: 'agent:nova', state: 'online' }, options).status)
+      .toBe('posted');
+
+    const page = readAgentChannel('release', {}, options);
+    if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+    expect(page.channel).toBe('release');
+    expect(page.messages.map(m => `${m.envelope.id}:${m.topic}`)).toEqual(['ch-1:general', 'ch-2:deploy']);
+    expect(page.messages.map(m => m.fromAgent)).toEqual(['atlas', 'nova']);
+    expect(page.messages.every(m => m.cursor > 0)).toBe(true);
+
+    // --topic narrows to one topic of the channel.
+    const deploy = readAgentChannel('release', { topic: 'deploy' }, options);
+    expect(deploy.status === 'ok' && deploy.messages.map(m => m.envelope.id)).toEqual(['ch-2']);
+    // --from resolves every label of one identity: alias, handle, agent: ref and stable id.
+    for (const ref of ['nova', 'lane-nova', 'agent:nova', stableAgentId('nova')]) {
+      const mine = readAgentChannel('release', { from: ref }, options);
+      expect(mine.status === 'ok' && mine.messages.map(m => m.envelope.id)).toEqual(['ch-2']);
+    }
+    // An unresolvable ref keeps exact-label matching and finds nothing.
+    const ghost = readAgentChannel('release', { from: 'ghost' }, options);
+    expect(ghost.status === 'ok' && ghost.messages).toEqual([]);
+
+    // Paging resumes at nextCursor, which covers every scanned row.
+    const first = readAgentChannel('release', { limit: 1 }, options);
+    if (first.status !== 'ok') throw new Error('unreadable');
+    expect(first.messages.map(m => m.envelope.id)).toEqual(['ch-1']);
+    const rest = readAgentChannel('release', { after: first.nextCursor }, options);
+    expect(rest.status === 'ok' && rest.messages.map(m => m.envelope.id)).toEqual(['ch-2']);
+  });
+
+  it('reports unknown channels and unreadable state instead of empty history', () => {
+    const options = setup();
+    // A missing registry means no channel exists — verified empty is not a page.
+    expect(readAgentChannel('release', {}, options)).toMatchObject({ status: 'unknown-channel' });
+    register(options, 'atlas');
+    createAgentChannel({ name: 'release', createdBy: 'atlas' }, options);
+    expect(readAgentChannel('release', {}, options)).toMatchObject({ status: 'ok', messages: [] });
+    expect(readAgentChannel('missing', {}, options)).toMatchObject({ status: 'unknown-channel' });
+    expect(readAgentChannel('Bad Name', {}, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { topic: 'Bad Topic' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { limit: 0 }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { after: -1 }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { from: '' }, options)).toMatchObject({ status: 'invalid' });
+    // An unreadable registry is unavailable, never an empty transcript.
+    writeFileSync(join(options.root!, 'agent-identities', 'registry.json'), '{broken');
+    expect(readAgentChannel('release', {}, options)).toMatchObject({ status: 'unavailable' });
+  });
+});
+
+describe('thread-filtered reads', () => {
+  it('narrows inbox and channel pages to one v2 thread label', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'question', thread: 'rq-1', id: 'dm-t1' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'aside', thread: 'rq-2', id: 'dm-t2' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'plain', id: 'dm-t3' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'channel note', thread: 'rq-1', id: 'ch-t1' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'channel aside', thread: 'rq-9', id: 'ch-t2' }, options);
+    // An opaque body carrying a thread-looking field is not a v2 note/context.
+    expect(appendBusInbox({ id: 'raw-t1', from: 'atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
+      body: { kind: 'custom.kind', thread: 'rq-1', text: 'opaque' } }, options).status).toBe('posted');
+
+    const inbox = readAgentInbox('nova', { thread: 'rq-1' }, options);
+    if (inbox.status !== 'ok') throw new Error(`unexpected ${inbox.status}`);
+    expect(inbox.messages.map(m => `${m.kind}:${m.envelope.id}`)).toEqual(['dm:dm-t1', 'channel:ch-t1']);
+    expect(readAgentInbox('nova', { thread: 'rq-9' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'ch-t2' } }] });
+    expect(readAgentInbox('nova', { thread: 'rq-absent' }, options)).toMatchObject({ status: 'ok', messages: [] });
+    // The unfiltered page still sees everything the thread page skipped.
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages.length).toBe(6);
+
+    const channel = readAgentChannel('release', { thread: 'rq-1' }, options);
+    if (channel.status !== 'ok') throw new Error(`unexpected ${channel.status}`);
+    expect(channel.messages.map(m => m.envelope.id)).toEqual(['ch-t1']);
+    expect(readAgentChannel('release', { thread: 'rq-9' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'ch-t2' } }] });
+    // Thread composes with the sender filter.
+    expect(readAgentChannel('release', { thread: 'rq-1', from: 'ghost' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+
+    // Labels must be printable v2 thread labels; anything else refuses closed.
+    expect(readAgentInbox('nova', { thread: 'has space' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { thread: '' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { thread: 'x'.repeat(129) }, options)).toMatchObject({ status: 'invalid' });
   });
 });
 

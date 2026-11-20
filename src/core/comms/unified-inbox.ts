@@ -47,9 +47,8 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
+import { BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
 import { coordinationRowBlocks, listCoordination } from '../agents/claim-store.js';
-import type { WorkJob } from '../agents/bus-v2-schema.js';
 import { listDrafts, type Draft } from '../cos/drafts.js';
 import { compareRanked, needsYouPriorityHeuristic, type AttentionItem, type NeedsYouPriority, type RankedAttentionItem } from '../decide/needs-you.js';
 import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxInspection, type BusInboxOptions, type BusInboxReceipt } from '../fleet/bus-inbox.js';
@@ -227,14 +226,10 @@ function protocolBodyTitle(body: unknown): string | null {
 
 /** Announcement metadata for a v2 work job, read off its live `work.post` receipt. */
 interface BusFeedPost {
-  title: string | null;
   priority: BusPriority;
   receivedAt: number;
   expiresAt: number;
 }
-
-/** Statuses that still mean "open for a worker"; running/idle/blocked are progress reports, the rest are terminal. */
-const BUS_FEED_OPEN_STATUSES: ReadonlySet<WorkJob['status']> = new Set(['queued', 'rescheduled']);
 
 /**
  * Open v2 work-feed jobs with claimable scope, from the same read-only
@@ -271,7 +266,9 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
     if (freeKeys.length === 0) continue;
     const claimKey = freeKeys.find(key => key.startsWith('queue:')) ?? freeKeys[0]!;
     const post = posts.get(job.id);
-    const title = post?.title ? oneLine(post.title, TITLE_MAX) : '';
+    // The feed job carries the announcement's own title; the receipt scan only
+    // adds priority and expiry the projection does not keep.
+    const title = oneLine(job.title, TITLE_MAX);
     const heldCount = held?.size ?? 0;
     items.push({
       id: `bus-feed:${job.id}`,
@@ -332,7 +329,6 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
         const record = body as Record<string, unknown>;
         if (record.kind === 'work.post' && typeof record.jobId === 'string' && !feedPosts.has(record.jobId)) {
           feedPosts.set(record.jobId, {
-            title: typeof record.title === 'string' ? record.title : null,
             priority: envelope.priority,
             receivedAt: receipt.receivedAt,
             // The reader decrements ttl to what remains; expiry is a real deadline.

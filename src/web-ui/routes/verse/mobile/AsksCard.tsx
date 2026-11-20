@@ -1,5 +1,5 @@
 /**
- * One card at the top: "Asks (N)". One row per ask, a big button per allowed
+ * One card at the top: "Asks (N)", soonest expiry first (unknown last; expired hidden). One row per ask, a big button per allowed
  * answer, one number field for a usage ask (a short text box for any other
  * short-value ask), "Recorded" in place after a tap. No asks: "Nothing needs
  * you." Unreadable ledger: says unknown. Without the unlock the buttons are
@@ -25,6 +25,12 @@ function ageText(askedAt: string | null): string {
   return Number.isFinite(ms) ? `asked ${formatAge(Math.max(0, Math.floor((Date.now() - ms) / 1000)))} ago` : 'asked (time unknown)';
 }
 
+function expiryText(expires: string | null): string {
+  const ms = expires === null ? NaN : Date.parse(expires);
+  if (!Number.isFinite(ms)) return 'expiry unknown';
+  return `expires in ${formatAge(Math.max(0, Math.floor((ms - Date.now()) / 1000)))}`;
+}
+
 const LOCKED_REASON = 'Unlock actions to answer. Only you, verified, can record an answer.';
 
 /** A usage answer is a whole number from 0 to 100; anything else stays unsent. */
@@ -37,7 +43,7 @@ function AskRow({ ask, result, verified, onAnswer }: { ask: BatchAsk; result: Re
   return (
     <li className={styles.ask}>
       <p className={styles.question}>{ask.number}. {ask.question}</p>
-      <p className={styles.meta}>{ageText(ask.askedAt)} · {ask.whatHappens}</p>
+      <p className={styles.meta}>{expiryText(ask.expires)} · {ageText(ask.askedAt)} · {ask.whatHappens}</p>
       {result?.state === 'done' ? (
         <p className={styles.result} role="status">{result.text}</p>
       ) : (

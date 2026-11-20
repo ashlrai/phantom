@@ -23,6 +23,8 @@ export interface OpenAsk {
   choices?: readonly string[];
   /** ISO time, or null when unknown (shown as unknown, sorted last). */
   askedAt: string | null;
+  /** ISO time after which the ask is moot, or null when unknown (listed after every ask with a known expiry). */
+  expires?: string | null;
   hardLimit: HardLimit | null;
   /** One line: what happens on yes (or on the first choice). */
   whatHappens?: string;
@@ -42,6 +44,7 @@ export interface BatchAsk {
   /** Allowed answers. Empty for short-value (any short text). */
   choices: string[];
   askedAt: string | null;
+  expires: string | null;
   hardLimit: HardLimit | null;
   whatHappens: string;
   /** Set only when the answer is a number from 0 to 100. */
@@ -73,15 +76,16 @@ export function choicesOf(ask: Pick<OpenAsk, 'kind' | 'choices'>): string[] {
 }
 
 export function buildAskBatch(open: readonly OpenAsk[], ledger: AskBatch['ledger'] = 'available'): AskBatch {
-  const sorted = [...open].sort((a, b) => ms(a.askedAt) - ms(b.askedAt));
+  // Soonest expiry first; unknown expiry last; ties (and all unknowns) oldest first.
+  const sorted = [...open].sort((a, b) => ms(a.expires ?? null) - ms(b.expires ?? null) || ms(a.askedAt) - ms(b.askedAt));
   const merged = new Map<string, BatchAsk>();
   for (const ask of sorted) {
     const key = `${ask.kind}|${norm(ask.question)}`;
     const seen = merged.get(key);
-    if (seen) { seen.ids.push(ask.id); continue; } // sorted, so the first one carries the oldest time
+    if (seen) { seen.ids.push(ask.id); continue; } // sorted, so the first one carries the soonest expiry
     merged.set(key, {
       number: 0, id: ask.id, ids: [ask.id], question: ask.question.trim(), kind: ask.kind, choices: choicesOf(ask),
-      askedAt: ask.askedAt, hardLimit: ask.hardLimit,
+      askedAt: ask.askedAt, expires: ask.expires ?? null, hardLimit: ask.hardLimit,
       whatHappens: ask.whatHappens ?? (ask.hardLimit ? LIMIT_LINE[ask.hardLimit] : 'Unknown: the ask does not say.'),
       ...(ask.numeric ? { numeric: true } : {}),
     });
@@ -90,10 +94,11 @@ export function buildAskBatch(open: readonly OpenAsk[], ledger: AskBatch['ledger
   return { schema: 'asks.batch.v1', count: asks.length, asks, ledger };
 }
 
-const FROM_KIND: Record<AskKind, Pick<OpenAsk, 'kind' | 'choices' | 'hardLimit' | 'whatHappens' | 'numeric'>> = {
+const FROM_KIND: Record<AskKind | 'signin', Pick<OpenAsk, 'kind' | 'choices' | 'hardLimit' | 'whatHappens' | 'numeric'>> = {
   payment: { kind: 'yes-no', hardLimit: 'money', whatHappens: LIMIT_LINE.money },
   outreach: { kind: 'yes-no', hardLimit: 'outside-send', whatHappens: LIMIT_LINE['outside-send'] },
   password: { kind: 'pick-one', choices: ASK_REPLIES.password, hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
+  signin: { kind: 'pick-one', choices: ASK_REPLIES.password, hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
   '2fa': { kind: 'pick-one', choices: ASK_REPLIES['2fa'], hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
   device: { kind: 'pick-one', choices: ASK_REPLIES.device, hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
   // A usage answer is a number, so it is a short value; it is a reading, not a limit.
@@ -103,7 +108,7 @@ const FROM_KIND: Record<AskKind, Pick<OpenAsk, 'kind' | 'choices' | 'hardLimit' 
 };
 
 export const openAskOf = (ask: Ask): OpenAsk => ({
-  id: ask.id, question: ask.request, askedAt: ask.created, ...FROM_KIND[ask.kind], ...(ask.unblocks ? { whatHappens: ask.unblocks } : {}),
+  id: ask.id, question: ask.request, askedAt: ask.created, expires: ask.expires, ...FROM_KIND[ask.kind], ...(ask.unblocks ? { whatHappens: ask.unblocks } : {}),
 });
 
 /** The batch Mason sees: the open ledger asks through buildAskBatch. Never throws. */

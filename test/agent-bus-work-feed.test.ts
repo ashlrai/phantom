@@ -34,7 +34,7 @@ describe('retained v2 work projection', () => {
     const rows = [receipt(post), ...WORK_STATUSES.map((status, n) => receipt({ kind: 'work.status', jobId: 'job', status }, n + 2))];
     const result = projectBusWorkFeed(rows);
     expect(result).toEqual({ status: 'ok', feed: { v: 2, jobs: [{ id: 'job', owner: 'agent', to: 'leaders', provider: 'devin',
-      repo: 'a/b', claimKeys: ['repo:a/b'], status: 'terminated', updatedAt: 900 }] } });
+      repo: 'a/b', title: 'Review', claimKeys: ['repo:a/b'], status: 'terminated', updatedAt: 900 }] } });
     if (result.status !== 'ok') throw new Error('fixture refused');
     expect(workFeedSchema.parse(JSON.parse(JSON.stringify(result.feed)))).toEqual(result.feed);
     expect(rows[0]!.envelope.body).toEqual(post);
@@ -45,6 +45,19 @@ describe('retained v2 work projection', () => {
     const rows = [directed, receipt({ kind: 'work.status', jobId: 'job', status: 'running' }, 2, 'agent', 'leaders')];
     expect(projectBusWorkFeed(rows)).toMatchObject({ status: 'ok',
       feed: { jobs: [{ id: 'job', owner: 'agent', to: 'agent:worker', status: 'running' }] } });
+  });
+  it('carries the announcement title and optional dispatch spec onto the job', () => {
+    const dispatch = { tier: 'work', scope: 'the scope', acceptance: 'the check' };
+    const announced = { ...post, title: 'Fix the feed', dispatch };
+    const result = projectBusWorkFeed([receipt(announced)]);
+    expect(result).toMatchObject({ status: 'ok', feed: { jobs: [{ id: 'job', title: 'Fix the feed', dispatch }] } });
+    if (result.status !== 'ok') throw new Error('fixture refused');
+    // The optional spec stays absent, never null, when the post omits it.
+    const plain = projectBusWorkFeed([receipt(post)]);
+    if (plain.status !== 'ok') throw new Error('fixture refused');
+    expect(plain.feed.jobs[0]).not.toHaveProperty('dispatch');
+    expect(plain.feed.jobs[0]?.title).toBe('Review');
+    expect(workFeedSchema.parse(JSON.parse(JSON.stringify(result.feed)))).toEqual(result.feed);
   });
   it('preserves v1 and peer bodies as opaque data and ignores orphan statuses', () => {
     expect(projectBusWorkFeed([

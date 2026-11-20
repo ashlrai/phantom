@@ -228,8 +228,11 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
   after it ends `merged` or its session reported `no-change` (the work was
   already done).
-- **Order.** The next item is the highest priority (1 first), then built-in
-  order.
+- **Order.** The next item is the highest priority (1 first). Within a
+  priority, areas whose measured outcomes improved their metric go first
+  (higher measured leverage first), unmeasured areas next, and areas with a
+  measured zero or negative record last (`phm improve outcomes` shows the
+  ledger); then built-in order.
 
 There are two ways to launch backlog items:
 
@@ -239,11 +242,14 @@ There are two ways to launch backlog items:
 - **The scheduler** runs inside the Phantom server. It starts when the cloud
   module first loads, never under a test runner. Every 10 minutes it refreshes
   task states from GitHub. Two minutes after start, and then every 60 minutes,
-  it launches the next backlog item. Scheduled launches need self-improvement
-  switched on **and** the self-improvement gate open. So with the defaults
-  Phantom starts at most 4 sessions a day on its own, and stops when the estimate
-  reaches the $40 reserve. The two jobs never overlap themselves, and each
-  distinct error is logged once.
+  it launches the next backlog item. Before each launch pick it also registers
+  every unclosed backlog PR whose item declares a metric into the outcome
+  ledger — the same records `phm improve sync-backlog` writes by hand — so
+  measured outcomes keep feeding the order above. Scheduled launches need
+  self-improvement switched on **and** the self-improvement gate open. So with
+  the defaults Phantom starts at most 4 sessions a day on its own, and stops
+  when the estimate reaches the $40 reserve. The two jobs never overlap
+  themselves, and each distinct error is logged once.
 
 ---
 

@@ -8,7 +8,7 @@ import type { PaneProps } from '../panes/pane-registry.js';
 import styles from './team.module.css';
 
 const PATH = '/api/verse/team/people';
-const query: QueryDef<TeamDirectory> = { key: 'team-people', async fetch(signal) {
+export const teamQuery: QueryDef<TeamDirectory> = { key: 'team-people', async fetch(signal) {
   const result = directorySchema.safeParse(await apiGet<unknown>(`${PATH}?team=default`, signal));
   if (!result.success) throw new Error('Team response unavailable.');
   return result.data;
@@ -16,7 +16,7 @@ const query: QueryDef<TeamDirectory> = { key: 'team-people', async fetch(signal)
 const list = (value: FormDataEntryValue | null) => String(value ?? '').split(',').map(s => s.trim()).filter(Boolean);
 
 export function TeamPane({ visible }: Pick<PaneProps, 'visible'>) {
-  const read = useQuery(query, { enabled: visible, freshMs: 0 }), refresh = useRefetch(query);
+  const read = useQuery(teamQuery, { enabled: visible, freshMs: 0 }), refresh = useRefetch(teamQuery);
   const [adding, setAdding] = useState(false), [saving, setSaving] = useState(false), [message, setMessage] = useState('');
   async function add(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

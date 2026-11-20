@@ -681,6 +681,8 @@
 /test/locus-readiness.test.ts @masonwyatt23
 /test/locus-session-authority.test.ts @masonwyatt23
 /test/locus.probe.test.ts @masonwyatt23
+/test/loop-stages-api.test.ts @masonwyatt23
+/test/loop-stages.test.ts @masonwyatt23
 /test/m100.web-open.test.ts @masonwyatt23
 /test/m102.goal-conductor.test.ts @masonwyatt23
 /test/m103.desktop-action.test.ts @masonwyatt23
@@ -1058,6 +1060,7 @@
 /test/merge-identity-owner-preservation-297s.test.ts @masonwyatt23
 /test/merge-identity-recut.test.ts @masonwyatt23
 /test/merge-identity-registry.test.ts @masonwyatt23
+/test/merge-latency.test.ts @masonwyatt23
 /test/merge-path-readonly.test.ts @masonwyatt23
 /test/merge-path.test.ts @masonwyatt23
 /test/merge-plan-original-preservation-202s.test.ts @masonwyatt23
@@ -1136,6 +1139,7 @@
 /test/publish-fetch-retry.test.ts @masonwyatt23
 /test/publish-resume.test.ts @masonwyatt23
 /test/quarantine-ledger.test.ts @masonwyatt23
+/test/queue-dupcheck-gate.test.ts @masonwyatt23
 /test/receipt-key.test.ts @masonwyatt23
 /test/receipt-later-hooks.test.ts @masonwyatt23
 /test/recut-comms-61.test.ts @masonwyatt23

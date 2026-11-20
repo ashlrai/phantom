@@ -84,3 +84,11 @@
 .filterPick { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text-secondary); }
 .filterPick select { max-width: 11rem; font: inherit; }
 .filterBar button { padding: 2px var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: none; color: var(--text-secondary); font: inherit; cursor: pointer; }
+
+.replay { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.replay input[type='range'] { flex: 1 1 240px; min-width: 160px; }
+.history { display: flex; flex: 1 1 100%; gap: 1px; margin: 0; padding: 0; list-style: none; height: 8px; }
+.history li { flex: 1; background: var(--ok, #3b8); }
+.history li[data-state='unknown'] { background: repeating-linear-gradient(45deg, transparent 0 3px, var(--muted, #888) 3px 5px); outline: 1px dashed var(--muted, #888); }
+.history li[data-state='partly-unknown'] { background: var(--warn, #c93); }
+.history li[data-current='true'] { outline: 2px solid currentColor; }

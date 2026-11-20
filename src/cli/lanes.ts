@@ -2,15 +2,26 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { computeLaneFit } from '../core/fleet/lane-fit.js';
+import { computeLaneYield, NEUTRAL_WEIGHT, type LaneYieldRow } from '../core/fleet/lane-yield-weight.js';
 import { readFleetRunsDirState } from '../core/fleet/runs-dir-state.js';
 import { buildFleetLiveSnapshot } from '../core/verse/fleet-live-api.js';
 import { computeLaneHealth, laneHealthLine, stuckBadge } from '../core/fleet/lane-health.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const USAGE = `Usage: phm lanes --json | phm lanes health [--json] | phm lanes fit --lane <lane> [--json]
+       phm lanes yield [--json]
 Calls, error rate, p50 latency and deployed commit per lane over the last 12 h,
 plus a "stuck" badge with phase age for any run past its phase timeout.
+"phm lanes yield" shows merged PRs per launch over each lane's last 50 jobs, the empty rate and the
+weight the router uses (1 = neutral; unknown below 10 jobs).
 Figures that cannot be measured print "unknown".`;
+
+const pct = (n: number | null): string => n === null ? 'unknown' : `${Math.round(n * 100)}%`;
+function yieldLine(row: LaneYieldRow, min: number): string {
+  const head = `${row.lane} / ${row.size === 'all' ? 'all sizes' : row.size}`;
+  if (!row.known) return `${head}: unknown (${row.launches} of ${min} launches needed); router weight ${NEUTRAL_WEIGHT.toFixed(2)} (neutral)`;
+  return `${head}: yield ${pct(row.yield)} (${row.merged} merged of ${row.launches} launches${row.reverted ? `, ${row.reverted} reverted` : ''}), empty ${pct(row.emptyRate)}; router weight ${row.weight.toFixed(2)}`;
+}
 
 export async function cmdLanes(args: string[]): Promise<number> {
   if (args.length === 1 && args[0] === '--json') {
@@ -22,6 +33,18 @@ export async function cmdLanes(args: string[]): Promise<number> {
   if (args.length === 0 || ['--help', '-h'].includes(args[0]!)) {
     console.log(USAGE);
     return args.length === 0 ? 2 : 0;
+  }
+  if (args[0] === 'yield') {
+    const flags = args.slice(1);
+    if (flags.some(x => x !== '--json') || flags.length > 1) { console.error(USAGE); return 2; }
+    let ledger: string | null;
+    try { ledger = await readFile(join(homedir(), '.ashlr-runs', 'metrics', 'jobs.jsonl'), 'utf8'); } catch { ledger = null; }
+    const report = computeLaneYield(ledger);
+    if (flags.length) console.log(JSON.stringify(sanitizePublicJson(report)));
+    else if (!report.known) console.log('Job history is unavailable. Yield is unknown.');
+    else if (!report.rows.length) console.log('No launches recorded yet. Every lane is neutral (weight 1).');
+    else for (const row of report.rows) console.log(yieldLine(row, report.minJobs));
+    return 0;
   }
   if (args[0] === 'fit') {
     const flags = args.slice(1);
