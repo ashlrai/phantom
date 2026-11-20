@@ -147,6 +147,17 @@ export async function buildDigest(
     }
   }
 
+  // Fleet jobs that ended with no change: named only when the rate is high. Best effort; a missing ledger adds nothing.
+  let emptyJobs: string | null = null;
+  try {
+    const { readEmptyJobs } = await import('../fleet/empty-jobs.js');
+    const { emptyDigestLine } = await import('../fleet/empty-tags.js');
+    const empty = await readEmptyJobs(24);
+    emptyJobs = empty?.tags ? emptyDigestLine(empty.tags) : null;
+  } catch {
+    // No ledger to read.
+  }
+
   const report: DigestReport = {
     generatedAt,
     date,
@@ -157,6 +168,7 @@ export async function buildDigest(
     daemon,
     headline,
   };
+  if (emptyJobs) report.emptyJobs = emptyJobs;
   if (narrative !== undefined) {
     report.narrative = narrative;
     report.narrativeLocal = narrativeLocal;
