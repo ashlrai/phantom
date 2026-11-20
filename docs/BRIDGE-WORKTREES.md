@@ -50,6 +50,15 @@ retains #963's opt-in caller compatibility:
 node scripts/bridge-worktree.mjs --require-clone SOURCE_CHECKOUT TARGET_WORKTREE
 ```
 
+Before cloning, the helper checks that the source has a working `tsgo` and
+`eslint` (the checks `phm doctor worktree` runs). If not, it runs
+`npm ci --ignore-scripts --no-audit --no-fund` once in the source checkout under
+a lock, at most once per hour, then clones. If the repair fails or the lock is
+held over 10 minutes it clones anyway and prints one line saying the worktree
+has no lint/typecheck:fast. Each probe or repair is one JSON line
+(`phm.bridge.source-heal/1`) in `bridge-source-repair.jsonl` inside the source
+`.git` folder.
+
 The source installation must remain stable while cloning. Clones preserve
 executable modes and relative package links, and isolate subsequent writes.
 The helper requires matching root package-manager inputs; it does not install
