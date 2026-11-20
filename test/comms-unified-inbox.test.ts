@@ -304,6 +304,72 @@ describe('v2 work-feed jobs in the bus source', () => {
   });
 });
 
+describe('stuck work-feed jobs in the bus source', () => {
+  it('lists blocked and failed jobs with the status report deep link, not a claim act', async () => {
+    postJob('RQ-STUCK', { title: 'fake stuck job' });
+    const blockedId = postV2Body({ kind: 'work.status', jobId: 'RQ-STUCK', status: 'blocked',
+      detail: 'fake waiting on security review' });
+    postJob('RQ-BROKEN', { title: 'fake broken job' });
+    const failedId = postV2Body({ kind: 'work.status', jobId: 'RQ-BROKEN', status: 'failed' });
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'bus');
+    expect(items.map(i => i.id).sort()).toEqual(['bus-feed:RQ-BROKEN', 'bus-feed:RQ-STUCK']);
+    const stuck = items.find(i => i.id === 'bus-feed:RQ-STUCK')!;
+    expect(stuck).toMatchObject({
+      kind: 'bus-work', severity: 'warn', blocking: false,
+      title: 'fake stuck job',
+      detail: 'owner agent:peer · codex-cmp · ashlrai/phantom · blocked — fake waiting on security review',
+      since: new Date(now).toISOString(),
+      expiresAt: new Date(now + 7 * 24 * 3_600_000).toISOString(),
+      act: [`phm agents bus show ${blockedId}`, 'phm agents bus work feed --job RQ-STUCK --claims'],
+    });
+    const broken = items.find(i => i.id === 'bus-feed:RQ-BROKEN')!;
+    expect(broken).toMatchObject({
+      severity: 'high', title: 'fake broken job',
+      detail: 'owner agent:peer · codex-cmp · ashlrai/phantom · failed',
+      act: [`phm agents bus show ${failedId}`, 'phm agents bus work feed --job RQ-BROKEN --claims'],
+    });
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 2 });
+  });
+
+  it('hides jobs whose newest status is not stuck and still lists claimable work beside them', async () => {
+    postJob('RQ-QUEUED');
+    postJob('RQ-DONE2'); postStatus('RQ-DONE2', 'done');
+    postJob('RQ-RUN2'); postStatus('RQ-RUN2', 'running');
+    postJob('RQ-IDLE'); postStatus('RQ-IDLE', 'idle');
+    postJob('RQ-TERM'); postStatus('RQ-TERM', 'terminated');
+    postJob('RQ-REVIVED'); postV2Body({ kind: 'work.status', jobId: 'RQ-REVIVED', status: 'blocked' });
+    postStatus('RQ-REVIVED', 'done');
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'bus');
+    expect(items.map(i => i.id)).toEqual(['bus-feed:RQ-QUEUED']);
+    expect(items[0]!.detail).toContain('queued');
+    expect(items[0]!.act[0]).toContain('claim acquire');
+  });
+
+  it('lists a stuck job with no claim keys and cites the newest status report', async () => {
+    postJob('RQ-NOKEYS', { claimKeys: [] });
+    postV2Body({ kind: 'work.status', jobId: 'RQ-NOKEYS', status: 'blocked', detail: 'fake first reason' });
+    const newestId = postV2Body({ kind: 'work.status', jobId: 'RQ-NOKEYS', status: 'blocked', detail: 'fake newest reason' });
+    const inbox = await read();
+    const item = inbox.items.find(i => i.id === 'bus-feed:RQ-NOKEYS')!;
+    expect(item).toMatchObject({ severity: 'warn', title: 'fake job RQ-NOKEYS' });
+    expect(item.detail).toContain('blocked — fake newest reason');
+    expect(item.detail).not.toContain('first reason');
+    expect(item.act).toEqual([`phm agents bus show ${newestId}`, 'phm agents bus work feed --job RQ-NOKEYS --claims']);
+  });
+
+  it('scrubs secret-shaped status detail before it reaches the item', async () => {
+    postJob('RQ-SECRET');
+    postV2Body({ kind: 'work.status', jobId: 'RQ-SECRET', status: 'failed',
+      detail: 'token sk-abcdefghijklmnop leaked' });
+    const inbox = await read();
+    const item = inbox.items.find(i => i.id === 'bus-feed:RQ-SECRET')!;
+    expect(item.detail).toContain('failed — token [REDACTED] leaked');
+    expect(item.detail).not.toContain('sk-abcdefghijklmnop');
+  });
+});
+
 describe('worker-handoff assignments in the bus source', () => {
   const handoff = (taskId: string, prompt: string) => ({ kind: 'worker-handoff', taskId, prompt });
 
