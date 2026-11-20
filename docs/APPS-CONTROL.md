@@ -57,9 +57,13 @@ latest open, focus, quit or restart in the feed, or null). Action answers are
 
 The report reads the filesystem, `plutil`, `ps` and `lsappinfo` only. It needs
 no Accessibility or Automation permission and never launches anything. Apps
-are matched by their `.app` path, not bundle id. JSON (`schema: "phm.apps/1"`)
+are matched by their `.app` path, not bundle id. JSON (`schema: "phm.apps/2"`)
 has one row per app in a fixed order; GET `/api/verse/apps/mac` returns it.
-Every `phm apps` JSON answer carries `version: 1`; new fields are additive.
+Every `phm apps` JSON answer carries `version: 1`; new fields are additive. The
+`phm.apps` report is at `version: 2`: each row adds `lastFocusedAt` (ISO time) and
+`lastFocus` (`known`, `never` or `unknown`), read for running apps with
+`lsappinfo`. A missing `lsappinfo`, an unreadable line or a stopped app is
+`unknown`, never 0 or now; the card and `phm apps` show it as "Last used".
 
 ## Action log
 
