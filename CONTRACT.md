@@ -1655,6 +1655,32 @@ claimKey>` so an operation id retried on the same key replaces its own lease
 while reuse on another key cannot relocate it. Claims coordinate only and grant
 no execution authority; the token returns only to its acquirer.
 
+`src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
+`phm agents bus work mine [<agent>]`. `readBusWorkMine(agent, options?)`
+(`BusWorkMineOptions`: `root?`, `runsRoot?`, `now?: () => number` frozen once
+across all three reads) returns `BusWorkMineResult`: `{status:'ok', agent,
+asOf, claims, jobs, wakes}` or `{status:'invalid', reason}` for a ref outside
+the printable-label rule. `agent` echoes `ref`, resolved `handle`/`identity`
+(null when unregistered) and the `registry` state. `claims` reuses
+`listBusClaims({owner})` — identity-aware owner matching with exact-label
+fallback — as `{status:'ok', source, claims, owner}` or `{status:'unavailable'}`;
+each claim row is a `BusClaimsListClaim` that gains `jobs` (the announced jobs
+its keys block, `{id, owner, status, title}`) only when the feed read is `ok`,
+absent otherwise. `jobs` reports the open feed jobs
+(`BUS_FEED_OPEN_STATUSES`, at least one claim key, newest 50 of `open`) as
+`BusWorkMineJob` (`WorkJob` plus `addressed`, `freeKeys`, `heldKeys`,
+`claimable`): `holds` is `complete`/`truncated`/`unknown` from the feed's
+claims join, and `claimable` is `true` only on a provably free key, `false`
+only when every declared key is provably held, `null` when coverage is
+`truncated` or `unknown` — `busWorkMineJobAnnotation(job, held, coverage,
+addressed)` is the exported pure rule. A non-ok feed collapses the section to
+its own status (`refused` keeps `reason`/`receipts`). `wakes` reuses
+`readAgentWakes` capped at the newest 20 with `truncated`, or
+`unknown-agent`/`unavailable` with `reason`. `formatBusWorkMine(result)`
+renders the shared human lines — titles and key lists scrubbed, single-lined
+and display-clipped; JSON keeps full values. Exit 0 on a completed read, 2 on
+an invalid agent.
+
 ### Unified agent bus (RQ-BUS-UNIFY-1)
 
 `src/core/agents/bus-identity.ts`: `stableAgentId(handle): string` (`agt_` + 20 hex),

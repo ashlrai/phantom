@@ -13,6 +13,7 @@ import { busWorkFeedToMatcher, formatBusWorkFeed, projectBusWorkFeedView, readBu
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult } from '../core/agents/bus-claims.js';
+import { formatBusWorkMine, readBusWorkMine } from '../core/agents/bus-work-mine.js';
 import { readUnifiedBusStatus } from '../core/agents/bus-status.js';
 import { scrubSecrets } from '../core/util/scrub.js';
 import type { BusPriority } from '../core/fleet/bus-envelope.js';
@@ -44,6 +45,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--to <label>] [--claims]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
+ashlr agents bus work mine [<agent>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
@@ -57,7 +59,10 @@ read-only and need no identity; work feed --to keeps jobs announced to that
 routing label under every label of one agent identity. work claim takes one of
 a shown job's declared claim keys — queue:<jobId> preferred, --key picks
 another declared key — into the shared coordination table; claims coordinate,
-never authenticate. status is a read-only
+never authenticate. work mine is a read-only per-agent digest — the live
+claims it holds under any of its labels, the open feed jobs still claimable
+for it and its pending wake hints — where every section reports its own read
+state and unknown stays unknown. status is a read-only
 probe of the store, registry, wake queue, coordination table and work feed;
 a section that cannot be read reports unavailable or unknown, never zero.
 No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
@@ -338,6 +343,18 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         ...(key === undefined ? {} : { key }), ...(opId === undefined ? {} : { id: opId }) });
       out(json ? JSON.stringify(result) : workJobClaimHuman(result));
       return workJobClaimExitCode(result);
+    }
+    if (verb === 'work' && sub === 'mine') {
+      noExtra(3);
+      const agent = arg ?? self;
+      if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
+      const result = readBusWorkMine(agent, options);
+      if (result.status !== 'ok') {
+        out(json ? JSON.stringify(result) : `${result.status}: ${result.reason}`);
+        return 2;
+      }
+      out(json ? JSON.stringify(result) : formatBusWorkMine(result).join('\n'));
+      return 0;
     }
     if (verb === 'work' && (sub === 'post' || sub === 'status')) {
       noExtra(2);
