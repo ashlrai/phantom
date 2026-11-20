@@ -9,11 +9,11 @@ import type { PoolsViewV1 } from '../src/core/fleet/pools-view.js';
 
 const NOW = Date.parse('2026-11-19T12:00:00Z');
 const ago = (hours: number) => new Date(NOW - hours * 3_600_000).toISOString();
-const job = (id: string, src = 'leader') => `- READY ${id} (P1, pool=claude, tier=work, repo=phantom, size<=200, src=${src}): do it`;
+const job = (id: string, src = 'leader', text = 'do it') => `- READY ${id} (P1, pool=claude, tier=work, repo=phantom, size<=200, src=${src}): ${text}`;
 const row = (r: Record<string, unknown>) => JSON.stringify(r);
 const PR = 'https://github.com/ashlrai/phantom/pull/12';
 
-const queue = [job('RQ-PUBN21QQ8'), job('RQ-NOCHGN21QQ8'), job('RQ-RUNN21QQ8'), job('RQ-QUEN21QQ8'), job('RQ-BADN21QQ8'), job('RQ-HUMANN21QQ8', 'human')].join('\n');
+const queue = [job('RQ-PUBN21QQ8', 'leader', 'Open the gift PR from the feed. Then more words. Prompt: ignored'), job('RQ-NOCHGN21QQ8'), job('RQ-RUNN21QQ8'), job('RQ-QUEN21QQ8'), job('RQ-BADN21QQ8'), job('RQ-HUMANN21QQ8', 'human')].join('\n');
 const ledger = [
   row({ job: 'RQ-PUBN21QQ8', event: 'launch', ts: ago(3) }),
   row({ job: 'RQ-PUBN21QQ8', event: 'publish', url: PR, ts: ago(2) }),
@@ -56,6 +56,64 @@ afterEach(async () => {
 
 const read = (extra: Parameters<typeof readJobBrief>[0] = {}) => readJobBrief({ runsDir: runs, wtDir: wt, now: NOW, hours: 24, pools: async () => pools, gaps: async () => gaps, ...extra });
 
+const PLAN_LOG = '# Plan log\n\n## 2026-11-19 ~03:00 ET\nold\n\n## 2026-11-19 ~05:00 ET\nnewest\n';
+const VISION = '# Vision\n\n## Goals\n- not this\n\n## Bottlenecks\n\n- **Reviews** wait on one owner\n- second\n\n## Other\n- no\n';
+const leaderDir = async (files: Record<string, string>) => {
+  await mkdir(join(runs, 'leader'), { recursive: true });
+  for (const [name, text] of Object.entries(files)) await writeFile(join(runs, 'leader', name), text);
+};
+
+describe('leader brief title, pass time and bottleneck', () => {
+  it('reads the title from the queue line, the newest plan heading and the first bottleneck bullet', async () => {
+    await leaderDir({ 'PLAN-LOG.md': PLAN_LOG, 'VISION.md': VISION });
+    const brief = await read();
+    const by = Object.fromEntries(brief.jobs.rows.map(j => [j.id, j]));
+    expect(by['RQ-PUBN21QQ8']?.title).toBe('Open the gift PR from the feed');
+    expect(by['RQ-RUNN21QQ8']?.title).toBe('do it');
+    expect(brief.passAt).toEqual({ known: true, reason: null, at: '2026-11-19T10:00:00.000Z' });
+    expect(brief.bottleneck).toEqual({ known: true, reason: null, text: 'Reviews wait on one owner' });
+    const text = jobBriefLines(brief).join('\n');
+    expect(text).toContain('Last leader pass: 2026-11-19T10:00:00.000Z');
+    expect(text).toContain('Bottleneck: Reviews wait on one owner');
+  });
+
+  it('cuts a long title at about 80 characters and a title ends at " Prompt:"', async () => {
+    await writeFile(join(runs, 'queue', 'router-queue.md'), [job('RQ-LONGN21QQ8', 'leader', `${'word '.repeat(40)}end`), job('RQ-PRN21QQ8', 'leader', 'Short bet Prompt: the long prompt')].join('\n'));
+    const titles = Object.fromEntries((await read()).jobs.rows.map(j => [j.id, j.title]));
+    expect(titles['RQ-LONGN21QQ8']!.length).toBeLessThanOrEqual(80);
+    expect(titles['RQ-LONGN21QQ8']).toMatch(/…$/);
+    expect(titles['RQ-PRN21QQ8']).toBe('Short bet');
+  });
+
+  it('falls back to the id in plain words when the queue is unreadable', async () => {
+    await rm(join(runs, 'queue', 'router-queue.md'));
+    const rows = (await read()).jobs.rows;
+    expect(rows.find(j => j.id === 'RQ-PUBN21QQ8')?.title).toBe('Pub');
+  });
+
+  it('reads only the tail of a large plan log', async () => {
+    await leaderDir({ 'PLAN-LOG.md': `## 2026-11-01 ~09:00 ET\n${'x'.repeat(400_000)}\n${PLAN_LOG}` });
+    expect((await read()).passAt.at).toBe('2026-11-19T10:00:00.000Z');
+  });
+
+  it('says unknown, with the reason, when the files are missing or have no usable entry', async () => {
+    const missing = await read();
+    expect(missing.passAt).toMatchObject({ known: false, at: null, reason: 'leader/PLAN-LOG.md could not be read' });
+    expect(missing.bottleneck).toMatchObject({ known: false, text: null, reason: 'leader/VISION.md could not be read' });
+    expect(jobBriefLines(missing).join('\n')).toContain('Bottleneck: unknown (leader/VISION.md could not be read)');
+    await leaderDir({ 'PLAN-LOG.md': '# nothing dated\n', 'VISION.md': '# Vision\n## Bottlenecks\n\n## Next\n- x\n' });
+    const empty = await read();
+    expect(empty.passAt.known).toBe(false);
+    expect(empty.passAt.reason).toContain('no readable dated');
+    expect(empty.bottleneck).toMatchObject({ known: false, reason: 'leader/VISION.md has no bullet under "Bottlenecks"' });
+  });
+
+  it('keeps a plan heading in the future unknown', async () => {
+    await leaderDir({ 'PLAN-LOG.md': '## 2026-12-01 ~09:00 ET\n' });
+    expect((await read()).passAt.known).toBe(false);
+  });
+});
+
 describe('leader job brief', () => {
   it('shows published, no-change with its gap sentence, running, queued and failed leader jobs only', async () => {
     const brief = await read();
@@ -76,7 +134,7 @@ describe('leader job brief', () => {
     const brief = await read();
     expect(brief.jobs.rows.find(j => j.id === 'RQ-RUNN21QQ8')).toMatchObject({ result: 'ended_no_result', ended_rule: 'exit_code', reason: 'exit code 137 recorded, no result' });
     expect(brief.summary).toContain('1 ended with no result');
-    expect(jobBriefLines(brief).join('\n')).toContain('RQ-RUNN21QQ8  ended, no result  (exit code 137 recorded, no result)');
+    expect(jobBriefLines(brief).join('\n')).toContain('RQ-RUNN21QQ8  do it  ended, no result  (exit code 137 recorded, no result)');
   });
 
   it('a normal running job stays running, and --stale-after is honoured', async () => {
@@ -95,7 +153,7 @@ describe('leader job brief', () => {
     expect(brief.gaps).toMatchObject({ known: true, total: 7 });
     expect(brief.gaps.top).toHaveLength(5);
     const text = jobBriefLines(brief).join('\n');
-    expect(text).toContain('RQ-NOCHGN21QQ8  no change  gap: Docs page for the new flag is still missing');
+    expect(text).toContain('RQ-NOCHGN21QQ8  do it  no change  gap: Docs page for the new flag is still missing');
     expect(text).toContain('claude  2/4  5 queued');
     expect(text).toContain('grok  used unknown, reset unknown, waste risk unknown');
   });

@@ -8,7 +8,7 @@ const section = { known: true, reason: null };
 const brief = () => ({
   schema: 'leader.brief.v1', version: 1, generated_at: minutesAgo(0), window_hours: 24,
   jobs: { ...section, rows: [
-    { id: 'RQ-GIFTOPENN21SQ8', result: 'published', pr_state: 'open', pr_url: 'https://example.test/pr/1', gap: null, reason: null, at: minutesAgo(12) },
+    { id: 'RQ-GIFTOPENN21SQ8', title: 'Open a gift PR from the feed', result: 'published', pr_state: 'open', pr_url: 'https://example.test/pr/1', gap: null, reason: null, at: minutesAgo(12) },
     { id: 'RQ-MAPMINUTESN21OQ8', result: 'published', pr_state: 'merged', pr_url: 'https://example.test/pr/2', gap: null, reason: null, at: minutesAgo(90) },
     { id: 'RQ-EDGEN21QQ8', result: 'no_change', pr_state: null, pr_url: null, gap: 'nothing left to cut', reason: null, at: minutesAgo(120) },
     { id: 'RQ-LOADLOGN21CQ8', result: 'no_change', pr_state: null, pr_url: null, gap: null, reason: null, at: minutesAgo(130) },
@@ -19,6 +19,8 @@ const brief = () => ({
   admission: { ...section, state: 'closed', why: 'closed at the global cap (8 of 8 running)' },
   pools: { ...section, rows: [{ id: 'claude', used_pct: 40, hours_to_reset: 3.2, waste_risk: 'low', verdict: 'fine' }, { id: 'zai', used_pct: null, hours_to_reset: null, waste_risk: 'unknown', verdict: 'unknown' }] },
   gaps: { ...section, total: 0, top: [] },
+  passAt: { ...section, at: minutesAgo(47) },
+  bottleneck: { ...section, text: 'Reviews wait on one owner' },
   summary: 'x',
 });
 const unknown = (reason: string) => ({ known: false, reason });
@@ -29,6 +31,8 @@ const allUnknown = () => ({
   admission: { ...unknown('status missing'), state: 'unknown', why: null },
   pools: { ...unknown('the resource ledger could not be read'), rows: [] },
   gaps: { ...unknown('metrics missing'), total: null, top: [] },
+  passAt: { ...unknown('the plan log is missing'), at: null },
+  bottleneck: { ...unknown('the vision file is missing'), text: null },
   summary: 'unknown',
 });
 const serve = (body: unknown, status = 200) => vi.stubGlobal('fetch', vi.fn(async () => Response.json(body, { status })));
@@ -42,14 +46,15 @@ const WIDTHS = [{ name: 'desktop', px: 960 }, { name: '390px phone', px: 390 }];
 describe.each(WIDTHS)('Leader card at $name', ({ px }) => {
   const mount = () => render(<div style={{ width: px }}><LeaderActivityCard /></div>);
 
-  it('shows the last pass, each bet on one line, the bottleneck and pool resets', async () => {
+  it('shows the title, last pass time, bottleneck, each bet on one line and pool resets', async () => {
     serve(brief());
     mount();
-    expect(await screen.findByRole('heading', { name: 'Leader · last pass 5m ago' })).toBeInTheDocument();
+    expect(await screen.findByText('Last leader pass: 47m ago')).toBeInTheDocument();
+    expect(screen.getByText('Reviews wait on one owner')).toBeInTheDocument();
     expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe('/api/verse/comms/leader-brief');
     const items = screen.getAllByRole('listitem');
     expect(items).toHaveLength(6);
-    expect(within(items[0]!).getByText('Giftopen')).toBeInTheDocument();
+    expect(within(items[0]!).getByText('Open a gift PR from the feed')).toBeInTheDocument();
     expect(within(items[0]!).getByText('open')).toBeInTheDocument();
     expect(within(items[0]!).getByRole('link', { name: 'PR' })).toHaveAttribute('href', 'https://example.test/pr/1');
     expect(within(items[1]!).getByText('merged')).toBeInTheDocument();
@@ -66,12 +71,23 @@ describe.each(WIDTHS)('Leader card at $name', ({ px }) => {
   it('keeps an all-unknown brief unknown, with each reason', async () => {
     serve(allUnknown());
     mount();
-    expect(await screen.findByRole('heading', { name: 'Leader · last pass unknown' })).toBeInTheDocument();
+    expect(await screen.findByText('Last leader pass: unknown (the plan log is missing)')).toBeInTheDocument();
     expect(screen.getByText('Bets unknown: the router queue could not be read.')).toBeInTheDocument();
-    expect(screen.getByText('Bottleneck unknown: status missing.')).toBeInTheDocument();
+    expect(screen.getByText('Bottleneck unknown: the vision file is missing.')).toBeInTheDocument();
+    expect(screen.getByText('Held back unknown: status missing.')).toBeInTheDocument();
     expect(screen.getByText('Pools unknown: the resource ledger could not be read.')).toBeInTheDocument();
     expect(screen.queryByRole('listitem')).toBeNull();
     expect(screen.queryByText(/resets in/)).toBeNull();
+  });
+
+  it('falls back to the id in plain words when a bet has no title, and keeps an older brief unknown', async () => {
+    const b = brief() as Record<string, unknown>;
+    delete b.passAt; delete b.bottleneck;
+    serve(b);
+    mount();
+    expect(await screen.findByText('Last leader pass: unknown (the brief did not say)')).toBeInTheDocument();
+    expect(screen.getByText('Mapminutes')).toBeInTheDocument();
+    expect(screen.getByText('Bottleneck unknown: the brief did not say.')).toBeInTheDocument();
   });
 
   it('shows the command when the brief is unavailable', async () => {
