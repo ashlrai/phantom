@@ -11,7 +11,7 @@
  * sweeps every ~2 minutes.
  *
  * GUARDS (each failure is a named skip, never a silent drop):
- *   - title must start `bridge: RQ-PHX-` — only fleet bridge PRs;
+ *   - title must start `bridge: RQ-` — only fleet agent (bridge) PRs, any job family;
  *   - findSupersededPrs — a merged job whose prompt already names this PR
  *     (this is the guard against recutting the same PR twice);
  *   - the recut ledger <runsDir>/queue/recut-loop.jsonl — a PR written within
@@ -69,6 +69,7 @@ import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from './local
 import type { CloudGh } from '../cloud/pr-actions.js';
 import { defaultGitRunner } from '../verse/git-ops.js';
 import { renderBacklogRecutJob } from './backlog-recut-job.js';
+import { FLEET_BRIDGE_TITLE_RE } from './recut-drop-body.js';
 import { inspectDirtyLanded, withScratchRepo, type DirtyLandedClass, type DirtyLandedPr } from './dirty-landed-inspect.js';
 import { collectPrConflicts } from './dirty-union-collect.js';
 import { classifyDiff3 } from './dirty-union-preview.js';
@@ -118,7 +119,6 @@ const LEDGER_FILE = join('queue', 'recut-loop.jsonl');
 const LEASE_FILE = join('queue', 'recut-loop-leases.jsonl');
 const LEASE_MS = 10 * 60 * 1000;
 const OFF_FILE = join('queue', 'recut-loop.off');
-const BRIDGE_TITLE_RE = /^bridge: RQ-PHX-/;
 const PULL_HEAD_RE = /pull\/(\d+)\/head/g;
 const PROMPT_FILE_RE = /^(RQ-[A-Za-z0-9_-]+)\.(?:md|prompt)$/;
 const ROOT_PROMPT_RE = /^RQ-PHX-[A-Z0-9]+\.prompt$/;
@@ -611,7 +611,7 @@ async function recutLoopTickLocked(deps: RecutLoopDeps): Promise<RecutLoopTickRe
   }
 
   const candidates = backlog.items.filter((item) =>
-    item.suggestedAction === 'recut' && BRIDGE_TITLE_RE.test(item.title));
+    item.suggestedAction === 'recut' && FLEET_BRIDGE_TITLE_RE.test(item.title));
   if (candidates.length === 0) return result;
 
   let merged: MergedFleetPr[];

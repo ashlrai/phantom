@@ -65,6 +65,19 @@ describe('fleet merge-recover', () => {
     expect(f.writes).toBe(1);
   });
 
+  it('recovers a non-PHX agent PR once and explains unresolved conflicts in plain words', async () => {
+    const f = fixture(); f.inspected.title = 'bridge: RQ-CL-DOCS-1795103686';
+    expect(await f.run(true)).toBe(0); expect(f.report.rows[0].action).toBe('recut-queued');
+    expect(await f.run(true)).toBe(0); expect(f.writes).toBe(1);
+    f.state.replacement = true; f.state.conflict = true;
+    expect(await f.run(true)).toBe(0);
+    const row = f.report.rows[0];
+    expect(row.action).toBe('replacement-conflict');
+    expect(row.reason).toMatch(/original PR stays open/);
+    expect(f.writes).toBe(1);
+    expect(f.calls.some(args => args[1] === 'merge' || args[1] === 'close')).toBe(false);
+  });
+
   it('defaults to a mutation-free conflict preview', async () => {
     const f = fixture(); expect(await f.run()).toBe(0);
     expect(f.writes).toBe(0); expect(f.report.dryRun).toBe(true);
