@@ -95,6 +95,7 @@ class FakeChild extends EventEmitter {
 interface Deps {
   steps?: Partial<Record<SelfTickStepName, SelfTickStep>>;
   spawn?: SpawnLike;
+  loadSnapshot?: (runsDir: string) => Promise<unknown>;
 }
 const run = async (args: string[], deps: Deps = {}) => {
   const out: string[] = [], err: string[] = [];
@@ -168,6 +169,17 @@ describe('fleet self-tick', () => {
     expect(report!.steps.map((s) => s.step)).toEqual(rec.order);
     expect(report!.steps.every((s) => s.state === 'ok' && s.exitCode === 0
       && (s.report as { ok: string }).ok === s.step)).toBe(true);
+  });
+
+  it('takes one host-load snapshot on --apply only, and a failing snapshot changes nothing', async () => {
+    const seen: string[] = [];
+    const snap = async (dir: string) => { seen.push(dir); };
+    expect((await run(['--json', '--runs-dir', runsDir], { steps: recording().steps, loadSnapshot: snap })).code).toBe(0);
+    expect(seen).toEqual([]);
+    expect((await run(['--json', '--apply', '--runs-dir', runsDir], { steps: recording().steps, loadSnapshot: snap })).code).toBe(0);
+    expect(seen).toEqual([runsDir]);
+    const boom = async () => { throw new Error('ps unreadable'); };
+    expect((await run(['--json', '--apply', '--runs-dir', runsDir], { steps: recording().steps, loadSnapshot: boom })).code).toBe(0);
   });
 
   it('a throwing first step still runs the later two and exits 1', async () => {

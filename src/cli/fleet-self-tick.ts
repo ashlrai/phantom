@@ -6,6 +6,7 @@
  * and folds their parsed reports into one run report. Only one self-tick runs
  * per runs dir; a step that fails or throws never stops the later ones.
  */
+import { takeLoadSnapshot } from '../core/fleet/load-history.js';
 import { isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { cmdFleetResetRelease } from './fleet-reset-release.js';
@@ -71,6 +72,8 @@ interface Dependencies {
   error?: (text: string) => void;
   /** Per-step overrides for tests; unlisted steps run the real verbs. */
   steps?: Partial<SelfTickSteps>;
+  /** Host-load snapshot seam; the real one reads the dispatcher's admission state and, only when blocked, the process list. */
+  loadSnapshot?: (runsDir: string) => Promise<unknown>;
   /** Lock seam forwarded to runSelfTick. */
   acquireLock?: RunSelfTickOptions['acquireLock'];
   /** planner-tick spawn seam; tests fake it, never a shell. */
@@ -401,6 +404,11 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     steps,
     ...(deps.acquireLock === undefined ? {} : { acquireLock: deps.acquireLock }),
   });
+  // One host-load snapshot when the dispatcher blocks launches for load, so the evidence outlives the moment. Read-only toward
+  // processes; best-effort and rate-limited inside, so it never changes the tick's result.
+  if (apply && report.state === 'ran') {
+    try { await (deps.loadSnapshot ?? ((dir: string) => takeLoadSnapshot(dir, { now })))(root); } catch { /* Best-effort. */ }
+  }
   if (json) {
     output(JSON.stringify(sanitizePublicJson({ ...report, logCap: { state: logCap.state } })));
   } else if (report.state === 'busy') {

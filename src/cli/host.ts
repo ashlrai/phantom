@@ -1,10 +1,14 @@
 /** `phm host load` and `phm host top`: what is loading and using this computer. Thin: the grouping lives in core/fleet/host-load and host-top. */
 import { readHostLoadReport, type HostLoadDeps, type HostLoadReport, type HostLoadTrees } from '../core/fleet/host-load.js';
 import { describeHostTop, hostDiskWarningLine, hostTopMemory, readHostTopReport, HOST_DISK_FLOOR_GB, type HostTopDeps, type HostTopReport } from '../core/fleet/host-top.js';
+import { defaultRunsDir } from '../core/fleet/landed-closes-read.js';
+import { formatLoadHistory, readLoadHistory, summarizeLoadHistory } from '../core/fleet/load-history.js';
+import { parseSince } from '../core/fleet/agent-messages.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const USAGE = `Usage: phm host top [--json] [--groups] [--floor GB]
        phm host load [--json] [--by-tree]
+       phm host load --history [--since 6h] [--json]
 top   What is using this Mac: fleet workers, the local model server, Docker, each desktop app, Phantom, indexing and other,
       with load, memory pressure, swap used, the free-disk trend (GB per hour and hours to the floor) and one suggestion.
       --groups adds the busiest processes in each bucket. --floor sets the GB floor the trend measures to (default ${HOST_DISK_FLOOR_GB});
@@ -13,6 +17,10 @@ load  What is loading this computer, with fleet workers listed per job. --by-tre
       with it and says what share of CPU the fleet's own jobs use. --json has owners (schema host.load.owners.v1): load share by
       producer (fleet jobs, Claude loop, Devin cloud, local model, main guardian, other), the admission guard's state from
       queue/admission-ctl.json, jobs idle over 45 minutes that still use CPU, and one next step.
+--history  Why launches were blocked, after the fact: per hour the peak load, minutes blocked and the top 3 contributors, and one line
+      such as "Most blocked time today: Docker (41%), then local model server (22%)." The self-tick takes a snapshot when the
+      dispatcher blocks for host load (at most one per 10 minutes; kept 7 days, 2,000 rows). --since takes 1h to 7d (default 6h).
+      --json is schema host.load.history.v1; with no snapshot it says unknown.
 Read-only: nothing is ever stopped or quit. Exits 0 with a report, 1 when the process list cannot be read, 2 on bad usage.`;
 
 export function formatHostTop(report: HostTopReport, groups = false): string {
@@ -55,7 +63,7 @@ export function formatHostLoad(report: HostLoadReport): string {
   return [...lines, ...report.gaps.map(gap => `Note: ${gap}`)].join('\n');
 }
 
-export async function cmdHost(args: string[], deps: HostLoadDeps & HostTopDeps & { write?: (text: string) => void } = {}): Promise<number> {
+export async function cmdHost(args: string[], deps: HostLoadDeps & HostTopDeps & { write?: (text: string) => void; runsDir?: string } = {}): Promise<number> {
   const write = deps.write ?? ((text: string) => { process.stdout.write(text); });
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) { write(`${USAGE}\n`); return 0; }
   const [verb, ...flags] = args;
@@ -75,6 +83,25 @@ export async function cmdHost(args: string[], deps: HostLoadDeps & HostTopDeps &
     const top = sanitizePublicJson(await readHostTopReport({ ...deps, floorGb: floor })) as HostTopReport;
     write(`${json ? JSON.stringify(top) : formatHostTop(top, groups)}\n`);
     return top.state === 'unknown' ? 1 : 0;
+  }
+  if (verb === 'load' && flags.includes('--history')) {
+    let json = false, since = '6h', sinceGiven = false;
+    for (let i = 0; i < flags.length; i++) {
+      const flag = flags[i]!;
+      if (flag === '--history') continue;
+      if (flag === '--json' && !json) json = true;
+      else if (flag === '--since' && !sinceGiven) { sinceGiven = true; since = flags[++i] ?? ''; }
+      else { console.error(USAGE.split('\n')[2]); return 2; }
+    }
+    const now = (deps.now ?? Date.now)();
+    const from = parseSince(since, now);
+    const hours = from === null ? NaN : (now - from) / 3_600_000;
+    if (!/^[1-9]\d{0,6}[mhd]$/.test(since) || hours < 1 / 60 || hours > 24 * 7) { console.error('--since takes 1h to 7d, for example 6h.'); return 2; }
+    let rows: ReturnType<typeof readLoadHistory> = [];
+    try { rows = readLoadHistory(deps.runsDir ?? defaultRunsDir()); } catch { /* Unknown history. */ }
+    const history = summarizeLoadHistory(rows, now, Math.round(hours * 100) / 100);
+    write(`${json ? JSON.stringify(history) : formatLoadHistory(history)}\n`);
+    return 0;
   }
   if (verb !== 'load' || new Set(flags).size !== flags.length || flags.some(flag => flag !== '--json' && flag !== '--by-tree')) { console.error(USAGE.split('\n')[1]); return 2; }
   const report = sanitizePublicJson(await readHostLoadReport(deps, { byTree: flags.includes('--by-tree') })) as HostLoadReport;
