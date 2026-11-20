@@ -41,8 +41,11 @@ pnpm 10.28.2 and shares one dependency store (see
 [Shared installs for trusted local worktrees](#shared-installs-for-trusted-local-worktrees)).
 
 Run focused verification locally while developing. Pull requests and default-branch
-pushes run the repository's CI and Dependency Audit workflows. Check the actual
-run for your commit; workflow source alone is not evidence that it passed.
+pushes run the repository's CI workflow (the fast gate; see
+[Running tests hermetically](#running-tests-hermetically-on-the-local-host)),
+and the Dependency Audit workflow when a manifest, lockfile or audit
+configuration changes. Check the actual run for your commit; workflow source
+alone is not evidence that it passed.
 Dependency changes must keep the
 affected manifest and lockfile consistent, including separately packaged Raycast
 or desktop dependencies when those are in scope.
@@ -236,12 +239,14 @@ Hosted CI includes exhaustive Ubuntu shards, named Windows portability contracts
 four exhaustive Mac partitions, a separate Mac lane for all isolated suites
 (two at a time, each in its own home with one worker; locally they stay serial
 unless `ASHLR_TEST_CI_ISOLATED_CONCURRENCY=2`), macOS queue coverage and native
-broker checks. The four exhaustive Mac
-partitions run on master pushes and on pull requests labelled `ci:full-mac`; on
-other pull requests they are skipped and `Merge Gate` reports them as deferred
-to post-merge. The isolated Mac lane, macOS queue coverage and native broker
-checks run on every pull request that is ready for review; a draft pull request
-skips those three until it is marked ready, which starts a full run. Local tests
+broker checks. None of these full lanes runs on a pull request, in the merge
+queue or on a `master` push. Those events run only fast checks: secret scans,
+generated-file and authority-drift checks and a typecheck, plus the affected
+tests on pull requests and in the queue (see
+[Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md#6-what-ci-requires)).
+The full lanes run on the six-hour scheduled `master` run, on manual dispatch
+and when another workflow calls CI, and failures there are fixed forward. No
+label or draft state changes this. Local tests
 and hosted checks prove different environments. Inspect each actual run and report unavailable or
 skipped coverage separately; do not weaken checks to make a release pass.
 
