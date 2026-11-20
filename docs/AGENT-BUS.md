@@ -259,6 +259,15 @@ characters so one large body cannot crowd out the rest of the frame.
 `phm agents bus wakes <agent>` lists wake hints for the agent and its
 channels.
 
+**Lookup.** `phm agents bus show <id>` resolves one retained envelope by the
+wire id wake hints, `work mine` items and claim operations cite — the third
+addressing mode beside labels and cursors. The scan is the same bounded page
+walk the other reads use and sees live rows only: an expired or never-posted
+id reports `not-found`, an unreadable store `unavailable`, and the read needs
+no identity or addressing scope. The sender's registered handle decorates the
+result as `fromAgent` when the registry resolves it — best-effort, so an
+unreadable registry never hides the envelope itself.
+
 **Work announcements.** `phm agents bus work post --job <id> --title <text>
 --repo <owner/name> [--claim <key>]... [--provider <p>] [--tier <fast|mid|work|frontier>
 --scope <text> --acceptance <text>] [--to <label>]` sends a v2 `work.post`;

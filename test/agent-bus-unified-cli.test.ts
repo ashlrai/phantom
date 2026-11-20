@@ -126,6 +126,28 @@ describe('phm agents bus (unified)', () => {
     expect(text.join('\n')).toContain('nextCursor');
   });
 
+  it('resolves one retained envelope by id without needing an identity', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'find me', '--id', 'show-1'])).json)
+      .toMatchObject({ status: 'posted' });
+    // The read needs no --from or PHM_AGENT_ID: the id alone resolves the row.
+    const found = await run(['show', 'show-1']);
+    expect(found.code).toBe(0);
+    expect(found.json).toMatchObject({ status: 'ok', id: 'show-1',
+      message: { fromAgent: 'atlas', envelope: { id: 'show-1', from: 'agent:atlas', to: 'agent:nova' } } });
+    expect(await run(['show', 'show-404'])).toMatchObject({ code: 1, json: { status: 'not-found', id: 'show-404' } });
+    expect(await run(['show', 'bad id'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['show'])).toMatchObject({ code: 2 });
+    expect(await run(['show', 'show-1', 'extra'])).toMatchObject({ code: 2 });
+    // Human output prints cursor, priority, id, resolved sender, recipient and a body summary.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['show', 'show-1', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('show-1');
+    expect(text.join('\n')).toContain('agent:nova');
+    expect(text.join('\n')).toContain('find me');
+  });
+
   it('filters inbox and channel reads by --thread', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

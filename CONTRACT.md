@@ -1802,6 +1802,12 @@ excluded; `from` filters by sender through identity-label matching and
 `nextCursor` covers every scanned row, a missing registry answers
 `unknown-channel`, and an unreadable registry or store answers
 `unavailable`/`retryable`, never an empty page passed off as history),
+`readBusEnvelopeById(id, options?)` (one retained envelope by its wire id —
+the key wake hints, claim operations and `work mine` items cite — via the
+same bounded page walk; live rows only so an expired or never-posted id
+answers `not-found`, an unreadable store `unavailable`/`retryable`, the read
+needs no identity, and `fromAgent` sender decoration is best-effort so an
+unreadable registry never hides the envelope),
 `shouldWake(priority, requested, handoff?)`
 and `busBodySummary(body)` — a pure, secret-scrubbed read of a bus body for
 inbox surfaces (`note`/`context`/`worker-handoff` return their message text,

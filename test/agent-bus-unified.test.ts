@@ -8,7 +8,7 @@ import {
 } from '../src/core/agents/bus-identity.js';
 import {
   announceWork, busBodySummary, listBusChannels, postChannelMessage, readAgentChannel, readAgentInbox, readAgentWakes,
-  sendDirectMessage, sendHandoff, sendWakeRequest, shouldWake, updateWorkStatus, type UnifiedBusOptions,
+  readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest, shouldWake, updateWorkStatus, type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
@@ -295,6 +295,67 @@ describe('sender-filtered inbox reads', () => {
     if (filtered.status !== 'ok') throw new Error(`unexpected ${filtered.status}`);
     expect(filtered.messages).toEqual([]);
     expect(filtered.nextCursor).toBeGreaterThan(0);
+  });
+});
+
+describe('envelope lookup by id', () => {
+  it('resolves a retained envelope of any kind by its wire id', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'rebase please', id: 'lk-dm', priority: 'P1' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'ship it', id: 'lk-ch' }, options);
+    await sendHandoff({ from: 'atlas', to: 'nova', taskId: 'RQ-LK-1', prompt: 'take over', id: 'lk-ho' }, options);
+
+    const dm = readBusEnvelopeById('lk-dm', options);
+    if (dm.status !== 'ok') throw new Error(`unexpected ${dm.status}`);
+    expect(dm.message.cursor).toBeGreaterThan(0);
+    expect(dm.message.receivedAt).toBe(1_000);
+    expect(dm.message.fromAgent).toBe('atlas');
+    expect(dm.message.envelope).toMatchObject({ id: 'lk-dm', from: 'agent:atlas', to: 'agent:nova',
+      priority: 'P1', channel: 'bus' });
+    // Channel and handoff envelopes resolve by the same id, no addressing scope needed.
+    for (const id of ['lk-ch', 'lk-ho']) {
+      const found = readBusEnvelopeById(id, options);
+      expect(found.status).toBe('ok');
+      if (found.status === 'ok') expect(found.message.envelope.id).toBe(id);
+    }
+    const ho = readBusEnvelopeById('lk-ho', options);
+    if (ho.status !== 'ok') throw new Error('missing handoff');
+    expect(ho.message.envelope.channel).toBe('handoff');
+  });
+
+  it('reports not-found for unknown and expired ids, invalid for malformed ones', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    // A never-posted store is a verified miss, not an error.
+    expect(readBusEnvelopeById('lk-none', options)).toEqual({ status: 'not-found', id: 'lk-none' });
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'short lived', id: 'lk-ttl', ttl: 1_000 }, options);
+    expect(readBusEnvelopeById('lk-ttl', options).status).toBe('ok');
+    options.clock.now = 3_000;
+    // The expired receipt no longer resolves: live rows only, never a stale body.
+    expect(readBusEnvelopeById('lk-ttl', options)).toEqual({ status: 'not-found', id: 'lk-ttl' });
+    expect(readBusEnvelopeById('', options).status).toBe('invalid');
+    expect(readBusEnvelopeById('has space', options).status).toBe('invalid');
+    expect(readBusEnvelopeById('x'.repeat(129), options).status).toBe('invalid');
+  });
+
+  it('keeps the envelope when the registry is unreadable and reports an unreadable store', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'still here', id: 'lk-reg' }, options);
+    const registryFile = join(options.root!, 'agent-identities', 'registry.json');
+    writeFileSync(registryFile, 'not json');
+    chmodSync(registryFile, 0o600);
+    const found = readBusEnvelopeById('lk-reg', options);
+    if (found.status !== 'ok') throw new Error(`unexpected ${found.status}`);
+    expect(found.message.fromAgent).toBeNull();
+    expect(found.message.envelope.from).toBe('agent:atlas');
+
+    const storeFile = join(options.root!, 'bus-inbox', 'messages.json');
+    writeFileSync(storeFile, 'not json');
+    chmodSync(storeFile, 0o600);
+    expect(readBusEnvelopeById('lk-reg', options)).toMatchObject({ status: 'unavailable' });
   });
 });
 

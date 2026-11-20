@@ -1156,3 +1156,56 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
   }
   return { status: 'ok', channel: name, messages, nextCursor: cursor };
 }
+
+export interface BusEnvelopeLookupMessage {
+  cursor: number;
+  receivedAt: number;
+  /**
+   * Registered handle of the sender label, or null. A label is never
+   * authentication; null also covers an unreadable registry — the raw
+   * `envelope.from` label is always present either way.
+   */
+  fromAgent: string | null;
+  /** Live receipt: `ttl` here is the remaining TTL at read time. */
+  envelope: BusEnvelope;
+}
+export type BusEnvelopeLookup =
+  | { status: 'ok'; id: string; message: BusEnvelopeLookupMessage }
+  | { status: 'not-found'; id: string }
+  | { status: 'invalid' | 'unavailable' | 'retryable'; reason: string };
+
+/**
+ * Resolve one retained envelope by its wire id — the key wake hints, claim
+ * operations, `work mine` items and dedupe all cite. The scan is the same
+ * bounded page walk the other reads use and sees only live (unexpired)
+ * receipts: an expired or reclaimed-away id reports `not-found`, never a
+ * stale row. Reading needs no identity and no addressing scope: like
+ * `readAgentChannel`, the store is shared and ids are routing data, not
+ * secrets. `fromAgent` decoration is best-effort; an unreadable registry
+ * never hides the envelope itself.
+ */
+export function readBusEnvelopeById(id: string, options: UnifiedBusOptions = {}): BusEnvelopeLookup {
+  if (typeof id !== 'string' || !THREAD.test(id)) {
+    return { status: 'invalid', reason: 'Invalid message id.' };
+  }
+  const registry = readAgentRegistry(options);
+  let cursor = 0;
+  for (let index = 0; index < MAX_PAGES; index += 1) {
+    const result = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ, { root: options.root, now: options.now });
+    if (result.status !== 'ok') {
+      return { status: result.status === 'retryable' ? 'retryable' : result.status === 'invalid' ? 'invalid' : 'unavailable',
+        reason: 'Bus store is not readable.' };
+    }
+    for (const row of result.messages) {
+      if (row.envelope.id === id) {
+        return { status: 'ok', id,
+          message: { cursor: row.cursor, receivedAt: row.receivedAt,
+            fromAgent: registry.status === 'ok' ? resolveAgent(registry.registry, row.envelope.from)?.handle ?? null : null,
+            envelope: row.envelope } };
+      }
+    }
+    if (result.messages.length < BUS_INBOX_MAX_READ || result.nextCursor <= cursor) break;
+    cursor = result.nextCursor;
+  }
+  return { status: 'not-found', id };
+}

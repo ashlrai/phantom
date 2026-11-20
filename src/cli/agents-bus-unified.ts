@@ -5,8 +5,8 @@ import {
   type BusCli, type BusProvider,
 } from '../core/agents/bus-identity.js';
 import {
-  announceWork, listBusChannels, postChannelMessage, readAgentChannel, readAgentInbox, readAgentWakes, sendDirectMessage,
-  sendHandoff, sendWakeRequest, updateWorkStatus, type UnifiedBusOptions, type WorkStatusInput,
+  announceWork, busBodyFallbackSummary, listBusChannels, postChannelMessage, readAgentChannel, readAgentInbox, readAgentWakes,
+  readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest, updateWorkStatus, type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { WORK_STATUSES, parseClaimKey, type WorkJob } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedToMatcher, formatBusWorkFeed, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
@@ -19,7 +19,7 @@ import { scrubSecrets } from '../core/util/scrub.js';
 import type { BusPriority } from '../core/fleet/bus-envelope.js';
 import { seatParticipants } from '../core/bots/seats.js';
 
-export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'channel', 'handoff', 'wake', 'inbox', 'wakes', 'adapters', 'claim', 'work', 'status']);
+export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'channel', 'handoff', 'wake', 'inbox', 'wakes', 'show', 'adapters', 'claim', 'work', 'status']);
 
 export const AGENTS_BUS_UNIFIED_HELP = `ashlr agents bus id register [<handle>] [--cli <cli>] [--provider <p>] [--model <m>] [--alias <label>]... [--display <name>]
 ashlr agents bus id list
@@ -33,6 +33,7 @@ ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <a
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--frame <cli>]
 ashlr agents bus wakes [<agent>] [--since <epoch ms>]
+ashlr agents bus show <id>
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
 ashlr agents bus claim renew --key <claimKey> --token <64hex> --lease-ms <1..3600000>
@@ -54,7 +55,10 @@ wakes, P1 and handoffs wake by default, and wake always records its hint.
 --thread on dm, channel post, inbox and channel read is the v2 conversation
 label carried by note/context bodies; reads match that field only. --from on
 inbox and channel read narrows to one sender — a handle, agent:<handle>,
-stable id or alias; an unresolvable ref keeps exact-label matching.
+stable id or alias; an unresolvable ref keeps exact-label matching. show
+resolves one retained envelope by the wire id wake hints, work mine items
+and claim operations cite; an expired id reports not-found, and the read
+needs no identity.
 A terminal work status also queues a routing-only wake hint for each live claim
 holder on the job's keys; --no-wake opts out. work feed and claim list are
 read-only and need no identity; work feed --to keeps jobs announced to that
@@ -307,6 +311,24 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       out(json ? JSON.stringify(page) : [
         ...page.messages.map(m => `${m.cursor} ${m.priority} ${m.kind === 'channel' ? `#${m.channel}` : m.kind} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}`),
         `nextCursor ${page.nextCursor}`,
+      ].join('\n'));
+      return 0;
+    }
+    if (verb === 'show') {
+      noExtra(2);
+      if (sub === undefined) throw new UsageError('A message id is required.');
+      const result = readBusEnvelopeById(sub, options);
+      if (result.status !== 'ok') {
+        if (result.status === 'not-found') {
+          out(json ? JSON.stringify(result) : `not-found: ${result.id}`);
+          return 1;
+        }
+        return finish(result, '');
+      }
+      const m = result.message;
+      out(json ? JSON.stringify(result) : [
+        `${m.cursor} ${m.envelope.priority} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from} -> ${m.envelope.to}`,
+        `  ${busBodyFallbackSummary(m.envelope.body)}`,
       ].join('\n'));
       return 0;
     }
