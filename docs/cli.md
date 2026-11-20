@@ -370,7 +370,7 @@ Every command, grouped by topic.
     recut plan [--json] [--prs <dirty-landed.json>] [<area>...]                                             Per recut area, emit or skip this cycle with one plain reason. Writes nothing.
     recut prompt <job-id> --lane <lane> --tier <tier>                                                       Print a recut prompt from stdin with the standard task line first.
     jobs state <id> [--json]                                                                                Show whether a job is running or done, with the evidence.
-    jobs empty [--since 24h] [--family F] [--lane L] [--by-family [--apply | --undo <family>]] [--json]    Why jobs ended empty, per lane and reason. --by-family: one action per job family; --apply retires stop families (dry run with --dry-run).
+    jobs empty [--since 24h] [--family F] [--lane L] [--by-family [--apply | --undo <family>]] [--json]     Why jobs ended empty, per lane and reason. --by-family: one action per job family; --apply retires stop families (dry run with --dry-run).
     jobs producers [--since 6h] [--metrics <jobs.jsonl>] [--queue <router-queue.md>] [--json]               Who queued the jobs that started, per hour over the last 6 hours.
     jobs tokens --lane <lane> [--since 24h] [--metrics <jobs.jsonl>] [--json]                               Token use and measured coverage for one lane.
     jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json]                                          Why jobs ended empty, ranked by recorded wasted tokens.
@@ -486,7 +486,7 @@ Every command, grouped by topic.
   Safety - sandboxes, invariants, activation
     daemon activation-preflight --request <path> [--json]                                 Read-only verification of operator-custodied signed candidate and rollback artifacts; grants no service authority.
     daemon activate --request <path> --authorize <digest> --confirm <digest> [--json]     Dormant permit-gated 3.2.7 selection; preserves loaded=false and the exact disabled bit, and never starts a service.
-    worktrees [--json] [--reap [--dry-run | --apply]]                                     List job worktrees by state and remove the ones safe to remove.
+    worktrees [--json] [--reap [--dry-run | --apply | --status]]                          List job worktrees by state and remove the ones safe to remove. The fleet self-tick runs the safe reap itself above 40 worktrees; --reap --status shows its last run.
     worktrees prune [--dry-run | --apply] [--json]                                        Preview or remove clean, inactive worktrees for finished jobs.
     worktrees report [--dir <path>] [--json]                                              Report worktree age, size, last log time and job state.
     host top [--json] [--groups] [--floor GB]                                             Show what is using this Mac in plain buckets (fleet workers, local model server, Docker, each desktop app, Phantom, indexing, other) with load, memory pressure, swap used, the free-disk trend (GB per hour, hours to the floor; under 12 hours is a warning) and one suggestion. Read-only: never quits anything; JSON is host.top.v1.

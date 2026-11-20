@@ -85,6 +85,8 @@ export interface WorktreesDeps extends Pick<WtAuditDeps, 'fs' | 'readJobs' | 'ps
   remove?: (path: string, wtRoot: string) => Promise<void>;
   /** Records one removal attempt; default appends to queue/worktree-reap.jsonl. */
   logRemoval?: (entry: WorktreeRemoval & { at: string }) => Promise<void>;
+  /** Most safe rows to attempt in one apply; the rest wait for the next run. Default: all. */
+  maxRemovals?: number;
 }
 
 const STATE_OF: Record<WtAuditState, WorktreeState | null> = {
@@ -129,7 +131,7 @@ async function defaultRemove(path: string, wtRoot: string): Promise<void> {
   await run('git', ['-C', path, 'worktree', 'remove', '--', path], { timeout: 60_000, maxBuffer: 64 * 1024 });
 }
 
-const defaultRunsRoot = (): string => process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+export const defaultRunsRoot = (): string => process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
 const defaultWtRoot = (): string => process.env['ASHLR_WT_DIR'] ?? join(homedir(), 'Projects', 'ashlrai', 'wt');
 
 async function pool<T>(items: T[], limit: number, work: (item: T) => Promise<void>): Promise<void> {
@@ -189,9 +191,19 @@ export async function readWorktrees(mode: WorktreesReport['mode'] = 'list', deps
   if (mode === 'apply') {
     // Git checks can take a while; a job relaunched or kept since then must win.
     const fresh = new Map(rowsOf((await readAudit()).worktrees).map(row => [row.job, row]));
-    report.removals = await removeSafe(rows, fresh, wtRoot, runsRoot, isClean, deps);
+    report.removals = await removeSafe(rows, fresh, wtRoot, runsRoot, isClean, deps, deps.maxRemovals);
   }
   return report;
+}
+
+/** How many job worktrees exist: the audit only, no Git or size scans. */
+export async function countJobWorktrees(deps: WorktreesDeps = {}): Promise<number> {
+  const audit = await (deps.audit ?? readWtAudit)({
+    now: deps.now ?? Date.now(), wtRoot: deps.wtRoot ?? defaultWtRoot(), runsRoot: deps.runsRoot ?? defaultRunsRoot(), wantSize: false,
+    ...(deps.fs ? { fs: deps.fs } : {}), ...(deps.readJobs ? { readJobs: deps.readJobs } : {}),
+    ...(deps.ps ? { ps: deps.ps } : {}), ...(deps.readPins ? { readPins: deps.readPins } : {}),
+  });
+  return rowsOf(audit.worktrees).length;
 }
 
 function rowsOf(entries: readonly WtAuditEntry[]): WorktreeRow[] {
@@ -206,7 +218,7 @@ function rowsOf(entries: readonly WtAuditEntry[]): WorktreeRow[] {
 
 async function removeSafe(
   rows: WorktreeRow[], fresh: ReadonlyMap<string, WorktreeRow>, wtRoot: string, runsRoot: string,
-  isClean: NonNullable<WorktreesDeps['isClean']>, deps: WorktreesDeps,
+  isClean: NonNullable<WorktreesDeps['isClean']>, deps: WorktreesDeps, maxRemovals = Infinity,
 ): Promise<WorktreeRemoval[]> {
   const remove = deps.remove ?? defaultRemove;
   const log = deps.logRemoval ?? (async (entry: WorktreeRemoval & { at: string }) => {
@@ -215,7 +227,7 @@ async function removeSafe(
     await appendFile(file, `${JSON.stringify(entry)}\n`, { mode: 0o600 });
   });
   const removals: WorktreeRemoval[] = [];
-  for (const row of rows.filter(r => r.safe)) {
+  for (const row of rows.filter(r => r.safe).slice(0, Math.max(0, maxRemovals))) {
     const path = join(wtRoot, row.job);
     let removal: WorktreeRemoval;
     const latest = fresh.get(row.job);
