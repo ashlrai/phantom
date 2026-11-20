@@ -374,6 +374,7 @@ Every command, grouped by topic.
     jobs producers [--since 6h] [--metrics <jobs.jsonl>] [--queue <router-queue.md>] [--json]               Who queued the jobs that started, per hour over the last 6 hours.
     jobs tokens --lane <lane> [--since 24h] [--metrics <jobs.jsonl>] [--json]                               Token use and measured coverage for one lane.
     jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json]                                          Why jobs ended empty, ranked by recorded wasted tokens.
+    jobs stranded [--since 24h] [--runs-dir <dir>] [--json]                                                 Finished jobs that pushed a branch but opened no PR: job, repo, branch, age, files changed and one next step. Read-only; unknown stays unknown.
     radar list|run|diff [--json]                                                                            Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.
     observe [--json]                                                                                        Human observe snapshot: roster, sensor headroom, pull headlines, bottlenecks, and human steps. Unknown stays unknown. See docs/OBSERVE.md.
     context --for-agent <lane> [--json]                                                                     Compact under-4KB brief for one lane: claims, open pulls, bottlenecks, blind spots, and pacing. See docs/WORLD.md.
@@ -496,6 +497,7 @@ Every command, grouped by topic.
     autofix [--apply] [--dry-run] [--json] [--only <fixer>]                               Act on Eng Ops incident files (prefix a, b, d, e; g is detect-only). Dry run unless --apply. Refuses when ~/.ashlr/KILL exists. Never reads the incident body into a command. See docs/AUTOFIX.md.
     nodes [--json] [--can-take <lane>]                                                    Your computers as one pool: which are reachable, running Phantom and ready for work. Read only.
     nodes plan [--json]                                                                   Plan which queued job fits which computer, with suggested free slots per computer. Read only: it launches and moves nothing.
+    nodes offload [--dry-run] [--json]                                                    Opt-in: when this computer would hold a launch and another passes doctor, choose that computer for a ready job and record why. --dry-run shows what would move; `nodes offload on|off` flips the setting.
     node join|beat|enqueue|plan|pull|complete|status [--json]                             Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases.
     node bootstrap --dry-run [--json]                                                     Plan a persistent Linux node; registry integration is a stub, no provisioning.
     sandbox list                                                                          List active git-worktree sandboxes (M21 safety foundation).
