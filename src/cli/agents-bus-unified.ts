@@ -349,6 +349,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       out(json ? JSON.stringify(result) : [
         `${m.cursor} ${m.envelope.priority} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from} -> ${m.envelope.to}`,
         `  ${busBodyFallbackSummary(m.envelope.body)}`,
+        ...(result.held === undefined ? [] : [`  held=${result.held === null ? 'unknown' : result.held ? 'yes' : 'no'}` +
+          (result.holder ? ` holder=${result.holder}` : '')]),
       ].join('\n'));
       return 0;
     }

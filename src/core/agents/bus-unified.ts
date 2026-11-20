@@ -20,8 +20,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { appendBusInbox, listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
   type BusInboxOptions, type BusInboxPost } from '../fleet/bus-inbox.js';
-import { BUS_PRIORITIES, type BusEnvelope, type BusPriority } from '../fleet/bus-envelope.js';
+import { BUS_PRIORITIES, isClaimableWork, type BusEnvelope, type BusPriority } from '../fleet/bus-envelope.js';
 import { groupAddress } from '../fleet/bus-group.js';
+import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
+import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { createBusWakeHook, type BusWakeResult } from '../fleet/bus-wake.js';
 import { busWakeQueueEnqueue, enqueueBusWake, readBusWakes, type BusWakeRow } from '../fleet/bus-wake-queue.js';
 import { isFleetJobId } from '../fleet/runs-job-detail.js';
@@ -1220,9 +1222,45 @@ export interface BusEnvelopeLookupMessage {
   envelope: BusEnvelope;
 }
 export type BusEnvelopeLookup =
-  | { status: 'ok'; id: string; message: BusEnvelopeLookupMessage }
+  | { status: 'ok'; id: string; message: BusEnvelopeLookupMessage;
+      /**
+       * Present only when the body is claimable work or a worker handoff:
+       * whether a taken message-id claim or a live coordination hold provably
+       * covers the envelope — the same rule `work mine` next/handoffs and the
+       * unified comms inbox apply. `held` false is proof of free; null means
+       * a hold store could not be read (unknown, never proven free).
+       */
+      held?: boolean | null;
+      /** Owner label of the blocking claim when held and known; null otherwise. */
+      holder?: string | null }
   | { status: 'not-found'; id: string }
   | { status: 'invalid' | 'unavailable' | 'retryable'; reason: string };
+
+/**
+ * Hold state for one resolved envelope, for the claimable kinds only: a
+ * message-id claim row matching the exact `(id, cursor, receivedAt)` receipt
+ * triple (a completed row stays taken, an expired lease does not) or a live
+ * coordination row blocking `queue:<id>`. A store that cannot be read makes
+ * the answer unknown — never reported free.
+ */
+function envelopeHold(receipt: { id: string; cursor: number; receivedAt: number; envelope: BusEnvelope },
+  options: UnifiedBusOptions): { held: boolean | null; holder: string | null } | undefined {
+  const body = receipt.envelope.body;
+  if (!isClaimableWork(body) && !isWorkerHandoffBody(body)) return undefined;
+  const now = (options.now ?? Date.now)();
+  const claimsRead = inspectBusWorkClaims(options.root);
+  const coordination = listCoordination(options.root, now);
+  if (claimsRead.source === 'unavailable' || coordination.source === 'unavailable') {
+    return { held: null, holder: null };
+  }
+  const messageOwner = claimsRead.claims.find(row =>
+    row.id === receipt.envelope.id && row.cursor === receipt.cursor && row.receivedAt === receipt.receivedAt &&
+    (row.completedAt !== null || row.leaseUntil > now))?.owner;
+  const coordinationBlocker = coordination.claims.find(row => row.live &&
+    coordinationRowBlocks(row, `queue:${receipt.envelope.id}`));
+  const held = messageOwner !== undefined || coordinationBlocker !== undefined;
+  return { held, holder: held ? messageOwner ?? coordinationBlocker?.owner ?? null : null };
+}
 
 /**
  * Resolve one retained envelope by its wire id — the key wake hints, claim
@@ -1232,7 +1270,10 @@ export type BusEnvelopeLookup =
  * stale row. Reading needs no identity and no addressing scope: like
  * `readAgentChannel`, the store is shared and ids are routing data, not
  * secrets. `fromAgent` decoration is best-effort; an unreadable registry
- * never hides the envelope itself.
+ * never hides the envelope itself. Claimable work and worker-handoff bodies
+ * additionally report `held`/`holder` — whether a taken claim or live
+ * coordination hold already covers the envelope, the same evidence `work
+ * mine` next/handoffs and the unified comms inbox show.
  */
 export function readBusEnvelopeById(id: string, options: UnifiedBusOptions = {}): BusEnvelopeLookup {
   if (typeof id !== 'string' || !THREAD.test(id)) {
@@ -1248,10 +1289,12 @@ export function readBusEnvelopeById(id: string, options: UnifiedBusOptions = {})
     }
     for (const row of result.messages) {
       if (row.envelope.id === id) {
-        return { status: 'ok', id,
-          message: { cursor: row.cursor, receivedAt: row.receivedAt,
-            fromAgent: registry.status === 'ok' ? resolveAgent(registry.registry, row.envelope.from)?.handle ?? null : null,
-            envelope: row.envelope } };
+        const message: BusEnvelopeLookupMessage = { cursor: row.cursor, receivedAt: row.receivedAt,
+          fromAgent: registry.status === 'ok' ? resolveAgent(registry.registry, row.envelope.from)?.handle ?? null : null,
+          envelope: row.envelope };
+        const hold = envelopeHold({ id: row.envelope.id, cursor: row.cursor, receivedAt: row.receivedAt,
+          envelope: row.envelope }, options);
+        return { status: 'ok', id, message, ...(hold ?? {}) };
       }
     }
     if (result.messages.length < BUS_INBOX_MAX_READ || result.nextCursor <= cursor) break;

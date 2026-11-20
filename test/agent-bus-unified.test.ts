@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -13,11 +13,12 @@ import {
 } from '../src/core/agents/bus-unified.js';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
+import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import {
   attachBusCliSession, busSelfFromEnv, detectBusCli, frameBusInbox, getBusCliAdapter, listBusCliAdapters,
   BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END,
 } from '../src/core/agents/bus-cli-adapters.js';
-import type { BusJsonValue } from '../src/core/fleet/bus-envelope.js';
+import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import { enqueueBusWake } from '../src/core/fleet/bus-wake-queue.js';
 import { publishGroupPresence, subscribeGroup } from '../src/core/fleet/bus-group.js';
@@ -357,6 +358,59 @@ describe('envelope lookup by id', () => {
     writeFileSync(storeFile, 'not json');
     chmodSync(storeFile, 0o600);
     expect(readBusEnvelopeById('lk-reg', options)).toMatchObject({ status: 'unavailable' });
+  });
+
+  it('reports hold state for claimable work and handoffs, never for other bodies', async () => {
+    // Real time: mutateBusWorkClaim reads Date.now() for lease and expiry.
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    const claimable = (id: string): void => {
+      const envelope: BusEnvelope = { id, from: 'agent:nova', to: 'agent:atlas',
+        priority: 'P2', ttl: 120_000, body: { kind: 'work', text: `fake work ${id}` } };
+      expect(appendBusInbox(envelope, { root: options.root, now: options.now }).status).toBe('posted');
+    };
+    // Free claimable work: both hold stores read and nothing covers the receipt.
+    claimable('lk-free');
+    // Taken through the message-id claim journal (the bus-next claim path).
+    claimable('lk-taken');
+    expect(mutateBusWorkClaim({ action: 'acquire', id: 'lk-taken', owner: 'nova', leaseMs: 60_000,
+      root: options.root }).status).toBe('acquired');
+    // Held only by a live coordination row on the envelope's queue:<id> key.
+    claimable('lk-coord');
+    expect(acquireCoordination({ root: options.root, origin: 'resource', key: 'queue:lk-coord',
+      owner: 'atlas', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000, sourceId: 'lk-coord-src',
+      now: options.clock.now, started: new Date(options.clock.now).toISOString() }).status).toBe('acquired');
+    // A worker handoff is claimable too; a plain DM is not.
+    await sendHandoff({ from: 'atlas', to: 'nova', taskId: 'RQ-LK-H1', prompt: 'take over', id: 'lk-ho' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'just chat', id: 'lk-dm' }, options);
+
+    const free = readBusEnvelopeById('lk-free', options);
+    expect(free).toMatchObject({ status: 'ok', held: false, holder: null });
+    const taken = readBusEnvelopeById('lk-taken', options);
+    expect(taken).toMatchObject({ status: 'ok', held: true, holder: 'nova' });
+    const coord = readBusEnvelopeById('lk-coord', options);
+    expect(coord).toMatchObject({ status: 'ok', held: true, holder: 'atlas' });
+    const ho = readBusEnvelopeById('lk-ho', options);
+    expect(ho).toMatchObject({ status: 'ok', held: false, holder: null });
+    const dm = readBusEnvelopeById('lk-dm', options);
+    if (dm.status !== 'ok') throw new Error('missing dm');
+    expect(dm).not.toHaveProperty('held');
+    expect(dm).not.toHaveProperty('holder');
+  });
+
+  it('reports held unknown when a hold store cannot be read', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    const envelope: BusEnvelope = { id: 'lk-unk', from: 'agent:nova', to: 'agent:atlas',
+      priority: 'P2', ttl: 120_000, body: { kind: 'work', text: 'fake work' } };
+    expect(appendBusInbox(envelope, { root: options.root, now: options.now }).status).toBe('posted');
+    // An unreadable claims journal makes coverage unknown, never proven free.
+    const claimsDir = join(options.root!, 'bus-work-claims');
+    mkdirSync(claimsDir, { recursive: true });
+    const claimsFile = join(claimsDir, 'claims.json');
+    writeFileSync(claimsFile, 'not json');
+    chmodSync(claimsFile, 0o600);
+    expect(readBusEnvelopeById('lk-unk', options)).toMatchObject({ status: 'ok', held: null, holder: null });
   });
 });
 
