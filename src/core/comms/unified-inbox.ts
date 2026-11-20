@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates nine local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates ten local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), act: `phm fleet needs-resolve`.
@@ -45,6 +45,20 @@
  *               feed already lists stays under the bus source: one pending
  *               thing, one item. Act: `phm agents conversations`,
  *               `phm agents bus show`, `phm agents bus post --thread`.
+ *   seats       bot seats whose projected handoff plan still has work to
+ *               move — the same `planSeatHandoffs` read `phm bots handoffs`
+ *               serves, so the inbox and that surface can never disagree.
+ *               Only eligible seats (draining, or idle while still holding
+ *               work or handoff history) with pending — not yet journaled —
+ *               handoff records list: a draining seat with nothing left to
+ *               release is already on its way to idle, not pending work.
+ *               Seat handoffs are agent work, never Mason-blocking, so items
+ *               are warn and non-blocking; `since` stays null because the
+ *               plan's record timestamps are the read instant, not a real
+ *               age. An empty roster is 'missing' (no seats configured); an
+ *               unreadable roster, coordination table, node store or quota
+ *               read is 'unavailable', never an empty plan passed off as
+ *               fact. Act: `phm bots handoff --seat`, `phm bots handoffs`.
  *   gmail       one item per inbox in the saved Gmail archive plan whose unread
  *               count is over its target (`phm fleet gmail-archive-plan`). A
  *               read of the saved plan only: no mail is read, moved or deleted.
@@ -88,6 +102,7 @@ import { readOwnerAwaitingReplies, type OwnerAwaitingReplies } from './owner-thr
 import { commsRequestAgeStartMs, commsRequestTtlMs, DEFAULT_REQUEST_TTL_HOURS, readCommsRequests, type CommsRequestsRead } from './requests.js';
 import { readAgentConversations, plainAge, type AgentConversations } from '../fleet/agent-conversations.js';
 import { JOB_THREAD_PREFIX } from '../fleet/agent-messages.js';
+import { planSeatHandoffs, type SeatHandoffsPlan } from '../bots/seats.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { classifyTeammateIntent, readTeammateTexts, type TeammateText } from './imessage-teammate-inbox.js';
 
@@ -96,9 +111,9 @@ const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
 
-export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'owner-thread' | 'drafts' | 'bus' | 'conversations' | 'gmail' | 'linkedin' | 'requests';
+export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'owner-thread' | 'drafts' | 'bus' | 'conversations' | 'seats' | 'gmail' | 'linkedin' | 'requests';
 export type UnifiedInboxSourceState = 'healthy' | 'missing' | 'degraded' | 'unavailable';
-export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'owner-message' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'agent-thread' | 'gmail-over-target' | 'linkedin-message' | 'comms-request';
+export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'owner-message' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request';
 
 export interface UnifiedInboxItem extends AttentionItem {
   /** Stable, namespaced: `<source>:<ref>` (e.g. `drafts:d-0123…`). */
@@ -154,6 +169,7 @@ export interface UnifiedInboxOptions {
   readLinkedIn?: typeof readLinkedInDrop;
   readOwnerAwaiting?: (options: { runsDir: string }) => OwnerAwaitingReplies;
   readConversations?: typeof readAgentConversations;
+  readSeatHandoffs?: typeof planSeatHandoffs;
   readRequests?: typeof readCommsRequests;
   /** Test seam: the request TTL `expiresAt` uses; default resolves cfg.comms.requestTtlHours like dispatch. */
   requestTtlMs?: number;
@@ -572,6 +588,54 @@ function conversationItems(read: NonNullable<UnifiedInboxOptions['readConversati
   return { report: { state: result.skipped > 0 ? 'degraded' : 'healthy', pending: items.length }, items };
 }
 
+/** Work refs named inside one seat item's detail line before the overflow count takes over. */
+const SEAT_DETAIL_REFS = 4;
+
+/**
+ * Bot seats whose projected handoff plan still has work to move — the same
+ * `planSeatHandoffs` read `phm bots handoffs` serves, so this source and that
+ * surface can never disagree. Only eligible seats with pending (not yet
+ * journaled) handoff records list: a draining seat with nothing left to
+ * release is already on its way to idle, not pending work, and an ineligible
+ * seat's held work is not a handoff candidate. Seat handoffs are agent work,
+ * never Mason-blocking, so items are warn and non-blocking; `since` stays
+ * null because the plan stamps records at the read instant, not at a real
+ * age, and `expiresAt` stays null — unknown, never invented. An empty roster
+ * is 'missing' (no seats configured); a throwing or refused plan read is
+ * 'unavailable', never an empty plan passed off as fact.
+ */
+async function seatItems(read: NonNullable<UnifiedInboxOptions['readSeatHandoffs']>,
+  now: () => number): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  let plan: SeatHandoffsPlan;
+  try { plan = await read({ now }); } catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
+  if (plan.seats.length === 0) return { report: { state: 'missing', pending: 0 }, items: [] };
+  const items = plan.seats
+    .filter(seat => seat.eligible && seat.handoffs.length > 0)
+    .map((seat): Omit<UnifiedInboxItem, 'priority'> => {
+      const count = seat.handoffs.length;
+      const refs = seat.handoffs.slice(0, SEAT_DETAIL_REFS)
+        .map(handoff => `${handoff.work.kind} ${handoff.work.ref}`).join(', ');
+      const overflow = count > SEAT_DETAIL_REFS ? ` +${count - SEAT_DETAIL_REFS} more` : '';
+      return {
+        id: `seats:${seat.seatId}`,
+        source: 'seats',
+        kind: 'seat-handoff',
+        severity: 'warn',
+        blocking: false,
+        title: oneLine(`Seat ${seat.seatId} (${seat.state}): ${count} pending handoff${count === 1 ? '' : 's'}`, TITLE_MAX),
+        detail: oneLine(`${seat.state} · ${refs}${overflow}`, DETAIL_MAX),
+        since: null,
+        expiresAt: null,
+        act: [
+          `phm bots handoff --seat ${seat.seatId}`,
+          `phm bots handoff --seat ${seat.seatId} --apply`,
+          'phm bots handoffs',
+        ],
+      };
+    });
+  return { report: { state: 'healthy', pending: items.length }, items };
+}
+
 function gmailItems(read: typeof readGmailArchivePlanLatest, runsDir: string | undefined): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   const dir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
   let latest: ReturnType<typeof readGmailArchivePlanLatest> = null;
@@ -686,6 +750,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const drafts = await draftItems(options.listPendingDrafts ?? listDrafts, options.runsDir);
   const bus = busItems(options);
   const conversations = conversationItems(options.readConversations ?? readAgentConversations, options, now, bus.covered);
+  const seats = await seatItems(options.readSeatHandoffs ?? planSeatHandoffs, now);
   const gmail = gmailItems(options.readGmailPlans ?? readGmailArchivePlanLatest, options.runsDir);
   const linkedin = linkedInItems(options.readLinkedIn ?? readLinkedInDrop, options.runsDir, now);
   const requests = requestItems(options.readRequests ?? readCommsRequests, now, options.requestTtlMs);
@@ -697,11 +762,12 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     drafts: drafts.report,
     bus: bus.report,
     conversations: conversations.report,
+    seats: seats.report,
     gmail: gmail.report,
     linkedin: linkedin.report,
     requests: requests.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...ownerThread.items, ...drafts.items, ...bus.items, ...conversations.items, ...gmail.items, ...linkedin.items, ...requests.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...ownerThread.items, ...drafts.items, ...bus.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

@@ -244,8 +244,11 @@ long it has waited and deep-linking `phm agents conversations`,
 `phm agents bus show` and a `phm agents bus post --thread` reply template;
 a thread whose waiting message is already a pending bus item or whose `job:`
 thread the feed already lists stays under the bus source, one pending thing
-one item — plus Gmail
-archive-plan overages, LinkedIn messages saved as
+one item — plus bot seats whose projected handoff plan still has work to
+move (the same `planSeatHandoffs` read `phm bots handoffs` serves; only
+eligible seats with pending, not yet journaled, handoff records list, each
+item deep-linking `phm bots handoff --seat` and `phm bots handoffs`) — plus
+Gmail archive-plan overages, LinkedIn messages saved as
 JSON files under `<runsDir>/comms/linkedin/inbox/` (answered when a file of the
 same id exists in `.../linkedin/answered/`; replies stay drafts) and live
 comms questions/approvals from the request queue (`~/.ashlr/comms/requests.jsonl`,
@@ -259,7 +262,7 @@ needs-resolve`, `phm fleet teammate-texts --answered`, `phm comms thread`,
 `phm drafts approve`,
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
 `phm fleet handoff-receive`, `phm agents conversations`,
-`phm agents bus post`). It never claims, replies, or mutates; a source
+`phm bots handoff`, `phm agents bus post`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. `phm comms inbox read` and

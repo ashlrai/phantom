@@ -6,8 +6,8 @@ const DETAIL_MAX = 300;
 /** The CLI twin of this card. */
 export const UNIFIED_INBOX_COMMAND = 'phm comms inbox';
 
-const SOURCES = ['needs-you', 'imessage', 'owner-thread', 'drafts', 'bus', 'conversations', 'gmail', 'linkedin', 'requests'] as const;
-const KINDS = ['needs-you', 'teammate-text', 'owner-message', 'draft-approval', 'bus-work', 'bus-handoff', 'agent-thread', 'gmail-over-target', 'linkedin-message', 'comms-request'] as const;
+const SOURCES = ['needs-you', 'imessage', 'owner-thread', 'drafts', 'bus', 'conversations', 'seats', 'gmail', 'linkedin', 'requests'] as const;
+const KINDS = ['needs-you', 'teammate-text', 'owner-message', 'draft-approval', 'bus-work', 'bus-handoff', 'agent-thread', 'seat-handoff', 'gmail-over-target', 'linkedin-message', 'comms-request'] as const;
 const SEVERITIES = ['info', 'warn', 'high'] as const;
 const STATES = ['healthy', 'missing', 'degraded', 'unavailable'] as const;
 const EXPIRES_SOON_MS = 30 * 60_000;
@@ -72,8 +72,8 @@ export function readUnifiedInboxView(data: unknown): UnifiedInboxView | null {
   return { total: data.total, omitted: data.omitted, sources, items };
 }
 
-const SOURCE_NAMES: Record<InboxSource, string> = { 'needs-you': 'Needs you', imessage: 'iMessage', 'owner-thread': 'Owner thread', drafts: 'Drafts', bus: 'Bus', conversations: 'Conversations', gmail: 'Gmail', linkedin: 'LinkedIn', requests: 'Requests' };
-const ITEM_LABELS: Record<InboxSource, string> = { 'needs-you': 'Needs you', imessage: 'Teammate text', 'owner-thread': 'Owner message', drafts: 'Draft', bus: 'Bus work', conversations: 'Agent thread', gmail: 'Gmail inbox', linkedin: 'LinkedIn message', requests: 'Comms request' };
+const SOURCE_NAMES: Record<InboxSource, string> = { 'needs-you': 'Needs you', imessage: 'iMessage', 'owner-thread': 'Owner thread', drafts: 'Drafts', bus: 'Bus', conversations: 'Conversations', seats: 'Seats', gmail: 'Gmail', linkedin: 'LinkedIn', requests: 'Requests' };
+const ITEM_LABELS: Record<InboxSource, string> = { 'needs-you': 'Needs you', imessage: 'Teammate text', 'owner-thread': 'Owner message', drafts: 'Draft', bus: 'Bus work', conversations: 'Agent thread', seats: 'Seat handoff', gmail: 'Gmail inbox', linkedin: 'LinkedIn message', requests: 'Comms request' };
 
 /** "Needs you 3 · iMessage 1 · Drafts 0 · Bus degraded 2"; a missing source shows "—", never 0. */
 export function sourceSummary(sources: UnifiedInboxSources): string {
@@ -106,7 +106,7 @@ export function itemLine(item: UnifiedInboxEntry, nowMs: number): { label: strin
 const SOURCE_COMMANDS: Record<InboxSource, string> = {
   'needs-you': 'phm fleet needs', imessage: 'phm fleet teammate-texts', 'owner-thread': 'phm comms thread',
   drafts: 'phm drafts list --status pending', bus: 'phm fleet bus-claim', conversations: 'phm agents conversations',
-  gmail: 'phm fleet gmail-archive-plan', linkedin: 'phm drafts list --status pending', requests: 'phm comms status',
+  seats: 'phm bots handoffs', gmail: 'phm fleet gmail-archive-plan', linkedin: 'phm drafts list --status pending', requests: 'phm comms status',
 };
 const STATE_MEANINGS: Record<Exclude<InboxSourceState, 'healthy'>, string> = {
   missing: 'not set up on this Mac', degraded: 'read partly; some items may be missing', unavailable: 'could not be read',

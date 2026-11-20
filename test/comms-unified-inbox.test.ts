@@ -15,6 +15,7 @@ import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
 import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type UnifiedInbox } from '../src/core/comms/unified-inbox.js';
+import type { SeatHandoff, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
 import type { CommsRequest, CommsRequestsRead } from '../src/core/comms/requests.js';
 import { markTeammateTextsAnswered, recordTeammateText } from '../src/core/comms/imessage-teammate-inbox.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
@@ -103,6 +104,7 @@ describe('readUnifiedInbox sources', () => {
         drafts: { state: 'healthy', pending: 0 },
         bus: { state: 'missing', pending: 0 },
         conversations: { state: 'missing', pending: 0 },
+        seats: { state: 'missing', pending: 0 },
       },
     });
   });
@@ -529,6 +531,76 @@ describe('agent conversation threads in the unified inbox', () => {
     const throwing = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
       readConversations: () => { throw new Error('boom'); } });
     expect(throwing.sources.conversations).toEqual({ state: 'unavailable', pending: 0 });
+  });
+});
+
+describe('bot seat handoffs in the unified inbox', () => {
+  const handoff = (seatId: string, kind: 'bus-claim' | 'node-job', ref: string, n = 0): SeatHandoff => ({
+    schema: 'phantom-bot-handoff.v1', handoffId: `h-${seatId}-${n}`,
+    seatId, work: { kind, ref }, done: 'unknown', left: 'unknown',
+    branch: null, pr: null, createdAt: new Date(now).toISOString(),
+  });
+  const seat = (over: Partial<SeatHandoffPlanEntry> = {}): SeatHandoffPlanEntry => ({
+    seatId: 'devin-review', state: 'draining', eligible: true,
+    handoffs: [handoff('devin-review', 'bus-claim', 'queue:RQ-SEAT-1')], ...over,
+  });
+  const plan = (seats: SeatHandoffPlanEntry[]): SeatHandoffsPlan =>
+    ({ schema: 'phantom-bot-handoffs-plan.v1', apply: false, seats });
+  const readSeats = (seats: SeatHandoffPlanEntry[]) => readUnifiedInbox({
+    runsDir, busRoot, now: () => now,
+    readSeatHandoffs: async () => plan(seats),
+    readRequests: () => ({ status: 'missing', requests: [] }),
+  });
+
+  it('lists eligible seats with pending handoffs as warn items with plan and apply acts', async () => {
+    const inbox = await readSeats([
+      seat({ seatId: 'devin-review', state: 'draining',
+        handoffs: [handoff('devin-review', 'bus-claim', 'queue:RQ-SEAT-1'),
+                   handoff('devin-review', 'node-job', 'job-77', 1)] }),
+      // An eligible seat with nothing pending is already on its way to idle,
+      // not pending work; an ineligible seat's held work is not a candidate.
+      seat({ seatId: 'idle-seat', state: 'idle', eligible: true, handoffs: [] }),
+      seat({ seatId: 'active-seat', state: 'active', eligible: false,
+        handoffs: [handoff('active-seat', 'bus-claim', 'queue:RQ-X')] }),
+    ]);
+    const items = inbox.items.filter(i => i.source === 'seats');
+    expect(items.map(i => i.id)).toEqual(['seats:devin-review']);
+    expect(items[0]).toMatchObject({
+      kind: 'seat-handoff', severity: 'warn', blocking: false, priority: 'today',
+      title: 'Seat devin-review (draining): 2 pending handoffs',
+      detail: 'draining · bus-claim queue:RQ-SEAT-1, node-job job-77',
+      since: null, expiresAt: null,
+      act: ['phm bots handoff --seat devin-review', 'phm bots handoff --seat devin-review --apply', 'phm bots handoffs'],
+    });
+    expect(inbox.sources.seats).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('lists one item per seat and clips the detail ref list with an overflow count', async () => {
+    const handoffs = Array.from({ length: 6 }, (_, i) => handoff('devin-review', 'bus-claim', `queue:RQ-${i}`, i));
+    const inbox = await readSeats([
+      seat({ handoffs }),
+      seat({ seatId: 'codex-fast', state: 'idle',
+        handoffs: [handoff('codex-fast', 'node-job', 'job-1', 1), handoff('codex-fast', 'node-job', 'job-2', 2)] }),
+    ]);
+    expect(inbox.items.filter(i => i.source === 'seats').map(i => i.id).sort()).toEqual(['seats:codex-fast', 'seats:devin-review']);
+    expect(inbox.sources.seats).toEqual({ state: 'healthy', pending: 2 });
+    const item = inbox.items.find(i => i.id === 'seats:devin-review')!;
+    expect(item.title).toBe('Seat devin-review (draining): 6 pending handoffs');
+    expect(item.detail).toBe('draining · bus-claim queue:RQ-0, bus-claim queue:RQ-1, bus-claim queue:RQ-2, bus-claim queue:RQ-3 +2 more');
+  });
+
+  it('reports an empty roster as missing and a throwing read as unavailable while other sources still list', async () => {
+    const empty = await readSeats([]);
+    expect(empty.sources.seats).toEqual({ state: 'missing', pending: 0 });
+    expect(empty.items.filter(i => i.source === 'seats')).toHaveLength(0);
+    const throwing = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
+      readSeatHandoffs: () => { throw new Error('boom'); },
+      readRequests: () => ({ status: 'missing', requests: [] }) });
+    expect(throwing.sources.seats).toEqual({ state: 'unavailable', pending: 0 });
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const mixed = await readSeats([seat()]);
+    expect(mixed.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+    expect(mixed.items.filter(i => i.source === 'seats').map(i => i.id)).toEqual(['seats:devin-review']);
   });
 });
 

@@ -98,7 +98,10 @@ the same deterministic ids a later per-seat apply dedupes on. Ineligible seats
 (active seats, and idle seats with no open work or handoff history) report
 `eligible: false` with no records instead of erroring, so the whole roster's
 handoff posture reads in one call. It writes nothing: no state transitions,
-releases, journals or notices.
+releases, journals or notices. `phm comms inbox` lists each eligible seat
+with pending handoff records as a `seat-handoff` item — the same plan read —
+so pending seat work surfaces in the unified pending view without a second
+lookup.
 
 Handoff defaults to a dry-run plan. It refuses active seats; only draining seats
 or idle seats with work may hand off (completed handoffs allow harmless replay).
