@@ -41,6 +41,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     lintFiles: changed.filter((path) => existing.has(path) && /\.(?:[cm]?js|[cm]?ts|tsx|jsx)$/.test(path)),
     pythonFiles: changed.filter((path) => existing.has(path) && /\.py$/.test(path)),
     shellFiles: changed.filter((path) => existing.has(path) && /\.sh$/.test(path)),
+    jsonFiles: changed.filter((path) => existing.has(path) && /\.json$/.test(path)),
     webTypecheck: changed.some((path) => path.startsWith('src/web-ui/')),
     authorityDrift: changed.some(affectsAuthorityDrift),
     fleetRegistry: changed.some((path) => /^src\/cli\/fleet-[^/]*\.ts$/.test(path)),
@@ -198,6 +199,31 @@ export function runShellSyntaxCheck(root, files, spawn = spawnSync) {
     return false;
   }
   console.log('PASS shell syntax check');
+  return true;
+}
+
+/**
+ * Strict-parse changed .json files with JSON.parse — the same grammar
+ * tscCachePaths already applies to tsconfig.json and sync-plan's checkSyntax
+ * applies to fleet machinery — so a failure is a real break for package.json,
+ * manifests, schemas and registries. No external interpreter is needed, so
+ * unlike the Python and shell checks there is no preflight or SKIP path; every
+ * failing path is named with its parse error.
+ */
+export function runJsonSyntaxCheck(root, files, read = readFileSync) {
+  const failures = [];
+  for (const path of files) {
+    try {
+      JSON.parse(read(resolve(root, path), 'utf8'));
+    } catch (error) {
+      failures.push(`${path}: ${error.message}`);
+    }
+  }
+  if (failures.length) {
+    for (const failure of failures) console.error(`FAIL json syntax check: ${failure}`);
+    return false;
+  }
+  console.log('PASS json syntax check');
   return true;
 }
 
@@ -692,6 +718,11 @@ function main() {
     } else if (!runShellSyntaxCheck(root, selection.shellFiles)) {
       process.exitCode = 1;
     }
+  }
+  if (selection.jsonFiles.length === 0) {
+    console.log('PASS json syntax check skipped: no json change');
+  } else if (!runJsonSyntaxCheck(root, selection.jsonFiles)) {
+    process.exitCode = 1;
   }
   if (selection.quarantineCheck) {
     try {

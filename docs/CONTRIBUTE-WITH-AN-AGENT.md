@@ -87,6 +87,7 @@ exit code is non-zero if any of them failed.
 | ESLint | A JavaScript or TypeScript file changed | Fix the reported lines. |
 | Python syntax check | A `.py` file changed | Fix the reported `SyntaxError`. The files are compiled with `python3` without writing bytecode; with no working `python3` the step prints `SKIP`. |
 | Shell syntax check | A `.sh` file changed | Fix the parse error `bash -n` reports. With no working `bash` the step prints `SKIP`. |
+| JSON syntax check | A `.json` file changed | Fix the parse error `JSON.parse` reports; every failing file is named. The check needs no external tool, so it never prints `SKIP` for a changed `.json` file. |
 | Quarantine ledger | A `*.test.*` or `*.spec.*` file or `queue/quarantine.tsv` changed | An added skip marker or `.only`, or a stale or expired ledger row; see [Skipping a flaky test](#skipping-a-flaky-test). |
 | Type check | Always (`tsgo`, falling back to `tsc`); the web project too when `src/web-ui/` changed | Fix the reported errors. With many parallel worktrees, `FAIL tsc slot wait` means no type-check slot freed in time (`PHANTOM_TSC_TIMEOUT_SECONDS`, default 900). |
 | Real-I/O lane lint | Always | A changed test that spawns processes or does real I/O must be listed in `test/config/realio-lane-membership.mjs` (a protected path), or carry a comment near the match saying why it is safe in the fast lane. Files you did not change only print a `WARN`. |
