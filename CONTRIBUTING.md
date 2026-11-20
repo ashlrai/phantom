@@ -75,12 +75,18 @@ To install the CLI while developing:
 | `npm run dev:web` | Run the Vite development server; it does not commission providers or enable dispatch |
 | `npm run lint` | ESLint plus real-I/O membership and Phantom console synchronous-I/O guards |
 | `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master, run one type check, run the documentation link check when the diff touches markdown or deletes files, run the quarantine-ledger check when test files or `queue/quarantine.tsv` change, and syntax-check changed `.py` files with `python3` and changed `.sh` files with `bash -n`; the fast local gate before pushing. Repeats on an unchanged tree are skipped (`--force` reruns). Merge Gate still runs the full check. |
+| `npm run gate` | Build, type check, lint, docs and quarantine checks, then the tests related to your diff plus a smoke set; `-- --base <ref>` sets the base and `npm run gate:full` runs the complete backend and web suites |
+| `npm run test:fast` | Run the backend `unit` project through the `test:ci` runner and write per-file durations to `.ashlr-gate/test-fast-durations.json`, warning on files over 20 seconds |
+| `npm run check:quarantine` | Verify that every added test skip has a live row in `queue/quarantine.tsv`; pass `-- --base origin/master` to check your branch |
+| `npm run authority:regen` | Regenerate `.github/CODEOWNERS` and the Tier-1 closure snapshot after authority drift, then print the changed roots and owner lines |
+| `npm run install:worktree` | Install dependencies from one shared pnpm 10.28.2 store; use it instead of `npm ci` in trusted parallel worktrees |
 | `npm run check:docs` | Validate operator documentation file links and anchors locally, without network requests |
 | `npm run check:perf` | Time the committed CLI cold-path budgets in `perf/budgets.json` (hyperfine when installed); advisory in CI, never a required check |
 | `npm run docs:sync` | Regenerate every generated docs surface (freshness blocks, site pages, CODEMAP inventory, llms indexes); `-- --check` reports drift without writing |
 | `node scripts/check-test-names.mjs` | Flag duplicate test names across `test/` that collide in name-keyed reports |
 | `node scripts/generate-cli-docs.mjs` | Regenerate `docs/cli.md` from `phm --help` output; `--check` compares without writing |
 | `npm run typecheck` | Strict backend and web type checks, without emitting files |
+| `npm run typecheck:fast` | The same two projects through the locally installed native `tsgo`; what `npm run gate` runs |
 | `npm run build` | Check candidate version sync, compile the backend, generate the authority surface, copy assets, build the built-in preparation evaluator and the web console, then generate dependency inventory and Git build identity in `dist/` |
 
 For explicit Bun-compatible test inventories, see the standalone
