@@ -162,7 +162,7 @@ export function parseDiskHistory(text: string | null): HostDiskSample[] {
   return samples;
 }
 
-async function readLiveDiskSample(): Promise<HostDiskSample | null> {
+export async function readLiveDiskSample(): Promise<HostDiskSample | null> {
   try {
     const { bavail, bsize } = await statfs(homedir());
     if (!Number.isFinite(bavail) || !Number.isFinite(bsize) || bavail < 0 || bsize <= 0) return null;

@@ -37,6 +37,8 @@ export interface StatusDigestInput {
   nodeRuns?: NodeResultsSummary | null;
   /** One plain sentence about a gap over 30 minutes that left work waiting ("The Mac slept 12:33 to 18:42; 6 hours of work did not run."); absent when none. */
   gapLine?: string;
+  /** `disk_low: ...` when free disk will reach the lane freeze line in under 24 hours (or is already below it); absent otherwise. */
+  diskLine?: string;
 }
 
 export const TOP_P0_MAX_CHARS = 120;
@@ -93,6 +95,7 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
     }
   }
   if (input.gapLine) lines.push(input.gapLine);
+  if (input.diskLine) lines.push(input.diskLine);
   const runs = input.nodeRuns;
   if (runs) lines.push(nodeRunsLine(runs));
   return lines;
