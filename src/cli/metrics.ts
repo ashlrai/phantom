@@ -26,8 +26,8 @@ projected unused, waste risk). --hours (1 to 168, default 24) sets the period fo
 metrics.glance.v1. Reads ~/.ashlr-runs/queue/status.json and metrics/jobs.jsonl; missing or stale values print as unknown (null in JSON),
 never zero. Read-only. Exit 1 only when neither file gives a reading. The desktop Metrics view shows the same report.
 
-More reports: phm metrics <impact [--jobs file] [--queue file] [--overrides file]|loop [--dry-run]|merges|summary|dashboard [--out file] [--prs file]|record <json>|recommend <taskType> <arm...>|idle --status <snapshot.json> --jobs <jobs.jsonl>|ingest --jobs <jobs.jsonl> --status <status.json>|levers [--window <7d|30d>]|leverage [--hours N] [--prs <file>]|leverage-mix [--prs <file>]|prod [--repo OWNER/REPO ...] [--lane NAME] [--bridge-label LABEL]> [--json]
-phm metrics loop [--json] measures throughput, loop times, cost per merged PR and capacity per node; see phm metrics loop --help.
+More reports: phm metrics <impact [--jobs file] [--queue file] [--overrides file]|loop [--since 24h] [--dry-run]|merges|summary|dashboard [--out file] [--prs file]|record <json>|recommend <taskType> <arm...>|idle --status <snapshot.json> --jobs <jobs.jsonl>|ingest --jobs <jobs.jsonl> --status <status.json>|levers [--window <7d|30d>]|leverage [--hours N] [--prs <file>]|leverage-mix [--prs <file>]|prod [--repo OWNER/REPO ...] [--lane NAME] [--bridge-label LABEL]> [--json]
+phm metrics loop [--json] [--since 24h] shows where the loop waits (p50 and p90 per stage, slowest stage in words), then throughput, loop times, cost per merged PR and capacity per node; see phm metrics loop --help.
 phm metrics merges [--json] reads the last 24 hourly buckets from the local jobs ledger.
 phm metrics ingest reads two explicit local files and prints deterministic lane and tier metrics as JSON.
 phm metrics levers ranks opportunity proxies from local activity and fleet rollups.

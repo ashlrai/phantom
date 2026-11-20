@@ -25,6 +25,7 @@ import {
   missing, morningFields, nodeCapacityRow, selectionHints, slotLanes, throughput,
   type InstalledBundle, type LoopReport, type MergedPr, type Missing, type NodeCapacityRow, type ReleaseRef, type ResourceRow, type SelectionHints,
 } from './loop.js';
+import { buildLoopStages, LOOP_STAGES_DEFAULT_SINCE_MS, type LoopStagesReport } from './loop-stages.js';
 
 const execFileAsync = promisify(execFile);
 export const LOOP_REPO = 'ashlrai/phantom';
@@ -133,9 +134,9 @@ export function parseMergedPrs(text: string | null): MergedPr[] | null {
     .filter(r => Number.isSafeInteger(r.number) && Number.isFinite(r.mergedAt));
 }
 
-export interface LoopCollection { report: LoopReport; share: BetsShare; hints: SelectionHints; jobsText: string | null }
+export interface LoopCollection { report: LoopReport; share: BetsShare; hints: SelectionHints; jobsText: string | null; stages: LoopStagesReport }
 
-export async function collectLoop(readers: LoopReaders, shareConfig: BetsShareConfig = {}): Promise<LoopCollection> {
+export async function collectLoop(readers: LoopReaders, shareConfig: BetsShareConfig = {}, sinceMs = LOOP_STAGES_DEFAULT_SINCE_MS): Promise<LoopCollection> {
   const now = readers.now();
   const root = readers.runsDir;
   const path = (...p: string[]) => join(root, ...p);
@@ -221,7 +222,7 @@ export async function collectLoop(readers: LoopReaders, shareConfig: BetsShareCo
   const readyBetRows = readyText === null ? null : parseReadyRows(readyText).filter(isBetRow).length;
   const free = localCap !== null && localRunning !== null ? Math.max(0, localCap - localRunning) : null;
   const share = betsShare({ freeSlots: free, readyBetRows }, shareConfig);
-  return { report, share, hints: selectionHints(report, share), jobsText };
+  return { report, share, hints: selectionHints(report, share), jobsText, stages: buildLoopStages(jobsText, releases, now, sinceMs) };
 }
 
 export interface LoopWrites { loop: string; hints: string; share: string; morning: string | Missing }
