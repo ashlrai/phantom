@@ -9,6 +9,7 @@
  */
 import { burnRate, BURN_METHOD, BURN_MIN_SAMPLES, BURN_WINDOW_HOURS, type BurnSample } from '../usage/burn-rate.js';
 import { poolLabel } from '../usage/runway.js';
+import type { ModelCapRow } from '../routing/model-caps.js';
 import type { ResourceLaneRow, ResourceLedgerV1 } from './runs-resource-ledger.js';
 
 export const POOLS_SCHEMA = 'pools.v1';
@@ -71,6 +72,8 @@ export interface PoolRow {
   source: string | null;
   /** Per-model windows beside the pool's own. Empty unless the pool's reading is current. */
   scopes: PoolScope[];
+  /** Per-model caps (Claude only): capped true, false or unknown (null), since when, and the last limit message. */
+  modelCaps: ModelCapRow[];
   /** When the reading was captured. A dispatcher tick never substitutes for it. */
   asOf: string | null;
   /** Why the row is unknown; null when the risk is known. */
@@ -112,7 +115,7 @@ function poolRow(lane: ResourceLaneRow, now: number, samples: readonly PoolSampl
     usedPct: null, resetAt: lane.resetAt, hoursLeft: null, elapsedPct: null, burnPctPerHour: null, burnBasis: null,
     burn: { samples: 0, window_h: 0, method: 'none' }, projectedUnusedPct: null, projectedEmptyAt: null, verdict: 'unknown',
     wasteRisk: 'unknown', creditsRemaining: lane.creditsRemaining, held: lane.held,
-    running: lane.running, target: lane.target, source: lane.observation?.source ?? lane.source, scopes: [], asOf,
+    running: lane.running, target: lane.target, source: lane.observation?.source ?? lane.source, scopes: [], modelCaps: lane.modelCaps ?? [], asOf,
     reason: null, summary: '',
   };
   const unknown = (reason: string): PoolRow => ({ ...row, reason, summary: `${name}: unknown: ${reason}` });
@@ -203,6 +206,10 @@ export function buildPoolsView(ledger: ResourceLedgerV1, now: number, samples: r
   return { schema: POOLS_SCHEMA, generatedAt: new Date(now).toISOString(), staleAfterMinutes: POOLS_STALE_AFTER_MINUTES, pools, gaps };
 }
 
+/** One plain phrase for a model cap: "at its limit since ... (clears ...)", "clear" or "unknown". */
+export const modelCapWords = (cap: ModelCapRow): string => cap.capped === null ? 'limit unknown'
+  : cap.capped ? `at its own limit since ${cap.since ?? 'unknown'}${cap.resetAt ? `, clears ${cap.resetAt}` : ''}; work moves to the next model` : 'no limit hit';
+
 const cell = (value: number | null, unit: string): string => value === null ? 'unknown' : `${value}${unit}`;
 
 /** `phm pools --text`: one line per resource, same order as the JSON. */
@@ -213,6 +220,7 @@ export function formatPoolsText(view: PoolsViewV1): string {
     lines.push(row.summary);
     lines.push(`  risk ${row.wasteRisk}; used ${cell(row.usedPct, '%')}; resets ${row.resetAt ?? 'unknown'} (${cell(row.hoursLeft, 'h')} left); `
       + `burn ${cell(row.burnPctPerHour, '%/h')}${row.burnBasis ? ` (${row.burnBasis === 'least-squares' ? `${row.burnBasis}, ${row.burn.samples} readings over ${row.burn.window_h} h` : row.burnBasis})` : ''}; unused at reset ${cell(row.projectedUnusedPct, '%')}; empty ${row.projectedEmptyAt ?? (row.burnPctPerHour === null ? 'unknown' : 'not before reset')}; as of ${row.asOf ?? 'unknown'}`);
+    for (const cap of row.modelCaps) lines.push(`  ${cap.model}: ${modelCapWords(cap)}`);
     for (const scope of row.scopes) lines.push(`  ${scope.id}: used ${cell(scope.usedPct, '%')}; resets ${scope.resetAt ?? 'unknown'} (${cell(scope.hoursLeft, 'h')} left)`);
   }
   for (const gap of view.gaps) lines.push(`Not covered: ${gap}`);

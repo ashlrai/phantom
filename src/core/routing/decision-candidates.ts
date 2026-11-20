@@ -1,3 +1,4 @@
+import { applyModelCap, readModelCaps, type ModelCapRow } from './model-caps.js';
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -25,6 +26,8 @@ export interface RouteSources {
    * rows of `phm jobs yield`). queue/route-yield.ts fills it only when a pool starves.
    */
   familyYield?: Readonly<Record<string, number | null>>;
+  /** Per-model caps (routing/model-caps.ts). A capped model moves to the next in its family. */
+  modelCaps?: readonly ModelCapRow[];
 }
 const object = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -43,12 +46,13 @@ export async function loadRouteSources(root: string): Promise<RouteSources> {
       } finally { await fd.close(); }
     } catch { return null; }
   };
-  const [models, slots, admission, capacity, request] = await Promise.all([
+  const [models, slots, admission, capacity, request, modelCaps] = await Promise.all([
     read(join(root, 'models.json')), read(join(root, 'queue/slots.json')), read(join(root, 'queue/admission.json')),
     read(join(root, 'queue/route-capacity.json')),
     read(join(root, 'queue/route-request.json')),
+    readModelCaps(root),
   ]);
-  return { models, slots, admission, ...(capacity === null ? {} : { capacity }), ...(request === null ? {} : { request }) };
+  return { models, slots, admission, ...(modelCaps.some(row => row.capped !== null) ? { modelCaps } : {}), ...(capacity === null ? {} : { capacity }), ...(request === null ? {} : { request }) };
 }
 
 /**
@@ -109,13 +113,14 @@ export function enumerateRouteCandidates(request: RouteRequest, sources: RouteSo
       const fit = localModelFit(model.data, 65536);
       if (fit.verdict !== 'fits') { refused.push(fit); continue; }
     }
-    const configuredMode = models[`mode.${model.data}`];
-    const mode = modelModeTierSchema.safeParse(configuredMode ?? modelModeTier(model.data));
+    const capped = applyModelCap(model.data, sources.modelCaps);
+    const configuredMode = models[`mode.${capped.model}`];
+    const mode = modelModeTierSchema.safeParse(configuredMode ?? modelModeTier(capped.model));
     const rawCapacity = object(sources.capacity)[lane];
     const capacity = rawCapacity === undefined ? undefined : { ...object(rawCapacity), pool: lane };
     if (capacity && !validResetCalendarPool(capacity)) continue;
-    result.push({ lane, model: model.data, effort: effort.data, mode_tier: mode.success ? mode.data : null,
-      ...(capacity ? { capacity } : {}), ...modelPrior(model.data, tier) });
+    result.push({ lane, model: capped.model, ...(capped.fallback_from ? { fallback_from: capped.fallback_from } : {}), effort: effort.data, mode_tier: mode.success ? mode.data : null,
+      ...(capacity ? { capacity } : {}), ...modelPrior(capped.model, tier) });
   }
   return result;
 }

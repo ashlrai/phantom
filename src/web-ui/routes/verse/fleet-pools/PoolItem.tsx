@@ -3,7 +3,7 @@
  * reset, and how far the window has run), its labelled readings and any per-model windows. Draws only what pools.v1
  * holds for the row.
  */
-import type { PoolRow, PoolsViewV1 } from '../../../../core/fleet/pools-view.js';
+import { modelCapWords, type PoolRow, type PoolsViewV1 } from '../../../../core/fleet/pools-view.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 import { KIND_WORD, poolFacts, poolGroup, projectedEndPct, scopeLine, scopeName } from './pools-board-model.js';
 import styles from './fleet-pools.module.css';
@@ -47,6 +47,9 @@ export function PoolItem({ row, view }: { row: PoolRow; view: Pick<PoolsViewV1, 
       <dd data-unknown={fact.value === null || undefined}>{fact.value ?? 'unknown'}</dd>
       {fact.note ? <dd className={styles.note}>{fact.note}</dd> : null}
     </div>)}</dl> : null}
+    {row.modelCaps.length > 0 ? <ul className={styles.scopes} aria-label={`${row.id} model limits`}>{row.modelCaps.map(cap => <li key={cap.model}>
+      <span>{cap.model}</span><span className={styles.scopeLine}>{modelCapWords(cap)}</span>
+    </li>)}</ul> : null}
     {row.scopes.length > 0 ? <ul className={styles.scopes} aria-label={`${row.id} windows by model`}>{row.scopes.map(scope => {
       const name = scopeName(scope.id);
       return <li key={scope.id}>

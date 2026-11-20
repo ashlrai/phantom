@@ -10,6 +10,6 @@ export const fleetPoolsQuery: QueryDef<PoolsViewV1> = {
     // A drifted payload is loud, not a blank list.
     if (data?.schema !== POOLS_SCHEMA || !Array.isArray(data.pools)) throw new Error(`Expected ${POOLS_SCHEMA}`);
     // An older server sends rows without the newer fields: absent is unknown (or none), never a number.
-    return { ...data, pools: data.pools.map(row => ({ ...row, running: row.running ?? null, burn: row.burn ?? { samples: 0, window_h: 0, method: 'none' as const }, projectedEmptyAt: row.projectedEmptyAt ?? null, verdict: row.verdict ?? 'unknown' as const, target: row.target ?? null, source: row.source ?? null, scopes: Array.isArray(row.scopes) ? row.scopes : [] })) };
+    return { ...data, pools: data.pools.map(row => ({ ...row, running: row.running ?? null, burn: row.burn ?? { samples: 0, window_h: 0, method: 'none' as const }, projectedEmptyAt: row.projectedEmptyAt ?? null, verdict: row.verdict ?? 'unknown' as const, target: row.target ?? null, source: row.source ?? null, scopes: Array.isArray(row.scopes) ? row.scopes : [], modelCaps: Array.isArray(row.modelCaps) ? row.modelCaps : [] })) };
   },
 };
