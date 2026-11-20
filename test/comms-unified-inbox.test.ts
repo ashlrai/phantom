@@ -15,6 +15,7 @@ import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
 import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type UnifiedInbox } from '../src/core/comms/unified-inbox.js';
+import type { CommsRequest, CommsRequestsRead } from '../src/core/comms/requests.js';
 import { markTeammateTextsAnswered, recordTeammateText } from '../src/core/comms/imessage-teammate-inbox.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import type { AgentConversations } from '../src/core/fleet/agent-conversations.js';
@@ -35,7 +36,13 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); roots.splice(0).forEach(r => rmSync(r, { recursive: true, force: true })); });
 
-const read = (): Promise<UnifiedInbox> => readUnifiedInbox({ runsDir, busRoot, now: () => now });
+// The requests store lives at ~/.ashlr/comms, outside this file's temp dirs;
+// pin it to a verified-empty read so the suite stays hermetic. The requests
+// source has its own describe block below with an injected reader.
+const read = (): Promise<UnifiedInbox> => readUnifiedInbox({
+  runsDir, busRoot, now: () => now,
+  readRequests: () => ({ status: 'missing', requests: [] }),
+});
 
 function postWork(id: string, extra: { priority?: 'P0' | 'P1' | 'P2' | 'P3'; ttl?: number; kind?: string; at?: number } = {}) {
   const receipt = appendBusInbox({
@@ -601,6 +608,97 @@ describe('owner-thread awaiting replies in the unified inbox', () => {
       act: ['phm comms thread', 'phm comms send-owner --text "<reply>" --reply-to stub-key-0001'],
     });
     expect(stubbed.sources['owner-thread']).toEqual({ state: 'healthy', pending: 1 });
+  });
+});
+
+describe('readUnifiedInbox comms requests', () => {
+  const TTL = 48 * 3_600_000;
+  const req = (over: Partial<CommsRequest> = {}): CommsRequest => ({
+    id: 'req-1', kind: 'manager-approval', type: 'approval',
+    text: 'Merge "fake change" → repo? Judged SHIP (v9/c9/s9/a9).',
+    options: ['Approve & merge', 'Reject', 'Show diff'],
+    status: 'sent',
+    createdAt: new Date(now - 3 * 3_600_000).toISOString(),
+    sentAt: new Date(now - 2 * 3_600_000).toISOString(),
+    ...over,
+  });
+  const available = (requests: CommsRequest[]): CommsRequestsRead => ({ status: 'available', requests });
+  const readReq = (read: () => CommsRequestsRead) =>
+    readUnifiedInbox({ runsDir, busRoot, now: () => now, requestTtlMs: TTL, readRequests: read });
+
+  it('lists a sent approval as a blocking warn with real expiry and deep links', async () => {
+    const r = req({ meta: { proposalId: 'prop-m1abc000-000001-abcdef0123456789abcdef' } });
+    const inbox = await readReq(() => available([r]));
+    const item = inbox.items.find(i => i.id === 'requests:req-1')!;
+    expect(item).toMatchObject({
+      source: 'requests', kind: 'comms-request', severity: 'warn', blocking: true, priority: 'now',
+      title: 'Merge "fake change" → repo? Judged SHIP (v9/c9/s9/a9).',
+      detail: 'approval · manager-approval · awaiting reply · 3 options · waiting 2h 0m',
+      since: r.sentAt,
+      expiresAt: new Date(Date.parse(r.sentAt!) + TTL).toISOString(),
+      act: ['phm comms status', 'phm inbox show prop-m1abc000-000001-abcdef0123456789abcdef'],
+    });
+    expect(inbox.sources.requests).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('lists a pending question as a queued info item and never lists reports or resolved requests', async () => {
+    const pending = req({ id: 'req-q', kind: 'leader-question', type: 'question', status: 'pending',
+      sentAt: undefined, createdAt: new Date(now - 30 * 60_000).toISOString() });
+    const report = req({ id: 'req-r', type: 'report', kind: 'fleet-digest', status: 'pending', options: [], sentAt: undefined });
+    const answered = req({ id: 'req-a', status: 'answered' });
+    const expired = req({ id: 'req-e', status: 'expired' });
+    const inbox = await readReq(() => available([pending, report, answered, expired]));
+    const items = inbox.items.filter(i => i.source === 'requests');
+    expect(items.map(i => i.id)).toEqual(['requests:req-q']);
+    expect(items[0]).toMatchObject({
+      severity: 'info', blocking: false, priority: 'this-week',
+      detail: 'question · leader-question · queued · 3 options · waiting 30m',
+      since: pending.createdAt,
+      expiresAt: new Date(Date.parse(pending.createdAt) + TTL).toISOString(),
+      act: ['phm comms status'],
+    });
+    expect(inbox.sources.requests).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('reports missing, unavailable and throwing reads honestly', async () => {
+    const missing = await readReq(() => ({ status: 'missing', requests: [] }));
+    expect(missing.sources.requests).toEqual({ state: 'missing', pending: 0 });
+    const unavailable = await readReq(() => ({ status: 'unavailable', requests: [] }));
+    expect(unavailable.sources.requests).toEqual({ state: 'unavailable', pending: 0 });
+    expect(unavailable.items.filter(i => i.source === 'requests')).toHaveLength(0);
+    const throwing = await readReq(() => { throw new Error('boom'); });
+    expect(throwing.sources.requests).toEqual({ state: 'unavailable', pending: 0 });
+  });
+
+  it('treats an available-but-empty queue as healthy zero, not missing', async () => {
+    const inbox = await readReq(() => available([]));
+    expect(inbox.sources.requests).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('scrubs secret-shaped request text and never copies option labels', async () => {
+    const r = req({ text: 'Approve key sk-abcdefghijklmnop\nnow', options: ['yes', 'no'] });
+    const inbox = await readReq(() => available([r]));
+    const item = inbox.items.find(i => i.source === 'requests')!;
+    expect(item.title).toContain('[REDACTED]');
+    expect(item.title).not.toContain('sk-abcdefghijklmnop');
+    expect(item.title).not.toMatch(/\n/);
+    expect(item.detail).toContain('2 options');
+    expect(item.detail).not.toContain('yes');
+  });
+
+  it('does not deep-link a proposal id that fails the inbox-show shape guard', async () => {
+    const r = req({ meta: { proposalId: 'bad id; touch /tmp/x' } });
+    const inbox = await readReq(() => available([r]));
+    expect(inbox.items.find(i => i.id === 'requests:req-1')!.act).toEqual(['phm comms status']);
+  });
+
+  it('leaves since and expiresAt unknown for an unparseable timestamp', async () => {
+    const r = req({ createdAt: 'not-a-date', sentAt: 'also-bad' });
+    const inbox = await readReq(() => available([r]));
+    const item = inbox.items.find(i => i.id === 'requests:req-1')!;
+    expect(item.since).toBeNull();
+    expect(item.expiresAt).toBeNull();
+    expect(item.detail).toBe('approval · manager-approval · awaiting reply · 3 options');
   });
 });
 

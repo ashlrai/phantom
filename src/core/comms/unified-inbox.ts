@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates eight local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates nine local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), act: `phm fleet needs-resolve`.
@@ -52,6 +52,13 @@
  *               drop folder `<runsDir>/comms/linkedin/inbox/` (see
  *               linkedin-drop.ts). Replies stay drafts (`phm drafts list
  *               --status pending`); nothing is sent from here.
+ *   requests    live comms questions and approvals from the request queue
+ *               (`~/.ashlr/comms/requests.jsonl`, the same store `phm comms
+ *               status` counts): a sent one is the single outstanding slot
+ *               Mason's numbered reply or button tap resolves, a pending
+ *               one is queued behind it. Informational reports never await
+ *               a reply and never list. `expiresAt` is the real TTL deadline
+ *               `expireStaleRequests` applies — never invented.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -74,9 +81,11 @@ import { BUS_PROTOCOL_KEY, isClaimableWork, type BusPriority } from '../fleet/bu
 import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
+import { loadConfigReadOnly } from '../config.js';
 import { gmailArchivePlanLatestPath, readGmailArchivePlanLatest } from './gmail-archive-plan-latest.js';
 import { readLinkedInDrop, type LinkedInMessage } from './linkedin-drop.js';
 import { readOwnerAwaitingReplies, type OwnerAwaitingReplies } from './owner-thread.js';
+import { commsRequestAgeStartMs, commsRequestTtlMs, DEFAULT_REQUEST_TTL_HOURS, readCommsRequests, type CommsRequestsRead } from './requests.js';
 import { readAgentConversations, plainAge, type AgentConversations } from '../fleet/agent-conversations.js';
 import { JOB_THREAD_PREFIX } from '../fleet/agent-messages.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -87,9 +96,9 @@ const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
 
-export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'owner-thread' | 'drafts' | 'bus' | 'conversations' | 'gmail' | 'linkedin';
+export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'owner-thread' | 'drafts' | 'bus' | 'conversations' | 'gmail' | 'linkedin' | 'requests';
 export type UnifiedInboxSourceState = 'healthy' | 'missing' | 'degraded' | 'unavailable';
-export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'owner-message' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'agent-thread' | 'gmail-over-target' | 'linkedin-message';
+export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'owner-message' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'agent-thread' | 'gmail-over-target' | 'linkedin-message' | 'comms-request';
 
 export interface UnifiedInboxItem extends AttentionItem {
   /** Stable, namespaced: `<source>:<ref>` (e.g. `drafts:d-0123…`). */
@@ -145,6 +154,9 @@ export interface UnifiedInboxOptions {
   readLinkedIn?: typeof readLinkedInDrop;
   readOwnerAwaiting?: (options: { runsDir: string }) => OwnerAwaitingReplies;
   readConversations?: typeof readAgentConversations;
+  readRequests?: typeof readCommsRequests;
+  /** Test seam: the request TTL `expiresAt` uses; default resolves cfg.comms.requestTtlHours like dispatch. */
+  requestTtlMs?: number;
 }
 
 const cap = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
@@ -605,6 +617,63 @@ function linkedInItems(read: typeof readLinkedInDrop, runsDir: string | undefine
   return { report: { state: result.sourceState, pending: items.length }, items };
 }
 
+/** The request TTL dispatch will apply, resolved read-only: cfg.comms.requestTtlHours with the same 48h fallback `expireStaleRequests` gets. */
+function requestTtlMs(): number {
+  try { return commsRequestTtlMs(loadConfigReadOnly()); }
+  catch { return DEFAULT_REQUEST_TTL_HOURS * 3_600_000; }
+}
+
+/** Same shape guard `inbox show` applies to proposal ids before one reaches a command line. */
+const PROPOSAL_ID = /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}$/;
+
+/**
+ * Comms questions and approvals still owed an answer — the live request queue
+ * behind `phm comms status`. A `sent` question/approval is the single
+ * outstanding slot Mason's numbered reply or button tap resolves, so it
+ * lists as a blocking warn; a `pending` one is queued behind the slot or the
+ * question cooldown and lists as info. Informational `report` requests never
+ * await a reply and never list, matching the dispatch split. `since` and
+ * `expiresAt` come from the same age-start and TTL rule
+ * `expireStaleRequests` applies, so a request about to age out ranks as the
+ * deadline it really is. An unreadable store reports 'unavailable'; a
+ * missing one 'missing' — never an empty queue passed off as fact.
+ */
+function requestItems(read: typeof readCommsRequests, now: () => number, ttlOverride?: number): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let result: CommsRequestsRead;
+  try { result = read(); } catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
+  if (result.status === 'unavailable') return { report: { state: 'unavailable', pending: 0 }, items: [] };
+  if (result.status === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  const candidates = result.requests.filter(r =>
+    (r.type === 'question' || r.type === 'approval') && (r.status === 'pending' || r.status === 'sent'));
+  if (candidates.length === 0) return { report: { state: 'healthy', pending: 0 }, items: [] };
+  const nowMs = now();
+  const ttlMs = ttlOverride ?? requestTtlMs();
+  const items = candidates.map((r): Omit<UnifiedInboxItem, 'priority'> => {
+    const sent = r.status === 'sent';
+    const start = commsRequestAgeStartMs(r);
+    const timed = Number.isFinite(start);
+    const act = ['phm comms status'];
+    const proposalId = r.meta?.['proposalId'];
+    if (typeof proposalId === 'string' && PROPOSAL_ID.test(proposalId)) act.push(`phm inbox show ${proposalId}`);
+    return {
+      id: `requests:${r.id}`,
+      source: 'requests',
+      kind: 'comms-request',
+      severity: sent ? 'warn' : 'info',
+      // Until Mason answers or it expires, a sent request holds the question slot.
+      blocking: sent,
+      title: oneLine(r.text, TITLE_MAX) || `comms ${r.type} ${r.id.slice(0, 8)}`,
+      detail: cap(`${r.type} · ${r.kind} · ${sent ? 'awaiting reply' : 'queued'}` +
+        (r.options.length > 0 ? ` · ${r.options.length} option${r.options.length === 1 ? '' : 's'}` : '') +
+        (timed ? ` · waiting ${plainAge(nowMs - start)}` : ''), DETAIL_MAX),
+      since: timed ? new Date(start).toISOString() : null,
+      expiresAt: timed ? new Date(start + ttlMs).toISOString() : null,
+      act,
+    };
+  });
+  return { report: { state: 'healthy', pending: items.length }, items };
+}
+
 /**
  * One read-only pass over every pending comms source. Never throws; a failed
  * source reports its state and the rest still list.
@@ -619,6 +688,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const conversations = conversationItems(options.readConversations ?? readAgentConversations, options, now, bus.covered);
   const gmail = gmailItems(options.readGmailPlans ?? readGmailArchivePlanLatest, options.runsDir);
   const linkedin = linkedInItems(options.readLinkedIn ?? readLinkedInDrop, options.runsDir, now);
+  const requests = requestItems(options.readRequests ?? readCommsRequests, now, options.requestTtlMs);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -629,8 +699,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     conversations: conversations.report,
     gmail: gmail.report,
     linkedin: linkedin.report,
+    requests: requests.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...ownerThread.items, ...drafts.items, ...bus.items, ...conversations.items, ...gmail.items, ...linkedin.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...ownerThread.items, ...drafts.items, ...bus.items, ...conversations.items, ...gmail.items, ...linkedin.items, ...requests.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

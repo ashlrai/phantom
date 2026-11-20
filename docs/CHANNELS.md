@@ -245,11 +245,18 @@ long it has waited and deep-linking `phm agents conversations`,
 a thread whose waiting message is already a pending bus item or whose `job:`
 thread the feed already lists stays under the bus source, one pending thing
 one item — plus Gmail
-archive-plan overages and LinkedIn messages saved as
+archive-plan overages, LinkedIn messages saved as
 JSON files under `<runsDir>/comms/linkedin/inbox/` (answered when a file of the
-same id exists in `.../linkedin/answered/`; replies stay drafts) — and each item carries `act` deep-link commands (`phm fleet
+same id exists in `.../linkedin/answered/`; replies stay drafts) and live
+comms questions/approvals from the request queue (`~/.ashlr/comms/requests.jsonl`,
+the same store `phm comms status` counts — a sent one is the single
+outstanding slot Mason's numbered reply or button tap resolves and lists as a
+blocking warn, a pending one is queued behind it; informational reports never
+await a reply and never list, and `expiresAt` is the real TTL deadline
+`expireStaleRequests` applies) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm comms thread`,
-`phm comms send-owner`, `phm drafts approve`,
+`phm comms send-owner`, `phm comms status`, `phm inbox show`,
+`phm drafts approve`,
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
 `phm fleet handoff-receive`, `phm agents conversations`,
 `phm agents bus post`). It never claims, replies, or mutates; a source
