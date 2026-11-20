@@ -16,6 +16,20 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.44](https://github.com/ashlrai/phantom/compare/v3.30.43...v3.30.44) (2026-11-20)
+
+
+### Changes
+
+* **RQ-MAPFILTERR3N21GQ8:** RQ-MAPFILTERR3N21GQ8 ([#7461](https://github.com/ashlrai/phantom/issues/7461)) ([e410168](https://github.com/ashlrai/phantom/commit/e4101682a130e1aa5b88d062e44129ec346162e1))
+* **RQ-MERGEWAITN21HQ8:** BRIDGE_NOTES: RQ-MERGEWAITN21HQ8 ([#7466](https://github.com/ashlrai/phantom/issues/7466)) ([1780666](https://github.com/ashlrai/phantom/commit/178066652e1d14bee2bc2bbdb64424a9b5ad3891))
+* **RQ-NODEOFFLOADN21GQ8:** BRIDGE_NOTES: RQ-NODEOFFLOADN21GQ8 ([#7468](https://github.com/ashlrai/phantom/issues/7468)) ([05f3658](https://github.com/ashlrai/phantom/commit/05f365847b14a67d59d6986ea6d0205a96ee0b79))
+* **RQ-PHX-RECORDEDCONFIGRECOVER673S:** RQ-PHX-RECORDEDCONFIGRECOVER673S: recorded scheduler-config ([#7460](https://github.com/ashlrai/phantom/issues/7460)) ([9fd0974](https://github.com/ashlrai/phantom/commit/9fd097402db31d72d4bc2b64123c448324dd903f))
+* **RQ-STRANDEDN21GQ8:** BRIDGE_NOTES: RQ-STRANDEDN21GQ8 ([#7462](https://github.com/ashlrai/phantom/issues/7462)) ([c615631](https://github.com/ashlrai/phantom/commit/c615631fae6e11ebfed60a61b1a780eb767eb713))
+* **RQ-SUPPLYLOWN21GQ8:** RQ-SUPPLYLOWN21GQ8: `phm queue supply` and the `supply_low` ([#7464](https://github.com/ashlrai/phantom/issues/7464)) ([aa3d736](https://github.com/ashlrai/phantom/commit/aa3d736f421619ef19bbc095709f2cbe7404ac95))
+* **RQ-SWAPWHYN21GQ8:** BRIDGE_NOTES: RQ-SWAPWHYN21GQ8 ([#7465](https://github.com/ashlrai/phantom/issues/7465)) ([521eff5](https://github.com/ashlrai/phantom/commit/521eff5ee65d1f84d231a0d292fd8cf49c6f74a8))
+* **RQ-TOKENCOSTN21GQ8:** RQ-TOKENCOSTN21GQ8: `phm jobs cost` ([#7469](https://github.com/ashlrai/phantom/issues/7469)) ([4ec92a6](https://github.com/ashlrai/phantom/commit/4ec92a6da6767f3fef197305a0920b2ef5dcde33))
+
 ## [Unreleased]
 
 ### Since v3.30.40
