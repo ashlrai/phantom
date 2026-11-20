@@ -219,6 +219,18 @@ unknown. Main recoveries and incident closures have no recorded time, so only
 red and opened are shown. Empty reads
 show “Nothing new yet.”
 
+The resource boards are one surface. Pools, Usage, Router, Models, Lanes,
+Capacity and Supply each open with the same row of names across the top, in
+that order: what the fleet has, where work is sent, how the lanes are running.
+The board on screen is marked. Choosing another name puts that board in the
+same dock tab, so looking across them does not pile up tabs; a board that
+already has a tab of its own is brought forward instead. The row is one Tab
+stop: Left and Right move along it, Home and End jump to the ends, and `[` and
+`]` step to the previous and next board from anywhere in the board except a
+text field. The row stays in view while the board scrolls. It lists only the
+boards this build has, and it is not drawn while the dock is tiled as the agent
+workspace. The row only navigates; each board still reads its own data.
+
 The phone Home screen brings the fleet glance, links to active sessions,
 Needs you approvals and the comms inbox, the leader order box, and the recent
 merge list together. These links open the existing screens and preserve their
