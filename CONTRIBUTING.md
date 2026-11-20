@@ -276,7 +276,7 @@ imports and never introduce Node-only runtime imports into browser modules.
 `src/core/` and `src/cli/` primarily use Node builtins. The declared runtime
 dependencies are `@modelcontextprotocol/sdk` for MCP, `marked` for external-skill
 Markdown analysis, `tar` for managed-runtime archives, `smol-toml` and `yaml` for
-TOML/YAML parsing, and `@simplewebauthn/server`, `@simplewebauthn/browser`,
+TOML/YAML parsing, `zod` for schema validation, and `@simplewebauthn/server`, `@simplewebauthn/browser`,
 `jose`, `reflect-metadata` and `web-push` for the optional phone gateway. They
 are listed in `bundleDependencies`, bundled in the package and verified by the release dependency inventory. **Do not add a
 runtime dependency casually:** reuse an existing utility first, and change the
@@ -306,7 +306,7 @@ Author attribution (Mason Wyatt / `masonwyatt23` / ashlr.ai) is intentional and 
 
 Phantom is built **contract-first**: interfaces and types are authored before code, so multiple agents can build disjoint modules in parallel without colliding.
 
-1. **Use the owning subsystem's canonical types.** `src/core/types.ts` holds shared Hub types. Universe, Resources and local-runtime also own focused type modules; import their existing contracts instead of duplicating them or growing a global catch-all. Browser consumers should use type-only imports for server DTOs.
+1. **Use the owning subsystem's canonical types.** `src/core/types.ts` re-exports the shared Hub types, which live by domain in `src/core/types/`. Universe, Resources and local-runtime also own focused type modules; import their existing contracts instead of duplicating them or growing a global catch-all. Browser consumers should use type-only imports for server DTOs.
 
 2. **`CONTRACT.md` plus per-milestone files** (`docs/contracts/CONTRACT-M<N>.md`) are the binding interface spec. Each pins the exported function signatures and type shapes a milestone's modules must satisfy. Do not change an exported signature without updating the corresponding contract file in the same change.
 
@@ -323,11 +323,11 @@ require a new milestone document when an existing canonical contract is enough.
 The following invariants are enforced by named adversarial tests. A PR that weakens any of them will not be accepted — and the fleet's own self-improvement harness (M54) is also blocked from doing so:
 
 1. **Proposal-only floor.** The daemon source may import no merge/apply primitive. Auto-merge is a separate gated module, default off. Test: `test/h1.daemon-gates.test.ts` (source-scan grep-guard) + `test/m48.automerge-pass.test.ts`.
-2. **Enrollment gate.** Only enrolled repos receive autonomous work. Test: `test/h6.*`.
-3. **Kill-switch always halts.** `~/.ashlr/KILL` present must stop every backend and every repo. Test: `test/m48.*` kill-all.
-4. **Sandboxed-with-diff-capture only.** In the autonomous loop, external engines run only through `runEngineSandboxed`. No raw-external path. Sandbox-creation failure is terminal, never a silent fallback. Test: `test/m45.*` no-raw-fallback test.
-5. **Git push blocked from sandbox.** The pre-push hook + credential strip must fail every push from a worktree. Test: `test/m45.*` pre-push test.
-6. **Only the diff is consumed.** No transcript, no live-tree write escapes the sandbox. Test: `test/m45.*` diff-only test.
+2. **Enrollment gate.** Only enrolled repos receive autonomous work. Tests: `test/h4.sandbox-enrollment-kill.test.ts` (invariant 3) and `test/h1.daemon-gates.test.ts` (empty enrollment makes a tick a no-op); `test/h6.audit-completeness.test.ts` checks that every enrollment change is audited.
+3. **Kill-switch always halts.** `~/.ashlr/KILL` present must stop every backend and every repo. Tests: `test/h4.sandbox-enrollment-kill.test.ts` (invariant 4: the kill check runs before the enrollment check and `allowAnyRepo` cannot override it), plus `test/h1.daemon-gates.test.ts` and `test/m48.fleet-supervisor.test.ts` (a tick halts with reason `kill-switch` before any dispatch).
+4. **Sandboxed-with-diff-capture only.** In the autonomous loop, external engines run only through `runEngineSandboxed`. No raw-external path. Sandbox-creation failure is terminal, never a silent fallback. Tests: `test/h4.sandbox-enrollment-kill.test.ts` (invariant 2: a sandbox that cannot be created aborts to zero tasks) and `test/m45.foundry.test.ts` (a failing engine run is contained and leaves no sandbox behind).
+5. **Git push blocked from sandbox.** The pre-push hook + credential strip must fail every push from a worktree. Test: `test/m45.foundry.test.ts` (the pre-push containment proof, plus the `buildContainedEnv` credential checks).
+6. **Only the diff is consumed.** No transcript, no live-tree write escapes the sandbox. Tests: `test/h1.daemon-gates.test.ts` (a tick leaves the enrolled repo's working tree byte-identical), `test/h1.chain.test.ts` and `test/h1.apply-guardrails.test.ts` (a captured diff lands only on a new proposal branch; a refused apply mutates nothing).
 7. **Immutable signed provenance.** `{engineModel, engineTier}` is write-once and HMAC-signed. The merge gate must verify the HMAC. Test: `test/m47.*`, `test/m47_1.*`.
 8. **Merge requires explicit policy and verification.** Default tier mode requires frontier provenance and a matching `mergeAuthority` entry. Opt-in verification/evidence modes have their own stricter gates; no producer verdict, test result or documentation change grants authority by itself. See the [safety model](docs/HUB-REFERENCE.md#safety-model) and `test/m47.*`, `test/m153.*`, `test/m307.*`.
 9. **Self-improvement cannot self-disarm.** Self-target diffs must pass the suite flag-off and flag-on. Safety-test-weakening diffs refused. Test: `test/m54.*`.
@@ -341,7 +341,7 @@ If you are adding a new safety invariant, the pattern is: add the invariant to `
 
 Backends are registered in `src/core/run/engine-registry.ts`. To add a new one:
 
-1. Add an entry to `BUILTIN_ENGINE_REGISTRY` with `id`, `kind`, `tier` (`local | mid | frontier`) and either `bin`/`argv` (a `cli-agent`) or `api` (an `api-model`); see `EngineSpec` in `src/core/types.ts`.
+1. Add an entry to `BUILTIN_ENGINE_REGISTRY` with `id`, `kind`, `tier` (`local | mid | frontier`) and either `bin`/`argv` (a `cli-agent`) or `api` (an `api-model`); see `EngineSpec` in `src/core/types/engines.ts` (re-exported from `src/core/types.ts`).
 2. If it is API-based (OpenAI-compatible), confirm it works through the existing `provider-client.ts` path.
 3. Add a `cfg.foundry.engines` example to `docs/examples/foundry.config.json`.
 4. Add a test that asserts the new entry resolves to byte-identical argv and that its tier is correct.
@@ -354,7 +354,7 @@ Portfolio scanners live in `src/core/portfolio/scanners.ts`. Each scanner is an 
 
 ## Adding a new comms transport
 
-Comms transports live in `src/core/integrations/` (`telegram.ts`, `imessage.ts`). There is no shared transport interface: add the transport module, extend the `comms.channel` union in `src/core/types.ts`, branch on it in `runCommsCycle` in `src/core/comms/dispatch.ts`, and add a hermetic test with a mock transport.
+Comms transports live in `src/core/integrations/` (`telegram.ts`, `imessage.ts`). There is no shared transport interface: add the transport module, extend the `comms.channel` union in `src/core/types/config.ts`, branch on it in `runCommsCycle` in `src/core/comms/dispatch.ts`, and add a hermetic test with a mock transport.
 
 ---
 
@@ -376,7 +376,7 @@ src/
 ├── api/           # Public SDK entrypoints (`@ashlr/phantom`, `/core`, `/types`, `/plugin`)
 ├── cli/           # Thin argv dispatchers — parse, delegate to core, format output
 ├── core/
-│   ├── types.ts   # Shared Hub types; subsystems also own focused contracts
+│   ├── types.ts   # Public barrel over types/ (shared Hub types by domain); subsystems also own focused contracts
 │   ├── universe/  # Experiments, evaluation, campaigns, archive, graph, delivery
 │   ├── resources/ # Worker bindings, quota admission, ledger, foreground queue
 │   ├── local-runtime/ # Pinned package install, verification and rollback
@@ -399,7 +399,11 @@ src/
 │   └── ...        # config, git, classify, index-engine, providers, doctor, mcp, …
 ├── web-ui/        # React console, feature-local DOM tests, Vite entrypoints
 ├── raycast/       # Separate package (React/Raycast extension)
-└── tui/           # Terminal UI renderer
+├── tui/           # Terminal UI renderer
+├── mcp/           # MCP servers (context, docs) and fleet MCP tools
+├── fleet/         # Bridge session record/replay and merge-confidence risk scoring
+├── shared/        # Schemas shared by backend and console (e.g. team directory)
+└── doctor/, planning/ # Tool version probes; task triviality classifier
 test/              # Vitest suites organized by milestone
 docs/
 ├── README.md      # Canonical documentation map
