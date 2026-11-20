@@ -11,6 +11,11 @@ Unreadable, incomplete, capped, or unverified logs are unknown, never clean.
 Vitest FAIL lines -- including named-project labels such as `|unit|` or `|console|` --
 identify tests under `test/` and `src/web-ui/`; AssertionError summaries are scrubbed
 and capped at 2,000 characters per failure, with at most 100 failures per log.
+A suite that fails to load (transform, parse, or collection error) prints
+`FAIL <file> [ <file> ]` with no test name; these group under the
+`<file> > (suite)` identity, capture the suite's error line, and count as
+passing on master when the file shows any verbose pass -- the file loading
+and running is what resolves a suite failure.
 
 Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
 brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
