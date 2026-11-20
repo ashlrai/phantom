@@ -917,6 +917,21 @@ Both are implemented in `src/cli/doctor-init.ts` and loaded lazily from the disp
 
 ---
 
+## Pools JSON gift-credit row
+
+The gift-credit row of `pools.v1` (`phm pools --json`, `GET /api/app/pools`, built in
+[`pools-view.ts`](src/core/fleet/pools-view.ts)) carries three fields. They appear only on rows
+with `creditUnit: "usd"`.
+
+- `creditAsOf` is the ISO 8601 timestamp of the last balance reading.
+- `creditClosed` is `true` when the lane is closed and `false` otherwise.
+- `daysLeft` is the whole number of days until the gift expires, `0` once it has expired.
+
+An unknown `creditAsOf` or `daysLeft` is `null`. `creditClosed` is never `null`: it is
+`false` unless the lane is known to be closed.
+
+---
+
 ## Build / run
 
 - `npm run build` → tsc → `dist/`
