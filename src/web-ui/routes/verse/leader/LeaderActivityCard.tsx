@@ -21,10 +21,10 @@ const COMMAND = 'phm leader brief';
 const leaderActivityQuery: QueryDef<unknown> = { key: 'verse-leader-activity', fetch: s => apiGet(LEADER_ACTIVITY_PATH, s) };
 
 type Result = 'published' | 'no_change' | 'running' | 'queued' | 'failed';
-export interface Bet { id: string; result: Result; prState: 'open' | 'merged' | null; url: string | null; gap: string | null; at: string | null }
+export interface Bet { id: string; title: string; result: Result; prState: 'open' | 'merged' | null; url: string | null; gap: string | null; at: string | null }
 interface Pool { id: string; hoursToReset: number | null }
 type Part<T> = { known: true; value: T } | { known: false; reason: string };
-export interface LeaderActivity { bets: Part<Bet[]>; bottleneck: Part<string | null>; pools: Part<Pool[]> }
+export interface LeaderActivity { bets: Part<Bet[]>; passAt: Part<string>; bottleneck: Part<string>; heldBack: Part<string | null>; pools: Part<Pool[]> }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
@@ -35,19 +35,31 @@ const unknownPart = (section: unknown, fallback: string): { known: false; reason
 /** The typed brief from a payload; null when it is not ours. Defensive, never repairing. */
 export function readActivity(data: unknown): LeaderActivity | null {
   if (!isObj(data) || data.schema !== SCHEMA || data.unavailable === true) return null;
-  const { jobs, admission, pools } = data;
+  const { jobs, admission, pools, passAt, bottleneck: vision } = data;
 
   let bets: LeaderActivity['bets'] = unknownPart(jobs, 'the brief did not say');
   if (isObj(jobs) && jobs.known === true && Array.isArray(jobs.rows)) {
     bets = { known: true, value: jobs.rows.filter(isObj).flatMap((r): Bet[] => {
       const id = str(r.id);
       if (!id || typeof r.result !== 'string' || !RESULTS.includes(r.result)) return [];
-      return [{ id, result: r.result as Result, prState: r.pr_state === 'open' || r.pr_state === 'merged' ? r.pr_state : null, url: str(r.pr_url), gap: str(r.gap), at: str(r.at) }];
+      return [{ id, title: str(r.title) ?? betName(id), result: r.result as Result, prState: r.pr_state === 'open' || r.pr_state === 'merged' ? r.pr_state : null, url: str(r.pr_url), gap: str(r.gap), at: str(r.at) }];
     }) };
   }
 
-  let bottleneck: LeaderActivity['bottleneck'] = unknownPart(admission, 'the brief did not say');
-  if (isObj(admission) && admission.known === true) bottleneck = { known: true, value: admission.state === 'closed' ? str(admission.why) : null };
+  let heldBack: LeaderActivity['heldBack'] = unknownPart(admission, 'the brief did not say');
+  if (isObj(admission) && admission.known === true) heldBack = { known: true, value: admission.state === 'closed' ? str(admission.why) : null };
+
+  // Only a parseable time counts as a pass time; anything else stays unknown.
+  let pass: LeaderActivity['passAt'] = unknownPart(passAt, 'the brief did not say');
+  if (isObj(passAt) && passAt.known === true) {
+    const at = str(passAt.at);
+    pass = at && Number.isFinite(Date.parse(at)) ? { known: true, value: at } : { known: false, reason: 'the brief gave no usable time' };
+  }
+  let bottleneck: LeaderActivity['bottleneck'] = unknownPart(vision, 'the brief did not say');
+  if (isObj(vision) && vision.known === true) {
+    const text = str(vision.text);
+    bottleneck = text ? { known: true, value: text } : { known: false, reason: 'the brief gave no bottleneck' };
+  }
 
   let poolPart: LeaderActivity['pools'] = unknownPart(pools, 'the brief did not say');
   if (isObj(pools) && pools.known === true && Array.isArray(pools.rows)) {
@@ -56,19 +68,13 @@ export function readActivity(data: unknown): LeaderActivity | null {
       return id ? [{ id, hoursToReset: typeof r.hours_to_reset === 'number' && Number.isFinite(r.hours_to_reset) ? r.hours_to_reset : null }] : [];
     }) };
   }
-  return { bets, bottleneck, pools: poolPart };
+  return { bets, passAt: pass, bottleneck, heldBack, pools: poolPart };
 }
 
 /** `RQ-GIFTOPENN21SQ8` -> "Giftopen": the id without its prefix and batch suffix, in plain letters. */
 export function betName(id: string): string {
   const core = id.replace(/^RQ-/i, '').replace(/N\d+[A-Z]Q8$/i, '').replace(/[-_]+/g, ' ').trim() || id;
   return core.charAt(0).toUpperCase() + core.slice(1).toLowerCase();
-}
-
-/** When the Leader last made a bet; null when no bet carries a time. */
-export function lastPassAt(bets: Bet[]): string | null {
-  const times = bets.map(b => b.at).filter((t): t is string => t !== null && Number.isFinite(Date.parse(t)));
-  return times.length ? times.reduce((a, b) => (Date.parse(a) >= Date.parse(b) ? a : b)) : null;
 }
 
 const WORD: Record<Result, string> = { published: 'PR open', no_change: 'no change', running: 'running', queued: 'queued', failed: 'failed' };
@@ -85,8 +91,8 @@ export function LeaderActivityCard() {
 
   if (!query || (query.status !== 'error' && query.data === undefined)) return null;
   const a = readActivity(query.data);
-  const last = a && a.bets.known ? lastPassAt(a.bets.value) : null;
-  const head = `Leader · ${a ? (last ? `last pass ${triageAge(last, now)}` : 'last pass unknown') : 'unavailable'}`;
+  const pass = a && a.passAt.known ? a.passAt.value : null;
+  const head = 'Leader';
 
   return (
     <section className={styles.activity} aria-label="Leader">
@@ -94,6 +100,7 @@ export function LeaderActivityCard() {
         <h3 className={styles.activityTitle}>{head}</h3>
         <button type="button" className={styles.briefRefresh} onClick={refresh} disabled={query.status === 'refreshing'}>Refresh</button>
       </div>
+      {a ? <p className={styles.briefLine}>Last leader pass: {pass ? triageAge(pass, now) : `unknown${a.passAt.known ? '' : ` (${a.passAt.reason})`}`}</p> : null}
       {!a ? (
         <p className={styles.briefLine}>Leader brief unavailable. Run <code>{COMMAND} --json</code>.</p>
       ) : (
@@ -105,7 +112,7 @@ export function LeaderActivityCard() {
                   const url = safeUrl(b.url);
                   return (
                     <li key={b.id} className={styles.activityBet}>
-                      <span className={styles.activityName}>{betName(b.id)}</span>
+                      <span className={styles.activityName}>{b.title}</span>
                       <span className={styles.activityState} data-result={b.result}>{stateWord(b)}</span>
                       {url ? <a href={url} target="_blank" rel="noopener noreferrer">PR</a> : null}
                       {b.result === 'no_change' ? <span className={styles.activityWhy}>{b.gap ?? 'reason unknown'}</span> : null}
@@ -116,9 +123,10 @@ export function LeaderActivityCard() {
               </ul>
             )
           ) : <p className={styles.briefLine}>Bets unknown: {a.bets.reason}.</p>}
-          {a.bottleneck.known
-            ? (a.bottleneck.value ? <p className={styles.briefLine}><strong>Held back:</strong> {a.bottleneck.value}</p> : null)
-            : <p className={styles.briefLine}>Bottleneck unknown: {a.bottleneck.reason}.</p>}
+          <p className={styles.briefLine}>{a.bottleneck.known ? <><strong>Bottleneck:</strong> {a.bottleneck.value}</> : `Bottleneck unknown: ${a.bottleneck.reason}.`}</p>
+          {a.heldBack.known
+            ? (a.heldBack.value ? <p className={styles.briefLine}><strong>Held back:</strong> {a.heldBack.value}</p> : null)
+            : <p className={styles.briefLine}>Held back unknown: {a.heldBack.reason}.</p>}
           {a.pools.known
             ? (a.pools.value.length ? <p className={styles.briefLine}>{a.pools.value.map(p => `${p.id} ${hours(p.hoursToReset)}`).join(' · ')}</p> : null)
             : <p className={styles.briefLine}>Pools unknown: {a.pools.reason}.</p>}
