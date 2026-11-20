@@ -42,6 +42,8 @@ export interface StatusDigestInput {
   diskLine?: string;
   /** The one thing costing the most launches in the last hour; its sentence is the digest's first line unless kind is none. */
   blocker?: DigestBlocker;
+  /** `supply_low: Claude (0 queued, 16% left): add work` when a pool at risk of waste has under an hour of work queued; absent otherwise. */
+  supplyLine?: string;
 }
 
 export const TOP_P0_MAX_CHARS = 120;
@@ -102,6 +104,7 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
   // The blocker line already says what the gap or disk line would.
   if (input.gapLine && blocker?.kind !== 'asleep') lines.push(input.gapLine);
   if (input.diskLine && blocker?.kind !== 'disk_low') lines.push(input.diskLine);
+  if (input.supplyLine) lines.push(input.supplyLine);
   const runs = input.nodeRuns;
   if (runs) lines.push(nodeRunsLine(runs));
   return lines;

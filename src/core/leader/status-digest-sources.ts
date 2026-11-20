@@ -36,6 +36,8 @@ export interface StatusDigestSources {
   /** The `disk_low` line from recorded free-disk samples when under 24 hours remain before the lane freeze line; null when fine or unknown. */
   diskLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
   /** The single biggest cost in the last hour (asleep, host load, empty queue, drained pool, low disk); lanes are the ones the digest already read. */
+  /** The `supply_low` line when a pool at risk of waste has under an hour of work queued; null when none or unknown. */
+  supplyLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
   blocker?: (runsDir: string, nowMs: number, lanes: Array<{ lane: string; running: number; target: number; held: boolean }> | null) => Promise<DigestBlocker>;
 }
 
@@ -65,6 +67,10 @@ const defaults: StatusDigestSources = {
     return worst?.line ?? null;
   },
   diskLine: readDiskLowLine,
+  supplyLine: async (runsDir, nowMs) => {
+    const { readQueueSupply, supplyLowLine } = await import('../fleet/queue-supply.js');
+    return supplyLowLine(await readQueueSupply({ runsDir, now: () => nowMs }));
+  },
   blocker: readBlocker,
 };
 
@@ -167,7 +173,8 @@ export async function gatherStatusDigestInput(runsDir: string, now: Date, overri
 
   const gap = await fact(() => src.gapLine?.(runsDir, nowMs) ?? null, 'gap check failed');
   const disk = await fact(() => src.diskLine?.(runsDir, nowMs) ?? null, 'disk check failed');
+  const supply = await fact(() => src.supplyLine?.(runsDir, nowMs) ?? null, 'supply check failed');
   const blocker = await fact(() => src.blocker?.(runsDir, nowMs, lanes.ok ? lanes.value : null) ?? undefined, 'blocker check failed');
   const updatePending = installed.ok && published.ok ? versionNewer(published.value, installed.value) : null;
-  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}), ...(blocker.ok && blocker.value ? { blocker: blocker.value } : {}) };
+  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}), ...(supply.ok && supply.value ? { supplyLine: supply.value } : {}), ...(blocker.ok && blocker.value ? { blocker: blocker.value } : {}) };
 }
