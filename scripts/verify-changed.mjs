@@ -39,6 +39,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
   const existing = new Set(existingPaths);
   return {
     lintFiles: changed.filter((path) => existing.has(path) && /\.(?:[cm]?js|[cm]?ts|tsx|jsx)$/.test(path)),
+    pythonFiles: changed.filter((path) => existing.has(path) && /\.py$/.test(path)),
     webTypecheck: changed.some((path) => path.startsWith('src/web-ui/')),
     authorityDrift: changed.some(affectsAuthorityDrift),
     fleetRegistry: changed.some((path) => /^src\/cli\/fleet-[^/]*\.ts$/.test(path)),
@@ -136,6 +137,36 @@ export function docsCheckPreflight(root, exists = existsSync) {
     return { ok: true };
   }
   return { ok: false, reason: 'node_modules/marked/package.json is absent; run npm ci to restore it' };
+}
+
+/** Probe for a working python3; the fleet's dispatcher and bridge tooling are Python. */
+export function pythonPreflight(spawn = spawnSync) {
+  const probe = spawn('python3', ['--version'], { encoding: 'utf8', timeout: 15000 });
+  if (probe.error || probe.signal || probe.status !== 0) {
+    return { ok: false, reason: 'python3 is unavailable or did not run; changed .py files cannot be syntax-checked locally' };
+  }
+  return { ok: true };
+}
+
+// compile() applies the same grammar step py_compile performs, without writing
+// __pycache__ bytecode into the tree. One interpreter run covers the batch and
+// the first SyntaxError fails the check.
+const PYTHON_SYNTAX_CHECK = 'import sys\nfor path in sys.argv[1:]:\n    compile(open(path, "rb").read(), path, "exec")\n';
+
+/** Syntax-check changed .py files; returns false on any interpreter or compile failure. */
+export function runPythonSyntaxCheck(root, files, spawn = spawnSync) {
+  const result = spawn('python3', ['-c', PYTHON_SYNTAX_CHECK, ...files], {
+    cwd: root, encoding: 'utf8', timeout: 120000,
+  });
+  if (result.status !== 0) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL python syntax check');
+    return false;
+  }
+  console.log('PASS python syntax check');
+  return true;
 }
 
 /** Shared root for the typecheck cache and slots; worktrees resolve to the git common dir. */
@@ -609,6 +640,16 @@ function main() {
     run('eslint changed files', 'node_modules/eslint/bin/eslint.js', ['--no-warn-ignored', '--', ...selection.lintFiles.map((path) => `./${path}`)]);
   } else {
     console.log('PASS eslint skipped: no lintable file changed');
+  }
+  if (selection.pythonFiles.length === 0) {
+    console.log('PASS python syntax check skipped: no python change');
+  } else {
+    const python = pythonPreflight();
+    if (!python.ok) {
+      console.log(`SKIP python syntax check: ${python.reason}`);
+    } else if (!runPythonSyntaxCheck(root, selection.pythonFiles)) {
+      process.exitCode = 1;
+    }
   }
   if (selection.quarantineCheck) {
     try {
