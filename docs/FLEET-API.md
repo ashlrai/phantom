@@ -571,7 +571,9 @@ filter on (the same key `phm agents messages` reports as `threadId`), a
 `threadId`, or a `job:<id>` key — buckets its conversation under that label
 even without `replyTo` links, so a threaded question and its answer are one
 conversation; only the synthesized per-pair fallback stays reply-chain
-rooted. `--json` prints `agents.conversations.v1` (`version` 1), and
+rooted. `group.presence` heartbeats are expiring observations with their own
+read (`phm comms bus group presence`), never messages: they form no thread
+and cannot answer a waiting one. `--json` prints `agents.conversations.v1` (`version` 1), and
 `GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1]`
 serves the same read with a current read session.
 
@@ -590,6 +592,7 @@ serves the same read with a current read session.
 
 `phm agents messages [--since 1h] [--limit N] [--json]` lists recent
 agent-to-agent messages from the same bus read (no new store), newest first.
+`group.presence` heartbeats are observations, not messages, and never list.
 `--json` prints `agents.messages.v1` (`version` 1), and
 `GET /api/verse/fleet/control/agent-messages[?since=1h&limit=50]` serves the
 same read with a current read session.

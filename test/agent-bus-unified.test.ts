@@ -190,6 +190,15 @@ describe('channel reads', () => {
     expect(first.messages.map(m => m.envelope.id)).toEqual(['ch-1']);
     const rest = readAgentChannel('release', { after: first.nextCursor }, options);
     expect(rest.status === 'ok' && rest.messages.map(m => m.envelope.id)).toEqual(['ch-2']);
+
+    // The same rule holds for mail: a heartbeat is an observation, so it never
+    // lands in any member's inbox while real channel posts still arrive.
+    const atlasInbox = readAgentInbox('atlas', {}, options);
+    if (atlasInbox.status !== 'ok') throw new Error('unreadable');
+    expect(atlasInbox.messages.map(m => m.envelope.id).sort()).toEqual(['ch-2']);
+    const novaInbox = readAgentInbox('nova', {}, options);
+    if (novaInbox.status !== 'ok') throw new Error('unreadable');
+    expect(novaInbox.messages.map(m => m.envelope.id).sort()).toEqual(['ch-1', 'dm-1']);
   });
 
   it('reports unknown channels and unreadable state instead of empty history', () => {

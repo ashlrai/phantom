@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import { appendBusInbox, listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
   type BusInboxOptions, type BusInboxPost } from '../fleet/bus-inbox.js';
 import { BUS_PRIORITIES, isClaimableWork, type BusEnvelope, type BusPriority } from '../fleet/bus-envelope.js';
-import { groupAddress } from '../fleet/bus-group.js';
+import { groupAddress, isGroupPresenceBody } from '../fleet/bus-group.js';
 import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { createBusWakeHook, type BusWakeResult } from '../fleet/bus-wake.js';
@@ -998,7 +998,9 @@ function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
 /**
  * One page of an identity's inbox: DMs and handoffs to `agent:<handle>`,
  * traffic still addressed to its bare handle, stable id or legacy aliases,
- * and posts in its channels (minus its own). `thread` narrows the page to
+ * and posts in its channels (minus its own and minus `group.presence`
+ * heartbeats, which are observations with their own read, never mail).
+ * `thread` narrows the page to
  * `note`/`context` bodies carrying that v2 thread label; `from` narrows by
  * sender through the same identity-label matching `channel read` uses — a
  * ref that resolves through the registry matches every label of that
@@ -1038,6 +1040,8 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
     let ownerReceipts: OwnerChatReceipt[] | undefined;
     for (const row of result.messages) {
       const envelope = row.envelope;
+      // A presence heartbeat is an observation, not mail of any kind.
+      if (isGroupPresenceBody(envelope.body)) continue;
       let kind: InboxKind | null = null;
       const channel = channelOf(envelope.to, target.channels);
       if (envelope.channel === 'handoff' && target.labels.has(envelope.to)) kind = 'handoff';
@@ -1218,8 +1222,7 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
     }
     for (const row of result.messages) {
       const envelope = row.envelope, body = envelope.body;
-      const presence = body !== null && typeof body === 'object' && !Array.isArray(body) &&
-        (body as Record<string, unknown>).kind === 'group.presence';
+      const presence = isGroupPresenceBody(body);
       if (!presence && envelope.to.startsWith(prefix) && (exact === undefined || envelope.to === exact) &&
           (fromMatch === undefined || fromMatch(envelope.from)) &&
           (thread === undefined || busBodyThread(body) === thread)) {
