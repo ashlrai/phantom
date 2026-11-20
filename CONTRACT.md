@@ -321,12 +321,12 @@ History reads only the bounded 256 KiB regular-file tail, newest last, max three
 matching rows or null. `explainRoutes` adds nullable `fallback_chain` (non-fusion
 decisions only) and `fallback_used` (job receipts). See [gates and inert status](docs/ROUTING.md#failover-chains).
 
-`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?})`,
-`foldSpendCosts(text)`, `foldRouteDecisionWorkClasses(text)`,
-`readLedgerFile(path, limit?)`,
+`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?, revertedPrKeys?})`,
+`authorityRevertedPrKeys(evidence)`, `foldSpendCosts(text)`,
+`foldRouteDecisionWorkClasses(text)`, `readLedgerFile(path, limit?)`,
 `readLedgerTail(path, maxBytes?)` and
-`readRouterOutcomes({runsDir?, lane?, ashlarDir?})`, producing
-`router.outcome.v1` records folded from `metrics/jobs.jsonl`. The jobs
+`readRouterOutcomes({runsDir?, lane?, ashlarDir?, authorityEvidence?})`,
+producing `router.outcome.v1` records folded from `metrics/jobs.jsonl`. The jobs
 ledger is append-only and unbounded, so the read retains the newest
 `ROUTER_OUTCOME_LEDGER_LIMIT` (16 MiB) bytes via `readLedgerTail`: an
 oversized ledger reports `truncated: true` and folds only the retained
@@ -363,9 +363,20 @@ reports the projection health (`healthy`/`missing`/`degraded`) so callers
 can distinguish absent eval evidence from a real score. `reverted` folds
 explicit revert evidence — a `reverted` boolean, a revert event name or
 terminal REVERT/REVERTED state field, or a parseable `reverted_at`/
-`revertedAt` stamp — sticky-true like metrics-ingest, so a recorded revert
-is never contradicted by a later `reverted:false`; it is `null` when the
-ledger records nothing either way. The fold is read-only and advisory: it
+`revertedAt` stamp — plus the authority ledger's verified evidence index:
+`authorityRevertedPrKeys` resolves each `revert:landed` row's
+`revertsLandingId` to its `merge:landed` landing and yields the merged
+PR's `owner/repo#n` key, and the fold marks an outcome reverted when the
+job's own canonical github.com pull URL claim is unambiguous and
+canonicalizes to one of those keys (ambiguous, foreign or non-canonical
+claims never mark). `readRouterOutcomes` reads that index lazily through
+`ledgerSnapshot('cached')` — only hash-verified rows contribute, a broken
+chain still marks only its verified prefix, and any read failure degrades
+to no join; `authorityEvidence: null` skips the join and an explicit
+array is used as given. Revert evidence is sticky-true like
+metrics-ingest, so a recorded revert is never contradicted by a later
+`reverted:false`; it is `null` when neither source records anything
+either way. The fold is read-only and advisory: it
 never routes, ranks, tunes or writes.
 
 `explainRoutes(root, nowSeconds)` returns nullable `posture` from the bounded
