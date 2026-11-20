@@ -68,6 +68,11 @@ describe('commsBriefFacts', () => {
     expect(r.line).toBe('Comms: 2 Needs-you, 3 drafts to approve, mason@ashlr.ai 120/50 unread');
   });
 
+  it('lists stuck email replies awaiting attention', () => {
+    expect(commsBriefFacts(inbox({ 'email-outbox': rep('healthy', 2) })).line).toBe('Comms: 2 stuck email replies');
+    expect(commsBriefFacts(inbox({ 'email-outbox': rep('healthy', 1) })).line).toBe('Comms: 1 stuck email reply');
+  });
+
   it('tolerates an unknown extra source key', () => {
     const r = commsBriefFacts(inbox({ linkedin: rep('healthy', 4) }));
     expect(r.line).toBeNull();

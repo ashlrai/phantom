@@ -80,6 +80,8 @@ export function commsBriefFacts(inbox: UnifiedInbox, opts: { overdueMinutes?: nu
       const ages = items.map((i) => waitedMinutes(i, nowMs)).filter((a): a is number => a !== null);
       const oldest = ages.length > 0 ? Math.max(...ages) : null;
       parts.push(`${plural(report.pending, 'comms request')} awaiting an answer${oldest !== null ? ` (oldest ${formatAge(oldest)})` : ''}`);
+    } else if (name === 'email-outbox') {
+      parts.push(plural(report.pending, 'stuck email reply', 'stuck email replies'));
     }
     // Other sources (bus, linkedin, …) are not part of Mason's comms line.
   }

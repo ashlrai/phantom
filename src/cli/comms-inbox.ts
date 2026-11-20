@@ -13,8 +13,9 @@ phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 With no verb, lists every pending comms item — unresolved needs-you lines, unanswered iMessage
 teammate texts, owner-thread messages awaiting a recorded reply, drafts awaiting approval,
 pending bus work (unclaimed envelopes, open feed jobs and worker handoffs), agent
-conversation threads waiting on a reply, bot seats with pending handoffs and comms
-questions/approvals awaiting an answer —
+conversation threads waiting on a reply, bot seats with pending handoffs, comms
+questions/approvals awaiting an answer and .reply.eml artifacts stuck in the
+email outbox —
 one prioritized list whose
 items carry the deep-link commands that act on them. --json prints the same view as JSON.
 read and post read and write Mason's local inbox file. Output is JSON; post returns the receiver acknowledgement.

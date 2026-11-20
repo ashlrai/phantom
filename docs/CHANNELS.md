@@ -256,13 +256,21 @@ the same store `phm comms status` counts — a sent one is the single
 outstanding slot Mason's numbered reply or button tap resolves and lists as a
 blocking warn, a pending one is queued behind it; informational reports never
 await a reply and never list, and `expiresAt` is the real TTL deadline
-`expireStaleRequests` applies) — and each item carries `act` deep-link commands (`phm fleet
+`expireStaleRequests` applies) — plus `.reply.eml` artifacts the email send
+pass marked `stuck` in the reply outbox (the same read `phm fleet
+email-outbox` serves: saved email-drop config → `outboxDir`, else the sibling
+of `inboxDir` → `readEmailOutbox`; interrupted send claims, oversized or
+unreadable files and malformed drafted rows each list as a warn with the
+fixed reason — a stuck reply is never auto-resent, so items carry no
+timestamp and deep-link `phm fleet email-outbox` and `phm comms diagnose
+--json`; missing or invalid config, a missing outbox and an unreadable one
+keep their own source state) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
 `phm drafts approve`,
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
 `phm fleet handoff-receive`, `phm agents conversations`,
-`phm bots handoff`, `phm agents bus post`). It never claims, replies, or mutates; a source
+`phm bots handoff`, `phm agents bus post`, `phm fleet email-outbox`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. `phm comms inbox read` and
