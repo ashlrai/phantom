@@ -1524,7 +1524,9 @@ paths, GATES files) are refused by the writer and ignored by the resolver. See
 ## Agent Bus v2 foundation
 
 `src/core/agents/bus-v2-schema.ts` owns the `agent-bus.v2` body, participant,
-claim and work-feed schemas described in [Agent Bus v2](docs/AGENT-BUS.md#v2).
+claim and work-feed schemas described in [Agent Bus v2](docs/AGENT-BUS.md#v2),
+plus `busBodyThread(body)`, the read-side predicate that returns the `thread`
+label a `note`/`context` body carries (null for every other kind and shape).
 Routing labels, repo slugs and claim tokens reject trailing newlines; claim keys
 reject ASCII controls including DEL. Claims grant no execution authority.
 
@@ -1634,17 +1636,18 @@ with a `reason`); they never throw for bad input or storage faults.
 `src/core/agents/bus-unified.ts`: `sendDirectMessage`, `postChannelMessage`,
 `sendHandoff`, `sendWakeRequest`, `announceWork`, `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
-carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit}, options?)`,
+carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?}, options?)`,
 `readAgentWakes(ref, sinceAt, options?)`, `listBusChannels(agent, options?)`
 (the registry channels name-sorted with `createdBy`, `createdAt` and member
 handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or
 `available`, `agent` the resolved handle or null, and an unknown ref or
 unreadable registry answers `unknown-agent`/`unavailable`, never an empty
-list), `readAgentChannel(name, {topic, from, after, limit}, options?)`
+list), `readAgentChannel(name, {topic, from, thread, after, limit}, options?)`
 (one oldest-first page of a registry channel's live posts addressed to
 `group:<name>:*` — or one topic — with `group.presence` heartbeats
-excluded; `from` filters by sender through identity-label matching,
+excluded; `from` filters by sender through identity-label matching and
+`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `nextCursor` covers every scanned row, a missing registry answers
 `unknown-channel`, and an unreadable registry or store answers
 `unavailable`/`retryable`, never an empty page passed off as history),

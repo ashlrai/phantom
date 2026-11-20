@@ -43,6 +43,9 @@ status.
   but not `fleetx.deploy`. Patterns must be a valid name or a namespace
   prefix. Anything else exits 2.
 - `--kind <task|result|review|status|question>` matches `protocol.kind`.
+- `--thread <label>` matches the v2 `thread` field on `note`/`context`
+  bodies only; every other body kind never matches. The label is printable
+  ASCII, 1 to 128 characters; anything else exits 2.
 - `--to`, `--from` and `--exclude-from` match the literal routing label or
   any other label of the same registered agent identity (handle, `agent:`
   address, stable id or alias), resolved once when the read starts; an

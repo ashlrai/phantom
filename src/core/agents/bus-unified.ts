@@ -28,7 +28,7 @@ import { LEADERS_ADDRESS } from '../fleet/bus-leader-inbox.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { localWriteGate } from './send-gate.js';
 import { coordinationRowBlocks, listCoordination } from './claim-store.js';
-import { BUS_V2_TEXT_MAX, wakeBodySchema, workPostBodySchema, workStatusBodySchema,
+import { BUS_V2_TEXT_MAX, busBodyThread, wakeBodySchema, workPostBodySchema, workStatusBodySchema,
   type Participant, type WorkJob } from './bus-v2-schema.js';
 import { readBusWorkFeed, runtimeProvider, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import {
@@ -904,15 +904,19 @@ function channelOf(to: string, channels: Map<string, string>): string | null {
 /**
  * One page of an identity's inbox: DMs and handoffs to `agent:<handle>`,
  * traffic still addressed to its bare handle, stable id or legacy aliases,
- * and posts in its channels (minus its own). Returned highest priority
- * first; `nextCursor` covers every scanned row, so callers persist it only
- * after handling the page.
+ * and posts in its channels (minus its own). `thread` narrows the page to
+ * `note`/`context` bodies carrying that v2 thread label. Returned highest
+ * priority first; `nextCursor` covers every scanned row, so callers persist
+ * it only after handling the page.
  */
-export function readAgentInbox(ref: string, page: { after?: number; limit?: number } = {},
+export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string } = {},
   options: UnifiedBusOptions = {}): InboxPage {
-  const after = page.after ?? 0, limit = page.limit ?? 50;
+  const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread;
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
     return { status: 'invalid', reason: 'after must be >= 0 and limit 1-100.' };
+  }
+  if (thread !== undefined && (typeof thread !== 'string' || !THREAD.test(thread))) {
+    return { status: 'invalid', reason: 'Invalid thread label.' };
   }
   const read = readAgentRegistry(options);
   if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
@@ -936,14 +940,15 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
       else if (envelope.to === self) kind = 'dm';
       else if (target.labels.has(envelope.to)) kind = 'legacy';
       else if (channel && !target.labels.has(envelope.from)) kind = 'channel';
-      if (kind && envelope.origin_bridge === 'agent-chat-owner') {
+      const inThread = thread === undefined || busBodyThread(envelope.body) === thread;
+      if (kind && inThread && envelope.origin_bridge === 'agent-chat-owner') {
         try { ownerReceipts ??= readOwnerChatReceipts(ownerChatRoot(options.root)); }
         catch { return { status: 'unavailable', reason: 'Owner share receipts unavailable.' }; }
         const receiptState = ownerChatReceiptState(row.originalEnvelope ?? envelope, row.cursor, ownerReceipts, target.identity.id);
         if (receiptState === 'pending') return { status: 'retryable', reason: 'Owner share receipt pending.' };
         if (receiptState !== 'accepted') continue;
       }
-      if (kind) {
+      if (kind && inThread) {
         messages.push({ cursor: row.cursor, receivedAt: row.receivedAt, kind, priority: envelope.priority,
           fromAgent: resolveAgent(read.registry, envelope.from)?.handle ?? null,
           channel: kind === 'channel' ? channel : null, envelope });
@@ -1031,6 +1036,11 @@ export interface ChannelReadOptions {
    * identity; an unresolvable ref keeps exact-label matching.
    */
   from?: string;
+  /**
+   * Thread filter: the v2 `thread` label a `note`/`context` body carries.
+   * Every other body kind — and a note without the field — never matches.
+   */
+  thread?: string;
   after?: number;
   limit?: number;
 }
@@ -1045,18 +1055,22 @@ export type ChannelReadPage =
  * (`groupPresence`), not messages. Reading needs no identity and no
  * membership: membership gates posting only, and the rows are the same
  * shared store `comms bus group read` sees. `from` narrows by sender through
- * the same identity-label matching `comms bus read` uses. `nextCursor`
+ * the same identity-label matching `comms bus read` uses; `thread` narrows to
+ * `note`/`context` bodies carrying that v2 thread label. `nextCursor`
  * covers every scanned row, so callers persist it only after handling the
  * page; a missing registry means no channel exists, an unreadable one or an
  * unreadable store is reported, never an empty page passed off as history.
  */
 export function readAgentChannel(name: string, page: ChannelReadOptions = {}, options: UnifiedBusOptions = {}): ChannelReadPage {
-  const after = page.after ?? 0, limit = page.limit ?? 50;
+  const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread;
   if (typeof name !== 'string' || !agentChannelNameSchema.safeParse(name).success) {
     return { status: 'invalid', reason: 'Invalid channel name.' };
   }
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
     return { status: 'invalid', reason: 'after must be >= 0 and limit 1-100.' };
+  }
+  if (thread !== undefined && (typeof thread !== 'string' || !THREAD.test(thread))) {
+    return { status: 'invalid', reason: 'Invalid thread label.' };
   }
   let exact: string | undefined;
   if (page.topic !== undefined) {
@@ -1095,7 +1109,8 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
       const presence = body !== null && typeof body === 'object' && !Array.isArray(body) &&
         (body as Record<string, unknown>).kind === 'group.presence';
       if (!presence && envelope.to.startsWith(prefix) && (exact === undefined || envelope.to === exact) &&
-          (fromMatch === undefined || fromMatch(envelope.from))) {
+          (fromMatch === undefined || fromMatch(envelope.from)) &&
+          (thread === undefined || busBodyThread(body) === thread)) {
         messages.push({ cursor: row.cursor, receivedAt: row.receivedAt, priority: envelope.priority,
           topic: envelope.to.slice(prefix.length),
           fromAgent: resolveAgent(read.registry, envelope.from)?.handle ?? null, envelope });

@@ -209,6 +209,46 @@ describe('channel reads', () => {
   });
 });
 
+describe('thread-filtered reads', () => {
+  it('narrows inbox and channel pages to one v2 thread label', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'question', thread: 'rq-1', id: 'dm-t1' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'aside', thread: 'rq-2', id: 'dm-t2' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'plain', id: 'dm-t3' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'channel note', thread: 'rq-1', id: 'ch-t1' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'channel aside', thread: 'rq-9', id: 'ch-t2' }, options);
+    // An opaque body carrying a thread-looking field is not a v2 note/context.
+    expect(appendBusInbox({ id: 'raw-t1', from: 'atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
+      body: { kind: 'custom.kind', thread: 'rq-1', text: 'opaque' } }, options).status).toBe('posted');
+
+    const inbox = readAgentInbox('nova', { thread: 'rq-1' }, options);
+    if (inbox.status !== 'ok') throw new Error(`unexpected ${inbox.status}`);
+    expect(inbox.messages.map(m => `${m.kind}:${m.envelope.id}`)).toEqual(['dm:dm-t1', 'channel:ch-t1']);
+    expect(readAgentInbox('nova', { thread: 'rq-9' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'ch-t2' } }] });
+    expect(readAgentInbox('nova', { thread: 'rq-absent' }, options)).toMatchObject({ status: 'ok', messages: [] });
+    // The unfiltered page still sees everything the thread page skipped.
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages.length).toBe(6);
+
+    const channel = readAgentChannel('release', { thread: 'rq-1' }, options);
+    if (channel.status !== 'ok') throw new Error(`unexpected ${channel.status}`);
+    expect(channel.messages.map(m => m.envelope.id)).toEqual(['ch-t1']);
+    expect(readAgentChannel('release', { thread: 'rq-9' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'ch-t2' } }] });
+    // Thread composes with the sender filter.
+    expect(readAgentChannel('release', { thread: 'rq-1', from: 'ghost' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+
+    // Labels must be printable v2 thread labels; anything else refuses closed.
+    expect(readAgentInbox('nova', { thread: 'has space' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { thread: '' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { thread: 'x'.repeat(129) }, options)).toMatchObject({ status: 'invalid' });
+  });
+});
+
 describe('DM, channel, handoff and priority wake on the one bus store', () => {
   it('delivers DMs to agent:<handle> with channel metadata from the identity', async () => {
     const options = setup();
