@@ -171,7 +171,9 @@ countdown, time marker, and freshness checks still use the request time.
 `reset_at`, `even_pace_frac` (where a straight line from the last reset would be
 now), `projected_at_reset` (used share at reset at the current burn), a `state`
 (`on-pace`, `under`, `over`, `drained`, `unknown`) and a plain `verdict` ("on
-pace", "will leave 12% unused: add work", "drained until Fri 6 PM", "no reading").
+pace", "will leave 12% unused: add work", "drained until Fri 6 PM", "no reading",
+"unknown: no fresh reading (3 h old)"). `resets_in_h` is hours to the reset, `as_of`
+and `reading_age_min` say when the last reading was taken and how old it is.
 Fractions are 0 to 1; a pool with no current reading has `null` fractions and
 `state: "unknown"`, never zero. The desktop Spend down panel and the phone Home card
 draw only this JSON.

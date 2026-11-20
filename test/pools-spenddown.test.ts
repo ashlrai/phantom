@@ -56,6 +56,16 @@ describe('buildSpendDown', () => {
     });
   });
 
+  it('stale reading: says unknown with the reading age, never a stale number', () => {
+    const row = only(lane('claude', { usedPct: 60, observation: { source: 'claude-native-usage' as const, asOf: at(-3) } }));
+    expect(row).toMatchObject({ state: 'unknown', used_frac: null, reading_age_min: 180, verdict: 'unknown: no fresh reading (3 h old)' });
+  });
+
+  it('says when it resets, in hours', () => {
+    expect(only(lane('claude', { usedPct: 50, resetAt: at(22), burnPctPerHour: 0.6 })).resets_in_h).toBe(22);
+    expect(only(lane('zai', { usedPct: null, resetAt: null })).resets_in_h).toBeNull();
+  });
+
   it('keeps pools.v1 order and prints one plain line per pool', () => {
     const data = chart(lane('claude', { usedPct: 50, burnPctPerHour: 0.6 }), lane('zai', { usedPct: null }));
     expect(data.schema).toBe(SPENDDOWN_SCHEMA);
