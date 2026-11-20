@@ -13,7 +13,7 @@ export function LeverageTile({ report }: { report: LeverageReport | undefined })
     const all = MERGE_CLASSES.reduce((sum, name) => sum + counts[name], 0);
     return all ? (counts.fleet + counts.product) / all : null;
   });
-  return <div className={styles.root}>
+  return <div className={styles.card}>
     <h3 className={styles.heading}>Merge leverage</h3>
     {!usable ? <p className={styles.note}>Merge leverage: unknown</p>
       : !usable.total ? <p className={styles.note}>No merges in the last {usable.hours} hours</p>

@@ -103,6 +103,31 @@ says it may be stale. The same list for agents:
 phm sessions --json
 ```
 
+The Metrics pane is one board of the last 24 hours. It leads with the merged
+PR counts and the busiest hour, then four numbers (the first with a line of
+the merges in each hour), the two hourly charts side by side and a ranked bar
+per repo the merges landed in. Next come two cards side by side. **Where the
+loop waits** lists each stage of a job with its median and 90th percentile,
+and under each stage name a bar of its median against the slowest stage's,
+which is drawn in the warning colour; a stage no job gave a time gets a
+hatched bar and the word unknown. Its **24 hours** / **7 days** switch sits on
+the heading's line. **Merge leverage** says what share of the merges moved the
+fleet or the product. Below sit one card each for lanes, spend-down, job
+kinds, generators and releases. Lane and pool rows carry the provider's mark;
+under a lane's merge rate a thin bar shows how its finished jobs ended
+(merged, changed nothing, the rest). A lane or pool without a reading gets a
+hatched bar and the word unknown, never a zero. The first read shows
+placeholders, a failed one says the report is unknown with **Try again**, and
+a failed refresh labels the board as the last reading. The numbers are the
+ones these commands print:
+
+```sh
+phm metrics --json
+phm metrics loop --json
+phm metrics leverage --json
+phm jobs yield --json
+```
+
 Home's Merged PRs card opens the Throughput pane. It leads with the report's
 headline and a Delivery flow chart: jobs launched, PRs published and PRs merged
 in the window, each with its exact count and its share of the step before. The
