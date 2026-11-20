@@ -1,0 +1,208 @@
+/* The Leader pane's "Working now" strip: running agent sessions above the conversation. */
+
+.surface {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.thread {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+/* The chat (strip plus conversation) stays mounted under an opened session, so the draft and reading position survive. */
+.chat {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.chat[hidden] { display: none; }
+
+.reading {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-surface);
+  animation: roster-in var(--duration-base) var(--ease-decelerate);
+}
+
+.roster {
+  flex: none;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--card-pad);
+}
+
+.toggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-h-xs);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* The dot is solid while anyone is working and breathes slowly; it is hollow when nobody is. */
+.pulse {
+  width: var(--space-2);
+  height: var(--space-2);
+  border: 1px solid var(--text-tertiary);
+  border-radius: var(--radius-full);
+}
+
+.pulse[data-live] {
+  border-color: var(--accent-500);
+  background: var(--accent-500);
+  animation: roster-breathe var(--duration-pulse) var(--ease-standard) infinite alternate;
+}
+
+@keyframes roster-breathe {
+  to { opacity: 0.45; }
+}
+
+.headline {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.headline[data-tone='unknown'],
+.note[data-tone='unknown'] { color: var(--text-tertiary); font-style: italic; }
+
+.list {
+  max-height: calc(var(--control-h) * 4.5);
+  margin: 0;
+  padding: 0 var(--space-2) var(--space-2);
+  overflow-y: auto;
+  list-style: none;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
+  animation: roster-in var(--duration-base) var(--ease-decelerate);
+}
+
+@keyframes roster-in {
+  from { opacity: 0; }
+}
+
+.item:hover,
+.item:focus-within { background: var(--bg-hover); }
+.item[data-aimed] { box-shadow: inset 2px 0 0 var(--accent-500); }
+
+.row {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: var(--control-h-xs);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+button.row { cursor: pointer; }
+
+.row strong {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs-size);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kind,
+.when {
+  flex: none;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs-size);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Quiet is the one state here that asks for a look. */
+.when[data-state='quiet'] { color: var(--status-warning-fg); font-weight: 600; }
+
+.said {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.said[data-unknown] { color: var(--text-tertiary); font-style: italic; }
+
+.side {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: var(--control-h-xs);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs-size);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.side:hover { border-color: var(--border-strong); color: var(--text-primary); }
+
+.toggle:focus-visible,
+.row:focus-visible,
+.side:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.note,
+.aimed {
+  margin: 0;
+  padding: 0 var(--card-pad) var(--space-2);
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+}
+
+.aimed { color: var(--text-primary); }
+.aimed:empty { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse[data-live],
+  .item, .reading { animation: none; }
+}
