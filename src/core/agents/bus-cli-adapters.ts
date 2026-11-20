@@ -157,7 +157,9 @@ export function frameBusInbox(cli: BusCli, messages: readonly InboxMessage[]): s
   for (const message of messages) {
     const where = message.kind === 'channel' ? `#${message.channel}` : message.kind;
     const from = message.fromAgent ? `agent:${message.fromAgent}` : `label ${message.envelope.from}`;
-    const line = clean(`[${message.priority} ${where} id=${message.envelope.id} from ${from}] ${summary(message)}`);
+    const held = message.held === undefined ? '' :
+      ` held=${message.held === null ? 'unknown' : message.held ? 'yes' : 'no'}${message.holder ? ` holder=${message.holder}` : ''}`;
+    const line = clean(`[${message.priority} ${where} id=${message.envelope.id} from ${from}${held}] ${summary(message)}`);
     if (used + line.length + 1 > BUS_INBOX_FRAME_MAX) break;
     lines.push(line);
     used += line.length + 1;

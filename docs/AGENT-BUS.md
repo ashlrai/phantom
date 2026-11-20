@@ -274,6 +274,12 @@ payloads summarize as counts only, never message text); claim tokens and
 never appear, string bodies render as their scrubbed text, and
 unrecognized bodies keep a secret-scrubbed raw JSON render clipped to 512
 characters so one large body cannot crowd out the rest of the frame.
+Claimable work and worker-handoff items carry `held`/`holder` — the same
+hold evidence `show` reports — so an agent sees whether pending work is
+already taken, and by whom, without a lookup per message; the marker also
+appears inside the frame's bracket on those items. `held` is
+`true`/`false` only when both hold stores were read — a store that cannot
+be read reports `held: null` (unknown), never free.
 `phm agents bus wakes <agent>` lists wake hints for the agent and its
 channels.
 
