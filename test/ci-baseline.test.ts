@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -51,7 +51,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     else if (endpoint.includes('/jobs/') && endpoint.endsWith('/logs')) {
       if (options.unreadable) return { ok: false, stdout: '', stderr: '403' };
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.web ? 'web-shared' : 'shared';
       return success(`/usr/bin/git log -1 --format=%H\n${isMaster ? master : head}\n${fixture(name)}`);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
@@ -134,6 +134,50 @@ describe('CI baseline evidence', () => {
     expect(fixed.updates.every(u => u.ready)).toBe(true);
     const flake = await analyzeCiBaseline('owner/repo', github({ suite: true, pass: true, count: 1 }).gh);
     expect(flake.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed' });
+  });
+  it('parses TypeScript diagnostics as per-file typecheck failures', () => {
+    const failures = parseBaselineFailures([
+      'src/core/example.ts(12,7): error TS2322: Type \'string\' is not assignable to type \'number\'.',
+      'src/core/example.ts(40,3): error TS2304: Cannot find name \'missing\'.',
+      'src/web-ui/design/tokens.tsx(8,2): error TS7006: Parameter \'x\' implicitly has an \'any\' type.',
+      'error TS2688: Cannot find type definition file for \'node\'.',
+      'src/../escape.ts(1,1): error TS2322: nope',
+      '/abs/path.ts(1,1): error TS2322: nope',
+      'src/core/not-a-diagnostic.ts: error TS2322 missing position',
+      'plain output line',
+    ].join('\n'));
+    expect(failures.map(f => f.testId)).toEqual([
+      'src/core/example.ts > (typecheck)',
+      'src/web-ui/design/tokens.tsx > (typecheck)',
+    ]);
+    expect(failures[0]?.names).toBe('(typecheck)');
+    expect(failures[0]?.excerpt).toContain('TS2322').toContain('TS2304');
+    expect(failures[1]?.file).toBe('src/web-ui/design/tokens.tsx');
+  });
+  it('groups TypeScript diagnostics and queues master fixes for typecheck breaks', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ tsc: true }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(2);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ names: '(typecheck)', classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    expect(report.groups.map(g => g.testId)).toEqual(['src/core/example.ts > (typecheck)', 'src/core/other.ts > (typecheck)']);
+  });
+  it('attributes typecheck failures to PRs touching the failing file or its imports', async () => {
+    const caused = await analyzeCiBaseline('owner/repo', github({ tsc: true, touched: 'src/core/example.ts' }).gh);
+    const byId = new Map(caused.groups.map(g => [g.testId, g]));
+    expect(byId.get('src/core/example.ts > (typecheck)')?.action).toBe('pr-caused');
+    expect(byId.get('src/core/other.ts > (typecheck)')?.action).toBe('queue-master-fix');
+    const contents = {
+      'src/core/example.ts': "import { dep } from './dep.js';\nexport const x: number = dep;",
+      'src/core/dep.ts': 'export const dep = 1;',
+      'src/core/other.ts': 'export const y = 2;',
+    };
+    const imported = await analyzeCiBaseline('owner/repo', github({ tsc: true, touched: 'src/core/dep.ts', contents }).gh);
+    const importedById = new Map(imported.groups.map(g => [g.testId, g]));
+    expect(importedById.get('src/core/example.ts > (typecheck)')?.action).toBe('pr-caused');
+    expect(importedById.get('src/core/other.ts > (typecheck)')?.action).toBe('queue-master-fix');
   });
   it('resolves bundler-style imports across the dependency closure', async () => {
     const contents = {
