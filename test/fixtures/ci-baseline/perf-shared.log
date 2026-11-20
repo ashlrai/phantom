@@ -1,0 +1,138 @@
+> phantom@0.0.0 check:perf
+> node scripts/perf-budget.mjs --runner hyperfine --home "$RUNNER_TEMP/perf-home" --json
+
+{
+  "schema": "ashlr.perf-budget-report.v1",
+  "ok": false,
+  "runner": "hyperfine",
+  "budgets": "perf/budgets.json",
+  "results": [
+    {
+      "id": "phm-version",
+      "command": "node bin/ashlr --version",
+      "baseline_ms": 400,
+      "tolerance": 0.2,
+      "optional": false,
+      "status": "pass",
+      "stats": {
+        "runs": 8,
+        "median_ms": 388.4,
+        "mean_ms": 391.2,
+        "min_ms": 370.1,
+        "max_ms": 412.9
+      },
+      "exitCodes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "budget_ms": 480,
+      "delta_pct": -19.1
+    },
+    {
+      "id": "phm-help",
+      "command": "node bin/ashlr --help",
+      "baseline_ms": 600,
+      "tolerance": 0.2,
+      "optional": false,
+      "status": "pass",
+      "stats": {
+        "runs": 8,
+        "median_ms": 512.7,
+        "mean_ms": 520.4,
+        "min_ms": 498.3,
+        "max_ms": 601.8
+      },
+      "exitCodes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "budget_ms": 720,
+      "delta_pct": -28.8
+    },
+    {
+      "id": "phm-status",
+      "command": "node bin/ashlr status",
+      "baseline_ms": 800,
+      "tolerance": 0.2,
+      "optional": false,
+      "status": "fail",
+      "stats": {
+        "runs": 8,
+        "median_ms": 1042.6,
+        "mean_ms": 1058.1,
+        "min_ms": 990.4,
+        "max_ms": 1187.2
+      },
+      "exitCodes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "budget_ms": 960,
+      "delta_pct": 8.6
+    },
+    {
+      "id": "phm-doctor",
+      "command": "node bin/ashlr doctor",
+      "baseline_ms": 10000,
+      "tolerance": 0.2,
+      "optional": false,
+      "status": "error",
+      "why": "command exceeded 60000 ms timeout"
+    },
+    {
+      "id": "phm-mcp-tools-list",
+      "command": "node scripts/perf-mcp-tools-list.mjs",
+      "baseline_ms": 3000,
+      "tolerance": 0.2,
+      "optional": false,
+      "status": "pass",
+      "stats": {
+        "runs": 8,
+        "median_ms": 2411.5,
+        "mean_ms": 2398.0,
+        "min_ms": 2287.9,
+        "max_ms": 2510.2
+      },
+      "exitCodes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "budget_ms": 3600,
+      "delta_pct": -33.0
+    },
+    {
+      "id": "phantom-wrapper-warm",
+      "command": "phantom --version",
+      "baseline_ms": 250,
+      "tolerance": 0.2,
+      "optional": true,
+      "status": "skip",
+      "why": "requires_bin \"phantom\" is not on PATH"
+    }
+  ]
+}
+##[error]Process completed with exit code 2.

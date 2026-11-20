@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -55,7 +55,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     else if (endpoint.includes('/jobs/') && endpoint.endsWith('/logs')) {
       if (options.unreadable) return { ok: false, stdout: '', stderr: '403' };
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.web ? 'web-shared' : 'shared';
       return success(`/usr/bin/git log -1 --format=%H\n${isMaster ? master : head}\n${fixture(name)}`);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
@@ -471,6 +471,76 @@ describe('CI baseline evidence', () => {
     // A singleton unaffected failure can never prove a master pass.
     const singleton = await analyzeCiBaseline('owner/repo', github({ version: true, count: 1, pass: true, contents }).gh);
     expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('parses perf-budget reports as per-target failures', () => {
+    const failures = parseBaselineFailures(fixture('perf-shared'));
+    expect(failures.map(f => f.testId)).toEqual([
+      'perf/budgets.json > (perf-budget) phm-status',
+      'perf/budgets.json > (perf-budget) phm-doctor',
+    ]);
+    expect(failures[0]).toMatchObject({ file: 'perf/budgets.json', names: '(perf-budget) phm-status' });
+    expect(failures[0]?.excerpt).toContain('status=fail');
+    expect(failures[0]?.excerpt).toContain('median_ms=1042.6');
+    expect(failures[0]?.excerpt).toContain('budget_ms=960');
+    expect(failures[0]?.excerpt).toContain('delta_pct=8.6');
+    expect(failures[1]?.excerpt).toContain('status=error');
+    expect(failures[1]?.excerpt).toContain('command exceeded 60000 ms timeout');
+    // Timestamped job-log lines parse the same way.
+    const stamped = fixture('perf-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped).map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    // Passing reports, skipped-only results, other schemas, malformed or
+    // multi-line blocks, absolute or escaping budgets paths, unknown
+    // statuses, malformed results and unrelated JSON stay unparsed.
+    const report = (results: unknown, extra: Record<string, unknown> = {}) => JSON.stringify({
+      schema: 'ashlr.perf-budget-report.v1', ok: false, runner: 'hyperfine', budgets: 'perf/budgets.json', results, ...extra,
+    }, null, 2);
+    for (const bad of [
+      report([{ id: 'phm-status', status: 'pass', stats: { median_ms: 1 }, budget_ms: 2, delta_pct: 0 }], { ok: true }),
+      report([{ id: 'phantom-wrapper-warm', status: 'skip', why: 'requires_bin "phantom" is not on PATH' }]),
+      report([{ id: 'Bad_ID', status: 'fail' }]),
+      report([{ id: 'phm-status', status: 'unknown' }]),
+      report([{ status: 'fail' }]),
+      report(['not-an-object']),
+      report([{ id: 'phm-status', status: 'fail' }], { budgets: '/abs/path.json' }),
+      report([{ id: 'phm-status', status: 'fail' }], { budgets: '../escape.json' }),
+      report([{ id: 'phm-status', status: 'fail' }], { budgets: 42 }),
+      JSON.stringify({ schema: 'other.v1', ok: false, budgets: 'perf/budgets.json', results: [{ id: 'x', status: 'fail' }] }, null, 2),
+      '{\n  "schema": "ashlr.perf-budget-report.v1",\n  "ok": false,\n  "budgets": "perf/budgets.json",\n  "results": [\n    {\n      "id": "phm-status",\n      "status": "fail"\n    }\n  ]\n',
+      '{"schema":"ashlr.perf-budget-report.v1","ok":false,"budgets":"perf/budgets.json","results":[{"id":"phm-status","status":"fail"}]}',
+      '{\n  "unrelated": true\n}',
+    ]) {
+      expect(parseBaselineFailures(bad), bad.slice(0, 80)).toEqual([]);
+    }
+    const secret = 'ghp_' + 'a'.repeat(36);
+    const leaky = report([{ id: 'phm-status', status: 'error', why: `token ${secret} leaked` }]);
+    expect(parseBaselineFailures(leaky)[0]?.excerpt).not.toContain(secret);
+  });
+  it('groups perf-budget failures per target and attributes gate inputs', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ perf: true }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(2);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ file: 'perf/budgets.json', classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.testId).toMatch(/^perf\/budgets\.json > \(perf-budget\) phm-(status|doctor)$/);
+      expect(group.brief).toContain(group.testId);
+    }
+    // The budgets spec, the checker and harness scripts, the launcher and
+    // the dependency manifests are all direct inputs: touching any one is
+    // PR-caused.
+    for (const touched of ['perf/budgets.json', 'scripts/perf-budget.mjs', 'scripts/perf-mcp-tools-list.mjs', 'bin/ashlr', 'package.json', 'package-lock.json']) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ perf: true, touched }).gh);
+      for (const group of caused.groups) expect(group.action, `${touched} -> ${group.testId}`).toBe('pr-caused');
+    }
+    // The measured CLI graph has no enumerable closure: src/ changes stay
+    // unattributed and share the baseline rather than claiming causation.
+    for (const touched of ['src/core/status.ts', 'src/cli/index.ts', 'docs/README.md']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ perf: true, touched }).gh);
+      for (const group of shared.groups) expect(group.classification, `${touched} -> ${group.testId}`).toBe('shared-baseline');
+    }
+    // A singleton unaffected failure can never prove a master pass: the
+    // report format has no vitest pass line, so it stays unknown.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ perf: true, count: 1, pass: true }).gh);
+    for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
   });
   it('keeps TAP indentation on timestamped job-log lines', () => {
     const block = [
