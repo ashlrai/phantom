@@ -264,6 +264,8 @@ describe('readBusWorkMine', () => {
     expect(result.jobs.jobs[0]).toMatchObject({ id: 'RQ-M-9', claimable: null, freeKeys: null, heldKeys: null });
     // The claimable-envelope walk degrades the same way: listed, holds unknown.
     expect(result.next).toMatchObject({ status: 'ok', holds: 'unknown', matched: 0 });
+    // The handoff walk shares the scan and the hold join: same honest unknown.
+    expect(result.handoffs).toMatchObject({ status: 'ok', holds: 'unknown', matched: 0 });
     // The feed itself still reads; only the hold join is unknown.
     expect(result.wakes.status).toBe('ok');
   });
@@ -331,6 +333,112 @@ describe('readBusWorkMine', () => {
     const again = mutateBusWorkClaim({ action: 'acquire', id: 'w-high-2', owner: 'late',
       leaseMs: 60_000, root: options.root });
     expect(again.status).toBe('acquired');
+  });
+
+  it('lists live worker-handoff assignments with the envelope ids handoff-receive takes', async () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', aliases: ['atlas-alias'],
+      runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova',
+      runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+
+    // Two receivable handoffs in claim order: the P0 alias-addressed one first.
+    expect(await sendHandoff({ from: 'nova', to: 'atlas-alias', taskId: 'RQ-H-1',
+      prompt: 'take the alpha task', id: 'ho-p0', priority: 'P0' }, options))
+      .toMatchObject({ status: 'posted' });
+    expect(await sendHandoff({ from: 'nova', to: 'atlas', taskId: 'RQ-H-2',
+      prompt: 'take the beta task', id: 'ho-p2', priority: 'P2' }, options))
+      .toMatchObject({ status: 'posted' });
+    // A raw handoff addressed to the alias label matches while the registry resolves it.
+    const aliasPost = appendBusInbox({ id: 'ho-alias', from: 'agent:nova', to: 'atlas-alias',
+      priority: 'P2', ttl: 120_000,
+      body: { kind: 'worker-handoff', taskId: 'RQ-H-3', prompt: 'alias addressed' } },
+      { root: options.root, now: options.now });
+    expect(aliasPost.status).toBe('posted');
+    // Handoff-shaped bodies handoff-receive would refuse are not pending assignments.
+    for (const [i, body] of [
+      { kind: 'worker-handoff', taskId: 'not a job id!', prompt: 'x' },
+      { kind: 'worker-handoff', taskId: 'RQ-H-9', prompt: '' },
+      { kind: 'worker-handoff', taskId: 'RQ-H-9', prompt: 'x', extra: 1 },
+      { kind: 'worker-handoff', taskId: 'RQ-H-9' },
+      { kind: 'note', text: 'worker-handoff-ish' },
+    ].entries()) {
+      const posted = appendBusInbox({ id: `ho-bad-${i}`, from: 'agent:nova', to: 'agent:atlas',
+        priority: 'P0', ttl: 120_000, body: body as BusEnvelope['body'] },
+        { root: options.root, now: options.now });
+      expect(posted.status).toBe('posted');
+    }
+    // A handoff addressed to someone else never appears in atlas's digest.
+    expect(await sendHandoff({ from: 'atlas', to: 'nova', taskId: 'RQ-H-7',
+      prompt: 'not atlas work', id: 'ho-nova' }, options)).toMatchObject({ status: 'posted' });
+
+    // A bus-next claim on one handoff is reported as evidence, not a gate.
+    takeWork(options, 'ho-p2', 'nova');
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.handoffs).toMatchObject({ status: 'ok', holds: 'complete', matched: 3, truncated: false });
+    if (result.handoffs.status !== 'ok') throw new Error('unreachable');
+    // Claim order: P0 first, then the two P2 labels in cursor order.
+    expect(result.handoffs.items.map(item => item.id)).toEqual(['ho-p0', 'ho-p2', 'ho-alias']);
+    expect(result.handoffs.items[0]).toMatchObject({ taskId: 'RQ-H-1', priority: 'P0',
+      from: 'agent:nova', fromAgent: 'nova', held: false, holder: null });
+    expect(result.handoffs.items[0]!.summary).toContain('handoff task RQ-H-1');
+    expect(result.handoffs.items[0]!.summary).toContain('take the alpha task');
+    expect(result.handoffs.items[1]).toMatchObject({ taskId: 'RQ-H-2', held: true, holder: 'nova' });
+    expect(result.handoffs.items[2]).toMatchObject({ taskId: 'RQ-H-3', held: false });
+    for (const item of result.handoffs.items) {
+      expect(item.id).toMatch(/^ho-/);
+      expect(Date.parse(item.expiresAt)).toBeGreaterThan(Date.parse(item.ts));
+    }
+    // The digest stays read-only: the handoffs it lists are still receivable.
+    const inbox = readAgentInbox('atlas', {}, options);
+    expect(inbox.status).toBe('ok');
+
+    // The same handoffs surface under every label of the identity.
+    for (const ref of ['agent:atlas', 'atlas-alias', stableAgentId('atlas')]) {
+      const other = readBusWorkMine(ref, options);
+      expect(other.status).toBe('ok');
+      if (other.status !== 'ok' || other.handoffs.status !== 'ok') throw new Error('unreachable');
+      expect(other.handoffs.matched).toBe(3);
+    }
+
+    // An unreadable registry narrows to the literal label, never widens.
+    writeFileSync(join(options.root, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+    const narrowed = readBusWorkMine('agent:atlas', options);
+    expect(narrowed.status).toBe('ok');
+    if (narrowed.status !== 'ok' || narrowed.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(narrowed.handoffs.matched).toBe(2);
+    expect(narrowed.handoffs.items.map(item => item.id)).toEqual(['ho-p0', 'ho-p2']);
+    expect(narrowed.handoffs.items.every(item => item.fromAgent === null)).toBe(true);
+    const aliased = readBusWorkMine('atlas-alias', options);
+    expect(aliased.status).toBe('ok');
+    if (aliased.status !== 'ok' || aliased.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(aliased.handoffs.matched).toBe(1);
+    expect(aliased.handoffs.items[0]).toMatchObject({ id: 'ho-alias' });
+  });
+
+  it('caps shown handoffs at twenty with the true total', () => {
+    const options = setup();
+    register(options, 'atlas');
+    for (let i = 1; i <= 21; i += 1) {
+      const posted = appendBusInbox({ id: `ho-cap-${String(i).padStart(2, '0')}`, from: 'agent:nova',
+        to: 'agent:atlas', priority: 'P2', ttl: 120_000,
+        body: { kind: 'worker-handoff', taskId: `RQ-C-${i}`, prompt: `handoff ${i}` } },
+        { root: options.root, now: options.now });
+      expect(posted.status).toBe('posted');
+    }
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok' || result.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(result.handoffs).toMatchObject({ holds: 'complete', matched: 21, truncated: true });
+    expect(result.handoffs.items).toHaveLength(20);
+    // Same priority, so claim order is cursor order: the first twenty show.
+    expect(result.handoffs.items[0]).toMatchObject({ id: 'ho-cap-01', taskId: 'RQ-C-1' });
+    expect(result.handoffs.items[19]).toMatchObject({ id: 'ho-cap-20', taskId: 'RQ-C-20' });
   });
 
   it('keeps completed work taken and frees released and expired claims', () => {
@@ -432,6 +540,8 @@ describe('readBusWorkMine', () => {
     // Candidates stay listed; only the provable hold state degrades.
     expect(result.next).toMatchObject({ holds: 'unknown', matched: 1, truncated: false });
     expect(result.next.items[0]).toMatchObject({ id: 'w-held', held: null, holder: null });
+    // The handoff section shares the same walk and hold coverage.
+    expect(result.handoffs).toMatchObject({ holds: 'unknown', matched: 0 });
   });
 
   it('reports the claimable walk unavailable when the bus store is unreadable', () => {
@@ -444,6 +554,7 @@ describe('readBusWorkMine', () => {
     expect(result.status).toBe('ok');
     if (result.status !== 'ok') throw new Error('unreachable');
     expect(result.next).toEqual({ status: 'unavailable', reason: 'Bus store is not readable.' });
+    expect(result.handoffs).toEqual({ status: 'unavailable', reason: 'Bus store is not readable.' });
   });
 });
 
@@ -460,6 +571,7 @@ describe('formatBusWorkMine', () => {
     expect(text).toContain('jobs=1 shown=1 holds=complete');
     expect(text).toContain('RQ-F-1 queued "Job RQ-F-1" claimable=yes addressed=false');
     expect(text).toContain('next=0 shown=0 holds=complete');
+    expect(text).toContain('handoffs=0 shown=0 holds=complete');
     expect(text).toContain('wakes=0');
     expect(text).toContain('inbox=0');
     // A non-ok top-level result renders its status line only.
@@ -499,6 +611,7 @@ describe('phm agents bus work mine', () => {
       claims: { status: 'ok', source: 'missing', claims: [] },
       jobs: { status: 'ok', holds: 'complete', jobs: [] },
       next: { status: 'ok', holds: 'complete', matched: 0, items: [], truncated: false },
+      handoffs: { status: 'ok', holds: 'complete', matched: 0, items: [], truncated: false },
       wakes: { status: 'ok', wakes: [] },
       inbox: { status: 'ok', messages: [], truncated: false } });
   });

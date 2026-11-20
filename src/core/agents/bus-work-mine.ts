@@ -1,9 +1,10 @@
 /**
  * `agents bus work mine`: one read answering "what is pending for this agent" —
  * the live claims it holds under any of its labels, the open work-feed jobs it
- * could still claim, the claimable work envelopes addressed to it in `bus
- * next` order, the wake hints addressed to it and the next page of mail in its
- * inbox. Each section reads the same projection the dedicated verb
+ * could still claim, the claimable work envelopes and worker-handoff
+ * assignments addressed to it in `bus next` order, the wake hints addressed to
+ * it and the next page of mail in its inbox. Each section reads the same
+ * projection the dedicated verb
  * serves and keeps its honesty rules: an unreadable store, coordination table,
  * registry or wake queue narrows the match or reports unknown, never an empty
  * list passed off as fact. Routing labels are not authentication; claims
@@ -21,6 +22,7 @@ import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter } from '.
 import { BUS_PROTOCOL_KEY, BUS_PRIORITIES, isClaimableWork,
   type BusPriority } from '../fleet/bus-envelope.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
+import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
 import type { BusWakeRow } from '../fleet/bus-wake-queue.js';
 import type { WorkJob } from './bus-v2-schema.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -135,18 +137,55 @@ export type BusWorkMineNext =
       truncated: boolean }
   | { status: 'unavailable' | 'retryable' | 'invalid'; reason: string };
 
+/** One live worker-handoff assignment addressed to the agent. */
+export interface BusWorkMineHandoff {
+  cursor: number;
+  /** Envelope id — the handle `fleet handoff-receive --id` and `handoff-reply --id` take. */
+  id: string;
+  /** Fleet job id the handoff body carries; the same id its snapshot must name. */
+  taskId: string;
+  priority: BusPriority;
+  /** ISO receipt time. */
+  ts: string;
+  /** ISO expiry of the retained envelope; it stops being receivable then. */
+  expiresAt: string;
+  /** Raw sender routing label; `fromAgent` is its resolved handle or null. */
+  from: string;
+  fromAgent: string | null;
+  /** Scrubbed, single-line body summary, clipped to the digest bound. */
+  summary: string;
+  /** Same tri-state hold rule as `next` items: a taken claim or coordination
+   * hold on the envelope is reported, never a guess; receiving a handoff does
+   * not check claims, so `held` is evidence, not a gate. */
+  held: boolean | null;
+  /** Owner label of the blocking claim when held and known; null otherwise. */
+  holder: string | null;
+}
+
+export type BusWorkMineHandoffs =
+  | { status: 'ok';
+      /** complete: both claim stores were read, so `held` is provable per item; unknown: a store could not be read. */
+      holds: 'complete' | 'unknown';
+      /** Every live worker-handoff envelope addressed to the agent, before the display cap. */
+      matched: number;
+      items: BusWorkMineHandoff[];
+      /** True only when matched items remain beyond the shown page. */
+      truncated: boolean }
+  | { status: 'unavailable' | 'retryable' | 'invalid'; reason: string };
+
 export type BusWorkMineResult =
   | { status: 'ok'; agent: BusWorkMineAgent; asOf: string;
       claims: BusWorkMineClaims; jobs: BusWorkMineJobs; next: BusWorkMineNext;
-      wakes: BusWorkMineWakes; inbox: BusWorkMineInbox }
+      handoffs: BusWorkMineHandoffs; wakes: BusWorkMineWakes; inbox: BusWorkMineInbox }
   | { status: 'invalid'; reason: string };
 
 /** Newest open jobs, newest wake hints and next inbox page a digest shows; totals stay honest via `open`/`truncated`. */
 const WORK_MINE_JOBS_MAX = 50;
 const WORK_MINE_WAKES_MAX = 20;
 const WORK_MINE_INBOX_MAX = 20;
-/** Claimable envelopes a digest shows in claim order; `matched` keeps the true total. */
+/** Claimable envelopes and handoffs a digest shows in claim order; `matched` keeps the true total. */
 const WORK_MINE_NEXT_MAX = 10;
+const WORK_MINE_HANDOFFS_MAX = 20;
 /** Bounded scan over the retained store, same page bound the inbox reader uses. */
 const WORK_MINE_NEXT_MAX_PAGES = Math.ceil(BUS_INBOX_MAX_MESSAGES / BUS_INBOX_MAX_READ) + 1;
 /** Display clip for one mail summary; the digest carries no raw body, so JSON and human output share it. */
@@ -253,23 +292,46 @@ interface NextCandidate {
   expiresAt: number;
 }
 
+interface HandoffCandidate {
+  cursor: number;
+  receivedAt: number;
+  priority: BusPriority;
+  id: string;
+  taskId: string;
+  from: string;
+  fromAgent: string | null;
+  summary: string;
+  expiresAt: number;
+}
+
+/** One bounded-walk failure shared by the `next` and `handoffs` sections — same store, same read. */
+type PendingWorkScanFail = { status: 'unavailable' | 'retryable' | 'invalid'; reason: string };
+
 /**
- * The claimable work `fleet bus-next` would walk for this agent: every live
- * envelope whose body `isClaimableWork` accepts (`kind:'work'` or a
- * protocol-v1 `task`) and whose `to` label resolves to the agent under the
- * same identity matching the feed `--to` filter and `bus next` use, ordered
- * the way `claimNextBusWork` claims — priority band, then cursor. Each item
- * reports its hold state against the same two stores the unified inbox
- * consults: a taken message-id claim row (live lease or completed) on the
- * exact receipt, or a live coordination row blocking `queue:<envelope id>`.
- * An unreadable claims or coordination store degrades `holds` to `unknown` and
- * every item's `held` to null — candidates are still listed rather than hidden,
- * matching the unified inbox's degraded rule. Read-only: no claims, no mutations.
+ * The pending work `fleet bus-next` and `fleet handoff-receive` would find for
+ * this agent, from one bounded walk of the retained store: every live envelope
+ * whose body is claimable work (`kind:'work'` or a protocol-v1 `task`) or a
+ * receivable `worker-handoff`, and whose `to` label resolves to the agent
+ * under the same identity matching the feed `--to` filter and `bus next` use,
+ * ordered the way `claimNextBusWork` claims — priority band, then cursor.
+ * Each item reports its hold state against the same two stores the unified
+ * inbox consults: a taken message-id claim row (live lease or completed) on
+ * the exact receipt, or a live coordination row blocking `queue:<envelope
+ * id>`. An unreadable claims or coordination store degrades `holds` to
+ * `unknown` and every item's `held` to null — candidates are still listed
+ * rather than hidden, matching the unified inbox's degraded rule. Read-only:
+ * no claims, no mutations.
  */
-function nextSection(agent: string, options: BusWorkMineOptions, nowMs: number,
-  registry: AgentRegistry | undefined): BusWorkMineNext {
+function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: number,
+  registry: AgentRegistry | undefined): { next: BusWorkMineNext; handoffs: BusWorkMineHandoffs } {
+  const scanFail = (result: PendingWorkScanFail) => ({ next: result, handoffs: result });
   const toMatch = busWorkFeedToMatcher(agent, { root: options.root });
-  const candidates: NextCandidate[] = [];
+  const nextCandidates: NextCandidate[] = [];
+  const handoffCandidates: HandoffCandidate[] = [];
+  const sender = (from: string): string | null =>
+    registry === undefined ? null : resolveAgent(registry, from)?.handle ?? null;
+  const summaryOf = (body: unknown): string =>
+    mineField(busBodySummary(body) ?? busBodyFallbackSummary(body), WORK_MINE_SUMMARY_MAX);
   let cursor = 0, finished = false;
   // The same bounded walk `bus next` and the unified inbox use: a short page
   // proves the retained store was scanned to its end, a stalled cursor or an
@@ -277,31 +339,42 @@ function nextSection(agent: string, options: BusWorkMineOptions, nowMs: number,
   for (let index = 0; index < WORK_MINE_NEXT_MAX_PAGES && !finished; index += 1) {
     const page = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ, { root: options.root, now: () => nowMs });
     if (page.status !== 'ok') {
-      return { status: page.status === 'retryable' ? 'retryable' : page.status === 'invalid' ? 'invalid' : 'unavailable',
-        reason: 'Bus store is not readable.' };
+      return scanFail({ status: page.status === 'retryable' ? 'retryable' : page.status === 'invalid' ? 'invalid' : 'unavailable',
+        reason: 'Bus store is not readable.' });
     }
     for (const row of page.messages) {
-      const envelope = row.envelope, kind = claimableKind(envelope.body);
-      if (kind === null || !toMatch(envelope.to)) continue;
-      candidates.push({
+      const envelope = row.envelope;
+      if (!toMatch(envelope.to)) continue;
+      const kind = claimableKind(envelope.body);
+      if (kind !== null) {
+        nextCandidates.push({
+          cursor: row.cursor, receivedAt: row.receivedAt, priority: envelope.priority,
+          id: envelope.id, kind, from: envelope.from, fromAgent: sender(envelope.from),
+          summary: summaryOf(envelope.body),
+          // The reader decrements ttl to what remains; expiry is a real deadline.
+          expiresAt: nowMs + envelope.ttl,
+        });
+        continue;
+      }
+      // Only bodies the handoff verbs themselves accept count as pending
+      // assignments — the shared contract, never a looser local shape.
+      if (!isWorkerHandoffBody(envelope.body)) continue;
+      handoffCandidates.push({
         cursor: row.cursor, receivedAt: row.receivedAt, priority: envelope.priority,
-        id: envelope.id, kind, from: envelope.from,
-        fromAgent: registry === undefined ? null : resolveAgent(registry, envelope.from)?.handle ?? null,
-        summary: mineField(busBodySummary(envelope.body) ?? busBodyFallbackSummary(envelope.body),
-          WORK_MINE_SUMMARY_MAX),
-        // The reader decrements ttl to what remains; expiry is a real deadline.
+        id: envelope.id, taskId: envelope.body.taskId, from: envelope.from, fromAgent: sender(envelope.from),
+        summary: summaryOf(envelope.body),
         expiresAt: nowMs + envelope.ttl,
       });
     }
     if (page.messages.length < BUS_INBOX_MAX_READ) { finished = true; break; }
     if (page.nextCursor <= cursor) {
-      return { status: 'retryable', reason: 'Bus store cursor did not advance.' };
+      return scanFail({ status: 'retryable', reason: 'Bus store cursor did not advance.' });
     }
     cursor = page.nextCursor;
   }
-  if (!finished) return { status: 'retryable', reason: 'Bus store scan exceeded the bounded read.' };
-  candidates.sort((a, b) => BUS_PRIORITIES.indexOf(a.priority) - BUS_PRIORITIES.indexOf(b.priority) ||
-    a.cursor - b.cursor);
+  if (!finished) {
+    return scanFail({ status: 'retryable', reason: 'Bus store scan exceeded the bounded read.' });
+  }
 
   const claimsRead = inspectBusWorkClaims(options.root);
   const coordination = listCoordination(options.root, nowMs);
@@ -317,35 +390,61 @@ function nextSection(agent: string, options: BusWorkMineOptions, nowMs: number,
     }
   }
   const liveCoordination = coordination.claims.filter(row => row.live);
+  const heldFor = (candidate: { id: string; cursor: number; receivedAt: number }) => {
+    if (holdsUnknown) return { held: null, holder: null };
+    const messageOwner = messageClaims.get(`${candidate.id}:${candidate.cursor}:${candidate.receivedAt}`);
+    const coordinationBlocker = liveCoordination.find(row => coordinationRowBlocks(row, `queue:${candidate.id}`));
+    const held = messageOwner !== undefined || coordinationBlocker !== undefined;
+    return { held, holder: held ? messageOwner ?? coordinationBlocker?.owner ?? null : null };
+  };
+  const claimOrder = (a: { priority: BusPriority; cursor: number }, b: { priority: BusPriority; cursor: number }) =>
+    BUS_PRIORITIES.indexOf(a.priority) - BUS_PRIORITIES.indexOf(b.priority) || a.cursor - b.cursor;
+  const holds: 'complete' | 'unknown' = holdsUnknown ? 'unknown' : 'complete';
 
-  const items: BusWorkMineNextItem[] = candidates.slice(0, WORK_MINE_NEXT_MAX).map(candidate => {
-    const messageOwner = holdsUnknown ? undefined
-      : messageClaims.get(`${candidate.id}:${candidate.cursor}:${candidate.receivedAt}`);
-    const coordinationBlocker = holdsUnknown ? undefined
-      : liveCoordination.find(row => coordinationRowBlocks(row, `queue:${candidate.id}`));
-    const held = holdsUnknown ? null : messageOwner !== undefined || coordinationBlocker !== undefined;
-    return {
-      cursor: candidate.cursor, id: candidate.id, priority: candidate.priority,
-      ts: new Date(candidate.receivedAt).toISOString(),
-      expiresAt: new Date(candidate.expiresAt).toISOString(),
-      kind: candidate.kind, from: candidate.from, fromAgent: candidate.fromAgent,
-      summary: candidate.summary, held,
-      holder: held === true ? messageOwner ?? coordinationBlocker?.owner ?? null : null,
-    };
-  });
-  return { status: 'ok', holds: holdsUnknown ? 'unknown' : 'complete', matched: candidates.length,
-    items, truncated: candidates.length > WORK_MINE_NEXT_MAX };
+  nextCandidates.sort(claimOrder);
+  const next: BusWorkMineNext = {
+    status: 'ok', holds, matched: nextCandidates.length,
+    items: nextCandidates.slice(0, WORK_MINE_NEXT_MAX).map(candidate => {
+      const { held, holder } = heldFor(candidate);
+      return {
+        cursor: candidate.cursor, id: candidate.id, priority: candidate.priority,
+        ts: new Date(candidate.receivedAt).toISOString(),
+        expiresAt: new Date(candidate.expiresAt).toISOString(),
+        kind: candidate.kind, from: candidate.from, fromAgent: candidate.fromAgent,
+        summary: candidate.summary, held, holder,
+      };
+    }),
+    truncated: nextCandidates.length > WORK_MINE_NEXT_MAX,
+  };
+
+  handoffCandidates.sort(claimOrder);
+  const handoffs: BusWorkMineHandoffs = {
+    status: 'ok', holds, matched: handoffCandidates.length,
+    items: handoffCandidates.slice(0, WORK_MINE_HANDOFFS_MAX).map(candidate => {
+      const { held, holder } = heldFor(candidate);
+      return {
+        cursor: candidate.cursor, id: candidate.id, taskId: candidate.taskId,
+        priority: candidate.priority,
+        ts: new Date(candidate.receivedAt).toISOString(),
+        expiresAt: new Date(candidate.expiresAt).toISOString(),
+        from: candidate.from, fromAgent: candidate.fromAgent,
+        summary: candidate.summary, held, holder,
+      };
+    }),
+    truncated: handoffCandidates.length > WORK_MINE_HANDOFFS_MAX,
+  };
+  return { next, handoffs };
 }
 
 /**
  * Compose the reads one agent otherwise runs separately — `claim list
- * --owner`, `work feed`, the `bus next` walk, `wakes` and `inbox` — into one
- * snapshot. The claims
+ * --owner`, `work feed`, the `bus next` and `handoff-receive` walks, `wakes`
+ * and `inbox` — into one snapshot. The claims
  * join names the announced jobs each held claim's keys block, from the same
  * feed read the jobs section annotates, so the two views cannot disagree. A
  * non-ok feed leaves `jobs` absent on claims and reports its own state in the
- * jobs section; non-ok claims, next, wakes or inbox reads report their own
- * state rather than zero or an empty list.
+ * jobs section; non-ok claims, next, handoffs, wakes or inbox reads report
+ * their own state rather than zero or an empty list.
  */
 export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {}): BusWorkMineResult {
   if (!AGENT_REF.test(agent)) return { status: 'invalid', reason: 'invalid-agent' };
@@ -365,7 +464,7 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
 
   const feed = readBusWorkFeed({ root: options.root, now: () => nowMs, claims: true });
   const jobs = jobsSection(feed, agent, options.root);
-  const next = nextSection(agent, options, nowMs, registry);
+  const { next, handoffs } = pendingWorkSections(agent, options, nowMs, registry);
 
   if (claims.status === 'ok' && feed.status === 'ok') {
     for (const claim of claims.claims) {
@@ -384,7 +483,7 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
 
   const inbox = inboxSection(agent, options, nowMs);
 
-  return { status: 'ok', agent: who, asOf, claims, jobs, next, wakes, inbox };
+  return { status: 'ok', agent: who, asOf, claims, jobs, next, handoffs, wakes, inbox };
 }
 
 /** Scrubbed, single-line, clipped display field; '' when nothing readable remains. */
@@ -444,6 +543,21 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
       const held = item.held === null ? 'unknown' : item.held ? 'yes' : 'no';
       const holder = item.holder === null ? '' : ` holder=${item.holder}`;
       lines.push(`  [${item.priority} ${item.kind} id=${item.id} from ${from}] ${item.summary} ` +
+        `held=${held}${holder} expires=${item.expiresAt}`);
+    }
+  }
+
+  const handoffs = result.handoffs;
+  if (handoffs.status !== 'ok') {
+    lines.push(`handoffs=unknown ${handoffs.status}`);
+  } else {
+    lines.push(`handoffs=${handoffs.matched} shown=${handoffs.items.length}${handoffs.truncated ? '+truncated' : ''} ` +
+      `holds=${handoffs.holds}`);
+    for (const item of handoffs.items) {
+      const from = item.fromAgent ? `agent:${item.fromAgent}` : `label ${item.from}`;
+      const held = item.held === null ? 'unknown' : item.held ? 'yes' : 'no';
+      const holder = item.holder === null ? '' : ` holder=${item.holder}`;
+      lines.push(`  [${item.priority} handoff id=${item.id} task=${item.taskId} from ${from}] ${item.summary} ` +
         `held=${held}${holder} expires=${item.expiresAt}`);
     }
   }

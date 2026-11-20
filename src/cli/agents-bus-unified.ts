@@ -64,7 +64,9 @@ another declared key — into the shared coordination table; claims coordinate,
 never authenticate. work mine is a read-only per-agent digest — the live
 claims it holds under any of its labels, the open feed jobs still claimable
 for it, the claimable work envelopes addressed to it in bus-next order with
-their hold state, its pending wake hints and the next page of mail addressed
+their hold state, the worker-handoff assignments addressed to it (the
+envelope id is the handle handoff-receive and handoff-reply take), its
+pending wake hints and the next page of mail addressed
 to it — where every section reports its own read state and unknown stays
 unknown.
 status is a read-only probe of the store, registry, wake queue, coordination

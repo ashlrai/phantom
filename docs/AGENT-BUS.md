@@ -325,7 +325,12 @@ never a guess — the claimable work envelopes addressed to it, the same live
 order (priority band, then cursor; the first 10 shown, `matched` the true
 total), each carrying its hold state against the message-claim journal and
 the coordination table — `held` is tri-state, `null` whenever either store is
-unreadable, never a guess — the wake hints addressed to it, capped at the
+unreadable, never a guess — the worker-handoff envelopes addressed to it that
+`fleet handoff-receive`/`handoff-reply` would accept, found in the same
+bounded walk and claim order (the first 20 shown, `matched` the true total),
+each carrying the envelope `id` those verbs take as `--id`, the body's
+`taskId`, sender and the same tri-state hold evidence — the wake hints
+addressed to it, capped at the
 newest 20, and
 the next page of mail in its inbox: the same matching, order and owner-share
 receipt checks `agents bus inbox` applies, capped at the oldest 20 pending
