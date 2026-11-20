@@ -48,6 +48,8 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     fleetRegistry: changed.some((path) => /^src\/cli\/fleet-[^/]*\.ts$/.test(path)),
     docsCheck: changed.some((path) => DOC_MARKDOWN.test(path) || !existing.has(path)),
     quarantineCheck: changed.some((path) => QUARANTINE_TEST_FILE.test(path) || path === QUARANTINE_LEDGER),
+    rustFiles: changed.filter((path) => existing.has(path) && /\.rs$/.test(path)),
+    swiftFiles: changed.filter((path) => existing.has(path) && /\.swift$/.test(path)),
   };
 }
 
@@ -350,6 +352,69 @@ export function runXmlSyntaxCheck(root, files, spawn = spawnSync) {
     return false;
   }
   console.log('PASS xml syntax check');
+  return true;
+}
+
+/** Probe for a working rustfmt; the Tauri desktop broker under desktop/src-tauri is Rust. */
+export function rustPreflight(spawn = spawnSync) {
+  const probe = spawn('rustfmt', ['--version'], { encoding: 'utf8', timeout: 15000 });
+  if (probe.error || probe.signal || probe.status !== 0) {
+    return { ok: false, reason: 'rustfmt is unavailable or did not run; changed .rs files cannot be syntax-checked locally' };
+  }
+  return { ok: true };
+}
+
+// rustfmt parses the whole file before it emits anything, so --emit stdout is
+// a pure syntax check: it writes nothing back, enforces no formatting, and
+// fails only on parse errors. skip_children keeps a crate-root file from
+// descending into its out-of-line modules. Edition 2021 matches
+// desktop/src-tauri/Cargo.toml and the CI rustfmt invocation. Stdout is
+// discarded — the formatted text can be large and is never a diagnostic.
+const RUSTFMT_SYNTAX_ARGS = ['--edition', '2021', '--config', 'skip_children=true', '--emit', 'stdout'];
+
+/** Syntax-check changed .rs files with rustfmt's parser; returns false on any parse failure. */
+export function runRustSyntaxCheck(root, files, spawn = spawnSync) {
+  for (const path of files) {
+    const result = spawn('rustfmt', [...RUSTFMT_SYNTAX_ARGS, path], {
+      cwd: root, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'], timeout: 120000,
+    });
+    if (result.error || result.signal || result.status !== 0) {
+      if (result.stderr) console.error(String(result.stderr).trimEnd());
+      if (result.error) console.error(result.error.message);
+      console.log(`FAIL rust syntax check: ${path}`);
+      return false;
+    }
+  }
+  console.log('PASS rust syntax check');
+  return true;
+}
+
+/** Probe for a working swiftc; tools/custody and tools/desktop-operator are Swift. */
+export function swiftPreflight(spawn = spawnSync) {
+  const probe = spawn('swiftc', ['--version'], { encoding: 'utf8', timeout: 15000 });
+  if (probe.error || probe.signal || probe.status !== 0) {
+    return { ok: false, reason: 'swiftc is unavailable or did not run; changed .swift files cannot be syntax-checked locally' };
+  }
+  return { ok: true };
+}
+
+// `swiftc -parse` runs only the parser stage: no type checking, no module
+// resolution, no output files — the same grammar step `swift build` applies
+// first, so a failure here is a failure there. One spawn per file keeps the
+// diagnostic pointed at the failing path, matching the node check.
+export function runSwiftSyntaxCheck(root, files, spawn = spawnSync) {
+  for (const path of files) {
+    const result = spawn('swiftc', ['-parse', path], {
+      cwd: root, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'], timeout: 120000,
+    });
+    if (result.error || result.signal || result.status !== 0) {
+      if (result.stderr) console.error(String(result.stderr).trimEnd());
+      if (result.error) console.error(result.error.message);
+      console.log(`FAIL swift syntax check: ${path}`);
+      return false;
+    }
+  }
+  console.log('PASS swift syntax check');
   return true;
 }
 
@@ -869,6 +934,26 @@ function main() {
     if (!python.ok) {
       console.log(`SKIP xml syntax check: ${python.reason}`);
     } else if (!runXmlSyntaxCheck(root, selection.xmlFiles)) {
+      process.exitCode = 1;
+    }
+  }
+  if (selection.rustFiles.length === 0) {
+    console.log('PASS rust syntax check skipped: no rust change');
+  } else {
+    const rust = rustPreflight();
+    if (!rust.ok) {
+      console.log(`SKIP rust syntax check: ${rust.reason}`);
+    } else if (!runRustSyntaxCheck(root, selection.rustFiles)) {
+      process.exitCode = 1;
+    }
+  }
+  if (selection.swiftFiles.length === 0) {
+    console.log('PASS swift syntax check skipped: no swift change');
+  } else {
+    const swift = swiftPreflight();
+    if (!swift.ok) {
+      console.log(`SKIP swift syntax check: ${swift.reason}`);
+    } else if (!runSwiftSyntaxCheck(root, selection.swiftFiles)) {
       process.exitCode = 1;
     }
   }
