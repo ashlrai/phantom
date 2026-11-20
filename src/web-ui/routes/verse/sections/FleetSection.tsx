@@ -41,6 +41,7 @@ import { RunsLanesCard } from '../fleet/RunsLanesCard.js';
 import { LaunchesCard } from '../fleet/LaunchesCard.js';
 import { WorkersCard } from '../fleet/WorkersCard.js';
 import { InterjectBox } from '../fleet/InterjectBox.js';
+import { SlackBridgeLine } from '../fleet/SlackBridgeLine.js';
 import { CosTaskList } from '../fleet/CosTaskList.js';
 import { EmptyJobsPanel } from '../growth/EmptyJobsPanel.js';
 import { FleetControl } from '../fleet/FleetControl.js';
@@ -150,6 +151,7 @@ export function FleetSection() {
             <FleetControl actions={actions} grantFlow={grantFlow} darkSince={fleetDarkSince(live)} setupShownBelow={off?.kind === 'setup'} />
           </div>
           <InterjectBox />
+          <SlackBridgeLine />
           <CosTaskList />
           <AutonomyCard />
           <OperationsDeck />

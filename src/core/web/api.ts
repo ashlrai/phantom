@@ -2080,6 +2080,12 @@ export async function handleApi(
       return true;
     }
 
+    // RQ-PHX-SLACKBRIDGEDESK671: offline Slack bridge state; same read class as /api/fleet/job.
+    if (path === '/api/fleet/slack-bridge' && method === 'GET') {
+      (await import('./slack-bridge-read-api.js')).handleSlackBridgeRead(res);
+      return true;
+    }
+
     // ── GET /api/fleet/job ───────────────────────────────────────────────
     // RQ-PHX-JOBDETAIL: single-job detail from the dispatchd runs dir —
     // state, lane/model provenance, publish outcome and a scrubbed bounded
