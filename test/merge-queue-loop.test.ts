@@ -15,6 +15,8 @@ const pr = (over: Partial<MergeQueuePr> = {}): MergeQueuePr => ({
   id: `PR_${over.number ?? 1}`,
   number: 1,
   headSha: sha('a'),
+  headRef: `codex-bridge/test-${over.number ?? 1}`,
+  headRepo: REPO,
   baseRef: 'master',
   isDraft: false,
   author: 'ashlr-fleet[bot]',
@@ -256,13 +258,20 @@ describe('runMergeQueueCycle', () => {
     runMergeQueueCycle(fake.io, { repos: [REPO] });
     expect(calls).toEqual([['pr', 'merge', '1', '--repo', REPO, '--auto', '--match-head-commit', sha('a')]]);
     expect(fake.lines).toHaveLength(1);
-    const snapshot = (claims: { key: string; live: boolean }[]) => readSnapshot(() => ({ data: { repository: {
-      defaultBranchRef: { name: 'master' }, mergeQueue: { id: 'Q' },
-      pullRequests: { nodes: [{ number: 1 }], pageInfo: { hasNextPage: false } },
-    } } }), REPO, claims).prs[0];
+    const snapshot = (claims: { key: string; live: boolean }[], node: Record<string, unknown> = { number: 1 }) =>
+      readSnapshot(() => ({ data: { repository: {
+        defaultBranchRef: { name: 'master' }, mergeQueue: { id: 'Q' },
+        pullRequests: { nodes: [node], pageInfo: { hasNextPage: false } },
+      } } }), REPO, claims).prs[0];
     expect(snapshot([{ key: `pr:${REPO}#1`, live: true }]).activeOwner).toBe(true);
     expect(snapshot([{ key: `repo:${REPO.toUpperCase()}`, live: true }]).activeOwner).toBe(true);
     expect(snapshot([{ key: `pr:${REPO}#1`, live: false }]).activeOwner).toBe(false);
+    const identified = snapshot([], { number: 2, headRefName: 'codex-bridge/RQ-X', headRepository: { nameWithOwner: REPO } });
+    expect([identified.headRef, identified.headRepo]).toEqual(['codex-bridge/RQ-X', REPO]);
+    const forked = snapshot([], { number: 3, headRefName: 'patch-1', headRepository: { nameWithOwner: 'someone/phantom' } });
+    expect([forked.headRef, forked.headRepo]).toEqual(['patch-1', 'someone/phantom']);
+    const bare = snapshot([], { number: 4 });
+    expect([bare.headRef, bare.headRepo]).toEqual(['', null]);
   });
 
   it('enqueues a stranded armed head once and leaves the actual queue to enforce merge checks', () => {
@@ -421,6 +430,44 @@ describe('runMergeQueueCycle', () => {
     const fake = makeIo({ snapshots: only([pr({ number: 9, mergeState: 'DIRTY', headSha: sha('d') })]) });
     fake.io.resolveConflict = () => { throw new Error('must not run'); };
     expect(runMergeQueueCycle(fake.io, { repos: [REPO], dryRun: true }).resolved).toBe(0);
+  });
+
+  it('a transient recut spends no lane job and retries under the same budget', () => {
+    let at = NOW;
+    const fake = makeIo({ snapshots: only([pr({ number: 9, mergeState: 'DIRTY', headSha: sha('d') })]), now: () => at });
+    let resolves = 0;
+    fake.io.resolveConflict = () => (++resolves === 1 ? 'transient' : 'real');
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO] })).toMatchObject({ failed: 1, drained: 0, resolved: 0 });
+    expect(fake.logs).toContain(`MERGEQ_GH_ERROR resolve ${REPO}#9`);
+    expect(fake.lines).toEqual([]);
+    at += 5 * MIN;
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO] })).drained).toBe(0);
+    expect(resolves).toBe(1); // still inside the 15-minute retry window
+    at += 15 * MIN;
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO] })).drained).toBe(1);
+    expect(resolves).toBe(2);
+    expect(fake.lines).toHaveLength(1);
+  });
+
+  it('a recut conflicting PR re-enters the queue only through the gated head-pinned path', () => {
+    let at = NOW;
+    const snapshots = only([pr({ number: 9, mergeState: 'DIRTY', headSha: sha('d') })]);
+    const fake = makeIo({ snapshots, now: () => at });
+    const commands: string[][] = [];
+    fake.io.resolveConflict = (_repo, head) => {
+      expect(head.headSha).toBe(sha('d'));
+      // The recut pushed a merge commit: fresh head, checks restart from none.
+      snapshots.set(REPO, snap([pr({ number: 9, headSha: sha('e'), checks: 'NONE', mergeState: 'CLEAN' })]));
+      return 'resolved';
+    };
+    fake.io.enqueue = (repo, head) => enqueueMergeQueuePr((args: string[]) => commands.push(args), repo, head);
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO] })).toMatchObject({ resolved: 1, enqueued: 0, drained: 0 });
+    expect(fake.lines).toEqual([]);
+    snapshots.set(REPO, snap([pr({ number: 9, headSha: sha('e') })]));
+    at += MIN;
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO] }).enqueued).toBe(1);
+    expect(commands).toEqual([['pr', 'merge', '9', '--repo', REPO, '--auto', '--match-head-commit', sha('e')]]);
+    expect(fake.logs.join('\n')).not.toContain('secret');
   });
 
   it('requeues the recovered head through auto-merge, bounds retries and stops after merge', () => {
