@@ -148,7 +148,19 @@ missed night catches up on the next eligible tick while Verse is running.
 The local producer supplies two newline-terminated JSONL files under
 `~/.ashlr/learn/retro-input/`. Both must exist; an empty review file is valid.
 This is a versioned adapter contract because the router queue format is not
-part of this repository:
+part of this repository. Phantom's own nightly feed (`learn/retro/feed.ts`)
+produces the jobs half: once per due night, inside the state lock, it folds
+the tail of the fleet jobs ledger (`<runs>/metrics/jobs.jsonl`, bounded to the
+input byte cap) into contract rows and merges them into `retro-input/jobs.jsonl`
+by latest `updatedAt` per (repo,id) — externally supplied rows are kept, never
+clobbered, and a missing or unreadable ledger leaves inputs untouched. Only
+explicit terminal outcomes become jobs (MERGED counts as `succeeded`;
+FAILED/CLOSED-unmerged/reverted evidence as `failed`; CANCELLED as
+`cancelled`), a job is emitted only with a proven `owner/repo` and routing arm
+(lane/pool/arm, else `model:<model>`), and rows that cannot prove attribution
+are skipped — unknown stays unknown. `review-blocks.jsonl` is not produced
+locally (review bodies have no local source); a missing review input keeps the
+run `unavailable` until its producer supplies it.
 
 * `jobs.jsonl`: `v: 1`, `id`, `repo` (`owner/repo`), `arm` (a producer-assigned,
   provider-agnostic routing arm), `status`, `updatedAt` (canonical ISO UTC),
