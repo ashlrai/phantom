@@ -13,6 +13,8 @@ const sources: StatusDigestSources = {
   workClaims: undefined,
   // This suite pins the original five digest lines, not the later node-runs line.
   nodeRuns: undefined,
+  // This suite pins the original five digest lines, not the later time-to-merge line.
+  mergeLatency: undefined,
 };
 const now = () => new Date('2026-11-11T12:00:00Z');
 

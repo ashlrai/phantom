@@ -2307,6 +2307,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'merges': {
+        const { cmdMerges } = await import('./merges.js');
+        process.exitCode = await cmdMerges(rest);
+        break;
+      }
+
       case 'jobs': {
         const { cmdJobs } = await import('./jobs-empty.js');
         process.exitCode = await cmdJobs(rest);
