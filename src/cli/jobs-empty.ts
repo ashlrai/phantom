@@ -89,6 +89,8 @@ export async function cmdJobs(args: string[], read = readEmptyJobs, readFamilies
     const { runsRoot } = await import('../core/metrics/loop-collect.js');
     const { recordEmptyTags } = await import('../core/fleet/empty-tags.js');
     await recordEmptyTags(runsRoot(), report.tagged).catch(() => 0);
+    // A job the pre-launch gate let through that ended already_done: keep it so dupcheck's precision can be measured.
+    await (await import('../core/queue/dupcheck-gate.js')).recordDupcheckOutcomes(runsRoot(), report.tagged).catch(() => 0);
   }
   if (json) console.log(JSON.stringify(report));
   else if (by && report.tags) for (const line of (await import('../core/fleet/empty-tags.js')).formatEmptyTags(report.tags, by, hours)) console.log(line);
