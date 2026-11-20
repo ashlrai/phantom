@@ -1247,7 +1247,8 @@ measurements. `suggestOutcomePolicy` returns bounded, evidence-backed
 `generateWeeklySelfReport` produces Markdown for chief-of-staff attachment.
 
 `phm fleet metrics report --hours 24 --json`, `suggest --json` and `weekly`
-read the jobs ledger only. Weekly defaults to 168 hours. The
+read the jobs ledger only, keeping its newest bounded tail on oversized
+ledgers and marking cut evidence degraded. Weekly defaults to 168 hours. The
 [full contract](docs/contracts/CONTRACT-FLEET-OUTCOME-METRICS.md) defines
 cohorts, observation coverage, unknowns, thresholds and exit codes.
 
