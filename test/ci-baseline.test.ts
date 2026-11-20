@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -63,7 +63,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.web ? 'web-shared' : 'shared';
       return success(`/usr/bin/git log -1 --format=%H\n${isMaster ? master : head}\n${fixture(name)}`);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
@@ -768,6 +768,92 @@ describe('CI baseline evidence', () => {
     }
     // A singleton unaffected failure can never prove a master pass.
     const singleton = await analyzeCiBaseline('owner/repo', github({ pack: true, count: 1, pass: true, contents }).gh);
+    for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('parses secret-shape, secret-scan and version-provenance gate failures', () => {
+    const failures = parseBaselineFailures(fixture('trust-shared'));
+    expect(failures.map(f => f.testId)).toEqual([
+      '.github/tests/secret-shape/scrub.pl > (secret-shape)',
+      '.github/workflows/ci.yml > (secret-scan)',
+      '.github/scripts/release-version-provenance.mjs > (version-provenance)',
+    ]);
+    expect(failures[0]).toMatchObject({ file: '.github/tests/secret-shape/scrub.pl', names: '(secret-shape)' });
+    expect(failures[0]?.excerpt).toBe('3 allowed=1');
+    expect(failures[1]).toMatchObject({ file: '.github/workflows/ci.yml', names: '(secret-scan)' });
+    expect(failures[1]?.excerpt).toContain('leaks found: 2');
+    expect(failures[2]).toMatchObject({ file: '.github/scripts/release-version-provenance.mjs', names: '(version-provenance)' });
+    expect(failures[2]?.excerpt).toContain('Only the release-please PR may change the release version');
+    // Timestamped job-log lines parse identically.
+    const stamped = fixture('trust-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped).map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    // The gate-malfunction line groups under the same provenance identity.
+    const malfunction = parseBaselineFailures('release version provenance check failed: merge base unavailable');
+    expect(malfunction.map(f => f.testId)).toEqual(['.github/scripts/release-version-provenance.mjs > (version-provenance)']);
+    // Clean scans, zero counts, the provenance pass line and unrelated
+    // error annotations stay unparsed.
+    for (const bad of [
+      '0 allowed=0',
+      '0 allowed=3',
+      '2',
+      'allowed=2',
+      'no leaks found',
+      'leaks found: 0',
+      'release version provenance: version-unchanged',
+      'release version provenance: release-please-pr',
+      'release version provenance check failed:',
+      '::error::unrelated workflow command failure',
+      '::error::package.json version 1 -> 2',
+      'Error: Secret scan (diff) concluded failure',
+    ]) {
+      expect(parseBaselineFailures(bad), bad).toEqual([]);
+    }
+  });
+  it('groups trust-gate failures and attributes each gate its own inputs', async () => {
+    const contents = {
+      '.github/scripts/release-version-provenance.mjs': "import { execFileSync } from 'node:child_process';\nimport { resolve } from 'node:path';\nimport { fileURLToPath } from 'node:url';",
+      'package.json': '{"version":"3.30.49"}',
+      '.release-please-manifest.json': '{".":"3.30.49"}',
+    };
+    const report = await analyzeCiBaseline('owner/repo', github({ trust: true, contents }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(3);
+    expect(report.groups.map(g => g.testId)).toEqual([
+      '.github/scripts/release-version-provenance.mjs > (version-provenance)',
+      '.github/tests/secret-shape/scrub.pl > (secret-shape)',
+      '.github/workflows/ci.yml > (secret-scan)',
+    ]);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    // Each gate's own definition file is PR-caused for that group only.
+    for (const [touched, id] of [
+      ['.github/tests/secret-shape/scrub.pl', '.github/tests/secret-shape/scrub.pl > (secret-shape)'],
+      ['.github/workflows/ci.yml', '.github/workflows/ci.yml > (secret-scan)'],
+      ['package.json', '.github/scripts/release-version-provenance.mjs > (version-provenance)'],
+      ['.release-please-manifest.json', '.github/scripts/release-version-provenance.mjs > (version-provenance)'],
+      ['.github/scripts/release-version-provenance.mjs', '.github/scripts/release-version-provenance.mjs > (version-provenance)'],
+    ] as const) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ trust: true, touched, contents }).gh);
+      const byId = new Map(caused.groups.map(g => [g.testId, g.action]));
+      expect(byId.get(id), touched).toBe('pr-caused');
+    }
+    // The vitest harness ambient set cannot reach any of these gates, and an
+    // unrelated PR touching only toolchain config stays shared-baseline.
+    for (const touched of ['tsconfig.json', 'vitest.config.ts', 'src/core/status.ts', 'docs/README.md']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ trust: true, touched, contents }).gh);
+      for (const group of shared.groups) expect(group.classification, `${touched} -> ${group.testId}`).toBe('shared-baseline');
+    }
+    // Without the gate script's contents its dependency closure cannot be
+    // proved, so the provenance group stays unknown while the two scanner
+    // gates (whose inputs need no fetch) still classify.
+    const partial = await analyzeCiBaseline('owner/repo', github({ trust: true, contents: { 'package.json': '{}', '.release-please-manifest.json': '{}' } }).gh);
+    const partialById = new Map(partial.groups.map(g => [g.testId, g.classification]));
+    expect(partialById.get('.github/scripts/release-version-provenance.mjs > (version-provenance)')).toBe('unknown');
+    expect(partialById.get('.github/tests/secret-shape/scrub.pl > (secret-shape)')).toBe('shared-baseline');
+    expect(partialById.get('.github/workflows/ci.yml > (secret-scan)')).toBe('shared-baseline');
+    // A singleton unaffected failure can never prove a master pass.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ trust: true, count: 1, pass: true, contents }).gh);
     for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
   });
   it('keeps TAP indentation on timestamped job-log lines', () => {

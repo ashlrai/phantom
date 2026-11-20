@@ -181,6 +181,38 @@ line and classify `shared-baseline`, `pr-caused` or `unknown` -- never
 `Offline partition comparison refused:`), empty messages, non-prefixed
 assert output and unrelated lines stay unparsed.
 
+The PR-visible trust gates fail with no vitest, typecheck or TAP line
+naming them, so each gets its own count-or-verdict identity. The
+`secret-shape` job pipes the candidate diff through the pinned
+`.github/tests/secret-shape/scrub.pl --check --allow-fixtures`, which
+prints only `<blocked> allowed=<n>` and never a matched value; a nonzero
+blocked count groups under `.github/tests/secret-shape/scrub.pl >
+(secret-shape)` and the count line is the whole excerpt. The
+`secret-scan` job runs the pinned gitleaks binary with `--redact` and no
+`-v`, so finding detail never reaches the log -- only the scanner's own
+`WRN leaks found: <n>` summary -- and a nonzero count groups under
+`.github/workflows/ci.yml > (secret-scan)`, the workflow that pins the
+version and owns the invocation. The `quick` job's pull-request-only
+`Require release-please provenance for version bumps` step fails a
+version bump outside a same-repository `release-please--*` branch with
+`::error::<changed carriers>. Only the release-please PR may change the
+release version; ...`, or reports a gate malfunction as `release
+version provenance check failed: <message>`; both group under
+`.github/scripts/release-version-provenance.mjs > (version-provenance)`.
+The diff and commit-range scans have no enumerable repo input -- any
+diff line or scanned commit can carry the shape -- so the scanner groups
+key on the gate definition itself and a shape carried inside a PR's own
+diff stays unattributed rather than guessed at a file; only a PR
+touching the scanner or workflow counts as `pr-caused`. The provenance
+check reads exactly its script plus `package.json` and
+`.release-please-manifest.json`, seeded as static inputs so a PR bumping
+either carrier is `pr-caused`. Like the other non-test identities these
+groups can never resolve through a vitest pass line and classify
+`shared-baseline`, `pr-caused` or `unknown` -- never `probable-flake`.
+Clean scans (`0 allowed=<n>`, `no leaks found`, `leaks found: 0`), the
+provenance pass lines, unrelated `::error::` annotations and unrelated
+lines stay unparsed.
+
 Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
 brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
 with an explicit verbose test pass on master's current run produces
