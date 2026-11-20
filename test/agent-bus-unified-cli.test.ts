@@ -126,6 +126,34 @@ describe('phm agents bus (unified)', () => {
     expect(text.join('\n')).toContain('nextCursor');
   });
 
+  it('filters inbox and channel reads by --thread', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'q1', '--thread', 'rq-1', '--id', 't-dm-1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'q2', '--thread', 'rq-2', '--id', 't-dm-2'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'plain', '--id', 't-dm-3'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'c1', '--thread', 'rq-1', '--id', 't-ch-1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'c2', '--thread', 'rq-9', '--id', 't-ch-2'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    const inbox = await run(['inbox', 'nova', '--thread', 'rq-1']);
+    expect(inbox.code).toBe(0);
+    expect(inbox.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['t-dm-1', 't-ch-1']);
+    const channel = await run(['channel', 'read', 'release', '--thread', 'rq-1']);
+    expect(channel.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['t-ch-1']);
+    expect((await run(['channel', 'read', 'release', '--thread', 'rq-9'])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['t-ch-2']);
+    // A thread label must be a printable v2 label; anything else fails closed.
+    expect(await run(['inbox', 'nova', '--thread', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['channel', 'read', 'release', '--thread', ''])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('records repeatable --ref values as v2 note refs on dm and channel post', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

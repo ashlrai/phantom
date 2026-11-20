@@ -293,6 +293,19 @@ export const busBodySchema = z.union([
 ]);
 export type BusBody = z.infer<typeof busBodySchema>;
 
+/**
+ * The conversation label a `note`/`context` body carries in `thread`, or null
+ * for every other body kind and shape. Thread reads match this field only: it
+ * is the one v2 body field that ties a question and its answer together.
+ */
+export function busBodyThread(body: unknown): string | null {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
+  const record = body as Record<string, unknown>;
+  if (record['kind'] !== 'note' && record['kind'] !== 'context') return null;
+  const thread = record['thread'];
+  return typeof thread === 'string' && thread.length > 0 ? thread : null;
+}
+
 // ─── Work feed ──────────────────────────────────────────────────────
 
 export const workJobSchema = z.object({

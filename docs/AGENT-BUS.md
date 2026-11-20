@@ -197,11 +197,12 @@ resolved identity belongs to. A missing registry is a verified-empty list
 (`source: missing`), an unreadable one is `unavailable` — never an empty
 list — and membership is a routing label set (who may post), not proof of
 presence or authority. `phm agents bus channel read <name> [--topic <t>]
-[--from <agent>] [--after <cursor>] [--limit <n>]` pages the room's posts
+[--from <agent>] [--thread <t>] [--after <cursor>] [--limit <n>]` pages the room's posts
 oldest-first — every live envelope addressed to `group:<name>:*` (or one
 `--topic`), minus `group.presence` heartbeats, which are observations with
 their own read, not messages; `--from` narrows by sender through the same
-identity-label matching `comms bus read` uses. Reading needs no identity
+identity-label matching `comms bus read` uses, and `--thread` narrows to
+`note`/`context` bodies carrying that v2 thread label. Reading needs no identity
 and no membership; an unknown channel is `unknown-channel`, an unreadable
 registry or store is reported — never an empty page passed off as history.
 Because channel addresses are bus-group addresses, existing `subscribeGroup`
@@ -230,10 +231,12 @@ projections — it is threading metadata, never a feed lookup, so a wake needs
 no announced job and reads no feed before posting. Like every send it is
 untrusted data: a wake is a hint to read the inbox and grants no authority.
 
-**Inbox.** `phm agents bus inbox <agent>` returns one page of DMs, handoffs,
+**Inbox.** `phm agents bus inbox <agent> [--thread <t>]` returns one page of
+DMs, handoffs,
 posts in the agent's channels (minus its own) and traffic still addressed to
 its bare handle, stable id or aliases — every ref `resolveAgent` accepts —
-highest priority first. Persist `nextCursor` only after handling the
+highest priority first; `--thread` keeps only `note`/`context` bodies
+carrying that v2 thread label. Persist `nextCursor` only after handling the
 page. `--frame <cli>` prints the page as one bounded block marked untrusted
 data, the same for every CLI: each line summarizes the body — `note`,
 `context` and `worker-handoff` carry their message text, while typed
@@ -475,7 +478,11 @@ these shared projections to every enrolled, authenticated peer, independent of
 lane or role. Private inboxes keep their recipient checks. Routine local DMs use
 `phm agents bus dm --to <handle> --text <text>`; transport and send gates still apply.
 Repeatable `--ref <ref>` on `dm` and `channel post` records v2 `refs` on the
-`note` body.
+`note` body; `--thread <label>` records the v2 `thread` conversation label —
+the field that ties a question and its answer together — on `dm`, `channel
+post`, and (as a read filter) `inbox` and `channel read`, plus `comms bus
+read`/`watch`. A thread read matches that field on `note`/`context` bodies
+only; every other body kind never matches.
 
 `body.kind` is one of:
 
