@@ -249,6 +249,55 @@ describe('thread-filtered reads', () => {
   });
 });
 
+describe('sender-filtered inbox reads', () => {
+  it('narrows an inbox page to one sender under every label of its identity', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    registerAgentIdentity({ handle: 'relay', aliases: ['lane-relay'] }, options);
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova', 'relay'] }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'atlas dm', id: 'dm-a1' }, options);
+    await sendDirectMessage({ from: 'relay', to: 'nova', text: 'relay dm', id: 'dm-r1' }, options);
+    await sendDirectMessage({ from: 'relay', to: 'nova', text: 'threaded', thread: 'rq-7', id: 'dm-r2' }, options);
+    // A post addressed to the bare handle is legacy traffic, still the sender's mail.
+    expect(appendBusInbox({ id: 'leg-r1', from: 'relay', to: 'nova', priority: 'P3', ttl: 60_000,
+      body: { kind: 'note', text: 'legacy' } }, options).status).toBe('posted');
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'atlas post', id: 'ch-a1' }, options);
+    await postChannelMessage({ from: 'relay', channel: 'release', text: 'relay post', id: 'ch-r1' }, options);
+
+    // Every ref of one identity finds its DMs, legacy traffic and channel posts.
+    for (const ref of ['relay', 'lane-relay', 'agent:relay', stableAgentId('relay')]) {
+      const page = readAgentInbox('nova', { from: ref }, options);
+      if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+      expect(page.messages.map(m => m.envelope.id).sort()).toEqual(['ch-r1', 'dm-r1', 'dm-r2', 'leg-r1']);
+    }
+    const atlas = readAgentInbox('nova', { from: 'atlas' }, options);
+    expect(atlas.status === 'ok' && atlas.messages.map(m => m.envelope.id).sort()).toEqual(['ch-a1', 'dm-a1']);
+
+    // An unresolvable ref keeps exact-label matching and finds nothing.
+    expect(readAgentInbox('nova', { from: 'ghost' }, options)).toMatchObject({ status: 'ok', messages: [] });
+    // --from composes with --thread.
+    const threaded = readAgentInbox('nova', { from: 'relay', thread: 'rq-7' }, options);
+    expect(threaded.status === 'ok' && threaded.messages.map(m => m.envelope.id)).toEqual(['dm-r2']);
+    // The unfiltered page still sees everything the filter skipped.
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages.length).toBe(6);
+  });
+
+  it('validates the sender filter and still scans the whole store for nextCursor', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    expect(readAgentInbox('nova', { from: '' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentInbox('nova', { from: 'x'.repeat(129) }, options)).toMatchObject({ status: 'invalid' });
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'one', id: 'dm-v1' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'two', id: 'dm-v2' }, options);
+    // A filter that drops every row still reports a cursor covering the scan.
+    const filtered = readAgentInbox('nova', { from: 'ghost' }, options);
+    if (filtered.status !== 'ok') throw new Error(`unexpected ${filtered.status}`);
+    expect(filtered.messages).toEqual([]);
+    expect(filtered.nextCursor).toBeGreaterThan(0);
+  });
+});
+
 describe('DM, channel, handoff and priority wake on the one bus store', () => {
   it('delivers DMs to agent:<handle> with channel metadata from the identity', async () => {
     const options = setup();
