@@ -14,7 +14,7 @@
 import { coordinationRowBlocks, listCoordination } from './claim-store.js';
 import { listBusClaims, type BusClaimsListClaim, type BusClaimsOwnerMatch } from './bus-claims.js';
 import { readAgentRegistry, resolveAgent, type AgentRegistry } from './bus-identity.js';
-import { BUS_FEED_OPEN_STATUSES, busWorkFeedToMatcher, readBusWorkFeed,
+import { BUS_FEED_OPEN_STATUSES, busWorkFeedOwnerMatcher, busWorkFeedToMatcher, readBusWorkFeed,
   type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import { busBodyFallbackSummary, busBodySummary, readAgentInbox, readAgentWakes,
   type InboxKind } from './bus-unified.js';
@@ -43,6 +43,8 @@ export type BusWorkMineHoldCoverage = 'complete' | 'truncated' | 'unknown';
 export interface BusWorkMineJob extends WorkJob {
   /** True when the announcement `to` label resolves to this agent's identity; false keeps exact-label misses honest. */
   addressed: boolean;
+  /** True when the job's `owner` (announcer) label resolves to this agent's identity — the agent posted it and owns its status reports; false keeps exact-label misses honest. */
+  announced: boolean;
   /** Declared keys with no shown live hold — null unless hold coverage is complete. */
   freeKeys: string[] | null;
   /** Declared keys with at least one shown live hold — null when the hold set itself is unknown. */
@@ -203,14 +205,14 @@ const AGENT_REF = /^[\x21-\x7e]{1,128}$/;
  */
 export function busWorkMineJobAnnotation(
   job: WorkJob, held: ReadonlySet<string> | undefined, coverage: BusWorkMineHoldCoverage,
-  addressed: boolean,
+  addressed: boolean, announced = false,
 ): BusWorkMineJob {
   const heldKeys = coverage === 'unknown' ? null : job.claimKeys.filter(key => held?.has(key));
   const freeKeys = coverage === 'complete' ? job.claimKeys.filter(key => !held?.has(key)) : null;
   const claimable = coverage === 'unknown' ? null
     : coverage === 'complete' ? job.claimKeys.some(key => !held?.has(key))
     : heldKeys !== null && heldKeys.length === job.claimKeys.length ? false : null;
-  return { ...job, addressed, freeKeys, heldKeys, claimable };
+  return { ...job, addressed, announced, freeKeys, heldKeys, claimable };
 }
 
 function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined): BusWorkMineJobs {
@@ -230,11 +232,12 @@ function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | 
     .filter(job => BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length > 0)
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const toMatch = busWorkFeedToMatcher(agent, { root });
+  const ownerMatch = busWorkFeedOwnerMatcher(agent, { root });
   return {
     status: 'ok', holds: coverage, open: open.length, receipts: feed.receipts,
     truncated: open.length > WORK_MINE_JOBS_MAX,
     jobs: open.slice(0, WORK_MINE_JOBS_MAX).map(job =>
-      busWorkMineJobAnnotation(job, heldByJob.get(job.id), coverage, toMatch(job.to))),
+      busWorkMineJobAnnotation(job, heldByJob.get(job.id), coverage, toMatch(job.to), ownerMatch(job.owner))),
   };
 }
 
@@ -527,7 +530,7 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
       const keys = (list: string[] | null): string => list === null ? '-' : mineField(list.join(','), 400);
       const claimable = job.claimable === null ? 'unknown' : job.claimable ? 'yes' : 'no';
       lines.push(`  ${job.id} ${job.status}${title === '' ? '' : ` "${title}"`} ` +
-        `claimable=${claimable} addressed=${job.addressed} owner=${job.owner} repo=${job.repo} ` +
+        `claimable=${claimable} addressed=${job.addressed} announced=${job.announced} owner=${job.owner} repo=${job.repo} ` +
         `free=${keys(job.freeKeys)} held=${keys(job.heldKeys)}`);
     }
   }

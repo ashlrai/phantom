@@ -259,3 +259,68 @@ describe('work-feed --to announcement-address filter', () => {
     expect(jobLines(log.mock.calls)).toEqual([expect.stringContaining('fake-sink')]);
   });
 });
+
+describe('work-feed --job and --owner filters', () => {
+  it('keeps one job id and jobs announced by an agent label in text and JSON', async () => {
+    append(post, 1, 'fake-agent');
+    append({ ...post, jobId: 'fake-second' }, 2, 'lane-7');
+    now += 10;
+    append({ kind: 'work.status', jobId: post.jobId, status: 'running' }, 3, 'fake-agent');
+    const result = readBusWorkFeed({ root });
+    expect(result).toMatchObject({ status: 'ok', jobs: [
+      { id: post.jobId, owner: 'fake-agent', status: 'running' },
+      { id: 'fake-second', owner: 'lane-7', status: 'queued' }] });
+    const log = output();
+    // --job resolves the exact id through the whole lifecycle, status included.
+    expect(await cmdFleetWorkFeed(['--root', root, '--job', 'fake-second'])).toBe(0);
+    expect(log.mock.calls.map(call => String(call[0]))).toEqual([
+      `fake-second queued "Review" owner=lane-7 to=leaders provider=devin repo=fake/repo keys=repo:fake/repo updated=${new Date(now - 10).toISOString()}`,
+      `jobs=1 receipts=3 feed=ok as-of=${new Date(now).toISOString()}`]);
+    log.mockClear();
+    // An unknown id is an honest empty view, not an error.
+    expect(await cmdFleetWorkFeed(['--root', root, '--job', 'fake-gone'])).toBe(0);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0 receipts=3 feed=ok');
+    log.mockClear();
+    // --owner keeps jobs announced by that label; --job composes with --status.
+    expect(await cmdFleetWorkFeed(['--root', root, '--owner', 'fake-agent', '--status', 'running', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual({
+      ...result, jobs: result.status === 'ok' ? result.jobs.filter(job => job.owner === 'fake-agent' && job.status === 'running') : [],
+    });
+    expect(await cmdFleetWorkFeed(['--root', root, '--owner', 'lane-7'])).toBe(0);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith('fake-second queued'))).toBe(true);
+  });
+
+  it('matches --owner under every label of one agent identity and never widens on unknown identity', async () => {
+    append(post, 1, 'agent:worker-bot');
+    append({ ...post, jobId: 'fake-sink' }, 2, 'fake-other');
+    const jobLines = (calls: unknown[][]) => calls.map(call => String(call[0])).filter(line => line.startsWith('fake-'));
+    const log = output();
+    // No registry: only the literal announcer label matches.
+    expect(await cmdFleetWorkFeed(['--root', root, '--owner', 'worker-bot'])).toBe(0);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0');
+    log.mockClear();
+    expect(registerAgentIdentity({ handle: 'worker-bot', aliases: ['lane-7'],
+      runtime: { cli: 'codex', provider: 'codex-cmp', model: null } }, { root, now: () => now }).status).toBe('created');
+    for (const ref of ['worker-bot', 'agent:worker-bot', 'lane-7']) {
+      log.mockClear();
+      expect(await cmdFleetWorkFeed(['--root', root, '--owner', ref])).toBe(0);
+      expect(jobLines(log.mock.calls)).toEqual([expect.stringContaining('fake-job')]);
+    }
+    // The other announcer's job stays out of every identity-scoped view.
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--owner', 'fake-other'])).toBe(0);
+    expect(jobLines(log.mock.calls)).toEqual([expect.stringContaining('fake-sink')]);
+  });
+
+  it('rejects bad --job and --owner values with usage on stderr and exit 2', async () => {
+    const log = output();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const args of [['--job'], ['--job', 'two words'], ['--job', 'a\nb'], ['--job', 'x', '--job', 'y'],
+      ['--owner'], ['--owner', 'two words'], ['--owner', 'a\nb'], ['--owner', 'x', '--owner', 'y'],
+      ['--job', 'x', '--owner', 'bad owner']]) {
+      expect(await cmdFleetWorkFeed(args)).toBe(2);
+    }
+    expect(log).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledTimes(9);
+  });
+});

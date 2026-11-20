@@ -1627,17 +1627,21 @@ open for a worker (`queued`, `rescheduled`); the comms inbox pending-work view
 and `claimBusWorkJob` share it so "claimable" means one thing.
 `coordinationRowBlocks(row, key)` in `src/core/agents/claim-store.ts` is the
 exported read-only overlap predicate; acquisition and observation now share one
-structural overlap rule. `projectBusWorkFeedView(result, status?, toMatch?)` applies the
-client-side status and announcement-address filters, newest-first order and
-per-job hold regrouping; `toMatch` is the predicate `busWorkFeedToMatcher(to,
-{root?})` builds, matching a job's `to` label literally and under every label
-of one agent identity (an unresolvable ref or unreadable registry keeps
+structural overlap rule. `projectBusWorkFeedView(result, filters?)` applies the
+client-side feed filters (`{status?, jobId?, toMatch?, ownerMatch?}`),
+newest-first order and per-job hold regrouping; `toMatch` is the predicate
+`busWorkFeedToMatcher(to, {root?})` builds over a job's `to` label and
+`ownerMatch` the predicate `busWorkFeedOwnerMatcher(owner, {root?})` builds
+over its `owner` (announcer) label — each matching literally and under every
+label of one agent identity (an unresolvable ref or unreadable registry keeps
 exact-label matching). `formatBusWorkFeed(result)` renders the shared human
 lines — each job as `<id> <status> "<title>" owner=… keys=<claim keys>` with
 title and keys scrubbed, single-lined and display-clipped (JSON keeps the full
-values) — both feed CLIs use them, and both accept `--to <label>` beside
-`--status`. `phm fleet work-feed [--claims] [--to <label>]` and
-`phm agents bus work feed [--status] [--claims] [--to <label>]` print the same
+values) — both feed CLIs use them, and both accept `--to <label>`, `--owner
+<agent>` and `--job <id>` beside `--status`. `phm fleet work-feed [--claims]
+[--to <label>] [--owner <agent>] [--job <id>]` and
+`phm agents bus work feed [--status] [--claims] [--to <label>] [--owner
+<agent>] [--job <id>]` print the same
 projection — hold lines plus a `claims=` footer — and non-ok reads print
 `jobs=unknown` rather than a fabricated count.
 
@@ -1708,12 +1712,16 @@ each claim row is a `BusClaimsListClaim` that gains `jobs` (the announced jobs
 its keys block, `{id, owner, status, title}`) only when the feed read is `ok`,
 absent otherwise. `jobs` reports the open feed jobs
 (`BUS_FEED_OPEN_STATUSES`, at least one claim key, newest 50 of `open`) as
-`BusWorkMineJob` (`WorkJob` plus `addressed`, `freeKeys`, `heldKeys`,
-`claimable`): `holds` is `complete`/`truncated`/`unknown` from the feed's
+`BusWorkMineJob` (`WorkJob` plus `addressed`, `announced`, `freeKeys`,
+`heldKeys`, `claimable`): `addressed` marks a `to` label resolving to the
+agent's identity and `announced` an `owner` label resolving to it (the agent
+posted the job and owns its status reports) — both through the same
+identity-label contract the feed `--to`/`--owner` filters use;
+`holds` is `complete`/`truncated`/`unknown` from the feed's
 claims join, and `claimable` is `true` only on a provably free key, `false`
 only when every declared key is provably held, `null` when coverage is
 `truncated` or `unknown` — `busWorkMineJobAnnotation(job, held, coverage,
-addressed)` is the exported pure rule. A non-ok feed collapses the section to
+addressed, announced?)` is the exported pure rule. A non-ok feed collapses the section to
 its own status (`refused` keeps `reason`/`receipts`). `next` lists the
 claimable work envelopes addressed to the agent — every live receipt whose
 `isClaimableWork` body (`kind:'work'` or a protocol-v1 `task`) and whose `to`
