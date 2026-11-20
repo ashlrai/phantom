@@ -1835,7 +1835,11 @@ the key wake hints, claim operations and `work mine` items cite — via the
 same bounded page walk; live rows only so an expired or never-posted id
 answers `not-found`, an unreadable store `unavailable`/`retryable`, the read
 needs no identity, and `fromAgent` sender decoration is best-effort so an
-unreadable registry never hides the envelope),
+unreadable registry never hides the envelope; claimable work and
+worker-handoff bodies also report `held`/`holder` — whether a taken
+message-id claim or live coordination hold covers the exact receipt, the
+same rule `work mine` next/handoffs and the unified comms inbox apply —
+with `held` null when a hold store cannot be read, never proven free),
 `shouldWake(priority, requested, handoff?)`
 and `busBodySummary(body)` — a pure, secret-scrubbed read of a bus body for
 inbox surfaces (`note`/`context`/`worker-handoff` return their message text,

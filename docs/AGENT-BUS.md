@@ -284,7 +284,12 @@ walk the other reads use and sees live rows only: an expired or never-posted
 id reports `not-found`, an unreadable store `unavailable`, and the read needs
 no identity or addressing scope. The sender's registered handle decorates the
 result as `fromAgent` when the registry resolves it — best-effort, so an
-unreadable registry never hides the envelope itself.
+unreadable registry never hides the envelope itself. Claimable work and
+worker-handoff bodies additionally report `held`/`holder`: whether a taken
+message-id claim or a live coordination hold already covers that exact
+receipt, the same evidence `work mine` next/handoffs and the unified comms
+inbox show. `held` is `true`/`false` only when both hold stores were read —
+a store that cannot be read reports `held: null` (unknown), never free.
 
 **Work announcements.** `phm agents bus work post --job <id> --title <text>
 --repo <owner/name> [--claim <key>]... [--provider <p>] [--tier <fast|mid|work|frontier>
