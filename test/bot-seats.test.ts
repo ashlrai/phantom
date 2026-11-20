@@ -263,6 +263,48 @@ it('routes seat-to-seat messages through the seat fleet root and clock', async (
   expect(rows[0]!.envelope.to).toBe('agent:reviewer');
   expect(rows[0]!.receivedAt).toBe(now);
 });
+it('counts claims held under any label of the seat identity as open work', async () => {
+  const o = await fixture();
+  const fleetRoot = join(o.home, '.ashlr', 'fleet');
+  expect(registerAgentIdentity({ handle: 'helper', aliases: ['helper-alias'] }, { root: fleetRoot, now: o.now }).status).toBe('created');
+  for (const [key, owner, sourceId] of [
+    ['pr:o/r#8', 'helper-alias', 'alias-claim'],
+    ['pr:o/r#9', 'agent:helper', 'address-claim'],
+    ['pr:o/r#10', 'unrelated', 'other-claim'],
+  ] as const) {
+    expect(acquireCoordination({ root: fleetRoot, origin: 'resource', key, owner, sourceId,
+      leaseMs: 3600000, leaseUntil: now + 3600000, now }).status).toBe('acquired');
+  }
+  await writeFile(join(o.root, 'seat-state.json'), JSON.stringify({ helper: { state: 'draining', since: iso(), exhaustedReset: null } }));
+  const opts: SeatOptions = { ...o, readQuota: async () => exhausted,
+    ownerNotice: async () => ({ status: 'accepted' }), busPost: async () => ({ status: 'posted' }) };
+  const listed = await listSeats(opts);
+  expect(listed.seats[0]!.state).toBe('draining');
+  expect(listed.seats[0]!.claims.map(c => c.owner).sort()).toEqual(['agent:helper', 'helper-alias']);
+  const plan = await planSeatHandoff('helper', opts);
+  expect(plan.handoffs.map(h => h.work.ref).sort()).toEqual(['pr:o/r#8', 'pr:o/r#9']);
+  const applied = await applySeatHandoff('helper', opts);
+  expect(applied.handoffs).toHaveLength(2);
+  expect(applied.state).toBe('idle');
+  expect(listCoordination(fleetRoot, now).claims.filter(c => c.live).map(c => c.owner)).toEqual(['unrelated']);
+});
+it('keeps exact-label seat claims when the identity registry is unreadable', async () => {
+  const o = await fixture();
+  const fleetRoot = join(o.home, '.ashlr', 'fleet');
+  registerAgentIdentity({ handle: 'helper', aliases: ['helper-alias'] }, { root: fleetRoot, now: o.now });
+  for (const [key, owner, sourceId] of [
+    ['pr:o/r#11', 'helper', 'exact-claim'],
+    ['pr:o/r#12', 'helper-alias', 'alias-claim'],
+  ] as const) {
+    acquireCoordination({ root: fleetRoot, origin: 'resource', key, owner, sourceId,
+      leaseMs: 3600000, leaseUntil: now + 3600000, now });
+  }
+  await writeFile(join(fleetRoot, 'agent-identities', 'registry.json'), '{broken', { mode: 0o600 });
+  await writeFile(join(o.root, 'seat-state.json'), JSON.stringify({ helper: { state: 'draining', since: iso(), exhaustedReset: null } }));
+  const listed = await listSeats({ ...o, readQuota: async () => exhausted });
+  expect(listed.seats[0]!.claims.map(c => c.owner)).toEqual(['helper']);
+  expect(listed.seats[0]!.state).toBe('draining');
+});
 it('reports an unavailable bus store honestly instead of claiming a posted note', async () => {
   const o = await fixture();
   const fleetRoot = join(o.home, '.ashlr', 'fleet');
