@@ -6,6 +6,7 @@
  * network, no model calls.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,6 +30,8 @@ import { createCommsInboxCommand } from '../src/cli/comms-inbox.js';
 
 let root: string, runsDir: string, busRoot: string, now: number;
 const roots: string[] = [];
+// Mirrors the opaque id scheme in unified-inbox.ts (sha256 of the artifact name, 16 hex).
+const outboxId = (name: string): string => `email-outbox:${createHash('sha256').update(name).digest('hex').slice(0, 16)}`;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'unified-inbox-')); roots.push(root);
@@ -716,6 +719,13 @@ describe('readUnifiedInbox comms requests', () => {
     expect(inbox.sources.requests).toEqual({ state: 'healthy', pending: 1 });
   });
 
+  it('skips malformed store rows instead of crashing the inbox', async () => {
+    const inbox = await readReq(() => available([null as unknown as CommsRequest, req()]));
+    const items = inbox.items.filter(i => i.source === 'requests');
+    expect(items.map(i => i.id)).toEqual(['requests:req-1']);
+    expect(inbox.sources.requests).toEqual({ state: 'healthy', pending: 1 });
+  });
+
   it('lists a pending question as a queued info item and never lists reports or resolved requests', async () => {
     const pending = req({ id: 'req-q', kind: 'leader-question', type: 'question', status: 'pending',
       sentAt: undefined, createdAt: new Date(now - 30 * 60_000).toISOString() });
@@ -803,7 +813,7 @@ describe('readUnifiedInbox email outbox', () => {
     const items = inbox.items.filter(i => i.source === 'email-outbox');
     expect(items).toHaveLength(3);
     expect(items.map(i => i.detail).sort()).toEqual(['reason interrupted-send', 'reason malformed', 'reason oversized']);
-    const lost = items.find(i => i.id === 'email-outbox:lost.reply.eml')!;
+    const lost = items.find(i => i.id === outboxId('lost.reply.eml'))!;
     expect(lost).toMatchObject({
       kind: 'email-stuck', severity: 'warn', blocking: false, priority: 'today',
       title: 'Stuck email reply lost.reply.eml',
@@ -811,7 +821,7 @@ describe('readUnifiedInbox email outbox', () => {
       act: ['phm fleet email-outbox', 'phm comms diagnose --json'],
     });
     // Queued, sent and drafted rows are the send pass's own concern — never items.
-    expect(items.some(i => /queued|done|good/.test(i.id))).toBe(false);
+    expect(items.some(i => /queued|done|good/.test(i.title))).toBe(false);
   });
 
   it('resolves the outbox as the sibling of inboxDir when outboxDir is absent', async () => {
@@ -821,7 +831,7 @@ describe('readUnifiedInbox email outbox', () => {
     writeFileSync(join(dir, 'sending', 'lost.reply.eml'), 'x', { mode: 0o600 });
     const inbox = await read();
     expect(inbox.sources['email-outbox']).toEqual({ state: 'healthy', pending: 1 });
-    expect(inbox.items.find(i => i.id === 'email-outbox:lost.reply.eml')).toMatchObject({ kind: 'email-stuck' });
+    expect(inbox.items.find(i => i.id === outboxId('lost.reply.eml'))).toMatchObject({ kind: 'email-stuck' });
   });
 
   it('reports missing config, invalid config, a missing outbox and a non-directory outbox honestly', async () => {
@@ -848,8 +858,8 @@ describe('readUnifiedInbox email outbox', () => {
       ] }),
     });
     const items = stubbed.items.filter(i => i.source === 'email-outbox');
-    expect(items.map(i => i.id).sort()).toEqual(['email-outbox:a.reply.eml', 'email-outbox:c.reply.eml']);
-    expect(items.find(i => i.id === 'email-outbox:c.reply.eml')!.detail).toBe('reason unknown');
+    expect(items.map(i => i.id).sort()).toEqual([outboxId('a.reply.eml'), outboxId('c.reply.eml')].sort());
+    expect(items.find(i => i.id === outboxId('c.reply.eml'))!.detail).toBe('reason unknown');
     expect(stubbed.sources['email-outbox']).toEqual({ state: 'healthy', pending: 2 });
     writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
     const throwing = await readUnifiedInbox({
@@ -860,7 +870,7 @@ describe('readUnifiedInbox email outbox', () => {
     expect(throwing.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
   });
 
-  it('scrubs secret-shaped artifact names out of item titles', async () => {
+  it('scrubs secret-shaped artifact names out of the whole item', async () => {
     await writeEmailDropConfig(runsDir, config());
     const dir = join(root, 'outbox');
     mkdirSync(join(dir, 'sending'), { recursive: true });
@@ -869,6 +879,8 @@ describe('readUnifiedInbox email outbox', () => {
     expect(item.title).toContain('[REDACTED]');
     expect(item.title).not.toContain('sk-abcdefghijklmnop');
     expect(item.title).not.toMatch(/\n/);
+    // The opaque id and every other field must not echo the artifact name either.
+    expect(JSON.stringify(item)).not.toContain('sk-abcdefghijklmnop');
   });
 });
 
