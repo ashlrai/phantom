@@ -39,13 +39,14 @@ it('drops items without id or title and with unknown enum values', () => {
 
 it('summarises sources, marking non-healthy and showing missing as a dash', () => {
   const view = readUnifiedInboxView(raw({ sources: { 'needs-you': report('healthy', 3), imessage: report('healthy', 1), drafts: report('missing', 0), bus: report('degraded', 2) } }));
-  expect(view && !view.unavailable && sourceSummary(view.sources)).toBe('Needs you 3 · iMessage 1 · Drafts — · Bus degraded 2 · Gmail — · LinkedIn —');
+  expect(view && !view.unavailable && sourceSummary(view.sources)).toBe('Needs you 3 · iMessage 1 · Owner thread — · Drafts — · Bus degraded 2 · Gmail — · LinkedIn —');
   const healthy = readUnifiedInboxView(raw());
-  expect(healthy && !healthy.unavailable && sourceSummary(healthy.sources)).toBe('Needs you 1 · iMessage 0 · Drafts 1 · Bus 0 · Gmail — · LinkedIn —');
+  expect(healthy && !healthy.unavailable && sourceSummary(healthy.sources)).toBe('Needs you 1 · iMessage 0 · Owner thread — · Drafts 1 · Bus 0 · Gmail — · LinkedIn —');
 });
 
 it('itemLine labels, ages and flags soon-expiring items', () => {
-  expect(itemLine(entry({ source: 'imessage', since: '2026-11-09T11:00:00Z' }), NOW)).toEqual({ label: 'Teammate text', title: 't', age: '1h ago' });
+  expect(itemLine(entry({ source: 'imessage', kind: 'teammate-text', since: '2026-11-09T11:00:00Z' }), NOW)).toEqual({ label: 'Teammate text', title: 't', age: '1h ago' });
+  expect(itemLine(entry({ source: 'owner-thread', kind: 'owner-message' }), NOW).label).toBe('Owner message');
   expect(itemLine(entry({ source: 'needs-you' }), NOW)).toMatchObject({ label: 'Needs you', age: null });
   expect(itemLine(entry({ source: 'drafts' }), NOW).label).toBe('Draft');
   expect(itemLine(entry({ since: '2026-11-09T11:55:00Z', expiresAt: '2026-11-09T12:20:00Z' }), NOW)).toMatchObject({ label: 'Bus work', age: '5m ago · expires in 20m' });

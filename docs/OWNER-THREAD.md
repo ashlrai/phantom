@@ -35,7 +35,10 @@ human `phm comms thread` output appends `[awaiting reply]` to those inbound
 lines. A message counts as answered once any recorded outbound reply cites its
 idempotency key — including a reply whose channel deliveries all failed, since
 delivery state stays with the receipts — while proactive notices never clear
-the mark.
+the mark. `phm comms inbox` lists each awaiting inbound as an `owner-thread`
+item (kind `owner-message`) with `phm comms thread` and
+`phm comms send-owner --reply-to <key>` deep links, so the unified pending
+view and the Leader's comms brief see the same mark this status reports.
 
 ## Rotation, history and pulling
 

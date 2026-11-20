@@ -6,7 +6,7 @@ import { cmdCommsOwner, cmdCommsOwnerStatus } from '../src/cli/comms-owner-threa
 import { createLeaderMailbox } from '../src/core/comms/leader-mailbox.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings, type OwnerChannelTransport, type OwnerDelivery, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { liveOwnerTransports, proveOwnerDirectMessage, resolveLiveEmailRecipient, resolveLiveIMessageHandle, resolveLiveSlackOwnerId } from '../src/core/comms/owner-live-transport.js';
-import { acceptOwnerInbound, postOwnerNotice, pullOwnerChannel, readOwnerCommsStatus, readOwnerThread, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
+import { acceptOwnerInbound, postOwnerNotice, pullOwnerChannel, readOwnerAwaitingReplies, readOwnerCommsStatus, readOwnerThread, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
 import { useAccountHomeForTest } from '../src/core/real-home.js';
 import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 
@@ -148,6 +148,31 @@ describe('owner thread', () => {
     await sendOwnerReply({ text: 'answer second', replyTo: 'email-msg-0002', idempotencyKey: 'reply-owner-02' }, options);
     expect(readOwnerThread(options).awaitingReply).toEqual([]);
     expect(readOwnerCommsStatus(options).awaitingReply).toBe(0);
+  });
+
+  it('lists each awaiting inbound with the fields a pending surface needs', async () => {
+    const { options } = fixture();
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'first', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
+    await acceptOwnerInbound({ channel: 'email', senderId: 'email:owner@example.com', text: 'second', idempotencyKey: 'email-msg-0002', at: 1_700_000_001_000 }, options);
+    const read = readOwnerAwaitingReplies({ runsDir: options.runsDir });
+    expect(read).toEqual({
+      status: 'ok',
+      items: [
+        { id: 'm1', idempotencyKey: 'telegram-msg-1', channel: 'telegram', at: '2023-11-14T22:13:20.000Z', text: 'first' },
+        { id: 'm2', idempotencyKey: 'email-msg-0002', channel: 'email', at: '2023-11-14T22:13:21.000Z', text: 'second' },
+      ],
+    });
+    await sendOwnerReply({ text: 'answer first', replyTo: 'telegram-msg-1', idempotencyKey: 'reply-owner-01' }, options);
+    const after = readOwnerAwaitingReplies({ runsDir: options.runsDir });
+    expect(after.status === 'ok' && after.items.map(item => item.id)).toEqual(['m2']);
+  });
+
+  it('reads an absent thread as an honest empty list and a corrupt one as unavailable', () => {
+    const { options } = fixture();
+    expect(readOwnerAwaitingReplies({ runsDir: options.runsDir })).toEqual({ status: 'ok', items: [] });
+    mkdirSync(join(options.runsDir, 'leader'), { recursive: true });
+    writeFileSync(join(options.runsDir, 'leader', 'owner-thread.json'), 'not json', { mode: 0o600 });
+    expect(readOwnerAwaitingReplies({ runsDir: options.runsDir })).toEqual({ status: 'unavailable' });
   });
 
   it('does not let a proactive notice clear the awaiting mark', async () => {

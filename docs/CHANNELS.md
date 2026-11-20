@@ -220,6 +220,9 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
 — unresolved `NEEDS-MASON.md` items, unanswered allowlisted teammate texts,
+live owner-thread inbound messages no recorded outbound reply cites (the same
+awaiting-reply mark `phm comms status` counts, each item deep-linking
+`phm comms thread` and `phm comms send-owner --reply-to`),
 outbound drafts awaiting approval, live bus envelopes whose body the claim
 contract accepts (`isClaimableWork`: a `kind:"work"` body or a protocol-v1
 transport `task` body) with no
@@ -237,7 +240,8 @@ through the same projection as `phm agents bus work feed`) — plus Gmail
 archive-plan overages and LinkedIn messages saved as
 JSON files under `<runsDir>/comms/linkedin/inbox/` (answered when a file of the
 same id exists in `.../linkedin/answered/`; replies stay drafts) — and each item carries `act` deep-link commands (`phm fleet
-needs-resolve`, `phm fleet teammate-texts --answered`, `phm drafts approve`,
+needs-resolve`, `phm fleet teammate-texts --answered`, `phm comms thread`,
+`phm comms send-owner`, `phm drafts approve`,
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
 `phm fleet handoff-receive`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
