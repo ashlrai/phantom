@@ -286,6 +286,7 @@ Missing fleet summaries are marked explicitly; flags hidden behind `[opts]` or u
 | <code>phm fleet dot-evidence [--json]</code> | Summary not registered; run phm fleet dot-evidence --help for details. | <code>--json</code> | <code>phm fleet dot-evidence --json</code> |
 | <code>phm fleet dot-handoff [--json]</code> | ashlr fleet dot-handoff [--json] - offline, read-only evidence summary for handing work to Mason's personal OpenAI Dot (and back). | <code>--json</code> | <code>phm fleet dot-handoff --json</code> |
 | <code>phm fleet draft-check --stdin [--json] [--queued] [--fail-on-collision]</code> | Read-only: is an in-memory batch of draft jobs already on master? | <code>--fail-on-collision</code>, <code>--json</code>, <code>--queued</code>, <code>--stdin</code> | <code>phm fleet draft-check --stdin --json [--queued] [--fail-on-collision]</code> |
+| <code>phm fleet drift [--json] [--repo &lt;checkout&gt;] [--bin &lt;runtime directory&gt;]</code> | Summary not registered; run phm fleet drift --help for details. | <code>--bin</code>, <code>--json</code>, <code>--repo</code> | <code>phm fleet drift --json [--repo &lt;checkout&gt;] [--bin &lt;runtime directory&gt;]</code> |
 | <code>phm fleet drip [--json] [--root PATH]</code> | ashlr fleet drip - READ-ONLY gauge of the merge drip. | <code>--json</code>, <code>--root</code> | <code>phm fleet drip --json [--root PATH]</code> |
 | <code>phm fleet drive [--once] [--root &lt;directory&gt;] [--json]</code> | Summary not registered; run phm fleet drive --help for details. | <code>--json</code>, <code>--once</code>, <code>--root</code> | <code>phm fleet drive [--once] [--root &lt;directory&gt;] --json</code> |
 | <code>phm fleet edges [--json]</code> | Read live agent bus message links. | <code>--json</code> | <code>phm fleet edges --json</code> |
@@ -513,6 +514,7 @@ Missing fleet summaries are marked explicitly; flags hidden behind `[opts]` or u
 | <code>phm fleet rebase-status --repo &lt;owner/name&gt; [--repo &lt;owner/name&gt; ...] [--root &lt;abs&gt;] [--json]</code> | Summary not registered; run phm fleet rebase-status --help for details. | <code>--json</code>, <code>--repo</code>, <code>--root</code> | <code>phm fleet rebase-status --repo &lt;owner/name&gt; [--repo &lt;owner/name&gt; ...] [--root &lt;abs&gt;] --json</code> |
 | <code>phm fleet recheck [--json&#124;--reply]</code> | ashlr fleet recheck - one read-only verdict joining the runtime identity, claims ledger, channel health and work board readers into four sections plus an overal | <code>--json</code>, <code>--reply</code> | <code>phm fleet recheck [--json&#124;--reply]</code> |
 | <code>phm fleet recheck-record [--last N [--json [--envelope]]]</code> | ashlr fleet recheck-record - append one sanitized recheck verdict row to the local history, or read it back with --last. | <code>--envelope</code>, <code>--json</code>, <code>--last</code> | <code>phm fleet recheck-record [--last N [--json [--envelope]]]</code> |
+| <code>phm fleet recorded-config --file &lt;path&gt; [--json]</code> | ashlr fleet recorded-config --file &lt;path&gt; [--json]: inspect one explicitly named recorded scheduler config. | <code>--file</code>, <code>--json</code> | <code>phm fleet recorded-config --file &lt;path&gt; --json</code> |
 | <code>phm fleet recut-sweep [--json] [--apply] [--runs-dir &lt;abs&gt;] [--limit N]</code> | Summary not registered; run phm fleet recut-sweep --help for details. | <code>--apply</code>, <code>--json</code>, <code>--limit</code>, <code>--runs-dir</code> | <code>phm fleet recut-sweep --json [--apply] [--runs-dir &lt;abs&gt;] [--limit N]</code> |
 | <code>phm fleet red-blame [--repo &lt;name&gt;] [--json]</code> | Read-only: which commit last touched each file the red default branch fails on? | <code>--json</code>, <code>--repo</code> | <code>phm fleet red-blame [--repo &lt;name&gt;] --json</code> |
 | <code>phm fleet red-fix [--json] [--write] [--hours &lt;1-168&gt;] [--runs-dir &lt;absolute&gt;] [--repo ashlrai/phantom]</code> | Summary not registered; run phm fleet red-fix --help for details. | <code>--hours</code>, <code>--json</code>, <code>--repo</code>, <code>--runs-dir</code>, <code>--write</code> | <code>phm fleet red-fix --json [--write] [--hours &lt;1-168&gt;] [--runs-dir &lt;absolute&gt;] [--repo ashlrai/phantom]</code> |
@@ -603,6 +605,7 @@ Missing fleet summaries are marked explicitly; flags hidden behind `[opts]` or u
 | <code>phm fleet superseded-close [--apply] [--limit N] [--json]</code> | ashlr fleet superseded-close - close open fleet bridge PRs whose recut already merged. | <code>--apply</code>, <code>--json</code>, <code>--limit</code> | <code>phm fleet superseded-close [--apply] [--limit N] --json</code> |
 | <code>phm fleet supply [--json]</code> | Read-only: counts what each batch did in the last 24 h, per hour. | <code>--json</code> | <code>phm fleet supply --json</code> |
 | <code>phm fleet surface-owner (${Object.keys(SURFACES).join('&#124;')}) [--json]</code> | ashlr fleet surface-owner &lt;surface&gt; [--json] - who owns a named surface (Slack bridge, iMessage bridge, Dot handoff, coordination ledger) right now, with eviden | <code>--json</code> | <code>phm fleet surface-owner (${Object.keys(SURFACES).join('&#124;')}) --json</code> |
+| <code>phm fleet sync --dry-run [--json] [--repo &lt;checkout&gt;] [--bin &lt;runtime directory&gt;]</code> | Summary not registered; run phm fleet sync --help for details. | <code>--bin</code>, <code>--dry-run</code>, <code>--json</code>, <code>--repo</code> | <code>phm fleet sync --dry-run --json [--repo &lt;checkout&gt;] [--bin &lt;runtime directory&gt;]</code> |
 | <code>phm fleet tailnet-peers [--json]</code> | Summary not registered; run phm fleet tailnet-peers --help for details. | <code>--json</code> | <code>phm fleet tailnet-peers --json</code> |
 | <code>phm fleet task-check &lt;job-id&gt; [--json]</code> | Read-only: warns when a job's batch keeps finishing empty. | <code>--json</code> | <code>phm fleet task-check &lt;job-id&gt; --json</code> |
 | <code>phm fleet teammate-latency [--window-hours &lt;1-168&gt;] [--target-minutes &lt;1-120&gt;] [--runs-dir &lt;path&gt;] [--json]</code> | Show how fast allowlisted teammate (Dot) iMessages get answered, and the oldest unanswered one. | <code>--json</code>, <code>--runs-dir</code>, <code>--target-minutes</code>, <code>--window-hours</code> | <code>phm fleet teammate-latency [--window-hours &lt;1-168&gt;] [--target-minutes &lt;1-120&gt;] [--runs-dir &lt;path&gt;] --json</code> |
@@ -1037,6 +1040,7 @@ These registered verbs have no one-line help in their source yet. Their rows abo
 - <code>phm fleet diff-scan</code>
 - <code>phm fleet disk-forecast</code>
 - <code>phm fleet dot-evidence</code>
+- <code>phm fleet drift</code>
 - <code>phm fleet drive</code>
 - <code>phm fleet email-outbox</code>
 - <code>phm fleet email-outbox-await</code>
@@ -1177,6 +1181,7 @@ These registered verbs have no one-line help in their source yet. Their rows abo
 - <code>phm fleet status-api</code>
 - <code>phm fleet status-digest</code>
 - <code>phm fleet stuck-prs</code>
+- <code>phm fleet sync</code>
 - <code>phm fleet tailnet-peers</code>
 - <code>phm fleet telegram-pulse</code>
 - <code>phm fleet thread-run</code>
