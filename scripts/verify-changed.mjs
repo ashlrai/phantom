@@ -40,6 +40,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
   return {
     lintFiles: changed.filter((path) => existing.has(path) && /\.(?:[cm]?js|[cm]?ts|tsx|jsx)$/.test(path)),
     pythonFiles: changed.filter((path) => existing.has(path) && /\.py$/.test(path)),
+    shellFiles: changed.filter((path) => existing.has(path) && /\.sh$/.test(path)),
     webTypecheck: changed.some((path) => path.startsWith('src/web-ui/')),
     authorityDrift: changed.some(affectsAuthorityDrift),
     fleetRegistry: changed.some((path) => /^src\/cli\/fleet-[^/]*\.ts$/.test(path)),
@@ -166,6 +167,37 @@ export function runPythonSyntaxCheck(root, files, spawn = spawnSync) {
     return false;
   }
   console.log('PASS python syntax check');
+  return true;
+}
+
+/** Probe for a working bash; the fleet's shell tooling is bash/sh and queuegen gates jobs on `bash -n`. */
+export function shellPreflight(spawn = spawnSync) {
+  const probe = spawn('bash', ['--version'], { encoding: 'utf8', timeout: 15000 });
+  if (probe.error || probe.signal || probe.status !== 0) {
+    return { ok: false, reason: 'bash is unavailable or did not run; changed .sh files cannot be syntax-checked locally' };
+  }
+  return { ok: true };
+}
+
+// bash -n parses one script per invocation, so a single wrapper run walks the
+// batch and the first parse failure fails the check, matching the Python
+// compile loop. `#!/bin/sh` scripts parse under bash's grammar — the same
+// `bash -n` acceptance command queuegen assigns to shell jobs.
+const SHELL_SYNTAX_CHECK = 'for f in "$@"; do bash -n "$f" || exit 1; done';
+
+/** Syntax-check changed .sh files with bash -n; returns false on any parse failure. */
+export function runShellSyntaxCheck(root, files, spawn = spawnSync) {
+  const result = spawn('bash', ['-c', SHELL_SYNTAX_CHECK, 'bash', ...files], {
+    cwd: root, encoding: 'utf8', timeout: 120000,
+  });
+  if (result.status !== 0) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL shell syntax check');
+    return false;
+  }
+  console.log('PASS shell syntax check');
   return true;
 }
 
@@ -648,6 +680,16 @@ function main() {
     if (!python.ok) {
       console.log(`SKIP python syntax check: ${python.reason}`);
     } else if (!runPythonSyntaxCheck(root, selection.pythonFiles)) {
+      process.exitCode = 1;
+    }
+  }
+  if (selection.shellFiles.length === 0) {
+    console.log('PASS shell syntax check skipped: no shell change');
+  } else {
+    const shell = shellPreflight();
+    if (!shell.ok) {
+      console.log(`SKIP shell syntax check: ${shell.reason}`);
+    } else if (!runShellSyntaxCheck(root, selection.shellFiles)) {
       process.exitCode = 1;
     }
   }
