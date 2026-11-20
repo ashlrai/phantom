@@ -12,11 +12,12 @@ import { WORK_STATUSES, type WorkJob } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedToMatcher, formatBusWorkFeed, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, executeBusClaimBody, listBusClaims, newBusClaimOpId, type BusClaimResult, type BusClaimJobRef } from '../core/agents/bus-claims.js';
+import { readUnifiedBusStatus } from '../core/agents/bus-status.js';
 import { scrubSecrets } from '../core/util/scrub.js';
 import type { BusPriority } from '../core/fleet/bus-envelope.js';
 import { seatParticipants } from '../core/bots/seats.js';
 
-export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'channel', 'handoff', 'wake', 'inbox', 'wakes', 'adapters', 'claim', 'work']);
+export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'channel', 'handoff', 'wake', 'inbox', 'wakes', 'adapters', 'claim', 'work', 'status']);
 
 export const AGENTS_BUS_UNIFIED_HELP = `ashlr agents bus id register [<handle>] [--cli <cli>] [--provider <p>] [--model <m>] [--alias <label>]... [--display <name>]
 ashlr agents bus id list
@@ -41,6 +42,7 @@ ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--clai
 ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--to <label>] [--claims]
+ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
 names, never authentication. Messages land in the one local bus store; P0 always
@@ -48,7 +50,10 @@ wakes, P1 and handoffs wake by default, and wake always records its hint.
 A terminal work status also queues a routing-only wake hint for each live claim
 holder on the job's keys; --no-wake opts out. work feed and claim list are
 read-only and need no identity; work feed --to keeps jobs announced to that
-routing label under every label of one agent identity. No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
+routing label under every label of one agent identity. status is a read-only
+probe of the store, registry, wake queue, coordination table and work feed;
+a section that cannot be read reports unavailable or unknown, never zero.
+No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
 
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
@@ -143,6 +148,23 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (p.positionals.length > count) throw new UsageError('Unexpected operand.');
     };
 
+    if (verb === 'status') {
+      noExtra(1);
+      const result = readUnifiedBusStatus(options);
+      if (json) { out(JSON.stringify(result)); return 0; }
+      const unknown = 'unknown';
+      out([
+        `store ${result.store.source} retained=${result.store.retainedCount ?? unknown}/${result.store.maxMessages} ` +
+          `bytes=${result.store.retainedBytes ?? unknown}/${result.store.maxBytes} ` +
+          `live=${result.store.liveCount ?? unknown} expired=${result.store.expiredCount ?? unknown}`,
+        `registry ${result.registry.source} identities=${result.registry.identities ?? unknown} channels=${result.registry.channels ?? unknown}`,
+        `wakes ${result.wakes.state} hints=${result.wakes.hints ?? unknown}`,
+        `coordination ${result.coordination.source} liveClaims=${result.coordination.liveClaims ?? unknown} statuses=${result.coordination.statuses ?? unknown}`,
+        `feed ${result.feed.status}${result.feed.reason === undefined ? '' : `:${result.feed.reason}`} jobs=${result.feed.jobs ?? unknown}`,
+        `as-of=${result.asOf}`,
+      ].join('\n'));
+      return 0;
+    }
     if (verb === 'adapters') {
       noExtra(1);
       const adapters = listBusCliAdapters();
