@@ -31,7 +31,7 @@ import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { showMessagePair, type MessagePair } from '../fleet-messages/messages-pair.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { emptyMap, layoutLiveMap, liveMapQuery, mapEdgesQuery, mapHeadline, messageCurve, messagePairs, messagePairsQuery, MAP_POLL_MS, NODE_H, NODE_W, pulsing, readMapFilter, saveMapFilter } from './map-model.js';
+import { edgeOpacity, emptyMap, layoutLiveMap, liveMapQuery, mapEdgesQuery, mapHeadline, messageCurve, messagePairs, messagePairsQuery, MAP_POLL_MS, NODE_H, NODE_W, pulsing, readMapFilter, saveMapFilter } from './map-model.js';
 import { useViewport } from '../shell/viewport.js';
 import { readMapViewMode, saveMapViewMode, type MapViewMode } from './map3d-model.js';
 import { MapStage3D } from './MapStage3D.js';
@@ -84,7 +84,7 @@ export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => 
   const arrange = (next: MapLayoutMode) => { setArrangement(next); setHovered(null); saveMapLayout(next); };
   const choose = (next: MapViewMode) => { setChosen(next); setHovered(null); saveMapViewMode(next); };
   if (compact && !phoneMap) return <>{filterBar}{none ? noMatch
-    : <PhoneOrg groups={fleetOrgGroups(map)} asks={asks} onShowMap={() => setPhoneMap(true)}
+    : <PhoneOrg groups={fleetOrgGroups(map)} asks={asks} messages={showMessages ? edges : undefined} now={now} onShowMap={() => setPhoneMap(true)}
       onOpenJob={job => { const node = map.nodes.find(row => row.kind === 'job' && row.label === job); if (node) onOpen(node); }} />}</>;
   const orgLayout = arrangement === 'org' ? layoutByOrg(map) : null;
   const layout = orgLayout ?? layoutLiveMap(map);
@@ -132,7 +132,7 @@ export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => 
             const d = message ? messageCurve(a, b).d : `M${a.x},${a.y} L${b.x},${b.y}`;
             if (!message) return <path key={edge.id} d={d} className={styles.edge} data-kind={edge.kind} />;
             return <g key={edge.id}>
-              <path d={d} className={styles.edge} data-kind={edge.kind} data-pulse={pulse(edge)} style={{ strokeWidth: messageLineWidth(edge.messages) }} />
+              <path d={d} className={styles.edge} data-kind={edge.kind} data-pulse={pulse(edge)} style={{ strokeWidth: messageLineWidth(edge.messages), opacity: edgeOpacity(edge, map, now) }} />
               <path d={d} className={styles.hit} data-open-messages={edge.id} onClick={() => onOpenMessages(pairOf(edge))} {...hover(edge)} />
             </g>;
           })}
