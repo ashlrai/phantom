@@ -16,8 +16,10 @@ import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
 import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type UnifiedInbox } from '../src/core/comms/unified-inbox.js';
+import type { ProposalApprovalItem, Section, TeamApprovalItem } from '../src/core/approvals/surface.js';
 import type { SeatHandoff, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
 import type { CommsRequest, CommsRequestsRead } from '../src/core/comms/requests.js';
+import { DEFAULT_TEAM } from '../src/core/teams/tools.js';
 import { markTeammateTextsAnswered, recordTeammateText } from '../src/core/comms/imessage-teammate-inbox.js';
 import { writeEmailDropConfig, type EmailDropConfig } from '../src/core/comms/email-drop-config.js';
 import { EMAIL_OUTBOX_MAX_BYTES } from '../src/core/comms/email-outbox.js';
@@ -111,6 +113,8 @@ describe('readUnifiedInbox sources', () => {
         conversations: { state: 'missing', pending: 0 },
         seats: { state: 'missing', pending: 0 },
         'email-outbox': { state: 'missing', pending: 0 },
+        'team-approvals': { state: 'healthy', pending: 0 },
+        proposals: { state: 'healthy', pending: 0 },
       },
     });
   });
@@ -934,6 +938,162 @@ describe('readUnifiedInbox email outbox', () => {
     expect(item.title).not.toMatch(/\n/);
     // The opaque id and every other field must not echo the artifact name either.
     expect(JSON.stringify(item)).not.toContain('sk-abcdefghijklmnop');
+  });
+});
+
+describe('readUnifiedInbox team approvals', () => {
+  const approval = (over: Partial<TeamApprovalItem> = {}): TeamApprovalItem => ({
+    id: 'ev-abc123',
+    kind: 'access',
+    summary: 'Access request: repo write on ashlrai/phantom',
+    requestedBy: 'agent:claude',
+    note: 'needs triage access',
+    command: `phm team approve ev-abc123 --team ${DEFAULT_TEAM}`,
+    ...over,
+  });
+  const pinned = {
+    readRequests: () => ({ status: 'missing' as const, requests: [] }),
+    readInboxProposals: () => ({ state: 'ok' as const, items: [], truncated: false }),
+  };
+
+  it('lists pending approvals as blocking warn items with approve/deny links', async () => {
+    const teams: string[] = [];
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readTeamApprovals: (team) => {
+        teams.push(team);
+        return { state: 'ok', items: [
+          approval(),
+          approval({
+            id: 'ev-def456', kind: 'handoff', summary: 'Consequential action: rotate the deploy key',
+            requestedBy: 'agent:codex', note: null, command: `phm team approve ev-def456 --team ${DEFAULT_TEAM}`,
+          }),
+        ] };
+      },
+    });
+    expect(teams).toEqual([DEFAULT_TEAM]);
+    expect(inbox.sources['team-approvals']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'team-approvals');
+    expect(items).toHaveLength(2);
+    const first = items.find(i => i.id === 'team-approvals:ev-abc123')!;
+    expect(first).toMatchObject({
+      kind: 'team-approval', severity: 'warn', blocking: true, priority: 'now',
+      title: 'Access request: repo write on ashlrai/phantom',
+      since: null, expiresAt: null,
+      act: [
+        'phm team approve ev-abc123 --team default',
+        'phm team deny ev-abc123 --team default',
+        'phm approvals',
+      ],
+    });
+    expect(first.detail).toBe('from agent:claude · "needs triage access"');
+    // The projection carries no timestamp, so the item invents none.
+    expect(items.find(i => i.id === 'team-approvals:ev-def456')).toMatchObject({
+      detail: 'from agent:codex', since: null, expiresAt: null,
+    });
+  });
+
+  it('reports unavailable on a refused or throwing read while other sources still list', async () => {
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const refused = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readTeamApprovals: (): Section<TeamApprovalItem> => ({ state: 'unavailable', reason: 'boom', items: [] }),
+    });
+    expect(refused.sources['team-approvals']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(refused.items.filter(i => i.source === 'team-approvals')).toHaveLength(0);
+    expect(refused.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+    const throwing = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readTeamApprovals: () => { throw new Error('boom'); },
+    });
+    expect(throwing.sources['team-approvals']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(throwing.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+});
+
+describe('readUnifiedInbox inbox proposals', () => {
+  const proposal = (over: Partial<ProposalApprovalItem> = {}): ProposalApprovalItem => ({
+    id: 'prop-abc123',
+    kind: 'outbound-email',
+    title: 'Send follow-up to ops@example.com',
+    detail: 'subject: fake subject',
+    createdAt: '2026-11-06T12:00:00Z',
+    partial: false,
+    revision: 'approval-v1:abc',
+    reviewPath: '/inbox/prop-abc123',
+    ...over,
+  });
+  const section = (
+    items: ProposalApprovalItem[],
+    over: { state?: 'ok' | 'unavailable'; truncated?: boolean } = {},
+  ): Section<ProposalApprovalItem> & { truncated: boolean } => ({
+    state: over.state ?? 'ok',
+    ...(over.state === 'unavailable' ? { reason: 'boom' } : {}),
+    items,
+    truncated: over.truncated ?? false,
+  });
+  const pinned = {
+    readRequests: () => ({ status: 'missing' as const, requests: [] }),
+    readTeamApprovals: (): Section<TeamApprovalItem> => ({ state: 'ok', items: [] }),
+  };
+  const readWith = (readInboxProposals: () => Section<ProposalApprovalItem> & { truncated: boolean }) =>
+    readUnifiedInbox({ runsDir, busRoot, now: () => now, ...pinned, readInboxProposals });
+
+  it('lists pending proposals as info items with review links and real timestamps', async () => {
+    const inbox = await readWith(() => section([
+      proposal(),
+      proposal({
+        id: 'prop-def456', kind: 'channel-post', title: 'Post the launch note', detail: null,
+        createdAt: 'not-a-date', partial: true,
+      }),
+    ]));
+    expect(inbox.sources.proposals).toEqual({ state: 'healthy', pending: 2 });
+    const first = inbox.items.find(i => i.id === 'proposals:prop-abc123')!;
+    expect(first).toMatchObject({
+      kind: 'inbox-proposal', severity: 'info', blocking: false,
+      title: 'Send follow-up to ops@example.com',
+      detail: 'outbound-email proposal — subject: fake subject',
+      since: '2026-11-06T12:00:00Z', expiresAt: null,
+      act: ['phm inbox show prop-abc123', 'phm inbox approve prop-abc123', 'phm inbox reject prop-abc123'],
+    });
+    const partial = inbox.items.find(i => i.id === 'proposals:prop-def456')!;
+    // A partial capture can be rejected but never approved.
+    expect(partial.act).toEqual(['phm inbox show prop-def456', 'phm inbox reject prop-def456']);
+    expect(partial.detail).toBe('channel-post proposal · partial capture');
+    // An unparseable createdAt stays unknown — never invented.
+    expect(partial.since).toBeNull();
+  });
+
+  it('keeps only the bare inbox link for a proposal id that fails the shape guard', async () => {
+    const inbox = await readWith(() => section([proposal({ id: 'bad id; touch /tmp/x' })]));
+    const item = inbox.items.find(i => i.source === 'proposals')!;
+    expect(item.act).toEqual(['phm inbox']);
+  });
+
+  it('reports degraded on truncated or incomplete reads while listing what it found', async () => {
+    const truncated = await readWith(() => section([proposal()], { truncated: true }));
+    expect(truncated.sources.proposals).toEqual({ state: 'degraded', pending: 1 });
+    expect(truncated.items.filter(i => i.source === 'proposals')).toHaveLength(1);
+    const incomplete = await readWith(() => section([proposal()], { state: 'unavailable' }));
+    expect(incomplete.sources.proposals).toEqual({ state: 'degraded', pending: 1 });
+    expect(incomplete.items.filter(i => i.source === 'proposals')).toHaveLength(1);
+  });
+
+  it('reports unavailable on an empty refused read or a throwing seam while other sources list', async () => {
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const refused = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readInboxProposals: () => section([], { state: 'unavailable' }),
+    });
+    expect(refused.sources.proposals).toEqual({ state: 'unavailable', pending: 0 });
+    expect(refused.items.filter(i => i.source === 'proposals')).toHaveLength(0);
+    expect(refused.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+    const throwing = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readInboxProposals: () => { throw new Error('boom'); },
+    });
+    expect(throwing.sources.proposals).toEqual({ state: 'unavailable', pending: 0 });
+    expect(throwing.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
   });
 });
 
