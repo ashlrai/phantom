@@ -19,12 +19,13 @@ import {
   listDropJobs, resolveDropJobRoot, validateDropJob, writeDropJob, type DropJobInput,
 } from './drop-job-writer.js';
 import { ledgerFinishes } from './empties.js';
-import { readText } from './empty-cause.js';
+import { EMPTY_CAUSE_TAIL_LINES, readText } from './empty-cause.js';
 import { readIdeaList } from './bottleneck-ideas.js';
 
 export const JOB_GAPS_SCHEMA = 'jobs.gaps.v1';
 export const MAX_GAPS_PER_JOB = 12;
 const NOTES_BYTES = 65536;
+const LOG_BYTES = 16384;
 const TITLE_MAX = 110;
 const WHY_MAX = 240;
 /** Two titles this alike (shared stems over all stems) count as the same work. */
@@ -92,6 +93,39 @@ export function extractGaps(notes: string): { title: string; why: string }[] {
     }
   }
   return found.slice(0, MAX_GAPS_PER_JOB);
+}
+
+const PROSE_GAP = /\b(?:gap|gaps|aren['’]?t there|isn['’]?t there|not done|left it|missing)\b/i;
+/** A sentence that says there is nothing left ("no gaps", "nothing missing") is not a gap. */
+const PROSE_NONE = /\b(?:no|none|nothing|zero|without any)\b[^.]{0,30}\b(?:gaps?|missing)\b|\bnot (?:missing|a gap)\b/i;
+export const PROSE_TITLE_MAX = 120;
+
+/** Pure: one candidate per sentence that names a gap in free prose (notes or a final message). Headings and code are skipped. */
+export function extractProseGaps(text: string): { title: string; why: string }[] {
+  const found: { title: string; why: string }[] = [];
+  let fenced = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; continue; }
+    if (fenced || HEADING.test(line)) continue;
+    const body = plain(line.replace(BULLET, '$1'));
+    for (const sentence of body.split(/(?<=[.!?])\s+/)) {
+      const why = sentence.trim();
+      if (why.length < 12 || !PROSE_GAP.test(why) || PROSE_NONE.test(why)) continue;
+      found.push({ title: why.slice(0, PROSE_TITLE_MAX).trim(), why: why.slice(0, WHY_MAX) });
+    }
+  }
+  return found;
+}
+
+/** Heading gaps first, then prose gaps, the repeats of an earlier gap dropped, capped per source. */
+export function extractAllGaps(...texts: string[]): { title: string; why: string }[] {
+  const out: { title: string; why: string }[] = [];
+  const add = (gaps: { title: string; why: string }[]): void => {
+    for (const gap of gaps) if (!out.some(o => o.title === gap.title || sameWork(o.title, gap.title))) out.push(gap);
+  };
+  for (const text of texts) add(extractGaps(text));
+  for (const text of texts) add(extractProseGaps(text));
+  return out.slice(0, MAX_GAPS_PER_JOB);
 }
 
 const STOP = new Set('a an the and or of to in on for is are be it its this that with without by from as at not yet still no'.split(' '));
@@ -180,7 +214,9 @@ export async function readJobGaps(hours: number, opts: { propose?: boolean } & J
   for (let i = 0; i < finishes.length; i += 16) {
     await Promise.all(finishes.slice(i, i + 16).map(async finish => {
       const notes = await read(join(wtDir, finish.id, 'BRIDGE_NOTES.md'), NOTES_BYTES).catch(() => null);
-      const gaps = notes ? extractGaps(notes) : [];
+      // The worker's final message is the tail of its log (the same read `phm empties` uses).
+      const log = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(finish.id) ? await read(join(runsDir, `${finish.id}.log`), LOG_BYTES).catch(() => null) : null;
+      const gaps = extractAllGaps(notes ?? '', log ? log.split(/\r?\n/).slice(-EMPTY_CAUSE_TAIL_LINES).join('\n') : '');
       if (!gaps.length) { report.jobsWithoutGaps.push(finish.id); return; }
       for (const gap of gaps) raw.push({ title: scrubSecrets(gap.title), repo: repos.get(finish.id) ?? null, sourceJob: finish.id, why: scrubSecrets(gap.why) });
     }));
@@ -209,14 +245,17 @@ export async function readJobGaps(hours: number, opts: { propose?: boolean } & J
   return report;
 }
 
-/** Writes each survivor as a drop job (the queue `phm ideas queue` writes to). Only phantom work is queued: the drop queue is per-repo. */
+/** Repos that have a drop queue. The drop job header names its repo, and only phantom has one today; add a repo here when it gets its own. */
+export const DROP_QUEUE_REPOS: readonly string[] = ['phantom'];
+
+/** Writes each survivor as a drop job (the queue `phm ideas queue` writes to) when its repo has a drop queue; the rest are listed as skipped with the reason. */
 async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: JobGapsDeps['write']): Promise<ProposedGap[]> {
   const root = resolveDropJobRoot(runsDir);
   const out: ProposedGap[] = [];
   for (const gap of candidates) {
     const row: ProposedGap = { ...gap, jobId: null, queued: false, skipped: null };
     out.push(row);
-    if (gap.repo !== null && gap.repo !== 'phantom') { row.skipped = `repo ${gap.repo} is not phantom`; continue; }
+    if (gap.repo !== null && !DROP_QUEUE_REPOS.includes(gap.repo)) { row.skipped = `repo ${gap.repo} has no drop queue`; continue; }
     const job: DropJobInput = { id: gapJobId(gap.title), lane: 'claude', tier: 'work', body: gapJobBody(gap) };
     row.jobId = job.id;
     const verdict = validateDropJob(job);
