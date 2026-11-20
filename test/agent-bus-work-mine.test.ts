@@ -8,7 +8,7 @@ import { announceWork, readAgentInbox, sendDirectMessage, sendHandoff, sendWakeR
   updateWorkStatus } from '../src/core/agents/bus-unified.js';
 import { busWorkMineJobAnnotation, formatBusWorkMine, readBusWorkMine,
   type BusWorkMineOptions } from '../src/core/agents/bus-work-mine.js';
-import type { WorkJob } from '../src/core/agents/bus-v2-schema.js';
+import type { BusWorkFeedJob } from '../src/core/agents/bus-work-feed-read.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
@@ -55,9 +55,9 @@ async function announce(options: BusWorkMineOptions, from: string, jobId: string
   expect(result.status).toBe('posted');
 }
 
-const job = (over: Partial<WorkJob>): WorkJob => ({ id: 'J', owner: 'agent:atlas', to: 'leaders',
+const job = (over: Partial<BusWorkFeedJob>): BusWorkFeedJob => ({ id: 'J', owner: 'agent:atlas', to: 'leaders',
   provider: 'claude', repo: 'a/b', title: 'T', claimKeys: ['queue:J'], status: 'queued',
-  updatedAt: 1, ...over });
+  updatedAt: 1, postId: 'm-post', statusId: null, ...over });
 
 describe('busWorkMineJobAnnotation', () => {
   it('marks provably free, provably held and unknown coverage honestly', () => {
@@ -184,6 +184,30 @@ describe('readBusWorkMine', () => {
     // The human line names the detail too (the claims line prints `RQ-M-D(rescheduled)`).
     const line = formatBusWorkMine(result).find(text => text.includes('RQ-M-D rescheduled'));
     expect(line).toContain('detail="waiting on fake upstream"');
+  });
+
+  it('cites the post and newest status envelopes on each open job', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    await announce(options, 'atlas', 'RQ-C-1', ['queue:RQ-C-1']);
+    await announce(options, 'atlas', 'RQ-C-2', ['queue:RQ-C-2']);
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-C-2',
+      status: 'rescheduled', id: 'ws-RQ-C-2' }, options)).toMatchObject({ status: 'posted' });
+
+    const result = readBusWorkMine('atlas', options);
+    if (result.status !== 'ok' || result.jobs.status !== 'ok') throw new Error('unreachable');
+    const byId = new Map(result.jobs.jobs.map(entry => [entry.id, entry]));
+    // postId is the announcement envelope; statusId is the newest accepted
+    // status envelope, null while none has moved the job.
+    expect(byId.get('RQ-C-1')).toMatchObject({ postId: 'post-RQ-C-1', statusId: null });
+    expect(byId.get('RQ-C-2')).toMatchObject({ postId: 'post-RQ-C-2', statusId: 'ws-RQ-C-2',
+      status: 'rescheduled' });
+    const moved = formatBusWorkMine(result).find(text => text.includes('RQ-C-2 rescheduled'))!;
+    expect(moved).toContain('post=post-RQ-C-2 status=ws-RQ-C-2');
+    const fresh = formatBusWorkMine(result).find(text => text.includes('RQ-C-1 queued'))!;
+    expect(fresh).toContain('post=post-RQ-C-1');
+    expect(fresh).not.toContain('status=');
   });
 
   it('lists addressed mail with claim handles and resumes the page without loss', async () => {

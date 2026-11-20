@@ -36,8 +36,16 @@ export interface BusWorkFeedReadOptions {
   ownerKeyFor?: WorkFeedOwnerKeyFor;
 }
 
+/** A feed job plus the wire ids of the retained envelopes its state cites. */
+export interface BusWorkFeedJob extends WorkJob {
+  /** Wire id of the `work.post` receipt that announced the job — `agents bus show <postId>` reads it. */
+  postId: string;
+  /** Wire id of the newest accepted `work.status` receipt; null while no status has moved the job. */
+  statusId: string | null;
+}
+
 export type BusWorkFeedReadResult =
-  | { status: 'ok'; jobs: WorkJob[]; receipts: number; asOf: string; claims?: BusWorkFeedClaims }
+  | { status: 'ok'; jobs: BusWorkFeedJob[]; receipts: number; asOf: string; claims?: BusWorkFeedClaims }
   | { status: 'refused'; reason: Extract<WorkFeedResult, { status: 'refused' }>['reason']; receipts: number; asOf: string }
   | { status: 'unavailable' | 'retryable' | 'invalid'; asOf: string };
 
@@ -117,7 +125,13 @@ export function readBusWorkFeed(options: BusWorkFeedReadOptions = {}): BusWorkFe
   const result = projectBusWorkFeed(receipts, options.participants ?? [],
     options.providerFor ?? hints?.providerFor, options.ownerKeyFor ?? hints?.ownerKeyFor);
   if (result.status !== 'ok') return { ...result, receipts: receipts.length, asOf };
-  const ok: BusWorkFeedReadResult = { status: 'ok', jobs: result.feed.jobs, receipts: receipts.length, asOf };
+  const ok: BusWorkFeedReadResult = { status: 'ok',
+    jobs: result.feed.jobs.map(job => {
+      // The projection records a citation for every job it emits.
+      const citation = result.citations.get(job.id)!;
+      return { ...job, postId: citation.post, statusId: citation.status };
+    }),
+    receipts: receipts.length, asOf };
   if (!options.claims) return ok;
   const listed = listCoordination(options.root, now);
   const holds: BusWorkFeedHold[] = [];
@@ -212,16 +226,17 @@ function feedField(value: string, max: number): string {
 }
 
 /** One human line per job: the announcement's own title, the newest status's
- * detail when it carries one, and claim keys — display-clipped (JSON keeps
- * the full values). */
-function feedJobLine(job: WorkJob): string {
+ * detail when it carries one, claim keys — display-clipped (JSON keeps the
+ * full values) — and the wire ids of the retained envelopes the job cites. */
+function feedJobLine(job: BusWorkFeedJob): string {
   const title = feedField(job.title, FEED_TITLE_MAX);
   const detail = job.detail === undefined ? '' : feedField(job.detail, FEED_DETAIL_MAX);
   const keys = job.claimKeys.length === 0 ? 'none' : feedField(job.claimKeys.join(','), FEED_KEYS_MAX);
   return `${job.id} ${job.status}${title === '' ? '' : ` "${title}"`}` +
     `${detail === '' ? '' : ` detail="${detail}"`}` +
     ` owner=${job.owner} to=${job.to} provider=${job.provider} repo=${job.repo} keys=${keys} ` +
-    `updated=${new Date(job.updatedAt).toISOString()}`;
+    `updated=${new Date(job.updatedAt).toISOString()} post=${job.postId}` +
+    `${job.statusId === null ? '' : ` status=${job.statusId}`}`;
 }
 
 /** Human-readable feed lines shared by `fleet work-feed` and `agents bus work feed`. */

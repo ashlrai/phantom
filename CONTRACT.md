@@ -1590,7 +1590,12 @@ reject ASCII controls including DEL. Claims grant no execution authority.
 
 `projectBusWorkFeed(receipts: readonly unknown[], participants?: readonly Participant[], providerFor?: WorkFeedProviderFor, ownerKeyFor?: WorkFeedOwnerKeyFor)`
 in `src/core/agents/bus-work-feed.ts` returns `WorkFeedResult`: either
-`{status:'ok', feed:{v:2,jobs:WorkJob[]}}` or `{status:'refused',reason}`.
+`{status:'ok', feed:{v:2,jobs:WorkJob[]}, citations:ReadonlyMap<string,WorkFeedCitation>}`
+or `{status:'refused',reason}`. `WorkFeedCitation` is `{post, status}` — the
+wire ids of the retained `work.post` receipt that announced the job and of
+the newest accepted `work.status` receipt (`status` is null while none has
+moved it), keyed by job id, so every job cites the envelopes its state came
+from; `agents bus show <id>` resolves them.
 It validates at most 1024 retained receipts in strictly increasing cursor order;
 legacy and unrelated bodies stay opaque. Posts start queued with `owner=from`,
 `to` set to the announcement envelope's routing label, and the announcement's
@@ -1616,7 +1621,12 @@ answer 503.
 
 `readBusWorkFeed({root?, now?, claims?, participants?, providerFor?, ownerKeyFor?})` in `src/core/agents/bus-work-feed-read.ts`
 pages the bounded bus inbox without writes and returns ok/refused/unavailable/
-retryable/invalid with receipt count and `asOf`. `runtimeProvider(identity)` is the exported newest-runtime provider
+retryable/invalid with receipt count and `asOf`. On `ok` each job is a
+`BusWorkFeedJob` (`WorkJob` plus `postId` — the announcing `work.post`
+envelope's wire id — and `statusId` — the newest accepted `work.status`
+envelope's wire id, null while none has moved the job), so feed consumers can
+`agents bus show` the receipts behind a job without a second scan; filters
+keep the citation fields with their job. `runtimeProvider(identity)` is the exported newest-runtime provider
 lookup both the feed hints and `announceWork` share. Omitted post providers fall back
 to the sender identity's newest registered runtime in the agent registry beside
 the bus store (`resolveAgent` over handle, `agent:<handle>`, stable id and
@@ -1642,9 +1652,10 @@ newest-first order and per-job hold regrouping; `toMatch` is the predicate
 over its `owner` (announcer) label — each matching literally and under every
 label of one agent identity (an unresolvable ref or unreadable registry keeps
 exact-label matching). `formatBusWorkFeed(result)` renders the shared human
-lines — each job as `<id> <status> "<title>" detail="<why>" owner=… keys=<claim keys>`
+lines — each job as `<id> <status> "<title>" detail="<why>" owner=… keys=<claim keys> updated=… post=<postId> [status=<statusId>]`
 with title, detail and keys scrubbed, single-lined and display-clipped (JSON
-keeps the full values; `detail=` appears only when the job carries one) — both feed CLIs use them, and both accept `--to <label>`, `--owner
+keeps the full values; `detail=` and `status=` appear only when present, `post=`
+always) — both feed CLIs use them, and both accept `--to <label>`, `--owner
 <agent>` and `--job <id>` beside `--status`. `phm fleet work-feed [--claims]
 [--to <label>] [--owner <agent>] [--job <id>]` and
 `phm agents bus work feed [--status] [--claims] [--to <label>] [--owner
@@ -1719,7 +1730,8 @@ each claim row is a `BusClaimsListClaim` that gains `jobs` (the announced jobs
 its keys block, `{id, owner, status, title, detail?}`) only when the feed read is `ok`,
 absent otherwise. `jobs` reports the open feed jobs
 (`BUS_FEED_OPEN_STATUSES`, at least one claim key, newest 50 of `open`) as
-`BusWorkMineJob` (`WorkJob` plus `addressed`, `announced`, `freeKeys`,
+`BusWorkMineJob` (`BusWorkFeedJob` — so it carries the feed's `postId`/`statusId`
+envelope citations — plus `addressed`, `announced`, `freeKeys`,
 `heldKeys`, `claimable`): `addressed` marks a `to` label resolving to the
 agent's identity and `announced` an `owner` label resolving to it (the agent
 posted the job and owns its status reports) — both through the same

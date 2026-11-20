@@ -5,8 +5,16 @@ import {
   type Participant, type WorkJob,
 } from './bus-v2-schema.js';
 
+/** The retained envelopes a job's state cites: its announcement and newest status. */
+export interface WorkFeedCitation {
+  /** Wire id of the `work.post` receipt that announced the job. */
+  post: string;
+  /** Wire id of the newest accepted `work.status` receipt; null while no status has moved the job. */
+  status: string | null;
+}
+
 export type WorkFeedResult =
-  | { status: 'ok'; feed: { v: 2; jobs: WorkJob[] } }
+  | { status: 'ok'; feed: { v: 2; jobs: WorkJob[] }; citations: ReadonlyMap<string, WorkFeedCitation> }
   | { status: 'refused'; reason: 'invalid-receipts' | 'invalid-participants' | 'invalid-body'
     | 'missing-provider' | 'duplicate-job' | 'owner-mismatch' };
 
@@ -45,6 +53,7 @@ export function projectBusWorkFeed(receipts: readonly unknown[], participants: r
     return ownerKeys.get(label);
   };
   const jobs = new Map<string, WorkJob>();
+  const citations = new Map<string, WorkFeedCitation>();
   let cursor = 0;
   for (const input of receipts) {
     if (input === null || typeof input !== 'object' || Array.isArray(input)) {
@@ -74,6 +83,7 @@ export function projectBusWorkFeed(receipts: readonly unknown[], participants: r
         repo: post.data.repo, title: post.data.title,
         ...(post.data.dispatch === undefined ? {} : { dispatch: post.data.dispatch }),
         claimKeys: post.data.claimKeys, status: 'queued', updatedAt: row.receivedAt });
+      citations.set(post.data.jobId, { post: checked.value.id, status: null });
     } else if (body.kind === 'work.status') {
       const status = workStatusBodySchema.safeParse(body);
       if (!status.success) return { status: 'refused', reason: 'invalid-body' };
@@ -93,7 +103,9 @@ export function projectBusWorkFeed(receipts: readonly unknown[], participants: r
       if (status.data.detail === undefined) delete next.detail;
       else next.detail = status.data.detail;
       jobs.set(job.id, next);
+      // Every job was announced by a post that recorded its citation above.
+      citations.get(job.id)!.status = checked.value.id;
     }
   }
-  return { status: 'ok', feed: workFeedSchema.parse({ v: 2, jobs: [...jobs.values()] }) };
+  return { status: 'ok', feed: workFeedSchema.parse({ v: 2, jobs: [...jobs.values()] }), citations };
 }

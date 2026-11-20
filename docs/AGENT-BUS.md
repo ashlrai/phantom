@@ -328,7 +328,12 @@ same projection back — jobs newest-first, optionally filtered by status,
 exact job id, announcement address or announcing agent and joined with the
 live coordination holds — so the
 whole post/status/feed loop stays on this surface without dropping to
-`phm fleet work-feed`. `--to` keeps jobs whose announcement was addressed to
+`phm fleet work-feed`. Every job cites the retained envelopes its state came
+from: `postId` is the wire id of the `work.post` receipt that announced it
+and `statusId` the wire id of the newest accepted `work.status` receipt
+(`null` while none has moved it), so `phm agents bus show <id>` resolves the
+evidence behind a job without a second scan; the human lines print them as
+`post=`/`status=`. `--to` keeps jobs whose announcement was addressed to
 that routing label and `--owner` keeps jobs announced by that agent; each
 matches literally and under every label of one agent identity through the
 registry, while an unresolvable ref or an unreadable registry keeps
@@ -384,7 +389,9 @@ without redelivering or skipping. `addressed` marks jobs whose announcement
 `to` label resolves to the agent's
 identity, and `announced` marks jobs whose `owner` (announcer) label resolves
 to it — the agent posted them and owns their status reports, so the digest
-distinguishes driveable announcements from claimable work. For the
+distinguishes driveable announcements from claimable work. Each job also
+carries the feed's `postId`/`statusId` envelope citations, so the digest
+names the `agents bus show` handles behind every open job. For the
 `next`/`handoffs` sections "addressed to it" means any label of the resolved
 identity or a `group:<channel>:<topic>` address of a registry channel it
 belongs to — the same membership rule the inbox and wake reads apply, minus

@@ -16,7 +16,7 @@ import { coordinationRowBlocks, listCoordination } from './claim-store.js';
 import { listBusClaims, type BusClaimsListClaim, type BusClaimsOwnerMatch } from './bus-claims.js';
 import { agentLabels, readAgentRegistry, resolveAgent, type AgentRegistry } from './bus-identity.js';
 import { BUS_FEED_OPEN_STATUSES, busWorkFeedOwnerMatcher, busWorkFeedToMatcher, readBusWorkFeed,
-  type BusWorkFeedReadResult } from './bus-work-feed-read.js';
+  type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import { busBodyFallbackSummary, busBodySummary, readAgentInbox, readAgentWakes,
   type InboxKind } from './bus-unified.js';
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter } from '../fleet/bus-inbox.js';
@@ -25,7 +25,6 @@ import { BUS_PROTOCOL_KEY, BUS_PRIORITIES, isClaimableWork,
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
 import type { BusWakeRow } from '../fleet/bus-wake-queue.js';
-import type { WorkJob } from './bus-v2-schema.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export interface BusWorkMineOptions {
@@ -41,7 +40,7 @@ export interface BusWorkMineOptions {
 export type BusWorkMineHoldCoverage = 'complete' | 'truncated' | 'unknown';
 
 /** An open feed job plus its per-key hold state; a null field means unknown, never none. */
-export interface BusWorkMineJob extends WorkJob {
+export interface BusWorkMineJob extends BusWorkFeedJob {
   /** True when the announcement `to` label resolves to this agent's identity; false keeps exact-label misses honest. */
   addressed: boolean;
   /** True when the job's `owner` (announcer) label resolves to this agent's identity — the agent posted it and owns its status reports; false keeps exact-label misses honest. */
@@ -209,7 +208,7 @@ const AGENT_REF = /^[\x21-\x7e]{1,128}$/;
  * free key, false only when every declared key is provably held.
  */
 export function busWorkMineJobAnnotation(
-  job: WorkJob, held: ReadonlySet<string> | undefined, coverage: BusWorkMineHoldCoverage,
+  job: BusWorkFeedJob, held: ReadonlySet<string> | undefined, coverage: BusWorkMineHoldCoverage,
   addressed: boolean, announced = false,
 ): BusWorkMineJob {
   const heldKeys = coverage === 'unknown' ? null : job.claimKeys.filter(key => held?.has(key));
@@ -557,7 +556,8 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
       lines.push(`  ${job.id} ${job.status}${title === '' ? '' : ` "${title}"`}` +
         `${detail === '' ? '' : ` detail="${detail}"`} ` +
         `claimable=${claimable} addressed=${job.addressed} announced=${job.announced} owner=${job.owner} repo=${job.repo} ` +
-        `free=${keys(job.freeKeys)} held=${keys(job.heldKeys)}`);
+        `free=${keys(job.freeKeys)} held=${keys(job.heldKeys)} post=${job.postId}` +
+        `${job.statusId === null ? '' : ` status=${job.statusId}`}`);
     }
   }
 
