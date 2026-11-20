@@ -11,6 +11,7 @@ import { readNeedsMason } from '../fleet/needs-mason-resolve.js';
 import { readFleetRunsDirState, type FleetRunsDirState } from '../fleet/runs-dir-state.js';
 import { readInboxEntries, type InboxEntry } from '../fleet/mason-inbox.js';
 import { defaultReleasePublicReader, verifyLatestWorkbenchRelease } from '../release-public-facts.js';
+import { DIGEST_GAP_MINUTES, readFleetGaps } from '../fleet/sleep-gaps.js';
 import { readNodeResults, type NodeResultsSummary } from '../drive/nodes/results-read.js';
 import type { Fact, StatusDigestInput, StatusDigestPeers, StatusDigestWorkClaims } from './status-digest.js';
 
@@ -28,6 +29,8 @@ export interface StatusDigestSources {
   peers?: (nowMs: number) => PeerLedgerReport;
   /** Read-only node runner results on this computer; a throw becomes an unknown Node runs line. */
   nodeRuns?: (nowMs: number) => NodeResultsSummary;
+  /** The one plain line for the longest gap over 30 minutes that ended in the last 6 hours and left work waiting; null when none. */
+  gapLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
 }
 
 const HOUR = 3_600_000;
@@ -50,6 +53,11 @@ const defaults: StatusDigestSources = {
   workClaims: () => inspectBusWorkClaims(),
   peers: nowMs => readPeerLedger({ now: () => nowMs }),
   nodeRuns: nowMs => readNodeResults({ nowMs }),
+  gapLine: async (runsDir, nowMs) => {
+    const report = await readFleetGaps({ runsDir, now: nowMs, sinceMs: 6 * HOUR, minMinutes: DIGEST_GAP_MINUTES + 1, claudeLeftPct: null });
+    const worst = report.gaps.filter(g => g.lostWork !== false).sort((a, b) => b.minutes - a.minutes)[0];
+    return worst?.line ?? null;
+  },
 };
 
 function gatherNodeRuns(read: ((nowMs: number) => NodeResultsSummary) | undefined, nowMs: number): NodeResultsSummary | undefined {
@@ -149,6 +157,7 @@ export async function gatherStatusDigestInput(runsDir: string, now: Date, overri
     topP0 = { ok: true, value: entry ? { text: entry.text, ageMs: at === null ? null : Math.max(0, nowMs - at) } : null };
   }
 
+  const gap = await fact(() => src.gapLine?.(runsDir, nowMs) ?? null, 'gap check failed');
   const updatePending = installed.ok && published.ok ? versionNewer(published.value, installed.value) : null;
-  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs) };
+  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}) };
 }

@@ -35,6 +35,8 @@ export interface StatusDigestInput {
   peers?: StatusDigestPeers | null;
   /** Node runner results on this computer; undefined keeps the existing lines, a throw is `{ status: 'unavailable' }`. */
   nodeRuns?: NodeResultsSummary | null;
+  /** One plain sentence about a gap over 30 minutes that left work waiting ("The Mac slept 12:33 to 18:42; 6 hours of work did not run."); absent when none. */
+  gapLine?: string;
 }
 
 export const TOP_P0_MAX_CHARS = 120;
@@ -90,6 +92,7 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
       lines.push(`Peers: ${parts.join(' · ')}`);
     }
   }
+  if (input.gapLine) lines.push(input.gapLine);
   const runs = input.nodeRuns;
   if (runs) lines.push(nodeRunsLine(runs));
   return lines;
