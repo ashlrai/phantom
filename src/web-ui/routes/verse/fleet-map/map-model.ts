@@ -38,6 +38,7 @@ export function narrowLiveMap(raw: unknown): FleetLiveMap | null {
       ...(kind === 'lane' && narrowLaneHealth(row.health) ? { health: narrowLaneHealth(row.health) } : {}),
       ...(kind === 'lane' && (row.mergedPerHour === null || typeof row.mergedPerHour === 'number') ? { mergedPerHour: row.mergedPerHour } : {}),
       ...(kind === 'job' ? { lane: text(row.lane), repo: text(row.repo), ...(MAP_STATES.includes(row.state as MapState) ? { state: row.state as MapState } : {}) } : {}),
+      ...(kind === 'computer' && row.remote === true ? { remote: true } : {}),
       ...(kind === 'resource' && (row.usedPct === null || typeof row.usedPct === 'number') ? { usedPct: row.usedPct } : {}) });
   }
   const edges: LiveMapEdge[] = [];
@@ -110,7 +111,9 @@ export const messagePairsQuery: QueryDef<Map<string, AgentsMessagePair> | null> 
 export const NODE_W = 140, NODE_H = 52;
 const COLUMN = 156, ROW = 104, PAD = 16;
 export interface PlacedNode extends LiveMapNode { x: number; y: number }
-export interface MapLayout { width: number; height: number; nodes: PlacedNode[]; at: Map<string, PlacedNode> }
+/** A labelled box around nodes that belong together: the other Macs, drawn apart from this one. */
+export interface MapGroupBox { id: string; label: string; x: number; y: number; width: number; height: number }
+export interface MapLayout { width: number; height: number; nodes: PlacedNode[]; at: Map<string, PlacedNode>; groups?: MapGroupBox[] }
 
 /**
  * Rows by org level (leader, lanes, jobs, computers, resources), empty rows skipped. Each job sits in
@@ -128,14 +131,27 @@ export function layoutLiveMap(map: FleetLiveMap): MapLayout {
   const at = new Map<string, PlacedNode>(), placed: PlacedNode[] = [];
   rows.forEach((row, index) => {
     const rank = (node: LiveMapNode) => { const up = parent.get(node.id); return up && at.has(up) ? at.get(up)!.x : Number.MAX_SAFE_INTEGER; };
-    const ordered = row.map((node, order) => ({ node, order })).sort((a, b) => rank(a.node) - rank(b.node) || a.order - b.order);
+    // Other Macs sit together to the right of this Mac, so they can be boxed as one group.
+    const ordered = row.map((node, order) => ({ node, order })).sort((a, b) => Number(a.node.remote === true) - Number(b.node.remote === true)
+      || rank(a.node) - rank(b.node) || a.order - b.order);
     const step = (width - PAD * 2) / ordered.length;
     ordered.forEach(({ node }, i) => {
       const place = { ...node, x: Math.round(PAD + step * (i + 0.5)), y: PAD + NODE_H / 2 + index * ROW };
       at.set(node.id, place); placed.push(place);
     });
   });
-  return { width, height: PAD * 2 + NODE_H + Math.max(0, rows.length - 1) * ROW, nodes: placed, at };
+  return { width, height: PAD * 2 + NODE_H + Math.max(0, rows.length - 1) * ROW, nodes: placed, at, groups: remoteGroup(placed) };
+}
+
+/** The box around every other Mac, labelled with how many are online; none when this is the only Mac. */
+export function remoteGroup(placed: readonly PlacedNode[]): MapGroupBox[] {
+  const remote = placed.filter(node => node.kind === 'computer' && node.remote === true);
+  if (!remote.length) return [];
+  const left = Math.min(...remote.map(node => node.x)) - NODE_W / 2 - 8, right = Math.max(...remote.map(node => node.x)) + NODE_W / 2 + 8;
+  const top = Math.min(...remote.map(node => node.y)) - NODE_H / 2 - 24, bottom = Math.max(...remote.map(node => node.y)) + NODE_H / 2 + 8;
+  const down = remote.filter(node => node.status === 'offline').length, unsure = remote.filter(node => node.status === 'unknown').length;
+  const label = `Other Macs: ${remote.length}${down ? `, ${down} offline` : ''}${unsure ? `, ${unsure} unknown` : ''}`;
+  return [{ id: 'remote-macs', label, x: Math.max(0, left), y: Math.max(0, top), width: right - Math.max(0, left), height: bottom - Math.max(0, top) }];
 }
 
 /**

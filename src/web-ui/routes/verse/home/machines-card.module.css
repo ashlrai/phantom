@@ -1,0 +1,12 @@
+/* Machines: the total, then one block per Mac. The same on the desktop Home and the phone. */
+.card { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; overflow-wrap: anywhere; }
+.title { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-weight: var(--font-weight-semibold); }
+.line { margin: 0; color: var(--text-primary); font-size: var(--text-sm-size); }
+.muted { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }
+.macs { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.mac { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--space-2); }
+.name { color: var(--text-primary); font-size: var(--text-sm-size); }
+.status { color: var(--text-secondary); font-size: var(--text-xs-size); }
+.status[data-status='offline'] { color: var(--status-danger-fg); }
+.status[data-status='unknown'] { font-style: italic; }
+.facts { flex-basis: 100%; color: var(--text-secondary); font-size: var(--text-xs-size); }

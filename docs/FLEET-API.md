@@ -428,7 +428,19 @@ computers and the pools lanes draw on. `phm map --json` prints it as
 `fleet.live-map.v1`. `GET /api/verse/fleet/control/live-map` serves the same
 graph to the desktop Map pane with a current read session. The graph adds no
 source of its own. It joins the org map and tree above, `phm nodes` (computers
-and the jobs each one holds) and the pool-usage ledger.
+and the jobs each one holds) and the pool-usage ledger. A computer that is not
+this one carries `remote: true`; the 2D map draws those together in an
+"Other Macs" box, apart from this Mac.
+
+`phm nodes pool [--json]` shows the joined Macs as one pool, this Mac first:
+online, offline or unknown, free slots, running jobs, load, free memory and disk,
+whether offload is on, when it was last seen, and a total such as "2 Macs, 11
+free slots". `--json` is `phantom.nodes-pool.v1`, and
+`GET /api/verse/fleet/control/nodes-pool` serves the same report to the
+Machines card on the desktop and phone Home. Unknown facts say `unknown` and stay
+out of the total (`total.slotsUnknown` counts online Macs whose slots were not
+measured). The offload setting is per Mac; only this Mac's is known, so other
+Macs show `unknown`.
 
 `phm map --lane <lane> --repo <repo> --state <running|waiting|done|failed|unknown>`
 narrows it to the agents (jobs) that match every filter given, with their lane,

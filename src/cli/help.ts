@@ -291,6 +291,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{schema:"phantom.nodes-view.v1", schemaVersion:1, asOf, self, registry, nodes:[{name,isSelf,reachable,lastSeen,heartbeatAgeSeconds,phantom,freeMemoryBytes,freeMemoryPercent,load,cpuHeadroomPercent,lanes,jobsRunning,freeSlots,stateCode,state}], reasons, canTake?, placement?:{lane,node,target,reason,explanation}}',
   },
   {
+    usage: 'phm nodes pool [--json]',
+    description: 'Your Macs as one pool, this Mac first: online, offline or unknown, free slots, running jobs, load, free memory and disk, whether offload is on, when it was last seen, and a total line such as "2 Macs, 11 free slots". Offload is known only for this Mac. The desktop and phone Home show the same as a Machines card. Unknown facts say unknown and stay out of the total. Read only. Exit 0, 2 bad usage.',
+    safety: 'read',
+    jsonShape: '{schema:"phantom.nodes-pool.v1", schemaVersion:1, asOf, nodes:[{name,isSelf,status:online|offline|unknown,freeSlots,jobsRunning,load,freeMemoryBytes,freeMemoryPercent,freeDiskGb,offload:on|off|unknown,lastSeen,state}], total:{macs,online,freeSlots,slotsUnknown,jobsRunning,line}, reasons}',
+  },
+  {
     usage: 'phm nodes plan [--json]',
     description: 'A plan for spreading queued jobs over your computers: for each one, online or not, free memory, load, lanes and how many more jobs it could take now (0 when offline or held, "unknown" when not measured), plus which queued job fits which computer. Says "Tailscale is not installed here." when the Tailscale CLI is missing. It only plans: it launches, moves and stops nothing. Exit 0, 2 bad usage.',
     safety: 'read',
@@ -1407,6 +1413,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'disk-maint [--apply] [--json] [--only <class>] [--allow <class>]', desc: 'Standing disk maintenance: rotate/compress quiet logs, prune dead session leftovers, stale staging and recovery dirs, and remove merged worktrees. Dry run unless --apply; protect-list never touches ~/.codex*, model weights, Docker, client trees or secrets.', topic: 'safety' },
   { cmd: 'autofix [--apply] [--dry-run] [--json] [--only <fixer>]', desc: 'Act on Eng Ops incident files (prefix a, b, d, e; g is detect-only). Dry run unless --apply. Refuses when ~/.ashlr/KILL exists. Never reads the incident body into a command. See docs/AUTOFIX.md.', topic: 'safety' },
   { cmd: 'nodes [--json] [--can-take <lane>]', desc: 'Your computers as one pool: which are reachable, running Phantom and ready for work. Read only.', topic: 'safety' },
+  { cmd: 'nodes pool [--json]', desc: 'Your Macs as one pool, this Mac first: online or not, free slots, running jobs, load, free memory and disk, offload on or off, last seen, and a total such as "2 Macs, 11 free slots". Read only.', topic: 'safety' },
   { cmd: 'nodes plan [--json]', desc: 'Plan which queued job fits which computer, with suggested free slots per computer. Read only: it launches and moves nothing.', topic: 'safety' },
   { cmd: 'nodes offload [--dry-run] [--json]', desc: 'Opt-in: when this computer would hold a launch and another passes doctor, choose that computer for a ready job and record why. --dry-run shows what would move; `nodes offload on|off` flips the setting.', topic: 'safety' },
   { cmd: 'node join|beat|enqueue|plan|pull|complete|status [--json]', desc: 'Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases.', topic: 'safety' },
