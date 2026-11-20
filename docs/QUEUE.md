@@ -922,6 +922,18 @@ job in the group lacks a token total or no PR merged. Missing measurements are
 unknown, and malformed lines are skipped and counted. The report describes
 recorded evidence, not necessarily every job or PR.
 
+## Is each pool fed?
+
+Run `phm queue supply` for one plain line per pool: usage left, hours to reset, jobs queued for the pool, its starts
+per hour over the last 6 hours, and the hours of work queued (ready jobs divided by starts per hour). Pools that need work
+come first: "Claude: 0 jobs queued, 16% left, about 3 hours of usage idle" or "codex-personal: 104 jobs queued, plan used
+up until Sat 3:30 PM". `--json` returns `queue.supply.v1` for agents. It is read-only and built from `phm pools`, the
+ready queue and the dispatch events. A figure that cannot be read is `null` and shown as unknown, never zero. Ready jobs
+are counted by the lane on their queue row, so a job not yet placed on a lane is not counted.
+
+The hourly digest adds a `supply_low` line, naming the pool, when a pool that is behind (or has waste risk high or
+medium) has under an hour of work queued.
+
 ## Waiting to launch
 
 Run `phm queue stuck --json` to list READY router jobs without a recorded launch. `age_s` uses the enqueue epoch, or the first timestamped dispatch event for the job; `age: "unknown"` means neither is available. If dispatch events are unavailable, `eventsAvailable` is false and the list may include jobs that have launched. The desktop Queue view shows the same reading. The dispatch-events log is append-only and unbounded, so it is folded line by line: memory stays flat however large the log grows, and every event still counts.
