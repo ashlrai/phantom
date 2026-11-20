@@ -40,8 +40,8 @@ export async function cmdPools(args: string[]): Promise<number> {
   const now = Date.now();
   const view = buildPoolsView(await readResourceLedger({ now: () => now }), now, await readUsageSamples({ nowMs: now }));
   if (spenddown) {
-    const { buildSpendDown, formatSpendDownText } = await import('../core/fleet/pools-spenddown.js');
-    const chart = buildSpendDown(view);
+    const { readSpendDown, formatSpendDownText } = await import('../core/fleet/pools-spenddown.js');
+    const chart = await readSpendDown(view, { nowMs: now });
     console.log(flags.includes('--text') ? formatSpendDownText(chart) : JSON.stringify(chart, null, 2));
     return 0;
   }

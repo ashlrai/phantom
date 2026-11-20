@@ -2847,11 +2847,11 @@ export async function handleApi(
         sendJson(res, 405, { error: 'method not allowed' });
         return true;
       }
-      const [{ readResourceLedger }, { buildPoolsView }, { buildSpendDown }, { readUsageSamples }] = await Promise.all([
+      const [{ readResourceLedger }, { buildPoolsView }, { readSpendDown }, { readUsageSamples }] = await Promise.all([
         import('../fleet/runs-resource-ledger.js'), import('../fleet/pools-view.js'), import('../fleet/pools-spenddown.js'), import('../fleet/usage-history.js'),
       ]);
       const now = Date.now();
-      sendJson(res, 200, buildSpendDown(buildPoolsView(await readResourceLedger({ now: () => now }), now, await readUsageSamples({ nowMs: now }))));
+      sendJson(res, 200, await readSpendDown(buildPoolsView(await readResourceLedger({ now: () => now }), now, await readUsageSamples({ nowMs: now })), { nowMs: now }));
       return true;
     }
 
