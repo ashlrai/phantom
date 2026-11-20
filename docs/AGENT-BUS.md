@@ -382,7 +382,15 @@ owes under any of its labels or a `group:<channel>:<topic>` address of a
 channel it belongs to, minus threads whose waiting message it sent itself
 (the first 20 longest-waiting shown, `matched` the true total; each item
 cites the waiting message's envelope `id` for `agents bus show`, its
-`kind`, `waitingOn`, `waitingMs`, sender and scrubbed subject) — the wake
+`kind`, `waitingOn`, `waitingMs`, sender and scrubbed subject) — and the
+conversations it is waiting on: the outbound mirror over the same shared
+read, every `waiting` thread whose latest message the agent sent and whose
+`waiting.on` is not the agent itself — its own unanswered asks and
+handoffs, each naming `waitingOn` plus the resolved `waitingOnAgent` (null
+for a topic, a `group:` address, an unregistered label or an unreadable
+registry), the same 20-item cap and `matched`/`truncated`/`skipped`
+semantics; the two thread sections are mutually exclusive on every thread —
+the wake
 hints addressed to it, capped at the
 newest 20, and
 the next page of mail in its inbox: the same matching, order and owner-share

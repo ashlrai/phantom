@@ -1722,7 +1722,7 @@ no execution authority; the token returns only to its acquirer.
 `phm agents bus work mine [<agent>]`. `readBusWorkMine(agent, options?)`
 (`BusWorkMineOptions`: `root?`, `runsRoot?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, claims, jobs, announced, next, handoffs, threads, wakes, inbox}` or `{status:'invalid',
+asOf, claims, jobs, announced, next, handoffs, threads, awaiting, wakes, inbox}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
@@ -1819,6 +1819,21 @@ the true total and `truncated` definitive. The section reports
 `{status:'ok', source, matched, items, truncated, skipped}` — `skipped`
 keeps the damaged-row count — or `{status:'unavailable'}` when the bus
 store cannot be read; a missing store is a verified-empty `ok`.
+`awaiting` is the outbound mirror of `threads` over the same shared
+conversations read: every `state:'waiting'` thread whose latest message
+the agent itself sent (`isSelf` on the last message's `from`) and whose
+`waiting.on` does not resolve back to the agent — the agent's own asks
+and handoffs nobody has answered yet, so "is my question still
+outstanding?" needs no second `agents conversations` read. The two
+sections are mutually exclusive on every thread. Each
+`BusWorkMineAwaitingItem` carries the same fields as `BusWorkMineThread`
+— conversation `id`, waiting `messageId`, `kind`, `waitingOn`,
+`waitingMs`, `lastAt`, `messageCount`, sender `from`/`fromAgent`,
+scrubbed `subject` — plus `waitingOnAgent`, the resolved handle of the
+party owing the reply (null for a topic or `group:` address, an
+unregistered label, or an unreadable registry). Same 20-item cap,
+longest-waiting order, `matched`/`truncated`/`skipped` semantics and
+`unavailable`-on-unreadable rule as `threads`.
 `wakes` reuses
 `readAgentWakes` capped at the newest 20 with `truncated`, or
 `unknown-agent`/`unavailable` with `reason`. `inbox` reuses `readAgentInbox`

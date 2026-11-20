@@ -5,7 +5,7 @@
  * the claimable work envelopes and worker-handoff
  * assignments addressed to it — under any of its labels or to a channel it
  * belongs to — in `bus next` order, the conversation threads waiting on its
- * answer, the wake hints addressed to
+ * answer, the conversation threads it is waiting on, the wake hints addressed to
  * it and the next page of mail in its inbox. Each section reads the same
  * projection the dedicated verb
  * serves and keeps its honesty rules: an unreadable store, coordination table,
@@ -18,7 +18,7 @@ import { coordinationRowBlocks, listCoordination } from './claim-store.js';
 import { listBusClaims, type BusClaimsListClaim, type BusClaimsOwnerMatch } from './bus-claims.js';
 import { agentLabels, readAgentRegistry, resolveAgent, type AgentIdentity, type AgentRegistry } from './bus-identity.js';
 import { agentName } from '../fleet/agent-messages.js';
-import { readAgentConversations } from '../fleet/agent-conversations.js';
+import { readAgentConversations, type AgentConversations } from '../fleet/agent-conversations.js';
 import { plainAge } from '../fleet/agent-conversation-model.js';
 import { BUS_FEED_OPEN_STATUSES, busWorkFeedOwnerMatcher, busWorkFeedToMatcher, readBusWorkFeed,
   type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
@@ -221,11 +221,41 @@ export type BusWorkMineThreads =
       items: BusWorkMineThread[]; truncated: boolean; skipped: number }
   | { status: 'unavailable'; reason: string };
 
+/** One conversation thread whose latest message the agent sent and which still waits on another party's reply. */
+export interface BusWorkMineAwaitingItem {
+  /** Conversation key the thread groups under: a declared thread label, `job:<id>` or the root message id. */
+  id: string;
+  /** Envelope id of the agent's waiting (latest) message — `agents bus show <messageId>` resolves it. */
+  messageId: string;
+  /** The waiting message's kind: an ask or a handoff. */
+  kind: 'ask' | 'handoff';
+  /** Who owes the reply, as the conversation projection names it: the recipient label of the agent's waiting message — an agent label, a topic or a `group:<channel>:<topic>` address. */
+  waitingOn: string;
+  /** Resolved handle of the party owing the reply; null when the label names no registered identity — a topic or channel address — or the registry is unreadable. */
+  waitingOnAgent: string | null;
+  /** How long the thread has waited at the frozen read instant, ms. */
+  waitingMs: number;
+  /** ISO of the waiting (latest) message — the wait's start. */
+  lastAt: string;
+  messageCount: number;
+  /** Sender name of the waiting message — the agent's own label, as the projection shows it. */
+  from: string;
+  /** Resolved handle of that sender; null when unregistered or the registry is unreadable. */
+  fromAgent: string | null;
+  /** Scrubbed one-line subject of the waiting message. */
+  subject: string;
+}
+
+export type BusWorkMineAwaiting =
+  | { status: 'ok'; source: 'missing' | 'available'; matched: number;
+      items: BusWorkMineAwaitingItem[]; truncated: boolean; skipped: number }
+  | { status: 'unavailable'; reason: string };
+
 export type BusWorkMineResult =
   | { status: 'ok'; agent: BusWorkMineAgent; asOf: string;
       claims: BusWorkMineClaims; jobs: BusWorkMineJobs; announced: BusWorkMineAnnounced;
       next: BusWorkMineNext;
-      handoffs: BusWorkMineHandoffs; threads: BusWorkMineThreads;
+      handoffs: BusWorkMineHandoffs; threads: BusWorkMineThreads; awaiting: BusWorkMineAwaiting;
       wakes: BusWorkMineWakes; inbox: BusWorkMineInbox }
   | { status: 'invalid'; reason: string };
 
@@ -238,7 +268,7 @@ const WORK_MINE_NEXT_MAX = 10;
 const WORK_MINE_HANDOFFS_MAX = 20;
 /** Live announced jobs a digest shows, newest update first; `matched` keeps the true total. */
 const WORK_MINE_ANNOUNCED_MAX = 50;
-/** Waiting conversation threads a digest shows, longest wait first; `matched` keeps the true total. */
+/** Waiting conversation threads a digest shows per direction, longest wait first; `matched` keeps the true total. */
 const WORK_MINE_THREADS_MAX = 20;
 /** Bounded scan over the retained store, same page bound the inbox reader uses. */
 const WORK_MINE_NEXT_MAX_PAGES = Math.ceil(BUS_INBOX_MAX_MESSAGES / BUS_INBOX_MAX_READ) + 1;
@@ -541,6 +571,43 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
 }
 
 /**
+ * The identity scope both conversation sections share, built once per read:
+ * `isSelf` names the agent under any of its labels (with the literal-label
+ * fallback when no identity resolves — matching never widens on unknown
+ * state), `waitsOn` reports whether a `waiting.on` name is a wait the agent
+ * owes — its own labels or a `group:<channel>:<topic>` address of a channel it
+ * belongs to — and `agentOf` resolves a projection name to a registered
+ * handle or null.
+ */
+interface ConversationScope {
+  isSelf: (name: string) => boolean;
+  waitsOn: (on: string) => boolean;
+  agentOf: (name: string) => string | null;
+}
+
+function conversationScope(agent: string, registry: AgentRegistry | undefined,
+  identity: AgentIdentity | undefined): ConversationScope {
+  const selfNames = new Set(identity === undefined ? [] : agentLabels(identity).map(agentName));
+  const channelNames = new Set(registry === undefined || identity === undefined ? [] :
+    registry.channels.filter(channel => channel.members.includes(identity.handle)).map(channel => channel.name));
+  return {
+    isSelf: (name) => identity === undefined
+      ? name === agentName(agent)
+      : selfNames.has(name) || (registry !== undefined && resolveAgent(registry, name)?.id === identity.id),
+    waitsOn: (on) => {
+      if (identity === undefined) return on === agentName(agent);
+      if (selfNames.has(on)) return true;
+      if (on.startsWith('group:')) {
+        const rest = on.slice('group:'.length), sep = rest.indexOf(':');
+        return sep > 0 && channelNames.has(rest.slice(0, sep));
+      }
+      return registry !== undefined && resolveAgent(registry, on)?.id === identity.id;
+    },
+    agentOf: (name) => registry === undefined ? null : resolveAgent(registry, name)?.handle ?? null,
+  };
+}
+
+/**
  * The conversation threads whose latest message still wants this agent's
  * answer — the same thread state `agents conversations --waiting-only`
  * computes, narrowed to waits the agent (or a channel it belongs to) owes.
@@ -554,30 +621,13 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
  * `unavailable` and a missing one is a verified-empty `ok`, and `skipped`
  * keeps the damaged-row count honest.
  */
-function threadsSection(agent: string, options: BusWorkMineOptions, nowMs: number,
-  registry: AgentRegistry | undefined, identity: AgentIdentity | undefined): BusWorkMineThreads {
-  const conversations = readAgentConversations({ waitingOnly: true }, { root: options.root, now: () => nowMs });
+function threadsSection(conversations: AgentConversations, scope: ConversationScope): BusWorkMineThreads {
   const source = conversations.source;
   if (source === 'unavailable' || conversations.conversations === null) {
     return { status: 'unavailable', reason: 'Bus store is not readable.' };
   }
-  const selfNames = new Set(identity === undefined ? [] : agentLabels(identity).map(agentName));
-  const channelNames = new Set(registry === undefined || identity === undefined ? [] :
-    registry.channels.filter(channel => channel.members.includes(identity.handle)).map(channel => channel.name));
-  const isSelf = (name: string): boolean => identity === undefined
-    ? name === agentName(agent)
-    : selfNames.has(name) || (registry !== undefined && resolveAgent(registry, name)?.id === identity.id);
-  const waitsOn = (on: string): boolean => {
-    if (identity === undefined) return on === agentName(agent);
-    if (selfNames.has(on)) return true;
-    if (on.startsWith('group:')) {
-      const rest = on.slice('group:'.length), sep = rest.indexOf(':');
-      return sep > 0 && channelNames.has(rest.slice(0, sep));
-    }
-    return registry !== undefined && resolveAgent(registry, on)?.id === identity.id;
-  };
   const matched = conversations.conversations.filter(thread => thread.waiting !== null &&
-    waitsOn(thread.waiting.on) && !isSelf(thread.messages[thread.messages.length - 1]!.from));
+    scope.waitsOn(thread.waiting.on) && !scope.isSelf(thread.messages[thread.messages.length - 1]!.from));
   return { status: 'ok', source, matched: matched.length,
     items: matched.slice(0, WORK_MINE_THREADS_MAX).map(thread => {
       const last = thread.messages[thread.messages.length - 1]!;
@@ -586,7 +636,44 @@ function threadsSection(agent: string, options: BusWorkMineOptions, nowMs: numbe
         id: thread.id, messageId: last.id, kind: last.kind === 'handoff' ? 'handoff' : 'ask',
         waitingOn: waiting.on, waitingMs: waiting.ms, lastAt: thread.lastAt,
         messageCount: thread.messageCount, from: last.from,
-        fromAgent: registry === undefined ? null : resolveAgent(registry, last.from)?.handle ?? null,
+        fromAgent: scope.agentOf(last.from),
+        subject: mineField(thread.subject, WORK_MINE_SUMMARY_MAX),
+      };
+    }),
+    truncated: matched.length > WORK_MINE_THREADS_MAX, skipped: conversations.skipped };
+}
+
+/**
+ * The outbound mirror of `threads`: conversation threads whose latest
+ * message the agent itself sent and which still wait on the recipient's
+ * reply — asks and handoffs the agent asked and nobody has answered yet, so
+ * "is my question still outstanding?" is answered by the same digest instead
+ * of a second `agents conversations` read and a mental filter. The wait is
+ * the projection's own: `waiting.on` names the last message's recipient,
+ * and a thread only counts when that recipient is not the agent — you cannot
+ * wait on yourself. A reply, a done or blocked state, or the wait's TTL
+ * expiring drops the thread exactly the way `agents conversations` reports
+ * it. Same shared read, same caps and honesty rules as `threads`; the two
+ * sections are mutually exclusive on every thread (one needs the agent's
+ * label off the waiting message, the other on it).
+ */
+function awaitingSection(conversations: AgentConversations, scope: ConversationScope): BusWorkMineAwaiting {
+  const source = conversations.source;
+  if (source === 'unavailable' || conversations.conversations === null) {
+    return { status: 'unavailable', reason: 'Bus store is not readable.' };
+  }
+  const matched = conversations.conversations.filter(thread => thread.waiting !== null &&
+    scope.isSelf(thread.messages[thread.messages.length - 1]!.from) && !scope.isSelf(thread.waiting.on));
+  return { status: 'ok', source, matched: matched.length,
+    items: matched.slice(0, WORK_MINE_THREADS_MAX).map(thread => {
+      const last = thread.messages[thread.messages.length - 1]!;
+      const waiting = thread.waiting!;
+      return {
+        id: thread.id, messageId: last.id, kind: last.kind === 'handoff' ? 'handoff' : 'ask',
+        waitingOn: waiting.on, waitingOnAgent: scope.agentOf(waiting.on),
+        waitingMs: waiting.ms, lastAt: thread.lastAt,
+        messageCount: thread.messageCount, from: last.from,
+        fromAgent: scope.agentOf(last.from),
         subject: mineField(thread.subject, WORK_MINE_SUMMARY_MAX),
       };
     }),
@@ -601,7 +688,9 @@ function threadsSection(agent: string, options: BusWorkMineOptions, nowMs: numbe
  * feed read the jobs section annotates, so the two views cannot disagree. A
  * non-ok feed leaves `jobs` absent on claims and reports its own state in the
  * jobs section; non-ok claims, next, handoffs, wakes or inbox reads report
- * their own state rather than zero or an empty list.
+ * their own state rather than zero or an empty list. `threads` and
+ * `awaiting` share the one conversations read: waits the agent owes and
+ * waits the agent is owed, each capped and reporting the same source state.
  */
 export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {}): BusWorkMineResult {
   if (!AGENT_REF.test(agent)) return { status: 'invalid', reason: 'invalid-agent' };
@@ -623,7 +712,12 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
   const jobs = jobsSection(feed, agent, options.root);
   const announced = announcedSection(feed, agent, options.root);
   const { next, handoffs } = pendingWorkSections(agent, options, nowMs, registry);
-  const threads = threadsSection(agent, options, nowMs, registry, identity);
+  // One conversations read backs both thread directions: owed-to-me waits and
+  // my own unanswered asks share the same projection and frozen instant.
+  const conversations = readAgentConversations({ waitingOnly: true }, { root: options.root, now: () => nowMs });
+  const scope = conversationScope(agent, registry, identity);
+  const threads = threadsSection(conversations, scope);
+  const awaiting = awaitingSection(conversations, scope);
 
   if (claims.status === 'ok' && feed.status === 'ok') {
     for (const claim of claims.claims) {
@@ -643,7 +737,7 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
 
   const inbox = inboxSection(agent, options, nowMs);
 
-  return { status: 'ok', agent: who, asOf, claims, jobs, announced, next, handoffs, threads, wakes, inbox };
+  return { status: 'ok', agent: who, asOf, claims, jobs, announced, next, handoffs, threads, awaiting, wakes, inbox };
 }
 
 /** Scrubbed, single-line, clipped display field; '' when nothing readable remains. */
@@ -752,6 +846,18 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
     for (const item of threads.items) {
       const from = item.fromAgent ? `agent:${item.fromAgent}` : `label ${item.from}`;
       lines.push(`  [${item.kind} id=${item.messageId} thread=${item.id} from ${from} to ${item.waitingOn}] ` +
+        `${item.subject} waiting=${plainAge(item.waitingMs)} messages=${item.messageCount}`);
+    }
+  }
+
+  const awaiting = result.awaiting;
+  if (awaiting.status !== 'ok') {
+    lines.push(`awaiting=unknown ${awaiting.status}`);
+  } else {
+    lines.push(`awaiting=${awaiting.matched} shown=${awaiting.items.length}${awaiting.truncated ? '+truncated' : ''}`);
+    for (const item of awaiting.items) {
+      const on = item.waitingOnAgent ? `agent:${item.waitingOnAgent}` : `label ${item.waitingOn}`;
+      lines.push(`  [${item.kind} id=${item.messageId} thread=${item.id} from ${item.from} to ${on}] ` +
         `${item.subject} waiting=${plainAge(item.waitingMs)} messages=${item.messageCount}`);
     }
   }

@@ -83,7 +83,9 @@ to in bus-next order with their hold state, the worker-handoff assignments
 addressed the same way (each item carries the to label handoff-receive and
 handoff-reply take verbatim), the conversation threads waiting on its
 answer — asks and handoffs whose latest message it or a channel it belongs
-to still owes, each citing the envelope id show resolves — its
+to still owes, each citing the envelope id show resolves — the
+conversation threads it is waiting on — its own asks and handoffs nobody
+has answered yet, each naming who owes the reply — its
 pending wake hints and the next page of mail addressed
 to it — where every section reports its own read state and unknown stays
 unknown.
