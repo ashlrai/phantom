@@ -61,6 +61,7 @@ import { IncidentsStrip } from '../command/IncidentsStrip.js';
 import { LeaderCard } from '../command/LeaderCard.js';
 import { NeedsYouCard } from '../command/NeedsYouCard.js';
 import { SeatStrip } from '../command/SeatStrip.js';
+import { SupplyCard } from '../home/SupplyCard.js';
 import { CloudCard } from '../cloud/CloudCard.js';
 import { Cell, Surface } from '../command/Surface.js';
 import { SinceStrip, VerdictLine, useLastLooked } from '../command/VerdictLine.js';
@@ -225,6 +226,7 @@ export function CommandSection() {
       <Cell span={7}>
         <LeaderCard read={leader.data} loading={leader.status === 'loading'} actions={actions} seatNames={names} />
       </Cell>
+      <Cell span={12}><SupplyCard /></Cell>
       <Cell span={12}><IncidentsStrip now={now} /></Cell>
       <Cell span={12}><RunsNowRow now={now} /></Cell>
       {banner && kpisEmpty ? null : (
