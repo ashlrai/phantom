@@ -309,8 +309,9 @@ History reads only the bounded 256 KiB regular-file tail, newest last, max three
 matching rows or null. `explainRoutes` adds nullable `fallback_chain` (non-fusion
 decisions only) and `fallback_used` (job receipts). See [gates and inert status](docs/ROUTING.md#failover-chains).
 
-`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?})`,
-`foldSpendCosts(text)`, `readLedgerFile(path, limit?)`,
+`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?})`,
+`foldSpendCosts(text)`, `foldRouteDecisionWorkClasses(text)`,
+`readLedgerFile(path, limit?)`,
 `readLedgerTail(path, maxBytes?)` and
 `readRouterOutcomes({runsDir?, lane?, ashlarDir?})`, producing
 `router.outcome.v1` records folded from `metrics/jobs.jsonl`. The jobs
@@ -328,7 +329,19 @@ and never counted, a job whose calls reported no cost stays `null`
 they report a USD figure. The spend read degrades independently:
 `RouterOutcomeRead.spend_state` reports its health and
 `spend_truncated` marks a cut spend tail (joined costs are lower
-bounds). `passk` is the
+bounds). `work_class` joins the same bound of
+`metrics/work-market.jsonl`: `foldRouteDecisionWorkClasses` collapses
+`work-market.v1` `route_decision` rows to each job's newest-timestamp
+recorded class — the market's own classification, written for every
+evaluated job — and the fold's `workClassFor` option fills only
+outcomes whose jobs rows recorded no class, so an explicit
+jobs-ledger `work_class` always wins and a job with no decision row
+stays null. Rows with a missing or non-finite `ts`, an absent or
+non-route-identifier `work_class`, or a wrong schema/event are
+skipped. The market read degrades independently too:
+`RouterOutcomeRead.market_state` reports its health and
+`market_truncated` marks a cut tail; anything but `read` leaves
+classes ledger-recorded only. `passk` is the
 lane+model's pass^k (`passPowK`) from the published `eval.lane-scores.v1`
 projection (`~/.ashlr/eval/passk/lane-scores.json`, `ASHLR_HOME` honored);
 it is `null` whenever the ledger lacks lane/model, the projection is

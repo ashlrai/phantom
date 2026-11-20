@@ -7,23 +7,29 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 
 // Read-only recorded job outcomes from the newest ROUTER_OUTCOME_LEDGER_LIMIT
 // bytes of <runs>/metrics/jobs.jsonl, joined with the per-call spend ledger
-// <runs>/metrics/api-spend.jsonl under the same bound. Recovered from the
+// <runs>/metrics/api-spend.jsonl and the work-market decision journal
+// <runs>/metrics/work-market.jsonl under the same bound. Recovered from the
 // router-outcome slice of #6794 (head f9e484e87ec2). Scope is deliberately
 // bounded: no routing, ranking, tuning, weights, or network. `passk` joins
 // each outcome's (lane, model) to the published eval.lane-scores.v1
 // projection — advisory evidence only; a missing, degraded or ambiguous
-// score leaves passk null. The ledgers are append-only and unbounded, so each
+// score leaves passk null. jobs.jsonl rows never carry work_class, so the
+// fold fills it from each job's latest work-market route_decision row — the
+// market's own recorded classification — while an explicit jobs-row
+// work_class always wins. The ledgers are append-only and unbounded, so each
 // read retains a tail window: an oversized ledger reports truncated:true (or
-// spend_truncated for the spend source) and folds only the retained rows,
-// never a refused read. jobs.jsonl finish rows carry cost:null by design, so
-// cost_usd is populated from api-spend rows naming the job — the same
-// job|job_id|id attribution and cost_usd|usd|cost precedence the fleet spend
-// readers already use — and stays null when no call reported a cost.
+// spend_truncated/market_truncated for the joined sources) and folds only
+// the retained rows, never a refused read. jobs.jsonl finish rows carry
+// cost:null by design, so cost_usd is populated from api-spend rows naming
+// the job — the same job|job_id|id attribution and cost_usd|usd|cost
+// precedence the fleet spend readers already use — and stays null when no
+// call reported a cost.
 
 /** Newest-bytes bound retained from the append-only jobs ledger. */
 export const ROUTER_OUTCOME_LEDGER_LIMIT = 16 * 1024 * 1024;
 export const ROUTER_OUTCOME_LEDGER_RELATIVE = join('metrics', 'jobs.jsonl');
 export const ROUTER_SPEND_LEDGER_RELATIVE = join('metrics', 'api-spend.jsonl');
+export const ROUTER_MARKET_LEDGER_RELATIVE = join('metrics', 'work-market.jsonl');
 
 export interface RouterOutcome {
   schema: 'router.outcome.v1';
@@ -31,6 +37,11 @@ export interface RouterOutcome {
   lane: string | null;
   model: string | null;
   tier: string | null;
+  /**
+   * work_class recorded on a jobs.jsonl row when present; otherwise the
+   * latest work-market route_decision class for the job; null when neither
+   * ledger recorded one — unknown stays null, never derived.
+   */
   work_class: string | null;
   /** true only on an explicit MERGED state or merged:true; false on CLOSED or merged:false; else null. */
   merged: boolean | null;
@@ -178,6 +189,11 @@ export interface RouterOutcomeFold {
 export interface RouterOutcomeFoldOptions {
   /** Resolve the advisory pass^k score for a (lane, model) pair; absent or null stays null. */
   passkFor?: (lane: string, model: string) => number | null;
+  /**
+   * Resolve the market-recorded work_class for a job id; consulted only
+   * when no jobs.jsonl row carried one. Absent or null/empty stays null.
+   */
+  workClassFor?: (jobId: string) => string | null;
 }
 
 /** Folds JSONL text into one outcome per job. Explicit fields only; nothing inferred. */
@@ -248,11 +264,16 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     }
     outcomes.set(j, o);
   }
-  if (opts.passkFor) {
+  if (opts.passkFor || opts.workClassFor) {
     for (const o of outcomes.values()) {
-      if (o.lane === null || o.model === null) continue;
-      const score = opts.passkFor(o.lane, o.model);
-      o.passk = typeof score === 'number' && Number.isFinite(score) ? score : null;
+      if (opts.passkFor && o.lane !== null && o.model !== null) {
+        const score = opts.passkFor(o.lane, o.model);
+        o.passk = typeof score === 'number' && Number.isFinite(score) ? score : null;
+      }
+      if (opts.workClassFor && o.work_class === null) {
+        const workClass = opts.workClassFor(o.job_id);
+        if (typeof workClass === 'string' && workClass.trim()) o.work_class = workClass.trim();
+      }
     }
   }
   return {
@@ -294,6 +315,46 @@ export function foldSpendCosts(text: string): Map<string, number> {
   return costs;
 }
 
+/** work_class joins only values shaped like the route identifiers weight proposals group on. */
+const MARKET_WORK_CLASS = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/**
+ * Folds work-market.jsonl route_decision rows into each job's latest recorded
+ * work_class. The dispatcher re-decides every waiting job each tick, so rows
+ * collapse to the newest timestamp per job — the same latest-decision rule
+ * the unfed report applies. Only work-market.v1 route_decision rows with a
+ * bounded job id, a finite epoch-seconds ts and a route-identifier-shaped
+ * work_class count; every other row is skipped, never guessed. The class is
+ * the market's own classification of the job (declared or derived from its
+ * requirements), recorded whether or not a lane was chosen.
+ */
+export function foldRouteDecisionWorkClasses(text: string): Map<string, string> {
+  const latest = new Map<string, { workClass: string; ts: number }>();
+  for (const line of text.split('\n')) {
+    // Cheap prefilter: route decisions are the bulk of the file.
+    if (!line.includes('"route_decision"')) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const row = value as Row;
+    if (row['schema'] !== 'work-market.v1' || row['event'] !== 'route_decision') continue;
+    const job = row['job'];
+    if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
+    const ts = row['ts'];
+    if (typeof ts !== 'number' || !Number.isFinite(ts)) continue;
+    const workClass = row['work_class'];
+    if (typeof workClass !== 'string' || !MARKET_WORK_CLASS.test(workClass)) continue;
+    const prev = latest.get(job);
+    if (prev !== undefined && prev.ts >= ts) continue;
+    latest.set(job, { workClass, ts });
+  }
+  return new Map([...latest].map(([job, entry]) => [job, entry.workClass]));
+}
+
 export interface RouterOutcomeRead extends RouterOutcomeFold {
   /** 'read' is the only state with trustworthy outcomes; everything else is an unknown ledger. */
   state: LedgerReadState;
@@ -311,6 +372,17 @@ export interface RouterOutcomeRead extends RouterOutcomeFold {
    * costs cover only the newest bytes and are lower bounds, never totals.
    */
   spend_truncated: boolean;
+  /**
+   * Health of the work-market.jsonl tail behind work_class joins from
+   * route_decision rows. Anything but 'read' means no market classes were
+   * joined — outcomes keep only explicit jobs-ledger work_class fields.
+   */
+  market_state: Exclude<LedgerReadState, 'too-large'>;
+  /**
+   * True when the market ledger exceeded the retained tail: joined classes
+   * cover only the newest bytes, so older decisions read as unclassified.
+   */
+  market_truncated: boolean;
   /**
    * True when the ledger exceeded the retained tail: the fold, and so every
    * count on this read, covers only the newest ROUTER_OUTCOME_LEDGER_LIMIT
@@ -342,16 +414,19 @@ function laneScoreLookup(read: LaneScoresRead): ((lane: string, model: string) =
 /**
  * Reads the newest ROUTER_OUTCOME_LEDGER_LIMIT bytes of
  * <runsDir>/metrics/jobs.jsonl plus the same bound of
- * <runsDir>/metrics/api-spend.jsonl. `runsDir` defaults to ASHLR_RUNS_DIR,
+ * <runsDir>/metrics/api-spend.jsonl and <runsDir>/metrics/work-market.jsonl.
+ * `runsDir` defaults to ASHLR_RUNS_DIR,
  * then ~/.ashlr-runs, and must be absolute when given. `ashlarDir` is the
  * ASHLR root holding eval/passk/lane-scores.json (default ASHLR_HOME, then
  * ~/.ashlr). A missing or unreadable jobs ledger yields state != 'read' with
  * no outcomes, so callers can tell unknown input from a successfully read
  * empty ledger; a ledger larger than the bound reads its tail and reports
- * truncated:true. The spend ledger degrades independently: spend_state
- * reports its health and spend-derived cost_usd fills only outcomes whose
- * explicit ledger cost stayed null — a missing spend file never zeroes or
- * blocks the jobs fold.
+ * truncated:true. The spend and market ledgers degrade independently:
+ * spend_state and market_state report their health, spend-derived cost_usd
+ * fills only outcomes whose explicit ledger cost stayed null, and
+ * market-derived work_class fills only outcomes whose jobs rows recorded
+ * none — a missing joined ledger never zeroes, guesses or blocks the jobs
+ * fold.
  */
 export async function readRouterOutcomes(opts: { runsDir?: string; lane?: string; ashlarDir?: string } = {}): Promise<RouterOutcomeRead> {
   const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
@@ -364,11 +439,21 @@ export async function readRouterOutcomes(opts: { runsDir?: string; lane?: string
   const spendRead = await readLedgerTail(join(runsDir, ROUTER_SPEND_LEDGER_RELATIVE));
   const spendState = spendRead.state;
   const spendTruncated = spendRead.state === 'read' ? spendRead.truncated : false;
+  const marketRead = await readLedgerTail(join(runsDir, ROUTER_MARKET_LEDGER_RELATIVE));
+  const marketState = marketRead.state;
+  const marketTruncated = marketRead.state === 'read' ? marketRead.truncated : false;
   if (read.state !== 'read') {
     return { ...empty, state: read.state, path, eval_state: laneScores.state,
-      spend_state: spendState, spend_truncated: spendTruncated, truncated: false };
+      spend_state: spendState, spend_truncated: spendTruncated,
+      market_state: marketState, market_truncated: marketTruncated, truncated: false };
   }
-  const folded = foldRouterOutcomes(read.text, { passkFor: laneScoreLookup(laneScores) });
+  const workClasses = marketRead.state === 'read'
+    ? foldRouteDecisionWorkClasses(marketRead.text)
+    : new Map<string, string>();
+  const folded = foldRouterOutcomes(read.text, {
+    passkFor: laneScoreLookup(laneScores),
+    workClassFor: (jobId) => workClasses.get(jobId) ?? null,
+  });
   if (spendRead.state === 'read') {
     const costs = foldSpendCosts(spendRead.text);
     for (const o of folded.outcomes) {
@@ -379,5 +464,6 @@ export async function readRouterOutcomes(opts: { runsDir?: string; lane?: string
   }
   const outcomes = opts.lane === undefined ? folded.outcomes : folded.outcomes.filter(o => o.lane === opts.lane);
   return { ...folded, outcomes, state: 'read', path, eval_state: laneScores.state,
-    spend_state: spendState, spend_truncated: spendTruncated, truncated: read.truncated };
+    spend_state: spendState, spend_truncated: spendTruncated,
+    market_state: marketState, market_truncated: marketTruncated, truncated: read.truncated };
 }

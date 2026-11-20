@@ -32,7 +32,7 @@ function parseArgs(args: string[]): { runsDir?: string; json: boolean } | null {
 }
 
 function proposalLines(report: RouterWeightProposalReport): string[] {
-  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} truncated=${report.truncated} as_of=${report.as_of} ` +
+  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} truncated=${report.truncated} as_of=${report.as_of} ` +
     'advisory-only: not applied to routing or weights.json';
   if (report.status === 'unavailable') {
     return [header, `unavailable: ledger state=${report.ledger.state}; no proposals were computed`, `ledger ${report.ledger.path}`];
@@ -46,7 +46,14 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
       : `${p.work_class}/${p.lane}: insufficient evidence known=${p.known_n}${reverted} need=${report.bounds.min_samples}; baseline ${p.baseline_weight} unchanged`;
   });
   const none = report.proposals.length === 0 ? ['insufficient evidence: no classified known outcomes'] : [];
-  const coverage = report.truncated ? ['coverage: retained tail only; older ledger rows were not read'] : [];
+  const coverage = [
+    ...(report.truncated ? ['coverage: retained tail only; older ledger rows were not read'] : []),
+    ...(report.market_state !== 'read'
+      ? [`market coverage: work-market.jsonl ${report.market_state}; work_class groups reflect jobs-ledger fields only`]
+      : report.market_truncated
+        ? ['market coverage: retained tail only; work_class joins cover the newest bytes']
+        : []),
+  ];
   return [header, counts, `ledger ${report.ledger.path}`, ...coverage, ...rows, ...none];
 }
 
