@@ -14,6 +14,8 @@ export interface ResourceLaneRow {
   lane: string; running: number | null; target: number | null; held: boolean | null;
   window: 'weekly' | 'credits' | 'none';
   usedPct: number | null; creditsRemaining: number | null; resetAt: string | null;
+  /** Set when `creditsRemaining` is a gift credit in US dollars (status `budget.<lane>.gift` or `.pools.gift`). */
+  creditUnit?: 'usd';
   burnPctPerHour: number | null; tokensPerHour6h: number | null; projectedExhaustion: string | null;
   source: string | null; deadSignal: LaneDeadSignal | null;
   quotaEvidence?: QuotaEvidence;
@@ -40,6 +42,22 @@ const number = (v: unknown): number | null => typeof v === 'number' && Number.is
 const timestamp = (v: unknown): string | null => typeof v === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:?\d\d)$/.test(v) && Number.isFinite(Date.parse(v)) ? v : null;
 const safeName = (v: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(v) && scrubPrivateText(v) === v;
 const missing = (e: unknown): boolean => object(e) && e.code === 'ENOENT';
+/** A gift reading older than a day no longer says what is left (same limit as usage/spend.ts). */
+const GIFT_MAX_AGE_MS = 24 * 3_600_000;
+/**
+ * The gift credit a lane's budget reports, in USD: `gift` ({usd_remaining, as_of, expires_at}) or `pools.gift`
+ * ({balance, expires_at, open}). A balance with no usable capture time, an older-than-a-day one, or a closed grant is
+ * unknown (null), never 0. The expiry is kept whenever it is a real date.
+ */
+function giftCredit(budget: Obj, lastTick: unknown, now: number): { present: boolean; usd: number | null; expires: string | null } {
+  const pools = object(budget.pools) ? budget.pools : {};
+  const g = object(budget.gift) ? budget.gift : object(pools.gift) ? pools.gift : null;
+  if (!g) return { present: false, usd: null, expires: null };
+  const seen = Date.parse(String(timestamp(g.as_of) ?? timestamp(lastTick) ?? ''));
+  const fresh = Number.isFinite(seen) && seen <= now + 60_000 && now - seen <= GIFT_MAX_AGE_MS;
+  const usd = number(g.usd_remaining ?? g.balance);
+  return { present: true, usd: fresh && g.open !== false ? usd : null, expires: timestamp(g.expires_at) };
+}
 const STATUS_MAX = 1024 * 1024;
 const SPEND_TAIL = 512 * 1024;
 const MODEL_USAGE_MAX = 100;
@@ -143,10 +161,12 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
           const b = object(budget[lane]) ? budget[lane] : {};
           statusQuotaObservedAt.set(lane, timestamp(b.observed_at));
           if ((lane in data.lanes && !object(data.lanes[lane])) || (lane in budget && !object(budget[lane]))) result.sources.status = 'degraded';
-          const credits = number(b.credits_remaining);
+          const gift = giftCredit(b, data.last_tick, now);
+          const credits = number(b.credits_remaining) ?? gift.usd;
           result.lanes.push({ lane, running: number(l.running), target: number(l.target), held: typeof l.held === 'boolean' ? l.held : null,
-            window: lane === 'claude' || lane.startsWith('codex-') ? 'weekly' : credits !== null ? 'credits' : 'none',
-            usedPct: number(b.weekly_used_pct), creditsRemaining: credits, resetAt: timestamp(b.reset_at),
+            window: lane === 'claude' || lane.startsWith('codex-') ? 'weekly' : credits !== null || gift.present ? 'credits' : 'none',
+            usedPct: number(b.weekly_used_pct), creditsRemaining: credits, resetAt: timestamp(b.reset_at) ?? gift.expires,
+            ...(gift.present ? { creditUnit: 'usd' as const } : {}),
             burnPctPerHour: number(b.burn_pct_per_hour), tokensPerHour6h: number(b.tokens_per_hour_6h), projectedExhaustion: timestamp(b.projected_exhaustion),
             source: typeof b.source === 'string' ? redactHomePaths(scrubPrivateText(b.source, { emails: true })).replace(/\p{Cc}/gu, ' ').slice(0, 160) : null, deadSignal: null });
         }
