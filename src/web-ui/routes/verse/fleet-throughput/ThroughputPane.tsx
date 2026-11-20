@@ -9,19 +9,15 @@ import { Funnel } from '../../../components/charts/Funnel.js';
 import { LineChart } from '../../../components/charts/LineChart.js';
 import { Button } from '../../../components/primitives/Button.js';
 import { Segmented } from '../../../components/primitives/Segmented.js';
-import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
-import type { QueryDef } from '../../../data/queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { ThroughputFigures, ThroughputFiguresSkeleton, ThroughputLanes } from './ThroughputBoard.js';
 import styles from './fleet-throughput.module.css';
+import { THROUGHPUT_QUERIES, THROUGHPUT_WINDOWS, type ThroughputWindow } from './throughput-query.js';
 
-const WINDOWS = [{ value: '6', label: '6 hours' }, { value: '24', label: '24 hours' }, { value: '168', label: '7 days' }] as const;
-type Window = (typeof WINDOWS)[number]['value'];
-const queryFor = (hours: Window): QueryDef<ThroughputReport> => ({ key: `fleet-throughput-${hours}`, fetch: signal => apiGet(`/api/verse/fleet/runs/throughput?hours=${hours}&by=lane`, signal) });
-// One stable definition per window, so switching back reuses the last reading while it refreshes.
-const QUERIES: Readonly<Record<Window, QueryDef<ThroughputReport>>> = { 6: queryFor('6'), 24: queryFor('24'), 168: queryFor('168') };
+const WINDOWS = THROUGHPUT_WINDOWS, QUERIES = THROUGHPUT_QUERIES;
+type Window = ThroughputWindow;
 const shown = (value: number | null): string => value === null ? 'unknown' : String(value);
 const minutes = (seconds: number | null): number | null => seconds === null ? null : Math.round(seconds / 6) / 10;
 const percent = (rate: number | null): string => rate === null ? 'unknown' : `${Math.round(rate * 100)}%`;
