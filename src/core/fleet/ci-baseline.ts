@@ -412,6 +412,12 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   // hashes the tracked lockfile set it admits.
   '.github/scripts/ci-pack-smoke.mjs': ['package.json'],
   'scripts/hosted-build-artifact.mjs': ['package.json', 'package-lock.json'],
+  // The release-version provenance gate compares exactly two carriers --
+  // package.json "version" and .release-please-manifest.json "." -- between
+  // merge-base and head, so a bump to either is the PR-caused shape the
+  // group must resolve. The scanner gates have no enumerable diff/commit
+  // inputs and get no static seeds.
+  '.github/scripts/release-version-provenance.mjs': ['package.json', '.release-please-manifest.json'],
 };
 
 function parseVersionSyncFailures(log: string): Failure[] {
@@ -734,6 +740,93 @@ function parseArtifactGateFailures(log: string): Failure[] {
   return out;
 }
 
+// The secret-shape job pipes the candidate diff through the pinned
+// `.github/tests/secret-shape/scrub.pl --check --allow-fixtures` and the
+// step fails when the blocked count is nonzero. The checker prints only
+// "<blocked> allowed=<n>" and never a matched value, so the count line is
+// the whole evidence; a clean scan prints "0 allowed=<n>" and passes, so
+// only a nonzero blocked count is a failure. The scan covers the entire
+// candidate diff -- no enumerable repo input -- so the group keys on the
+// scanner itself: only a PR touching scrub.pl counts as touched, and a
+// shape carried inside a PR's own diff stays unattributed rather than
+// guessed at which line carried it. Like the other non-test identities
+// it can never resolve through a vitest pass line: shared-baseline,
+// pr-caused or unknown -- never probable-flake.
+const SECRET_SHAPE_FILE = '.github/tests/secret-shape/scrub.pl';
+const SECRET_SHAPE_NAMES = '(secret-shape)';
+const SECRET_SHAPE_COUNT = /^(\d+) allowed=(\d+)$/;
+const SECRET_SHAPE_MAX = 8;
+
+function parseSecretShapeFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  for (const line of lines(log)) {
+    if (out.length >= SECRET_SHAPE_MAX) break;
+    const match = SECRET_SHAPE_COUNT.exec(line);
+    if (match === null || Number(match[1]) === 0) continue;
+    out.push({ file: SECRET_SHAPE_FILE, names: SECRET_SHAPE_NAMES, testId: `${SECRET_SHAPE_FILE} > ${SECRET_SHAPE_NAMES}`, excerpt: clean(line) });
+  }
+  return out;
+}
+
+// The secret-scan job runs the pinned gitleaks binary over the candidate
+// commit range with --redact and no -v, so the job log carries only the
+// scanner's own summary: `WRN leaks found: <n>` on stderr (a clean scan
+// prints `no leaks found` instead). Finding detail -- file, rule,
+// fingerprint -- is never emitted by this invocation, so the count line is
+// the whole evidence and the group keys on the workflow that defines the
+// gate: only a PR touching .github/workflows/ci.yml (the job, its pinned
+// version, the .gitleaksignore removal) counts as touched, and a leak
+// carried inside a PR's own commits stays unattributed rather than
+// guessed at which commit carried it. Like the other non-test identities
+// it can never resolve through a vitest pass line: shared-baseline,
+// pr-caused or unknown -- never probable-flake.
+const SECRET_SCAN_FILE = '.github/workflows/ci.yml';
+const SECRET_SCAN_NAMES = '(secret-scan)';
+const SECRET_SCAN_FOUND = /\bleaks found:\s*(\d+)\s*$/;
+const SECRET_SCAN_MAX = 8;
+
+function parseSecretScanFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  for (const line of lines(log)) {
+    if (out.length >= SECRET_SCAN_MAX) break;
+    const match = SECRET_SCAN_FOUND.exec(line);
+    if (match === null || Number(match[1]) === 0) continue;
+    out.push({ file: SECRET_SCAN_FILE, names: SECRET_SCAN_NAMES, testId: `${SECRET_SCAN_FILE} > ${SECRET_SCAN_NAMES}`, excerpt: clean(line) });
+  }
+  return out;
+}
+
+// The quick job's "Require release-please provenance for version bumps"
+// step (pull_request only) compares the merge-base and head carriers --
+// package.json version and .release-please-manifest.json "." -- and fails
+// any bump outside a same-repository release-please--* branch. A refused
+// bump prints `::error::<changed carriers>. Only the release-please PR
+// may change the release version; ...` and a gate malfunction prints
+// `release version provenance check failed: <message>`; either way the
+// job goes red with no vitest, typecheck or TAP line naming it. Both
+// shapes group under the gate script as
+// `.github/scripts/release-version-provenance.mjs > (version-provenance)`:
+// the check reads exactly the script and the two carrier files, which
+// STATIC_FAILURE_INPUTS seeds so a PR touching either carrier is
+// PR-caused. Like the other non-test identities it can never resolve
+// through a vitest pass line: shared-baseline, pr-caused or unknown --
+// never probable-flake.
+const VERSION_PROVENANCE_FILE = '.github/scripts/release-version-provenance.mjs';
+const VERSION_PROVENANCE_NAMES = '(version-provenance)';
+const VERSION_PROVENANCE_ERROR = /^::error::.+Only the release-please PR may change the release version/;
+const VERSION_PROVENANCE_FAILED = /^release version provenance check failed: \S/;
+const VERSION_PROVENANCE_MAX = 8;
+
+function parseVersionProvenanceFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  for (const line of lines(log)) {
+    if (out.length >= VERSION_PROVENANCE_MAX) break;
+    if (!VERSION_PROVENANCE_ERROR.test(line) && !VERSION_PROVENANCE_FAILED.test(line)) continue;
+    out.push({ file: VERSION_PROVENANCE_FILE, names: VERSION_PROVENANCE_NAMES, testId: `${VERSION_PROVENANCE_FILE} > ${VERSION_PROVENANCE_NAMES}`, excerpt: clean(line) });
+  }
+  return out;
+}
+
 export function parseBaselineFailures(log: string, repo?: string, auditExceptions: readonly DependencyAuditException[] | null = []): Failure[] {
   const result: Failure[] = [];
   const typecheck = new Map<string, Failure>();
@@ -792,6 +885,18 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     result.push(failure);
   }
   for (const failure of parseArtifactGateFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseSecretShapeFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseSecretScanFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseVersionProvenanceFailures(log)) {
     if (result.length >= 100) break;
     result.push(failure);
   }
@@ -1174,10 +1279,11 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // runner: the vitest harness ambient set cannot stale them, so only
       // the generator-input deps decide touched. The version-sync gate reads
       // exactly its enumerated metadata inputs, the dependency-audit gate
-      // exactly its lockfile input set, and the pack-smoke/artifact gates
-      // plain .mjs scripts plus their enumerated manifests, so the ambient
-      // set cannot reach any of them.
-      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) ? new Set<string>() : await harnessAmbient(failure.file);
+      // exactly its lockfile input set, the pack-smoke/artifact gates
+      // plain .mjs scripts plus their enumerated manifests, and the
+      // secret-shape/secret-scan/version-provenance trust gates have no
+      // vitest harness at all, so the ambient set cannot reach any of them.
+      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) ? new Set<string>() : await harnessAmbient(failure.file);
       const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
       observations.push({ pr, failure, touched, runId: failure.runId });
     }
