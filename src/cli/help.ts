@@ -231,6 +231,18 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'fleet.job.control.v1 { schema, action, job, lane, status: requested|applied|refused|unknown, reason, requestId, at, dryRun, duplicate }',
   },
   {
+    usage: 'phm job say <id> "<text>" [--dry-run] [--json]',
+    description: 'Send one note to a running job, e.g. "also update the docs". The note is timestamped and appended to the job\'s steering record (queue/job-notes.jsonl); a worker reads new notes between steps where its runner supports it, and every note shows as "Notes sent" in the job window. A finished job refuses the note. Up to 500 characters; the same note twice in a row is sent once. Exit 0 sent, 1 refused, unknown or unavailable, 2 usage.',
+    safety: 'append',
+    jsonShape: 'fleet.job.say.v1 { schema, job, status: sent|refused|unknown, reason, note: { id, at, text, by } | null, dryRun, duplicate }',
+  },
+  {
+    usage: 'phm job notes <id> [--json]',
+    description: 'List the notes sent to one job, oldest first (the newest 50). Exit 0 listed, 1 unreadable, 2 usage.',
+    safety: 'read',
+    jsonShape: 'fleet.job.notes.v1 { schema, job, count, notes: [{ id, at, text, by }] }',
+  },
+  {
     usage: 'phm budget show [--json]',
     description: 'Read per-pool budget buckets, burn rates, resets and provenance. Unknown is never zero.',
     safety: 'read',
@@ -1354,6 +1366,8 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'queue visits-sync [--jobs <path>] [--queue <path>] [--journal <path>] [--apply] [--json]', desc: 'Fold the jobs ledger and live router queue into station visits for the visit journal that queue stats reads. Dry run unless --apply; recorded timestamps only, missing boundaries stay open or absent.', topic: 'observability' },
   { cmd: 'repos rank [proposals] [--json] [--recompute]', desc: 'Repository scheduling rank from seed priority, local merged-PR recency and autonomy leverage (daily ceiling); proposals are read-only.', topic: 'observability' },
   { cmd: 'job pause|resume|stop|move <id> [--lane <lane>] [--dry-run] [--json]', desc: 'Steer one fleet job: pause, resume, stop, or move it to another lane. Returns a receipt: requested, applied, refused or unknown.', topic: 'observability' },
+  { cmd: 'job say <id> "<text>" [--dry-run] [--json]', desc: 'Send one note to a running job ("also update the docs"). A finished job refuses it.', topic: 'observability' },
+  { cmd: 'job notes <id> [--json]', desc: 'List the notes sent to one job.', topic: 'observability' },
   { cmd: 'job cost <id> [--json]',       desc: 'Per-model-call cost breakdown for one fleet job: tokens in/out, model and cost (or \'unknown\').', topic: 'observability' },
   { cmd: 'job tail <id> [--lines N] [--follow] [--json]', desc: 'What a fleet job is doing now: status, lane, model, start and PR, then its redacted last log lines; --follow streams new ones.', topic: 'observability' },
   { cmd: 'job show <id> [--tail N] [--follow] [--json]', desc: 'One window into a fleet job: state in plain words, lane, model, repo, tier, start, finish, PR, then its redacted last log lines; --follow streams new ones.', topic: 'observability' },
