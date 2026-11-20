@@ -11,6 +11,7 @@ describe('changed verification selection', () => {
       lintFiles: ['scripts/new helper.mjs', 'src/committed.ts', 'src/dirty.ts'],
       pythonFiles: [],
       shellFiles: [],
+      jsonFiles: [],
       webTypecheck: false,
       authorityDrift: true,
       fleetRegistry: false,
@@ -21,7 +22,7 @@ describe('changed verification selection', () => {
 
   it('excludes deleted files from lint while retaining deleted web paths for typecheck', () => {
     expect(selectChangedFiles(['src/gone.ts', 'src/web-ui/old screen.tsx'], [])).toEqual({
-      lintFiles: [], pythonFiles: [], shellFiles: [], webTypecheck: true, authorityDrift: true, fleetRegistry: false, docsCheck: true, quarantineCheck: false,
+      lintFiles: [], pythonFiles: [], shellFiles: [], jsonFiles: [], webTypecheck: true, authorityDrift: true, fleetRegistry: false, docsCheck: true, quarantineCheck: false,
     });
   });
 
@@ -53,7 +54,7 @@ describe('changed verification selection', () => {
     expect(selectChangedFiles(['notes.md'], ['notes.md']).lintFiles).toEqual([]);
     const paths = ['a.js', 'b.cjs', 'c.mjs', 'd.ts', 'e.cts', 'f.mts', 'g.tsx', 'h.jsx'];
     expect(selectChangedFiles(paths, paths).lintFiles).toEqual(paths);
-    expect(selectChangedFiles([], [])).toEqual({ lintFiles: [], pythonFiles: [], shellFiles: [], webTypecheck: false, authorityDrift: false, fleetRegistry: false, docsCheck: false, quarantineCheck: false });
+    expect(selectChangedFiles([], [])).toEqual({ lintFiles: [], pythonFiles: [], shellFiles: [], jsonFiles: [], webTypecheck: false, authorityDrift: false, fleetRegistry: false, docsCheck: false, quarantineCheck: false });
   });
 
   it('selects the docs check for markdown changes and deletions, not modified code', () => {
