@@ -2,10 +2,12 @@
 import { validCap } from '../core/drive/nodes/state.js';
 import { readQueueOrder } from '../core/queue/order.js';
 import { readNodesPlan, type NodesPlan } from '../core/fleet/nodes-plan.js';
+import { defaultRunsDir, dispatchNodeJob, planOnlyAdapter, type NodeDispatchAdapter, type NodeDispatchResult } from '../core/fleet/nodes-dispatch.js';
 import { chooseNodeForLane, defaultNodesViewDeps, nodesThatCanTake, readNodesView, type NodeRow, type NodesViewDeps } from '../core/fleet/nodes-view.js';
 
 const USAGE = `Usage: phm nodes [--json] [--can-take <lane>]
        phm nodes plan [--json]
+       phm nodes dispatch <job-id> --node <name> [--dry-run] [--json]
 
 One row per known computer: reachable or not, whether Phantom is running there,
 free memory, CPU headroom, lanes, running jobs and a plain-words state.
@@ -13,7 +15,12 @@ free memory, CPU headroom, lanes, running jobs and a plain-words state.
 It recommends a ready remote computer, then this computer if no remote is ready.
 plan: how many more jobs each computer could take now, and which queued job fits
 which computer. It only plans; it launches, moves and stops nothing.
-Read only: it changes no network, security or pool setting.`;
+dispatch: hand one job from the plan to another computer. It checks the computer
+first: unreachable, no lane CLI or an unknown login only shows the plan (a dry run);
+"<name> is not signed in to <lane>" is refused. Logins are never copied. Results come
+back as the job's branch and go out through the usual publisher. Create
+<runs dir>/queue/nodes-dispatch.off to switch it off.
+Read only except dispatch: it changes no network, security or pool setting.`;
 
 const unknownOr = <T>(value: T | 'unknown', show: (known: T) => string): string => (value === 'unknown' ? 'unknown' : show(value));
 
@@ -43,7 +50,34 @@ async function cmdNodesPlan(args: string[], deps: NodesViewDeps, readQueue: type
   return 0;
 }
 
-export async function cmdNodes(args: string[], deps: NodesViewDeps = defaultNodesViewDeps(), readQueue: typeof readQueueOrder = readQueueOrder): Promise<number> {
+function dispatchText(r: NodeDispatchResult): string {
+  return [`${r.outcome === 'started' ? 'Started' : r.outcome === 'dry-run' ? 'Dry run' : 'Refused'}: ${r.why}`, ...r.steps.map((step, i) => `${i + 1}. ${step}`)].join('\n');
+}
+
+/** `phm nodes dispatch <job-id> --node <name> [--dry-run] [--json]`: exit 0 started or dry run, 1 refused, 2 usage. */
+async function cmdNodesDispatch(args: string[], deps: NodesViewDeps, readQueue: typeof readQueueOrder, adapter: NodeDispatchAdapter, runsDir: string): Promise<number> {
+  let job: string | null = null, node: string | null = null, dryRun = false, json = false;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === '--help' || arg === '-h') { console.log(USAGE); return 0; }
+    if (arg === '--dry-run' && !dryRun) dryRun = true;
+    else if (arg === '--json' && !json) json = true;
+    else if (arg === '--node' && node === null && args[i + 1] && !args[i + 1]!.startsWith('-')) node = args[++i]!;
+    else if (!arg.startsWith('-') && job === null) job = arg;
+    else { console.error(USAGE); return 2; }
+  }
+  if (!job || !node) { console.error(USAGE); return 2; }
+  const result = await dispatchNodeJob({
+    readPlan: () => readNodesPlan({ view: deps, readQueue: () => readQueue() }), adapter, runsDir,
+    self: (() => { try { return deps.hostName().split('.')[0]!; } catch { return ''; } })(),
+  }, { job, node, dryRun });
+  console.log(json ? JSON.stringify(result, null, 2) : dispatchText(result));
+  return result.outcome === 'refused' ? 1 : 0;
+}
+
+export async function cmdNodes(args: string[], deps: NodesViewDeps = defaultNodesViewDeps(), readQueue: typeof readQueueOrder = readQueueOrder,
+  adapter: NodeDispatchAdapter = planOnlyAdapter, runsDir: string = defaultRunsDir()): Promise<number> {
+  if (args[0] === 'dispatch') return cmdNodesDispatch(args.slice(1), deps, readQueue, adapter, runsDir);
   if (args[0] === 'plan') return args.slice(1).includes('--help') ? (console.log(USAGE), 0) : cmdNodesPlan(args.slice(1), deps, readQueue);
   let json = false;
   let lane: string | null = null;
