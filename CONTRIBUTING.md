@@ -306,7 +306,7 @@ Author attribution (Mason Wyatt / `masonwyatt23` / ashlr.ai) is intentional and 
 
 Phantom is built **contract-first**: interfaces and types are authored before code, so multiple agents can build disjoint modules in parallel without colliding.
 
-1. **Use the owning subsystem's canonical types.** `src/core/types.ts` holds shared Hub types. Universe, Resources and local-runtime also own focused type modules; import their existing contracts instead of duplicating them or growing a global catch-all. Browser consumers should use type-only imports for server DTOs.
+1. **Use the owning subsystem's canonical types.** Shared Hub types are declared in domain modules under `src/core/types/` (for example `config.ts` for `AshlrConfig`, `engines.ts` for `EngineSpec`) and re-exported from the `src/core/types.ts` entry point; import from that entry point, and edit the domain module when a shape changes. Universe, Resources and local-runtime also own focused type modules; import their existing contracts instead of duplicating them or growing a global catch-all. Browser consumers should use type-only imports for server DTOs.
 
 2. **`CONTRACT.md` plus per-milestone files** (`docs/contracts/CONTRACT-M<N>.md`) are the binding interface spec. Each pins the exported function signatures and type shapes a milestone's modules must satisfy. Do not change an exported signature without updating the corresponding contract file in the same change.
 
@@ -341,7 +341,7 @@ If you are adding a new safety invariant, the pattern is: add the invariant to `
 
 Backends are registered in `src/core/run/engine-registry.ts`. To add a new one:
 
-1. Add an entry to `BUILTIN_ENGINE_REGISTRY` with `id`, `kind`, `tier` (`local | mid | frontier`) and either `bin`/`argv` (a `cli-agent`) or `api` (an `api-model`); see `EngineSpec` in `src/core/types.ts`.
+1. Add an entry to `BUILTIN_ENGINE_REGISTRY` with `id`, `kind`, `tier` (`local | mid | frontier`) and either `bin`/`argv` (a `cli-agent`) or `api` (an `api-model`); see `EngineSpec` in `src/core/types/engines.ts`.
 2. If it is API-based (OpenAI-compatible), confirm it works through the existing `provider-client.ts` path.
 3. Add a `cfg.foundry.engines` example to `docs/examples/foundry.config.json`.
 4. Add a test that asserts the new entry resolves to byte-identical argv and that its tier is correct.
@@ -354,7 +354,7 @@ Portfolio scanners live in `src/core/portfolio/scanners.ts`. Each scanner is an 
 
 ## Adding a new comms transport
 
-Comms transports live in `src/core/integrations/` (`telegram.ts`, `imessage.ts`). There is no shared transport interface: add the transport module, extend the `comms.channel` union in `src/core/types.ts`, branch on it in `runCommsCycle` in `src/core/comms/dispatch.ts`, and add a hermetic test with a mock transport.
+Comms transports live in `src/core/integrations/` (`telegram.ts`, `imessage.ts`). There is no shared transport interface: add the transport module, extend the `comms.channel` union on `AshlrConfig` in `src/core/types/config.ts`, branch on it in `runCommsCycle` in `src/core/comms/dispatch.ts`, and add a hermetic test with a mock transport.
 
 ---
 
@@ -376,7 +376,8 @@ src/
 ├── api/           # Public SDK entrypoints (`@ashlr/phantom`, `/core`, `/types`, `/plugin`)
 ├── cli/           # Thin argv dispatchers — parse, delegate to core, format output
 ├── core/
-│   ├── types.ts   # Shared Hub types; subsystems also own focused contracts
+│   ├── types.ts   # Shared Hub types entry point; re-exports types/<domain>.ts
+│   ├── types/     # Shared type declarations by domain (config, engines, run, …)
 │   ├── universe/  # Experiments, evaluation, campaigns, archive, graph, delivery
 │   ├── resources/ # Worker bindings, quota admission, ledger, foreground queue
 │   ├── local-runtime/ # Pinned package install, verification and rollback
