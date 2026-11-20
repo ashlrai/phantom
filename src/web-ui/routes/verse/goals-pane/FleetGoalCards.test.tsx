@@ -22,7 +22,7 @@ const unknown = (id: string, title: string, reason: string, evidencePane = 'flee
 });
 const card = (goals: FleetGoal[]): GoalScorecard => ({
   schema: 'fleet.goal-scorecard.v3', version: 3, generatedAt: '2026-11-17T12:00:00.000Z', malformedLines: 0, endState: 'Behind on 1 of 3 goals: Releases.',
-  targets: { mergesPerDay: 96, publishToMergeMinutes: 60, launchesMergedPercent: 50, releasesPerRepoPer7d: 1, poolUsedByResetPercent: 90 },
+  targets: { mergesPerDay: 96, publishToMergeMinutes: 60, launchesMergedPercent: 50, releasesPerRepoPer7d: 1, poolUsedByResetPercent: 90, wastedLaunchRate: 0.2 },
   goals,
 });
 /** Deliberately on-track first: the view must still lead with the behind goal. */
@@ -50,6 +50,20 @@ afterEach(() => { cleanup(); viewport?.restore(); viewport = null; vi.unstubAllG
 const titles = () => screen.getAllByRole('button', { name: 'See evidence' }).map(b => b.closest('section, article, div[class]')?.textContent ?? '');
 
 describe.each([['desktop width', 1440], ['390 px', 390]])('FleetGoalCards at %s', (_name, width) => {
+  it('shows the vision line and the current bets, or why there are none', async () => {
+    viewport = mockViewport(width);
+    stubSurfaceFetch({ routes: { [ROUTE]: { ...MIXED, end_state_text: 'Ship fewer, better PRs', bets_source: 'leader/VISION.md', as_of: '2026-11-17T11:00:00.000Z',
+      bets: [{ id: 'RQ-ONE', pool: 'claude', repo: 'phantom', goal: 'Fix the thing.' }] } } });
+    render(<FleetGoalCards />);
+    expect(await screen.findByText('Ship fewer, better PRs')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Current bets' })).toHaveTextContent('RQ-ONE (claude, phantom): Fix the thing.');
+  });
+  it('says plainly when the vision file is missing', async () => {
+    viewport = mockViewport(width);
+    stubSurfaceFetch({ routes: { [ROUTE]: { ...MIXED, end_state_text: null, bets: [], bets_source: null, bets_reason: 'The leader vision file is missing or could not be read.', as_of: null } } });
+    render(<FleetGoalCards />);
+    expect(await screen.findByText(/Current bets: none\. The leader vision file is missing/)).toBeInTheDocument();
+  });
   it('leads with the behind goal and draws each trend against its target', async () => {
     viewport = mockViewport(width);
     stubSurfaceFetch({ routes: { [ROUTE]: MIXED } });
