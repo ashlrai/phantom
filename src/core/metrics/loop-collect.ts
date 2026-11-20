@@ -134,6 +134,30 @@ export function parseMergedPrs(text: string | null): MergedPr[] | null {
     .filter(r => Number.isSafeInteger(r.number) && Number.isFinite(r.mergedAt));
 }
 
+export interface LoopReleases { releases: ReleaseRef[] | null; reason: string | null }
+
+/** One release read with a plain reason when it fails. Shared by `phm metrics loop` and the desktop card so both show the same numbers. */
+export async function readLoopReleases(gh: LoopReaders['gh']): Promise<LoopReleases> {
+  const text = await gh(['api', `repos/${LOOP_REPO}/releases?per_page=40`]);
+  if (text === null) return { releases: null, reason: 'GitHub releases could not be read (gh is missing or not signed in)' };
+  const releases = parseReleases(text);
+  if (!releases) return { releases: null, reason: 'GitHub returned releases in a shape this report does not know' };
+  return releases.length ? { releases, reason: null } : { releases: null, reason: 'GitHub has no releases for this repo yet' };
+}
+
+export const LOOP_RELEASES_FRESH_MS = 10 * 60_000;
+const FAILED_RETRY_MS = 60_000;
+const releaseCache = new WeakMap<LoopReaders['gh'], { at: number; read: LoopReleases }>();
+
+/** `readLoopReleases` kept for 10 minutes per reader (a failure for 1 minute, so a flaky read is retried soon but not on every poll). */
+export async function readLoopReleasesCached(gh: LoopReaders['gh'], now: number): Promise<LoopReleases> {
+  const hit = releaseCache.get(gh);
+  if (hit && now >= hit.at && now - hit.at < (hit.read.releases ? LOOP_RELEASES_FRESH_MS : FAILED_RETRY_MS)) return hit.read;
+  const read = await readLoopReleases(gh);
+  releaseCache.set(gh, { at: now, read });
+  return read;
+}
+
 export interface LoopCollection { report: LoopReport; share: BetsShare; hints: SelectionHints; jobsText: string | null; stages: LoopStagesReport }
 
 export async function collectLoop(readers: LoopReaders, shareConfig: BetsShareConfig = {}, sinceMs = LOOP_STAGES_DEFAULT_SINCE_MS): Promise<LoopCollection> {
@@ -165,10 +189,10 @@ export async function collectLoop(readers: LoopReaders, shareConfig: BetsShareCo
   // GitHub: releases first, so the merged-PR search is bounded by the release before the installed one.
   const installed = await readers.installed();
   sources['Info.plist'] = installed ? 'read' : 'missing';
-  const releases = parseReleases(await readers.gh(['api', `repos/${LOOP_REPO}/releases?per_page=40`]));
+  const { releases, reason: releasesReason } = await readLoopReleases(readers.gh);
   sources['gh releases'] = releases ? 'read' : 'missing';
   let merged: MergedPr[] | null = null;
-  if (releases && releases.length) {
+  if (releases) {
     const since = new Date(Math.min(...releases.map(r => r.createdAt))).toISOString().slice(0, 10);
     merged = parseMergedPrs(await readers.gh(['pr', 'list', '--repo', LOOP_REPO, '--state', 'merged', '--limit', '1000', '--search', `merged:>=${since}`, '--json', 'number,mergedAt']));
   }
@@ -222,7 +246,7 @@ export async function collectLoop(readers: LoopReaders, shareConfig: BetsShareCo
   const readyBetRows = readyText === null ? null : parseReadyRows(readyText).filter(isBetRow).length;
   const free = localCap !== null && localRunning !== null ? Math.max(0, localCap - localRunning) : null;
   const share = betsShare({ freeSlots: free, readyBetRows }, shareConfig);
-  return { report, share, hints: selectionHints(report, share), jobsText, stages: buildLoopStages(jobsText, releases, now, sinceMs) };
+  return { report, share, hints: selectionHints(report, share), jobsText, stages: buildLoopStages(jobsText, releases, now, sinceMs, releasesReason) };
 }
 
 export interface LoopWrites { loop: string; hints: string; share: string; morning: string | Missing }

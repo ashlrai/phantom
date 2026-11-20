@@ -6,20 +6,26 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { useState } from 'react';
 import { JobYieldCard } from './JobYieldCard.js';
 import { LeverageTile } from './LeverageTile.js';
-import { LoopStagesCard } from './LoopStagesCard.js';
+import { LoopStagesCard, type LoopWindow } from './LoopStagesCard.js';
 import { MetricsGlance } from './MetricsGlance.js';
 import { ReleasesCard } from './ReleasesCard.js';
 import { releasesQuery } from './releases-query.js';
 
 const query: QueryDef<MetricsPanel> = { key: 'fleet-metrics-panel', fetch: signal => apiGet('/api/verse/fleet/runs/metrics', signal) };
+// The stage card's 7 day window reads the same route with ?since=7d; it is fetched only once someone picks it.
+const weekQuery: QueryDef<MetricsPanel> = { key: 'fleet-metrics-panel-7d', fetch: signal => apiGet('/api/verse/fleet/runs/metrics?since=7d', signal) };
 export function MetricsPane({ visible }: PaneProps) {
   // Tags move slowly, so this is read when the pane opens and kept for five minutes.
   const releases = useQuery(releasesQuery, { enabled: visible, freshMs: 300_000 });
   const read = useQuery(query, { enabled: visible, freshMs: 0 });
+  const [loopWindow, setLoopWindow] = useState<LoopWindow>('24h');
+  const week = useQuery(weekQuery, { enabled: visible && loopWindow === '7d', freshMs: 0 });
   const refresh = useRefetch(query);
-  usePollWhileVisible(refresh, 60_000, { enabled: visible });
+  const refreshWeek = useRefetch(weekQuery);
+  usePollWhileVisible(() => { refresh(); if (loopWindow === '7d') refreshWeek(); }, 60_000, { enabled: visible });
   const data = read.data;
   const history = data?.series;
   const hours = history?.hours ?? [];
@@ -32,7 +38,7 @@ export function MetricsPane({ visible }: PaneProps) {
   return <section aria-label="Metrics"><h2>Metrics</h2>
     {!data ? <p>{read.status === 'error' ? 'Metrics are unknown.' : 'Reading metrics…'}</p> : null}
     <MetricsGlance report={data?.glance} capacity={capacity} />
-    <LoopStagesCard report={data?.loopStages} />
+    <LoopStagesCard report={loopWindow === '7d' ? week.data?.loopStages : data?.loopStages} range={loopWindow} onWindow={setLoopWindow} />
     <LeverageTile report={data?.leverage} />
     <JobYieldCard report={data?.jobYield} stopped={data?.stopped} />
     <ReleasesCard report={releases.data} />

@@ -44,6 +44,8 @@ export interface LoopStagesReport {
   headline: string;
   /** Whether a release list was available. When false, merged to released is unknown for every job. */
   releases: 'ok' | 'unavailable';
+  /** Plain reason merged to released is unknown; null when releases were read. */
+  releases_reason: string | null;
 }
 
 /** "24h", "90m", "7d" to milliseconds, within 1 minute to 30 days. Null when invalid. */
@@ -77,7 +79,7 @@ function releaseGap(job: JobTimeline, releases: readonly ReleaseRef[] | null): {
 
 const round = (n: number): number => Math.round(n * 10) / 10;
 
-export function buildLoopStages(ledger: string | null, releases: readonly ReleaseRef[] | null, now: number, sinceMs = LOOP_STAGES_DEFAULT_SINCE_MS): LoopStagesReport {
+export function buildLoopStages(ledger: string | null, releases: readonly ReleaseRef[] | null, now: number, sinceMs = LOOP_STAGES_DEFAULT_SINCE_MS, releasesReason: string | null = null): LoopStagesReport {
   const finished = [...jobTimelines(ledger, now).values()].filter(job => job.finishedAt !== null && job.finishedAt > now - sinceMs);
   const samples = new Map<StageName, number[]>(STAGE_NAMES.map(name => [name, []]));
   const counts = new Map<StageName, { unknown: number; pending: number }>(STAGE_NAMES.map(name => [name, { unknown: 0, pending: 0 }]));
@@ -109,6 +111,7 @@ export function buildLoopStages(ledger: string | null, releases: readonly Releas
       : slowest ? `Biggest wait: ${WORDS[slowest.stage]}, p50 ${minutesText(slowest.p50_minutes)}`
       : 'Biggest wait: unknown (no job has two timestamps for any stage)',
     releases: releases?.length ? 'ok' : 'unavailable',
+    releases_reason: releases?.length ? null : releasesReason ?? 'No release list was supplied',
   };
 }
 
@@ -118,7 +121,7 @@ export function loopStagesText(report: LoopStagesReport): string[] {
   return [
     `${report.headline} (${report.jobs} job${report.jobs === 1 ? '' : 's'} finished since ${report.since}).`,
     ...report.stages.map(s => `${WORDS[s.stage]}: p50 ${cell(s.p50_minutes)}, p90 ${cell(s.p90_minutes)} (${s.known} known, ${s.unknown} unknown${s.pending ? `, ${s.pending} waiting for a release` : ''})`),
-    ...(report.releases === 'unavailable' ? ['Releases could not be read, so merged to released is unknown.'] : []),
+    ...(report.releases === 'unavailable' ? [`Merged to released is unknown: ${report.releases_reason ?? 'releases could not be read'}.`] : []),
   ];
 }
 
