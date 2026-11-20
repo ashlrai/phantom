@@ -90,6 +90,24 @@ describe('fleet dep-gate (RQ-DEPGATEQ8)', () => {
     }
   });
 
+  it('counts reconciler merge rows toward dependency gates', async () => {
+    const { dir, cleanup } = await makeRunsDir({
+      ready: ['RQ-WAIT\tphantom\tdevin\twork\tprompts/RQ-WAIT.md'],
+      prompts: { 'RQ-WAIT.md': 'DEPENDENCY GATE: RQ-UP-A, RQ-UP-B\n' },
+      jobs: [
+        JSON.stringify({ event: 'publish', job: 'RQ-UP-A', url: 'https://github.com/o/r/pull/1', outcome: 'MERGED', source: 'metrics-outcomes-reconciler' }),
+        JSON.stringify({ outcome: 'MERGED', jobId: 'RQ-UP-B', prUrl: 'https://github.com/o/r/pull/2', source: 'metrics-outcomes-reconciler' }),
+      ],
+    });
+    try {
+      const { code } = await runCli(['--runs-dir', dir]);
+      expect(code).toBe(0);
+      expect((await readDepGate({ runsDir: dir })).unmet).toEqual([]);
+    } finally {
+      await cleanup();
+    }
+  });
+
   it('skips PARKED rows in both layouts even when gate ids are unmet', async () => {
     const { dir, cleanup } = await makeRunsDir({
       ready: [

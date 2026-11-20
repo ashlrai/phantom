@@ -12,6 +12,7 @@
  * weight = yield / 0.5, clamped to 0.1..2, so a yield of 0.5 is exactly neutral.
  */
 import { hasRevertEvidence } from './slot-yield.js';
+import { ledgerEvent, ledgerJobId, ledgerOutcomeState } from './job-ledger.js';
 
 export const LANE_YIELD_SCHEMA = 'lanes.yield.v1';
 export const YIELD_WINDOW_JOBS = 50;
@@ -71,9 +72,10 @@ export function computeLaneYield(ledger: string | null): LaneYieldReport {
   for (const line of ledger.split('\n')) {
     let row: Row;
     try { const value: unknown = JSON.parse(line); if (!value || typeof value !== 'object' || Array.isArray(value)) continue; row = value as Row; } catch { continue; }
-    const id = text(row.job);
+    const id = ledgerJobId(row);
     if (!id) continue;
-    if (row.event === 'launch') {
+    const event = ledgerEvent(row);
+    if (event === 'launch') {
       const lane = text(row.lane);
       if (!lane) continue;
       const at = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
@@ -81,8 +83,8 @@ export function computeLaneYield(ledger: string | null): LaneYieldReport {
       launches.push(launch);
       byJob.set(id, [...(byJob.get(id) ?? []), launch]);
     } else {
-      if (row.event === 'outcome' && (row.state === 'MERGED' || row.outcome === 'MERGED')) merged.add(id);
-      else if (row.event === 'finish' && row.empty === true) empty.add(id);
+      if (event === 'outcome' && ledgerOutcomeState(row) === 'MERGED') merged.add(id);
+      else if (event === 'finish' && row.empty === true) empty.add(id);
       if (hasRevertEvidence(row)) reverted.add(id);
     }
   }

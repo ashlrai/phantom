@@ -59,4 +59,21 @@ describe('phm lanes yield', () => {
     expect(await cmdLanes(['yield'])).toBe(0);
     expect(out.mock.calls.map(c => c[0])).toContain('claude / md: yield 50% (5 merged of 10 launches, 2 reverted), empty 30%; router weight 1.00');
   });
+
+  it('counts merges from metrics-outcomes reconciler rows across the job-id dialects', async () => {
+    // The reconciler copies PUBLISHED rows into terminal rows with no
+    // event:"outcome" marker: jobId/prUrl dialects and a reconciler source.
+    const reconciled = Array.from({ length: 10 }, (_, i) => [
+      JSON.stringify({ event: 'launch', job: `b${i}`, lane: 'claude', size: 'md', ts: '2026-11-19T10:00:00.000Z' }),
+      ...(i < 7 ? [i % 2 === 0
+        ? JSON.stringify({ outcome: 'MERGED', jobId: `b${i}`, prUrl: `https://example.invalid/pr/${i}`, source: 'metrics-outcomes-reconciler' })
+        : JSON.stringify({ event: 'publish', job: `b${i}`, url: `https://example.invalid/pr/${i}`, outcome: 'MERGED', source: 'metrics-outcomes-reconciler' })]
+        : [JSON.stringify({ event: 'finish', job: `b${i}`, empty: true })]),
+    ].join('\n')).join('\n');
+    await home(reconciled);
+    const out = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await cmdLanes(['yield', '--json'])).toBe(0);
+    const report = JSON.parse(out.mock.calls.at(-1)![0]);
+    expect(report.rows.find((r: { size: string }) => r.size === 'md')).toMatchObject({ lane: 'claude', launches: 10, merged: 7, yield: 0.7, weight: 1.4 });
+  });
 });

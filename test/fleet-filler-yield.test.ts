@@ -39,6 +39,19 @@ it('counts per repo from a fixture file, joins repo via launch, and ignores othe
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+it('counts merges from metrics-outcomes reconciler rows', async () => {
+  const iso = (h: number) => new Date(now - h * 3_600_000).toISOString();
+  const report = await fleetFillerYield(read(
+    JSON.stringify({ event: 'launch', job: J(1), repo: 'phantom', ts: iso(1) }),
+    JSON.stringify({ outcome: 'MERGED', jobId: J(1), prUrl: 'https://github.com/o/r/pull/1', source: 'metrics-outcomes-reconciler', ts: iso(0.5) }),
+    JSON.stringify({ event: 'launch', job: J(2), repo: 'phantom', ts: iso(1) }),
+    JSON.stringify({ event: 'publish', job: J(2), url: 'https://github.com/o/r/pull/2', outcome: 'CLOSED', source: 'metrics-outcomes-reconciler', ts: iso(0.5) }),
+  ), 6, now);
+  expect(report.repos).toEqual([
+    { repo: 'phantom', launches: 2, skips: 0, empty_finishes: 0, merged: 1, rows: 4, yield: 0.5, red: false },
+  ]);
+});
+
 it('filler-yield is red only when skips are over half of 10 or more rows', async () => {
   const skips = (n: number, repo: string) => Array.from({ length: n }, (_, i) => row('precheck_skip', J(100 + i), 1, { repo, code: 13 }));
   const launches = (n: number, repo: string) => Array.from({ length: n }, (_, i) => row('launch', J(200 + i), 1, { repo }));

@@ -1,5 +1,6 @@
 /** Read-only: counts what each batch did in the last 24 h, per hour. Never changes dispatch or merge authority. */
 import { readTaskCheckJobs, taskBatch, type TaskCheckReader } from './fleet-task-check.js';
+import { ledgerEvent, ledgerJobId, ledgerOutcomeState } from '../core/fleet/job-ledger.js';
 
 const usage = 'Usage: ashlr fleet supply [--json]';
 const HOUR_MS = 3_600_000;
@@ -32,7 +33,7 @@ function classify(row: Record<string, unknown>): Count[] {
   if (kinds.includes('skipped_empty')) hit.push('skipped_empty');
   else if (kinds.includes('precheck_skip')) hit.push('precheck_skip');
   if (typeof row.url === 'string' && row.url !== '' && 'class' in row) hit.push('pr_opened');
-  if (row.event === 'outcome' && typeof row.state === 'string' && row.state.toUpperCase() === 'MERGED') hit.push('merged');
+  if (ledgerEvent(row) === 'outcome' && ledgerOutcomeState(row) === 'MERGED') hit.push('merged');
   return hit;
 }
 
@@ -50,8 +51,8 @@ export async function fleetSupply(read: SupplyReader, now = Date.now()): Promise
       if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
       row = parsed as Record<string, unknown>;
     } catch { continue; }
-    const id = row.job ?? row.job_id ?? row.id;
-    if (typeof id !== 'string' || id === '') continue;
+    const id = ledgerJobId(row);
+    if (id === null) continue;
     const at = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
     if (!Number.isFinite(at) || at > now || now - at > WINDOW_HOURS * HOUR_MS) continue;
     const hit = classify(row);

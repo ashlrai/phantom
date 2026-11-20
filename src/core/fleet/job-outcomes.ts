@@ -13,6 +13,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ledgerRows, readText } from './empty-cause.js';
+import { ledgerEvent, ledgerOutcomeState, ledgerPrUrl } from './job-ledger.js';
 import { classifyEmptyRun, type EmptyRunReason } from './empties-why.js';
 import { finishesIn } from './empties.js';
 import { parsePublishResult } from './job-state.js';
@@ -37,10 +38,13 @@ export interface JobOutcomeInput {
 
 /** Pure: the outcome of one finished job. Exit code is the last resort, never the first. */
 export function classifyJobOutcome(input: JobOutcomeInput): { outcome: JobOutcome; pr: string | null } {
-  const states = input.events.filter(row => row.event === 'outcome').map(row => String(row.state ?? '').toUpperCase());
+  // Rows go through the shared ledger projection: metrics-outcomes reconciler
+  // rows are publish-shaped copies whose terminal outcome/status reads as an
+  // outcome row, and job ids/PR urls resolve across the ledger dialects.
+  const states = input.events.filter(row => ledgerEvent(row) === 'outcome').map(row => ledgerOutcomeState(row) ?? '');
   const parsed = input.publish === null ? null : parsePublishResult(input.publish);
   const publishedPr = parsed?.result?.kind === 'pr' ? parsed.result.url : null;
-  const rowPr = [...input.events].reverse().map(row => row.event === 'outcome' && typeof row.url === 'string' ? row.url : null).find(Boolean) ?? null;
+  const rowPr = [...input.events].reverse().map(row => ledgerEvent(row) === 'outcome' ? ledgerPrUrl(row) : null).find(Boolean) ?? null;
   const pr = publishedPr ?? rowPr;
   if (states.includes('MERGED')) return { outcome: 'merged', pr };
   if (states.at(-1) === 'CLOSED') return { outcome: 'pr_closed', pr };
@@ -177,7 +181,7 @@ export async function readJobOutcomes(opts: ReadJobOutcomesOptions): Promise<Job
   }
   // A job is finished once the ledger shows a finish, a skip, or a merge observation.
   const finished = finishesIn(rows);
-  const outcomeOnly = [...byJob].filter(([id, events]) => !finished.some(f => f.id === id) && events.some(row => row.event === 'outcome' && typeof row.state === 'string' && ['MERGED', 'CLOSED'].includes(row.state.toUpperCase())));
+  const outcomeOnly = [...byJob].filter(([id, events]) => !finished.some(f => f.id === id) && events.some(row => ledgerEvent(row) === 'outcome' && ['MERGED', 'CLOSED'].includes(ledgerOutcomeState(row) ?? '')));
   const targets = [
     ...finished.map(f => ({ id: f.id, lane: f.lane, exit: f.exitCode, empty: f.empty })),
     ...outcomeOnly.map(([id, events]) => ({ id, lane: String(events.find(row => typeof row.lane === 'string')?.lane ?? 'unknown'), exit: null as number | null, empty: false })),

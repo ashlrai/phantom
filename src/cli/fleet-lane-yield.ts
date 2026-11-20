@@ -1,6 +1,7 @@
 /** Read-only yield per lane from the host jobs ledger. Exit 1 when any lane is red. */
 import { readTaskCheckJobs, type TaskCheckReader } from './fleet-task-check.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
+import { ledgerEvent, ledgerJobId, ledgerOutcomeState } from '../core/fleet/job-ledger.js';
 
 const usage = 'Usage: ashlr fleet lane-yield [--hours 2] [--json]';
 const RED_MIN_ROWS = 10;
@@ -46,7 +47,7 @@ export async function fleetLaneYield(read: TaskCheckReader = readTaskCheckJobs, 
     const r = row as Record<string, unknown>;
     const at = typeof r.ts === 'string' ? Date.parse(r.ts) : NaN;
     if (!Number.isFinite(at)) continue;
-    const id = text(r.job ?? r.job_id ?? r.id);
+    const id = ledgerJobId(r);
     const lane = text(r.lane);
     if (r.event === 'launch' && id !== null && lane !== null) launchLane.set(id, lane);
     parsed.push({ row: r, id, at });
@@ -65,7 +66,7 @@ export async function fleetLaneYield(read: TaskCheckReader = readTaskCheckJobs, 
       entry.skips_by_code[code] = (entry.skips_by_code[code] ?? 0) + 1;
       entry.skips++;
     } else if (row.event === 'finish' && row.empty === true) entry.empty_finishes++;
-    else if (row.event === 'outcome' && row.state === 'MERGED' && id !== null && !mergedJobs.has(id)) { mergedJobs.add(id); entry.merged++; }
+    else if (ledgerEvent(row) === 'outcome' && ledgerOutcomeState(row) === 'MERGED' && id !== null && !mergedJobs.has(id)) { mergedJobs.add(id); entry.merged++; }
   }
   for (const entry of lanes.values()) {
     const attempts = entry.launches + entry.skips;

@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { parseReadyTsv } from './lane-console.js';
 import { MARKET_LANE_ID } from './unfed-market.js';
+import { ledgerEvent, ledgerJobId, ledgerOutcomeState } from './job-ledger.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export const VERSE_FLEET_LIVE_QUEUE_PATH = '/api/verse/fleet/live/queue';
@@ -82,9 +83,12 @@ export function mergedJobsFromJsonl(text: string): Set<string> {
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     try {
-      const row = JSON.parse(line) as { event?: unknown; state?: unknown; job?: unknown };
-      if (row.event === 'outcome' && row.state === 'MERGED' && typeof row.job === 'string' && JOB_ID.test(row.job)) {
-        merged.add(row.job);
+      const row = JSON.parse(line) as Record<string, unknown>;
+      // The shared projection counts metrics-outcomes reconciler rows (and
+      // event-less outcome markers) whose terminal state is MERGED.
+      if (ledgerEvent(row) === 'outcome' && ledgerOutcomeState(row) === 'MERGED') {
+        const job = ledgerJobId(row);
+        if (job !== null && JOB_ID.test(job)) merged.add(job);
       }
     } catch { /* skip malformed ledger lines */ }
   }
