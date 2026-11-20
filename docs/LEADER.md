@@ -226,6 +226,15 @@ phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky
   govern memo/check-in cadence; they do not create a second conversation cap.
 - A reply goes to Telegram only when you wrote from Telegram. Memos, questions
   and updates are sent to Telegram as well as shown in the thread.
+- **App actions:** the Leader pane (⌘⌥L) shows each app action an agent or a
+  console button took on this Mac as one line where it happened: the action and
+  app ("Quit Slack"), how it ended (done, refused, failed, waiting for you,
+  needs a macOS permission), the recorded reason, how long it took and when.
+  An action that started under a minute ago with no result reads in progress;
+  after that it reads no result recorded, and a result this build cannot read
+  says result unknown. **Needs you only** keeps the ones waiting for you, Find
+  searches them, and the toolbar counts them apart from bus replies. The lines
+  are receipts, not controls; see [Apps control](APPS-CONTROL.md).
 
 ---
 

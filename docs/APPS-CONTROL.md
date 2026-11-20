@@ -227,6 +227,10 @@ then retry through the same policy checks. The adapter presses only the app's
 own Quit menu item, never a discard or save confirmation.
 
 Every operation writes feed intent and result entries, including refusals.
+The console reads each pair as one line: the Leader pane (⌘⌥L) shows the
+action, the app, how it ended and the recorded reason in the conversation, the
+Bus pane shows each entry in words, and a notification is raised only for an
+action that was refused, failed, is waiting for you or has an unknown result.
 If intent cannot be recorded, no action runs. KILL and comms pause block app
 mutations. Actions retain the desktop adapter's per-chat grants, tier ceilings,
 confirmation cards, takeover and native KILL enforcement. No typing,
