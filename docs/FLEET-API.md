@@ -487,6 +487,18 @@ same agent bus as `phm messages`. `--json` prints `fleet.map-edges.v1`
 the same read with a current read session. The default window is the last 15
 minutes, the same as the map.
 
+`phm map replay [--json] [--since 6h] [--step 5m]` replays the fleet one frame
+per step (default: the last 6 hours, every 5 minutes; at most 288 frames).
+`--json` prints `fleet.map-replay.v1` (`version` 1) and
+`GET /api/verse/fleet/control/map-replay[?since=6h&step=5m]` serves the same
+read with a current read session. Each frame has `from`, `at`, `state`
+(`known`, `partly-unknown` or `unknown`) and `running`, `launched`,
+`prsOpened`, `merged` and `messages`. The jobs come from the jobs ledger and
+the messages are the `map edges` lines inside the frame. A part nobody
+recorded (ledger unreadable, or older than the bus keeps) is `null`, never an
+empty list; `gaps` says why in plain words. The Map pane's time slider draws
+these frames, with a "Back to live" button.
+
 #### Recent bus messages
 
 `phm bus recent [--since 5m] [--json]` lists agent-to-agent messages, newest

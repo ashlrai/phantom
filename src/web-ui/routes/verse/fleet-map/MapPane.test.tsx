@@ -88,9 +88,9 @@ it('opens the existing detail pane for the node clicked and polls at most every 
   fireEvent.click(screen.getByRole('button', { name: /^Open leader/ }));
   expect(openPane).toHaveBeenLastCalledWith('leader-thread');
   expect(DETAIL_PANE.resource).toBe('fleet-usage');
-  // One read each of the graph, its message edges and its message cards; none repeats inside the poll interval.
+  // One read each of the graph, its message edges, its message cards, its conversations and its replay frames; none repeats inside the poll interval.
   await new Promise(resolve => setTimeout(resolve, 50));
-  expect((fetch.mock.calls as unknown[][]).map(call => String(call[0]).replace(/^.*\/control\//, '')).sort()).toEqual(['agent-conversations', 'agent-messages', 'live-map', 'map-edges']);
+  expect((fetch.mock.calls as unknown[][]).map(call => String(call[0]).replace(/^.*\/control\//, '')).sort()).toEqual(['agent-conversations', 'agent-messages', 'live-map', 'map-edges', 'map-replay']);
 });
 
 it('reads an unexpected payload as unavailable, and drops edges to nodes it does not have', async () => {

@@ -356,7 +356,7 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
     return (await import('./fleet-org-map-api.js')).handleFleetOrgMapApi(ctx, req, res, path, method);
   }
   // Literal paths: the whole-fleet graph behind `phm map` and the Map pane, and its message edges (`phm map edges`) and messages (`phm agents messages`).
-  if (path === '/api/verse/fleet/control/live-map' || path === '/api/verse/fleet/control/map-edges' || path === '/api/verse/fleet/control/agent-messages' || path === '/api/verse/fleet/control/agent-conversations') {
+  if (path === '/api/verse/fleet/control/live-map' || path === '/api/verse/fleet/control/map-edges' || path === '/api/verse/fleet/control/agent-messages' || path === '/api/verse/fleet/control/agent-conversations' || path === '/api/verse/fleet/control/map-replay') {
     return (await import('./fleet-live-map-api.js')).handleFleetLiveMapApi(ctx, req, res, path, method);
   }
   if (path === '/api/verse/fleet/control/org-groups') {
