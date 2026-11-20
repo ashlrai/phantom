@@ -12,8 +12,9 @@ phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 With no verb, lists every pending comms item — unresolved needs-you lines, unanswered iMessage
 teammate texts, owner-thread messages awaiting a recorded reply, drafts awaiting approval,
-pending bus work (unclaimed envelopes, open feed jobs and worker handoffs) and agent
-conversation threads waiting on a reply — one prioritized list whose
+pending bus work (unclaimed envelopes, open feed jobs and worker handoffs), agent
+conversation threads waiting on a reply and comms questions/approvals awaiting an answer —
+one prioritized list whose
 items carry the deep-link commands that act on them. --json prints the same view as JSON.
 read and post read and write Mason's local inbox file. Output is JSON; post returns the receiver acknowledgement.
 --receipt-only on post returns only the acknowledgement status, channel and durable deduplication key, or a failure reason; it excludes message text and private paths.
