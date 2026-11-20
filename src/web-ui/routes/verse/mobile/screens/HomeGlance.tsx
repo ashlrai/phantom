@@ -6,6 +6,7 @@
  *      green or red (one read of `phm home --json`, home.v1);
  *   2. decisions, one tap each (the desktop Home Decisions card, built on `phm approvals`);
  *   3. the leader's newest reply (the desktop Home From your leader card, `phm leader replies`);
+ *   3b. the Supply card: is the fleet feeding itself (`phm doctor supply --json`);
  *   4. a box that posts to the fleet inbox, the same API as the desktop inbox box;
  *   5. what shipped today (the desktop Shipped card, `phm shipped --since 1d`).
  * A fact the Mac could not read says unknown, never 0.
@@ -22,6 +23,7 @@ import { MachinesCard } from '../../home/MachinesCard.js';
 import { PoolsCard, poolsQuery } from '../../home/PoolsCard.js';
 import { PulseCard, pulseQuery } from '../../home/PulseCard.js';
 import { PulseStrip, pulseLanesQuery } from '../../home/PulseStrip.js';
+import { SupplyCardPhone, supplyQuery } from '../../home/SupplyCard.js';
 import { ShippedCard, shippedQuery } from '../../home/ShippedCard.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
@@ -49,6 +51,7 @@ export const refreshHomeGlance = (): Promise<unknown> => Promise.all([
   refetchQuery(pulseLanesQuery.key, () => pulseLanesQuery.fetch(), true).catch(() => undefined),
   refetchQuery(pulseQuery.key, () => pulseQuery.fetch(), true).catch(() => undefined),
   refetchQuery(leaderRepliesQuery(1).key, () => leaderRepliesQuery(1).fetch(), true).catch(() => undefined),
+  refetchQuery(supplyQuery.key, () => supplyQuery.fetch(), true).catch(() => undefined),
   refetchQuery(shippedQuery(1).key, () => shippedQuery(1).fetch(), true).catch(() => undefined),
 ]);
 
@@ -89,6 +92,7 @@ export function HomeGlance() {
       {/* Approvals stand on their own API: what only Mason can decide does not wait on the health line. */}
       <ApprovalsCard from="phone" canAnswer={canShowActions(permissions)} limit={APPROVALS_SHOWN} />
       <LeaderRepliesCard limit={1} />
+      <SupplyCardPhone />
       <PoolsCard onOpenJob={job => navigate({ screen: 'worker', job })} />
       <MachinesCard className={ui.card} />
       <MobileInterject compact title="Message the leader" placeholder="Say it in plain words." />
