@@ -50,6 +50,8 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     quarantineCheck: changed.some((path) => QUARANTINE_TEST_FILE.test(path) || path === QUARANTINE_LEDGER),
     rustFiles: changed.filter((path) => existing.has(path) && /\.rs$/.test(path)),
     swiftFiles: changed.filter((path) => existing.has(path) && /\.swift$/.test(path)),
+    yamlFiles: changed.filter((path) => existing.has(path) && /\.ya?ml$/.test(path)),
+    tomlFiles: changed.filter((path) => existing.has(path) && /\.toml$/.test(path)),
   };
 }
 
@@ -415,6 +417,102 @@ export function runSwiftSyntaxCheck(root, files, spawn = spawnSync) {
     }
   }
   console.log('PASS swift syntax check');
+  return true;
+}
+
+/**
+ * .yaml/.yml and .toml files — GitHub workflows, dependabot, codecov,
+ * socket, the pnpm workspace and lock manifests, agent-network, lexicon
+ * and cliff configs, Cargo.toml — are consumed by parsers a text diff can
+ * never prove. `yaml` and `smol-toml` are already bundled dependencies, so
+ * the grammar steps use the same parsers the codebase itself ships, but
+ * they run in a child node process: a top-level import here would keep
+ * this script from loading at all when node_modules is absent, while the
+ * preflight reports that case as SKIP like the ESLint and docs checks.
+ * Bare specifiers resolve against the spawned cwd (the repo root), which
+ * is where npm ci and install:worktree place the packages.
+ */
+export function parserPackagePreflight(root, pkg, exists = existsSync) {
+  if (exists(resolve(root, 'node_modules', pkg, 'package.json'))) {
+    return { ok: true };
+  }
+  return { ok: false, reason: `node_modules/${pkg}/package.json is absent; run npm ci to restore it` };
+}
+
+// Both child scripts walk argv files, parse each with the bundled parser,
+// print `path: <first diagnostic line>` per failure and exit 1 on any.
+// yaml's parseAllDocuments checks every document of a multi-document file
+// and treats duplicate keys as errors — the same rejections GitHub's
+// workflow parser and pnpm apply; its diagnostics already carry
+// "at line L, column C". Default-import + destructure keeps the import
+// working whether the package resolves to its ESM or CJS build. smol-toml
+// errors expose line/column fields its message omits, so the toml script
+// appends them. Each file reports at most 8 yaml errors.
+const YAML_SYNTAX_CHECK = `import { readFileSync } from 'node:fs';
+import pkg from 'yaml';
+const { parseAllDocuments } = pkg;
+const firstLine = (error) => String(error && error.message ? error.message : error).split('\\n')[0];
+let failed = false;
+for (const path of process.argv.slice(1)) {
+  const errors = [];
+  try {
+    for (const doc of parseAllDocuments(readFileSync(path, 'utf8'))) errors.push(...doc.errors);
+  } catch (error) {
+    errors.push(error);
+  }
+  for (const error of errors.slice(0, 8)) console.error(path + ': ' + firstLine(error));
+  if (errors.length > 8) console.error(path + ': ' + (errors.length - 8) + ' more errors');
+  if (errors.length) failed = true;
+}
+process.exit(failed ? 1 : 0);
+`;
+
+/** Syntax-check changed .yaml/.yml files with the bundled yaml parser; false on any parse failure. */
+export function runYamlSyntaxCheck(root, files, spawn = spawnSync) {
+  const result = spawn(process.execPath, ['--input-type=module', '-e', YAML_SYNTAX_CHECK, ...files], {
+    cwd: root, encoding: 'utf8', timeout: 120000,
+  });
+  if (result.status !== 0) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL yaml syntax check');
+    return false;
+  }
+  console.log('PASS yaml syntax check');
+  return true;
+}
+
+const TOML_SYNTAX_CHECK = `import { readFileSync } from 'node:fs';
+import pkg from 'smol-toml';
+const { parse } = pkg;
+let failed = false;
+for (const path of process.argv.slice(1)) {
+  try {
+    parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error).split('\\n')[0];
+    const pos = error && Number.isInteger(error.line) ? ' at line ' + error.line + ', column ' + error.column : '';
+    console.error(path + ': ' + message + pos);
+    failed = true;
+  }
+}
+process.exit(failed ? 1 : 0);
+`;
+
+/** Syntax-check changed .toml files with the bundled smol-toml parser; false on any parse failure. */
+export function runTomlSyntaxCheck(root, files, spawn = spawnSync) {
+  const result = spawn(process.execPath, ['--input-type=module', '-e', TOML_SYNTAX_CHECK, ...files], {
+    cwd: root, encoding: 'utf8', timeout: 120000,
+  });
+  if (result.status !== 0) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL toml syntax check');
+    return false;
+  }
+  console.log('PASS toml syntax check');
   return true;
 }
 
@@ -954,6 +1052,26 @@ function main() {
     if (!swift.ok) {
       console.log(`SKIP swift syntax check: ${swift.reason}`);
     } else if (!runSwiftSyntaxCheck(root, selection.swiftFiles)) {
+      process.exitCode = 1;
+    }
+  }
+  if (selection.yamlFiles.length === 0) {
+    console.log('PASS yaml syntax check skipped: no yaml change');
+  } else {
+    const yaml = parserPackagePreflight(root, 'yaml');
+    if (!yaml.ok) {
+      console.log(`SKIP yaml syntax check: ${yaml.reason}`);
+    } else if (!runYamlSyntaxCheck(root, selection.yamlFiles)) {
+      process.exitCode = 1;
+    }
+  }
+  if (selection.tomlFiles.length === 0) {
+    console.log('PASS toml syntax check skipped: no toml change');
+  } else {
+    const toml = parserPackagePreflight(root, 'smol-toml');
+    if (!toml.ok) {
+      console.log(`SKIP toml syntax check: ${toml.reason}`);
+    } else if (!runTomlSyntaxCheck(root, selection.tomlFiles)) {
       process.exitCode = 1;
     }
   }
