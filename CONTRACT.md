@@ -169,11 +169,20 @@ only the failed job evidence to its workflow run and current PR head.
 analyzer, clock, authority/KILL readers, queue and journal/status paths. Only
 probable flakes are rerun, with durable pre-attempt deduplication and a global
 hourly cap (default ten). Rerun attempt rows carry the failing test id (bounded
-to 400 chars). `src/core/fleet/ci-flakes.ts` exports `recurringFlakes(rows, opts?)`,
+to 400 chars). Successful rerun calls are later resolved to `verdict` journal
+rows (`pass`/`fail`/`inconclusive`) by reading the workflow run once it has
+settled: attempts younger than five minutes are not trusted yet, unresolved
+attempts older than 24 hours stop being polled, and each pass checks at most
+eight pending reruns per repository. `success` maps to `pass`, `failure` and
+`timed_out` to `fail`, other completed conclusions to `inconclusive`; runs
+still in progress or reads predating the rerun call stay pending.
+`src/core/fleet/ci-flakes.ts` exports `recurringFlakes(rows, opts?)`,
 `flakeJobId(repo, test)` and `enqueueFlakeFixes(flakes, absoluteQueuePath)`:
 a test probable-flaking on at least three distinct heads within seven days
 becomes one `RQ-CIFLAKE-*` work-tier queue row per (repository, test), capped
-at ten new rows per run. `src/core/fleet/ci-fix-generations.ts` exports
+at ten new rows per run; each flake also carries `verdicts` tallies of recorded
+rerun outcomes inside the window and the brief names them when present.
+`src/core/fleet/ci-fix-generations.ts` exports
 `nextFixGeneration(queueText, baseJobId, opts?)` and `MAX_FIX_GENERATIONS`:
 queue deduplication is generation-aware — open rows suppress queueing,
 dropped/retired rows and unparsed mentions stay suppressed, and a family
@@ -183,13 +192,16 @@ queueing both require effective authority and inactive KILL. Cancellation
 returns/persists `status: 'aborted'`.
 `ciRerunPaths()` resolves journal/status files under the ASHLR state root;
 `readCiReruns(path?, nowMs?)` returns bounded entries, recent entries, counts,
-lastHour attempts and recurringFlakes; `readCiRerunStatus(path?)` returns the
-persisted status or null, whose per-repo records gain `recurringFlakes` and
-`flakeFixesQueued` counts.
+lastHour attempts, recurringFlakes and `verdicts` (`pass`/`fail`/`inconclusive`
+tallies, `pending` unresolved fired reruns inside 24 hours, and
+`resolutionRate` = pass/(pass+fail) or null when none resolved);
+`readCiRerunStatus(path?)` returns the persisted status or null, whose per-repo
+records gain `recurringFlakes`, `flakeFixesQueued`, `verdictsPending` and
+`verdictsResolved` counts.
 Top-level config `ciRerun` accepts enabled, intervalMinutes, repos and maxPerHour.
 Resident off-tick ticks launch it only with repositories and an elapsed interval.
-The CLI `ci reruns [--json]` reads recent journal entries, counts and
-recurringFlakes without mutation.
+The CLI `ci reruns [--json]` reads recent journal entries, counts,
+recurringFlakes and verdicts without mutation.
 
 `src/core/fleet/ci-baseline.ts` exports `analyzeCiBaseline(repo, gh?)`, a
 read-only version 1 evidence report, and `parseBaselineFailures(log)` for capped,
