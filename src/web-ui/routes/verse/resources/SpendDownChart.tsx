@@ -1,4 +1,4 @@
-import { SPENDDOWN_SCHEMA, type SpendDownRow, type SpendDownV1 } from '../../../../core/fleet/pools-spenddown.js';
+import { queuedText, SPENDDOWN_SCHEMA, type SpendDownRow, type SpendDownV1 } from '../../../../core/fleet/pools-spenddown.js';
 import { apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 import styles from './SpendDownChart.module.css';
@@ -36,6 +36,8 @@ export function SpendDownChart({ data }: { data: SpendDownV1 }) {
     {data.pools.map(row => <div className={styles.row} key={row.id} data-state={row.state}>
       <div className={styles.head}><span className={styles.label}>{row.label}</span><span className={styles.verdict}>{row.verdict}</span></div>
       {resetsInText(row.resets_in_h) ? <span className={styles.reset}>{resetsInText(row.resets_in_h)}</span> : null}
+      {row.blocked_fix ? <span className={styles.reset} data-testid="spenddown-blocked">{row.blocked_fix}</span> : null}
+      {row.queued_hours !== undefined ? <span className={styles.reset} data-testid="spenddown-queued">{queuedText(row.queued_hours)}</span> : null}
       <div className={styles.track} role="img" aria-label={describe(row)}>
         {row.used_frac !== null ? <span className={styles.used} style={{ width: left(row.used_frac) }} /> : null}
         {row.used_frac !== null && row.even_pace_frac !== null ? <span className={styles.pace} data-mark="even-pace" style={{ left: left(row.even_pace_frac) }} /> : null}

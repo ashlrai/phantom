@@ -6,8 +6,11 @@
  * Derived only from pools.v1 (`buildPoolsView`), so the burn, the reset and the staleness rules are the ones
  * `phm pools` already uses; nothing here re-measures. A pool with no current reading is "no reading", never zero.
  */
+import { join } from 'node:path';
 import { poolLabel } from '../usage/runway.js';
 import type { PoolRow, PoolsViewV1 } from './pools-view.js';
+import { signInFix } from './pools-waste.js';
+import type { QueueSupplyV1 } from './queue-supply.js';
 
 export const SPENDDOWN_SCHEMA = 'pools.spenddown.v1';
 export const SPENDDOWN_PATH = '/api/app/pools/spenddown';
@@ -38,6 +41,20 @@ export interface SpendDownRow {
   reading_age_min: number | null;
   /** Why there is no reading; null when there is one. */
   reason: string | null;
+  /** Hours of work queued for this pool: ready jobs times the pool's recent median job time. 0 for an empty queue; null when the queue or the job times are unknown. Absent on older payloads. */
+  queued_hours?: number | null;
+  /** "sign-in" when the lane is held waiting for a sign-in (the verdict then says "blocked: sign-in"); null otherwise. Absent on older payloads. */
+  blocked?: 'sign-in' | null;
+  /** The one step that clears a block, in plain words; null when not blocked. */
+  blocked_fix?: string | null;
+}
+
+/** What the chart adds to pools.v1: the queue, each lane's recent median job time, and why held lanes are held. Each may be missing. */
+export interface SpendDownExtras {
+  supply?: Pick<QueueSupplyV1, 'pools'> | null;
+  /** Median minutes per finished job by lane over the recent window; a lane with no finished jobs is absent or null. */
+  medianJobMinByLane?: Readonly<Record<string, number | null>> | null;
+  heldReasons?: Readonly<Record<string, string | null>>;
 }
 
 export interface SpendDownV1 {
@@ -80,7 +97,14 @@ function verdictOf(row: PoolRow, state: SpendDownState, ageMin: number | null): 
   }
 }
 
-export function buildSpendDown(view: Pick<PoolsViewV1, 'pools' | 'generatedAt'>): SpendDownV1 {
+/** ready jobs x median job minutes, in hours with one decimal; 0 for an empty queue; null when either input is unknown. */
+export function queuedHours(ready: number | null | undefined, medianMin: number | null | undefined): number | null {
+  if (ready === null || ready === undefined) return null;
+  if (ready === 0) return 0;
+  return medianMin === null || medianMin === undefined || !(medianMin > 0) ? null : Math.round(ready * medianMin / 6) / 10;
+}
+
+export function buildSpendDown(view: Pick<PoolsViewV1, 'pools' | 'generatedAt'>, extras: SpendDownExtras = {}): SpendDownV1 {
   const nowMs = Date.parse(view.generatedAt);
   const pools = view.pools.map((row): SpendDownRow => {
     const state = stateOf(row);
@@ -89,11 +113,14 @@ export function buildSpendDown(view: Pick<PoolsViewV1, 'pools' | 'generatedAt'>)
     const resetMs = row.resetAt === null ? NaN : Date.parse(row.resetAt);
     const resetsIn = Number.isFinite(resetMs) && Number.isFinite(nowMs) && resetMs > nowMs ? Math.round((resetMs - nowMs) / 360_000) / 10 : null;
     const fully = state === 'drained';
+    const fix = signInFix(row, extras.heldReasons);
+    const ready = extras.supply?.pools.find(p => p.id === row.id)?.ready;
     return {
       id: row.id, label: poolLabel(row.id), state, used_frac: frac(row.usedPct), reset_at: row.resetAt,
       even_pace_frac: frac(row.elapsedPct),
       projected_at_reset: fully ? 1 : row.projectedUnusedPct === null ? null : frac(100 - row.projectedUnusedPct),
-      projected_empty_at: row.projectedEmptyAt, verdict: verdictOf(row, state, ageMin), resets_in_h: resetsIn, as_of: row.asOf, reading_age_min: ageMin, reason: row.usedPct === null ? row.reason ?? 'no reading' : row.reason,
+      projected_empty_at: row.projectedEmptyAt, verdict: fix === null ? verdictOf(row, state, ageMin) : 'blocked: sign-in', resets_in_h: resetsIn, as_of: row.asOf, reading_age_min: ageMin, reason: row.usedPct === null ? row.reason ?? 'no reading' : row.reason,
+      queued_hours: queuedHours(ready, extras.medianJobMinByLane?.[row.id]), blocked: fix === null ? null : 'sign-in', blocked_fix: fix,
     };
   });
   return { schema: SPENDDOWN_SCHEMA, generated_at: view.generatedAt, pools };
@@ -103,6 +130,42 @@ export function buildSpendDown(view: Pick<PoolsViewV1, 'pools' | 'generatedAt'>)
 export function formatSpendDownText(data: SpendDownV1): string {
   if (data.pools.length === 0) return 'No plans reported.';
   const pct = (value: number | null): string => value === null ? 'unknown' : `${Math.round(value * 100)}%`;
-  return data.pools.map(row => row.used_frac === null ? `${row.label}: ${row.verdict}`
-    : `${row.label}: ${pct(row.used_frac)} used, even pace ${pct(row.even_pace_frac)}, ends near ${pct(row.projected_at_reset)}: ${row.verdict}`).join('\n');
+  return data.pools.map(row => {
+    const queued = row.queued_hours === undefined ? '' : `; ${queuedText(row.queued_hours)}`;
+    const fix = row.blocked_fix ? ` (${row.blocked_fix})` : '';
+    return (row.used_frac === null ? `${row.label}: ${row.verdict}${fix}`
+      : `${row.label}: ${pct(row.used_frac)} used, even pace ${pct(row.even_pace_frac)}, ends near ${pct(row.projected_at_reset)}: ${row.verdict}${fix}`) + queued;
+  }).join('\n');
+}
+
+/** "3.5 h queued", "nothing queued", "queued: unknown". */
+export const queuedText = (hours: number | null): string => hours === null ? 'queued: unknown' : hours === 0 ? 'nothing queued' : `${hours} h queued`;
+
+const RECENT_JOBS_HOURS = 72;
+
+/** Median minutes per finished job by lane, from the jobs ledger through the outcome metrics; a lane with no timed job is null. */
+export async function readMedianJobMinutes(opts: { runsDir?: string; nowMs: number }): Promise<Record<string, number | null> | null> {
+  const [{ readText }, { buildOutcomeMetrics }, { defaultRunsDir }] = await Promise.all([
+    import('./empty-cause.js'), import('./outcome-metrics.js'), import('./landed-closes-read.js'),
+  ]);
+  const text = await readText(join(opts.runsDir ?? defaultRunsDir(), 'metrics', 'jobs.jsonl'), 8 * 1024 * 1024);
+  if (text === null) return null;
+  const events: unknown[] = [];
+  for (const line of text.split(/\r?\n/)) { try { events.push(JSON.parse(line)); } catch { /* blank or partial line */ } }
+  const metrics = buildOutcomeMetrics({ events, nowMs: opts.nowMs, hours: RECENT_JOBS_HOURS });
+  return Object.fromEntries(metrics.byLane.map(g => [g.name, g.samples.duration > 0 && g.medianDuration !== null ? g.medianDuration / 60 : null]));
+}
+
+/** Reads the queue, job times and held reasons (each optional: a failed read leaves that figure unknown), then builds the chart. */
+export async function readSpendDown(view: Pick<PoolsViewV1, 'pools' | 'generatedAt'>, opts: { runsDir?: string; nowMs: number }): Promise<SpendDownV1> {
+  const runs = opts.runsDir === undefined ? {} : { runsDir: opts.runsDir };
+  const now = () => opts.nowMs;
+  const [{ readQueueSupply }, { readFleetRunsDirState }] = await Promise.all([import('./queue-supply.js'), import('./runs-dir-state.js')]);
+  const [supply, state, medianJobMinByLane] = await Promise.all([
+    readQueueSupply({ ...runs, now }).catch(() => null),
+    readFleetRunsDirState({ ...runs, now }).catch(() => null),
+    readMedianJobMinutes(opts).catch(() => null),
+  ]);
+  const heldReasons = Object.fromEntries((state?.lanes ?? []).filter(l => l.held).map(l => [l.lane, l.heldReason]));
+  return buildSpendDown(view, { supply, medianJobMinByLane, heldReasons });
 }

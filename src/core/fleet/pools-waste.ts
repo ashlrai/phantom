@@ -76,12 +76,17 @@ const SIGN_IN_STEP: Readonly<Record<string, string>> = {
 const round1 = (n: number): number => Math.round(n * 10) / 10;
 const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '');
 
+/** The one rule for "this lane waits on a sign-in": held, and the held reason says sign in. Shared by the waste check and the spend-down chart. */
+export function signInFix(row: Pick<PoolRow, 'id' | 'held'>, heldReasons: Readonly<Record<string, string | null>> | undefined): string | null {
+  if (row.held !== true || !SIGN_IN_REASON.test(oneLine(heldReasons?.[row.id] ?? ''))) return null;
+  const step = SIGN_IN_STEP[row.id];
+  return `sign in to ${poolLabel(row.id)} once${step ? `: ${step}` : ''}`;
+}
+
 function fixFor(row: PoolRow, label: string, input: PoolsWasteInput): { kind: WasteFixKind; fix: string } {
   const reason = row.held === true ? oneLine(input.heldReasons?.[row.id] ?? '') : '';
-  if (row.held === true && SIGN_IN_REASON.test(reason)) {
-    const step = SIGN_IN_STEP[row.id];
-    return { kind: 'sign-in', fix: `sign in to ${label} once${step ? `: ${step}` : ''}` };
-  }
+  const signIn = signInFix(row, input.heldReasons);
+  if (signIn !== null) return { kind: 'sign-in', fix: signIn };
   if (row.held === true) return { kind: 'lane-held', fix: `lane held: ${reason || 'no reason recorded'}` };
   const queued = input.supply?.pools.find(p => p.id === row.id);
   if (queued && queued.ready !== null && queued.ready > 0 && queued.state === 'healthy') {
