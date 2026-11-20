@@ -1,7 +1,8 @@
 /**
  * `agents bus work mine`: one read answering "what is pending for this agent" —
  * the live claims it holds under any of its labels, the open work-feed jobs it
- * could still claim, the claimable work envelopes and worker-handoff
+ * could still claim, the work-feed jobs it announced that have not finished,
+ * the claimable work envelopes and worker-handoff
  * assignments addressed to it — under any of its labels or to a channel it
  * belongs to — in `bus next` order, the conversation threads waiting on its
  * answer, the wake hints addressed to
@@ -76,6 +77,15 @@ export type BusWorkMineClaims =
 export type BusWorkMineJobs =
   | { status: 'ok'; holds: BusWorkMineHoldCoverage; open: number; receipts: number;
       truncated: boolean; jobs: BusWorkMineJob[] }
+  | { status: 'refused'; reason: Extract<BusWorkFeedReadResult, { status: 'refused' }>['reason'];
+      receipts: number }
+  | { status: 'unavailable' | 'retryable' | 'invalid' };
+
+/** The feed jobs the agent announced that have not reached a terminal state. */
+export type BusWorkMineAnnounced =
+  | { status: 'ok'; matched: number; items: BusWorkFeedJob[];
+      /** True only when live announced jobs remain beyond the shown page. */
+      truncated: boolean }
   | { status: 'refused'; reason: Extract<BusWorkFeedReadResult, { status: 'refused' }>['reason'];
       receipts: number }
   | { status: 'unavailable' | 'retryable' | 'invalid' };
@@ -213,7 +223,8 @@ export type BusWorkMineThreads =
 
 export type BusWorkMineResult =
   | { status: 'ok'; agent: BusWorkMineAgent; asOf: string;
-      claims: BusWorkMineClaims; jobs: BusWorkMineJobs; next: BusWorkMineNext;
+      claims: BusWorkMineClaims; jobs: BusWorkMineJobs; announced: BusWorkMineAnnounced;
+      next: BusWorkMineNext;
       handoffs: BusWorkMineHandoffs; threads: BusWorkMineThreads;
       wakes: BusWorkMineWakes; inbox: BusWorkMineInbox }
   | { status: 'invalid'; reason: string };
@@ -225,6 +236,8 @@ const WORK_MINE_INBOX_MAX = 20;
 /** Claimable envelopes and handoffs a digest shows in claim order; `matched` keeps the true total. */
 const WORK_MINE_NEXT_MAX = 10;
 const WORK_MINE_HANDOFFS_MAX = 20;
+/** Live announced jobs a digest shows, newest update first; `matched` keeps the true total. */
+const WORK_MINE_ANNOUNCED_MAX = 50;
 /** Waiting conversation threads a digest shows, longest wait first; `matched` keeps the true total. */
 const WORK_MINE_THREADS_MAX = 20;
 /** Bounded scan over the retained store, same page bound the inbox reader uses. */
@@ -278,6 +291,37 @@ function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | 
     jobs: open.slice(0, WORK_MINE_JOBS_MAX).map(job =>
       busWorkMineJobAnnotation(job, heldByJob.get(job.id), coverage, toMatch(job.to), ownerMatch(job.owner))),
   };
+}
+
+/**
+ * Feed statuses that end a job's board life for its announcer. `failed`
+ * stays listed: only the announcer may move a job, and a failed job can
+ * still be rescheduled or terminated — it is exactly the announcement that
+ * needs the agent's next decision.
+ */
+const ANNOUNCED_DONE: ReadonlySet<BusWorkFeedJob['status']> = new Set(['done', 'terminated']);
+
+/**
+ * The outbound side of the jobs section: every feed job this agent announced
+ * that has not reached `done` or `terminated`, newest update first. `jobs`
+ * answers "what can I still claim"; this answers "what did I post and where
+ * does it stand" — an announced job leaves the open set the moment a worker
+ * claims it or its status moves past `queued`/`rescheduled`, yet only the
+ * announcer may post its next status, so a live announcement is work the
+ * agent still drives. Matching reuses the jobs section's owner matcher, so
+ * an unresolvable ref or unreadable registry keeps exact-label matching and
+ * never widens; a non-ok feed reports its own state, never an empty list.
+ */
+function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined): BusWorkMineAnnounced {
+  if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts };
+  if (feed.status !== 'ok') return { status: feed.status };
+  const ownerMatch = busWorkFeedOwnerMatcher(agent, { root });
+  const live = feed.jobs
+    .filter(job => !ANNOUNCED_DONE.has(job.status) && ownerMatch(job.owner))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  return { status: 'ok', matched: live.length,
+    items: live.slice(0, WORK_MINE_ANNOUNCED_MAX),
+    truncated: live.length > WORK_MINE_ANNOUNCED_MAX };
 }
 
 /**
@@ -577,6 +621,7 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
 
   const feed = readBusWorkFeed({ root: options.root, now: () => nowMs, claims: true });
   const jobs = jobsSection(feed, agent, options.root);
+  const announced = announcedSection(feed, agent, options.root);
   const { next, handoffs } = pendingWorkSections(agent, options, nowMs, registry);
   const threads = threadsSection(agent, options, nowMs, registry, identity);
 
@@ -598,7 +643,7 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
 
   const inbox = inboxSection(agent, options, nowMs);
 
-  return { status: 'ok', agent: who, asOf, claims, jobs, next, handoffs, threads, wakes, inbox };
+  return { status: 'ok', agent: who, asOf, claims, jobs, announced, next, handoffs, threads, wakes, inbox };
 }
 
 /** Scrubbed, single-line, clipped display field; '' when nothing readable remains. */
@@ -646,6 +691,25 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
         `${detail === '' ? '' : ` detail="${detail}"`} ` +
         `claimable=${claimable} addressed=${job.addressed} announced=${job.announced} owner=${job.owner} repo=${job.repo} ` +
         `free=${keys(job.freeKeys)} held=${keys(job.heldKeys)} post=${job.postId}` +
+        `${job.statusId === null ? '' : ` status=${job.statusId}`}`);
+    }
+  }
+
+  const announced = result.announced;
+  if (announced.status !== 'ok') {
+    lines.push(`announced=unknown ${announced.status}` +
+      `${announced.status === 'refused' ? `:${announced.reason}` : ''}`);
+  } else {
+    lines.push(`announced=${announced.matched} shown=${announced.items.length}` +
+      `${announced.truncated ? '+truncated' : ''}`);
+    for (const job of announced.items) {
+      const title = mineField(job.title, 80);
+      const detail = job.detail === undefined ? '' : mineField(job.detail, 120);
+      const keys = job.claimKeys.length === 0 ? 'none' : mineField(job.claimKeys.join(','), 400);
+      lines.push(`  ${job.id} ${job.status}${title === '' ? '' : ` "${title}"`}` +
+        `${detail === '' ? '' : ` detail="${detail}"`} ` +
+        `owner=${job.owner} to=${job.to} provider=${job.provider} repo=${job.repo} keys=${keys} ` +
+        `updated=${new Date(job.updatedAt).toISOString()} post=${job.postId}` +
         `${job.statusId === null ? '' : ` status=${job.statusId}`}`);
     }
   }
