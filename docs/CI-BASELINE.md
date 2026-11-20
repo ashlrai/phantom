@@ -76,6 +76,23 @@ manifest depends on `bin/ashlr`. Like `(typecheck)` they can never resolve
 through a vitest pass line, so they classify `shared-baseline`,
 `pr-caused` or `unknown` -- never `probable-flake`.
 
+`npm run build` opens with `npm run check:version`
+(`scripts/sync-candidate-version.mjs --check`), the release-metadata gate:
+a version bump that reached only some of the tracked files prints one
+compact JSON drift report -- `{"version": ..., "changed": [...],
+"matches": false, "check": true}` naming the stale files -- and exits 1,
+while a structural break (missing file, renamed field, ambiguous URL)
+prints `sync-candidate-version: <message>` instead. Both group under
+`scripts/sync-candidate-version.mjs > (version-sync)`. The gate reads
+exactly the script and the ten metadata files it rewrites, so the
+dependency set is that closed input list (seeded as static inputs) and
+the vitest harness ambient set does not apply; like the other non-test
+identities it can never resolve through a vitest pass line and classifies
+`shared-baseline`, `pr-caused` or `unknown` -- never `probable-flake`.
+Passing reports (`matches: true`), write-mode results, empty or unknown
+`changed` entries, non-semver versions, malformed or multi-line JSON, and
+unrelated output stay unparsed.
+
 Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
 brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
 with an explicit verbose test pass on master's current run produces
