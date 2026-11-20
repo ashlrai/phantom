@@ -7,7 +7,11 @@ read-only: it does not rerun jobs, change tests, merge PRs, or update branches.
 The version 1 JSON report contains failure groups, per-PR freshness, master
 evidence, unknown reasons, and proposed update-branch commands. Latest workflow
 runs are checked against the current head and full checkout SHA in job logs.
-Unreadable, incomplete, capped, or unverified logs are unknown, never clean.
+Jobs that never check out the workspace (aggregators such as Merge Gate)
+cannot emit that SHA; their logs are dropped from evidence only when they
+carry no recognizable failure or pass output, and any consumable evidence in
+an unverifiable log keeps the run unknown. Unreadable, incomplete, capped, or
+unverified logs are unknown, never clean.
 Vitest FAIL lines -- including named-project labels such as `|unit|` or `|console|` --
 identify tests under `test/` and `src/web-ui/`; AssertionError summaries are scrubbed
 and capped at 2,000 characters per failure, with at most 100 failures per log.

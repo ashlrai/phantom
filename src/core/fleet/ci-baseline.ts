@@ -821,10 +821,21 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       if (job.conclusion === 'skipped') continue;
       let r;
       try { r = await gh(['api', `repos/${repo}/actions/jobs/${job.id}/logs`]); } catch { return null; }
+      if (!r.ok || job.head_sha !== head) return null;
       const output = lines(r.stdout);
       const checkout = output.findIndex(line => /(?:^|\/)git log -1 --format=%H$/.test(line));
-      if (!r.ok || job.head_sha !== head || checkout < 0 || output[checkout + 1] !== head) return null;
-      result.push({ conclusion: job.conclusion, text: r.stdout });
+      if (checkout >= 0) {
+        if (output[checkout + 1] !== head) return null;
+        result.push({ conclusion: job.conclusion, text: r.stdout });
+        continue;
+      }
+      // Aggregator jobs that never check out the workspace (Merge Gate,
+      // release autotag) cannot emit the checkout SHA this check requires.
+      // Their logs are dropped from evidence only when they carry nothing
+      // the analyzer consumes; any recognizable failure or pass output in
+      // an unverifiable log keeps the whole run unknown rather than letting
+      // unattributed evidence pass as head-verified.
+      if (parseBaselineFailures(r.stdout, repo).length > 0 || output.some(line => PASS_LINE.test(line))) return null;
     }
     return result;
   }
