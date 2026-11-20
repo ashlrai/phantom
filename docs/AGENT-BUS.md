@@ -362,7 +362,9 @@ the coordination table — `held` is tri-state, `null` whenever either store is
 unreadable, never a guess — the worker-handoff envelopes addressed to it that
 `fleet handoff-receive`/`handoff-reply` would accept, found in the same
 bounded walk and claim order (the first 20 shown, `matched` the true total),
-each carrying the envelope `id` those verbs take as `--id`, the body's
+each carrying the envelope `id` those verbs take as `--id`, the raw `to`
+routing label they take as `--to` (a channel-addressed handoff matches only
+its literal `group:<channel>:<topic>` label), the body's
 `taskId`, sender and the same tri-state hold evidence — the wake hints
 addressed to it, capped at the
 newest 20, and
@@ -377,7 +379,14 @@ without redelivering or skipping. `addressed` marks jobs whose announcement
 `to` label resolves to the agent's
 identity, and `announced` marks jobs whose `owner` (announcer) label resolves
 to it — the agent posted them and owns their status reports, so the digest
-distinguishes driveable announcements from claimable work. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
+distinguishes driveable announcements from claimable work. For the
+`next`/`handoffs` sections "addressed to it" means any label of the resolved
+identity or a `group:<channel>:<topic>` address of a registry channel it
+belongs to — the same membership rule the inbox and wake reads apply, minus
+the agent's own channel posts — so work posted to a shared channel is pending
+for its members without a second read; an unreadable or missing registry and
+an unresolvable ref contribute no channels, so matching never widens on
+unknown state. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
 exact-label claim matching, reports `identity: null`, and answers
 `unknown-agent` for wakes and inbox rather than an empty list. Every section
 reports its

@@ -1726,10 +1726,16 @@ its own status (`refused` keeps `reason`/`receipts`). `next` lists the
 claimable work envelopes addressed to the agent — every live receipt whose
 `isClaimableWork` body (`kind:'work'` or a protocol-v1 `task`) and whose `to`
 label resolves through the same identity matching `bus next` and the feed
-`--to` filter use — in `claimNextBusWork` claim order (priority band, then
+`--to` filter use, or names a `group:<channel>:<topic>` address of a
+registry channel the resolved identity belongs to (the same membership rule
+the inbox and wake reads apply, minus the agent's own channel posts; an
+unreadable or missing registry and an unresolvable ref contribute no
+channels, so matching never widens) — in `claimNextBusWork` claim order
+(priority band, then
 cursor), capped at the first 10 shown with `matched` the true total and
 `truncated` definitive. Each `BusWorkMineNextItem` carries `cursor`,
-envelope `id`, `priority`, `ts`, `expiresAt` (read time plus the receipt's
+envelope `id`, the raw `to` routing label, `priority`, `ts`, `expiresAt`
+(read time plus the receipt's
 remaining TTL — the reader decrements `ttl`, so this is the live deadline),
 `kind` (`'work'`|`'task'`), raw `from`, resolved `fromAgent`, a
 `summary` through `busBodySummary`/`busBodyFallbackSummary` scrubbed,
@@ -1744,13 +1750,17 @@ a store that cannot be read (claims journal or coordination table) keeps
 the unified inbox's degraded rule; an unreadable bus store reports the
 section's `unavailable`/`retryable`/`invalid` status with `reason`.
 `handoffs` is collected in the same bounded store walk as `next` and lists
-the live `worker-handoff` envelopes addressed to the agent — only bodies the
+the live `worker-handoff` envelopes addressed to the agent under the same
+label-or-member-channel rule — only bodies the
 shared `isWorkerHandoffBody` contract (`src/core/fleet/handoff-body.ts`)
 accepts, the same check `fleet handoff-receive`/`handoff-reply` run (exactly
 the `kind`/`taskId`/`prompt` keys, a fleet job id, a non-empty prompt), in the
 same claim order, capped at the first 20 shown with `matched` the true total
 and `truncated` definitive. Each `BusWorkMineHandoff` carries `cursor`,
 envelope `id` — the handle `handoff-receive`/`handoff-reply --id` take — the
+raw `to` routing label to pass verbatim as `--to` (a channel-addressed
+handoff matches only its literal `group:<channel>:<topic>` label, never the
+agent's own labels), the
 body's `taskId`, `priority`, `ts`, `expiresAt`, raw `from`, resolved
 `fromAgent`, the same scrubbed single-line `summary`, and the same tri-state
 `held`/`holder`: a taken claim or coordination hold is reported as evidence,

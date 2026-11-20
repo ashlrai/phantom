@@ -2,7 +2,8 @@
  * `agents bus work mine`: one read answering "what is pending for this agent" —
  * the live claims it holds under any of its labels, the open work-feed jobs it
  * could still claim, the claimable work envelopes and worker-handoff
- * assignments addressed to it in `bus next` order, the wake hints addressed to
+ * assignments addressed to it — under any of its labels or to a channel it
+ * belongs to — in `bus next` order, the wake hints addressed to
  * it and the next page of mail in its inbox. Each section reads the same
  * projection the dedicated verb
  * serves and keeps its honesty rules: an unreadable store, coordination table,
@@ -13,7 +14,7 @@
  */
 import { coordinationRowBlocks, listCoordination } from './claim-store.js';
 import { listBusClaims, type BusClaimsListClaim, type BusClaimsOwnerMatch } from './bus-claims.js';
-import { readAgentRegistry, resolveAgent, type AgentRegistry } from './bus-identity.js';
+import { agentLabels, readAgentRegistry, resolveAgent, type AgentRegistry } from './bus-identity.js';
 import { BUS_FEED_OPEN_STATUSES, busWorkFeedOwnerMatcher, busWorkFeedToMatcher, readBusWorkFeed,
   type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import { busBodyFallbackSummary, busBodySummary, readAgentInbox, readAgentWakes,
@@ -110,6 +111,8 @@ export interface BusWorkMineNextItem {
   cursor: number;
   /** Envelope id — the handle the message-id claim verbs take. */
   id: string;
+  /** Raw `to` routing label the envelope was addressed to — one of the agent's labels or a `group:<channel>:<topic>` address of a channel it belongs to. */
+  to: string;
   priority: BusPriority;
   /** ISO receipt time. */
   ts: string;
@@ -144,6 +147,8 @@ export interface BusWorkMineHandoff {
   cursor: number;
   /** Envelope id — the handle `fleet handoff-receive --id` and `handoff-reply --id` take. */
   id: string;
+  /** Raw `to` routing label — pass it verbatim as `handoff-receive --to`/`handoff-reply --to`; a channel-addressed handoff matches only its literal `group:<channel>:<topic>` label. */
+  to: string;
   /** Fleet job id the handoff body carries; the same id its snapshot must name. */
   taskId: string;
   priority: BusPriority;
@@ -288,6 +293,7 @@ interface NextCandidate {
   receivedAt: number;
   priority: BusPriority;
   id: string;
+  to: string;
   kind: 'work' | 'task';
   from: string;
   fromAgent: string | null;
@@ -300,6 +306,7 @@ interface HandoffCandidate {
   receivedAt: number;
   priority: BusPriority;
   id: string;
+  to: string;
   taskId: string;
   from: string;
   fromAgent: string | null;
@@ -315,8 +322,11 @@ type PendingWorkScanFail = { status: 'unavailable' | 'retryable' | 'invalid'; re
  * this agent, from one bounded walk of the retained store: every live envelope
  * whose body is claimable work (`kind:'work'` or a protocol-v1 `task`) or a
  * receivable `worker-handoff`, and whose `to` label resolves to the agent
- * under the same identity matching the feed `--to` filter and `bus next` use,
- * ordered the way `claimNextBusWork` claims — priority band, then cursor.
+ * under the same identity matching the feed `--to` filter and `bus next` use
+ * or names a `group:<channel>:<topic>` address of a channel the resolved
+ * identity belongs to — the same membership rule the inbox and wake reads
+ * apply, minus the agent's own channel posts — ordered the way
+ * `claimNextBusWork` claims — priority band, then cursor.
  * Each item reports its hold state against the same two stores the unified
  * inbox consults: a taken message-id claim row (live lease or completed) on
  * the exact receipt, or a live coordination row blocking `queue:<envelope
@@ -329,6 +339,19 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
   registry: AgentRegistry | undefined): { next: BusWorkMineNext; handoffs: BusWorkMineHandoffs } {
   const scanFail = (result: PendingWorkScanFail) => ({ next: result, handoffs: result });
   const toMatch = busWorkFeedToMatcher(agent, { root: options.root });
+  // Channel membership widens "addressed to this agent" exactly the way the
+  // inbox and wake reads do: `group:<name>:` prefixes of channels whose member
+  // list holds the resolved handle, excluding posts the agent sent itself. A
+  // missing or unreadable registry — or a ref resolving to no identity —
+  // contributes no channels, so matching never widens on unknown state.
+  const identity = registry === undefined ? undefined : resolveAgent(registry, agent);
+  const selfLabels = new Set(identity === undefined ? [] : agentLabels(identity));
+  const channelPrefixes = registry === undefined || identity === undefined ? [] : registry.channels
+    .filter(channel => channel.members.includes(identity.handle))
+    .map(channel => `group:${channel.name}:`);
+  const pendingAddress = (to: string, from: string): boolean =>
+    toMatch(to) || (channelPrefixes.length > 0 && !selfLabels.has(from) &&
+      channelPrefixes.some(prefix => to.startsWith(prefix)));
   const nextCandidates: NextCandidate[] = [];
   const handoffCandidates: HandoffCandidate[] = [];
   const sender = (from: string): string | null =>
@@ -347,12 +370,12 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
     }
     for (const row of page.messages) {
       const envelope = row.envelope;
-      if (!toMatch(envelope.to)) continue;
+      if (!pendingAddress(envelope.to, envelope.from)) continue;
       const kind = claimableKind(envelope.body);
       if (kind !== null) {
         nextCandidates.push({
           cursor: row.cursor, receivedAt: row.receivedAt, priority: envelope.priority,
-          id: envelope.id, kind, from: envelope.from, fromAgent: sender(envelope.from),
+          id: envelope.id, to: envelope.to, kind, from: envelope.from, fromAgent: sender(envelope.from),
           summary: summaryOf(envelope.body),
           // The reader decrements ttl to what remains; expiry is a real deadline.
           expiresAt: nowMs + envelope.ttl,
@@ -364,8 +387,8 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
       if (!isWorkerHandoffBody(envelope.body)) continue;
       handoffCandidates.push({
         cursor: row.cursor, receivedAt: row.receivedAt, priority: envelope.priority,
-        id: envelope.id, taskId: envelope.body.taskId, from: envelope.from, fromAgent: sender(envelope.from),
-        summary: summaryOf(envelope.body),
+        id: envelope.id, to: envelope.to, taskId: envelope.body.taskId, from: envelope.from,
+        fromAgent: sender(envelope.from), summary: summaryOf(envelope.body),
         expiresAt: nowMs + envelope.ttl,
       });
     }
@@ -410,7 +433,7 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
     items: nextCandidates.slice(0, WORK_MINE_NEXT_MAX).map(candidate => {
       const { held, holder } = heldFor(candidate);
       return {
-        cursor: candidate.cursor, id: candidate.id, priority: candidate.priority,
+        cursor: candidate.cursor, id: candidate.id, to: candidate.to, priority: candidate.priority,
         ts: new Date(candidate.receivedAt).toISOString(),
         expiresAt: new Date(candidate.expiresAt).toISOString(),
         kind: candidate.kind, from: candidate.from, fromAgent: candidate.fromAgent,
@@ -426,7 +449,7 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
     items: handoffCandidates.slice(0, WORK_MINE_HANDOFFS_MAX).map(candidate => {
       const { held, holder } = heldFor(candidate);
       return {
-        cursor: candidate.cursor, id: candidate.id, taskId: candidate.taskId,
+        cursor: candidate.cursor, id: candidate.id, to: candidate.to, taskId: candidate.taskId,
         priority: candidate.priority,
         ts: new Date(candidate.receivedAt).toISOString(),
         expiresAt: new Date(candidate.expiresAt).toISOString(),
@@ -545,7 +568,7 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
       const from = item.fromAgent ? `agent:${item.fromAgent}` : `label ${item.from}`;
       const held = item.held === null ? 'unknown' : item.held ? 'yes' : 'no';
       const holder = item.holder === null ? '' : ` holder=${item.holder}`;
-      lines.push(`  [${item.priority} ${item.kind} id=${item.id} from ${from}] ${item.summary} ` +
+      lines.push(`  [${item.priority} ${item.kind} id=${item.id} from ${from} to ${item.to}] ${item.summary} ` +
         `held=${held}${holder} expires=${item.expiresAt}`);
     }
   }
@@ -560,7 +583,7 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
       const from = item.fromAgent ? `agent:${item.fromAgent}` : `label ${item.from}`;
       const held = item.held === null ? 'unknown' : item.held ? 'yes' : 'no';
       const holder = item.holder === null ? '' : ` holder=${item.holder}`;
-      lines.push(`  [${item.priority} handoff id=${item.id} task=${item.taskId} from ${from}] ${item.summary} ` +
+      lines.push(`  [${item.priority} handoff id=${item.id} task=${item.taskId} from ${from} to ${item.to}] ${item.summary} ` +
         `held=${held}${holder} expires=${item.expiresAt}`);
     }
   }

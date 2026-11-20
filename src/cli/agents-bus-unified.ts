@@ -75,9 +75,10 @@ a shown job's declared claim keys — queue:<jobId> preferred, --key picks
 another declared key — into the shared coordination table; claims coordinate,
 never authenticate. work mine is a read-only per-agent digest — the live
 claims it holds under any of its labels, the open feed jobs still claimable
-for it, the claimable work envelopes addressed to it in bus-next order with
-their hold state, the worker-handoff assignments addressed to it (the
-envelope id is the handle handoff-receive and handoff-reply take), its
+for it, the claimable work envelopes addressed to it or a channel it belongs
+to in bus-next order with their hold state, the worker-handoff assignments
+addressed the same way (each item carries the to label handoff-receive and
+handoff-reply take verbatim), its
 pending wake hints and the next page of mail addressed
 to it — where every section reports its own read state and unknown stays
 unknown.
