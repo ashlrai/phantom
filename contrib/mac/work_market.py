@@ -218,16 +218,19 @@ def read_devin_allowance(home, ashlr_home=None):
 
 
 def devin_cost(reading, model, running, now):
-    """Included only while a whole session fits. Free CLI previews do not reserve ACUs."""
+    """Included only while a whole session fits. Free CLI previews do not reserve ACUs, but still need fresh live account evidence."""
     r = reading if isinstance(reading, dict) else {}
     evidence = {key: number(r.get(key)) for key in ("used", "limit", "in_flight", "reserve", "session_cap")}
     evidence["headroom"] = None
     result = dict(cost_class="metered", zero_cost=False, allowance=evidence)
     preview = isinstance(model, str) and DEVIN_PREVIEW.fullmatch(model)
     if preview:
-        if number(now) is not None and now < _epoch(DEVIN_PREVIEW_UNTIL):
-            return dict(result, cost_class="included", zero_cost=True, cost_class_reason="devin_free_preview")
-        return dict(result, cost_class_reason="devin_preview_expired")
+        if number(now) is None or now >= _epoch(DEVIN_PREVIEW_UNTIL):
+            return dict(result, cost_class_reason="devin_preview_expired")
+        observed = _epoch(r.get("as_of"))
+        if r.get("state") != "live" or observed is None or not 0 <= now - observed <= 900:
+            return dict(result, cost_class_reason="devin_preview_unverified")
+        return dict(result, cost_class="included", zero_cost=True, cost_class_reason="devin_free_preview")
     limit, used, reserve, cap, flight = (evidence[k] for k in ("limit", "used", "reserve", "session_cap", "in_flight"))
     reset, observed = _epoch(r.get("reset_at")), _epoch(r.get("as_of"))
     if reset is None: reason = "devin_reset_unknown"

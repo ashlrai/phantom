@@ -103,7 +103,7 @@ class MarketUnit(unittest.TestCase):
 
     def test_devin_preview_is_zero_cost_only_until_expiry(self):
         for model in ('swe-2-lightning', 'swe-2-flash'):
-            entry = self.devin_view({'used': None}, model=model, now=1796101199)['devin']
+            entry = self.devin_view({'used': None, 'as_of': 1796101199}, model=model, now=1796101199)['devin']
             self.assertEqual((entry['cost_class'], entry['posture']), ('included', 'burn'))
             self.assertTrue(entry['zero_cost'])
             self.assertEqual(entry['cost_class_reason'], 'devin_free_preview')
@@ -115,6 +115,12 @@ class MarketUnit(unittest.TestCase):
         self.assertEqual((expired['cost_class'], expired['posture']), ('metered', 'balanced'))
         self.assertEqual(expired['cost_class_reason'], 'devin_preview_expired')
         self.assertEqual(self.devin_view(model='swe-2-high')['devin']['zero_cost'], False)
+
+    def test_devin_preview_requires_fresh_account_evidence(self):
+        for reading in ({}, {'state': None}, {'state': 'stale'}, {'as_of': 1796100000}):
+            entry = self.devin_view(reading, model='swe-2-flash', now=1796101199)['devin']
+            self.assertEqual((entry['cost_class'], entry['zero_cost']), ('metered', False))
+            self.assertEqual(entry['cost_class_reason'], 'devin_preview_unverified')
 
     def test_metered_api_cannot_burn_from_host_posture(self):
         entry = market.lane_view(['claude-api'], {'claude-api': {'posture': 'burn'}},
