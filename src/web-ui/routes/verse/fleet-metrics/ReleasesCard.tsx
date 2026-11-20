@@ -20,6 +20,11 @@ export function ReleasesCard({ report }: { report: ReleasesReport | undefined })
               <td>{row.verdict === 'no release yet' ? 'none' : shown(row.latestTag)}</td><td>{row.latestTag === null ? '' : shown(row.ageDays)}</td>
               <td>{shown(row.mergedPrsSince)}</td><td>{row.verdict}</td></tr>)}</tbody></table>
         </div>
+        {known.repos.filter(row => row.recentPrs?.length).map(row => <div key={row.repo} className={styles.note}>
+          <strong>{row.repo.replace(/^ashlrai\//, '')}</strong> merged since {row.latestTag}:
+          <ul>{row.recentPrs!.map(pr => <li key={pr.number}>#{pr.number} {pr.title}</li>)}</ul>
+          {row.mergedPrsSince !== null && row.mergedPrsSince > row.recentPrs!.length ? `and ${row.mergedPrsSince - row.recentPrs!.length} more` : null}
+        </div>)}
       </>}
   </section>;
 }
