@@ -40,6 +40,15 @@ afterEach(() => {
 
 const ledgerPath = (): string => join(runs, 'metrics', 'jobs.jsonl');
 const writeLedger = (rows: object[]): void => writeFileSync(ledgerPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+const marketPath = (): string => join(runs, 'metrics', 'work-market.jsonl');
+const writeMarket = (rows: object[]): void => writeFileSync(marketPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+
+/** A work-market.v1 route_decision row in the dispatcher's own shape. */
+const marketDecision = (job: string, workClass: string, ts: number): object => ({
+  schema: 'work-market.v1', event: 'route_decision', job,
+  chosen_lane: 'alpha', preferred_lane: 'alpha', work_class: workClass,
+  override: null, rejected_lanes: [], reason_codes: [], ts,
+});
 
 /** Current ledger event shape: state in `phase` (MERGED, CLOSED, or a non-terminal phase), route fields alongside. */
 function event(job: string, lane: string, workClass: string, phase: string | null, extra: Record<string, unknown> = {}): object {
@@ -185,6 +194,63 @@ describe('pure proposal semantics', () => {
     expect(() => proposeRouterWeights(rows1, { baselines: [{ work_class: 'code', lane: 'alpha', weight: 1.2 }] })).toThrow(RangeError);
     const pair = [{ work_class: 'code', lane: 'alpha', weight: 0.4 }, { work_class: 'code', lane: 'alpha', weight: 0.6 }];
     expect(() => proposeRouterWeights(rows1, { baselines: pair })).toThrow(RangeError);
+  });
+});
+
+describe('work_class join from the work market', () => {
+  // Production jobs.jsonl rows never carry work_class; the market's
+  // route_decision journal is the only per-job class evidence. Without the
+  // join every outcome reads unclassified and no proposal can ever form.
+  const marketRows = (jobs: string[], workClass: string): object[] =>
+    jobs.map((job, i) => marketDecision(job, workClass, 1_000 + i));
+
+  it('classifies outcomes from route_decision rows and proposes per (work_class, lane)', async () => {
+    const jobs = Array.from({ length: 20 }, (_, i) => `synthetic-market-${i}`);
+    // Lane and merge state come from jobs.jsonl; the class comes only from work-market.jsonl.
+    writeLedger(jobs.map((job, i) => ({ job, lane: 'alpha', phase: 'MERGED', ts: `2026-11-0${(i % 9) + 1}T00:00:00Z` })));
+    writeMarket(marketRows(jobs, 'bulk'));
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      status: 'proposed', market_state: 'read', market_truncated: false,
+      known_outcomes: 20, unclassified_outcomes: 0,
+    });
+    expect(report.proposals).toEqual([expect.objectContaining({
+      work_class: 'bulk', lane: 'alpha', status: 'proposed', known_n: 20, proposed_weight: 0.6,
+    })]);
+  });
+
+  it('keeps groups separate per market class and reports unclassified jobs without decisions', async () => {
+    const bulk = Array.from({ length: 20 }, (_, i) => `synthetic-bulk-${i}`);
+    const judgment = Array.from({ length: 20 }, (_, i) => `synthetic-judgment-${i}`);
+    const undecided = 'synthetic-no-decision';
+    writeLedger([
+      ...bulk.map(job => ({ job, lane: 'alpha', phase: 'MERGED' })),
+      ...judgment.map(job => ({ job, lane: 'beta', phase: 'CLOSED' })),
+      { job: undecided, lane: 'alpha', phase: 'MERGED' },
+    ]);
+    writeMarket([
+      ...marketRows(bulk, 'bulk'),
+      ...marketRows(judgment, 'judgment'),
+    ]);
+    const { report } = await runJson();
+    expect(report.unclassified_outcomes).toBe(1);
+    const byKey = Object.fromEntries(report.proposals.map((p: { work_class: string; lane: string }) => [`${p.work_class}/${p.lane}`, p]));
+    expect(byKey['bulk/alpha']).toMatchObject({ status: 'proposed', proposed_weight: 0.6 });
+    expect(byKey['judgment/beta']).toMatchObject({ status: 'proposed', proposed_weight: 0.4 });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('market=read');
+  });
+
+  it('reports market_state so a missing decision journal explains unclassified outcomes', async () => {
+    // Production-shaped rows: no work_class on jobs.jsonl and no market file.
+    writeLedger(Array.from({ length: 20 }, (_, i) => ({ job: `synthetic-nomarket-${i}`, lane: 'alpha', phase: 'MERGED' })));
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({ status: 'insufficient-evidence', market_state: 'missing', unclassified_outcomes: 20 });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('market=missing');
+    expect(out).toContain('market coverage: work-market.jsonl missing');
   });
 });
 

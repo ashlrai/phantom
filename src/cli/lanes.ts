@@ -20,7 +20,7 @@ const pct = (n: number | null): string => n === null ? 'unknown' : `${Math.round
 function yieldLine(row: LaneYieldRow, min: number): string {
   const head = `${row.lane} / ${row.size === 'all' ? 'all sizes' : row.size}`;
   if (!row.known) return `${head}: unknown (${row.launches} of ${min} launches needed); router weight ${NEUTRAL_WEIGHT.toFixed(2)} (neutral)`;
-  return `${head}: yield ${pct(row.yield)} (${row.merged} merged of ${row.launches} launches), empty ${pct(row.emptyRate)}; router weight ${row.weight.toFixed(2)}`;
+  return `${head}: yield ${pct(row.yield)} (${row.merged} merged of ${row.launches} launches${row.reverted ? `, ${row.reverted} reverted` : ''}), empty ${pct(row.emptyRate)}; router weight ${row.weight.toFixed(2)}`;
 }
 
 export async function cmdLanes(args: string[]): Promise<number> {

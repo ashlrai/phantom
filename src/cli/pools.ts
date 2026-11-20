@@ -26,9 +26,9 @@ export async function cmdPools(args: string[]): Promise<number> {
   if (args[0] === 'waste') {
     const flags = args.slice(1);
     if (flags.some(a => a !== '--text' && a !== '--json')) { console.error(POOLS_USAGE); return 2; }
-    const { readPoolsWaste, formatPoolsWasteText, raiseWasteAsk } = await import('../core/fleet/pools-waste.js');
+    const { readPoolsWaste, formatPoolsWasteText } = await import('../core/fleet/pools-waste.js');
     const waste = await readPoolsWaste();
-    await raiseWasteAsk(waste);
+    await (await import('../core/fleet/asks-sync.js')).syncAsks().catch(() => null);
     console.log(flags.includes('--json') ? JSON.stringify(waste, null, 2) : formatPoolsWasteText(waste));
     return 0;
   }

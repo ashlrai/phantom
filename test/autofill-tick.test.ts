@@ -130,3 +130,24 @@ describe('phm queue autofill --status', () => {
     expect(await cmdQueueAutofill(['--status', '--lane', 'claude'])).toBe(2);
   });
 });
+
+describe('autofill tick gap harvest', () => {
+  const gapsReport = { schema: 'jobs.gaps.v1', sinceHours: 24, known: true, unknownSources: [], jobsScanned: 1, jobsWithoutGaps: [], candidates: [{ title: 'a', repo: 'phantom', sourceJob: 'J', why: 'w' }], dropped: [], proposed: [{ title: 'a', repo: 'phantom', sourceJob: 'J', why: 'w', jobId: 'GAPX', queued: true, skipped: null }] } as never;
+  it('calls the gap harvest once for several starved lanes and reports it', async () => {
+    const harvestGaps = vi.fn(async () => gapsReport);
+    const report = await tick({ claude: 0, devin: 0 }, { harvestGaps });
+    expect(harvestGaps).toHaveBeenCalledTimes(1);
+    expect(report.schema).toBe('queue.autofill.tick.v1');
+    expect(report.gaps).toEqual({ candidates: 1, queued: 1, skipped: 0, unknown: false });
+  });
+  it('does not harvest on a dry run, with autofill off, or with no starved lane; a failed harvest never fails the tick', async () => {
+    const harvestGaps = vi.fn(async () => gapsReport);
+    await tick({ claude: 0 }, { harvestGaps }, false);
+    await tick({ claude: 0 }, { harvestGaps, readOff: async () => true });
+    await tick({}, { harvestGaps });
+    expect(harvestGaps).not.toHaveBeenCalled();
+    const failing = await tick({ claude: 0 }, { harvestGaps: async () => { throw new Error('boom'); } });
+    expect(failing.gaps).toBeNull();
+    expect(failing.runs).toHaveLength(1);
+  });
+});

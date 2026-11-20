@@ -12,7 +12,7 @@ All files live under `$ASHLR_RUNS_DIR` or `~/.ashlr-runs`.
 
 | Command | Effect |
 | --- | --- |
-| `phm metrics loop [--dry-run] [--json]` | Collect the loop report and write the loop, hint and share files; merge morning fields. `--dry-run` writes nothing. |
+| `phm metrics loop [--since 24h] [--dry-run] [--json]` | Print where the loop waits (`stages`, schema `metrics.loop-stages.v1`), then collect the loop report and write the loop, hint and share files; merge morning fields. `--dry-run` writes nothing. The desktop Metrics card serves the same report from `GET /api/verse/fleet/runs/metrics?since=24h|7d` (`loopStages`), reading releases through the same reader and keeping them for 10 minutes; when releases cannot be read, `releases` is `unavailable` and `releases_reason` says why. |
 | `phm bets list [--json]` | Current state of every bet (fold of the ledger). |
 | `phm bets launch --id RQ-BET-<slug> --hypothesis <text> --metric <key> --max-lane-hours <n> --max-cycles <n>` | Append a launch. Baseline defaults to the metric's value in today's loop file, or unknown. |
 | `phm bets score [--dry-run] [--json]` | One kill-fast cycle over every launched bet; appends each decision with its numbers and refreshes `bets-share.json`. |

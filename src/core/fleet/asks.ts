@@ -47,7 +47,8 @@ export interface Ask {
   id: string;
   /** Shortest unique prefix of the hex (at least 4), for one-word replies: `yes <shortId>`. */
   shortId: string;
-  kind: AskKind;
+  /** `signin` for a sign-in ask (stored as the `password` kind), else the stored kind. */
+  kind: AskKind | 'signin';
   /** One plain line: what Mason is asked to do (the question). */
   request: string;
   /** Allowed replies, one word each. Empty when the reply is a value (see replyHint). */
@@ -155,6 +156,11 @@ export function shortIds(items: readonly NeedsMasonLedgerItem[]): Map<string, st
   return out;
 }
 
+/** Sync raises sign-in asks as stored `password` asks with a pool subject and this note; read back they are `signin`. */
+const SIGNIN_NOTE = /usage that would otherwise expire$/;
+const reportKind = (ask: { kind: AskKind; subject: string | null; unblocks: string | null }): AskKind | 'signin' =>
+  ask.kind === 'password' && ask.subject !== null && SIGNIN_NOTE.test(ask.unblocks ?? '') ? 'signin' : ask.kind;
+
 const expiryMs = (iso: string | null): number => { const n = iso === null ? NaN : Date.parse(iso); return Number.isFinite(n) ? n : Infinity; };
 
 /** Open asks, soonest expiry first, then asks with no stated expiry in ledger order. Expired asks are hidden. Never throws; an unreadable ledger says so. */
@@ -171,7 +177,7 @@ export function listAsks(options: AsksOptions = {}): AsksList {
     if (expiryMs(ask.expires) <= nowMs) { expiredHidden++; continue; }
     const createdMs = ask.created === null ? NaN : Date.parse(ask.created);
     asks.push({
-      id: item.id, shortId: shorts.get(item.id)!, kind: ask.kind, request: ask.request, replies: [...ASK_REPLIES[ask.kind]],
+      id: item.id, shortId: shorts.get(item.id)!, kind: reportKind(ask), request: ask.request, replies: [...ASK_REPLIES[ask.kind]],
       replyHint: ask.kind === 'usage' ? 'a number from 0 to 100' : null, unblocks: ask.unblocks, subject: ask.subject, created: ask.created,
       ageSeconds: Number.isFinite(createdMs) ? Math.max(0, Math.floor((nowMs - createdMs) / 1000)) : null, expires: ask.expires,
     });
@@ -213,13 +219,13 @@ export function raiseAsk(kind: unknown, request: unknown, options: AsksOptions =
   const runsDir = runsDirOf(options);
   const existing = listAsks({ ...options, runsDir });
   if (existing.ledger === 'unavailable') return { ok: false, reason: 'The needs-you ledger could not be read.' };
-  const same = existing.asks.find(ask => ask.kind === kind && ask.request === line && ask.subject === subject);
+  const same = existing.asks.find(ask => (ask.kind === kind || (kind === 'password' && ask.kind === 'signin')) && ask.request === line && ask.subject === subject);
   if (same) return { ok: true, id: same.id, duplicate: true };
   const created = new Date((options.now ?? Date.now)()).toISOString();
   try {
     appendNeedsMasonLine(runsDir, `ask:${kind}${subject ? `@${subject}` : ''} ${line}${unblocks ? ` => ${unblocks}` : ''} (asked ${created})${expires ? ` (expires ${expires})` : ''}`);
   } catch { return { ok: false, reason: 'The needs-you ledger could not be written.' }; }
-  const raised = listAsks({ ...options, runsDir }).asks.find(ask => ask.kind === kind && ask.request === line && ask.subject === subject);
+  const raised = listAsks({ ...options, runsDir }).asks.find(ask => (ask.kind === kind || (kind === 'password' && ask.kind === 'signin')) && ask.request === line && ask.subject === subject);
   return raised ? { ok: true, id: raised.id, duplicate: false } : { ok: false, reason: 'The ask was written but could not be read back.' };
 }
 

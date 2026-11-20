@@ -92,10 +92,15 @@ phm bots handoff --seat devin-review --apply --json
 
 Handoff defaults to a dry-run plan. It refuses active seats; only draining seats
 or idle seats with work may hand off (completed handoffs allow harmless replay).
-Open work consists of live coordination claims owned by `participantId` and
-running node-router jobs held by `nodeId`. The claim guard `seatMayClaim` admits
-only active seats with measured evidence; this module never acquires claims.
-Existing executors must call the guard to enforce seat admission.
+Open work consists of live coordination claims owned by `participantId` — or by
+any other routing label of the same registered bus identity (handle, `agent:`
+address, stable id or alias), the same owner matching `claim list --owner`
+applies — and running node-router jobs held by `nodeId`. An unresolvable
+`participantId` or an unreadable identity registry keeps exact-label matching:
+unknown identity state never widens what a handoff drains. The claim guard
+`seatMayClaim` admits only active seats with measured evidence; this module
+never acquires claims. Existing executors must call the guard to enforce seat
+admission.
 
 Apply uses a **write-ahead, exactly-once handoff record**: the SHA-256 id includes
 the seat, work reference and fencing/lease identity. The private append-only

@@ -300,10 +300,19 @@ Positive allowance with a future reset is `reset-pressure` even when burn pace i
 `phm router outcomes [--json] [--runs-dir <dir>] [--lane <lane>] [--limit <1..1000>]`
 reads the newest bounded tail of `<runs-dir>/metrics/jobs.jsonl` (default
 `ASHLR_RUNS_DIR`, then `~/.ashlr-runs`; 16 MiB retained) joined with the
-same bound of `<runs-dir>/metrics/api-spend.jsonl`, and reports one
+same bound of `<runs-dir>/metrics/api-spend.jsonl` and
+`<runs-dir>/metrics/work-market.jsonl`, and reports one
 `router.outcome.v1` record per job in that window, newest
 first: merge and revert state, CI first pass, review findings, cost, wall
-time and the advisory `passk` join from `eval.lane-scores.v1`. `cost_usd`
+time, `work_class` and the advisory `passk` join from
+`eval.lane-scores.v1`. `work_class` is the class a jobs row recorded when
+one exists; otherwise it is the job's newest `work-market.v1`
+`route_decision` class — the market's own classification of the job,
+written for every evaluated job — and stays `null` when neither ledger
+recorded one. The market read degrades independently: the report's
+`market_state` mirrors the jobs `state` vocabulary and `market_truncated`
+marks a cut decision tail, in which case joined classes cover only the
+newest bytes. `cost_usd`
 is an explicit `cost_usd`/`usd`/`cost` field on a jobs row when one is
 recorded; otherwise it is the sum of api-spend call costs naming the job
 (same `job`/`job_id`/`id` attribution and `cost_usd`/`usd`/`cost`
@@ -335,16 +344,21 @@ feed weights, ranking or dispatch by itself.
 `metrics/jobs.jsonl` outcomes into `router.weight-proposals.v1`: per
 `(work_class, lane)` group it compares the observed held-merge rate against a
 0.5 baseline and proposes a bounded shift — at least 20 known outcomes per
-group, shifts capped at 0.1 and clamped to [0, 1]. A merged outcome recorded
-as reverted counts as known evidence (`reverted_n` reports the count) but
-never as a held merge. Groups below the evidence
+group, shifts capped at 0.1 and clamped to [0, 1]. Production jobs rows
+never carry `work_class`, so groups classify through the work-market join:
+each job's newest `route_decision` row supplies the market's recorded class,
+while the lane stays the one the job actually ran on in jobs.jsonl. A merged
+outcome recorded as reverted counts as known evidence (`reverted_n` reports
+the count) but never as a held merge. Groups below the evidence
 floor are refused and keep their baseline; `merged: null` outcomes count as
-unknown, never as failures. When the ledger exceeds the retained tail the
+unknown, never as failures, and jobs with no recorded class count as
+unclassified. When the ledger exceeds the retained tail the
 report carries `truncated: true` and every count covers the newest bytes
-only. The report is advisory-only: it writes nothing, never touches
-`weights.json`, and changes no live routing, rank or admission. A missing or
-unreadable ledger reports `status: "unavailable"` with null counts rather
-than an empty success.
+only; `market_state`/`market_truncated` report the decision journal's
+health the same way. The report is advisory-only: it writes nothing, never
+touches `weights.json`, and changes no live routing, rank or admission. A
+missing or unreadable ledger reports `status: "unavailable"` with null
+counts rather than an empty success.
 
 ## Revert outcome scan
 

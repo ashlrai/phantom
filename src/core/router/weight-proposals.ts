@@ -113,6 +113,14 @@ export interface RouterWeightProposalReport {
   ledger: { state: RouterOutcomeRead['state']; path: string };
   /** True when the ledger exceeded the retained tail; outcome counts cover only the newest bytes. */
   truncated: boolean;
+  /**
+   * Health of the work-market.jsonl tail behind work_class joins. Anything
+   * but 'read' means no market classes joined; groups reflect only
+   * jobs-ledger-recorded classes (production ledgers record none).
+   */
+  market_state: RouterOutcomeRead['market_state'];
+  /** True when the market tail was cut; joined classes cover only the newest bytes. */
+  market_truncated: boolean;
   /** 'unavailable' when the ledger was not read; counts are then null, never zero. */
   status: 'proposed' | 'insufficient-evidence' | 'unavailable';
   bounds: { min_samples: number; max_shift: number };
@@ -127,7 +135,8 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
   if (!z.iso.datetime().safeParse(asOf).success) throw new RangeError('as_of must be an ISO-8601 UTC timestamp');
   const bounds = { min_samples: opts.minSamples ?? ROUTER_WEIGHT_DEFAULT_MIN_SAMPLES, max_shift: opts.maxShift ?? ROUTER_WEIGHT_DEFAULT_MAX_SHIFT };
   const head = { schema: 'router.weight-proposals.v1' as const, advisory_only: true as const, as_of: asOf,
-    source: ROUTER_WEIGHT_PROPOSAL_SOURCE, ledger: { state: read.state, path: read.path }, truncated: read.truncated, bounds };
+    source: ROUTER_WEIGHT_PROPOSAL_SOURCE, ledger: { state: read.state, path: read.path }, truncated: read.truncated,
+    market_state: read.market_state, market_truncated: read.market_truncated, bounds };
   if (read.state !== 'read') {
     return { ...head, status: 'unavailable', known_outcomes: null, unknown_outcomes: null, unclassified_outcomes: null, proposals: [] };
   }

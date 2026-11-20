@@ -25,7 +25,7 @@ export interface HomeSummary {
   /** Leader replies in the last 24 hours that are newer than the caller's last-read time. */
   unreadLeaderReplies: HomeField<number>;
   /** What only Mason can do, oldest first (`phm asks`). Each takes one word from `answers`; an empty list means nothing is waiting. */
-  needsYou: HomeField<{ id: string; shortId: string; kind: AskKind; request: string; ageSeconds: number | null; answers: readonly AskAnswer[] }[]>;
+  needsYou: HomeField<{ id: string; shortId: string; kind: AskKind | 'signin'; request: string; ageSeconds: number | null; answers: readonly AskAnswer[] }[]>;
 }
 /** Each report as its own reader returned it; null when that reader failed. */
 export interface HomeSources { throughput: ThroughputReport | null; main: FleetMainHealthV1 | null; ledger: ResourceLedgerV1 | null; worklog: WorklogReport | null; asks: AsksList | null }

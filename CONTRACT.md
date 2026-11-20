@@ -33,6 +33,9 @@ Exports:
   Each row includes provider, bus-v2 participant, state, acceptsNewWork, quota,
   claims, inFlight, recent handoffs and advisory adapter status. Only lifecycle
   transitions may persist during listing; missing node stores stay missing.
+  Open work counts live coordination claims owned by `participantId` or by any
+  other label of the same registered bus identity; an unreadable identity
+  registry keeps exact-label matching.
 - `seatMayClaim(id: string, opts?): Promise<boolean>` accepts only active seats
   with measured quota. The module acquires no claims.
 - `seatParticipants(opts?): Promise<Participant[]>` projects poll participants;
@@ -306,8 +309,9 @@ History reads only the bounded 256 KiB regular-file tail, newest last, max three
 matching rows or null. `explainRoutes` adds nullable `fallback_chain` (non-fusion
 decisions only) and `fallback_used` (job receipts). See [gates and inert status](docs/ROUTING.md#failover-chains).
 
-`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?})`,
-`foldSpendCosts(text)`, `readLedgerFile(path, limit?)`,
+`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?})`,
+`foldSpendCosts(text)`, `foldRouteDecisionWorkClasses(text)`,
+`readLedgerFile(path, limit?)`,
 `readLedgerTail(path, maxBytes?)` and
 `readRouterOutcomes({runsDir?, lane?, ashlarDir?})`, producing
 `router.outcome.v1` records folded from `metrics/jobs.jsonl`. The jobs
@@ -325,7 +329,19 @@ and never counted, a job whose calls reported no cost stays `null`
 they report a USD figure. The spend read degrades independently:
 `RouterOutcomeRead.spend_state` reports its health and
 `spend_truncated` marks a cut spend tail (joined costs are lower
-bounds). `passk` is the
+bounds). `work_class` joins the same bound of
+`metrics/work-market.jsonl`: `foldRouteDecisionWorkClasses` collapses
+`work-market.v1` `route_decision` rows to each job's newest-timestamp
+recorded class — the market's own classification, written for every
+evaluated job — and the fold's `workClassFor` option fills only
+outcomes whose jobs rows recorded no class, so an explicit
+jobs-ledger `work_class` always wins and a job with no decision row
+stays null. Rows with a missing or non-finite `ts`, an absent or
+non-route-identifier `work_class`, or a wrong schema/event are
+skipped. The market read degrades independently too:
+`RouterOutcomeRead.market_state` reports its health and
+`market_truncated` marks a cut tail; anything but `read` leaves
+classes ledger-recorded only. `passk` is the
 lane+model's pass^k (`passPowK`) from the published `eval.lane-scores.v1`
 projection (`~/.ashlr/eval/passk/lane-scores.json`, `ASHLR_HOME` honored);
 it is `null` whenever the ledger lacks lane/model, the projection is
@@ -1521,7 +1537,9 @@ paths, GATES files) are refused by the writer and ignored by the resolver. See
 ## Agent Bus v2 foundation
 
 `src/core/agents/bus-v2-schema.ts` owns the `agent-bus.v2` body, participant,
-claim and work-feed schemas described in [Agent Bus v2](docs/AGENT-BUS.md#v2).
+claim and work-feed schemas described in [Agent Bus v2](docs/AGENT-BUS.md#v2),
+plus `busBodyThread(body)`, the read-side predicate that returns the `thread`
+label a `note`/`context` body carries (null for every other kind and shape).
 Routing labels, repo slugs and claim tokens reject trailing newlines; claim keys
 reject ASCII controls including DEL. Claims grant no execution authority.
 
@@ -1529,8 +1547,10 @@ reject ASCII controls including DEL. Claims grant no execution authority.
 in `src/core/agents/bus-work-feed.ts` returns `WorkFeedResult`: either
 `{status:'ok', feed:{v:2,jobs:WorkJob[]}}` or `{status:'refused',reason}`.
 It validates at most 1024 retained receipts in strictly increasing cursor order;
-legacy and unrelated bodies stay opaque. Posts start queued with `owner=from` and
-`to` set to the announcement envelope's routing label;
+legacy and unrelated bodies stay opaque. Posts start queued with `owner=from`,
+`to` set to the announcement envelope's routing label, and the announcement's
+own `title` plus optional `dispatch` spec carried onto the job so the feed
+names the work it lists;
 provider comes from the post, explicit participant metadata, or the
 injected `providerFor` resolver — schema-checked, never guessed (missing is refused).
 Statuses update only retained jobs from the same owner: exact sender-label
@@ -1564,6 +1584,9 @@ blocking a job's declared claim keys (`jobId`, `claimKey`, `owner`,
 `leaseUntil`, `origin`, `sourceId` — tokens never leave the store); `source` is
 `missing`, `available` or `unavailable`, and holds are unknown, not empty, when
 the table is unavailable. Holds cap at 1024 with `truncated` set.
+`BUS_FEED_OPEN_STATUSES` is the exported set of feed statuses that still mean
+open for a worker (`queued`, `rescheduled`); the comms inbox pending-work view
+and `claimBusWorkJob` share it so "claimable" means one thing.
 `coordinationRowBlocks(row, key)` in `src/core/agents/claim-store.ts` is the
 exported read-only overlap predicate; acquisition and observation now share one
 structural overlap rule. `projectBusWorkFeedView(result, status?, toMatch?)` applies the
@@ -1572,7 +1595,9 @@ per-job hold regrouping; `toMatch` is the predicate `busWorkFeedToMatcher(to,
 {root?})` builds, matching a job's `to` label literally and under every label
 of one agent identity (an unresolvable ref or unreadable registry keeps
 exact-label matching). `formatBusWorkFeed(result)` renders the shared human
-lines; both feed CLIs use them, and both accept `--to <label>` beside
+lines — each job as `<id> <status> "<title>" owner=… keys=<claim keys>` with
+title and keys scrubbed, single-lined and display-clipped (JSON keeps the full
+values) — both feed CLIs use them, and both accept `--to <label>` beside
 `--status`. `phm fleet work-feed [--claims] [--to <label>]` and
 `phm agents bus work feed [--status] [--claims] [--to <label>]` print the same
 projection — hold lines plus a `claims=` footer — and non-ok reads print
@@ -1601,17 +1626,60 @@ label, and the result's `owner` field (`ref`, resolved `identity` or null,
 `registry` state) reports which mode applied so a label match is never
 mistaken for identity proof. With `jobs:true` each claim gains an optional
 `jobs` list of the announced work-feed jobs its keys block (`{id, owner,
-status}` per job, the reverse of the feed's `--claims` hold join) and the
+status, title}` per job, the reverse of the feed's `--claims` hold join) and the
 result's `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
 `phm agents bus claim list [--key] [--owner] [--jobs]`
 prints it.
+`claimBusWorkJob(BusWorkJobClaimOptions)` (`job`, `owner`, `leaseMs`, the
+`BusClaimOptions` `root?`/`now?`, and optional `key?`/`id?`) is the job-level
+companion to `claim acquire`: it reads the live work feed, requires the job
+shown and open under `BUS_FEED_OPEN_STATUSES`, resolves one of the job's
+declared claim keys (`queue:<jobId>` preferred, else the first declared; an
+explicit `key` must be declared) and acquires through the same
+`executeBusClaimBody` path, so overlap with every other claim origin still
+decides in one place. `BusWorkJobClaimResult` echoes the announced job
+(`{id, owner, repo, title, status}`) on every outcome that found it:
+`acquired` carries the claim with the fencing token for its acquirer only,
+`conflict` the holder without one, and
+`invalid`/`refused`/`unavailable`/`retryable`/`full` carry a slug `reason`
+(`invalid-job`/`invalid-owner`/`invalid-lease`/`invalid-key`, `unknown-job`,
+`job-not-open`, `no-claim-keys`, `undeclared-key`, `work-feed-*`,
+`claim-*`). A feed that cannot be read refuses rather than claiming against a
+guessed job. `phm agents bus work claim --job <id> --lease-ms <ms> [--key]
+[--owner] [--id]` prints it, exit 0 acquired, 2 invalid, 1 otherwise.
 `work.claim` acquire/renew run through `acquireCoordination`/`renewCoordination`
 and `work.release` through `settleCoordination` on the one coordination table
 with `origin:'resource'`; lease source ids are `agentbus:<opId>:<sha256-16 of
 claimKey>` so an operation id retried on the same key replaces its own lease
 while reuse on another key cannot relocate it. Claims coordinate only and grant
 no execution authority; the token returns only to its acquirer.
+
+`src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
+`phm agents bus work mine [<agent>]`. `readBusWorkMine(agent, options?)`
+(`BusWorkMineOptions`: `root?`, `runsRoot?`, `now?: () => number` frozen once
+across all three reads) returns `BusWorkMineResult`: `{status:'ok', agent,
+asOf, claims, jobs, wakes}` or `{status:'invalid', reason}` for a ref outside
+the printable-label rule. `agent` echoes `ref`, resolved `handle`/`identity`
+(null when unregistered) and the `registry` state. `claims` reuses
+`listBusClaims({owner})` — identity-aware owner matching with exact-label
+fallback — as `{status:'ok', source, claims, owner}` or `{status:'unavailable'}`;
+each claim row is a `BusClaimsListClaim` that gains `jobs` (the announced jobs
+its keys block, `{id, owner, status, title}`) only when the feed read is `ok`,
+absent otherwise. `jobs` reports the open feed jobs
+(`BUS_FEED_OPEN_STATUSES`, at least one claim key, newest 50 of `open`) as
+`BusWorkMineJob` (`WorkJob` plus `addressed`, `freeKeys`, `heldKeys`,
+`claimable`): `holds` is `complete`/`truncated`/`unknown` from the feed's
+claims join, and `claimable` is `true` only on a provably free key, `false`
+only when every declared key is provably held, `null` when coverage is
+`truncated` or `unknown` — `busWorkMineJobAnnotation(job, held, coverage,
+addressed)` is the exported pure rule. A non-ok feed collapses the section to
+its own status (`refused` keeps `reason`/`receipts`). `wakes` reuses
+`readAgentWakes` capped at the newest 20 with `truncated`, or
+`unknown-agent`/`unavailable` with `reason`. `formatBusWorkMine(result)`
+renders the shared human lines — titles and key lists scrubbed, single-lined
+and display-clipped; JSON keeps full values. Exit 0 on a completed read, 2 on
+an invalid agent.
 
 ### Unified agent bus (RQ-BUS-UNIFY-1)
 
@@ -1627,14 +1695,22 @@ with a `reason`); they never throw for bad input or storage faults.
 `src/core/agents/bus-unified.ts`: `sendDirectMessage`, `postChannelMessage`,
 `sendHandoff`, `sendWakeRequest`, `announceWork`, `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
-carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit}, options?)`,
+carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?}, options?)`,
 `readAgentWakes(ref, sinceAt, options?)`, `listBusChannels(agent, options?)`
 (the registry channels name-sorted with `createdBy`, `createdAt` and member
 handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or
 `available`, `agent` the resolved handle or null, and an unknown ref or
 unreadable registry answers `unknown-agent`/`unavailable`, never an empty
-list), `shouldWake(priority, requested, handoff?)`
+list), `readAgentChannel(name, {topic, from, thread, after, limit}, options?)`
+(one oldest-first page of a registry channel's live posts addressed to
+`group:<name>:*` — or one topic — with `group.presence` heartbeats
+excluded; `from` filters by sender through identity-label matching and
+`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
+`nextCursor` covers every scanned row, a missing registry answers
+`unknown-channel`, and an unreadable registry or store answers
+`unavailable`/`retryable`, never an empty page passed off as history),
+`shouldWake(priority, requested, handoff?)`
 and `busBodySummary(body)` — a pure, secret-scrubbed read of a bus body for
 inbox surfaces (`note`/`context`/`worker-handoff` return their message text,
 possibly multi-line; every other recognized kind — the v2 work/wake bodies
@@ -1672,6 +1748,15 @@ a feed lookup.
 falling back to a secret-scrubbed single-line read of string bodies or a
 bounded 512-character raw JSON render for unrecognized bodies. Identities
 are routing names and grant no authority.
+
+`src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
+read-only probe over the five dependencies the unified verbs touch — the
+message store (`inspectBusInbox` pass-through), the identity registry (counts,
+null when unreadable), the wake queue (`state` plus the observed hint count,
+null unless `ok`), the shared coordination table (`coordinationSummary`) and
+the work-feed projection (job count, or the refusal `reason`). Each section
+reports its own real state, a failed probe degrades only its own section, and
+the read never throws, writes or takes a lock; unknown stays null, never zero.
 See [Unified bus](docs/AGENT-BUS.md#unified-bus-identities-dms-channels-handoffs-and-wake).
 
 `fleet.specialist-identity.v1` adds a read-only identity/outcome projection over

@@ -1,6 +1,8 @@
 import { readGoals } from '../fleet/goals.js';
 import { readGoalScorecard } from '../fleet/goal-scorecard.js';
 import { readMetricsPanel } from '../fleet/metrics-panel.js';
+import { defaultLoopReaders, readLoopReleasesCached, type LoopReleases } from '../metrics/loop-collect.js';
+import { LOOP_STAGES_DEFAULT_SINCE_MS, parseSince } from '../metrics/loop-stages.js';
 import { readThroughput, throughputOptions } from '../fleet/throughput.js';
 import { launchRateHours, readLaunchRate } from '../fleet/launch-rate.js';
 import { sanitizePublicJson } from '../util/public-json.js';
@@ -116,6 +118,8 @@ const VERSE_FLEET_SUPERSEDED_PATH: typeof import('../fleet/superseded-read.js').
   '/api/verse/fleet/runs/superseded';
 
 export interface FleetRunsApiDeps {
+  /** Metrics pane: the release list for merged to released; default is the 10-minute cached GitHub read `phm metrics loop` uses. */
+  loopReleases?: (now: number) => Promise<LoopReleases>;
   laneModels?: () => Promise<LaneModelSnapshot>;
   /** Inventory pane; default is readInventory from core/fleet/inventory. */
   readInventory?: () => Promise<Inventory>;
@@ -536,7 +540,13 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     }
     if (path === '/api/verse/fleet/runs/metrics') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
-      sendJson(res, 200, await readMetricsPanel(deps.runsDir ?? defaultRunsDir()));
+      // ?since=24h|7d is the card's one window control; the same values as `phm metrics loop --since`.
+      const since = new URL(req.url ?? '/', 'http://localhost').searchParams.get('since');
+      const sinceMs = since === null ? LOOP_STAGES_DEFAULT_SINCE_MS : parseSince(since);
+      if (sinceMs === null) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'since takes a window like 24h or 7d (1 minute to 30 days)' }); return true; }
+      // A caller-supplied runs dir is a sandbox, so it never reaches GitHub unless a reader is injected.
+      const releases = deps.loopReleases ?? (deps.runsDir ? undefined : (at: number) => readLoopReleasesCached(defaultLoopReaders().gh, at));
+      sendJson(res, 200, await readMetricsPanel(deps.runsDir ?? defaultRunsDir(), deps.now?.(), undefined, { sinceMs, releases }));
       return true;
     }
     // The Throughput pane reads the same report as `phm throughput`.

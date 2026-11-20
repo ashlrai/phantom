@@ -2,6 +2,8 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { directorySchema, isOwner, personInputSchema, personSchema, shareTotal, TEAM_SCHEMA, toMember, type TeamDirectory, type TeamPerson } from '../../shared/team-directory.js';
+import { DROP_JOB_LANES } from '../fleet/drop-job-writer.js';
+import { BUS_MIRROR_KNOWN_LANES } from '../fleet/bus-mirror-dispatch.js';
 import { assertMetadata } from '../connectors/profile.js';
 import { loadOrg, orgFile, type Org } from '../org/org.js';
 import { appendUnlocked, readEvents, withTeamLock } from './store.js';
@@ -19,6 +21,9 @@ function assertOwner(directory: TeamDirectory, actor: TeamActor): void {
   if (!owners.length) throw new DirectoryRefusedError(`This team has no owner yet. Run phm team join --team ${directory.team} first; the first person to join becomes the owner.`);
   if (actor.kind !== 'human' || !owners.some(p => p.id === actor.id)) throw new DirectoryRefusedError(OWNER_ONLY);
 }
+/** Pools a teammate can bring: the dispatch lanes plus any lane already on this team's record. */
+export const knownPools = (directory?: TeamDirectory): string[] =>
+  [...new Set([...DROP_JOB_LANES, ...BUS_MIRROR_KNOWN_LANES, ...(directory?.people.flatMap(p => p.lanes) ?? [])])].sort();
 const invalid = (): never => { throw new DirectoryInputError('Invalid teammate. Use a display name, role, contact identities, lane names and seat names only.'); };
 
 export function foldDirectory(team: string, events: TeamEvent[], org: Org | null): TeamDirectory {
@@ -57,7 +62,8 @@ export function teamDirectory(team: string): TeamDirectory {
   return result;
 }
 
-export function addTeamPerson(team: string, actor: TeamActor, input: unknown) {
+/** `dryRun` runs every check and returns the record that would be saved, writing nothing. */
+export function addTeamPerson(team: string, actor: TeamActor, input: unknown, options: { dryRun?: boolean } = {}) {
   try { assertMetadata(JSON.stringify(input)); } catch { return invalid(); }
   const parsed = personInputSchema.safeParse(input);
   if (!parsed.success) return invalid();
@@ -72,6 +78,8 @@ export function addTeamPerson(team: string, actor: TeamActor, input: unknown) {
       m.identities.some(i => identities.some(j => i.kind === j.kind && i.value.toLowerCase() === j.value.toLowerCase())))) {
       throw new DirectoryInputError('Teammate already exists. Use phm team list to review.');
     }
+    const unknown = p.lanes.filter(lane => !knownPools(directory).includes(lane));
+    if (unknown.length) throw new DirectoryInputError(`Unknown pool ${unknown.join(', ')}. Known pools: ${knownPools(directory).join(', ')}.`);
     const total = shareTotal(directory.people) + (p.poolSharePct ?? 0);
     if (total > 100) throw new DirectoryInputError(`Pool shares would add up to ${total}%. Keep the total at 100 or less.`);
     const person: TeamPerson = { id: `person:${randomUUID()}`, displayName: p.displayName, role: p.role, identities,
@@ -79,11 +87,13 @@ export function addTeamPerson(team: string, actor: TeamActor, input: unknown) {
       ...(p.poolSharePct !== undefined ? { poolSharePct: p.poolSharePct } : {}),
       ...(p.allowedRepos?.length ? { allowedRepos: [...new Set(p.allowedRepos.map(r => r.toLowerCase()))] } : {}),
       createdAt: new Date().toISOString() };
-    appendUnlocked(team, actor, 'person.added', { person });
+    if (!options.dryRun) appendUnlocked(team, actor, 'person.added', { person });
     // Phantom never contacts the teammate: the owner passes this note on in their own words and channel.
     const note = `You have a seat on our Phantom team${person.poolSharePct ? `, with ${person.poolSharePct}% of the shared pool` : ''}. Install Phantom, tell me when you are ready, and I will give you an invite to run with: phm team join <invite>`;
-    return { schema: TEAM_SCHEMA, version: 1 as const, person, member: toMember(person), note,
-      next: `Saved on this machine only. Nothing was sent: share the note with ${person.displayName} yourself.${identities.length && !p.verified ? ' Their sender ids are pending; add with --verified once you have checked them.' : ''}` };
+    // Joining from another machine is the existing node pairing; this record never builds a second one.
+    return { schema: TEAM_SCHEMA, version: 1 as const, dry_run: !!options.dryRun, written: !options.dryRun, person, member: toMember(person), note,
+      next: options.dryRun ? `Dry run: nothing was saved. Run the same command with --apply to save it. Their other computer joins with phm node join (docs/NODES.md).`
+      : `Saved on this machine only. Nothing was sent: share the note with ${person.displayName} yourself.${identities.length && !p.verified ? ' Their sender ids are pending; add with --verified once you have checked them.' : ''} Their other computer joins with phm node join (docs/NODES.md).` };
   });
 }
 

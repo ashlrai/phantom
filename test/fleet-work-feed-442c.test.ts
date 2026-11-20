@@ -76,7 +76,7 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
       { id: 'fake-second', status: 'queued', updatedAt: now - 10 }] });
     const log = output();
     expect(await cmdFleetWorkFeed(['--root', root])).toBe(0);
-    expect(log.mock.calls[0]?.[0]).toBe(`fake-job running owner=fake-agent to=leaders provider=devin repo=fake/repo updated=${new Date(now).toISOString()}`);
+    expect(log.mock.calls[0]?.[0]).toBe(`fake-job running "Review" owner=fake-agent to=leaders provider=devin repo=fake/repo keys=repo:fake/repo updated=${new Date(now).toISOString()}`);
     expect(log.mock.calls[1]?.[0]).toContain('fake-second queued');
     log.mockClear();
     expect(await cmdFleetWorkFeed(['--root', root, '--status', 'queued'])).toBe(0);
@@ -87,6 +87,28 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual({
       ...result, jobs: result.status === 'ok' ? result.jobs.filter(job => job.status === 'running') : [],
     });
+  });
+
+  it('scrubs and clips the title and claim keys on human lines while JSON keeps them', async () => {
+    const dirty = `Fix\n  the\tfake sk-ant-api03-${'a'.repeat(40)} ${'t'.repeat(170)}`;
+    const claimKeys = ['repo:fake/repo',
+      ...Array.from({ length: 4 }, (_, i) => `queue:key-${i}-${'k'.repeat(110)}`)];
+    append({ ...post, title: dirty, claimKeys });
+    const log = output();
+    expect(await cmdFleetWorkFeed(['--root', root])).toBe(0);
+    const line = String(log.mock.calls[0]?.[0]);
+    expect(line.split('\n')).toHaveLength(1);
+    expect(line).toContain('"Fix the fake [REDACTED]');
+    expect(line).not.toContain('sk-ant-api03');
+    expect(line).toContain('…');
+    const keysField = /keys=(\S+) updated=/.exec(line)?.[1] ?? '';
+    expect(keysField.length).toBeLessThanOrEqual(480);
+    expect(keysField.endsWith('…')).toBe(true);
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--json'])).toBe(0);
+    const wire = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as { jobs: { title: string; claimKeys: string[] }[] };
+    expect(wire.jobs[0]?.title).toBe(dirty);
+    expect(wire.jobs[0]?.claimKeys).toEqual(claimKeys);
   });
 
   it('refuses a status from a different owner and exits 1 in text and JSON', async () => {
@@ -203,7 +225,7 @@ describe('work-feed --to announcement-address filter', () => {
     const log = output();
     expect(await cmdFleetWorkFeed(['--root', root, '--to', 'agent:worker-bot'])).toBe(0);
     expect(log.mock.calls.map(call => String(call[0]))).toEqual([
-      `fake-directed running owner=fake-agent to=agent:worker-bot provider=devin repo=fake/repo updated=${new Date(now).toISOString()}`,
+      `fake-directed running "Review" owner=fake-agent to=agent:worker-bot provider=devin repo=fake/repo keys=repo:fake/repo updated=${new Date(now).toISOString()}`,
       `jobs=1 receipts=3 feed=ok as-of=${new Date(now).toISOString()}`]);
     log.mockClear();
     expect(await cmdFleetWorkFeed(['--root', root, '--to', 'leaders', '--status', 'queued', '--json'])).toBe(0);
