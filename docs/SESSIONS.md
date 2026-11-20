@@ -122,6 +122,21 @@ last until the console window is reloaded. They are counted from each
 conversation's message total, and the read keeps only the newest part of a
 long conversation, so a session whose total has stopped growing shows no mark.
 
+A bar above the cards finds and narrows. Press `/` and type: only the sessions
+holding every word stay, matched against each session's id, lane, model, repo,
+state, summary and the newest messages on its card. Find looks only at the
+sessions on screen and sends no request. Down or Enter moves to the first
+card, Esc clears the words, and the words stay while you open a conversation
+and come back. The Lane and Repo menus and "Running only" narrow the read
+itself, the same way `--lane`, `--repo` and `--live` narrow
+`phm sessions threads`. The read returns at most 40 sessions, so this is how
+you reach one it left out; a line under the bar says how many are not on
+screen. "Running only" leaves out sessions that have finished. The menus list
+the lanes and repos seen since the pane opened. "Every session" removes the
+narrowing. If the server answers for a different narrowing than the one you
+chose, the line says so instead of labelling the cards wrongly. Marks for new
+messages on sessions outside the narrowed list are kept.
+
 To read one session as a conversation instead of a log, run
 `phm sessions thread <id>`. The id is `leader`, a job id or a subagent id from
 the tree. It prints a short summary (what the session is, its state, commands

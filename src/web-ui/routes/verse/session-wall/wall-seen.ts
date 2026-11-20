@@ -13,8 +13,11 @@ interface Counted { session: { id: string }; messageCount: number }
 
 const seen = new Map<string, number>();
 
-/** Records a first sight of each session, and everything in the open conversation as read. Sessions that left the read are forgotten. */
-export function noteWallSeen(entries: readonly Counted[], openId: string | null): void {
+/**
+ * Records a first sight of each session, and everything in the open conversation as read. Sessions that left the read are forgotten,
+ * unless `narrowed` says the read was asked for only some sessions: the others are still there, and keep their marks.
+ */
+export function noteWallSeen(entries: readonly Counted[], openId: string | null, narrowed = false): void {
   const present = new Set<string>();
   for (const { session: { id }, messageCount } of entries) {
     present.add(id);
@@ -22,6 +25,7 @@ export function noteWallSeen(entries: readonly Counted[], openId: string | null)
     // A total that shrank (old lines dropped off the read) becomes the new mark, so later growth still counts.
     if (before === undefined || id === openId || messageCount < before) seen.set(id, messageCount);
   }
+  if (narrowed) return;
   for (const id of [...seen.keys()]) if (!present.has(id)) seen.delete(id);
 }
 
