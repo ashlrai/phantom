@@ -299,11 +299,18 @@ statuses never fan out. The result's `claimHoldersWoken` counts the hints
 present after the call — absent when the fan-out did not run, `null` when the
 live claim table could not be read (unknown holders are never reported as
 none), and a hint that cannot be written is best-effort, never a failed send.
-`phm agents bus work feed [--status <s>] [--to <label>] [--claims]` reads the
-same projection back — jobs newest-first, optionally filtered by status or
-announcement address and joined with the live coordination holds — so the
+`phm agents bus work feed [--status <s>] [--job <id>] [--to <label>]
+[--owner <agent>] [--claims]` reads the
+same projection back — jobs newest-first, optionally filtered by status,
+exact job id, announcement address or announcing agent and joined with the
+live coordination holds — so the
 whole post/status/feed loop stays on this surface without dropping to
-`phm fleet work-feed`.
+`phm fleet work-feed`. `--to` keeps jobs whose announcement was addressed to
+that routing label and `--owner` keeps jobs announced by that agent; each
+matches literally and under every label of one agent identity through the
+registry, while an unresolvable ref or an unreadable registry keeps
+exact-label matching — the filters narrow the fleet view, they never widen
+it. `phm fleet work-feed` accepts the same flags.
 
 **Job claims.** `phm agents bus work claim --job <id> --lease-ms <1..3600000>
 [--key <claimKey>] [--owner <label>] [--id <opId>]` is the job-level companion
@@ -350,7 +357,9 @@ reached the store's end — and `nextCursor` resumes strictly before any
 unshown mail, so `agents bus inbox --after <nextCursor>` continues the page
 without redelivering or skipping. `addressed` marks jobs whose announcement
 `to` label resolves to the agent's
-identity. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
+identity, and `announced` marks jobs whose `owner` (announcer) label resolves
+to it — the agent posted them and owns their status reports, so the digest
+distinguishes driveable announcements from claimable work. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
 exact-label claim matching, reports `identity: null`, and answers
 `unknown-agent` for wakes and inbox rather than an empty list. Every section
 reports its

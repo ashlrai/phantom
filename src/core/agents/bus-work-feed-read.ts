@@ -2,7 +2,7 @@
 import { BUS_INBOX_MAX_MESSAGES, listBusInboxAfter, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { coordinationRowBlocks, listCoordination, type CoordinationOrigin } from './claim-store.js';
 import { projectBusWorkFeed, type WorkFeedOwnerKeyFor, type WorkFeedProviderFor, type WorkFeedResult } from './bus-work-feed.js';
-import { agentIdentityKeys, readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
+import { agentAddressMatcher, agentIdentityKeys, readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
 import { scrubSecrets } from '../util/scrub.js';
 import type { Participant, WorkJob } from './bus-v2-schema.js';
 
@@ -138,32 +138,54 @@ export function readBusWorkFeed(options: BusWorkFeedReadOptions = {}): BusWorkFe
 }
 
 /**
- * Match a job's announcement `to` label against a `--to` ref under every label
- * of one agent identity — the same contract `bus next`, `bus-follow`, handoff
- * receive and claim `--owner` use: the literal label always matches, and any
- * label resolving to the ref's identity key matches too. A ref that resolves
- * to no identity, and an unreadable registry, keep exact-label matching, so
- * unknown identity state never widens the feed filter.
+ * Match a routing label against a ref under every label of one agent identity —
+ * the same contract `bus next`, `bus-follow`, handoff receive and claim
+ * `--owner` use: the literal label always matches, and any label resolving to
+ * the ref's identity key matches too. A ref that resolves to no identity, and
+ * an unreadable registry, keep exact-label matching, so unknown identity state
+ * never widens the filter.
  */
+function feedLabelMatcher(ref: string, options: { root?: string }): (label: string) => boolean {
+  return agentAddressMatcher(agentIdentityKeys({ root: options.root }), ref);
+}
+
+/** Announcement-address matcher for a job's `to` label. */
 export function busWorkFeedToMatcher(to: string, options: { root?: string } = {}): (label: string) => boolean {
-  const identityOf = agentIdentityKeys({ root: options.root });
-  const target = identityOf?.(to);
-  return label => label === to || (target !== undefined && identityOf?.(label) === target);
+  return feedLabelMatcher(to, options);
+}
+
+/** Announcer matcher for a job's `owner` label — the same identity contract `to` uses. */
+export function busWorkFeedOwnerMatcher(owner: string, options: { root?: string } = {}): (label: string) => boolean {
+  return feedLabelMatcher(owner, options);
+}
+
+/** Client-side feed filters shared by the feed CLIs; every field narrows, none fabricates. */
+export interface BusWorkFeedViewFilters {
+  /** Keep only jobs in this feed status. */
+  status?: WorkJob['status'];
+  /** Keep only the job with this exact id. */
+  jobId?: string;
+  /** Announcement-address predicate from `busWorkFeedToMatcher`. */
+  toMatch?: (to: string) => boolean;
+  /** Announcer predicate over `job.owner` from `busWorkFeedOwnerMatcher`. */
+  ownerMatch?: (owner: string) => boolean;
 }
 
 /**
- * Client-side `--status`/`--to` filters and newest-first ordering shared by
- * the feed CLIs; `toMatch` is a `busWorkFeedToMatcher` predicate over each
- * job's announcement address. With claims, holds regroup under the jobs still
- * shown so a filtered view never lists a hold for a hidden job. Non-ok
- * results pass through untouched; nothing is fabricated for a refused or
- * unavailable read.
+ * Client-side `--status`/`--job`/`--to`/`--owner` filters and newest-first
+ * ordering shared by the feed CLIs; the matchers are the
+ * `busWorkFeedToMatcher`/`busWorkFeedOwnerMatcher` predicates. With claims,
+ * holds regroup under the jobs still shown so a filtered view never lists a
+ * hold for a hidden job. Non-ok results pass through untouched; nothing is
+ * fabricated for a refused or unavailable read.
  */
-export function projectBusWorkFeedView(result: BusWorkFeedReadResult, status?: WorkJob['status'],
-  toMatch?: (to: string) => boolean): BusWorkFeedReadResult {
+export function projectBusWorkFeedView(result: BusWorkFeedReadResult, filters: BusWorkFeedViewFilters = {}): BusWorkFeedReadResult {
   if (result.status !== 'ok') return result;
   const jobs = result.jobs
-    .filter(job => (status === undefined || job.status === status) && (toMatch === undefined || toMatch(job.to)))
+    .filter(job => (filters.status === undefined || job.status === filters.status)
+      && (filters.jobId === undefined || job.id === filters.jobId)
+      && (filters.toMatch === undefined || filters.toMatch(job.to))
+      && (filters.ownerMatch === undefined || filters.ownerMatch(job.owner)))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const view: Extract<BusWorkFeedReadResult, { status: 'ok' }> = { ...result, jobs };
   if (result.claims !== undefined) {

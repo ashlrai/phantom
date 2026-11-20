@@ -369,6 +369,40 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['work', 'feed', '--to', 'bad label'])).toMatchObject({ code: 2 });
   });
 
+  it('filters the work feed by job id and announcing agent', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-J-1', '--title', 'Mine',
+      '--repo', 'ashlrai/phantom', '--provider', 'claude', '--id', 'feed-j1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'post', '--from', 'nova', '--job', 'RQ-J-2', '--title', 'Theirs',
+      '--repo', 'ashlrai/phantom', '--provider', 'local', '--id', 'feed-j2'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'status', '--from', 'atlas', '--job', 'RQ-J-1', '--status', 'running',
+      '--id', 'feed-j1s'])).json).toMatchObject({ status: 'posted' });
+
+    // --job resolves the exact id through its whole lifecycle.
+    expect((await run(['work', 'feed', '--job', 'RQ-J-1'])).json.jobs)
+      .toEqual([expect.objectContaining({ id: 'RQ-J-1', status: 'running', owner: 'agent:atlas' })]);
+    expect((await run(['work', 'feed', '--job', 'RQ-GONE'])).json.jobs).toEqual([]);
+    // --owner keeps jobs announced by that agent under every label of its identity.
+    for (const ref of ['atlas', 'agent:atlas']) {
+      expect((await run(['work', 'feed', '--owner', ref])).json.jobs)
+        .toEqual([expect.objectContaining({ id: 'RQ-J-1', owner: 'agent:atlas' })]);
+    }
+    expect((await run(['work', 'feed', '--owner', 'nova'])).json.jobs)
+      .toEqual([expect.objectContaining({ id: 'RQ-J-2', owner: 'agent:nova' })]);
+    // Filters compose: atlas's running job only; holds regroup under shown jobs.
+    expect((await run(['work', 'feed', '--owner', 'atlas', '--status', 'queued'])).json.jobs).toEqual([]);
+    expect((await run(['work', 'feed', '--job', 'RQ-J-1', '--owner', 'atlas', '--claims'])).json)
+      .toMatchObject({ status: 'ok', claims: { source: 'missing', holds: [] } });
+    expect((await run(['work', 'feed', '--job', 'RQ-J-1', '--owner', 'nova'])).json.jobs).toEqual([]);
+    // Unresolvable owner refs keep exact-label matching — never widen.
+    expect((await run(['work', 'feed', '--owner', 'ghost'])).json.jobs).toEqual([]);
+    expect(await run(['work', 'feed', '--job', 'bad job'])).toMatchObject({ code: 2 });
+    expect(await run(['work', 'feed', '--owner', 'bad owner'])).toMatchObject({ code: 2 });
+  });
+
   it('filters claim list by owner through the identity registry', async () => {
     expect((await run(['id', 'register', 'atlas', '--alias', 'lane-atlas'])).json)
       .toMatchObject({ status: 'created' });
