@@ -7,6 +7,8 @@ import { readUnifiedBusStatus, type UnifiedBusStatusOptions } from '../src/core/
 import { announceWork, sendDirectMessage, sendWakeRequest, type UnifiedBusOptions } from '../src/core/agents/bus-unified.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
+import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
 
 const dirs: string[] = [];
@@ -28,12 +30,13 @@ describe('readUnifiedBusStatus', () => {
     expect(status.registry).toEqual({ source: 'missing', identities: 0, channels: 0 });
     expect(status.wakes).toEqual({ state: 'missing', hints: null });
     expect(status.coordination).toEqual({ source: 'missing', liveClaims: null, statuses: null });
+    expect(status.workClaims).toEqual({ source: 'missing', claims: null });
     // A missing store is an empty feed, matching `work feed` semantics.
     expect(status.feed).toEqual({ status: 'ok', jobs: 0 });
     expect(Number.isNaN(Date.parse(status.asOf))).toBe(false);
   });
 
-  it('counts real rows across all five sections after bus activity', async () => {
+  it('counts real rows across all six sections after bus activity', async () => {
     const options = setup();
     const bus: UnifiedBusOptions = options;
     for (const handle of ['atlas', 'nova']) {
@@ -93,6 +96,31 @@ describe('readUnifiedBusStatus', () => {
     expect(status.store.source).toBe('available');
     expect(status.store.retainedCount).toBe(1);
   });
+
+  it('counts retained message-id claim records and degrades only that section when the journal is unreadable', () => {
+    // mutateBusWorkClaim reads the wall clock, so this probe needs real time.
+    const options = setup(Date.now());
+    const envelope: BusEnvelope = { id: 'w-claim-1', from: 'agent:nova', to: 'agent:atlas',
+      priority: 'P2', ttl: 120_000, body: { kind: 'work', text: 'fake work' } };
+    expect(appendBusInbox(envelope, { root: options.root, now: options.now }).status).toBe('posted');
+    expect(mutateBusWorkClaim({ action: 'acquire', id: 'w-claim-1', owner: 'agent:atlas',
+      leaseMs: 60_000, root: options.root }).status).toBe('acquired');
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.workClaims).toEqual({ source: 'available', claims: 1 });
+    // The same acquire also took a coordination lease under queue:w-claim-1.
+    expect(status.coordination.liveClaims).toBe(1);
+
+    // Corrupt only the journal payload; every other section still reads.
+    const file = join(options.root!, 'bus-work-claims', 'claims.json');
+    writeFileSync(file, '{not json');
+    chmodSync(file, 0o600);
+    const degraded = readUnifiedBusStatus(options);
+    expect(degraded.workClaims).toEqual({ source: 'unavailable', claims: null });
+    expect(degraded.store.source).toBe('available');
+    expect(degraded.coordination.source).toBe('available');
+    expect(degraded.feed.status).toBe('ok');
+  });
 });
 
 describe('phm agents bus status', () => {
@@ -106,12 +134,14 @@ describe('phm agents bus status', () => {
     expect(json.store.source).toBe('missing');
     expect(json.registry.identities).toBe(0);
     expect(json.wakes.state).toBe('missing');
+    expect(json.workClaims).toEqual({ source: 'missing', claims: null });
     expect(json.feed.status).toBe('ok');
 
     const text: string[] = [];
     expect(await runAgentsBusUnified(['status', '--root', options.root!], t => text.push(t), () => {}, {})).toBe(0);
     const lines = text.join('\n').split('\n');
     expect(lines[0]).toMatch(/^store missing /);
+    expect(lines.join('\n')).toContain('workClaims missing claims=unknown');
     expect(lines.join('\n')).toContain('feed ok jobs=0');
     expect(lines.join('\n')).toContain('wakes missing hints=unknown');
   });

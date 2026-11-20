@@ -1,10 +1,12 @@
 /** One read-only health probe over every store the unified `agents bus` verbs
  * touch: the message inbox, the identity registry, the wake queue, the shared
- * coordination table and the v2 work feed. Each section reports its own real
- * state; a section that cannot be read reports unavailable or null, never
- * zero, and the whole read never throws. Read-only: takes no writer lock,
- * writes nothing, makes no network calls and grants nothing. */
+ * coordination table, the message-id claim journal and the v2 work feed. Each
+ * section reports its own real state; a section that cannot be read reports
+ * unavailable or null, never zero, and the whole read never throws. Read-only:
+ * takes no writer lock, writes nothing, makes no network calls and grants
+ * nothing. */
 import { inspectBusInbox, type BusInboxInspection } from '../fleet/bus-inbox.js';
+import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { coordinationSummary } from './claim-store.js';
 import { readBusWakes } from '../fleet/bus-wake-queue.js';
 import { readAgentRegistry } from './bus-identity.js';
@@ -43,6 +45,17 @@ export interface UnifiedBusStatus {
     liveClaims: number | null;
     statuses: number | null;
   };
+  /** Message-id claim journal (`bus-work-claims`) behind `fleet bus-next` and
+   * `bus-claim` message claims, the `work mine` next-section hold state and
+   * the comms inbox bus section. Its rows gate message work the same way the
+   * coordination table gates feed jobs, so an unreadable journal degrades
+   * those reads while leaving this probe's other sections intact. */
+  workClaims: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Claim records retained in the journal; null unless it was read, the
+     * same convention the coordination section uses for an unprobed store. */
+    claims: number | null;
+  };
   /** v2 work-feed projection behind `work post|status|feed`. */
   feed: {
     status: BusWorkFeedReadResult['status'];
@@ -55,7 +68,7 @@ export interface UnifiedBusStatus {
   };
 }
 
-/** Compose the five dependency reads. Each probe is isolated: one failing
+/** Compose the six dependency reads. Each probe is isolated: one failing
  * store degrades only its own section. */
 export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): UnifiedBusStatus {
   const now = options.now ?? Date.now;
@@ -88,6 +101,14 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     coordination = { source: 'unavailable', liveClaims: null, statuses: null };
   }
 
+  let workClaims: UnifiedBusStatus['workClaims'];
+  try {
+    const read = inspectBusWorkClaims(options.root);
+    workClaims = { source: read.source, claims: read.source === 'available' ? read.claims.length : null };
+  } catch {
+    workClaims = { source: 'unavailable', claims: null };
+  }
+
   let feed: UnifiedBusStatus['feed'];
   try {
     const read = readBusWorkFeed({ root: options.root, now });
@@ -100,5 +121,5 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     feed = { status: 'unavailable', jobs: null };
   }
 
-  return { asOf, store, registry, wakes, coordination, feed };
+  return { asOf, store, registry, wakes, coordination, workClaims, feed };
 }
