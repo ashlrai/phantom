@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { extractGaps, JOB_GAPS_SCHEMA, readJobGaps, sameWork } from '../src/core/fleet/job-gaps.js';
+import { extractAllGaps, extractGaps, JOB_GAPS_SCHEMA, readJobGaps, sameWork } from '../src/core/fleet/job-gaps.js';
 import { cmdJobsGaps } from '../src/cli/jobs-gaps.js';
 
 const NOW = Date.parse('2026-11-19T12:00:00Z');
@@ -108,5 +108,37 @@ describe('phm jobs gaps', () => {
     expect(out.join('\n')).toContain('unknown');
     expect(await cmdJobsGaps(['--since', 'soon'])).toBe(2);
     expect(await cmdJobsGaps(['extra'])).toBe(2);
+  });
+});
+
+describe('prose gaps and the drop queue', () => {
+  const dropFiles = async () => (await readdir(join(root, 'leader', 'drop', 'claude')).catch(() => [])).filter(f => f.endsWith('.md'));
+  it('extracts a prose gap and a heading gap, one candidate per sentence, trimmed to 120 characters', async () => {
+    await seed({ JOBA: `# Notes\nThe one gap is the retry flag on the export command. Everything else is done.\n\n## Remaining gaps\n- Show unknown sizes as unknown in the report\n` });
+    const report = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, ...none });
+    expect(report.candidates.map(c => c.title)).toEqual(['Show unknown sizes as unknown in the report', 'The one gap is the retry flag on the export command.']);
+    const long = extractAllGaps(`The gap is ${'very '.repeat(40)}long.`);
+    expect(long[0]!.title.length).toBeLessThanOrEqual(120);
+    expect(extractAllGaps('There are no gaps. Nothing is missing here.')).toEqual([]);
+  });
+  it('reads the final message in the job log too', async () => {
+    await seed({ JOBB: null });
+    await writeFile(join(root, 'JOBB.log'), 'working\nTwo parts of your spec aren\'t there: the sort flag and the page size.\n');
+    const report = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, ...none });
+    expect(report.candidates).toHaveLength(1);
+    expect(report.candidates[0]!.sourceJob).toBe('JOBB');
+  });
+  it('drops a duplicate gap, queues a phantom gap and skips a repo with no drop queue with a reason', async () => {
+    await seed({ JOBC: 'We left it for you to decide: the retry flag name.\n', JOBE: 'I left it for you to decide: the retry flag name.\n', JOBD: 'The gap is the sort flag on the list command.\n' });
+    await writeFile(join(root, 'metrics', 'jobs.jsonl'), `${[
+      { job: 'JOBC', repo: 'phantom' }, { job: 'JOBE', repo: 'phantom' }, { job: 'JOBD', repo: 'ashlr-md' },
+    ].map(r => JSON.stringify({ event: 'outcome', lane: 'claude', empty: true, ts: iso(2), ...r })).join('\n')}\n`);
+    const report = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, ...none });
+    expect(report.dropped.filter(d => d.reason === 'duplicate-gap')).toHaveLength(1);
+    const queuedRows = report.proposed!.filter(p => p.queued);
+    expect(queuedRows).toHaveLength(1);
+    expect(report.proposed!.find(p => p.repo === 'ashlr-md')).toMatchObject({ queued: false, skipped: 'repo ashlr-md has no drop queue' });
+    expect(await dropFiles()).toHaveLength(1);
+    expect(report.schema).toBe(JOB_GAPS_SCHEMA);
   });
 });
