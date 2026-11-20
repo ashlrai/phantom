@@ -12,7 +12,7 @@ phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 With no verb, lists every pending comms item — unresolved needs-you lines, unanswered iMessage
 teammate texts, owner-thread messages awaiting a recorded reply, drafts awaiting approval,
-pending bus work (unclaimed envelopes, open feed jobs and worker handoffs), agent
+pending bus work (unclaimed envelopes, open or unclaimable feed jobs and worker handoffs), agent
 conversation threads waiting on a reply, bot seats with pending handoffs, comms
 questions/approvals awaiting an answer and .reply.eml artifacts stuck in the
 email outbox —
