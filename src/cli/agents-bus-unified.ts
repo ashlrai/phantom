@@ -5,8 +5,8 @@ import {
   type BusCli, type BusProvider,
 } from '../core/agents/bus-identity.js';
 import {
-  announceWork, listBusChannels, postChannelMessage, readAgentInbox, readAgentWakes, sendDirectMessage, sendHandoff,
-  sendWakeRequest, updateWorkStatus, type UnifiedBusOptions, type WorkStatusInput,
+  announceWork, listBusChannels, postChannelMessage, readAgentChannel, readAgentInbox, readAgentWakes, sendDirectMessage,
+  sendHandoff, sendWakeRequest, updateWorkStatus, type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { WORK_STATUSES, type WorkJob } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedToMatcher, formatBusWorkFeed, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
@@ -24,6 +24,7 @@ ashlr agents bus channel create <name> [--from <agent>] [--member <agent>]...
 ashlr agents bus channel join|leave <name> [--agent <agent>]
 ashlr agents bus channel post <name> --text <text> [--from <agent>] [--topic <t>] [--ref <ref>]... [--priority ..] [--wake|--no-wake]
 ashlr agents bus channel list [--agent <agent>]
+ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--after <cursor>] [--limit <1..100>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--frame <cli>]
@@ -197,6 +198,16 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         const result = await postChannelMessage({ ...send, from: actor('--from'), channel: arg, topic: one('--topic'),
           text: required('--text'), thread: one('--thread'), refs: p.values.get('--ref') }, options);
         return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
+      }
+      if (sub === 'read') {
+        const result = readAgentChannel(arg, { topic: one('--topic'), from: one('--from'),
+          after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit') }, options);
+        if (result.status !== 'ok') return finish(result, '');
+        out(json ? JSON.stringify(result) : [
+          ...result.messages.map(m => `${m.cursor} ${m.priority} #${result.channel}:${m.topic} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}`),
+          `nextCursor ${result.nextCursor}`,
+        ].join('\n'));
+        return 0;
       }
     }
     if (verb === 'handoff') {
