@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -24,6 +24,10 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
       else value = Array.from({ length: options.count ?? 2 }, (_, i) => ({ number: i + 1, headRefOid: head, headRefName: 'feature', files: [{ path: options.touched ?? 'docs/README.md' }] }));
     } else if (endpoint.includes('/branches/')) value = { commit: { sha: master } };
     else if (endpoint.includes('/compare/')) value = { status: 'ahead' };
+    else if (endpoint.includes('/git/trees/')) {
+      if (options.treeError) return { ok: false, stdout: '', stderr: 'HTTP 500: Internal Server Error' };
+      value = { tree: options.tree ?? [], truncated: options.treeTruncated === true };
+    }
     else if (endpoint.includes('/contents/')) {
       const path = endpoint.split('/contents/')[1]!.split('?')[0]!;
       if (path === '') {
@@ -51,7 +55,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     else if (endpoint.includes('/jobs/') && endpoint.endsWith('/logs')) {
       if (options.unreadable) return { ok: false, stdout: '', stderr: '403' };
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.web ? 'web-shared' : 'shared';
       return success(`/usr/bin/git log -1 --format=%H\n${isMaster ? master : head}\n${fixture(name)}`);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
@@ -322,6 +326,98 @@ describe('CI baseline evidence', () => {
       contents: { 'docs/QUICKSTART.md': "import x from './gone.js';\nSamples show `from './also-gone'`." },
     }).gh);
     expect(prose.groups.find(g => g.testId === 'docs/QUICKSTART.md > (docs-check)')?.classification).toBe('shared-baseline');
+  });
+  it('parses generated-file staleness and launcher digest failures', () => {
+    const failures = parseBaselineFailures(fixture('generated-shared'));
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({ file: 'docs/llms.txt', names: '(generated)', testId: 'docs/llms.txt > (generated)' });
+    expect(failures[0]?.excerpt).toContain(' M docs/llms.txt');
+    const digest = parseBaselineFailures(fixture('digest-shared'));
+    expect(digest).toHaveLength(1);
+    expect(digest[0]).toMatchObject({ file: 'scripts/canonical-launcher-digests.json', names: '(generated)', testId: 'scripts/canonical-launcher-digests.json > (generated)' });
+    // Timestamped job-log lines keep the porcelain status column.
+    const stamped = fixture('generated-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped).map(f => f.testId)).toEqual(['docs/llms.txt > (generated)']);
+    // Porcelain variety: staged rows, untracked, renames, quoted paths; the
+    // block ends at the first non-porcelain line and bad paths stay unparsed.
+    const varied = parseBaselineFailures([
+      'generated files are stale; commit the regenerated tree:',
+      'M  src/staged.ts',
+      ' M docs/llms.txt',
+      '?? docs/new page.md',
+      'R  docs/old.md -> docs/new.md',
+      ' M "docs/quoted\\"name.md"',
+      ' M ../escape.md',
+      ' M /abs/path.md',
+      ' M docs/\\303\\251.md',
+      'not a porcelain row',
+      ' M docs/after-break.md',
+    ].join('\n'));
+    expect(varied.map(f => f.file)).toEqual(['src/staged.ts', 'docs/llms.txt', 'docs/new page.md', 'docs/new.md', 'docs/quoted"name.md']);
+    expect(parseBaselineFailures('generated files are stale; commit the regenerated tree:\n##[error]Process completed with exit code 1.')).toEqual([]);
+    // The passing digest line and unrelated text produce nothing; the other
+    // two failure shapes of the same check still parse.
+    expect(parseBaselineFailures(`canonical launcher digest check passed: ${'a'.repeat(64)}`)).toEqual([]);
+    expect(parseBaselineFailures('canonical launcher digest list is invalid').map(f => f.file)).toEqual(['scripts/canonical-launcher-digests.json']);
+    expect(parseBaselineFailures('canonical launcher digest list differs from bin/ashlr history; run npm run canonical-launcher-digests:regen').map(f => f.file)).toEqual(['scripts/canonical-launcher-digests.json']);
+  });
+  it('groups generated-file failures and attributes them to generator inputs', async () => {
+    const tree = [
+      { path: 'docs/README.md', type: 'blob', mode: '100644' },
+      { path: 'docs/guide/install.md', type: 'blob', mode: '100644' },
+      { path: 'docs/internal/scratch.md', type: 'blob', mode: '100644' },
+      { path: 'docs/llms-source.txt', type: 'blob', mode: '100644' },
+      { path: 'docs/llms.txt', type: 'blob', mode: '100644' },
+      { path: 'src/core/x.ts', type: 'blob', mode: '100644' },
+      { path: 'docs/symlinked.md', type: 'blob', mode: '120000' },
+      { path: 'docs/tree', type: 'tree' },
+    ];
+    // llms.txt renders from every public docs page plus the source and
+    // generator scripts: a PR touching any of them is the cause.
+    for (const touched of ['docs/guide/install.md', 'docs/README.md', 'docs/llms-source.txt', 'scripts/generate-docs-llms.mjs', 'scripts/lib/docs-pages.mjs']) {
+      const report = await analyzeCiBaseline('owner/repo', github({ generated: true, touched, tree }).gh);
+      expect(report.groups[0], touched).toMatchObject({ testId: 'docs/llms.txt > (generated)', classification: 'pr-caused', action: 'pr-caused', master: 'fail' });
+    }
+    // docs/internal is not a public page, symlinks and trees are not pages,
+    // and unrelated sources share the baseline. Runner-harness files cannot
+    // stale a generated artifact either: the clean-tree job never runs vitest.
+    for (const touched of ['docs/internal/scratch.md', 'docs/symlinked.md', 'docs/tree', 'src/core/x.ts', 'vitest.config.ts', 'tsconfig.json', 'package.json']) {
+      const report = await analyzeCiBaseline('owner/repo', github({ generated: true, touched, tree }).gh);
+      expect(report.groups[0], touched).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+    }
+  });
+  it('fails closed for generated files when the docs tree listing is unusable', async () => {
+    const tree = [{ path: 'docs/README.md', type: 'blob', mode: '100644' }];
+    for (const options of [{ treeError: true }, { treeTruncated: true }]) {
+      const report = await analyzeCiBaseline('owner/repo', github({ generated: true, touched: 'docs/README.md', tree, ...options }).gh);
+      expect(report.groups[0]?.classification).toBe('unknown');
+    }
+  });
+  it('groups launcher digest failures and attributes them to bin/ashlr', async () => {
+    const caused = await analyzeCiBaseline('owner/repo', github({ digest: true, touched: 'bin/ashlr' }).gh);
+    expect(caused.groups[0]).toMatchObject({ testId: 'scripts/canonical-launcher-digests.json > (generated)', classification: 'pr-caused', action: 'pr-caused', master: 'fail' });
+    const shared = await analyzeCiBaseline('owner/repo', github({ digest: true, touched: 'src/core/x.ts' }).gh);
+    expect(shared.groups[0]).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+  });
+  it('keeps TAP indentation on timestamped job-log lines', () => {
+    const block = [
+      'TAP version 13',
+      '# Subtest: outer',
+      '    # Subtest: inner',
+      '        not ok 1 - leaf',
+      '          ---',
+      "          type: 'test'",
+      "          location: '/home/runner/work/repo/repo/.github/tests/nested.test.mjs:9:1'",
+      "          failureType: 'testCodeFailure'",
+      '          ...',
+      '        1..1',
+      '    1..1',
+      '1..1',
+    ];
+    const stamped = block.map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    const failures = parseBaselineFailures(stamped, 'owner/repo');
+    expect(failures.map(f => f.testId)).toEqual(['.github/tests/nested.test.mjs > outer > inner > leaf']);
+    expect(parseBaselineFailures(block.join('\n'), 'owner/repo').map(f => f.testId)).toEqual(failures.map(f => f.testId));
   });
   it('resolves bundler-style imports across the dependency closure', async () => {
     const contents = {

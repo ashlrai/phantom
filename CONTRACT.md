@@ -206,10 +206,16 @@ recurringFlakes and verdicts without mutation.
 `src/core/fleet/ci-baseline.ts` exports `analyzeCiBaseline(repo, gh?)`, a
 read-only version 1 evidence report, and `parseBaselineFailures(log, repo?)`
 for capped, scrubbed failure identities -- Vitest `file > name` and suite-load
-`file > (suite)`, TypeScript `<file> > (typecheck)`, and node:test TAP
-`file > suite > test` / `file > (suite)` resolved through the Actions checkout
-marker -- plus summaries. TAP `ok` results carry no location, so TAP failures
-never resolve a master pass or flake classification. `enqueueBaselineFixes(report,
+`file > (suite)`, TypeScript `<file> > (typecheck)`, check:docs
+`<file> > (docs-check)`, node:test TAP `file > suite > test` /
+`file > (suite)` resolved through the Actions checkout marker, and
+clean-tree `<file> > (generated)` rows from the stale-files porcelain dump
+and launcher-digest check -- plus summaries. TAP `ok` results carry no
+location, so TAP failures never resolve a master pass or flake
+classification. Generated artifacts carry no import closure: `docs/llms.txt`
+depends on its generator inputs and every public docs page from the master
+tree listing (unreadable or truncated listings fail closed), and
+`scripts/canonical-launcher-digests.json` on `bin/ashlr`. `enqueueBaselineFixes(report,
 absoluteQueuePath)` explicitly writes work-tier master-fix rows deduplicated
 by queue state via `nextFixGeneration`: a failure whose prior fix generations
 all reached DONE re-queues as the next `RQ-CIBASE-*-G<n>` id while the
