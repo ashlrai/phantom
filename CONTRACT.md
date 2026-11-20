@@ -214,8 +214,9 @@ The CLI `ci reruns [--json]` reads recent journal entries, counts,
 recurringFlakes and verdicts without mutation.
 
 `src/core/fleet/ci-baseline.ts` exports `analyzeCiBaseline(repo, gh?)`, a
-read-only version 1 evidence report, and `parseBaselineFailures(log, repo?)`
-for capped, scrubbed failure identities -- Vitest `file > name` and suite-load
+read-only version 1 evidence report, and `parseBaselineFailures(log, repo?,
+auditExceptions?)` for capped, scrubbed failure identities -- Vitest
+`file > name` and suite-load
 `file > (suite)`, TypeScript `<file> > (typecheck)`, check:docs
 `<file> > (docs-check)`, node:test TAP `file > suite > test` /
 `file > (suite)` resolved through the Actions checkout marker,
@@ -223,10 +224,16 @@ clean-tree `<file> > (generated)` rows from the stale-files porcelain dump
 and launcher-digest check, the release-metadata gate
 `scripts/sync-candidate-version.mjs > (version-sync)` from the build's
 `check:version` drift JSON report or `sync-candidate-version: <message>`
-error, and the advisory perf gate's
+error, the advisory perf gate's
 `<budgets file> > (perf-budget) <target id>` rows from the
 `ashlr.perf-budget-report.v1` JSON document (`fail` and `error` results
-only) -- plus summaries. TAP `ok` results carry no
+only), and the Dependency Audit job's
+`<lockfile> > (dependency-audit) <package>` rows from npm audit v2 JSON
+reports (advisories outside the exception fixpoint only) -- plus
+summaries. `auditExceptions` is the optional
+`DependencyAuditException[] | null` list (`{id, package, graph}` with
+graph `full` or `raycast-production`); `null` leaves audit reports
+unparsed. TAP `ok` results carry no
 location, so TAP failures never resolve a master pass or flake
 classification. Generated artifacts carry no import closure: `docs/llms.txt`
 depends on its generator inputs and every public docs page from the master
@@ -238,7 +245,14 @@ to it. The perf gate's dependency set is the budgets file plus its direct
 inputs (`bin/ashlr`, `scripts/perf-budget.mjs`,
 `scripts/perf-mcp-tools-list.mjs`, seeded as static inputs); the measured
 CLI graph has no enumerable closure, so the harness ambient set alone
-decides manifest and toolchain touches. `enqueueBaselineFixes(report,
+decides manifest and toolchain touches. Each audited lockfile's dependency
+set is its manifest, shrinkwrap, .npmrc, the lockfile itself,
+`.github/dependency-audit-exceptions.json` and
+`scripts/npm-audit-with-osv-fallback.sh` (seeded as static inputs), and the
+harness ambient set does not apply to it either; the analyzer reads the
+exception file once from master and an unreadable or malformed file
+leaves audit reports unparsed rather than risk phantom groups for
+accepted advisories. `enqueueBaselineFixes(report,
 absoluteQueuePath)` explicitly writes work-tier master-fix rows deduplicated
 by queue state via `nextFixGeneration`: a failure whose prior fix generations
 all reached DONE re-queues as the next `RQ-CIBASE-*-G<n>` id while the

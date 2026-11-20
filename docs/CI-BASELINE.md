@@ -115,6 +115,38 @@ Passing reports (`ok: true` or only pass/skip results), other schemas,
 malformed or multi-line blocks, absolute or escaping `budgets` paths,
 unknown statuses and unrelated JSON stay unparsed.
 
+The `Dependency Audit` workflow audits four npm graphs through
+`scripts/npm-audit-with-osv-fallback.sh` -- root full, root production
+(`--omit=dev`), Raycast full and Raycast production (`working-directory:
+src/raycast`, invoked as `../../scripts/...`) -- and `cat`s npm's audit v2
+JSON report into the job log on every attempt. Each vulnerable package
+groups under `<lockfile> > (dependency-audit) <package>`: bumping the
+dependency or adding a reviewed exception is the unit a master fix
+restores. The step command echo before a report fixes its lockfile and
+exception graph: non-omit audits consult
+`.github/dependency-audit-exceptions.json` under graph `full`, the
+Raycast production audit under `raycast-production`, and the root
+production audit never consults exceptions at all. npm still lists
+excepted advisories inside a failing report, so the parser replays the
+gate script's exemption fixpoint -- a package stays exempt while every
+`via` entry is an excepted advisory id or a still-exempt package name --
+and emits only packages outside the exempt set; a report exempt end to
+end passed its step and emits nothing. The analyzer reads the exception
+file once from master: an absent file means no exceptions, while an
+unreadable or malformed file leaves audit reports unparsed (unknown)
+rather than risk a phantom group for an accepted advisory; exception
+expiry is not re-checked because a completed run was governed by the
+exceptions valid at run time. Each lockfile's dependency set is its
+manifest, shrinkwrap, `.npmrc`, the lockfile itself, the shared exception
+file and the audit script (seeded as static inputs), and the vitest
+harness ambient set does not apply. Like the other non-test identities
+these groups can never resolve through a vitest pass line and classify
+`shared-baseline`, `pr-caused` or `unknown` -- never `probable-flake`.
+OSV-Scanner table output (the transport fallback) and cargo-audit output
+carry no audit v2 document and stay unparsed, as do invalid reports
+(non-v2 schema, malformed severity counts), reports with no preceding
+step echo, clean reports (`total: 0`) and unrelated JSON.
+
 Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
 brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
 with an explicit verbose test pass on master's current run produces
