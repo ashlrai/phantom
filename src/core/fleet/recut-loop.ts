@@ -542,14 +542,14 @@ async function defaultWriteJob(file: string, body: string): Promise<void> {
   const name = basename(file);
   const id = DROP_JOB_FILE.exec(name)?.[1];
   if (id === undefined) throw new DropJobValidationError(['id-shape']);
-  const verdict = validateDropJob({ id, lane: RECUT_LOOP_LANE, tier: RECUT_LOOP_TIER, body });
+  const verdict = validateDropJob({ id, repo: 'phantom', lane: RECUT_LOOP_LANE, tier: RECUT_LOOP_TIER, body });
   if (!verdict.ok) {
     const reasons = verdict.reasons.filter((reason) => reason !== 'denied-content');
     if (reasons.length > 0) throw new DropJobValidationError(reasons);
   }
   const dir = dirname(file);
   await mkdir(dir, { recursive: true });
-  const content = composeDropJobFile({ lane: RECUT_LOOP_LANE, tier: RECUT_LOOP_TIER, body });
+  const content = composeDropJobFile({ repo: 'phantom', lane: RECUT_LOOP_LANE, tier: RECUT_LOOP_TIER, body });
   if (Buffer.byteLength(content, 'utf8') > DROP_JOB_MAX_FILE_BYTES) throw new DropJobValidationError(['too-large']);
   const temp = join(dir, `.${name}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`);
   const handle = await open(temp, 'wx', 0o600);
