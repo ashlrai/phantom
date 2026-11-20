@@ -67,6 +67,7 @@ describe.each(WIDTHS)('message line selection at %s', (_name, width) => {
   it('draws no count without messages and shows the map observation time', () => {
     viewport = mockViewport(width);
     render(<MapView map={liveMap([])} now={NOW} onOpen={() => {}} />);
+    if (width < 480) fireEvent.click(screen.getByRole('button', { name: 'Show the full map' })); // phone opens on the org list; the map is one tap away
     expect(counts()).toEqual([]);
     expect(screen.getByText('No messages between agents in the last 15 minutes.')).toBeTruthy();
     expect(screen.getByText(/Map as of/).querySelector('time')?.dateTime).toBe(at(0));
@@ -77,6 +78,7 @@ describe.each(WIDTHS)('message line selection at %s', (_name, width) => {
     const fetch = stub();
     const open = vi.fn();
     render(<MapView map={liveMap(MANY)} now={NOW} onOpen={() => {}} onOpenMessages={open} />);
+    if (width < 480) fireEvent.click(screen.getByRole('button', { name: 'Show the full map' })); // phone opens on the org list; the map is one tap away
     expect(counts().map(button => button.textContent)).toEqual(['3', '4', '?']);
     const count = screen.getByRole('button', { name: 'Show 3 messages between Leader (CEO) and claude' });
     fireEvent.click(count);
