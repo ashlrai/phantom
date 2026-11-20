@@ -35,9 +35,14 @@ phm fleet metrics weekly --jobs fixture.jsonl --json
 ```
 
 `src/cli/fleet-metrics.ts` exports `cmdFleetMetrics(args, deps?)`, with injected
-`read(path): Promise<string | null>` and `now(): number`. Default source:
-`~/.ashlr-runs/metrics/jobs.jsonl`. Reads refuse non-files and files over
-16 MiB; no partial-tail extrapolation. JSONL invalid rows mark evidence degraded.
+`read(path): Promise<string | { text: string; truncated: boolean } | null>`
+and `now(): number`. Default source:
+`~/.ashlr-runs/metrics/jobs.jsonl`. The ledger is append-only, so the default
+read keeps its newest bounded tail — the same 16 MiB window
+`readLedgerTail` gives every other jobs-ledger reader — rather than refusing
+an oversized file; a cut tail marks the evidence degraded because retained
+rows cannot prove complete window coverage. Non-files and unreadable paths
+still read as missing. JSONL invalid rows also mark evidence degraded.
 Exit 0 healthy, 1 missing/degraded, 2 usage. Flags are strictly parsed; no apply
 verb. Weekly defaults to 168 hours; `--hours` can override it. JSON weekly output
 contains `metrics`, `suggestions`, `markdown`; report emits metrics, suggest

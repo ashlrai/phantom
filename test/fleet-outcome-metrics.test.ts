@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildOutcomeMetrics, outcomePercentile } from '../src/core/fleet/outcome-metrics.js';
 import { suggestOutcomePolicy } from '../src/core/fleet/policy-suggest.js';
@@ -157,6 +160,33 @@ describe('fleet metrics CLI', () => {
     }
     expect(read).toHaveBeenCalledWith('/fixture/jobs.jsonl');
     expect(await cmdFleetMetrics(['report'], { read: async () => 'broken', now: () => nowMs })).toBe(1);
+  });
+  it('marks a cut ledger tail degraded instead of claiming complete coverage', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const read = vi.fn(async () => ({ text: measuredFleet().map(e => JSON.stringify(e)).join('\n'), truncated: true }));
+    expect(await cmdFleetMetrics(['report', '--json'], { read, now: () => nowMs })).toBe(1);
+    expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ sourceState: 'degraded' });
+    expect(await cmdFleetMetrics(['suggest', '--json'], { read, now: () => nowMs })).toBe(1);
+    const suggestion = JSON.parse(log.mock.calls.at(-1)![0] as string);
+    expect(suggestion).toMatchObject({ sourceState: 'degraded', laneTargetDeltas: [], tierRoutingHints: [] });
+  });
+  it('reads the newest tail of an oversized ledger through the default reader', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fleet-metrics-'));
+    try {
+      const path = join(dir, 'jobs.jsonl');
+      // Whitespace-only lines are filtered before parsing, so the padding keeps
+      // ignoredRows at zero and the degraded verdict can only come from the cut.
+      const pad = `${' '.repeat(100)}\n`.repeat(168_000);
+      const tail = [launch('TAIL', 3, { lane: 'tail-lane' }), finish('TAIL', 2, { cost: 1, empty: false })]
+        .map(e => JSON.stringify(e)).join('\n') + '\n';
+      writeFileSync(path, pad + tail);
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      expect(await cmdFleetMetrics(['report', '--jobs', path, '--json'], { now: () => nowMs })).toBe(1);
+      const report = JSON.parse(log.mock.calls.at(-1)![0] as string);
+      expect(report).toMatchObject({ sourceState: 'degraded', ignoredRows: 0,
+        totals: { jobs: 1, finished: 1, estCost: 1 } });
+      expect(report.byLane).toEqual([expect.objectContaining({ name: 'tail-lane', jobs: 1 })]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
   it('refuses unknown, repeated or out-of-range options before reading inputs', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
