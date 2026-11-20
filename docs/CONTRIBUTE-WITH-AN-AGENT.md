@@ -164,16 +164,28 @@ and the fast gate never skips tests silently:
 - **Docs-only diff** (every path is under `docs/` or ends in `.md`):
   `test/docs-repo-links.test.ts` plus each test whose source names a changed
   file, up to 25. If none names one, it runs the fallback set.
-- **Code diff**: changed test files, tests whose name matches a changed file,
-  and tests that import a changed module directly, up to 25. Touching
-  `.github/CODEOWNERS` or `src/core/authority/` always adds the two
-  `test/authority-*-310b.test.ts` suites, and a changed
-  `.github/scripts/<name>.mjs` adds its `.github/tests/<name>.test.mjs`.
-- **Fallback**: a change to `package.json`, a `tsconfig*.json`, a Vite or
-  Vitest config, `test/setup/`, `test/config/` or `scripts/test-ci*.mjs`, a
-  diff that maps to no test (a `src/web-ui/`-only change, for example), or a
-  selection error runs an even spread of up to 120 backend tests across the
-  repository that always includes the two authority suites.
+- **Code diff**: changed test files and a few tests named by path (below)
+  always run; tests whose name matches a changed file and tests that import a
+  changed module directly fill the rest, up to 25 files in total. Named tests:
+  - `.github/CODEOWNERS`, `src/core/authority/`, a `test/authority-*310b*`
+    suite or `.github/tests/secret-shape/` adds the two
+    `test/authority-*-310b.test.ts` suites.
+  - A file in the recorded Tier-1 import closure
+    (`test/fixtures/authority/tier1-closure.json`), that snapshot itself, or a
+    new file under a closure root such as `src/core/memory/` or
+    `src/core/routing/` adds `test/authority-tier1-closure-310b.test.ts`.
+  - `src/cli/index.ts`, `src/cli/help.ts` or `src/cli/completions.ts` adds
+    `test/cli-registry-drift.test.ts`.
+  - `.github/workflows/ci.yml` adds `test/m30.ci.test.ts`.
+  - A changed `.github/scripts/<name>.mjs` adds its
+    `.github/tests/<name>.test.mjs`.
+- **Fallback**: a change to `package.json` or `package-lock.json`, a
+  `tsconfig*.json`, a Vite or Vitest config, `test/setup/`, `test/config/` or
+  `scripts/test-ci*.mjs`, a diff that maps to no test (a `src/web-ui/`-only
+  change, for example), or a selection error runs an even spread of up to 120
+  backend tests across the repository (three shards of 40) that always
+  includes the two authority suites. A `package.json` change also adds
+  `test/package-files-allowlist.test.ts`.
 
 Tests that need the built `dist/`, and the slow real-I/O and serial suites
 picked up indirectly, are left to the scheduled `master` run. `npm run check:docs` is not part of the pull request
