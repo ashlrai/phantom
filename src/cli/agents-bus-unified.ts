@@ -11,7 +11,8 @@ import {
 import { WORK_STATUSES, type WorkJob } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedToMatcher, formatBusWorkFeed, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
-import { busClaimExitCode, executeBusClaimBody, listBusClaims, newBusClaimOpId, type BusClaimResult } from '../core/agents/bus-claims.js';
+import { busClaimExitCode, executeBusClaimBody, listBusClaims, newBusClaimOpId, type BusClaimResult, type BusClaimJobRef } from '../core/agents/bus-claims.js';
+import { scrubSecrets } from '../core/util/scrub.js';
 import type { BusPriority } from '../core/fleet/bus-envelope.js';
 import { seatParticipants } from '../core/bots/seats.js';
 
@@ -87,6 +88,14 @@ function integer(raw: string | undefined, name: string): number | undefined {
   if (raw === undefined) return undefined;
   if (!/^[0-9]{1,16}$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new UsageError(`${name} must be a non-negative integer.`);
   return Number(raw);
+}
+
+/** `RQ-1(running) "Fix the feed"` — the blocked job named by its announcement title, display-clipped. */
+function claimJobLabel(job: BusClaimJobRef): string {
+  // eslint-disable-next-line no-control-regex
+  const title = scrubSecrets(job.title).replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const clipped = title.length > 80 ? `${title.slice(0, 79)}…` : title;
+  return `${job.id}(${job.status})${clipped === '' ? '' : ` "${clipped}"`}`;
 }
 
 function claimHuman(result: BusClaimResult): string {
@@ -319,7 +328,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
             if (result.feed === undefined) return base;
             if (result.feed !== 'ok') return `${base} jobs=unknown`;
             const blocked = row.jobs ?? [];
-            return `${base} jobs=${blocked.length === 0 ? 'none' : blocked.map(job => `${job.id}(${job.status})`).join(',')}`;
+            return `${base} jobs=${blocked.length === 0 ? 'none' : blocked.map(claimJobLabel).join(',')}`;
           }),
           `claims=${result.claims.length} source=${result.source}${ownerNote}${feedNote} as-of=${result.asOf}`,
         ].join('\n'));

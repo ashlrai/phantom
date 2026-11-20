@@ -71,7 +71,9 @@ export function projectBusWorkFeed(receipts: readonly unknown[], participants: r
       const provider = post.data.provider ?? providers.get(from) ?? resolved;
       if (!provider) return { status: 'refused', reason: 'missing-provider' };
       jobs.set(post.data.jobId, { id: post.data.jobId, owner: from, to, provider,
-        repo: post.data.repo, claimKeys: post.data.claimKeys, status: 'queued', updatedAt: row.receivedAt });
+        repo: post.data.repo, title: post.data.title,
+        ...(post.data.dispatch === undefined ? {} : { dispatch: post.data.dispatch }),
+        claimKeys: post.data.claimKeys, status: 'queued', updatedAt: row.receivedAt });
     } else if (body.kind === 'work.status') {
       const status = workStatusBodySchema.safeParse(body);
       if (!status.success) return { status: 'refused', reason: 'invalid-body' };

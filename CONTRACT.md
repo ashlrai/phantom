@@ -1529,8 +1529,10 @@ reject ASCII controls including DEL. Claims grant no execution authority.
 in `src/core/agents/bus-work-feed.ts` returns `WorkFeedResult`: either
 `{status:'ok', feed:{v:2,jobs:WorkJob[]}}` or `{status:'refused',reason}`.
 It validates at most 1024 retained receipts in strictly increasing cursor order;
-legacy and unrelated bodies stay opaque. Posts start queued with `owner=from` and
-`to` set to the announcement envelope's routing label;
+legacy and unrelated bodies stay opaque. Posts start queued with `owner=from`,
+`to` set to the announcement envelope's routing label, and the announcement's
+own `title` plus optional `dispatch` spec carried onto the job so the feed
+names the work it lists;
 provider comes from the post, explicit participant metadata, or the
 injected `providerFor` resolver — schema-checked, never guessed (missing is refused).
 Statuses update only retained jobs from the same owner: exact sender-label
@@ -1572,7 +1574,9 @@ per-job hold regrouping; `toMatch` is the predicate `busWorkFeedToMatcher(to,
 {root?})` builds, matching a job's `to` label literally and under every label
 of one agent identity (an unresolvable ref or unreadable registry keeps
 exact-label matching). `formatBusWorkFeed(result)` renders the shared human
-lines; both feed CLIs use them, and both accept `--to <label>` beside
+lines — each job as `<id> <status> "<title>" owner=… keys=<claim keys>` with
+title and keys scrubbed, single-lined and display-clipped (JSON keeps the full
+values) — both feed CLIs use them, and both accept `--to <label>` beside
 `--status`. `phm fleet work-feed [--claims] [--to <label>]` and
 `phm agents bus work feed [--status] [--claims] [--to <label>]` print the same
 projection — hold lines plus a `claims=` footer — and non-ok reads print
@@ -1601,7 +1605,7 @@ label, and the result's `owner` field (`ref`, resolved `identity` or null,
 `registry` state) reports which mode applied so a label match is never
 mistaken for identity proof. With `jobs:true` each claim gains an optional
 `jobs` list of the announced work-feed jobs its keys block (`{id, owner,
-status}` per job, the reverse of the feed's `--claims` hold join) and the
+status, title}` per job, the reverse of the feed's `--claims` hold join) and the
 result's `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
 `phm agents bus claim list [--key] [--owner] [--jobs]`

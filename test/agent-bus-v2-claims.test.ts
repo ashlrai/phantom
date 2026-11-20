@@ -234,7 +234,7 @@ describe('listBusClaims', () => {
     if (listed.status !== 'ok') throw new Error('expected ok');
     const byKey = new Map(listed.claims.map(row => [row.key, row]));
     // The queue claim overlaps the job's queue key; the unrelated repo claim blocks nothing.
-    expect(byKey.get('queue:RQ-JOB')?.jobs).toEqual([{ id: 'RQ-JOB', owner: 'agent-1', status: 'queued' }]);
+    expect(byKey.get('queue:RQ-JOB')?.jobs).toEqual([{ id: 'RQ-JOB', owner: 'agent-1', status: 'queued', title: 'T' }]);
     expect(byKey.get('repo:other/repo')?.jobs).toEqual([]);
     // Without jobs the same claims carry no feed join and no feed state.
     const plain = listBusClaims({ root, now: NOW });

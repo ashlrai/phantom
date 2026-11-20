@@ -534,8 +534,8 @@ not resolve or the registry is unreadable (the JSON `owner` field reports the
 `ref`, resolved `identity` or null, and `registry` state). A missing table
 reads as a verified-empty list; an unreadable one stays `unavailable`, never
 zero. With `--jobs` each claim also names the announced work-feed jobs its
-keys block (`{id, owner, status}` — the reverse of `work feed --claims`), and
-the JSON `feed` field reports the feed read state; a non-`ok` feed leaves
+keys block (`{id, owner, status, title}` — the reverse of `work feed --claims`),
+and the JSON `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
 
 Example (replace `FAKE-TOKEN`):
@@ -563,8 +563,10 @@ exact-label matching.
 
 ### 4. Work feed
 
-Every job is `{id, owner, to, provider, repo, claimKeys[], status, updatedAt}`
-and the feed is `{v:2, jobs:[...]}`. `projectBusWorkFeed` in
+Every job is `{id, owner, to, provider, repo, title, dispatch?, claimKeys[],
+status, updatedAt}` — `title` and the optional `dispatch` spec carry through
+from the `work.post` so the feed names the work it lists — and the feed is
+`{v:2, jobs:[...]}`. `projectBusWorkFeed` in
 `src/core/agents/bus-work-feed.ts` projects a retained receipt snapshot without
 I/O. Posts start queued; `owner` is the sender label and `to` is the routing
 label the `work.post` announcement was addressed to (the `leaders` sink by
@@ -583,7 +585,9 @@ authentication check; labels grant no authority.
 `/api/verse/agent-bus/work-feed` serve the same `BusWorkFeedReadResult` as
 `{v:1, status, jobs?, receipts, asOf}`; the two CLIs share one status filter,
 one announcement-address filter, newest-first order, hold regrouping and
-human rendering. `--to <label>` keeps only jobs whose post was addressed to
+human rendering — each job line names the announcement's title and claim keys,
+scrubbed, single-lined and display-clipped while JSON keeps the full values.
+`--to <label>` keeps only jobs whose post was addressed to
 that routing label; like `bus next`, `bus-follow`, handoff receive and claim
 `--owner`, the label matches literally and under every label of one agent
 identity through the registry, while an unresolvable `--to` or an unreadable

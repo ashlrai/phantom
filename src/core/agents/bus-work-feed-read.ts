@@ -3,6 +3,7 @@ import { BUS_INBOX_MAX_MESSAGES, listBusInboxAfter, type BusInboxReceipt } from 
 import { coordinationRowBlocks, listCoordination, type CoordinationOrigin } from './claim-store.js';
 import { projectBusWorkFeed, type WorkFeedOwnerKeyFor, type WorkFeedProviderFor, type WorkFeedResult } from './bus-work-feed.js';
 import { agentIdentityKeys, readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
+import { scrubSecrets } from '../util/scrub.js';
 import type { Participant, WorkJob } from './bus-v2-schema.js';
 
 /** One live coordination lease blocking a job's declared claim key. */
@@ -174,12 +175,30 @@ export function projectBusWorkFeedView(result: BusWorkFeedReadResult, status?: W
   return view;
 }
 
+const FEED_TITLE_MAX = 160;
+const FEED_KEYS_MAX = 480;
+
+/** Scrubbed, single-line, clipped display field; '' when nothing readable remains. */
+function feedField(value: string, max: number): string {
+  // eslint-disable-next-line no-control-regex
+  const flat = scrubSecrets(value).replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
+/** One human line per job: the announcement's own title and claim keys, display-clipped (JSON keeps full values). */
+function feedJobLine(job: WorkJob): string {
+  const title = feedField(job.title, FEED_TITLE_MAX);
+  const keys = job.claimKeys.length === 0 ? 'none' : feedField(job.claimKeys.join(','), FEED_KEYS_MAX);
+  return `${job.id} ${job.status}${title === '' ? '' : ` "${title}"`} owner=${job.owner} to=${job.to} ` +
+    `provider=${job.provider} repo=${job.repo} keys=${keys} updated=${new Date(job.updatedAt).toISOString()}`;
+}
+
 /** Human-readable feed lines shared by `fleet work-feed` and `agents bus work feed`. */
 export function formatBusWorkFeed(result: BusWorkFeedReadResult): string[] {
   const lines: string[] = [];
   if (result.status === 'ok') {
     for (const job of result.jobs) {
-      lines.push(`${job.id} ${job.status} owner=${job.owner} to=${job.to} provider=${job.provider} repo=${job.repo} updated=${new Date(job.updatedAt).toISOString()}`);
+      lines.push(feedJobLine(job));
     }
     if (result.claims) {
       for (const hold of result.claims.holds) {
