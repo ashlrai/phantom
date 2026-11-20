@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -55,7 +55,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     else if (endpoint.includes('/jobs/') && endpoint.endsWith('/logs')) {
       if (options.unreadable) return { ok: false, stdout: '', stderr: '403' };
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.web ? 'web-shared' : 'shared';
       return success(`/usr/bin/git log -1 --format=%H\n${isMaster ? master : head}\n${fixture(name)}`);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
@@ -541,6 +541,131 @@ describe('CI baseline evidence', () => {
     // report format has no vitest pass line, so it stays unknown.
     const singleton = await analyzeCiBaseline('owner/repo', github({ perf: true, count: 1, pass: true }).gh);
     for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('parses dependency-audit npm reports as per-package failures', () => {
+    const failures = parseBaselineFailures(fixture('audit-shared'));
+    expect(failures.map(f => f.testId)).toEqual([
+      'package-lock.json > (dependency-audit) lodash',
+      'package-lock.json > (dependency-audit) minimist',
+      'src/raycast/package-lock.json > (dependency-audit) tar',
+    ]);
+    expect(failures[0]).toMatchObject({ file: 'package-lock.json', names: '(dependency-audit) lodash' });
+    expect(failures[0]?.excerpt).toContain('lodash severity=high');
+    expect(failures[0]?.excerpt).toContain('GHSA-35JH-R3H4-6JHM');
+    expect(failures[0]?.excerpt).toContain('lodash vulnerable to Code Injection');
+    expect(failures[0]?.excerpt).toContain('fix=4.17.21');
+    expect(failures[1]?.excerpt).toContain('fix=available');
+    expect(failures[2]).toMatchObject({ file: 'src/raycast/package-lock.json', names: '(dependency-audit) tar' });
+    // Timestamped job-log lines parse identically.
+    const stamped = fixture('audit-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped).map(f => f.testId)).toEqual(failures.map(f => f.testId));
+  });
+  it('filters dependency-audit advisories through the exception fixpoint', () => {
+    const invoke = 'bash scripts/npm-audit-with-osv-fallback.sh "root full graph" package-lock.json';
+    const auditAdvisory = (id: string) => ({ source: 1, name: 'x', dependency: 'x', title: `advisory ${id}`, url: `https://github.com/advisories/${id}`, severity: 'high', range: '*' });
+    const auditVuln = (name: string, via: unknown[]) => ({ name, severity: 'high', isDirect: false, via, effects: [], range: '*', nodes: [`node_modules/${name}`], fixAvailable: true });
+    const auditReport = (vulnerabilities: unknown) => JSON.stringify({
+      auditReportVersion: 2, vulnerabilities,
+      metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 1, critical: 0, total: 1 }, dependencies: { prod: 1, dev: 0, optional: 0, peer: 0, peerOptional: 0, total: 1 } },
+    });
+    const lodash = { lodash: auditVuln('lodash', [auditAdvisory('GHSA-35jh-r3h4-6jhm')]) };
+    const lodashLog = [invoke, auditReport(lodash)].join('\n');
+    // Without exceptions the advisory emits; a matching full-graph
+    // exception exempts it end to end.
+    expect(parseBaselineFailures(lodashLog)).toHaveLength(1);
+    const exceptions = [{ id: 'GHSA-35JH-R3H4-6JHM', package: 'lodash', graph: 'full' as const }];
+    expect(parseBaselineFailures(lodashLog, undefined, exceptions)).toEqual([]);
+    expect(parseBaselineFailures(lodashLog, undefined, null)).toEqual([]);
+    // A package vulnerable only through an exempt package is exempt too
+    // (the script's cyclic via-string fixpoint).
+    const cyclic = {
+      'pkg-a': auditVuln('pkg-a', [auditAdvisory('GHSA-aaaa-bbbb-cccc')]),
+      'pkg-b': auditVuln('pkg-b', ['pkg-a']),
+    };
+    const cyclicExceptions = [{ id: 'GHSA-AAAA-BBBB-CCCC', package: 'pkg-a', graph: 'full' as const }];
+    expect(parseBaselineFailures([invoke, auditReport(cyclic)].join('\n'), undefined, cyclicExceptions)).toEqual([]);
+    // A second unexcepted advisory keeps the package a real failure.
+    const mixed = { lodash: auditVuln('lodash', [auditAdvisory('GHSA-35jh-r3h4-6jhm'), auditAdvisory('GHSA-9999-8888-7777')]) };
+    expect(parseBaselineFailures([invoke, auditReport(mixed)].join('\n'), undefined, exceptions)).toHaveLength(1);
+    // The root production audit never consults exceptions: the same
+    // advisory still emits under --omit=dev on the root lockfile.
+    const prodInvoke = 'bash scripts/npm-audit-with-osv-fallback.sh "root production graph" package-lock.json --omit=dev';
+    const prodFailures = parseBaselineFailures([prodInvoke, auditReport(lodash)].join('\n'), undefined, exceptions);
+    expect(prodFailures.map(f => f.testId)).toEqual(['package-lock.json > (dependency-audit) lodash']);
+    // The Raycast production audit consults only raycast-production
+    // exceptions and reports against the nested lockfile.
+    const raycastProdInvoke = 'bash ../../scripts/npm-audit-with-osv-fallback.sh "Raycast production graph" package-lock.json --omit=dev';
+    const tar = { tar: auditVuln('tar', [auditAdvisory('GHSA-34x7-hfp2-rc4v')]) };
+    const raycastLog = [raycastProdInvoke, auditReport(tar)].join('\n');
+    expect(parseBaselineFailures(raycastLog, undefined, [{ id: 'GHSA-34X7-HFP2-RC4V', package: 'tar', graph: 'full' as const }])).toHaveLength(1);
+    const raycastFailures = parseBaselineFailures(raycastLog, undefined, [{ id: 'GHSA-34X7-HFP2-RC4V', package: 'tar', graph: 'raycast-production' as const }]);
+    expect(raycastFailures).toEqual([]);
+    // Pretty-printed reports parse through the column-0 block scan.
+    const pretty = JSON.stringify(JSON.parse(auditReport(lodash)), null, 2);
+    expect(parseBaselineFailures([invoke, pretty].join('\n'))).toHaveLength(1);
+    // Invalid reports, clean reports and unrelated JSON stay unparsed
+    // even with a step echo; a valid report with no step echo does too.
+    for (const bad of [
+      JSON.stringify({ auditReportVersion: 1, vulnerabilities: lodash, metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 1, critical: 0, total: 1 } } }),
+      JSON.stringify({ auditReportVersion: 2, vulnerabilities: lodash, metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 'x', critical: 0, total: 1 } } }),
+      JSON.stringify({ auditReportVersion: 2, vulnerabilities: [], metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 } } }),
+      JSON.stringify({ auditReportVersion: 2, vulnerabilities: {}, metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 } } }),
+      // Inconsistent document: packages listed under an all-zero count
+      // would have passed the gate's clean check, so it emits nothing.
+      JSON.stringify({ auditReportVersion: 2, vulnerabilities: lodash, metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 } } }),
+      '{\n  "auditReportVersion": 2,\n  "vulnerabilities": {',
+      '{"unrelated":true}',
+    ]) {
+      expect(parseBaselineFailures([invoke, bad].join('\n')), bad.slice(0, 80)).toEqual([]);
+    }
+    expect(parseBaselineFailures(auditReport(lodash))).toEqual([]);
+  });
+  it('groups dependency-audit failures and attributes lockfile inputs', async () => {
+    const contents = { '.github/dependency-audit-exceptions.json': '[]' };
+    const report = await analyzeCiBaseline('owner/repo', github({ audit: true, contents }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(3);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    expect(report.groups.map(g => g.testId)).toEqual([
+      'package-lock.json > (dependency-audit) lodash',
+      'package-lock.json > (dependency-audit) minimist',
+      'src/raycast/package-lock.json > (dependency-audit) tar',
+    ]);
+    // Each lockfile's manifest, shrinkwrap, .npmrc, the shared exception
+    // file and the gate script are inputs: touching any one is
+    // PR-caused for that lockfile's groups only.
+    const caused = await analyzeCiBaseline('owner/repo', github({ audit: true, touched: 'package-lock.json', contents }).gh);
+    const causedById = new Map(caused.groups.map(g => [g.testId, g.action]));
+    expect(causedById.get('package-lock.json > (dependency-audit) lodash')).toBe('pr-caused');
+    expect(causedById.get('package-lock.json > (dependency-audit) minimist')).toBe('pr-caused');
+    expect(causedById.get('src/raycast/package-lock.json > (dependency-audit) tar')).toBe('queue-master-fix');
+    const excused = await analyzeCiBaseline('owner/repo', github({ audit: true, touched: '.github/dependency-audit-exceptions.json', contents }).gh);
+    for (const group of excused.groups) expect(group.action).toBe('pr-caused');
+    const raycast = await analyzeCiBaseline('owner/repo', github({ audit: true, touched: 'src/raycast/package-lock.json', contents }).gh);
+    const raycastById = new Map(raycast.groups.map(g => [g.testId, g.action]));
+    expect(raycastById.get('src/raycast/package-lock.json > (dependency-audit) tar')).toBe('pr-caused');
+    expect(raycastById.get('package-lock.json > (dependency-audit) lodash')).toBe('queue-master-fix');
+    // The vitest harness ambient set cannot reach this gate.
+    const ambient = await analyzeCiBaseline('owner/repo', github({ audit: true, touched: 'tsconfig.json', contents }).gh);
+    for (const group of ambient.groups) expect(group.classification).toBe('shared-baseline');
+    // Master's exception file filters the same reports end to end: a
+    // full-graph exception for lodash removes its group everywhere.
+    const exceptionFile = JSON.stringify([{ id: 'GHSA-35jh-r3h4-6jhm', package: 'lodash', graph: 'full', expires: '2099-01-01T00:00:00Z', reason: 'accepted risk' }]);
+    const filtered = await analyzeCiBaseline('owner/repo', github({ audit: true, contents: { '.github/dependency-audit-exceptions.json': exceptionFile } }).gh);
+    expect(filtered.groups.map(g => g.testId)).toEqual([
+      'package-lock.json > (dependency-audit) minimist',
+      'src/raycast/package-lock.json > (dependency-audit) tar',
+    ]);
+    // An unreadable or malformed exception file disables audit parsing:
+    // the failures stay unknown rather than fabricate coverage.
+    for (const badContents of [{ '.github/dependency-audit-exceptions.json': 'not json' }, { '.github/dependency-audit-exceptions.json': '{"not":"an array"}' }]) {
+      const broken = await analyzeCiBaseline('owner/repo', github({ audit: true, contents: badContents }).gh);
+      expect(broken.groups).toEqual([]);
+      expect(broken.freshness.every(p => p.state === 'unknown')).toBe(true);
+    }
   });
   it('keeps TAP indentation on timestamped job-log lines', () => {
     const block = [

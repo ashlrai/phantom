@@ -399,6 +399,13 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   // (src/** -> dist/) has no enumerable closure, so deeper changes stay
   // unattributed rather than guessed.
   'perf/budgets.json': ['bin/ashlr', 'scripts/perf-budget.mjs', 'scripts/perf-mcp-tools-list.mjs'],
+  // The dependency-audit gate reads each lockfile's installed graph plus
+  // the manifests, shrinkwraps and .npmrc files that shape it, the
+  // exception file its verdicts are filtered by, and the audit script
+  // itself. The desktop Cargo.lock is audited by cargo-audit, whose
+  // output this analyzer does not parse.
+  'package-lock.json': ['package.json', 'npm-shrinkwrap.json', '.npmrc', '.github/dependency-audit-exceptions.json', 'scripts/npm-audit-with-osv-fallback.sh'],
+  'src/raycast/package-lock.json': ['src/raycast/package.json', 'src/raycast/npm-shrinkwrap.json', 'src/raycast/.npmrc', '.github/dependency-audit-exceptions.json', 'scripts/npm-audit-with-osv-fallback.sh'],
 };
 
 function parseVersionSyncFailures(log: string): Failure[] {
@@ -491,7 +498,190 @@ function parsePerfBudgetFailures(log: string): Failure[] {
   return out;
 }
 
-export function parseBaselineFailures(log: string, repo?: string): Failure[] {
+// The Dependency Audit workflow (.github/workflows/dependency-audit.yml)
+// audits four npm graphs through scripts/npm-audit-with-osv-fallback.sh --
+// root full, root production (`--omit=dev`), Raycast full and Raycast
+// production (`working-directory: src/raycast`, invoked as `../../scripts/...`)
+// -- and `cat`s npm's audit v2 JSON report into the job log on every
+// attempt. Each vulnerable package groups under
+// `<lockfile> > (dependency-audit) <package>`: bumping the dependency or
+// adding a reviewed exception is the unit a master fix restores, and the
+// lockfile plus its manifest, shrinkwrap, .npmrc, the exception file and
+// the gate script are its closed input set. The
+// step command echo before a report fixes its lockfile and exception
+// graph: non-omit audits consult .github/dependency-audit-exceptions.json
+// under graph `full`, the Raycast production audit under
+// `raycast-production`, and the root production audit never consults
+// exceptions at all. npm still lists excepted advisories inside a failing
+// report, so the parser replays the script's exemption fixpoint -- a
+// package stays exempt while every `via` entry is an excepted advisory id
+// or a still-exempt package name -- and emits only packages outside the
+// exempt set; a report exempt end to end passed its step and emits
+// nothing. `auditExceptions` carries master's exception list: `null`
+// means the file was unreadable or malformed, and audit reports then stay
+// unparsed rather than risk a phantom group for an accepted advisory.
+// Expiry is not re-checked: a report printed by a completed run was
+// governed by the exceptions valid at run time. OSV-Scanner table output
+// (the transport fallback) and cargo-audit output carry no audit v2
+// document and stay unparsed. Invalid reports (non-v2 schema, malformed
+// severity counts), reports with no preceding step echo, unrelated JSON
+// and clean reports (`total: 0`) stay unparsed. Like the other non-test
+// identities these groups can never resolve through a vitest pass line:
+// shared-baseline, pr-caused or unknown -- never probable-flake.
+export type DependencyAuditException = { id: string; package: string; graph: 'full' | 'raycast-production' };
+const DEPENDENCY_AUDIT_NAMES = '(dependency-audit)';
+const DEPENDENCY_AUDIT_MAX = 100;
+const DEPENDENCY_AUDIT_SEVERITIES = ['info', 'low', 'moderate', 'high', 'critical', 'total'] as const;
+const DEPENDENCY_AUDIT_INVOKE = /(?:^|[\s"'`(=])(\.\.\/\.\.\/)?scripts\/npm-audit-with-osv-fallback\.sh\s+"[^"]*"\s+(\S+?)(\s+--omit=dev)?\s*$/;
+const DEPENDENCY_AUDIT_GHSA = /GHSA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/i;
+const DEPENDENCY_AUDIT_GHSA_ALL = /GHSA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/gi;
+const DEPENDENCY_AUDIT_PACKAGE = /^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/i;
+
+// Master's exception file is small and hand-reviewed; any malformed entry
+// makes the whole file untrusted (the gate script itself fails closed on
+// the same shapes), so one bad row discards the list rather than silently
+// dropping coverage.
+function parseAuditExceptions(source: string): DependencyAuditException[] | null {
+  let doc: unknown;
+  try { doc = JSON.parse(source); } catch { return null; }
+  if (!Array.isArray(doc)) return null;
+  const entries: DependencyAuditException[] = [];
+  for (const item of doc) {
+    const e = item as { id?: unknown; package?: unknown; graph?: unknown } | null;
+    if (e === null || typeof e !== 'object' || typeof e.id !== 'string' || typeof e.package !== 'string' ||
+        (e.graph !== 'full' && e.graph !== 'raycast-production')) return null;
+    entries.push({ id: e.id.toUpperCase(), package: e.package, graph: e.graph });
+  }
+  return entries;
+}
+
+interface AuditStep { file: string; graph: 'full' | 'raycast-production' | null }
+
+// Port of the fallback script's is_fully_exempt_npm_report fixpoint: every
+// package starts assumed exempt, then a package drops out while any `via`
+// entry is neither an excepted advisory nor a package still assumed
+// exempt. The surviving set is exactly the coverage the gate script
+// credits; packages outside it carry real, unexcepted advisories.
+function exemptAuditPackages(vulnerabilities: Record<string, unknown>, exceptions: readonly DependencyAuditException[]): Set<string> {
+  const names = Object.keys(vulnerabilities);
+  const exempt = new Set(names);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const key of names) {
+      if (!exempt.has(key)) continue;
+      const vulnerability = vulnerabilities[key] as { name?: unknown; via?: unknown } | null;
+      let ok = vulnerability !== null && typeof vulnerability === 'object' &&
+        vulnerability.name === key && Array.isArray(vulnerability.via) && vulnerability.via.length > 0;
+      if (ok) {
+        const packageExceptions = exceptions.filter(exception => exception.package === vulnerability!.name);
+        ok = (vulnerability!.via as unknown[]).every(advisory => {
+          if (typeof advisory === 'string') return advisory !== key && exempt.has(advisory);
+          if (advisory === null || typeof advisory !== 'object' || typeof (advisory as { url?: unknown }).url !== 'string') return false;
+          const ids = ((advisory as { url: string }).url.match(DEPENDENCY_AUDIT_GHSA_ALL) ?? []);
+          const id = ids.length === 1 ? ids[0]!.toUpperCase() : '';
+          return packageExceptions.some(exception => exception.id.toUpperCase() === id);
+        });
+      }
+      if (!ok) {
+        exempt.delete(key);
+        changed = true;
+      }
+    }
+  }
+  return exempt;
+}
+
+function parseAuditFailures(log: string, auditExceptions: readonly DependencyAuditException[] | null): Failure[] {
+  const out: Failure[] = [];
+  if (auditExceptions === null) return out;
+  const seen = new Set<string>();
+  // Timestamped job-log lines keep the document's and table's own columns:
+  // the strip removes the stamp and its single separating space only, the
+  // same convention as the check:docs and perf-budget report parsers, so a
+  // nested `}` can never collapse into the column-0 close that ends a
+  // pretty-printed report.
+  const raw = stripVTControlCharacters(log).split('\n')
+    .map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+ /, '').replace(/\r$/, ''));
+  let context: AuditStep | null = null;
+  for (let i = 0; i < raw.length && out.length < DEPENDENCY_AUDIT_MAX; i++) {
+    const line = raw[i]!;
+    const invoke = DEPENDENCY_AUDIT_INVOKE.exec(line);
+    if (invoke !== null) {
+      const arg = invoke[2]!;
+      const raycast = invoke[1] !== undefined;
+      context = arg !== '' && !posix.isAbsolute(arg) && posix.normalize(arg) === arg && !arg.includes('..')
+        ? { file: raycast ? `src/raycast/${arg}` : arg, graph: invoke[3] === undefined ? 'full' : raycast ? 'raycast-production' : null }
+        : null;
+      continue;
+    }
+    if (!line.startsWith('{')) continue;
+    let doc: unknown;
+    let end = i;
+    try {
+      doc = JSON.parse(line);
+    } catch {
+      if (line !== '{') continue;
+      end = i + 1;
+      while (end < raw.length && end - i < 20000 && raw[end] !== '}') end++;
+      if (end >= raw.length || raw[end] !== '}') continue;
+      try { doc = JSON.parse(raw.slice(i, end + 1).join('\n')); } catch { continue; }
+    }
+    i = end;
+    const report = doc as { auditReportVersion?: unknown; vulnerabilities?: unknown; metadata?: { vulnerabilities?: unknown } | null } | null;
+    if (report === null || typeof report !== 'object' || report.auditReportVersion !== 2) continue;
+    const counts = report.metadata?.vulnerabilities;
+    if (counts === null || typeof counts !== 'object' || Array.isArray(counts)) continue;
+    const valid = DEPENDENCY_AUDIT_SEVERITIES.every(severity => {
+      const value = (counts as Record<string, unknown>)[severity];
+      return Number.isInteger(value) && (value as number) >= 0;
+    });
+    if (!valid) continue;
+    // The gate script passes a report only when every severity count is
+    // zero; an inconsistent document listing packages under an all-zero
+    // count would have passed its step, so it emits nothing here either.
+    if (DEPENDENCY_AUDIT_SEVERITIES.every(severity => (counts as Record<string, unknown>)[severity] === 0)) continue;
+    const vulnerabilities = report.vulnerabilities;
+    if (vulnerabilities === null || typeof vulnerabilities !== 'object' || Array.isArray(vulnerabilities)) continue;
+    if (context === null) continue;
+    const step = context;
+    const vulnMap = vulnerabilities as Record<string, unknown>;
+    const names = Object.keys(vulnMap);
+    if (names.length === 0) continue;
+    // The root production audit never consults the exception file, so its
+    // report emits every listed package; exception-governed graphs emit
+    // only the packages the fixpoint leaves outside the exempt set.
+    const exempt = step.graph === null ? null : exemptAuditPackages(vulnMap, auditExceptions.filter(exception => exception.graph === step.graph));
+    for (const pkg of names) {
+      if (out.length >= DEPENDENCY_AUDIT_MAX) break;
+      if (!DEPENDENCY_AUDIT_PACKAGE.test(pkg) || pkg.length > 214 || exempt?.has(pkg) === true) continue;
+      const entry = vulnMap[pkg] as { severity?: unknown; via?: unknown; fixAvailable?: unknown } | null;
+      const severity = typeof entry?.severity === 'string' ? entry.severity : 'unknown';
+      const advisories: string[] = [];
+      if (entry !== null && typeof entry === 'object' && Array.isArray(entry.via)) {
+        for (const advisory of entry.via as unknown[]) {
+          if (advisories.length >= 6) break;
+          if (advisory === null || typeof advisory !== 'object') continue;
+          const { url, title } = advisory as { url?: unknown; title?: unknown };
+          if (typeof url !== 'string') continue;
+          const id = DEPENDENCY_AUDIT_GHSA.exec(url)?.[0]?.toUpperCase() ?? url;
+          advisories.push(typeof title === 'string' && title !== '' ? `${id} ${title}` : id);
+        }
+      }
+      const fix = entry !== null && typeof entry === 'object' ? entry.fixAvailable : undefined;
+      const fixVersion = fix !== null && typeof fix === 'object' ? (fix as { version?: unknown }).version : undefined;
+      const fixText = typeof fixVersion === 'string' ? `fix=${fixVersion}` : fix === true ? 'fix=available' : '';
+      const namesField = `${DEPENDENCY_AUDIT_NAMES} ${pkg}`;
+      const testId = `${step.file} > ${namesField}`;
+      if (seen.has(testId)) continue;
+      seen.add(testId);
+      out.push({ file: step.file, names: namesField, testId, excerpt: clean([`${pkg} severity=${severity}`, ...advisories, ...(fixText === '' ? [] : [fixText])].join('\n')) });
+    }
+  }
+  return out;
+}
+
+export function parseBaselineFailures(log: string, repo?: string, auditExceptions: readonly DependencyAuditException[] | null = []): Failure[] {
   const result: Failure[] = [];
   const typecheck = new Map<string, Failure>();
   let current: Failure | undefined;
@@ -544,6 +734,10 @@ export function parseBaselineFailures(log: string, repo?: string): Failure[] {
     if (result.length >= 100) break;
     result.push(failure);
   }
+  for (const failure of parseAuditFailures(log, auditExceptions)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
   return result;
 }
 
@@ -586,16 +780,29 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     const evidence = await logs(run, run.head_sha);
     if (evidence) masterLogs.push(...evidence); else masterKnown = false;
   }
-  const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text, repo));
+  const dependencyCache = new Map<string, Promise<Set<string> | null>>();
+  const contentsCache = new Map<string, Promise<{ ok: boolean; absent: boolean; source: string | null }>>();
+  const ref = branch?.commit?.sha ?? 'master';
+  // The Dependency Audit job prints npm's audit v2 JSON once per lockfile
+  // graph; advisories covered by .github/dependency-audit-exceptions.json
+  // are accepted rather than failures, so the parser replays the gate
+  // script's exemption fixpoint against master's exception list. An
+  // absent file means no exceptions; an unreadable or malformed one
+  // yields null and audit reports then stay unparsed (unknown) rather
+  // than risk a phantom group for an accepted advisory.
+  let auditExceptions: DependencyAuditException[] | null = null;
+  {
+    const fetched = await contents('.github/dependency-audit-exceptions.json');
+    if (fetched.absent) auditExceptions = [];
+    else if (fetched.ok && fetched.source !== null) auditExceptions = parseAuditExceptions(fetched.source);
+  }
+  const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text, repo, auditExceptions));
   // A suite failure has no per-test pass line to match: the file loading and
   // running at all (any verbose pass in it) is what resolves it.
   const passes = (f: Failure) => masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
     const m = PASS_LINE.exec(line);
     return m?.[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
   }));
-  const dependencyCache = new Map<string, Promise<Set<string> | null>>();
-  const contentsCache = new Map<string, Promise<{ ok: boolean; absent: boolean; source: string | null }>>();
-  const ref = branch?.commit?.sha ?? 'master';
   // Bundler-resolution candidates for one normalized repo-relative spec base.
   // Explicit extensions keep TypeScript precedence (.js -> .ts before .tsx,
   // the literal spec last so a real .js/.mjs file still resolves); extensionless
@@ -886,7 +1093,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       const evidence = await logs(run, pr.headRefOid);
       if (!evidence) { known = false; continue; }
       for (const log of evidence.filter(l => l.conclusion === 'failure')) {
-        const failures = parseBaselineFailures(log.text, repo);
+        const failures = parseBaselineFailures(log.text, repo, auditExceptions);
         if (!failures.length) known = false;
         found.push(...failures.map(failure => ({ ...failure, runId: run.id })));
       }
@@ -898,9 +1105,10 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // Generated artifacts are produced by the clean-tree job, not the test
       // runner: the vitest harness ambient set cannot stale them, so only
       // the generator-input deps decide touched. The version-sync gate reads
-      // exactly its enumerated metadata inputs, so the ambient set cannot
-      // reach it either.
-      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES ? new Set<string>() : await harnessAmbient(failure.file);
+      // exactly its enumerated metadata inputs, and the dependency-audit
+      // gate exactly its lockfile input set, so the ambient set cannot
+      // reach either of them.
+      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) ? new Set<string>() : await harnessAmbient(failure.file);
       const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
       observations.push({ pr, failure, touched, runId: failure.runId });
     }
