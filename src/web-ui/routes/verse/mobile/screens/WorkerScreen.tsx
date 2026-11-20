@@ -16,6 +16,7 @@ import { workerFromSnapshot } from '../worker-snapshot-model.js';
 import { workerTellPrefill } from '../worker-tell-text.js';
 import { Button, cx, Screen, SkeletonList } from '../ui.js';
 import { EmptyState, ErrorState, Row, Section, ui } from '../ui-parts.js';
+import { WorkerControls } from './WorkerControls.js';
 import styles from './WorkerScreen.module.css';
 
 export function WorkerScreen({ job }: { job: string }) {
@@ -73,7 +74,7 @@ export function WorkerScreen({ job }: { job: string }) {
       </Section>
     </>;
   }
-  return <Screen title={job} onBack={() => navigate({ screen: 'runs' })} onRefresh={() => { refetch(); if (gatewayUnavailable || detail === null) refetchSnapshot(); }}>{body}{tell ? <TellLeaders key={job} prefill={workerTellPrefill(tell)} /> : null}</Screen>;
+  return <Screen title={job} onBack={() => navigate({ screen: 'runs' })} onRefresh={() => { refetch(); if (gatewayUnavailable || detail === null) refetchSnapshot(); }}>{body}{tell ? <WorkerControls key={`${job}-controls`} job={job} lane={tell.lane} /> : null}{tell ? <TellLeaders key={job} prefill={workerTellPrefill(tell)} /> : null}</Screen>;
 }
 
 function TellLeaders({ prefill }: { prefill: string }) {

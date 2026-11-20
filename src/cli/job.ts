@@ -6,7 +6,8 @@ import { isJobControlAction, jobControlText, type JobControlAction } from '../co
 import { LANE_ID_RE } from '../core/fleet/runs-lane-targets.js';
 import { STRAY_ID_PATTERN } from '../core/fleet/stray-slots.js';
 
-const controlUsage = 'phm job pause|resume|stop|move <id> [--lane <lane>] [--dry-run] [--json] [--runs-dir <abs>]';
+const controlTail = 'pause|resume|stop|move <id> [--lane <lane>] [--dry-run] [--json] [--runs-dir <abs>]';
+const controlUsage = `phm job ${controlTail}`;
 const usage = `Usage: phm job cost <id> [--json] [--runs-dir <abs>] [--help]\n       phm job tail <id> [--lines N] [--follow] [--json] [--runs-dir <abs>] [--help]\n       phm job show <id> [--tail N] [--follow] [--json] [--runs-dir <abs>] [--help]\n       ${controlUsage}`;
 const controlHelp = 'Steer one fleet job. move needs --lane and refuses a lane that is held or full. ' +
   'Repeating a request changes nothing and returns the first receipt. --json emits fleet.job.control.v1 ' +
@@ -15,12 +16,13 @@ const showHelp = 'Show one fleet job as one window: its state in plain words, it
 const tailHelp = 'Tail one fleet job: status, lane, model, start time and PR, then its newest ledger events and last N log lines (1..120, default 40), every line redacted. --follow streams new lines until the job finishes or Ctrl-C. --json prints one {ts, source, text} object per line (source log, event or status). Exit 1 when the job is unknown on this machine.';
 
 /**
- * `phm job pause|resume|stop|move <id>`: one control request for one job
+ * `phm job|jobs pause|resume|stop|move <id>`: one control request for one job
  * (core/fleet/job-control.ts), the same call the desktop job detail makes.
  */
-async function cmdJobControl(action: JobControlAction, rest: string[]): Promise<number> {
+export async function cmdJobControl(action: JobControlAction, rest: string[], noun: 'job' | 'jobs' = 'job'): Promise<number> {
+  const usageLine = `phm ${noun} ${controlTail}`;
   const invalid = (extra?: string): number => {
-    console.error(`${extra ? `${extra}\n` : ''}Usage: ${controlUsage}`);
+    console.error(`${extra ? `${extra}\n` : ''}Usage: ${usageLine}`);
     return 2;
   };
   let job: string | undefined;
@@ -30,7 +32,7 @@ async function cmdJobControl(action: JobControlAction, rest: string[]): Promise<
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i]!;
     if (flags.has(arg)) return invalid();
-    if (arg === '--help' || arg === '-h') { console.log(`Usage: ${controlUsage}\n${controlHelp}`); return 0; }
+    if (arg === '--help' || arg === '-h') { console.log(`Usage: ${usageLine}\n${controlHelp}`); return 0; }
     if (arg === '--json' || arg === '--dry-run') flags.add(arg);
     else if (arg === '--lane' || arg === '--runs-dir') {
       flags.add(arg);
