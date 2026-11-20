@@ -7,7 +7,7 @@ const DETAIL_MAX = 300;
 export const UNIFIED_INBOX_COMMAND = 'phm comms inbox';
 
 const SOURCES = ['needs-you', 'imessage', 'drafts', 'bus', 'gmail', 'linkedin'] as const;
-const KINDS = ['needs-you', 'teammate-text', 'draft-approval', 'bus-work', 'gmail-over-target', 'linkedin-message'] as const;
+const KINDS = ['needs-you', 'teammate-text', 'draft-approval', 'bus-work', 'bus-handoff', 'gmail-over-target', 'linkedin-message'] as const;
 const SEVERITIES = ['info', 'warn', 'high'] as const;
 const STATES = ['healthy', 'missing', 'degraded', 'unavailable'] as const;
 const EXPIRES_SOON_MS = 30 * 60_000;

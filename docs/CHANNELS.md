@@ -224,7 +224,10 @@ outbound drafts awaiting approval, live bus envelopes whose body the claim
 contract accepts (`isClaimableWork`: a `kind:"work"` body or a protocol-v1
 transport `task` body) with no
 live claim (a live coordination-table row on the envelope's `queue:<id>` key
-counts as held, since the message-id claim consults that same table), and
+counts as held, since the message-id claim consults that same table),
+live `worker-handoff` envelopes (`isWorkerHandoffBody`, the exact contract
+`fleet handoff-receive`/`handoff-reply` accept — a pending assignment lists
+until its TTL ends, claims are evidence only, never a gate), and
 open agent-bus v2 work-feed jobs (queued or rescheduled
 `work.post` announcements with at least one claim key not fully held, read
 through the same projection as `phm agents bus work feed`) — plus Gmail
@@ -232,7 +235,8 @@ archive-plan overages and LinkedIn messages saved as
 JSON files under `<runsDir>/comms/linkedin/inbox/` (answered when a file of the
 same id exists in `.../linkedin/answered/`; replies stay drafts) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm drafts approve`,
-`phm fleet bus-claim acquire`, `phm agents bus claim acquire`). It never claims, replies, or mutates; a source
+`phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
+`phm fleet handoff-receive`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. `phm comms inbox read` and

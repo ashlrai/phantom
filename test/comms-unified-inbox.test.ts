@@ -59,11 +59,13 @@ function claim(id: string, leaseMs = 600_000, owner = 'worker') {
 let v2seq = 0;
 function postV2Body(body: BusJsonValue, extra: { priority?: 'P0' | 'P1' | 'P2' | 'P3'; ttl?: number; at?: number; from?: string; to?: string } = {}) {
   v2seq += 1;
+  const id = `v2-${v2seq}`;
   const receipt = appendBusInbox({
-    id: `v2-${v2seq}`, from: extra.from ?? 'agent:peer', to: extra.to ?? 'leaders',
+    id, from: extra.from ?? 'agent:peer', to: extra.to ?? 'leaders',
     priority: extra.priority ?? 'P2', ttl: extra.ttl ?? 7 * 24 * 3_600_000, body,
   }, { root: busRoot, now: () => extra.at ?? now });
   expect(receipt.status).toBe('posted');
+  return id;
 }
 function postJob(jobId: string, over: { title?: string; claimKeys?: string[]; provider?: string; priority?: 'P0' | 'P1' | 'P2' | 'P3'; ttl?: number; at?: number } = {}) {
   postV2Body({ kind: 'work.post', jobId, title: over.title ?? `fake job ${jobId}`,
@@ -285,6 +287,60 @@ describe('v2 work-feed jobs in the bus source', () => {
     const item = inbox.items.find(i => i.id === 'bus-feed:RQ-BLIND')!;
     expect(item.detail).toContain('claim holds unknown');
     expect(item.act[0]).toBe('phm agents bus claim acquire --key queue:RQ-BLIND --owner <label> --lease-ms 600000');
+  });
+});
+
+describe('worker-handoff assignments in the bus source', () => {
+  const handoff = (taskId: string, prompt: string) => ({ kind: 'worker-handoff', taskId, prompt });
+
+  it('lists a live handoff with receive and inspect acts until its TTL ends', async () => {
+    const id = postV2Body(handoff('RQ-HANDOFF-1', 'fake handoff prompt'), { to: 'agent:worker-9', priority: 'P1' });
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'bus');
+    expect(items.map(i => i.id)).toEqual([`bus-handoff:${id}`]);
+    expect(items[0]).toMatchObject({
+      kind: 'bus-handoff', severity: 'warn', blocking: false,
+      title: 'handoff task RQ-HANDOFF-1: fake handoff prompt',
+      detail: 'from agent:peer to agent:worker-9 · P1 · cursor 1',
+      since: new Date(now).toISOString(),
+      expiresAt: new Date(now + 7 * 24 * 3_600_000).toISOString(),
+      act: [
+        `phm fleet handoff-receive --id ${id} --to agent:worker-9 --snapshot <abs-json> -- <program> [args...]`,
+        `phm agents bus show ${id}`,
+      ],
+    });
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('lists channel-addressed handoffs with the literal group label', async () => {
+    const id = postV2Body(handoff('RQ-HANDOFF-2', 'fake channel handoff'), { to: 'group:ops:general', priority: 'P0' });
+    const inbox = await read();
+    const item = inbox.items.find(i => i.id === `bus-handoff:${id}`)!;
+    expect(item).toMatchObject({ kind: 'bus-handoff', severity: 'high' });
+    expect(item.detail).toContain('to group:ops:general');
+    expect(item.act[0]).toContain('--to group:ops:general');
+  });
+
+  it('hides expired and malformed handoff bodies', async () => {
+    postV2Body(handoff('RQ-HANDOFF-3', 'fake expired'), { ttl: 1, at: now - 10_000 });
+    // Extra keys, a non-fleet task id and an empty prompt all fail the shared
+    // isWorkerHandoffBody contract the receive verbs enforce.
+    postV2Body({ ...handoff('RQ-HANDOFF-4', 'fake extra key'), note: 'x' });
+    postV2Body(handoff('bad id!', 'fake bad task'));
+    postV2Body(handoff('RQ-HANDOFF-5', '   '));
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'bus')).toHaveLength(0);
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('lists handoffs next to unclaimed work without confusing the two kinds', async () => {
+    postWork('still-work', { priority: 'P1' });
+    const id = postV2Body(handoff('RQ-HANDOFF-6', 'fake alongside'), { to: 'agent:worker-9' });
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'bus');
+    expect(items.map(i => i.id).sort()).toEqual([`bus-handoff:${id}`, 'bus:still-work']);
+    expect(items.find(i => i.id === `bus-handoff:${id}`)).toMatchObject({ kind: 'bus-handoff', severity: 'info' });
+    expect(items.find(i => i.id === 'bus:still-work')).toMatchObject({ kind: 'bus-work' });
   });
 });
 
