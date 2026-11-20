@@ -2,7 +2,7 @@
  * `ashlr leader` — V3.10 Track B (unit U8). Registered by B-U1 in src/cli/index.ts.
  *
  *   ashlr leader show [--json]               the latest memo, actions, hit-rate
- *   ashlr leader brief [--since 2h] [--json]  one read of what the last bets did and what to queue next
+ *   ashlr leader brief [--since 2h] [--stale-after 3h] [--json]  one read of what the last bets did and what to queue next
  *   ashlr leader run [--force]               run the Leader now (waits for the memo)
  *   ashlr leader tick [--wait]               apply due class-B actions, grade moves,
  *                                            and start a run if one is due
@@ -38,6 +38,7 @@ import { loadConfig } from '../core/config.js';
 import { hasLeaderNetworkConfig } from '../core/agents/leader-network-config.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
 import type { LeaderAction, LeaderMemo, LeaderStateV1 } from '../core/vision/leader-types.js';
+import { parseStaleAfter } from '../core/fleet/leader-batches.js';
 
 const USAGE = `Phantom Leader — memo, actions and veto
 
@@ -45,7 +46,7 @@ Compatible alias: ashlr leader <command>
 
 Usage:
   phm leader show [--json]
-  phm leader brief [--since 2h] [--json]  the last bets' results, lanes, pools, admission and the top 5 open gaps in one read (unknown stays unknown; exit 0)
+  phm leader brief [--since 2h] [--stale-after 3h] [--json]  the last bets' results, lanes, pools, admission and the top 5 open gaps in one read (unknown stays unknown; exit 0)
   phm leader status [--json]
   phm leader ask "<text>" [--json]
   phm leader org [--json]
@@ -711,15 +712,17 @@ async function runSeatDryRun(args: string[]): Promise<number> {
   return 0;
 }
 
-/** `leader brief [--since 2h] [--json]`: thin; the reading and rendering live in core/fleet/leader-job-brief.ts. */
+/** `leader brief [--since 2h] [--stale-after 3h] [--json]`: thin; the reading and rendering live in core/fleet/leader-job-brief.ts. */
 async function runBrief(args: string[]): Promise<number> {
   const json = flag(args, '--json');
   const since = option(args, '--since');
   const m = since === null ? null : /^(\d+(?:\.\d+)?)([hd])$/.exec(since ?? '');
+  const stale = option(args, '--stale-after');
+  const staleHours = stale === null ? undefined : stale === undefined ? NaN : parseStaleAfter(stale) ?? NaN;
   const core = await import('../core/fleet/leader-job-brief.js');
   const hours = since === null ? core.BRIEF_DEFAULT_HOURS : m ? Number(m[1]) * (m[2] === 'd' ? 24 : 1) : NaN;
-  if (args.length || since === undefined || !(hours > 0 && hours <= core.BRIEF_MAX_HOURS)) { console.error(USAGE); return 2; }
-  const brief = await core.readJobBrief({ hours });
+  if (args.length || since === undefined || Number.isNaN(staleHours) || !(hours > 0 && hours <= core.BRIEF_MAX_HOURS)) { console.error(USAGE); return 2; }
+  const brief = await core.readJobBrief({ hours, staleAfterHours: staleHours });
   console.log(json ? JSON.stringify(brief) : core.jobBriefLines(brief).join('\n'));
   return 0;
 }

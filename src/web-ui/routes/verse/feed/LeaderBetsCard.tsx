@@ -12,8 +12,8 @@ import { CardNote } from '../command/Surface.js';
 import styles from './feed.module.css';
 
 export const leaderBetsQuery: QueryDef<LeaderBetsReport> = { key: 'leader-bets', fetch: signal => apiGet<LeaderBetsReport>('/api/fleet/leader-bets', signal) };
-const STAGE: Record<LeaderBetStage, string> = { queued: 'Queued', running: 'Running', pr_open: 'PR open', merged: 'Merged', empty: 'Empty' };
-const ORDER: readonly LeaderBetStage[] = ['merged', 'pr_open', 'running', 'queued', 'empty'];
+const STAGE: Record<LeaderBetStage, string> = { queued: 'Queued', running: 'Running', pr_open: 'PR open', merged: 'Merged', empty: 'Empty', ended: 'Ended, no result' };
+const ORDER: readonly LeaderBetStage[] = ['merged', 'pr_open', 'running', 'queued', 'ended', 'empty'];
 
 const isReport = (v: unknown): v is LeaderBetsReport => !!v && typeof v === 'object' && (v as LeaderBetsReport).schema === 'fleet.leader-bets.v1' && Array.isArray((v as LeaderBetsReport).batches);
 const safeUrl = (u: unknown): string | null => typeof u === 'string' && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(u) ? u : null;
@@ -38,7 +38,7 @@ export function LeaderBetsCardView({ report }: { report: LeaderBetsReport | unde
             <summary>Show all {batch.bets.length}</summary>
             <ul>{batch.bets.map(bet => {
               const url = safeUrl(bet.url);
-              return <li key={bet.id}>{bet.id}: {STAGE[bet.stage] ?? 'Unknown'}{bet.stage === 'empty' ? ` (${bet.reason ?? 'reason unknown'})` : ''}
+              return <li key={bet.id}>{bet.id}: {STAGE[bet.stage] ?? 'Unknown'}{(bet.stage === 'empty' || bet.stage === 'ended') ? ` (${bet.reason ?? 'reason unknown'})` : ''}
                 {url ? <> · <a href={url} target="_blank" rel="noopener noreferrer">PR</a></> : null}</li>;
             })}</ul>
           </details>
