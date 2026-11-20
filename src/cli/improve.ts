@@ -141,18 +141,13 @@ async function measure(id: string | undefined, repo: string | undefined, repeatA
 }
 
 async function syncBacklog(): Promise<number> {
-  const { appendLedger, readLedger } = await import('../core/improve/outcomes.js');
-  const { backlogRegistrations } = await import('../core/improve/backlog-sync.js');
-  const { listCloudTasks } = await import('../core/cloud/store.js');
-  const { readCloudBacklog } = await import('../core/cloud/backlog.js');
   try {
-    const read = readLedger();
-    if (!read.intact) { console.error(`! outcome ledger is not intact: ${read.reasons.join(', ')}`); return 1; }
-    const tasks = listCloudTasks();
-    const events = backlogRegistrations(tasks, readCloudBacklog(tasks, new Date()).items, read.records);
-    for (const e of events) appendLedger(e);
-    const n = events.filter((e) => e.type === 'registered').length;
-    console.log(n ? `ok registered ${n} cloud backlog PR(s); measure them with phm improve measure <id> --repo <dir>` : 'No new cloud backlog PRs with a declared metric.');
+    const { syncCloudBacklogOutcomes } = await import('../core/improve/backlog-sync.js');
+    const res = syncCloudBacklogOutcomes();
+    if (!res.intact) { console.error(`! outcome ledger is not intact: ${res.reasons.join(', ')}`); return 1; }
+    if (res.reason === 'append-failed') { console.error('! could not append to the outcome ledger'); return 1; }
+    if (res.reason === 'source-unavailable') { console.error('! could not read the cloud task store, backlog or outcome ledger'); return 1; }
+    console.log(res.registered ? `ok registered ${res.registered} cloud backlog PR(s); measure them with phm improve measure <id> --repo <dir>` : 'No new cloud backlog PRs with a declared metric.');
     return 0;
   } catch (err) { console.error(`! ${err instanceof Error ? err.message : String(err)}`); return 1; }
 }
