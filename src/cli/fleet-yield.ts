@@ -37,6 +37,7 @@ export async function cmdFleetYield(args: string[], read: YieldLineReader = read
     console.log(`${usage}
 Merged PRs per launch for every job family in the last --hours (default 24).
 Reads the job metrics file (default: <fleet runs dir>/metrics/jobs.jsonl); --since 24h or 2d also works.
+A merge recorded as reverted counts as reverted, never as merged; its tokens still count as wasted.
 A family is the job id with its numbers collapsed: RQ-PHX-RECUTAPIC606 and RQ-PHX-RECUTCLIC607 are RQ-PHX-RECUT*C*,
 RQ-MD12A111815Q8 is RQ-MD*A*Q8. Families of one job id are listed under Single jobs.
 stop: ${FAMILY_STOP_MIN_FINISHED}+ finished runs and merged per launch under ${FAMILY_STOP_RATE}. watch: under ${FAMILY_WATCH_RATE}. keep: the rest.

@@ -362,6 +362,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'recheck': () => import('./fleet-recheck.js'),
   'recheck-record': () => import('./fleet-recheck-record.js'),
   'recorded-config': () => import('./fleet-recorded-config.js'),
+  'recorded-schedule': () => import('./fleet-recorded-schedule.js'),
   'recut-sweep': () => import('./fleet-recut-sweep.js'),
   'red-blame': () => import('./fleet-red-blame.js'),
   'red-fix': () => import('./fleet-red-fix.js'),

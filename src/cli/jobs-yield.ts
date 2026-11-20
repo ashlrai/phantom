@@ -68,7 +68,8 @@ Rows last --ttl-hours (default ${STOP_TTL_HOURS}, at most ${STOP_TTL_MAX_HOURS})
 The file is --out PATH, else ${STOP_FILE_ENV}; with neither the path is unknown and nothing is written.
 --dry-run shows the rows and writes nothing. JSON is ${STOP_FILE_SCHEMA} with version 1.
 A job kind is the job id minus its trailing counter (RQ-PHX-RECUTCOREC566 is RQ-PHX-RECUTCORE);
-one-test filler jobs group by repo. Per kind: launches, empty, skipped before launch, merged and merged per launch.
+one-test filler jobs group by repo. Per kind: launches, empty, skipped before launch, merged, reverted and merged per launch.
+A merge recorded as reverted (a revert event, a reverted flag or stamp, or a REVERTED outcome state) counts as reverted, never as merged.
 keep: merged per launch ${JOB_KEEP_RATE} or more. stop: ${JOB_STOP_MIN_LAUNCHES} or more ended launches, merged per launch under ${JOB_STOP_RATE}
 and no merge in the last ${JOB_RECENT_LAUNCHES} launches. watch: the rest.
 JSON is jobs.yield.v1 with version 1. An unreadable file prints unknown, never zero.`);

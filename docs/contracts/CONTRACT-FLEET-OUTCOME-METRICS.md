@@ -171,19 +171,25 @@ with neither, the path is unknown and only `--dry-run` runs.
 as "Stopped families" on the Job yield card.
 
 `src/core/fleet/slot-yield.ts` exports the pure `jobYield(lines, now, hours)`,
-`jobKind(id, repo?)`, `jobVerdict({ launches, running, merged, recentMerge? })` and
-`unknownJobYield(hours)`; `yieldTally(...).jobYield()` streams the same report.
-`readJobYield(path, hours?, now?, read?)` in `metrics-series.ts` owns the read.
+`jobKind(id, repo?)`, `jobVerdict({ launches, running, merged, recentMerge? })`,
+`hasRevertEvidence(row)` and `unknownJobYield(hours)`; `yieldTally(...).jobYield()`
+streams the same report. `readJobYield(path, hours?, now?, read?)` in
+`metrics-series.ts` owns the read.
 Rows used: `launch`, `finish` (`empty`), `precheck_skip`, `publish` and
 `outcome` (`state`). Only launches inside the window count; a relaunched job is
-several launches and a MERGED job is credited once.
+several launches and a MERGED job is credited once. A merge recorded as reverted
+(`hasRevertEvidence`: `reverted:true`, a parseable `reverted_at`/`revertedAt`
+stamp, a `revert`/`reverted` event name or terminal state field — the router
+outcome fold's vocabulary) is credited as `reverted`, never as a held merge;
+an explicit `reverted:false` is not evidence, and a terminal REVERT/REVERTED
+outcome state counts as reverted on its own.
 
 ```json
 { "schema": "jobs.yield.v1", "version": 1, "window_hours": 24, "known": true,
-  "launches": 30, "merged": 9, "empty": 14, "skipped": 3, "stop_slots": 12,
+  "launches": 30, "merged": 9, "reverted": 2, "empty": 14, "skipped": 3, "stop_slots": 12,
   "summary": "12 of 30 launches went to 3 job kinds that merged nothing",
   "families": [{ "family": "RQ-PHX-RECUTCORE", "launches": 6, "running": 0,
-    "empty": 6, "skipped": 0, "prs": 0, "merged": 0, "merged_per_launch": 0,
+    "empty": 6, "skipped": 0, "prs": 0, "merged": 0, "reverted": 0, "merged_per_launch": 0,
     "verdict": "stop", "reason": "0 merged from 6 launches, 6 empty" }],
   "stop_first": [{ "family": "RQ-PHX-RECUTCORE", "slots": 6, "merged": 0,
     "reason": "0 merged from 6 launches, 6 empty" }] }
@@ -200,7 +206,8 @@ Job kind (`family`) is the job id minus its trailing counter:
 
 Verdicts: `keep` at 0.3 merged per launch or more; `stop` when 6 or more
 launches have ended and merged per launch is under 0.1; `watch` otherwise.
-Launches still running never count toward `stop`. `families` sort stop, watch,
+Launches still running never count toward `stop`, and a reverted merge is not
+a recent merge either. `families` sort stop, watch,
 keep, most launches first; `stop_first` holds at most 5. `skipped` counts
 precheck skip rows, which take no slot. With no launches `merged_per_launch` is
 null. An unreadable or interrupted read gives `known: false`, null totals and
@@ -216,7 +223,10 @@ with its numbers collapsed (`collapseFamily`): `RQ-PHX-RECUTAPIC606` and
 Families of one job id are listed under `single`.
 
 - Verdict: `stop` with 6+ finished runs and merged per launch under 0.2;
-  `watch` under 0.4; `keep` otherwise.
+  `watch` under 0.4; `keep` otherwise. Merged per launch counts held merges
+  only: a merge recorded as reverted (`hasRevertEvidence`, see job yield) is
+  `reverted`, its tokens still count as wasted, and it never counts as a
+  recent merge.
 - Order: most `wasted_tokens` (tokens on runs that did not merge) first.
 - Tokens: missing counts stay null (unknown). `tokens_unknown` counts ended runs
   without a count; `wasted_tokens_partial` marks a lower bound.
@@ -232,9 +242,9 @@ read-only `YieldRun` with `last`, its newest row time.
 
 ```json
 { "schema": "fleet.family-yield.v1", "version": 1, "window_hours": 24, "known": true,
-  "launches": 14, "merged": 4, "wasted_tokens": 537000, "wasted_tokens_partial": false,
+  "launches": 14, "merged": 4, "reverted": 1, "wasted_tokens": 537000, "wasted_tokens_partial": false,
   "families": [{ "family": "RQ-PHX-RECUT*C*", "jobs": 7, "launches": 7, "finished": 7,
-    "empty": 6, "prs": 1, "merged": 1, "merged_per_launch": 0.14, "tokens_total": 550000,
+    "empty": 6, "prs": 1, "merged": 1, "reverted": 0, "merged_per_launch": 0.14, "tokens_total": 550000,
     "tokens_unknown": 0, "tokens_per_merged": 550000, "wasted_tokens": 510000,
     "wasted_tokens_partial": false, "last_seen": "2026-11-18T15:00:00.000Z", "verdict": "stop",
     "reason": "1 merged of 7 launches, 6 empty, 510000 tokens on unmerged runs" }],

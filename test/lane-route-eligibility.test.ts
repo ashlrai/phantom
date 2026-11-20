@@ -113,4 +113,21 @@ describe('lane yield weight', () => {
     const rows = yields(old, ledger('claude', 'md', 50, 40));
     expect(rows.find(r => r.lane === 'claude' && r.size === 'md')).toMatchObject({ launches: 50, merged: 40, yield: 0.8, weight: 1.6 });
   });
+
+  it('a merge recorded as reverted is not a held merge and sinks the lane weight', () => {
+    const reverted = (lane: string, size: string, jobs: number): string[] =>
+      Array.from({ length: jobs }, (_, i) => {
+        const job = `${lane}-${size}-${i}`;
+        return [
+          JSON.stringify({ event: 'launch', job, lane, size, ts: new Date(NOW.getTime() - i * 1000).toISOString() }),
+          JSON.stringify({ event: 'outcome', job, state: 'MERGED' }),
+          JSON.stringify({ event: 'revert', job }),
+        ].join('\n');
+      });
+    const rows = yields(reverted('claude', 'lg', 20), ledger('zai', 'lg', 20, 10));
+    expect(rows.find(r => r.lane === 'claude' && r.size === 'lg')).toMatchObject({ launches: 20, merged: 0, reverted: 20, yield: 0, weight: 0.1 });
+    const out = routeToEligibleLane({ targets, size: 'lg', yields: rows, now: NOW });
+    expect(out.lane).toBe('zai');
+    expect(out.testOnly).toBe(false);
+  });
 });
