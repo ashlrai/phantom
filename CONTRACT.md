@@ -1685,9 +1685,9 @@ no execution authority; the token returns only to its acquirer.
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
 `phm agents bus work mine [<agent>]`. `readBusWorkMine(agent, options?)`
 (`BusWorkMineOptions`: `root?`, `runsRoot?`, `now?: () => number` frozen once
-across all four reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, claims, jobs, wakes, inbox}` or `{status:'invalid', reason}` for a ref
-outside the printable-label rule. `agent` echoes `ref`, resolved
+across all five reads) returns `BusWorkMineResult`: `{status:'ok', agent,
+asOf, claims, jobs, next, wakes, inbox}` or `{status:'invalid', reason}` for a
+ref outside the printable-label rule. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
 `claims` reuses
 `listBusClaims({owner})` — identity-aware owner matching with exact-label
@@ -1702,7 +1702,28 @@ claims join, and `claimable` is `true` only on a provably free key, `false`
 only when every declared key is provably held, `null` when coverage is
 `truncated` or `unknown` — `busWorkMineJobAnnotation(job, held, coverage,
 addressed)` is the exported pure rule. A non-ok feed collapses the section to
-its own status (`refused` keeps `reason`/`receipts`). `wakes` reuses
+its own status (`refused` keeps `reason`/`receipts`). `next` lists the
+claimable work envelopes addressed to the agent — every live receipt whose
+`isClaimableWork` body (`kind:'work'` or a protocol-v1 `task`) and whose `to`
+label resolves through the same identity matching `bus next` and the feed
+`--to` filter use — in `claimNextBusWork` claim order (priority band, then
+cursor), capped at the first 10 shown with `matched` the true total and
+`truncated` definitive. Each `BusWorkMineNextItem` carries `cursor`,
+envelope `id`, `priority`, `ts`, `expiresAt` (read time plus the receipt's
+remaining TTL — the reader decrements `ttl`, so this is the live deadline),
+`kind` (`'work'`|`'task'`), raw `from`, resolved `fromAgent`, a
+`summary` through `busBodySummary`/`busBodyFallbackSummary` scrubbed,
+single-lined and clipped like the inbox section, and tri-state `held`:
+`true` when a taken message-id claim row (live lease or completed, the same
+rule the unified inbox applies) or a live coordination row blocking
+`queue:<envelope id>` provably covers it, `false` when provably free,
+`null` when hold coverage is unknown — the `holder` label rides along only
+when `held` is `true`. Section-level `holds` is `complete` or `unknown`:
+a store that cannot be read (claims journal or coordination table) keeps
+`held` null and `holds` unknown rather than fabricating `false`, matching
+the unified inbox's degraded rule; an unreadable bus store reports the
+section's `unavailable`/`retryable`/`invalid` status with `reason`.
+`wakes` reuses
 `readAgentWakes` capped at the newest 20 with `truncated`, or
 `unknown-agent`/`unavailable` with `reason`. `inbox` reuses `readAgentInbox`
 for the next page of mail addressed to the agent — same matching, order and

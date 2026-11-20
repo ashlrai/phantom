@@ -314,13 +314,19 @@ never permits a merge, a push, or spending.
 
 **Per-agent work view.** `phm agents bus work mine [<agent>]` is the read-only
 digest that answers "what is pending for this agent" in one call instead of
-four: the live coordination claims it holds under any of its labels (with the
+five: the live coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block, the reverse of `work feed --claims`),
 the open work-feed jobs (`queued`/`rescheduled`, declaring at least one claim
 key; newest 50 shown, `open` keeps the true total) annotated per declared key —
 `freeKeys`/`heldKeys` plus a tri-state
 `claimable` that is `null` whenever hold coverage is `truncated` or `unknown`,
-never a guess — the wake hints addressed to it, capped at the newest 20, and
+never a guess — the claimable work envelopes addressed to it, the same live
+`kind:'work'`/protocol-`task` receipts `fleet bus-next` would walk in claim
+order (priority band, then cursor; the first 10 shown, `matched` the true
+total), each carrying its hold state against the message-claim journal and
+the coordination table — `held` is tri-state, `null` whenever either store is
+unreadable, never a guess — the wake hints addressed to it, capped at the
+newest 20, and
 the next page of mail in its inbox: the same matching, order and owner-share
 receipt checks `agents bus inbox` applies, capped at the oldest 20 pending
 messages with each body summarized by the shared one-line composer. The inbox
@@ -335,7 +341,8 @@ exact-label claim matching, reports `identity: null`, and answers
 `unknown-agent` for wakes and inbox rather than an empty list. Every section
 reports its
 own read state — `missing`/`available`/`unavailable` for claims,
-`ok`/`refused`/`unavailable`/`retryable`/`invalid` for the feed — so one
+`ok`/`refused`/`unavailable`/`retryable`/`invalid` for the feed,
+`unavailable`/`retryable`/`invalid` for the claimable-envelope walk — so one
 unreadable dependency degrades only its own section. Exit 0 on a completed
 read, 2 on an invalid agent ref.
 
