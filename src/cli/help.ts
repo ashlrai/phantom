@@ -299,10 +299,10 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'MetricsFeed (schemaVersion 1); unknown measurements are null; refused input exits 2',
   },
   {
-    usage: 'phm nodes [--json] [--can-take <lane>]',
-    description: 'One row per known computer: reachable or not, whether Phantom is running there, free memory, load, heartbeat age, CPU headroom, lanes, free slots, running jobs and a plain-words state; a computer silent for over 5 minutes is offline. Prints "Only this Mac." when no other computer is known. --can-take lists ready computers and recommends a remote computer, falling back to this computer when ready. Unknown facts stay unknown with a reason. Exit 0, 2 bad usage.',
+    usage: 'phm nodes [--json] [--discover] [--can-take <lane>]',
+    description: 'One row per known computer: reachable or not, whether Phantom is running there, free memory, load, heartbeat age, CPU headroom, lanes, free slots, running jobs and a plain-words state; a computer silent for over 5 minutes is offline. Prints "Only this Mac." when no other computer is known. --can-take lists ready computers and recommends a remote computer, falling back to this computer when ready. Unknown facts stay unknown with a reason. --discover also lists Tailscale computers that have not joined, each with the one command to join it (phm node join, run on that computer). Exit 0, 2 bad usage.',
     safety: 'read',
-    jsonShape: '{schema:"phantom.nodes-view.v1", schemaVersion:1, asOf, self, registry, nodes:[{name,isSelf,reachable,lastSeen,heartbeatAgeSeconds,phantom,freeMemoryBytes,freeMemoryPercent,load,cpuHeadroomPercent,lanes,jobsRunning,freeSlots,stateCode,state}], reasons, canTake?, placement?:{lane,node,target,reason,explanation}}',
+    jsonShape: '{schema:"phantom.nodes-view.v1", schemaVersion:1, asOf, self, registry, nodes:[{name,isSelf,reachable,lastSeen,heartbeatAgeSeconds,phantom,freeMemoryBytes,freeMemoryPercent,load,cpuHeadroomPercent,lanes,jobsRunning,freeSlots,stateCode,state,joined,joinCommand}], reasons, discovered?, canTake?, placement?:{lane,node,target,reason,explanation}}',
   },
   {
     usage: 'phm nodes pool [--json]',
