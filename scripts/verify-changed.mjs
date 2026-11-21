@@ -56,6 +56,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     tomlFiles: changed.filter((path) => existing.has(path) && /\.toml$/.test(path)),
     cssFiles: changed.filter((path) => existing.has(path) && /\.css$/i.test(path)),
     snapFiles: changed.filter((path) => existing.has(path) && /\.snap$/i.test(path)),
+    patchFiles: changed.filter((path) => existing.has(path) && /\.(?:patch|diff)$/i.test(path)),
   };
 }
 
@@ -610,6 +611,40 @@ export function runSnapSyntaxCheck(root, files, read = readFileSync) {
     return false;
   }
   console.log('PASS snap syntax check');
+  return true;
+}
+
+/**
+ * `.patch` and `.diff` files are unified diffs consumed by `git apply` —
+ * host-integration candidates, staged dispatcher changes, strategy
+ * proposals and evidence exports all fail only when someone tries to
+ * apply them, long after the diff review that produced them. `git apply
+ * --stat` is the grammar step: it parses every file header and hunk
+ * without needing the target tree (`--check` would wrongly demand the
+ * patch apply cleanly in this checkout, which staged proposals against
+ * other revisions never do), and it rejects non-patch input and corrupt
+ * hunks alike. One spawn per file keeps the diagnostic pointed at the
+ * failing path, matching the node, rust and swift checks; stdout is
+ * discarded like rustfmt's formatted text. `--allow-empty` is
+ * deliberately absent: it would accept any non-patch text as an empty
+ * patch set. Git is already required to collect the changed set, so like
+ * the JSON and snap checks there is no preflight or SKIP path. Paths are
+ * `./`-prefixed because `git apply` has no `--` separator — a
+ * `-`-leading filename must never read as an option.
+ */
+export function runPatchSyntaxCheck(root, files, spawn = spawnSync) {
+  for (const path of files) {
+    const result = spawn('git', ['apply', '--stat', `./${path}`], {
+      cwd: root, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'], timeout: 120000,
+    });
+    if (result.error || result.signal || result.status !== 0) {
+      if (result.stderr) console.error(String(result.stderr).trimEnd());
+      if (result.error) console.error(result.error.message);
+      console.log(`FAIL patch syntax check: ${path}`);
+      return false;
+    }
+  }
+  console.log('PASS patch syntax check');
   return true;
 }
 
@@ -1185,6 +1220,11 @@ function main() {
   if (selection.snapFiles.length === 0) {
     console.log('PASS snap syntax check skipped: no snapshot change');
   } else if (!runSnapSyntaxCheck(root, selection.snapFiles)) {
+    process.exitCode = 1;
+  }
+  if (selection.patchFiles.length === 0) {
+    console.log('PASS patch syntax check skipped: no patch or diff change');
+  } else if (!runPatchSyntaxCheck(root, selection.patchFiles)) {
     process.exitCode = 1;
   }
   if (selection.quarantineCheck) {
