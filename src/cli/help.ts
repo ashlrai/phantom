@@ -1391,6 +1391,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'job say <id> "<text>" [--dry-run] [--json]', desc: 'Send one note to a running job ("also update the docs"). A finished job refuses it.', topic: 'observability' },
   { cmd: 'job notes <id> [--json]', desc: 'List the notes sent to one job.', topic: 'observability' },
   { cmd: 'job cost <id> [--json]',       desc: 'Per-model-call cost breakdown for one fleet job: tokens in/out, model and cost (or \'unknown\').', topic: 'observability' },
+  { cmd: 'jobs tail <id> [--lines N] [--follow] [--json]', desc: 'Same as `job tail`: a job\'s status, lane, model and PR, then its redacted last log lines; --follow streams new ones until it finishes. Pause, resume and stop it with `jobs pause|resume|stop <id>`.', topic: 'observability' },
   { cmd: 'job tail <id> [--lines N] [--follow] [--json]', desc: 'What a fleet job is doing now: status, lane, model, start and PR, then its redacted last log lines; --follow streams new ones.', topic: 'observability' },
   { cmd: 'job show <id> [--tail N] [--follow] [--json]', desc: 'One window into a fleet job: state in plain words, lane, model, repo, tier, start, finish, PR, then its redacted last log lines; --follow streams new ones.', topic: 'observability' },
   { cmd: 'telemetry [status]',           desc: 'M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.', topic: 'observability' },
