@@ -8,7 +8,7 @@
  * KILL and the comms pause halt every adapter before a transport is called.
  */
 import { teammateReplyGapFromInbox, type TeammateReplyGap } from './teammate-reply-gap.js';
-import { recordDelivery } from '../leader/delivery-receipts.js';
+import { readReceipts, recordDelivery, type MessageReceipts } from '../leader/delivery-receipts.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { linkSync, lstatSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
@@ -114,10 +114,13 @@ export interface OwnerCommsStatus {
   threadId: typeof OWNER_THREAD_ID;
   kill: boolean;
   paused: boolean;
-  messages: number;
+  /** Live plus archived-base message count; null when the thread is unreadable — unknown stays unknown, never 0. */
+  messages: number | null;
   adapters: OwnerAdapterStatus[];
   /** Additive: how long teammate texts have waited for a reply (metadata only). */
   replyGap: TeammateReplyGap[];
+  /** Additive: live inbound messages no recorded outbound reply cites; null when the thread is unreadable. */
+  awaitingReply: number | null;
 }
 
 function clock(options: OwnerThreadOptions): number {
@@ -149,7 +152,7 @@ function paused(options: OwnerThreadOptions): boolean {
   return options.paused === true || isPaused();
 }
 
-function threadDir(options: OwnerThreadOptions): string {
+function threadDir(options: { runsDir: string }): string {
   return join(options.runsDir, 'leader');
 }
 
@@ -163,7 +166,7 @@ function validMessage(value: OwnerThreadMessage, seq: number): boolean {
     typeof value.at === 'string' && typeof value.text === 'string' && typeof value.senderId === 'string';
 }
 
-function readState(options: OwnerThreadOptions): ThreadState {
+function readState(options: { runsDir: string }): ThreadState {
   const file = join(threadDir(options), 'owner-thread.json');
   try { lstatSync(file); } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return blank();
@@ -547,26 +550,103 @@ export async function sendOwnerHello(options: OwnerThreadOptions): Promise<Owner
   }
 }
 
-export function readOwnerThread(options: OwnerThreadOptions, limit = 200): { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: OwnerThreadMessage[] } | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: []; unavailable: true } {
+/** Per-channel delivery receipts keyed by outbound message id; a channel with no record is unknown. */
+export type OwnerThreadReceipts = Record<string, MessageReceipts>;
+
+/**
+ * Live inbound messages no recorded outbound reply cites. `sendOwnerReply`
+ * stores the answered inbound's idempotency key in `replyTo`, so a proactive
+ * notice never clears the mark and a reply recorded but undelivered still
+ * counts as answered — channel delivery stays with the receipts. Archived
+ * inbound messages are outside the live window and are not reported.
+ */
+function awaitingReplyMessages(state: ThreadState): OwnerThreadMessage[] {
+  const answered = new Set(
+    state.messages.filter(message => message.direction === 'outbound' && message.replyTo !== undefined)
+      .map(message => message.replyTo!),
+  );
+  return state.messages
+    .filter(message => message.direction === 'inbound' && !answered.has(message.idempotencyKey));
+}
+
+function awaitingReplyIds(state: ThreadState): string[] {
+  return awaitingReplyMessages(state).map(message => message.id);
+}
+
+export function readOwnerThread(options: OwnerThreadOptions, limit = 200):
+  | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: OwnerThreadMessage[]; receipts: OwnerThreadReceipts; awaitingReply: string[] }
+  | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: []; receipts: OwnerThreadReceipts; awaitingReply: null; unavailable: true } {
   const cap = Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 200) : 200;
   try {
     const state = readState(options);
-    return { schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages: state.messages.slice(-cap) };
+    const messages = state.messages.slice(-cap);
+    return {
+      schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages,
+      receipts: readReceipts(options.runsDir, messages.filter(m => m.direction === 'outbound').map(m => m.id)),
+      awaitingReply: awaitingReplyIds(state),
+    };
   } catch {
-    return { schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages: [], unavailable: true };
+    return { schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages: [], receipts: {}, awaitingReply: null, unavailable: true };
+  }
+}
+
+/** One live inbound owner message no recorded outbound reply cites. */
+export interface OwnerAwaitingReply {
+  /** Thread message id (`m<seq>`). */
+  id: string;
+  /** The inbound's idempotency key — the value `send-owner --reply-to` accepts. */
+  idempotencyKey: string;
+  channel: OwnerChannel;
+  /** ISO time the owner message landed. */
+  at: string;
+  /** Stored message text; scrubbed at intake, never a secret value. */
+  text: string;
+}
+
+export type OwnerAwaitingReplies =
+  | { status: 'ok'; items: OwnerAwaitingReply[] }
+  | { status: 'unavailable' };
+
+/**
+ * The item-level form of the awaiting-reply mark `readOwnerThread` reports as
+ * ids and `readOwnerCommsStatus` reports as a count: every live inbound owner
+ * message in thread order, with the fields a pending-comms surface needs. An
+ * unreadable thread reports `unavailable` — never an empty list passed off as
+ * fact. Archived inbound messages stay outside the live window.
+ */
+export function readOwnerAwaitingReplies(options: { runsDir: string }): OwnerAwaitingReplies {
+  try {
+    const state = readState(options);
+    return {
+      status: 'ok',
+      items: awaitingReplyMessages(state).map(message => ({
+        id: message.id,
+        idempotencyKey: message.idempotencyKey,
+        channel: message.channel,
+        at: message.at,
+        text: message.text,
+      })),
+    };
+  } catch {
+    return { status: 'unavailable' };
   }
 }
 
 export function readOwnerCommsStatus(options: OwnerThreadOptions): OwnerCommsStatus {
   const kill = halted(options);
   const hold = paused(options);
-  let messages = 0;
-  try { const state = readState(options); messages = (state.base ?? 0) + state.messages.length; } catch { messages = 0; }
+  let messages: number | null = null;
+  let awaitingReply: number | null = null;
+  try {
+    const state = readState(options);
+    messages = (state.base ?? 0) + state.messages.length;
+    awaitingReply = awaitingReplyIds(state).length;
+  } catch { /* unreadable thread: both counts stay null, never a fabricated 0 */ }
   return {
     schema: 'comms.owner-thread.status.v1',
     claimKey: OWNER_THREAD_CLAIM_KEY,
     threadId: OWNER_THREAD_ID,
-    kill, paused: hold, messages,
+    kill, paused: hold, messages, awaitingReply,
     adapters: listAdapterStatus(options.settings, kill, hold),
     replyGap: teammateReplyGapFromInbox(clock(options), options.runsDir),
   };

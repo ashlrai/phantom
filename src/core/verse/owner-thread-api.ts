@@ -7,7 +7,6 @@ import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
 import { MASON_THREAD_SCHEMA, readMasonThread } from '../comms/mason-thread.js';
 import { parseSince } from '../fleet/agent-messages.js';
-import { readReceipts } from '../leader/delivery-receipts.js';
 import type { LeaderBriefV1 } from '../fleet/leader-job-brief.js';
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
@@ -139,7 +138,6 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
       const { adapters, kill, paused } = readOwnerCommsStatus(options);
       sendJson(res, 200, {
         ...thread,
-        receipts: readReceipts(options.runsDir, thread.messages.filter(m => m.direction === 'outbound').map(m => m.id)),
         status: {
           kill,
           paused,

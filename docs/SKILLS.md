@@ -8,6 +8,25 @@ diffs, prompts, process output or secret values, and every text field is
 scrubbed and capped at 240 characters. One proposal yields at most one card,
 and later revisions of the same skill replace earlier ones in the list.
 
+## Shadow recovery candidates
+
+On the same self-improvement cadence as the reward-signal sync, the resident
+daemon's `skill-nudge` off-tick job folds the tail of the fleet jobs ledger
+(`<runs>/metrics/jobs.jsonl`) into candidate skill cards
+(`syncSkillNudgesFromJobsLedger` in `src/core/fleet/skill-nudge.ts`). The fold
+uses only recorded evidence: launch and batch-claim attempts, bounded
+launch-failure receipts, finish-row failure classifications, recut-admission
+decisions, revert evidence, and terminal outcome phases (MERGED, CLOSED,
+DONE-NOOP, CANCELLED). A merged, non-reverted job that needed a retry, a
+recut, or recovered a failure class seen on three earlier failed jobs seeds
+one bounded draft card.
+
+These cards are `candidate`/`imported` shadow records: they persist to the
+same card ledger, are deduplicated by content hash across ticks, and stay out
+of verified selection until a human or a verified pathway promotes them.
+Unresolved outcomes, degraded corpora and unreadable ledgers produce no
+cards — unknown stays unknown.
+
 ## See what was learned
 
 ```bash

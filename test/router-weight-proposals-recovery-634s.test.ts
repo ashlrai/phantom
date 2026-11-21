@@ -392,6 +392,65 @@ describe('outcome-quality evidence', () => {
   });
 });
 
+describe('unknown-outcome resolution', () => {
+  // Finish rows carry empty/exit_code/failure_class; the fold keeps them on
+  // the outcome and the report resolves the merged:null cohort with them.
+  const finishRow = (job: string, extra: Record<string, unknown>): object =>
+    ({ job, lane: 'alpha', work_class: 'code', event: 'finish', ...extra });
+
+  it('counts empty finishes, nonzero exits and failure classes inside the unknown cohort', async () => {
+    writeLedger([
+      ...merged(20),
+      // Three crashed-empty runs: every signal overlaps on the same jobs.
+      ...[0, 1, 2].map(i => finishRow(`synthetic-unq-crash-${i}`, { empty: true, exit_code: 1, failure_class: 'quota' })),
+      // Two nonzero exits without an empty verdict or class.
+      ...[0, 1].map(i => finishRow(`synthetic-unq-exit-${i}`, { exit_code: 2 })),
+      // One classified failure without a usable exit code.
+      finishRow('synthetic-unq-class', { failure_class: 'authentication' }),
+      // Four jobs with no finish signal at all — in flight or awaiting a verdict.
+      ...[0, 1, 2, 3].map(i => event(`synthetic-unq-open-${i}`, 'alpha', 'code', 'VERIFIED')),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 10, unclassified_outcomes: 0,
+      unknown_empty: 3, unknown_nonzero_exit: 5, unknown_unresolved: 4,
+      unknown_failure_classes: [
+        { failure_class: 'quota', jobs: 3 },
+        { failure_class: 'authentication', jobs: 1 },
+      ],
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('unknown resolution: empty=3 nonzero_exit=5 unresolved=4');
+    expect(out).toContain('failure_classes=quota:3,authentication:1');
+  });
+
+  it('never counts finish signals from the known cohort as unknown resolution', async () => {
+    writeLedger([
+      // A merged job can still carry a nonzero exit (the PR landed anyway)
+      // and an empty verdict on an earlier attempt — neither is unknown.
+      ...Array.from({ length: 20 }, (_, i) => event(`synthetic-known-${i}`, 'alpha', 'code', 'MERGED',
+        i === 0 ? { empty: true, exit_code: 1, failure_class: 'quota' } : { empty: false, exit_code: 0 })),
+      event('synthetic-unq-clean', 'alpha', 'code', 'VERIFIED', { empty: false, exit_code: 0 }),
+    ]);
+    const { report } = await runJson();
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 1,
+      unknown_empty: 0, unknown_nonzero_exit: 0, unknown_unresolved: 1,
+      unknown_failure_classes: [],
+    });
+  });
+
+  it('reports null resolution counts when the ledger was not read', async () => {
+    const { code, report } = await runJson();
+    expect(code).toBe(1);
+    expect(report).toMatchObject({
+      status: 'unavailable',
+      unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null, unknown_unresolved: null,
+    });
+  });
+});
+
 describe('missing, unreadable and oversized input', () => {
   it('reports a missing ledger as unavailable, never as an empty measurement', async () => {
     const { code, report } = await runJson();

@@ -68,6 +68,19 @@ export interface RouterOutcome {
    */
   cost_usd: number | null;
   wall_s: number | null;
+  /**
+   * Finish-row productivity verdicts, newest explicit row wins like cost_usd
+   * and wall_s. `empty` is the boolean a finish row records for its diff
+   * check (true = the run produced no diff); `exit_code` is the worker's
+   * recorded exit status — negative values are signal exits and stay
+   * recorded; `failure_class` is the bounded identifier-shaped failure label
+   * a finish row classified (values outside that shape are skipped, never
+   * guessed). All stay null when no jobs row recorded them — unknown, never
+   * inferred from merged state, PR URLs or event names.
+   */
+  empty: boolean | null;
+  exit_code: number | null;
+  failure_class: string | null;
   /** The lane+model's pass^k (passPowK) from the latest eval.lane-scores.v1 projection; null when unknown. */
   passk: number | null;
 }
@@ -161,6 +174,14 @@ const str = (r: Row, ...keys: string[]): string | null => {
 };
 const num = (v: unknown): number | null => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 const count = (v: unknown): number | null => Number.isSafeInteger(v) && (v as number) >= 0 ? v as number : null;
+/** Exit statuses are safe integers of either sign — dispatchd records signal exits as negatives. */
+const exitStatus = (v: unknown): number | null => Number.isSafeInteger(v) ? v as number : null;
+/** failure_class joins only bounded identifier-shaped labels; anything else is skipped, never recorded raw. */
+const FAILURE_CLASS = /^[a-z0-9][a-z0-9_.-]{0,127}$/;
+const failureClass = (r: Row): string | null => {
+  const v = str(r, 'failure_class', 'failureClass');
+  return v !== null && FAILURE_CLASS.test(v) ? v : null;
+};
 
 // Revert evidence uses the same field vocabulary the fleet ledger readers
 // already honor: event names (event/type/kind), terminal state fields
@@ -296,7 +317,8 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     if (!j) { unattached++; continue; }
     const o: RouterOutcome = outcomes.get(j) ?? {
       schema: 'router.outcome.v1', job_id: j, lane: null, model: null, tier: null, work_class: null,
-      merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null, passk: null,
+      merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
+      empty: null, exit_code: null, failure_class: null, passk: null,
     };
     o.lane = str(r, 'lane', 'pool', 'arm') ?? o.lane;
     o.model = str(r, 'model') ?? o.model;
@@ -328,6 +350,9 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     if (typeof r['ci_first_pass'] === 'boolean') o.ci_first_pass = r['ci_first_pass'];
     o.cost_usd = num(r['cost_usd']) ?? num(r['usd']) ?? num(r['cost']) ?? o.cost_usd;
     o.wall_s = num(r['wall_s']) ?? o.wall_s;
+    if (typeof r['empty'] === 'boolean') o.empty = r['empty'];
+    o.exit_code = exitStatus(r['exit_code']) ?? exitStatus(r['exitCode']) ?? o.exit_code;
+    o.failure_class = failureClass(r) ?? o.failure_class;
     const f = r['review_findings'];
     if (f !== null && typeof f === 'object' && !Array.isArray(f)) {
       const fixed = count((f as Row)['fixed']), rejected = count((f as Row)['rejected']), ignored = count((f as Row)['ignored']);

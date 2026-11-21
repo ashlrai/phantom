@@ -85,6 +85,24 @@ export interface RouterWeightProposalSet {
   known_outcomes: number;
   unknown_outcomes: number;
   unclassified_outcomes: number;
+  /**
+   * Finish productivity signals inside the merged:null cohort — the same
+   * classified outcomes `unknown_outcomes` counts, so these explain why the
+   * merge verdict is missing rather than adding new jobs. `unknown_empty`
+   * counts jobs whose newest finish recorded `empty: true` (the run produced
+   * no diff); `unknown_nonzero_exit` counts jobs whose newest `exit_code`
+   * was not 0 — the two overlap, since a crashed run usually diffs nothing.
+   * `unknown_failure_classes` tallies the recorded `failure_class` labels,
+   * top entries first. `unknown_unresolved` is the remainder with no
+   * finish failure signal — finished cleanly and awaiting a merge verdict,
+   * or still in flight; the ledger simply records no terminal productivity
+   * outcome for it. All are counts of recorded evidence over the retained
+   * window, so 0 is a real measurement.
+   */
+  unknown_empty: number;
+  unknown_nonzero_exit: number;
+  unknown_failure_classes: { failure_class: string; jobs: number }[];
+  unknown_unresolved: number;
 }
 
 /** Running tallies for the outcome-quality signals; every count starts at zero and means stay sums until emitted. */
@@ -141,9 +159,25 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
 
   const groups = new Map<string, { work_class: string; lane: string; known: number; merged: number; reverted: number; tally: WeightEvidenceTally }>();
   let known = 0, unknown = 0, unclassified = 0;
+  let unknownEmpty = 0, unknownNonzeroExit = 0, unknownUnresolved = 0;
+  const failureClasses = new Map<string, number>();
   for (const o of outcomes) {
     if (!isRouteId(o.work_class) || !isRouteId(o.lane)) { unclassified++; continue; }
-    if (o.merged === null) { unknown++; continue; }
+    if (o.merged === null) {
+      unknown++;
+      // Finish productivity evidence explains the missing merge verdict:
+      // empty:true means the run produced no diff, a nonzero exit_code means
+      // the worker failed, and failure_class names the classified cause. A
+      // job carrying none of them has no recorded finish failure — it
+      // finished cleanly awaiting a verdict or is still in flight.
+      const empty = o.empty === true;
+      const nonzeroExit = o.exit_code !== null && o.exit_code !== 0;
+      if (empty) unknownEmpty++;
+      if (nonzeroExit) unknownNonzeroExit++;
+      if (o.failure_class !== null) failureClasses.set(o.failure_class, (failureClasses.get(o.failure_class) ?? 0) + 1);
+      if (!empty && !nonzeroExit && o.failure_class === null) unknownUnresolved++;
+      continue;
+    }
     const key = JSON.stringify([o.work_class, o.lane]);
     const g = groups.get(key) ?? { work_class: o.work_class, lane: o.lane, known: 0, merged: 0, reverted: 0, tally: freshTally() };
     g.known++;
@@ -176,7 +210,13 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     const proposed = clamp(baseline + clamp(g.merged / g.known - baseline, -maxShift, maxShift), 0, 1);
     return { ...base, status: 'proposed', reason: null, proposed_weight: round6(proposed), shift: round6(proposed - baseline) };
   });
-  return { proposals, known_outcomes: known, unknown_outcomes: unknown, unclassified_outcomes: unclassified };
+  const topFailureClasses = [...failureClasses.entries()]
+    .map(([failure_class, jobs]) => ({ failure_class, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.failure_class.localeCompare(b.failure_class))
+    .slice(0, 10);
+  return { proposals, known_outcomes: known, unknown_outcomes: unknown, unclassified_outcomes: unclassified,
+    unknown_empty: unknownEmpty, unknown_nonzero_exit: unknownNonzeroExit,
+    unknown_failure_classes: topFailureClasses, unknown_unresolved: unknownUnresolved };
 }
 
 export interface RouterWeightProposalReport {
@@ -202,6 +242,16 @@ export interface RouterWeightProposalReport {
   known_outcomes: number | null;
   unknown_outcomes: number | null;
   unclassified_outcomes: number | null;
+  /**
+   * Why the merged:null cohort has no merge verdict, from finish-row
+   * evidence — see RouterWeightProposalSet. Null when the ledger was not
+   * read; counts are then unknown, never zero.
+   */
+  unknown_empty: number | null;
+  unknown_nonzero_exit: number | null;
+  /** Top recorded failure_class labels inside the unknown cohort, by jobs; empty when none recorded. */
+  unknown_failure_classes: { failure_class: string; jobs: number }[] | null;
+  unknown_unresolved: number | null;
   proposals: RouterWeightProposal[];
 }
 
@@ -213,10 +263,14 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     source: ROUTER_WEIGHT_PROPOSAL_SOURCE, ledger: { state: read.state, path: read.path }, truncated: read.truncated,
     market_state: read.market_state, market_truncated: read.market_truncated, bounds };
   if (read.state !== 'read') {
-    return { ...head, status: 'unavailable', known_outcomes: null, unknown_outcomes: null, unclassified_outcomes: null, proposals: [] };
+    return { ...head, status: 'unavailable', known_outcomes: null, unknown_outcomes: null, unclassified_outcomes: null,
+      unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null, unknown_unresolved: null, proposals: [] };
   }
   const set = proposeRouterWeights(read.outcomes, { ...opts, minSamples: bounds.min_samples, maxShift: bounds.max_shift });
   const status = set.proposals.some(p => p.status === 'proposed') ? 'proposed' : 'insufficient-evidence';
   return { ...head, status, known_outcomes: set.known_outcomes, unknown_outcomes: set.unknown_outcomes,
-    unclassified_outcomes: set.unclassified_outcomes, proposals: set.proposals };
+    unclassified_outcomes: set.unclassified_outcomes,
+    unknown_empty: set.unknown_empty, unknown_nonzero_exit: set.unknown_nonzero_exit,
+    unknown_failure_classes: set.unknown_failure_classes, unknown_unresolved: set.unknown_unresolved,
+    proposals: set.proposals };
 }

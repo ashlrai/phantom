@@ -86,9 +86,22 @@ lifecycle transition. Missing node storage is never initialized by observation.
 
 ```sh
 phm bots seats --json
+phm bots handoffs --json
 phm bots handoff --seat devin-review --json
 phm bots handoff --seat devin-review --apply --json
 ```
+
+`phm bots handoffs` is the fleet-wide dry-run: one read reports every roster
+seat's projected state, whether `planSeatHandoff`/`applySeatHandoff` would
+accept it (`eligible`), and the pending handoff records it would journal —
+the same deterministic ids a later per-seat apply dedupes on. Ineligible seats
+(active seats, and idle seats with no open work or handoff history) report
+`eligible: false` with no records instead of erroring, so the whole roster's
+handoff posture reads in one call. It writes nothing: no state transitions,
+releases, journals or notices. `phm comms inbox` lists each eligible seat
+with pending handoff records as a `seat-handoff` item — the same plan read —
+so pending seat work surfaces in the unified pending view without a second
+lookup.
 
 Handoff defaults to a dry-run plan. It refuses active seats; only draining seats
 or idle seats with work may hand off (completed handoffs allow harmless replay).
@@ -142,12 +155,17 @@ poll wake targets. Neither projection grants membership or authentication.
 Direct messaging still requires the existing bus identities/aliases and channel
 membership; the seat projection does not silently register them.
 
-`sendSeatMessage` sends to another configured participant through the unified
-bus, or to the owner through an injected/configured owner thread. A seat-to-seat
-message resolves the bus identity registry and appends under the same fleet root
+`phm bots message --from <seat> --to <seat|owner> --text <text>` reaches
+`sendSeatMessage`: both ends accept a seat id or participantId, and `owner`
+posts an owner-thread notice. `sendSeatMessage` sends to another configured
+participant through the unified bus, or to the owner through the configured
+owner thread (injected options win in tests). A seat-to-seat message resolves
+the bus identity registry and appends under the same fleet root
 (`<home>/.ashlr/fleet`) and clock the seat's claims and handoff notices use;
-`runsRoot` places only the wake hint queue. Unknown seats and secret-shaped
-text are refused. Provider adapter messaging is separate.
+`runsRoot` places only the wake hint queue. Owner notices use the same
+settings/runs construction as handoff notices and mirror onto that fleet root.
+Unknown seats and secret-shaped text are refused. Provider adapter messaging
+is separate.
 
 The console's `/bots` Seats section reads `GET /api/bots/seats`: display name,
 kind/provider, state, admission, quota evidence, current claims/jobs and recent

@@ -9,5 +9,5 @@ export function SpendDownCard() {
   const refetch = useRefetch(spendDownQuery);
   usePollWhileVisible(refetch, 60_000);
   if (!query.data || query.data.pools.length === 0) return null;
-  return <Section title="Spend down" footer="Same readings as phm pools spenddown."><SpendDownChart data={query.data} /></Section>;
+  return <Section title="Pools" footer="Same readings as phm pools spenddown."><SpendDownChart data={query.data} /></Section>;
 }

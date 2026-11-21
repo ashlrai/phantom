@@ -320,6 +320,9 @@ export const workJobSchema = z.object({
   dispatch: workDispatchSchema.optional(),
   claimKeys: z.array(claimKeySchema).max(16),
   status: z.enum(WORK_STATUSES),
+  /** The newest status's optional detail — why the job sits in its current
+   * state. A newer status without one clears it; it is never accumulated. */
+  detail: text.max(1024).optional(),
   updatedAt: epochMs,
 }).strict();
 export type WorkJob = z.infer<typeof workJobSchema>;

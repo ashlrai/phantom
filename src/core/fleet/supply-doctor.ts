@@ -18,6 +18,8 @@ import { lstat, open, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { LostLaunch } from './lost-launches.js';
+import { readDispatchEventsLog } from './dispatch-events-read.js';
+import { computeLanesHeld, type LaneHeldRow } from './lane-held.js';
 import { parseDoneName, parseIngestedTsv } from './drop-job-fate.js';
 
 export const SUPPLY_DOCTOR_SCHEMA = 'doctor.supply.v1';
@@ -48,6 +50,8 @@ export interface SupplyDoctorReport {
   candidates: { state: 'known'; noChange: number; published: number } | { state: 'unknown'; why: string };
   /** Jobs that launched in 24 h and vanished (no finish or publish, or a failed launch); newest 5. Unknown when the job metrics cannot be read. */
   lost_launches: { state: 'known'; count: number; newest: LostLaunch[] } | { state: 'unknown'; why: string };
+  /** Lanes whose own wrapper held every launch in the last 60 min (3+ held, 0 finishes); unknown when the event log is unreadable. */
+  selfHeld: { state: 'known'; windowMinutes: number; lanes: LaneHeldRow[] } | { state: 'unknown'; why: string };
   verdict: string;
 }
 
@@ -57,6 +61,8 @@ export interface SupplyDoctorOptions {
   /** true = autofill off, false = on, null = unreadable. Defaults to the live config. */
   readOff?: (runsDir: string) => Promise<boolean | null>;
   /** Candidate counts by source. Defaults to the gap finder (read only, no propose). */
+  /** Dispatch event log text (null = unreadable). Defaults to the runs-dir log. */
+  readEvents?: (runsDir: string) => Promise<string | null>;
   readCandidates?: (runsDir: string) => Promise<{ noChange: number; published: number } | null>;
   /** Lost launches in 24 h, newest first. Defaults to the lost-launch finder; null when unreadable. */
   readLost?: (runsDir: string, nowMs: number) => Promise<LostLaunch[] | null>;
@@ -146,13 +152,16 @@ export async function readSupplyDoctor(opts: SupplyDoctorOptions = {}): Promise<
     const r = await (await import('./lost-launches.js')).readLostLaunches(24, { runsDir: dir, now: () => at });
     return r.known ? r.lost : null;
   });
-  const [ingested, rejected, off, found, lost] = await Promise.all([
+  const readEvents = opts.readEvents ?? readDispatchEventsLog;
+  const [ingested, rejected, off, found, lost, events] = await Promise.all([
     readIngested(join(runsDir, 'leader', 'drop', 'ingested.tsv'), nowMs),
     readRejected(join(runsDir, 'leader', 'drop', 'done'), nowMs),
     readOff(runsDir).catch(() => null),
     readCandidates(runsDir).catch(() => null),
     readLost(runsDir, nowMs).catch(() => null),
+    readEvents(runsDir).catch(() => null),
   ]);
+  const held = computeLanesHeld(events, nowMs);
   const gap = ingested.state === 'known' ? ingested.sources.find(s => s.source === 'gap') : undefined;
   const selfSupply = {
     landed24h: ingested.state === 'known' ? gap?.count24h ?? 0 : null,
@@ -164,6 +173,9 @@ export async function readSupplyDoctor(opts: SupplyDoctorOptions = {}): Promise<
     note: 'Runs once per self-tick when a lane is starved, applying, and autofill is on.',
   };
   const report = { schema: SUPPLY_DOCTOR_SCHEMA, generatedAt: new Date(nowMs).toISOString(), runsDir, ingested, rejected, hook, selfSupply,
+    selfHeld: held.source === 'ok'
+      ? { state: 'known', windowMinutes: held.windowMinutes, lanes: held.lanes.filter(r => r.selfHeld) }
+      : { state: 'unknown', why: 'dispatch event log unreadable' },
     candidates: found ? { state: 'known', ...found } : { state: 'unknown', why: 'job metrics unreadable' },
     lost_launches: lost ? { state: 'known', count: lost.length, newest: lost.slice(0, 5) } : { state: 'unknown', why: 'job metrics unreadable' } } as SupplyDoctorReport;
   report.verdict = verdictOf(report);
@@ -190,6 +202,9 @@ export function supplyDoctorLines(report: SupplyDoctorReport): string[] {
     lines.push(`Lost launches in 24 h: ${report.lost_launches.count} (newest ${report.lost_launches.newest.length}; see "phm jobs lost").`);
     for (const l of report.lost_launches.newest) lines.push(`  ${l.job} (${l.lane ?? 'unknown lane'}): ${l.reason}`);
   } else lines.push('Lost launches in 24 h: 0.');
+  if (report.selfHeld.state === 'unknown') lines.push(`Self-held lanes: unknown (${report.selfHeld.why}).`);
+  else if (!report.selfHeld.lanes.length) lines.push('Self-held lanes: none.');
+  else for (const r of report.selfHeld.lanes) lines.push(`Self-held lane: ${r.reason}; skipped until a launch there finishes.`);
   lines.push(`Self-tick gap hook: ${report.hook.enabled === null ? 'unknown' : report.hook.enabled ? 'on' : 'off'}.`);
   return lines;
 }

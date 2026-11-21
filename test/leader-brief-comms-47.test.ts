@@ -36,6 +36,24 @@ describe('commsBriefFacts', () => {
     expect(r.blocker).toBeNull();
   });
 
+  it('lists owner-thread messages awaiting a recorded reply with the oldest age', () => {
+    const since = new Date(NOW - 40 * 60_000).toISOString();
+    const r = commsBriefFacts(inbox({ 'owner-thread': rep('healthy', 2) }, [
+      { source: 'owner-thread', since }, { source: 'owner-thread', since: new Date(NOW - 5 * 60_000).toISOString() },
+    ]));
+    expect(r.line).toBe('Comms: 2 owner messages awaiting reply (oldest 40m)');
+    expect(r.blocker).toBeNull();
+  });
+
+  it('lists comms requests awaiting an answer with the oldest age', () => {
+    const since = new Date(NOW - 40 * 60_000).toISOString();
+    const r = commsBriefFacts(inbox({ requests: rep('healthy', 2) }, [
+      { source: 'requests', since }, { source: 'requests', since: new Date(NOW - 5 * 60_000).toISOString() },
+    ]));
+    expect(r.line).toBe('Comms: 2 comms requests awaiting an answer (oldest 40m)');
+    expect(r.blocker).toBeNull();
+  });
+
   it('names a degraded or unavailable source as unreadable, not zero', () => {
     const r = commsBriefFacts(inbox({ drafts: rep('unavailable'), imessage: rep('degraded') }));
     expect(r.line).toBe('Comms: imessage unreadable, drafts unreadable');
@@ -48,6 +66,11 @@ describe('commsBriefFacts', () => {
       [{ source: 'gmail', title: 'mason@ashlr.ai: 120 unread, target 50' }],
     ));
     expect(r.line).toBe('Comms: 2 Needs-you, 3 drafts to approve, mason@ashlr.ai 120/50 unread');
+  });
+
+  it('lists stuck email replies awaiting attention', () => {
+    expect(commsBriefFacts(inbox({ 'email-outbox': rep('healthy', 2) })).line).toBe('Comms: 2 stuck email replies');
+    expect(commsBriefFacts(inbox({ 'email-outbox': rep('healthy', 1) })).line).toBe('Comms: 1 stuck email reply');
   });
 
   it('tolerates an unknown extra source key', () => {

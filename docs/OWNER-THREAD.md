@@ -20,6 +20,28 @@ MCP tools: `ashlr_comms_thread` (read) and `ashlr_comms_send_owner` (append;
 KILL refuses it). `ashlr_comms` includes the same adapter rollup as
 `phm comms status --json`.
 
+The thread read joins the per-channel delivery receipts written at send time:
+`receipts` maps each outbound message id to `{ channel: { state, reason? } }`
+with `delivered`, `pending` or `failed`. A channel with no record is unknown —
+never reported as delivered — and the human `phm comms thread` output appends
+`[channel:state ...]` to outbound lines that have receipts. The receipt journal
+is bounded, so older messages simply have no entry.
+
+The same read reports which live inbound messages still have no recorded
+reply: `awaitingReply` lists their message ids (`m<n>`), or `null` when the
+thread is unreadable — unknown stays unknown, never an empty list. `phm comms
+status` reports the count as `awaitingReply` (`null` when unreadable) and the
+human `phm comms thread` output appends `[awaiting reply]` to those inbound
+lines. Its `messages` count follows the same rule — the real total, or `null`,
+never `0`, when the thread cannot be read. A message counts as answered once
+any recorded outbound reply cites its idempotency key — including a reply
+whose channel deliveries all failed, since delivery state stays with the
+receipts — while proactive notices never clear the mark. `phm comms inbox`
+lists each awaiting inbound as an `owner-thread` item (kind `owner-message`)
+with `phm comms thread` and `phm comms send-owner --reply-to <key>` deep
+links, so the unified pending view and the Leader's comms brief see the same
+mark this status reports.
+
 ## Rotation, history and pulling
 
 When the live thread passes its message or byte cap it archives the oldest

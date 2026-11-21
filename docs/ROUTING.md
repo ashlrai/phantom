@@ -304,7 +304,9 @@ same bound of `<runs-dir>/metrics/api-spend.jsonl` and
 `<runs-dir>/metrics/work-market.jsonl`, and reports one
 `router.outcome.v1` record per job in that window, newest
 first: merge and revert state, CI first pass, review findings, cost, wall
-time, `work_class` and the advisory `passk` join from
+time, `work_class`, the finish-row productivity verdicts (`empty`,
+`exit_code`, `failure_class` — explicit row fields only, `null` when
+unrecorded) and the advisory `passk` join from
 `eval.lane-scores.v1`. `work_class` is the class a jobs row recorded when
 one exists; otherwise it is the job's newest `work-market.v1`
 `route_decision` class — the market's own classification of the job,
@@ -359,7 +361,16 @@ outcome recorded as reverted counts as known evidence (`reverted_n` reports
 the count) but never as a held merge. Groups below the evidence
 floor are refused and keep their baseline; `merged: null` outcomes count as
 unknown, never as failures, and jobs with no recorded class count as
-unclassified. When the ledger exceeds the retained tail the
+unclassified. The report also resolves *why* the unknown cohort has no
+merge verdict, from the same finish-row evidence: `unknown_empty` counts
+jobs whose newest finish recorded `empty: true` (the run produced no
+diff), `unknown_nonzero_exit` counts jobs whose newest `exit_code` was
+not 0 — the two overlap, since a crashed run usually diffs nothing —
+`unknown_failure_classes` tallies the recorded `failure_class` labels
+(top entries first), and `unknown_unresolved` is the remainder with no
+finish failure signal (finished cleanly awaiting a verdict, or still in
+flight). These are counts over the retained window; when the ledger was
+not read they are `null`, never zero. When the ledger exceeds the retained tail the
 report carries `truncated: true` and every count covers the newest bytes
 only; `market_state`/`market_truncated` report the decision journal's
 health the same way. Each proposal also carries an `evidence` block folded

@@ -12,6 +12,8 @@
  *     reading: paid, credit, stale or missing readings all count as paid,
  *   - the job needs a capability the lane is declared to lack (for example
  *     gh on claude). A gh context pack covers a read-only gh need.
+ * A lane whose recent finished jobs mostly ended empty (`verdicts`, "low-yield")
+ * is skipped with a plain reason, unless the job names that lane.
  * Yield: when `yields` is given, a row bigger than "sm" prefers lanes whose
  * recent yield for that size is at least 0.5 and that have room; an unknown
  * lane (too few jobs) is neutral and comes next; a known low-yield lane comes
@@ -23,9 +25,10 @@
 import { ZERO_PAID_LANES, type ThroughputWindow } from '../daemon/count-preferences.js';
 import { laneLacks, routeSkipCode, type CapabilityNeed, type LaneCapabilityOverrides, type RouteSkipCode } from './lane-capabilities.js';
 import { laneYieldFor, YIELD_HIGH, type LaneYieldRow } from './lane-yield-weight.js';
+import { lowYieldReason, type LaneYieldStats } from './lane-yield-verdict.js';
 import type { LaneTargetRow, LaneTargetsV1 } from './runs-lane-targets.js';
 
-export type LaneSkipKind = 'snapshot' | 'held' | 'no-target' | 'full' | 'paid-unproven' | 'excluded' | 'lacks-capability';
+export type LaneSkipKind = 'snapshot' | 'held' | 'no-target' | 'full' | 'paid-unproven' | 'excluded' | 'lacks-capability' | 'low-yield';
 
 /** `code` is set only for `lacks-capability`, e.g. "route_skip: lane lacks gh". */
 export interface LaneSkip { lane: string; kind: LaneSkipKind; reason: string; code?: RouteSkipCode }
@@ -50,6 +53,10 @@ export interface LaneRouteInput {
   size?: string;
   /** Recent yield rows (computeLaneYield). Absent means every lane is neutral. */
   yields?: readonly LaneYieldRow[];
+  /** Per-lane finished-job stats (laneYield). A "low-yield" lane is skipped unless it is `named`. */
+  verdicts?: Readonly<Record<string, LaneYieldStats>>;
+  /** The lane the job explicitly asks for; it is never skipped as low-yield. */
+  named?: string;
 }
 
 export interface LaneRouteDecision {
@@ -88,6 +95,8 @@ export function routeToEligibleLane(input: LaneRouteInput): LaneRouteDecision {
   for (const row of input.targets.lanes) {
     const skip = (kind: LaneSkipKind, reason: string): void => { skipped.push({ lane: row.lane, kind, reason }); };
     if (input.exclude?.includes(row.lane)) { skip('excluded', 'The caller ruled this lane out.'); continue; }
+    const stats = input.verdicts?.[row.lane];
+    if (stats?.verdict === 'low-yield' && input.named !== row.lane) { skip('low-yield', lowYieldReason(row.lane, stats)); continue; }
     const lacks = input.needs?.length ? laneLacks(row.lane, input.needs, input.pack === true, input.capabilities) : null;
     if (lacks) { skipped.push({ lane: row.lane, kind: 'lacks-capability', code: routeSkipCode(lacks), reason: `Lane cannot use ${lacks}.` }); continue; }
     if (laneHoldActive(row, now)) { skip('held', `Lane is held${row.heldReason ? `: ${row.heldReason}` : ''}.`); continue; }

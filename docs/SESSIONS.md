@@ -52,6 +52,23 @@ where pause and stop live. Escape or **Sessions** returns to the tree. The
 conversation is read from `GET /api/verse/fleet/control/session-thread` every
 10 seconds; a server without that read says so and shows no conversation.
 
+An open conversation is followed while it grows. A message that arrives while
+the end of the conversation is on screen scrolls into view. Once you have
+scrolled up to read, the view stays where you are: a **New** rule sits above
+the first message you have not reached and the header shows a count, such as
+**2 new ↓**. Click the count to go to the first new message, or press End to
+go to the newest. Reaching the end clears the count and leaves the rule in
+place until the next message arrives. The first time you open a conversation
+nothing is marked new. Once you have read one to its end, this browser
+remembers that, and the next time you open it (after a reload too) it opens at
+the first message that arrived since, under the same **New** rule and count; a
+message you never scrolled down to is still new the next time. Only a short
+fingerprint of each message is kept, never its text, for the 40 conversations
+read most recently. A line whose words changed, such as a worker's latest
+line, counts as new. When a
+conversation spans more than one day, each day's first message has a heading
+(**Today**, **Yesterday**, or the date).
+
 To see what one session is doing right now, run `phm sessions tail <id>`
 with the job id from the tree. It prints the session's lane, model, start and
 PR, then its last 200 log lines (`--lines N`, 1 to 200); `--follow` streams
@@ -96,6 +113,48 @@ says where a reply would go, and R on a card opens it with the cursor in the
 reply box. "Live log" opens the worker log, where pause and stop live. A server without the read says so and offers the Sessions pane.
 The Leader chat opens this pane on one session: "Conversation" on a routed
 job there shows that job's conversation, and Esc returns to every session.
+
+While a conversation is open, a pane at least 720 px wide keeps every session
+listed on the left: its id, when it last spoke, its state and the newest line
+said. Click a row to read that conversation without going back to the cards.
+J and K move to the next and previous conversation from anywhere except a
+text field. In the list, Up, Down, Home and End move between rows, Enter opens
+one and Esc returns to the cards. A narrower pane shows the conversation
+alone, and J and K still work.
+
+A card or row shows "3 new" when the session holds three more messages than
+when you last had it open, or than when the pane first showed it. The counts
+are kept in this browser, so after a reload or a restart of the app the cards
+show what arrived while the console was closed, and opening a marked
+conversation shows where the new messages start. A session that has left the
+list is forgotten. In a private window the marks last until it is closed. They are counted from each
+conversation's message total, and the read keeps only the newest part of a
+long conversation, so a session whose total has stopped growing shows no mark.
+
+A bar above the cards finds and narrows. Press `/` and type: only the sessions
+holding every word stay, matched against each session's id, lane, model, repo,
+state, summary and the newest messages on its card. Find looks only at the
+sessions on screen and sends no request. Down or Enter moves to the first
+card, Esc clears the words, and the words stay while you open a conversation
+and come back. The Lane and Repo menus and "Running only" narrow the read
+itself, the same way `--lane`, `--repo` and `--live` narrow
+`phm sessions threads`. The read returns at most 40 sessions, so this is how
+you reach one it left out; a line under the bar says how many are not on
+screen. "Running only" leaves out sessions that have finished. The menus list
+the lanes and repos seen since the pane opened. "Every session" removes the
+narrowing. If the server answers for a different narrowing than the one you
+chose, the line says so instead of labelling the cards wrongly. Marks for new
+messages on sessions outside the narrowed list are kept.
+
+The pane opens the way you left it: the words in the find box and the lane,
+repo and "Running only" you narrowed to are kept in this browser, across a
+reload or a restart of the app, until you clear them. Only that view is kept,
+never a session's messages. When a card holds messages that arrived since you
+last looked, a button above the cards says how many conversations do; it or N
+opens the first one, and N again goes on to the next, starting over from the
+top after the last. Beside an open conversation the list is narrowed by the
+same find words (the open conversation always keeps its row), J and K walk
+only the rows listed, and "Show all" brings the rest back.
 
 To read one session as a conversation instead of a log, run
 `phm sessions thread <id>`. The id is `leader`, a job id or a subagent id from

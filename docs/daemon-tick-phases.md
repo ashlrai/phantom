@@ -54,7 +54,10 @@ writes only learning reports and append-only genome entries and does not take
 the outward mutation fence. On the same self-improvement cadence a
 `reward-sync` off-tick job folds the jobs-ledger tail into the append-only
 reward-signal ledger (`src/core/metrics/reward-feed.ts`); it is best-effort,
-never throws, and writes only under `~/.ashlr/metrics`. A job that ignores
+never throws, and writes only under `~/.ashlr/metrics`. A `skill-nudge`
+off-tick job on the same cadence folds the same tail into candidate shadow
+skill cards (`src/core/fleet/skill-nudge.ts`); it writes only candidate
+records under `~/.ashlr/skills`. A job that ignores
 cancellation remains single-flight until its work settles; shutdown cancels
 running jobs with bounded waiting. Once ticks keep reflection in-tick;
 dry-run ticks skip maintenance.
@@ -129,6 +132,7 @@ and persists the outcome in a `finally`, whatever `tick()` did.
 | `ancillary`      | 5 min            | `TICK_PHASE_MAINTENANCE_MS`                             |
 | `reflection`     | 3 min            | `TICK_PHASE_REFLECTION_MS`; separate resident off-tick job |
 | `reward-sync`    | 1 min            | `TICK_PHASE_REWARD_SYNC_MS`; resident off-tick reward-ledger feed |
+| `skill-nudge`    | 1 min            | `TICK_PHASE_SKILL_NUDGE_MS`; resident off-tick shadow skill-card feed |
 | `ci-rerun`       | 5 min            | `TICK_PHASE_CI_RERUN_MS`; optional resident off-tick flake maintenance |
 | `auto-merge`, `proposal-repair` | 5 min | `TICK_PHASE_MAINTENANCE_MS`                   |
 | `capacity`       | 30 s             | `TICK_PHASE_CAPACITY_MS`; internally probed             |
