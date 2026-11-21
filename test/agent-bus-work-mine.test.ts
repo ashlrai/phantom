@@ -337,9 +337,12 @@ describe('readBusWorkMine', () => {
     const result = readBusWorkMine('atlas', options);
     expect(result.status).toBe('ok');
     if (result.status !== 'ok') throw new Error('unreachable');
-    expect(result.announced).toEqual({ status: 'refused', reason: 'duplicate-job', receipts: 2 });
+    // The refused feed names the retained receipt that poisoned it.
+    expect(result.announced).toEqual({ status: 'refused', reason: 'duplicate-job', receipts: 2,
+      receipt: { id: 'post-dup-2', receivedAt: 1_000, ttl: 120_000 } });
     // The jobs section reports the same feed state.
-    expect(result.jobs).toMatchObject({ status: 'refused', reason: 'duplicate-job' });
+    expect(result.jobs).toMatchObject({ status: 'refused', reason: 'duplicate-job',
+      receipt: { id: 'post-dup-2' } });
   });
 
   it('lists addressed mail with claim handles and resumes the page without loss', async () => {

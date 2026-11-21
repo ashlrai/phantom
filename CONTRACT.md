@@ -1661,11 +1661,16 @@ reject ASCII controls including DEL. Claims grant no execution authority.
 `projectBusWorkFeed(receipts: readonly unknown[], participants?: readonly Participant[], providerFor?: WorkFeedProviderFor, ownerKeyFor?: WorkFeedOwnerKeyFor)`
 in `src/core/agents/bus-work-feed.ts` returns `WorkFeedResult`: either
 `{status:'ok', feed:{v:2,jobs:WorkJob[]}, citations:ReadonlyMap<string,WorkFeedCitation>}`
-or `{status:'refused',reason}`. `WorkFeedCitation` is `{post, status}` — the
+or `{status:'refused',reason, receipt?}`. `WorkFeedCitation` is `{post, status}` — the
 wire ids of the retained `work.post` receipt that announced the job and of
 the newest accepted `work.status` receipt (`status` is null while none has
 moved it), keyed by job id, so every job cites the envelopes its state came
-from; `agents bus show <id>` resolves them.
+from; `agents bus show <id>` resolves them. `receipt` is a
+`WorkFeedRefusalReceipt` (`{id, receivedAt, ttl}` — the wire id, receipt time
+and TTL of the retained envelope whose processing refused the projection),
+present on the body-level refusals (`invalid-body`, `missing-provider`,
+`duplicate-job`, `owner-mismatch`) and absent when no single well-formed
+receipt is the cause (`invalid-receipts`, `invalid-participants`).
 It validates at most 1024 retained receipts in strictly increasing cursor order;
 legacy and unrelated bodies stay opaque. Posts start queued with `owner=from`,
 `to` set to the announcement envelope's routing label, and the announcement's
@@ -1691,7 +1696,8 @@ answer 503.
 
 `readBusWorkFeed({root?, now?, claims?, participants?, providerFor?, ownerKeyFor?})` in `src/core/agents/bus-work-feed-read.ts`
 pages the bounded bus inbox without writes and returns ok/refused/unavailable/
-retryable/invalid with receipt count and `asOf`. On `ok` each job is a
+retryable/invalid with receipt count and `asOf`; a `refused` result carries
+the projection's `receipt` (`WorkFeedRefusalReceipt`) when it named one. On `ok` each job is a
 `BusWorkFeedJob` (`WorkJob` plus `postId` — the announcing `work.post`
 envelope's wire id — and `statusId` — the newest accepted `work.status`
 envelope's wire id, null while none has moved the job), so feed consumers can
@@ -1725,7 +1731,8 @@ exact-label matching). `formatBusWorkFeed(result)` renders the shared human
 lines — each job as `<id> <status> "<title>" detail="<why>" owner=… keys=<claim keys> updated=… post=<postId> [status=<statusId>]`
 with title, detail and keys scrubbed, single-lined and display-clipped (JSON
 keeps the full values; `detail=` and `status=` appear only when present, `post=`
-always) — both feed CLIs use them, and both accept `--to <label>`, `--owner
+always) — a refused read's footer adds `receipt=<id>` when the projection
+blamed a retained envelope — both feed CLIs use them, and both accept `--to <label>`, `--owner
 <agent>` and `--job <id>` beside `--status`. `phm fleet work-feed [--claims]
 [--to <label>] [--owner <agent>] [--job <id>]` and
 `phm agents bus work feed [--status] [--claims] [--to <label>] [--owner
@@ -1818,7 +1825,8 @@ claims join, and `claimable` is `true` only on a provably free key, `false`
 only when every declared key is provably held, `null` when coverage is
 `truncated` or `unknown` — `busWorkMineJobAnnotation(job, held, coverage,
 addressed, announced?)` is the exported pure rule. A non-ok feed collapses the section to
-its own status (`refused` keeps `reason`/`receipts`). `announced` is the
+its own status (`refused` keeps `reason`/`receipts` and the blamed `receipt`
+when the projection named one). `announced` is the
 outbound side of the same feed read: every job whose `owner` label resolves
 to the agent under the jobs section's owner matcher that has not reached
 `done` or `terminated`, newest update first, capped at the first 50 shown
@@ -2042,7 +2050,8 @@ read-only probe over the five dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
 null when unreadable), the wake queue (`state` plus the observed hint count,
 null unless `ok`), the shared coordination table (`coordinationSummary`) and
-the work-feed projection (job count, or the refusal `reason`). Each section
+the work-feed projection (job count, or the refusal `reason` plus the blamed
+receipt's wire id as `receipt` when the projection named one). Each section
 reports its own real state, a failed probe degrades only its own section, and
 the read never throws, writes or takes a lock; unknown stays null, never zero.
 See [Unified bus](docs/AGENT-BUS.md#unified-bus-identities-dms-channels-handoffs-and-wake).

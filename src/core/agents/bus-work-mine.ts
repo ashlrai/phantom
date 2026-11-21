@@ -78,7 +78,7 @@ export type BusWorkMineJobs =
   | { status: 'ok'; holds: BusWorkMineHoldCoverage; open: number; receipts: number;
       truncated: boolean; jobs: BusWorkMineJob[] }
   | { status: 'refused'; reason: Extract<BusWorkFeedReadResult, { status: 'refused' }>['reason'];
-      receipts: number }
+      receipts: number; receipt?: Extract<BusWorkFeedReadResult, { status: 'refused' }>['receipt'] }
   | { status: 'unavailable' | 'retryable' | 'invalid' };
 
 /** The feed jobs the agent announced that have not reached a terminal state. */
@@ -87,7 +87,7 @@ export type BusWorkMineAnnounced =
       /** True only when live announced jobs remain beyond the shown page. */
       truncated: boolean }
   | { status: 'refused'; reason: Extract<BusWorkFeedReadResult, { status: 'refused' }>['reason'];
-      receipts: number }
+      receipts: number; receipt?: Extract<BusWorkFeedReadResult, { status: 'refused' }>['receipt'] }
   | { status: 'unavailable' | 'retryable' | 'invalid' };
 
 export type BusWorkMineWakes =
@@ -304,7 +304,8 @@ export function busWorkMineJobAnnotation(
 }
 
 function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined): BusWorkMineJobs {
-  if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts };
+  if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
+    ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
   if (feed.status !== 'ok') return { status: feed.status };
   const claims = feed.claims;
   const coverage: BusWorkMineHoldCoverage =
@@ -349,7 +350,8 @@ const ANNOUNCED_DONE: ReadonlySet<BusWorkFeedJob['status']> = new Set(['done', '
  * never widens; a non-ok feed reports its own state, never an empty list.
  */
 function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined): BusWorkMineAnnounced {
-  if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts };
+  if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
+    ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
   if (feed.status !== 'ok') return { status: feed.status };
   const ownerMatch = busWorkFeedOwnerMatcher(agent, { root });
   const live = feed.jobs
@@ -771,7 +773,8 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
 
   const jobs = result.jobs;
   if (jobs.status !== 'ok') {
-    lines.push(`jobs=unknown feed=${jobs.status}${jobs.status === 'refused' ? `:${jobs.reason}` : ''}`);
+    lines.push(`jobs=unknown feed=${jobs.status}${jobs.status === 'refused'
+      ? `:${jobs.reason}${jobs.receipt === undefined ? '' : ` receipt=${jobs.receipt.id}`}` : ''}`);
   } else {
     lines.push(`jobs=${jobs.open} shown=${jobs.jobs.length}${jobs.truncated ? '+truncated' : ''} ` +
       `holds=${jobs.holds} receipts=${jobs.receipts}`);
@@ -791,7 +794,8 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
   const announced = result.announced;
   if (announced.status !== 'ok') {
     lines.push(`announced=unknown ${announced.status}` +
-      `${announced.status === 'refused' ? `:${announced.reason}` : ''}`);
+      `${announced.status === 'refused'
+        ? `:${announced.reason}${announced.receipt === undefined ? '' : ` receipt=${announced.receipt.id}`}` : ''}`);
   } else {
     lines.push(`announced=${announced.matched} shown=${announced.items.length}` +
       `${announced.truncated ? '+truncated' : ''}`);

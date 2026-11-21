@@ -1,7 +1,7 @@
 /** Read the bounded local work feed. Labels grant no execution authority. */
 import { BUS_INBOX_MAX_MESSAGES, listBusInboxAfter, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { coordinationRowBlocks, listCoordination, type CoordinationOrigin } from './claim-store.js';
-import { projectBusWorkFeed, type WorkFeedOwnerKeyFor, type WorkFeedProviderFor, type WorkFeedResult } from './bus-work-feed.js';
+import { projectBusWorkFeed, type WorkFeedOwnerKeyFor, type WorkFeedProviderFor, type WorkFeedRefusalReceipt, type WorkFeedResult } from './bus-work-feed.js';
 import { agentAddressMatcher, agentIdentityKeys, readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
 import { scrubSecrets } from '../util/scrub.js';
 import type { Participant, WorkJob } from './bus-v2-schema.js';
@@ -46,7 +46,9 @@ export interface BusWorkFeedJob extends WorkJob {
 
 export type BusWorkFeedReadResult =
   | { status: 'ok'; jobs: BusWorkFeedJob[]; receipts: number; asOf: string; claims?: BusWorkFeedClaims }
-  | { status: 'refused'; reason: Extract<WorkFeedResult, { status: 'refused' }>['reason']; receipts: number; asOf: string }
+  | { status: 'refused'; reason: Extract<WorkFeedResult, { status: 'refused' }>['reason']; receipts: number; asOf: string;
+      /** The retained receipt the projection blamed, when it named one. */
+      receipt?: WorkFeedRefusalReceipt }
   | { status: 'unavailable' | 'retryable' | 'invalid'; asOf: string };
 
 const HOLDS_MAX = 1024;
@@ -255,6 +257,7 @@ export function formatBusWorkFeed(result: BusWorkFeedReadResult): string[] {
   const feed = result.status === 'refused' ? `refused:${result.reason}` : result.status;
   const claimsNote = result.status === 'ok' && result.claims
     ? ` claims=${result.claims.source}${result.claims.truncated ? ':truncated' : ''}` : '';
-  lines.push(`jobs=${result.status === 'ok' ? result.jobs.length : 'unknown'} receipts=${'receipts' in result ? result.receipts : 'unknown'} feed=${feed} as-of=${result.asOf}${claimsNote}`);
+  const receiptNote = result.status === 'refused' && result.receipt !== undefined ? ` receipt=${result.receipt.id}` : '';
+  lines.push(`jobs=${result.status === 'ok' ? result.jobs.length : 'unknown'} receipts=${'receipts' in result ? result.receipts : 'unknown'} feed=${feed}${receiptNote} as-of=${result.asOf}${claimsNote}`);
   return lines;
 }

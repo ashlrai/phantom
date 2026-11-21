@@ -242,7 +242,12 @@ jobs the feed shows `blocked` or `failed` — stuck work needs a decision — or
 open announcements that declare no claim keys, which `work claim` refuses
 `no-claim-keys`; those list with `bus show` / `work feed --job` links and the
 status detail when one exists instead of a claim act — read
-through the same projection as `phm agents bus work feed`), plus agent
+through the same projection as `phm agents bus work feed`), plus a refused
+work feed itself — one high item naming the retained receipt the projection
+blamed (`agents bus show <id>` / `work feed` links, `expiresAt` that
+receipt's TTL deadline; a refusal that names no receipt keeps unknown
+times), since the refusal hides every announced job and refuses the work
+verbs until the receipt expires — plus agent
 conversation threads still waiting on a reply — the same `waiting` threads
 `phm agents conversations --waiting` computes from the one shared
 conversations projection, fleet-wide, each item naming who must answer, how
