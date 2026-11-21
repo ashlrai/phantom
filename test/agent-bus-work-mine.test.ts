@@ -6,7 +6,7 @@ import { createAgentChannel, registerAgentIdentity, stableAgentId } from '../src
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { announceWork, readAgentInbox, sendDirectMessage, sendHandoff, sendWakeRequest,
   updateWorkStatus } from '../src/core/agents/bus-unified.js';
-import { busWorkMineJobAnnotation, formatBusWorkMine, readBusWorkMine,
+import { busWorkMineAnnouncedAnnotation, busWorkMineJobAnnotation, formatBusWorkMine, readBusWorkMine,
   type BusWorkMineOptions } from '../src/core/agents/bus-work-mine.js';
 import type { BusWorkFeedJob } from '../src/core/agents/bus-work-feed-read.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
@@ -75,6 +75,31 @@ describe('busWorkMineJobAnnotation', () => {
     // Unknown coverage: nothing is provable, so nothing is claimed free or held.
     expect(busWorkMineJobAnnotation(job({}), undefined, 'unknown', true))
       .toMatchObject({ freeKeys: null, heldKeys: null, claimable: null, addressed: true });
+  });
+});
+
+describe('busWorkMineAnnouncedAnnotation', () => {
+  it('summarizes per-key hold coverage as an honest held tri-state', () => {
+    const held = new Set(['queue:J', 'repo:a/b']);
+    // Complete coverage: a shown hold is held; unheld keys are provably free.
+    expect(busWorkMineAnnouncedAnnotation(job({ claimKeys: ['queue:J', 'path:x'] }), held, 'complete'))
+      .toMatchObject({ held: true, heldKeys: ['queue:J'], freeKeys: ['path:x'] });
+    expect(busWorkMineAnnouncedAnnotation(job({ claimKeys: ['path:x'] }), held, 'complete'))
+      .toMatchObject({ held: false, heldKeys: [], freeKeys: ['path:x'] });
+    // Truncated coverage: shown holds are real, but an unshown key might still
+    // be held, so free stays unknown and held stays unknown without a show.
+    expect(busWorkMineAnnouncedAnnotation(job({ claimKeys: ['queue:J', 'path:x'] }), held, 'truncated'))
+      .toMatchObject({ held: true, heldKeys: ['queue:J'], freeKeys: null });
+    expect(busWorkMineAnnouncedAnnotation(job({ claimKeys: ['path:x'] }), new Set(), 'truncated'))
+      .toMatchObject({ held: null, heldKeys: [], freeKeys: null });
+    // Unknown coverage: nothing is provable.
+    expect(busWorkMineAnnouncedAnnotation(job({}), undefined, 'unknown'))
+      .toMatchObject({ held: null, heldKeys: null, freeKeys: null });
+    // No declared keys: nothing a hold could cover, provable without the table.
+    expect(busWorkMineAnnouncedAnnotation(job({ claimKeys: [] }), undefined, 'unknown'))
+      .toMatchObject({ held: false, heldKeys: null, freeKeys: null });
+    expect(busWorkMineAnnouncedAnnotation(job({ claimKeys: [] }), undefined, 'truncated'))
+      .toMatchObject({ held: false, heldKeys: [], freeKeys: null });
   });
 });
 
@@ -272,6 +297,70 @@ describe('readBusWorkMine', () => {
     expect(other.announced).toMatchObject({ status: 'ok', matched: 1, truncated: false });
     if (other.announced.status !== 'ok') throw new Error('unreachable');
     expect(other.announced.items[0]).toMatchObject({ id: 'RQ-N-1', status: 'running' });
+  });
+
+  it('annotates announced jobs with live claim coverage of their declared keys', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+
+    // RQ-H-1 reports running while nova holds one of its declared keys;
+    // RQ-H-2 stays queued and unheld; RQ-H-3 declares no keys at all.
+    await announce(options, 'atlas', 'RQ-H-1', ['queue:RQ-H-1', 'repo:a/b']);
+    await announce(options, 'atlas', 'RQ-H-2', ['queue:RQ-H-2']);
+    await announce(options, 'atlas', 'RQ-H-3', []);
+    options.clock.now += 1_000;
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-1', status: 'running', id: 'ws-h1' }, options))
+      .toMatchObject({ status: 'posted' });
+    options.clock.now += 1_000;
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-3', status: 'blocked', id: 'ws-h3' }, options))
+      .toMatchObject({ status: 'posted' });
+    claim(options, 'queue:RQ-H-1', 'nova', 'test:nova-h1', options.clock.now);
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok' || result.announced.status !== 'ok') throw new Error('unreachable');
+    expect(result.announced.matched).toBe(3);
+    const byId = new Map(result.announced.items.map(item => [item.id, item]));
+    // A shown hold is real under complete coverage: the claimed key reads held,
+    // the unclaimed repo key reads provably free.
+    expect(byId.get('RQ-H-1')).toMatchObject({ status: 'running', held: true,
+      heldKeys: ['queue:RQ-H-1'], freeKeys: ['repo:a/b'] });
+    // Complete coverage with no holds: every declared key is provably free.
+    expect(byId.get('RQ-H-2')).toMatchObject({ status: 'queued', held: false,
+      heldKeys: [], freeKeys: ['queue:RQ-H-2'] });
+    // No declared keys: nothing a hold could cover.
+    expect(byId.get('RQ-H-3')).toMatchObject({ status: 'blocked', held: false,
+      heldKeys: [], freeKeys: [], claimKeys: [] });
+    // The human lines carry the same tri-state the JSON does; announced
+    // lines are the ones carrying heldkeys= (open jobs list in jobs too).
+    const text = formatBusWorkMine(result);
+    const announcedLine = (id: string): string =>
+      text.find(line => line.includes(id) && line.includes('heldkeys='))!;
+    expect(announcedLine('RQ-H-1 running')).toContain('held=yes');
+    expect(announcedLine('RQ-H-1 running')).toContain('heldkeys=queue:RQ-H-1');
+    expect(announcedLine('RQ-H-2 queued')).toContain('held=no');
+    expect(announcedLine('RQ-H-3 blocked')).toContain('held=no');
+  });
+
+  it('keeps announced hold coverage unknown when the coordination table is unreadable', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    await announce(options, 'atlas', 'RQ-U-1', ['queue:RQ-U-1']);
+    claim(options, 'queue:RQ-U-1', 'nova', 'test:nova-u1', options.clock.now);
+    // Poison the coordination table after the lease lands: coverage is
+    // unknown, never proven free or held.
+    writeFileSync(join(options.root, 'coordination', 'claims.json'), 'invalid JSON');
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok' || result.announced.status !== 'ok') throw new Error('unreachable');
+    expect(result.announced.items[0]).toMatchObject({ id: 'RQ-U-1', held: null,
+      heldKeys: null, freeKeys: null });
+    expect(formatBusWorkMine(result)
+      .find(line => line.includes('RQ-U-1 queued') && line.includes('heldkeys='))).toContain('held=unknown');
   });
 
   it('matches announced jobs under every identity label and narrows when the registry is unreadable', async () => {
