@@ -669,6 +669,14 @@ unreadable records leave contributions unknown. Fleet totals remain shared
 aggregates, separate from member activity and private account usage. Sources
 refresh every 15 seconds while visible; missing org metadata stays unknown.
 
+The Merges pane ends with **Lane throughput · 24 h**: one row per lane, most
+merged first, with a bar of its merged count against the busiest lane and its
+merge rate in words. The line above the bars adds up the lanes that reported
+and names how many did not. A lane with no recorded count gets a hatched bar
+and reads unknown, so it never looks like a lane that merged nothing. Select a
+row to open that lane in the Lanes pane, where its target, pause and hold are.
+The rows come from the fleet runs read the rest of the pane uses.
+
 ## Unified engineering surface audit (RQ-DESKTOP-UNIFIED-1)
 
 Phantom desktop is the operator surface. Agents use the same typed projections

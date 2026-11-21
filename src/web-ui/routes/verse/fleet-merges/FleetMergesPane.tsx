@@ -25,6 +25,8 @@ import { ReleaseStrip } from './ReleaseStrip.js';
 import { RecutLoopStrip } from './RecutLoopStrip.js';
 import { RepoBacklogStrip } from './RepoBacklogStrip.js';
 import { MergeWaitCard } from './MergeWaitCard.js';
+import { LaneThroughput } from './LaneThroughput.js';
+import { requestLaneFocus } from '../fleet-lanes/lane-focus-request.js';
 import styles from './fleet-merges.module.css';
 
 export function FleetMergesPane({ visible, host }: PaneProps) {
@@ -134,8 +136,6 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
         </>}
       </details>
     </section>}
-    <section><h3 className={styles.heading}>Lane throughput · 24 h</h3>
-      {data.lanes.length === 0 ? <p className={styles.message}>No lane throughput reported.</p> : <ul className={styles.list} aria-label="Lane throughput">{data.lanes.map((item, index) => <li key={`${item.lane}:${index}`} className={styles.row}><span>{item.lane}</span>{' '}<span>{item.merged24h ?? '—'} merged · {item.mergeRate24h === null || (item.merged24h === 0 && item.mergeRate24h === 0) ? '—' : `${item.mergeRate24h.toFixed(1)}%`}</span></li>)}</ul>}
-    </section>
+    <LaneThroughput lanes={data.lanes} onOpenLane={lane => { requestLaneFocus(lane); host.openPane('fleet-lanes'); }} />
   </section>;
 }

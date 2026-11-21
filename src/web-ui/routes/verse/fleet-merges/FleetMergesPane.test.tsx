@@ -28,7 +28,7 @@ it('renders merged PRs, waiting publishes and lane throughput', async () => {
   expect(pending.getByRole('link')).toHaveAttribute('rel', 'noopener noreferrer');
   const lanes = within(screen.getByRole('list', { name: 'Lane throughput' }));
   expect(lanes.getAllByRole('listitem')[0]).toHaveTextContent('a 4 merged · 75.0%');
-  expect(lanes.getAllByRole('listitem')[1]).toHaveTextContent('b — merged · —');
+  expect(lanes.getAllByRole('listitem')[1]).toHaveTextContent('b merges unknown · merge rate unknown');
   expect(screen.queryByText('Merge data may be incomplete.')).not.toBeInTheDocument();
 });
 
