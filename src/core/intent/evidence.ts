@@ -189,6 +189,17 @@ function linkMergedPullWithPolicy<T extends EvidenceItem>(
  * release evidence row. Returns the matched items.
  */
 export function markShipped<T extends EvidenceItem>(ledger: EvidenceLedger<T>, release: ShippedReleaseNote, at?: string): T[] {
+  return markShippedWithPolicy(ledger, release, at, true);
+}
+
+/** Preserve each caller-supplied release observation in persistent history, as merge observations do. */
+export function markShippedObservation<T extends EvidenceItem>(ledger: EvidenceLedger<T>, release: ShippedReleaseNote, at?: string): T[] {
+  return markShippedWithPolicy(ledger, release, at, false);
+}
+
+function markShippedWithPolicy<T extends EvidenceItem>(
+  ledger: EvidenceLedger<T>, release: ShippedReleaseNote, at: string | undefined, deduplicateEvidence: boolean,
+): T[] {
   const when = timestamp(at ?? release.at);
   const releaseId = release.release.replace(/[\r\n]+/g, ' ').trim();
   if (!releaseId || releaseId.length > MAX_RELEASE_REF) {
@@ -206,7 +217,7 @@ export function markShipped<T extends EvidenceItem>(ledger: EvidenceLedger<T>, r
       item.status = 'shipped';
       changed = true;
     }
-    changed = pushEvidence(item, { at: when, kind: 'release', ref: releaseId }, true) || changed;
+    changed = pushEvidence(item, { at: when, kind: 'release', ref: releaseId }, deduplicateEvidence) || changed;
     if (changed) {
       item.lastTouchedAt = when;
       item.updatedAt = when;
