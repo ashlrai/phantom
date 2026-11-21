@@ -49,6 +49,8 @@ const paths = (runsDir: string) => {
 
 /** Guardian and release work is never stopped. */
 export const guardedFamily = (name: string): boolean => name.startsWith('FIXUP-') || name.includes('RELEASE');
+/** The bare name `leader` is not a glob: a row for it would block every leader job. */
+const bareFamily = (name: string): boolean => name === 'leader';
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const READY_LINE = /^- READY ([A-Za-z0-9][A-Za-z0-9._-]*)(.*)$/;
@@ -69,6 +71,7 @@ export function planEmptyApply(report: EmptyFamiliesReport, ready: ReadonlyArray
     if (fam.action !== 'stop' && fam.action !== 'reroute') continue;
     const top = fam.top_reasons[0]?.reason ?? 'unknown';
     const reason = `${fam.empty}of${fam.launches}-empty_${top}`.replace(/\s+/g, '-');
+    if (bareFamily(fam.family)) { rows.push({ family: fam.family, lane: fam.lane, action: 'skip', ids: [], until: null, reason: 'bare family name leader is not a glob; it would block every leader job' }); continue; }
     if (guardedFamily(fam.family)) { rows.push({ family: fam.family, lane: fam.lane, action: 'skip', ids: [], until: null, reason: 'guarded: guardian and release work is never stopped' }); continue; }
     if (fam.action === 'reroute') { rows.push({ family: fam.family, lane: fam.lane, action: 'reroute', ids: [], until, reason }); continue; }
     const ids = ready.filter(job => jobFamily(job.id) === fam.family && !guardedFamily(job.id) && (job.pool === null || job.pool === fam.lane)).map(job => job.id);

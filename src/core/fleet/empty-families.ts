@@ -16,20 +16,32 @@ export type EmptyFamilyReason = 'pool_cap' | 'auth_failed' | 'no_gh' | 'tool_mis
 export interface EmptyFamilyRow {
   family: string; lane: string; launches: number; empty: number; empty_rate: number;
   top_reasons: Array<{ reason: string; count: number }>; action: EmptyFamilyAction;
+  /** Same as `launches`: every run of this family on this lane. */
+  runs: number;
+  /** Empties the work caused. Only these count toward the stop rate. */
+  workEmpties: number;
+  /** Empties the fleet caused (usage cap, sign-in, missing tool, fetch race). They never count against the family. */
+  infraEmpties: { count: number; reasons: Array<{ reason: string; count: number }> };
+  /** Same as `action`, under the name the --json docs use. */
+  decision: EmptyFamilyAction;
+  /** The decision in plain words. */
+  why: string;
 }
 export interface EmptyFamiliesReport { schema: typeof EMPTY_FAMILIES_SCHEMA; hours: number; total_empty: number; families: EmptyFamilyRow[] }
 
-/** Stop a family once this share of at least STOP_MIN_LAUNCHES launches came back empty. */
+/** Stop a family once this share of at least STOP_MIN_LAUNCHES runs the work could fail came back empty for work reasons. */
 export const STOP_RATE = 0.8;
 export const STOP_MIN_LAUNCHES = 5;
 /** Below this empty rate a family is healthy enough to keep. */
 export const RECUT_RATE = 0.5;
-const LANE_GAPS = new Set(['pool_cap', 'auth_failed', 'no_gh', 'tool_missing']);
+/** Empties the fleet caused, not the work: they never count toward a family's empty rate. */
+export const INFRA_REASONS: ReadonlySet<string> = new Set(['pool_cap', 'usage_limit', 'auth_failed', 'no_gh', 'tool_missing', 'fetch_race', 'provider quota or rate limit']);
 
 // Checked in this order on the log tail: the first match names the lane gap.
 const GAP_RULES: ReadonlyArray<readonly [string, RegExp]> = [
   ['auth_failed', /\bauth(?:entication|orization)?[ _-]?failed\b|\bnot (?:logged|signed) in\b|\b(?:please |must )?(?:log|sign)[ -]?in (?:again|required|first)\b|\b(?:HTTP|status(?: code)?) 40[13]\b|invalid (?:api )?credentials|\bunauthorized\b/i],
   ['no_gh', /\bno gh\b|\bgh: command not found\b|\bgh(?: cli)? (?:is )?(?:missing|not installed|unavailable)\b/i],
+  ['fetch_race', /\bfetch[ _-]?race\b|cannot lock ref|couldn'?t find remote ref|\bshallow update not allowed\b/i],
   ['tool_missing', /command not found|\bspawn \S+ ENOENT\b|(?:tool|binary|executable|dependency)[^\n]{0,30}(?:missing|not found|unavailable)/i],
 ];
 
@@ -42,13 +54,21 @@ export function emptyFamilyReason(log: string | null, publish: string | null): s
   return gap ?? diagnoseEmptyJob(log, publish);
 }
 
-export function emptyFamilyAction(row: Pick<EmptyFamilyRow, 'launches' | 'empty' | 'empty_rate' | 'top_reasons'>): EmptyFamilyAction {
-  if (row.empty === 0) return 'keep';
-  const gaps = row.top_reasons.filter(r => LANE_GAPS.has(r.reason)).reduce((sum, r) => sum + r.count, 0);
-  if (gaps * 2 >= row.empty) return 'reroute';
-  if (row.launches >= STOP_MIN_LAUNCHES && row.empty_rate >= STOP_RATE) return 'stop';
-  return row.empty_rate >= RECUT_RATE ? 'recut' : 'keep';
+type ActionInput = Pick<EmptyFamilyRow, 'launches' | 'empty' | 'workEmpties'>;
+
+/** Pure: the decision and why. Infra empties are set aside; only work empties, over the runs the work could fail, count. */
+export function decideEmptyFamily(row: ActionInput): { action: EmptyFamilyAction; why: string } {
+  const infra = row.empty - row.workEmpties;
+  const runs = row.launches - infra;
+  const note = infra ? ` ${infra} ${infra === 1 ? 'empty was' : 'empties were'} caused by the fleet, not the work, and ${infra === 1 ? 'is' : 'are'} not counted.` : '';
+  if (row.workEmpties === 0) return { action: 'keep', why: `No empties were caused by the work.${note}` };
+  const pct = Math.round(row.workEmpties / runs * 100);
+  const share = `${row.workEmpties} of ${runs} runs came back empty for work reasons (${pct}%).`;
+  if (runs >= STOP_MIN_LAUNCHES && row.workEmpties / runs >= STOP_RATE) return { action: 'stop', why: `${share}${note}` };
+  return row.workEmpties / runs >= RECUT_RATE ? { action: 'recut', why: `${share} Recut the goals.${note}` } : { action: 'keep', why: `${share} Healthy.${note}` };
 }
+
+export const emptyFamilyAction = (row: ActionInput): EmptyFamilyAction => decideEmptyFamily(row).action;
 
 const rank: Record<EmptyFamilyAction, number> = { stop: 0, reroute: 1, recut: 2, keep: 3 };
 
@@ -66,8 +86,12 @@ export function summarizeEmptyFamilies(launches: ReadonlyArray<{ id: string; lan
     for (const job of empties) counts.set(job.reason ?? 'unknown', (counts.get(job.reason ?? 'unknown') ?? 0) + 1);
     const top_reasons = [...counts].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason)).slice(0, 3);
     const empty_rate = Math.round(empties.length / members.length * 100) / 100;
-    const row = { family, lane, launches: members.length, empty: empties.length, empty_rate, top_reasons };
-    return { ...row, action: emptyFamilyAction(row) };
+    const infraList = [...counts].filter(([reason]) => INFRA_REASONS.has(reason)).map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+    const infra = infraList.reduce((n, r) => n + r.count, 0);
+    const workEmpties = empties.length - infra;
+    const { action, why } = decideEmptyFamily({ launches: members.length, empty: empties.length, workEmpties });
+    return { family, lane, launches: members.length, empty: empties.length, empty_rate, top_reasons, action, runs: members.length, workEmpties,
+      infraEmpties: { count: infra, reasons: infraList }, decision: action, why };
   }).filter(row => row.empty > 0)
     .sort((a, b) => rank[a.action] - rank[b.action] || b.empty_rate - a.empty_rate || b.empty - a.empty || a.family.localeCompare(b.family) || a.lane.localeCompare(b.lane));
   return { schema: EMPTY_FAMILIES_SCHEMA, hours, total_empty: families.reduce((n, r) => n + r.empty, 0), families };

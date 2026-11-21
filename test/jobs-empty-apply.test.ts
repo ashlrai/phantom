@@ -30,6 +30,11 @@ const queue = [
   '- READY RQ-RELEASE-WATCH6 (P1, pool=claude)',
 ].join('\n') + '\n';
 const put = (name: string, text: string) => writeFile(join(dir, 'queue', name), text);
+/** A reroute hint an older version wrote: still expires and still undoes. */
+const seedHint = async (until: number) => {
+  await put('lane-avoid.tsv', `cursor\tRQ-LOGIN*\t${until}\t3of3-empty_auth_failed\n`);
+  await put('empty-family-actions.json', JSON.stringify({ schema: 'jobs.empty.actions.v1', last_run_ms: null, entries: [{ family: 'RQ-LOGIN*', lane: 'cursor', action: 'reroute', ids: [], until, reason: '3of3-empty_auth_failed' }] }));
+};
 const get = (name: string) => readFile(join(dir, 'queue', name), 'utf8').catch(() => null);
 
 it('stop: writes the exact READY ids with an expiry; other lanes, claimed and guarded jobs are left alone', async () => {
@@ -43,11 +48,21 @@ it('stop: writes the exact READY ids with an expiry; other lanes, claimed and gu
   expect(await get('RETIRED')).toBe('RQ-OLD1\nRQ-MD6A111806Q8\nRQ-MD7A111807Q8\n');
 });
 
-it('reroute: writes a lane-avoid hint with expiry and reason', async () => {
+it('sign-in empties alone write no lane-avoid hint', async () => {
   await put('router-queue.md', queue);
-  await applyEmptyFamilies({ runsDir: dir, apply: true, now, ttlHours: 24, readReport });
-  expect(await get('lane-avoid.tsv')).toBe(`cursor\tRQ-LOGIN*\t${now / 1000 + 24 * HOUR}\t3of3-empty_auth_failed\n`);
+  const result = await applyEmptyFamilies({ runsDir: dir, apply: true, now, ttlHours: 24, readReport });
+  expect(await get('lane-avoid.tsv')).toBeNull();
+  expect(result.rows.some(r => r.family === 'RQ-LOGIN*')).toBe(false);
   expect(await get('RETIRED')).not.toContain('RQ-LOGIN4');
+});
+
+it('never writes a row for the bare family name leader', async () => {
+  await put('router-queue.md', '- READY RQ-WORKN21AQ8 (P1, pool=claude)\n');
+  const leader = summarizeEmptyFamilies(launches([1, 2, 3, 4, 5].map(n => `RQ-W${n}N21AQ8`), 'claude', 'already-on-master'), 24);
+  const result = await applyEmptyFamilies({ runsDir: dir, apply: true, now, readReport: async () => leader });
+  expect(result.rows).toMatchObject([{ family: 'leader', action: 'skip', ids: [] }]);
+  expect(await get('RETIRED')).toBeNull();
+  expect(await get('lane-avoid.tsv')).toBeNull();
 });
 
 it('guarded: FIXUP- and RELEASE families are never stopped', async () => {
@@ -72,6 +87,7 @@ it('dry run writes nothing', async () => {
 it('undo removes what was written and keeps hand-listed ids', async () => {
   await put('router-queue.md', queue);
   await put('RETIRED', 'RQ-MD7A111807Q8\nRQ-OLD1\n');
+  await seedHint(now / 1000 + 48 * HOUR);
   await applyEmptyFamilies({ runsDir: dir, apply: true, now, readReport });
   expect(await get('RETIRED')).toBe('RQ-MD7A111807Q8\nRQ-OLD1\nRQ-MD6A111806Q8\n');
   const undone = await undoEmptyFamily(dir, 'RQ-MD*');
@@ -84,6 +100,7 @@ it('undo removes what was written and keeps hand-listed ids', async () => {
 
 it('expired entries are removed on the next apply', async () => {
   await put('router-queue.md', queue);
+  await seedHint(now / 1000 + 48 * HOUR);
   await applyEmptyFamilies({ runsDir: dir, apply: true, now, readReport });
   const later = await applyEmptyFamilies({ runsDir: dir, apply: true, now: now + 49 * HOUR * 1000, readReport: async () => summarizeEmptyFamilies([], 24) });
   expect(later.expired_removed).toBe(2);
