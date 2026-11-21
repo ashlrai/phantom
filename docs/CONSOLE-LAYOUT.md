@@ -697,3 +697,12 @@ It neither starts another listener nor adds a transport. Browser app lifecycle
 control does not grant browser input; browser interactions still use the Browser
 pane. See [Apps control](APPS-CONTROL.md) for enrollment, copy-paste examples and
 the fleet request/reply loop.
+
+## Shipped PRs pane
+
+The Shipped PRs pane (`fleet-worklog-prs`) shows what the fleet merged, newest
+first: one line per PR with its time, repo and number, title, lane, model and
+minutes to merge, grouped by hour with a merged count and the number of jobs that
+ended with no PR. Click or press Enter to open the selected PR; Up and Down move
+the selection. Missing facts read "unknown". It has loading, empty and error
+states, refreshes every minute and shows the same data as `phm worklog --prs`.
