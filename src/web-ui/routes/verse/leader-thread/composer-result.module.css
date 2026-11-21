@@ -16,6 +16,36 @@
   .result { animation: result-in var(--duration-base) var(--ease-decelerate); }
 }
 
+/* An answer of several lines: the headline, then a row a line, read from the left like a list. */
+.block {
+  display: grid;
+  gap: var(--space-1);
+  text-align: left;
+  text-wrap: pretty;
+}
+
+.head { margin: 0; color: var(--text-secondary); }
+
+.rows {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--border-subtle);
+  overflow-wrap: anywhere;
+}
+
+/* A row that quotes a line: the rule takes the accent, the way a quoted message does. */
+.row[data-quoted] { border-left-color: var(--accent-500); }
+
+/* What was said, a step brighter than who said it and when. */
+.quote { color: var(--text-secondary); }
+
 .session {
   padding: 0;
   border: 0;
