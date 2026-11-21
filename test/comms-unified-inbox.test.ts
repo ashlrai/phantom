@@ -2098,6 +2098,195 @@ describe('readUnifiedInbox view filters', () => {
   });
 });
 
+describe('readUnifiedInbox job filter', () => {
+  const jobNote = (text: string, thread: string) =>
+    postV2Body({ kind: 'note', text, thread }, { from: 'agent:asker', to: 'agent:reviewer' });
+  const mailbox = () => createBusMailbox(root, () => now);
+  const sendMail = (envelope: BusEnvelope) => {
+    const result = mailbox().send(envelope);
+    expect(result.replayed).toBe(false);
+    return result.id;
+  };
+  // The same board digest shapes the board describe injects: deliveries and
+  // tasks are plain stored rows, holds are the observed states.
+  const boardDigest = (over: Partial<BusBoardPendingPeers> = {}): BusBoardPendingPeers => ({
+    peers: ['alice'], claims: 'readable', threads: [],
+    deliveries: { matched: 0, items: [], truncated: false },
+    tasks: { matched: 0, items: [], truncated: false },
+    ...over,
+  });
+  const boardDelivery = (id: string, threadId: string): BusBoardDelivery => ({
+    schemaVersion: 1, id, threadId, sender: 'alice', recipient: 'bob',
+    createdAt: new Date(now).toISOString(),
+    message: { id, from: 'alice', to: 'bob', priority: 'P2', ttl: 60_000 },
+    content: { trust: 'untrusted', text: JSON.stringify({ body: { text: 'fake board post' } }) },
+  });
+  const boardTask = (id: string, threadId: string, itemId: string, hold: BusBoardTaskHold = 'open'): BusBoardPendingTask => ({
+    id, threadId, itemId,
+    content: { trust: 'untrusted', text: 'Fake task title' },
+    claimed: false, hold, owner: null,
+  });
+  // A schema-valid teammate-task ledger row; jobId is the fleet job the task reserves.
+  const taskRow = (jobId: string, over: Record<string, unknown> = {}) => ({
+    jobId, peer: 'dot', kind: 'research', scope: 'fake scope',
+    repo: 'ashlrai/phantom', prRefs: [], format: 'fake format',
+    deadline: new Date(now + 3_600_000).toISOString(),
+    token: jobId.replace(/[^a-f0-9]/gi, '').padEnd(32, '0').slice(0, 32),
+    createdAt: now - 600_000, state: 'pending', attemptedAt: now - 300_000,
+    receipt: { rowid: 5000, sent: true, delivered: true, error: 0 },
+    metrics: ['launch'], settled: false, ...over,
+  });
+  const writeLedger = (tasks: unknown[]) => {
+    const dir = join(runsDir, 'imessage');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'teammate-tasks.json'),
+      JSON.stringify({ v: 1, tasks, attempts: { dot: [], instinct: [] } }), { mode: 0o600 });
+  };
+  const seatHandoff = (seatId: string, kind: 'bus-claim' | 'node-job', ref: string, n = 0): SeatHandoff => ({
+    schema: 'phantom-bot-handoff.v1', handoffId: `h-${seatId}-${n}`,
+    seatId, work: { kind, ref }, done: 'unknown', left: 'unknown',
+    branch: null, pr: null, createdAt: new Date(now).toISOString(),
+  });
+  const seatPlan = (seats: SeatHandoffPlanEntry[]): SeatHandoffsPlan =>
+    ({ schema: 'phantom-bot-handoffs-plan.v1', apply: false, seats });
+  const seatEntry = (over: Partial<SeatHandoffPlanEntry> = {}): SeatHandoffPlanEntry => ({
+    seatId: 'devin-review', state: 'draining', eligible: true,
+    handoffs: [seatHandoff('devin-review', 'node-job', 'RQ-JS-1'),
+      seatHandoff('devin-review', 'bus-claim', 'queue:RQ-claim-1', 1)], ...over,
+  });
+
+  it('annotates each item with the job ids its own citation rule proves', async () => {
+    postJob('RQ-JF-1');
+    const handoffId = postV2Body({ kind: 'worker-handoff', taskId: 'RQ-JH-1', prompt: 'fake handoff' },
+      { from: 'agent:lead', to: 'agent:worker-9' });
+    jobNote('can you check this?', 'job:RQ-JC-1');
+    // A schema-valid work.status cites its jobId on the raw body — the
+    // conversation thread picks it up even with no `job:` bucket.
+    postV2Body({ kind: 'work.status', jobId: 'RQ-JC-2', status: 'blocked', detail: 'waiting on creds' },
+      { from: 'agent:worker', to: 'agent:lead' });
+    sendMail({ id: 'mb-job-1', from: 'codex-cmp', to: 'fleet', priority: 'P2', ttl: 60_000,
+      body: { kind: 'note', text: 'fake mail', thread: 'job:RQ-JM-1' } });
+    postWork('plain-work');
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    writeLedger([taskRow('RQ-JT-1')]);
+    const inbox = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
+      readRequests: () => ({ status: 'missing', requests: [] }),
+      readBoard: () => ({ source: 'available', pending: boardDigest({
+        deliveries: { matched: 1, items: [boardDelivery('d-1', 'thread-1')], truncated: false },
+        tasks: { matched: 2, items: [boardTask('t-a', 'thread-1', 'RQ-JB-1'),
+          boardTask('t-b', 'thread-2', 'RQ-JB-2')], truncated: false },
+      }) }),
+      readSeatHandoffs: async () => seatPlan([seatEntry()]),
+    });
+    const byId = (id: string) => inbox.items.find(i => i.id === id);
+    expect(byId('bus-feed:RQ-JF-1')?.jobIds).toEqual(['RQ-JF-1']);
+    expect(byId(`bus-handoff:${handoffId}`)?.jobIds).toEqual(['RQ-JH-1']);
+    // The `job:<id>` bucket itself and a work.status body citation both land
+    // on the thread's `jobs`, sorted and deduplicated.
+    expect(byId('conversations:job:RQ-JC-1')?.jobIds).toEqual(['RQ-JC-1']);
+    const convItems = inbox.items.filter(i => i.source === 'conversations');
+    expect(convItems).toHaveLength(2);
+    const statusThread = convItems.find(i => i.id !== 'conversations:job:RQ-JC-1')!;
+    expect(statusThread.jobIds).toEqual(['RQ-JC-2']);
+    expect(byId('mailbox:mb-job-1')?.jobIds).toEqual(['RQ-JM-1']);
+    expect(byId('board:task:t-a')?.jobIds).toEqual(['RQ-JB-1']);
+    expect(byId('board:task:t-b')?.jobIds).toEqual(['RQ-JB-2']);
+    // A delivery carries the itemIds of the tasks on its own thread — the
+    // job-carrying-thread citation `BusBoard.pendingFor` applies.
+    expect(byId('board:delivery:d-1')?.jobIds).toEqual(['RQ-JB-1']);
+    expect(byId('teammate-tasks:RQ-JT-1')?.jobIds).toEqual(['RQ-JT-1']);
+    // A seat's node-job ref is a job id; its bus-claim ref is a claim key.
+    expect(byId('seats:devin-review')?.jobIds).toEqual(['RQ-JS-1']);
+    // Uncited items carry no jobIds at all — unknown stays out of a match.
+    expect(byId('bus:plain-work')).not.toHaveProperty('jobIds');
+    const needsYou = inbox.items.find(i => i.source === 'needs-you')!;
+    expect(needsYou).not.toHaveProperty('jobIds');
+  });
+
+  it('keeps only items naming the job, exact-matches the id and ANDs with the other dimensions', async () => {
+    postJob('RQ-JF-1');
+    postJob('RQ-JF-2');
+    postWork('plain-work');
+    jobNote('status on this?', 'job:RQ-JC-1');
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const inbox = await read({ filter: { job: 'RQ-JF-1' } });
+    expect(inbox.filter).toEqual({ job: 'RQ-JF-1' });
+    expect(inbox.items.map(i => i.id)).toEqual(['bus-feed:RQ-JF-1']);
+    expect(inbox.total).toBe(1);
+    expect(inbox.omitted).toBe(0);
+    // Per-source reports stay the unfiltered store truth.
+    expect(inbox.sources.bus.pending).toBe(3);
+    expect(inbox.sources['needs-you'].pending).toBe(1);
+    expect(inbox.sources.conversations.pending).toBe(1);
+
+    // The citation is exact: a prefix of a real job id matches nothing.
+    const prefix = await read({ filter: { job: 'RQ-JF' } });
+    expect(prefix.total).toBe(0);
+    expect(prefix.items).toEqual([]);
+    expect(prefix.sources.bus.pending).toBe(3);
+
+    // job ANDs with source/severity/blocking like every other dimension.
+    const convOnly = await read({ filter: { job: 'RQ-JC-1', source: 'conversations' } });
+    expect(convOnly.total).toBe(1);
+    expect(convOnly.items.map(i => i.id)).toEqual(['conversations:job:RQ-JC-1']);
+    const wrongSource = await read({ filter: { job: 'RQ-JF-1', source: 'conversations' } });
+    expect(wrongSource.total).toBe(0);
+    const blocking = await read({ filter: { job: 'RQ-JF-1', blocking: true } });
+    expect(blocking.total).toBe(0);
+  });
+
+  it('scopes board items the way pendingFor does: deliveries ride job-carrying threads, sibling tasks stay out', async () => {
+    const pending = boardDigest({
+      deliveries: { matched: 3, items: [
+        boardDelivery('d-1', 'thread-1'), boardDelivery('d-2', 'thread-2'), boardDelivery('d-3', 'thread-3')], truncated: false },
+      tasks: { matched: 3, items: [
+        boardTask('t-a', 'thread-1', 'RQ-JB-1'),
+        boardTask('t-b', 'thread-2', 'RQ-JB-2'),
+        // A held task never lists but still marks its thread as the job's
+        // board surface — the same thread scope pendingFor reads from state.
+        boardTask('t-held', 'thread-3', 'RQ-JB-H', 'held')], truncated: false },
+    });
+    const inbox = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
+      readRequests: () => ({ status: 'missing', requests: [] }),
+      readBoard: () => ({ source: 'available', pending }) });
+    const boardItems = inbox.items.filter(i => i.source === 'board');
+    expect(boardItems.find(i => i.id === 'board:task:t-a')?.jobIds).toEqual(['RQ-JB-1']);
+    expect(boardItems.find(i => i.id === 'board:task:t-b')?.jobIds).toEqual(['RQ-JB-2']);
+    expect(boardItems.find(i => i.id === 'board:delivery:d-1')?.jobIds).toEqual(['RQ-JB-1']);
+    expect(boardItems.find(i => i.id === 'board:delivery:d-2')?.jobIds).toEqual(['RQ-JB-2']);
+    expect(boardItems.find(i => i.id === 'board:delivery:d-3')?.jobIds).toEqual(['RQ-JB-H']);
+    expect(boardItems.some(i => i.id === 'board:task:t-held')).toBe(false);
+
+    const filtered = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
+      readRequests: () => ({ status: 'missing', requests: [] }),
+      readBoard: () => ({ source: 'available', pending }),
+      filter: { job: 'RQ-JB-1' } });
+    expect(filtered.items.filter(i => i.source === 'board').map(i => i.id).sort())
+      .toEqual(['board:delivery:d-1', 'board:task:t-a']);
+    // The held task's thread still cites its job through the delivery.
+    const heldThread = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
+      readRequests: () => ({ status: 'missing', requests: [] }),
+      readBoard: () => ({ source: 'available', pending }),
+      filter: { job: 'RQ-JB-H' } });
+    expect(heldThread.items.filter(i => i.source === 'board').map(i => i.id)).toEqual(['board:delivery:d-3']);
+  });
+
+  it('never treats a seat bus-claim ref as a job id', async () => {
+    const opts = {
+      runsDir, busRoot, now: () => now,
+      readRequests: () => ({ status: 'missing' as const, requests: [] }),
+      readSeatHandoffs: async () => seatPlan([seatEntry()]),
+    };
+    const nodeJob = await readUnifiedInbox({ ...opts, filter: { job: 'RQ-JS-1' } });
+    expect(nodeJob.items.filter(i => i.source === 'seats').map(i => i.id)).toEqual(['seats:devin-review']);
+    // The claim key names coordination scope, not a job — it matches nothing.
+    for (const job of ['queue:RQ-claim-1', 'RQ-claim-1']) {
+      const claimRef = await readUnifiedInbox({ ...opts, filter: { job } });
+      expect(claimRef.items.filter(i => i.source === 'seats')).toEqual([]);
+    }
+  });
+});
+
 describe('phm comms inbox cli', () => {
   const setupCli = () => {
     const command = createCommsInboxCommand({ runsDir, busRoot });
@@ -2134,7 +2323,7 @@ describe('phm comms inbox cli', () => {
   it('keeps read/post and help while refusing malformed unified invocations', async () => {
     const { command, lines } = setupCli();
     expect(await command(['--help'])).toBe(0);
-    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--severity <info|warn|high>] [--blocking] [--json]');
+    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--json]');
     for (const args of [['--json', '--json'], ['unified'], ['--limit', '5'], ['bogus', '--json']]) {
       expect(await command(args)).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
@@ -2175,6 +2364,34 @@ describe('phm comms inbox cli', () => {
     expect(report.items[0]!.id).toBe('bus:cli-bus2');
   });
 
+  it('filters the unified JSON view by job id', async () => {
+    const { command, json } = setupCli();
+    postJob('RQ-CLI-1');
+    postJob('RQ-CLI-2');
+    postWork('cli-plain');
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    expect(await command(['--job', 'RQ-CLI-1', '--json'])).toBe(0);
+    let report = json();
+    expect(report.filter).toEqual({ job: 'RQ-CLI-1' });
+    expect(report.total).toBe(1);
+    expect(report.items.map(i => i.id)).toEqual(['bus-feed:RQ-CLI-1']);
+    expect(report.items[0]!.jobIds).toEqual(['RQ-CLI-1']);
+    // The per-source counts stay the unfiltered store truth.
+    expect(report.sources.bus.pending).toBe(3);
+    expect(report.sources['needs-you'].pending).toBe(1);
+
+    // --job ANDs with the other view filters.
+    expect(await command(['--job', 'RQ-CLI-1', '--source', 'bus', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ job: 'RQ-CLI-1', source: 'bus' });
+    expect(report.total).toBe(1);
+    expect(await command(['--job', 'RQ-CLI-1', '--source', 'needs-you', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+  });
+
   it('labels the human footer with the applied filter and unfiltered counts', async () => {
     const { command, lines } = setupCli();
     writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
@@ -2187,6 +2404,11 @@ describe('phm comms inbox cli', () => {
     // A filter matching nothing says so instead of "Nothing pending."
     expect(await command(['--source', 'gmail'])).toBe(0);
     expect(lines().at(-1)).toBe('Nothing pending matching source=gmail.');
+    postJob('RQ-CLI-H');
+    expect(await command(['--job', 'RQ-CLI-H'])).toBe(0);
+    expect(lines().join('\n')).toContain('1 pending matching job=RQ-CLI-H');
+    expect(await command(['--job', 'RQ-NOPE'])).toBe(0);
+    expect(lines().at(-1)).toBe('Nothing pending matching job=RQ-NOPE.');
   });
 
   it('refuses malformed unified filter invocations', async () => {
@@ -2196,6 +2418,9 @@ describe('phm comms inbox cli', () => {
       ['--severity'], ['--severity', 'P0'], ['--severity', 'warn', '--severity', 'info'],
       ['--blocking', '--blocking'], ['--json', '--source'], ['--source', '--json'],
       ['--source', 'read'], ['--blocking', 'true'],
+      ['--job'], ['--job', ''], ['--job', '--json'], ['--job', 'bad job'],
+      ['--job', 'x'.repeat(129)], ['--job', 'RQ-1', '--job', 'RQ-2'],
+      ['--job', 'RQ-1', '--source'], ['--json', '--job'],
     ]) {
       expect(await command(args), args.join(' ')).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
