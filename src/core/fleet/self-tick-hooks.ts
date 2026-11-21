@@ -46,7 +46,7 @@ export function hooksFromPlannerReport(planner: unknown, mode: 'apply' | 'dry-ru
         const applied = runs.reduce<number>((sum, r) => sum + (num(rec(r)?.['applied']) ?? 0), 0);
         autofill = { hook: 'autofill', state: 'ran', items: applied, count: null, note: text(auto['reason']) };
         const g = rec(auto['gaps']);
-        gaps = g && num(g['queued']) !== null
+        gaps = g && num(g['queued']) !== null && num(g['candidates']) !== null
           ? { hook: 'gaps', state: 'ran', items: num(g['queued']), count: num(g['candidates']), note: g['unknown'] === true ? 'some sources unknown' : null }
           : skipped('gaps', 'the gap hook did not run');
       }

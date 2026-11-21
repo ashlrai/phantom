@@ -1,3 +1,4 @@
+import { hooksFromPlannerReport } from '../src/core/fleet/self-tick-hooks.js';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -36,6 +37,11 @@ describe('self-tick run record', () => {
     expect(lines()).toHaveLength(1);
     expect(lines()[0]).toMatchObject({ schema: 'fleet.self-tick-record.v1', mode: 'apply' });
     expect(readSelfTickStatus(runs, NOW).line).toContain('autofill 2 items, gaps: 4 candidates, 1 queued, reap 5 items');
+  });
+
+  it('does not invent a gap candidate count from a queued-only legacy report', () => {
+    const hooks = hooksFromPlannerReport({ autofill: { runs: [], gaps: { queued: 2 } } });
+    expect(hooks[1]).toEqual({ hook: 'gaps', state: 'skipped', items: null, count: null, note: 'the gap hook did not run' });
   });
 
   it('a dry run is marked dry-run and its hooks read skipped, never zero', async () => {
