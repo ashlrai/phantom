@@ -306,7 +306,14 @@ The same window's `route_decision` rows are folded into `overrides`:
 each waiting job counts once, by its latest in-window decision — how many
 jobs the market decided and how many left their hinted lane, by reason
 (`resource_fit`, `preferred_lane_fallback`, `unknown_preference`) and by
-hinted-to-chosen lane. The same window's `claim` and `batch_claim` rows in
+hinted-to-chosen lane. The same collapsed decisions also fold their
+`rejected_lanes` into `rejections`: every lane the market refused each job,
+with the reason codes that say why (`missing_capability`, `quota_exhausted`,
+`saturated`, `lower_rank`, ...). `lanes` tallies each rejected lane per job
+with its reason counts and `byReason` counts each job once per reason
+across all its rejected lanes; `unrouted` counts decisions that chose no
+lane at all. Malformed entries or codes are skipped, never guessed.
+The same window's `claim` and `batch_claim` rows in
 `metrics/jobs.jsonl` fold into `claims`: launches that actually left their
 hinted lane, counted as events — a re-launched attempt is another real
 launch — by `lane_override` reason and by hinted-to-launched lane. This is

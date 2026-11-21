@@ -157,6 +157,36 @@ export interface UnfedDecisionOutcomes {
   byClass: Record<string, UnfedDecisionOutcomeTally>;
 }
 
+/** One lane the market rejected for decided jobs, with its reason tally. */
+export interface UnfedRejectionLane {
+  lane: string;
+  /** Distinct jobs whose latest in-window decision rejected this lane. */
+  jobs: number;
+  /** Rejection reason counts for this lane, per job-lane pair. */
+  reasons: Record<string, number>;
+}
+
+/**
+ * Per-lane rejection accounting over the window's route_decision rows. The
+ * market records every lane it would not run each job on, with the reason
+ * codes that say why — evidence the overrides and outcome folds do not
+ * carry. Each job counts once, by its latest in-window decision (the same
+ * collapse `overrides` and `decisionOutcomes` use), so a job that waited
+ * for hours is not re-counted every tick.
+ */
+export interface UnfedRejections {
+  /** False when metrics/work-market.jsonl is absent or unreadable. */
+  available: boolean;
+  /** Latest in-window route decisions collapsed per job (same set as overrides.decided). */
+  decided: number;
+  /** Of those, decisions that chose no lane. */
+  unrouted: number;
+  /** Rejected-lane tallies, most jobs first. */
+  lanes: UnfedRejectionLane[];
+  /** Jobs affected per reason code: a job counts once per reason however many lanes rejected it. */
+  byReason: Record<string, number>;
+}
+
 export interface UnfedReport {
   schema: typeof FLEET_UNFED_SCHEMA;
   readOnly: true;
@@ -214,6 +244,8 @@ export interface UnfedReport {
   claims: UnfedClaims;
   /** Route-decision outcome correlation over the same window's decisions joined to jobs.jsonl outcomes. */
   decisionOutcomes: UnfedDecisionOutcomes;
+  /** Per-lane rejection accounting over the same window's route_decision rows. */
+  rejections: UnfedRejections;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -301,7 +333,7 @@ function publishedFleetStop(resources: readonly UnfedResource[]): FleetStopCode 
  * dispatcher's own input files; when present and slots.json parses, a derived
  * report recomputes per-lane reason codes instead of leaving them unknown.
  */
-export function currentUnfed(statusJson: string, readyTsv: string, market?: UnfedMarketInputs): Omit<UnfedReport, 'history' | 'overrides' | 'claims' | 'decisionOutcomes'> {
+export function currentUnfed(statusJson: string, readyTsv: string, market?: UnfedMarketInputs): Omit<UnfedReport, 'history' | 'overrides' | 'claims' | 'decisionOutcomes' | 'rejections'> {
   const data: unknown = JSON.parse(statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
   const tickMs = typeof data.last_tick === 'string' ? Date.parse(data.last_tick) : NaN;
@@ -426,10 +458,43 @@ interface LatestRouteDecision {
   chosen: string | null;
   /** Recorded work_class when it is one of the market's closed values. */
   workClass: string | null;
+  /** Lanes the market rejected for this job, with their recorded reason codes. */
+  rejected: { lane: string; codes: string[] }[];
 }
 
 const laneField = (value: unknown): string | null =>
   typeof value === 'string' && LANE.test(value) ? value : null;
+
+/**
+ * A decision's `rejected_lanes` entries: each names a lane the market would
+ * not run the job on, with the closed reason-code list that says why
+ * (missing_capability, quota_exhausted, saturated, lower_rank, ...). Only
+ * well-formed lane/code pairs survive — a malformed entry or code is
+ * skipped, never guessed, matching the override and claim folds' strictness.
+ */
+const rejectedLanes = (value: unknown): { lane: string; codes: string[] }[] => {
+  if (!Array.isArray(value)) return [];
+  const out: { lane: string; codes: string[] }[] = [];
+  const seenLanes = new Set<string>();
+  for (const entry of value) {
+    if (out.length >= MAX_CODES || !isRecord(entry)) continue;
+    const lane = laneField(entry['lane']);
+    const rawCodes = entry['reason_codes'];
+    if (lane === null || seenLanes.has(lane) || !Array.isArray(rawCodes)) continue;
+    seenLanes.add(lane);
+    const seen = new Set<string>();
+    const codes: string[] = [];
+    for (const code of rawCodes) {
+      if (codes.length >= MAX_CODES) break;
+      if (typeof code === 'string' && CODE.test(code) && !seen.has(code)) {
+        seen.add(code);
+        codes.push(code);
+      }
+    }
+    out.push({ lane, codes });
+  }
+  return out;
+};
 
 /**
  * Collapse work-market.jsonl route_decision rows to each job's latest
@@ -470,6 +535,7 @@ function latestRouteDecisions(jsonl: string, nowMs: number, windowHours: number)
       preferred: laneField(row.preferred_lane),
       chosen: laneField(row.chosen_lane),
       workClass,
+      rejected: rejectedLanes(row.rejected_lanes),
     });
   }
   return latest;
@@ -656,6 +722,55 @@ export function foldDecisionOutcomes(
   return report;
 }
 
+const MAX_REJECTION_LANES = 16;
+
+/**
+ * Fold `rejected_lanes` from the window's route_decision rows: for each
+ * job's latest in-window decision, every lane the market rejected with its
+ * recorded reason codes. `lanes` keeps the per-lane detail (a job counts
+ * once under each lane that rejected it); `byReason` counts each job once
+ * per reason across all its rejected lanes, so a job rejected by three
+ * lanes for the same cause is one affected job, not three. Null text means
+ * the journal was absent or unreadable; malformed rows and entries are
+ * skipped. Counts and lane/reason codes only; no job ids, task text or
+ * credentials.
+ */
+export function foldRouteRejections(
+  marketJsonl: string | null,
+  nowMs: number,
+  windowHours: number,
+): UnfedRejections {
+  const report: UnfedRejections = { available: marketJsonl !== null, decided: 0, unrouted: 0, lanes: [], byReason: {} };
+  if (marketJsonl === null) return report;
+  const perLane = new Map<string, { jobs: number; reasons: Record<string, number> }>();
+  for (const [, decision] of latestRouteDecisions(marketJsonl, nowMs, windowHours)) {
+    report.decided++;
+    if (decision.chosen === null) report.unrouted++;
+    const jobReasons = new Set<string>();
+    for (const rej of decision.rejected) {
+      const entry = perLane.get(rej.lane) ?? { jobs: 0, reasons: {} };
+      entry.jobs++;
+      for (const code of rej.codes) {
+        if (entry.reasons[code] !== undefined || Object.keys(entry.reasons).length < MAX_CODES) {
+          entry.reasons[code] = (entry.reasons[code] ?? 0) + 1;
+        }
+        jobReasons.add(code);
+      }
+      perLane.set(rej.lane, entry);
+    }
+    for (const code of jobReasons) {
+      if (report.byReason[code] !== undefined || Object.keys(report.byReason).length < MAX_CODES) {
+        report.byReason[code] = (report.byReason[code] ?? 0) + 1;
+      }
+    }
+  }
+  report.lanes = [...perLane.entries()]
+    .map(([lane, value]) => ({ lane, jobs: value.jobs, reasons: value.reasons }))
+    .sort((a, b) => b.jobs - a.jobs || a.lane.localeCompare(b.lane))
+    .slice(0, MAX_REJECTION_LANES);
+  return report;
+}
+
 const MAX_OVERRIDE_LANES = 16;
 
 const topCodes = (blocked: Record<string, number>): string =>
@@ -712,6 +827,18 @@ export function renderUnfed(report: UnfedReport): string[] {
         for (const l of o.lanes.slice(0, 3)) {
           lines.push(`  ${l.from ?? 'open'} -> ${l.to} (${l.reason}): ${l.jobs} job(s)`);
         }
+      }
+    }
+  }
+  const j = report.rejections;
+  if (j.available && j.decided > 0) {
+    const nowhere = j.unrouted > 0 ? `, ${j.unrouted} routed nowhere` : '';
+    if (j.lanes.length === 0) {
+      lines.push(`Last ${h.windowHours}h: no lane rejections recorded across ${j.decided} decided job(s)${nowhere}.`);
+    } else {
+      lines.push(`Last ${h.windowHours}h: lane rejections across ${j.decided} decided job(s)${nowhere}: ${topCodes(j.byReason)}`);
+      for (const l of j.lanes.slice(0, 3)) {
+        lines.push(`  ${l.lane}: ${l.jobs} job(s) rejected${Object.keys(l.reasons).length ? ` (${topCodes(l.reasons)})` : ''}`);
       }
     }
   }
