@@ -103,66 +103,41 @@
   font-size: 9px;
 }
 
-.gauge {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-}
-.track {
-  position: relative;
-  flex: 1 1 auto;
-  height: 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: 99px;
-  background: var(--bg-surface);
-  overflow: hidden;
-}
-.fill {
-  position: absolute;
-  inset: 1px auto 1px 1px;
-  width: max(0px, calc(var(--fill, 0%) - 2px));
-  border-radius: 99px;
-  background: var(--status-success-solid);
-}
-.gauge[data-forecast='early'] .fill { background: var(--status-danger-solid); }
-.gauge[data-forecast='on-pace'] .fill { background: var(--status-success-solid); }
-.gauge[data-forecast='underuse'] .fill { background: var(--status-warning-solid); }
-.mark, .resetMark {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--text-primary);
-}
-.resetMark { right: 0; }
-.gauge[data-forecast='unknown'] .track {
-  border-style: dashed;
-  background: repeating-linear-gradient(135deg, transparent 0 3px, color-mix(in srgb, var(--text-tertiary) 22%, transparent) 3px 5px);
-}
-.group:not([data-expanded]) .gauge { width: 14px; flex: none; }
-.group:not([data-expanded]) .track { width: 9px; height: 16px; }
-.group:not([data-expanded]) .fill {
-  inset: auto 1px 1px 1px;
-  width: auto;
-  height: max(0px, calc(var(--fill, 0%) - 2px));
-}
+/* The window itself is the shared WindowBar; this file only places it. */
+.bar { margin-block: 1px; }
+.group:not([data-expanded]) .bar { width: calc(100% - var(--space-2)); }
 
-.forecast {
+.figure {
   flex: none;
-  max-width: 58%;
+  font-size: var(--text-xs-size, 12px);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.note {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--text-2xs-size, 11px);
+  font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
 }
-.group:not([data-expanded]) .forecast { display: none; }
+.note[data-ending='dry'], .note[data-ending='unused'] { color: var(--status-warning-fg); }
+.note[data-ending='spent'] { color: var(--status-danger-fg); }
+.note[data-ending='unread'] { color: var(--text-tertiary); font-style: italic; }
+
+.key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-2);
+  margin: var(--space-1) 0 0;
+  padding: 0 var(--space-2);
+  font-size: var(--text-2xs-size, 11px);
+  color: var(--text-tertiary);
+}
+.key span { display: inline-flex; align-items: center; gap: 4px; }
 
 .tip { display: flex; flex-direction: column; gap: 3px; max-width: 280px; }
 .tipHead { display: flex; align-items: center; gap: 6px; }
 .tipLine { color: var(--text-secondary); font-size: var(--text-2xs-size, 11px); }
 
-@media (prefers-reduced-motion: reduce) {
-  .fill { transition: none; }
-}

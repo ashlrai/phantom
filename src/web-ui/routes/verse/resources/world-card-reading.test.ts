@@ -6,7 +6,7 @@ function row(key: string, engine: LaneEngine, freshness: LaneFreshness = 'fresh'
   return {
     history: null,
     key, lane, label: key, engine, usage: 'Used 40%', remaining: 'left 60%', reset: 'unknown', resetAt: null, burn: 'unknown',
-    forecast: 'unknown', forecastText: 'unknown', exhaustFraction: null, source: 'claude-usage', observedAt: null, freshness, age: '2m ago', summary: '',
+    forecast: 'unknown', forecastText: 'unknown', bar: { used: 40, more: null, unused: null, ending: 'open', figure: '40%', note: 'not projected', text: '40% used; nothing projected' }, source: 'claude-usage', observedAt: null, freshness, age: '2m ago', summary: '',
   };
 }
 
