@@ -71,7 +71,7 @@ export interface ReportLedger {
  * offsets and `Z`; naive strings read as UTC. Unparseable → NaN.
  */
 function rowTs(row: Record<string, unknown>): number {
-  const raw = row['ts'] ?? row['timestamp'] ?? row['at'];
+  const raw = row['ts'] ?? row['timestamp'] ?? row['at'] ?? row['time'] ?? row['mergedAt'] ?? row['closedAt'] ?? row['recordedAt'] ?? row['updatedAt'];
   if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
   if (typeof raw !== 'string') return Number.NaN;
   const trimmed = raw.trim();
@@ -125,10 +125,10 @@ export function summarizeJobsLedger(text: string, truncated: boolean, nowMs: num
     const ts = rowTs(row);
     if (!Number.isFinite(ts) || ts < since || ts > nowMs + 86_400_000) continue;
     sawAny = true;
-    const event = typeof row['event'] === 'string' ? row['event'] : typeof row['type'] === 'string' ? row['type'] : null;
+    const event = typeof row['event'] === 'string' ? row['event'] : typeof row['type'] === 'string' ? row['type'] : typeof row['kind'] === 'string' ? row['kind'] : null;
     const job = rowJob(row) ?? 'unknown';
-    const lane = pick(row, ['lane', 'actualLane', 'pool']);
-    const at = pick(row, ['ts', 'timestamp', 'at']);
+    const lane = pick(row, ['lane', 'actualLane', 'pool', 'arm']);
+    const at = pick(row, ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt']);
     const laneCounts = () => {
       const entry = lanes.get(lane ?? 'unknown') ?? { launches: 0, finishes: 0, merges: 0 };
       lanes.set(lane ?? 'unknown', entry);
@@ -148,7 +148,7 @@ export function summarizeJobsLedger(text: string, truncated: boolean, nowMs: num
       const url = rowUrl(row);
       if (url && !published.has(url)) published.set(url, { job, lane, url, at, ttmSeconds: null });
     } else if (event === 'outcome' || event === 'pr-merge') {
-      const state = pick(row, ['state', 'outcome', 'status'])?.toUpperCase();
+      const state = pick(row, ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'])?.toUpperCase();
       if (state !== 'MERGED') continue;
       growth.merges += 1;
       laneCounts().merges += 1;

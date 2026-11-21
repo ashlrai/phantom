@@ -145,6 +145,27 @@ describe('jobYield', () => {
     const lines = [row({ job: 'RQ-EARLYREV-1', event: 'revert', ts: at(3) }), ...merged('RQ-EARLYREV-1')];
     expect(jobYield(lines, now, 24).families[0]).toMatchObject({ launches: 1, merged: 0, reverted: 1 });
   });
+
+  it('reads the full ledger dialect: phase/result/conclusion verdicts, arm lanes, type/kind/id fields', () => {
+    const dialect = [
+      // eval/batcher spellings: arm is the lane alias, type/kind name the
+      // event and id names the job; result carries the merge verdict.
+      row({ type: 'launch', id: 'RQ-DIALECT-1', repo: 'phantom', arm: 'work', ts: at(2) }),
+      row({ kind: 'finish', job: 'RQ-DIALECT-1', empty: false, ts: at(1) }),
+      row({ event: 'publish', job: 'RQ-DIALECT-1', class: 'pr', url: 'https://example.invalid/pr/d1', ts: at(1) }),
+      row({ type: 'outcome', job: 'RQ-DIALECT-1', result: 'MERGED', ts: at(0.5) }),
+      // phase and conclusion spellings count the same way.
+      row({ event: 'launch', job: 'RQ-DIALECT-2', repo: 'phantom', pool: 'work', ts: at(2) }),
+      row({ event: 'finish', job: 'RQ-DIALECT-2', empty: false, ts: at(1) }),
+      row({ event: 'publish', job: 'RQ-DIALECT-2', class: 'pr', url: 'https://example.invalid/pr/d2', ts: at(1) }),
+      row({ event: 'outcome', job: 'RQ-DIALECT-2', phase: 'MERGED', ts: at(0.5) }),
+      row({ event: 'launch', job: 'RQ-DIALECT-3', repo: 'phantom', lane: 'work', ts: at(2) }),
+      row({ event: 'finish', job: 'RQ-DIALECT-3', empty: false, ts: at(1) }),
+      row({ event: 'publish', job: 'RQ-DIALECT-3', class: 'pr', url: 'https://example.invalid/pr/d3', ts: at(1) }),
+      row({ event: 'outcome', job: 'RQ-DIALECT-3', conclusion: 'MERGED', ts: at(0.5) }),
+    ];
+    expect(family(dialect, 'RQ-DIALECT')).toMatchObject({ launches: 3, prs: 3, merged: 3, verdict: 'keep' });
+  });
 });
 
 describe('phm jobs yield', () => {

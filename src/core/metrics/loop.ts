@@ -50,16 +50,17 @@ const PR_URL = /^https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/(\d+)$/;
  * job-latency.boundaryEvent, fleet/throughput.marksOf and
  * metrics/reward-feed.foldJobsLedgerRewards accept: job ids take
  * job|job_id|jobId|id, the event name event|type|kind, the phase
- * state|outcome|status, timestamps ts|timestamp|at|time|mergedAt|closedAt|
+ * state|outcome|status plus the producer aliases phase|result|conclusion,
+ * timestamps ts|timestamp|at|time|mergedAt|closedAt|
  * recordedAt|updatedAt (mergedAt/closedAt preferred on terminal rows), PR
- * links url|pr_url|prUrl|pr|html_url and the lane alias pool.
+ * links url|pr_url|prUrl|pr|html_url and the lane aliases pool|arm.
  */
 const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
-const PHASE_KEYS = ['state', 'outcome', 'status'] as const;
+const PHASE_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
 const TS_FIELDS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr', 'html_url'] as const;
-const LANE_KEYS = ['lane', 'pool'] as const;
+const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
 
 const firstString = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
   for (const key of keys) {

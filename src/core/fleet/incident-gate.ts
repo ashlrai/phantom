@@ -259,7 +259,7 @@ function jobRows(text: string): RawRow[] {
         at: tsMs(r.ts ?? r.at ?? r.timestamp ?? r.time ?? r.mergedAt ?? r.closedAt ?? r.recordedAt ?? r.updatedAt),
         event,
         job: jobIdOf(r),
-        lane: laneOf(r.lane ?? r.pool),
+        lane: laneOf(r.lane ?? r.pool ?? r.arm),
         repo: qualifyIncidentRepo(r.repo ?? r.repository ?? r.nameWithOwner ?? r.name_with_owner),
         prRepo: prRepoOf(r),
         raw: r,

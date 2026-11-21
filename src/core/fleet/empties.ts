@@ -355,9 +355,9 @@ export async function fleetEmpties(
     try {
       const row: Row = JSON.parse(line);
       if (!row || typeof row !== 'object' || Array.isArray(row)) throw Error();
-      const kind = String(row.event ?? '').toLowerCase();
+      const kind = String([row.event, row.type, row.kind].find(v => typeof v === 'string') ?? '').toLowerCase();
       if (!['launch', 'finish', 'outcome', 'empty_done', 'publish', 'published'].includes(kind)) continue;
-      const job = label(row.job ?? row.jobId ?? row.job_id ?? row.id), stamp = row.ts ?? row.timestamp ?? row.at;
+      const job = label(row.job ?? row.jobId ?? row.job_id ?? row.id), stamp = row.ts ?? row.timestamp ?? row.at ?? row.time ?? row.mergedAt ?? row.closedAt ?? row.recordedAt ?? row.updatedAt;
       const at = typeof stamp === 'string' ? Date.parse(stamp) : NaN;
       if (job === 'unknown' || !Number.isFinite(at)) throw Error();
       const key = JSON.stringify(Object.entries(row).sort(([a], [b]) => a.localeCompare(b)));

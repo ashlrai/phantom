@@ -92,15 +92,15 @@ export function leaderBets(queue: string | null, ledger: string | null, now: num
       if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
       row = v as Row;
     } catch { continue; }
-    const id = row.job ?? row.job_id ?? row.id;
+    const id = row.job ?? row.job_id ?? row.jobId ?? row.id;
     if (typeof id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id)) continue;
     const at = parseTs(row.ts);
     if (!Number.isFinite(at) || at > now) continue;
     const cur = seen.get(id) ?? { launched: false, started: Infinity, src: null, state: '', url: null, skip: false, empty: false, reason: null, at: -Infinity };
     seen.set(id, cur);
-    const event = String(row.event ?? '');
-    const state = String(row.state ?? row.outcome ?? '').toUpperCase();
-    const url = [row.url, row.pr_url].find((u): u is string => typeof u === 'string' && PR_URL.test(u));
+    const event = [row.event, row.type, row.kind].find((v): v is string => typeof v === 'string') ?? '';
+    const state = String([row.state, row.outcome, row.status, row.phase, row.result, row.conclusion].find((v): v is string => typeof v === 'string') ?? '').toUpperCase();
+    const url = [row.url, row.pr_url, row.prUrl, row.pr, row.html_url].find((u): u is string => typeof u === 'string' && PR_URL.test(u));
     // A launch row may carry its own producer tag; the queue line is the other source.
     const rowSrc = [row.src, row.producer].find((v): v is string => typeof v === 'string' && v.trim() !== '');
     if (rowSrc) cur.src ??= rowSrc.trim();
