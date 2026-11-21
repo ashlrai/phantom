@@ -2610,6 +2610,11 @@ async function main(): Promise<void> {
         process.exitCode = await (await loadDesktopUpdateCmd())(rest);
         break;
       }
+      case 'self-update': {
+        const { cmdSelfUpdate } = await import('./self-update.js');
+        process.exitCode = await cmdSelfUpdate(rest);
+        break;
+      }
       case 'self-swap': {
         const { cmdSelfSwap } = await import('./self-swap.js');
         process.exitCode = await cmdSelfSwap(rest);
