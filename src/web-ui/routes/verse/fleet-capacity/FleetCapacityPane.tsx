@@ -4,6 +4,10 @@
  * the sampler was watching with the launch gaps marked on it, and the worker and leader counts. History comes from
  * GET /api/verse/runs-history; the usage window (GET /api/app/pools), hold reason, models and lane-truth lines come
  * from their own reads.
+ *
+ * The board holds one cursor for all of its charts: the sample being read. Pointing at any chart, or stepping
+ * through one with the keyboard, marks that sample on every lane, on the window strip and on the worker chart,
+ * and the line above the cards says what the whole fleet held then.
  */
 import { laneModelsQuery } from './lane-models-query.js';
 import { laneModelLine, mismatchText, laneModelsHeadline } from './lane-models-model.js';
@@ -22,11 +26,13 @@ import { laneHeldText } from './lane-held-text.js';
 import { truthHeadline, verdictText, verdictTone } from './lane-truth-model.js';
 import { ObserveSlice } from '../fleet-observe/ObserveFacts.js';
 import { laneTruthQuery } from './lane-truth-queries.js';
-import { CapacityChart, clock, Facts, LaneCapacityCard } from './LaneCapacityCard.js';
+import { CapacityChart, clock, Facts, LaneCapacityCard, type BoardCursor } from './LaneCapacityCard.js';
+import { fleetMoment, fleetMomentWords, processWords } from './capacity-cursor-model.js';
 import { LaneUsage, LaneUsageKey, useLanePools } from './LaneUsage.js';
 
 export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> & Partial<Pick<PaneProps, 'host'>>) {
   const [hours, setHours] = useState<CapacityHours>(24);
+  const [picked, setPicked] = useState<number | null>(null);
   const query = useMemo(() => runsHistoryQuery(hours), [hours]);
   const sectionVisible = useSectionVisible();
   const documentVisible = useDocumentVisible();
@@ -53,7 +59,8 @@ export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> 
     ? runs.codexPersonal as Record<string, unknown> : {};
   const resetsAt = typeof personal.resetsAt === 'string' ? personal.resetsAt : null;
   const now = Date.now();
-  const samples = data ? [...data.samples].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)) : [];
+  // Held steady between reads, so moving the cursor redraws no chart line.
+  const samples = useMemo(() => data ? [...data.samples].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)) : [], [data]);
   const noFleet = !!data && samples.length === 0 && isNoFleet(data.sourceState);
   const series = data ? laneSeries(data, now) : [];
   const lanes = rankLanes(series);
@@ -63,7 +70,11 @@ export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> 
   const truthLanes = truth.data?.source === 'ok' ? truth.data.lanes : [];
   const truthHeadlineText = truthHeadline(truthLanes);
   const modelsHeadline = laneModelsHeadline(models.data);
-  const workerPoints = samples.map((sample) => ({ atMs: Date.parse(sample.at), running: sample.workers, target: sample.leaders }));
+  const workerPoints = useMemo(() => samples.map((sample) => ({ atMs: Date.parse(sample.at), running: sample.workers, target: sample.leaders })), [samples]);
+  // The sample being read on every chart at once. A place past a shorter window reads nothing.
+  const moment = picked !== null && picked < samples.length ? samples[picked] : null;
+  const momentMs = moment ? Date.parse(moment.at) : 0;
+  const cursor: BoardCursor = { index: moment ? picked : null, pick: setPicked };
   const fromMs = data ? Date.parse(data.from) : 0;
   const toMs = data ? Date.parse(data.to) : 0;
   const watched = watchedSegments(samples.map((sample) => Date.parse(sample.at)));
@@ -77,7 +88,7 @@ export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> 
         <p className={styles.headline}>{data && !noFleet ? headline(data, now) : 'Fleet capacity history'}</p>
       </div>
       <div className={styles.controls} role="group" aria-label="History window">
-        {([6, 24, 72] as const).map((value) => <button type="button" className={styles.button} aria-pressed={hours === value} key={value} onClick={() => setHours(value)}>{value} h</button>)}
+        {([6, 24, 72] as const).map((value) => <button type="button" className={styles.button} aria-pressed={hours === value} key={value} onClick={() => { setHours(value); setPicked(null); }}>{value} h</button>)}
       </div>
       <button type="button" className={styles.button} onClick={() => { refresh(); refreshSnapshot(); refreshTruth(); refreshModels(); pools.refresh(); }}>Refresh</button>
     </header>
@@ -93,7 +104,9 @@ export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> 
           <Facts facts={totalFacts(totals, watchedFor, hours)} label="Fleet totals" />
           {stall ? <p className={styles.stall} role="status">{stall}</p> : null}
           <section className={styles.section} aria-labelledby="capacity-lanes"><h3 id="capacity-lanes" className={styles.title}>Lane capacity</h3>
-            <p className={styles.muted}>Solid: running · dashed: target · shaded: held · muted band: paused. Breaks indicate missing observations.</p>
+            {/* While a sample is read, the key gives way to what the whole fleet held at that moment. */}
+            {moment ? <p className={styles.moment} data-testid="fleet-moment"><time dateTime={moment.at}>{clock(momentMs)}</time> {fleetMomentWords(fleetMoment(moment))}</p>
+              : <p className={styles.muted}>Solid: running · dashed: target · shaded: held · muted band: paused. Breaks indicate missing observations. Point at a chart, or focus it and use the arrow keys, to read one sample on every lane.</p>}
             <LaneUsageKey lanes={lanes.map((lane) => lane.lane)} pools={pools} />
             {lanes.length === 0 ? <p className={styles.muted}>No lanes reported.</p> : <ul className={styles.list}>{lanes.map((lane) => {
               const live = liveLanes.find((item: unknown) => item && typeof item === 'object' && 'lane' in item && item.lane === lane.lane) as Record<string, unknown> | undefined;
@@ -102,7 +115,7 @@ export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> 
               const mismatch = mismatchText(lane.lane, models.data);
               const truthRow = truthLanes.find((row) => row.lane === lane.lane);
               const truthLine = truthRow ? verdictText(truthRow) : null;
-              return <LaneCapacityCard key={lane.lane} lane={lane} samples={samples} onOpen={() => host?.openPane('fleet-lanes')}>
+              return <LaneCapacityCard key={lane.lane} lane={lane} samples={samples} cursor={cursor} onOpen={() => host?.openPane('fleet-lanes')}>
                 <LaneUsage lane={lane} pools={pools} hours={hours} onOpen={host ? () => host.openPane('fleet-pools') : undefined} />
                 {modelLine ? <p className={styles.muted} data-testid="lane-models">{modelLine}</p> : null}
                 {mismatch ? <p className={styles.truth} data-tone="warning">{mismatch}</p> : null}
@@ -117,6 +130,7 @@ export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> 
             <div className={styles.strip} role="img" aria-label={`Watched ${span(watchedFor)} of the last ${hours} h, ${gaps.length} launch ${gaps.length === 1 ? 'gap' : 'gaps'} marked`}>
               {watched.map((segment) => { const at = place(segment, fromMs, toMs); return <span key={segment.fromMs} className={styles.watched} style={{ left: `${at.left}%`, width: `${at.width}%` }} />; })}
               {gaps.map((gap) => { const at = place(gap, fromMs, toMs); return <span key={gap.fromMs} className={styles.gap} style={{ left: `${at.left}%`, width: `${at.width}%` }} />; })}
+              {moment ? <span className={styles.stripRule} data-rule="picked" style={{ left: `${place({ fromMs: momentMs, toMs: momentMs }, fromMs, toMs).left}%` }} /> : null}
             </div>
             <p className={styles.axis}><time dateTime={data.from}>{clock(fromMs)}</time><span>filled: watched · amber: launch gap · hatched: not watched</span><time dateTime={data.to}>{clock(toMs)}</time></p>
             <p className={styles.muted}>Observed: {new Date(samples[0].at).toLocaleString()} – {new Date(samples[samples.length - 1].at).toLocaleString()}</p>
@@ -124,7 +138,7 @@ export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> 
           </section>
           <section className={styles.section} aria-labelledby="capacity-workers"><h3 id="capacity-workers" className={styles.title}>Workers / leaders</h3>
             <p className={styles.muted}>Solid: workers · dashed: leaders · muted band: paused</p>
-            {workerPoints.some((point) => point.running !== null || point.target !== null) ? <CapacityChart points={workerPoints} samples={samples} unit="processes" label="Workers and leaders over time" /> : <p className={styles.muted}>No worker or leader counts reported.</p>}
+            {workerPoints.some((point) => point.running !== null || point.target !== null) ? <CapacityChart points={workerPoints} samples={samples} unit="processes" label="Workers and leaders over time" cursor={{ ...cursor, name: 'Workers and leaders samples', words: (index) => processWords(samples[index]) }} /> : <p className={styles.muted}>No worker or leader counts reported.</p>}
           </section>
         </> : null}
       </>}
