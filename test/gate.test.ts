@@ -6,6 +6,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { NPM_BUILD_STEPS } from '../scripts/build-outputs.mjs';
 import {
   CORPUS_GUARDS,
   GATE_BUILD_ASSET_SCRIPTS,
@@ -400,7 +401,8 @@ describe('gate data files', () => {
 
   it('every gate build asset script is still a step of `npm run build` (reused, never forked)', () => {
     const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
-    const buildSteps = String(pkg.scripts.build).split('&&').map((step) => step.trim());
+    expect(pkg.scripts.build).toBe('node scripts/build.mjs');
+    const buildSteps = NPM_BUILD_STEPS.map((step: { command: string }) => step.command);
     // Public version consistency precedes compilation; the gate reuses every asset step after tsc.
     expect(buildSteps.slice(0, 2)).toEqual(['npm run check:version', 'tsc -p tsconfig.json']);
     const positions = GATE_BUILD_ASSET_SCRIPTS.map((script) => buildSteps.indexOf(`node ${script}`));
