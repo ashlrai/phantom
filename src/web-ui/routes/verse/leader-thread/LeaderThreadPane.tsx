@@ -70,6 +70,7 @@ import { requestWallSession } from '../session-wall/wall-selection.js';
 import { useComposerAssist } from './ComposerAssist.js';
 import { recallable } from './composer-assist-model.js';
 import { EarlierMessages, useEarlierMessages } from './LeaderEarlier.js';
+import { ComposerResultLine } from './ComposerResultLine.js';
 
 /** Shared 'verse-fleet-runs' key so the pane rides the same cache and SSE invalidation as the other fleet panes. */
 const fleetRunsQuery: QueryDef<unknown> = {
@@ -543,7 +544,9 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
         <EarlierMessages control={earlier} />
         {body}
         {merged.hiddenNoise > 0 ? <p className={styles.note}>{merged.hiddenNoise} stray command {merged.hiddenNoise === 1 ? 'line' : 'lines'} hidden</p> : null}
-        {commandLines.map(line => <LineView key={line.id} line={line} />)}
+        {/* A command's answer; the jobs it names open as conversations. */}
+        {commandLines.map(line => <ComposerResultLine key={line.id} text={line.text} at={line.at}
+          onOpenConversation={job => { requestWallSession(job); openDockPane('session-wall'); }} />)}
       </div>
     </div>
     {/* What the Leader is waiting on Mason for, answerable without scrolling back. */}

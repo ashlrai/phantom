@@ -168,3 +168,17 @@ describe('top EMPTY reason in the verdict', () => {
     expect(supplyDoctorLines(blind)).toContain('EMPTY jobs: unknown (job metrics unreadable).');
   });
 });
+
+describe('phm doctor supply: build and self-tick lines', () => {
+  it('carries both typed reports and prints one plain line for each', async () => {
+    const report = await readSupplyDoctor({
+      runsDir: runs, now: () => NOW, readOff: async () => false, readCandidates: async () => null,
+      readBuild: () => ({ schema: 'doctor.build.v1', generatedAt: '', codeDir: '/x', commit: { state: 'known', sha: 'a'.repeat(40), source: 'git' }, branch: { state: 'known', name: 'work' }, behind: { state: 'known', count: 644, ref: 'origin/master' }, verdict: 'live build is 644 commits behind master on work; merged fleet features may not be running' }),
+    });
+    expect(report.build.schema).toBe('doctor.build.v1');
+    expect(report.selfTick).toMatchObject({ schema: 'fleet.self-tick-status.v1', state: 'none' });
+    const lines = supplyDoctorLines(report);
+    expect(lines).toContain('Live build: live build is 644 commits behind master on work; merged fleet features may not be running.');
+    expect(lines).toContain('Self-tick: no self-tick run recorded.');
+  });
+});

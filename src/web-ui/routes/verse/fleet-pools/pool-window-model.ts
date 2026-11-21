@@ -19,6 +19,8 @@ export interface WindowChart {
   endMs: number;
   /** Every stored reading of this window, oldest first. */
   points: WindowPoint[];
+  /** The same readings as stored, one per point and in the same order: when each was taken and the share it measured. */
+  stored: { atMs: number; usedPct: number }[];
   /** Where the view's clock sits in the window; null before its start or after its reset. */
   nowX: number | null;
   /** The end of each whole day counted from the window's start. */
@@ -57,6 +59,7 @@ export function poolWindow(series: PoolUsageSeries | undefined, row: Pick<PoolRo
   const even = series.ideal_pct;
   return { kind: 'chart', chart: {
     startMs, endMs, points: stored.map(point => ({ x: x(ms(point.at)), y: y(point.used_pct) })),
+    stored: stored.map(point => ({ atMs: ms(point.at), usedPct: point.used_pct })),
     nowX: nowMs > startMs && nowMs < endMs ? x(nowMs) : null, days,
     ahead: to !== null && to.x > from.x ? { from, to } : null,
     latest: { usedPct: last.used_pct, atMs: ms(last.at) },
@@ -65,7 +68,7 @@ export function poolWindow(series: PoolUsageSeries | undefined, row: Pick<PoolRo
 }
 
 /** The newest reading against the even line, in words: "60% used against 64.3% on the even line: 4.3 points under." */
-export function gapWords(chart: Pick<WindowChart, 'latest' | 'evenPct' | 'gap'>): string {
+export function gapWords(chart: { latest: { usedPct: number }; evenPct: number | null; gap: number | null }): string {
   if (chart.evenPct === null || chart.gap === null) return `${chart.latest.usedPct}% used.`;
   const side = chart.gap === 0 ? 'on it' : `${Math.abs(chart.gap)} ${Math.abs(chart.gap) === 1 ? 'point' : 'points'} ${chart.gap < 0 ? 'under' : 'over'}`;
   return `${chart.latest.usedPct}% used against ${chart.evenPct}% on the even line: ${side}.`;
@@ -73,3 +76,44 @@ export function gapWords(chart: Pick<WindowChart, 'latest' | 'evenPct' | 'gap'>)
 
 /** How many readings the chart draws: "41 readings". */
 export const readingCount = (chart: Pick<WindowChart, 'points'>): string => readings(chart.points.length);
+
+/** One stored reading, read off the chart: when it was taken, what it measured and where the even line stood then. */
+export interface WindowReading { index: number; of: number; atMs: number; usedPct: number; evenPct: number; gap: number }
+
+/**
+ * The reading at `index`, or null when the chart holds none there. The even line at a reading is the share of the
+ * window that had run when it was taken; the newest reading takes the route's own figure, so the caption and a
+ * reading stepped to cannot disagree.
+ */
+export function readingAt(chart: Pick<WindowChart, 'startMs' | 'endMs' | 'stored' | 'evenPct'>, index: number): WindowReading | null {
+  const stored = chart.stored[index];
+  if (!stored) return null;
+  const share = round1(Math.min(100, Math.max(0, (stored.atMs - chart.startMs) / (chart.endMs - chart.startMs) * 100)));
+  const evenPct = index === chart.stored.length - 1 && chart.evenPct !== null ? chart.evenPct : share;
+  return { index, of: chart.stored.length, atMs: stored.atMs, usedPct: stored.usedPct, evenPct, gap: round1(stored.usedPct - evenPct) };
+}
+
+/** The reading drawn nearest to `x` (a share of the window, 0 to 100); the later one on a tie. -1 when there is none. */
+export function nearestReading(chart: Pick<WindowChart, 'points'>, x: number): number {
+  let best = -1, distance = Infinity;
+  chart.points.forEach((point, index) => {
+    const away = Math.abs(point.x - x);
+    if (away <= distance) { best = index; distance = away; }
+  });
+  return best;
+}
+
+/** A reading in words: "Reading 2 of 3, Sun, Nov 15, 12:00 PM: 30% used against 35.7% on the even line: 5.7 points under." */
+export function readingWords(reading: WindowReading, time: (ms: number) => string): string {
+  return `Reading ${reading.index + 1} of ${reading.of}, ${time(reading.atMs)}: ${gapWords({ latest: reading, evenPct: reading.evenPct, gap: reading.gap })}`;
+}
+
+/** Where a key moves the reading being read; null for a key the chart does not take. The arrows stop at the ends. */
+export function stepReading(key: string, index: number, count: number): number | null {
+  if (count === 0) return null;
+  if (key === 'ArrowLeft' || key === 'ArrowDown') return Math.max(0, index - 1);
+  if (key === 'ArrowRight' || key === 'ArrowUp') return Math.min(count - 1, index + 1);
+  if (key === 'Home') return 0;
+  if (key === 'End') return count - 1;
+  return null;
+}
