@@ -91,8 +91,16 @@ unchanged tree prints `SKIP verify-changed`; pass `--force` to rerun.
 prefer one command. If authority drift fails, run `npm run authority:regen` and
 list each new Tier-1 root in the pull request body.
 
-If you added or renamed a document, run `npm run docs:sync` and commit what it
-regenerates; the hosted generated-files check fails on a stale tree.
+If you added, renamed or deleted a page under `docs/`, or changed a page's
+`#` title or first sentence, run `node scripts/generate-docs-llms.mjs` and
+commit the updated `docs/llms.txt`. Its page index lists each page's title and
+first sentence, and the required `Check generated files` job reruns the
+generator and fails if any tracked file changes. If you changed `bin/ashlr`,
+commit it, then run `npm run canonical-launcher-digests:regen` (it reads the
+launcher's git history) and commit `scripts/canonical-launcher-digests.json`.
+`npm run docs:sync` regenerates every generated surface (version blocks, site
+pages, CODEMAP, the CLI references) and can also rewrite files you did not
+touch; keep only the output your change caused.
 
 ### Reading `verify-changed` output
 
@@ -178,7 +186,7 @@ when these jobs succeed:
 | Secret-shape scan | Added lines contain nothing token-shaped outside fake test fixtures. |
 | Secret scan (diff) | A second secret scan over the diff. |
 | Classify | Picks the lane (site, docs or full) for the change. |
-| Check generated files | Regenerated docs indexes and launcher digests match what you committed. |
+| Check generated files | `node scripts/generate-docs-llms.mjs` leaves every tracked file unchanged, and the `bin/ashlr` digest is listed in `scripts/canonical-launcher-digests.json`. |
 | Fast gate (typecheck + affected tests) | Type check plus a bounded set of tests selected from your diff (below). |
 
 Quick typecheck and `Check authority drift (hermetic)` also run but are
