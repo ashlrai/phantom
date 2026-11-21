@@ -116,6 +116,7 @@ Every command, grouped by topic.
     models verify [--text]                                                Show model verification status and age (JSON by default).
     models pull <name> [--yes]                                            Explicitly pull an Ollama model (large download; confirm first).
     models start                                                          Best-effort start a locally-installed Ollama (never downloads).
+    local capacity [--json]                                               Show how many local-model workers fit in free memory, retaining a safety margin and the local lane ceiling; unknown readings leave targets unchanged.
     local-runtime <status|start|stop|restart|reshape|logs|resolve-model>  Supervise the loopback llama-server serving runtime (parallel local fleet engine); manual and attended.
     local-runtime install|uninstall                                       Add or remove the opt-in launch agent that keeps llama-server up across logout/crashes; install is refused while the kill switch is engaged.
     context read | write [--json]                                         Read current company context or save a sourced note.
@@ -457,6 +458,7 @@ Every command, grouped by topic.
     receipt list|status|show <run>|verify <run>|timeline <run> [--json]                                                                Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only).
     sessions [--lane <lane>] [--repo <repo>] [--json] [--live]                                                                         Every agent session as one tree (leader, workers, subagents): model, repo, state, when it last spoke (quiet after 10 min) and its last message. --live shows only running ones.
     sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json]                                                                 Every session as a short conversation on one screen: its summary and newest 3 messages, yours included, leader first. Read only.
+    sessions find <words> [--lane <lane>] [--repo <repo>] [--live] [--json]                                                            The sessions whose whole conversation holds every word, with the messages that hold one. Read only.
     sessions tail <id> [--follow] [--lines N] [--json]                                                                                 What one session is doing now: its last 200 log lines, redacted; --follow streams new ones. The same stream the map side panel shows.
     sessions thread <id> [--all] [--json]                                                                                              One session as a conversation: a summary, then its brief, steps, commands, changed files, notes, bus messages and last message; --all shows the earlier ones too. Read only.
     sessions reconcile [--json]                                                                                                        Check local runs against worker processes and job metrics: live, finished or unknown. Read only.

@@ -201,6 +201,21 @@ narrowing. If the server answers for a different narrowing than the one you
 chose, the line says so instead of labelling the cards wrongly. Marks for new
 messages on sessions outside the narrowed list are kept.
 
+The same words are also looked for in every session's whole conversation.
+Once you stop typing, a list under the bar names each session that holds
+them, with the lines that do and the words marked: who said the line, when,
+and the words around the find. It reaches what the cards cannot: something
+said long before a session's newest messages, the end of a job's log, and
+sessions past the 40 on screen (a search reads up to 120). It keeps the lane,
+repo and "Running only" you narrowed to. A session listed with no line holds
+the words in its id, lane, repo or summary. Click a result, or press Down
+from the find box and Enter, to open that conversation; arrow keys move
+between results and go on to the cards after the last one. A word needs two
+letters. If the search cannot be read the list says why and the cards are
+still filtered. From a terminal, `phm sessions find <words>` prints the same
+results; add `--json` for the document described under
+[session find](FLEET-API.md#session-find).
+
 The pane opens the way you left it: the words in the find box and the lane,
 repo and "Running only" you narrowed to are kept in this browser, across a
 reload or a restart of the app, until you clear them. Only that view is kept,
