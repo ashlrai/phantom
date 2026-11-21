@@ -144,6 +144,28 @@ agents:
 phm shipped --since 24h --json
 ```
 
+Home's **Work log** card shows what the fleet did in the last 24 hours. One
+sentence counts the events by kind: merged, launched, finished, no change,
+leader and incident. Under it each kind that happened gets a row: its name
+and count, a strip of 48 squares running across the report's 24 hours (a
+filled square is a half hour in which that kind happened, darker where more
+happened within that row) and the time it last happened. A kind's name is a
+button that narrows the list below to that kind; choose it again to go back.
+The list holds the newest eight events with the time, the kind, the lane's
+provider mark and the event in words. A merge links to its pull request,
+"3 times" marks a line that stands for repeated events of one job, and a job
+id opens that job in the Worker log. Nothing is filled in: a source the
+report could not read is named under the sentence as not counted, an event
+with no readable time is listed as "time unknown" and gets no square, and no
+strip is drawn when the report does not give its hours. The card reads the
+report every minute while visible. Until the first read answers, or on a
+server that does not serve the report, it lists the few newest lines the
+Home summary carries. The same report for agents:
+
+```sh
+phm worklog --hours 24 --json
+```
+
 The Metrics pane is one board of the last 24 hours. It leads with the merged
 PR counts and the busiest hour, then four numbers (the first with a line of
 the merges in each hour), the two hourly charts side by side and a ranked bar
