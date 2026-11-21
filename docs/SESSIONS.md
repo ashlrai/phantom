@@ -122,6 +122,25 @@ text field. In the list, Up, Down, Home and End move between rows, Enter opens
 one and Esc returns to the cards. A narrower pane shows the conversation
 alone, and J and K still work.
 
+A pane at least 1000 px wide keeps the Leader's conversation on the right of
+the cards, so you can read every session and write to the Leader on one
+screen. It is the same conversation the leader's card opens: the Leader's
+replies, your messages, where each one was routed, and a reply box that
+writes to the Leader's inbox. It reads
+`GET /api/verse/fleet/control/session-thread?id=leader` every 10 seconds
+while the pane is on screen, and it still does when the cards are narrowed to
+a lane or repo, which lists no leader. It never takes the keyboard when it
+appears. Press L anywhere outside a text field to put the cursor in its reply
+box; Esc there returns to the cards and leaves the conversation where it is.
+The leader's card shows no "new" mark while its conversation is beside the
+cards. Hide puts the conversation away, which is kept in this browser across
+a reload; "Leader conversation" above the cards, or L, brings it back. From
+1360 px the Leader stays on the right of an open conversation as well, as a
+third column. In a pane between the two widths an open conversation covers
+it, and words already typed to the Leader are still in the box when you come
+back. In a pane too narrow for it, L opens the leader's own conversation with
+the cursor in the reply box.
+
 A card or row shows "3 new" when the session holds three more messages than
 when you last had it open, or than when the pane first showed it. The counts
 are kept in this browser, so after a reload or a restart of the app the cards

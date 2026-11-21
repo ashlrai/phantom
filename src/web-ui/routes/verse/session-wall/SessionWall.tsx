@@ -14,8 +14,10 @@
  * asks the server for one lane, one repo or only running sessions; both are
  * kept across a reload. N opens the next conversation with new messages; the
  * counts behind the "N new" marks are kept across a reload too (wall-seen.ts).
+ * With room, the Leader's conversation and its reply box stay on the right of
+ * all of it (LeaderDock.tsx, wall-leader.ts), and L goes to that reply box.
  */
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { sessionAge } from '../../../../core/fleet/live-sessions.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -25,7 +27,9 @@ import { sessionThreadQuery, THREAD_POLL_MS } from '../fleet-sessions/session-th
 import { clockTime } from '../leader/thread-model.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { LeaderDock } from './LeaderDock.js';
 import { newLabel, railEntries, railStep, SessionRail } from './SessionRail.js';
+import { leaderIdOf, loadLeaderHidden, saveLeaderHidden, useLeaderRoom } from './wall-leader.js';
 import { nextUnseen, noteWallSeen, unseenCount, unseenSessions } from './wall-seen.js';
 import { loadWallView, saveWallView } from './wall-view-store.js';
 import { subscribeWallSelection, takeRequestedWallSession } from './wall-selection.js';
@@ -83,9 +87,11 @@ export interface WallViewProps {
   find?: string;
   /** What the read was asked to narrow to, so an empty answer names it. */
   scope?: WallScope;
+  /** A session whose whole conversation is on screen beside the cards (the Leader's); its card carries no "new" mark. */
+  readingId?: string | null;
 }
 
-export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_SCOPE }: WallViewProps) {
+export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_SCOPE, readingId = null }: WallViewProps) {
   const [only, setOnly] = useState<WallState | null>(null);
   const list = useRef<HTMLUListElement>(null);
   const found = findEntries(read.entries, find);
@@ -95,7 +101,7 @@ export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_S
   // A filter whose last session has changed state falls back to everything rather than showing an empty wall.
   const filter = only !== null && counts[only] > 0 ? only : null;
   const shown = filter === null ? found : found.filter(entry => entry.session.state === filter);
-  const next = nextUnseen(shown, null);
+  const next = nextUnseen(shown, readingId);
   useEffect(() => { if (focusId !== null) cardsIn(list.current).find(card => card.dataset.card === focusId)?.focus(); }, [focusId]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLUListElement>) => {
@@ -116,7 +122,7 @@ export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_S
   return <section className={styles.root} aria-label="Every session as a conversation">
     <p className={styles.headline}>{wallHeadline(read)}</p>
     {next !== null && <button type="button" className={styles.next} data-next-new={next} onClick={() => onOpen(next)} title="Open the first conversation with new messages (N)">
-      {newLabel(unseenSessions(shown, null))} <kbd>N</kbd>
+      {newLabel(unseenSessions(shown, readingId))} <kbd>N</kbd>
     </button>}
     {found.length > 0 && <div className={styles.filters} role="group" aria-label="Show sessions by state">
       <button type="button" className={styles.filter} aria-pressed={filter === null} onClick={() => setOnly(null)}>All <span>{found.length}</span></button>
@@ -131,10 +137,10 @@ export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_S
       : found.length === 0
       ? <p className={styles.empty} role="status">No conversation on screen holds “{find.trim()}”. It looks in each session's id, lane, model, repo, summary and newest messages{unshown > 0 ? `; ${unshown} more session${unshown === 1 ? ' is' : 's are'} not on screen` : ''}.</p>
       : <ul ref={list} className={styles.wall} aria-label="Conversations" onKeyDown={onKeyDown}>
-        {shown.map(entry => <Card key={entry.session.id} entry={entry} fresh={unseenCount(entry, null)} onOpen={onOpen} />)}
+        {shown.map(entry => <Card key={entry.session.id} entry={entry} fresh={unseenCount(entry, readingId)} onOpen={onOpen} />)}
       </ul>}
     {read.gaps.length > 0 && <ul className={styles.gaps} aria-label="Not shown">{read.gaps.map(gap => <li key={gap}>{gap}</li>)}</ul>}
-    <p className={styles.notice}>Updated {clockTime(read.generatedAt) || 'at an unknown time'}. Enter opens a conversation, R opens it ready to reply, N opens the next with new messages, / finds. Summaries are assembled from the records, not written by a model. Same read for agents: <code>phm sessions threads --json</code></p>
+    <p className={styles.notice}>Updated {clockTime(read.generatedAt) || 'at an unknown time'}. Enter opens a conversation, R opens it ready to reply, N opens the next with new messages, L writes to the Leader, / finds. Summaries are assembled from the records, not written by a model. Same read for agents: <code>phm sessions threads --json</code></p>
   </section>;
 }
 
@@ -179,15 +185,32 @@ export function SessionWallPane({ visible, host }: Pick<PaneProps, 'visible' | '
   const [scope, setScope] = useState<WallScope>(kept.scope);
   useEffect(() => { saveWallView({ find, scope }); }, [find, scope]);
   const [choices, setChoices] = useState<{ lanes: readonly string[]; repos: readonly string[] }>({ lanes: [], repos: [] });
-  const wrap = useRef<HTMLDivElement>(null);
+  const wrap = useRef<HTMLDivElement | null>(null);
+  // The pane's own box, held as state too so its width is measured as soon as it exists.
+  const [box, setBox] = useState<HTMLDivElement | null>(null);
+  const attach = useCallback((node: HTMLDivElement | null) => { wrap.current = node; setBox(node); }, []);
+  const room = useLeaderRoom(box);
+  const [leaderHidden, setLeaderHidden] = useState(() => loadLeaderHidden());
+  useEffect(() => { saveLeaderHidden(leaderHidden); }, [leaderHidden]);
+  const [replyAsk, setReplyAsk] = useState(0);
   const def = useMemo(() => sessionWallQueryFor(scope), [scope]);
   const read = useQuery(def, { enabled: visible, freshMs: WALL_POLL_MS });
   const refetch = useRefetch(def);
   usePollWhileVisible(refetch, WALL_POLL_MS, { enabled: visible });
   const wall = read.data ?? null;
   const openId = open?.id ?? null;
-  // After each read is drawn: first sight of a session is its starting count, and the open conversation counts as read.
-  useEffect(() => { if (wall) noteWallSeen(wall.entries, openId, isScoped(scope)); }, [wall, openId, scope]);
+  const leaderId = leaderIdOf(wall?.entries);
+  // Beside the cards from the first width, beside an open conversation only with room for three columns; never twice on one screen.
+  const leaderFits = room > 0 && (openId === null || (room === 2 && openId !== leaderId));
+  // Kept mounted (and its draft with it) while a conversation covers it; on screen only when it fits.
+  const leaderMounted = room > 0 && !leaderHidden, leaderShown = leaderMounted && leaderFits;
+  const readingId = leaderShown ? leaderId : null;
+  // After each read is drawn: first sight of a session is its starting count, and a conversation on screen counts as read.
+  useEffect(() => {
+    if (!wall) return;
+    noteWallSeen(wall.entries, openId ?? readingId, isScoped(scope));
+    if (openId !== null && readingId !== null) noteWallSeen(wall.entries, readingId, isScoped(scope));
+  }, [wall, openId, readingId, scope]);
   // Lanes and repos seen in any read stay on offer, so narrowing to one does not hide the way to another.
   useEffect(() => {
     setChoices(known => {
@@ -195,6 +218,18 @@ export function SessionWallPane({ visible, host }: Pick<PaneProps, 'visible' | '
       return lanes === known.lanes && repos === known.repos ? known : { lanes, repos };
     });
   }, [wall, scope]);
+  /** L: the cursor goes to the Leader's reply box, beside the wall when it fits there, otherwise in the Leader's own conversation. */
+  const talkToLeader = () => {
+    if (leaderFits) { setLeaderHidden(false); setReplyAsk(asks => asks + 1); }
+    else if (openId === leaderId) wrap.current?.querySelector<HTMLElement>('[data-wall-side] textarea')?.focus();
+    else setOpen({ id: leaderId, toReply: true });
+  };
+  /** Esc in the Leader's conversation: back to the cards, or to the conversation that is open. */
+  const leaveLeader = () => {
+    const side = wrap.current?.querySelector<HTMLElement>('[data-wall-side]');
+    (side?.querySelector<HTMLElement>('button[data-card]') ?? side?.querySelector<HTMLElement>('section[tabindex]') ?? side?.querySelector<HTMLElement>('input[type="search"]'))?.focus();
+  };
+  let side: ReactNode;
   if (open !== null) {
     const close = () => { setFocusId(open.id); setOpen(null); };
     // J and K step through the conversations listed, N goes to the next one with new messages, from anywhere but a text field or the unlock dialog.
@@ -206,7 +241,7 @@ export function SessionWallPane({ visible, host }: Pick<PaneProps, 'visible' | '
       event.preventDefault();
       setOpen({ id: to, toReply: false });
     };
-    return <div className={styles.split} onKeyDown={onKeyDown}>
+    side = <div className={styles.split} onKeyDown={onKeyDown}>
       <div className={styles.columns}>
         <SessionRail read={wall} failed={read.error != null} openId={open.id} onPick={id => setOpen({ id, toReply: false })} onClose={close}
           find={find} onShowAll={() => setFind('')} />
@@ -214,12 +249,30 @@ export function SessionWallPane({ visible, host }: Pick<PaneProps, 'visible' | '
         <OpenConversation key={open.id} id={open.id} toReply={open.toReply} visible={visible} host={host} onBack={close} />
       </div>
     </div>;
+  } else {
+    const failure = read.error ? wallFailure(read.error) : null;
+    // The bar keeps its place in the tree through every state below, so choosing a lane never takes the keyboard off the control.
+    side = <>
+      {(wall || isScoped(scope)) && <WallBar find={find} onFind={setFind} scope={scope} onScope={setScope} lanes={choices.lanes} repos={choices.repos} read={wall}
+        onLeave={() => wrap.current?.querySelector<HTMLButtonElement>('button[data-card]')?.focus()} />}
+      {room > 0 && leaderHidden && <button type="button" className={styles.leaderShow} onClick={() => setLeaderHidden(false)} title="Show the Leader conversation beside the cards (L writes to the Leader)">
+        Leader conversation <kbd>L</kbd>
+      </button>}
+      {wall ? <>
+        {failure && <p className={styles.stale} role="status">Refresh failed; showing the last read, which may be stale.</p>}
+        <WallView read={wall} onOpen={(id, toReply = false) => setOpen({ id, toReply })} focusId={focusId} find={find} scope={scope} readingId={readingId} />
+      </> : <div className={styles.root}>
+        {failure ? <Fault failure={failure} onRetry={refetch}><button type="button" className={styles.link} onClick={() => host.openPane('fleet-sessions')}>Open Sessions</button></Fault>
+          : read.data === null ? <p className={styles.fault} role="alert">The server answered with something that is not a list of session conversations.</p>
+          : <p className={styles.loading} role="status">{isScoped(scope) ? `Reading sessions in ${scopeWords(scope)}…` : 'Reading every session…'}</p>}
+      </div>}
+    </>;
   }
-  const failure = read.error ? wallFailure(read.error) : null;
-  // From anywhere on the wall but a field: "/" puts the cursor in the find box, N opens the first conversation with new messages.
-  const onSlash = (event: KeyboardEvent<HTMLDivElement>) => {
-    if ((event.key !== '/' && event.key !== 'n') || event.metaKey || event.ctrlKey || event.altKey) return;
-    if (event.target instanceof Element && event.target.closest('textarea, input, select')) return;
+  // From anywhere in the pane but a field: L writes to the Leader. On the wall, "/" puts the cursor in the find box and N opens the first conversation with new messages.
+  const onKeys = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.metaKey || event.ctrlKey || event.altKey || (event.key !== 'l' && (open !== null || (event.key !== '/' && event.key !== 'n')))) return;
+    if (event.target instanceof Element && event.target.closest('textarea, input, select, [role="dialog"]')) return;
+    if (event.key === 'l') { event.preventDefault(); talkToLeader(); return; }
     if (event.key === 'n') {
       // The button is on screen only while a card shown holds something new, so the key and the button always agree.
       const next = wrap.current?.querySelector<HTMLButtonElement>('button[data-next-new]');
@@ -232,17 +285,8 @@ export function SessionWallPane({ visible, host }: Pick<PaneProps, 'visible' | '
     box.focus();
     box.select();
   };
-  // The bar keeps its place in the tree through every state below, so choosing a lane never takes the keyboard off the control.
-  return <div ref={wrap} className={styles.narrowed} onKeyDown={onSlash}>
-    {(wall || isScoped(scope)) && <WallBar find={find} onFind={setFind} scope={scope} onScope={setScope} lanes={choices.lanes} repos={choices.repos} read={wall}
-      onLeave={() => wrap.current?.querySelector<HTMLButtonElement>('button[data-card]')?.focus()} />}
-    {wall ? <>
-      {failure && <p className={styles.stale} role="status">Refresh failed; showing the last read, which may be stale.</p>}
-      <WallView read={wall} onOpen={(id, toReply = false) => setOpen({ id, toReply })} focusId={focusId} find={find} scope={scope} />
-    </> : <div className={styles.root}>
-      {failure ? <Fault failure={failure} onRetry={refetch}><button type="button" className={styles.link} onClick={() => host.openPane('fleet-sessions')}>Open Sessions</button></Fault>
-        : read.data === null ? <p className={styles.fault} role="alert">The server answered with something that is not a list of session conversations.</p>
-        : <p className={styles.loading} role="status">{isScoped(scope) ? `Reading sessions in ${scopeWords(scope)}…` : 'Reading every session…'}</p>}
-    </div>}
+  return <div ref={attach} className={styles.narrowed} data-leader={leaderShown ? 'beside' : undefined} onKeyDown={onKeys}>
+    <div className={styles.wallSide} data-wall-side>{side}</div>
+    {leaderMounted && <LeaderDock id={leaderId} visible={visible} shown={leaderShown} replyAsk={replyAsk} onHide={() => setLeaderHidden(true)} onLeave={leaveLeader} />}
   </div>;
 }
