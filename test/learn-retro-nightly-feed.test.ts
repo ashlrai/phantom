@@ -110,6 +110,22 @@ describe('foldFleetJobs', () => {
     ]);
   });
 
+  it('reads merged/closed event names as verdicts when no phase field resolves', () => {
+    const rows = [
+      fleetRow({ event: 'merged', state: undefined, ts: '2026-10-25T22:00:00.000Z' }),
+      fleetRow({ job: 'RQ-TEST-2', event: 'closed', state: undefined, ts: '2026-10-25T22:30:00.000Z' }),
+      // A resolved phase stays authoritative over the event name.
+      fleetRow({ job: 'RQ-TEST-3', event: 'merged', state: 'OPEN', ts: '2026-10-25T22:40:00.000Z' }),
+      fleetRow({ job: 'RQ-TEST-4', event: 'merged', state: 'CLOSED', ts: '2026-10-25T22:50:00.000Z' }),
+    ];
+    const jobs = foldFleetJobs(rows.map((row) => JSON.stringify(row)).join('\n'), NOW);
+    const byId = new Map(jobs.map((job) => [job.id, job]));
+    expect(byId.get('RQ-TEST-1')).toMatchObject({ status: 'succeeded', updatedAt: '2026-10-25T22:00:00.000Z' });
+    expect(byId.get('RQ-TEST-2')).toMatchObject({ status: 'failed', updatedAt: '2026-10-25T22:30:00.000Z' });
+    expect(byId.has('RQ-TEST-3')).toBe(false);
+    expect(byId.get('RQ-TEST-4')).toMatchObject({ status: 'failed', updatedAt: '2026-10-25T22:50:00.000Z' });
+  });
+
   it('counts a later revert as failure and skips rows without provable attribution', () => {
     const rows = [
       fleetRow({ state: 'MERGED', ts: '2026-10-25T22:00:00.000Z' }),
