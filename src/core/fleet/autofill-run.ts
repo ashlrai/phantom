@@ -246,7 +246,7 @@ export async function runAutofillTick(o: AutofillTickOptions): Promise<AutofillT
   report.gaps = null;
   if (o.apply && off === false) {
     try {
-      const harvest = o.harvestGaps ?? (async (d: { runsDir: string; root: string }) => (await import('./job-gaps.js')).readJobGaps(24, { propose: true, runsDir: d.runsDir, repoDir: d.root }));
+      const harvest = o.harvestGaps ?? (async (d: { runsDir: string; root: string }) => (await import('./job-gaps.js')).readJobGaps(24, { propose: true, runsDir: d.runsDir, repoDir: d.root, now: nowMs }));
       const gaps = await harvest({ runsDir: o.runsDir, root: o.root });
       const proposed = gaps.proposed ?? [];
       report.gaps = { candidates: gaps.candidates.length, queued: proposed.filter(p => p.queued).length, skipped: proposed.filter(p => !p.queued).length, unknown: !gaps.known };
