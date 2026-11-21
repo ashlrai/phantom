@@ -39,7 +39,7 @@ jobs:
           set -euo pipefail
           cd "$RUNNER_TEMP"
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          if git ls-remote --exit-code --heads "$remote" ecosystem-stats >/dev/null; then
+          if git ls-remote --exit-code --heads "$remote" refs/heads/ecosystem-stats >/dev/null; then
             git clone --quiet --depth 1 --branch ecosystem-stats "$remote" data
           else
             git init --quiet data && git -C data checkout --quiet --orphan ecosystem-stats
