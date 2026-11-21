@@ -19,3 +19,4 @@
 .pace_line[data-pace='ahead'] strong, .pace_line[data-pace='behind'] strong { color: var(--status-warning-fg); }
 .pace_line[data-pace='on-pace'] strong { color: var(--status-success-fg); }
 .pace_line[data-pace='unknown'] strong { color: var(--status-unknown-fg); }
+.pace_line[data-over], .pace_line[data-over] strong { color: var(--status-danger-fg); }
