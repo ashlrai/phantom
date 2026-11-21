@@ -32,7 +32,8 @@ export interface BuildLiveReport {
   commit: Known<{ sha: string; source: 'build' | 'git' }> | Unknown;
   /** Branch name; 'detached' for a detached head. */
   branch: Known<{ name: string | 'detached' }> | Unknown;
-  behind: Known<{ count: number; ref: string }> | Unknown;
+  /** `since`: when the oldest commit the running build lacks was merged (ISO), null when git would not say. */
+  behind: Known<{ count: number; ref: string; since: string | null }> | Unknown;
   verdict: string;
 }
 
@@ -98,7 +99,12 @@ export function readBuildLive(opts: BuildLiveOptions = {}): BuildLiveReport {
     else {
       const raw = git(codeDir, ['rev-list', '--count', `${commit.sha}..${ref}`]);
       const count = raw !== null && /^\d+$/.test(raw) ? Number(raw) : null;
-      behind = count === null ? { state: 'unknown', why: `${short(commit.sha)} is not in this checkout's history` } : { state: 'known', count, ref };
+      if (count === null) behind = { state: 'unknown', why: `${short(commit.sha)} is not in this checkout's history` };
+      else {
+        const oldest = count > 0 ? git(codeDir, ['log', '--reverse', '--format=%cI', `${commit.sha}..${ref}`])?.split('\n')[0] : null;
+        const since = oldest && Number.isFinite(Date.parse(oldest)) ? new Date(oldest).toISOString() : null;
+        behind = { state: 'known', count, ref, since };
+      }
     }
   }
 

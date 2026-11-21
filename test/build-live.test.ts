@@ -31,7 +31,7 @@ describe('phm doctor build', () => {
     const r = read();
     expect(r.schema).toBe('doctor.build.v1');
     expect(r.commit).toEqual({ state: 'known', sha, source: 'git' });
-    expect(r.behind).toEqual({ state: 'known', count: 0, ref: 'origin/master' });
+    expect(r.behind).toEqual({ state: 'known', count: 0, ref: 'origin/master', since: null });
     expect(r.verdict).toBe(`live build is up to date with master (${sha.slice(0, 7)} on master)`);
   });
 
@@ -40,6 +40,8 @@ describe('phm doctor build', () => {
     const r = read();
     expect(r.branch).toEqual({ state: 'known', name: 'work' });
     expect(r.behind).toMatchObject({ state: 'known', count: 3 });
+    // `since` is when the oldest missing commit merged (a real ISO time), so the card can say "since Nov 12".
+    expect(r.behind.state === 'known' && Number.isFinite(Date.parse(r.behind.since ?? ''))).toBe(true);
     expect(r.verdict).toBe('live build is 3 commits behind master on work; merged fleet features may not be running');
     expect(buildLiveLines(r)[1]).toContain('HEAD of');
   });
@@ -99,7 +101,7 @@ describe('phm doctor build', () => {
     repo(1);
     const seen: string[] = [];
     read({ git: (cwd, args) => { seen.push(args[0]!); return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } });
-    expect(seen.filter(c => !['rev-parse', 'symbolic-ref', 'rev-list'].includes(c))).toEqual([]);
+    expect(seen.filter(c => !['rev-parse', 'symbolic-ref', 'rev-list', 'log'].includes(c))).toEqual([]);
   });
 
   it('prints plain words and JSON, rejects other flags', async () => {

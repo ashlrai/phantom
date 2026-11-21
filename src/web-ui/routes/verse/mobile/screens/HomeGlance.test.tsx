@@ -50,7 +50,7 @@ describe('phone Home', () => {
     ['empty', 'quiet', '0 merged in the last hour · 0 lanes running · main green', 'ok', 'Nothing merged in the last 24 hours.'],
     ['normal', 'busy', '7 merged in the last hour · 2 lanes running · main green', 'ok', 'Today: 3 user-facing changes across 1 repo; biggest: Add a phone Home.'],
     ['red main', 'red', '7 merged in the last hour · 2 lanes running · main red: phantom', 'red', 'Today: 3 user-facing changes across 1 repo; biggest: Add a phone Home.'],
-  ] as const)('%s at 390 px: nine parts in order, and nothing a phone cannot use', async (_name, kind, line, tone, shippedLine) => {
+  ] as const)('%s at 390 px: ten parts in order, and nothing a phone cannot use', async (_name, kind, line, tone, shippedLine) => {
     const viewport = mockViewport(390);
     const fetches = mac(kind);
     const { container } = renderMobile(<div className={ui.app} style={{ width: 390 }}><HomeGlance /></div>);
@@ -67,10 +67,10 @@ describe('phone Home', () => {
     const strip = within(await screen.findByRole('region', { name: 'Pulse strip' }));
     expect(strip.getAllByRole('listitem')).toHaveLength(4);
     expect(strip.queryAllByText('unknown')).toHaveLength(kind === 'quiet' ? 4 : 0);
-    // Top to bottom: the four tiles, the strip, the pulse, health, approvals (or their empty note), supply, pools, the message box, what shipped today.
-    const parts = [screen.getByRole('region', { name: 'Fleet at a glance' }), screen.getByRole('region', { name: 'Pulse strip' }), screen.getByRole('region', { name: 'Pulse' }), await health(), screen.getByText('Nothing needs you'), screen.getByRole('region', { name: 'Supply' }), screen.getByRole('region', { name: 'Pools' }), screen.getByLabelText('Message to the leaders'), screen.getByRole('region', { name: 'Shipped today' })];
+    // Top to bottom: the four tiles, the strip, the pulse, health, live build, approvals (or their empty note), supply, pools, the message box, what shipped today.
+    const parts = [screen.getByRole('region', { name: 'Fleet at a glance' }), screen.getByRole('region', { name: 'Pulse strip' }), screen.getByRole('region', { name: 'Pulse' }), await health(), await screen.findByLabelText('Live build'), screen.getByText('Nothing needs you'), screen.getByRole('region', { name: 'Supply' }), screen.getByRole('region', { name: 'Pools' }), screen.getByLabelText('Message to the leaders'), screen.getByRole('region', { name: 'Shipped today' })];
     for (let i = 1; i < parts.length; i++) expect(parts[i - 1]!.compareDocumentPosition(parts[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect([...container.firstElementChild!.children]).toHaveLength(9);
+    expect([...container.firstElementChild!.children]).toHaveLength(10);
     expect(checkView('home', 'Home', container).findings).toEqual([]);
     // One read each for pulse, health, approvals, pools, machines and shipped (one day); the only other reads are the message box's own inbox.
     expect([...new Set(fetches.calls.map((call) => call.url))].filter((url) => !url.includes('/fleet/runs')).sort()).toEqual([APPROVALS_PATH, NODES_POOL_PATH, SUPPLY_PATH, `${SHIPPED_PATH}?days=1`, '/api/usage/runway'].sort());
@@ -88,6 +88,22 @@ describe('phone Home', () => {
     for (let i = 1; i < parts.length; i++) expect(parts[i - 1]!.compareDocumentPosition(parts[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(fetches.calls.map(call => call.url)).toContain(`${LEADER_REPLIES_PATH}?limit=1`);
     expect(checkView('home', 'Home', container).findings).toEqual([]);
+    viewport.restore();
+  });
+
+  it('shows the live build under the health line: unknown without a report, behind with a date when stale', async () => {
+    const viewport = mockViewport(390);
+    mac('busy');
+    const first = renderMobile(<div className={ui.app} style={{ width: 390 }}><HomeGlance /></div>);
+    expect(await screen.findByLabelText('Live build')).toHaveTextContent('Live build: unknown');
+    first.unmount(); evictAll();
+    const supply = { schema: 'doctor.supply.v1', verdict: 'v', ingested: { state: 'known', path: 'p', sources: [] }, rejected: { state: 'known', path: 'p', total24h: 0, byReason: {} },
+      selfSupply: { landed24h: 0, lastLanded: null }, hook: {},
+      build: { commit: { state: 'known', sha: 'abc1234', source: 'git' }, behind: { state: 'known', count: 644, ref: 'origin/master', since: '2026-11-12T08:00:00.000Z' } } };
+    mac('busy', { [`GET ${SUPPLY_PATH}`]: supply });
+    renderMobile(<div className={ui.app} style={{ width: 390 }}><HomeGlance /></div>);
+    const line = await screen.findByText('Live build: 644 behind (since Nov 12)');
+    expect(line).toHaveAttribute('data-tone', 'red');
     viewport.restore();
   });
 

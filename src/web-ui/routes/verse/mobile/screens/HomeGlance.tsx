@@ -19,6 +19,7 @@ import type { QueryDef } from '../../../../data/queries.js';
 import { BriefTiles, briefQuery } from '../BriefTiles.js';
 import { ApprovalsCard, approvalAsksQuery } from '../../home/ApprovalsCard.js';
 import { LeaderRepliesCard, leaderRepliesQuery } from '../../home/LeaderRepliesCard.js';
+import { LiveBuildLine } from '../../home/LiveBuildLine.js';
 import { MachinesCard } from '../../home/MachinesCard.js';
 import { PoolsCard, poolsQuery } from '../../home/PoolsCard.js';
 import { PulseCard, pulseQuery } from '../../home/PulseCard.js';
@@ -89,6 +90,7 @@ export function HomeGlance() {
           <Button variant="tinted" onClick={() => refetch()}>Try again</Button>
         </section>
       )}
+      <LiveBuildLine className={styles.health} />
       {/* Approvals stand on their own API: what only Mason can decide does not wait on the health line. */}
       <ApprovalsCard from="phone" canAnswer={canShowActions(permissions)} limit={APPROVALS_SHOWN} />
       <LeaderRepliesCard limit={1} />
