@@ -349,10 +349,26 @@ session aggregate. `work_class` is the class a jobs row recorded when
 one exists; otherwise it is the job's newest `work-market.v1`
 `route_decision` class — the market's own classification of the job,
 written for every evaluated job — and stays `null` when neither ledger
-recorded one. The market read degrades independently: the report's
+recorded one. The market read
+degrades independently: the report's
 `market_state` mirrors the jobs `state` vocabulary and `market_truncated`
 marks a cut decision tail, in which case joined classes cover only the
-newest bytes. `cost_usd`
+newest bytes. `lane_hint_blocked_by` carries the dispatch claim's
+recorded lane-hint blocking codes — the third field of the claim's
+lane-override record: a solo `claim` row that left its hinted lane
+spreads the work market's `preferred_lane_blocked_by`, the rejected
+preferred lane's `reason_codes` or `[]` when the lane was unknown to
+the market or merely outranked rather than rejected (`resource_fit`,
+`unknown_preference`, hysteresis-held fallbacks); `batch_claim` rows
+never carry the field. The list joins only alongside a well-formed
+`lane_override` on the newest `claim`/`batch_claim` row under the same
+newest-claim-stands rule — a later on-hint claim clears it, a malformed
+reason or hint skips the row, and non-claim rows never touch it.
+Entries join only in the bounded lowercase reason-code shape,
+deduplicated in recorded order and capped; a non-array value or a list
+whose entries are all unrecognizable reads as unrecorded (`null`),
+while a recorded empty list stays `[]` — the market's own "nothing
+blocked it" verdict, distinct from missing evidence. `cost_usd`
 is an explicit `cost_usd`/`usd`/`cost` field on a jobs row when one is
 recorded; otherwise it is the sum of api-spend call costs naming the job
 (same `job`/`job_id`/`id` attribution and `cost_usd`/`usd`/`cost`
@@ -453,7 +469,15 @@ unclassified alike, since capture completeness is not merge evidence:
 `usage_missing` lists the top recorded capture-gap reasons and
 `usage_sources` the top recorded measurement paths, so an operator sees
 where usage telemetry is actually broken rather than only that token
-coverage is thin. The weight math still moves on
+coverage is thin. Each proposal's evidence block also tallies the
+dispatch lane-hint blocking codes — `lane_blocked_known` counts the
+known-cohort outcomes whose standing claim recorded a non-empty
+`lane_hint_blocked_by` (the market's recorded `[]` "nothing blocked
+it" verdict does not count) and `lane_blocked_reasons` breaks the
+count down by recorded code (`quota_exhausted`, `saturated`, `held`,
+`lower_rank`, `hysteresis_*`), so a lane whose hinted work keeps
+losing to capacity or rank shows the blocking mix behind its off-hint
+share. The weight math still moves on
 held-merge rate alone; the evidence is context for whoever applies a
 proposal, and text output renders it as `name=value(known)` suffixes only
 for signals with coverage. The report is advisory-only: it writes nothing, never

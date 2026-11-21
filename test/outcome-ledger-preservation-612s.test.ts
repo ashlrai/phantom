@@ -204,7 +204,7 @@ describe('router outcome ledger (612S preservation)', () => {
       usage_source: null, usage_missing: null,
       ttm_s: null, queue_wait_s: null, empty: null, diff_files: null, diff_lines: null,
       exit_code: null, failure_class: null, empty_class: null,
-      task_outcome: null, passk: null,
+      task_outcome: null, lane_hint_blocked_by: null, passk: null,
     }]);
   });
 
@@ -565,6 +565,60 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(byId.get('S1')?.task_outcome).toBeNull();
     expect(byId.get('S1')?.empty).toBe(false);
     expect(byId.get('S1')?.exit_code).toBe(0);
+  });
+
+  it('folds the claim lane-hint blocking codes, newest claim stands', () => {
+    const fold = foldRouterOutcomes([
+      // B1: solo claim that left its hinted lane — the market's recorded
+      // rejected-lane reason codes join in recorded order.
+      '{"job":"B1","event":"claim","lane":"claude","lane_hint":"codex-personal","lane_override":"preferred_lane_fallback","lane_hint_blocked_by":["quota_exhausted","saturated"]}',
+      '{"job":"B1","phase":"MERGED"}',
+      // B2: override then a re-claim that ran on its hint clears the codes.
+      '{"job":"B2","event":"claim","lane":"devin","lane_hint":"claude","lane_override":"resource_fit","lane_hint_blocked_by":["lower_rank"]}',
+      '{"job":"B2","event":"claim","lane":"claude"}',
+      // B3: batch member whose session lane differed — batch_claim never
+      // carries the field, so the codes stay unrecorded (null), never [].
+      '{"job":"B3","event":"batch_claim","batch":"RQ-BATCH-b3","lane":"claude","lane_hint":"devin","lane_override":"batch_session"}',
+      // B4: a recorded empty list is the market's "nothing blocked it"
+      // verdict — it stays [] and is distinct from missing evidence.
+      '{"job":"B4","event":"claim","lane":"alpha","lane_hint":"beta","lane_override":"resource_fit","lane_hint_blocked_by":[]}',
+      // B5: non-array values and lists whose entries are all
+      // unrecognizable read as unrecorded — never guessed, never raw.
+      '{"job":"B5","event":"claim","lane":"alpha","lane_hint":"beta","lane_override":"resource_fit","lane_hint_blocked_by":"quota_exhausted"}',
+      '{"job":"B5","event":"claim","lane":"alpha","lane_hint":"beta","lane_override":"preferred_lane_fallback","lane_hint_blocked_by":["NOT_A_CODE",42,null]}',
+      // B6: duplicate and over-bound entries dedupe/cap; malformed reason
+      // or hint skips the row and preserves the earlier well-formed codes.
+      '{"job":"B6","event":"claim","lane":"alpha","lane_hint":"beta","lane_override":"preferred_lane_fallback","lane_hint_blocked_by":["held","held","saturated"]}',
+      '{"job":"B6","event":"claim","lane":"gamma","lane_hint":"beta","lane_override":"NOT_A_CODE","lane_hint_blocked_by":["quota_exhausted"]}',
+      '{"job":"B6","event":"claim","lane":"delta","lane_hint":"bad lane!","lane_override":"preferred_lane_fallback","lane_hint_blocked_by":["provider_backoff"]}',
+      // B7: advisory failover receipts carry lookalike fields under a
+      // different vocabulary and never join.
+      '{"job":"B7","event":"failover","lane":"beta","lane_hint":"alpha","lane_override":"failover_quota","lane_hint_blocked_by":["quota_exhausted"],"failure":"quota"}',
+      '{"job":"B7","phase":"MERGED"}',
+      // B8: non-claim rows carrying the fields never mint or clear codes.
+      '{"job":"B8","event":"launch","lane":"alpha","lane_hint":"beta","lane_override":"resource_fit","lane_hint_blocked_by":["saturated"]}',
+      '{"job":"B8","event":"finish","lane_hint_blocked_by":["saturated"]}',
+      '{"job":"B8","phase":"MERGED"}',
+      // B9: claim rows under the type/kind dialect join like the phase reads.
+      '{"job":"B9","type":"claim","lane":"alpha","lane_hint":"beta","lane_override":"preferred_lane_fallback","lane_hint_blocked_by":["hysteresis_move_cap"]}',
+      '{"job":"B9","phase":"CLOSED"}',
+      // B10: an override reason without a recorded hint still joins the
+      // codes — the hint shape gates the pair, not the code list.
+      '{"job":"B10","event":"claim","lane":"alpha","lane_override":"unknown_preference","lane_hint_blocked_by":[]}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('B1')).toMatchObject({ lane_hint_blocked_by: ['quota_exhausted', 'saturated'], merged: true });
+    expect(byId.get('B2')).toMatchObject({ lane_hint_blocked_by: null });
+    expect(byId.get('B3')).toMatchObject({ lane_hint_blocked_by: null });
+    expect(byId.get('B4')).toMatchObject({ lane_hint_blocked_by: [] });
+    expect(byId.get('B5')).toMatchObject({ lane_hint_blocked_by: null });
+    // Malformed newest claims preserve the earlier well-formed codes;
+    // duplicates fold once in recorded order.
+    expect(byId.get('B6')).toMatchObject({ lane_hint_blocked_by: ['held', 'saturated'] });
+    expect(byId.get('B7')).toMatchObject({ lane_hint_blocked_by: null, merged: true });
+    expect(byId.get('B8')).toMatchObject({ lane_hint_blocked_by: null, merged: true });
+    expect(byId.get('B9')).toMatchObject({ lane_hint_blocked_by: ['hysteresis_move_cap'], merged: false });
+    expect(byId.get('B10')).toMatchObject({ lane_hint_blocked_by: [] });
   });
 
   it('never lets a session row claim a PR URL or resolve an outcome', () => {
