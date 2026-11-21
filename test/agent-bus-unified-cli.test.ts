@@ -237,6 +237,42 @@ describe('phm agents bus (unified)', () => {
     expect(text.join('\n')).toContain('matched 3');
   });
 
+  it('reports the true pending total on channel read --matched and resumes before unshown posts', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    for (const id of ['c-1', 'c-2', 'c-3']) {
+      expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', id, '--id', id])).json)
+        .toMatchObject({ status: 'posted' });
+    }
+    // Without the flag the page shape is unchanged: no matched field at all.
+    const plain = await run(['channel', 'read', 'release']);
+    expect(plain.json.matched).toBeUndefined();
+
+    const first = await run(['channel', 'read', 'release', '--matched', '--limit', '2']);
+    expect(first.code).toBe(0);
+    expect(first.json.matched).toBe(3);
+    expect(first.json.messages).toHaveLength(2);
+    // nextCursor resumes at the newest shown row: the unshown match sits beyond it.
+    const shownCursors = first.json.messages.map((m: { cursor: number }) => m.cursor);
+    expect(first.json.nextCursor).toBe(Math.max(...shownCursors));
+
+    const second = await run(['channel', 'read', 'release', '--matched', '--limit', '2', '--after', String(first.json.nextCursor)]);
+    expect(second.json.matched).toBe(1);
+    expect(second.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['c-3']);
+
+    const done = await run(['channel', 'read', 'release', '--matched', '--after', String(second.json.nextCursor)]);
+    expect(done.json.matched).toBe(0);
+    expect(done.json.messages).toEqual([]);
+
+    // Human output names the total as well.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['channel', 'read', 'release', '--matched', '--limit', '2', '--root', root],
+      t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('matched 3');
+  });
+
   it('records repeatable --ref values as v2 note refs on dm and channel post', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

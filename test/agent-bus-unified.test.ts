@@ -218,6 +218,44 @@ describe('channel reads', () => {
     writeFileSync(join(options.root!, 'agent-identities', 'registry.json'), '{broken');
     expect(readAgentChannel('release', {}, options)).toMatchObject({ status: 'unavailable' });
   });
+
+  it('counts every filter-matched post across the store only when asked', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    createAgentChannel({ name: 'other', createdBy: 'atlas' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'a1', id: 'ch-m1' }, options);
+    await postChannelMessage({ from: 'nova', channel: 'release', topic: 'deploy', text: 'a2', id: 'ch-m2' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'a3', id: 'ch-m3' }, options);
+    // Posts on another channel and DMs never enter the count.
+    await postChannelMessage({ from: 'atlas', channel: 'other', text: 'elsewhere', id: 'ch-m4' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'dm noise', id: 'dm-m5' }, options);
+
+    // Without the flag the page shape is unchanged: no matched field at all.
+    const plain = readAgentChannel('release', { limit: 2 }, options);
+    if (plain.status !== 'ok') throw new Error(`unexpected ${plain.status}`);
+    expect(plain.messages).toHaveLength(2);
+    expect(plain.matched).toBeUndefined();
+
+    // With it, messages still caps at limit while matched counts every post
+    // the same filters accept — and nextCursor already covers the whole scan.
+    const counted = readAgentChannel('release', { limit: 2, matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.messages).toHaveLength(2);
+    expect(counted.matched).toBe(3);
+
+    // The count honors the same topic, sender and after cursor as the page.
+    const topic = readAgentChannel('release', { topic: 'deploy', matched: true }, options);
+    if (topic.status !== 'ok') throw new Error(`unexpected ${topic.status}`);
+    expect(topic.matched).toBe(1);
+    const filtered = readAgentChannel('release', { matched: true, from: 'atlas' }, options);
+    if (filtered.status !== 'ok') throw new Error(`unexpected ${filtered.status}`);
+    expect(filtered.matched).toBe(2);
+    const resumed = readAgentChannel('release', { after: counted.nextCursor, matched: true }, options);
+    if (resumed.status !== 'ok') throw new Error(`unexpected ${resumed.status}`);
+    expect(resumed.matched).toBe(0);
+    expect(resumed.messages).toEqual([]);
+  });
 });
 
 describe('thread-filtered reads', () => {
