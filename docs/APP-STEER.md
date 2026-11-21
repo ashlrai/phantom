@@ -34,6 +34,27 @@ In an empty reply box, ↑ brings back the messages you already sent in this
 conversation, newest first; ↓ steps forward again and Esc clears the box.
 Editing a recalled message makes it an ordinary draft.
 
+### Reach a session by typing
+
+A reply that starts with `/` and names a command runs on Enter instead of
+being sent; `/help` lists them all. Four of them are about sessions. They
+only read, so they need no unlock and leave no note in the Leader inbox:
+
+| Type | What happens |
+| --- | --- |
+| `/who` | One line in the conversation naming the sessions working now (quiet ones first, eight at most, the rest counted), each with its lane and when it last spoke. |
+| `/thread <session>` | Opens that session as a conversation in the Conversations pane and says its state and lane. |
+| `/summary <session>` | Prints the session's state, lane, model, when it last spoke and its recorded summary, without leaving the chat. |
+| `/log <job-id>` | Opens the job's live log. |
+
+Type `@` after the command to pick the session from the list above; the `@`
+is dropped. A job id in a command's answer is a button that opens that session
+as a conversation, so `/who` is also a way into any of them. `/thread` on a
+name the session list does not hold opens nothing and says so. When the list
+does not answer, `/who` reads "Working sessions are unknown" with the reason,
+and `/thread` opens the name unchecked and says that. The reads are the ones
+behind `phm sessions --json` and `phm sessions thread <id> --json`.
+
 Every fleet graph node offers Steer and Hand off. Both open the existing
 message dialog for review before sending. Steer asks for a routing decision
 when a node is exhausted, held or stale, and a neutral question otherwise.
