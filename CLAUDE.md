@@ -9,6 +9,9 @@ Read first, in this order:
 - [docs/AGENT-OPERATIONS.md](docs/AGENT-OPERATIONS.md): setup and operation.
 - [CONTRIBUTING.md](CONTRIBUTING.md): conventions, tests, contracts.
 - [CONSTITUTION.md](CONSTITUTION.md).
+- [docs/CONTRIBUTE-WITH-AN-AGENT.md](docs/CONTRIBUTE-WITH-AN-AGENT.md): for
+  outside contributors, the path from clone to auto-merge (upstream as
+  `origin`, push to your fork, what `Merge Gate` requires).
 
 ## Commands
 
