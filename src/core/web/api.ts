@@ -2040,6 +2040,17 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/lane-yield[?hours=24] ─────────────────────────────
+    // Merged PRs per launch for every lane (fleet.lane-yield.v1), the same report as
+    // `phm fleet yield --by lane`. Read-only; an unreadable ledger is known: false.
+    if (path === '/api/fleet/lane-yield' && method === 'GET') {
+      const [{ readLaneYield }, { runsRoot }, { join }] = await Promise.all([import('../fleet/lane-yield-board.js'), import('../metrics/loop-collect.js'), import('node:path')]);
+      const raw = Number(new URL(req.url ?? '', 'http://localhost').searchParams.get('hours') ?? 24);
+      const hours = Number.isFinite(raw) && raw > 0 && raw <= 168 ? raw : 24;
+      sendJson(res, 200, await readLaneYield(join(runsRoot(), 'metrics', 'jobs.jsonl'), hours, Date.now()));
+      return true;
+    }
+
     // ── GET /api/fleet/activity ─────────────────────────────────────────
     // RQ-SWE3-OBSERVABILITY-2: per-job launch->finish->publish lifecycle and
     // timing folded from the host metrics ledger (metrics/jobs.jsonl) — the

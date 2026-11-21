@@ -19,6 +19,7 @@ import { DeliveryCard } from './DeliveryCard.js';
 import { DiskCard } from './DiskCard.js';
 import { MachinesCard } from './MachinesCard.js';
 import { LeaderRepliesCard } from './LeaderRepliesCard.js';
+import { LaneYieldCard } from './LaneYieldCard.js';
 import { PoolsCard } from './PoolsCard.js';
 import { PulseCard } from './PulseCard.js';
 import { PulseStrip } from './PulseStrip.js';
@@ -68,7 +69,7 @@ export function HomePane({ visible }: PaneProps) {
   if (!home) return <section className={styles.root} aria-label="Home"><PulseStrip visible={visible} /><PulseCard visible={visible} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p>
     <div key="board" className={styles.board}>
       <Column key="agents" title={AGENTS}><ApprovalsCard key="approvals" visible={visible} /><LeaderRepliesCard key="leader-replies" visible={visible} />{working(visible)}<MachinesCard key="machines" visible={visible} className={styles.card} onOpenJob={openPoolJob} /></Column>
-      <Column key="resources" title={RESOURCES}><PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} onOpenPools={openPools} /></Column>
+      <Column key="resources" title={RESOURCES}><PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} onOpenPools={openPools} /><LaneYieldCard key="yield" visible={visible} /></Column>
     </div></section>;
   // A failed refresh keeps the last summary on screen; it must not read as current.
   const stale = read.status === 'error';
@@ -97,7 +98,7 @@ export function HomePane({ visible }: PaneProps) {
     </Card>
     </Column>
     <Column key="resources" title={RESOURCES}>
-    <PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} onOpenPools={openPools} />
+    <PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} onOpenPools={openPools} /><LaneYieldCard key="yield" visible={visible} />
     <Card title="Most at risk of going unused" action="Open Usage" onOpen={() => openPane('fleet-usage')}>
       <Value field={home.atRisk}>{risk => risk ? <AtRiskReading risk={risk} /> : <p>Nothing is set to expire unused.</p>}</Value>
     </Card>
