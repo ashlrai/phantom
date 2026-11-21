@@ -34,6 +34,8 @@
 .peerDot[data-state='busy'], .peerDot[data-state='held'], .peerDot[data-state='not-running'] { background: var(--status-warning-solid); }
 .computers { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
 .computer { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.peerDot[data-state='not-joined'] { background: var(--status-unknown-fg); opacity: 0.6; }
+.computer[data-state='not-joined'] { border-style: dashed; color: var(--text-secondary); }
 .computer[data-state='offline'] { border-color: var(--status-danger-solid); }
 /* Apps (MacAppsCard): name and state on the left, one button on the right; wraps cleanly at 390px. */
 .appList { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
