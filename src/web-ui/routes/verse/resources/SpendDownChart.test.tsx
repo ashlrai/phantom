@@ -25,7 +25,13 @@ afterEach(() => { evictAll(); vi.unstubAllGlobals(); });
 describe('SpendDownChart', () => {
   it('renders an under-spending, an on-pace, a drained and an unknown plan from the JSON alone', () => {
     const { container } = render(<SpendDownChart data={FIXTURE} />);
-    for (const words of ['behind: will waste ~12%', 'spending on pace', 'exhausted until Fri 6 PM', 'unknown: no fresh reading (3 h old)']) expect(screen.getByText(words)).toBeVisible();
+    // One plain sentence per row, built here from the same fields when an older payload has none.
+    expect(screen.getAllByTestId('spenddown-sentence').map(el => el.textContent)).toEqual([
+      'Claude: 72% used, 22 hours left, behind: will leave 12% unused',
+      'Codex Cmp: 50% used, reset time unknown, on pace',
+      expect.stringMatching(/^Zai: 100% used, reset time unknown, spent$/),
+      'Grok: unknown',
+    ]);
     const bars = screen.getAllByRole('img');
     expect(bars.map(bar => bar.getAttribute('aria-label'))).toEqual([
       'Claude: 72% used, even pace 82%, ends near 88% at reset. behind: will waste ~12%',
@@ -40,7 +46,6 @@ describe('SpendDownChart', () => {
     // An unknown plan draws an empty track: no fill, tick or marker.
     expect(bars[3]!.children).toHaveLength(0);
     expect(container.querySelectorAll('[data-state]').length).toBe(4);
-    expect(screen.getByText('resets in 22 h')).toBeVisible();
   });
 
   it('draws nothing for an empty list', () => {
@@ -100,9 +105,9 @@ describe('phone Home spend down card', () => {
   it('shows the chart from GET /api/app/pools/spenddown', async () => {
     stubFetch({ 'GET /api/app/pools/spenddown': FIXTURE });
     renderMobile(<SpendDownCard />);
-    const claude = (await screen.findByText('behind: will waste ~12%')).closest('[data-state]') as HTMLElement;
-    expect(within(claude).getByText('Claude')).toBeVisible();
-    expect(screen.getByText('unknown: no fresh reading (3 h old)')).toBeVisible();
+    const claude = (await screen.findByText('Claude: 72% used, 22 hours left, behind: will leave 12% unused')).closest('[data-state]') as HTMLElement;
+    expect(within(claude).getByRole('img')).toBeVisible();
+    expect(screen.getByText('Grok: unknown')).toBeVisible();
   });
 
   it('stays quiet when there are no plans', async () => {

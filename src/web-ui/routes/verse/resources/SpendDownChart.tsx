@@ -1,4 +1,4 @@
-import { queuedText, slotsText, SPENDDOWN_SCHEMA, type SpendDownRow, type SpendDownV1 } from '../../../../core/fleet/pools-spenddown.js';
+import { poolSentence, queuedText, slotsText, SPENDDOWN_SCHEMA, type SpendDownRow, type SpendDownV1 } from '../../../../core/fleet/pools-spenddown.js';
 import { apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 import styles from './SpendDownChart.module.css';
@@ -17,13 +17,6 @@ export const spendDownQuery: QueryDef<SpendDownV1> = {
 const pct = (frac: number | null): string => frac === null ? 'unknown' : `${Math.round(frac * 100)}%`;
 const left = (frac: number): string => `${Math.min(100, Math.max(0, frac * 100))}%`;
 
-/** "resets in 22 h"; days past two, "soon" under an hour; nothing when the reset is unknown. */
-export function resetsInText(hours: number | null): string | null {
-  if (hours === null) return null;
-  if (hours < 1) return 'resets soon';
-  return hours < 48 ? `resets in ${Math.round(hours)} h` : `resets in ${Math.round(hours / 24)} d`;
-}
-
 function describe(row: SpendDownRow): string {
   if (row.used_frac === null) return `${row.label}: ${row.verdict}`;
   return `${row.label}: ${pct(row.used_frac)} used, even pace ${pct(row.even_pace_frac)}, ends near ${pct(row.projected_at_reset)} at reset. ${row.verdict}`;
@@ -34,8 +27,8 @@ export function SpendDownChart({ data }: { data: SpendDownV1 }) {
   if (data.pools.length === 0) return null;
   return <div className={styles.chart} data-testid="spenddown-chart">
     {data.pools.map(row => <div className={styles.row} key={row.id} data-state={row.state}>
-      <div className={styles.head}><span className={styles.label}>{row.label}</span><span className={styles.verdict}>{row.verdict}</span></div>
-      {resetsInText(row.resets_in_h) ? <span className={styles.reset}>{resetsInText(row.resets_in_h)}</span> : null}
+      <div className={styles.head}><span className={styles.label} data-testid="spenddown-sentence">{row.sentence ?? poolSentence(row)}</span>
+        {row.state === 'idle' || row.blocked ? <span className={styles.verdict}>{row.verdict}</span> : null}</div>
       {row.blocked_fix ? <span className={styles.reset} data-testid="spenddown-blocked">{row.blocked_fix}</span> : null}
       {row.running !== undefined ? <span className={styles.reset} data-testid="spenddown-slots">{slotsText(row.running, row.target ?? null, row.queued_rows ?? null)}</span> : null}
       {row.queued_hours !== undefined ? <span className={styles.reset} data-testid="spenddown-queued">{queuedText(row.queued_hours)}</span> : null}
