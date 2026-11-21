@@ -266,9 +266,20 @@ forks, drafts, and failures in the secret scans or `Check generated files`.
 From a fork, wait until `master` is green again, then rebase onto
 `origin/master` and push, or ask a maintainer to rerun the failed jobs.
 
-Two other workflows you may see around your pull request are not required:
-`PR topology observation (non-authoritative)` is telemetry, and the
-`Merge Queue Reaper` only cancels queue runs whose queue entry is gone.
+Other workflows you may see around your pull request are not required and
+do not block auto-merge:
+
+- `Perf budget (advisory, non-required)` runs when a pull request is opened,
+  reopened or marked ready, not on later pushes. It times the cold CLI paths
+  in `perf/budgets.json` and fails when a median exceeds its baseline plus
+  the file's tolerance (20% unless a target sets its own). A red result means your change may have slowed startup, or the
+  shared runner was slow; look before you dismiss it.
+- `Dependency audit (root + Raycast)` runs only when a manifest, lockfile or
+  audit configuration changes. Those paths are protected, so the owner reviews
+  that pull request anyway; see
+  [docs/DEPENDENCY-SECURITY.md](DEPENDENCY-SECURITY.md).
+- `PR topology observation (non-authoritative)` is telemetry, and the
+  `Merge Queue Reaper` only cancels queue runs whose queue entry is gone.
 
 ### Protected paths wait for the owner
 
