@@ -15,6 +15,7 @@ import { useQuery } from '../../../data/hooks.js';
 import type { FleetLaneSnapshot, FleetLaneView } from '../../../data/api-types.js';
 import { SkeletonLine } from '../../../components/primitives/Skeleton.js';
 import { readFailureReason } from '../../../data/client.js';
+import { LaneCapBadges } from '../../../components/fleet/LaneCapBadges.js';
 import styles from './LanesPanel.module.css';
 
 function formatReset(resetAt: string | null): string {
@@ -104,6 +105,7 @@ export function LanesPanel() {
                   <strong>{lane.lane}</strong>
                   <span>Queue {cell(lane.queueDepth)} · Live {cell(lane.liveJobs)} · Merges/h {cell(lane.mergesPerHour)}</span>
                   <span>Credit: {lane.credit.state === 'observed' || lane.credit.state === 'reset-pending' ? lane.credit.label : 'unknown'}</span>
+                  <LaneCapBadges caps={lane.caps} lane={lane.lane} />
                 </button>
               ))}
             </div>

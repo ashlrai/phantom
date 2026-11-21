@@ -36,7 +36,9 @@ last 50 jobs, the empty rate and the weight the router uses (1 is neutral; a lan
 fewer than 10 jobs is unknown and stays neutral). A merge recorded as reverted
 counts as reverted, never as merged. The lane router sends rows bigger
 than small to lanes at 0.5 or better when they have room, and gives a low-yield lane
-small, test-only rows. `phm lanes yield` also gives every lane a verdict over `--since`
+small, test-only rows. The yield fold reads the fleet's jobs-ledger dialect, so
+GitHub-resolved merges recorded by the outcome reconciler (`jobId`/`prUrl`/
+`outcome` rows) count the same as dispatcher outcome rows. `phm lanes yield` also gives every lane a verdict over `--since`
 (default 24h): "low-yield" when 80% or more of at least 20 finished jobs ended empty,
 "unknown" under 10 finished jobs, else "productive". The router skips a low-yield lane
 for remaps and free capacity ("skipped zai: 92 of 99 recent jobs ended empty") unless the

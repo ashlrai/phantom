@@ -222,7 +222,11 @@ band, then priority, then expiry, then newest. It aggregates local sources
 — unresolved `NEEDS-MASON.md` items, unanswered allowlisted teammate texts,
 live owner-thread inbound messages no recorded outbound reply cites (the same
 awaiting-reply mark `phm comms status` counts, each item deep-linking
-`phm comms thread` and `phm comms send-owner --reply-to`),
+`phm comms thread` and `phm comms send-owner --reply-to`), recorded owner
+replies whose channel fanout is not fully delivered — the delivery side of the
+same mark, which counts a reply answered even when every channel refused it
+(each `owner-delivery` item names the unconfirmed destinations as failed,
+pending or unknown and deep-links the resend that retries only them),
 outbound drafts awaiting approval — `phm drafts` items plus pending
 Comms-agent reply drafts that have no cos mirror (every non-email transport,
 or an email mirror that failed to write; a mirrored copy lists through its
@@ -241,8 +245,17 @@ open agent-bus v2 work-feed jobs (queued or rescheduled
 jobs the feed shows `blocked` or `failed` — stuck work needs a decision — or
 open announcements that declare no claim keys, which `work claim` refuses
 `no-claim-keys`; those list with `bus show` / `work feed --job` links and the
-status detail when one exists instead of a claim act — read
-through the same projection as `phm agents bus work feed`), plus agent
+status detail when one exists instead of a claim act — and `running`/`idle`
+announcements whose declared keys provably lost every live hold, which are
+stalled work only the announcer can move; those list only under complete
+hold coverage, since truncated, unavailable or absent coverage can never
+prove "no hold" — read
+through the same projection as `phm agents bus work feed`), plus a refused
+work feed itself — one high item naming the retained receipt the projection
+blamed (`agents bus show <id>` / `work feed` links, `expiresAt` that
+receipt's TTL deadline; a refusal that names no receipt keeps unknown
+times), since the refusal hides every announced job and refuses the work
+verbs until the receipt expires — plus agent
 conversation threads still waiting on a reply — the same `waiting` threads
 `phm agents conversations --waiting` computes from the one shared
 conversations projection, fleet-wide, each item naming who must answer, how

@@ -6,7 +6,7 @@ import { cmdCommsOwner, cmdCommsOwnerStatus } from '../src/cli/comms-owner-threa
 import { createLeaderMailbox } from '../src/core/comms/leader-mailbox.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings, type OwnerChannelTransport, type OwnerDelivery, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { liveOwnerTransports, proveOwnerDirectMessage, resolveLiveEmailRecipient, resolveLiveIMessageHandle, resolveLiveSlackOwnerId } from '../src/core/comms/owner-live-transport.js';
-import { acceptOwnerInbound, postOwnerNotice, pullOwnerChannel, readOwnerAwaitingReplies, readOwnerCommsStatus, readOwnerThread, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
+import { acceptOwnerInbound, postOwnerNotice, pullOwnerChannel, readOwnerAwaitingReplies, readOwnerCommsStatus, readOwnerThread, readOwnerUndeliveredReplies, sendOwnerHello, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
 import { useAccountHomeForTest } from '../src/core/real-home.js';
 import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 
@@ -203,6 +203,88 @@ describe('owner thread', () => {
     const status = readOwnerCommsStatus(options);
     expect(status.awaitingReply).toBeNull();
     expect(status.messages).toBeNull();
+    expect(status.undeliveredReplies).toBeNull();
+  });
+
+  it('lists recorded replies whose fanout is not fully delivered', async () => {
+    const { options } = fixture();
+    options.transports!.telegram = {
+      async pull() { return []; },
+      async deliver() { return { status: 'refused' as const, reason: 'fixture refusal' }; },
+    };
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'hello', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
+    // The reply still answers the inbound; only the delivery side is incomplete.
+    expect((await sendOwnerReply({ text: 'answer', idempotencyKey: 'reply-owner-01' }, options)).status).toBe('partial');
+    expect(readOwnerThread(options).awaitingReply).toEqual([]);
+    const read = readOwnerUndeliveredReplies({ runsDir: options.runsDir });
+    expect(read).toEqual({
+      status: 'ok',
+      items: [{
+        id: 'm2', idempotencyKey: 'reply-owner-01', replyTo: 'telegram-msg-1',
+        at: '2023-11-14T22:13:20.000Z', text: 'answer',
+        destinations: [{ channel: 'telegram', state: 'failed', reason: 'Channel transport refused the owner reply.' }],
+      }],
+    });
+    expect(readOwnerCommsStatus(options).undeliveredReplies).toBe(1);
+  });
+
+  it('clears the undelivered mark when a resend confirms the destination', async () => {
+    const { options } = fixture();
+    let refuse = true;
+    options.transports!.telegram = {
+      async pull() { return []; },
+      async deliver() { return refuse ? { status: 'refused' as const, reason: 'fixture refusal' } : { status: 'sent' as const, reason: 'ok' }; },
+    };
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'hello', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
+    await sendOwnerReply({ text: 'answer', idempotencyKey: 'reply-owner-01' }, options);
+    expect(readOwnerUndeliveredReplies({ runsDir: options.runsDir })).toMatchObject({ status: 'ok' });
+    const before = readOwnerUndeliveredReplies({ runsDir: options.runsDir });
+    expect(before.status === 'ok' && before.items).toHaveLength(1);
+    refuse = false;
+    // Same reply identity retries only the unconfirmed destination.
+    expect((await sendOwnerReply({ text: 'answer', idempotencyKey: 'reply-owner-01' }, options)).status).toBe('sent');
+    expect(readOwnerUndeliveredReplies({ runsDir: options.runsDir })).toEqual({ status: 'ok', items: [] });
+    expect(readOwnerCommsStatus(options).undeliveredReplies).toBe(0);
+  });
+
+  it('reads a destination with no delivery evidence as unknown, never delivered', () => {
+    const { options } = fixture();
+    mkdirSync(join(options.runsDir, 'leader'), { recursive: true });
+    // A reply recorded before the receipt journal (or with it rotated away):
+    // desktop kept its sent-mark in the thread, telegram has no evidence at all.
+    writeFileSync(join(options.runsDir, 'leader', 'owner-thread.json'), JSON.stringify({
+      v: 1, threadId: 'owner',
+      messages: [
+        { seq: 1, id: 'm1', idempotencyKey: 'telegram-msg-1', channel: 'telegram', senderId: 'telegram:100', direction: 'inbound', at: '2023-11-14T22:13:20.000Z', text: 'hello' },
+        { seq: 2, id: 'm2', idempotencyKey: 'reply-owner-01', channel: 'telegram', senderId: 'leader', direction: 'outbound', at: '2023-11-14T22:14:00.000Z', text: 'answer', replyTo: 'telegram-msg-1', fanout: ['telegram', 'desktop'] },
+      ],
+      deliveries: { 'reply-owner-01:desktop': 'sent' },
+    }), { mode: 0o600 });
+    const read = readOwnerUndeliveredReplies({ runsDir: options.runsDir });
+    expect(read).toEqual({
+      status: 'ok',
+      items: [{
+        id: 'm2', idempotencyKey: 'reply-owner-01', replyTo: 'telegram-msg-1',
+        at: '2023-11-14T22:14:00.000Z', text: 'answer',
+        destinations: [{ channel: 'telegram', state: 'unknown', reason: null }],
+      }],
+    });
+  });
+
+  it('keeps notices and hellos out of the undelivered read', async () => {
+    const { options } = fixture();
+    await postOwnerNotice({ text: 'leader line', idempotencyKey: 'notice-owner-01' }, options);
+    await sendOwnerHello(options);
+    expect(readOwnerUndeliveredReplies({ runsDir: options.runsDir })).toEqual({ status: 'ok', items: [] });
+    expect(readOwnerCommsStatus(options).undeliveredReplies).toBe(0);
+  });
+
+  it('reads an absent thread as an honest empty list and a corrupt one as unavailable', () => {
+    const { options } = fixture();
+    expect(readOwnerUndeliveredReplies({ runsDir: options.runsDir })).toEqual({ status: 'ok', items: [] });
+    mkdirSync(join(options.runsDir, 'leader'), { recursive: true });
+    writeFileSync(join(options.runsDir, 'leader', 'owner-thread.json'), 'not json', { mode: 0o600 });
+    expect(readOwnerUndeliveredReplies({ runsDir: options.runsDir })).toEqual({ status: 'unavailable' });
   });
 
   it('marks unanswered inbound lines in the human thread and status reads', async () => {

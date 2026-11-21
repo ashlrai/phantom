@@ -1,12 +1,16 @@
 /**
- * Home's Machines card, on the desktop and the phone: the joined Macs as one pool, this Mac first.
- * Built only on the `phm nodes pool --json` report (phantom.nodes-pool.v1). Read-only: no button.
+ * Home's Machines card, on the desktop and the phone: the joined Macs as one pool, this Mac first, a tile per Mac
+ * (whether it answers, free slots, memory in use, the jobs it is running, then load, disk and offload).
+ * Built only on the `phm nodes pool --json` report (phantom.nodes-pool.v1). Read-only: with `onOpenJob`
+ * (the desktop Home) each running job is a button that opens that job's messages; without it the names are plain text.
  */
-import { NODES_POOL_SCHEMA, poolParts, type NodesPool, type PoolNode } from '../../../../core/fleet/nodes-pool.js';
+import { NODES_POOL_SCHEMA, type NodesPool } from '../../../../core/fleet/nodes-pool.js';
 import { apiGet, ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
+import { JOB_ID_RE } from '../fleet-job-log/job-id.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { machinesSummary, macTiles, type MacTile } from './machines-card-model.js';
 import styles from './machines-card.module.css';
 
 export const NODES_POOL_PATH = '/api/verse/fleet/control/nodes-pool';
@@ -36,13 +40,42 @@ export const nodesPoolQuery: QueryDef<NodesPool | null> = {
   },
 };
 
-const Mac = ({ node, asOf }: { node: PoolNode; asOf: string }) => <li className={styles.mac}>
-  <span className={styles.name}>{node.name}{node.isSelf ? ' (this Mac)' : ''}</span>
-  <span className={styles.status} data-status={node.status}>{node.status}</span>
-  <span className={styles.facts}>{poolParts(node, asOf).join(' · ')}</span>
-</li>;
+function Jobs({ mac, onOpenJob }: { mac: MacTile; onOpenJob?: (job: string) => void }) {
+  if (mac.jobs === null) return <span className={styles.value} data-unknown>unknown</span>;
+  if (mac.jobs.length === 0) return <span className={styles.value}>nothing</span>;
+  return <span className={styles.jobs} role="group" aria-label={`Jobs running on ${mac.name}`}>
+    {mac.jobs.map(job => onOpenJob && JOB_ID_RE.test(job)
+      ? <button key={job} type="button" className={styles.job} aria-label={`Open messages for ${job}`} onClick={() => onOpenJob(job)}>{job}</button>
+      : <span key={job} className={styles.job}>{job}</span>)}
+    {mac.moreJobs > 0 && <span className={styles.label}>+{mac.moreJobs} more</span>}
+  </span>;
+}
 
-export function MachinesCard({ visible = true, className = '' }: { visible?: boolean; className?: string }) {
+function Mac({ mac, onOpenJob }: { mac: MacTile; onOpenJob?: (job: string) => void }) {
+  return <li className={styles.mac} data-status={mac.status}>
+    <span className={styles.head}>
+      <span className={styles.name}>{mac.name}{mac.isSelf ? <span className={styles.self}>(this Mac)</span> : null}</span>
+      <span className={styles.status} data-status={mac.status}>{mac.status}</span>
+      <span className={styles.seen}>{mac.seen}</span>
+    </span>
+    {mac.slots === null ? <span className={styles.figure} data-unknown>free slots unknown</span>
+      : <span className={styles.figure}><strong>{mac.slots}</strong>{mac.slots === 1 ? 'free slot' : 'free slots'}</span>}
+    <span className={styles.reading}>
+      <span className={styles.row}><span className={styles.label}>Memory</span>
+        <span className={styles.value} data-unknown={mac.memoryWords === 'unknown' || undefined}>{mac.memoryWords}</span></span>
+      {/* The words above carry the reading; the bar is the same share at a glance. */}
+      {mac.memoryUsed === null ? <span className={styles.track} data-unknown aria-hidden="true" />
+        : <span className={styles.track} role="meter" aria-label={`${mac.name} memory in use`} aria-valuemin={0} aria-valuemax={100}
+          aria-valuenow={mac.memoryUsed} aria-valuetext={mac.memoryWords}><i className={styles.fill} style={{ width: `${mac.memoryUsed}%` }} /></span>}
+    </span>
+    <span className={styles.reading}><span className={styles.label}>Running</span><Jobs mac={mac} onOpenJob={onOpenJob} /></span>
+    <dl className={styles.facts}>
+      {mac.facts.map(fact => <div key={fact.label}><dt>{fact.label}</dt><dd data-unknown={fact.unknown || undefined}>{fact.value}</dd></div>)}
+    </dl>
+  </li>;
+}
+
+export function MachinesCard({ visible = true, className = '', onOpenJob }: { visible?: boolean; className?: string; onOpenJob?: (job: string) => void }) {
   const read = useQuery(nodesPoolQuery, { enabled: visible, freshMs: 0 });
   const refresh = useRefetch(nodesPoolQuery);
   usePollWhileVisible(refresh, 30_000, { enabled: visible });
@@ -53,8 +86,10 @@ export function MachinesCard({ visible = true, className = '' }: { visible?: boo
     <h3 className={styles.title}>Machines</h3>
     {read.status === 'error' ? <p className={styles.muted} role="status">Machines could not refresh. Showing the last reading.</p> : null}
     <p className={styles.line}>{pool.total.line}</p>
-    {pool.nodes.length ? <ul className={styles.macs}>{pool.nodes.map(node => <Mac key={node.name} node={node} asOf={pool.asOf} />)}</ul>
-      : <p className={styles.muted}>No Macs known. Run <code>phm node join</code> on each Mac.</p>}
+    {pool.nodes.length ? <>
+      <p className={styles.muted}>{machinesSummary(pool)}</p>
+      <ul className={styles.macs} aria-label="Macs in the pool">{macTiles(pool).map(mac => <Mac key={mac.name} mac={mac} onOpenJob={onOpenJob} />)}</ul>
+    </> : <p className={styles.muted}>No Macs known. Run <code>phm node join</code> on each Mac.</p>}
     <p className={styles.muted}>Same for agents: <code>phm nodes pool --json</code></p>
   </section>;
 }

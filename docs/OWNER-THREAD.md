@@ -42,6 +42,21 @@ with `phm comms thread` and `phm comms send-owner --reply-to <key>` deep
 links, so the unified pending view and the Leader's comms brief see the same
 mark this status reports.
 
+The delivery side of that mark is a separate read: `readOwnerUndeliveredReplies`
+(and the additive `undeliveredReplies` count on `phm comms status`, `null` when
+the thread is unreadable) lists every recorded reply — `replyTo` set, `fanout`
+declared — with at least one destination the thread's sent-mark
+(`deliveries[<reply-key>:<channel>]`) and the latest receipt journal row cannot
+confirm delivered. A destination the evidence cannot confirm lists as `failed`,
+`pending` or `unknown` — never delivered — with the scrubbed receipt reason
+when one was recorded. Notices and hellos carry no `replyTo` and stay out.
+Resending the same text under the reply's own idempotency key and the answered
+inbound's key (`--reply-to <key> --idempotency-key <reply-key>`) reproduces the
+reply identity whether the key was explicit or derived, and retries only the
+unconfirmed destinations, so an item clears once every fanout destination is
+confirmed. `phm comms inbox` lists each as an `owner-delivery` item (kind
+`owner-reply-undelivered`) deep-linking `phm comms thread` and that resend.
+
 ## Rotation, history and pulling
 
 When the live thread passes its message or byte cap it archives the oldest

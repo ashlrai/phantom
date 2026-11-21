@@ -1,7 +1,8 @@
 /**
  * `agents bus work mine`: one read answering "what is pending for this agent" —
  * the live claims it holds under any of its labels, the open work-feed jobs it
- * could still claim, the work-feed jobs it announced that have not finished,
+ * could still claim, the work-feed jobs it announced that have not finished —
+ * each with the live claim coverage of its declared keys —
  * the claimable work envelopes and worker-handoff
  * assignments addressed to it — under any of its labels or to a channel it
  * belongs to — in `bus next` order, the conversation threads waiting on its
@@ -78,20 +79,32 @@ export type BusWorkMineJobs =
   | { status: 'ok'; holds: BusWorkMineHoldCoverage; open: number; receipts: number;
       truncated: boolean; jobs: BusWorkMineJob[] }
   | { status: 'refused'; reason: Extract<BusWorkFeedReadResult, { status: 'refused' }>['reason'];
-      receipts: number }
+      receipts: number; receipt?: Extract<BusWorkFeedReadResult, { status: 'refused' }>['receipt'] }
   | { status: 'unavailable' | 'retryable' | 'invalid' };
+
+/** An announced feed job plus the live claim coverage of its declared keys. */
+export interface BusWorkMineAnnouncedJob extends BusWorkFeedJob {
+  /** true: a declared key has a shown live hold; false: complete coverage proves none is held, or the job declares no keys a hold could cover; null: coverage cannot prove either way. */
+  held: boolean | null;
+  /** Declared keys with at least one shown live hold — a lower bound under truncated coverage; null when the hold set itself is unknown. */
+  heldKeys: string[] | null;
+  /** Declared keys with no shown live hold — proven only under complete coverage; null otherwise. */
+  freeKeys: string[] | null;
+}
 
 /** The feed jobs the agent announced that have not reached a terminal state. */
 export type BusWorkMineAnnounced =
-  | { status: 'ok'; matched: number; items: BusWorkFeedJob[];
+  | { status: 'ok'; matched: number; items: BusWorkMineAnnouncedJob[];
       /** True only when live announced jobs remain beyond the shown page. */
       truncated: boolean }
   | { status: 'refused'; reason: Extract<BusWorkFeedReadResult, { status: 'refused' }>['reason'];
-      receipts: number }
+      receipts: number; receipt?: Extract<BusWorkFeedReadResult, { status: 'refused' }>['receipt'] }
   | { status: 'unavailable' | 'retryable' | 'invalid' };
 
 export type BusWorkMineWakes =
-  | { status: 'ok'; agent: string; wakes: BusWakeRow[]; truncated: boolean }
+  | { status: 'ok'; agent: string; wakes: BusWakeRow[];
+      /** Every wake hint the bounded queue read matched for the agent; `wakes` shows only the newest cap. */
+      matched: number; truncated: boolean }
   | { status: 'unknown-agent' | 'unavailable'; reason: string };
 
 /** One mail row addressed to the agent, summarized the way the inbox frame reads it. */
@@ -121,6 +134,9 @@ export type BusWorkMineInbox =
   | { status: 'ok'; agent: string; messages: BusWorkMineInboxMessage[];
       /** Resume cursor for `agents bus inbox --after`; covers every scanned row. */
       nextCursor: number;
+      /** Every pending mail row the inbox match rules accept across the
+       * retained store; `messages` shows only the oldest cap. */
+      matched: number;
       /** True only when mail beyond the shown page provably exists. */
       truncated: boolean }
   | { status: 'unknown-agent' | 'unavailable' | 'retryable' | 'invalid'; reason: string };
@@ -265,7 +281,7 @@ export type BusWorkMineResult =
       wakes: BusWorkMineWakes; inbox: BusWorkMineInbox }
   | { status: 'invalid'; reason: string };
 
-/** Newest open jobs, newest wake hints and next inbox page a digest shows; totals stay honest via `open`/`truncated`. */
+/** Newest open jobs, newest wake hints and next inbox page a digest shows; totals stay honest via `open`/`matched`/`truncated`. */
 const WORK_MINE_JOBS_MAX = 50;
 const WORK_MINE_WAKES_MAX = 20;
 const WORK_MINE_INBOX_MAX = 20;
@@ -303,9 +319,39 @@ export function busWorkMineJobAnnotation(
   return { ...job, addressed, announced, freeKeys, heldKeys, claimable };
 }
 
-function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined): BusWorkMineJobs {
-  if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts };
-  if (feed.status !== 'ok') return { status: feed.status };
+/**
+ * The announced-side annotation: the same per-key hold evidence the jobs
+ * section reports, summarized as `held` — whether any declared key has a
+ * shown live hold. A shown hold is real under any coverage; `false` takes a
+ * complete hold list or a job with no declared keys (nothing a hold could
+ * cover, provable without reading the table); `null` is everything coverage
+ * cannot prove, including a truncated list with no shown holds. A
+ * non-terminal job reporting `running`/`idle` with `held:false` has no live
+ * claim on its declared scope — the digest shows that evidence; only the
+ * announcer may move the job.
+ */
+export function busWorkMineAnnouncedAnnotation(
+  job: BusWorkFeedJob, held: ReadonlySet<string> | undefined, coverage: BusWorkMineHoldCoverage,
+): BusWorkMineAnnouncedJob {
+  const heldKeys = coverage === 'unknown' ? null : job.claimKeys.filter(key => held?.has(key));
+  const freeKeys = coverage === 'complete' ? job.claimKeys.filter(key => !held?.has(key)) : null;
+  const heldState = job.claimKeys.length === 0 ? false
+    : heldKeys !== null && heldKeys.length > 0 ? true
+    : coverage === 'unknown' || coverage === 'truncated' ? null
+    : false;
+  return { ...job, held: heldState, heldKeys, freeKeys };
+}
+
+/**
+ * The hold evidence behind one ok feed read, shared by the jobs and
+ * announced sections: the coverage state plus the shown holds grouped by
+ * job id. `unknown` means the coordination table could not be read; `truncated`
+ * means shown holds are real but later ones are unseen.
+ */
+function feedHoldIndex(feed: Extract<BusWorkFeedReadResult, { status: 'ok' }>): {
+  coverage: BusWorkMineHoldCoverage;
+  heldByJob: ReadonlyMap<string, ReadonlySet<string>>;
+} {
   const claims = feed.claims;
   const coverage: BusWorkMineHoldCoverage =
     claims === undefined || claims.source === 'unavailable' ? 'unknown'
@@ -316,6 +362,14 @@ function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | 
     set.add(hold.claimKey);
     heldByJob.set(hold.jobId, set);
   }
+  return { coverage, heldByJob };
+}
+
+function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined): BusWorkMineJobs {
+  if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
+    ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
+  if (feed.status !== 'ok') return { status: feed.status };
+  const { coverage, heldByJob } = feedHoldIndex(feed);
   const open = feed.jobs
     .filter(job => BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length > 0)
     .sort((a, b) => b.updatedAt - a.updatedAt);
@@ -344,34 +398,43 @@ const ANNOUNCED_DONE: ReadonlySet<BusWorkFeedJob['status']> = new Set(['done', '
  * does it stand" — an announced job leaves the open set the moment a worker
  * claims it or its status moves past `queued`/`rescheduled`, yet only the
  * announcer may post its next status, so a live announcement is work the
- * agent still drives. Matching reuses the jobs section's owner matcher, so
- * an unresolvable ref or unreadable registry keeps exact-label matching and
- * never widens; a non-ok feed reports its own state, never an empty list.
+ * agent still drives. Each item carries the same per-key hold coverage the
+ * jobs section computes, so a job whose status says in progress but whose
+ * declared keys have no live hold reads as such without a second read.
+ * Matching reuses the jobs section's owner matcher, so an unresolvable ref
+ * or unreadable registry keeps exact-label matching and never widens; a
+ * non-ok feed reports its own state, never an empty list.
  */
 function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined): BusWorkMineAnnounced {
-  if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts };
+  if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
+    ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
   if (feed.status !== 'ok') return { status: feed.status };
   const ownerMatch = busWorkFeedOwnerMatcher(agent, { root });
+  const { coverage, heldByJob } = feedHoldIndex(feed);
   const live = feed.jobs
     .filter(job => !ANNOUNCED_DONE.has(job.status) && ownerMatch(job.owner))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   return { status: 'ok', matched: live.length,
-    items: live.slice(0, WORK_MINE_ANNOUNCED_MAX),
+    items: live.slice(0, WORK_MINE_ANNOUNCED_MAX)
+      .map(job => busWorkMineAnnouncedAnnotation(job, heldByJob.get(job.id), coverage)),
     truncated: live.length > WORK_MINE_ANNOUNCED_MAX };
 }
 
 /**
  * The next page of mail addressed to the agent — the same matching, order and
  * owner-share receipt checks `agents bus inbox` applies, capped at the oldest
- * WORK_MINE_INBOX_MAX pending messages. One extra row is read past the cap so
- * `truncated` is definitive: a full window proves mail remains beyond
- * `nextCursor`, a short one proves the scan reached the store's end. When the
- * window overflows the newest row is the one dropped, so `nextCursor` resumes
- * strictly before it and `agents bus inbox --after` redelivers nothing shown
- * and skips nothing pending.
+ * WORK_MINE_INBOX_MAX pending messages. The read asks for the matched total
+ * too, so `matched` reports every pending row the same filters accept across
+ * the whole retained store, not just the shown window. One extra row is read
+ * past the cap so `truncated` is definitive: a full window proves mail remains
+ * beyond `nextCursor`, a short one proves the scan reached the store's end.
+ * When the window overflows the newest row is the one dropped, so `nextCursor`
+ * resumes strictly before it and `agents bus inbox --after` redelivers nothing
+ * shown and skips nothing pending.
  */
 function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number): BusWorkMineInbox {
-  const page = readAgentInbox(agent, { limit: WORK_MINE_INBOX_MAX + 1 }, { root: options.root, now: () => nowMs });
+  const page = readAgentInbox(agent, { limit: WORK_MINE_INBOX_MAX + 1, matched: true },
+    { root: options.root, now: () => nowMs });
   if (page.status !== 'ok') return { status: page.status, reason: page.reason };
   let shown = page.messages, nextCursor = page.nextCursor, truncated = false;
   if (page.messages.length > WORK_MINE_INBOX_MAX) {
@@ -385,6 +448,7 @@ function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number)
   }
   return {
     status: 'ok', agent: page.agent, nextCursor, truncated,
+    matched: page.matched ?? shown.length,
     messages: shown.map(message => ({
       cursor: message.cursor, id: message.envelope.id, ts: new Date(message.receivedAt).toISOString(),
       priority: message.priority, kind: message.kind, channel: message.channel,
@@ -730,7 +794,8 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
   const page = readAgentWakes(agent, undefined,
     { root: options.root, runsRoot: options.runsRoot, now: () => nowMs });
   const wakes: BusWorkMineWakes = page.status === 'ok'
-    ? { status: 'ok', agent: page.agent, truncated: page.wakes.length > WORK_MINE_WAKES_MAX,
+    ? { status: 'ok', agent: page.agent, matched: page.wakes.length,
+        truncated: page.wakes.length > WORK_MINE_WAKES_MAX,
         wakes: page.wakes.slice(-WORK_MINE_WAKES_MAX) }
     : { status: page.status, reason: page.reason };
 
@@ -771,7 +836,8 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
 
   const jobs = result.jobs;
   if (jobs.status !== 'ok') {
-    lines.push(`jobs=unknown feed=${jobs.status}${jobs.status === 'refused' ? `:${jobs.reason}` : ''}`);
+    lines.push(`jobs=unknown feed=${jobs.status}${jobs.status === 'refused'
+      ? `:${jobs.reason}${jobs.receipt === undefined ? '' : ` receipt=${jobs.receipt.id}`}` : ''}`);
   } else {
     lines.push(`jobs=${jobs.open} shown=${jobs.jobs.length}${jobs.truncated ? '+truncated' : ''} ` +
       `holds=${jobs.holds} receipts=${jobs.receipts}`);
@@ -791,7 +857,8 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
   const announced = result.announced;
   if (announced.status !== 'ok') {
     lines.push(`announced=unknown ${announced.status}` +
-      `${announced.status === 'refused' ? `:${announced.reason}` : ''}`);
+      `${announced.status === 'refused'
+        ? `:${announced.reason}${announced.receipt === undefined ? '' : ` receipt=${announced.receipt.id}`}` : ''}`);
   } else {
     lines.push(`announced=${announced.matched} shown=${announced.items.length}` +
       `${announced.truncated ? '+truncated' : ''}`);
@@ -799,9 +866,12 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
       const title = mineField(job.title, 80);
       const detail = job.detail === undefined ? '' : mineField(job.detail, 120);
       const keys = job.claimKeys.length === 0 ? 'none' : mineField(job.claimKeys.join(','), 400);
+      const held = job.held === null ? 'unknown' : job.held ? 'yes' : 'no';
+      const keyList = (list: string[] | null): string => list === null ? '-' : mineField(list.join(','), 400);
       lines.push(`  ${job.id} ${job.status}${title === '' ? '' : ` "${title}"`}` +
         `${detail === '' ? '' : ` detail="${detail}"`} ` +
         `owner=${job.owner} to=${job.to} provider=${job.provider} repo=${job.repo} keys=${keys} ` +
+        `held=${held} free=${keyList(job.freeKeys)} heldkeys=${keyList(job.heldKeys)} ` +
         `updated=${new Date(job.updatedAt).toISOString()} post=${job.postId}` +
         `${job.statusId === null ? '' : ` status=${job.statusId}`}`);
     }
@@ -865,7 +935,7 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
   if (wakes.status !== 'ok') {
     lines.push(`wakes=unknown ${wakes.status}`);
   } else {
-    lines.push(`wakes=${wakes.wakes.length}${wakes.truncated ? '+truncated' : ''}`);
+    lines.push(`wakes=${wakes.matched} shown=${wakes.wakes.length}${wakes.truncated ? '+truncated' : ''}`);
     for (const wake of wakes.wakes) {
       lines.push(`  ${new Date(wake.at).toISOString()} ${wake.id} ${wake.from} -> ${wake.to}`);
     }
@@ -875,7 +945,8 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
   if (inbox.status !== 'ok') {
     lines.push(`inbox=unknown ${inbox.status}`);
   } else {
-    lines.push(`inbox=${inbox.messages.length}${inbox.truncated ? '+truncated' : ''} nextCursor=${inbox.nextCursor}`);
+    lines.push(`inbox=${inbox.matched} shown=${inbox.messages.length}${inbox.truncated ? '+truncated' : ''} ` +
+      `nextCursor=${inbox.nextCursor}`);
     for (const message of inbox.messages) {
       const where = message.kind === 'channel' ? `#${message.channel}` : message.kind;
       const from = message.fromAgent ? `agent:${message.fromAgent}` : `label ${message.from}`;

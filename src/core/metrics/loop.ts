@@ -44,14 +44,74 @@ export interface JobTimeline {
 
 const PR_URL = /^https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/(\d+)$/;
 
+/**
+ * jobs.jsonl field dialects, the same sets visit-sync.classifyRow,
+ * queue/job-outcomes.parseJobOutcomeRows, agent-activity.parseLedger,
+ * job-latency.boundaryEvent, fleet/throughput.marksOf and
+ * metrics/reward-feed.foldJobsLedgerRewards accept: job ids take
+ * job|job_id|jobId|id, the event name event|type|kind, the phase
+ * state|outcome|status, timestamps ts|timestamp|at|time|mergedAt|closedAt|
+ * recordedAt|updatedAt (mergedAt/closedAt preferred on terminal rows), PR
+ * links url|pr_url|prUrl|pr|html_url and the lane alias pool.
+ */
+const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const EVENT_KEYS = ['event', 'type', 'kind'] as const;
+const PHASE_KEYS = ['state', 'outcome', 'status'] as const;
+const TS_FIELDS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr', 'html_url'] as const;
+const LANE_KEYS = ['lane', 'pool'] as const;
+
+const firstString = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+};
+
 function stateOf(row: Record<string, unknown>): string {
-  return String(row.state ?? row.outcome ?? row.status ?? '').toUpperCase();
+  return (firstString(row, PHASE_KEYS) ?? '').toUpperCase();
+}
+
+/** First parseable stamp among the ledger's timestamp fields; MERGED prefers mergedAt, CLOSED closedAt. */
+function eventTs(row: Record<string, unknown>, state: string): number | null {
+  const preferred = state === 'MERGED' ? 'mergedAt' : state === 'CLOSED' ? 'closedAt' : null;
+  const fields = preferred === null ? TS_FIELDS : [preferred, ...TS_FIELDS.filter(f => f !== preferred)];
+  for (const field of fields) {
+    const at = parseLedgerTs(row[field]);
+    if (at !== null) return at;
+  }
+  return null;
+}
+
+/** Canonical github.com pull URL from the row's link fields, or null. */
+function prUrlOf(row: Record<string, unknown>): string | null {
+  const value = firstString(row, URL_KEYS)?.replace(/\/+$/, '');
+  return value !== undefined && PR_URL.test(value) ? value : null;
 }
 
 /**
- * Fold jobs.jsonl text into per-job timelines. Accepts the producer field
- * variants the fleet writes (job/job_id/id, state/outcome/status, mergedAt).
- * Rows stamped after `now` are ignored so a skewed clock cannot fabricate rates.
+ * Lifecycle event in ledger vocabulary, or null for operational rows and
+ * eventless rows with no phase. Mirrors dispatchd _vc_event and
+ * agent-activity.inferredEvent: a named event|type|kind wins ('published'
+ * normalizes to 'publish'); a row with none infers from phase — PUBLISHED is
+ * a publish claim, MERGED/CLOSED/OPEN a reconciled outcome.
+ */
+function ledgerEvent(row: Record<string, unknown>, state: string): string | null {
+  const named = firstString(row, EVENT_KEYS);
+  if (named !== null) return named === 'published' ? 'publish' : named;
+  if (state === 'PUBLISHED') return 'publish';
+  if (state === 'MERGED' || state === 'CLOSED' || state === 'OPEN') return 'outcome';
+  return null;
+}
+
+/**
+ * Fold jobs.jsonl text into per-job timelines. Reads the fleet's canonical
+ * ledger dialect (see the field sets above): reconciler rows copied from a
+ * publish row keep their jobId/prUrl fields and resolve through phase, an
+ * eventless {outcome:'MERGED'} row still counts, and 'enqueued'/'queued' name
+ * the same queue arrival as 'enqueue'. Rows stamped after `now` are ignored
+ * so a skewed clock cannot fabricate rates.
  */
 export function jobTimelines(text: string | null, now: number): Map<string, JobTimeline> {
   const jobs = new Map<string, JobTimeline>();
@@ -61,27 +121,33 @@ export function jobTimelines(text: string | null, now: number): Map<string, JobT
     try { raw = JSON.parse(line); } catch { continue; }
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
     const row = raw as Record<string, unknown>;
-    const id = row.job ?? row.job_id ?? row.id;
-    const event = row.event;
-    if (typeof id !== 'string' || !id.trim() || typeof event !== 'string') continue;
+    const id = firstString(row, JOB_KEYS);
     const state = stateOf(row);
-    const at = parseLedgerTs(state === 'MERGED' && typeof row.mergedAt === 'string' ? row.mergedAt : row.ts);
+    const event = ledgerEvent(row, state);
+    if (id === null || event === null) continue;
+    const at = eventTs(row, state);
     if (at === null || at > now) continue;
     const job = jobs.get(id) ?? { id, lane: null, repo: null, enqueuedAt: null, launchedAt: null, finishedAt: null, wallSeconds: null, openedAt: null, mergedAt: null, prUrl: null };
     jobs.set(id, job);
     const earliest = (prev: number | null) => prev === null ? at : Math.min(prev, at);
-    if (typeof row.lane === 'string' && row.lane.trim() && (event === 'launch' || job.lane === null)) job.lane = row.lane.trim();
-    if (typeof row.repo === 'string' && row.repo.trim() && job.repo === null) job.repo = row.repo.trim();
-    const url = typeof row.url === 'string' && PR_URL.test(row.url.trim().replace(/\/$/, '')) ? row.url.trim().replace(/\/$/, '') : null;
-    if (url && job.prUrl === null) job.prUrl = url;
-    if (event === 'enqueue') job.enqueuedAt = earliest(job.enqueuedAt);
+    const lane = firstString(row, LANE_KEYS);
+    if (lane !== null && (event === 'launch' || job.lane === null)) job.lane = lane;
+    const repo = firstString(row, ['repo']);
+    if (repo !== null && job.repo === null) job.repo = repo;
+    const url = prUrlOf(row);
+    if (url !== null && job.prUrl === null) job.prUrl = url;
+    if (event === 'enqueue' || event === 'enqueued' || event === 'queued') job.enqueuedAt = earliest(job.enqueuedAt);
     else if (event === 'launch') job.launchedAt = earliest(job.launchedAt);
     else if (event === 'finish') {
       job.finishedAt = earliest(job.finishedAt);
-      if (typeof row.wall_s === 'number' && Number.isFinite(row.wall_s) && row.wall_s >= 0) job.wallSeconds = row.wall_s;
+      const wall = row['wall_s'] ?? row['wallS'];
+      if (typeof wall === 'number' && Number.isFinite(wall) && wall >= 0) job.wallSeconds = wall;
     }
-    if (url && (event === 'publish' || state === 'PUBLISHED' || state === 'OPEN')) job.openedAt = earliest(job.openedAt);
-    if ((event === 'outcome' || event === 'publish') && state === 'MERGED') job.mergedAt = earliest(job.mergedAt);
+    // A resolved PR state makes a publish-spelled row merge/close evidence,
+    // never a fresh open claim (dispatchd _vc_event treats it as a resolution).
+    const resolved = state === 'MERGED' || state === 'CLOSED';
+    if (url !== null && !resolved && (event === 'publish' || state === 'PUBLISHED' || state === 'OPEN')) job.openedAt = earliest(job.openedAt);
+    if (event === 'merged' || (state === 'MERGED' && (event === 'outcome' || event === 'publish'))) job.mergedAt = earliest(job.mergedAt);
   }
   return jobs;
 }

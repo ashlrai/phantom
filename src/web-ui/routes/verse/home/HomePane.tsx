@@ -55,7 +55,7 @@ export function HomePane({ visible }: PaneProps) {
   // Any other payload (an older server, an error body) is not a summary.
   const home = read.data?.schema === 'home.v1' ? read.data : null;
   // Approvals come first and stand on their own API: what only Mason can do should not wait on the health summary.
-  if (!home) return <section className={styles.root} aria-label="Home"><PulseStrip visible={visible} /><PulseCard visible={visible} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p><ApprovalsCard key="approvals" visible={visible} /><LeaderRepliesCard key="leader-replies" visible={visible} />{working(visible)}<PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} onOpenPools={openPools} /><MachinesCard key="machines" visible={visible} className={styles.card} /></section>;
+  if (!home) return <section className={styles.root} aria-label="Home"><PulseStrip visible={visible} /><PulseCard visible={visible} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p><ApprovalsCard key="approvals" visible={visible} /><LeaderRepliesCard key="leader-replies" visible={visible} />{working(visible)}<PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} onOpenPools={openPools} /><MachinesCard key="machines" visible={visible} className={styles.card} onOpenJob={openPoolJob} /></section>;
   // A failed refresh keeps the last summary on screen; it must not read as current.
   const stale = read.status === 'error';
   const at = readAt(home.asOf);
@@ -69,7 +69,7 @@ export function HomePane({ visible }: PaneProps) {
     <LeaderRepliesCard key="leader-replies" visible={visible} />
     {working(visible)}
     <PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} onOpenPools={openPools} />
-    <MachinesCard key="machines" visible={visible} className={styles.card} />
+    <MachinesCard key="machines" visible={visible} className={styles.card} onOpenJob={openPoolJob} />
     <ThisMacCard visible={visible} className={styles.card} />
     {/* The day's merges drawn by the hour, on the Throughput pane's own 24 hour read. */}
     <DeliveryCard summary={home} visible={visible} onOpen={() => openPane('fleet-throughput')} />
@@ -90,7 +90,7 @@ export function HomePane({ visible }: PaneProps) {
     <Card title="Leader" action="Open Leader" onOpen={() => setHomeChoice('leader')}>
       <p><Value field={home.unreadLeaderReplies}>{n => n === 0 ? 'No unread replies.' : n === 1 ? '1 unread reply.' : `${n} unread replies.`}</Value></p>
     </Card>
-    <FleetShippedCard visible={visible} />
+    <FleetShippedCard visible={visible} onOpenJob={openPoolJob} />
     <DiskCard visible={visible} />
   </section>;
 }

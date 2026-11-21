@@ -291,7 +291,8 @@ describe('v2 work-feed jobs in the bus source', () => {
   it('lists open feed jobs with real titles, priorities and claim acts', async () => {
     postJob('RQ-OPEN', { title: 'fake open job', priority: 'P1', claimKeys: ['queue:RQ-OPEN', 'path:ashlrai/phantom:docs/**'] });
     postJob('RQ-DONE'); postStatus('RQ-DONE', 'done');
-    postJob('RQ-RUN'); postStatus('RQ-RUN', 'running');
+    // A live hold keeps the running job in progress, not stalled.
+    postJob('RQ-RUN'); postStatus('RQ-RUN', 'running'); holdKey('queue:RQ-RUN');
     postJob('RQ-RESCHED'); postStatus('RQ-RESCHED', 'rescheduled');
     const emptyPost = postJob('RQ-EMPTY', { claimKeys: [] });
     postV2Body({ kind: 'work.post', jobId: 'RQ-OLD', title: 'fake old job', provider: 'codex-cmp',
@@ -349,18 +350,62 @@ describe('v2 work-feed jobs in the bus source', () => {
     expect(items[0]!.act[0]).toBe('phm agents bus claim acquire --key path:ashlrai/phantom:src/** --owner <label> --lease-ms 600000');
   });
 
+  it('lists a refused feed as pending work naming the blamed receipt', async () => {
+    postJob('RQ-POISON');
+    const poisonId = postV2Body({ kind: 'work.status', jobId: 'RQ-POISON', status: 'done' }, { from: 'agent:other' });
+    const inbox = await read();
+    expect(inbox.sources.bus).toEqual({ state: 'degraded', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'bus-feed-refused')!;
+    expect(item).toMatchObject({
+      source: 'bus', kind: 'bus-work', severity: 'high', blocking: false,
+      title: 'work feed refused: owner-mismatch',
+      detail: `every announced job is hidden and work verbs refuse until the receipt expires · receipt ${poisonId}`,
+      since: new Date(now).toISOString(),
+      expiresAt: new Date(now + 7 * 24 * 3_600_000).toISOString(),
+      act: [`phm agents bus show ${poisonId}`, 'phm agents bus work feed'],
+    });
+    // The refused feed still hides every job — no feed items list beside it.
+    expect(inbox.items.filter(i => i.id.startsWith('bus-feed:'))).toHaveLength(0);
+  });
+
+  it('lists a receipt-less refusal with unknown times and no show link', async () => {
+    postWork('legacy-ok', { priority: 'P1' });
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now,
+      readRequests: () => ({ status: 'missing', requests: [] }),
+      readFeed: () => ({ status: 'refused', reason: 'invalid-receipts', receipts: 2,
+        asOf: new Date(now).toISOString() }),
+    });
+    expect(inbox.sources.bus.state).toBe('degraded');
+    const item = inbox.items.find(i => i.id === 'bus-feed-refused')!;
+    expect(item).toMatchObject({
+      kind: 'bus-work', severity: 'high',
+      title: 'work feed refused: invalid-receipts',
+      since: null, expiresAt: null,
+      act: ['phm agents bus work feed'],
+    });
+    expect(item.detail).toBe('every announced job is hidden and work verbs refuse until the receipt expires');
+    // Legacy claimable work still lists beside the refusal item.
+    expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id).sort())
+      .toEqual(['bus-feed-refused', 'bus:legacy-ok']);
+  });
+
   it('degrades the bus source on a refused feed while legacy items still list', async () => {
     postWork('legacy-ok', { priority: 'P1' });
     postJob('RQ-POISON'); postStatus('RQ-POISON', 'done', 'agent:other');
     const inbox = await read();
     expect(inbox.sources.bus.state).toBe('degraded');
-    expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual(['bus:legacy-ok']);
+    expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id))
+      .toEqual(['bus-feed-refused', 'bus:legacy-ok']);
   });
 
   it('degrades rather than guessing when a post cannot resolve a provider', async () => {
     postV2Body({ kind: 'work.post', jobId: 'RQ-NOPROV', title: 'fake', repo: 'ashlrai/phantom', claimKeys: ['queue:RQ-NOPROV'] });
     const inbox = await read();
-    expect(inbox.sources.bus).toEqual({ state: 'degraded', pending: 0 });
+    expect(inbox.sources.bus).toEqual({ state: 'degraded', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'bus-feed-refused')!;
+    expect(item.title).toBe('work feed refused: missing-provider');
+    expect(item.act[0]).toMatch(/^phm agents bus show v2-\d+$/);
     expect(inbox.items.filter(i => i.id.startsWith('bus-feed:'))).toHaveLength(0);
   });
 
@@ -407,8 +452,9 @@ describe('stuck work-feed jobs in the bus source', () => {
   it('hides jobs whose newest status is not stuck and still lists claimable work beside them', async () => {
     postJob('RQ-QUEUED');
     postJob('RQ-DONE2'); postStatus('RQ-DONE2', 'done');
-    postJob('RQ-RUN2'); postStatus('RQ-RUN2', 'running');
-    postJob('RQ-IDLE'); postStatus('RQ-IDLE', 'idle');
+    // Live holds keep the in-progress jobs off the stalled list too.
+    postJob('RQ-RUN2'); postStatus('RQ-RUN2', 'running'); holdKey('queue:RQ-RUN2');
+    postJob('RQ-IDLE'); postStatus('RQ-IDLE', 'idle'); holdKey('queue:RQ-IDLE');
     postJob('RQ-TERM'); postStatus('RQ-TERM', 'terminated');
     postJob('RQ-REVIVED'); postV2Body({ kind: 'work.status', jobId: 'RQ-REVIVED', status: 'blocked' });
     postStatus('RQ-REVIVED', 'done');
@@ -475,6 +521,91 @@ describe('unclaimable work-feed jobs in the bus source', () => {
     postStatus('RQ-IDLEMPTY', 'idle');
     const inbox = await read();
     expect(inbox.items.filter(i => i.id.startsWith('bus-feed:'))).toHaveLength(0);
+  });
+});
+
+describe('stalled work-feed jobs in the bus source', () => {
+  it('lists a running job whose declared keys provably lost every live hold', async () => {
+    postJob('RQ-STALL', { title: 'fake stalled job' });
+    const statusId = postV2Body({ kind: 'work.status', jobId: 'RQ-STALL', status: 'running',
+      detail: 'fake worker went quiet' });
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'bus');
+    expect(items.map(i => i.id)).toEqual(['bus-feed:RQ-STALL']);
+    expect(items[0]).toMatchObject({
+      kind: 'bus-work', severity: 'warn', blocking: false,
+      title: 'fake stalled job',
+      detail: 'owner agent:peer · codex-cmp · ashlrai/phantom · running — fake worker went quiet · no live claim on its declared keys; only the announcer can move it',
+      since: new Date(now).toISOString(),
+      expiresAt: new Date(now + 7 * 24 * 3_600_000).toISOString(),
+      act: [`phm agents bus show ${statusId}`, 'phm agents bus work feed --job RQ-STALL --claims'],
+    });
+    // A stalled job is not claimable work: no claim act is offered.
+    expect(items[0]!.act.join(' ')).not.toContain('claim acquire');
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('ranks a P0 stalled announcement high and keeps an idle one warn beside claimable work', async () => {
+    postJob('RQ-IDLEP0', { priority: 'P0' });
+    postStatus('RQ-IDLEP0', 'idle');
+    postJob('RQ-RUNP2');
+    postStatus('RQ-RUNP2', 'running');
+    postJob('RQ-OPEN2');
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'bus');
+    expect(items.map(i => i.id).sort()).toEqual(['bus-feed:RQ-IDLEP0', 'bus-feed:RQ-OPEN2', 'bus-feed:RQ-RUNP2']);
+    expect(items.find(i => i.id === 'bus-feed:RQ-IDLEP0')!.severity).toBe('high');
+    expect(items.find(i => i.id === 'bus-feed:RQ-RUNP2')!.severity).toBe('warn');
+    expect(items.find(i => i.id === 'bus-feed:RQ-RUNP2')!.detail).toContain('running');
+    expect(items.find(i => i.id === 'bus-feed:RQ-OPEN2')!.act[0]).toContain('claim acquire');
+  });
+
+  it('hides in-progress jobs while any declared key keeps a live hold', async () => {
+    postJob('RQ-HELDSTUDY'); postStatus('RQ-HELDSTUDY', 'running'); holdKey('queue:RQ-HELDSTUDY');
+    postJob('RQ-PARTSTUDY', { claimKeys: ['queue:RQ-PARTSTUDY', 'path:ashlrai/phantom:src/**'] });
+    postStatus('RQ-PARTSTUDY', 'idle'); holdKey('queue:RQ-PARTSTUDY');
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.id.startsWith('bus-feed:'))).toHaveLength(0);
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('lists a job as stalled only once its last hold lapses', async () => {
+    postJob('RQ-LAPSE'); postStatus('RQ-LAPSE', 'running');
+    holdKey('queue:RQ-LAPSE');
+    expect((await read()).items.filter(i => i.id.startsWith('bus-feed:'))).toHaveLength(0);
+    now += 700_000;
+    const items = (await read()).items.filter(i => i.id.startsWith('bus-feed:'));
+    expect(items.map(i => i.id)).toEqual(['bus-feed:RQ-LAPSE']);
+    expect(items[0]!.detail).toContain('no live claim on its declared keys');
+  });
+
+  it('keeps unproven stalls hidden when the coordination table is unreadable', async () => {
+    postJob('RQ-BLINDSTALL'); postStatus('RQ-BLINDSTALL', 'running');
+    mkdirSync(join(busRoot, 'coordination'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(busRoot, 'coordination', 'claims.json'), '{"version":1,"claims":{},"statuses":[]}', { mode: 0o600 });
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.id.startsWith('bus-feed:'))).toHaveLength(0);
+    expect(inbox.sources.bus.state).toBe('degraded');
+  });
+
+  it('keeps stalls hidden under truncated hold coverage', async () => {
+    // The bus store must be readable for the feed section to run at all.
+    postJob('RQ-TRUNC'); postStatus('RQ-TRUNC', 'running');
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now,
+      readRequests: () => ({ status: 'missing', requests: [] }),
+      readFeed: () => ({
+        status: 'ok', receipts: 2, asOf: new Date(now).toISOString(),
+        jobs: [{
+          id: 'RQ-TRUNC', owner: 'agent:peer', to: 'leaders', provider: 'codex-cmp',
+          repo: 'ashlrai/phantom', title: 'fake stalled job', claimKeys: ['queue:RQ-TRUNC'],
+          status: 'running', updatedAt: now, postId: 'v2-1', statusId: 'v2-2',
+        }],
+        claims: { source: 'available', holds: [], truncated: true },
+      }),
+    });
+    expect(inbox.items.filter(i => i.id.startsWith('bus-feed:'))).toHaveLength(0);
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 0 });
   });
 });
 
@@ -780,6 +911,94 @@ describe('owner-thread awaiting replies in the unified inbox', () => {
       act: ['phm comms thread', 'phm comms send-owner --text "<reply>" --reply-to stub-key-0001'],
     });
     expect(stubbed.sources['owner-thread']).toEqual({ state: 'healthy', pending: 1 });
+  });
+});
+
+describe('owner-delivery undelivered replies in the unified inbox', () => {
+  const ownerSettings: OwnerThreadSettings = {
+    ...emptyOwnerSettings(),
+    owners: { desktop: 'local-owner' },
+    confirmed: true,
+    team: [{ channel: 'bus', id: 'local-owner' }],
+  };
+  const ownerOptions = (over: Partial<OwnerThreadOptions> = {}): OwnerThreadOptions => ({
+    runsDir, busRoot, now: () => now, settings: ownerSettings, halted: false, paused: false,
+    mailbox: { async accept() { return { status: 'accepted' as const }; } },
+    ...over,
+  });
+  const acceptOwner = (text: string, key: string, at = now) => acceptOwnerInbound(
+    { channel: 'desktop', senderId: 'local-owner', text, idempotencyKey: key, at }, ownerOptions());
+
+  it('lists a recorded reply no channel confirmed as a warn item with a resend deep link', async () => {
+    await acceptOwner('ping the leader', 'desktop-msg-0001');
+    // No transports attached: the reply records as refused on every fanout
+    // destination yet still answers the inbound — the delivery gap this lists.
+    const reply = await sendOwnerReply({ text: 'leader answer', replyTo: 'desktop-msg-0001', idempotencyKey: 'reply-owner-01' }, ownerOptions());
+    expect(reply.status).toBe('refused');
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'owner-delivery');
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: 'owner-delivery:m2', kind: 'owner-reply-undelivered', severity: 'warn', blocking: false,
+      title: 'Leader reply undelivered on desktop',
+      detail: 'desktop: failed (No transport is attached for this channel.) · "leader answer"',
+      since: new Date(now).toISOString(),
+      expiresAt: null,
+      act: ['phm comms thread', 'phm comms send-owner --reply-to desktop-msg-0001 --idempotency-key reply-owner-01 --text "<same reply text>"'],
+    });
+    expect(inbox.sources['owner-delivery']).toEqual({ state: 'healthy', pending: 1 });
+    // The answered inbound itself stays cleared — the two marks are independent.
+    expect(inbox.items.filter(i => i.source === 'owner-thread')).toHaveLength(0);
+  });
+
+  it('clears the item once a resend confirms the destination', async () => {
+    await acceptOwner('ping the leader', 'desktop-msg-0001');
+    await sendOwnerReply({ text: 'leader answer', replyTo: 'desktop-msg-0001', idempotencyKey: 'reply-owner-01' }, ownerOptions());
+    expect((await read()).items.filter(i => i.source === 'owner-delivery')).toHaveLength(1);
+    const retry = await sendOwnerReply({ text: 'leader answer', replyTo: 'desktop-msg-0001', idempotencyKey: 'reply-owner-01' }, ownerOptions({
+      transports: { desktop: { async pull() { return []; }, async deliver() { return { status: 'sent' as const, reason: 'ok' }; } } },
+    }));
+    expect(retry.status).toBe('sent');
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'owner-delivery')).toHaveLength(0);
+    expect(inbox.sources['owner-delivery']).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('reports an unreadable thread as unavailable and still lists the other sources', async () => {
+    mkdirSync(join(runsDir, 'leader'), { recursive: true });
+    writeFileSync(join(runsDir, 'leader', 'owner-thread.json'), 'not json', { mode: 0o600 });
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const inbox = await read();
+    expect(inbox.sources['owner-delivery']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'owner-delivery')).toHaveLength(0);
+    expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+
+  it('degrades on a throwing seam and builds items from a stubbed read', async () => {
+    const throwing = await readUnifiedInbox({ runsDir, busRoot, now: () => now, readOwnerUndelivered: () => { throw new Error('boom'); } });
+    expect(throwing.sources['owner-delivery']).toEqual({ state: 'unavailable', pending: 0 });
+    const stubbed = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now,
+      readOwnerUndelivered: () => ({ status: 'ok', items: [
+        { id: 'm7', idempotencyKey: 'reply-owner-07', replyTo: 'desktop-msg-0007',
+          at: new Date(now - 60_000).toISOString(), text: 'stubbed answer',
+          destinations: [{ channel: 'telegram' as const, state: 'unknown' as const, reason: null }] },
+        { id: 'm8', idempotencyKey: 'reply-owner-08', replyTo: 'not a valid key!',
+          at: new Date(now - 30_000).toISOString(), text: 'stubbed answer two',
+          destinations: [{ channel: 'slack' as const, state: 'failed' as const, reason: 'stub reason' }] },
+      ] }),
+    });
+    const good = stubbed.items.find(i => i.id === 'owner-delivery:m7')!;
+    expect(good).toMatchObject({
+      kind: 'owner-reply-undelivered', severity: 'warn', blocking: false,
+      title: 'Leader reply undelivered on telegram',
+      detail: 'telegram: unknown · "stubbed answer"',
+      act: ['phm comms thread', 'phm comms send-owner --reply-to desktop-msg-0007 --idempotency-key reply-owner-07 --text "<same reply text>"'],
+    });
+    // A replyTo that fails the send-owner shape guard keeps the inspect link only.
+    const guarded = stubbed.items.find(i => i.id === 'owner-delivery:m8')!;
+    expect(guarded.act).toEqual(['phm comms thread']);
+    expect(stubbed.sources['owner-delivery']).toEqual({ state: 'healthy', pending: 2 });
   });
 });
 

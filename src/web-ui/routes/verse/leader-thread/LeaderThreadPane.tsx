@@ -20,7 +20,6 @@ import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../flee
 import { ordersTraceQuery } from '../fleet-inbox/fleet-inbox-queries.js';
 import { narrowOrderTrace, type OrderTraceV1 } from '../fleet-inbox/order-trace-model.js';
 import { readMerges, type Merged, type Pending } from '../fleet-merges/fleet-merges-model.js';
-import { JobRefs } from '../fleet/JobRefs.js';
 import { narrowWorkers, validJob } from '../fleet/workers-card-model.js';
 import { jobDetailQuery } from '../fleet/workers-card-queries.js';
 import { DirectivesStrip } from '../leader/DirectivesStrip.js';
@@ -41,6 +40,7 @@ import { canSend, scrollTargetIndex, trimReply } from './thread-reply-model.js';
 import { stepMatch, threadMatches, type ThreadFindItem } from './thread-find-model.js';
 import { LeaderCatchUp } from './LeaderCatchUp.js';
 import { mentionedRefs } from './thread-refs.js';
+import { MentionedSessions } from './MentionedSessions.js';
 import { splitScreenshotMarkers } from './thread-screenshots.js';
 import { ThreadScreenshot } from './ThreadScreenshot.js';
 import { ReplyAttachment } from './ReplyAttachment.js';
@@ -66,10 +66,11 @@ import { commandGate, liveComposerDeps, runComposerCommand, type ComposerCommand
 import { steerTargetId, steerTargetOutcome, type SteerTargetJobFacts } from './steer-target-outcome.js';
 import { OrderRouting } from './OrderRouting.js';
 import { inboxAtForLine, lineRouting, routingInFlight, type LineRouting } from './thread-routing-model.js';
-import { requestWallSession } from '../session-wall/wall-selection.js';
+import { openConversationFromLeader } from './leader-reading.js';
 import { useComposerAssist } from './ComposerAssist.js';
 import { recallable } from './composer-assist-model.js';
 import { EarlierMessages, useEarlierMessages } from './LeaderEarlier.js';
+import { ComposerResultLine } from './ComposerResultLine.js';
 
 /** Shared 'verse-fleet-runs' key so the pane rides the same cache and SSE invalidation as the other fleet panes. */
 const fleetRunsQuery: QueryDef<unknown> = {
@@ -118,9 +119,7 @@ function LineView({ line, match, current }: { line: LabeledLine; match?: boolean
             ? <div className={leaderStyles.leaderText}>
               <div className={leaderStyles.prose}><MessageMarkdown text={line.text} /></div>
               {line.receipt ? <DeliveryReceipt items={line.receipt} /> : null}
-              {refs.length ? <div className={styles.refs} aria-label="Mentioned">Mentioned: {refs.map((ref, index) => <span key={ref}>
-                {index ? ' ' : null}<JobRefs text={ref.replace(/([^#])#/, '$1 #')} onOpenJob={job => { requestWorkerLogJob(job); openDockPane('worker-log'); }} />
-              </span>)}</div> : null}
+              <MentionedSessions refs={refs} onOpenLog={job => { requestWorkerLogJob(job); openDockPane('worker-log'); }} onOpenConversation={openConversationFromLeader} />
             </div>
             : <div className={leaderStyles.masonItem}>
               {splitScreenshotMarkers(line.text).map((segment, index) => segment.kind === 'shot'
@@ -482,7 +481,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
         <LineView line={item.line} match={findOpen && matches.includes(item.key)} current={findOpen && item.key === currentKey} />
         {target !== null ? <SteerTargetLine id={target} text={item.line.text} trace={trace} merges={merges} liveByJob={liveByJob} now={now} /> : null}
         {routing ? <OrderRouting routing={routing} onOpenJob={job => { requestWorkerLogJob(job); openDockPane('worker-log'); }}
-          onOpenConversation={job => { requestWallSession(job); openDockPane('session-wall'); }} /> : null}
+          onOpenConversation={openConversationFromLeader} /> : null}
       </Fragment>;
     });
   }
@@ -543,7 +542,9 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
         <EarlierMessages control={earlier} />
         {body}
         {merged.hiddenNoise > 0 ? <p className={styles.note}>{merged.hiddenNoise} stray command {merged.hiddenNoise === 1 ? 'line' : 'lines'} hidden</p> : null}
-        {commandLines.map(line => <LineView key={line.id} line={line} />)}
+        {/* A command's answer; the jobs it names open as conversations. */}
+        {commandLines.map(line => <ComposerResultLine key={line.id} text={line.text} at={line.at}
+          onOpenConversation={openConversationFromLeader} />)}
       </div>
     </div>
     {/* What the Leader is waiting on Mason for, answerable without scrolling back. */}

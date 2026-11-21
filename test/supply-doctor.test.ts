@@ -143,3 +143,42 @@ describe('supply doctor self-held lanes', () => {
     expect(supplyDoctorLines(blind).join('\n')).toMatch(/Self-held lanes: unknown/);
   });
 });
+
+describe('top EMPTY reason in the verdict', () => {
+  const withEmpty = (readEmpty: () => Promise<{ total: number; reasons: Record<string, number> } | null>) =>
+    readSupplyDoctor({ runsDir: runs, now: () => NOW, readOff: async () => false, readCandidates: async () => null, readEmpty });
+
+  it('names the most common real reason and keeps unknown out of the top slot', async () => {
+    seedDrop([row('2026-11-19 14:00:00', 'ONE', 'claude')]);
+    const report = await withEmpty(async () => ({ total: 9, reasons: { unknown: 5, 'already-shipped': 3, 'lane-held': 1 } }));
+    expect(report.empty).toEqual({ state: 'known', total: 9, top: { reason: 'already-shipped', count: 3 } });
+    expect(report.verdict).toContain('top EMPTY reason in 24 h: already-shipped (3 of 9)');
+    expect(supplyDoctorLines(report)).toContain('EMPTY jobs in 24 h: 9, most often already-shipped (3); see "phm jobs empty".');
+  });
+
+  it('adds nothing to the verdict when there are no empties, only unknown, or the metrics are unreadable', async () => {
+    seedDrop([row('2026-11-19 14:00:00', 'ONE', 'claude')]);
+    const none = await withEmpty(async () => ({ total: 0, reasons: {} }));
+    expect(none.empty).toEqual({ state: 'known', total: 0, top: null });
+    const onlyUnknown = await withEmpty(async () => ({ total: 2, reasons: { unknown: 2 } }));
+    expect(onlyUnknown.verdict).not.toContain('EMPTY');
+    const blind = await withEmpty(async () => { throw new Error('boom'); });
+    expect(blind.empty).toEqual({ state: 'unknown', why: 'job metrics unreadable' });
+    expect(blind.verdict).not.toContain('EMPTY');
+    expect(supplyDoctorLines(blind)).toContain('EMPTY jobs: unknown (job metrics unreadable).');
+  });
+});
+
+describe('phm doctor supply: build and self-tick lines', () => {
+  it('carries both typed reports and prints one plain line for each', async () => {
+    const report = await readSupplyDoctor({
+      runsDir: runs, now: () => NOW, readOff: async () => false, readCandidates: async () => null,
+      readBuild: () => ({ schema: 'doctor.build.v1', generatedAt: '', codeDir: '/x', commit: { state: 'known', sha: 'a'.repeat(40), source: 'git' }, branch: { state: 'known', name: 'work' }, behind: { state: 'known', count: 644, ref: 'origin/master' }, verdict: 'live build is 644 commits behind master on work; merged fleet features may not be running' }),
+    });
+    expect(report.build.schema).toBe('doctor.build.v1');
+    expect(report.selfTick).toMatchObject({ schema: 'fleet.self-tick-status.v1', state: 'none' });
+    const lines = supplyDoctorLines(report);
+    expect(lines).toContain('Live build: live build is 644 commits behind master on work; merged fleet features may not be running.');
+    expect(lines).toContain('Self-tick: no self-tick run recorded.');
+  });
+});

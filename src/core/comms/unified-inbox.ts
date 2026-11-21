@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates thirteen local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates fourteen local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), act: `phm fleet needs-resolve`.
@@ -12,6 +12,17 @@
  *   owner-thread  live inbound owner-thread messages no recorded outbound
  *               reply cites (`phm comms thread`), the same awaiting-reply mark
  *               `comms status` counts, act: `phm comms send-owner --reply-to`.
+ *   owner-delivery  recorded owner-thread replies whose fanout is not fully
+ *               delivered — the delivery side of the awaiting-reply mark,
+ *               which counts a reply answered even when every channel
+ *               refused it (`readOwnerUndeliveredReplies`, the same read
+ *               `comms status` counts as `undeliveredReplies`). A destination
+ *               the thread's sent-mark or the latest receipt cannot confirm
+ *               lists as failed, pending or unknown — never delivered — and
+ *               resending the same text under the reply's own key and the
+ *               answered inbound's key (`--reply-to`, `--idempotency-key`)
+ *               retries only the unconfirmed destinations. Act:
+ *               `phm comms thread`, `phm comms send-owner --reply-to`.
  *   drafts      outbound email drafts still pending approval
  *               (`phm drafts list --status pending`), act: show/approve/reject —
  *               plus pending Comms-agent reply drafts that have no cos mirror
@@ -28,9 +39,11 @@
  *               message-id claim consults) also counts as held. The same
  *               section also lists open agent-bus v2 work-feed jobs (queued or
  *               rescheduled `work.post` announcements with at least one claim
- *               key not fully held) and jobs the feed shows `blocked` or
- *               `failed` or that declare no claim keys at all — unclaimable
- *               or stuck work needs a decision, not a worker — read
+ *               key not fully held), jobs the feed shows `blocked` or
+ *               `failed`, jobs that declare no claim keys at all, and
+ *               `running`/`idle` announcements whose declared keys provably
+ *               lost every live hold — stalled work only the announcer can
+ *               move — read
  *               through the same projection `phm agents bus work feed` serves —
  *               act: `phm agents bus claim acquire` — and every live
  *               `worker-handoff` envelope (`isWorkerHandoffBody`, the exact
@@ -138,7 +151,7 @@ import { readEmailDropConfig } from './email-drop-config.js';
 import { probeOutboxDir, readEmailOutbox, type EmailOutboxEntry, type EmailOutboxListing } from './email-outbox.js';
 import { gmailArchivePlanLatestPath, readGmailArchivePlanLatest } from './gmail-archive-plan-latest.js';
 import { readLinkedInDrop, type LinkedInMessage } from './linkedin-drop.js';
-import { readOwnerAwaitingReplies, type OwnerAwaitingReplies } from './owner-thread.js';
+import { readOwnerAwaitingReplies, readOwnerUndeliveredReplies, type OwnerAwaitingReplies, type OwnerUndeliveredReplies } from './owner-thread.js';
 import { commsRequestAgeStartMs, commsRequestTtlMs, DEFAULT_REQUEST_TTL_HOURS, readCommsRequests, type CommsRequestsRead } from './requests.js';
 import { readAgentConversations, plainAge, type AgentConversations } from '../fleet/agent-conversations.js';
 import { JOB_THREAD_PREFIX } from '../fleet/agent-messages.js';
@@ -152,9 +165,9 @@ const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
 
-export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'owner-thread' | 'drafts' | 'bus' | 'conversations' | 'seats' | 'gmail' | 'linkedin' | 'requests' | 'email-outbox' | 'team-approvals' | 'proposals';
+export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'owner-thread' | 'owner-delivery' | 'drafts' | 'bus' | 'conversations' | 'seats' | 'gmail' | 'linkedin' | 'requests' | 'email-outbox' | 'team-approvals' | 'proposals';
 export type UnifiedInboxSourceState = 'healthy' | 'missing' | 'degraded' | 'unavailable';
-export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'owner-message' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-stuck' | 'team-approval' | 'inbox-proposal';
+export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'owner-message' | 'owner-reply-undelivered' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-stuck' | 'team-approval' | 'inbox-proposal';
 
 export interface UnifiedInboxItem extends AttentionItem {
   /** Stable, namespaced: `<source>:<ref>` (e.g. `drafts:d-0123…`). */
@@ -220,6 +233,8 @@ export interface UnifiedInboxOptions {
   readGmailPlans?: typeof readGmailArchivePlanLatest;
   readLinkedIn?: typeof readLinkedInDrop;
   readOwnerAwaiting?: (options: { runsDir: string }) => OwnerAwaitingReplies;
+  /** Undelivered-reply seam; default reads the same owner thread plus its delivery receipts. */
+  readOwnerUndelivered?: (options: { runsDir: string }) => OwnerUndeliveredReplies;
   readConversations?: typeof readAgentConversations;
   readSeatHandoffs?: typeof planSeatHandoffs;
   readRequests?: typeof readCommsRequests;
@@ -300,6 +315,58 @@ function ownerThreadItems(read: NonNullable<UnifiedInboxOptions['readOwnerAwaiti
     expiresAt: null,
     act: ['phm comms thread', `phm comms send-owner --text "<reply>" --reply-to ${reply.idempotencyKey}`],
   }));
+  return { report: { state: 'healthy', pending: items.length }, items };
+}
+
+/** Same shape guard `send-owner --reply-to` applies to inbound idempotency keys before one reaches a command line. */
+const OWNER_REPLY_KEY = /^[A-Za-z0-9._:-]{8,80}$/;
+
+/**
+ * Recorded owner-thread replies whose fanout is not fully delivered — the
+ * delivery side of the awaiting-reply mark, which counts an inbound answered
+ * once a reply is recorded even when every channel refused it. Each lists as
+ * a warn with the per-destination states the receipt journal proves —
+ * failed, pending or unknown, never delivered — the scrubbed failure reason
+ * when one was recorded, and a `phm comms thread` / `send-owner --reply-to`
+ * deep link: resending the same text under the reply's own idempotency key
+ * and the answered inbound's key reproduces the reply identity in every case
+ * — an explicit key or a derived `reply-<digest>` one — and retries only the
+ * unconfirmed destinations. An unreadable thread reports 'unavailable'; it
+ * never passes an empty list off as fact. `since` is the reply's recorded
+ * time — the receipt journal keeps no attempt timestamp, so a later retry's
+ * age stays unknown; `expiresAt` stays null.
+ */
+function ownerDeliveryItems(read: NonNullable<UnifiedInboxOptions['readOwnerUndelivered']>, runsDir: string | undefined): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  const dir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: OwnerUndeliveredReplies;
+  try { result = read({ runsDir: dir }); } catch { result = { status: 'unavailable' }; }
+  if (result.status !== 'ok') return { report: { state: 'unavailable', pending: 0 }, items: [] };
+  const items = result.items.map((reply): Omit<UnifiedInboxItem, 'priority'> => {
+    const act = ['phm comms thread'];
+    // The resend must reuse the recorded text, the reply's own key and the
+    // answered inbound's key or the reply identity refuses or forks; keys
+    // that fail the send-owner shape guard keep the inspect link rather than
+    // a command that cannot run.
+    if (OWNER_REPLY_KEY.test(reply.replyTo) && OWNER_REPLY_KEY.test(reply.idempotencyKey)) {
+      act.push(`phm comms send-owner --reply-to ${reply.replyTo} --idempotency-key ${reply.idempotencyKey} --text "<same reply text>"`);
+    }
+    return {
+      id: `owner-delivery:${reply.id}`,
+      source: 'owner-delivery',
+      kind: 'owner-reply-undelivered',
+      severity: 'warn',
+      // Resending is agent work; nothing here blocks Mason.
+      blocking: false,
+      title: oneLine(`Leader reply undelivered on ${reply.destinations.map(d => d.channel).join(', ')}`, TITLE_MAX) || `leader reply ${reply.id}`,
+      detail: oneLine(
+        reply.destinations.map(d => d.reason === null ? `${d.channel}: ${d.state}` : `${d.channel}: ${d.state} (${d.reason})`).join(' · ') +
+        ` · "${oneLine(reply.text, 120)}"`,
+        DETAIL_MAX) || null,
+      since: reply.at,
+      expiresAt: null,
+      act,
+    };
+  });
   return { report: { state: 'healthy', pending: items.length }, items };
 }
 
@@ -428,9 +495,18 @@ const STATUS_DETAIL_MAX = 160;
  * that declares no claim keys at all counts the same way — `work claim`
  * refuses it `no-claim-keys`, so it is unclaimable work needing a re-announce
  * or a terminal status, not a worker; it lists with the announcement's own
- * `bus show` handle and no claim act. Unknown holds
- * list candidates under 'degraded' rather than hiding them. A refused,
- * retryable or unreadable feed degrades the section; it never invents jobs.
+ * `bus show` handle and no claim act. A `running`/`idle` job that declares
+ * claim keys counts as pending only under complete hold coverage with no
+ * shown live hold on any of them — the status says progress while
+ * coordination proves nobody holds the scope, so the announcement is stalled
+ * and only its announcer can move it; truncated, unavailable or absent hold
+ * coverage can never prove that, so unproven stalls stay hidden. Unknown
+ * holds list open candidates under 'degraded' rather than hiding them. A refused feed
+ * lists one high item naming the retained receipt the projection blamed —
+ * every announced job is hidden and every work verb refuses until that
+ * receipt's TTL ends, so the refusal itself is pending work; `expiresAt` is
+ * the blamed receipt's own deadline. A retryable or unreadable feed degrades
+ * the section; it never invents jobs.
  */
 function busFeedJobItems(options: UnifiedInboxOptions, now: number,
   posts: ReadonlyMap<string, BusFeedPost>,
@@ -439,9 +515,37 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
   try { feed = (options.readFeed ?? readBusWorkFeed)({ root: options.busRoot, claims: true, now: () => now }); }
   catch { return { state: 'unavailable', items: [] }; }
   if (feed.status === 'unavailable') return { state: 'unavailable', items: [] };
+  if (feed.status === 'refused') {
+    const receipt = feed.receipt;
+    const expiry = receipt === undefined ? NaN : receipt.receivedAt + receipt.ttl;
+    // ECMAScript's Date range ends at ±8.64e15 ms; an out-of-range expiry
+    // stays null — unknown, never an invalid timestamp.
+    const expiresAt = Number.isSafeInteger(expiry) && expiry <= 8_640_000_000_000_000 ? iso(expiry) : null;
+    return { state: 'degraded', items: [{
+      id: 'bus-feed-refused',
+      source: 'bus',
+      kind: 'bus-work',
+      severity: 'high',
+      blocking: false,
+      title: `work feed refused: ${feed.reason}`,
+      detail: cap('every announced job is hidden and work verbs refuse until the receipt expires' +
+        (receipt === undefined ? '' : ` · receipt ${receipt.id}`), DETAIL_MAX),
+      since: receipt === undefined ? null : iso(receipt.receivedAt),
+      expiresAt,
+      act: [
+        ...(receipt === undefined ? [] : [`phm agents bus show ${receipt.id}`]),
+        'phm agents bus work feed',
+      ],
+    }] };
+  }
   if (feed.status !== 'ok') return { state: 'degraded', items: [] };
 
   const holdsKnown = feed.claims?.source !== 'unavailable';
+  // Complete hold coverage is what "no live claim" proofs need: a missing
+  // table is verified-empty and an untruncated available read shows every
+  // hold, while unavailable, truncated or absent claims can never prove a
+  // declared key is unheld.
+  const holdsComplete = feed.claims !== undefined && feed.claims.source !== 'unavailable' && !feed.claims.truncated;
   const heldKeys = new Map<string, Set<string>>();
   if (feed.claims) {
     for (const hold of feed.claims.holds) {
@@ -475,6 +579,37 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
           `phm agents bus work feed --job ${job.id} --claims`,
         ],
       });
+      continue;
+    }
+    // A running/idle announcement whose declared keys all lost their live
+    // holds is stalled work: the status reports progress but complete hold
+    // coverage proves nobody holds the job's scope, and only the announcer
+    // can move it — a worker cannot claim a non-open status. Jobs with no
+    // declared keys have no claim scope to prove unheld, and incomplete
+    // coverage can never prove "no hold", so both stay hidden rather than
+    // listed as fact.
+    if ((job.status === 'running' || job.status === 'idle') && job.claimKeys.length > 0 && holdsComplete) {
+      const held = heldKeys.get(job.id);
+      if (held === undefined || held.size === 0) {
+        const report = statuses.get(job.id);
+        items.push({
+          id: `bus-feed:${job.id}`,
+          source: 'bus',
+          kind: 'bus-work',
+          severity: post?.priority === 'P0' ? 'high' : 'warn',
+          blocking: false,
+          title: oneLine(job.title, TITLE_MAX) || `bus work ${job.id}`,
+          detail: cap(`owner ${job.owner} · ${job.provider} · ${job.repo} · ${job.status}` +
+            (report?.detail ? ` — ${report.detail}` : (job.detail === undefined ? '' : ` — ${oneLine(job.detail, 140)}`)) +
+            ' · no live claim on its declared keys; only the announcer can move it', DETAIL_MAX),
+          since: iso(job.updatedAt),
+          expiresAt: post ? iso(post.expiresAt) : null,
+          act: [
+            ...(report === undefined ? [] : [`phm agents bus show ${report.id}`]),
+            `phm agents bus work feed --job ${job.id} --claims`,
+          ],
+        });
+      }
       continue;
     }
     // An open job that declares no claim keys can never be claimed —
@@ -1007,6 +1142,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const needs = needsYouItems(options.readNeeds ?? readNeedsMason, options.runsDir);
   const teammates = teammateItems(options.readTexts ?? readTeammateTexts, options.runsDir, now);
   const ownerThread = ownerThreadItems(options.readOwnerAwaiting ?? readOwnerAwaitingReplies, options.runsDir);
+  const ownerDelivery = ownerDeliveryItems(options.readOwnerUndelivered ?? readOwnerUndeliveredReplies, options.runsDir);
   const drafts = await draftItems(options.listPendingDrafts ?? listDrafts, options.listCommsDrafts ?? listCommsAgentDrafts, options.runsDir);
   const bus = busItems(options);
   const conversations = conversationItems(options.readConversations ?? readAgentConversations, options, now, bus.covered);
@@ -1024,6 +1160,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'needs-you': needs.report,
     imessage: teammates.report,
     'owner-thread': ownerThread.report,
+    'owner-delivery': ownerDelivery.report,
     drafts: drafts.report,
     bus: bus.report,
     conversations: conversations.report,
@@ -1035,7 +1172,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'team-approvals': teamApprovals.report,
     proposals: proposals.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...ownerThread.items, ...drafts.items, ...bus.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

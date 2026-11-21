@@ -51,3 +51,31 @@ export const EMPTY_JOB_SUGGESTIONS: Record<EmptyJobDiagnosis, string> = {
   'tool error': 'repair the failing tool before retrying',
   unknown: 'record a concrete reason in the final job log',
 };
+
+/** A worker stopped because its model or plan hit a usage cap. `model` is null when the log does not name one. */
+export interface PoolCapHit { model: string | null; kind: 'model-limit' | 'plan-limit' | 'rate-limit' }
+
+// Specific wording first. The model name is a single word, so "reached your Fable limit" names Fable.
+const POOL_CAP_RULES: ReadonlyArray<readonly [PoolCapHit['kind'], RegExp]> = [
+  ['model-limit', /you(?:'|’)ve (?:reached|hit) (?:your|the) ([A-Za-z][\w.-]{1,40}) (?:usage )?limit\b/i],
+  ['plan-limit', /you(?:'|’)ve (?:reached|hit) (?:your|the) (?:usage|plan|weekly|daily|5-hour) limit\b|you(?:(?:'|’)ve| have) hit your usage limit|usage limit (?:reached|hit)\b|usage_limit_reached|exceeded your (?:current )?(?:usage|plan) (?:limit|quota)/i],
+  ['rate-limit', /\brate[ -]?limit(?:ed| exceeded| reached)\b|\bquota (?:exceeded|exhausted)\b|insufficient_quota|resource_exhausted/i],
+];
+
+/**
+ * Pure: does the final worker output say a model or plan limit was reached? Same tail window as the other
+ * empty reasons. Plain "auth failed" and ordinary empties return null, so they keep their own labels.
+ */
+export function detectPoolCap(log: string | null): PoolCapHit | null {
+  if (log === null) return null;
+  const tail = log.split(/\r?\n/).slice(-FLEET_EMPTY_WHY_LOG_LINES).join('\n');
+  for (const [kind, pattern] of POOL_CAP_RULES) {
+    const match = pattern.exec(tail);
+    if (!match) continue;
+    const named = match[1]?.toLowerCase();
+    // "reached your usage limit" captures the word "usage"; that is a plan limit, not a model.
+    if (named && ['usage', 'plan', 'weekly', 'daily', 'rate', 'monthly', 'free'].includes(named)) return { model: null, kind: 'plan-limit' };
+    return { model: named ?? null, kind };
+  }
+  return null;
+}

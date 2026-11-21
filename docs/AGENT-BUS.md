@@ -256,7 +256,11 @@ posts in the agent's channels (minus its own and minus `group.presence`
 heartbeats, which are observations with their own read, never mail) and
 traffic still addressed to
 its bare handle, stable id or aliases — every ref `resolveAgent` accepts —
-highest priority first; `--thread` keeps only `note`/`context` bodies
+highest priority first. A handoff is the `channel:'handoff'` stamp or the
+receivable `worker-handoff` body `fleet handoff-send` posts on a legacy
+envelope, under any of those labels or a member channel's `group:` address —
+the same coverage `work mine` handoffs and `handoff-receive` apply;
+`--thread` keeps only `note`/`context` bodies
 carrying that v2 thread label, and `--from` narrows by sender through the
 same identity-label matching `channel read` uses (a handle, `agent:<handle>`,
 stable id or alias; an unresolvable ref keeps exact-label matching). Persist
@@ -408,10 +412,14 @@ registry), the same 20-item cap and `matched`/`truncated`/`skipped`
 semantics; the two thread sections are mutually exclusive on every thread —
 the wake
 hints addressed to it, capped at the
-newest 20, and
+newest 20 with `matched` the count of every hint the bounded queue read
+matched, and
 the next page of mail in its inbox: the same matching, order and owner-share
 receipt checks `agents bus inbox` applies, capped at the oldest 20 pending
-messages with each body summarized by the shared one-line composer — and
+messages with each body summarized by the shared one-line composer and
+`matched` the true pending total — every row the same filters accept across
+the whole retained store, counted by the full scan `readAgentInbox` performs
+when asked — and
 claimable work or worker-handoff mail keeps the same tri-state `held`/`holder`
 evidence `agents bus inbox` reports, `null` whenever a hold store cannot be
 read, never a guess, so pending work shows its claim state without a second
@@ -433,11 +441,16 @@ matcher that has not reached `done` or `terminated`, newest update first
 (the first 50 shown, `matched` the true total, `truncated` definitive).
 `failed` stays listed because only the announcer may move a job and a
 failed one can still be rescheduled or terminated; each item is the feed
-job verbatim with its `postId`/`statusId` citations, so a job still open
+job plus the same per-key hold coverage the `jobs` section computes —
+`held`/`heldKeys`/`freeKeys` under the shared complete/truncated/unknown
+rule — with its `postId`/`statusId` citations, so a job still open
 with claim keys appears in both `jobs` (the claimable view) and `announced`
 (the ownership view), while a `running`/`idle`/`blocked`/`failed` or
 claim-key-less announcement the agent posted no longer leaves the digest
-invisible. A non-ok feed reports the section's own
+invisible. The hold fields let the announcer see that a job reporting
+`running`/`idle` has `held:false` — no live claim on its declared scope —
+without a second `claim list` or `work feed --claims` read; only the
+announcer may reschedule or terminate it. A non-ok feed reports the section's own
 `refused`/`unavailable`/`retryable`/`invalid` state, never an empty list.
 For the
 `next`/`handoffs` sections "addressed to it" means any label of the resolved
@@ -767,9 +780,14 @@ Statuses from that owner update retained jobs in cursor order with receipt time
 as `updatedAt`; when the read layer supplies `ownerKeyFor`, any sender label
 resolving to the job owner's key counts as that owner, while labels it cannot
 resolve still require exact label equality. Orphan statuses are ignored.
-Duplicate posts and malformed work bodies are refused. Legacy and unrelated
-bodies stay opaque. This projection is neither a historical ledger nor an
-authentication check; labels grant no authority.
+Duplicate posts and malformed work bodies are refused. A body-level refusal
+carries `receipt` — the wire id, receipt time and TTL of the retained envelope
+whose processing refused the projection — so a poisoned feed names its cause
+(`agents bus show <id>` resolves it) instead of silently hiding every job
+until the receipt expires; receipt-shape, participant-metadata and volume
+refusals name none. Legacy and unrelated bodies stay opaque. This projection
+is neither a historical ledger nor an authentication check; labels grant no
+authority.
 
 `phm fleet work-feed --json`, `phm agents bus work feed` and GET
 `/api/verse/agent-bus/work-feed` serve the same `BusWorkFeedReadResult` as
@@ -786,10 +804,17 @@ registry keeps exact-label matching — the filter narrows the fleet view, it
 never widens it. The
 endpoint needs a current read session and accepts only `claims=true` (any
 other parameter or value is a 400), and answers 200
-for `ok` and `refused` — the projection's own status and reason stay in the
-body — while `unavailable`, `retryable` and `invalid` storage answer 503. A
-missing store reads as an empty `ok` feed. Status filtering stays client-side;
-a missing provider stays a refusal, never a fabricated owner.
+for `ok` and `refused` — the projection's own status, reason and blamed
+receipt stay in the body — while `unavailable`, `retryable` and `invalid`
+storage answer 503. A missing store reads as an empty `ok` feed. Status
+filtering stays client-side; a missing provider stays a refusal, never a
+fabricated owner. Every refused-feed read names the receipt when the
+projection could attribute one: the feed CLIs print it as `receipt=<id>`,
+`agents bus status` reports it as `feed.receipt`, `agents bus work mine`
+carries it on the refused `jobs`/`announced` sections, the work send verbs
+refuse `at receipt <id>`, and the unified comms inbox lists the refusal
+itself as a high-severity bus item deep-linking `agents bus show <id>` —
+a poisoned feed is pending work, never a silent empty list.
 
 The read resolves an omitted post `provider` and the job `owner` match
 through the agent identity registry beside the bus store: a sender label

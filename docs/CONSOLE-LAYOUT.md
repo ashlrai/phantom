@@ -103,6 +103,47 @@ says it may be stale. The same list for agents:
 phm sessions --json
 ```
 
+Home's **Machines** card is a tile per Mac in the pool, this Mac first. Each
+tile gives the Mac's name, whether it is online, offline or unknown with a
+mark beside the word, and when it was last seen. Below that come its free
+slots as the large figure, memory as the free amount and the share in use
+with a bar of that share, the jobs it is running, then load, free disk and
+offload. On the desktop each running job is a button that opens that job's
+messages in the Worker log; a tile names up to six jobs and counts the rest.
+A line above the tiles counts the Macs that are online and the jobs running
+on the Macs that report them. Nothing is estimated: unmeasured slots read
+"free slots unknown" instead of a number, a Mac with no memory share gets a
+hatched bar instead of an empty one, and an offline Mac's tile is dashed, with
+when it was last seen in its head. The card refreshes every 30 seconds while
+visible. The same report for agents:
+
+```sh
+phm nodes pool --json
+```
+
+Home's **Shipped today** card lists every pull request the fleet merged in
+the last 24 hours, newest first. Two sentences lead: how many merged, across
+how many repositories and at what rate, then the median time from open to
+merge and the pull request that stayed open longest. When more than one
+repository merged, a row of buttons (each with its count, underlined by its
+share of the list) narrows the list to one; choose it again, or **All**, to
+go back. Each row gives the merge time, the lane's provider mark, a link to
+the pull request, the lane and the time it was open. Under the row a line
+runs across the feed's own 24 hours: it starts where the pull request was
+opened and ends in a dot at its merge, and fades in from the left edge when
+it was opened before the window. When the feed names the job that made the
+pull request, the job id opens that job in the Worker log. Nothing is filled
+in: a row with no time open says "open time unknown" and gets a hollow dot
+and no line, a missing lane reads "lane unknown", an incomplete feed counts
+what it lists and says the totals are unknown, and no line is drawn when the
+feed does not give its window. The card reads the feed again every 10
+minutes while visible and says when a refresh failed. The same feed for
+agents:
+
+```sh
+phm shipped --since 24h --json
+```
+
 The Metrics pane is one board of the last 24 hours. It leads with the merged
 PR counts and the busiest hour, then four numbers (the first with a line of
 the merges in each hour), the two hourly charts side by side and a ranked bar
@@ -173,14 +214,40 @@ far; lighter: where the current burn ends by reset; marker: time elapsed in
 the window) and labelled readings: used, left, the reset as a countdown and a
 local time, burn per hour and its basis, unused at reset, jobs running against
 the slot target, and how long ago the reading was taken and by which reader.
+Under the bar, a plan pool draws its window so far: every stored reading from
+the window's start to its reset, the dashed even line from 0% to 100%, a rule
+at now and a dotted line from the newest reading to where the card says this
+burn ends. The sentence below it counts the readings and gives the newest one
+against the even line in points. One reading is one dot, a pool without a
+reset time says its window cannot be drawn, and when the stored readings
+cannot be read the board says so once and draws no chart. Each reading can
+be read on its own: point at the plot for the reading drawn nearest, or focus
+the plot and press Left or Right to step through them (Home and End jump to
+the oldest and newest, Esc lets go). A rule and a ring mark the reading, and
+the sentence below becomes its time, its used share and where the even line
+stood then.
 Claude's per-model weekly windows sit under its card. A credits pool shows its
 balance and no bar. The line under the headline names the next reset, and the
 switch narrows the list to Behind, On pace or Unknown (arrow keys move it).
+Above the switch, **Runway ahead** puts every plan pool on one line of time
+from the reading to the furthest reset, soonest reset first: a line to the
+pool's reset with a ring at it, the countdown and local time, and what the
+view projects in words. A pool that runs empty first stops where
+`projectedEmptyAt` says and the wait from there to its reset is hatched
+("empty in 10 h, then dry 2 d 2 h until reset"), amber only where the pool's
+own verdict is slow down or fully used. A pool with no usage or burn reading
+is dashed and says so, a held lane says held, and neither is projected.
+Claude's per-model windows follow their pool with their reset and usage only.
+Credit balances, lanes without a window and resets that have passed are named
+under the line with the reason. A pool's name is a button: it brings that
+pool's card into view and puts the keyboard on it, showing it again if the
+switch had hidden it. With no reset ahead the section is not drawn.
 Every value is read from `pools.v1`; one it does not hold reads unknown, never
-zero. The same rows for agents:
+zero. The same rows and the same stored readings for agents:
 
 ```sh
 phm pools
+phm fleet usage-history
 ```
 
 The Models pane is one board of every model the router knows, grouped under
@@ -242,7 +309,16 @@ flagged it, never from a 100% reading, because credits can keep that account
 usable. Each window shows its bar, percent and reset as a countdown plus a
 local clock time; Claude's reset is the provider's own sentence, so no clock
 time is derived for it. A window with no reading has a hatched bar, not an
-empty one. Tokens last hour totals the lanes that reported a figure, says how
+empty one. Above the cards, Resets ahead puts every window that gave its reset
+as a date and time on one line that starts at now, soonest first: the wait
+drawn to a dot at the reset, the countdown and local time, and the usage now
+in words (a percent, "limit reached" with a square in place of the dot, or
+"usage unknown"). The scale is hours from now on a line shorter than a day
+and a half, local midnights beyond. The fleet's own Codex personal reading
+joins the line when the fleet read carries its reset. A window with a sentence
+for a reset, with none, or with one that has passed is named under the line
+with that reason and gets no position; with no dated reset at all the line is
+not drawn. Tokens last hour totals the lanes that reported a figure, says how
 many did not, and draws each lane as a thin bar against the busiest lane.
 Accounts come from `GET /api/verse/accounts` and lane tokens from
 `GET /api/verse/fleet/runs`. `phm usage limits [--json]` prints the same
@@ -264,8 +340,20 @@ along the row) to draw its answer as a numbered try order. Each seat has a bar
 of the share of its binding usage window already used and that window's reset
 time; seats the router holds back are listed underneath with its reason and
 when they become eligible again. Below, the last 200 recorded routing
-decisions are counted by chosen seat as ranked bars, with the six newest
-listed and any whose work ran on a different seat marked. A decision is the
+decisions are counted by chosen seat and drawn over time: one row per seat,
+most chosen first, each holding a lane of 24 columns that cut the span from
+the oldest decision read to now into equal slices. A column's height is how
+many decisions chose that seat in that slice, every lane against the same
+tallest cell so lanes compare, and an amber cap marks a slice whose work ran
+on a different seat than the one chosen. The span never reaches back past the
+oldest decision read, and a decision whose time cannot be read is counted in
+words and not drawn (with no readable time at all, the rows keep plain share
+bars). Point at a column to read it: the line under the chart gives its start
+and end, its count, the seats chosen in it and how many ran elsewhere, and
+the list below becomes that column's decisions (six shown, the rest
+counted) instead of the six newest. The time axis under the lanes is one tab
+stop: Left and Right step a column, Home and End jump to the oldest and
+newest, Esc lets go, and a click keeps a column until focus leaves. A decision is the
 seat the router chose, not proof the work ran there. The pane decides nothing
 and launches nothing: besides the previews it reads `GET /api/verse/budget`
 (seat usage, resets and the time that usage was read) and
@@ -308,20 +396,33 @@ text field. The row stays in view while the board scrolls. It lists only the
 boards this build has, and it is not drawn while the dock is tiled as the agent
 workspace.
 
-Three names in the row carry a live reading, so the row says where to look
-before a board is opened. Pools shows how many pools will run empty before
+Every name in the row can carry a live reading, so the row is the status line
+of the whole surface and says where to look before a board is opened. Pools shows how many pools will run empty before
 their reset (`2 too fast`), else how many are behind their window, else how
 many have no current reading, counted from the `phm pools` view. Usage shows
 how many accounts their provider flags at a limit (`1 at limit`), else how
 many could not be read, counted from the Usage board's accounts read the way
 `phm usage limits` counts them; an account at 100% without the provider's flag is not
 counted. Lanes shows how many lanes are held, or slots running over slots
-asked for (`5/6`) when none is held, counted from `phm fleet runs`. Each is
-the same read its board draws from, refreshed while the row is on screen
-(every 30 seconds; accounts every 60, the Usage board's own interval), and the
-board's own headline is the name's tooltip. A read that has not answered or
-last failed shows no reading: the name stands alone, never a zero. The other
-boards have no reading in the row yet.
+asked for (`5/6`) when none is held, counted from `phm fleet runs`. Router
+shows how many kinds of fleet work no seat can take right now (`2 no seat`),
+else how many the router gave no answer for, counted from the Router board's
+route table. Models shows how many models the router refuses
+(`1 not routable`), else how many are stale or deprecated in their provider's
+docs (`2 to review`), counted from `phm models` and `phm models check`; a
+retired model is not counted. Capacity shows the share of target slots the
+lanes kept filled over the last 24 hours (`83.3% filled`), the board's own
+figure, and nothing for a window nobody sampled. Supply shows how many slots
+opening in the next 15 minutes have no job waiting (`3 short`), from the same
+snapshot Lanes reads; when the drop folder could not be read the figure is an
+upper bound and says so (`up to 3 short`).
+
+Each reading comes from the same read its board draws from, refreshed while
+the row is on screen (Pools, Lanes and Supply every 30 seconds; the others
+every 60), and the board's own headline is the name's tooltip. Amber marks a
+reading that asks to be looked at; a plain figure is only a figure. A board
+with nothing to flag, or whose read has not answered or last failed, shows no
+reading: the name stands alone, never a zero.
 
 The phone Home screen brings the fleet glance, links to active sessions,
 Needs you approvals and the comms inbox, the leader order box, and the recent
@@ -334,7 +435,10 @@ became work sits a routing trail: one row per job whose prompt cites the
 message, with the lane it was routed to, a four-step track (queued, launched,
 published, merged) and the recorded result. On a job that has launched, the
 id opens its Worker log and "Conversation" opens what that session was told,
-said and did in the Conversations pane; a published or merged job links its
+said and did without leaving the Leader pane: beside the chat when the pane
+is wide enough, over it otherwise. The row is lit and its button reads
+"Conversation open" while that session is the one open, and closing it (Esc)
+puts the keyboard back on the button. A published or merged job links its
 PR. A job that ended with nothing to publish says so. A message from the last
 six hours that no job cites reads "Not routed to a lane yet". If the job
 prompts could not be read it reads routing unknown instead, and a job with no
@@ -344,6 +448,22 @@ trail reads `GET /api/verse/leader/orders`, the same order trace as:
 
 ```sh
 phm fleet orders --json
+```
+
+A job the Leader names in one of its own messages is live too. Under the
+message, each named job is one chip: a dot and words for what that session is
+doing now ("running · claude · spoke 2m ago", "quiet 14m", "finished",
+"failed"), the last thing it said while it is working, and Log for its Worker
+log. The job id opens the session as a conversation in the same place a
+routed job's does, and is underlined while it is the one open. A job the
+session list does not hold reads "not in the session list" and is never
+called finished; when the list cannot be read every chip reads "state
+unknown". Pull requests the message names stay links on their own line. The
+chips read the list the Working now strip already reads, so they add no
+request:
+
+```sh
+phm sessions --json
 ```
 
 ## Fleet telemetry and Show Mode

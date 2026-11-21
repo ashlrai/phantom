@@ -55,7 +55,7 @@ it('narrow drops malformed rows and never invents a state', () => {
   expect(narrowComputers({ nodes: 'x' })).toBeNull();
   const view = narrowComputers(payload(['junk', { state: 'ready for work' }, { name: 'node-x', stateCode: 'great', state: 'ready for work', freeMemoryBytes: -1, lanes: 'claude' }]));
   expect(view?.computers).toEqual([{ name: 'node-x', isSelf: false, stateCode: 'unknown', state: 'unknown',
-    freeMemoryBytes: 'unknown', cpuHeadroomPercent: 'unknown', lanes: 'unknown', jobsRunning: 'unknown', freeSlots: 'unknown' }]);
+    freeMemoryBytes: 'unknown', cpuHeadroomPercent: 'unknown', lanes: 'unknown', jobsRunning: 'unknown', freeSlots: 'unknown', joined: true, joinCommand: null }]);
 });
 
 it('registers a Computers pane that loads the cards from the API', async () => {
@@ -71,4 +71,12 @@ it('says so plainly when the list cannot be read', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 404 })));
   render(<ComputersPane visible />);
   expect(await screen.findByText('Computers are unavailable right now.')).toBeTruthy();
+});
+
+it('shows a not joined computer grey with the one command to join it', () => {
+  const view = narrowComputers(payload([row('node-a', { isSelf: true }), row('studio-mac', { joined: false, joinCommand: 'phm node join', stateCode: 'not-running', state: 'x' })]));
+  const { container } = render(<ComputersBody view={view} />);
+  expect(container.querySelector('li[aria-label="studio-mac"]')?.getAttribute('data-state')).toBe('not-joined');
+  expect(screen.getByText(/Not joined\. On studio-mac, run/)).toBeTruthy();
+  expect(screen.getByText('1 of 2 ready for work')).toBeTruthy();
 });

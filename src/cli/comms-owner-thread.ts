@@ -47,6 +47,7 @@ export async function cmdCommsOwnerStatus(json: boolean, options = ownerThreadOp
   console.log(`owner thread: ${status.threadId} (messages: ${status.messages ?? 'unknown'})`);
   console.log(`kill: ${status.kill}  paused: ${status.paused}`);
   console.log(`awaiting reply: ${status.awaitingReply ?? 'unknown'}`);
+  console.log(`undelivered replies: ${status.undeliveredReplies ?? 'unknown'}`);
   for (const adapter of status.adapters) {
     console.log(`  ${adapter.id}: ${adapter.enabled ? 'enabled' : 'disabled'} — ${adapter.reason}`);
     if (adapter.nextStep !== null) console.log(`    next: ${adapter.nextStep}`);

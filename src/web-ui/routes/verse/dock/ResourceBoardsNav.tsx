@@ -9,27 +9,20 @@
  * Home and End jump to the ends, and [ and ] do the same from anywhere in the
  * board that is not a text field.
  *
- * Three names carry a live reading, each from the read its own board draws
- * from and shared with it through the cache: Pools says how many pools run
- * empty early or are behind (GET /api/app/pools, `phm pools`), Usage how many
- * accounts a provider flags at a limit (GET /api/verse/accounts, counted as
- * `phm usage limits` counts them) and Lanes how many lanes are held or how many slots are running
- * (GET /api/verse/fleet/runs, `phm fleet runs`). A read that has not answered
- * or last failed shows no reading.
+ * Every name can carry a live reading, so the row is the status line of the
+ * whole surface: pools running empty early or behind, accounts at a limit,
+ * kinds of work with no seat, models the router refuses, lanes held or slots
+ * running, the share of target slots filled, and opening slots with no job
+ * waiting. Each comes from the read its own board draws from and is shared
+ * with it through the cache (use-board-readings.ts lists the reads). A board
+ * with nothing worth a word, or whose read has not answered or last failed,
+ * shows its name alone.
  */
 import { useEffect, useRef, type KeyboardEvent } from 'react';
-import { useQuery, useRefetch } from '../../../data/hooks.js';
-import { fleetPoolsQuery } from '../fleet-pools/pools-query.js';
-import { isFleetRuns } from '../ops/ops-runs-model.js';
-import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { getPane, usePanes } from '../panes/pane-registry.js';
-import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { swapDockPane } from './dock-store.js';
-import { rowsFromAccounts } from '../fleet-usage/usage-pane-model.js';
-import { projectAccountsSnapshot } from '../usage/usage-contract.js';
-import { verseAccountsQuery } from '../usage/usage-queries.js';
-import { lanesReading, poolsReading, usageReading, type BoardReading } from './resource-board-readings.js';
 import { RESOURCE_BOARD_GROUPS, neighbourBoard, resourceBoards } from './resource-boards.js';
+import { useBoardReadings } from './use-board-readings.js';
 import styles from './ResourceBoardsNav.module.css';
 
 /** The board a keyboard move just opened: its switcher takes focus back, so the next key lands in the same place. */
@@ -37,34 +30,6 @@ let focusAfterSwitch: string | null = null;
 
 function typingIn(target: Element): boolean {
   return target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !== null;
-}
-
-/** Long enough that a recent read by the board itself, or by Home, is reused instead of asked for again. */
-const READING_POLL_MS = 30_000;
-/** The Usage board's own interval: the accounts read asks the providers, so the row must not ask more often. */
-const ACCOUNTS_POLL_MS = 60_000;
-
-/** The readings to draw, by board id. Only asked for while the row is on screen and lists that board. */
-function useBoardReadings(ids: readonly string[], on: boolean): ReadonlyMap<string, BoardReading> {
-  const wantPools = on && ids.includes('fleet-pools'), wantLanes = on && ids.includes('fleet-lanes'), wantUsage = on && ids.includes('fleet-usage');
-  const pools = useQuery(fleetPoolsQuery, { enabled: wantPools, freshMs: READING_POLL_MS });
-  const runs = useQuery(opsRunsQuery, { enabled: wantLanes, freshMs: READING_POLL_MS });
-  usePollWhileVisible(useRefetch(fleetPoolsQuery), READING_POLL_MS, { enabled: wantPools, refreshOnShow: false });
-  usePollWhileVisible(useRefetch(opsRunsQuery), READING_POLL_MS, { enabled: wantLanes, refreshOnShow: false });
-  const accounts = useQuery(verseAccountsQuery, { enabled: wantUsage, freshMs: ACCOUNTS_POLL_MS });
-  usePollWhileVisible(useRefetch(verseAccountsQuery), ACCOUNTS_POLL_MS, { enabled: wantUsage, refreshOnShow: false });
-  const out = new Map<string, BoardReading>();
-  // An accounts read the server could not answer, or a body that is not the accounts snapshot, is no reading.
-  const snapshot = accounts.status === 'error' || accounts.data?.available !== true ? null : projectAccountsSnapshot(accounts.data.raw);
-  const usageNow = snapshot === null ? null : usageReading(rowsFromAccounts(snapshot));
-  if (usageNow) out.set('fleet-usage', usageNow);
-  // A failed refresh keeps the last data in the cache; a count from it must not read as current. The cache entries
-  // are shared by key with other readers, so the shape is checked here too: anything else is no reading.
-  const poolsNow = pools.status === 'error' || !Array.isArray(pools.data?.pools) ? null : poolsReading(pools.data);
-  const lanesNow = runs.status === 'error' || !isFleetRuns(runs.data) ? null : lanesReading(runs.data);
-  if (poolsNow) out.set('fleet-pools', poolsNow);
-  if (lanesNow) out.set('fleet-lanes', lanesNow);
-  return out;
 }
 
 export interface ResourceBoardsNavProps {

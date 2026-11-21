@@ -76,7 +76,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'autofix',
   // Changed-file tests and the fleet event feed.
   'test', 'check', 'feed',
-  'worklog', 'log', 'library', 'decide', 'spend',
+  'work', 'worklog', 'log', 'library', 'decide', 'spend',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
   'constitution', 'wb', 'caps',
   // COS report pages for the loopback dashboard (RQ-COS-PAGES-1).

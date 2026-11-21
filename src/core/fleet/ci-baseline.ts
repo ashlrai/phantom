@@ -30,6 +30,19 @@ const SUITE_FAIL_LINE = /^FAIL\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/[^\s>]+
 const SUITE_NAMES = '(suite)';
 const PASS_LINE = /^[\u2713\u2714\u221a]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/\S+)\s*>\s*(.+?)(?:\s+\d+(?:\.\d+)?m?s)?$/;
 
+// The default reporter emits no per-test pass line for a green file; it
+// summarizes the whole module instead:
+//   ✓ |unit| test/example.test.ts (4 tests) 4ms
+// A green module means every test it contains passed on that run -- the
+// finest pass evidence the default reporter produces.
+const FILE_PASS_LINE = /^[✓✔√]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/[^\s>]+\.test\.[cm]?[jt]sx?)\s+\(\d+ tests?(?:\s*\|[^)]*)?\)(?:\s+\d+(?:\.\d+)?m?s)?$/;
+
+// .github/scripts/ci-source-binding.mjs verifies `git rev-parse HEAD` equals
+// the candidate revision and prints this receipt in every bound CI job:
+//   Bound candidate <sha> to event tree <tree>
+//   Bound candidate <sha> to event merge <sha> of base <sha>...
+const BOUND_LINE = /^Bound candidate ([a-f0-9]{40}) to event (?:tree|merge) [a-f0-9]{40}/;
+
 // TypeScript diagnostics (tsc/tsgo non-pretty output, identical in CI) name a
 // repo-relative file, position and diagnostic code:
 //   src/core/foo.ts(41,9): error TS2322: Type 'string' is not assignable ...
@@ -1066,6 +1079,15 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
         result.push({ conclusion: job.conclusion, text: r.stdout });
         continue;
       }
+      // Bound CI jobs prove the checkout through the source-binding receipt
+      // instead of a raw `git log -1` echo; the bound revision must equal the
+      // analyzed head exactly like the marker's following line does.
+      const bound = output.find(line => BOUND_LINE.test(line));
+      if (bound !== undefined) {
+        if (BOUND_LINE.exec(bound)![1] !== head) return null;
+        result.push({ conclusion: job.conclusion, text: r.stdout });
+        continue;
+      }
       // Aggregator jobs that never check out the workspace (Merge Gate,
       // release autotag) cannot emit the checkout SHA this check requires.
       // Their logs are dropped from evidence only when they carry nothing
@@ -1103,10 +1125,13 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   }
   const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text, repo, auditExceptions));
   // A suite failure has no per-test pass line to match: the file loading and
-  // running at all (any verbose pass in it) is what resolves it.
+  // running at all is what resolves it. The default reporter's green-module
+  // line (`✓ file (N tests)`) is the same evidence at file granularity -- a
+  // green module means every test it contains passed on master.
   const passes = (f: Failure) => masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
     const m = PASS_LINE.exec(line);
-    return m?.[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
+    if (m) return m[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
+    return FILE_PASS_LINE.exec(line)?.[1] === f.file;
   }));
   // Bundler-resolution candidates for one normalized repo-relative spec base.
   // Explicit extensions keep TypeScript precedence (.js -> .ts before .tsx,

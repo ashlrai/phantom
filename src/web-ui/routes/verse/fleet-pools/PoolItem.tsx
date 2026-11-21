@@ -1,10 +1,12 @@
 /**
  * One pool on the Pools board: who it is, the plain-words line, a bar (used so far, where the current burn ends by
- * reset, and how far the window has run), its labelled readings and any per-model windows. Draws only what pools.v1
- * holds for the row.
+ * reset, and how far the window has run), its window so far when the board passes the stored readings, its labelled
+ * readings and any per-model windows. Draws only what pools.v1 and the stored readings hold for the row.
  */
 import type { PoolRow, PoolsViewV1 } from '../../../../core/fleet/pools-view.js';
+import type { PoolUsageSeries } from '../../../../core/fleet/usage-history.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
+import { PoolWindow, type WindowRead } from './PoolWindow.js';
 import { KIND_WORD, poolFacts, poolGroup, projectedEndPct, scopeLine, scopeName } from './pools-board-model.js';
 import styles from './fleet-pools.module.css';
 
@@ -27,9 +29,13 @@ function PoolBar({ row }: { row: PoolRow }) {
   </div>;
 }
 
-export function PoolItem({ row, view }: { row: PoolRow; view: Pick<PoolsViewV1, 'generatedAt'> }) {
+/** The stored readings of every pool's window, as the board last read them; `pools` is empty until the read answers. */
+export interface PoolWindows { read: WindowRead; now: number; pools: readonly PoolUsageSeries[] }
+
+export function PoolItem({ row, view, windows }: { row: PoolRow; view: Pick<PoolsViewV1, 'generatedAt'>; windows?: PoolWindows }) {
   const facts = poolFacts(row, view, localTime);
-  return <li className={styles.row} data-risk={row.wasteRisk} data-group={poolGroup(row)} aria-label={`${row.id} pool`}>
+  // Focusable from code only: the Runway line above the cards puts the keyboard here when a pool's name is chosen.
+  return <li className={styles.row} data-pool={row.id} tabIndex={-1} data-risk={row.wasteRisk} data-group={poolGroup(row)} aria-label={`${row.id} pool`}>
     <div className={styles.head}>
       <span className={styles.name}>
         <ProviderBadge of={row.id} iconOnly size={14} />
@@ -42,6 +48,7 @@ export function PoolItem({ row, view }: { row: PoolRow; view: Pick<PoolsViewV1, 
     </div>
     {/* Only a plan window is a share of something: a credit balance or an unmetered lane gets no bar. */}
     {row.kind === 'subscription' ? <PoolBar row={row} /> : null}
+    {row.kind === 'subscription' && windows ? <PoolWindow row={row} read={windows.read} now={windows.now} series={windows.pools.find(series => series.pool === row.id)} /> : null}
     {facts.length > 0 ? <dl className={styles.facts}>{facts.map(fact => <div key={fact.label} className={styles.fact}>
       <dt>{fact.label}</dt>
       <dd data-unknown={fact.value === null || undefined}>{fact.value ?? 'unknown'}</dd>

@@ -27,6 +27,7 @@ import type { SpawnLike } from '../core/fleet/planner-run.js';
 import { runSelfTick, type RunSelfTickOptions, type SelfTickStep, type SelfTickSteps } from '../core/fleet/self-tick.js';
 import { refreshClaudeQuotaPeriodically, refreshHeldClaudeQuota, type Probe } from '../core/fleet/claude-quota-refresh.js';
 import { readSelfTickLast } from '../core/fleet/self-tick-last.js';
+import { readSelfTickStatus, selfTickStatusLines } from '../core/fleet/self-tick-status.js';
 import { capSelfTickLog, selfTickLogPath } from '../core/fleet/self-tick-log-cap.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import { cmdFleetStrayStop } from './fleet-stray-stop.js';
@@ -38,7 +39,7 @@ import { awakeEnabled, holdKeepAwake, type AwakeDeps } from '../core/fleet/keep-
 import { recordClockSample } from '../core/fleet/sleep-gaps.js';
 import { recordDiskSample } from '../core/fleet/host-disk.js';
 
-const usage = `Usage: ashlr fleet self-tick [--json] [--runs-dir <abs>] [--apply] [--last]
+const usage = `Usage: ashlr fleet self-tick [--json] [--runs-dir <abs>] [--apply] [--last] [--status]
 One locked pass of Phantom's self-management: reset-release first (it first
 refreshes Claude's native weekly reading when the persisted one is older than
 30 minutes, probing once on --apply only; a lane it frees counts as a free slot for the planner step), then lane-autohold, then
@@ -58,7 +59,7 @@ throws never stops the later ones. Each completed pass records itself to
 queue/self-tick-last.json while the lock is still held; --last prints that
 recorded run (or 'no recorded run') without running a step or taking the
 lock, combines only with --json and --runs-dir, and exits 0 even when
-nothing is recorded. Exit 0 when every step is ok or the run is busy, 1
+nothing is recorded. --status is the plain-words twin of --last: when the self-tick last ran and how many items each hook produced (autofill, gaps, reap), or 'no self-tick run recorded'; it reads the same file, takes no lock, combines only with --json and --runs-dir (schema fleet.self-tick-status.v1). Exit 0 when every step is ok or the run is busy, 1
 when any step failed, 2 on usage.`;
 
 interface Dependencies {
@@ -188,12 +189,13 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   const error = deps.error ?? ((text: string) => console.error(text));
   const invalid = (): number => { error(`Invalid arguments. ${usage.split('\n')[0]}`); return 2; };
   if (args.includes('--help') || args.includes('-h')) { output(usage); return 0; }
-  let json = false, apply = false, last = false, runsDir: string | undefined;
+  let json = false, apply = false, last = false, status = false, runsDir: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--json' && !json) json = true;
     else if (arg === '--apply' && !apply) apply = true;
     else if (arg === '--last' && !last) last = true;
+    else if (arg === '--status' && !status) status = true;
     else if (arg === '--runs-dir' && runsDir === undefined) {
       const value = args[++i];
       if (typeof value !== 'string' || !isAbsolute(value)) return invalid();
@@ -202,13 +204,20 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   }
   // --last is a read-only report of the last recorded pass: nothing runs,
   // no lock is taken, so --apply has no meaning beside it.
-  if (last && apply) return invalid();
+  if ((last || status) && apply) return invalid();
+  if (last && status) return invalid();
   // One root for the lock and all fifteen steps: the verbs' own fallbacks
   // (ASHLR_RUNS_DIR, ~/.ashlr-runs) resolve here once, so the lock domain
   // and the released slots can never drift to different dirs.
   const home = deps.home ?? homedir();
   const root = resolve(runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(home, '.ashlr-runs'));
   const now = deps.now ?? Date.now;
+  if (status) {
+    const report = readSelfTickStatus(root, now());
+    if (json) output(JSON.stringify(sanitizePublicJson(report)));
+    else for (const line of selfTickStatusLines(report)) output(line);
+    return 0;
+  }
   if (last) {
     const view = readSelfTickLast(root, now());
     if (json) {

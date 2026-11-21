@@ -19,6 +19,8 @@ export const ROUTER_TASKS = [
 export const ROUTER_DIFFICULTIES = [
   { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' },
 ] as const satisfies ReadonlyArray<{ value: RoutingDifficulty; label: string }>;
+/** Every kind of work the route table asks about: one cell per task and difficulty. */
+export const ROUTER_KINDS = ROUTER_TASKS.length * ROUTER_DIFFICULTIES.length;
 export const ROUTER_DECISIONS_LIMIT = 200;
 export const ROUTER_DECISIONS_PATH = `/api/verse/budget/decisions?limit=${ROUTER_DECISIONS_LIMIT}`;
 export const routerPreviewPath = (task: RoutingTask, difficulty: RoutingDifficulty, autonomous: boolean): string =>

@@ -16,7 +16,7 @@ import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
 import { laneModelsQuery } from '../fleet-capacity/lane-models-query.js';
-import { boardGroups, boardModels, filterCounts, groupLine, lanesText, matchesFilter, type BoardModel, type ModelFilter } from './models-board-model.js';
+import { boardGroups, boardModels, filterCounts, groupLine, lanesText, matchesFilter, modelsHeadline, type BoardModel, type ModelFilter } from './models-board-model.js';
 import { modelCheckQuery, modelRegistryQuery, postVerifyModel } from './models-queries.js';
 import styles from './models.module.css';
 
@@ -113,7 +113,7 @@ export function ModelsPane({ visible = true }: { visible?: boolean }) {
   const launches = lanes?.source === 'ok' && lanes.launches !== null;
   const nowMs = Date.now();
   return <section className={styles.root} aria-label="Models">
-    <p className={styles.headline}>{check ? check.summary : models.length > 0 ? `${models.length} ${models.length === 1 ? 'model' : 'models'} in the registry.` : 'Models are unknown.'}</p>
+    <p className={styles.headline}>{modelsHeadline(models.length, check)}</p>
     {registryDown ? <p className={styles.message} data-unknown role="status">Could not read the model registry, so its state is unknown.</p> : null}
     {checkDown ? <p className={styles.message} data-unknown role="status">Model check is unknown: it could not be loaded.</p> : null}
     {report && !check ? <p className={styles.message} data-unknown role="status">Model check is unknown. {report.error}</p> : null}

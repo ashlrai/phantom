@@ -8,7 +8,8 @@
  *   - the job's PR merged, or the job finished with an empty result;
  *   - the audit found nothing protecting it (no live job, no keep list, keep.txt
  *     or pin entry, every safety source readable);
- *   - its newest evidence is at least six hours old;
+ *   - its newest evidence is at least as old as its class allows (two hours for
+ *     a merged PR or an empty result, see WORKTREES_SAFE_AGE_HOURS);
  *   - `git status` shows no modified or untracked files.
  * Removal is plain `git worktree remove` without --force, so Git itself
  * refuses a tree that changed after the check. Readers, the clean check, the
@@ -22,7 +23,10 @@ import { promisify } from 'node:util';
 import { measureWorktreeBytes, type WorktreeMeasurement } from '../worktree-retention.js';
 import { readWtAudit, type WtAuditDeps, type WtAuditEntry, type WtAuditState } from './wt-audit.js';
 
-export const WORKTREES_SAFE_AGE_HOURS = 6;
+/** Hours of quiet before a worktree of each class is safe to remove. Only these two classes can ever be safe. */
+export const WORKTREES_SAFE_AGE_HOURS = { merged: 2, empty: 2 } as const satisfies Partial<Record<WorktreeState, number>>;
+/** The command every warning about the worktree count points to. */
+export const WORKTREES_PLAN_COMMAND = 'phm worktrees --reap --plan';
 /** Fleet warning level for job worktrees on one host. */
 export const WORKTREES_WARN_AT = 40;
 const CLEAN_CHECK_BUDGET_MS = 60_000;
@@ -107,7 +111,8 @@ function preHold(entry: WtAuditEntry, state: WorktreeState): WorktreeHold | null
   const byState = HOLD_OF_STATE[state];
   if (byState) return byState;
   if (!entry.reapable) return entry.blockers.includes('fresh') ? 'too-new' : 'records-unreadable';
-  if (entry.ageHours === null || entry.ageHours < WORKTREES_SAFE_AGE_HOURS) return 'too-new';
+  const minHours = state === 'merged' || state === 'empty' ? WORKTREES_SAFE_AGE_HOURS[state] : Infinity;
+  if (entry.ageHours === null || entry.ageHours < minHours) return 'too-new';
   return null;
 }
 
@@ -132,7 +137,7 @@ async function defaultRemove(path: string, wtRoot: string): Promise<void> {
 }
 
 export const defaultRunsRoot = (): string => process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
-const defaultWtRoot = (): string => process.env['ASHLR_WT_DIR'] ?? join(homedir(), 'Projects', 'ashlrai', 'wt');
+export const defaultWtRoot = (): string => process.env['ASHLR_WT_DIR'] ?? join(homedir(), 'Projects', 'ashlrai', 'wt');
 
 async function pool<T>(items: T[], limit: number, work: (item: T) => Promise<void>): Promise<void> {
   let next = 0;
@@ -262,9 +267,36 @@ export const STATE_WORDS: Record<WorktreeState, string> = {
 };
 const HOLD_WORDS: Record<WorktreeHold, string> = {
   'live-job': 'job is running', 'open-pr': 'PR is open', kept: 'kept on purpose', 'state-unknown': 'state unknown',
-  'records-unreadable': 'records unreadable', 'too-new': 'under 6 hours old',
+  'records-unreadable': 'records unreadable', 'too-new': 'too new',
   'uncommitted-changes': 'has uncommitted changes', 'not-checked': 'could not check for changes',
 };
+
+function holdWords(row: WorktreeRow): string {
+  if (row.hold === 'too-new' && (row.state === 'merged' || row.state === 'empty')) return `under ${WORKTREES_SAFE_AGE_HOURS[row.state]} hours old`;
+  return HOLD_WORDS[row.hold!];
+}
+
+/** Typed form of `--reap --plan`: the removal commands for the safe rows. */
+export interface WorktreesPlan {
+  schema: 'worktrees.plan.v1';
+  commands: string[];
+}
+
+/**
+ * The exact removal commands for the safe rows, one per line; never --force.
+ * `-C <path>` makes each line runnable from any directory, as the reaper does.
+ */
+export function worktreeRemoveCommands(report: WorktreesReport, wtRoot: string = defaultWtRoot()): string[] {
+  return report.rows.filter(row => row.safe).map(row => {
+    const path = shellQuote(join(wtRoot, row.job));
+    return `git -C ${path} worktree remove ${path}`;
+  });
+}
+
+/** Single-quote a path for a POSIX shell unless it is plainly safe. */
+function shellQuote(path: string): string {
+  return /^[\w@%+=:,./-]+$/.test(path) ? path : `'${path.replace(/'/g, `'\\''`)}'`;
+}
 
 export function formatWorktrees(report: WorktreesReport): string[] {
   const shown = report.mode === 'list' ? report.rows : report.rows.filter(row => row.safe);
@@ -276,12 +308,13 @@ export function formatWorktrees(report: WorktreesReport): string[] {
       lines.push([row.job, row.repo ?? '-', STATE_WORDS[row.state],
         row.ageHours === null ? '-' : `${Math.round(row.ageHours)} h`,
         row.bytes === null ? '-' : formatBytes(row.bytes),
-        row.safe ? 'yes' : `no, ${HOLD_WORDS[row.hold!]}`].join('\t'));
+        row.safe ? 'yes' : `no, ${holdWords(row)}`].join('\t'));
     }
   }
   const c = report.counts;
   if (c.total) {
     lines.push(`${c.total} job worktrees (warning at ${report.warnAt}): ${WORKTREE_STATES.filter(s => c[s]).map(s => `${c[s]} ${STATE_WORDS[s]}`).join(', ')}.`);
+    if (c.total > report.warnAt) lines.push(`Over the warning level. Run ${WORKTREES_PLAN_COMMAND} for the removal commands.`);
   }
   lines.push(`Safe to remove: ${c.safe} (${formatBytes(report.reclaimableBytes)}${report.reclaimableComplete ? '' : ' or more'}).`);
   if (!report.sourcesOk) lines.push('Some records could not be read, so nothing is marked safe to remove.');

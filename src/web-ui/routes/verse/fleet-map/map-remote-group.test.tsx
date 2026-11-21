@@ -8,7 +8,7 @@ import { MapView } from './MapPane.js';
 
 const AT = '2026-11-17T12:00:00.000Z';
 const row = (name: string, extra: Partial<NodeRow> = {}): NodeRow => ({ name, isSelf: false, reachable: true, lastSeen: AT, heartbeatAgeSeconds: 2, phantom: 'running',
-  freeMemoryBytes: 'unknown', freeMemoryPercent: 'unknown', load: 'unknown', cpuHeadroomPercent: 'unknown', lanes: ['claude'], jobsRunning: [], freeSlots: 1, stateCode: 'ready', state: 'ready for work', ...extra });
+  freeMemoryBytes: 'unknown', freeMemoryPercent: 'unknown', load: 'unknown', cpuHeadroomPercent: 'unknown', lanes: ['claude'], jobsRunning: [], freeSlots: 1, stateCode: 'ready', state: 'ready for work', joined: true, joinCommand: null, ...extra });
 const computers = (nodes: NodeRow[]): NodesView => ({ schema: 'phantom.nodes-view.v1', schemaVersion: 1, asOf: AT, self: 'alpha', registry: 'local', nodes, reasons: [] });
 const live = (nodes: NodeRow[]) => narrowLiveMap(JSON.parse(JSON.stringify(buildFleetLiveMap({ computers: computers(nodes), now: Date.parse(AT) }))))!;
 const THREE = [row('zulu', { reachable: false, stateCode: 'offline', state: 'offline' }), row('alpha', { isSelf: true }), row('beta')];
