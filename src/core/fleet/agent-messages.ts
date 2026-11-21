@@ -7,7 +7,7 @@
  */
 import { scrubSecrets } from '../util/scrub.js';
 import { PROVIDERS } from '../agents/bus-v2-schema.js';
-import { busBodySummary, busInboxJobMarker, jobAnnotationFromFeed, workFeedJobId,
+import { busBodyJobId, busBodySummary, busInboxJobMarker, jobAnnotationFromFeed,
   type BusEnvelopeLookupJob } from '../agents/bus-unified.js';
 import { readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
 import { agentIdentityKeys, BUS_CLIS, type AgentIdentityKeyFor } from '../agents/bus-identity.js';
@@ -27,8 +27,9 @@ export interface AgentMessage {
   id: string; ts: string; from: AgentRef; to: AgentRef; kind: AgentMessageKind;
   summary: string; conversation: string; job: string | null; pr: string | null;
   /**
-   * Present only when the body declares a work-feed `jobId` citation
-   * (`work.post`, `work.status`, `work.result` or `wake`): the same live
+   * Present only when the body names a job — a `jobId` citation
+   * (`work.post`, `work.status`, `work.result` or `wake`) or a
+   * `worker-handoff`'s `taskId`: the same live
    * `BusEnvelopeLookupJob` `agents bus inbox`, `agents bus show` and
    * `agents bus work mine` resolve — the job's feed status and claim
    * coverage, the feed's own refusal, or its unreadable state. Absent on
@@ -153,8 +154,9 @@ function threadKey(body: Body | null, jobId: string | null): string | null {
 
 /**
  * Pure projection, oldest-to-newest input in, newest-first messages out.
- * `jobStateOf` resolves the live feed state behind a body's declared
- * `jobId` citation (`work.post`, `work.status`, `work.result` or `wake`);
+ * `jobStateOf` resolves the live feed state behind a body's job citation
+ * (`jobId` on `work.post`, `work.status`, `work.result` or `wake`, or
+ * `taskId` on a `worker-handoff`);
  * without it — the map and conversations projections, which carry no feed
  * read — `jobState` stays absent rather than guessed.
  */
@@ -192,7 +194,7 @@ export function projectAgentMessages(rows: readonly BusInboxReceipt[],
   return sorted.map(row => {
     const { envelope } = row, body = record(envelope.body);
     const jobId = jobIdOf(body, jobByClaim);
-    const feedJobId = jobStateOf === undefined ? undefined : workFeedJobId(envelope.body);
+    const feedJobId = jobStateOf === undefined ? undefined : busBodyJobId(envelope.body);
     const jobState = feedJobId === undefined || jobStateOf === undefined ? undefined : jobStateOf(feedJobId);
     // work.* operations keep their terse field formats; every other kind the
     // bus knows summarizes through the same one-line composer the inbox frame
@@ -233,8 +235,9 @@ export function filterAgentMessages(messages: readonly AgentMessage[], query: Ag
 
 /**
  * The one typed read behind the CLI, API and panes. Bodies that cite a
- * work-feed `jobId` get `jobState` — the same live feed state `agents bus
- * inbox`/`show`/`work mine` resolve — from one claims-joined feed read per
+ * job — a work-feed `jobId` or a `worker-handoff`'s `taskId` — get
+ * `jobState`, the same live feed state `agents bus
+ * inbox`/`show`/`work mine` resolve, from one claims-joined feed read per
  * call, only when a scanned row cites a job. A feed that cannot be read
  * annotates `unavailable` (or its own state), never a guessed job.
  */
@@ -244,7 +247,7 @@ export function readAgentMessages(query: AgentMessagesQuery = {}, options: BusIn
     : agentIdentityKeys({ root: options.root });
   const jobIds = new Set<string>();
   for (const row of scan.rows) {
-    const jobId = workFeedJobId(row.envelope.body);
+    const jobId = busBodyJobId(row.envelope.body);
     if (jobId !== undefined) jobIds.add(jobId);
   }
   let jobStateOf: ((jobId: string) => BusEnvelopeLookupJob) | undefined;

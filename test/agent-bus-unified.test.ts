@@ -583,6 +583,42 @@ describe('job-filtered inbox reads', () => {
     expect(all.status === 'ok' && all.messages.length).toBe(11);
   });
 
+  it('keeps worker-handoff assignments in the job filter and annotates their taskId', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    // One announced job backs the live feed state the handoff citation resolves.
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-HO-1', title: 'Handoff job', repo: 'ashlrai/phantom',
+      claimKeys: ['repo:ashlrai/phantom'], provider: 'claude', to: 'agent:nova', id: 'ho-post' }, options))
+      .toMatchObject({ status: 'posted' });
+    // A receivable handoff names its fleet job through taskId — the same
+    // job-id namespace the feed's jobId uses.
+    expect(await sendHandoff({ from: 'atlas', to: 'nova', taskId: 'RQ-HO-1', prompt: 'take the announced job',
+      id: 'ho-job-1' }, options)).toMatchObject({ status: 'posted' });
+    // A handoff for a job the feed never announced cites the same way and
+    // resolves feed-ok with no live job — never a guessed state.
+    expect(await sendHandoff({ from: 'atlas', to: 'nova', taskId: 'RQ-HO-2', prompt: 'take the unannounced job',
+      id: 'ho-job-2' }, options)).toMatchObject({ status: 'posted' });
+    // A handoff-shaped body handoff-receive would refuse cites no job.
+    expect(appendBusInbox({ id: 'ho-bad', from: 'agent:atlas', to: 'agent:nova', priority: 'P2', ttl: 60_000,
+      body: { kind: 'worker-handoff', taskId: 'RQ-HO-1' } }, options).status).toBe('posted');
+
+    const page = readAgentInbox('nova', { job: 'RQ-HO-1' }, options);
+    if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+    const byId = new Map(page.messages.map(m => [m.envelope.id, m]));
+    // The announcement and its handoff assignment both name the job.
+    expect([...byId.keys()].sort()).toEqual(['ho-job-1', 'ho-post'].sort());
+    expect(byId.get('ho-job-1')).toMatchObject({ kind: 'handoff', held: false, holder: null,
+      job: { jobId: 'RQ-HO-1', feed: 'ok', job: { id: 'RQ-HO-1', status: 'queued' } } });
+    const absent = readAgentInbox('nova', { job: 'RQ-HO-2' }, options);
+    if (absent.status !== 'ok') throw new Error(`unexpected ${absent.status}`);
+    expect(absent.messages.map(m => m.envelope.id)).toEqual(['ho-job-2']);
+    expect(absent.messages[0]).toMatchObject({ kind: 'handoff',
+      job: { jobId: 'RQ-HO-2', feed: 'ok', job: null } });
+    // show resolves the same citation on the handoff envelope itself.
+    expect(readBusEnvelopeById('ho-job-1', options)).toMatchObject({ status: 'ok',
+      job: { jobId: 'RQ-HO-1', feed: 'ok', job: { id: 'RQ-HO-1', status: 'queued' } } });
+  });
+
   it('composes with the other inbox filters and --matched counts only accepted rows', async () => {
     const options = setup();
     register(options, 'atlas', 'nova', 'orion');
@@ -1837,7 +1873,7 @@ describe('CLI session adapters', () => {
     expect(framed.endsWith(BUS_INBOX_FRAME_END)).toBe(true);
     expect(framed.split(BUS_INBOX_FRAME_END)).toHaveLength(2);
     expect(framed).not.toContain('\u0007');
-    expect(framed).toContain('[P1 handoff id=ho from agent:atlas held=no] handoff task RQ-X-1: do it');
+    expect(framed).toContain('[P1 handoff id=ho from agent:atlas held=no job=RQ-X-1:absent] handoff task RQ-X-1: do it');
     expect(frameBusInbox('grok', inbox.messages)).toBe(framed);
     const many = Array.from({ length: 200 }, () => inbox.messages[0]!);
     const bounded = frameBusInbox('codex', many.map(m => ({ ...m, envelope: { ...m.envelope, body: { kind: 'note', text: 'x'.repeat(1000) } } })));

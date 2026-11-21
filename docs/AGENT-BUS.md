@@ -22,8 +22,9 @@ kind, `--limit <n>`) or GET `/api/verse/agent-bus/messages` with the same
 `since`, `agent`, `with`, `kind` and `limit` params. Both return `agent-messages.v1`: newest
 first, each with `id`, `ts`, `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line
-`summary`, `conversation`, `job` and `pr`. A body that declares a work-feed
-`jobId` (`work.post`, `work.status`, `work.result` or `wake`) also carries
+`summary`, `conversation`, `job` and `pr`. A body that names a job — a
+work-feed `jobId` (`work.post`, `work.status`, `work.result` or `wake`) or
+a `worker-handoff`'s fleet `taskId` — also carries
 `jobState` — the same live feed state `agents bus inbox`, `agents bus show`
 and `agents bus work mine` resolve (the job's status and claim coverage, the
 feed's own refusal with its receipt, or its unreadable state), read once per
@@ -288,7 +289,8 @@ reports — so an agent can read just its handoffs or just its direct mail in
 one filtered read; it is the row's delivery class, not a v2 body kind, and it
 composes with every other inbox filter. `--job` keeps only mail that names
 one job — a `work.post`, `work.status`, `work.result` or `wake` body
-declaring that `jobId`, or a `note`/`context` body carrying the
+declaring that `jobId`, a `worker-handoff` assigning that fleet job id
+through `taskId`, or a `note`/`context` body carrying the
 `job:<id>` v2 thread label, the same bucket the messages and conversations
 projections group under `job:<id>` — so an agent on one job reads its
 pending mail without paging the whole inbox and eyeballing each row's
@@ -321,9 +323,11 @@ already taken, and by whom, without a lookup per message; the marker also
 appears inside the frame's bracket on those items. `held` is
 `true`/`false` only when both hold stores were read — a store that cannot
 be read reports `held: null` (unknown), never free.
-Items whose body declares a `jobId` — `work.post`, `work.status`,
-`work.result` or `wake` — additionally carry `job`: the same
-live feed state `show` resolves for the job the body cites, computed
+Items whose body names a job — `work.post`, `work.status`,
+`work.result` or `wake` declaring a `jobId`, or a `worker-handoff`
+assigning its fleet job id through `taskId` — additionally carry `job`:
+the same
+live feed state `show` resolves for the job the body names, computed
 with one claims-joined feed read per page rather than a lookup per
 message — so an agent paging mail sees where each announced job stands
 (status, claim coverage, `job: null` on an orphaned citation, or the
@@ -350,7 +354,7 @@ unreadable bus store reports `unknown`, never a guessed citation. Every
 other `bus.send` hint carries the triggering envelope's wire id as its own
 `id`, so the same bounded store scan resolves the live message it refers to:
 the row gains `message` — `resolved` with the receipt's summary, priority,
-sender handle, channel and, for claimable work or a `jobId` citation, the
+sender handle, channel and, for claimable work or a job citation, the
 same `held`/`job` evidence an inbox row carries; `unresolved` when the store
 was read and holds no live envelope with that id; `unknown` when the store
 cannot be read. Triage no longer costs one `agents bus show` per hint.
@@ -368,9 +372,11 @@ message-id claim or a live coordination hold already covers that exact
 receipt, the same evidence `work mine` next/handoffs and the unified comms
 inbox show. `held` is `true`/`false` only when both hold stores were read —
 a store that cannot be read reports `held: null` (unknown), never free.
-A body that declares a `jobId` — `work.post`, `work.status`,
-`work.result` or `wake` — additionally reports `job`: the live
-work-feed state of the job the body cites — the same projection
+A body that names a job — `work.post`, `work.status`,
+`work.result` or `wake` declaring a `jobId`, or a `worker-handoff`
+assigning its fleet job id through `taskId` — additionally reports `job`:
+the live
+work-feed state of the job the body names — the same projection
 `work feed` serves, joined with claim coverage — so the `post=`/`status=`
 citation resolves to where the job stands without a second read. `feed` is
 `ok` with the projected `job` (`null` when the feed is healthy but projects
@@ -487,7 +493,7 @@ to that live envelope in the same bounded store walk the next/handoffs
 sections use, so the digest names the message a claim covers without a
 `bus show` per row: id, cursor, receipt and expiry times, priority, raw
 `to`/`from` labels with the resolved `fromAgent`, body kind, a scrubbed
-one-line summary and, on `jobId`-bearing bodies, the same live feed
+one-line summary and, on job-citing bodies, the same live feed
 citation the inbox resolves. The claims journal pins the exact
 `(id, cursor, receivedAt)` receipt generation the lease took: a live row
 matching that triple resolves `pinned:true`; journal rows for the claim
@@ -555,8 +561,9 @@ the whole retained store, counted by the full scan `readAgentInbox` performs
 when asked — and
 claimable work or worker-handoff mail keeps the same tri-state `held`/`holder`
 evidence `agents bus inbox` reports, `null` whenever a hold store cannot be
-read, never a guess, and mail whose body declares a `jobId` — `work.post`,
-`work.status`, `work.result` or `wake` — keeps the same `job`
+read, never a guess, and mail whose body names a job — `work.post`,
+`work.status`, `work.result` or `wake` declaring a `jobId`, or a
+`worker-handoff` assigning its fleet job id through `taskId` — keeps the same `job`
 live-feed citation `agents bus inbox` resolves — so pending work shows its
 claim state and each announced job's standing without a second read. The inbox
 section reads one row past the cap so `truncated` is definitive — a full

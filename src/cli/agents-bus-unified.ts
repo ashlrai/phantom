@@ -69,7 +69,8 @@ dm, channel, handoff or legacy, the same kind each inbox row prints — so an
 agent can read just its handoffs or just its direct mail in one filtered
 read; it composes with every other inbox filter and --matched counts only
 the rows it accepts. --job on inbox keeps only mail that names one job — a
-work.post/work.status/work.result/wake body declaring that jobId, or a
+work.post/work.status/work.result/wake body declaring that jobId, a
+worker-handoff assigning that fleet job id through taskId, or a
 note/context body carrying the job:<id> thread label — so an agent on one
 job reads its pending mail without paging the whole inbox. --matched
 on inbox and channel read reports matched, the true pending total across the
@@ -78,15 +79,17 @@ and nextCursor then resumes at the newest shown row, so paging never skips
 an unshown match. Inbox and channel-read rows annotate what they carry:
 claimable work and
 worker-handoff bodies report held/holder — whether a taken claim or live
-coordination hold already covers the receipt — and work.post/work.status
-bodies report job, the live feed state of the jobId they cite (the same
-annotation show resolves, read once per page), so an agent sees hold and
-job state without a lookup per message.
+coordination hold already covers the receipt — and bodies naming a job
+(work.post/work.status/work.result/wake jobId citations and
+worker-handoff taskIds) report job, the live feed state of the job they
+name (the same annotation show resolves, read once per page), so an agent
+sees hold and job state without a lookup per message.
 show
 resolves one retained envelope by the wire id wake hints, work mine items
 and claim operations cite; an expired id reports not-found, and the read
-needs no identity. A work.post or work.status body additionally reports
-job — the live work-feed state of the jobId it cites, with claim
+needs no identity. A body naming a job — a work.post or work.status
+jobId citation or a worker-handoff taskId — additionally reports
+job — the live work-feed state of the job it names, with claim
 coverage, or the feed's own refused/unavailable state when the projection
 cannot answer — so the citation resolves to where the job stands in one
 read. A claim-holder wh-… hint id resolves through the wake
