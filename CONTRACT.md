@@ -1991,11 +1991,12 @@ newest-first order and per-job hold regrouping; `toMatch` is the predicate
 over its `owner` (announcer) label — each matching literally and under every
 label of one agent identity (an unresolvable ref or unreadable registry keeps
 exact-label matching). `formatBusWorkFeed(result)` renders the shared human
-lines — each job as `<id> <status> "<title>" detail="<why>" owner=… keys=<claim keys> updated=… post=<postId> [status=<statusId>]`
-with title, detail and keys scrubbed, single-lined and display-clipped (JSON
-keeps the full values; `detail=` and `status=` appear only when present, `post=`
-always) — a refused read's footer adds `receipt=<id>` when the projection
-blamed a retained envelope — both feed CLIs use them, and both accept `--to <label>`, `--owner
+lines — each job as `<id> <status> "<title>" detail="<why>" owner=… to=… provider=… repo=… [tier=… scope="…" acceptance="…"] keys=<claim keys> claimable=… updated=… post=<postId> [status=<statusId>]`
+with title, detail, the optional dispatch spec and keys scrubbed, single-lined
+and display-clipped (JSON keeps the full values; `detail=`, `status=` and the
+dispatch fields appear only when present, `post=` always) — a refused read's
+footer adds `receipt=<id>` when the projection blamed a retained envelope —
+both feed CLIs use them, and both accept `--to <label>`, `--owner
 <agent>` and `--job <id>` beside `--status`. `phm fleet work-feed [--claims]
 [--to <label>] [--owner <agent>] [--job <id>]` and
 `phm agents bus work feed [--status] [--claims] [--to <label>] [--owner
@@ -2309,9 +2310,10 @@ fault reports `{status:'unavailable', reason:'board-unreadable'}`. Board
 content stays `trust:'untrusted'` shared data: it coordinates attention,
 never grants execution authority.
 `formatBusWorkMine(result)`
-renders the shared human lines — titles and key lists scrubbed, single-lined
-and display-clipped; JSON keeps full values. Exit 0 on a completed read, 2 on
-an invalid agent.
+renders the shared human lines — titles, the declared dispatch spec and key
+lists scrubbed, single-lined and display-clipped (the same
+`busWorkJobDispatch` tag the feed job line prints); JSON keeps full values.
+Exit 0 on a completed read, 2 on an invalid agent.
 
 ### Unified agent bus (RQ-BUS-UNIFY-1)
 

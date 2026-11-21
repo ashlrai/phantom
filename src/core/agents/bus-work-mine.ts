@@ -31,7 +31,7 @@ import { agentName, type AgentMessageKind } from '../fleet/agent-messages.js';
 import { readAgentConversations, type AgentConversations } from '../fleet/agent-conversations.js';
 import { plainAge } from '../fleet/agent-conversation-model.js';
 import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobHold, busWorkFeedOwnerMatcher, busWorkFeedToMatcher,
-  readBusWorkFeed, type BusWorkFeedHoldCoverage, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
+  busWorkJobDispatch, readBusWorkFeed, type BusWorkFeedHoldCoverage, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import { agentWakeClaimHolderSuffix, agentWakeMessageSuffix, busBodyFallbackSummary, busBodySummary, busInboxJobMarker,
   jobAnnotationFromFeed, readAgentInbox, readAgentWakes, workFeedJobId,
   type AgentWakeRow, type BusEnvelopeLookupJob, type InboxKind } from './bus-unified.js';
@@ -1338,7 +1338,7 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
       const claimable = job.claimable === null ? 'unknown' : job.claimable ? 'yes' : 'no';
       lines.push(`  ${job.id} ${job.status}${title === '' ? '' : ` "${title}"`}` +
         `${detail === '' ? '' : ` detail="${detail}"`} ` +
-        `claimable=${claimable} addressed=${job.addressed} announced=${job.announced} owner=${job.owner} repo=${job.repo} ` +
+        `claimable=${claimable} addressed=${job.addressed} announced=${job.announced} owner=${job.owner} repo=${job.repo}${busWorkJobDispatch(job.dispatch)} ` +
         `free=${keys(job.freeKeys)} held=${keys(job.heldKeys)} post=${job.postId}` +
         `${job.statusId === null ? '' : ` status=${job.statusId}`}`);
     }
@@ -1360,7 +1360,7 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
       const keyList = (list: string[] | null): string => list === null ? '-' : mineField(list.join(','), 400);
       lines.push(`  ${job.id} ${job.status}${title === '' ? '' : ` "${title}"`}` +
         `${detail === '' ? '' : ` detail="${detail}"`} ` +
-        `owner=${job.owner} to=${job.to} provider=${job.provider} repo=${job.repo} keys=${keys} ` +
+        `owner=${job.owner} to=${job.to} provider=${job.provider} repo=${job.repo}${busWorkJobDispatch(job.dispatch)} keys=${keys} ` +
         `held=${held} free=${keyList(job.freeKeys)} heldkeys=${keyList(job.heldKeys)} ` +
         `updated=${new Date(job.updatedAt).toISOString()} post=${job.postId}` +
         `${job.statusId === null ? '' : ` status=${job.statusId}`}`);

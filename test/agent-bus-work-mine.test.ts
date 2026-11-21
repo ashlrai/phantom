@@ -1856,6 +1856,21 @@ describe('formatBusWorkMine', () => {
     // A non-ok top-level result renders its status line only.
     expect(formatBusWorkMine({ status: 'invalid', reason: 'invalid-agent' })).toEqual(['invalid: invalid-agent']);
   });
+
+  it('renders the announced dispatch spec on the jobs and announced lines', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    const posted = await announceWork({ from: 'atlas', jobId: 'RQ-D-1', title: 'Dispatch job',
+      repo: 'a/b', claimKeys: ['queue:RQ-D-1'], id: 'post-RQ-D-1',
+      dispatch: { tier: 'mid', scope: 'the scope', acceptance: 'the check' } }, options);
+    expect(posted.status).toBe('posted');
+    const lines = formatBusWorkMine(readBusWorkMine('atlas', options));
+    const tag = 'tier=mid scope="the scope" acceptance="the check"';
+    const jobLines = lines.filter(line => line.includes('RQ-D-1 queued'));
+    expect(jobLines).toHaveLength(2);
+    for (const line of jobLines) expect(line).toContain(tag);
+  });
 });
 
 describe('phm agents bus work mine', () => {

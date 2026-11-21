@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { projectBusWorkFeed } from '../src/core/agents/bus-work-feed.js';
+import { busWorkJobDispatch, formatBusWorkFeed, formatBusWorkFeedJob, type BusWorkFeedJob } from '../src/core/agents/bus-work-feed-read.js';
 import { workFeedSchema, type Participant, WORK_STATUSES } from '../src/core/agents/bus-v2-schema.js';
 import { isClaimableWork } from '../src/core/fleet/bus-envelope.js';
 import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
@@ -197,5 +198,38 @@ describe('retained v2 work projection', () => {
       expect(projectBusWorkFeed(rows, participants)).toEqual({ status: 'refused', reason,
         ...(receiptSite === undefined ? {} : { receipt: receiptSite }) });
     }
+  });
+});
+
+describe('work-feed job line rendering', () => {
+  const feedJob = (over: Partial<BusWorkFeedJob> = {}): BusWorkFeedJob => ({
+    id: 'job', owner: 'agent', to: 'leaders', provider: 'devin', repo: 'a/b',
+    title: 'Review', claimKeys: ['repo:a/b'], status: 'queued', updatedAt: 100,
+    postId: 'm-1', statusId: null, ...over,
+  });
+
+  it('renders the declared dispatch spec on the job line and feed', () => {
+    const job = feedJob({ dispatch: { tier: 'work', scope: 'the scope', acceptance: 'the check' } });
+    expect(formatBusWorkFeedJob(job))
+      .toContain('repo=a/b tier=work scope="the scope" acceptance="the check" keys=repo:a/b');
+    expect(formatBusWorkFeed({ status: 'ok', jobs: [job], receipts: 1, asOf: 'now' }).join('\n'))
+      .toContain('tier=work scope="the scope" acceptance="the check"');
+  });
+
+  it('omits every dispatch field when the post carried no spec', () => {
+    const line = formatBusWorkFeedJob(feedJob());
+    expect(line).not.toContain('tier=');
+    expect(line).not.toContain('scope=');
+    expect(line).not.toContain('acceptance=');
+    expect(busWorkJobDispatch(undefined)).toBe('');
+  });
+
+  it('clips and single-lines dispatch text like every other feed field', () => {
+    const tag = busWorkJobDispatch({ tier: 'fast', scope: `start ${'x'.repeat(300)}`, acceptance: 'one\ntwo' });
+    expect(tag).toContain('tier=fast');
+    const scope = tag.match(/scope="([^"]*)"/)?.[1] ?? '';
+    expect(scope).toHaveLength(200);
+    expect(scope.endsWith('…')).toBe(true);
+    expect(tag).toContain('acceptance="one two"');
   });
 });
