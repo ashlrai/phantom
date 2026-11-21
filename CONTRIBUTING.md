@@ -236,12 +236,13 @@ Hosted CI includes exhaustive Ubuntu shards, named Windows portability contracts
 four exhaustive Mac partitions, a separate Mac lane for all isolated suites
 (two at a time, each in its own home with one worker; locally they stay serial
 unless `ASHLR_TEST_CI_ISOLATED_CONCURRENCY=2`), macOS queue coverage and native
-broker checks. The four exhaustive Mac
-partitions run on master pushes and on pull requests labelled `ci:full-mac`; on
-other pull requests they are skipped and `Merge Gate` reports them as deferred
-to post-merge. The isolated Mac lane, macOS queue coverage and native broker
-checks run on every pull request that is ready for review; a draft pull request
-skips those three until it is marked ready, which starts a full run. Local tests
+broker checks. None of these run on a pull request, a merge-queue commit or a
+push to `master`: those events run only the fast gate (see
+[Hosted CI](docs/AGENT-OPERATIONS.md)), and no label or ready-for-review
+change starts them. They run on the six-hour scheduled `master` run (which
+takes one of seven daily slices of the Mac exhaustive work, per
+`.github/scripts/ci-mac-rotation.mjs`) and on manual dispatch (release runs are covered in the
+[release guide](docs/RELEASING.md)). Failures there are fixed forward. Local tests
 and hosted checks prove different environments. Inspect each actual run and report unavailable or
 skipped coverage separately; do not weaken checks to make a release pass.
 
