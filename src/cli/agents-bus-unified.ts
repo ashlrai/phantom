@@ -81,7 +81,10 @@ queue to the live terminal work.status receipt that cites it, returned
 with its wakeHint citation; a hint no live receipt reproduces reports
 not-found.
 A terminal work status also queues a routing-only wake hint for each live claim
-holder on the job's keys; --no-wake opts out. work feed and claim list are
+holder on the job's keys; --no-wake opts out. Holder labels need not be
+registered identities, so wakes (and the work mine wakes section) keep
+exact-label matching for a ref that resolves to no identity — JSON reports
+scope: label and only hints whose to is that label verbatim match. work feed and claim list are
 read-only and need no identity; work feed --to keeps jobs announced to that
 routing label and --owner keeps jobs announced by that agent, each under
 every label of one agent identity, while --job keeps one job id. work claim

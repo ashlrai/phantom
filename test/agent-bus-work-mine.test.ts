@@ -10,6 +10,7 @@ import { busWorkMineAnnouncedAnnotation, busWorkMineJobAnnotation, formatBusWork
   type BusWorkMineOptions } from '../src/core/agents/bus-work-mine.js';
 import type { BusWorkFeedJob } from '../src/core/agents/bus-work-feed-read.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { enqueueBusWake } from '../src/core/fleet/bus-wake-queue.js';
 import { createBusMailbox } from '../src/core/fleet/bus-mailbox.js';
 import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
@@ -648,8 +649,19 @@ describe('readBusWorkMine', () => {
     if (result.claims.status !== 'ok') throw new Error('unreachable');
     expect(result.claims.claims.map(row => row.key)).toEqual(['queue:RQ-G-1']);
     expect(result.claims.owner).toMatchObject({ ref: 'ghost', identity: null, registry: 'missing' });
-    // Wakes and inbox need a registered identity: unknown, never an empty list.
-    expect(result.wakes.status).toBe('unknown-agent');
+    // Wakes keep exact-label matching for the unregistered ref: a hint
+    // queued under the literal label surfaces under scope 'label'; inbox
+    // needs a registered identity: unknown, never an empty list.
+    enqueueBusWake({ kind: 'bus.send', id: 'wk-ghost', from: 'agent:atlas', to: 'ghost' },
+      { root: options.runsRoot });
+    const hinted = readBusWorkMine('ghost', options);
+    expect(hinted.status).toBe('ok');
+    if (hinted.status !== 'ok') throw new Error('unreachable');
+    expect(hinted.wakes).toMatchObject({ status: 'ok', agent: 'ghost', scope: 'label', matched: 1 });
+    if (hinted.wakes.status !== 'ok') throw new Error('unreachable');
+    expect(hinted.wakes.wakes.map(row => row.id)).toEqual(['wk-ghost']);
+    // The earlier digest predates the hint: matched 0, never an error.
+    expect(result.wakes).toMatchObject({ status: 'ok', agent: 'ghost', scope: 'label', matched: 0, wakes: [] });
     expect(result.inbox).toMatchObject({ status: 'unknown-agent' });
   });
 

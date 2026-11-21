@@ -1293,6 +1293,50 @@ describe('terminal work.status wakes live claim holders', () => {
     expect(page).toMatchObject({ status: 'ok', wakes: [{ claimHolder: 'unknown' }] });
   });
 
+  it('reads a claim-holder hint addressed to an unregistered owner label', async () => {
+    const options = ready();
+    expect(await announceWork({ from: 'atlas', ...announceFor('RQ-H-L') }, options)).toMatchObject({ status: 'posted' });
+    // The coordination owner is a bare label that was never registered.
+    hold(options, 'queue:RQ-H-L', 'worker-7');
+    const done = await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-L', status: 'done', id: 'w-h-label' }, options);
+    expect(done).toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    // The hint's to is the raw owner label; the label-scoped read finds it.
+    const page = readAgentWakes('worker-7', undefined, options);
+    expect(page).toMatchObject({ status: 'ok', agent: 'worker-7', scope: 'label', matched: 1 });
+    if (page.status !== 'ok') throw new Error('unreachable');
+    expect(page.wakes[0]).toMatchObject({ id: expect.stringMatching(/^wh-[a-f0-9]{32}$/),
+      from: 'agent:atlas', to: 'worker-7',
+      claimHolder: { statusId: 'w-h-label', jobId: 'RQ-H-L', status: 'done' } });
+    // Exact-label only: sibling spellings and registered identities see nothing.
+    expect(readAgentWakes('worker-8', undefined, options))
+      .toMatchObject({ status: 'ok', scope: 'label', matched: 0, wakes: [] });
+    expect(readAgentWakes('agent:worker-7', undefined, options))
+      .toMatchObject({ status: 'ok', scope: 'label', matched: 0, wakes: [] });
+    expect(readAgentWakes('nova', undefined, options))
+      .toMatchObject({ status: 'ok', scope: 'identity', matched: 0, wakes: [] });
+  });
+
+  it('keeps label scope literal and identity scope for registered refs', () => {
+    const options = setup();
+    register(options, 'atlas');
+    enqueueBusWake({ kind: 'bus.send', id: 'wk-lit', from: 'agent:atlas', to: 'worker-7' }, { root: options.runsRoot });
+    enqueueBusWake({ kind: 'bus.send', id: 'wk-addr', from: 'agent:atlas', to: 'agent:worker-7' }, { root: options.runsRoot });
+    // A registered ref reports identity scope even with an empty queue match.
+    expect(readAgentWakes('atlas', undefined, options))
+      .toMatchObject({ status: 'ok', agent: 'atlas', scope: 'identity', matched: 0, wakes: [] });
+    const label = readAgentWakes('worker-7', undefined, options);
+    expect(label).toMatchObject({ status: 'ok', agent: 'worker-7', scope: 'label', matched: 1 });
+    if (label.status !== 'ok') throw new Error('unreachable');
+    expect(label.wakes.map(row => row.id)).toEqual(['wk-lit']);
+    // 'agent:worker-7' is a distinct label — the fallback never widens spellings.
+    const addressed = readAgentWakes('agent:worker-7', undefined, options);
+    expect(addressed).toMatchObject({ status: 'ok', agent: 'agent:worker-7', scope: 'label', matched: 1 });
+    if (addressed.status !== 'ok') throw new Error('unreachable');
+    expect(addressed.wakes.map(row => row.id)).toEqual(['wk-addr']);
+    // A ref that is no identity and no printable label stays unknown-agent.
+    expect(readAgentWakes('bad agent!', undefined, options)).toMatchObject({ status: 'unknown-agent' });
+  });
+
   it('spells the claim-holder suffix for human lines on every wake shape', () => {
     const row: AgentWakeRow = { kind: 'bus.send', id: 'wk-1', from: 'agent:a', to: 'agent:b', at: 0 };
     expect(agentWakeClaimHolderSuffix(row)).toBe('');

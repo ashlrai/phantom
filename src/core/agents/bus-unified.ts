@@ -1187,7 +1187,17 @@ export function agentWakeClaimHolderSuffix(wake: AgentWakeRow): string {
   return ` claim-holder job=${holder.jobId} status=${holder.status} receipt=${holder.statusId}`;
 }
 
-export type WakePage = { status: 'ok'; agent: string; wakes: AgentWakeRow[];
+/** A ref that resolves to no identity may still name a routing label: wake
+ *  `to` values are the literal labels hints were queued under — the
+ *  claim-holder fan-out writes the raw coordination owner label, which need
+ *  not be a registered identity — so the read keeps exact-label matching like
+ *  the claim/next/owner filters. 256 chars covers the claim-owner label bound. */
+const WAKE_HINT_LABEL = /^[\x21-\x7e]{1,256}$/;
+
+export type WakePage = { status: 'ok'; agent: string;
+  /** 'identity' matched every label of a registered identity plus its member channels; 'label' is the literal-`to` fallback for a ref that resolves to no identity — `agent` then reports the queried label verbatim. */
+  scope: 'identity' | 'label';
+  wakes: AgentWakeRow[];
   /** Every hint the bounded queue read matched for the agent, before its row cap; `wakes` shows only the newest slice. */
   matched: number;
   /** The queue tail or row cap cut matches beyond `wakes`; false only when the bounded read provably saw them all. */
@@ -1197,8 +1207,13 @@ export type WakePage = { status: 'ok'; agent: string; wakes: AgentWakeRow[];
 /**
  * Wake hints addressed to this identity under any label it resolves through
  * (address, bare handle, stable id or alias) or to one of its channels after
- * `sinceAt`. A wake is only a hint to read the inbox: it carries routing ids,
- * never a body, and grants nothing. Claim-holder hints (`wh-…` ids) carry no
+ * `sinceAt`. A ref that resolves to no registered identity keeps exact-label
+ * matching instead — `scope:'label'`, `agent` the queried label — so hints
+ * queued under a bare coordination or routing label (claim-holder fan-out
+ * writes the raw claim-owner label) stay readable by their addressee; only
+ * `wake.to === ref` matches, never a widened set. A wake is only a hint to
+ * read the inbox: it carries routing ids, never a body, and grants nothing.
+ * Claim-holder hints (`wh-…` ids) carry no
  * envelope id of their own, so each is re-resolved against the live
  * `work.status` receipts that could have generated it and annotated with the
  * citing status — `unresolved` when none reproduces it, `unknown` when the
@@ -1211,12 +1226,17 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
   const read = readAgentRegistry(options);
   if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
   const target = addressing(read.registry, ref);
-  if (!target) return { status: 'unknown-agent', reason: 'Agent is not a registered identity.' };
+  if (target === undefined && !WAKE_HINT_LABEL.test(ref)) {
+    return { status: 'unknown-agent', reason: 'Agent is not a registered identity.' };
+  }
   const wakes = readBusWakes({ root: options.runsRoot, sinceAt, match: wake =>
-    target.labels.has(wake.to) || (channelOf(wake.to, target.channels) !== null && !target.labels.has(wake.from)) });
+    target !== undefined
+      ? target.labels.has(wake.to) || (channelOf(wake.to, target.channels) !== null && !target.labels.has(wake.from))
+      : wake.to === ref });
   if (wakes.state === 'unreadable') return { status: 'unavailable', reason: 'Wake queue is unreadable.' };
   const contexts = claimHolderWakeContexts(wakes.wakes, options);
-  return { status: 'ok', agent: target.identity.handle,
+  return { status: 'ok', agent: target?.identity.handle ?? ref,
+    scope: target === undefined ? 'label' : 'identity',
     wakes: wakes.wakes.map(row => {
       const claimHolder = contexts.get(row.id);
       return claimHolder === undefined ? row : { ...row, claimHolder };

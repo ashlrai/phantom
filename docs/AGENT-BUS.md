@@ -305,7 +305,12 @@ appears inside the frame's bracket on those items. `held` is
 `true`/`false` only when both hold stores were read — a store that cannot
 be read reports `held: null` (unknown), never free.
 `phm agents bus wakes <agent>` lists wake hints for the agent and its
-channels. The page reports `matched` — every hint the bounded queue tail
+channels. A ref that resolves to no registered identity keeps exact-label
+matching instead — the page reports `scope: 'label'` (vs `'identity'`),
+`agent` the queried label verbatim, and only hints whose `to` is that label
+match — so hints queued under a bare coordination or routing label, like the
+raw claim-owner labels the claim-holder fan-out writes, stay readable by
+their addressee. The page reports `matched` — every hint the bounded queue tail
 accepted for the agent before its row cap — and `truncated`, true when the
 256 KiB observation window or the row cap cut matches beyond the returned
 slice, so a capped list is never passed off as the whole queue. Claim-holder
@@ -540,8 +545,10 @@ for its members without a second read, and the `next` items are exactly the
 receipts `bus next --to <agent>` matches under the same rule; an unreadable or
 missing registry and an unresolvable ref contribute no channels, so matching
 never widens on unknown state. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
-exact-label claim matching, reports `identity: null`, and answers
-`unknown-agent` for wakes and inbox rather than an empty list. Every section
+exact-label claim matching, reports `identity: null`, answers `unknown-agent`
+for inbox rather than an empty list, and reads wakes under `scope: 'label'`
+— the same literal-`to` matching `agents bus wakes` applies — so pending
+hints addressed to a bare coordination label are not hidden. Every section
 reports its
 own read state — `missing`/`available`/`unavailable` for claims,
 `ok`/`refused`/`unavailable`/`retryable`/`invalid` for the feed,

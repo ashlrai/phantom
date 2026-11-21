@@ -361,6 +361,14 @@ describe('phm agents bus (unified)', () => {
       .toMatchObject({ status: 'posted', wake: 'queued' });
     const inbox = await run(['inbox', 'nova']);
     expect(inbox.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['cli-alias']);
+    // A wake hint queued under a bare unregistered label reads back under
+    // label scope; the inbox still needs a registered identity.
+    expect((await run(['post', '--from', 'atlas', '--to', 'fleet.mesh', '--text', 'ping',
+      '--priority', 'P1', '--id', 'cli-mesh'])).json).toMatchObject({ status: 'posted', wake: 'queued' });
+    expect(await run(['wakes', 'fleet.mesh'])).toMatchObject({ code: 0,
+      json: { status: 'ok', agent: 'fleet.mesh', scope: 'label', matched: 1 } });
+    expect(await run(['wakes', 'fleet.mesh'])).toMatchObject({ json: { wakes: [{ id: 'cli-mesh', to: 'fleet.mesh' }] } });
+    expect(await run(['inbox', 'fleet.mesh'])).toMatchObject({ code: 1, json: { status: 'unknown-agent' } });
   });
 
   it('announces and updates v2 work on the same bus, owner-only for status', async () => {
