@@ -240,7 +240,11 @@ prefixes, and the PR-visible trust gates'
 `.github/scripts/release-version-provenance.mjs > (version-provenance)`
 rows from the scrub.pl `<blocked> allowed=<n>` count, the gitleaks
 `leaks found: <n>` summary and the provenance `::error::` /
-`check failed:` lines (nonzero counts and verdicts only) -- plus
+`check failed:` lines (nonzero counts and verdicts only), and the
+memory benchmark gate's
+`scripts/benchmark-memory.ts > (memory-benchmark)` rows from the
+`memory benchmark below floor:` stderr block and its two-space-indented
+violation lines -- plus
 summaries. `auditExceptions` is the optional
 `DependencyAuditException[] | null` list (`{id, package, graph}` with
 graph `full` or `raycast-production`); `null` leaves audit reports
@@ -274,7 +278,12 @@ secret-shape and secret-scan groups key on the scanner definition alone
 shape carried inside a PR's own diff stays unattributed) and the
 provenance group's dependency set adds `package.json` and
 `.release-please-manifest.json` as static inputs; the harness ambient
-set does not apply to any of the three.
+set does not apply to any of the three. The memory benchmark gate's
+dependency set is the entry script's import closure -- the benchmark,
+its floors file and the `src/core/memory` implementation -- plus
+`package.json`, `package-lock.json` and `tsconfig.json` seeded as
+static inputs for the toolchain files tsx reads, and the harness
+ambient set does not apply to it either.
 `enqueueBaselineFixes(report,
 absoluteQueuePath)` explicitly writes work-tier master-fix rows deduplicated
 by queue state via `nextFixGeneration`: a failure whose prior fix generations
