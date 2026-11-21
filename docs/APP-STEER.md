@@ -155,6 +155,18 @@ sessions list does not hold reads "Last message unknown", and a list that does
 not answer reads "Sessions unavailable", never "nobody is working". Sessions
 whose state is unknown are counted beside the running ones.
 
+Under the list, **Ended in the last hour** keeps the sessions that stopped
+running, so one that leaves the list does not just disappear. Each row says
+"failed 5m ago" or "finished 12m ago" and how it ended in the session list's
+own words ("Opened a pull request", "Ended with no change"). A finished session
+with no recorded outcome reads "Outcome unknown", and an end time the list does
+not hold reads "time unknown". Failed sessions are always listed, first; the
+finished ones are counted and fold behind the heading, which stays as you left
+it. Choosing a row opens that session's conversation; its job is over, so it
+cannot be aimed at. With a row focused, ↑/↓ or J/K move, Enter or T opens the
+conversation and L opens the log. With the whole strip folded, its line still
+says how many failed.
+
 Choose a line to put `@RQ-<job>` in the reply box. Nothing is sent until you
 send the message. Helpers without an `RQ-` id are listed but cannot be aimed
 at.
