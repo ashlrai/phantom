@@ -130,4 +130,39 @@ describe('lane yield weight', () => {
     expect(out.lane).toBe('zai');
     expect(out.testOnly).toBe(false);
   });
+
+  it('reads the jobs-ledger dialect: reconciler, alias and alternate-field rows count', () => {
+    // Launches spelled job_id/pool/timestamp/type; merges arrive only as
+    // metrics-outcomes reconciler rows (jobId/prUrl/outcome + source), one
+    // eventless and one keeping the publish event — the authoritative
+    // GitHub-resolved outcomes the narrow reader could not see.
+    const lines: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      lines.push(JSON.stringify({ type: 'launch', job_id: `z${i}`, pool: 'zai', size: 'md', timestamp: new Date(NOW.getTime() - i * 1000).toISOString() }));
+      if (i < 8) {
+        lines.push(i === 7
+          ? JSON.stringify({ event: 'publish', jobId: `z${i}`, prUrl: 'https://github.com/ashlrai/phantom/pull/7', outcome: 'MERGED', source: 'metrics-outcomes-reconciler' })
+          : JSON.stringify({ jobId: `z${i}`, prUrl: `https://github.com/ashlrai/phantom/pull/${i}`, outcome: 'MERGED', mergedAt: '2026-11-16T15:00:00.000Z', source: 'metrics-outcomes-reconciler' }));
+      } else {
+        lines.push(JSON.stringify({ kind: 'finish', id: `z${i}`, empty: true, at: '2026-11-16T15:30:00.000Z' }));
+      }
+    }
+    const rows = computeLaneYield(lines.join('\n')).rows;
+    expect(rows.find(r => r.lane === 'zai' && r.size === 'md')).toMatchObject({ launches: 10, merged: 8, empty: 2, yield: 0.8, weight: 1.6 });
+  });
+
+  it('counts merged flags, merged events, status phases and terminal empty phases', () => {
+    const lines: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      lines.push(JSON.stringify({ event: 'launch', job: `m${i}`, lane: 'zai', ts: new Date(NOW.getTime() - i * 1000).toISOString() }));
+      if (i < 4) lines.push(JSON.stringify({ job: `m${i}`, merged: true }));
+      else if (i < 6) lines.push(JSON.stringify({ event: 'merged', job: `m${i}` }));
+      else if (i < 8) lines.push(JSON.stringify({ event: 'outcome', job: `m${i}`, status: 'MERGED' }));
+      else lines.push(JSON.stringify({ event: 'outcome', job: `m${i}`, state: 'DONE-NOOP' }));
+    }
+    // A publish row asserting PUBLISHED is not merge evidence.
+    lines.push(JSON.stringify({ event: 'publish', job: 'm0', prUrl: 'https://github.com/ashlrai/phantom/pull/99', outcome: 'PUBLISHED' }));
+    const rows = computeLaneYield(lines.join('\n')).rows;
+    expect(rows.find(r => r.lane === 'zai' && r.size === 'unknown')).toMatchObject({ launches: 10, merged: 8, empty: 2, yield: 0.8 });
+  });
 });
