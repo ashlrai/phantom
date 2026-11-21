@@ -73,8 +73,11 @@ export function AccountCard({
   expanded = false,
   triggerId,
   detailId,
+  nowMs,
 }: {
   card: AccountCardModel;
+  /** The section's clock, for the time-gone mark on each window. Omitted = no mark. */
+  nowMs?: number | undefined;
   /** Omitted when there is nothing to open — the head then stays inert text. */
   onOpen?: ((id: string) => void) | undefined;
   expanded?: boolean;
@@ -138,14 +141,14 @@ export function AccountCard({
       {card.binding ? (
         <>
           <span className={styles.bindingLabel}>{historical ? 'Last reported window' : 'Binding constraint'}</span>
-          <WindowMeter view={card.binding} ariaPrefix={card.label} prominent historical={historical} />
+          <WindowMeter view={card.binding} ariaPrefix={card.label} prominent historical={historical} nowMs={nowMs} />
         </>
       ) : null}
 
       {card.others.length > 0 ? (
         <div className={styles.windows}>
           {card.others.map((w) => (
-            <WindowMeter key={w.id} view={w} ariaPrefix={card.label} historical={historical} />
+            <WindowMeter key={w.id} view={w} ariaPrefix={card.label} historical={historical} nowMs={nowMs} />
           ))}
         </div>
       ) : null}
