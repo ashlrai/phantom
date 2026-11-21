@@ -1913,6 +1913,90 @@ describe('wake hint message resolution', () => {
   });
 });
 
+describe('wake hint job filter', () => {
+  it('keeps only hints whose resolved referent names the job', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    // A wake body citing jobId RQ-W-9.
+    expect(await sendWakeRequest({ from: 'atlas', to: 'nova', reason: 'check the feed',
+      jobId: 'RQ-W-9', id: 'wk-feed' }, options)).toMatchObject({ status: 'posted' });
+    // A DM note carrying the job:<id> v2 thread label.
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'about the release',
+      thread: 'job:RQ-T-1', id: 'wk-thread', wake: true }, options)).toMatchObject({ status: 'posted' });
+    // A worker-handoff assigning fleet job RQ-H-9 through taskId.
+    expect(await sendHandoff({ from: 'atlas', to: 'nova', taskId: 'RQ-H-9', prompt: 'run it',
+      id: 'wk-handoff' }, options)).toMatchObject({ status: 'posted' });
+    // Plain mail that names no job.
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'hello',
+      id: 'wk-plain', wake: true }, options)).toMatchObject({ status: 'posted' });
+
+    const unfiltered = readAgentWakes('nova', undefined, options);
+    expect(unfiltered).toMatchObject({ status: 'ok', matched: 4 });
+    // Each citation channel keeps exactly its own hint under --job.
+    for (const [job, id] of [['RQ-W-9', 'wk-feed'], ['RQ-T-1', 'wk-thread'], ['RQ-H-9', 'wk-handoff']] as const) {
+      const page = readAgentWakes('nova', undefined, options, { job });
+      expect(page).toMatchObject({ status: 'ok', matched: 1, truncated: false });
+      if (page.status !== 'ok') throw new Error('unreachable');
+      expect(page.wakes.map(row => row.id)).toEqual([id]);
+    }
+    expect(readAgentWakes('nova', undefined, options, { job: 'RQ-Z-9' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    expect(readAgentWakes('nova', undefined, options, { job: 'bad job' }))
+      .toMatchObject({ status: 'invalid' });
+  });
+
+  it('matches claim-holder hints by their citing status jobId beside ordinary hints', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-HO-1', title: 'ho', repo: 'ashlrai/phantom',
+      claimKeys: ['queue:RQ-HO-1'] }, options)).toMatchObject({ status: 'posted' });
+    expect(acquireCoordination({ root: options.root, origin: 'resource', key: 'queue:RQ-HO-1',
+      owner: 'agent:nova', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000, sourceId: 'ho-src',
+      now: options.clock.now, started: new Date(options.clock.now).toISOString() }).status).toBe('acquired');
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-HO-1', status: 'done', id: 'w-ho' }, options))
+      .toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    // An ordinary hint for a different job shares the same page.
+    expect(await sendWakeRequest({ from: 'atlas', to: 'nova', reason: 'other work',
+      jobId: 'RQ-OTHER', id: 'wk-other' }, options)).toMatchObject({ status: 'posted' });
+
+    const holder = readAgentWakes('nova', undefined, options, { job: 'RQ-HO-1' });
+    expect(holder).toMatchObject({ status: 'ok', matched: 1 });
+    if (holder.status !== 'ok') throw new Error('unreachable');
+    expect(holder.wakes).toHaveLength(1);
+    expect(holder.wakes[0]).toMatchObject({ claimHolder: { jobId: 'RQ-HO-1', status: 'done' } });
+    expect(holder.wakes[0]!.id).toMatch(/^wh-[a-f0-9]{32}$/);
+    const ordinary = readAgentWakes('nova', undefined, options, { job: 'RQ-OTHER' });
+    expect(ordinary).toMatchObject({ status: 'ok', matched: 1 });
+    if (ordinary.status !== 'ok') throw new Error('unreachable');
+    expect(ordinary.wakes.map(row => row.id)).toEqual(['wk-other']);
+    expect(readAgentWakes('nova', undefined, options, { job: 'RQ-NONE' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+  });
+
+  it('never matches unresolved referents and fails closed on an unreadable store', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    // A hint whose envelope is gone resolves unresolved — it names no provable job.
+    enqueueBusWake({ kind: 'bus.send', id: 'wk-ghost', from: 'agent:atlas', to: 'agent:nova' },
+      { root: options.runsRoot });
+    expect(await sendWakeRequest({ from: 'atlas', to: 'nova', reason: 'x', jobId: 'RQ-W-1',
+      id: 'wk-live' }, options)).toMatchObject({ status: 'posted' });
+    const page = readAgentWakes('nova', undefined, options, { job: 'RQ-W-1' });
+    expect(page).toMatchObject({ status: 'ok', matched: 1 });
+    if (page.status !== 'ok') throw new Error('unreachable');
+    expect(page.wakes.map(row => row.id)).toEqual(['wk-live']);
+    // An unreadable bus store makes every referent unknown, so the filtered
+    // read is unavailable — never an empty page passed off as "no wakes".
+    mkdirSync(join(options.root!, 'bus-inbox'), { recursive: true });
+    writeFileSync(join(options.root!, 'bus-inbox', 'messages.json'), 'not json', { mode: 0o600 });
+    expect(readAgentWakes('nova', undefined, options, { job: 'RQ-W-1' }))
+      .toMatchObject({ status: 'unavailable' });
+    // The unfiltered read still answers with per-row unknown referents.
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok' });
+  });
+});
+
 describe('CLI session adapters', () => {
   it('covers claude, codex, devin, cursor and grok, mapping to v2 providers', () => {
     const providers = new Set<string>(busV2ContractSummary().providers);

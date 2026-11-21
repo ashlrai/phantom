@@ -1260,13 +1260,15 @@ export function agentWakeClaimHolderSuffix(wake: AgentWakeRow): string {
  * envelope ids, and pass through untouched.
  */
 function wakeMessageContexts(rows: readonly BusWakeRow[], scan: BusInboxScan | undefined,
-  registry: AgentRegistry, options: UnifiedBusOptions): Map<string, AgentWakeMessage> {
+  registry: AgentRegistry, options: UnifiedBusOptions, job?: string):
+  { contexts: Map<string, AgentWakeMessage>; jobMatches: Set<string> } {
   const contexts = new Map<string, AgentWakeMessage>();
+  const jobMatches = new Set<string>();
   const ordinary = rows.filter(row => row.kind === 'bus.send' && !CLAIM_HOLDER_WAKE_ID.test(row.id));
-  if (ordinary.length === 0) return contexts;
+  if (ordinary.length === 0) return { contexts, jobMatches };
   if (scan === undefined || scan.source === 'unavailable') {
     for (const row of ordinary) contexts.set(row.id, { status: 'unknown' });
-    return contexts;
+    return { contexts, jobMatches };
   }
   const byId = new Map<string, BusInboxReceipt>();
   for (const receipt of scan.rows) byId.set(receipt.envelope.id, receipt);
@@ -1305,8 +1307,13 @@ function wakeMessageContexts(rows: readonly BusWakeRow[], scan: BusInboxScan | u
       ...(jobId === undefined ? {} : { job: feed === undefined
         ? { jobId, feed: 'unavailable' } : jobAnnotationFromFeed(feed, jobId) }),
       ...(hold === undefined ? {} : { held: hold.held, holder: hold.holder }) });
+    // The referent names the filtered job through the same rule every other
+    // read surface's --job applies — a feed jobId citation, a worker-handoff
+    // taskId or a job:<id> thread label — decided on the live body here,
+    // where it is still in hand.
+    if (job !== undefined && busBodyJobMatch(body, job)) jobMatches.add(row.id);
   }
-  return contexts;
+  return { contexts, jobMatches };
 }
 
 /** Human suffix naming the message an ordinary wake hint refers to; '' on claim-holder hints. */
@@ -1352,11 +1359,11 @@ export type WakePage = { status: 'ok'; agent: string;
   /** 'identity' matched every label of a registered identity plus its member channels; 'label' is the literal-`to` fallback for a ref that resolves to no identity — `agent` then reports the queried label verbatim. */
   scope: 'identity' | 'label';
   wakes: AgentWakeRow[];
-  /** Every hint the bounded queue read matched for the agent, before its row cap; `wakes` shows only the newest slice. */
+  /** Every hint the bounded queue read matched for the agent, before its row cap; `wakes` shows only the newest slice. With a `job` filter this counts the proven job matches on the resolved page instead — the same accepted-hints count, never a total beyond `truncated`. */
   matched: number;
   /** The queue tail or row cap cut matches beyond `wakes`; false only when the bounded read provably saw them all. */
   truncated: boolean } |
-  { status: 'unknown-agent' | 'unavailable'; reason: string };
+  { status: 'unknown-agent' | 'unavailable' | 'invalid'; reason: string };
 
 /**
  * Wake hints addressed to this identity under any label it resolves through
@@ -1381,8 +1388,23 @@ export type WakePage = { status: 'ok'; agent: string;
  * queue tail matched before its row cap and `truncated` marks older bytes or
  * matched rows beyond the returned slice — an unreadable queue stays
  * `unavailable`, never an empty page passed off as "no wakes".
+ * `filter.job` keeps only hints that provably name one job — the same
+ * `busBodyJobMatch` rule `inbox --job`/`channel read --job` apply to the
+ * message a hint refers to (a feed `jobId` citation, a `worker-handoff`
+ * `taskId` or a `job:<id>` thread label), or the `jobId` a claim-holder
+ * hint's citing status carries; a hint whose referent is `unresolved` or
+ * `unknown` names no provable job and never matches. Because the verdict
+ * needs the resolved referent, an unreadable bus store makes the filtered
+ * read `unavailable` rather than an empty page, and `matched` then counts
+ * the proven matches on the resolved page while `truncated` keeps its
+ * queue-tail meaning.
  */
-export function readAgentWakes(ref: string, sinceAt: number | undefined, options: UnifiedBusOptions = {}): WakePage {
+export function readAgentWakes(ref: string, sinceAt: number | undefined, options: UnifiedBusOptions = {},
+  filter: { job?: string } = {}): WakePage {
+  const job = filter.job;
+  if (job !== undefined && (typeof job !== 'string' || !THREAD.test(job))) {
+    return { status: 'invalid', reason: 'Invalid job id.' };
+  }
   const read = readAgentRegistry(options);
   if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
   const target = addressing(read.registry, ref);
@@ -1398,18 +1420,30 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
   // citation re-derivation and the ordinary hint's referent lookup.
   const scan = wakes.wakes.length === 0 ? undefined
     : scanBusInbox({ root: options.root, now: options.now });
+  // A job verdict needs the resolved referent; when the store cannot be read
+  // every hint's citation is unknown, so the filtered read fails closed
+  // instead of reporting an empty page as "no wakes for this job".
+  if (job !== undefined && scan !== undefined && scan.source === 'unavailable') {
+    return { status: 'unavailable', reason: 'Bus store is not readable.' };
+  }
   const contexts = claimHolderWakeContexts(wakes.wakes, options, scan);
-  const messages = wakeMessageContexts(wakes.wakes, scan, read.registry, options);
+  const resolved = wakeMessageContexts(wakes.wakes, scan, read.registry, options, job);
+  const shown = job === undefined ? wakes.wakes : wakes.wakes.filter(row => {
+    const holder = contexts.get(row.id);
+    if (typeof holder === 'object') return holder.jobId === job;
+    return resolved.jobMatches.has(row.id);
+  });
   return { status: 'ok', agent: target?.identity.handle ?? ref,
     scope: target === undefined ? 'label' : 'identity',
-    wakes: wakes.wakes.map(row => {
+    wakes: shown.map(row => {
       const claimHolder = contexts.get(row.id);
-      const message = messages.get(row.id);
+      const message = resolved.contexts.get(row.id);
       return { ...row,
         ...(claimHolder === undefined ? {} : { claimHolder }),
         ...(message === undefined ? {} : { message }) };
     }),
-    matched: wakes.matched ?? 0, truncated: wakes.truncated ?? false };
+    matched: job === undefined ? wakes.matched ?? 0 : shown.length,
+    truncated: wakes.truncated ?? false };
 }
 
 export interface ChannelListEntry {

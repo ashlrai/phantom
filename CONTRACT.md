@@ -2542,7 +2542,7 @@ they cite resolved through the same feed read and job mapping
 when a returned message cites a jobId, so the citation answers where its
 job stands (status, claim coverage, `job:null` on an orphaned citation, or
 the feed's own refused/unavailable state) without a `show` per message),
-`readAgentWakes(ref, sinceAt, options?)` (the ok page carries `scope` —
+`readAgentWakes(ref, sinceAt, options?, filter?)` (the ok page carries `scope` —
 `'identity'` when the ref resolved through the registry and every label of
 that identity plus its member channels matched, `'label'` when the ref
 resolved to no identity and only hints whose `to` is the queried label
@@ -2562,7 +2562,15 @@ live envelope its id refers to, `resolved` with the receipt's summary,
 priority, sender handle, channel and the same `held`/`job` evidence an
 inbox row reports for claimable work or a `jobId` citation, `'unresolved'`
 when the store was read and holds no live envelope with that id, `'unknown'`
-when the store cannot be read), `listBusChannels(agent, options?)`
+when the store cannot be read; `filter.job` keeps only hints that provably
+name one job — the same `busBodyJobMatch` rule the inbox/channel `job`
+filters apply, decided on the resolved referent (a feed `jobId` citation,
+a `worker-handoff` `taskId` or a `job:<id>` thread label) or on the
+`jobId` a claim-holder hint's citing status carries, with `unresolved`/
+`unknown` referents never matching, `matched` counting the proven matches
+on the resolved page, an unreadable bus store answering `unavailable`
+rather than an empty page, and a malformed job id answering `invalid`),
+`listBusChannels(agent, options?)`
 (the registry channels name-sorted with `createdBy`, `createdAt` and member
 handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or
