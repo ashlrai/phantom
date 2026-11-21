@@ -23,6 +23,7 @@
  */
 import { tmpdir } from 'node:os';
 import type { CloudGh } from '../core/cloud/pr-actions.js';
+import { describeGhFailure, type GhFailure } from '../core/fleet/landed-git-only.js';
 import { defaultGitRunner } from '../core/verse/git-ops.js';
 import {
   classifyDirtyLanded, inspectDirtyLanded, unknownDirtyLanded, withScratchRepo, type DirtyLandedClass, type DirtyLandedPr, type DirtyRow,
@@ -60,6 +61,8 @@ export interface FleetDirtyLandedDeps {
   now?: () => Date;
   /** Stdout seam for the --json report; defaults to console.log. */
   output?: (text: string) => void;
+  /** Called with the plain reason when the gh list read fails, so a caller can fall back. */
+  onGhFailure?: (failure: GhFailure) => void;
 }
 
 /** A row counts as conflicting the way classifyFleetPrGh reads conflict. */
@@ -92,7 +95,9 @@ const defaultGh: CloudGh = async args => {
   const result = await defaultGitRunner('gh', args, {
     cwd: tmpdir(), timeoutMs: GIT_TIMEOUT_MS, maxStdoutBytes: GIT_MAX_BYTES,
   });
-  return { ok: result.code === 0 && !result.timedOut && !result.truncated, stdout: result.stdout, stderr: result.stderr };
+  const ok = result.code === 0 && !result.timedOut && !result.truncated;
+  // CloudGh has no `missing` field: say so in the stderr text describeGhFailure reads.
+  return { ok, stdout: result.stdout, stderr: result.missing ? 'gh: command not found' : result.timedOut ? `${result.stderr}\ntimeout` : result.stderr };
 };
 
 function describe(pr: DirtyLandedPr): string {
@@ -123,7 +128,12 @@ export async function cmdFleetDirtyLanded(args: string[], deps: FleetDirtyLanded
 
   const gh = deps.gh ?? defaultGh;
   const read = await gh(['pr', 'list', '--repo', REPO, '--state', 'open', '--limit', String(limit), '--json', GH_LIST_FIELDS]);
-  if (!read.ok) { console.error('fleet dirty-landed: gh pr list failed'); return 1; }
+  if (!read.ok) {
+    const failure = describeGhFailure({ stderr: read.stderr, missing: /command not found|ENOENT/i.test(read.stderr) });
+    deps.onGhFailure?.(failure);
+    console.error(`fleet dirty-landed: gh pr list failed: ${failure.reason}`);
+    return 1;
+  }
   let rows: unknown;
   try { rows = JSON.parse(read.stdout); } catch { console.error('fleet dirty-landed: invalid gh response'); return 1; }
   if (!Array.isArray(rows)) { console.error('fleet dirty-landed: invalid gh response'); return 1; }

@@ -11,6 +11,8 @@
  */
 import { isAbsolute } from 'node:path';
 import type { CloudGh } from '../core/cloud/pr-actions.js';
+import { gitOnlyLanded, type GhFailure } from '../core/fleet/landed-git-only.js';
+import type { GitRunner } from '../core/verse/git-ops.js';
 import { cmdFleetDirtyLanded } from './fleet-dirty-landed.js';
 import { MAX_LIMIT, cmdFleetLandedClose, type LandedCloseRunner } from './fleet-landed-close.js';
 
@@ -27,11 +29,23 @@ export interface FleetLandedSweepDeps {
   now?: () => number;
   output?: (text: string) => void;
   error?: (text: string) => void;
+  /** Clone the git-only path reads (default: the working directory). */
+  repoDir?: string;
+  /** git runner for the git-only path (tests inject one). */
+  git?: GitRunner;
 }
 
 interface SweepResult {
   v: 1; inspected: number; landed: number; planned: number;
   closed: number; skipped: number; failed: number; error?: string;
+  /** ok = swept; skipped = a tool is missing, nothing to do; failed = a read broke. */
+  state: 'ok' | 'skipped' | 'failed';
+  /** Which path decided "landed": gh PR list, or local git branches. */
+  mode: 'gh' | 'git-only';
+  /** Why the step is skipped, failed, or fell back to git. */
+  reason?: string;
+  /** git-only: local/remote branches fully reachable from origin/master. */
+  landedBranches?: string[];
 }
 
 const num = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -63,26 +77,43 @@ export async function cmdFleetLandedSweep(args: string[], deps: FleetLandedSweep
     } else { error(`Invalid arguments. ${USAGE}`); return 2; }
   }
 
-  const result: SweepResult = { v: 1, inspected: 0, landed: 0, planned: 0, closed: 0, skipped: 0, failed: 0 };
+  const result: SweepResult = { v: 1, state: 'ok', mode: 'gh', inspected: 0, landed: 0, planned: 0, closed: 0, skipped: 0, failed: 0 };
   const finish = (code: number, message?: string): number => {
-    if (message !== undefined) result.error = message;
+    if (message !== undefined) { result.error = message; result.reason ??= message; }
+    if (code !== 0) result.state = 'failed';
     if (json) output(JSON.stringify(result));
     else {
       output(`landed-sweep: inspected=${result.inspected} landed=${result.landed} planned=${result.planned} ` +
-        `closed=${result.closed} skipped=${result.skipped} failed=${result.failed}${message ? ` error=${message}` : ''}`);
+        `closed=${result.closed} skipped=${result.skipped} failed=${result.failed}${result.mode === 'git-only' ? ` mode=git-only landed-branches=${result.landedBranches?.length ?? 0}` : ''}` +
+        `${result.state === 'skipped' ? ` skipped: ${result.reason}` : message ? ` error=${message}` : result.reason ? ` note=${result.reason}` : ''}`);
     }
     return code;
   };
 
   let reportText = '';
+  let ghFailure: GhFailure | undefined;
   const inspectCode = await cmdFleetDirtyLanded(['--json'], {
     ...(deps.gh === undefined ? {} : { gh: deps.gh }),
     ...(deps.remote === undefined ? {} : { remote: deps.remote }),
     ...(deps.now === undefined ? {} : { now: () => new Date(deps.now!()) }),
     output: text => { reportText = text; },
+    onGhFailure: failure => { ghFailure = failure; },
   });
   const report = inspectCode === 0 ? parseJson(reportText) : null;
-  if (report === null) return finish(1, 'dirty-landed report unreadable');
+  if (report === null && ghFailure !== undefined && ghFailure.kind !== 'error') {
+    // gh is missing, signed out or offline: decide "landed" from the local clone instead.
+    // Closing a PR needs gh, so this path reports and closes nothing.
+    result.mode = 'git-only';
+    const local = await gitOnlyLanded({ ...(deps.repoDir === undefined ? {} : { repoDir: deps.repoDir }), ...(deps.git === undefined ? {} : { git: deps.git }) });
+    if (local.state === 'skipped') { result.state = 'skipped'; result.reason = `${ghFailure.reason}; ${local.reason}`; return finish(0); }
+    if (local.state === 'failed') return finish(1, `${ghFailure.reason}; ${local.reason}`);
+    result.inspected = local.branches.length;
+    result.landedBranches = local.branches.filter(branch => branch.landed).map(branch => branch.name);
+    result.landed = result.landedBranches.length;
+    result.reason = `${ghFailure.reason}; used git`;
+    return finish(0);
+  }
+  if (report === null) return finish(1, ghFailure?.reason ?? 'dirty-landed report unreadable');
   result.inspected = Array.isArray(report['prs']) ? report['prs'].length : 0;
   const counts = report['counts'];
   result.landed = typeof counts === 'object' && counts !== null ? num((counts as Record<string, unknown>)['landed']) : 0;
