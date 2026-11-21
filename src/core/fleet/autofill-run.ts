@@ -15,6 +15,7 @@ import { createConfigReader, runsDirOf } from './dynconfig.js';
 import type { BottleneckIdea } from './bottleneck-ideas.js';
 import { followUpCandidates, ideaCandidates, readFollowUps, type FollowUp } from './autofill-sources.js';
 import type { JobGapsReport } from './job-gaps.js';
+import { judgeLanes, type LaneFacts, type LaneVerdict } from './autofill-lanes.js';
 import { planAutofill, type QueueAutofillReport } from './queue-autofill.js';
 
 export const AUTOFILL_EVENT_SCHEMA = 'queue.autofill.event.v1' as const;
@@ -199,8 +200,8 @@ export function autofillStatusLines(s: AutofillStatus): string[] {
   return lines;
 }
 
-/** What the tick needs to know about the lanes; null where the snapshot could not be read. */
-export interface LaneSnapshotView { starved: readonly string[]; counts: Readonly<Record<string, LaneCounts>> }
+/** What the tick needs to know about the lanes (the facts, not a verdict); null where the snapshot could not be read. */
+export interface LaneSnapshotView { lanes: readonly LaneFacts[] }
 
 export interface AutofillTickOptions {
   runsDir: string;
@@ -225,8 +226,17 @@ export interface AutofillTickReport {
   /** Why no lane was looked at; null when the pass ran. */
   reason: string | null;
   runs: AutofillEvent[];
+  /** Every lane, in plain words: starved or not, how many bets it was fed, and why not. Added to v1 as an optional field. */
+  lanes?: AutofillLaneRow[];
   /** The gap harvest: gaps from no-change jobs, queued as drop jobs. null when it did not run (dry run, autofill off, no starved lane) or failed. Added to v1 as an optional field. */
   gaps?: { candidates: number; queued: number; skipped: number; unknown: boolean } | null;
+}
+
+export interface AutofillLaneRow { lane: string; starved: boolean; fed: number; why: string }
+
+/** One line per lane: "claude: starved, fed 4 (...)" or "codex-personal: not starved (out of usage ...)". */
+export function autofillLaneLines(rows: readonly AutofillLaneRow[]): string[] {
+  return rows.map(r => r.starved ? `${r.lane}: starved, fed ${r.fed} (${r.why})` : `${r.lane}: not starved (${r.why})`);
 }
 
 /** One pass: for each starved lane, fill it up to the hourly cap, unless autofill is off. */
@@ -235,8 +245,20 @@ export async function runAutofillTick(o: AutofillTickOptions): Promise<AutofillT
   const report: AutofillTickReport = { schema: AUTOFILL_TICK_SCHEMA, ts: new Date(nowMs).toISOString(), mode: o.apply ? 'apply' : 'dry-run', reason: null, runs: [] };
   const view = await o.readLanes().catch(() => null);
   if (view === null) return { ...report, reason: 'Lane snapshot is unknown.' };
-  const lanes = [...view.starved].filter(l => LANE_NAME.test(l)).sort();
-  if (!lanes.length) return { ...report, reason: 'No lane is starved.' };
+  const verdicts = judgeLanes(view.lanes.filter(f => LANE_NAME.test(f.lane)));
+  const byLane = new Map<string, LaneVerdict>(verdicts.map(v => [v.lane, v]));
+  const facts = new Map(view.lanes.map(f => [f.lane, f]));
+  const lanes = verdicts.filter(v => v.starved).map(v => v.lane);
+  const rows = (): AutofillLaneRow[] => verdicts.map(v => {
+    const run = report.runs.find(r => r.lane === v.lane);
+    if (!v.starved) return { lane: v.lane, starved: false, fed: 0, why: v.why };
+    if (!run) return { lane: v.lane, starved: true, fed: 0, why: v.why };
+    return { lane: v.lane, starved: true, fed: run.applied, why: run.applied > 0 ? v.why : run.reason };
+  });
+  if (!lanes.length) {
+    const why = verdicts.map(v => `${v.lane} ${v.why}`).join('; ');
+    return { ...report, lanes: rows(), reason: why ? `No lane is starved: ${why}.` : 'No lane is starved.' };
+  }
 
   const off = await (o.readOff ?? readAutofillOff)(o.runsDir);
   const history = readAutofillEvents(o.runsDir);
@@ -261,7 +283,10 @@ export async function runAutofillTick(o: AutofillTickOptions): Promise<AutofillT
     else if (allowed <= 0) event = run(0, 0, 0, 'hourly cap');
     else {
       try {
-        const result = await fill({ lane, counts: view.counts[lane] ?? { running: null, target: null, queued: null }, apply: o.apply, limit: allowed, root: o.root, runsDir: o.runsDir, dir: join(o.runsDir, 'queue'), entries: o.entries });
+        // Feed only the free slots: the lane has nothing queued, so the want is target minus running.
+        const f = facts.get(lane)!;
+        const free = byLane.get(lane)!.free;
+        const result = await fill({ lane, counts: { running: f.running, target: f.target, queued: f.queued }, min: free, apply: o.apply, limit: Math.min(allowed, free), root: o.root, runsDir: o.runsDir, dir: join(o.runsDir, 'queue'), entries: o.entries });
         if ('error' in result) event = run(0, 0, 0, 'The lane has no slot target.');
         else {
           const applied = result.applied ? result.drafted.length : 0;
@@ -280,5 +305,6 @@ export async function runAutofillTick(o: AutofillTickOptions): Promise<AutofillT
     const repeat = event.applied === 0 && event.drafted === 0 && prior !== undefined && prior.reason === event.reason && prior.applied === 0 && nowMs - Date.parse(prior.ts) < HOUR_MS;
     if (!repeat) await recordAutofillEvent(o.runsDir, event).catch(() => {});
   }
+  report.lanes = rows();
   return report;
 }
