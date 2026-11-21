@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
 import { defaultRunsDir } from './landed-closes-read.js';
-import { BUILD_STALE_COMMITS, BUILD_STALE_HOURS, buildStaleText, buildStaleness, buildUnidentifiedText, type BuildStaleLimits, type MaybeBuildReport } from './build-stale.js';
+import { buildStaleText, buildStaleness, buildUnidentifiedText, resolveBuildStaleLimits, savedBuildStaleLimits, type BuildStaleLimits, type MaybeBuildReport } from './build-stale.js';
 import type { CadenceV1 } from '../release/cadence.js';
 import type { SpendSnapshot } from '../usage/spend.js';
 import type { StarvedRead } from './lane-starved.js';
@@ -209,10 +209,12 @@ async function defaultSenders(runsDir: string): Promise<PulseNoticeSenders> {
   return senders;
 }
 
-/** ASHLR_BUILD_STALE_COMMITS / ASHLR_BUILD_STALE_HOURS override the 50-commit and 24-hour limits; junk keeps the default. */
-function buildLimitsFromEnv(env: NodeJS.ProcessEnv = process.env): BuildStaleLimits {
-  const num = (raw: string | undefined, fallback: number): number => { const n = Number(raw); return raw && Number.isFinite(n) && n >= 0 ? n : fallback; };
-  return { commits: num(env['ASHLR_BUILD_STALE_COMMITS'], BUILD_STALE_COMMITS), hours: num(env['ASHLR_BUILD_STALE_HOURS'], BUILD_STALE_HOURS) };
+/** Saved Settings limits (`fleet.buildStale`) under the ASHLR_BUILD_STALE_COMMITS / _HOURS env overrides; an unreadable config keeps the defaults. */
+async function buildLimitsFromConfig(env: NodeJS.ProcessEnv = process.env): Promise<BuildStaleLimits> {
+  let saved = savedBuildStaleLimits(undefined);
+  try { saved = savedBuildStaleLimits((await import('../config.js')).loadConfigReadOnly().fleet?.buildStale); } catch { /* defaults */ }
+  const { commits, hours } = resolveBuildStaleLimits(saved, env);
+  return { commits, hours };
 }
 
 /** Read every input once. Read-only; a reader that fails leaves its checks unknown. */
@@ -228,7 +230,7 @@ export async function readPulseAlertInputs(runsDir: string, now: number): Promis
     quiet(import('../release/cadence.js').then(m => m.readReleaseCadence({ now }))),
   ]);
   const build = await quiet(import('./build-live.js').then(m => m.readBuildLive({ now: () => now })));
-  return { marks: ledger === null ? null : throughputMarks(ledger, now - ALERT_LOOKBACK_H * 3_600_000, now).marks, starved, spend, releases, build, buildLimits: buildLimitsFromEnv() };
+  return { marks: ledger === null ? null : throughputMarks(ledger, now - ALERT_LOOKBACK_H * 3_600_000, now).marks, starved, spend, releases, build, buildLimits: await buildLimitsFromConfig() };
 }
 
 export interface ReadPulseAlertsOpts {
