@@ -46,7 +46,7 @@ Compatible alias: ashlr leader <command>
 
 Usage:
   phm leader show [--json]
-  phm leader brief [--since 2h] [--stale-after 3h] [--json]  the last bets' results, lanes, pools, admission and the top 5 open gaps in one read (unknown stays unknown; exit 0)
+  phm leader brief [--json] [--write <path>]  compact fleet snapshot; --since 2h or --stale-after 3h selects the detailed bets view
   phm leader status [--json]
   phm leader ask "<text>" [--json]
   phm leader org [--json]
@@ -714,6 +714,7 @@ async function runSeatDryRun(args: string[]): Promise<number> {
 
 /** `leader brief [--since 2h] [--stale-after 3h] [--json]`: thin; the reading and rendering live in core/fleet/leader-job-brief.ts. */
 async function runBrief(args: string[]): Promise<number> {
+  if (!args.includes('--since') && !args.includes('--stale-after')) return (await import('./leader-brief.js')).cmdLeaderBrief(args);
   const json = flag(args, '--json');
   const since = option(args, '--since');
   const m = since === null ? null : /^(\d+(?:\.\d+)?)([hd])$/.exec(since ?? '');
