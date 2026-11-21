@@ -310,9 +310,12 @@ merge verdict and cleared when a later verdict is not a merge), recorded
 token usage (`tokens_total` — the finish row's `tokens_total`/`tokensTotal`
 usage total, newest explicit row wins like `cost_usd` and `wall_s`),
 `work_class`, the finish-row productivity verdicts (`empty`,
-`exit_code`, `failure_class` — the row's recorded failure
+`exit_code`, `failure_class` — the recorded failure
 classification, resolved `failure_class` → `failure_reason` →
-`pool_error` so non-devin lanes' causes join too — and `empty_class`,
+`pool_error` on a finish row so non-devin lanes' causes join too, or
+the fixed `reason` on a `launch_failed` row whose `action` is
+`give_up` — the dead launch's recorded cause; retry receipts and
+`launch_terminal` rows never join — and `empty_class`,
 the row's recorded empty-diff classification in dispatchd's closed
 `classify_empty` vocabulary `no_diff`/`error`/`unknown`; explicit row
 fields only, `null` when unrecorded), the batch member's recorded
@@ -388,13 +391,15 @@ the count) but never as a held merge. Groups below the evidence
 floor are refused and keep their baseline; `merged: null` outcomes count as
 unknown, never as failures, and jobs with no recorded class count as
 unclassified. The report also resolves *why* the unknown cohort has no
-merge verdict, from the same finish-row evidence: `unknown_empty` counts
+merge verdict, from the same recorded finish and launch evidence:
+`unknown_empty` counts
 jobs whose newest finish recorded `empty: true` (the run produced no
 diff), `unknown_nonzero_exit` counts jobs whose newest `exit_code` was
 not 0 — the two overlap, since a crashed run usually diffs nothing —
 `unknown_failure_classes` tallies the recorded failure classifications
-(`failure_class`, else `failure_reason`, else `pool_error`; top entries
-first), `unknown_empty_classes` tallies the recorded finish-row
+(`failure_class`, else `failure_reason`, else `pool_error` on a finish
+row, or the fixed `reason` on a `launch_failed` give_up receipt; top
+entries first), `unknown_empty_classes` tallies the recorded finish-row
 `empty_class` verdicts — dispatchd's `classify_empty` triage, so the
 empty share splits healthy `no_diff` no-ops from the `error`
 infrastructure share and `unknown` capture gaps the way the
@@ -404,9 +409,8 @@ finish boundary; the requeue words `failed`/`deferred`/`unreported` are
 the recorded failure signal, while `done`/`skipped` members still await
 their own publish verdict) — and `unknown_unresolved` is
 the remainder with no
-finish failure signal and no requeue word (finished cleanly awaiting a
-verdict, or still in
-flight). These are counts over the retained window; when the ledger was
+recorded failure signal and no requeue word (finished cleanly awaiting a
+verdict, still in flight, or carrying only transient launch receipts). These are counts over the retained window; when the ledger was
 not read they are `null`, never zero. When the ledger exceeds the retained tail the
 report carries `truncated: true` and every count covers the newest bytes
 only; `market_state`/`market_truncated` report the decision journal's

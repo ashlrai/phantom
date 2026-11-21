@@ -574,6 +574,41 @@ describe('unknown-outcome resolution', () => {
     expect(out).toContain('unresolved=5');
     expect(out).toContain('task_outcomes=failed:3,deferred:2,done:2,skipped:1,unreported:1');
   });
+
+  it('classifies dead launches by their give_up reason and leaves transient receipts unresolved', async () => {
+    // dispatchd drops a job whose launch budget is spent or whose failure is
+    // permanent: the launch_failed give_up receipt is the only recorded
+    // cause for a job that never reached finish. Retry receipts are
+    // transient backoff and launch_terminal rows fire on requeues and
+    // skips, so neither resolves the missing verdict.
+    const launchRow = (job: string, extra: Record<string, unknown>): object =>
+      ({ job, lane: 'alpha', work_class: 'code', event: 'launch_failed', ...extra });
+    writeLedger([
+      ...merged(20),
+      launchRow('synthetic-dead-quota', { reason: 'provider_unavailable', class: 'permanent', action: 'give_up', attempt: 1 }),
+      launchRow('synthetic-dead-auth', { reason: 'authentication', class: 'permanent', action: 'give_up', attempt: 1 }),
+      launchRow('synthetic-dead-timeout', { reason: 'launch_timeout', action: 'give_up', attempt: 3 }),
+      // Transient receipts, terminal markers and verified in-flight rows
+      // carry no dead-launch cause and stay unresolved.
+      launchRow('synthetic-retry', { reason: 'provider_unavailable', action: 'retry', attempt: 1 }),
+      { job: 'synthetic-terminal', event: 'launch_terminal', reason: 'launcher-exited', lane: 'alpha', work_class: 'code' },
+      event('synthetic-open', 'alpha', 'code', 'VERIFIED'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 6, unclassified_outcomes: 0,
+      unknown_failure_classes: [
+        { failure_class: 'authentication', jobs: 1 },
+        { failure_class: 'launch_timeout', jobs: 1 },
+        { failure_class: 'provider_unavailable', jobs: 1 },
+      ],
+      unknown_unresolved: 3,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('unresolved=3');
+    expect(out).toContain('failure_classes=authentication:1,launch_timeout:1,provider_unavailable:1');
+  });
 });
 
 describe('missing, unreadable and oversized input', () => {

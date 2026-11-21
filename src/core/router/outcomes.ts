@@ -101,17 +101,20 @@ export interface RouterOutcome {
    */
   ttm_s: number | null;
   /**
-   * Finish-row productivity verdicts, newest explicit row wins like cost_usd
+   * Recorded productivity verdicts, newest explicit row wins like cost_usd
    * and wall_s. `empty` is the boolean a finish row records for its diff
    * check (true = the run produced no diff); `exit_code` is the worker's
    * recorded exit status — negative values are signal exits and stay
-   * recorded; `failure_class` is the finish row's recorded failure
-   * classification — `failure_class`, then `failure_reason`, then
-   * `pool_error`, the precedence the skill-nudge ledger reader shares —
-   * accepted only in the bounded identifier shape (values outside it are
-   * skipped, never guessed or recorded raw); `empty_class` is the finish
-   * row's recorded empty-diff classification in dispatchd's closed
-   * classify_empty vocabulary. All stay null when no jobs row
+   * recorded; `failure_class` is the recorded failure classification — a
+   * finish row's `failure_class`, then `failure_reason`, then `pool_error`
+   * (the precedence the skill-nudge ledger reader shares), or a
+   * `launch_failed` row's fixed `reason` when its `action` is `give_up`
+   * (the launch budget is spent or the failure permanent, so the job
+   * never reaches a finish; retry receipts and `launch_terminal` rows
+   * never join) — accepted only in the bounded identifier shape (values
+   * outside it are skipped, never guessed or recorded raw); `empty_class`
+   * is the finish row's recorded empty-diff classification in dispatchd's
+   * closed classify_empty vocabulary. All stay null when no jobs row
    * recorded them — unknown, never inferred from merged state, PR URLs or
    * event names.
    */
@@ -242,18 +245,37 @@ const count = (v: unknown): number | null => Number.isSafeInteger(v) && (v as nu
 const exitStatus = (v: unknown): number | null => Number.isSafeInteger(v) ? v as number : null;
 /** Failure classifications join only bounded identifier-shaped labels; anything else is skipped, never recorded raw. */
 const FAILURE_CLASS = /^[a-z0-9][a-z0-9_.-]{0,127}$/;
+/** Event names across the event|type|kind dialect spelling. */
+const EVENT_NAME_KEYS = ['event', 'type', 'kind'] as const;
 /**
- * The finish row's recorded failure classification, in the skill-nudge
- * precedence: `failure_class`, then `failure_reason`, then `pool_error`
- * (snake_case before camelCase within each). dispatchd writes `failure_class`
- * only for the devin pool, so without the fallbacks every other lane's
- * classified cause — launch_timeout, provider_*, agent_exit_nonzero,
+ * The recorded failure classification, in the skill-nudge precedence:
+ * `failure_class`, then `failure_reason`, then `pool_error` (snake_case
+ * before camelCase within each). dispatchd writes `failure_class` only for
+ * the devin pool, so without the fallbacks every other lane's classified
+ * cause — launch_timeout, provider_*, agent_exit_nonzero,
  * exit_status_missing, or a pool error like rate_limit — folded to null.
+ * A `launch_failed` row whose `action` is `give_up` supplies the same kind
+ * of evidence from the launch side: dispatchd drops the line when the
+ * bounded retry budget is spent or the failure is permanent, so the row's
+ * fixed `reason` label (launch_precheck's launch_timeout /
+ * local_backend_unavailable / authentication / resource_exhausted /
+ * provider_unavailable / launch_interrupted / launch_script_error
+ * vocabulary) is the job's recorded cause for never reaching a finish.
+ * `action: 'retry'` receipts are transient backoff — the job is still in
+ * flight — and `launch_terminal` rows fire on requeues and skips too, so
+ * neither mints a classification. The receipt's `class` field describes
+ * retryability, not cause, and never joins either.
  */
 const FAILURE_CLASS_KEYS = ['failure_class', 'failureClass', 'failure_reason', 'failureReason', 'pool_error', 'poolError'] as const;
 const failureClass = (r: Row): string | null => {
   const v = str(r, ...FAILURE_CLASS_KEYS);
-  return v !== null && FAILURE_CLASS.test(v) ? v : null;
+  if (v !== null && FAILURE_CLASS.test(v)) return v;
+  if (str(r, ...EVENT_NAME_KEYS)?.toLowerCase() === 'launch_failed' &&
+      str(r, 'action')?.toLowerCase() === 'give_up') {
+    const reason = str(r, 'reason');
+    if (reason !== null && FAILURE_CLASS.test(reason)) return reason;
+  }
+  return null;
 };
 
 /**
@@ -292,11 +314,10 @@ const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
  * merge-phase spelling and never sets it. snake_case before camelCase on
  * the event name, the same dialect tolerance the other event reads use.
  */
-const TASK_OUTCOME_EVENT_KEYS = ['event', 'type', 'kind'] as const;
 const TASK_OUTCOME_EVENTS: ReadonlySet<string> = new Set(['task_outcome']);
 const TASK_OUTCOME_WORDS: ReadonlySet<string> = new Set(['done', 'skipped', 'failed', 'deferred', 'unreported']);
 const taskOutcome = (r: Row): string | null => {
-  const event = str(r, ...TASK_OUTCOME_EVENT_KEYS);
+  const event = str(r, ...EVENT_NAME_KEYS);
   if (event === null || !TASK_OUTCOME_EVENTS.has(event)) return null;
   const word = str(r, 'outcome');
   return word !== null && TASK_OUTCOME_WORDS.has(word) ? word : null;
@@ -307,7 +328,6 @@ const taskOutcome = (r: Row): string | null => {
 // (phase/state/outcome/status/result/conclusion) and the reverted_at /
 // revertedAt stamps (ask status stream and outcome metrics dialects).
 const REVERT_NAMES: ReadonlySet<string> = new Set(['revert', 'reverted']);
-const REVERT_EVENT_KEYS = ['event', 'type', 'kind'];
 /**
  * jobs.jsonl terminal-phase dialect: phase|state|outcome|status plus the
  * producer aliases result|conclusion — the same field set and order the
@@ -505,7 +525,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     // and a later reverted:false cannot undo it; explicit false only stands
     // when no positive evidence exists anywhere in the job's rows.
     if (o.reverted !== true) {
-      if (r['reverted'] === true || hasRevertStamp(r) || hasRevertName(r, REVERT_EVENT_KEYS) || hasRevertName(r, PHASE_KEYS)) {
+      if (r['reverted'] === true || hasRevertStamp(r) || hasRevertName(r, EVENT_NAME_KEYS) || hasRevertName(r, PHASE_KEYS)) {
         o.reverted = true;
       } else if (r['reverted'] === false) {
         o.reverted = false;
