@@ -42,10 +42,43 @@
 .surface[data-layout='beside'] { flex-direction: row; }
 .surface[data-layout='beside'] .chat { min-width: 0; }
 
+/* The share is the divider's (SurfaceSplitter); the two pixel widths are surface-layout.ts's minimum columns. */
 .reading[data-layout='beside'] {
-  flex: 0 1 44%;
-  border-left: 1px solid var(--border-subtle);
+  flex: 0 0 clamp(340px, var(--reading-share, 44%), calc(100% - 420px));
   animation-name: reading-beside-in;
+}
+
+/* The divider: a hairline to look at, a wider strip to grab. It is a control (focus, arrows), not a border. */
+.splitter {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: 1px;
+  background: var(--border-subtle);
+  cursor: col-resize;
+  touch-action: none;
+  transition: background var(--duration-fast) var(--ease-standard);
+}
+
+.splitter::before {
+  position: absolute;
+  inset-block: 0;
+  right: calc(var(--space-1) * -1);
+  left: calc(var(--space-1) * -1);
+  content: '';
+}
+
+.splitter:hover,
+.splitter:focus-visible,
+.splitter[data-dragging] { background: var(--accent-500); }
+/* Focus is a wider bar rather than a ring: a 1px element cannot carry one. */
+.splitter:focus-visible { outline: none; box-shadow: 0 0 0 1px var(--accent-500); }
+
+/* A drag must not select the two conversations it passes over (the shell's flag, set for the gesture only). */
+:global(body[data-verse-resizing='true']) {
+  cursor: col-resize;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 @keyframes reading-beside-in {
@@ -247,4 +280,5 @@ button.row { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   .pulse[data-live],
   .item, .reading { animation: none; }
+  .splitter { transition: none; }
 }
