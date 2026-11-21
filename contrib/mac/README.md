@@ -989,7 +989,14 @@ the run without writing. Only open PRs
 whose public REST detail says `mergeable_state=dirty` qualify. Unknown states
 wait for the next run. No credentials are used; an API error stops the run.
 READY and CLAIMED references in the queue and Supersedes links in open PR bodies
-or queue notes suppress duplicates. Job IDs are stable across runs.
+or queue notes suppress duplicates. Each job ID includes the full source head
+SHA and stays stable across pools and runs. READY, CLAIMED, RUNNING and PR-OPEN rows
+with `source-head=<sha>` cover that head; older references without a head
+conservatively cover the PR. Terminal queue rows and proven empty outcomes in
+the last 16 MiB of `metrics/jobs.jsonl` prevent unchanged work from retrying,
+including after queue cleanup. A changed head gets one new job; an unknown
+head waits. Generated prompts name the expected head and require re-observation
+if it changes.
 Replace `--dry-run` with `--apply` to append; use `--max N` to change the cap.
 Apply rechecks the queue under the existing `ready.lock`, waiting at most ten
 seconds (`--lock-timeout` overrides). `--queue PATH` selects a scratch queue;

@@ -6,6 +6,9 @@ import tempfile
 from unittest.mock import patch
 import io
 import contextlib
+from concurrent.futures import ThreadPoolExecutor
+import json
+import threading
 import unittest
 
 SPEC = importlib.util.spec_from_file_location('recut_feed', Path(__file__).parents[1] / 'recut-feed.py')
@@ -15,6 +18,7 @@ SPEC.loader.exec_module(feed)
 
 TEMPLATE = ('- DONE RQ-RC3401N9Q8 (P0, pool=codex-personal, tier=frontier, repo=phantom, size<=300, src=leader): '
             'Recut https://github.com/ashlrai/phantom/pull/3401; preserve intent.\n')
+HEAD = 'a' * 40
 
 
 def plan(rows, queue='', maximum=6):
@@ -23,7 +27,7 @@ def plan(rows, queue='', maximum=6):
 
 def pr(number=1, repo='phantom', **values):
     return dict({'repo': repo, 'number': number, 'state': 'open', 'mergeable_state': 'dirty',
-                 'created_at': f'2026-01-{number:02}T00:00:00Z', 'body': ''}, **values)
+                 'head': {'sha': HEAD}, 'created_at': f'2026-01-{number:02}T00:00:00Z', 'body': ''}, **values)
 
 
 class RecutFeedTests(unittest.TestCase):
@@ -34,7 +38,7 @@ class RecutFeedTests(unittest.TestCase):
         self.assertEqual(len(lines), 2)
         self.assertIn('RQ-RCFP1Q8', lines[0])
         self.assertIn('RQ-RCFP4Q8', lines[1])
-        self.assertTrue(lines[0].startswith('- READY RQ-RCFP1Q8 (P0, pool=codex-personal, tier=frontier, repo=phantom,'))
+        self.assertTrue(lines[0].startswith(f'- READY RQ-RCFP1Q8-{HEAD.upper()} (P0, pool=codex-personal, tier=frontier, repo=phantom,'))
 
     def test_reference_text_is_copied_and_required(self):
         line = plan([pr(7, repo='locus')])[0]
@@ -47,7 +51,7 @@ class RecutFeedTests(unittest.TestCase):
         line = feed.plan([pr()], TEMPLATE, 6, pool='devin')[0]
         self.assertIn('pool=devin', line)
         self.assertNotIn('pool=codex-personal', line)
-        self.assertTrue(line.startswith('- READY RQ-RCFP1Q8 (P0, pool=devin,'))
+        self.assertTrue(line.startswith(f'- READY RQ-RCFP1Q8-{HEAD.upper()} (P0, pool=devin,'))
 
     def test_dedupe_queue_and_supersedes(self):
         queue = ('- READY OTHER (repo=phantom): PR #1\n'
@@ -68,6 +72,58 @@ class RecutFeedTests(unittest.TestCase):
         self.assertEqual(plan(rows, queue, 0), [])
         ids = [plan([pr(repo=r)], '', 1)[0].split()[2] for r in feed.REPOS]
         self.assertEqual(len(set(ids)), 7)
+
+    def test_active_and_empty_rows_cover_only_the_observed_head(self):
+        first = plan([pr()])[0]
+        moved = pr(head={'sha': 'b' * 40})
+        for status in ('READY', 'CLAIMED', 'RUNNING', 'PR-OPEN', 'DONE-NOOP', 'EMPTY', 'DONE'):
+            with self.subTest(status=status):
+                queue = first.replace('- READY ', f'- {status} ')
+                self.assertEqual(plan([pr()], queue), [])
+                recovery = plan([moved], queue)
+                self.assertEqual(len(recovery), 1)
+                self.assertNotEqual(first.split()[2], recovery[0].split()[2])
+                self.assertIn('source-head=' + 'b' * 40, recovery[0])
+                self.assertEqual(plan([moved], queue + '\n' + recovery[0]), [])
+                if status != 'DONE':
+                    self.assertEqual(plan([pr()], queue.replace(first.split()[2], 'RQ-OTHER')), [])
+        self.assertEqual(len(plan([pr(), pr()])), 1)
+
+    def test_unknown_heads_wait_and_full_sha_distinguishes_work(self):
+        for head in (None, {}, 'unavailable', {'sha': 'bad'}, {'sha': 'a' * 41}):
+            self.assertEqual(plan([pr(head=head)]), [])
+        line = plan([pr()])[0]
+        self.assertEqual(len(plan([pr(head={'sha': 'a' * 39 + 'b'})], line)), 1)
+
+    def test_empty_metrics_survive_queue_cleanup_and_head_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'queue').mkdir()
+            (root / 'metrics').mkdir()
+            queue = root / 'queue/router-queue.md'
+            queue.write_text(TEMPLATE)
+            job = plan([pr()])[0].split()[2]
+            metrics = root / 'metrics/jobs.jsonl'
+            for outcome in ({'empty': True}, {'state': 'DONE-NOOP'}):
+                metrics.write_text('torn\n[]\n' + json.dumps(dict(job=job, **outcome)) + '\n')
+                for apply in (False, True):
+                    self.assertEqual(feed.run([pr()], queue, 6, apply, 1)['count'], 0)
+            changed = pr(head={'sha': 'b' * 40})
+            self.assertEqual(feed.run([changed], queue, 6, True, 1)['count'], 1)
+            self.assertEqual(feed.run([changed], queue, 6, True, 1)['count'], 0)
+
+    def test_concurrent_enqueues_across_pools_publish_one_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            queue = Path(directory) / 'router-queue.md'
+            queue.write_text(TEMPLATE)
+            barrier = threading.Barrier(2)
+            def enqueue(pool):
+                barrier.wait(timeout=5)
+                return feed.run([pr(), pr()], queue, 6, True, 5, pool)['count']
+            with ThreadPoolExecutor(max_workers=2) as workers:
+                counts = list(workers.map(enqueue, ('codex-personal', 'devin')))
+            self.assertEqual(sorted(counts), [0, 1])
+            self.assertEqual(queue.read_text().count('- READY '), 1)
 
     def test_rest_pagination_and_detail(self):
         calls = []

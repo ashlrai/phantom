@@ -13,6 +13,7 @@ import urllib.request
 REPOS = {'phantom': 'P', 'phantom-secrets': 'PS', 'ashlr-plugin': 'AP',
          'ashlr-stack': 'AS', 'locus': 'L', 'lexicon': 'LX', 'ashlr-md': 'AM'}
 URL = re.compile(r'https://github\.com/ashlrai/([a-z-]+)/pull/(\d+)\b')
+SHA = re.compile(r'[0-9a-f]{40}')
 
 
 def get_json(path):
@@ -48,40 +49,79 @@ def references(text, repo=None):
     return found
 
 
-def plan(prs, queue, maximum, pool=None):
+def plan(prs, queue, maximum, pool=None, empty_jobs=()):
     reference = re.search(r'^- [A-Z-]+ RQ-RC3401N9Q8 \((.*?)\): (.+)$', queue, re.M)
     if not reference:
         raise ValueError('Queue must contain the RQ-RC3401N9Q8 reference line')
     covered = set()
+    seen_jobs = set(re.findall(r'^- \S+ (\S+) \(', queue, re.M)) | set(empty_jobs)
     for line in queue.splitlines():
-        if re.match(r'^- (READY|CLAIMED)\b', line) or re.search(r'\bSupersedes\b', line, re.I):
-            covered.update(references(line))
+        head = re.search(r'\bsource-head=([0-9a-f]{40})(?=[, )])', line)
+        empty = head and re.match(r'^- (DONE-NOOP|EMPTY|EMPTY_DONE|SKIPPED-EMPTY)\b', line)
+        if empty or re.match(r'^- (READY|CLAIMED|RUNNING|PR-OPEN)\b', line) or re.search(r'\bSupersedes\b', line, re.I):
+            refs = references(line)
             repo = re.search(r'\brepo=(?:ashlrai/)?([a-z-]+)', line)
             if repo:
-                covered.update((repo[1], int(n)) for n in re.findall(r'(?:PR\s*#?|#)(\d+)\b', line, re.I))
+                refs.update((repo[1], int(n)) for n in re.findall(r'(?:PR\s*#?|#)(\d+)\b', line, re.I))
+            # Legacy or ambiguous references conservatively cover every head.
+            sha = head[1] if head and len(refs) == 1 else None
+            covered.update((name, number, sha) for name, number in refs)
     for pr in prs:
         for line in (pr.get('body') or '').splitlines():
             if re.search(r'\bSupersedes\b', line, re.I):
-                covered.update(references(line, pr['repo']))
+                covered.update((name, number, None) for name, number in references(line, pr['repo']))
     lines = []
     for pr in sorted(prs, key=lambda p: (p['created_at'], p['repo'], p['number'])):
         repo, number = pr['repo'], pr['number']
-        job = f'RQ-RCF{REPOS[repo]}{number}Q8'
+        head_info = pr.get('head')
+        head = head_info.get('sha') if isinstance(head_info, dict) else None
+        if not isinstance(head, str) or not SHA.fullmatch(head):
+            continue  # Unknown head is not enough evidence to schedule work.
+        job = f'RQ-RCF{REPOS[repo]}{number}Q8-{head.upper()}'
         if (pr.get('state') != 'open' or pr.get('mergeable_state') != 'dirty'
-                or (repo, number) in covered or re.search(r'\b' + job + r'\b', queue)):
+                or (repo, number, None) in covered or (repo, number, head) in covered
+                or job in seen_jobs):
             continue
         if len(lines) >= maximum:
             break
         # Copy the leader's reviewed wording rather than invent another recut brief.
         attrs = re.sub(r'\brepo=(?:ashlrai/)?phantom\b', f'repo={repo}', reference[1])
+        attrs += f', source-head={head}'
         if pool:
             attrs = (re.sub(r'\bpool=[a-z0-9-]+\b', f'pool={pool}', attrs, count=1)
                      if re.search(r'\bpool=[a-z0-9-]+\b', attrs) else f'{attrs}, pool={pool}')
         text = re.sub(r'\bphantom\b', repo, reference[2])
         text = re.sub(r'\b3401\b', str(number), text)
-        lines.append(f'- READY {job} ({attrs}): {text}')
-        covered.add((repo, number))
+        lines.append(f'- READY {job} ({attrs}): Observed source head: {head}. '
+                     f'Stop and re-observe if the head changed. {text}')
+        covered.add((repo, number, head))
     return lines
+
+
+def read_empty_jobs(queue):
+    """Keep proven empty identities even after terminal rows leave the queue."""
+    try:
+        with (queue.parent.parent / 'metrics/jobs.jsonl').open('rb') as stream:
+            stream.seek(0, 2)
+            start = max(0, stream.tell() - 16 * 1024 * 1024)
+            stream.seek(start)
+            if start:
+                stream.readline()  # Discard a possibly partial first row.
+            rows = stream.read(16 * 1024 * 1024).decode('utf-8', errors='replace').splitlines()
+    except FileNotFoundError:
+        return set()
+    jobs = set()
+    for line in rows:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and (row.get('empty') is True or
+                row.get('state') in ('EMPTY', 'DONE-NOOP', 'EMPTY_DONE', 'SKIPPED-EMPTY')):
+            job = row.get('job') or row.get('job_id') or row.get('jobId')
+            if isinstance(job, str):
+                jobs.add(job)
+    return jobs
 
 
 @contextlib.contextmanager
@@ -102,7 +142,7 @@ def queue_lock(path, timeout):
 def run(prs, queue, maximum, apply, timeout, pool=None):
     def emit():
         text = queue.read_text()
-        lines = plan(prs, text, maximum, pool)
+        lines = plan(prs, text, maximum, pool, read_empty_jobs(queue))
         if apply and lines:
             with queue.open('a') as stream:
                 stream.write(('' if not text or text.endswith('\n') else '\n') + '\n'.join(lines) + '\n')
