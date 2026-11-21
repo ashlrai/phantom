@@ -132,7 +132,10 @@ resource-live state/history, parsed posture evidence and published Devin weekly
 capacity. Runs default to `ASHLR_RUNS_DIR` or `~/.ashlr-runs`; `weeklyFile`
 overrides the Devin publication path. `LaneAllowanceInputs` and
 `LaneAllowanceRow` describe nullable usage, reset, age, history, posture and
-Devin preview evidence. Missing measurements stay null; stale values retain
+Devin preview evidence. `LaneAllowanceRow.windowStart` is the start the
+measured reading reports for its window: null when the reading names none, is
+not usable, or names a start at or after the reset; it is never derived.
+Missing measurements stay null; stale values retain
 their age and reason. Future observations have `freshness: invalid-future`,
 null usage/age and an invalid-timestamp reason. A lane name alone never proves
 cost. Fresh verified USD readings map to `api-credit`; included/metered receipt
