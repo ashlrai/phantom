@@ -1013,16 +1013,21 @@ function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
 }
 
 /**
- * The job-scoped inbox filter: mail that names one job — a feed-citing body
- * (`work.post`, `work.status`, `work.result` or `wake`) declaring that
- * `jobId` through the same field the feed projection keys on, a
- * `worker-handoff` assigning that fleet job id through `taskId`, or a
- * `note`/`context` body carrying the `job:<id>` v2 thread label, the same
- * bucket the messages and conversations projections group under `job:<id>`.
- * Every other body kind cites no job and never matches; a bare `<id>` thread
- * label is a different conversation bucket and does not match either.
+ * The job-scoped bus filter every read surface shares: mail that names one
+ * job — a feed-citing body (`work.post`, `work.status`, `work.result` or
+ * `wake`) declaring that `jobId` through the same field the feed projection
+ * keys on, a `worker-handoff` assigning that fleet job id through `taskId`,
+ * or a `note`/`context` body carrying the `job:<id>` v2 thread label, the
+ * same bucket the messages and conversations projections group under
+ * `job:<id>`. Every other body kind cites no job and never matches; a bare
+ * `<id>` thread label is a different conversation bucket and does not match
+ * either. `agents bus inbox`/`channel read` and `comms bus read`/`watch`
+ * apply this one rule for their `job` filters, so a job-scoped read can
+ * never disagree about what names a job; the citation half (`busBodyJobId`)
+ * is the same field the message, channel, inbox and work-mine annotations
+ * key on.
  */
-function inboxJobMatch(body: unknown, job: string): boolean {
+export function busBodyJobMatch(body: unknown, job: string): boolean {
   return busBodyJobId(body) === job || busBodyThread(body) === `job:${job}`;
 }
 
@@ -1126,7 +1131,7 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
       const matchedKind = kind !== null &&
         (kindFilter === undefined || kind === kindFilter) &&
         (thread === undefined || busBodyThread(envelope.body) === thread) &&
-        (jobFilter === undefined || inboxJobMatch(envelope.body, jobFilter)) &&
+        (jobFilter === undefined || busBodyJobMatch(envelope.body, jobFilter)) &&
         (fromMatch === undefined || fromMatch(envelope.from)) &&
         (priority === undefined || envelope.priority === priority) ? kind : null;
       if (matchedKind !== null && envelope.origin_bridge === 'agent-chat-owner') {
@@ -1493,7 +1498,7 @@ export interface ChannelReadOptions {
   priority?: BusPriority;
   /**
    * Job filter: only posts that name this one job — the same
-   * `inboxJobMatch` rule `agents bus inbox --job` applies: a feed-citing
+   * `busBodyJobMatch` rule `agents bus inbox --job` applies: a feed-citing
    * body (`work.post`, `work.status`, `work.result` or `wake`) declaring
    * that `jobId`, a `worker-handoff` assigning that fleet job id through
    * `taskId`, or a `note`/`context` body carrying the `job:<id>` v2 thread
@@ -1527,7 +1532,7 @@ export type ChannelReadPage =
  * the same identity-label matching `comms bus read` uses; `thread` narrows to
  * `note`/`context` bodies carrying that v2 thread label, `priority`
  * narrows to posts stamped with that exact P0..P3 band, and `job` narrows
- * to posts that name one job — the same `inboxJobMatch` rule `agents bus
+ * to posts that name one job — the same `busBodyJobMatch` rule `agents bus
  * inbox --job` applies, so a channel transcript answers one job's posts
  * without paging the whole room. `nextCursor`
  * covers every scanned row, so callers persist it only after handling the
@@ -1593,7 +1598,7 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
         (fromMatch === undefined || fromMatch(envelope.from)) &&
         (thread === undefined || busBodyThread(body) === thread) &&
         (priority === undefined || envelope.priority === priority) &&
-        (job === undefined || inboxJobMatch(body, job));
+        (job === undefined || busBodyJobMatch(body, job));
       if (accepted) {
         matched += 1;
         if (!countMatched || messages.length < limit) {
