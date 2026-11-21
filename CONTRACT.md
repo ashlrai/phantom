@@ -590,7 +590,17 @@ queue_wait phase and reward-feed's dispatch set pair). A requeued job's
 later arrivals never move its first-dispatch wait; a job with no recorded
 arrival before its first dispatch — a direct dispatch or a batch member
 claimed only through its session — stays `null`, unknown, never zero and
-never another phase's duration. `lane_hint`/`lane_override` are the
+never another phase's duration. `ci_wall_s` is the recorded CI wall
+seconds derived once per job from the same `ci_start`/`ci_complete`
+boundary event pair the reward feed's ciWallMs, job-latency's `ci`
+phase and visit-sync's check boundaries already read: exactly one start
+and one complete stamp across the retained rows — identical repeated
+stamps dedupe so a replayed append cannot fake ambiguity — across the
+same `ts`/`timestamp`/`at`/`time` dialect, with the complete stamp not
+preceding the start. A missing boundary, reversed stamps or a repeated
+pair — a CI re-run — leaves the job absent so its outcome keeps `null`,
+unknown, never a partial guess and never another phase's duration.
+`lane_hint`/`lane_override` are the
 dispatch claim's recorded lane override: a `claim` or `batch_claim` row
 writes the pair when the launch left its hinted lane — `lane_hint` the
 preferred lane left (the market's `preferred_lane` on solo claims, the

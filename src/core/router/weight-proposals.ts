@@ -57,6 +57,10 @@ export interface RouterWeightEvidence {
   queue_wait_known: number;
   /** Mean recorded queue_wait_s over queue_wait_known; null when none recorded. */
   queue_wait_s_mean: number | null;
+  /** Group outcomes whose jobs ledger recorded exactly one ci_start/ci_complete pair. */
+  ci_wall_known: number;
+  /** Mean recorded ci_wall_s over ci_wall_known; null when none recorded. */
+  ci_wall_s_mean: number | null;
   /**
    * Group outcomes (the known cohort) whose standing dispatch claim
    * recorded lane-hint blocking codes — a non-empty
@@ -212,6 +216,7 @@ interface WeightEvidenceTally {
   wallSum: number; wallKnown: number;
   ttmSum: number; ttmKnown: number;
   queueWaitSum: number; queueWaitKnown: number;
+  ciWallSum: number; ciWallKnown: number;
   laneBlocked: number; blockedReasons: Map<string, number>;
   tokensSum: number; tokensKnown: number;
   passkSum: number; passkKnown: number;
@@ -226,7 +231,8 @@ interface WeightEvidenceTally {
 const freshTally = (): WeightEvidenceTally => ({
   ciPass: 0, ciKnown: 0, reviewFixed: 0, reviewRejected: 0, reviewIgnored: 0, reviewKnown: 0,
   costSum: 0, costKnown: 0, wallSum: 0, wallKnown: 0, ttmSum: 0, ttmKnown: 0,
-  queueWaitSum: 0, queueWaitKnown: 0, laneBlocked: 0, blockedReasons: new Map(),
+  queueWaitSum: 0, queueWaitKnown: 0, ciWallSum: 0, ciWallKnown: 0,
+  laneBlocked: 0, blockedReasons: new Map(),
   tokensSum: 0, tokensKnown: 0, passkSum: 0, passkKnown: 0,
   acusSum: 0, acusKnown: 0, diffFilesSum: 0, diffFilesKnown: 0,
   diffLinesSum: 0, diffLinesKnown: 0, usageMissingKnown: 0,
@@ -260,6 +266,8 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   ttm_s_mean: t.ttmKnown === 0 ? null : round6(t.ttmSum / t.ttmKnown),
   queue_wait_known: t.queueWaitKnown,
   queue_wait_s_mean: t.queueWaitKnown === 0 ? null : round6(t.queueWaitSum / t.queueWaitKnown),
+  ci_wall_known: t.ciWallKnown,
+  ci_wall_s_mean: t.ciWallKnown === 0 ? null : round6(t.ciWallSum / t.ciWallKnown),
   lane_blocked_known: t.laneBlocked,
   lane_blocked_reasons: t.laneBlocked === 0 ? null
     : [...t.blockedReasons.entries()]
@@ -369,6 +377,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     if (o.wall_s !== null) { t.wallKnown++; t.wallSum += o.wall_s; }
     if (o.ttm_s !== null) { t.ttmKnown++; t.ttmSum += o.ttm_s; }
     if (o.queue_wait_s !== null) { t.queueWaitKnown++; t.queueWaitSum += o.queue_wait_s; }
+    if (o.ci_wall_s !== null) { t.ciWallKnown++; t.ciWallSum += o.ci_wall_s; }
     if (o.lane_hint_blocked_by !== null && o.lane_hint_blocked_by.length > 0) {
       t.laneBlocked++;
       for (const code of o.lane_hint_blocked_by) {

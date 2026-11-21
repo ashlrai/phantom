@@ -339,6 +339,8 @@ describe('outcome-quality evidence', () => {
       ttm_s_mean: 245,
       queue_wait_known: 0,
       queue_wait_s_mean: null,
+      ci_wall_known: 0,
+      ci_wall_s_mean: null,
       lane_blocked_known: 0,
       lane_blocked_reasons: null,
       tokens_known: 10,
@@ -393,6 +395,41 @@ describe('outcome-quality evidence', () => {
     expect(out).toContain('queue_wait_s=105(20)');
   });
 
+  it('folds CI wall seconds into group evidence with coverage counts', async () => {
+    // Each job: ci_start at T0, ci_complete at T0+wall, then a MERGED
+    // verdict row carrying the group classification. ci_wall_s joins only
+    // the known cohort under the exactly-one-pair rule — a job whose
+    // boundaries are missing, reversed or repeated stays out of the
+    // coverage count rather than counting as zero.
+    const jobs = Array.from({ length: 20 }, (_, i) => `synthetic-cw-${i}`);
+    const t0 = Date.parse('2026-11-20T00:00:00Z');
+    writeLedger([
+      ...jobs.flatMap((job, i) => [
+        { job, event: 'ci_start', ts: new Date(t0).toISOString() },
+        { job, event: 'ci_complete', ts: new Date(t0 + (i + 1) * 30_000).toISOString() },
+        event(job, 'alpha', 'code', 'MERGED'),
+      ]),
+      // An ambiguous re-run pair keeps the job out of coverage entirely.
+      { job: 'synthetic-cw-rerun', event: 'ci_start', ts: new Date(t0).toISOString() },
+      { job: 'synthetic-cw-rerun', event: 'ci_complete', ts: new Date(t0 + 60_000).toISOString() },
+      { job: 'synthetic-cw-rerun', event: 'ci_start', ts: new Date(t0 + 120_000).toISOString() },
+      { job: 'synthetic-cw-rerun', event: 'ci_complete', ts: new Date(t0 + 180_000).toISOString() },
+      event('synthetic-cw-rerun', 'alpha', 'code', 'MERGED'),
+      // An unpaired boundary likewise never fabricates a duration.
+      { job: 'synthetic-cw-open', event: 'ci_start', ts: new Date(t0).toISOString() },
+      event('synthetic-cw-open', 'alpha', 'code', 'MERGED'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    const p = report.proposals[0];
+    expect(p).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 22 });
+    // walls are 30s..600s over the 20 paired jobs -> mean 315s.
+    expect(p.evidence.ci_wall_known).toBe(20);
+    expect(p.evidence.ci_wall_s_mean).toBe(315);
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('ci_wall_s=315(20)');
+  });
+
   it('folds dispatch lane overrides into group evidence with reason tallies', async () => {
     // Each overridden job claims off its hint before its merge verdict; the
     // tally counts known-cohort outcomes only, like every other signal.
@@ -433,6 +470,7 @@ describe('outcome-quality evidence', () => {
       wall_known: 0, wall_s_mean: null,
       ttm_known: 0, ttm_s_mean: null,
       queue_wait_known: 0, queue_wait_s_mean: null,
+      ci_wall_known: 0, ci_wall_s_mean: null,
       lane_blocked_known: 0, lane_blocked_reasons: null,
       tokens_known: 0, tokens_total_mean: null,
       passk_known: 0, passk_mean: null,

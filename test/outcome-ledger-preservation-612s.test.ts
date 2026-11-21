@@ -202,7 +202,7 @@ describe('router outcome ledger (612S preservation)', () => {
       tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
       tokens_cache_read: null, tokens_cache_write: null,
       usage_source: null, usage_missing: null,
-      ttm_s: null, queue_wait_s: null, empty: null, diff_files: null, diff_lines: null,
+      ttm_s: null, queue_wait_s: null, ci_wall_s: null, empty: null, diff_files: null, diff_lines: null,
       exit_code: null, failure_class: null, empty_class: null,
       task_outcome: null, lane_hint_blocked_by: null, passk: null,
     }]);
@@ -244,6 +244,45 @@ describe('router outcome ledger (612S preservation)', () => {
     for (const id of ['Q3', 'Q4', 'Q5']) expect(byId.get(id)?.queue_wait_s).toBeNull();
     expect(byId.has('RQ-BATCH-q6')).toBe(false);
     expect(byId.get('Q7')).toMatchObject({ merged: false, queue_wait_s: 30 });
+  });
+
+  it('folds CI wall seconds from the recorded ci_start/ci_complete pair, unknown when ambiguous', () => {
+    const fold = foldRouterOutcomes([
+      // C1: one start, one complete 20 minutes later -> 1200s of CI wall.
+      '{"job":"C1","event":"ci_start","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"C1","event":"ci_complete","ts":"2026-11-01T10:20:00Z"}',
+      '{"job":"C1","phase":"MERGED"}',
+      // C2: timestamp and event dialect aliases join like the phase reads.
+      '{"job":"C2","kind":"ci_start","at":"2026-11-01T09:00:00Z"}',
+      '{"job":"C2","type":"ci_complete","time":"2026-11-01T09:05:00Z"}',
+      '{"job":"C2","phase":"CLOSED"}',
+      // C3: a start with no recorded complete stays unknown, never zero.
+      '{"job":"C3","event":"ci_start","ts":"2026-11-01T10:00:00Z"}',
+      // C4: reversed stamps cannot pair — unknown, not a negative duration.
+      '{"job":"C4","event":"ci_complete","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"C4","event":"ci_start","ts":"2026-11-01T10:20:00Z"}',
+      // C5: a CI re-run records a second pair — ambiguous, stays unknown.
+      '{"job":"C5","event":"ci_start","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"C5","event":"ci_complete","ts":"2026-11-01T10:10:00Z"}',
+      '{"job":"C5","event":"ci_start","ts":"2026-11-01T11:00:00Z"}',
+      '{"job":"C5","event":"ci_complete","ts":"2026-11-01T11:05:00Z"}',
+      // C6: identical repeated stamps dedupe — a replayed append is not a re-run.
+      '{"job":"C6","event":"ci_start","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"C6","event":"ci_start","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"C6","event":"ci_complete","ts":"2026-11-01T10:30:00Z"}',
+      // C7: batch-session infrastructure rows never mint CI evidence.
+      '{"job":"RQ-BATCH-c7","event":"ci_start","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"RQ-BATCH-c7","event":"ci_complete","ts":"2026-11-01T10:10:00Z"}',
+      // C8: boundary rows without a readable stamp cannot pair.
+      '{"job":"C8","event":"ci_start"}',
+      '{"job":"C8","event":"ci_complete","ts":"not a date"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('C1')).toMatchObject({ merged: true, ci_wall_s: 1200 });
+    expect(byId.get('C2')).toMatchObject({ merged: false, ci_wall_s: 300 });
+    expect(byId.get('C6')).toMatchObject({ ci_wall_s: 1800 });
+    for (const id of ['C3', 'C4', 'C5', 'C8']) expect(byId.get(id)?.ci_wall_s).toBeNull();
+    expect(byId.has('RQ-BATCH-c7')).toBe(false);
   });
 
   it('folds the dispatch claim lane override, newest claim stands', () => {
