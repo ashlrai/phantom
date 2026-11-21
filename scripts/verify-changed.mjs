@@ -43,6 +43,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     lintFiles: changed.filter((path) => existing.has(path) && /\.(?:[cm]?js|[cm]?ts|tsx|jsx)$/.test(path)),
     pythonFiles: changed.filter((path) => existing.has(path) && /\.py$/.test(path)),
     shellFiles: changed.filter((path) => existing.has(path) && /\.sh$/.test(path)),
+    perlFiles: changed.filter((path) => existing.has(path) && /\.pl$/i.test(path)),
     jsonFiles: changed.filter((path) => existing.has(path) && /\.(?:json|webmanifest)$/.test(path)),
     xmlFiles: changed.filter((path) => existing.has(path) && /\.(?:xml|plist(?:\.in)?|svg)$/.test(path)),
     webTypecheck: changed.some((path) => path.startsWith('src/web-ui/')),
@@ -67,8 +68,8 @@ export function selectChangedFiles(changedPaths, existingPaths) {
  * (bash) all escaped every syntax check. Classify the interpreter from the
  * first line; `env` forwards its own options (`-S`, `VAR=value`) before the
  * real command. Only interpreters with a matching grammar step classify —
- * python, node, and the POSIX shells `bash -n` parses (sh/bash/dash). zsh,
- * ksh, perl and friends return null and stay unchecked, exactly as before.
+ * python, node, perl, and the POSIX shells `bash -n` parses (sh/bash/dash).
+ * zsh, ksh and friends return null and stay unchecked, exactly as before.
  */
 export function shebangInterpreter(firstLine) {
   if (typeof firstLine !== 'string' || !firstLine.startsWith('#!')) return null;
@@ -83,6 +84,7 @@ export function shebangInterpreter(firstLine) {
   const base = command.split('/').pop() ?? '';
   if (/^python(?:\d+(?:\.\d+)*)?$/.test(base)) return 'python';
   if (/^node(?:js)?(?:\d+(?:\.\d+)*)?$/.test(base)) return 'node';
+  if (/^perl(?:\d+(?:\.\d+)*)?$/.test(base)) return 'perl';
   if (['sh', 'bash', 'dash'].includes(base)) return 'shell';
   return null;
 }
@@ -107,7 +109,7 @@ export function readFirstLine(root, path) {
  */
 export function selectShebangScripts(changedPaths, existingPaths, readLine) {
   const existing = new Set(existingPaths);
-  const buckets = { python: [], shell: [], node: [] };
+  const buckets = { python: [], shell: [], node: [], perl: [] };
   for (const path of [...new Set(changedPaths)].filter(Boolean).sort()) {
     if (!existing.has(path) || path.split('/').pop().includes('.')) continue;
     let kind = null;
@@ -268,6 +270,41 @@ export function runShellSyntaxCheck(root, files, spawn = spawnSync) {
     return false;
   }
   console.log('PASS shell syntax check');
+  return true;
+}
+
+/** Probe for a working perl; the secret-shape gate scrub.pl and its fixtures are Perl. */
+export function perlPreflight(spawn = spawnSync, subject = 'changed .pl files') {
+  const probe = spawn('perl', ['--version'], { encoding: 'utf8', timeout: 15000 });
+  if (probe.error || probe.signal || probe.status !== 0) {
+    return { ok: false, reason: `perl is unavailable or did not run; ${subject} cannot be syntax-checked locally` };
+  }
+  return { ok: true };
+}
+
+/**
+ * `perl -c` is the compile-only grammar step CI's secret-shape job already
+ * relies on when it runs scrub.pl: it parses and compiles the script —
+ * BEGIN-time `use` statements run, the main body never does — and exits
+ * non-zero on a syntax error. One spawn per file keeps the diagnostic
+ * pointed at the failing path, and the `./` prefix keeps a dash-leading
+ * filename from parsing as perl switches, the same convention the patch
+ * check uses for `git apply`.
+ */
+export function runPerlSyntaxCheck(root, files, spawn = spawnSync) {
+  for (const path of files) {
+    const result = spawn('perl', ['-c', `./${path}`], {
+      cwd: root, encoding: 'utf8', timeout: 120000,
+    });
+    if (result.error || result.signal || result.status !== 0) {
+      if (result.stdout) console.log(result.stdout.trimEnd());
+      if (result.stderr) console.error(result.stderr.trimEnd());
+      if (result.error) console.error(result.error.message);
+      console.log(`FAIL perl syntax check: ${path}`);
+      return false;
+    }
+  }
+  console.log('PASS perl syntax check');
   return true;
 }
 
@@ -1044,6 +1081,7 @@ function main() {
   let changed;
   let pythonFiles = [];
   let shellFiles = [];
+  let perlFiles = [];
   let nodeFiles = [];
   try {
     changed = collectChangedPaths(root);
@@ -1059,6 +1097,7 @@ function main() {
     const shebangScripts = selectShebangScripts(changed, existing, (path) => readFirstLine(root, path));
     pythonFiles = [...new Set([...selection.pythonFiles, ...shebangScripts.python])];
     shellFiles = [...new Set([...selection.shellFiles, ...shebangScripts.shell])];
+    perlFiles = [...new Set([...selection.perlFiles, ...shebangScripts.perl])];
     nodeFiles = shebangScripts.node;
     console.log('PASS file selection');
     const emptyTests = emptyChangedTests(existing.map((path) => resolve(root, path)));
@@ -1149,6 +1188,16 @@ function main() {
     if (!shell.ok) {
       console.log(`SKIP shell syntax check: ${shell.reason}`);
     } else if (!runShellSyntaxCheck(root, shellFiles)) {
+      process.exitCode = 1;
+    }
+  }
+  if (perlFiles.length === 0) {
+    console.log('PASS perl syntax check skipped: no perl change');
+  } else {
+    const perl = perlPreflight();
+    if (!perl.ok) {
+      console.log(`SKIP perl syntax check: ${perl.reason}`);
+    } else if (!runPerlSyntaxCheck(root, perlFiles)) {
       process.exitCode = 1;
     }
   }
