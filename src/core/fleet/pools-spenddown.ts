@@ -15,8 +15,8 @@ import type { QueueSupplyV1 } from './queue-supply.js';
 export const SPENDDOWN_SCHEMA = 'pools.spenddown.v1';
 export const SPENDDOWN_PATH = '/api/app/pools/spenddown';
 
-/** on-pace and under are the two good-to-know cases; over runs dry early; drained is empty now; unknown has no reading. */
-export type SpendDownState = 'on-pace' | 'under' | 'over' | 'drained' | 'unknown';
+/** on-pace and under are the two good-to-know cases; idle is a freshly refilled pool whose lane has queued rows but nothing running; over runs dry early; drained is empty now; unknown has no reading. */
+export type SpendDownState = 'on-pace' | 'under' | 'idle' | 'over' | 'drained' | 'unknown';
 
 export interface SpendDownRow {
   id: string;
@@ -31,7 +31,7 @@ export interface SpendDownRow {
   projected_at_reset: number | null;
   /** When the pool runs dry before its reset at this burn; null otherwise. */
   projected_empty_at: string | null;
-  /** The whole story in plain words: "on pace", "will leave 12% unused: add work", "drained until Fri 6 PM", "no reading". */
+  /** The whole story in plain words: "spending on pace", "refilled, lane idle", "behind: will waste ~12%", "exhausted until Fri 6 PM", "unknown". */
   verdict: string;
   /** Hours until the reset, one decimal; null when the reset is unknown or already passed. */
   resets_in_h: number | null;
@@ -43,6 +43,12 @@ export interface SpendDownRow {
   reason: string | null;
   /** Hours of work queued for this pool: ready jobs times the pool's recent median job time. 0 for an empty queue; null when the queue or the job times are unknown. Absent on older payloads. */
   queued_hours?: number | null;
+  /** Jobs running on the pool's lane right now, as the dispatcher last reported them; null when unreported. Absent on older payloads. */
+  running?: number | null;
+  /** Slots the lane is allowed to run; null when unreported. Absent on older payloads. */
+  target?: number | null;
+  /** Rows waiting in the ready queue for this pool's lane; 0 for an empty queue; null when the queue could not be read. Absent on older payloads. */
+  queued_rows?: number | null;
   /** "sign-in" when the lane is held waiting for a sign-in (the verdict then says "blocked: sign-in"); null otherwise. Absent on older payloads. */
   blocked?: 'sign-in' | null;
   /** The one step that clears a block, in plain words; null when not blocked. */
@@ -77,9 +83,17 @@ function ageText(min: number): string {
   return min < 60 ? `${min} min old` : min < 2880 ? `${Math.round(min / 60)} h old` : `${Math.round(min / 1440)} d old`;
 }
 
-function stateOf(row: PoolRow): SpendDownState {
+/** A pool this unused and this early in its window has just refilled; past either line an idle lane is just behind. */
+export const REFILLED_MAX_USED_PCT = 10;
+export const REFILLED_MAX_ELAPSED_PCT = 25;
+
+/** Rows are waiting, the lane is open and nothing is running. Unreported slots or queue never count as idle. */
+const laneIdle = (row: PoolRow, queued: number | null): boolean => row.held !== true && row.running === 0 && queued !== null && queued > 0;
+
+function stateOf(row: PoolRow, queued: number | null): SpendDownState {
   if (row.usedPct === null) return 'unknown';
   if (row.verdict === 'fully used' || row.usedPct >= 100) return 'drained';
+  if (laneIdle(row, queued) && row.usedPct <= REFILLED_MAX_USED_PCT && (row.elapsedPct === null || row.elapsedPct <= REFILLED_MAX_ELAPSED_PCT)) return 'idle';
   if (row.verdict === 'slow down') return 'over';
   if (row.verdict === 'add work') return 'under';
   return row.verdict === 'on pace' ? 'on-pace' : 'unknown';
@@ -87,13 +101,14 @@ function stateOf(row: PoolRow): SpendDownState {
 
 function verdictOf(row: PoolRow, state: SpendDownState, ageMin: number | null): string {
   switch (state) {
-    case 'on-pace': return 'on pace';
-    case 'under': return `will leave ${Math.round(row.projectedUnusedPct ?? 0)}% unused: add work`;
+    case 'on-pace': return 'spending on pace';
+    case 'idle': return 'refilled, lane idle';
+    case 'under': return `behind: will waste ~${Math.round(row.projectedUnusedPct ?? 0)}%`;
     case 'over': return `will run out ${row.projectedEmptyAt === null ? 'early' : `about ${dayAndHour(row.projectedEmptyAt)}`}: slow down`;
-    case 'drained': return row.resetAt === null ? 'drained' : `drained until ${dayAndHour(row.resetAt)}`;
+    case 'drained': return row.resetAt === null ? 'exhausted' : `exhausted until ${dayAndHour(row.resetAt)}`;
     case 'unknown':
       if (row.usedPct === null && ageMin !== null && row.reason?.startsWith('no reading since')) return `unknown: no fresh reading (${ageText(ageMin)})`;
-      return row.usedPct === null ? 'no reading' : 'no pace yet: not enough readings';
+      return row.usedPct === null ? 'unknown: no reading' : 'unknown: not enough readings for a pace';
   }
 }
 
@@ -107,35 +122,41 @@ export function queuedHours(ready: number | null | undefined, medianMin: number 
 export function buildSpendDown(view: Pick<PoolsViewV1, 'pools' | 'generatedAt'>, extras: SpendDownExtras = {}): SpendDownV1 {
   const nowMs = Date.parse(view.generatedAt);
   const pools = view.pools.map((row): SpendDownRow => {
-    const state = stateOf(row);
+    const ready = extras.supply?.pools.find(p => p.id === row.id)?.ready ?? null;
+    const state = stateOf(row, ready);
     const asOfMs = row.asOf === null ? NaN : Date.parse(row.asOf);
     const ageMin = Number.isFinite(asOfMs) && Number.isFinite(nowMs) && asOfMs <= nowMs ? Math.floor((nowMs - asOfMs) / 60_000) : null;
     const resetMs = row.resetAt === null ? NaN : Date.parse(row.resetAt);
     const resetsIn = Number.isFinite(resetMs) && Number.isFinite(nowMs) && resetMs > nowMs ? Math.round((resetMs - nowMs) / 360_000) / 10 : null;
     const fully = state === 'drained';
     const fix = signInFix(row, extras.heldReasons);
-    const ready = extras.supply?.pools.find(p => p.id === row.id)?.ready;
     return {
       id: row.id, label: poolLabel(row.id), state, used_frac: frac(row.usedPct), reset_at: row.resetAt,
       even_pace_frac: frac(row.elapsedPct),
       projected_at_reset: fully ? 1 : row.projectedUnusedPct === null ? null : frac(100 - row.projectedUnusedPct),
       projected_empty_at: row.projectedEmptyAt, verdict: fix === null ? verdictOf(row, state, ageMin) : 'blocked: sign-in', resets_in_h: resetsIn, as_of: row.asOf, reading_age_min: ageMin, reason: row.usedPct === null ? row.reason ?? 'no reading' : row.reason,
+      running: row.running, target: row.target, queued_rows: ready,
       queued_hours: queuedHours(ready, extras.medianJobMinByLane?.[row.id]), blocked: fix === null ? null : 'sign-in', blocked_fix: fix,
     };
   });
   return { schema: SPENDDOWN_SCHEMA, generated_at: view.generatedAt, pools };
 }
 
-/** `phm pools spenddown --text`: one line per pool, "Claude: 72% used, 61% would be even, ends near 88%: will leave 12% unused: add work". */
+/** `phm pools spenddown --text`: one line per pool, "Claude: 72% used, even pace 61%, ends near 88%: behind: will waste ~12%; 2 running of 3 slots, 5 queued". */
 export function formatSpendDownText(data: SpendDownV1): string {
   if (data.pools.length === 0) return 'No plans reported.';
   const pct = (value: number | null): string => value === null ? 'unknown' : `${Math.round(value * 100)}%`;
   return data.pools.map(row => {
-    const queued = row.queued_hours === undefined ? '' : `; ${queuedText(row.queued_hours)}`;
+    const queued = `${row.running === undefined ? '' : `; ${slotsText(row.running, row.target ?? null, row.queued_rows ?? null)}`}${row.queued_hours === undefined ? '' : `; ${queuedText(row.queued_hours)}`}`;
     const fix = row.blocked_fix ? ` (${row.blocked_fix})` : '';
     return (row.used_frac === null ? `${row.label}: ${row.verdict}${fix}`
       : `${row.label}: ${pct(row.used_frac)} used, even pace ${pct(row.even_pace_frac)}, ends near ${pct(row.projected_at_reset)}: ${row.verdict}${fix}`) + queued;
   }).join('\n');
+}
+
+/** "2 running of 3 slots, 5 queued"; an unreported figure reads "unknown", never 0. */
+export function slotsText(running: number | null, target: number | null, queued: number | null): string {
+  return `${running === null ? 'running unknown' : `${running} running${target === null ? '' : ` of ${target} slots`}`}, ${queued === null ? 'queue unknown' : `${queued} queued`}`;
 }
 
 /** "3.5 h queued", "nothing queued", "queued: unknown". */
