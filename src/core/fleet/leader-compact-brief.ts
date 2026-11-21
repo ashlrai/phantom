@@ -91,6 +91,17 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now()) {
   return brief;
 }
 export type CompactLeaderBrief = Awaited<ReturnType<typeof readCompactBrief>>;
+/** Read the tick's bounded snapshot without gathering sources or writing state. */
+export async function readStoredCompactBrief(runsDir: string): Promise<CompactLeaderBrief | null> {
+  const source = await readSource(join(runsDir, LEADER_COMPACT_FILE), 8192, false);
+  if (source.state !== 'healthy') return null;
+  try {
+    const brief = JSON.parse(source.text) as CompactLeaderBrief;
+    return brief?.schema === 'leader.compact-brief.v1' && ['ready', 'no data'].includes(brief.state)
+      && brief.sources && typeof brief.sources === 'object'
+      && [brief.lanes, brief.pools, brief.families, brief.attention, brief.main].every(Array.isArray) ? brief : null;
+  } catch { return null; }
+}
 export async function writeCompactBrief(runsDir: string, now = Date.now(), file = join(runsDir, LEADER_COMPACT_FILE)) {
   const brief = await readCompactBrief(runsDir, now);
   await mkdir(join(file, '..'), { recursive: true, mode: 0o700 });
