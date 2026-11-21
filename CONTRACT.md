@@ -2412,7 +2412,15 @@ excluded; `from` filters by sender through identity-label matching,
 and `priority` keeps only posts stamped with that exact P0..P3 band;
 `matched: true` scans the whole retained store and returns `matched`, the
 count of every filter-matched post, while `messages` still caps at
-`limit`; `nextCursor` covers every scanned row, a missing registry answers
+`limit`; claimable work and worker-handoff posts additionally carry
+`held`/`holder` — the same hold evidence `readAgentInbox` and
+`readBusEnvelopeById` report, read once per page, `held` null when a hold
+store cannot be read, never proven free — and bodies that declare a
+`jobId` (`work.post`, `work.status`, `work.result` or `wake`)
+additionally carry `job` (`BusEnvelopeLookupJob`), the live feed state of
+the cited job resolved through the same one-read-per-page annotation
+`readAgentInbox` applies; `nextCursor` covers every scanned row, a missing
+registry answers
 `unknown-channel`, and an unreadable registry or store answers
 `unavailable`/`retryable`, never an empty page passed off as history),
 `readBusEnvelopeById(id, options?)` (one retained envelope by its wire id —

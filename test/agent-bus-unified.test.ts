@@ -258,6 +258,73 @@ describe('channel reads', () => {
   });
 });
 
+describe('channel read live evidence', () => {
+  it('annotates claimable work and feed-citing posts with the same evidence inbox reports', async () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    const claimable = (id: string, to: string): void => {
+      expect(appendBusInbox({ id, from: 'agent:nova', to, priority: 'P2', ttl: 120_000,
+        body: { kind: 'work', text: `fake work ${id}` } }, { root: options.root, now: options.now }).status).toBe('posted');
+    };
+    claimable('ch-free', 'group:release:general');
+    claimable('ch-taken', 'group:release:deploy');
+    claimable('ch-coord', 'group:release:deploy');
+    // A worker handoff on the channel address is claimable evidence too.
+    expect(appendBusInbox({ id: 'ch-ho', from: 'agent:nova', to: 'group:release:general', priority: 'P1', ttl: 120_000,
+      body: { kind: 'worker-handoff', taskId: 'RQ-CH-H1', prompt: 'take over' } },
+      { root: options.root, now: options.now }).status).toBe('posted');
+    // Free, message-id-claimed and coordination-held coverage in one page.
+    expect(mutateBusWorkClaim({ action: 'acquire', id: 'ch-taken', owner: 'nova', leaseMs: 60_000,
+      root: options.root }).status).toBe('acquired');
+    expect(acquireCoordination({ root: options.root, origin: 'resource', key: 'queue:ch-coord',
+      owner: 'atlas', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000, sourceId: 'ch-coord-src',
+      now: options.clock.now, started: new Date(options.clock.now).toISOString() }).status).toBe('acquired');
+    // A work.post announcement on the channel: the feed projects the job live.
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-CH-1', title: 'Channel job', repo: 'ashlrai/phantom',
+      claimKeys: ['repo:ashlrai/phantom'], to: 'group:release:general', id: 'ch-post' }, options))
+      .toMatchObject({ status: 'posted' });
+    // Plain channel chatter carries no evidence fields at all.
+    await postChannelMessage({ from: 'nova', channel: 'release', text: 'just chat', id: 'ch-note' }, options);
+
+    const page = readAgentChannel('release', {}, options);
+    if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+    const byId = new Map(page.messages.map(m => [m.envelope.id, m]));
+    expect(byId.get('ch-free')).toMatchObject({ held: false, holder: null });
+    expect(byId.get('ch-taken')).toMatchObject({ held: true, holder: 'nova' });
+    expect(byId.get('ch-coord')).toMatchObject({ held: true, holder: 'atlas' });
+    expect(byId.get('ch-ho')).toMatchObject({ held: false, holder: null });
+    expect(byId.get('ch-post')).toMatchObject({ job: { jobId: 'RQ-CH-1', feed: 'ok',
+      job: { id: 'RQ-CH-1', status: 'queued' } } });
+    expect(byId.get('ch-note')).not.toHaveProperty('held');
+    expect(byId.get('ch-note')).not.toHaveProperty('holder');
+    expect(byId.get('ch-note')).not.toHaveProperty('job');
+    // A work.post is feed-cited, not claimable: no held evidence on it.
+    expect(byId.get('ch-post')).not.toHaveProperty('held');
+  });
+
+  it('reports held unknown on channel rows when a hold store cannot be read', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    createAgentChannel({ name: 'release', createdBy: 'atlas' }, options);
+    expect(appendBusInbox({ id: 'ch-unk', from: 'agent:atlas', to: 'group:release:general',
+      priority: 'P2', ttl: 120_000, body: { kind: 'work', text: 'fake work' } },
+      { root: options.root, now: options.now }).status).toBe('posted');
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'chat', id: 'ch-unk-note' }, options);
+    const claimsDir = join(options.root!, 'bus-work-claims');
+    mkdirSync(claimsDir, { recursive: true });
+    const claimsFile = join(claimsDir, 'claims.json');
+    writeFileSync(claimsFile, 'not json');
+    chmodSync(claimsFile, 0o600);
+    const page = readAgentChannel('release', {}, options);
+    if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+    const byId = new Map(page.messages.map(m => [m.envelope.id, m]));
+    expect(byId.get('ch-unk')).toMatchObject({ held: null, holder: null });
+    expect(byId.get('ch-unk-note')).not.toHaveProperty('held');
+  });
+});
+
 describe('thread-filtered reads', () => {
   it('narrows inbox and channel pages to one v2 thread label', async () => {
     const options = setup();
