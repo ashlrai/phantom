@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runAgentsConversationsCli } from '../src/cli/agents-conversations.js';
-import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
+import { createAgentChannel, registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { buildConversations, filterConversations, formatAgentConversationsText, plainAge, readAgentConversations,
   type ConversationMessage } from '../src/core/fleet/agent-conversations.js';
@@ -82,6 +82,21 @@ describe('conversations from messages', () => {
     expect(filterConversations(list, { agent: 'query-label' })).toEqual([]);
     // A resolver that proves nothing for the query changes nothing.
     expect(filterConversations(list, { agent: 'one' }, () => undefined).map(c => c.id)).toEqual(['a']);
+  });
+
+  it('waitingOn keeps waiting threads through the caller predicate, literal label without one', () => {
+    const list = buildConversations([say('a', 'leader', 'claude', 0, { kind: 'ask' }), say('b', 'grok', 'zai', 1, { kind: 'status' })], NOW);
+    const seen: [string, string][] = [];
+    const match = (on: string, from: string) => { seen.push([on, from]); return on === 'claude'; };
+    // Only waiting threads invoke the predicate — 'b' is done, so it never asks.
+    expect(filterConversations(list, { waitingOn: 'claude' }, undefined, match).map(c => c.id)).toEqual(['a']);
+    expect(seen).toEqual([['claude', 'leader']]);
+    // Without a predicate the literal waiting.on label matches, case aside.
+    expect(filterConversations(list, { waitingOn: 'CLAUDE' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { waitingOn: 'agent:claude' })).toEqual([]);
+    // The predicate composes with the other filters.
+    expect(filterConversations(list, { waitingOn: 'claude', agent: 'grok' }, undefined, match)).toEqual([]);
+    expect(filterConversations(list, { waitingOn: 'claude', agent: 'leader' }, undefined, match).map(c => c.id)).toEqual(['a']);
   });
 
   it('a thread reports every job its messages name and --job keeps whole threads', () => {
@@ -205,6 +220,74 @@ describe('v2 work threads', () => {
     expect(printed.conversations.map((c: { id: string }) => c.id)).toEqual(['job:RQ-PEER9']);
     expect(await run(['--job', 'has space'])).toBe(2);
     expect(errors.pop()).toContain('--job takes a job id');
+  });
+});
+
+describe('--waiting-on', () => {
+  // a1 waits on claude inside a job thread; a5/a6 wait on the eng channel —
+  // a6 was sent by claude itself, so claude never owes it; a7 is already
+  // answered; a4 is done.
+  const WAIT_ON: [number, string, string, string, Record<string, unknown>][] = [
+    [T0, 'a1', 'leader', 'agent:claude', { kind: 'note', text: 'can you review?', thread: 'job:RQ-J1' }],
+    [T0 + MIN, 'a2', 'agent:grok', 'agent:zai', { kind: 'note', text: 'status?' }],
+    [T0 + 2 * MIN, 'a3', 'agent:claude', 'leader', { kind: 'note', text: 'question for you?' }],
+    [T0 + 3 * MIN, 'a4', 'leader', 'agent:claude', { kind: 'note', text: 'fyi only' }],
+    [T0 + 4 * MIN, 'a5', 'agent:peer', 'group:eng:general', { kind: 'note', text: 'deploy window?' }],
+    [T0 + 5 * MIN, 'a6', 'agent:claude', 'group:eng:general', { kind: 'note', text: 'claude asks the room?' }],
+    [T0 + 6 * MIN, 'a7', 'leader', 'agent:claude', { kind: 'note', text: 'one more?' }],
+    [T0 + 7 * MIN, 'a8', 'agent:claude', 'leader', { kind: 'note', text: 'answer', replyTo: 'a7' }],
+  ];
+  function registered() {
+    const root = bus(WAIT_ON);
+    expect(registerAgentIdentity({ handle: 'claude', aliases: ['claude-7'] }, { root }).status).toBe('created');
+    expect(registerAgentIdentity({ handle: 'atlas' }, { root }).status).toBe('created');
+    expect(registerAgentIdentity({ handle: 'zai' }, { root }).status).toBe('created');
+    expect(createAgentChannel({ name: 'eng', createdBy: 'atlas', members: ['claude'] }, { root }).status).toBe('created');
+    return root;
+  }
+  const owed = (root: string, waitingOn: string) =>
+    readAgentConversations({ waitingOn }, { root, now: () => NOW }).conversations!.map(c => c.id);
+
+  it('keeps the waiting threads one agent owes a reply on, under any of its labels', () => {
+    const root = registered();
+    // The direct ask and the channel ask claude did not send; its own channel
+    // ask (a6) never counts — you cannot owe yourself a reply.
+    for (const ref of ['claude', 'claude-7', 'agent:claude']) expect(owed(root, ref)).toEqual(['job:RQ-J1', 'a5']);
+    // atlas is an eng member that sent neither channel ask.
+    expect(owed(root, 'atlas')).toEqual(['a5', 'a6']);
+    expect(owed(root, 'zai')).toEqual(['a2']);
+    // An unregistered ref keeps the literal-label match.
+    expect(owed(root, 'leader')).toEqual(['a3']);
+    expect(owed(root, 'nobody')).toEqual([]);
+  });
+
+  it('without a registry the match stays on the literal waiting.on label', () => {
+    const root = bus(WAIT_ON);
+    // No channel knowledge: only the bare-label waits denote claude.
+    expect(owed(root, 'claude')).toEqual(['job:RQ-J1']);
+    expect(owed(root, 'agent:claude')).toEqual(['job:RQ-J1']);
+    expect(owed(root, 'group:eng:general')).toEqual(['a5', 'a6']);
+  });
+
+  it('composes with --agent and --job', () => {
+    const root = registered();
+    const read = (query: Parameters<typeof readAgentConversations>[0]) =>
+      readAgentConversations(query, { root, now: () => NOW }).conversations!.map(c => c.id);
+    expect(read({ waitingOn: 'claude', agent: 'leader' })).toEqual(['job:RQ-J1']);
+    expect(read({ waitingOn: 'claude', agent: 'peer' })).toEqual(['a5']);
+    expect(read({ waitingOn: 'claude', job: 'RQ-J1' })).toEqual(['job:RQ-J1']);
+    expect(read({ waitingOn: 'claude', job: 'RQ-J2' })).toEqual([]);
+    expect(read({ waitingOn: 'claude', waitingOnly: true })).toEqual(['job:RQ-J1', 'a5']);
+  });
+
+  it('the CLI --waiting-on prints that JSON and refuses a missing value', async () => {
+    const root = registered(), lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    expect(await run(['--waiting-on', 'claude', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['job:RQ-J1', 'a5']);
+    expect(await run(['--waiting-on'])).toBe(2);
+    expect(await run(['--waiting-on', '--json'])).toBe(2);
+    expect(errors.pop()).toContain('Usage: phm agents conversations');
   });
 });
 
@@ -343,6 +426,11 @@ describe('phm agents conversations --json', () => {
     const scoped = await call(`${AGENT_CONVERSATIONS_PATH}?job=RQ-1`);
     expect(scoped.status).toBe(200);
     expect(scoped.body.conversations).toEqual([]);
+    const owed = await call(`${AGENT_CONVERSATIONS_PATH}?waitingOn=zai`);
+    expect(owed.status).toBe(200);
+    expect(owed.body.conversations.map((c: { id: string }) => c.id)).toEqual(['m3']);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?waitingOn=`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?waitingOn=a&waitingOn=b`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?job=`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?job=a&job=b`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?extra=1`)).status).toBe(400);

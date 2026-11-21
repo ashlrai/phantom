@@ -70,7 +70,7 @@ export interface AgentConversations {
   waiting: number | null;
   skipped: number;
 }
-export interface ConversationQuery { agent?: string; waitingOnly?: boolean; job?: string }
+export interface ConversationQuery { agent?: string; waitingOnly?: boolean; job?: string; waitingOn?: string }
 
 /** Whether a routing label is a known agent (the leader, a lane, a job, a lane's numbered agent; a topic is not) and its map node. */
 export type PlaceAgent = (name: string, lane: string | null) => { known: boolean; node: string | null };
@@ -132,15 +132,29 @@ export function groupConversations(messages: readonly ConversationMessage[], now
  * `identityOf`, a participant also matches when its label and the query
  * resolve to the same registered identity, so one agent's handle, alias and
  * address never split the filter; an unresolvable side changes nothing.
+ * `waitingOn` keeps the waiting threads one agent owes a reply on: only a
+ * `state:'waiting'` thread whose `waiting.on` the caller's `waitingOnMatch`
+ * predicate accepts for its latest sender qualifies — `readAgentConversations`
+ * builds that predicate from the identity registry (the agent's own labels,
+ * names resolving to its identity, `group:<channel>:<topic>` addresses of
+ * channels it belongs to, minus threads whose waiting message the agent
+ * itself sent), so an unresolvable ref or unreadable registry keeps the
+ * literal `waiting.on` match and never widens. Without a predicate only the
+ * literal `waiting.on` label matches.
  */
 export function filterConversations(list: readonly Conversation[], query: ConversationQuery,
-  identityOf?: AgentIdentityKeyFor): Conversation[] {
+  identityOf?: AgentIdentityKeyFor, waitingOnMatch?: (on: string, from: string) => boolean): Conversation[] {
   const agent = query.agent?.toLowerCase();
   const key = agent !== undefined && identityOf ? identityOf(query.agent!) : undefined;
+  const owed = query.waitingOn?.toLowerCase();
   return list.filter(c => (query.job === undefined || c.jobs.includes(query.job))
     && (!agent || c.participants.some(p => p.name.toLowerCase() === agent
       || (key !== undefined && identityOf?.(p.name) === key)))
-    && (!query.waitingOnly || c.state === 'waiting'));
+    && (!query.waitingOnly || c.state === 'waiting')
+    && (query.waitingOn === undefined || (c.waiting !== null && (
+      waitingOnMatch !== undefined
+        ? waitingOnMatch(c.waiting.on, c.messages[c.messages.length - 1]?.from ?? '')
+        : c.waiting.on.toLowerCase() === owed))));
 }
 
 /** `3m`, `2h 5m`, `1d 4h`: one plain duration. */
