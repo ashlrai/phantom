@@ -69,7 +69,15 @@ new state:
   belongs to, minus the identity's own channel posts — is eligible; a `--to`
   that names no identity, membership in no channel, or an unreadable registry,
   keeps exact-label matching. It returns
-  `{status:'acquired', receipt, token, leaseUntil}` or `{status:'empty'}`.
+  `{status:'acquired', receipt, token, leaseUntil}` or
+  `{status:'empty', candidates, held}`. `candidates` counts every live
+  claimable receipt the bounded scan found addressed to `--to`, and `held`
+  counts how many answered `conflict` — a live claim on the message id or an
+  overlapping coordination key, possibly the requester's own. `candidates -
+  held` failed acquire for other reasons (completed, expired, lost, missing,
+  or a receipt that changed mid-claim); expired receipts never reach the
+  scan. Both are observed counts, so `empty` distinguishes a dry well
+  (`candidates: 0`) from work that exists but is held, without a second read.
 - `claim acquire --id <message-id> --owner <label> --lease-ms <n>` claims one
   message by ID. A live lease answers `conflict` to every other claimant.
 - `claim renew|release|complete --id <message-id> --token <token>` act only
