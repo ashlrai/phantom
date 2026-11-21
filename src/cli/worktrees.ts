@@ -60,7 +60,7 @@ no live job and not kept on purpose.
   --reap --apply    Remove them with git worktree remove (never --force).
   --reap --status   Show the scheduled reap: on or off, last run, removed, skipped, freed.
 The fleet self-tick runs this reap on its own when there are more than 40
-worktrees: up to 25 removals, once per 30 minutes. Create queue/worktree-reap.off
+worktrees: up to 40 removals, once per 30 minutes. Create queue/worktree-reap.off
 in the runs directory to turn it off.`;
 
 type Output = { log: (text: string) => void; error: (text: string) => void };

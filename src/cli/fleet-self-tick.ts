@@ -280,7 +280,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       return { reason: `empty-stop failed: ${error instanceof Error ? error.message.slice(0, 120) : 'unknown error'}` };
     }
   };
-  // Above 40 job worktrees, run the safe reap (25 removals, once per 30 minutes; off with queue/worktree-reap.off). Never fails the tick.
+  // Above 40 job worktrees, run the safe reap (40 removals, once per 30 minutes; off with queue/worktree-reap.off). Never fails the tick.
   const runWorktreeReapStage = async (): Promise<unknown> => {
     if (!deps.worktreeReap && root !== join(home, '.ashlr-runs')) return { state: 'skipped', reason: 'custom-runs-dir-no-worktree-reap' };
     try {
