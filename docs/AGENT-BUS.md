@@ -997,7 +997,14 @@ unresolvable `--to` or an unreadable registry keeps exact-label matching. `phm c
 `--from` and `--exclude-from` address filters the same way, once per read:
 a filter naming any label of a registered identity matches every label of
 that identity, and an unresolvable label or an unreadable registry keeps
-exact-label matching.
+exact-label matching. `--job <id>` narrows either verb to envelopes naming
+one job — a `work.post`/`work.status`/`work.result`/`wake` body declaring
+that `jobId`, a `worker-handoff` assigning that fleet job id through
+`taskId`, or a `note`/`context` body carrying the `job:<id>` thread label —
+the same `busBodyJobMatch` rule `agents bus inbox --job` and
+`channel read --job` apply, so a raw label read (the `leaders` sink that
+work announcements default to included) answers one job's traffic without
+paging the whole stream.
 
 ### 4. Work feed
 

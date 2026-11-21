@@ -2384,7 +2384,8 @@ with that exact P0..P3 band — the same match `comms bus read --priority`
 applies, and `kind` keeps only one delivery kind — `dm`, `channel`,
 `handoff` or `legacy`, the same kind each inbox row reports; `job` keeps
 only mail that names one job — a `work.post`/`work.status`/`work.result`/`wake`
-body declaring that `jobId`, or a `note`/`context` body carrying the
+body declaring that `jobId`, a `worker-handoff` assigning that fleet job id
+through `taskId`, or a `note`/`context` body carrying the
 `job:<id>` v2 thread label, the same bucket the messages and conversations
 projections group under `job:<id>`; `matched: true` scans the whole retained store
 and returns `matched`, the count of every filter-matched row, while
@@ -2433,7 +2434,7 @@ list), `readAgentChannel(name, {topic, from, thread, priority, job, matched, aft
 excluded; `from` filters by sender through identity-label matching,
 `thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `priority` keeps only posts stamped with that exact P0..P3 band, and `job`
-keeps only posts that name one job — the same `inboxJobMatch` rule
+keeps only posts that name one job — the same `busBodyJobMatch` rule
 `readAgentInbox`'s `job` applies: a `work.post`/`work.status`/`work.result`/`wake`
 body declaring that `jobId`, a `worker-handoff` assigning that fleet job id
 through `taskId`, or a `note`/`context` body carrying the `job:<id>` v2
@@ -2489,6 +2490,10 @@ scrubbed single-line text, anything else as a secret-scrubbed raw JSON
 render clipped to 512 characters. `workFeedJobId(body)` returns the
 `jobId` a feed-citing body (`work.post`, `work.status`, `work.result` or
 `wake`) declares, undefined for every other kind, and
+`busBodyJobMatch(body, job)` is the shared job-scoped read rule — a
+feed-citing `jobId`, a `worker-handoff` `taskId`, or the `job:<id>` thread
+label — that `readAgentInbox`, `readAgentChannel` and `comms bus
+read`/`watch --job` all apply, and
 `jobAnnotationFromFeed(feed, jobId)` maps one already-read
 `BusWorkFeedReadResult` to the `BusEnvelopeLookupJob` every citing read
 shares — the inbox page, `readBusEnvelopeById`, wake referents and the
