@@ -1108,6 +1108,39 @@ function parseLintFailures(log: string, repo: string | undefined): Failure[] {
   return out;
 }
 
+// The `ci` job's qualification lanes wrap the suite runs in
+// .github/scripts/ci-qualification-lane.mjs, which re-reads each Vitest
+// JSON report and refuses a case that passed only after a retry -- the
+// default reporter shows it green, so the step's only failure output is
+// this verdict on stderr:
+//   Test case passed only after a failed attempt (flaky): test/x.test.ts > suite title
+// `file` is the report's repo-relative module path (the script itself
+// rejects `..` and absolute paths); `names` is the JSON reporter's
+// space-joined ancestor titles plus the case title -- deliberately not
+// the default reporter's ` > ` chain, so the identity stays honest about
+// which evidence named it. It is not parenthesized, so a green master
+// module (`✓ file (N tests)`) resolves it like any vitest failure: a
+// one-off flake on an unaffected singleton becomes probable-flake and
+// rerun-failed, while a flake repeating across unaffected PRs -- or one
+// master itself prints -- groups shared-baseline for a stabilization
+// fix. Without this shape a flaky master leaves every open PR unknown
+// and queues nothing.
+const QUALIFICATION_FLAKY_MAX = 16;
+const QUALIFICATION_FLAKY_LINE = /^Test case passed only after a failed attempt \(flaky\): ((?:test|src\/web-ui)\/[^\s>]+\.test\.[cm]?[jt]sx?) > (.+)$/;
+
+function parseQualificationFlakyFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  for (const line of lines(log)) {
+    if (out.length >= QUALIFICATION_FLAKY_MAX) break;
+    const match = QUALIFICATION_FLAKY_LINE.exec(line);
+    if (match === null) continue;
+    const file = match[1]!, names = clean(match[2]!);
+    if (posix.normalize(file) !== file || file.includes('..') || posix.isAbsolute(file)) continue;
+    out.push({ file, names, testId: `${file} > ${names}`, excerpt: clean(line) });
+  }
+  return out;
+}
+
 export function parseBaselineFailures(log: string, repo?: string, auditExceptions: readonly DependencyAuditException[] | null = []): Failure[] {
   const result: Failure[] = [];
   const typecheck = new Map<string, Failure>();
@@ -1190,6 +1223,10 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     result.push(failure);
   }
   for (const failure of parseLintFailures(log, repo)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseQualificationFlakyFailures(log)) {
     if (result.length >= 100) break;
     result.push(failure);
   }
