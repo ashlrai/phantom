@@ -6,8 +6,8 @@
  *
  * Writes that succeed also post one short inbox note ("[composer] /pause:
  * done") so the leaders see what Mason did. /drop, /open and /help are local, and
- * /status, /apps and the session commands (/who, /thread, /summary, /log) are
- * read-only, so they post nothing. /app is a write like the others.
+ * /status, /apps, /find and the session commands (/who, /thread, /summary, /log)
+ * are read-only, so they post nothing. /app is a write like the others.
  */
 import { pauseFleet, resumeFleet } from '../../../data/mutations.js';
 import { describeControlError } from '../autonomy/use-guarded-action.js';
@@ -21,6 +21,7 @@ import { normalizePaneId } from '../shell/dock-catalog.js';
 import { isLaneTargets } from '../ops/lane-targets-model.js';
 import { liveAppDeps, runAppCommand, runAppsCommand, type AppCommandDeps } from './composer-app-commands.js';
 import { commandArgError, helpLine, holdArgs, type ComposerCommandName } from './composer-commands.js';
+import { liveFindDeps, runFindCommand, type FindCommandDeps } from './composer-find-command.js';
 import { isSessionCommand, liveSessionDeps, runSessionCommand, type SessionCommandDeps } from './composer-session-commands.js';
 import { sendLeaderInboxMessage } from './leader-inbox-data.js';
 import { fetchLeaderStatusNow } from './leader-status-now.js';
@@ -45,6 +46,8 @@ export interface ComposerCommandDeps {
   session?: SessionCommandDeps;
   /** The reads and the one write behind /apps and /app; the live ones when left out. */
   apps?: AppCommandDeps;
+  /** The search behind /find; the live one when left out. */
+  find?: FindCommandDeps;
 }
 
 export const liveComposerDeps: ComposerCommandDeps = {
@@ -141,6 +144,7 @@ export async function runComposerCommand(command: ComposerCommand, deps: Omit<Co
   if (command.name === 'help') return helpLine();
   // Read only: no token gate, no inbox note.
   if (isSessionCommand(command.name)) return runSessionCommand({ name: command.name, arg: command.arg }, deps.session ?? liveSessionDeps);
+  if (command.name === 'find') return runFindCommand(command.arg, deps.find ?? liveFindDeps);
   if (command.name === 'apps') return runAppsCommand(deps.apps ?? liveAppDeps, deps.now());
   if (command.name === 'open') {
     const id = normalizePaneId(command.arg)!;
