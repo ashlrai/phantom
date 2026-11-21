@@ -36,7 +36,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // "did you mean" were blind to them (caught by cli-registry-drift).
   'verse', 'console', 'local-runtime',
   // V3.10 Track B: standing authority, the Leader, fleet mirrors.
-  'authority', 'leader', 'mirror',
+  'authority', 'leader', 'mirror', 'owner-live',
   // 3.11 cloud lane.
   'cloud',
   // 3.15 Devin lane.

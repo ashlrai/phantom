@@ -3388,6 +3388,13 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'owner-live': {
+        // Why each phone channel is on or off, and the one step that changes it (src/cli/fleet-owner-live.ts).
+        const { cmdOwnerLiveStatus } = await import('./fleet-owner-live.js');
+        process.exitCode = rest[0] === 'status' ? await cmdOwnerLiveStatus(rest.slice(1)) : (console.error('usage: phm owner-live status [--json]'), 2);
+        break;
+      }
+
       case 'mirror': {
         // V3.10: the fleet's own mirror clones under ~/.ashlr/fleet/mirrors —
         // list / add / sync / path / remove / reconcile (src/cli/mirror.ts).
