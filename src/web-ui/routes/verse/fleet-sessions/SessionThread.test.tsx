@@ -10,6 +10,7 @@ import { SessionsPane } from './SessionsPane.js';
 import { SessionThread, SessionThreadView } from './SessionThread.js';
 import { narrowSessionThread, replyRoute, replyText, routedRow, SESSION_THREAD_API, sourcesLine, threadFailure, THREAD_REPLY_MAX } from './session-thread-model.js';
 import { LIVE_SESSIONS_API } from './sessions-model.js';
+import { forgetThreadDrafts } from './thread-draft-store.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00Z');
 const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
@@ -39,7 +40,7 @@ function wire(over: Record<string, unknown> = {}, session: Record<string, unknow
 }
 const thread = (over?: Record<string, unknown>, session?: Record<string, unknown>) => narrowSessionThread(wire(over, session))!;
 
-beforeEach(() => { evictAll(); setMutationToken('a'.repeat(64)); });
+beforeEach(() => { evictAll(); forgetThreadDrafts(); setMutationToken('a'.repeat(64)); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); clearMutationToken(); });
 
 describe('session thread model', () => {

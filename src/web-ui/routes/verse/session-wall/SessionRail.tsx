@@ -9,7 +9,8 @@
  * two columns. Up, Down, Home and End move between rows, Enter opens, Esc
  * returns to the wall. Words in the wall's find box narrow this list too (the
  * open conversation always keeps its row), and a button above the rows opens
- * the next conversation that holds new messages.
+ * the next conversation that holds new messages. A row says "Draft" while words
+ * typed to its session wait unsent (ThreadDraftMark.tsx).
  */
 import { useEffect, useRef, type KeyboardEvent } from 'react';
 import { sessionAge } from '../../../../core/fleet/live-sessions.js';
@@ -17,6 +18,7 @@ import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 import { findEntries, STATE_WORD, wallHeadline, type SessionWallRead, type WallEntry } from './session-wall-model.js';
 import { nextUnseen, unseenCount, unseenSessions } from './wall-seen.js';
 import { TaskLine } from './WallTask.js';
+import { ThreadDraftMark } from '../fleet-sessions/ThreadDraftMark.js';
 import { RailVitalsLine } from './WallVitals.js';
 import { cardVitals } from './wall-vitals.js';
 import { steerMark } from './wall-steer.js';
@@ -109,6 +111,7 @@ export function SessionRail({ read, failed, openId, onPick, onClose, find = '', 
               {session.kind === 'worker' && session.lane !== 'unknown' && <ProviderBadge of={session.lane} iconOnly size={12} />}
               <strong className={styles.id}>{session.id}</strong>
               {unread > 0 && <span className={styles.fresh}>{unread} new</span>}
+              <ThreadDraftMark id={session.id} open={session.id === openId} />
               <span className={styles.muted}>{session.lastMessageAgeSeconds === null ? 'unknown' : sessionAge(session.lastMessageAgeSeconds)}</span>
             </span>
             <TaskLine task={entry.task} place="rail" />

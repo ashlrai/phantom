@@ -10,6 +10,7 @@ import { SessionWallPane, WallView } from './SessionWall.js';
 import { narrowSessionWall, replyLine, wallHeadline } from './session-wall-model.js';
 import './session-wall.pane.js';
 import { forgetWallSeen } from './wall-seen.js';
+import { forgetThreadDrafts, setThreadDraft } from '../fleet-sessions/thread-draft-store.js';
 import { requestWallSession, takeRequestedWallSession } from './wall-selection.js';
 
 const AT = '2026-11-18T12:00:00.000Z';
@@ -60,7 +61,7 @@ const host = () => ({ openPane: vi.fn() });
 const card = (id: string) => screen.getByRole('button', { name: new RegExp(`^${id}, `) });
 
 let viewport: ViewportMock | null = null;
-beforeEach(() => { evictAll(); forgetWallSeen(); setMutationToken('a'.repeat(64)); takeRequestedWorkerLogJob(); takeRequestedWallSession(); });
+beforeEach(() => { evictAll(); forgetWallSeen(); forgetThreadDrafts(); setMutationToken('a'.repeat(64)); takeRequestedWorkerLogJob(); takeRequestedWallSession(); });
 afterEach(() => { cleanup(); viewport?.restore(); viewport = null; vi.unstubAllGlobals(); vi.restoreAllMocks(); clearMutationToken(); });
 
 it('registers a session-independent Conversations pane beside the Leader chat', () => {
@@ -324,4 +325,47 @@ it('narrows defensively: bad entries dropped, unsafe links removed, unknown kept
   render(<WallView read={narrowSessionWall(threads({ threads: [], counts: { sessions: 0 } }))!} onOpen={() => {}} />);
   expect(screen.getByRole('status').textContent).toBe('No agent sessions right now. Each one appears here as the fleet starts it.');
   expect(screen.queryByRole('group', { name: 'Show sessions by state' })).toBeNull();
+});
+
+describe('words typed to a session and not sent', () => {
+  const row = (id: string) => document.querySelector(`button[data-rail="${id}"]`)!;
+  const describedBy = (button: Element) => (button.getAttribute('aria-describedby') ?? '').split(' ').map(id => document.getElementById(id)?.textContent);
+
+  it('stay with that session as conversations change, and mark its row and its card "Draft"', async () => {
+    serve(() => json(threads()));
+    render(<SessionWallPane visible host={host() as never} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'RQ-A, running' }));
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Message RQ-A' }), { target: { value: 'half a thought' } });
+    // Its own row says nothing while its reply box is on screen.
+    expect(row('RQ-A').querySelector('[data-draft-mark]')).toBeNull();
+
+    // Another conversation opens in its place: an empty box, and the row left behind says a draft waits there.
+    fireEvent.click(row('RQ-DONE'));
+    const other = await screen.findByRole('textbox', { name: 'Message RQ-DONE' }) as HTMLTextAreaElement;
+    expect(other.value).toBe('');
+    expect(row('RQ-A').querySelector('[data-draft-mark]')!.textContent).toBe('Draft');
+    expect(row('RQ-DONE').querySelector('[data-draft-mark]')).toBeNull();
+
+    // Back on the cards, the card says so too, and reads it out with the rest of what describes it.
+    fireEvent.click(screen.getByRole('button', { name: 'Back to every conversation' }));
+    const a = await screen.findByRole('button', { name: 'RQ-A, running' });
+    expect(a.querySelector('[data-draft-mark="RQ-A"]')!.textContent).toBe('Draft');
+    expect(describedBy(a)).toContain('Draft');
+    expect(describedBy(card('RQ-DONE'))).not.toContain('Draft');
+
+    // Opened again, the words are in the box; once they are cleared the mark goes.
+    fireEvent.click(a);
+    expect((await screen.findByRole('textbox', { name: 'Message RQ-A' }) as HTMLTextAreaElement).value).toBe('half a thought');
+    act(() => setThreadDraft('RQ-A', ''));
+    expect(document.querySelector('[data-draft-mark]')).toBeNull();
+  });
+
+  it('leave the card unmarked while that conversation is beside the cards', () => {
+    setThreadDraft('leader', 'to the Leader');
+    setThreadDraft('RQ-A', 'to a worker');
+    render(<WallView read={narrowSessionWall(threads())!} onOpen={() => {}} readingId="leader" />);
+    expect(card('leader').querySelector('[data-draft-mark]')).toBeNull();
+    expect(describedBy(card('leader'))).not.toContain('Draft');
+    expect(card('RQ-A').querySelector('[data-draft-mark]')).not.toBeNull();
+  });
 });

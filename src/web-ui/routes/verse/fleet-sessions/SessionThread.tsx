@@ -33,6 +33,10 @@ import { onRecord, replyText, routedRow, sessionThreadQuery, sourcesLine, STATE_
 import { ThreadControls } from './ThreadControls.js';
 import { dayBreaks, NEW_MARK_ATTR, newCountLabel, useThreadFollow } from './thread-follow.js';
 import { noteThreadRead, unreadSince } from './thread-read-store.js';
+import { restoredLabel } from '../leader-thread/reply-draft-model.js';
+import { DraftLeft } from './ThreadDraftMark.js';
+import { addThreadSent, keptThreadDraft, setThreadDraft, settleThreadSent, threadDraft, useSentLines, useThreadDraft } from './thread-draft-store.js';
+import draftStyles from './thread-draft.module.css';
 import styles from './session-thread.module.css';
 
 interface SentLine { key: string; at: string; text: string }
@@ -64,13 +68,19 @@ function Bubble({ message }: { message: ThreadMessage }) {
 }
 
 function ReplyBox({ thread, onSent }: { thread: Thread; onSent: (line: SentLine) => void }) {
-  const route = thread.reply;
-  const [draft, setDraft] = useState('');
+  // The words belong to the session they were typed to (thread-draft-store.ts): they wait there while another conversation is read.
+  const route = thread.reply, id = thread.session.id;
+  const [draft, setDraft] = useThreadDraft(id);
+  // A box that opens holding words kept from before says so, until they are edited or sent.
+  const [restored, setRestored] = useState(() => { const kept = keptThreadDraft(id); return kept ? restoredLabel(kept, Date.now()) : null; });
   const [sending, setSending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [unlockOpen, setUnlockOpen] = useState(false);
-  const inFlight = useRef(false);
-  if (route.to === 'none') return <p className={styles.noReply} role="note">{route.hint}</p>;
+  const inFlight = useRef(false), alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  // Once the read holds the inbox's own record of a line sent from here, the kept copy is dropped.
+  useEffect(() => settleThreadSent(id, text => onRecord(thread, text)), [id, thread]);
+  if (route.to === 'none') return <><p className={styles.noReply} role="note">{route.hint}</p><DraftLeft id={id} /></>;
   const outgoing = replyText(route, draft);
   const tooLong = draft.trim() !== '' && outgoing === null;
 
@@ -82,9 +92,12 @@ function ReplyBox({ thread, onSent }: { thread: Thread; onSent: (line: SentLine)
     setFailure(null);
     try {
       await sendLeaderInboxMessage(outgoing);
-      const at = new Date().toISOString();
-      onSent({ key: `sent:${at}`, at, text: outgoing });
-      setDraft('');
+      const at = new Date().toISOString(), line = { key: `sent:${at}`, at, text: outgoing };
+      // Another conversation may be on screen by now: the line is filed under the session it was written to.
+      if (alive.current) onSent(line); else addThreadSent(id, line);
+      // Words typed while it was on its way are a new draft, and stay.
+      if (replyText(route, threadDraft(id)) === outgoing) setThreadDraft(id, '');
+      setRestored(null);
     } catch (error) {
       setFailure(inboxHeld(error)?.reason ?? readFailureReason(error));
     } finally {
@@ -99,9 +112,10 @@ function ReplyBox({ thread, onSent }: { thread: Thread; onSent: (line: SentLine)
   const name = route.to === 'leader' ? 'the Leader' : route.job;
   return <form className={styles.reply} onSubmit={onSubmit}>
     <textarea className={styles.box} rows={2} value={draft} maxLength={THREAD_REPLY_MAX} aria-label={`Message ${name}`}
-      placeholder={`Message ${name}. Enter sends, Shift+Enter adds a line.`} onChange={event => setDraft(event.target.value)} onKeyDown={onKeyDown} />
+      placeholder={`Message ${name}. Enter sends, Shift+Enter adds a line.`} onChange={event => { setRestored(null); setDraft(event.target.value); }} onKeyDown={onKeyDown} />
     <button type="submit" className={styles.send} disabled={sending || outgoing === null}>{sending ? 'Sending…' : 'Send'}</button>
     <p className={styles.hint}>{tooLong ? `Too long: a message holds ${THREAD_REPLY_MAX.toLocaleString('en-US')} characters.` : route.hint}</p>
+    {restored && draft !== '' && <p className={draftStyles.kept} role="status" data-draft-restored>{restored}</p>}
     {failure && <p className={styles.failure} role="alert">Not sent. {failure}</p>}
     <MutationTokenDialog open={unlockOpen} onClose={() => setUnlockOpen(false)} onUnlocked={() => void send()}
       reason="Messaging a session requires the dispatch token." tokenHelp="the mutation token ashlr verse printed" />
@@ -145,7 +159,7 @@ export function SessionThreadView({ thread, sent, onSent, markKey = null, aboveR
     <p className={styles.sources}>{sourcesLine(thread)}</p>
     <ThreadEarlier thread={thread} />
     {aboveReply}
-    <ReplyBox thread={thread} onSent={onSent} />
+    <ReplyBox key={thread.session.id} thread={thread} onSent={onSent} />
   </>;
 }
 
@@ -171,7 +185,8 @@ export function SessionThread({ id, visible, onBack, onOpenLog, backTo = BACK_TO
   const read = useQuery(def, { enabled: visible, freshMs: THREAD_POLL_MS });
   const refetch = useRefetch(def);
   usePollWhileVisible(refetch, THREAD_POLL_MS, { enabled: visible });
-  const [sent, setSent] = useState<SentLine[]>([]);
+  // Filed under the session, so a line sent to one conversation never shows in the next one opened in its place.
+  const [sent, setSent] = useSentLines(id);
   const root = useRef<HTMLElement>(null);
   const end = useRef<HTMLDivElement>(null);
   const thread = read.data ?? null;
