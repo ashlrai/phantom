@@ -198,7 +198,11 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(fold.outcomes).toEqual([{
       schema: 'router.outcome.v1', job_id: 'U1', lane: null, model: null, tier: null, work_class: null,
       merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
-      tokens_total: null, ttm_s: null, empty: null, exit_code: null, failure_class: null, empty_class: null,
+      tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
+      tokens_cache_read: null, tokens_cache_write: null,
+      usage_source: null, usage_missing: null,
+      ttm_s: null, empty: null, diff_files: null, diff_lines: null,
+      exit_code: null, failure_class: null, empty_class: null,
       task_outcome: null, passk: null,
     }]);
   });
@@ -388,6 +392,49 @@ describe('router outcome ledger (612S preservation)', () => {
     // Newest recognized wins; the trailing finish row carried no class.
     expect(byId.get('E9')?.empty_class).toBe('no_diff');
     expect(byId.get('E10')?.empty_class).toBeNull();
+  });
+
+  it('folds the finish row usage block and diff metrics, newest explicit value wins', () => {
+    const fold = foldRouterOutcomes([
+      // dispatchd's job_usage spread: ACU spend, the token breakdown and
+      // the provenance labels, beside job_diff_metrics' diff size.
+      '{"job":"U1","event":"finish","lane":"devin","acus":2.5,"tokens_in":900,"tokens_out":300,' +
+        '"tokens_cache_read":400,"tokens_cache_write":50,"tokens_total":1250,' +
+        '"usage_source":"devin-sessions-db","diff_files":7,"diff_lines":420}',
+      // A later finish row replaces each recorded figure independently.
+      '{"job":"U1","event":"finish","acus":3,"tokensIn":1000,"tokensOut":350,"tokensCacheRead":450,' +
+        '"tokensCacheWrite":60,"usageSource":"tokens-line","diffFiles":8,"diffLines":460}',
+      // claude dialect spelling plus snake_case provenance.
+      '{"job":"U2","event":"finish","lane":"claude","tokens_in":2000,"tokens_out":800,' +
+        '"usage_source":"claude-result-json","usage_missing":null,"diff_files":3,"diff_lines":null}',
+      // A recorded capture gap joins as a bounded label; wrong types and
+      // out-of-shape labels are skipped, never recorded raw. snake_case
+      // wins over camelCase on the same row.
+      '{"job":"U3","event":"finish","tokens_total":null,"usage_missing":"tokens-line-not-in-log","usageMissing":"devin-usage-incomplete"}',
+      '{"job":"U4","event":"finish","usage_missing":"Not A Label!","usage_source":"Two Words","usageMissing":"also bad!"}',
+      '{"job":"U5","event":"finish","acus":"many","tokens_in":"lots","diff_files":-1,"diff_lines":"x"}',
+      '{"job":"U6","event":"claim"}',
+      // acus_consumed/acusConsumed and camelCase usage spellings join too.
+      '{"job":"U7","event":"finish","acus_consumed":1.25}',
+      '{"job":"U8","event":"finish","acusConsumed":2,"usageMissing":"claude-result-not-in-log"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('U1')).toMatchObject({
+      acus: 3, tokens_in: 1000, tokens_out: 350, tokens_cache_read: 450, tokens_cache_write: 60,
+      usage_source: 'tokens-line', diff_files: 8, diff_lines: 460,
+    });
+    expect(byId.get('U2')).toMatchObject({
+      tokens_in: 2000, tokens_out: 800, usage_source: 'claude-result-json',
+      usage_missing: null, diff_files: 3, diff_lines: null,
+    });
+    // snake_case outranks camelCase on the same row; U3's tokens_total
+    // stayed unrecorded.
+    expect(byId.get('U3')).toMatchObject({ usage_missing: 'tokens-line-not-in-log', tokens_total: null });
+    expect(byId.get('U4')).toMatchObject({ usage_missing: null, usage_source: null });
+    expect(byId.get('U5')).toMatchObject({ acus: null, tokens_in: null, diff_files: null, diff_lines: null });
+    expect(byId.get('U6')).toMatchObject({ acus: null, usage_missing: null, diff_files: null });
+    expect(byId.get('U7')?.acus).toBe(1.25);
+    expect(byId.get('U8')).toMatchObject({ acus: 2, usage_missing: 'claude-result-not-in-log' });
   });
 
   it('skips RQ-BATCH-* session rows and folds member task_outcome words', () => {

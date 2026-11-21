@@ -341,6 +341,13 @@ describe('outcome-quality evidence', () => {
       tokens_total_mean: 1450,
       passk_known: 20,
       passk_mean: 0.71,
+      acus_known: 0,
+      acus_mean: null,
+      diff_files_known: 0,
+      diff_files_mean: null,
+      diff_lines_known: 0,
+      diff_lines_mean: null,
+      usage_missing_known: 0,
     });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).toContain('evidence ci_first_pass=0.8(10)');
@@ -363,6 +370,10 @@ describe('outcome-quality evidence', () => {
       ttm_known: 0, ttm_s_mean: null,
       tokens_known: 0, tokens_total_mean: null,
       passk_known: 0, passk_mean: null,
+      acus_known: 0, acus_mean: null,
+      diff_files_known: 0, diff_files_mean: null,
+      diff_lines_known: 0, diff_lines_mean: null,
+      usage_missing_known: 0,
     });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).not.toContain('ci_first_pass=');
@@ -401,6 +412,66 @@ describe('outcome-quality evidence', () => {
     expect(byKey['docs/beta'].evidence).toMatchObject({
       ci_first_pass_known: 0, ci_first_pass_rate: null, cost_known: 0, cost_usd_mean: null,
     });
+  });
+
+  it('folds ACU spend, diff size and usage-gap coverage into group evidence and set tallies', async () => {
+    const finishRowLike = (job: string, extra: Record<string, unknown>): object =>
+      ({ job, lane: 'alpha', work_class: 'code', event: 'finish', ...extra });
+    // dispatchd's finish rows carry the job_usage block (acus, token
+    // breakdown, usage_source/usage_missing) and job_diff_metrics — the
+    // devin lane's only recorded spend is ACU, never USD.
+    writeLedger([
+      ...Array.from({ length: 10 }, (_, i) => event(`synthetic-usage-a-${i}`, 'devin', 'code', 'MERGED', {
+        acus: 1 + i * 0.5, diff_files: 4 + i, diff_lines: 100 + i * 10,
+        usage_source: 'devin-sessions-db',
+      })),
+      ...Array.from({ length: 10 }, (_, i) => event(`synthetic-usage-b-${i}`, 'devin', 'code', 'MERGED', {
+        usage_missing: i < 4 ? 'devin-usage-not-reported' : 'devin-usage-incomplete',
+        usage_source: i < 4 ? null : 'tokens-line',
+      })),
+      // An unclassified outcome still tallies its usage labels — capture
+      // completeness is not merge evidence.
+      { job: 'synthetic-usage-unc', lane: 'devin', phase: 'MERGED', usage_missing: 'devin-session-db-missing' },
+      // Unknown-cohort finishes tally the same way.
+      finishRowLike('synthetic-usage-unq', { usage_missing: 'tokens-line-not-in-log' }),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({ known_outcomes: 20, unknown_outcomes: 1, unclassified_outcomes: 1 });
+    expect(report.proposals).toHaveLength(1);
+    const p = report.proposals[0];
+    expect(p).toMatchObject({ work_class: 'code', lane: 'devin', known_n: 20, status: 'proposed' });
+    expect(p.evidence).toMatchObject({
+      acus_known: 10, acus_mean: 3.25,
+      diff_files_known: 10, diff_files_mean: 8.5,
+      diff_lines_known: 10, diff_lines_mean: 145,
+      usage_missing_known: 10,
+    });
+    // usage_missing/usage_sources tally every folded outcome: 10 group B
+    // gaps + 1 unclassified + 1 unknown-cohort finish.
+    expect(report.usage_missing).toEqual([
+      { usage_missing: 'devin-usage-incomplete', jobs: 6 },
+      { usage_missing: 'devin-usage-not-reported', jobs: 4 },
+      { usage_missing: 'devin-session-db-missing', jobs: 1 },
+      { usage_missing: 'tokens-line-not-in-log', jobs: 1 },
+    ]);
+    expect(report.usage_sources).toEqual([
+      { usage_source: 'devin-sessions-db', jobs: 10 },
+      { usage_source: 'tokens-line', jobs: 6 },
+    ]);
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('acus=3.25(10)');
+    expect(out).toContain('diff_files=8.5(10)');
+    expect(out).toContain('diff_lines=145(10)');
+    expect(out).toContain('usage coverage:');
+    expect(out).toContain('missing=devin-usage-incomplete:6,devin-usage-not-reported:4');
+    expect(out).toContain('sources=devin-sessions-db:10,tokens-line:6');
+  });
+
+  it('reports null usage tallies when the ledger was not read', async () => {
+    const { code, report } = await runJson();
+    expect(code).toBe(1);
+    expect(report).toMatchObject({ usage_missing: null, usage_sources: null });
   });
 });
 

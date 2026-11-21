@@ -308,7 +308,15 @@ time, recorded merge latency (`ttm_s` — the jobs-ledger `ttm_s`/`ttmS`
 opened-to-merged seconds, taken only from the row that stands as the
 merge verdict and cleared when a later verdict is not a merge), recorded
 token usage (`tokens_total` — the finish row's `tokens_total`/`tokensTotal`
-usage total, newest explicit row wins like `cost_usd` and `wall_s`),
+usage total, newest explicit row wins like `cost_usd` and `wall_s`), the
+rest of the finish row's recorded usage block — `acus` (the Devin lane's
+billed ACU spend, a different unit than `cost_usd` and never summed with
+it), the token breakdown `tokens_in`/`tokens_out`/`tokens_cache_read`/
+`tokens_cache_write`, and the bounded provenance labels `usage_source`
+(the recorded measurement path) and `usage_missing` (the recorded
+capture-gap reason) — plus the finish row's recorded diff size
+(`diff_files`/`diff_lines`; `diff_lines` stays `null` when untracked
+files made the line total unmeasurable),
 `work_class`, the finish-row productivity verdicts (`empty`,
 `exit_code`, `failure_class` — the recorded failure
 classification, resolved `failure_class` → `failure_reason` →
@@ -416,11 +424,20 @@ report carries `truncated: true` and every count covers the newest bytes
 only; `market_state`/`market_truncated` report the decision journal's
 health the same way. Each proposal also carries an `evidence` block folded
 from the same known cohort: the group's CI first-pass rate, summed review
-findings, mean `cost_usd`, mean `wall_s`, mean recorded `ttm_s` (merge
-latency), mean recorded `tokens_total` (token usage) and mean advisory
-`passk` — every
+findings, mean `cost_usd`, mean recorded `acus` (the Devin lane's billed
+spend — a different unit, never mixed with USD), mean `wall_s`, mean
+recorded `ttm_s` (merge latency), mean recorded `tokens_total` (token
+usage), mean recorded `diff_files`/`diff_lines` (change size), the count
+of outcomes carrying a `usage_missing` capture-gap label, and mean
+advisory `passk` — every
 figure with its own coverage count, and `null` (never zero) when the ledger
-recorded nothing for that signal. The weight math still moves on
+recorded nothing for that signal. The report also tallies usage
+provenance across every folded outcome — known, unknown and
+unclassified alike, since capture completeness is not merge evidence:
+`usage_missing` lists the top recorded capture-gap reasons and
+`usage_sources` the top recorded measurement paths, so an operator sees
+where usage telemetry is actually broken rather than only that token
+coverage is thin. The weight math still moves on
 held-merge rate alone; the evidence is context for whoever applies a
 proposal, and text output renders it as `name=value(known)` suffixes only
 for signals with coverage. The report is advisory-only: it writes nothing, never

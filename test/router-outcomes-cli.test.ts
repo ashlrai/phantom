@@ -33,7 +33,11 @@ function outcome(job_id: string, over: Partial<RouterOutcome> = {}): RouterOutco
   return {
     schema: 'router.outcome.v1', job_id, lane: 'alpha', model: 'm1', tier: 'work', work_class: null,
     merged: true, reverted: null, ci_first_pass: true, review_findings: null, cost_usd: 1.5, wall_s: 600,
-    tokens_total: null, ttm_s: null, empty: null, exit_code: null, failure_class: null, empty_class: null,
+    tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
+    tokens_cache_read: null, tokens_cache_write: null,
+    usage_source: null, usage_missing: null,
+    ttm_s: null, empty: null, diff_files: null, diff_lines: null,
+    exit_code: null, failure_class: null, empty_class: null,
     task_outcome: null, passk: null,
     ...over,
   };
@@ -155,7 +159,7 @@ describe('phm router outcomes', () => {
     const lines = routerOutcomeLines(report);
     expect(lines[0]).toBe('router outcomes state=read eval=missing spend=missing market=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2 session_rows=4');
     expect(lines[1]).toBe(`ledger ${report.path}`);
-    expect(lines[3]).toContain('A lane=alpha model=m1 tier=work work_class=unknown merged=unknown reverted=true ci_first_pass=true review=fixed:2,rejected:1,ignored:0 cost_usd=unknown wall_s=unknown ttm_s=unknown tokens_total=unknown passk=unknown empty=unknown exit_code=unknown failure_class=unknown empty_class=unknown task_outcome=done');
+    expect(lines[3]).toContain('A lane=alpha model=m1 tier=work work_class=unknown merged=unknown reverted=true ci_first_pass=true review=fixed:2,rejected:1,ignored:0 cost_usd=unknown acus=unknown wall_s=unknown ttm_s=unknown tokens_total=unknown passk=unknown empty=unknown exit_code=unknown failure_class=unknown empty_class=unknown task_outcome=done');
     expect(lines[2]).toContain('B lane=unknown model=unknown tier=unknown work_class=docs merged=true reverted=unknown');
   });
 

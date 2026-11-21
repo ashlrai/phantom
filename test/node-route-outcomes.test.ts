@@ -11,7 +11,11 @@ const GIB = 1024 ** 3, MIB = 1024 ** 2;
 const outcome = (job: string, lane: string | null, merged: boolean | null, reverted: boolean | null = null): RouterOutcome => ({
   schema: 'router.outcome.v1', job_id: job, lane, model: null, tier: null, work_class: null,
   merged, reverted, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
-  tokens_total: null, ttm_s: null, empty: null, exit_code: null, failure_class: null, empty_class: null,
+  tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
+  tokens_cache_read: null, tokens_cache_write: null,
+  usage_source: null, usage_missing: null,
+  ttm_s: null, empty: null, diff_files: null, diff_lines: null,
+  exit_code: null, failure_class: null, empty_class: null,
   task_outcome: null, passk: null,
 });
 

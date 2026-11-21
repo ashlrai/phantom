@@ -3,7 +3,9 @@
  * host metrics ledgers (metrics/jobs.jsonl joined with metrics/api-spend.jsonl
  * for cost_usd) by src/core/router/outcomes.ts: merge and revert state, CI
  * first pass, review findings, cost, wall time, recorded merge latency
- * (ttm_s), recorded token usage (tokens_total), the batch member's recorded
+ * (ttm_s), recorded token usage (tokens_total plus the token breakdown,
+ * ACU spend and usage provenance labels), the finish row's recorded diff
+ * size (diff_files/diff_lines), the batch member's recorded
  * task_outcome word and the advisory pass^k join from eval.lane-scores.v1.
  * RQ-BATCH-* session rows are infrastructure evidence counted in
  * session_rows, never outcomes. Never writes; a missing ledger reports
@@ -125,7 +127,7 @@ function outcomeLine(o: RouterOutcome): string {
     o.job_id,
     `lane=${text(o.lane)}`, `model=${text(o.model)}`, `tier=${text(o.tier)}`, `work_class=${text(o.work_class)}`,
     `merged=${text(o.merged)}`, `reverted=${text(o.reverted)}`, `ci_first_pass=${text(o.ci_first_pass)}`, `review=${review}`,
-    `cost_usd=${text(o.cost_usd)}`, `wall_s=${text(o.wall_s)}`, `ttm_s=${text(o.ttm_s)}`, `tokens_total=${text(o.tokens_total)}`, `passk=${text(o.passk)}`,
+    `cost_usd=${text(o.cost_usd)}`, `acus=${text(o.acus)}`, `wall_s=${text(o.wall_s)}`, `ttm_s=${text(o.ttm_s)}`, `tokens_total=${text(o.tokens_total)}`, `passk=${text(o.passk)}`,
     `empty=${text(o.empty)}`, `exit_code=${text(o.exit_code)}`, `failure_class=${text(o.failure_class)}`,
     `empty_class=${text(o.empty_class)}`, `task_outcome=${text(o.task_outcome)}`,
   ].join(' ');

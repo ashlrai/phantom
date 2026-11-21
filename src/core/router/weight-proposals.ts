@@ -61,6 +61,28 @@ export interface RouterWeightEvidence {
   passk_known: number;
   /** Mean passk over passk_known; null when no outcome carried a score. */
   passk_mean: number | null;
+  /**
+   * Group outcomes with a recorded finish-row `acus` figure — the Devin
+   * lane's billed ACU spend, the only cost evidence subscription lanes
+   * record. A different unit than cost_usd: the two means never mix.
+   */
+  acus_known: number;
+  /** Mean recorded acus over acus_known; null when none recorded. */
+  acus_mean: number | null;
+  /** Group outcomes with a recorded finish-row `diff_files` count. */
+  diff_files_known: number;
+  /** Mean recorded diff_files over diff_files_known; null when none recorded. */
+  diff_files_mean: number | null;
+  /** Group outcomes with a recorded finish-row `diff_lines` count. */
+  diff_lines_known: number;
+  /** Mean recorded diff_lines over diff_lines_known; null when none recorded. */
+  diff_lines_mean: number | null;
+  /**
+   * Group outcomes carrying a recorded `usage_missing` label — finishes
+   * whose usage stayed unknowable, with the ledger's own capture-gap
+   * reason. A coverage count only; the reason tally lives at set level.
+   */
+  usage_missing_known: number;
 }
 
 export interface RouterWeightProposalOptions {
@@ -127,6 +149,26 @@ export interface RouterWeightProposalSet {
   unknown_empty_classes: { empty_class: string; jobs: number }[];
   unknown_task_outcomes: { task_outcome: string; jobs: number }[];
   unknown_unresolved: number;
+  /**
+   * Top recorded `usage_missing` labels across every folded outcome —
+   * known, unknown and unclassified alike, since usage capture is not
+   * merge evidence. Each entry is a finish row's own capture-gap reason
+   * (dispatchd's devin-, claude- and tokens-line- vocabulary or whatever
+   * bounded label a producer wrote), so an operator sees where usage
+   * telemetry is actually broken rather than only that tokens coverage
+   * is thin. Empty when no outcome recorded one; counts cover the
+   * retained window.
+   */
+  usage_missing: { usage_missing: string; jobs: number }[];
+  /**
+   * Top recorded `usage_source` labels across every folded outcome —
+   * which measurement path actually supplied the usage figures
+   * (devin-sessions-db, claude-result-json, tokens-line, ...). Paired
+   * with usage_missing it separates "no usage reported" from "usage
+   * reported through the fallback path". Same scope and bounds as
+   * usage_missing.
+   */
+  usage_sources: { usage_source: string; jobs: number }[];
 }
 
 /** Running tallies for the outcome-quality signals; every count starts at zero and means stay sums until emitted. */
@@ -138,12 +180,18 @@ interface WeightEvidenceTally {
   ttmSum: number; ttmKnown: number;
   tokensSum: number; tokensKnown: number;
   passkSum: number; passkKnown: number;
+  acusSum: number; acusKnown: number;
+  diffFilesSum: number; diffFilesKnown: number;
+  diffLinesSum: number; diffLinesKnown: number;
+  usageMissingKnown: number;
 }
 
 const freshTally = (): WeightEvidenceTally => ({
   ciPass: 0, ciKnown: 0, reviewFixed: 0, reviewRejected: 0, reviewIgnored: 0, reviewKnown: 0,
   costSum: 0, costKnown: 0, wallSum: 0, wallKnown: 0, ttmSum: 0, ttmKnown: 0,
   tokensSum: 0, tokensKnown: 0, passkSum: 0, passkKnown: 0,
+  acusSum: 0, acusKnown: 0, diffFilesSum: 0, diffFilesKnown: 0,
+  diffLinesSum: 0, diffLinesKnown: 0, usageMissingKnown: 0,
 });
 
 /**
@@ -170,6 +218,13 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   tokens_total_mean: t.tokensKnown === 0 ? null : round6(t.tokensSum / t.tokensKnown),
   passk_known: t.passkKnown,
   passk_mean: t.passkKnown === 0 ? null : round6(t.passkSum / t.passkKnown),
+  acus_known: t.acusKnown,
+  acus_mean: t.acusKnown === 0 ? null : round6(t.acusSum / t.acusKnown),
+  diff_files_known: t.diffFilesKnown,
+  diff_files_mean: t.diffFilesKnown === 0 ? null : round6(t.diffFilesSum / t.diffFilesKnown),
+  diff_lines_known: t.diffLinesKnown,
+  diff_lines_mean: t.diffLinesKnown === 0 ? null : round6(t.diffLinesSum / t.diffLinesKnown),
+  usage_missing_known: t.usageMissingKnown,
 });
 
 /**
@@ -202,7 +257,13 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   const failureClasses = new Map<string, number>();
   const emptyClasses = new Map<string, number>();
   const taskOutcomes = new Map<string, number>();
+  const usageMissing = new Map<string, number>();
+  const usageSources = new Map<string, number>();
   for (const o of outcomes) {
+    // Usage provenance is capture evidence, not merge evidence: every folded
+    // outcome tallies its recorded labels — classified or not.
+    if (o.usage_missing !== null) usageMissing.set(o.usage_missing, (usageMissing.get(o.usage_missing) ?? 0) + 1);
+    if (o.usage_source !== null) usageSources.set(o.usage_source, (usageSources.get(o.usage_source) ?? 0) + 1);
     if (!isRouteId(o.work_class) || !isRouteId(o.lane)) { unclassified++; continue; }
     if (o.merged === null) {
       unknown++;
@@ -246,6 +307,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     if (o.ttm_s !== null) { t.ttmKnown++; t.ttmSum += o.ttm_s; }
     if (o.tokens_total !== null) { t.tokensKnown++; t.tokensSum += o.tokens_total; }
     if (o.passk !== null) { t.passkKnown++; t.passkSum += o.passk; }
+    if (o.acus !== null) { t.acusKnown++; t.acusSum += o.acus; }
+    if (o.diff_files !== null) { t.diffFilesKnown++; t.diffFilesSum += o.diff_files; }
+    if (o.diff_lines !== null) { t.diffLinesKnown++; t.diffLinesSum += o.diff_lines; }
+    if (o.usage_missing !== null) t.usageMissingKnown++;
     groups.set(key, g);
     known++;
   }
@@ -272,10 +337,19 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     .map(([task_outcome, jobs]) => ({ task_outcome, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.task_outcome.localeCompare(b.task_outcome))
     .slice(0, 10);
+  const topUsageMissing = [...usageMissing.entries()]
+    .map(([usage_missing, jobs]) => ({ usage_missing, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.usage_missing.localeCompare(b.usage_missing))
+    .slice(0, 10);
+  const topUsageSources = [...usageSources.entries()]
+    .map(([usage_source, jobs]) => ({ usage_source, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.usage_source.localeCompare(b.usage_source))
+    .slice(0, 10);
   return { proposals, known_outcomes: known, unknown_outcomes: unknown, unclassified_outcomes: unclassified,
     unknown_empty: unknownEmpty, unknown_nonzero_exit: unknownNonzeroExit,
     unknown_failure_classes: topFailureClasses, unknown_empty_classes: topEmptyClasses,
-    unknown_task_outcomes: topTaskOutcomes, unknown_unresolved: unknownUnresolved };
+    unknown_task_outcomes: topTaskOutcomes, unknown_unresolved: unknownUnresolved,
+    usage_missing: topUsageMissing, usage_sources: topUsageSources };
 }
 
 export interface RouterWeightProposalReport {
@@ -325,6 +399,18 @@ export interface RouterWeightProposalReport {
    */
   unknown_task_outcomes: { task_outcome: string; jobs: number }[] | null;
   unknown_unresolved: number | null;
+  /**
+   * Top recorded `usage_missing` labels across every folded outcome —
+   * see RouterWeightProposalSet. Null when the ledger was not read;
+   * empty when no outcome recorded a usage gap.
+   */
+  usage_missing: { usage_missing: string; jobs: number }[] | null;
+  /**
+   * Top recorded `usage_source` labels across every folded outcome —
+   * see RouterWeightProposalSet. Null when the ledger was not read;
+   * empty when no outcome recorded a measurement path.
+   */
+  usage_sources: { usage_source: string; jobs: number }[] | null;
   proposals: RouterWeightProposal[];
 }
 
@@ -338,7 +424,8 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
   if (read.state !== 'read') {
     return { ...head, status: 'unavailable', known_outcomes: null, unknown_outcomes: null, unclassified_outcomes: null,
       unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null, unknown_empty_classes: null,
-      unknown_task_outcomes: null, unknown_unresolved: null, proposals: [] };
+      unknown_task_outcomes: null, unknown_unresolved: null,
+      usage_missing: null, usage_sources: null, proposals: [] };
   }
   const set = proposeRouterWeights(read.outcomes, { ...opts, minSamples: bounds.min_samples, maxShift: bounds.max_shift });
   const status = set.proposals.some(p => p.status === 'proposed') ? 'proposed' : 'insufficient-evidence';
@@ -347,5 +434,6 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     unknown_empty: set.unknown_empty, unknown_nonzero_exit: set.unknown_nonzero_exit,
     unknown_failure_classes: set.unknown_failure_classes, unknown_empty_classes: set.unknown_empty_classes,
     unknown_task_outcomes: set.unknown_task_outcomes, unknown_unresolved: set.unknown_unresolved,
+    usage_missing: set.usage_missing, usage_sources: set.usage_sources,
     proposals: set.proposals };
 }
