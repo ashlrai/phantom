@@ -15,6 +15,7 @@
 import { betaSample, createSeededRng, gammaSample, type BanditRng } from './bandit.js';
 import { ledgerAtMs, ledgerEventName, ledgerJobId, ledgerLane, ledgerPhase } from '../fleet/empty-cause.js';
 import { ledgerEventTs, ledgerLifecycleEvent, ledgerOutcomeState } from '../fleet/jobs-ledger-dialect.js';
+import { hasRevertEvidence } from '../fleet/slot-yield.js';
 
 export const OUTCOME_LEARNING_SCHEMA = 'routing.outcome-learning.v1' as const;
 
@@ -33,6 +34,13 @@ export interface OutcomeCellView {
   attempts: number;
   /** Attempts counted as failures because the PR sat unmerged past the horizon. Included in `attempts`. */
   censored: number;
+  /**
+   * Attempts whose merge was recorded as reverted — the merge did not hold.
+   * Counted in `attempts` as a failure, never in `merges` or `goodMerges`;
+   * only the jobs-ledger dialect produces them (the dispatch log has no
+   * revert signal). Zero when no revert evidence was recorded.
+   */
+  reverted: number;
   merges: number;
   /** Merges that did not break main. This is what routing treats as success. */
   goodMerges: number;
@@ -147,7 +155,13 @@ interface AssignEvent {
 interface OutcomeEvent {
   kind: 'outcome';
   job: string;
-  state: 'merged' | 'closed' | 'dirty' | 'fixup';
+  /**
+   * 'reverted' is jobs-ledger-only: a merge verdict contradicted by revert
+   * evidence recorded at or after it, or an open attempt carrying post-launch
+   * revert evidence. It counts as a failed attempt — the merge did not hold —
+   * and lands in the cell's `reverted` count.
+   */
+  state: 'merged' | 'closed' | 'dirty' | 'fixup' | 'reverted';
   /** Measured allowance spent. Null when the outcome carried no usage reading — never zeroed. */
   usage: number | null;
   minutes: number | null;
@@ -352,7 +366,7 @@ function parseEvents(text: string): { events: ParsedEvent[]; malformed: number }
 function blankCell(resource: string, model: string, jobType: string, repo: string): Cell {
   return {
     resource, model, jobType, repo,
-    attempts: 0, censored: 0, merges: 0, goodMerges: 0, breakages: 0, dirty: 0, fixups: 0,
+    attempts: 0, censored: 0, reverted: 0, merges: 0, goodMerges: 0, breakages: 0, dirty: 0, fixups: 0,
     usage: 0, mergeMinutes: 0, timedMerges: 0, usageAttempts: 0,
     mergeRate: 0, goodMergeRate: 0, breakageRate: 0, dirtyRate: 0, fixupRate: 0,
     meanUsage: 0, meanMinutesToMerge: null,
@@ -438,6 +452,9 @@ function fold(events: readonly ParsedEvent[], malformed: number, censor?: Censor
         }
         break;
       case 'closed':
+        break;
+      case 'reverted':
+        cell.reverted += 1;
         break;
       case 'dirty':
         cell.dirty += 1;
@@ -585,6 +602,23 @@ export function learnOutcomes(text: string, censor?: CensorOptions): OutcomeLear
  * `launch_failed`/`launch_terminal` row naming the session id closes every
  * member attempt it opened. Members get no per-member `finish` row, so
  * their usage stays unmeasured and reconcileUsage charges the cell mean.
+ *
+ * Revert evidence is job-scoped and read across the whole retained window
+ * before any verdict resolves — the same vocabulary slot-yield,
+ * reward-feed and the router outcome fold share (`hasRevertEvidence`:
+ * reverted:true, a parseable reverted_at/revertedAt stamp, or a
+ * revert/reverted event or state name; explicit reverted:false is not
+ * evidence). A MERGED verdict recorded at or before the job's newest
+ * revert-evidence line resolves as `reverted`, never a held merge: the
+ * merge did not hold, the attempt still spent its recorded usage, and the
+ * cell's `reverted` count keeps the discount visible. Revert evidence
+ * older than the verdict belongs to an earlier merge era and does not
+ * discount it — a later merge is a fresh held merge, matching
+ * reward-feed's merge-after-revert rule. An attempt still open at the end
+ * of the window whose job carries revert evidence recorded after its own
+ * launch resolves `reverted` too: the revert proves a merge existed and
+ * did not hold, so the attempt is a recorded failure rather than missing
+ * data for the censor horizon.
  */
 function ledgerAssign(row: Record<string, unknown>): AssignEvent | null {
   const job = ledgerJobId(row);
@@ -603,17 +637,35 @@ function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed
   let malformed = 0;
   const usageByJob = new Map<string, number>();
   const launchAtByJob = new Map<string, number>();
+  const launchLineByJob = new Map<string, number>();
   const resolvedJobs = new Set<string>();
   const openJobs = new Set<string>();
   // Batch members claimed but not yet launched: member job -> its claim,
   // and session id -> member jobs, so a dead session can close them all.
   const batchClaims = new Map<string, { bid: string; assign: AssignEvent }>();
   const batchMembers = new Map<string, Set<string>>();
-  const closeAttempt = (job: string): void => {
+  const lines = text.split(/\r?\n/);
+  // Newest ledger line carrying positive revert evidence per job id. Every
+  // spelling hasRevertEvidence accepts contains 'revert', so the regex
+  // keeps this pass from parsing rows that cannot carry the evidence.
+  const maxRevertLine = new Map<string, number>();
+  for (const [i, line] of lines.entries()) {
+    if (!line.trim() || !/revert/i.test(line)) continue;
+    let row: Record<string, unknown>;
+    try {
+      const value: unknown = JSON.parse(line);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      row = value as Record<string, unknown>;
+    } catch { continue; }
+    const job = ledgerJobId(row);
+    if (job === null || !ident(job) || !hasRevertEvidence(row)) continue;
+    maxRevertLine.set(job, i);
+  }
+  const closeAttempt = (job: string, state: 'closed' | 'reverted' = 'closed'): void => {
     openJobs.delete(job);
-    events.push({ kind: 'outcome', job, state: 'closed', usage: null, minutes: null, breakage: 0 });
+    events.push({ kind: 'outcome', job, state, usage: usageByJob.get(job) ?? null, minutes: null, breakage: 0 });
   };
-  for (const line of text.split(/\r?\n/)) {
+  for (const [lineNo, line] of lines.entries()) {
     const trimmed = line.trim();
     if (trimmed === '') continue;
     let row: Record<string, unknown>;
@@ -653,6 +705,7 @@ function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed
             batchClaims.delete(member);
             events.push({ ...claim.assign, atMs });
             launchAtByJob.set(member, atMs);
+            launchLineByJob.set(member, lineNo);
             resolvedJobs.delete(member);
             openJobs.add(member);
           }
@@ -663,6 +716,7 @@ function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed
       if (assign === null) { malformed += 1; continue; }
       events.push(assign);
       launchAtByJob.set(assign.job, assign.atMs);
+      launchLineByJob.set(assign.job, lineNo);
       resolvedJobs.delete(assign.job);
       openJobs.add(assign.job);
       continue;
@@ -721,12 +775,29 @@ function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed
     const atMs = ledgerEventTs(row, phase);
     const launchAt = launchAtByJob.get(job);
     const minutes = atMs !== null && launchAt !== undefined && atMs > launchAt ? (atMs - launchAt) / 60_000 : null;
+    // A recorded revert at or after this verdict line means the merge did
+    // not hold: the attempt resolves as reverted — a failed attempt that
+    // still spent its recorded usage — never as a held merge. Revert
+    // evidence older than the verdict belongs to an earlier merge era and
+    // leaves this one standing.
+    const heldMerge = state === 'MERGED' && (maxRevertLine.get(job) ?? -1) < lineNo;
     events.push({
       kind: 'outcome', job,
-      state: state === 'MERGED' ? 'merged' : 'closed',
+      state: state === 'MERGED' ? (heldMerge ? 'merged' : 'reverted') : 'closed',
       usage: usageByJob.get(job) ?? null,
       minutes, breakage: 0,
     });
+  }
+  // An attempt still open whose job carries revert evidence recorded after
+  // its own launch produced a merge that did not hold — close it as
+  // reverted rather than leaving it for the censor horizon. Evidence from
+  // before the launch belongs to an earlier attempt era and does not
+  // close this one.
+  for (const job of openJobs) {
+    const launchLine = launchLineByJob.get(job);
+    const revertLine = maxRevertLine.get(job);
+    if (launchLine === undefined || revertLine === undefined || revertLine < launchLine) continue;
+    closeAttempt(job, 'reverted');
   }
   return { events, malformed };
 }
@@ -858,6 +929,7 @@ function evidenceFor(learning: OutcomeLearning, resource: string, model: string,
   for (const cell of pooled) {
     sum.attempts += cell.attempts;
     sum.censored += cell.censored;
+    sum.reverted += cell.reverted;
     sum.merges += cell.merges;
     sum.goodMerges += cell.goodMerges;
     sum.breakages += cell.breakages;
@@ -1141,10 +1213,14 @@ export function offersFromLearning(learning: OutcomeLearning): ResourceOffer[] {
 
 function cellSentence(cell: OutcomeCellView): string {
   const time = cell.meanMinutesToMerge === null ? 'time to merge unknown' : `${Math.round(cell.meanMinutesToMerge)} min to merge`;
+  const tail = [
+    ...(cell.reverted > 0 ? [`${cell.reverted} reverted`] : []),
+    ...(cell.censored > 0 ? [`${cell.censored} unmerged past the horizon`] : []),
+  ];
   return `${resourceWords(cell.resource)} (${modelWords(cell.model)}) on ${cell.repo} ${cell.jobType} jobs: `
     + `${Math.round(cell.mergeRate * 100)}% merge, ${time}, usage ${formatUsage(cell.meanUsage)}, `
     + `${Math.round(cell.breakageRate * 100)}% breakage`
-    + (cell.censored > 0 ? `, ${cell.censored} unmerged past the horizon.` : '.');
+    + (tail.length > 0 ? `, ${tail.join(', ')}.` : '.');
 }
 
 /** Plain sentences for the desktop panel and the CLI. */

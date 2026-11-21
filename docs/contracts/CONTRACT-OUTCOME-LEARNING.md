@@ -45,6 +45,22 @@ per-member `finish` row so their usage is charged like any unread outcome. A
 `launch_failed`/`launch_terminal` row naming the session id closes every
 member attempt it opened.
 
+Revert evidence discounts merges exactly the way the reward feed and slot
+yield already read it (`hasRevertEvidence`: `reverted:true`, a parseable
+`reverted_at`/`revertedAt` stamp, or a `revert`/`reverted` event or state
+name; explicit `reverted:false` is not evidence). The fold reads the newest
+revert-evidence line per job across the retained window before resolving
+verdicts: a `MERGED` verdict at or before that line resolves as `reverted` —
+a failed attempt that still spent its recorded usage, counted in `attempts`
+and the cell's `reverted` total, never in `merges` or `goodMerges`. Revert
+evidence older than the verdict belongs to an earlier merge era and leaves
+the merge held, so a later merge is a fresh held merge. An attempt still
+open at the end of the window whose job carries revert evidence recorded
+after its own launch resolves `reverted` too: the revert proves a merge
+existed and did not hold, so the attempt is a recorded failure rather than
+missing data for the censor horizon. The dispatch-log dialect has no revert
+signal and is unchanged.
+
 ## How it routes
 
 `routeLearnedJob` draws a Thompson sample from a Beta success posterior and a
