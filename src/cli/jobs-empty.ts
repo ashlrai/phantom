@@ -120,14 +120,13 @@ async function cmdJobsState(args: string[]): Promise<number> {
   const json = args.includes('--json');
   const rest = args.filter(a => a !== '--json');
   if (rest.length !== 1 || rest[0]!.startsWith('-')) { console.error(usage); return 2; }
-  const { readJobState } = await import('../core/fleet/job-state.js');
+  const { readJobWorkState, formatWorkState } = await import('../core/fleet/job-work-state.js');
   let state;
-  try { state = await readJobState(rest[0]!); } catch (error) { console.error(error instanceof Error ? error.message : String(error)); return 2; }
+  try { state = await readJobWorkState(rest[0]!); } catch (error) { console.error(error instanceof Error ? error.message : String(error)); return 2; }
   if (json) console.log(JSON.stringify(state));
   else {
-    const result = state.result ? (state.result.kind === 'pr' ? `; result PR ${state.result.url}` : '; result empty') : '';
-    console.log(`${state.job}: ${state.state}${result}`);
+    console.log(formatWorkState(state));
     for (const line of state.evidence) console.log(`- ${line}`);
   }
-  return 0;
+  return state.state === 'UNKNOWN' ? 1 : 0;
 }
