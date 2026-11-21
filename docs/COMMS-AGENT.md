@@ -2,9 +2,12 @@
 
 The Comms role sits under the Leader. It triages email, iMessage and LinkedIn:
 classify, summarize, archive bulk and bot mail, and draft replies. It never
-deletes mail. The router and its bandit choose the lane from the lanes that
-are actually available. The role names no lane and does not require Grok. When
-Grok is one of the available lanes, the router may select it.
+deletes mail. A delivered reply resolves its inbox message into the archive,
+so pending depth counts only mail still awaiting a reply and a later pass
+never resends an answered message. The router and its bandit choose the lane
+from the lanes that are actually available. The role names no lane and does
+not require Grok. When Grok is one of the available lanes, the router may
+select it.
 
 This role reuses the channel adapter interface (`ChannelAdapter`) and the
 registered bus and handoff adapters. It does not open a second transport.
@@ -24,8 +27,10 @@ The policy is code, not prompt text. A prompt cannot approve a recipient.
 - Everyone else, including a novel recipient, becomes a draft for the owner.
   Email drafts are also copied into `phm drafts` so the desktop drafts card
   can show them. Every draft is recorded once per unique reply on the local
-  owner thread; a delivered reply resolves its draft to `sent`, and pending
-  drafts list in `phm comms-agent drafts` and the `phm comms inbox` drafts
+  owner thread; a delivered reply resolves its draft to `sent` — every send
+  leaves that mark, not only one that was once pending — and resolves the
+  inbox message into the archive without resending. Pending drafts list in
+  `phm comms-agent drafts` and the `phm comms inbox` drafts
   source (a Comms email draft already mirrored into `phm drafts` lists only
   there, so one pending reply is one item).
 - KILL and the comms pause refuse every send. Both are read from the account
@@ -47,8 +52,10 @@ phm comms-agent drafts --json
 than picking one. `--dir` selects an isolated runs directory.
 
 `status` reports the pending inbox depth as `inbox`: a real count of
-messages still awaiting triage, or `null` when the inbox file cannot be
-read — an unreadable store is unknown, never reported as an empty inbox.
+messages still awaiting a reply — unanswered mail only, since a delivered
+reply resolves its message into the archive — or `null` when the inbox file
+cannot be read — an unreadable store is unknown, never reported as an empty
+inbox.
 
 MCP tools: `ashlr_comms_agent_status`, `ashlr_comms_agent_drafts`, and
 `ashlr_comms_agent_run`.

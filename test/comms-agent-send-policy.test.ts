@@ -178,6 +178,72 @@ describe('Comms role and triage', () => {
     expect(preservedIds(messages, triage.kept, triage.archived)).toBe(true);
     expect(triage.deleted).toBe(0);
   });
+
+  it('resolves a delivered reply out of the pending inbox and never resends it', async () => {
+    const runsDir = temp();
+    const message = { id: 'person-1', transport: 'email' as const, from: 'ada@example.com', subject: 'Question', body: 'Can you look?' };
+    await writeInbox(runsDir, [message]);
+    const calls: string[] = [];
+    const options = {
+      runsDir,
+      lanes: [],
+      teamIdentities: [],
+      approvalsSource: 'injected' as const,
+      approvals: [{ transport: 'email' as const, recipient: 'ada@example.com' }],
+      kill: () => 'inactive' as const,
+      paused: () => false,
+      deliver: async () => { calls.push('sent'); return { status: 'sent' as const, reason: 'accepted by adapter' }; },
+    };
+    const first = await runCommsAgent(options);
+    expect(first.sends).toEqual([expect.objectContaining({ status: 'sent' })]);
+    expect(calls).toHaveLength(1);
+    // The answered message left the pending inbox for the archive; nothing deleted.
+    expect((await readInbox(runsDir)).messages).toEqual([]);
+    expect(readFileSync(join(runsDir, 'comms-agent', 'archive.jsonl'), 'utf8')).toContain('Question');
+    expect((await listDrafts(runsDir)).some(draft => draft.status === 'sent')).toBe(true);
+    expect(first.triage).toMatchObject({ kept: 0, archived: 1, deleted: 0 });
+    // A re-delivered copy of the same mail resolves on the sent mark — no resend.
+    await writeInbox(runsDir, [message]);
+    const second = await runCommsAgent(options);
+    expect(second.sends).toEqual([expect.objectContaining({ status: 'sent', reason: expect.stringContaining('already delivered') })]);
+    expect(calls).toHaveLength(1);
+    expect((await readInbox(runsDir)).messages).toEqual([]);
+    // An empty inbox produces no sends at all.
+    const third = await runCommsAgent(options);
+    expect(third.sends).toEqual([]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('keeps an unanswered message pending until its reply is delivered', async () => {
+    const runsDir = temp();
+    await writeInbox(runsDir, [
+      { id: 'person-1', transport: 'email', from: 'ada@example.com', subject: 'Question', body: 'Can you look?' },
+    ]);
+    const base = {
+      runsDir,
+      lanes: [],
+      teamIdentities: [],
+      approvalsSource: 'injected' as const,
+      kill: () => 'inactive' as const,
+      paused: () => false,
+    };
+    // Pass 1: no standing approval — the reply stays a pending draft and the
+    // message stays in the inbox awaiting delivery.
+    const drafted = await runCommsAgent({ ...base, approvals: [] });
+    expect(drafted.sends[0]?.status).toBe('drafted');
+    expect((await readInbox(runsDir)).messages).toHaveLength(1);
+    // Pass 2: the approval lands — the reply delivers once and the message resolves.
+    const calls: string[] = [];
+    const sent = await runCommsAgent({
+      ...base,
+      approvals: [{ transport: 'email' as const, recipient: 'ada@example.com' }],
+      deliver: async () => { calls.push('sent'); return { status: 'sent' as const, reason: 'accepted by adapter' }; },
+    });
+    expect(sent.sends).toEqual([expect.objectContaining({ status: 'sent' })]);
+    expect(calls).toHaveLength(1);
+    expect((await readInbox(runsDir)).messages).toEqual([]);
+    expect(sent.triage).toMatchObject({ kept: 0, archived: 1 });
+  });
 });
 
 describe('owner approvals file', () => {

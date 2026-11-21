@@ -349,7 +349,8 @@ treats an approved draft as send authority. Drafts live in
 
 `phm comms-agent status|run|drafts --json` runs the Comms role under the
 Leader. The router picks the lane; the role names none. Bulk and bot mail is
-archived, never deleted. A send needs an owner standing approval. See
+archived, never deleted; a delivered reply resolves its message into the
+archive without resending. A send needs an owner standing approval. See
 [COMMS-AGENT](docs/COMMS-AGENT.md):
 
 ```sh
