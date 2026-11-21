@@ -39,9 +39,11 @@
  *               message-id claim consults) also counts as held. The same
  *               section also lists open agent-bus v2 work-feed jobs (queued or
  *               rescheduled `work.post` announcements with at least one claim
- *               key not fully held) and jobs the feed shows `blocked` or
- *               `failed` or that declare no claim keys at all — unclaimable
- *               or stuck work needs a decision, not a worker — read
+ *               key not fully held), jobs the feed shows `blocked` or
+ *               `failed`, jobs that declare no claim keys at all, and
+ *               `running`/`idle` announcements whose declared keys provably
+ *               lost every live hold — stalled work only the announcer can
+ *               move — read
  *               through the same projection `phm agents bus work feed` serves —
  *               act: `phm agents bus claim acquire` — and every live
  *               `worker-handoff` envelope (`isWorkerHandoffBody`, the exact
@@ -493,8 +495,13 @@ const STATUS_DETAIL_MAX = 160;
  * that declares no claim keys at all counts the same way — `work claim`
  * refuses it `no-claim-keys`, so it is unclaimable work needing a re-announce
  * or a terminal status, not a worker; it lists with the announcement's own
- * `bus show` handle and no claim act. Unknown holds
- * list candidates under 'degraded' rather than hiding them. A refused feed
+ * `bus show` handle and no claim act. A `running`/`idle` job that declares
+ * claim keys counts as pending only under complete hold coverage with no
+ * shown live hold on any of them — the status says progress while
+ * coordination proves nobody holds the scope, so the announcement is stalled
+ * and only its announcer can move it; truncated, unavailable or absent hold
+ * coverage can never prove that, so unproven stalls stay hidden. Unknown
+ * holds list open candidates under 'degraded' rather than hiding them. A refused feed
  * lists one high item naming the retained receipt the projection blamed —
  * every announced job is hidden and every work verb refuses until that
  * receipt's TTL ends, so the refusal itself is pending work; `expiresAt` is
@@ -534,6 +541,11 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
   if (feed.status !== 'ok') return { state: 'degraded', items: [] };
 
   const holdsKnown = feed.claims?.source !== 'unavailable';
+  // Complete hold coverage is what "no live claim" proofs need: a missing
+  // table is verified-empty and an untruncated available read shows every
+  // hold, while unavailable, truncated or absent claims can never prove a
+  // declared key is unheld.
+  const holdsComplete = feed.claims !== undefined && feed.claims.source !== 'unavailable' && !feed.claims.truncated;
   const heldKeys = new Map<string, Set<string>>();
   if (feed.claims) {
     for (const hold of feed.claims.holds) {
@@ -567,6 +579,37 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
           `phm agents bus work feed --job ${job.id} --claims`,
         ],
       });
+      continue;
+    }
+    // A running/idle announcement whose declared keys all lost their live
+    // holds is stalled work: the status reports progress but complete hold
+    // coverage proves nobody holds the job's scope, and only the announcer
+    // can move it — a worker cannot claim a non-open status. Jobs with no
+    // declared keys have no claim scope to prove unheld, and incomplete
+    // coverage can never prove "no hold", so both stay hidden rather than
+    // listed as fact.
+    if ((job.status === 'running' || job.status === 'idle') && job.claimKeys.length > 0 && holdsComplete) {
+      const held = heldKeys.get(job.id);
+      if (held === undefined || held.size === 0) {
+        const report = statuses.get(job.id);
+        items.push({
+          id: `bus-feed:${job.id}`,
+          source: 'bus',
+          kind: 'bus-work',
+          severity: post?.priority === 'P0' ? 'high' : 'warn',
+          blocking: false,
+          title: oneLine(job.title, TITLE_MAX) || `bus work ${job.id}`,
+          detail: cap(`owner ${job.owner} · ${job.provider} · ${job.repo} · ${job.status}` +
+            (report?.detail ? ` — ${report.detail}` : (job.detail === undefined ? '' : ` — ${oneLine(job.detail, 140)}`)) +
+            ' · no live claim on its declared keys; only the announcer can move it', DETAIL_MAX),
+          since: iso(job.updatedAt),
+          expiresAt: post ? iso(post.expiresAt) : null,
+          act: [
+            ...(report === undefined ? [] : [`phm agents bus show ${report.id}`]),
+            `phm agents bus work feed --job ${job.id} --claims`,
+          ],
+        });
+      }
       continue;
     }
     // An open job that declares no claim keys can never be claimed —

@@ -245,7 +245,11 @@ open agent-bus v2 work-feed jobs (queued or rescheduled
 jobs the feed shows `blocked` or `failed` — stuck work needs a decision — or
 open announcements that declare no claim keys, which `work claim` refuses
 `no-claim-keys`; those list with `bus show` / `work feed --job` links and the
-status detail when one exists instead of a claim act — read
+status detail when one exists instead of a claim act — and `running`/`idle`
+announcements whose declared keys provably lost every live hold, which are
+stalled work only the announcer can move; those list only under complete
+hold coverage, since truncated, unavailable or absent coverage can never
+prove "no hold" — read
 through the same projection as `phm agents bus work feed`), plus a refused
 work feed itself — one high item naming the retained receipt the projection
 blamed (`agents bus show <id>` / `work feed` links, `expiresAt` that
