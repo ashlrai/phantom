@@ -11,7 +11,8 @@
  * A conversation read to its end before (thread-read-store.ts) opens at the first
  * message that arrived since, under the same mark. A running worker's job is paused,
  * resumed, stopped or moved from the row under the header (ThreadControls.tsx), and
- * each such request reads in the conversation as a record line.
+ * each such request reads in the conversation as a record line. Opened from a line a
+ * find turned up, it is read whole and opens at that line (ThreadFound.tsx).
  */
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { sessionAge } from '../../../../core/fleet/live-sessions.js';
@@ -27,6 +28,7 @@ import { sendLeaderInboxMessage } from '../leader-thread/leader-inbox-data.js';
 import { MessageMarkdown } from '../MessageMarkdown.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { ThreadEarlier } from './ThreadEarlier.js';
+import { foundAttr, FoundText, useThreadFound, type FoundMarks } from './ThreadFound.js';
 import { ThreadWork } from './ThreadWork.js';
 import { onRecord, replyText, routedRow, sessionThreadQuery, sourcesLine, STATE_WORD, threadFailure, THREAD_POLL_MS, THREAD_REPLY_MAX,
   type SessionThread as Thread, type ThreadMessage } from './session-thread-model.js';
@@ -37,11 +39,14 @@ import styles from './session-thread.module.css';
 
 interface SentLine { key: string; at: string; text: string }
 
-function Bubble({ message }: { message: ThreadMessage }) {
+function Bubble({ message, marks }: { message: ThreadMessage; marks?: FoundMarks | null }) {
   const at = message.at ? clockTime(message.at) : '';
+  // An entry holding a found word says so, and has the word marked where its text is drawn as plain words.
+  const found = foundAttr(marks, message.key);
+  const words = (text: string) => (found && marks ? <FoundText text={text} words={marks.words} /> : text);
   if (message.kind === 'routing') {
     // Where the Leader sent one of Mason's messages: a row per job, its pull request as a link.
-    return <li className={styles.routing} data-side="record" data-kind="routing">
+    return <li className={styles.routing} data-side="record" data-kind="routing" data-found={found}>
       <span className={styles.recordLabel}>{message.label}</span>
       <ul className={styles.routed}>{message.text.split('\n').map(routedRow).map(row => <li key={row.text}>
         {row.text}{row.pr && <> <a href={row.pr} target="_blank" rel="noopener noreferrer">PR #{/\/pull\/(\d+)/.exec(row.pr)![1]}</a></>}
@@ -49,16 +54,16 @@ function Bubble({ message }: { message: ThreadMessage }) {
     </li>;
   }
   if (message.side === 'record') {
-    return <li className={styles.record} data-side="record" data-kind={message.kind}>
-      <span className={styles.recordLabel}>{message.label}</span>{message.text && <span>{message.text}</span>}{at && <time dateTime={message.at!}>{at}</time>}
+    return <li className={styles.record} data-side="record" data-kind={message.kind} data-found={found}>
+      <span className={styles.recordLabel}>{words(message.label)}</span>{message.text && <span>{words(message.text)}</span>}{at && <time dateTime={message.at!}>{at}</time>}
     </li>;
   }
-  return <li className={styles.entry} data-side={message.side} data-kind={message.kind}>
+  return <li className={styles.entry} data-side={message.side} data-kind={message.kind} data-found={found}>
     <span className={styles.label}>{message.label}{at && <> · <time dateTime={message.at!}>{at}</time></>}</span>
     <div className={styles.bubble}>
       {message.format === 'markdown' ? <MessageMarkdown text={message.text} />
         : message.format === 'mono' ? <pre className={styles.mono}>{message.text}</pre>
-        : <p className={styles.plain}>{message.text}</p>}
+        : <p className={styles.plain}>{words(message.text)}</p>}
     </div>
   </li>;
 }
@@ -116,9 +121,11 @@ export interface SessionThreadViewProps {
   markKey?: string | null;
   /** Drawn just above the reply box: the notice that the Leader, which every reply goes through, is not reading. */
   aboveReply?: ReactNode;
+  /** The entries holding the words of a find, when the conversation was opened at one. */
+  found?: FoundMarks | null;
 }
 
-export function SessionThreadView({ thread, sent, onSent, markKey = null, aboveReply = null }: SessionThreadViewProps) {
+export function SessionThreadView({ thread, sent, onSent, markKey = null, aboveReply = null, found = null }: SessionThreadViewProps) {
   const { session } = thread;
   const days = useMemo(() => dayBreaks(thread.messages), [thread.messages]);
   // Once the read holds Mason's own record of a message, the local copy steps aside for it.
@@ -134,7 +141,7 @@ export function SessionThreadView({ thread, sent, onSent, markKey = null, aboveR
         {thread.messages.map(message => <Fragment key={message.key}>
           {days.has(message.key) && <li className={styles.day} role="separator" data-day>{days.get(message.key)}</li>}
           {message.key === markKey && <li className={styles.newMark} role="separator" {...{ [NEW_MARK_ATTR]: '' }}>New</li>}
-          <Bubble message={message} />
+          <Bubble message={message} marks={found} />
         </Fragment>)}
         {waiting.map(line => <li key={line.key} className={styles.entry} data-side="other" data-kind="sent">
           <span className={styles.label}>You, from here · <time dateTime={line.at}>{clockTime(line.at)}</time></span>
@@ -181,15 +188,18 @@ export function SessionThread({ id, visible, onBack, onOpenLog, backTo = BACK_TO
   const [opened, setOpened] = useState<{ id: string; unread: readonly string[] } | null>(null);
   if (thread !== null && opened?.id !== id) setOpened({ id, unread: unreadSince(id, thread.messages) });
   const unreadAtOpen = opened?.id === id ? opened.unread : NOTHING_UNREAD;
-  const follow = useThreadFollow(id, keys, root, end, unreadAtOpen);
+  // Opened at a line a find turned up: the reader is taken there and held there, not at the end or the "New" mark.
+  const found = useThreadFound(id, thread, root);
+  const held = found.hold;
+  const follow = useThreadFollow(id, keys, root, end, unreadAtOpen, held);
   const { caughtUp, jumpToNew } = follow;
   const openMark = unreadAtOpen[0] ?? null;
   const atOpenMark = openMark !== null && follow.markKey === openMark;
   useEffect(() => { if (autoFocus) root.current?.focus(); }, [id, autoFocus]);
   // Open at the newest message, the way a conversation reads, unless messages arrived since it was last read: then open at the first of those.
   // Later reads are followed or held by useThreadFollow; a line sent from here always scrolls into view.
-  useEffect(() => { if (loaded && (openMark === null || sent.length > 0)) end.current?.scrollIntoView?.({ block: 'nearest' }); }, [loaded, sent.length, openMark]);
-  useEffect(() => { if (atOpenMark) jumpToNew(); }, [atOpenMark, jumpToNew]);
+  useEffect(() => { if (loaded && (sent.length > 0 || (openMark === null && !held.current))) end.current?.scrollIntoView?.({ block: 'nearest' }); }, [loaded, sent.length, openMark, held]);
+  useEffect(() => { if (atOpenMark && !held.current) jumpToNew(); }, [atOpenMark, jumpToNew, held]);
   // Read to the end: this is the place the next opening counts from.
   useEffect(() => { if (thread !== null && caughtUp) noteThreadRead(id, thread.messages); }, [id, thread, caughtUp]);
 
@@ -226,12 +236,13 @@ export function SessionThread({ id, visible, onBack, onOpenLog, backTo = BACK_TO
         {session?.jobId && onOpenLog && <button type="button" className={styles.link} onClick={() => onOpenLog(session.jobId!)}>Live log</button>}
         {session?.prUrl && <a className={styles.link} href={session.prUrl} target="_blank" rel="noopener noreferrer">Pull request</a>}
       </span>
+      {found.bar}
     </header>
     {failure && thread && <p className={styles.notice} role="status">
       {failure.kind === 'gone' ? 'This session has left the list. Showing the last read.' : 'Refresh failed. Showing the last read, which may be stale.'}
     </p>}
     {thread && <ThreadControls thread={thread} onDone={refetch} />}
-    {thread ? <SessionThreadView thread={thread} sent={sent} markKey={follow.markKey} onSent={line => setSent(lines => [...lines, line])}
+    {thread ? <SessionThreadView thread={thread} sent={sent} markKey={follow.markKey} found={found.marks} onSent={line => setSent(lines => [...lines, line])}
       // Only where there is a box to write in: a session that takes no message is not waiting on the Leader.
       aboveReply={leaderHealth && thread.reply.to !== 'none' ? <LeaderHealth visible={visible} place="thread" to={thread.reply.to === 'job' ? thread.reply.job : null} /> : null} />
       : failure ? <div className={styles.fault} role="alert" data-kind={failure.kind}>

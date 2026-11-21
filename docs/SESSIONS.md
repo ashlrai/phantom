@@ -289,7 +289,14 @@ sessions past the 40 on screen (a search reads up to 120). It keeps the lane,
 repo and "Running only" you narrowed to. A session listed with no line holds
 the words in its id, lane, repo or summary. Click a result, or press Down
 from the find box and Enter, to open that conversation; arrow keys move
-between results and go on to the cards after the last one. A word needs two
+between results and go on to the cards after the last one. A result with
+lines opens at the newest line shown, and clicking a line opens at that line.
+The conversation is then read with its earlier entries, the entry is ringed
+and scrolled to the middle, and the words are marked in every entry that
+holds them. A bar under the header says which entry you are at ("entry 2 of
+7"); `,` goes to the earlier one and `.` to the later one, and "Done" drops
+the marks and leaves you where you are. If the line has left the records the
+bar says so and you are at the newest entry that holds the words. A word needs two
 letters. If the search cannot be read the list says why and the cards are
 still filtered. From a terminal, `phm sessions find <words>` prints the same
 results; add `--json` for the document described under

@@ -6,13 +6,17 @@
  * in the chat: a line saying how many sessions hold the words, then one row a
  * session with its state, how much of its conversation matches and the newest
  * line that does. A job a row names is a button that opens that session beside
- * the chat (ComposerResultLine.tsx).
+ * the chat, and a row that quotes a job's line has "Open at this line", which
+ * opens the conversation at the line quoted (ComposerResultLine.tsx).
+ * Which line a row quotes is kept here for this window only: an answer left
+ * from before a reload keeps its words and its session buttons, no more.
  *
  * It only reads, so it needs no token and posts no inbox note. Nothing is
  * invented: a search that does not answer says so with the reason, and what
  * the read could not search is said under the rows. It never throws.
  */
 import { ApiError } from '../../../data/client.js';
+import type { FoundPlace } from '../fleet-sessions/thread-found.js';
 import { clockTime } from '../leader/thread-model.js';
 import { NO_SCOPE } from '../session-wall/session-wall-model.js';
 import { findFailure, findQuery, foundHeadline, foundMeta, sessionFindQuery, type FoundSession, type SessionFindRead } from '../session-wall/wall-find.js';
@@ -28,6 +32,22 @@ export const liveFindDeps: FindCommandDeps = {
 
 /** Sessions given a row in the answer, and the longest line quoted; the rest are counted. */
 export const FIND_ROWS = 6, FIND_QUOTE_CHARS = 140;
+
+const ROWS_KEPT = 60;
+const quotedLines = new Map<string, FoundPlace>();
+
+/** The line a row of an answer quotes, when that answer was given in this window and the row is a job's. */
+export const foundRowPlace = (row: string): FoundPlace | null => quotedLines.get(row) ?? null;
+
+/** Keeps which line each row of `read`'s answer quotes. Only a job's row: the chat opens jobs beside it, and `/thread` opens the rest. */
+export function rememberFoundRows(read: SessionFindRead): void {
+  for (const result of read.results.slice(0, FIND_ROWS)) {
+    const hit = result.hits[result.hits.length - 1];
+    if (hit && result.kind === 'worker') quotedLines.set(foundRow(result, read.words), { id: result.id, words: read.words, key: hit.key });
+  }
+  // The oldest rows go first; a Map keeps the order they were set in.
+  for (const row of [...quotedLines.keys()].slice(0, Math.max(0, quotedLines.size - ROWS_KEPT))) quotedLines.delete(row);
+}
 
 /** The words a `/find` argument searches for, or null when it holds none of two letters or more. */
 export const findArg = (arg: string): string | null => findQuery(arg);
@@ -71,6 +91,7 @@ export async function runFindCommand(arg: string, deps: FindCommandDeps): Promis
   const query = findArg(arg)!;
   try {
     const read = await deps.find(query);
+    if (read) rememberFoundRows(read);
     return read ? findAnswer(read) : `Whether any conversation holds “${query}” is unknown: the server answered with something that is not a search result.`;
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) return `Whether any conversation holds “${query}” is unknown: this Phantom server cannot search whole conversations yet. Update Phantom.`;

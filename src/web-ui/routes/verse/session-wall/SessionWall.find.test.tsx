@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
 import { evictAll } from '../../../data/cache.js';
+import { forgetEarlier } from '../fleet-sessions/thread-depth.js';
+import { forgetFoundPlace } from '../fleet-sessions/thread-found.js';
 import { SessionWallPane } from './SessionWall.js';
 import { NO_SCOPE } from './session-wall-model.js';
 import { findFailure, findQuery, foundHeadline, foundMeta, markParts, narrowSessionFind, sessionFindQuery } from './wall-find.js';
@@ -45,7 +47,7 @@ async function mountAndType(words: string) {
 }
 
 beforeEach(() => { evictAll(); forgetWallSeen(); forgetWallView(); setMutationToken('a'.repeat(64)); takeRequestedWallSession(); });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); clearMutationToken(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); clearMutationToken(); forgetEarlier(); forgetFoundPlace(); });
 
 describe('the search read', () => {
   it('asks only for words the server would search, with the wall\'s own narrowing', () => {
@@ -94,6 +96,32 @@ describe('found in whole conversations, under the find box', () => {
     expect(screen.queryByRole('button', { name: /^RQ-Z,/ })).toBeNull();
     fireEvent.click(second!);
     expect(await screen.findByRole('region', { name: 'Session RQ-Z' })).toBeTruthy();
+  });
+
+  it('opens a conversation at the line clicked, and at the newest line shown when the session itself is chosen', async () => {
+    const said = (key: string, side: string, label: string, text: string) => ({ key, kind: key.split(':')[0], side, label, at: null, text, format: 'plain' });
+    const thread = { schema: 'fleet.session-thread.v1', generatedAt: AT, session: session('RQ-A'), summary: ['RQ-A is a worker on claude.'], gaps: [], depth: 'full', deeper: false,
+      messages: [said('owner:1', 'other', 'Mason', '@RQ-A run the web Suite before you push'), said('bus:1', 'session', 'RQ-A', 'On it.'), said('latest', 'session', 'RQ-A', 'Running the web suite now.')],
+      sources: { activity: 'none', bus: 'available', owner: 'available', replies: 'none', orders: 'none' } };
+    const fetch = vi.fn(async (input: unknown, _init?: RequestInit) => {
+      const path = new URL(String(input), 'http://localhost').pathname;
+      return path.endsWith('/session-find') ? json(SUITE) : path.endsWith('/session-threads') ? json(WALL) : path.endsWith('/session-thread') ? json(thread) : json({ error: 'No such route.' }, 404);
+    });
+    vi.stubGlobal('fetch', fetch);
+    await mountAndType('suite');
+    await waitFor(() => expect(results()).toHaveLength(2));
+    const lines = () => [...results()[0]!.querySelectorAll<HTMLElement>('[data-hit]')];
+    expect(lines().map(line => line.dataset.hit)).toEqual(['owner:1', 'latest']);
+    fireEvent.click(lines()[0]!.querySelector('mark')!);
+    const bar = async () => { await waitFor(() => expect(document.querySelector('[data-thread-found="at"]')).not.toBeNull()); return document.querySelector('[data-thread-found]')!.textContent; };
+    expect(await bar()).toContain('Found “suite”: entry 1 of 2');
+    // The line was found in the whole conversation, so that is what is read.
+    expect(fetch.mock.calls.map(call => String(call[0])).filter(url => url.includes('/session-thread?'))).toEqual(['/api/verse/fleet/control/session-thread?id=RQ-A&depth=full']);
+    expect(document.querySelector('li[data-found="here"]')!.textContent).toContain('run the web Suite before you push');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to every conversation' }));
+    fireEvent.click(results()[0]!);
+    expect(await bar()).toContain('Found “suite”: entry 2 of 2');
   });
 
   it('takes Down from the find box to the first result, and past the last result to the cards', async () => {
