@@ -1228,6 +1228,39 @@ dispatcher's `effective_target` (null when the producer does not publish it).
 Available slots count against the launch target — the configured target
 tightened by `effectiveTarget` — so a shed lane never reports phantom room.
 
+## Lane target snapshot v1
+
+`src/core/fleet/runs-lane-targets.ts` exports `readLaneTargets` and
+`setLaneTarget`, returning `LaneTargetsV1` from `queue/slots.json`:
+
+```ts
+export interface LaneTargetRow {
+  lane: string; target: number; floor: number; ceiling: number | null;
+  held: boolean; heldReason: string | null; heldUntil: string | null;
+  pausedFrom: number | null; lastChange: string | null; changedBy: string | null;
+}
+export interface LaneSkip { lane: string; reason: string }
+export interface LaneTargetsV1 {
+  v: 1; generatedAt: string; sourceState: 'healthy' | 'missing' | 'degraded';
+  lanes: LaneTargetRow[]; skipped?: LaneSkip[];
+}
+```
+
+A null or omitted on-disk `ceiling` projects as `ceiling: null`, meaning no
+fixed ceiling. Numeric ceilings must be nonnegative safe integers at or above
+the floor. Target writes respect the floor and the smaller of the lane's
+numeric `ceiling` and `hard_cap`, when present; without either cap there is no
+fixed upper bound. Extra dispatcher fields are preserved.
+
+Invalid lane rows are omitted from `lanes` and reported as `{lane, reason}` in
+the optional `skipped` array, which is absent when no rows were skipped.
+Per-row skips leave `sourceState: 'healthy'`; malformed or unsafe files still
+report `degraded`, and missing files report `missing`. A malformed hold flag
+or non-string global `last_change_by` makes the whole source unavailable.
+Writes to a skipped lane fail with `LaneTargetError('unavailable')` (503).
+`phm fleet lane-target --json` passes through this snapshot; text output shows
+an unbounded ceiling as `none` and includes skipped-lane reasons.
+
 ## Persistent fleet worker sessions (RQ-CMP-ORG-RUNTIME-1)
 
 `src/core/fleet/session-pool.ts` exports `sessionPoolPolicy(policy?:
