@@ -739,8 +739,8 @@ as the session list.
 
 ### Session thread
 
-`phm sessions thread <id> [--json]` reads one session as a conversation, and
-`GET /api/verse/fleet/control/session-thread?id=<id>` serves the same
+`phm sessions thread <id> [--all] [--json]` reads one session as a conversation, and
+`GET /api/verse/fleet/control/session-thread?id=<id>[&depth=full]` serves the same
 `fleet.session-thread.v1` document with a current read session. The id is
 `leader`, a job id or a subagent id from the session tree. It adds no source:
 it joins the session's row in `fleet.live-sessions.v1`, the job's
@@ -748,6 +748,15 @@ it joins the session's row in `fleet.live-sessions.v1`, the job's
 messages Mason wrote in the Leader inbox and, for the leader,
 `leader.replies.v1`.
 
+- `depth` and `deeper`, the last two keys: the limits below are the default
+  depth, `recent`. `--all` (or `depth=full`) reads the same records and shows
+  more of them: up to 400 bus messages, every message of Mason's in the inbox
+  entries read, 40 leader replies, 60 commands, 60 changed files, 25 served
+  messages, 40 control requests and 120 log lines. `deeper` is true for a
+  `recent` thread that left out something the `full` one would show, so a
+  client knows whether to offer the earlier entries; it is always false for
+  `full`, whose own omissions are lines in `gaps`. The route answers 400 for
+  any other `depth` value, or for `depth` given twice.
 - `session`: `id`, `kind`, `agent`, `lane`, `model`, `repo`, `jobId`,
   `parentId` (null for the leader), `state` (`quiet` for a running session
   with no output for 10 minutes, otherwise the tree's state), `startedAt`,

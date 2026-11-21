@@ -25,6 +25,7 @@ import { inboxHeld } from '../leader-thread/inbox-held-model.js';
 import { sendLeaderInboxMessage } from '../leader-thread/leader-inbox-data.js';
 import { MessageMarkdown } from '../MessageMarkdown.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { ThreadEarlier } from './ThreadEarlier.js';
 import { onRecord, replyText, routedRow, sessionThreadQuery, sourcesLine, STATE_WORD, threadFailure, THREAD_POLL_MS, THREAD_REPLY_MAX,
   type SessionThread as Thread, type ThreadMessage } from './session-thread-model.js';
 import { ThreadControls } from './ThreadControls.js';
@@ -139,7 +140,7 @@ export function SessionThreadView({ thread, sent, onSent, markKey = null }: Sess
         </li>)}
       </ol>}
     <p className={styles.sources}>{sourcesLine(thread)}</p>
-    {thread.gaps.length > 0 && <ul className={styles.gaps} aria-label="Not shown">{thread.gaps.map(gap => <li key={gap}>{gap}</li>)}</ul>}
+    <ThreadEarlier thread={thread} />
     <ReplyBox thread={thread} onSent={onSent} />
   </>;
 }

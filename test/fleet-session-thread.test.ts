@@ -14,7 +14,7 @@ import type { OrderTraceJob, OrderTraceV1 } from '../src/core/fleet/order-trace.
 import type { FleetJobActivityV1 } from '../src/core/fleet/runs-job-activity.js';
 import type { FleetSessionV1, FleetSessionsV1 } from '../src/core/fleet/runs-sessions.js';
 import { buildLiveSessions, flatTree } from '../src/core/fleet/live-sessions.js';
-import { buildSessionThread, renderSessionThreadText, sessionBusMessages, sessionOutputLines, sessionOwnerMessages, sessionReply, THREAD_BUS_SHOWN, THREAD_CONTROLS_SHOWN, THREAD_ORDERS_SHOWN, THREAD_OUTPUT_LINES, THREAD_OUTPUT_LINE_CHARS, THREAD_OWNER_SHOWN, THREAD_ROUTED_SHOWN, type SessionThreadOutputRead, type SessionThreadOwnerRead } from '../src/core/fleet/session-thread.js';
+import { buildSessionThread, THREAD_LIMITS, renderSessionThreadText, sessionBusMessages, sessionOutputLines, sessionOwnerMessages, sessionReply, THREAD_BUS_SHOWN, THREAD_CONTROLS_SHOWN, THREAD_ORDERS_SHOWN, THREAD_OUTPUT_LINES, THREAD_OUTPUT_LINE_CHARS, THREAD_OWNER_SHOWN, THREAD_ROUTED_SHOWN, type SessionThreadOutputRead, type SessionThreadOwnerRead } from '../src/core/fleet/session-thread.js';
 import { readSessionThread } from '../src/core/fleet/session-thread-read.js';
 import { readFleetSessionMap } from '../src/core/fleet/sessions-view.js';
 import { createFleetSessionThreadApi } from '../src/core/verse/fleet-session-thread-api.js';
@@ -290,7 +290,7 @@ describe('buildSessionThread', () => {
     const list = await liveList(), read = (id: string) => buildSessionThread(list, id, { sessionsRead: true, bus: bus([]) }, NOW);
     const worker = read('RQ-A');
     expect(worker.reply).toEqual({ to: 'job', mention: '@RQ-A', hint: 'Goes to the Leader\'s inbox with @RQ-A in front, so the Leader knows which session you mean.' });
-    expect(Object.keys(worker).slice(-2)).toEqual(['reply', 'control']);
+    expect(Object.keys(worker).slice(-4)).toEqual(['reply', 'control', 'depth', 'deeper']);
     expect(read('RQ-QUIET').reply).toMatchObject({ to: 'job', mention: '@RQ-QUIET' });
     expect(read('leader').reply).toEqual({ to: 'leader', mention: null, hint: 'Goes to the Leader\'s inbox, the same as the Leader chat.' });
     expect(read('RQ-NOPE').reply).toEqual({ to: 'none', mention: null, hint: 'There is no session to write to. Write to the Leader in the Leader chat.' });
@@ -393,10 +393,14 @@ describe('GET /api/verse/fleet/control/session-thread', () => {
     const ok = await call(`${PATH}?id=RQ-A`);
     expect(ok).toMatchObject({ handled: true, status: 200, body: { schema: 'fleet.session-thread.v1', id: 'RQ-A' } });
     expect(ok.read).toHaveBeenCalledWith('RQ-A');
+    // The read is told a depth only when the caller asked for the full one.
+    expect((await call(`${PATH}?id=RQ-A&depth=recent`)).read.mock.calls).toEqual([['RQ-A']]);
+    const all = await call(`${PATH}?depth=full&id=RQ-A`);
+    expect([all.status, all.read.mock.calls]).toEqual([200, [['RQ-A', 'full']]]);
     expect((await call(`${PATH}?id=leader`)).body.session.kind).toBe('leader');
     expect((await call(`${PATH}?id=RQ-A`, { session: false })).status).toBe(401);
     expect((await call(`${PATH}?id=RQ-A`, { method: 'POST' })).status).toBe(405);
-    for (const bad of ['', '?id=a&id=b', '?id=RQ-A&lane=x', '?id=..%2Fetc', '?id=', `?id=${'a'.repeat(129)}`]) {
+    for (const bad of ['', '?id=a&id=b', '?id=RQ-A&lane=x', '?id=RQ-A&depth=all', '?id=RQ-A&depth=', '?id=RQ-A&depth=full&depth=full', '?depth=full', '?id=..%2Fetc', '?id=', `?id=${'a'.repeat(129)}`]) {
       const refused = await call(`${PATH}${bad}`);
       expect([bad, refused.status]).toEqual([bad, 400]);
       expect(refused.read).not.toHaveBeenCalled();
@@ -448,11 +452,26 @@ describe('phm sessions thread', () => {
   it('is listed in the sessions help', async () => {
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     expect(await cmdSessions(['thread', '--help'])).toBe(0);
-    expect(String(out.mock.calls[0]![0])).toContain('phm sessions thread <id> [--json]');
+    expect(String(out.mock.calls[0]![0])).toContain('phm sessions thread <id> [--all] [--json]');
+  });
+
+  it('asks for the full depth with --all, and for nothing more without it', async () => {
+    const read = vi.fn(async (id: string, depth?: 'recent' | 'full') => buildSessionThread(await liveList(), id, { sessionsRead: true, activity: activity(), bus: bus([]) }, NOW, depth));
+    const recent = await run(['RQ-A'], read);
+    // Ten commands are on record and eight are shown, so the text says how to see the rest.
+    expect(recent.out).toContain('note: Earlier entries are on record. Show them: phm sessions thread RQ-A --all');
+    expect(read.mock.calls).toEqual([['RQ-A']]);
+    vi.restoreAllMocks();
+    read.mockClear();
+    const all = await run(['RQ-A', '--all', '--json'], read);
+    expect(read.mock.calls).toEqual([['RQ-A', 'full']]);
+    expect(JSON.parse(all.out)).toMatchObject({ depth: 'full', deeper: false });
+    vi.restoreAllMocks();
+    expect((await run(['RQ-A', '--all'], read)).out).not.toContain('--all');
   });
 
   it('documents the JSON it prints: every top-level key, and every source the thread names', async () => {
-    const doc = AGENT_COMMANDS.find(command => command.usage === 'phm sessions thread <id> [--json]');
+    const doc = AGENT_COMMANDS.find(command => command.usage === 'phm sessions thread <id> [--all] [--json]');
     const shape = doc?.jsonShape ?? '';
     const thread = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, activity: activity(), bus: bus([]) }, NOW);
     // The documented shape lists `sources` as `sources:{a,b,...}`; it must name the keys the builder returns, in order.
@@ -552,7 +571,7 @@ describe('what was asked of the session\'s job (control)', () => {
     expect(thread.summary.at(-1)).toBe(`Pause requested at ${ago(4)}. The dispatcher has not applied it yet.`);
     expect([thread.sources.controls, thread.gaps]).toEqual(['available', []]);
     expect(renderSessionThreadText(thread)).toContain(`- Pause requested [${ago(4)}]\n    Asked from desktop. The dispatcher has not applied it yet.`);
-    expect(Object.keys(thread).at(-1)).toBe('control');
+    expect(Object.keys(thread).slice(-3)).toEqual(['control', 'depth', 'deeper']);
   });
 
   it('says an applied request by name, lets a refusal stand for nothing, and keeps the newest few', async () => {
@@ -593,5 +612,74 @@ describe('what was asked of the session\'s job (control)', () => {
     const down = await readSessionThread('RQ-A', { now: NOW, ...reads(), readControls: async () => { throw new Error('control file unreadable'); } });
     expect(down.sources).toMatchObject({ activity: 'available', controls: 'unavailable' });
     expect(down.control).toBeNull();
+  });
+});
+
+describe('depth: the newest few of each record, or as much as the same reads hold', () => {
+  const refused = (index: number): JobControlLedgerRow =>
+    ({ requestId: `jc-${index}`, action: 'pause', job: 'RQ-A', lane: null, status: 'refused', reason: 'The job had ended.', at: ago(30 - index), by: 'desktop' });
+  /** More on record than a recent read shows, for every part a worker's thread limits. */
+  const parts = () => ({
+    sessionsRead: true, activity: activity(),
+    bus: bus(Array.from({ length: THREAD_BUS_SHOWN + 3 }, (_, index) => message(`m${index}`, 'RQ-A', 'leader', { ts: ago(200 - index) }))),
+    // Newest first, as the inbox reader returns them.
+    owner: inbox(Array.from({ length: THREAD_OWNER_SHOWN + 2 }, (_, index) => wrote(`06:${10 + index}`, `@RQ-A note ${index}`, { id: `desk-${index}` })).reverse()),
+    output: { source: 'live', truncated: false, lines: Array.from({ length: 30 }, (_, index) => `line ${index + 1}`) } as SessionThreadOutputRead,
+    controls: Array.from({ length: THREAD_CONTROLS_SHOWN + 2 }, (_, index) => refused(index)),
+  });
+  const count = (thread: { messages: Array<{ kind: string }> }, kind: string) => thread.messages.filter(m => m.kind === kind).length;
+  const labelOf = (thread: { messages: Array<{ kind: string; label: string }> }, kind: string) => thread.messages.find(m => m.kind === kind)?.label;
+
+  it('says when a deeper read holds more, and the full read shows it', async () => {
+    const list = await liveList();
+    const recent = buildSessionThread(list, 'RQ-A', parts(), NOW), full = buildSessionThread(list, 'RQ-A', parts(), NOW, 'full');
+    expect([recent.depth, recent.deeper, full.depth, full.deeper]).toEqual(['recent', true, 'full', false]);
+    expect(recent.gaps).toEqual(['3 earlier bus messages not shown.', '2 earlier messages from Mason not shown.', '2 earlier control requests not shown.']);
+    expect(full.gaps).toEqual([]);
+    expect(['bus', 'owner', 'control'].map(kind => [kind, count(recent, kind), count(full, kind)])).toEqual([
+      ['bus', THREAD_BUS_SHOWN, THREAD_BUS_SHOWN + 3], ['owner', THREAD_OWNER_SHOWN, THREAD_OWNER_SHOWN + 2], ['control', THREAD_CONTROLS_SHOWN, THREAD_CONTROLS_SHOWN + 2]]);
+    expect([labelOf(recent, 'commands'), labelOf(full, 'commands')]).toEqual(['Ran 10 commands, last 8 shown', 'Ran 10 commands']);
+    expect([labelOf(recent, 'output'), labelOf(full, 'output')]).toEqual(['Output, last 12 lines of its log', 'Output, 30 lines']);
+    // The full read is the recent one with earlier entries added: nothing is renamed, reordered or dropped.
+    const fullKeys = full.messages.map(m => m.key);
+    expect(recent.messages.every(m => fullKeys.includes(m.key))).toBe(true);
+    expect(fullKeys.filter(key => recent.messages.some(m => m.key === key))).toEqual(recent.messages.map(m => m.key));
+    expect([full.summary, full.session, full.sources, full.reply]).toEqual([recent.summary, recent.session, recent.sources, recent.reply]);
+    expect(renderSessionThreadText(recent)).toContain('note: Earlier entries are on record. Show them: phm sessions thread RQ-A --all');
+    expect(renderSessionThreadText(full)).not.toContain('--all');
+  });
+
+  it('promises nothing deeper when every record fits, or when the session is not in the list', async () => {
+    const list = await liveList();
+    const small = buildSessionThread(list, 'RQ-A', { sessionsRead: true, bus: bus([message('m1', 'leader', 'RQ-A')]) }, NOW);
+    expect([small.depth, small.deeper]).toEqual(['recent', false]);
+    expect(renderSessionThreadText(small)).not.toContain('--all');
+    expect(buildSessionThread(list, 'RQ-NOPE', { sessionsRead: true, bus: null }, NOW, 'full')).toMatchObject({ session: null, depth: 'full', deeper: false });
+    // Each limited part says so by itself.
+    const only = (over: object) => buildSessionThread(list, 'RQ-A', { sessionsRead: true, bus: bus([]), ...over }, NOW).deeper;
+    expect([only({ activity: activity() }), only({ output: parts().output }), only({ controls: parts().controls }), only({ owner: parts().owner }), only({ bus: parts().bus })])
+      .toEqual([true, true, true, true, true]);
+    expect(only({ activity: activity({ entries: activity().entries.filter(entry => entry.kind !== 'command') }) })).toBe(false);
+  });
+
+  it('keeps the full read bounded and names what it still leaves out', async () => {
+    const many = Array.from({ length: THREAD_LIMITS.full.bus + 5 }, (_, index) => message(`m${index}`, 'RQ-A', 'leader', { ts: ago(2000 - index) }));
+    const full = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, bus: bus(many) }, NOW, 'full');
+    expect([count(full, 'bus'), full.gaps, full.deeper]).toEqual([THREAD_LIMITS.full.bus, ['5 earlier bus messages not shown.'], false]);
+    for (const key of Object.keys(THREAD_LIMITS.recent) as Array<keyof typeof THREAD_LIMITS.recent>) expect([key, THREAD_LIMITS.full[key] > THREAD_LIMITS.recent[key]]).toEqual([key, true]);
+  });
+
+  it('gives the leader its earlier replies, and reads through the depth it was asked for', async () => {
+    const six = replies(['one', 'two', 'three', 'four', 'five', 'six']), list = await liveList();
+    const recent = buildSessionThread(list, 'leader', { sessionsRead: true, bus: bus([]), replies: six }, NOW);
+    const full = buildSessionThread(list, 'leader', { sessionsRead: true, bus: bus([]), replies: six }, NOW, 'full');
+    expect([count(recent, 'reply'), recent.deeper, count(full, 'reply'), full.deeper]).toEqual([THREAD_LIMITS.recent.replies, true, 6, false]);
+    // Newest first in the read, oldest first in the conversation: the earlier reply joins at the top.
+    expect([recent.messages[0]!.text, full.messages[0]!.text]).toEqual(['five', 'six']);
+    const reads = { readMap: fleetMap, readSubagents: async () => [], readActivity: async () => activity(), readBus: () => parts().bus, readOwner: async () => parts().owner,
+      readOrders: async () => trace([]), readOutput: async () => parts().output, readControls: async () => parts().controls };
+    const read = await readSessionThread('RQ-A', { now: NOW, ...reads }), deep = await readSessionThread('RQ-A', { now: NOW, depth: 'full', ...reads });
+    expect([read.depth, read.deeper, count(read, 'bus'), deep.depth, deep.deeper, count(deep, 'bus')]).toEqual(['recent', true, THREAD_BUS_SHOWN, 'full', false, THREAD_BUS_SHOWN + 3]);
+    expect((await readSessionThread('RQ-NOPE', { now: NOW, depth: 'full', ...reads })).depth).toBe('full');
   });
 });
