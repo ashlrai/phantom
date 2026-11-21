@@ -291,13 +291,13 @@ describe('buildSessionThread', () => {
     const list = await liveList(), read = (id: string, parts: Partial<SessionThreadParts> = {}) => buildSessionThread(list, id, { sessionsRead: true, bus: bus([]), ...parts }, NOW);
     const worker = read('RQ-A', { activity: activity() });
     // The newest step of the fixture carries no time; it reads null, never "now".
-    expect(worker.work).toEqual({ commands: 10, files: { count: 1, added: 12, removed: 3, partial: false }, step: { event: 'publish', summary: 'pr=9', at: null } });
+    expect(worker.work).toEqual({ pr: null, commands: 10, files: { count: 1, added: 12, removed: 3, partial: false }, step: { event: 'publish', summary: 'pr=9', at: null } });
     // The values are the ones the summary states in words.
     expect(worker.summary).toEqual(expect.arrayContaining(['10 commands seen, 1 file changed (+12 −3).', 'Latest step: publish pr=9.']));
     const keys = Object.keys(worker);
     expect(keys.slice(keys.indexOf('gaps'), keys.indexOf('reply') + 1)).toEqual(['gaps', 'work', 'reply']);
     const unread = read('RQ-A', { activity: { ...activity(), sources: { ...activity().sources, commands: 'degraded' }, entries: [] } });
-    expect(unread.work).toEqual({ commands: null, files: null, step: null });
+    expect(unread.work).toEqual({ pr: null, commands: null, files: null, step: null });
     // Not asked for, failed, a session with no job, and no session at all: no work, and `sources.activity` says which.
     expect([read('RQ-A').work, read('RQ-A', { activity: null }).work, read('leader', { activity: activity() }).work, read('RQ-NOPE').work]).toEqual([null, null, null, null]);
     expect([read('RQ-A').sources.activity, read('RQ-A', { activity: null }).sources.activity]).toEqual(['none', 'unavailable']);

@@ -7,6 +7,9 @@
 .reading > dd { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; margin: 0; white-space: nowrap; }
 .reading > dd[data-unknown], .when[data-unknown] { color: var(--text-secondary); font-style: italic; }
 .reading > dd[data-failed] { color: var(--status-danger-fg); }
+/* What became of the pull request: merged is the one green reading, closed is red, still open keeps the plain colour. */
+.reading > dd[data-fate='merged'] { color: var(--status-success-fg); }
+.reading > dd[data-fate='closed'] { color: var(--status-danger-fg); }
 .event { flex: none; max-width: 50%; overflow: hidden; font-family: var(--font-mono); font-weight: 600; text-overflow: ellipsis; }
 .stepText { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--text-secondary); text-overflow: ellipsis; }
 .when, .quiet { flex: none; color: var(--text-secondary); }

@@ -725,6 +725,16 @@ replies are read once, and the recorded activity once for each job shown.
   that parses (null when no step is recorded). A null part is unknown, not
   zero. `work` itself is null for a session with no job and when the job's
   activity was not read; the entry's `sources.activity` tells those apart.
+- `work.pr` is the first key of `work`: what the job ledger records became
+  of the job's pull request, `{state, mergeSeconds, at}`. `state` is
+  `merged`, `closed` or `open`; `mergeSeconds` is the recorded time from the
+  pull request opening to its merge (null when not recorded, and for any
+  other state); `at` is the outcome row's own time (null when it does not
+  parse). It is read from the `outcome` rows of `metrics/jobs.jsonl` written
+  since the job's newest launch: a recorded merge stands, otherwise the
+  newest row answers. `pr` is null when no row records an outcome, so a
+  published pull request is unknown, not open. The summary states it as a
+  sentence that starts "Its pull request ".
 - `control` sits just before `reply` in each entry: the pause, resume, stop
   or move that stands for the session's job, `{action, lane, status, at}`
   with `status` `requested` or `applied`, the same answer
@@ -789,6 +799,9 @@ messages Mason wrote in the Leader inbox and, for the leader,
   step}`, where a null part is unknown, not zero. It is null for a session
   with no job and when the job's activity was not read; `sources.activity`
   tells those apart.
+- `work.pr`, the first key of `work`: what became of the job's pull request,
+  `{state, mergeSeconds, at}` or null when no outcome is recorded, as
+  described for a [session threads](#session-threads) entry.
 - `messages[]` in reading order: the brief it was given, each recorded step,
   the last 8 commands, up to 6 changed files, its notes, the newest 50 bus
   messages that name its job or were sent by or to it, the newest 10 messages

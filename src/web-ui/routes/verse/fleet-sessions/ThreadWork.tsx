@@ -57,6 +57,10 @@ export function ThreadWork({ thread }: { thread: SessionThread }) {
           {helpers.running} of {helpers.below} running{helpers.failed > 0 && `, ${helpers.failed} failed`}
         </dd>
       </div>}
+      {vitals.fate !== null && <div className={styles.reading} data-reading="pr">
+        <dt>Pull request</dt>
+        <dd data-fate={vitals.fate.state} title={vitals.fate.title}>{vitals.fate.words[0]!.toUpperCase()}{vitals.fate.words.slice(1)}</dd>
+      </div>}
     </dl>}
     {thread.summary.length === 0 && !drawn ? <p className={threadStyles.plain}>Summary unknown: the read returned none.</p>
       : left.map(line => <p key={line} className={threadStyles.plain}>{line}</p>)}
