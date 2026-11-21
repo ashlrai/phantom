@@ -35,6 +35,7 @@
  */
 import { join } from 'node:path';
 import { LIVE_JOBS_FILE, readLiveJobs, writeLiveJobs } from './live-jobs.js';
+import { writeCompactBrief } from './leader-compact-brief.js';
 import {
   acquireLocalStoreLockWithOutcome,
   releaseLocalStoreLock,
@@ -95,6 +96,7 @@ export interface SelfTickReport {
   state: 'ran' | 'busy';
   steps: SelfTickStepResult[];
   liveJobs?: 'written' | 'failed';
+  leaderBrief?: 'written' | 'failed';
 }
 
 export interface SelfTickOutcome {
@@ -190,6 +192,8 @@ export async function runSelfTick(options: RunSelfTickOptions): Promise<SelfTick
     // Persisted while the lock is still held so a `--last` read can never
     // see a pass that is still mid-flight. A throwing write must not change
     // the steps' exit code or skip the release in finally.
+    try { await writeCompactBrief(runsDir, clock()); report.leaderBrief = 'written'; }
+    catch { report.leaderBrief = 'failed'; }
     appendHistory();
     try {
       (options.writeLast ?? writeSelfTickLast)(runsDir, report);
