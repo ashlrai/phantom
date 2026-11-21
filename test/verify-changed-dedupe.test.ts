@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
-  readVerifyPassed, recordVerifyPassed, verifyDedupeInput, verifyDedupeKey,
+  collectChangedPaths, readVerifyPassed, recordVerifyPassed, selectChangedFiles, verifyDedupeInput, verifyDedupeKey,
   verifyForceRequested, verifyPassedDir, workingTreeHash,
 } from '../scripts/verify-changed.mjs';
 
@@ -182,6 +182,42 @@ describe('verifyPassedDir', () => {
 });
 
 describe('verify-changed dedupe end-to-end', () => {
+  it.each(['unrelated', 'missing'])('checks dirty files with %s origin/master and keeps dedupe', (mode) => {
+    const root = fixture();
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+    mkdirSync(join(root, 'src'));
+    mkdirSync(join(root, 'node_modules/eslint/bin'), { recursive: true });
+    mkdirSync(join(root, 'node_modules/eslint/lib'), { recursive: true });
+    writeFileSync(join(root, 'src/sample.test.ts'), "it('sample', () => {});\n");
+    writeFileSync(join(root, 'scripts/test-ci.mjs'), '');
+    writeFileSync(join(root, 'scripts/check-quarantine-ledger.mjs'), "import { writeFileSync } from 'node:fs'; writeFileSync('node_modules/quarantine.txt', JSON.stringify(process.argv.slice(2)));\n");
+    writeFileSync(join(root, 'node_modules/eslint/lib/cli.js'), '');
+    writeFileSync(join(root, 'node_modules/eslint/bin/eslint.js'), "require('node:fs').writeFileSync('node_modules/selected.txt', JSON.stringify(process.argv.slice(2)));\n");
+    git('add', '.');
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'sample');
+    if (mode === 'unrelated') {
+      const orphan = git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit-tree', 'HEAD^{tree}', '-m', 'separate');
+      git('update-ref', 'refs/remotes/origin/master', orphan);
+      writeFileSync(join(root, '.git/shallow'), `${git('rev-parse', 'HEAD')}\n`);
+    } else git('update-ref', '-d', 'refs/remotes/origin/master');
+    writeFileSync(join(root, 'src/sample.test.ts'), "it('sample', () => { return; });\n");
+    const paths = collectChangedPaths(root);
+    expect([...new Set(paths)]).toEqual(['src/sample.test.ts']);
+    expect(selectChangedFiles(paths, paths).lintFiles).toEqual(['src/sample.test.ts']);
+    const result = run(root);
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).not.toContain('FAIL file selection');
+    expect(result.stdout).toContain(mode === 'unrelated' ? 'origin/master two-tree diff' : 'working-tree changes against HEAD');
+    expect(result.stdout).toContain('PASS authority drift');
+    expect(result.stdout).toContain('PASS quarantine ledger');
+    expect(JSON.parse(readFileSync(join(root, 'node_modules/selected.txt'), 'utf8'))).toEqual(['--no-warn-ignored', '--', './src/sample.test.ts']);
+    expect(JSON.parse(readFileSync(join(root, 'node_modules/quarantine.txt'), 'utf8'))).toEqual(['--base', git('rev-parse', mode === 'unrelated' ? 'origin/master' : 'HEAD')]);
+    expect(run(root).stdout).toContain('SKIP verify-changed');
+    writeFileSync(join(root, 'new space.ts'), 'export {};\n');
+    expect(collectChangedPaths(root)).toContain('new space.ts');
+    expect(run(root).stdout).toContain('PASS verify dedupe: recorded tree');
+  });
+
   it('records a pass marker and skips an identical rerun without invoking checks', () => {
     const root = fixture();
     const first = run(root);

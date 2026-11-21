@@ -175,19 +175,35 @@ export function emptyChangedTests(existingChangedPaths, read = (p) => readFileSy
 
 /** Merge-base of HEAD and origin/master — the diff anchor base-scoped checks share. */
 export function masterMergeBase(root, exec = execFileSync) {
-  return exec('git', ['merge-base', 'HEAD', 'origin/master'], { cwd: root, encoding: 'utf8' }).trim();
+  return exec('git', ['merge-base', 'HEAD', 'origin/master'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+}
+
+/** A missing shared history changes the diff anchor, never the verification verdict. */
+export function verificationBase(root, exec = execFileSync) {
+  try {
+    return { base: masterMergeBase(root, exec), mode: 'merge-base' };
+  } catch {
+    const git = (...args) => exec('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    try {
+      return { base: git('rev-parse', '--verify', 'origin/master^{commit}'), mode: 'origin/master' };
+    } catch {
+      return { base: git('rev-parse', '--verify', 'HEAD^{commit}'), mode: 'HEAD' };
+    }
+  }
 }
 
 /** Include committed changes, index/worktree edits, deletions and untracked files. */
-export function collectChangedPaths(root) {
+export function collectChangedPaths(root, comparison = verificationBase(root)) {
   const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
-  const base = masterMergeBase(root);
+  const { base, mode } = comparison;
   // NUL delimiters preserve whitespace/newlines; disabling renames includes both sides.
   return [
-    ...git('diff', '--name-only', '--no-renames', '-z', base, 'HEAD', '--').split('\0'),
+    ...git('diff', '--name-only', '--no-renames', '-z', base, ...(mode === 'merge-base' ? ['HEAD'] : []), '--').split('\0'),
     ...git('diff', '--cached', '--name-only', '--no-renames', '-z', '--').split('\0'),
     ...git('diff', '--name-only', '--no-renames', '-z', '--').split('\0'),
-    ...git('ls-files', '--others', '--exclude-standard', '-z').split('\0'),
+    ...(mode === 'HEAD'
+      ? git('status', '--porcelain', '--no-renames', '--untracked-files=all', '-z').split('\0').filter((entry) => entry.startsWith('?? ')).map((entry) => entry.slice(3))
+      : git('ls-files', '--others', '--exclude-standard', '-z').split('\0')),
   ].filter(Boolean);
 }
 
@@ -981,11 +997,11 @@ export function verifyPassedDir(root, env = process.env, exec = execFileSync) {
 }
 
 /**
- * Inputs a recorded pass is valid for: the working-tree hash, the merge-base
+ * Inputs a recorded pass is valid for: the working-tree hash, the diff anchor/mode
  * (changed-file selection depends on it), and the installed checker
  * identities, whose drift can change a verdict on an identical tree.
  */
-export function verifyDedupeInput(root, exec = execFileSync, exists = existsSync, read = readFileSync) {
+export function verifyDedupeInput(root, exec = execFileSync, exists = existsSync, read = readFileSync, comparison = verificationBase(root, exec)) {
   const version = (pkg) => {
     try {
       const parsed = JSON.parse(read(resolve(root, 'node_modules', pkg, 'package.json'), 'utf8'));
@@ -995,7 +1011,7 @@ export function verifyDedupeInput(root, exec = execFileSync, exists = existsSync
     }
   };
   return {
-    base: exec('git', ['merge-base', 'HEAD', 'origin/master'], { cwd: root, encoding: 'utf8' }).trim(),
+    base: comparison.mode === 'merge-base' ? comparison.base : `${comparison.mode}:${comparison.base}`,
     tree: workingTreeHash(root, exec),
     eslint: eslintPreflight(root, exists).ok ? version('eslint') : '',
     typescript: version('typescript'),
@@ -1062,9 +1078,12 @@ export function verifyForceRequested(argv, env = process.env) {
 
 function main() {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  let comparison;
   let dedupe = null;
   try {
-    const input = verifyDedupeInput(root);
+    comparison = verificationBase(root);
+    if (comparison.mode !== 'merge-base') console.log(`WARN no merge base: using ${comparison.mode === 'HEAD' ? 'working-tree changes against HEAD' : 'origin/master two-tree diff'}`);
+    const input = verifyDedupeInput(root, execFileSync, existsSync, readFileSync, comparison);
     dedupe = { dir: verifyPassedDir(root), input, key: verifyDedupeKey(input) };
     if (!verifyForceRequested(process.argv.slice(2))) {
       const hit = readVerifyPassed(dedupe.dir, dedupe.key);
@@ -1084,7 +1103,7 @@ function main() {
   let perlFiles = [];
   let nodeFiles = [];
   try {
-    changed = collectChangedPaths(root);
+    changed = collectChangedPaths(root, comparison);
     const existing = changed.filter((path) => {
       try {
         return statSync(resolve(root, path)).isFile();
@@ -1133,7 +1152,8 @@ function main() {
   if (selection.authorityDrift) {
     let overlay = null;
     try {
-      if (masterMovedAuthorityDrift(root)) overlay = materializeMasterOverlay(root, changed);
+      if (comparison?.mode !== 'merge-base') console.warn('WARN authority drift on current master skipped: no merge base; local authority checks still run');
+      else if (masterMovedAuthorityDrift(root)) overlay = materializeMasterOverlay(root, changed);
     } catch (error) {
       console.log(`SKIP authority drift on current master: ${error.message}`);
     }
@@ -1283,7 +1303,7 @@ function main() {
   }
   if (selection.quarantineCheck) {
     try {
-      run('quarantine ledger', 'scripts/check-quarantine-ledger.mjs', ['--base', masterMergeBase(root)]);
+      run('quarantine ledger', 'scripts/check-quarantine-ledger.mjs', ['--base', (comparison ?? verificationBase(root)).base]);
     } catch (error) {
       console.log(`FAIL quarantine ledger: ${error.message}`);
       process.exitCode = 1;
