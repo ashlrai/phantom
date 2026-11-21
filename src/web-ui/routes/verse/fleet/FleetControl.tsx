@@ -292,6 +292,14 @@ export function FleetControl({ actions, grantFlow, darkSince = null, setupShownB
         </div>
       </div>
 
+      {state.daemon.liveness === 'stale' ? (
+        <p className={styles.staleTick} data-stale-tick>
+          <span className={styles.dot} data-tone="warning" aria-hidden="true" />
+          <strong>Daemon tick is stale</strong>
+          <span>{state.daemon.lastTickAt ? `last tick ${formatRelative(state.daemon.lastTickAt)}` : 'no tick recorded'} · {state.daemon.reason}</span>
+        </p>
+      ) : null}
+
       {dispatchLine ? <p className={styles.muted}>{dispatchLine}</p> : null}
 
       {lastKnown ? (
@@ -360,7 +368,7 @@ export function FleetControl({ actions, grantFlow, darkSince = null, setupShownB
             <span className={styles.factSub}>{money(state.spend.todayUsd)} of {money(state.spend.capUsd)} cap{state.spend.exhausted ? ' · spent' : ''}</span>
           </dd>
         </div>
-        <div className={styles.fact}>
+        <div className={styles.fact} data-tone={state.daemon.liveness === 'stale' ? 'warning' : undefined}>
           <dt><MicroLabel>Daemon</MicroLabel></dt>
           <dd className={styles.factValue}>
             {daemonLine}
