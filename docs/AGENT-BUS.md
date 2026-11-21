@@ -510,7 +510,11 @@ total), each carrying its hold state against the message-claim journal and
 the coordination table — `held` is tri-state, `null` whenever either store is
 unreadable, never a guess — the worker-handoff envelopes addressed to it that
 `fleet handoff-receive`/`handoff-reply` would accept, found in the same
-bounded walk and claim order (the first 20 shown, `matched` the true total),
+bounded walk and claim order (the first 20 shown, `matched` the true total;
+an assignment the addressee already answered drops out once a live reply
+routed recipient -> sender cites the handoff id through `inReplyTo`/`replyTo`,
+the same durable evidence `agents conversations` credits when it marks the
+thread answered),
 each carrying the envelope `id` those verbs take as `--id`, the raw `to`
 routing label they take as `--to` (a channel-addressed handoff matches only
 its literal `group:<channel>:<topic>` label), the body's

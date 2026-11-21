@@ -252,7 +252,11 @@ live claim (a live coordination-table row on the envelope's `queue:<id>` key
 counts as held, since the message-id claim consults that same table),
 live `worker-handoff` envelopes (`isWorkerHandoffBody`, the exact contract
 `fleet handoff-receive`/`handoff-reply` accept — a pending assignment lists
-until its TTL ends, claims are evidence only, never a gate), and
+until its TTL ends or the addressee answers it, claims are evidence only,
+never a gate; an assignment the recipient already answered drops out once a
+live reply routed recipient -> sender cites the handoff id through
+`inReplyTo`/`replyTo`, the same durable evidence `agents conversations`
+credits when it marks the thread answered), and
 open agent-bus v2 work-feed jobs (queued or rescheduled
 `work.post` announcements with at least one claim key not fully held, plus
 jobs the feed shows `blocked` or `failed` — stuck work needs a decision — or

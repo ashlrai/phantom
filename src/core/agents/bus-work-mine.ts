@@ -39,7 +39,7 @@ import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter, type Bus
 import { BUS_PROTOCOL_KEY, BUS_PRIORITIES, isClaimableWork,
   type BusPriority } from '../fleet/bus-envelope.js';
 import { inspectBusWorkClaims, type BusWorkClaimView } from '../fleet/bus-work-claims.js';
-import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
+import { busReplyCitations, isWorkerHandoffBody, workerHandoffAnswered, type BusReplyCitation } from '../fleet/handoff-body.js';
 import { createBusMailbox } from '../fleet/bus-mailbox.js';
 import { ashlrHome } from '../cloud/store.js';
 import { loadConfigReadOnlyStrict } from '../config.js';
@@ -828,6 +828,10 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
   const pendingAddress = agentPendingAddressMatcher(agent, registry);
   const nextCandidates: NextCandidate[] = [];
   const handoffCandidates: HandoffCandidate[] = [];
+  // Live reply citations collected across the same walk — a handoff's answer
+  // routes back to its assigner, so it is gathered for every envelope, not
+  // only the ones pendingAddress keeps.
+  const replyCites: BusReplyCitation[] = [];
   const sender = (from: string): string | null =>
     registry === undefined ? null : resolveAgent(registry, from)?.handle ?? null;
   const summaryOf = (body: unknown): string =>
@@ -844,6 +848,7 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
     }
     for (const row of page.messages) {
       const envelope = row.envelope;
+      replyCites.push(...busReplyCitations(envelope));
       if (!pendingAddress(envelope.to, envelope.from)) continue;
       const kind = claimableKind(envelope.body);
       if (kind !== null) {
@@ -875,6 +880,12 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
   if (!finished) {
     return scanFail({ status: 'retryable', reason: 'Bus store scan exceeded the bounded read.' });
   }
+
+  // A handoff the addressee already answered is not pending work: a live reply
+  // routed recipient -> sender and citing the handoff id is the same durable
+  // evidence the conversation projection credits when it marks the thread
+  // answered. Only live envelopes were scanned, matching that window.
+  const openHandoffs = handoffCandidates.filter(candidate => !workerHandoffAnswered(candidate, replyCites));
 
   const claimsRead = inspectBusWorkClaims(options.root);
   const coordination = listCoordination(options.root, nowMs);
@@ -917,10 +928,10 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
     truncated: nextCandidates.length > WORK_MINE_NEXT_MAX,
   };
 
-  handoffCandidates.sort(claimOrder);
+  openHandoffs.sort(claimOrder);
   const handoffs: BusWorkMineHandoffs = {
-    status: 'ok', holds, matched: handoffCandidates.length,
-    items: handoffCandidates.slice(0, WORK_MINE_HANDOFFS_MAX).map(candidate => {
+    status: 'ok', holds, matched: openHandoffs.length,
+    items: openHandoffs.slice(0, WORK_MINE_HANDOFFS_MAX).map(candidate => {
       const { held, holder } = heldFor(candidate);
       return {
         cursor: candidate.cursor, id: candidate.id, to: candidate.to, taskId: candidate.taskId,
@@ -931,7 +942,7 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
         summary: candidate.summary, held, holder,
       };
     }),
-    truncated: handoffCandidates.length > WORK_MINE_HANDOFFS_MAX,
+    truncated: openHandoffs.length > WORK_MINE_HANDOFFS_MAX,
   };
   return { next, handoffs };
 }

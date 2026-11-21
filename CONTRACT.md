@@ -2181,7 +2181,14 @@ shared `isWorkerHandoffBody` contract (`src/core/fleet/handoff-body.ts`)
 accepts, the same check `fleet handoff-receive`/`handoff-reply` run (exactly
 the `kind`/`taskId`/`prompt` keys, a fleet job id, a non-empty prompt), in the
 same claim order, capped at the first 20 shown with `matched` the true total
-and `truncated` definitive. Each `BusWorkMineHandoff` carries `cursor`,
+and `truncated` definitive. A handoff the addressee already answered is not
+pending and does not list: the walk also collects every live envelope's
+`inReplyTo`/`replyTo` citations (`busReplyCitations`), and a citation routed
+recipient -> sender — the exact direction the handoff verbs publish — drops
+the assignment (`workerHandoffAnswered`), the same durable evidence the
+conversation projection credits when it marks the thread answered; a
+citation routed any other way, or one that has expired out of the retained
+window, leaves the handoff pending. Each `BusWorkMineHandoff` carries `cursor`,
 envelope `id` — the handle `handoff-receive`/`handoff-reply --id` take — the
 raw `to` routing label to pass verbatim as `--to` (a channel-addressed
 handoff matches only its literal `group:<channel>:<topic>` label, never the
