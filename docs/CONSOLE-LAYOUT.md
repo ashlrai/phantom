@@ -473,8 +473,8 @@ red and opened are shown. Empty reads
 show “Nothing new yet.”
 
 The resource boards are one surface. Pools, Usage, Router, Models, Lanes,
-Capacity and Supply each open with the same row of names across the top, in
-that order: what the fleet has, where work is sent, how the lanes are running.
+Capacity, Supply and Throughput each open with the same row of names across the top, in
+that order: what the fleet has, where work is sent, how the lanes are running, what came out.
 The board on screen is marked. Choosing another name puts that board in the
 same dock tab, so looking across them does not pile up tabs; a board that
 already has a tab of its own is brought forward instead. The row is one Tab
@@ -503,11 +503,15 @@ lanes kept filled over the last 24 hours (`83.3% filled`), the board's own
 figure, and nothing for a window nobody sampled. Supply shows how many slots
 opening in the next 15 minutes have no job waiting (`3 short`), from the same
 snapshot Lanes reads; when the drop folder could not be read the figure is an
-upper bound and says so (`up to 3 short`).
+upper bound and says so (`up to 3 short`). Throughput shows how many PRs
+merged in the last 24 hours (`42 merged`, a measured zero included), from the
+`phm throughput` report the board draws, or `main red` when the main guardian
+reports a default branch red; when the job metrics file could not be read the
+count is unknown and the name stands alone.
 
 Each reading comes from the same read its board draws from, refreshed while
-the row is on screen (Pools, Lanes and Supply every 30 seconds; the others
-every 60), and the board's own headline is the name's tooltip. Amber marks a
+the row is on screen (Pools, Lanes and Supply every 30 seconds; the others,
+Throughput among them, every 60), and the board's own headline is the name's tooltip. Amber marks a
 reading that asks to be looked at; a plain figure is only a figure. A board
 with nothing to flag, or whose read has not answered or last failed, shows no
 reading: the name stands alone, never a zero.

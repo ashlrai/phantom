@@ -8,6 +8,7 @@
  */
 import type { PoolsViewV1 } from '../../../../core/fleet/pools-view.js';
 import type { RunsHistory } from '../../../../core/fleet/runs-history.js';
+import type { ThroughputReport } from '../../../../core/fleet/throughput.js';
 import { standingCounts, usageHeadline } from '../../../../core/usage/account-limits.js';
 import { boardHeadline as capacityHeadline, fillText, fleetTotals } from '../fleet-capacity/capacity-board-model.js';
 import { laneSeries } from '../fleet-capacity/capacity-model.js';
@@ -112,4 +113,16 @@ export function supplyReading(runs: FleetRuns): BoardReading | null {
   const short = totalShortfall(cards);
   if (short === 0) return null;
   return { text: `${pendingKnown ? '' : 'up to '}${short} short`, tone: 'attention', detail: `${supplyHeadline(cards, pendingKnown)}.` };
+}
+
+/**
+ * Default branches the main guardian reports red, else PRs merged over the window read (the Throughput board's
+ * own 24 hours), from the `phm throughput` report. A measured zero is a figure and is shown; a job metrics file
+ * that could not be read leaves the count unknown, so the name then stands alone unless main is red.
+ */
+export function throughputReading(report: ThroughputReport): BoardReading | null {
+  const detail = `${report.headline}.`;
+  if (report.main === 'red') return { text: 'main red', tone: 'attention', detail: `Main is red. ${detail}` };
+  const merged = report.metrics === 'ok' ? report.totals.merged : null;
+  return merged === null ? null : { text: `${merged} merged`, tone: 'quiet', detail };
 }
