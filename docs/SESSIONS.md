@@ -58,8 +58,14 @@ scrolled up to read, the view stays where you are: a **New** rule sits above
 the first message you have not reached and the header shows a count, such as
 **2 new ↓**. Click the count to go to the first new message, or press End to
 go to the newest. Reaching the end clears the count and leaves the rule in
-place until the next message arrives. "New" means it arrived in this window
-after the conversation was opened; nothing is marked new on opening. When a
+place until the next message arrives. The first time you open a conversation
+nothing is marked new. Once you have read one to its end, this browser
+remembers that, and the next time you open it (after a reload too) it opens at
+the first message that arrived since, under the same **New** rule and count; a
+message you never scrolled down to is still new the next time. Only a short
+fingerprint of each message is kept, never its text, for the 40 conversations
+read most recently. A line whose words changed, such as a worker's latest
+line, counts as new. When a
 conversation spans more than one day, each day's first message has a heading
 (**Today**, **Yesterday**, or the date).
 
@@ -117,8 +123,11 @@ one and Esc returns to the cards. A narrower pane shows the conversation
 alone, and J and K still work.
 
 A card or row shows "3 new" when the session holds three more messages than
-when you last had it open, or than when the pane first showed it. The marks
-last until the console window is reloaded. They are counted from each
+when you last had it open, or than when the pane first showed it. The counts
+are kept in this browser, so after a reload or a restart of the app the cards
+show what arrived while the console was closed, and opening a marked
+conversation shows where the new messages start. A session that has left the
+list is forgotten. In a private window the marks last until it is closed. They are counted from each
 conversation's message total, and the read keeps only the newest part of a
 long conversation, so a session whose total has stopped growing shows no mark.
 

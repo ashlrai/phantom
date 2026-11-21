@@ -8,6 +8,8 @@
  * session that is not running. Built on GET /api/verse/fleet/control/session-thread.
  * While it is open the conversation is followed (thread-follow.ts): messages that
  * arrive with the end on screen scroll into view, the rest wait under a "New" mark.
+ * A conversation read to its end before (thread-read-store.ts) opens at the first
+ * message that arrived since, under the same mark.
  */
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { sessionAge } from '../../../../core/fleet/live-sessions.js';
@@ -24,6 +26,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { onRecord, replyText, routedRow, sessionThreadQuery, sourcesLine, STATE_WORD, threadFailure, THREAD_POLL_MS, THREAD_REPLY_MAX,
   type SessionThread as Thread, type ThreadMessage } from './session-thread-model.js';
 import { dayBreaks, NEW_MARK_ATTR, newCountLabel, useThreadFollow } from './thread-follow.js';
+import { noteThreadRead, unreadSince } from './thread-read-store.js';
 import styles from './session-thread.module.css';
 
 interface SentLine { key: string; at: string; text: string }
@@ -149,6 +152,7 @@ export interface SessionThreadProps {
 }
 
 const BACK_TO_SESSIONS = { label: 'Back to all sessions', text: '← Sessions' };
+const NOTHING_UNREAD: readonly string[] = [];
 
 export function SessionThread({ id, visible, onBack, onOpenLog, backTo = BACK_TO_SESSIONS }: SessionThreadProps) {
   const def = useMemo(() => sessionThreadQuery(id), [id]);
@@ -161,10 +165,21 @@ export function SessionThread({ id, visible, onBack, onOpenLog, backTo = BACK_TO
   const thread = read.data ?? null;
   const loaded = thread !== null;
   const keys = useMemo(() => thread?.messages.map(message => message.key) ?? null, [thread]);
-  const follow = useThreadFollow(id, keys, root, end);
+  // What arrived since this conversation was last read to its end, worked out once, from its first read (set during render, so the first paint has it).
+  const [opened, setOpened] = useState<{ id: string; unread: readonly string[] } | null>(null);
+  if (thread !== null && opened?.id !== id) setOpened({ id, unread: unreadSince(id, thread.messages) });
+  const unreadAtOpen = opened?.id === id ? opened.unread : NOTHING_UNREAD;
+  const follow = useThreadFollow(id, keys, root, end, unreadAtOpen);
+  const { caughtUp, jumpToNew } = follow;
+  const openMark = unreadAtOpen[0] ?? null;
+  const atOpenMark = openMark !== null && follow.markKey === openMark;
   useEffect(() => { root.current?.focus(); }, [id]);
-  // Open at the newest message, the way a conversation reads; later reads are followed or held by useThreadFollow.
-  useEffect(() => { if (loaded) end.current?.scrollIntoView?.({ block: 'nearest' }); }, [loaded, sent.length]);
+  // Open at the newest message, the way a conversation reads, unless messages arrived since it was last read: then open at the first of those.
+  // Later reads are followed or held by useThreadFollow; a line sent from here always scrolls into view.
+  useEffect(() => { if (loaded && (openMark === null || sent.length > 0)) end.current?.scrollIntoView?.({ block: 'nearest' }); }, [loaded, sent.length, openMark]);
+  useEffect(() => { if (atOpenMark) jumpToNew(); }, [atOpenMark, jumpToNew]);
+  // Read to the end: this is the place the next opening counts from.
+  useEffect(() => { if (thread !== null && caughtUp) noteThreadRead(id, thread.messages); }, [id, thread, caughtUp]);
 
   const failure = read.error ? threadFailure(read.error) : null;
   const session = thread?.session;
