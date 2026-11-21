@@ -376,6 +376,9 @@ traffic needs a new private `ASHLR_HOME`. No history is automatically deleted.
 Credential-shaped payloads refuse; use Phantom Secrets `phm_<name>` references.
 `--json` emits one object on stdout, including errors. Exit codes are 0 success,
 1 operational refusal and 2 bad usage. `phm bus send --help` performs no work.
+Pending (unacked, unexpired) mail also lists in `phm comms inbox` under the
+`mailbox` source — a read-only projection across every recipient label; the
+mailbox stays the store of record and `phm bus ack` still clears each row.
 
 ### Owner Assist
 

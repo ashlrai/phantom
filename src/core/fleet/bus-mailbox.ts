@@ -94,8 +94,9 @@ export interface BusMailboxPendingMessage {
 }
 
 /** Pending (unacked, unexpired) messages in the mailbox's own drain order —
- * the shared filter `pendingFor` narrows by label and `inspect` counts
- * store-wide. `at` is the caller's clock reading; callers validate it. */
+ * the shared filter `pendingFor` narrows by label, `pendingAll` lists
+ * store-wide and `inspect` counts. `at` is the caller's clock reading;
+ * callers validate it. */
 function pendingMailboxMessages(records: readonly RecordEntry[], at: number): BusMailboxPendingMessage[] {
   const acks = new Map<string, Set<string>>();
   for (const record of records) {
@@ -125,6 +126,17 @@ export interface BusMailbox {
    * its own `to` label — the `--to` `inbox`/`ack` take for that message.
    */
   pendingFor(labels: readonly string[], limit?: number): { messages: BusMailboxPendingMessage[]; matched: number };
+  /**
+   * Pending mail across EVERY recipient label in the same drain order —
+   * the fleet-wide read the unified comms inbox needs, where `pendingFor`
+   * still requires knowing the labels ahead of time. `source` mirrors
+   * `inspect`: 'missing' is a verified-empty store (`matched` 0 is proven,
+   * not fabricated), 'available' carries the rows capped at `limit` plus
+   * `matched` the true total, and 'unavailable' means the store could not be
+   * read — `messages` stays empty and `matched` null, never a guess. Writes
+   * nothing and takes no writer lock beyond the shared record read.
+   */
+  pendingAll(limit?: number): { source: 'missing' | 'available' | 'unavailable'; messages: BusMailboxPendingMessage[]; matched: number | null };
   /**
    * Read-only health probe for status surfaces: `missing` is a verified-empty
    * store (`pending` 0 is proven, not fabricated), `available` carries the
@@ -250,6 +262,19 @@ export function createBusMailbox(
       if (!Number.isSafeInteger(at) || at < 0) throw new BusMailboxError('storage');
       const pending = pendingMailboxMessages(read(), at).filter(message => wanted.has(message.envelope.to));
       return { messages: pending.slice(0, limit), matched: pending.length };
+    },
+    pendingAll(limit = 1000) {
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 5000) throw new BusMailboxError('invalid-envelope');
+      try {
+        const detailed = readDetailed();
+        if (detailed.state === 'missing') return { source: 'missing' as const, messages: [], matched: 0 };
+        const at = now();
+        if (!Number.isSafeInteger(at) || at < 0) return { source: 'unavailable' as const, messages: [], matched: null };
+        const pending = pendingMailboxMessages(detailed.records, at);
+        return { source: 'available' as const, messages: pending.slice(0, limit), matched: pending.length };
+      } catch {
+        return { source: 'unavailable' as const, messages: [], matched: null };
+      }
     },
     inspect() {
       try {

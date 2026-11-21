@@ -15,7 +15,7 @@ answers not confirmed in the planner inbox or with unreadable delivery receipts,
 unanswered iMessage
 teammate texts, unsettled Dot/Instinct teammate tasks, owner-thread messages awaiting a recorded reply, recorded owner
 replies whose channel fanout is not fully delivered, drafts awaiting approval,
-pending bus work (unclaimed envelopes, open, unclaimable or stalled feed jobs and worker handoffs), agent
+pending bus work (unclaimed envelopes, open, unclaimable or stalled feed jobs and worker handoffs), pending legacy phm bus mailbox mail across every recipient label, agent
 conversation threads waiting on a reply or blocked, bot seats with pending handoffs, comms
 questions/approvals awaiting an answer, .reply.eml artifacts stuck in the
 email outbox, pending team approvals and inbox proposals awaiting review —

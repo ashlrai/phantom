@@ -647,7 +647,10 @@ To move an agent onto the unified bus:
    mine`'s `mailbox` section lists the pending rows for every label of the
    agent's identity (or the literal ref when none resolves) with the `--to`
    each row needs, so leftover mail is discoverable without knowing which
-   label holds it. Copying
+   label holds it; `phm comms inbox`'s `mailbox` source lists every pending
+   message across ALL recipient labels fleet-wide — the same store, read
+   through `BusMailbox.pendingAll`, never copied or acknowledged by the
+   projection. Copying
    mailbox records into the store is not supported: it would duplicate ids and
    lose acknowledgment state.
 

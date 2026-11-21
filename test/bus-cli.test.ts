@@ -214,6 +214,50 @@ describe('local durable bus core', () => {
     expect(human.lines[0]).toContain('More pending messages');
   });
 
+  it('pendingAll lists every recipient\'s pending mail in drain order with the true total', () => {
+    bus.send(envelope({ id: 'low', to: 'other', priority: 'P3' }));
+    bus.send(envelope({ id: 'first', priority: 'P0' }));
+    time++;
+    bus.send(envelope({ id: 'second', to: 'other', priority: 'P0' }));
+    bus.send(envelope({ id: 'middle', priority: 'P1' }));
+    const all = bus.pendingAll();
+    expect(all.source).toBe('available');
+    expect(all.matched).toBe(4);
+    expect(all.messages.map(m => m.envelope.id)).toEqual(['first', 'second', 'middle', 'low']);
+    // Each row keeps its own `to` — the --to inbox/ack take for that message.
+    expect(all.messages.map(m => m.envelope.to)).toEqual(['fleet', 'other', 'fleet', 'other']);
+    const limited = bus.pendingAll(2);
+    expect(limited.source).toBe('available');
+    expect(limited.messages.map(m => m.envelope.id)).toEqual(['first', 'second']);
+    expect(limited.matched).toBe(4);
+  });
+
+  it('pendingAll omits acknowledged and expired mail and reports a missing store honestly', () => {
+    expect(bus.pendingAll()).toEqual({ source: 'missing', messages: [], matched: 0 });
+    bus.send(envelope({ id: 'expired' }));
+    time += 500;
+    bus.send(envelope({ id: 'acked' }));
+    time += 100;
+    bus.ack('acked', 'fleet');
+    time += 100;
+    bus.send(envelope({ id: 'live' }));
+    time += 600; // 'expired' (acceptedAt 1000, ttl 1000) is past its window; 'live' still has 400ms left.
+    const all = bus.pendingAll();
+    expect(all.source).toBe('available');
+    expect(all.matched).toBe(1);
+    expect(all.messages.map(m => m.envelope.id)).toEqual(['live']);
+    expect(all.messages[0]!.acceptedAt).toBe(1700);
+  });
+
+  it('pendingAll reports an unreadable store as unavailable with unknown counts, never zero', () => {
+    bus.send(envelope());
+    const record = join(home, 'bus-mailbox', 'records', readdirSync(join(home, 'bus-mailbox', 'records'))[0]!);
+    writeFileSync(record, '{malformed');
+    expect(bus.pendingAll()).toEqual({ source: 'unavailable', messages: [], matched: null });
+    expect(() => bus.pendingAll(0)).toThrow('Invalid bus envelope');
+    expect(() => bus.pendingAll(5001)).toThrow('Invalid bus envelope');
+  });
+
   it('rejects same-ID content or recipient conflicts and preserves the original', async () => {
     bus.send(envelope());
     expect(() => bus.send(envelope({ body: 'changed' }))).toThrow('different contents');

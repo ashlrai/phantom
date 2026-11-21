@@ -7,7 +7,7 @@ const entry = (over: Record<string, unknown> = {}) => ({
 });
 const view = (items: unknown[]) => readUnifiedInboxView({
   schema: 'comms.unified-inbox.v1', total: items.length, omitted: 0,
-  sources: { 'needs-you': ok, imessage: ok, 'owner-thread': ok, drafts: ok, bus: ok, conversations: ok, seats: ok, gmail: ok, linkedin: ok, requests: ok, 'email-outbox': ok }, items,
+  sources: { 'needs-you': ok, imessage: ok, 'owner-thread': ok, drafts: ok, bus: ok, mailbox: ok, conversations: ok, seats: ok, gmail: ok, linkedin: ok, requests: ok, 'email-outbox': ok }, items,
 });
 const detailOf = (raw: unknown) => {
   const v = view([entry({ detail: raw })]);
@@ -26,14 +26,14 @@ it('caps detail at 300 characters', () => {
 });
 
 it('sourceProblems gives no entry for healthy sources', () => {
-  const sources: UnifiedInboxSources = { 'needs-you': ok, 'needs-you-delivery': ok, imessage: ok, 'teammate-tasks': ok, 'owner-thread': ok, 'owner-delivery': ok, drafts: ok, bus: ok, conversations: ok, seats: ok, gmail: ok, linkedin: ok, requests: ok, 'email-outbox': ok, 'team-approvals': ok, proposals: ok } as UnifiedInboxSources;
+  const sources: UnifiedInboxSources = { 'needs-you': ok, 'needs-you-delivery': ok, imessage: ok, 'teammate-tasks': ok, 'owner-thread': ok, 'owner-delivery': ok, drafts: ok, bus: ok, mailbox: ok, conversations: ok, seats: ok, gmail: ok, linkedin: ok, requests: ok, 'email-outbox': ok, 'team-approvals': ok, proposals: ok } as UnifiedInboxSources;
   expect(sourceProblems(sources)).toEqual([]);
 });
 
 it('sourceProblems explains each unhealthy state with its command', () => {
   const sources = {
     'needs-you': ok, 'needs-you-delivery': ok, imessage: { state: 'missing', pending: 0 }, 'teammate-tasks': ok, 'owner-thread': ok, 'owner-delivery': ok, drafts: { state: 'degraded', pending: 2 },
-    bus: { state: 'unavailable', pending: 0 }, conversations: ok, seats: ok, gmail: { state: 'missing', pending: 0 }, linkedin: ok, requests: ok, 'email-outbox': ok,
+    bus: { state: 'unavailable', pending: 0 }, mailbox: ok, conversations: ok, seats: ok, gmail: { state: 'missing', pending: 0 }, linkedin: ok, requests: ok, 'email-outbox': ok,
     'team-approvals': ok, proposals: ok,
   } as UnifiedInboxSources;
   expect(sourceProblems(sources)).toEqual([
