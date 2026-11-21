@@ -69,6 +69,23 @@ export function paceLine(v: PaceVerdict): string {
   return `${head}: ${rates}`;
 }
 
+/** The word a screen shows beside a pool: "ahead", "behind", "on pace" or "unknown". */
+export const paceWord = (state: PaceState): string => state === 'on-pace' ? 'on pace' : state;
+
+/**
+ * One plain sentence for a desktop or phone row: "Claude: 64%, empty about Sat 4 PM, resets Thu 6 PM. Ahead of pace."
+ * Only what the verdict holds is said; an unknown pool says so and guesses nothing.
+ */
+export function paceSentence(v: PaceVerdict): string {
+  const label = poolLabel(v.pool);
+  if (v.state === 'unknown') return `${label}: unknown, no usable reading.`;
+  const parts = [`${Math.round(v.usedPct ?? 0)}%`];
+  if (v.state === 'ahead') parts.push(`empty about ${v.emptyAt ? when(v.emptyAt) : 'early'}`);
+  if (v.resetAt) parts.push(`resets ${when(v.resetAt)}`);
+  const verdict = v.state === 'ahead' ? 'Ahead of pace' : v.state === 'behind' ? 'Behind pace, room left over' : 'On pace';
+  return `${label}: ${parts.join(', ')}. ${verdict}.`;
+}
+
 export interface FleetPaceV1 { schema: typeof PACE_SCHEMA; generatedAt: string; pools: PaceVerdict[]; gaps: string[] }
 
 /** Verdicts for every pool in a pools view. Pure. */
