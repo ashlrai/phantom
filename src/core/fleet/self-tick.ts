@@ -34,6 +34,7 @@
  * does no step and reports 'busy'.
  */
 import { join } from 'node:path';
+import { LIVE_JOBS_FILE, readLiveJobs, writeLiveJobs } from './live-jobs.js';
 import {
   acquireLocalStoreLockWithOutcome,
   releaseLocalStoreLock,
@@ -93,6 +94,7 @@ export interface SelfTickReport {
   mode: 'apply' | 'dry-run';
   state: 'ran' | 'busy';
   steps: SelfTickStepResult[];
+  liveJobs?: 'written' | 'failed';
 }
 
 export interface SelfTickOutcome {
@@ -156,6 +158,8 @@ export async function runSelfTick(options: RunSelfTickOptions): Promise<SelfTick
   }
   const argv = ['--json', ...(options.apply === true ? ['--apply'] : []), '--runs-dir', runsDir];
   try {
+    try { await writeLiveJobs(join(runsDir, LIVE_JOBS_FILE), await readLiveJobs({ runsDir, now: clock })); report.liveJobs = 'written'; }
+    catch { report.liveJobs = 'failed'; }
     for (const step of SELF_TICK_STEP_ORDER) {
       try {
         const run = options.steps[step] ?? (step === 'teammate-overdue' ? async () => {
