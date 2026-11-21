@@ -7,7 +7,9 @@
  */
 import { scrubSecrets } from '../util/scrub.js';
 import { PROVIDERS } from '../agents/bus-v2-schema.js';
-import { busBodySummary } from '../agents/bus-unified.js';
+import { busBodySummary, busInboxJobMarker, jobAnnotationFromFeed, workFeedJobId,
+  type BusEnvelopeLookupJob } from '../agents/bus-unified.js';
+import { readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
 import { agentIdentityKeys, BUS_CLIS, type AgentIdentityKeyFor } from '../agents/bus-identity.js';
 import { scanBusInbox, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
 
@@ -24,6 +26,16 @@ export interface AgentRef { name: string; lane: string | null }
 export interface AgentMessage {
   id: string; ts: string; from: AgentRef; to: AgentRef; kind: AgentMessageKind;
   summary: string; conversation: string; job: string | null; pr: string | null;
+  /**
+   * Present only when the body declares a work-feed `jobId` citation
+   * (`work.post`, `work.status`, `work.result` or `wake`): the same live
+   * `BusEnvelopeLookupJob` `agents bus inbox`, `agents bus show` and
+   * `agents bus work mine` resolve — the job's feed status and claim
+   * coverage, the feed's own refusal, or its unreadable state. Absent on
+   * every other body kind; `job` stays the display link and may name a
+   * different id than the citation.
+   */
+  jobState?: BusEnvelopeLookupJob;
 }
 export interface AgentMessages {
   schema: 'agent-messages.v1';
@@ -139,8 +151,15 @@ function threadKey(body: Body | null, jobId: string | null): string | null {
     ?? (jobId === null ? null : `${JOB_THREAD_PREFIX}${jobId}`) ?? str(body?.origin);
 }
 
-/** Pure projection, oldest-to-newest input in, newest-first messages out. */
-export function projectAgentMessages(rows: readonly BusInboxReceipt[]): AgentMessage[] {
+/**
+ * Pure projection, oldest-to-newest input in, newest-first messages out.
+ * `jobStateOf` resolves the live feed state behind a body's declared
+ * `jobId` citation (`work.post`, `work.status`, `work.result` or `wake`);
+ * without it — the map and conversations projections, which carry no feed
+ * read — `jobState` stays absent rather than guessed.
+ */
+export function projectAgentMessages(rows: readonly BusInboxReceipt[],
+  jobStateOf?: (jobId: string) => BusEnvelopeLookupJob): AgentMessage[] {
   const byId = new Map(rows.map(row => [row.envelope.id, row]));
   const conversations = new Map<string, string>();
   const vendors = new Map<string, string>();
@@ -173,6 +192,8 @@ export function projectAgentMessages(rows: readonly BusInboxReceipt[]): AgentMes
   return sorted.map(row => {
     const { envelope } = row, body = record(envelope.body);
     const jobId = jobIdOf(body, jobByClaim);
+    const feedJobId = jobStateOf === undefined ? undefined : workFeedJobId(envelope.body);
+    const jobState = feedJobId === undefined || jobStateOf === undefined ? undefined : jobStateOf(feedJobId);
     // work.* operations keep their terse field formats; every other kind the
     // bus knows summarizes through the same one-line composer the inbox frame
     // uses, so `phm messages`, conversations and the map never show a bare
@@ -186,6 +207,7 @@ export function projectAgentMessages(rows: readonly BusInboxReceipt[]): AgentMes
       to: { name: to, lane: laneOf(to, vendors.get(envelope.to) ?? null) },
       kind: classify(envelope, body), summary: summary || 'No text.', conversation: oneLine(conversationOf(row)),
       ...related(body, raw ?? '', jobId),
+      ...(jobState === undefined ? {} : { jobState }),
     };
   }).reverse();
 }
@@ -209,12 +231,38 @@ export function filterAgentMessages(messages: readonly AgentMessage[], query: Ag
     && (!agent || (peer ? (is(m.from, agent, agentKey) && is(m.to, peer, peerKey)) || (is(m.from, peer, peerKey) && is(m.to, agent, agentKey)) : is(m.from, agent, agentKey) || is(m.to, agent, agentKey))));
 }
 
-/** The one typed read behind the CLI, API and panes. */
+/**
+ * The one typed read behind the CLI, API and panes. Bodies that cite a
+ * work-feed `jobId` get `jobState` — the same live feed state `agents bus
+ * inbox`/`show`/`work mine` resolve — from one claims-joined feed read per
+ * call, only when a scanned row cites a job. A feed that cannot be read
+ * annotates `unavailable` (or its own state), never a guessed job.
+ */
 export function readAgentMessages(query: AgentMessagesQuery = {}, options: BusInboxOptions = {}): AgentMessages {
   const scan = scanBusInbox(options);
   const identityOf = query.agent === undefined && query.with === undefined ? undefined
     : agentIdentityKeys({ root: options.root });
-  const matched = filterAgentMessages(projectAgentMessages(scan.rows), query, identityOf);
+  const jobIds = new Set<string>();
+  for (const row of scan.rows) {
+    const jobId = workFeedJobId(row.envelope.body);
+    if (jobId !== undefined) jobIds.add(jobId);
+  }
+  let jobStateOf: ((jobId: string) => BusEnvelopeLookupJob) | undefined;
+  if (jobIds.size > 0) {
+    let feed: BusWorkFeedReadResult | undefined;
+    try { feed = readBusWorkFeed({ root: options.root, now: options.now, claims: true }); }
+    catch { feed = undefined; }
+    const annotations = new Map<string, BusEnvelopeLookupJob>();
+    jobStateOf = (jobId) => {
+      let annotation = annotations.get(jobId);
+      if (annotation === undefined) {
+        annotation = feed === undefined ? { jobId, feed: 'unavailable' } : jobAnnotationFromFeed(feed, jobId);
+        annotations.set(jobId, annotation);
+      }
+      return annotation;
+    };
+  }
+  const matched = filterAgentMessages(projectAgentMessages(scan.rows, jobStateOf), query, identityOf);
   const limit = query.limit ?? AGENT_MESSAGES_DEFAULT_LIMIT;
   return { schema: 'agent-messages.v1', source: scan.source, messages: matched.slice(0, limit), matched: matched.length, skipped: scan.skipped };
 }
@@ -265,7 +313,8 @@ export function formatAgentMessagesText(result: AgentMessages): string {
   const lines = result.messages.map(m => {
     const who = (a: AgentRef) => `${a.name} (${a.lane ?? 'lane unknown'})`;
     const link = [m.job, m.pr].filter(Boolean).join(' ');
-    return `${m.ts.slice(0, 19).replace('T', ' ')}  ${m.kind.padEnd(7)} ${who(m.from)} → ${who(m.to)}: ${m.summary}${link ? `  [${link}]` : ''}`;
+    const job = m.jobState === undefined ? '' : ` ${busInboxJobMarker(m.jobState)}`;
+    return `${m.ts.slice(0, 19).replace('T', ' ')}  ${m.kind.padEnd(7)} ${who(m.from)} → ${who(m.to)}: ${m.summary}${link ? `  [${link}]` : ''}${job}`;
   });
   const head = result.messages.length === 0 ? 'No agent messages.' : `${result.messages.length} of ${result.matched} messages, newest first.`;
   const tail = result.skipped > 0 ? [`Skipped ${result.skipped} damaged bus record${result.skipped === 1 ? '' : 's'}.`] : [];
