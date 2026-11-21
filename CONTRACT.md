@@ -2135,7 +2135,8 @@ the scrubbed `subject`; the first 20 show longest-standing first with
 `readAgentWakes` capped at the newest 20 with `matched` the count of every
 hint the bounded queue tail matched for the agent before its row cap —
 a lower bound, never a proven total, when `truncated` marks queue-tail or
-cap cuts beyond the shown slice — claim-holder `wh-…` rows carrying the
+cap cuts beyond the shown slice — carrying the same `scope`
+(`'identity'`/`'label'`) the page reports — claim-holder `wh-…` rows carrying the
 same `claimHolder` citation `readAgentWakes` resolves — and
 `unknown-agent`/`unavailable` with `reason`. `inbox` reuses `readAgentInbox`
 for the next page of mail addressed to the agent — same matching, order and
@@ -2215,7 +2216,14 @@ worker-handoff items
 additionally carry `held`/`holder` — the same hold evidence
 `readBusEnvelopeById` reports, read once per page, `held` null when a hold
 store cannot be read),
-`readAgentWakes(ref, sinceAt, options?)` (the ok page carries `matched`,
+`readAgentWakes(ref, sinceAt, options?)` (the ok page carries `scope` —
+`'identity'` when the ref resolved through the registry and every label of
+that identity plus its member channels matched, `'label'` when the ref
+resolved to no identity and only hints whose `to` is the queried label
+verbatim matched, the same exact-label fallback the claim/next/owner
+filters keep so bare coordination labels like claim-owner fan-out targets
+stay readable; `agent` reports the resolved handle or the queried label —
+plus `matched`,
 every hint the bounded queue tail accepted for the agent before its row
 cap, and `truncated`, true when the 256 KiB observation window or the cap
 cut matches beyond the returned slice — `matched` is then a lower bound,

@@ -108,7 +108,10 @@ export type BusWorkMineAnnounced =
   | { status: 'unavailable' | 'retryable' | 'invalid' };
 
 export type BusWorkMineWakes =
-  | { status: 'ok'; agent: string; wakes: AgentWakeRow[];
+  | { status: 'ok'; agent: string;
+      /** Same scope `readAgentWakes` reports: 'identity' for a registered ref, 'label' for the literal-`to` fallback. */
+      scope: 'identity' | 'label';
+      wakes: AgentWakeRow[];
       /** Every wake hint the bounded queue tail matched for the agent before its row cap; `wakes` shows only the newest digest cap. */
       matched: number;
       /** The queue tail or a row cap cut matches beyond `wakes` — matched is then a lower bound, never proven total. */
@@ -915,7 +918,7 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
   const page = readAgentWakes(agent, undefined,
     { root: options.root, runsRoot: options.runsRoot, now: () => nowMs });
   const wakes: BusWorkMineWakes = page.status === 'ok'
-    ? { status: 'ok', agent: page.agent, matched: page.matched,
+    ? { status: 'ok', agent: page.agent, scope: page.scope, matched: page.matched,
         truncated: page.truncated || page.matched > WORK_MINE_WAKES_MAX,
         wakes: page.wakes.slice(-WORK_MINE_WAKES_MAX) }
     : { status: page.status, reason: page.reason };
@@ -1069,7 +1072,8 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
   if (wakes.status !== 'ok') {
     lines.push(`wakes=unknown ${wakes.status}`);
   } else {
-    lines.push(`wakes=${wakes.matched} shown=${wakes.wakes.length}${wakes.truncated ? '+truncated' : ''}`);
+    lines.push(`wakes=${wakes.matched} shown=${wakes.wakes.length}` +
+      `${wakes.scope === 'label' ? ' scope=label' : ''}${wakes.truncated ? '+truncated' : ''}`);
     for (const wake of wakes.wakes) {
       lines.push(`  ${new Date(wake.at).toISOString()} ${wake.id} ${wake.from} -> ${wake.to}` +
         agentWakeClaimHolderSuffix(wake));
