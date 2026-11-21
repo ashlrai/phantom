@@ -15,6 +15,7 @@ import { createConfigReader, runsDirOf } from './dynconfig.js';
 import type { BottleneckIdea } from './bottleneck-ideas.js';
 import { followUpCandidates, ideaCandidates, readFollowUps, type FollowUp } from './autofill-sources.js';
 import type { JobGapsReport } from './job-gaps.js';
+import { aheadWords, readPaceByPool, type PaceVerdict } from './pace-verdict.js';
 import { gapLaneRoom, waitingWords } from './gap-lane-room.js';
 import { judgeLanes, type LaneFacts, type LaneVerdict } from './autofill-lanes.js';
 import { planAutofill, type QueueAutofillReport } from './queue-autofill.js';
@@ -215,7 +216,9 @@ export interface AutofillTickOptions {
   /** Kill-switch seam; defaults to the live config. */
   readOff?: (runsDir: string) => Promise<boolean | null>;
   /** Gap harvest seam; defaults to `phm jobs gaps --propose` (readJobGaps with propose). */
-  harvestGaps?: (o: { runsDir: string; root: string; lanes?: readonly LaneFacts[] }) => Promise<JobGapsReport>;
+  harvestGaps?: (o: { runsDir: string; root: string; lanes?: readonly LaneFacts[]; pace?: ReadonlyMap<string, PaceVerdict> }) => Promise<JobGapsReport>;
+  /** Pace per pool seam; defaults to the live pools reading. An unreadable reading is an empty map: nothing changes. */
+  readPace?: () => Promise<ReadonlyMap<string, PaceVerdict>>;
   /** Newest queued-gap time in ms (null when none); defaults to the gap proposal record. */
   lastGapQueuedMs?: (runsDir: string, nowMs: number) => Promise<number | null>;
   /** Fill seam; defaults to runQueueAutofill. */
@@ -235,12 +238,14 @@ export interface AutofillTickReport {
   gaps?: { candidates: number; queued: number; skipped: number; unknown: boolean } | null;
   /** Why the gap harvest did not run (or ran and queued nothing); null when it ran and queued something. */
   gapsNote?: string | null;
+  /** One plain line per pace decision (a lane skipped or preferred, rows sent to another pool). Absent when pace changed nothing. */
+  paceNotes?: string[];
 }
 
 /** The gap harvest queues at most once in this long; a tick inside the window records how long ago. */
 export const GAP_HARVEST_MIN_GAP_MS = 10 * 60_000;
 
-async function harvestStep(o: AutofillTickOptions, nowMs: number, off: boolean | null): Promise<Pick<AutofillTickReport, 'gaps' | 'gapsNote'>> {
+async function harvestStep(o: AutofillTickOptions, nowMs: number, off: boolean | null, pace: ReadonlyMap<string, PaceVerdict>): Promise<Pick<AutofillTickReport, 'gaps' | 'gapsNote'>> {
   const none = (gapsNote: string) => ({ gaps: null, gapsNote });
   if (!o.apply) return none('dry run: the gap harvest only runs with apply');
   if (off === true) return none('autofill is off, so no gap harvest');
@@ -250,8 +255,8 @@ async function harvestStep(o: AutofillTickOptions, nowMs: number, off: boolean |
     if (last !== null && nowMs - last < GAP_HARVEST_MIN_GAP_MS) return none(`ran ${Math.max(1, Math.round((nowMs - last) / 60_000))} min ago (waits ${GAP_HARVEST_MIN_GAP_MS / 60_000} min)`);
     // Lane readings steer the gaps to a lane with room; unreadable lanes fall back to the old routing.
     const lanes = (await o.readLanes().catch(() => null))?.lanes;
-    const harvest = o.harvestGaps ?? (async (d: { runsDir: string; root: string; lanes?: readonly LaneFacts[] }) => (await import('./job-gaps.js')).readJobGaps(24, { propose: true, runsDir: d.runsDir, repoDir: d.root, now: nowMs, ...(d.lanes ? { lanes: d.lanes } : {}) }));
-    const gaps = await harvest({ runsDir: o.runsDir, root: o.root, ...(lanes ? { lanes } : {}) });
+    const harvest = o.harvestGaps ?? (async (d: { runsDir: string; root: string; lanes?: readonly LaneFacts[]; pace?: ReadonlyMap<string, PaceVerdict> }) => (await import('./job-gaps.js')).readJobGaps(24, { propose: true, runsDir: d.runsDir, repoDir: d.root, now: nowMs, ...(d.lanes ? { lanes: d.lanes } : {}), ...(d.pace?.size ? { pace: d.pace } : {}) }));
+    const gaps = await harvest({ runsDir: o.runsDir, root: o.root, ...(lanes ? { lanes } : {}), ...(pace.size ? { pace } : {}) });
     const proposed = gaps.proposed ?? [];
     const queued = proposed.filter(p => p.queued).length;
     const waiting = lanes ? waitingWords(gapLaneRoom(lanes, nowMs).waiting) : '';
@@ -262,7 +267,8 @@ async function harvestStep(o: AutofillTickOptions, nowMs: number, off: boolean |
       ? (gaps.known ? 'no new gaps found' : `no gap source readable: ${gaps.unknownSources.join(', ') || 'unknown'}`.slice(0, 120))
       : queued === 0 ? `${found}, none queued: ${proposed.find(p => p.skipped)?.skipped ?? 'already known'}${waiting ? `; ${waiting}` : ''}`.slice(0, 200)
       : waiting ? `${found}, queued ${queued} for ${queuedLanes.map(l => `${l}${busy(l)}`).join(', ') || 'a lane'}; ${waiting}`.slice(0, 200) : null;
-    return { gaps: { candidates: gaps.candidates.length, queued, skipped: proposed.length - queued, unknown: !gaps.known }, gapsNote: note };
+    const paceNotes = gaps.paceNotes ?? [];
+    return { gaps: { candidates: gaps.candidates.length, queued, skipped: proposed.length - queued, unknown: !gaps.known }, gapsNote: paceNotes.length ? [note, ...paceNotes].filter(Boolean).join('; ').slice(0, 400) : note, ...(paceNotes.length ? { paceNotes } : {}) };
   } catch (error) { return none(`the gap harvest failed: ${error instanceof Error ? error.message.slice(0, 80) : 'unknown error'}`); }
 }
 
@@ -287,20 +293,30 @@ export async function runAutofillTick(o: AutofillTickOptions): Promise<AutofillT
   const off = await (o.readOff ?? readAutofillOff)(o.runsDir);
   // The self-supply step runs on every apply tick (never per lane, and whether or not a lane is starved).
   // When it does not run or finds nothing, gapsNote says exactly why.
-  Object.assign(report, await harvestStep(o, nowMs, off));
+  const pace = await (o.readPace ?? (() => readPaceByPool({ runsDir: o.runsDir, now: o.now })))().catch(() => new Map<string, PaceVerdict>());
+  Object.assign(report, await harvestStep(o, nowMs, off, pace));
   const view = await o.readLanes().catch(() => null);
   if (view === null) return { ...report, reason: 'Lane snapshot is unknown.' };
   const verdicts = judgeLanes(view.lanes.filter(f => LANE_NAME.test(f.lane)));
   const byLane = new Map<string, LaneVerdict>(verdicts.map(v => [v.lane, v]));
   const facts = new Map(view.lanes.map(f => [f.lane, f]));
-  const lanes = verdicts.filter(v => v.starved).map(v => v.lane);
+  // A pool ahead of pace gets no new rows; a pool behind pace is fed first (the hourly cap is shared). Unknown changes nothing.
+  const starved = verdicts.filter(v => v.starved).map(v => v.lane);
+  const paceOf = (lane: string): PaceVerdict['state'] | undefined => pace.get(lane)?.state;
+  const aheadLanes = starved.filter(lane => paceOf(lane) === 'ahead');
+  const lanes = starved.filter(lane => paceOf(lane) !== 'ahead').sort((a, b) => Number(paceOf(b) === 'behind') - Number(paceOf(a) === 'behind'));
+  for (const lane of aheadLanes) {
+    const others = lanes.length ? `rows go to ${lanes.join(', ')} instead` : 'no other pool has a free slot, so nothing was added';
+    (report.paceNotes ??= []).push(`${aheadWords(pace.get(lane)!)}: ${others}`);
+  }
   const rows = (): AutofillLaneRow[] => verdicts.map(v => {
     const run = report.runs.find(r => r.lane === v.lane);
     if (!v.starved) return { lane: v.lane, starved: false, fed: 0, why: v.why };
+    if (aheadLanes.includes(v.lane)) return { lane: v.lane, starved: true, fed: 0, why: `${v.why}; skipped: pool ahead of pace` };
     if (!run) return { lane: v.lane, starved: true, fed: 0, why: v.why };
     return { lane: v.lane, starved: true, fed: run.applied, why: run.applied > 0 ? v.why : run.reason };
   });
-  if (!lanes.length) {
+  if (!starved.length) {
     const why = verdicts.map(v => `${v.lane} ${v.why}`).join('; ');
     return { ...report, lanes: rows(), reason: why ? `No lane is starved: ${why}.` : 'No lane is starved.' };
   }
