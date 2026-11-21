@@ -41,7 +41,8 @@ pnpm 10.28.2 and shares one dependency store (see
 [Shared installs for trusted local worktrees](#shared-installs-for-trusted-local-worktrees)).
 
 Run focused verification locally while developing. Pull requests and default-branch
-pushes run the repository's CI and Dependency Audit workflows. Check the actual
+pushes run the repository's CI workflow, plus the Dependency Audit workflow when
+they change a dependency manifest or lockfile. Check the actual
 run for your commit; workflow source alone is not evidence that it passed.
 Dependency changes must keep the
 affected manifest and lockfile consistent, including separately packaged Raycast

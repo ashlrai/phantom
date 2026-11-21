@@ -266,9 +266,14 @@ forks, drafts, and failures in the secret scans or `Check generated files`.
 From a fork, wait until `master` is green again, then rebase onto
 `origin/master` and push, or ask a maintainer to rerun the failed jobs.
 
-Two other workflows you may see around your pull request are not required:
-`PR topology observation (non-authoritative)` is telemetry, and the
-`Merge Queue Reaper` only cancels queue runs whose queue entry is gone.
+Other workflows run around your pull request but are not part of `Merge Gate`:
+
+| Workflow | When it runs | What a failure means |
+| --- | --- | --- |
+| `Perf Budget` | When the pull request is opened, reopened or marked ready, not on later pushes. | A CLI cold path in `perf/budgets.json` ran more than 20% over its baseline. It is advisory and never blocks a merge; run `npm run check:perf` if your change touches startup. |
+| `Dependency Audit` | Only when the diff changes a dependency manifest or lockfile, `.npmrc`, the desktop `Cargo.toml`/`Cargo.lock`, the audit script or its exceptions file, or `docs/DEPENDENCY-SECURITY.md`. | A dependency has a known vulnerability. Manifest and lockfile changes already wait for the owner's review (see below), who reads this result. See [dependency security](DEPENDENCY-SECURITY.md). |
+| `PR topology observation (non-authoritative)` | On pull request events. | Telemetry only. |
+| `Merge Queue Reaper` | On merge queue events. | It only cancels queue runs whose queue entry is gone. |
 
 ### Protected paths wait for the owner
 
