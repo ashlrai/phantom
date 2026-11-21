@@ -122,7 +122,7 @@ export function FleetSupplyPane({ visible }: PaneProps) {
         {cards.map((card, index) => {
           const laneExhaustion = exhaustion.get(card.lane);
           const laneYieldRow = yields.get(card.lane);
-          return <li key={`${card.lane}-${index}`} className={styles.lane} data-state={card.state} aria-label={card.lane}>
+          return <li key={`${card.lane}-${index}`} className={styles.lane} data-board-card data-state={card.state} aria-label={card.lane}>
             <div className={styles.line}>
               <span className={styles.name}>
                 <ProviderBadge of={card.lane} iconOnly size={14} />

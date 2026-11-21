@@ -438,6 +438,17 @@ text field. The row stays in view while the board scrolls. It lists only the
 boards this build has, and it is not drawn while the dock is tiled as the agent
 workspace.
 
+Inside a board the cards answer the keyboard the same way on all seven. `J`
+moves to the next card and `K` to the previous one (a pool, an account, a seat
+in the try order, a model, a lane), `G` jumps to the first and `Shift+G` to the
+last. The card that holds the keyboard is outlined and brought into view below
+the row, and the row says which one it is (`3 of 9`). With no card held, `J` or
+`K` starts at the first card still on screen instead of scrolling back to the
+top; the keys stop at the first and last card. Tab from a card goes to its own
+controls. Like `[` and `]`, the keys are ignored in a text field and with
+Command, Control or Option held. A board that has drawn no card yet takes no
+key.
+
 Every name in the row can carry a live reading, so the row is the status line
 of the whole surface and says where to look before a board is opened. Pools shows how many pools will run empty before
 their reset (`2 too fast`), else how many are behind their window, else how

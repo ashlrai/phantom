@@ -59,7 +59,7 @@ function ModelItem({ model, launches, nowMs, state, onVerify }: {
     { label: 'Source', value: docsLink(model.sourceUrl) },
     ...(model.replacement ? [{ label: 'Use instead', value: model.replacement }] : []),
   ];
-  return <li className={styles.row} data-tone={model.tone} aria-label={`${model.id} model`}>
+  return <li className={styles.row} data-board-card data-tone={model.tone} aria-label={`${model.id} model`}>
     <div className={styles.head}>
       <strong>{model.id}</strong>
       {/* The words carry the state; the mark before them only repeats it. */}
