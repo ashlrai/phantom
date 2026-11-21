@@ -52,6 +52,19 @@ remain `null` in JSON and unknown in Home. Spent means subscription quota used,
 not a monetary cost estimate. Resource collection and lane diagnostics remain
 owned by their existing APIs.
 
+Home files its cards under two named groups. **Agents and machines** is who
+is working and what needs you: Decisions, From your leader, Leader, Working
+now, Running jobs, Machines, This Mac and Main. **Usage and delivery** is
+what the work costs and what it produced: Pools, Most at risk of going
+unused, Merged PRs, Shipped today, Work log and Disk. When the Home pane is
+at least 64rem wide (1024px at the default text size) the groups sit side by
+side as two columns, each card keeping its own height, and the Pulse rows run
+across the top instead of down. In a narrower pane (Home beside an open
+chat, or a small window) the groups follow each other in one column. The
+pane's own width decides, not the window's. Keyboard and screen-reader order
+is the same at every width: the first group, then the second. The layout
+adds no request.
+
 Home's **Running jobs** card is a tile per lane: the provider's mark and the
 lane name, the number of jobs running, and one square per target slot, filled
 for each running job (a lane with more than 24 slots draws one bar of the
