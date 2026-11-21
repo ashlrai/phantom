@@ -8,6 +8,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Segmented } from '../../../components/primitives/Segmented.js';
+import { WindowBarSwatch } from '../../../components/primitives/WindowBar.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
@@ -73,7 +74,13 @@ export function FleetPoolsPane({ visible }: PaneProps) {
       {/* Said once here, not on every card: without the stored readings a card still shows its latest reading. */}
       {windows.read === 'failed' && view.pools.some(row => row.kind === 'subscription')
         ? <p className={styles.message} data-windows="failed">The stored readings could not be read, so no card draws its window. Each card still shows its latest reading.</p> : null}
-      <p className={styles.message}>Bar: used so far. Lighter: where this burn ends by reset. Marker: time elapsed in the window. A bar short of the marker is behind. Same data: <code>phm pools</code>.</p>
+      <p className={`${styles.message} ${styles.key}`} data-bar-key>
+        <span><WindowBarSwatch part="used" />used so far</span>
+        <span><WindowBarSwatch part="more" />more by its reset at this burn</span>
+        <span><WindowBarSwatch part="unused" />left unused at its reset</span>
+        <span><WindowBarSwatch part="elapsed" />time elapsed in the window</span>
+        <span>A bar short of the time mark is behind; an amber bar runs dry early. Same data: <code>phm pools</code>.</span>
+      </p>
       <p className={styles.message}>Chart: every stored reading from the window&apos;s start to its reset. Dashed: the even line from 0% to 100%. Dotted: where this burn leads. Point at a chart, or focus it and press Left or Right, to read one reading at a time. Same data: <code>phm fleet usage-history</code>.</p>
     </> : null}
     {view.gaps.map(gap => <p key={gap} className={styles.message}>Not covered: {gap}</p>)}

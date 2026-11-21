@@ -107,7 +107,10 @@ projected" with the reading that is missing. The bar is split the same way:
 used so far is solid, what the burn uses before the reset is lighter, and the
 gap after them is the share left unused; a pool that runs dry early fills to
 the end in amber. A line under the tiles counts the pools by ending and
-holds the key to the bars. A pool that
+holds the key to the bars. The tile's bar, the Most at risk card's bar and
+the bar on each Pools board card are one design-system component
+(`components/primitives/WindowBar.tsx`), so a part looks and reads the same
+on all three. A pool that
 empties before it resets has its figure and that line in amber. A pool with
 no reading says "usage unknown" in place of a figure and has a hatched bar,
 and Local shows "free,
@@ -264,9 +267,13 @@ Every figure is computed from the samples `GET /api/verse/runs-history`
 returned, so unwatched time is never counted as idle or as full.
 
 The Pools pane is one board of every resource pool, most at risk of going
-unused first. Each card has the pool's plain-words line, a bar (solid: used so
-far; lighter: where the current burn ends by reset; marker: time elapsed in
-the window) and labelled readings: used, left, the reset as a countdown and a
+unused first. Each card has the pool's plain-words line, a bar and labelled
+readings. The bar is the one Home draws for a pool (solid: used so far;
+lighter: what the current burn adds by its reset; an empty stretch outlined
+in amber: the share left unused at the reset), with a mark for the time
+elapsed in the window; a pool the view tells to slow down fills in amber, a
+pool with no usage reading is hatched, and a key under the cards names each
+part. The readings: used, left, the reset as a countdown and a
 local time, burn per hour and its basis, unused at reset, jobs running against
 the slot target, and how long ago the reading was taken and by which reader.
 Under the bar, a plan pool draws its window so far: every stored reading from
