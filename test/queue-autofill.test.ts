@@ -25,6 +25,20 @@ describe('queue autofill plan', () => {
     expect(r.drafted[0]!.why).toContain('src/a.ts:1');
   });
 
+  it('does not draft a gh-dependent job for a lane declared without gh, but does for one with gh or unknown', () => {
+    const ghBet = { ...bet(1), goal: 'Triage the open PRs and run gh pr merge on the green ones.' };
+    const plain = bet(2);
+    const input = { min: 5, queued: 0, existing: [] as { id: string; scope: string }[], proposed: { proposals: [ghBet, plain], droppedGoals: [] as string[] } };
+    const claude = planAutofill({ ...base, ...input, lane: 'claude' });
+    expect(claude.drafted.map(d => d.id)).toEqual(['RQ-BET2']);
+    expect(claude.skipped).toEqual([{ goal: expect.stringContaining('Triage the open PRs'), reason: 'Lane claude cannot use gh, and this job needs it.' }]);
+    expect(planAutofill({ ...base, ...input, lane: 'codex-personal' }).drafted.map(d => d.id)).toEqual(['RQ-BET1', 'RQ-BET2']);
+    // gemini declares nothing: unknown is not a refusal.
+    expect(planAutofill({ ...base, ...input, lane: 'gemini' }).drafted.map(d => d.id)).toEqual(['RQ-BET1', 'RQ-BET2']);
+    // A declared override wins over the built-in list.
+    expect(planAutofill({ ...base, ...input, lane: 'claude', capabilities: { claude: { gh: true } } }).drafted).toHaveLength(2);
+  });
+
   it('says the lane is full and drafts none', () => {
     const r = planAutofill({ ...base, min: 3, queued: 3, proposed: proposed(4) });
     expect(r.drafted).toEqual([]);
