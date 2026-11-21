@@ -80,7 +80,10 @@ export function readReleaseRows(deps: ReleaseStatusDeps = {}): ReleaseStatusRow[
     if (!existsSync(join(path, '.git'))) return { ...empty, reason: `not found (tried ${tried.join(', ') || 'no folders'})` };
     const remoteHead = git('symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD') || null;
     const defaultBranch = remoteHead?.startsWith('origin/') ? remoteHead.slice(7) : null;
-    const tag = git('for-each-ref', '--sort=-creatordate', '--count=1', '--format=%(refname:strip=2)%09%(creatordate:unix)', 'refs/tags');
+    // The newest tag reachable from the default branch (a tag on a side branch is not "the latest release");
+    // without a default-branch ref, fall back to the newest tag by date.
+    const reachable = remoteHead ? git('describe', '--tags', '--abbrev=0', `refs/remotes/${remoteHead}`) : null;
+    const tag = git('for-each-ref', ...(reachable ? [`refs/tags/${reachable}`] : ['--sort=-creatordate', '--count=1', 'refs/tags']), '--format=%(refname:strip=2)%09%(creatordate:unix)');
     const [latestTag, seconds] = tag?.split('\t') ?? [];
     const timestamp = seconds && /^\d+$/.test(seconds) ? Number(seconds) * 1000 : NaN;
     const ageDays = Number.isFinite(timestamp) ? Math.max(0, Math.floor(((deps.now ?? Date.now()) - timestamp) / DAY_MS)) : null;
@@ -103,6 +106,21 @@ export function readReleaseRows(deps: ReleaseStatusDeps = {}): ReleaseStatusRow[
       unreleasedCommits: count !== null && /^\d+$/.test(count) && Number.isSafeInteger(Number(count)) ? Number(count) : null,
       taggedAt: Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null,
       mergedPrsSinceTag: mergedPrs === null ? null : mergedPrs.length, mergedPrs };
+  });
+}
+
+/**
+ * One plain line per repo from the rows: "phantom: v0.42.1, 3 days ago, 212 commits since". A missing clone reads
+ * "not checked out here", a clone without tags "never released", and anything unreadable "unknown", never 0.
+ */
+export function releaseTagLines(rows: readonly ReleaseStatusRow[]): string[] {
+  return rows.map(row => {
+    const name = row.repo.replace(/^ashlrai\//, '');
+    if (!row.path) return `${name}: not checked out here`;
+    if (!row.readable) return `${name}: unknown${row.reason ? ` (${row.reason})` : ''}`;
+    if (!row.latestTag) return row.reason === 'no tags in this clone' ? `${name}: never released` : `${name}: unknown${row.reason ? ` (${row.reason})` : ''}`;
+    const age = row.ageDays === null ? 'unknown age' : row.ageDays === 0 ? 'today' : `${count(row.ageDays, 'day')} ago`;
+    return `${name}: ${row.latestTag}, ${age}, ${row.unreleasedCommits === null ? 'unknown' : count(row.unreleasedCommits, 'commit')} since`;
   });
 }
 

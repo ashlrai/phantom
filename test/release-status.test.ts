@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { formatReleases, formatReleaseStatus, getLocalReleaseStatus, getReleases, getReleaseStatus, releaseCadence, releaseRoots, releasesLeaderLine, RELEASES_SCHEMA } from '../src/core/release/status.js';
+import { formatReleases, formatReleaseStatus, readReleaseRows, releaseTagLines, getLocalReleaseStatus, getReleases, getReleaseStatus, releaseCadence, releaseRoots, releasesLeaderLine, RELEASES_SCHEMA } from '../src/core/release/status.js';
 import { cmdRelease, cmdReleases } from '../src/cli/release.js';
 import { cadenceMinutesFromEnv, TRAIN_SCHEMA } from '../src/core/release/train.js';
 
@@ -273,5 +273,43 @@ describe('release discovery roots and unreadable repos', () => {
     expect(releasesLeaderLine(releaseCadence([{ repo: 'ashlrai/locus', latestTag: 'v1.4.0', taggedAt: day(1), mergedPrsSinceTag: 2 }], now))).toBe('Releases: all fresh');
     expect(releasesLeaderLine(releaseCadence([{ repo: 'ashlrai/locus', latestTag: 'v1.4.0', taggedAt: day(1), mergedPrsSinceTag: 2 }, { repo: 'ashlrai/lexicon', latestTag: null, taggedAt: null, mergedPrsSinceTag: null, readable: false }], now))).toBe('Releases: none due (1 unknown)');
     expect(releasesLeaderLine(null)).toBe('Releases: unknown');
+  });
+});
+
+describe('release tag lines in plain words', () => {
+  const made: string[] = [];
+  afterEach(() => { for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+  function repo(root: string, name: string, tag: string | null, after: number) {
+    const path = join(root, name);
+    const git = (...args: string[]) => execFileSync('git', ['-C', path, ...args], { stdio: 'ignore' });
+    execFileSync('git', ['init', '-q', '-b', 'main', path]);
+    git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.invalid');
+    git('commit', '--allow-empty', '-qm', 'first');
+    if (tag) git('tag', tag);
+    for (let i = 0; i < after; i++) git('commit', '--allow-empty', '-qm', `change ${i}`);
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+    git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    return git;
+  }
+
+  it('says tag, age and commits since; never released; and not checked out here', () => {
+    const root = mkdtempSync(join(tmpdir(), 'release-lines-')); made.push(root);
+    repo(root, 'phantom', 'v0.42.1', 3);
+    repo(root, 'locus', null, 1);
+    const lines = releaseTagLines(readReleaseRows({ root, repos: ['phantom', 'locus', 'lexicon'] }));
+    expect(lines).toEqual([
+      'phantom: v0.42.1, today, 3 commits since',
+      'locus: never released',
+      'lexicon: not checked out here',
+    ]);
+  });
+
+  it('ignores a tag that is not on the default branch and reports unknown when the clone has no default-branch ref', () => {
+    const root = mkdtempSync(join(tmpdir(), 'release-lines-')); made.push(root);
+    const git = repo(root, 'phantom', 'v1.0.0', 2);
+    git('checkout', '-q', '-b', 'side'); git('commit', '--allow-empty', '-qm', 'side work'); git('tag', 'v9.9.9'); git('checkout', '-q', 'main');
+    expect(releaseTagLines(readReleaseRows({ root, repos: ['phantom'] }))).toEqual(['phantom: v1.0.0, today, 2 commits since']);
+    git('symbolic-ref', '--delete', 'refs/remotes/origin/HEAD');
+    expect(releaseTagLines(readReleaseRows({ root, repos: ['phantom'] }))[0]).toMatch(/^phantom: v\d+\.\d+\.\d+, today, unknown since$/);
   });
 });
