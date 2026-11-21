@@ -8,6 +8,7 @@
  * with `phm fleet config set autofill.off 1 --reason "..."`.
  */
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { appendGuarded, eventClock } from '../queue/supersede.js';
 import { QueueStore } from '../queue/store.js';
@@ -104,6 +105,7 @@ export async function runQueueAutofill(o: RunAutofillOptions): Promise<QueueAuto
       ...report,
       drafted: report.drafted.slice(0, o.limit),
       skipped: [...report.skipped, ...over.map(d => ({ goal: d.goal.slice(0, 100), reason: 'hourly cap' }))],
+      trace: report.trace?.map(d => d.event === 'drafted' && over.some(c => c.id === d.job) ? { ...d, event: 'rejected', reason: 'hourly_cap' } : d),
     };
   }
   if (o.apply && report.drafted.length) {
@@ -111,6 +113,12 @@ export async function runQueueAutofill(o: RunAutofillOptions): Promise<QueueAuto
       await store.add({ id: d.id, status: 'READY', priority: 'P1', pool: o.lane, tier: d.tier, repo: d.repo, scope: d.prompt, acceptance: d.acceptance, deps: [], claims: [] });
     }
     report = { ...report, applied: true };
+  }
+  if (o.apply && report.trace?.length) {
+    const metrics = join(o.runsDir ?? runsDirOf({}), 'metrics');
+    await mkdir(metrics, { recursive: true });
+    const ts = new Date().toISOString();
+    await appendGuarded(join(metrics, 'generation.jsonl'), report.trace.map(d => JSON.stringify({ schema: 'queue.generation-event.v1', ...d, ts })).join('\n') + '\n');
   }
   return report;
 }

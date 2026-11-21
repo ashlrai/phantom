@@ -933,6 +933,19 @@ job in the group lacks a token total or no PR merged. Missing measurements are
 unknown, and malformed lines are skipped and counted. The report describes
 recorded evidence, not necessarily every job or PR.
 
+The same command reports `drafted`, `rejected`, `launched` and `prs` by
+generator, with `rejections` counts by reason. Autofill `--apply` records
+decisions in `metrics/generation.jsonl` with job ID, timestamp, `src`
+(`autofill:idea`, `autofill:follow-up`, `autofill:bet`), event and rejection
+reason. Dry runs expose `trace` in their JSON without writing metrics.
+Drafted means accepted for queueing; an hourly cap is a rejection. Duplicate
+and completed targets retain their source; targets without an ID use a title
+hash. Counts deduplicate by source and target within the window; stages can
+overlap. Only draft evidence attributes later launches and PRs to that source.
+Rejections never claim another generator's results. `generationKnown: false`
+means the generation ledger is unavailable; `jobsKnown` does the same for the
+jobs ledger. Counts cover recorded evidence only.
+
 ## Is each pool fed?
 
 Run `phm queue supply` for one plain line per pool: usage left, hours to reset, jobs queued for the pool, its starts

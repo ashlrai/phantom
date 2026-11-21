@@ -10,6 +10,7 @@ import type { BetsProposal, BetsProposeReport } from './bets-propose.js';
 import { stepZeroPrompt, stripStepZero, type AutofillCandidate, type AutofillSource } from './autofill-sources.js';
 import { jobFamily } from './slot-yield.js';
 import { inferRequiredCapabilities, laneLacks, type LaneCapabilityOverrides } from './lane-capabilities.js';
+import type { GenerationDecision } from '../queue/generator-yield.js';
 
 export const QUEUE_AUTOFILL_SCHEMA = 'queue.autofill.v1' as const;
 
@@ -29,6 +30,7 @@ export interface QueueAutofillReport {
   summary: string;
   drafted: AutofillDraft[];
   skipped: AutofillSkip[];
+  trace?: GenerationDecision[];
 }
 export interface AutofillQueued { id: string; scope: string }
 export interface AutofillInput {
@@ -57,7 +59,8 @@ const betCandidate = (p: BetsProposal): AutofillCandidate => ({ id: p.id, repo: 
 
 export function planAutofill(input: AutofillInput): QueueAutofillReport {
   const { lane, min, running, target, queued } = input;
-  const base = { schema: QUEUE_AUTOFILL_SCHEMA, lane, min, running, target, queued, applied: false, drafted: [] as AutofillDraft[], skipped: [] as AutofillSkip[] };
+  const trace: GenerationDecision[] = [];
+  const base = { schema: QUEUE_AUTOFILL_SCHEMA, lane, min, running, target, queued, applied: false, drafted: [] as AutofillDraft[], skipped: [] as AutofillSkip[], trace };
   if (queued === null) return { ...base, summary: 'Queue depth is unknown, so nothing was drafted.' };
   const gap = min - queued;
   if (gap <= 0) return { ...base, summary: 'Lane is full.' };
@@ -69,15 +72,20 @@ export function planAutofill(input: AutofillInput): QueueAutofillReport {
     ...(input.proposed.droppedGoals ?? []).map(goal => ({ goal: clip(goal), reason: 'Already shipped: the bets check found it in this checkout.' })),
   ];
   const drafted: AutofillDraft[] = [];
+  for (const goal of input.shippedIdeas ?? []) trace.push({ job: `idea-${titleHash(goal)}`, src: 'autofill:idea', event: 'rejected', reason: 'already_queued_or_completed' });
+  for (const goal of input.proposed.droppedGoals ?? []) trace.push({ job: `bet-${titleHash(goal)}`, src: 'autofill:bet', event: 'rejected', reason: 'already_completed' });
   for (const c of [...(input.first ?? []), ...input.proposed.proposals.map(betCandidate)]) {
+    const reject = (reason: GenerationDecision['reason']) => trace.push({ job: c.id, src: `autofill:${c.source}`, event: 'rejected', reason });
     const queuedAs = ids.has(c.id) ? c.id : hashes.get(titleHash(c.goal));
-    if (queuedAs) { skipped.push({ goal: clip(c.goal), reason: `Already queued as ${queuedAs}.` }); continue; }
-    if (input.stoppedFamilies?.has(c.family)) { skipped.push({ goal: clip(c.goal), reason: `Family ${c.family} is stopped: most of its jobs end empty.` }); continue; }
+    if (queuedAs) { reject('duplicate'); skipped.push({ goal: clip(c.goal), reason: `Already queued as ${queuedAs}.` }); continue; }
+    if (input.stoppedFamilies?.has(c.family)) { reject('stopped_family'); skipped.push({ goal: clip(c.goal), reason: `Family ${c.family} is stopped: most of its jobs end empty.` }); continue; }
     // A lane declared to lack a capability (claude has no gh) is never handed a job that needs it; unknown is not a refusal.
     const lacks = laneLacks(lane, inferRequiredCapabilities(`${c.goal}\n${c.acceptance}`), false, input.capabilities);
-    if (lacks) { skipped.push({ goal: clip(c.goal), reason: `Lane ${lane} cannot use ${lacks}, and this job needs it.` }); continue; }
+    if (lacks) { reject('missing_capability'); skipped.push({ goal: clip(c.goal), reason: `Lane ${lane} cannot use ${lacks}, and this job needs it.` }); continue; }
     if (drafted.length >= gap) break;
     drafted.push({ id: c.id, repo: c.repo, tier: 'work', goal: c.goal, prompt: stepZeroPrompt(c.goal), acceptance: c.acceptance, why: c.why, source: c.source });
+    trace.push({ job: c.id, src: `autofill:${c.source}`, event: 'drafted' });
+    ids.add(c.id); hashes.set(titleHash(c.goal), c.id);
   }
   const short = gap - drafted.length;
   const summary = drafted.length === 0
