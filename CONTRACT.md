@@ -1612,6 +1612,23 @@ when it does not parse). These are the values the summary's "commands seen,
 files changed" and "Latest step" sentences state. `work` is null for a
 session with no job, a job whose activity was not asked for and a failed
 activity read.
+Pull request outcome (additive): `work` opens with the key
+`pr: SessionThreadPr | null`, `{state, mergeSeconds, at}` with
+`state: 'merged' | 'closed' | 'open'`, `mergeSeconds: number | null` (the
+ledger's `ttm_s`, opened to merged, whole seconds; null when not recorded
+and for a state that is not merged) and `at: string | null` (the outcome
+row's own time, null when it does not parse). The same key leads the single
+thread's `work`. `src/core/fleet/session-pr.ts` exports the type, the pure
+`sessionPr(activity)` (rows before the job's newest `launch` are set aside;
+a recorded merge stands, otherwise the newest row answers; null when no row
+records an outcome), `prSentence(pr)`, `prWords(pr)`, `PR_SENTENCE_START`
+and `SESSION_PR_STATES`. `summaryOf` appends `prSentence` after the "Latest
+step" sentence when an outcome is recorded. In
+`src/core/fleet/runs-job-activity.ts`, `FleetJobActivityEventEntry` gains
+the optional key `pr?: FleetJobPrFate` (`{state, mergeSeconds}`), present
+only on a row `rowPrFate(row, event)` reads as an outcome: an `outcome` row
+whose state is MERGED, CLOSED or OPEN, or a `merged` or `closed` event. An
+event entry's `summary` may now also carry `state=` and `ttm_s=`.
 `src/core/fleet/session-threads-read.ts` exports `readSessionThreads(options)`
 with `lane`, `repo`, `live` and injectable `readMap`, `readSubagents`,
 `readLeader`, `readActivity`, `readBus`, `readOwner`, `readReplies` and
