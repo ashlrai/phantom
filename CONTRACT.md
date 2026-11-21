@@ -514,6 +514,18 @@ other lane's classified cause (`launch_timeout`, `provider_*`,
 `agent_exit_nonzero`, `exit_status_missing`, pool errors like
 `rate_limit`). All stay `null` when no jobs row recorded them — the fold
 never infers a finish verdict from merge state, PR URLs or event names.
+Batch sessions fold per member like the sibling fleet readers:
+`RQ-BATCH-*` session rows (launch, finish, session-aggregate usage) are
+infrastructure evidence counted in `RouterOutcomeFold.session_rows` —
+they never mint outcomes and never claim PR URLs — while a member's
+`task_outcome` event row supplies its recorded end-of-session word in
+dispatchd's closed `batcher.OUTCOMES` vocabulary (`done`/`skipped`/
+`failed`/`deferred`/`unreported`, `event`/`type`/`kind` = `task_outcome`,
+word under `outcome`; unrecognized spellings and every other row's
+`outcome` field skipped, never recorded raw). Members get no per-member
+finish row, so their finish verdicts and usage stay `null` rather than
+split from the session aggregate; `task_outcome` is the member's only
+recorded productivity verdict and stays `null` for solo jobs.
 `merged` reads the jobs-ledger outcome dialect the sibling fleet readers
 share: a terminal phase across
 `phase`/`state`/`outcome`/`status`/`result`/`conclusion`, or a `merged` /

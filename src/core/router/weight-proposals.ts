@@ -107,16 +107,23 @@ export interface RouterWeightProposalSet {
    * finish-row `empty_class` verdicts — dispatchd's classify_empty triage
    * (`no_diff` healthy no-op, `error` infrastructure, `unknown` capture
    * gap) — so the empty share splits the way the dispatcher's own
-   * empty_error_rate does. `unknown_unresolved` is the remainder with no
-   * finish failure signal — finished cleanly and awaiting a merge verdict,
-   * or still in flight; the ledger simply records no terminal productivity
-   * outcome for it. All are counts of recorded evidence over the retained
-   * window, so 0 is a real measurement.
+   * empty_error_rate does. `unknown_task_outcomes` tallies the recorded
+   * batch-member `task_outcome` words — dispatchd's batcher.OUTCOMES
+   * vocabulary, the member's finish boundary since batch members get no
+   * per-member finish row — so a requeued member (`failed`/`deferred`/
+   * `unreported`, batcher.RETRY) reads as an explained attempt instead of
+   * an unresolved one, while `done`/`skipped` members still awaiting their
+   * own publish verdict count in `unknown_unresolved`. `unknown_unresolved`
+   * is the remainder with no finish failure signal — finished cleanly and
+   * awaiting a merge verdict, or still in flight; the ledger simply
+   * records no terminal productivity outcome for it. All are counts of
+   * recorded evidence over the retained window, so 0 is a real measurement.
    */
   unknown_empty: number;
   unknown_nonzero_exit: number;
   unknown_failure_classes: { failure_class: string; jobs: number }[];
   unknown_empty_classes: { empty_class: string; jobs: number }[];
+  unknown_task_outcomes: { task_outcome: string; jobs: number }[];
   unknown_unresolved: number;
 }
 
@@ -136,6 +143,14 @@ const freshTally = (): WeightEvidenceTally => ({
   costSum: 0, costKnown: 0, wallSum: 0, wallKnown: 0, ttmSum: 0, ttmKnown: 0,
   tokensSum: 0, tokensKnown: 0, passkSum: 0, passkKnown: 0,
 });
+
+/**
+ * The batch-member task_outcome words that end the attempt without a
+ * publish — dispatchd's batcher.RETRY set. `done`/`skipped` members hand
+ * off to their own per-job publish and stay awaiting-verdict unresolved;
+ * the requeue words are the member's recorded failure signal.
+ */
+const TASK_OUTCOME_RETRY: ReadonlySet<string> = new Set(['failed', 'deferred', 'unreported']);
 
 const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   ci_first_pass_known: t.ciKnown,
@@ -184,6 +199,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   let unknownEmpty = 0, unknownNonzeroExit = 0, unknownUnresolved = 0;
   const failureClasses = new Map<string, number>();
   const emptyClasses = new Map<string, number>();
+  const taskOutcomes = new Map<string, number>();
   for (const o of outcomes) {
     if (!isRouteId(o.work_class) || !isRouteId(o.lane)) { unclassified++; continue; }
     if (o.merged === null) {
@@ -191,15 +207,20 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
       // Finish productivity evidence explains the missing merge verdict:
       // empty:true means the run produced no diff, a nonzero exit_code means
       // the worker failed, and failure_class names the classified cause. A
-      // job carrying none of them has no recorded finish failure — it
+      // batch member's task_outcome is its finish boundary: the requeue
+      // words (failed/deferred/unreported) are the recorded failure signal,
+      // while done/skipped members still await their own publish verdict.
+      // A job carrying none of them has no recorded finish failure — it
       // finished cleanly awaiting a verdict or is still in flight.
       const empty = o.empty === true;
       const nonzeroExit = o.exit_code !== null && o.exit_code !== 0;
+      const requeued = o.task_outcome !== null && TASK_OUTCOME_RETRY.has(o.task_outcome);
       if (empty) unknownEmpty++;
       if (nonzeroExit) unknownNonzeroExit++;
       if (o.failure_class !== null) failureClasses.set(o.failure_class, (failureClasses.get(o.failure_class) ?? 0) + 1);
       if (o.empty_class !== null) emptyClasses.set(o.empty_class, (emptyClasses.get(o.empty_class) ?? 0) + 1);
-      if (!empty && !nonzeroExit && o.failure_class === null) unknownUnresolved++;
+      if (o.task_outcome !== null) taskOutcomes.set(o.task_outcome, (taskOutcomes.get(o.task_outcome) ?? 0) + 1);
+      if (!empty && !nonzeroExit && o.failure_class === null && !requeued) unknownUnresolved++;
       continue;
     }
     const key = JSON.stringify([o.work_class, o.lane]);
@@ -244,10 +265,14 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     .map(([empty_class, jobs]) => ({ empty_class, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.empty_class.localeCompare(b.empty_class))
     .slice(0, 10);
+  const topTaskOutcomes = [...taskOutcomes.entries()]
+    .map(([task_outcome, jobs]) => ({ task_outcome, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.task_outcome.localeCompare(b.task_outcome))
+    .slice(0, 10);
   return { proposals, known_outcomes: known, unknown_outcomes: unknown, unclassified_outcomes: unclassified,
     unknown_empty: unknownEmpty, unknown_nonzero_exit: unknownNonzeroExit,
     unknown_failure_classes: topFailureClasses, unknown_empty_classes: topEmptyClasses,
-    unknown_unresolved: unknownUnresolved };
+    unknown_task_outcomes: topTaskOutcomes, unknown_unresolved: unknownUnresolved };
 }
 
 export interface RouterWeightProposalReport {
@@ -288,6 +313,14 @@ export interface RouterWeightProposalReport {
    * unknown). Null when the ledger was not read; empty when none recorded.
    */
   unknown_empty_classes: { empty_class: string; jobs: number }[] | null;
+  /**
+   * Top recorded batch-member task_outcome words inside the unknown
+   * cohort, by jobs — dispatchd's batcher.OUTCOMES vocabulary, the
+   * member's finish boundary (failed/deferred/unreported requeued the
+   * member; done/skipped await their own publish verdict). Null when the
+   * ledger was not read; empty when none recorded.
+   */
+  unknown_task_outcomes: { task_outcome: string; jobs: number }[] | null;
   unknown_unresolved: number | null;
   proposals: RouterWeightProposal[];
 }
@@ -302,7 +335,7 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
   if (read.state !== 'read') {
     return { ...head, status: 'unavailable', known_outcomes: null, unknown_outcomes: null, unclassified_outcomes: null,
       unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null, unknown_empty_classes: null,
-      unknown_unresolved: null, proposals: [] };
+      unknown_task_outcomes: null, unknown_unresolved: null, proposals: [] };
   }
   const set = proposeRouterWeights(read.outcomes, { ...opts, minSamples: bounds.min_samples, maxShift: bounds.max_shift });
   const status = set.proposals.some(p => p.status === 'proposed') ? 'proposed' : 'insufficient-evidence';
@@ -310,6 +343,6 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     unclassified_outcomes: set.unclassified_outcomes,
     unknown_empty: set.unknown_empty, unknown_nonzero_exit: set.unknown_nonzero_exit,
     unknown_failure_classes: set.unknown_failure_classes, unknown_empty_classes: set.unknown_empty_classes,
-    unknown_unresolved: set.unknown_unresolved,
+    unknown_task_outcomes: set.unknown_task_outcomes, unknown_unresolved: set.unknown_unresolved,
     proposals: set.proposals };
 }

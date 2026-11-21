@@ -3,8 +3,10 @@
  * host metrics ledgers (metrics/jobs.jsonl joined with metrics/api-spend.jsonl
  * for cost_usd) by src/core/router/outcomes.ts: merge and revert state, CI
  * first pass, review findings, cost, wall time, recorded merge latency
- * (ttm_s), recorded token usage (tokens_total) and the advisory pass^k join
- * from eval.lane-scores.v1. Never writes; a missing ledger reports
+ * (ttm_s), recorded token usage (tokens_total), the batch member's recorded
+ * task_outcome word and the advisory pass^k join from eval.lane-scores.v1.
+ * RQ-BATCH-* session rows are infrastructure evidence counted in
+ * session_rows, never outcomes. Never writes; a missing ledger reports
  * `missing`, an unreadable or non-file one exits 1. Each read retains the
  * newest bounded tail of its ledger, so an oversized ledger reports
  * `truncated: true` (jobs) or `spend_truncated: true` (spend) — coverage of
@@ -83,6 +85,8 @@ export interface RouterOutcomesReport {
   malformed_rows: number;
   unattached_rows: number;
   ambiguous_urls: number;
+  /** Rows keyed by RQ-BATCH-* session ids — batch-session infrastructure, never outcomes. */
+  session_rows: number;
   /** True when the ledger exceeded the retained tail; counts cover only the newest bytes. */
   truncated: boolean;
   outcomes: RouterOutcome[];
@@ -106,6 +110,7 @@ export function buildRouterOutcomesReport(read: RouterOutcomeRead, limit: number
     malformed_rows: read.malformed_rows,
     unattached_rows: read.unattached_rows,
     ambiguous_urls: read.ambiguous_urls,
+    session_rows: read.session_rows,
     truncated: read.truncated,
     outcomes: page,
   };
@@ -122,13 +127,13 @@ function outcomeLine(o: RouterOutcome): string {
     `merged=${text(o.merged)}`, `reverted=${text(o.reverted)}`, `ci_first_pass=${text(o.ci_first_pass)}`, `review=${review}`,
     `cost_usd=${text(o.cost_usd)}`, `wall_s=${text(o.wall_s)}`, `ttm_s=${text(o.ttm_s)}`, `tokens_total=${text(o.tokens_total)}`, `passk=${text(o.passk)}`,
     `empty=${text(o.empty)}`, `exit_code=${text(o.exit_code)}`, `failure_class=${text(o.failure_class)}`,
-    `empty_class=${text(o.empty_class)}`,
+    `empty_class=${text(o.empty_class)}`, `task_outcome=${text(o.task_outcome)}`,
   ].join(' ');
 }
 
 export function routerOutcomeLines(report: RouterOutcomesReport): string[] {
   return [
-    `router outcomes state=${report.state} eval=${report.eval_state} spend=${report.spend_state} market=${report.market_state} jobs=${report.total} shown=${report.returned} truncated=${report.truncated} malformed=${report.malformed_rows} unattached=${report.unattached_rows} ambiguous_urls=${report.ambiguous_urls}`,
+    `router outcomes state=${report.state} eval=${report.eval_state} spend=${report.spend_state} market=${report.market_state} jobs=${report.total} shown=${report.returned} truncated=${report.truncated} malformed=${report.malformed_rows} unattached=${report.unattached_rows} ambiguous_urls=${report.ambiguous_urls} session_rows=${report.session_rows}`,
     `ledger ${report.path}`,
     ...(report.truncated ? ['coverage: retained tail only; older ledger rows were not read'] : []),
     ...(report.spend_truncated ? ['spend coverage: retained tail only; per-job costs are lower bounds'] : []),

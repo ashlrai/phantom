@@ -315,8 +315,19 @@ classification, resolved `failure_class` → `failure_reason` →
 `pool_error` so non-devin lanes' causes join too — and `empty_class`,
 the row's recorded empty-diff classification in dispatchd's closed
 `classify_empty` vocabulary `no_diff`/`error`/`unknown`; explicit row
-fields only, `null` when unrecorded) and the advisory `passk` join from
-`eval.lane-scores.v1`. `work_class` is the class a jobs row recorded when
+fields only, `null` when unrecorded), the batch member's recorded
+`task_outcome` word (a `task_outcome` event row's `outcome` in
+dispatchd's closed `batcher.OUTCOMES` vocabulary
+`done`/`skipped`/`failed`/`deferred`/`unreported` — the member's finish
+boundary, since batch members get no per-member finish row) and the
+advisory `passk` join from
+`eval.lane-scores.v1`. Batch sessions fold per member like the sibling
+fleet readers: `RQ-BATCH-*` session rows — the bundle's launch, finish
+and session-aggregate usage — are infrastructure evidence counted in the
+report's `session_rows`, never outcomes and never PR-URL claims, while
+members fold through their own `batch_claim`/`task_outcome`/publish rows.
+Member finish verdicts and usage stay `null` rather than split from the
+session aggregate. `work_class` is the class a jobs row recorded when
 one exists; otherwise it is the job's newest `work-market.v1`
 `route_decision` class — the market's own classification of the job,
 written for every evaluated job — and stays `null` when neither ledger
@@ -387,9 +398,14 @@ first), `unknown_empty_classes` tallies the recorded finish-row
 `empty_class` verdicts — dispatchd's `classify_empty` triage, so the
 empty share splits healthy `no_diff` no-ops from the `error`
 infrastructure share and `unknown` capture gaps the way the
-dispatcher's own `empty_error_rate` does — and `unknown_unresolved` is
+dispatcher's own `empty_error_rate` does — `unknown_task_outcomes`
+tallies the recorded batch-member `task_outcome` words (the member's
+finish boundary; the requeue words `failed`/`deferred`/`unreported` are
+the recorded failure signal, while `done`/`skipped` members still await
+their own publish verdict) — and `unknown_unresolved` is
 the remainder with no
-finish failure signal (finished cleanly awaiting a verdict, or still in
+finish failure signal and no requeue word (finished cleanly awaiting a
+verdict, or still in
 flight). These are counts over the retained window; when the ledger was
 not read they are `null`, never zero. When the ledger exceeds the retained tail the
 report carries `truncated: true` and every count covers the newest bytes

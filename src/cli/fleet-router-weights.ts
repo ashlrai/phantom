@@ -62,6 +62,9 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
         : '') +
       (report.unknown_empty_classes !== null && report.unknown_empty_classes.length > 0
         ? ` empty_classes=${report.unknown_empty_classes.map(c => `${c.empty_class}:${c.jobs}`).join(',')}`
+        : '') +
+      (report.unknown_task_outcomes !== null && report.unknown_task_outcomes.length > 0
+        ? ` task_outcomes=${report.unknown_task_outcomes.map(c => `${c.task_outcome}:${c.jobs}`).join(',')}`
         : ''),
   ];
   const rows = report.proposals.map(p => {

@@ -33,7 +33,8 @@ function outcome(job_id: string, over: Partial<RouterOutcome> = {}): RouterOutco
   return {
     schema: 'router.outcome.v1', job_id, lane: 'alpha', model: 'm1', tier: 'work', work_class: null,
     merged: true, reverted: null, ci_first_pass: true, review_findings: null, cost_usd: 1.5, wall_s: 600,
-    tokens_total: null, ttm_s: null, empty: null, exit_code: null, failure_class: null, empty_class: null, passk: null,
+    tokens_total: null, ttm_s: null, empty: null, exit_code: null, failure_class: null, empty_class: null,
+    task_outcome: null, passk: null,
     ...over,
   };
 }
@@ -43,7 +44,7 @@ function read(over: Partial<RouterOutcomeRead> = {}): RouterOutcomeRead {
     state: 'read', path: '/runs/metrics/jobs.jsonl', eval_state: 'missing',
     spend_state: 'missing', spend_truncated: false,
     market_state: 'missing', market_truncated: false,
-    outcomes: [], malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0, truncated: false,
+    outcomes: [], malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0, session_rows: 0, truncated: false,
     ...over,
   };
 }
@@ -78,7 +79,7 @@ describe('phm router outcomes', () => {
       schema: 'router.outcomes.v1', state: 'read', path: '/runs/metrics/jobs.jsonl',
       eval_state: 'missing', market_state: 'missing', market_truncated: false,
       total: 3, returned: 3, limit: 100,
-      malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0,
+      malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0, session_rows: 0,
     });
     expect(report.outcomes.map((o: RouterOutcome) => o.job_id)).toEqual(['C', 'B', 'A']);
   });
@@ -146,15 +147,15 @@ describe('phm router outcomes', () => {
   it('renders text lines with unknown for null fields and review counts when present', async () => {
     const report = buildRouterOutcomesReport(read({
       outcomes: [
-        outcome('A', { merged: null, reverted: true, cost_usd: null, wall_s: null, passk: null, review_findings: { fixed: 2, rejected: 1, ignored: 0 } }),
+        outcome('A', { merged: null, reverted: true, cost_usd: null, wall_s: null, passk: null, task_outcome: 'done', review_findings: { fixed: 2, rejected: 1, ignored: 0 } }),
         outcome('B', { lane: null, model: null, tier: null, work_class: 'docs' }),
       ],
-      malformed_rows: 3, unattached_rows: 1, ambiguous_urls: 2,
+      malformed_rows: 3, unattached_rows: 1, ambiguous_urls: 2, session_rows: 4,
     }), 100);
     const lines = routerOutcomeLines(report);
-    expect(lines[0]).toBe('router outcomes state=read eval=missing spend=missing market=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2');
+    expect(lines[0]).toBe('router outcomes state=read eval=missing spend=missing market=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2 session_rows=4');
     expect(lines[1]).toBe(`ledger ${report.path}`);
-    expect(lines[3]).toContain('A lane=alpha model=m1 tier=work work_class=unknown merged=unknown reverted=true ci_first_pass=true review=fixed:2,rejected:1,ignored:0 cost_usd=unknown wall_s=unknown ttm_s=unknown tokens_total=unknown passk=unknown');
+    expect(lines[3]).toContain('A lane=alpha model=m1 tier=work work_class=unknown merged=unknown reverted=true ci_first_pass=true review=fixed:2,rejected:1,ignored:0 cost_usd=unknown wall_s=unknown ttm_s=unknown tokens_total=unknown passk=unknown empty=unknown exit_code=unknown failure_class=unknown empty_class=unknown task_outcome=done');
     expect(lines[2]).toContain('B lane=unknown model=unknown tier=unknown work_class=docs merged=true reverted=unknown');
   });
 
@@ -202,6 +203,12 @@ describe('phm router outcomes', () => {
     const root = runsDir([
       '{"job":"J1","lane":"alpha","model":"m1","tier":"work","phase":"MERGED","ts":"2026-11-01T00:00:00Z","mergedAt":"2026-11-01T01:00:00Z","cost_usd":1.25,"wall_s":900,"tokens_total":123456,"ttm_s":5400,"ci_first_pass":true}',
       '{"job":"J2","lane":"beta","model":"m2","phase":"CLOSED","ts":"2026-11-02T00:00:00Z"}',
+      // A batch session: infrastructure rows never mint outcomes, while the
+      // member's own claim/task_outcome rows fold under its job id.
+      '{"job":"RQ-BATCH-e2e0001","event":"launch","lane":"alpha","wall_s":800,"tokens_total":40000}',
+      '{"job":"RQ-BATCH-e2e0001","event":"finish","lane":"alpha","wall_s":800,"pr_url":"https://github.com/o/r/pull/42"}',
+      '{"job":"M1","event":"batch_claim","batch":"RQ-BATCH-e2e0001","lane":"alpha","tier":"work"}',
+      '{"job":"M1","event":"task_outcome","batch":"RQ-BATCH-e2e0001","lane":"alpha","outcome":"failed"}',
       'not json',
     ].join('\n'));
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -209,19 +216,20 @@ describe('phm router outcomes', () => {
     expect(await cmdRouter(['outcomes', '--runs-dir', root, '--json'])).toBe(0);
     const report = JSON.parse(String(log.mock.calls.at(-1)![0]));
     expect(report).toMatchObject({
-      schema: 'router.outcomes.v1', state: 'read', total: 2, returned: 2,
-      malformed_rows: 1, eval_state: 'missing',
+      schema: 'router.outcomes.v1', state: 'read', total: 3, returned: 3,
+      malformed_rows: 1, session_rows: 2, eval_state: 'missing',
     });
-    // Newest first: J2 (appended last) leads.
-    expect(report.outcomes.map((o: RouterOutcome) => o.job_id)).toEqual(['J2', 'J1']);
-    expect(report.outcomes[1]).toMatchObject({ lane: 'alpha', model: 'm1', merged: true, cost_usd: 1.25, wall_s: 900, tokens_total: 123456, ttm_s: 5400, ci_first_pass: true, passk: null });
-    expect(report.outcomes[0]).toMatchObject({ lane: 'beta', merged: false, cost_usd: null });
+    // Newest first: M1 (appended last) leads, then J2, then J1.
+    expect(report.outcomes.map((o: RouterOutcome) => o.job_id)).toEqual(['M1', 'J2', 'J1']);
+    expect(report.outcomes[0]).toMatchObject({ lane: 'alpha', merged: null, task_outcome: 'failed', wall_s: null, tokens_total: null });
+    expect(report.outcomes[2]).toMatchObject({ lane: 'alpha', model: 'm1', merged: true, cost_usd: 1.25, wall_s: 900, tokens_total: 123456, ttm_s: 5400, ci_first_pass: true, passk: null, task_outcome: null });
+    expect(report.outcomes[1]).toMatchObject({ lane: 'beta', merged: false, cost_usd: null });
 
     const laneFiltered = vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await cmdRouterOutcomes(['--runs-dir', root, '--lane', 'alpha', '--json'])).toBe(0);
     const filtered = JSON.parse(String(laneFiltered.mock.calls.at(-1)![0]));
-    expect(filtered.total).toBe(1);
-    expect(filtered.outcomes[0].job_id).toBe('J1');
+    expect(filtered.total).toBe(2);
+    expect(filtered.outcomes.map((o: RouterOutcome) => o.job_id)).toEqual(['M1', 'J1']);
   });
 
   it('reports a missing ledger as state=missing with exit 0', async () => {
