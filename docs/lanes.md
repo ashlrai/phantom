@@ -25,7 +25,7 @@ Agents and scripts should use the commands, not this page:
 ```sh
 phm lanes health --json
 phm lanes fit --lane codex-personal --json
-phm lanes yield --json
+phm lanes yield --json --since 24h
 phm lanes held --json
 ```
 
@@ -36,7 +36,13 @@ last 50 jobs, the empty rate and the weight the router uses (1 is neutral; a lan
 fewer than 10 jobs is unknown and stays neutral). A merge recorded as reverted
 counts as reverted, never as merged. The lane router sends rows bigger
 than small to lanes at 0.5 or better when they have room, and gives a low-yield lane
-small, test-only rows. `phm lanes held` lists lanes whose own wrapper held launches in the
+small, test-only rows. The yield fold reads the fleet's jobs-ledger dialect, so
+GitHub-resolved merges recorded by the outcome reconciler (`jobId`/`prUrl`/
+`outcome` rows) count the same as dispatcher outcome rows. `phm lanes yield` also gives every lane a verdict over `--since`
+(default 24h): "low-yield" when 80% or more of at least 20 finished jobs ended empty,
+"unknown" under 10 finished jobs, else "productive". The router skips a low-yield lane
+for remaps and free capacity ("skipped zai: 92 of 99 recent jobs ended empty") unless the
+job names that lane. `phm lanes held` lists lanes whose own wrapper held launches in the
 last 60 minutes (`lanes.held.v1`). A lane with 3 or more held launches and no finished job
 is self-held: the router skips it, with the reason "lane <x> holds every launch (N in 60
 min)", until a launch there finishes or 60 minutes pass. `phm doctor supply` shows the same

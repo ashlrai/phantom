@@ -61,6 +61,14 @@
 .option[data-state='quiet'] .name::before { background: var(--status-warning-solid); }
 .option[data-state='quiet'] .facts { color: var(--status-warning-fg); }
 
+/* A command's argument rows (CommandArgAssist.tsx) say their state the same way; a pane or an unheld lane has no dot. */
+.option[data-tone='warn'] .name::before { background: var(--status-warning-solid); }
+.option[data-tone='warn'] .facts { color: var(--status-warning-fg); }
+.option[data-tone='bad'] .name::before { background: var(--status-danger-solid); }
+.option[data-tone='bad'] .facts { color: var(--status-danger-fg); }
+.option[data-tone='off'] .name::before { background: var(--status-unknown-solid); }
+.option[data-tone='none'] .name::before { display: none; }
+
 .facts { white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 .said {

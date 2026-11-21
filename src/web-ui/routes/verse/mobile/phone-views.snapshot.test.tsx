@@ -19,7 +19,7 @@ afterEach(() => { evictAll(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.un
 // DOM snapshots complement the mobile CSS overflow and touch-target contracts.
 // Keep the viewport wrapper in the snapshot so phone intent is reviewable.
 it('390px fleet status', async () => {
-  stubFetch({ 'GET /api/verse/control': controlSnapshot() });
+  stubFetch({ 'GET /api/verse/control': controlSnapshot(), 'GET /api/fleet/map/messages': { schema: 'fleet.map-messages.v1', version: 1, messages: [] } });
   const view = renderMobile(<div style={{ width: 390 }}><FleetScreen /></div>);
   await screen.findByRole('heading', { name: 'Fleet' });
   await waitFor(() => expect(view.container.querySelector('[aria-busy="true"]')).toBeNull());

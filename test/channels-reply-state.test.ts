@@ -42,8 +42,7 @@ describe('readReplyState', { timeout: 60_000 }, () => {
     const s = read('fake-a');
     expect(s.schema).toBe(REPLY_STATE_SCHEMA);
     expect(s).toMatchObject({ state: 'RECEIVED', owner: null, claim: null, duplicateOf: null });
-    expect(s.text).toContain('RECEIVED: no owner yet');
-    expect(s.text).toContain('as of');
+    expect(s.text).toMatch(/^RECEIVED \(as of \d\d:\d\d UTC, source: [^)]+\)\nno owner yet/);
   });
 
   it('RECEIVED with no owner yet when no record exists at all', () => {
@@ -60,7 +59,7 @@ describe('readReplyState', { timeout: 60_000 }, () => {
     expect(s.state).toBe('ASSIGNED');
     expect(s.owner).toBe('fake-owner');
     expect(s.claim).toContain('bus-claim:fake-b');
-    expect(s.text).toContain('ASSIGNED: owner fake-owner, claim bus-claim:fake-b');
+    expect(s.text).toMatch(/^ASSIGNED \(as of .*\)\nowner fake-owner, claim bus-claim:fake-b/);
   });
 
   it('RUNNING with live claim evidence', () => {
@@ -69,7 +68,7 @@ describe('readReplyState', { timeout: 60_000 }, () => {
     const s = read('fake-c');
     expect(s.state).toBe('RUNNING');
     expect(s.evidence.running?.source).toContain('bus-work-claims lease-until');
-    expect(s.text).toMatch(/^RUNNING: owner fake-owner/);
+    expect(s.text).toMatch(/^RUNNING \(as of .*\)\nowner fake-owner/);
   });
 
   it('BLOCKED names the missing dependency', () => {
@@ -94,6 +93,7 @@ describe('readReplyState', { timeout: 60_000 }, () => {
     post('fake-f');
     reply('fake-f', 'fake-reply-f', { text: 'routed to the fleet, running now' });
     expect(read('fake-f').state).toBe('RECEIVED');
+    expect(read('fake-f').text).not.toMatch(/routed|running now/);
   });
 
   it('a repeat request in the same thread reuses the first id', () => {
@@ -116,5 +116,20 @@ describe('phm channels reply-state', { timeout: 60_000 }, () => {
     expect(await cmdChannelsReplyState(['--help'])).toBe(0);
     expect(err).toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining('reply-state'));
+  });
+});
+
+describe('phm work state', () => {
+  it('delegates to the reply-state read and rejects other verbs', async () => {
+    const { cmdWork } = await import('../src/cli/work.js');
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdWork([])).toBe(2);
+    expect(await cmdWork(['nope'])).toBe(2);
+    expect(await cmdWork(['state'])).toBe(2);
+    expect(await cmdWork(['--help'])).toBe(0);
+    expect(await cmdWork(['state', 'fake-plain-id'])).toBe(0);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^RECEIVED \(as of .*\)\nno owner yet/));
+    expect(err).toHaveBeenCalled();
   });
 });

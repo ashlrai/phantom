@@ -21,15 +21,16 @@
 .reason { color: var(--text-secondary); overflow-wrap: anywhere; }
 .asOf { color: var(--text-tertiary); }
 
-/* label — thin track — percent — reset countdown */
-.window { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+/* label — bar — percent — reset countdown, then (where the window's start is known) one quiet line of pace */
+.window { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0; }
+.bar { flex: 1 1 4rem; display: flex; min-width: 2rem; }
+.pace { flex: 1 0 100%; color: var(--text-tertiary); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.pace[data-pace='behind'] { color: var(--text-secondary); }
+.barKey { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); margin: 0; color: var(--text-tertiary); }
 .windowLabel { flex: none; max-width: 7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
-.track { flex: 1 1 auto; display: block; min-width: 2rem; height: 6px; border-radius: var(--radius-full); background: var(--meter-track); overflow: hidden; }
-/* No reading: hatched, so an unknown window never looks like an untouched (0% used) one. */
-.track[data-unknown] { background: repeating-linear-gradient(135deg, var(--border-strong) 0 2px, transparent 2px 6px); }
-.fill { display: block; height: 100%; background: var(--accent-500); transition: width var(--duration-base, 180ms) var(--ease-standard); }
-.track[data-tone='warn'] .fill { background: var(--status-warning-solid); }
-.track[data-tone='danger'] .fill { background: var(--status-danger-solid); }
+/* Only the provider's limit flag draws this full bar: a flag, not a measurement. Every reading is a WindowBar. */
+.track { flex: 1 1 4rem; display: block; min-width: 2rem; height: 6px; border-radius: var(--radius-full); background: var(--meter-track); overflow: hidden; }
+.fill { display: block; height: 100%; background: var(--status-danger-solid); }
 .pct { flex: none; min-width: 3.5ch; text-align: right; font-variant-numeric: tabular-nums; }
 .flag { flex: none; color: var(--status-danger-solid); font-weight: 600; }
 .reset { flex: none; color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -61,5 +62,5 @@
 @media (width < 720px) {
   .windowLabel { max-width: none; white-space: normal; overflow: visible; }
   .window { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
-  .windowLabel, .reset { grid-column: 1 / -1; white-space: normal; }
+  .windowLabel, .reset, .pace { grid-column: 1 / -1; white-space: normal; }
 }

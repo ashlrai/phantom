@@ -97,6 +97,11 @@ export function boardModels({ registry, check, lanes }: BoardInputs): BoardModel
   });
 }
 
+/** The board's first line: the check's own summary when it was read, else how many models the registry names. */
+export function modelsHeadline(count: number, check: ModelCheckReport | null): string {
+  return check ? check.summary : count > 0 ? `${count} ${count === 1 ? 'model' : 'models'} in the registry.` : 'Models are unknown.';
+}
+
 /** One group per provider, by name, with the models no read gives a provider to last. Inside a group: what needs attention first. */
 export function boardGroups(models: readonly BoardModel[]): BoardGroup[] {
   const groups = new Map<string, BoardGroup>();

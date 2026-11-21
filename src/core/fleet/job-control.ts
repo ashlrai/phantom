@@ -32,7 +32,7 @@ import { isAbsolute, join } from 'node:path';
 import { DROP_JOB_LANES } from './drop-job-writer.js';
 import {
   JOB_CONTROL_FILE, JOB_CONTROL_SCHEMA, isJobControlAction,
-  type JobControlAction, type JobControlReceiptV1, type JobControlStatus,
+  type JobControlAction, type JobControlLedgerRow, type JobControlReceiptV1, type JobControlStatus,
 } from './job-control-types.js';
 import { appendLine, stopJob, type JobStopResult, type StopJobOptions } from './job-stop.js';
 import { parseReadyRows, readReadyText } from './ready-row-edit.js';
@@ -55,7 +55,19 @@ export interface JobControlOptions {
   reassign?: typeof reassignQueuedJobs;
 }
 
-interface LedgerRow { requestId: string; action: JobControlAction; job: string; lane: string | null; status: JobControlStatus; reason: string | null; at: string }
+type LedgerRow = JobControlLedgerRow;
+
+const defaultRunsDir = (): string => process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+
+/**
+ * Every request the control file holds, oldest first, each folded with its acknowledgements. Read only: the
+ * session thread shows a job's rows. A missing file is no requests; an unreadable one throws.
+ */
+export async function readJobControlLedger(opts: { runsDir?: string } = {}): Promise<JobControlLedgerRow[]> {
+  const runsDir = opts.runsDir ?? defaultRunsDir();
+  if (!isAbsolute(runsDir)) throw new TypeError('runs directory must be absolute');
+  return readLedger(runsDir);
+}
 
 const isMissing = (error: unknown): boolean => (error as NodeJS.ErrnoException).code === 'ENOENT';
 
@@ -79,6 +91,7 @@ async function readLedger(runsDir: string): Promise<LedgerRow[]> {
       rows.set(raw.requestId, {
         requestId: raw.requestId, action: raw.action, job: raw.job, status, reason: null, at: raw.at,
         lane: typeof raw.lane === 'string' ? raw.lane : null,
+        by: typeof raw.by === 'string' && /^[a-z][a-z0-9-]{0,23}$/.test(raw.by) ? raw.by : null,
       });
     }
   }
@@ -113,7 +126,7 @@ export async function requestJobControl(request: JobControlRequest, opts: JobCon
   const lane = action === 'move' ? request.lane ?? '' : null;
   if (!isJobControlAction(action) || !STRAY_ID_PATTERN.test(job)) throw new TypeError('invalid job control request');
   if (lane !== null && !LANE_ID_RE.test(lane)) throw new TypeError('move needs a lane');
-  const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  const runsDir = opts.runsDir ?? defaultRunsDir();
   if (!isAbsolute(runsDir)) throw new TypeError('runs directory must be absolute');
   const dryRun = request.dryRun === true;
   const at = new Date((opts.now ?? Date.now)()).toISOString();

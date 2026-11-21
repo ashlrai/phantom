@@ -84,6 +84,28 @@ const tsMs = (v: unknown): number => {
   const t = typeof v === 'string' ? Date.parse(v) : typeof v === 'number' ? v : NaN;
   return Number.isFinite(t) ? t : NaN;
 };
+/**
+ * jobs.jsonl field dialects the dispatchd `_vc_*` readers and the fleet
+ * metrics readers accept: job|job_id|jobId|id, event|type|kind,
+ * lane|pool and ts|at|timestamp|time|mergedAt|closedAt|recordedAt|updatedAt.
+ */
+const strField = (r: Record<string, unknown>, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const v = r[key];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return null;
+};
+const tsField = (r: Record<string, unknown>): number => {
+  for (const key of ['ts', 'at', 'timestamp', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt']) {
+    const v = r[key];
+    if (v !== undefined && v !== null) return tsMs(v);
+  }
+  return NaN;
+};
+const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const EVENT_KEYS = ['event', 'type', 'kind'] as const;
+const LANE_KEYS = ['lane', 'pool'] as const;
 const z = (text: string | null | undefined): number | null => text == null ? null : 0;
 
 interface JobRow { event: string; job: string | null; lane: string | null; at: number; raw: Record<string, unknown> }
@@ -95,9 +117,12 @@ function jobRows(text: string): JobRow[] {
       const raw: unknown = JSON.parse(line);
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
       const r = raw as Record<string, unknown>;
-      if (typeof r.event !== 'string') continue;
-      rows.push({ event: r.event, job: typeof r.job === 'string' && JID.test(r.job) ? r.job : null,
-        lane: typeof r.lane === 'string' ? r.lane.slice(0, 64) : null, at: tsMs(r.ts ?? r.at ?? r.timestamp), raw: r });
+      const event = strField(r, EVENT_KEYS);
+      if (event === null) continue;
+      const job = strField(r, JOB_KEYS);
+      const lane = strField(r, LANE_KEYS);
+      rows.push({ event, job: job !== null && JID.test(job) ? job : null,
+        lane: lane === null ? null : lane.slice(0, 64), at: tsField(r), raw: r });
     } catch { /* malformed ledger line */ }
   }
   return rows;

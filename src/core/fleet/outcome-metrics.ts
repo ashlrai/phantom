@@ -67,6 +67,24 @@ const time = (value: unknown): number | null => {
   const n = typeof value === 'string' ? Date.parse(value) : NaN;
   return Number.isFinite(n) ? n : null;
 };
+/**
+ * jobs.jsonl timestamp dialect: ts|timestamp|at|time|mergedAt|closedAt|
+ * recordedAt|updatedAt, with mergedAt/closedAt preferred on terminal rows —
+ * the same field set dispatchd `_vc_pick` and metrics/loop accept.
+ */
+const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+/** Ledger row time; MERGED prefers mergedAt, CLOSED closedAt. */
+function eventTs(row: Row): number | null {
+  const raw = row.state ?? row.outcome ?? row.status;
+  const phase = typeof raw === 'string' ? raw.trim().toUpperCase() : '';
+  const preferred = phase === 'MERGED' ? 'mergedAt' : phase === 'CLOSED' ? 'closedAt' : null;
+  const fields = preferred === null ? TS_KEYS : [preferred, ...TS_KEYS.filter(f => f !== preferred)];
+  for (const field of fields) {
+    const at = time(row[field]);
+    if (at !== null) return at;
+  }
+  return null;
+}
 const number = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 const url = (value: unknown): string | null => typeof value === 'string' && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/[1-9]\d*\/?$/i.test(value) ? value.replace(/\/$/, '').toLowerCase() : null;
 const rate = (yes: number, total: number): number | null => total ? yes / total : null;
@@ -108,10 +126,10 @@ export function buildOutcomeMetrics(input: OutcomeMetricsInput): OutcomeMetrics 
   for (const [i, value] of (input.events ?? []).entries()) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) { ignoredRows++; continue; }
     const row = value as Row;
-    const kind = label(row.event) ?? (row.source === 'metrics-outcomes-reconciler' ? 'outcome' : null);
+    const kind = label(row.event ?? row.type ?? row.kind) ?? (row.source === 'metrics-outcomes-reconciler' ? 'outcome' : null);
     if (!kind || !KINDS.has(kind)) continue;
-    const at = time(row.ts ?? row.timestamp ?? row.at);
-    const job = label(row.job ?? row.jobId ?? row.job_id);
+    const at = eventTs(row);
+    const job = label(row.job ?? row.job_id ?? row.jobId ?? row.id);
     const prUrl = url(row.url ?? row.prUrl ?? row.pr_url ?? row.pr);
     if (at === null || (JOB_REQUIRED_KINDS.has(kind) && !job)) { ignoredRows++; continue; }
     if (at <= until) events.push({ row, kind, at, ref: `events:${i}`, job, url: prUrl });

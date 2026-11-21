@@ -104,7 +104,7 @@ describe('host disk burn', () => {
 describe('host disk folders', () => {
   const folders = [
     entry('job-a', 'merged', 9, 30, true), entry('job-b', 'running', 8, 1), entry('job-c', 'empty', 7, 40, true),
-    entry('job-d', 'unknown', 6, null), entry('job-e', 'open', 5, 12), entry('job-f', 'merged', 4, 2, true), entry('job-g', 'merged', 0.5, 50, true),
+    entry('job-d', 'unknown', 6, null), entry('job-e', 'open', 5, 12), entry('job-f', 'merged', 4, 1.5, true), entry('job-g', 'merged', 0.5, 50, true),
     entry('.hidden', 'excluded', 99, 1),
   ];
 
@@ -114,12 +114,12 @@ describe('host disk folders', () => {
       ['job-a', 9, 30, true], ['job-b', 8, 1, false], ['job-c', 7, 40, true], ['job-d', 6, null, null], ['job-e', 5, 12, true],
     ]);
     expect(report.worktrees).toMatchObject({ folders: 7, finished: 5, reapable: 3, reapableGb: 16.5, sizesComplete: true });
-    expect(report.fix).toBe('7 job folders, 5 of them finished. `phm worktrees --reap --apply` removes 3 and frees about 16.5 GB.');
+    expect(report.fix).toBe('7 job folders, 5 of them finished. `phm worktrees --reap --plan` lists the 3 ready to remove, freeing about 16.5 GB.');
   });
 
   it('says at least when sizes were cut short, and unknown when folders cannot be read', async () => {
     const partial = await readHostDisk(deps({ samples: [sample(0, 250)], skipWorktrees: false, audit: audit(folders, false) }));
-    expect(partial.fix).toContain('frees at least 16.5 GB');
+    expect(partial.fix).toContain('freeing at least 16.5 GB');
     expect(partial.gaps.join(' ')).toContain('floors');
     const broken = await readHostDisk(deps({ samples: [sample(0, 250)], skipWorktrees: false, audit: async () => { throw new Error('no'); } }));
     expect(broken.worktrees).toMatchObject({ folders: null, largest: [] });

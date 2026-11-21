@@ -54,6 +54,31 @@ export function projectedEndPct(row: PoolRow): number | null {
   return row.usedPct === null || row.projectedUnusedPct === null ? null : Math.max(row.usedPct, Math.round((100 - row.projectedUnusedPct) * 10) / 10);
 }
 
+/** `dry`: empty early enough that the view says slow down. `unused`: resets with usage left. `even`: used up by its reset. */
+export type PoolBarEnding = 'unread' | 'unprojected' | 'dry' | 'unused' | 'even';
+export interface PoolBarShares {
+  /** Further share this burn uses by the reset, and the share left after it; null when nothing is projected. */
+  more: number | null;
+  unused: number | null;
+  ending: PoolBarEnding;
+  /** The bar read aloud. */
+  words: string;
+}
+
+/** A card's bar as shares of the window: the row's own usage, time elapsed and projected unused share, nothing derived beyond their difference. */
+export function poolBar(row: PoolRow): PoolBarShares {
+  if (row.usedPct === null) return { more: null, unused: null, ending: 'unread', words: 'usage unknown' };
+  const end = projectedEndPct(row);
+  const words = `${row.usedPct}% used${row.elapsedPct === null ? '' : `, ${row.elapsedPct}% of the window elapsed`}`;
+  if (end === null) return { more: null, unused: null, ending: 'unprojected', words };
+  const round = (value: number): number => Math.round(Math.max(0, Math.min(100, value)) * 10) / 10;
+  const unused = round(100 - end);
+  return {
+    more: round(end - row.usedPct), unused, ending: row.verdict === 'slow down' ? 'dry' : unused > 0 ? 'unused' : 'even',
+    words: `${words}, ${end}% by reset at this burn${unused > 0 ? `, ${unused}% left unused` : ''}`,
+  };
+}
+
 export const KIND_WORD: Readonly<Record<PoolRow['kind'], string>> = { subscription: 'weekly plan', credits: 'credit balance', unmetered: 'no usage window' };
 const BASIS_WORD: Readonly<Record<NonNullable<PoolRow['burnBasis']>, string>> = { reported: 'reported', 'least-squares': 'trend of recent readings', held: 'lane is held' };
 const number = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 });

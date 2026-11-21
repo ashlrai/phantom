@@ -590,7 +590,7 @@ export function parseJobsJsonl(text: string): { events: LaneLedgerEvent[]; dropp
       }
       return null;
     };
-    const job = pick('job', 'id', 'jobId');
+    const job = pick('job', 'job_id', 'jobId', 'id');
     const poolRaw = pick('pool', 'lane', 'account');
     const pool = poolRaw && LANE_ID.test(poolRaw) ? poolRaw : null;
     const at = pick('ts', 'at', 'time', 'timestamp', 'landedAt', 'mergedAt', 'completedAt', 'recordedAt', 'updatedAt');

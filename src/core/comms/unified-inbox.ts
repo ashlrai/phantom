@@ -2,18 +2,44 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates thirteen local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates fifteen local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), act: `phm fleet needs-resolve`.
+ *   needs-you-delivery  recorded needs-you answers whose planner-inbox relay
+ *               is not confirmed — the delivery side of needs-you, the same
+ *               `readNeedsMasonReplyDeliveries` read `phm fleet needs`
+ *               reports as `replyDeliveries`. A resolved item leaves every
+ *               open-item list, so a failed or unrecorded append would be
+ *               invisible here without this source; each pending receipt
+ *               lists as a warn whose retry is resolving the same id again
+ *               (the recorded reply is reused, never re-asked), and each
+ *               receipt that failed validation lists as unreadable — its
+ *               delivery state stays unknown, never delivered. Act:
+ *               `phm fleet needs-resolve`, `phm fleet needs`.
  *   imessage    unanswered allowlisted teammate texts in teammates.jsonl
  *               (`phm fleet teammate-texts`), act: mark answered or claim the
  *               mirrored bus envelope `imessage-teammate-<rowid>`.
  *   owner-thread  live inbound owner-thread messages no recorded outbound
  *               reply cites (`phm comms thread`), the same awaiting-reply mark
  *               `comms status` counts, act: `phm comms send-owner --reply-to`.
+ *   owner-delivery  recorded owner-thread replies whose fanout is not fully
+ *               delivered — the delivery side of the awaiting-reply mark,
+ *               which counts a reply answered even when every channel
+ *               refused it (`readOwnerUndeliveredReplies`, the same read
+ *               `comms status` counts as `undeliveredReplies`). A destination
+ *               the thread's sent-mark or the latest receipt cannot confirm
+ *               lists as failed, pending or unknown — never delivered — and
+ *               resending the same text under the reply's own key and the
+ *               answered inbound's key (`--reply-to`, `--idempotency-key`)
+ *               retries only the unconfirmed destinations. Act:
+ *               `phm comms thread`, `phm comms send-owner --reply-to`.
  *   drafts      outbound email drafts still pending approval
- *               (`phm drafts list --status pending`), act: show/approve/reject.
+ *               (`phm drafts list --status pending`), act: show/approve/reject —
+ *               plus pending Comms-agent reply drafts that have no cos mirror
+ *               (every non-email transport, or an email mirror that failed to
+ *               write; a mirrored copy already lists through the cos draft, so
+ *               one pending reply is one item), act: `phm comms-agent drafts`.
  *   bus         live envelopes whose body the claim contract accepts
  *               (`isClaimableWork`: a `kind:'work'` body, or a protocol-v1
  *               transport `task` body) with no live claim row — an expired
@@ -24,9 +50,11 @@
  *               message-id claim consults) also counts as held. The same
  *               section also lists open agent-bus v2 work-feed jobs (queued or
  *               rescheduled `work.post` announcements with at least one claim
- *               key not fully held) and jobs the feed shows `blocked` or
- *               `failed` or that declare no claim keys at all — unclaimable
- *               or stuck work needs a decision, not a worker — read
+ *               key not fully held), jobs the feed shows `blocked` or
+ *               `failed`, jobs that declare no claim keys at all, and
+ *               `running`/`idle` announcements whose declared keys provably
+ *               lost every live hold — stalled work only the announcer can
+ *               move — read
  *               through the same projection `phm agents bus work feed` serves —
  *               act: `phm agents bus claim acquire` — and every live
  *               `worker-handoff` envelope (`isWorkerHandoffBody`, the exact
@@ -37,15 +65,18 @@
  *               cannot be read the section reports 'degraded' and still lists
  *               candidates rather than hiding possibly unclaimed work; a
  *               refused or unreadable feed degrades it the same way.
- *   conversations  agent-to-agent conversation threads still waiting on a
- *               reply — the same `state:'waiting'` threads
- *               `agents conversations --waiting` computes from the one shared
- *               conversations projection, fleet-wide. A thread whose waiting
- *               message is already a pending bus item (an unclaimed work
- *               envelope or a live worker-handoff) or whose `job:` thread the
- *               feed already lists stays under the bus source: one pending
- *               thing, one item. Act: `phm agents conversations`,
- *               `phm agents bus show`, `phm agents bus post --thread`.
+ *   conversations  agent-to-agent conversation threads still needing a
+ *               person — the same `state:'waiting'` and `state:'blocked'`
+ *               threads the one shared conversations projection computes,
+ *               fleet-wide: a waiting thread names who must answer and how
+ *               long it has waited, a blocked thread names who reported the
+ *               block, who was told and how long it has stood. A thread
+ *               whose latest message is already a pending bus item (an
+ *               unclaimed work envelope or a live worker-handoff) or whose
+ *               `job:` thread the feed already lists stays under the bus
+ *               source: one pending thing, one item. Act: `phm agents
+ *               conversations`, `phm agents bus show`, `phm agents bus
+ *               post --thread`.
  *   seats       bot seats whose projected handoff plan still has work to
  *               move — the same `planSeatHandoffs` read `phm bots handoffs`
  *               serves, so the inbox and that surface can never disagree.
@@ -122,18 +153,20 @@ import { BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedReadResult } f
 import { coordinationRowBlocks, listCoordination } from '../agents/claim-store.js';
 import { readPendingProposals, readTeamApprovals, type ProposalApprovalItem, type TeamApprovalItem } from '../approvals/surface.js';
 import { listDrafts, type Draft } from '../cos/drafts.js';
+import { listDrafts as listCommsAgentDrafts, type CommsDraft } from '../comms-agent/store.js';
 import { compareRanked, needsYouPriorityHeuristic, type AttentionItem, type NeedsYouPriority, type RankedAttentionItem } from '../decide/needs-you.js';
 import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxInspection, type BusInboxOptions, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { BUS_PROTOCOL_KEY, isClaimableWork, type BusPriority } from '../fleet/bus-envelope.js';
 import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
+import { readNeedsMasonReplyDeliveries, type NeedsMasonReplyDeliveryReport } from '../fleet/needs-mason-relay.js';
 import { loadConfigReadOnly } from '../config.js';
 import { readEmailDropConfig } from './email-drop-config.js';
 import { probeOutboxDir, readEmailOutbox, type EmailOutboxEntry, type EmailOutboxListing } from './email-outbox.js';
 import { gmailArchivePlanLatestPath, readGmailArchivePlanLatest } from './gmail-archive-plan-latest.js';
 import { readLinkedInDrop, type LinkedInMessage } from './linkedin-drop.js';
-import { readOwnerAwaitingReplies, type OwnerAwaitingReplies } from './owner-thread.js';
+import { readOwnerAwaitingReplies, readOwnerUndeliveredReplies, type OwnerAwaitingReplies, type OwnerUndeliveredReplies } from './owner-thread.js';
 import { commsRequestAgeStartMs, commsRequestTtlMs, DEFAULT_REQUEST_TTL_HOURS, readCommsRequests, type CommsRequestsRead } from './requests.js';
 import { readAgentConversations, plainAge, type AgentConversations } from '../fleet/agent-conversations.js';
 import { JOB_THREAD_PREFIX } from '../fleet/agent-messages.js';
@@ -147,9 +180,9 @@ const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
 
-export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'owner-thread' | 'drafts' | 'bus' | 'conversations' | 'seats' | 'gmail' | 'linkedin' | 'requests' | 'email-outbox' | 'team-approvals' | 'proposals';
+export type UnifiedInboxSource = 'needs-you' | 'needs-you-delivery' | 'imessage' | 'owner-thread' | 'owner-delivery' | 'drafts' | 'bus' | 'conversations' | 'seats' | 'gmail' | 'linkedin' | 'requests' | 'email-outbox' | 'team-approvals' | 'proposals';
 export type UnifiedInboxSourceState = 'healthy' | 'missing' | 'degraded' | 'unavailable';
-export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'owner-message' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-stuck' | 'team-approval' | 'inbox-proposal';
+export type UnifiedInboxKind = 'needs-you' | 'needs-you-delivery' | 'teammate-text' | 'owner-message' | 'owner-reply-undelivered' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-stuck' | 'team-approval' | 'inbox-proposal';
 
 export interface UnifiedInboxItem extends AttentionItem {
   /** Stable, namespaced: `<source>:<ref>` (e.g. `drafts:d-0123…`). */
@@ -203,8 +236,12 @@ export interface UnifiedInboxOptions {
   now?: () => number;
   /** Trusted test seams; defaults read the real stores. */
   readNeeds?: (options: { runsDir?: string }) => NeedsMasonReadResult;
+  /** Reply-delivery seam; default reads the same receipts `phm fleet needs` reports. */
+  readNeedsDeliveries?: typeof readNeedsMasonReplyDeliveries;
   readTexts?: typeof readTeammateTexts;
   listPendingDrafts?: typeof listDrafts;
+  /** Comms-agent draft store seam; default reads `<runsDir>/comms-agent/drafts.jsonl`. */
+  listCommsDrafts?: (runsDir: string) => Promise<CommsDraft[]>;
   listBus?: typeof listBusInboxAfter;
   inspectBus?: typeof inspectBusInbox;
   readClaims?: (root?: string) => BusWorkClaimsInspection;
@@ -213,6 +250,8 @@ export interface UnifiedInboxOptions {
   readGmailPlans?: typeof readGmailArchivePlanLatest;
   readLinkedIn?: typeof readLinkedInDrop;
   readOwnerAwaiting?: (options: { runsDir: string }) => OwnerAwaitingReplies;
+  /** Undelivered-reply seam; default reads the same owner thread plus its delivery receipts. */
+  readOwnerUndelivered?: (options: { runsDir: string }) => OwnerUndeliveredReplies;
   readConversations?: typeof readAgentConversations;
   readSeatHandoffs?: typeof planSeatHandoffs;
   readRequests?: typeof readCommsRequests;
@@ -246,6 +285,56 @@ function needsYouItems(read: NonNullable<UnifiedInboxOptions['readNeeds']>, runs
     act: [`phm fleet needs-resolve ${item.id} --reply "<reply>"`],
   }));
   return { report: { state, pending: items.length }, items };
+}
+
+/**
+ * Recorded needs-you answers whose planner-inbox relay is not confirmed — the
+ * delivery side of needs-you, from the same `readNeedsMasonReplyDeliveries`
+ * read `phm fleet needs` reports as `replyDeliveries`, so the two surfaces
+ * can never disagree. A resolved item leaves every open-item list, so a
+ * failed or unrecorded append would be invisible without this source. Each
+ * pending receipt lists as a warn: "not confirmed", never "undelivered", since
+ * an append that succeeded but whose receipt write failed reads the same. The
+ * retry act resolves the same id again — the recorded reply is reused, never
+ * re-asked. A receipt that failed validation lists as unreadable with its
+ * delivery state honestly unknown; there is no per-item fix, so it keeps the
+ * `phm fleet needs` inspect link only. Receipts carry no timestamp, so
+ * `since`/`expiresAt` stay null. Retrying is agent work; nothing here blocks
+ * Mason. An unreadable store reports 'unavailable', never an empty list
+ * passed off as fact.
+ */
+function needsYouDeliveryItems(read: NonNullable<UnifiedInboxOptions['readNeedsDeliveries']>, runsDir: string | undefined): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let result: NeedsMasonReplyDeliveryReport;
+  try { result = read({ runsDir }); } catch { result = { status: 'unavailable' }; }
+  if (result.status !== 'ok') return { report: { state: 'unavailable', pending: 0 }, items: [] };
+  const items = [
+    ...result.pending.map((entry): Omit<UnifiedInboxItem, 'priority'> => ({
+      id: `needs-you-delivery:${entry.itemId}`,
+      source: 'needs-you-delivery',
+      kind: 'needs-you-delivery',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Needs-you answer ${entry.itemId} not confirmed in the planner inbox`, TITLE_MAX),
+      detail: oneLine(`via ${entry.source}` +
+        (entry.text === null ? ' · ledger text unknown' : ` · "${oneLine(entry.text, 140)}"`), DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      act: [`phm fleet needs-resolve ${entry.itemId}`, 'phm fleet needs'],
+    })),
+    ...result.unsafe.map((itemId): Omit<UnifiedInboxItem, 'priority'> => ({
+      id: `needs-you-delivery:${itemId}`,
+      source: 'needs-you-delivery',
+      kind: 'needs-you-delivery',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Needs-you delivery receipt ${itemId} unreadable`, TITLE_MAX),
+      detail: oneLine('receipt failed validation; delivery state unknown — inspect the needs-mason-delivery directory', DETAIL_MAX),
+      since: null,
+      expiresAt: null,
+      act: ['phm fleet needs'],
+    })),
+  ];
+  return { report: { state: 'healthy', pending: items.length }, items };
 }
 
 function teammateItems(read: typeof readTeammateTexts, runsDir: string | undefined, now: () => number): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
@@ -296,25 +385,115 @@ function ownerThreadItems(read: NonNullable<UnifiedInboxOptions['readOwnerAwaiti
   return { report: { state: 'healthy', pending: items.length }, items };
 }
 
-async function draftItems(list: typeof listDrafts, runsDir: string | undefined): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+/** Same shape guard `send-owner --reply-to` applies to inbound idempotency keys before one reaches a command line. */
+const OWNER_REPLY_KEY = /^[A-Za-z0-9._:-]{8,80}$/;
+
+/**
+ * Recorded owner-thread replies whose fanout is not fully delivered — the
+ * delivery side of the awaiting-reply mark, which counts an inbound answered
+ * once a reply is recorded even when every channel refused it. Each lists as
+ * a warn with the per-destination states the receipt journal proves —
+ * failed, pending or unknown, never delivered — the scrubbed failure reason
+ * when one was recorded, and a `phm comms thread` / `send-owner --reply-to`
+ * deep link: resending the same text under the reply's own idempotency key
+ * and the answered inbound's key reproduces the reply identity in every case
+ * — an explicit key or a derived `reply-<digest>` one — and retries only the
+ * unconfirmed destinations. An unreadable thread reports 'unavailable'; it
+ * never passes an empty list off as fact. `since` is the reply's recorded
+ * time — the receipt journal keeps no attempt timestamp, so a later retry's
+ * age stays unknown; `expiresAt` stays null.
+ */
+function ownerDeliveryItems(read: NonNullable<UnifiedInboxOptions['readOwnerUndelivered']>, runsDir: string | undefined): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  const dir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: OwnerUndeliveredReplies;
+  try { result = read({ runsDir: dir }); } catch { result = { status: 'unavailable' }; }
+  if (result.status !== 'ok') return { report: { state: 'unavailable', pending: 0 }, items: [] };
+  const items = result.items.map((reply): Omit<UnifiedInboxItem, 'priority'> => {
+    const act = ['phm comms thread'];
+    // The resend must reuse the recorded text, the reply's own key and the
+    // answered inbound's key or the reply identity refuses or forks; keys
+    // that fail the send-owner shape guard keep the inspect link rather than
+    // a command that cannot run.
+    if (OWNER_REPLY_KEY.test(reply.replyTo) && OWNER_REPLY_KEY.test(reply.idempotencyKey)) {
+      act.push(`phm comms send-owner --reply-to ${reply.replyTo} --idempotency-key ${reply.idempotencyKey} --text "<same reply text>"`);
+    }
+    return {
+      id: `owner-delivery:${reply.id}`,
+      source: 'owner-delivery',
+      kind: 'owner-reply-undelivered',
+      severity: 'warn',
+      // Resending is agent work; nothing here blocks Mason.
+      blocking: false,
+      title: oneLine(`Leader reply undelivered on ${reply.destinations.map(d => d.channel).join(', ')}`, TITLE_MAX) || `leader reply ${reply.id}`,
+      detail: oneLine(
+        reply.destinations.map(d => d.reason === null ? `${d.channel}: ${d.state}` : `${d.channel}: ${d.state} (${d.reason})`).join(' · ') +
+        ` · "${oneLine(reply.text, 120)}"`,
+        DETAIL_MAX) || null,
+      since: reply.at,
+      expiresAt: null,
+      act,
+    };
+  });
+  return { report: { state: 'healthy', pending: items.length }, items };
+}
+
+async function draftItems(
+  list: typeof listDrafts,
+  listComms: (runsDir: string) => Promise<CommsDraft[]>,
+  runsDir: string | undefined,
+): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
   // An absent store reads as an empty list; only a read failure is 'unavailable'.
+  // The cos read keeps every status: an approved or rejected copy of a
+  // comms-agent email draft still means the owner decided it, so it must
+  // suppress the comms-agent record below.
   let drafts: Draft[] = [];
   let state: UnifiedInboxSourceState = 'healthy';
-  try { drafts = await list({ runsDir, status: 'pending' }); } catch { state = 'unavailable'; }
-  const items = drafts.map((draft): Omit<UnifiedInboxItem, 'priority'> => ({
-    id: `drafts:${draft.id}`,
-    source: 'drafts',
-    kind: 'draft-approval',
-    severity: 'info',
-    // The outbound send is held until the owner decides.
-    blocking: true,
-    title: oneLine(`Approve outbound email to ${draft.to}`, TITLE_MAX),
-    detail: cap(`${draft.subject || '(no subject)'} · digest ${draft.digest.slice(0, 12)}`, DETAIL_MAX),
-    since: draft.createdAt,
-    expiresAt: null,
-    act: [`phm drafts show ${draft.id}`, `phm drafts approve ${draft.id}`, `phm drafts reject ${draft.id}`],
-  }));
-  return { report: { state, pending: items.length }, items };
+  try { drafts = await list({ runsDir }); } catch { state = 'unavailable'; }
+  const pendingCos = drafts.filter(draft => draft.status === 'pending');
+  const mirrored = new Set(
+    drafts.map(draft => draft.source)
+      .filter(source => source.startsWith('comms-agent:'))
+      .map(source => source.slice('comms-agent:'.length)),
+  );
+  const commsDir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let commsDrafts: CommsDraft[] = [];
+  let commsFailed = false;
+  try { commsDrafts = await listComms(commsDir); } catch { commsFailed = true; }
+  const items = [
+    ...pendingCos.map((draft): Omit<UnifiedInboxItem, 'priority'> => ({
+      id: `drafts:${draft.id}`,
+      source: 'drafts',
+      kind: 'draft-approval',
+      severity: 'info',
+      // The outbound send is held until the owner decides.
+      blocking: true,
+      title: oneLine(`Approve outbound email to ${draft.to}`, TITLE_MAX),
+      detail: cap(`${draft.subject || '(no subject)'} · digest ${draft.digest.slice(0, 12)}`, DETAIL_MAX),
+      since: draft.createdAt,
+      expiresAt: null,
+      act: [`phm drafts show ${draft.id}`, `phm drafts approve ${draft.id}`, `phm drafts reject ${draft.id}`],
+    })),
+    // Comms-agent reply drafts that never reached the cos store (every
+    // non-email transport, or an email mirror that failed to write) still
+    // wait on the owner, so they list here too — one pending reply, one item.
+    // The recipient stays out of the item: it can be a handle.
+    ...commsDrafts
+      .filter(draft => draft.status === 'pending' && !mirrored.has(draft.id))
+      .map((draft): Omit<UnifiedInboxItem, 'priority'> => ({
+        id: `drafts:${draft.id}`,
+        source: 'drafts',
+        kind: 'draft-approval',
+        severity: 'info',
+        blocking: true,
+        title: oneLine(`Comms reply draft via ${draft.transport}`, TITLE_MAX),
+        detail: oneLine(draft.subject || '(no subject)', DETAIL_MAX),
+        since: Number.isNaN(Date.parse(draft.createdAt)) ? null : draft.createdAt,
+        expiresAt: null,
+        act: ['phm comms-agent drafts'],
+      })),
+  ];
+  const merged: UnifiedInboxSourceState = state === 'unavailable' ? 'unavailable' : commsFailed ? 'degraded' : 'healthy';
+  return { report: { state: merged, pending: items.length }, items };
 }
 
 /**
@@ -383,9 +562,18 @@ const STATUS_DETAIL_MAX = 160;
  * that declares no claim keys at all counts the same way — `work claim`
  * refuses it `no-claim-keys`, so it is unclaimable work needing a re-announce
  * or a terminal status, not a worker; it lists with the announcement's own
- * `bus show` handle and no claim act. Unknown holds
- * list candidates under 'degraded' rather than hiding them. A refused,
- * retryable or unreadable feed degrades the section; it never invents jobs.
+ * `bus show` handle and no claim act. A `running`/`idle` job that declares
+ * claim keys counts as pending only under complete hold coverage with no
+ * shown live hold on any of them — the status says progress while
+ * coordination proves nobody holds the scope, so the announcement is stalled
+ * and only its announcer can move it; truncated, unavailable or absent hold
+ * coverage can never prove that, so unproven stalls stay hidden. Unknown
+ * holds list open candidates under 'degraded' rather than hiding them. A refused feed
+ * lists one high item naming the retained receipt the projection blamed —
+ * every announced job is hidden and every work verb refuses until that
+ * receipt's TTL ends, so the refusal itself is pending work; `expiresAt` is
+ * the blamed receipt's own deadline. A retryable or unreadable feed degrades
+ * the section; it never invents jobs.
  */
 function busFeedJobItems(options: UnifiedInboxOptions, now: number,
   posts: ReadonlyMap<string, BusFeedPost>,
@@ -394,9 +582,37 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
   try { feed = (options.readFeed ?? readBusWorkFeed)({ root: options.busRoot, claims: true, now: () => now }); }
   catch { return { state: 'unavailable', items: [] }; }
   if (feed.status === 'unavailable') return { state: 'unavailable', items: [] };
+  if (feed.status === 'refused') {
+    const receipt = feed.receipt;
+    const expiry = receipt === undefined ? NaN : receipt.receivedAt + receipt.ttl;
+    // ECMAScript's Date range ends at ±8.64e15 ms; an out-of-range expiry
+    // stays null — unknown, never an invalid timestamp.
+    const expiresAt = Number.isSafeInteger(expiry) && expiry <= 8_640_000_000_000_000 ? iso(expiry) : null;
+    return { state: 'degraded', items: [{
+      id: 'bus-feed-refused',
+      source: 'bus',
+      kind: 'bus-work',
+      severity: 'high',
+      blocking: false,
+      title: `work feed refused: ${feed.reason}`,
+      detail: cap('every announced job is hidden and work verbs refuse until the receipt expires' +
+        (receipt === undefined ? '' : ` · receipt ${receipt.id}`), DETAIL_MAX),
+      since: receipt === undefined ? null : iso(receipt.receivedAt),
+      expiresAt,
+      act: [
+        ...(receipt === undefined ? [] : [`phm agents bus show ${receipt.id}`]),
+        'phm agents bus work feed',
+      ],
+    }] };
+  }
   if (feed.status !== 'ok') return { state: 'degraded', items: [] };
 
   const holdsKnown = feed.claims?.source !== 'unavailable';
+  // Complete hold coverage is what "no live claim" proofs need: a missing
+  // table is verified-empty and an untruncated available read shows every
+  // hold, while unavailable, truncated or absent claims can never prove a
+  // declared key is unheld.
+  const holdsComplete = feed.claims !== undefined && feed.claims.source !== 'unavailable' && !feed.claims.truncated;
   const heldKeys = new Map<string, Set<string>>();
   if (feed.claims) {
     for (const hold of feed.claims.holds) {
@@ -430,6 +646,37 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
           `phm agents bus work feed --job ${job.id} --claims`,
         ],
       });
+      continue;
+    }
+    // A running/idle announcement whose declared keys all lost their live
+    // holds is stalled work: the status reports progress but complete hold
+    // coverage proves nobody holds the job's scope, and only the announcer
+    // can move it — a worker cannot claim a non-open status. Jobs with no
+    // declared keys have no claim scope to prove unheld, and incomplete
+    // coverage can never prove "no hold", so both stay hidden rather than
+    // listed as fact.
+    if ((job.status === 'running' || job.status === 'idle') && job.claimKeys.length > 0 && holdsComplete) {
+      const held = heldKeys.get(job.id);
+      if (held === undefined || held.size === 0) {
+        const report = statuses.get(job.id);
+        items.push({
+          id: `bus-feed:${job.id}`,
+          source: 'bus',
+          kind: 'bus-work',
+          severity: post?.priority === 'P0' ? 'high' : 'warn',
+          blocking: false,
+          title: oneLine(job.title, TITLE_MAX) || `bus work ${job.id}`,
+          detail: cap(`owner ${job.owner} · ${job.provider} · ${job.repo} · ${job.status}` +
+            (report?.detail ? ` — ${report.detail}` : (job.detail === undefined ? '' : ` — ${oneLine(job.detail, 140)}`)) +
+            ' · no live claim on its declared keys; only the announcer can move it', DETAIL_MAX),
+          since: iso(job.updatedAt),
+          expiresAt: post ? iso(post.expiresAt) : null,
+          act: [
+            ...(report === undefined ? [] : [`phm agents bus show ${report.id}`]),
+            `phm agents bus work feed --job ${job.id} --claims`,
+          ],
+        });
+      }
       continue;
     }
     // An open job that declares no claim keys can never be claimed —
@@ -608,25 +855,29 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
 const THREAD_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 /**
- * Agent-to-agent conversation threads still waiting on a reply — the same
- * `state:'waiting'` threads `agents conversations --waiting` computes, read
- * through the one shared conversations projection so thread state, subjects
- * and wait ages can never disagree with that surface. A thread whose waiting
- * message is already a pending bus item — an unclaimed work envelope or a
- * live worker-handoff — or whose `job:` thread the feed already lists stays
- * under the bus source: one pending thing, one item. The source state follows
- * the projection honestly: 'missing' is a verified-empty store, 'unavailable'
- * an unreadable one (never an empty list passed off as fact), and damaged
- * rows the tolerant scan skipped degrade the read rather than let partial
- * coverage pass as complete. `since` is the wait's start; the retained
- * envelope TTL is not part of the projection, so `expiresAt` stays null —
- * unknown, never invented.
+ * Agent-to-agent conversation threads still needing a person — the same
+ * `state:'waiting'` and `state:'blocked'` threads the one shared
+ * conversations projection computes, read unfiltered and narrowed here so
+ * thread state, subjects and ages can never disagree with that surface. A
+ * waiting thread names who must answer and how long it has waited; a blocked
+ * thread names who reported the block, who was told and how long it has
+ * stood — a reported block nothing has answered is pending work like an
+ * unanswered ask. A thread whose latest message is already a pending bus
+ * item — an unclaimed work envelope or a live worker-handoff — or whose
+ * `job:` thread the feed already lists stays under the bus source: one
+ * pending thing, one item. The source state follows the projection honestly:
+ * 'missing' is a verified-empty store, 'unavailable' an unreadable one
+ * (never an empty list passed off as fact), and damaged rows the tolerant
+ * scan skipped degrade the read rather than let partial coverage pass as
+ * complete. `since` is the state change's start; the retained envelope TTL
+ * is not part of the projection, so `expiresAt` stays null — unknown, never
+ * invented.
  */
 function conversationItems(read: NonNullable<UnifiedInboxOptions['readConversations']>,
   options: UnifiedInboxOptions, now: () => number,
   covered: BusItemCoverage): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   let result: AgentConversations;
-  try { result = read({ waitingOnly: true }, { root: options.busRoot, now }); }
+  try { result = read({}, { root: options.busRoot, now }); }
   catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
   if (result.source === 'unavailable' || result.conversations === null) {
     return { report: { state: 'unavailable', pending: 0 }, items: [] };
@@ -634,8 +885,10 @@ function conversationItems(read: NonNullable<UnifiedInboxOptions['readConversati
   if (result.source === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
   const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
   for (const thread of result.conversations) {
+    // Answered and done threads are history, not pending work.
+    if (thread.state !== 'waiting' && thread.state !== 'blocked') continue;
     const last = thread.messages[thread.messages.length - 1];
-    if (thread.waiting === null || last === undefined) continue;
+    if (last === undefined) continue;
     if (covered.envelopes.has(last.id)) continue;
     if (thread.id.startsWith(JOB_THREAD_PREFIX) && covered.feedJobs.has(thread.id.slice(JOB_THREAD_PREFIX.length))) continue;
     const act = ['phm agents conversations', `phm agents bus show ${last.id}`];
@@ -645,20 +898,39 @@ function conversationItems(read: NonNullable<UnifiedInboxOptions['readConversati
     if (THREAD_LABEL.test(thread.id)) {
       act.push(`phm agents bus post --to <sender-label> --text "<reply>" --thread ${thread.id}`);
     }
-    items.push({
-      id: `conversations:${thread.id}`,
-      source: 'conversations',
-      kind: 'agent-thread',
-      // A handoff waiting on a recipient is delegated work nobody picked up;
-      // an ask is ordinary coordination. Neither blocks Mason, so never `blocking`.
-      severity: last.kind === 'handoff' ? 'warn' : 'info',
-      blocking: false,
-      title: oneLine(thread.subject, TITLE_MAX) || `agent thread ${thread.id}`,
-      detail: cap(`from ${last.from} · waiting on ${thread.waiting.on} · ${thread.messageCount} message${thread.messageCount === 1 ? '' : 's'} · waiting ${plainAge(thread.waiting.ms)}`, DETAIL_MAX),
-      since: thread.waiting.since,
-      expiresAt: null,
-      act,
-    });
+    const title = oneLine(thread.subject, TITLE_MAX) || `agent thread ${thread.id}`;
+    const count = `${thread.messageCount} message${thread.messageCount === 1 ? '' : 's'}`;
+    if (thread.state === 'waiting' && thread.waiting !== null) {
+      items.push({
+        id: `conversations:${thread.id}`,
+        source: 'conversations',
+        kind: 'agent-thread',
+        // A handoff waiting on a recipient is delegated work nobody picked up;
+        // an ask is ordinary coordination. Neither blocks Mason, so never `blocking`.
+        severity: last.kind === 'handoff' ? 'warn' : 'info',
+        blocking: false,
+        title,
+        detail: cap(`from ${last.from} · waiting on ${thread.waiting.on} · ${count} · waiting ${plainAge(thread.waiting.ms)}`, DETAIL_MAX),
+        since: thread.waiting.since,
+        expiresAt: null,
+        act,
+      });
+    } else if (thread.state === 'blocked') {
+      items.push({
+        id: `conversations:${thread.id}`,
+        source: 'conversations',
+        kind: 'agent-thread',
+        // Unblocking a reported block is agent work, never Mason-blocking —
+        // warn like a handoff wait, non-blocking like every thread item.
+        severity: 'warn',
+        blocking: false,
+        title,
+        detail: cap(`from ${last.from} · to ${last.to} · ${thread.stateText} for ${plainAge(now() - Date.parse(thread.lastAt))} · ${count}`, DETAIL_MAX),
+        since: thread.lastAt,
+        expiresAt: null,
+        act,
+      });
+    }
   }
   return { report: { state: result.skipped > 0 ? 'degraded' : 'healthy', pending: items.length }, items };
 }
@@ -960,9 +1232,11 @@ async function emailOutboxItems(read: NonNullable<UnifiedInboxOptions['readEmail
 export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promise<UnifiedInbox> {
   const now = options.now ?? Date.now;
   const needs = needsYouItems(options.readNeeds ?? readNeedsMason, options.runsDir);
+  const needsDelivery = needsYouDeliveryItems(options.readNeedsDeliveries ?? readNeedsMasonReplyDeliveries, options.runsDir);
   const teammates = teammateItems(options.readTexts ?? readTeammateTexts, options.runsDir, now);
   const ownerThread = ownerThreadItems(options.readOwnerAwaiting ?? readOwnerAwaitingReplies, options.runsDir);
-  const drafts = await draftItems(options.listPendingDrafts ?? listDrafts, options.runsDir);
+  const ownerDelivery = ownerDeliveryItems(options.readOwnerUndelivered ?? readOwnerUndeliveredReplies, options.runsDir);
+  const drafts = await draftItems(options.listPendingDrafts ?? listDrafts, options.listCommsDrafts ?? listCommsAgentDrafts, options.runsDir);
   const bus = busItems(options);
   const conversations = conversationItems(options.readConversations ?? readAgentConversations, options, now, bus.covered);
   const seats = await seatItems(options.readSeatHandoffs ?? planSeatHandoffs, now);
@@ -977,8 +1251,10 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
+    'needs-you-delivery': needsDelivery.report,
     imessage: teammates.report,
     'owner-thread': ownerThread.report,
+    'owner-delivery': ownerDelivery.report,
     drafts: drafts.report,
     bus: bus.report,
     conversations: conversations.report,
@@ -990,7 +1266,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'team-approvals': teamApprovals.report,
     proposals: proposals.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...ownerThread.items, ...drafts.items, ...bus.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

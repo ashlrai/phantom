@@ -29,8 +29,8 @@ function writeOpen(open: boolean): void {
   try { window.localStorage.setItem(ROSTER_OPEN_KEY, open ? '1' : '0'); } catch { /* Storage can be unavailable. */ }
 }
 
-function Row({ row, aimed, onAim, onOpenLog, onOpenThread }: {
-  row: RosterRow; aimed: boolean; onAim: (id: string) => void; onOpenLog: (job: string) => void; onOpenThread?: (session: string) => void;
+function Row({ row, aimed, reading, onAim, onOpenLog, onOpenThread }: {
+  row: RosterRow; aimed: boolean; reading: boolean; onAim: (id: string) => void; onOpenLog: (job: string) => void; onOpenThread?: (session: string) => void;
 }) {
   const line = <>
     {row.lane !== 'unknown' ? <ProviderBadge of={row.lane} iconOnly size={14} /> : null}
@@ -39,21 +39,23 @@ function Row({ row, aimed, onAim, onOpenLog, onOpenThread }: {
     <span className={styles.when} data-state={row.state}>{row.when}</span>
     <span className={styles.said} data-unknown={row.said === null || undefined}>{row.said ?? 'Last message unknown'}</span>
   </>;
-  return <li className={styles.item} data-state={row.state} data-aimed={aimed || undefined}>
+  return <li className={styles.item} data-state={row.state} data-aimed={aimed || undefined} data-reading={reading || undefined}>
     {row.aimable
       ? <button type="button" className={styles.row} data-roster-row={row.id} data-job={row.job ?? undefined} data-session={row.session}
         aria-label={`Aim your next message at ${row.id}, ${row.when}`} title="Put this job in the reply box" onClick={() => onAim(row.id)}>{line}</button>
       : <span className={styles.row} data-roster-row={row.id} data-job={row.job ?? undefined} data-session={row.session} tabIndex={0}
         title="Only RQ- jobs can be named in a message">{line}</span>}
-    {onOpenThread ? <button type="button" className={styles.side} data-roster-thread={row.session} aria-label={`Read ${row.id} as a conversation`}
+    {onOpenThread ? <button type="button" className={styles.side} data-roster-thread={row.session} aria-current={reading || undefined} aria-label={`Read ${row.id} as a conversation`}
       title="What it was told, said and did, with a reply box (T)" onClick={() => onOpenThread(row.session)}>Thread</button> : null}
     {row.prUrl ? <a className={styles.side} href={row.prUrl} target="_blank" rel="noopener noreferrer">PR</a> : null}
     {row.job !== null ? <button type="button" className={styles.side} aria-label={`Open the log for ${row.id}`} onClick={() => onOpenLog(row.job!)}>Log</button> : null}
   </li>;
 }
 
-export function LeaderRoster({ visible, onOpenLog, onOpenSessions, onOpenThread }: {
+export function LeaderRoster({ visible, onOpenLog, onOpenSessions, onOpenThread, openSession = null }: {
   visible: boolean;
+  /** The session whose conversation is open beside the strip; its line is marked. */
+  openSession?: string | null;
   onOpenLog: (job: string) => void;
   /** When given, every line offers its session as a conversation (by session id). */
   onOpenThread?: (session: string) => void;
@@ -104,7 +106,7 @@ export function LeaderRoster({ visible, onOpenLog, onOpenSessions, onOpenThread 
     </header>
     {open && list !== null && rows.length > 0
       ? <ul ref={listRef} className={styles.list} aria-label="Running agent sessions" onKeyDown={onKeyDown}>
-        {rows.map(row => <Row key={row.id} row={row} aimed={aimed === row.id} onAim={aim} onOpenLog={onOpenLog} onOpenThread={onOpenThread} />)}
+        {rows.map(row => <Row key={row.id} row={row} aimed={aimed === row.id} reading={openSession === row.session} onAim={aim} onOpenLog={onOpenLog} onOpenThread={onOpenThread} />)}
       </ul> : null}
     {open && list !== null && read.error ? <p className={styles.note} role="status" data-tone="unknown">Refresh failed; this list may be stale.</p> : null}
     {open && list !== null && list.gaps.length > 0

@@ -7,13 +7,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AgentMessage, AgentMessages } from '../src/core/fleet/agent-messages.js';
 import type { FleetCompute } from '../src/core/fleet/compute-view.js';
+import type { JobControlLedgerRow } from '../src/core/fleet/job-control-types.js';
 import type { InboxEntry } from '../src/core/fleet/mason-inbox.js';
 import type { LeaderRepliesV1 } from '../src/core/fleet/mason-outbox.js';
 import type { OrderTraceJob, OrderTraceV1 } from '../src/core/fleet/order-trace.js';
 import type { FleetJobActivityV1 } from '../src/core/fleet/runs-job-activity.js';
 import type { FleetSessionV1, FleetSessionsV1 } from '../src/core/fleet/runs-sessions.js';
-import { buildLiveSessions } from '../src/core/fleet/live-sessions.js';
-import { buildSessionThread, renderSessionThreadText, sessionBusMessages, sessionOwnerMessages, sessionReply, THREAD_BUS_SHOWN, THREAD_ORDERS_SHOWN, THREAD_OWNER_SHOWN, THREAD_ROUTED_SHOWN, type SessionThreadOwnerRead } from '../src/core/fleet/session-thread.js';
+import { buildLiveSessions, flatTree } from '../src/core/fleet/live-sessions.js';
+import { buildSessionThread, THREAD_LIMITS, renderSessionThreadText, sessionBusMessages, sessionOutputLines, sessionOwnerMessages, sessionReply, THREAD_BUS_SHOWN, THREAD_CONTROLS_SHOWN, THREAD_ORDERS_SHOWN, THREAD_OUTPUT_LINES, THREAD_OUTPUT_LINE_CHARS, THREAD_OWNER_SHOWN, THREAD_ROUTED_SHOWN, type SessionThreadOutputRead, type SessionThreadOwnerRead } from '../src/core/fleet/session-thread.js';
 import { readSessionThread } from '../src/core/fleet/session-thread-read.js';
 import { readFleetSessionMap } from '../src/core/fleet/sessions-view.js';
 import { createFleetSessionThreadApi } from '../src/core/verse/fleet-session-thread-api.js';
@@ -107,7 +108,7 @@ describe('buildSessionThread', () => {
     expect(thread.session!.state).toBe('quiet');
     expect(thread.summary).toEqual(['Worker on claude, fixture-model, in phantom.', 'Quiet: no output for 25m.']);
     expect(thread.messages).toEqual([]);
-    expect(thread.sources).toEqual({ sessions: 'available', activity: 'unavailable', bus: 'unavailable', owner: 'none', replies: 'none', orders: 'none' });
+    expect(thread.sources).toEqual({ sessions: 'available', activity: 'unavailable', bus: 'unavailable', owner: 'none', replies: 'none', orders: 'none', output: 'none', controls: 'none' });
     expect(thread.gaps).toEqual(['Activity unknown: this session\'s recorded activity could not be read.', 'Bus messages unknown: the agent bus could not be read.']);
     const partial = buildSessionThread(await liveList(), 'RQ-QUIET', { sessionsRead: true, bus: bus([], 'missing'),
       activity: activity({ truncated: true, sources: { events: 'missing', commands: 'missing', files: 'missing', reports: 'missing' }, counts: { events: 0, commands: 0, files: 0, reports: 0 }, entries: [] }) }, NOW);
@@ -289,7 +290,7 @@ describe('buildSessionThread', () => {
     const list = await liveList(), read = (id: string) => buildSessionThread(list, id, { sessionsRead: true, bus: bus([]) }, NOW);
     const worker = read('RQ-A');
     expect(worker.reply).toEqual({ to: 'job', mention: '@RQ-A', hint: 'Goes to the Leader\'s inbox with @RQ-A in front, so the Leader knows which session you mean.' });
-    expect(Object.keys(worker).at(-1)).toBe('reply');
+    expect(Object.keys(worker).slice(-4)).toEqual(['reply', 'control', 'depth', 'deeper']);
     expect(read('RQ-QUIET').reply).toMatchObject({ to: 'job', mention: '@RQ-QUIET' });
     expect(read('leader').reply).toEqual({ to: 'leader', mention: null, hint: 'Goes to the Leader\'s inbox, the same as the Leader chat.' });
     expect(read('RQ-NOPE').reply).toEqual({ to: 'none', mention: null, hint: 'There is no session to write to. Write to the Leader in the Leader chat.' });
@@ -392,10 +393,14 @@ describe('GET /api/verse/fleet/control/session-thread', () => {
     const ok = await call(`${PATH}?id=RQ-A`);
     expect(ok).toMatchObject({ handled: true, status: 200, body: { schema: 'fleet.session-thread.v1', id: 'RQ-A' } });
     expect(ok.read).toHaveBeenCalledWith('RQ-A');
+    // The read is told a depth only when the caller asked for the full one.
+    expect((await call(`${PATH}?id=RQ-A&depth=recent`)).read.mock.calls).toEqual([['RQ-A']]);
+    const all = await call(`${PATH}?depth=full&id=RQ-A`);
+    expect([all.status, all.read.mock.calls]).toEqual([200, [['RQ-A', 'full']]]);
     expect((await call(`${PATH}?id=leader`)).body.session.kind).toBe('leader');
     expect((await call(`${PATH}?id=RQ-A`, { session: false })).status).toBe(401);
     expect((await call(`${PATH}?id=RQ-A`, { method: 'POST' })).status).toBe(405);
-    for (const bad of ['', '?id=a&id=b', '?id=RQ-A&lane=x', '?id=..%2Fetc', '?id=', `?id=${'a'.repeat(129)}`]) {
+    for (const bad of ['', '?id=a&id=b', '?id=RQ-A&lane=x', '?id=RQ-A&depth=all', '?id=RQ-A&depth=', '?id=RQ-A&depth=full&depth=full', '?depth=full', '?id=..%2Fetc', '?id=', `?id=${'a'.repeat(129)}`]) {
       const refused = await call(`${PATH}${bad}`);
       expect([bad, refused.status]).toEqual([bad, 400]);
       expect(refused.read).not.toHaveBeenCalled();
@@ -447,16 +452,234 @@ describe('phm sessions thread', () => {
   it('is listed in the sessions help', async () => {
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     expect(await cmdSessions(['thread', '--help'])).toBe(0);
-    expect(String(out.mock.calls[0]![0])).toContain('phm sessions thread <id> [--json]');
+    expect(String(out.mock.calls[0]![0])).toContain('phm sessions thread <id> [--all] [--json]');
+  });
+
+  it('asks for the full depth with --all, and for nothing more without it', async () => {
+    const read = vi.fn(async (id: string, depth?: 'recent' | 'full') => buildSessionThread(await liveList(), id, { sessionsRead: true, activity: activity(), bus: bus([]) }, NOW, depth));
+    const recent = await run(['RQ-A'], read);
+    // Ten commands are on record and eight are shown, so the text says how to see the rest.
+    expect(recent.out).toContain('note: Earlier entries are on record. Show them: phm sessions thread RQ-A --all');
+    expect(read.mock.calls).toEqual([['RQ-A']]);
+    vi.restoreAllMocks();
+    read.mockClear();
+    const all = await run(['RQ-A', '--all', '--json'], read);
+    expect(read.mock.calls).toEqual([['RQ-A', 'full']]);
+    expect(JSON.parse(all.out)).toMatchObject({ depth: 'full', deeper: false });
+    vi.restoreAllMocks();
+    expect((await run(['RQ-A', '--all'], read)).out).not.toContain('--all');
   });
 
   it('documents the JSON it prints: every top-level key, and every source the thread names', async () => {
-    const doc = AGENT_COMMANDS.find(command => command.usage === 'phm sessions thread <id> [--json]');
+    const doc = AGENT_COMMANDS.find(command => command.usage === 'phm sessions thread <id> [--all] [--json]');
     const shape = doc?.jsonShape ?? '';
     const thread = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, activity: activity(), bus: bus([]) }, NOW);
     // The documented shape lists `sources` as `sources:{a,b,...}`; it must name the keys the builder returns, in order.
     expect(/sources:\{([^}]*)\}/.exec(shape)?.[1]?.split(',')).toEqual(Object.keys(thread.sources));
     for (const key of Object.keys(thread)) expect([key, shape.includes(key)]).toEqual([key, true]);
     expect(doc?.description).toContain('routed');
+  });
+});
+
+describe('what the session wrote (output)', () => {
+  const log = (lines: string[], over: Partial<SessionThreadOutputRead> = {}): SessionThreadOutputRead => ({ source: 'live', truncated: false, lines, ...over });
+  const build = async (output?: SessionThreadOutputRead | null) => buildSessionThread(await liveList(), 'RQ-A',
+    { sessionsRead: true, activity: activity(), bus: bus([message('m1', 'leader', 'RQ-A')]), ...(output === undefined ? {} : { output }) }, NOW);
+
+  it('ends the conversation with the newest lines of the log, blank ones dropped and long ones cut', async () => {
+    const lines = ['', ...Array.from({ length: 14 }, (_, index) => `line ${index + 1}  `), '   ', 'x'.repeat(THREAD_OUTPUT_LINE_CHARS + 20)];
+    const thread = await build(log(lines));
+    const said = thread.messages.at(-1)!;
+    expect(said).toMatchObject({ key: 'output', kind: 'output', side: 'session', at: null, format: 'mono', label: 'Output, last 12 lines of its log' });
+    const shown = said.text.split('\n');
+    expect(shown).toHaveLength(THREAD_OUTPUT_LINES);
+    expect([shown[0], shown.at(-2)]).toEqual(['line 4', 'line 14']);
+    expect([shown.at(-1)!.length, shown.at(-1)!.endsWith('…')]).toEqual([THREAD_OUTPUT_LINE_CHARS, true]);
+    expect(sessionOutputLines(lines).earlier).toBe(3);
+    expect([thread.sources.output, thread.gaps]).toEqual(['available', []]);
+    expect(Object.keys(thread.sources).slice(-2)).toEqual(['output', 'controls']);
+    expect((await build(log(['one', 'two']))).messages.at(-1)).toMatchObject({ label: 'Output, 2 lines', text: 'one\ntwo' });
+    // A window that clipped the log has earlier lines even when few are shown.
+    expect((await build(log(['bye'], { source: 'archived', truncated: true }))).messages.at(-1)!.label).toBe('Output, from its archived log, last 1 line of its log');
+    expect(renderSessionThreadText(await build(log(['one', 'two'])))).toContain('< Output, 2 lines\n    one\n    two');
+  });
+
+  it('says the output is unknown when the log could not be read, and nothing when nothing was written', async () => {
+    for (const unread of [null, log([], { source: 'degraded' })]) {
+      const thread = await build(unread);
+      expect([thread.sources.output, thread.messages.some(m => m.kind === 'output')]).toEqual(['unavailable', false]);
+      expect(thread.gaps).toEqual(['Output unknown: this session\'s log could not be read.']);
+    }
+    for (const empty of [undefined, log([], { source: 'missing' }), log(['', '   ']), log([], { truncated: true })]) {
+      const thread = await build(empty);
+      expect([thread.sources.output, thread.messages.some(m => m.kind === 'output'), thread.gaps]).toEqual(['none', false, []]);
+    }
+    const tooLarge = await build(log([], { source: 'archived', truncated: true }));
+    expect([tooLarge.sources.output, tooLarge.gaps]).toEqual(['unavailable', ['Output not shown: the archived log is too large to read here.']]);
+    expect(buildSessionThread(await liveList(), 'RQ-NOPE', { sessionsRead: true, bus: null }, NOW).sources.output).toBe('none');
+  });
+
+  it('does not say the latest line twice when the output already ends with it', async () => {
+    const list = await liveList();
+    flatTree(list.tree.roots).map(entry => entry.node).find(node => node.id === 'RQ-A')!.lastMessage = 'Running the tests';
+    const keys = (output?: SessionThreadOutputRead) => buildSessionThread(list, 'RQ-A', { sessionsRead: true, bus: bus([]), ...(output ? { output } : {}) }, NOW).messages.map(m => m.key);
+    expect(keys()).toEqual(['latest']);
+    expect(keys(log(['npm test', 'Running the tests']))).toEqual(['output']);
+    expect(keys(log(['npm test', 'Running the tests, 40 of 90 files']))).toEqual(['output']);
+    expect(keys(log(['npm test', 'All green']))).toEqual(['output', 'latest']);
+  });
+
+  it('is read for a session with a job only, and a failed read leaves the rest of the thread', async () => {
+    const reads = () => ({ readMap: vi.fn(fleetMap), readSubagents: vi.fn(async () => []), readActivity: vi.fn(async () => activity()), readBus: vi.fn(() => bus([message('m1', 'leader', 'RQ-A')])),
+      readReplies: vi.fn(async () => replies(['hello'])), readOwner: vi.fn(async () => inbox([])), readOrders: vi.fn(async () => trace([])),
+      readOutput: vi.fn(async () => log(['compiling', `key ghp_${'a'.repeat(36)}`, 'done'])) });
+    const worker = reads(), thread = await readSessionThread('RQ-A', { now: NOW, ...worker });
+    expect(worker.readOutput.mock.calls).toEqual([['RQ-A']]);
+    expect(thread.messages.at(-1)).toMatchObject({ kind: 'output', label: 'Output, 3 lines' });
+    expect(thread.messages.at(-1)!.text.split('\n').filter(line => line === 'compiling' || line === 'done')).toEqual(['compiling', 'done']);
+    expect(JSON.stringify(thread)).not.toContain('ghp_');
+    const leader = reads();
+    expect((await readSessionThread('leader', { now: NOW, ...leader })).sources.output).toBe('none');
+    expect(leader.readOutput).not.toHaveBeenCalled();
+    const down = await readSessionThread('RQ-A', { now: NOW, ...reads(), readOutput: async () => { throw new Error('log unreadable'); } });
+    expect(down.sources).toMatchObject({ activity: 'available', bus: 'available', output: 'unavailable' });
+    expect(down.messages.map(m => m.kind)).toEqual(['brief', 'step', 'step', 'commands', 'files', 'notes', 'bus']);
+  });
+});
+
+describe('what was asked of the session\'s job (control)', () => {
+  const asked = (requestId: string, over: Partial<JobControlLedgerRow> = {}): JobControlLedgerRow =>
+    ({ requestId, action: 'pause', job: 'RQ-A', lane: null, status: 'requested', reason: null, at: ago(4), by: 'desktop', ...over });
+  const build = async (controls?: readonly JobControlLedgerRow[] | null, id = 'RQ-A') => buildSessionThread(await liveList(), id,
+    { sessionsRead: true, bus: bus([]), ...(controls === undefined ? {} : { controls }) }, NOW);
+
+  it('shows each request for this job as a record with what became of it, and says which one stands', async () => {
+    const thread = await build([
+      asked('jc-1', { status: 'applied', at: ago(20) }), asked('jc-2', { action: 'resume', status: 'applied', at: ago(15), by: 'cli' }),
+      asked('jc-other', { job: 'RQ-QUIET' }), asked('jc-3', { action: 'move', lane: 'codex', status: 'refused', reason: 'Lane codex is held.', at: ago(9), by: null }),
+      asked('jc-4', { at: ago(4) }),
+    ]);
+    expect(thread.messages.filter(m => m.kind === 'control')).toEqual([
+      { key: 'control:jc-1', kind: 'control', side: 'record', label: 'Paused', at: ago(20), format: 'plain', text: 'Asked from desktop. Done.' },
+      { key: 'control:jc-2', kind: 'control', side: 'record', label: 'Resumed', at: ago(15), format: 'plain', text: 'Asked from cli. Done.' },
+      { key: 'control:jc-3', kind: 'control', side: 'record', label: 'Move to codex refused', at: ago(9), format: 'plain', text: 'Lane codex is held.' },
+      { key: 'control:jc-4', kind: 'control', side: 'record', label: 'Pause requested', at: ago(4), format: 'plain', text: 'Asked from desktop. The dispatcher has not applied it yet.' },
+    ]);
+    // The newest one not refused is what stands.
+    expect(thread.messages.at(-1)!.key).toBe('control:jc-4');
+    expect(thread.control).toEqual({ action: 'pause', lane: null, status: 'requested', at: ago(4) });
+    expect(thread.summary.at(-1)).toBe(`Pause requested at ${ago(4)}. The dispatcher has not applied it yet.`);
+    expect([thread.sources.controls, thread.gaps]).toEqual(['available', []]);
+    expect(renderSessionThreadText(thread)).toContain(`- Pause requested [${ago(4)}]\n    Asked from desktop. The dispatcher has not applied it yet.`);
+    expect(Object.keys(thread).slice(-3)).toEqual(['control', 'depth', 'deeper']);
+  });
+
+  it('says an applied request by name, lets a refusal stand for nothing, and keeps the newest few', async () => {
+    const moved = await build([asked('jc-1', { action: 'move', lane: 'codex', status: 'applied', at: ago(6) }), asked('jc-2', { action: 'stop', status: 'refused', reason: null, at: ago(2) })]);
+    expect(moved.control).toEqual({ action: 'move', lane: 'codex', status: 'applied', at: ago(6) });
+    expect(moved.summary.at(-1)).toBe(`Moved to codex by request at ${ago(6)}.`);
+    expect(moved.messages.find(m => m.key === 'control:jc-2')).toMatchObject({ label: 'Stop refused', text: 'Asked from desktop. Refused.' });
+    const refused = await build([asked('jc-1', { status: 'refused', reason: 'Job has not started yet.' })]);
+    expect([refused.control, refused.sources.controls, refused.summary.some(line => line.includes('Pause'))]).toEqual([null, 'available', false]);
+    const many = await build(Array.from({ length: THREAD_CONTROLS_SHOWN + 2 }, (_, index) => asked(`jc-${index}`, { action: index % 2 ? 'resume' : 'pause', status: 'applied', at: ago(30 - index) })));
+    expect(many.messages.filter(m => m.kind === 'control').map(m => m.key)).toEqual(['control:jc-2', 'control:jc-3', 'control:jc-4', 'control:jc-5', 'control:jc-6']);
+    expect(many.gaps).toEqual(['2 earlier control requests not shown.']);
+  });
+
+  it('reads none recorded, unknown and not asked apart', async () => {
+    const none = await build([asked('jc-other', { job: 'RQ-QUIET' })]);
+    expect([none.sources.controls, none.control, none.gaps]).toEqual(['none', null, []]);
+    const unread = await build(null);
+    expect([unread.sources.controls, unread.control, unread.gaps]).toEqual(['unavailable', null, ['Controls unknown: the job control record could not be read.']]);
+    const notAsked = await build();
+    expect([notAsked.sources.controls, notAsked.control, notAsked.gaps]).toEqual(['none', null, []]);
+    expect(await build([asked('jc-1', { job: 'leader' })], 'leader')).toMatchObject({ control: null, sources: { controls: 'none' } });
+    expect(buildSessionThread(await liveList(), 'RQ-NOPE', { sessionsRead: true, bus: null }, NOW)).toMatchObject({ control: null, sources: { controls: 'none' } });
+  });
+
+  it('is read for a session with a job only, and a failed read leaves the rest of the thread', async () => {
+    const reads = () => ({ readMap: vi.fn(fleetMap), readSubagents: vi.fn(async () => []), readActivity: vi.fn(async () => activity()), readBus: vi.fn(() => bus([])),
+      readReplies: vi.fn(async () => replies(['hello'])), readOwner: vi.fn(async () => inbox([])), readOrders: vi.fn(async () => trace([])),
+      readOutput: vi.fn(async (): Promise<SessionThreadOutputRead> => ({ source: 'live', truncated: false, lines: ['compiling'] })), readControls: vi.fn(async () => [asked('jc-1')]) });
+    const worker = reads(), thread = await readSessionThread('RQ-A', { now: NOW, ...worker });
+    expect(worker.readControls).toHaveBeenCalledTimes(1);
+    expect([thread.control?.action, thread.sources.controls]).toEqual(['pause', 'available']);
+    // The requests come before what the session wrote last.
+    expect(thread.messages.map(m => m.kind).slice(-2)).toEqual(['control', 'output']);
+    const leader = reads();
+    expect((await readSessionThread('leader', { now: NOW, ...leader })).control).toBeNull();
+    expect(leader.readControls).not.toHaveBeenCalled();
+    const down = await readSessionThread('RQ-A', { now: NOW, ...reads(), readControls: async () => { throw new Error('control file unreadable'); } });
+    expect(down.sources).toMatchObject({ activity: 'available', controls: 'unavailable' });
+    expect(down.control).toBeNull();
+  });
+});
+
+describe('depth: the newest few of each record, or as much as the same reads hold', () => {
+  const refused = (index: number): JobControlLedgerRow =>
+    ({ requestId: `jc-${index}`, action: 'pause', job: 'RQ-A', lane: null, status: 'refused', reason: 'The job had ended.', at: ago(30 - index), by: 'desktop' });
+  /** More on record than a recent read shows, for every part a worker's thread limits. */
+  const parts = () => ({
+    sessionsRead: true, activity: activity(),
+    bus: bus(Array.from({ length: THREAD_BUS_SHOWN + 3 }, (_, index) => message(`m${index}`, 'RQ-A', 'leader', { ts: ago(200 - index) }))),
+    // Newest first, as the inbox reader returns them.
+    owner: inbox(Array.from({ length: THREAD_OWNER_SHOWN + 2 }, (_, index) => wrote(`06:${10 + index}`, `@RQ-A note ${index}`, { id: `desk-${index}` })).reverse()),
+    output: { source: 'live', truncated: false, lines: Array.from({ length: 30 }, (_, index) => `line ${index + 1}`) } as SessionThreadOutputRead,
+    controls: Array.from({ length: THREAD_CONTROLS_SHOWN + 2 }, (_, index) => refused(index)),
+  });
+  const count = (thread: { messages: Array<{ kind: string }> }, kind: string) => thread.messages.filter(m => m.kind === kind).length;
+  const labelOf = (thread: { messages: Array<{ kind: string; label: string }> }, kind: string) => thread.messages.find(m => m.kind === kind)?.label;
+
+  it('says when a deeper read holds more, and the full read shows it', async () => {
+    const list = await liveList();
+    const recent = buildSessionThread(list, 'RQ-A', parts(), NOW), full = buildSessionThread(list, 'RQ-A', parts(), NOW, 'full');
+    expect([recent.depth, recent.deeper, full.depth, full.deeper]).toEqual(['recent', true, 'full', false]);
+    expect(recent.gaps).toEqual(['3 earlier bus messages not shown.', '2 earlier messages from Mason not shown.', '2 earlier control requests not shown.']);
+    expect(full.gaps).toEqual([]);
+    expect(['bus', 'owner', 'control'].map(kind => [kind, count(recent, kind), count(full, kind)])).toEqual([
+      ['bus', THREAD_BUS_SHOWN, THREAD_BUS_SHOWN + 3], ['owner', THREAD_OWNER_SHOWN, THREAD_OWNER_SHOWN + 2], ['control', THREAD_CONTROLS_SHOWN, THREAD_CONTROLS_SHOWN + 2]]);
+    expect([labelOf(recent, 'commands'), labelOf(full, 'commands')]).toEqual(['Ran 10 commands, last 8 shown', 'Ran 10 commands']);
+    expect([labelOf(recent, 'output'), labelOf(full, 'output')]).toEqual(['Output, last 12 lines of its log', 'Output, 30 lines']);
+    // The full read is the recent one with earlier entries added: nothing is renamed, reordered or dropped.
+    const fullKeys = full.messages.map(m => m.key);
+    expect(recent.messages.every(m => fullKeys.includes(m.key))).toBe(true);
+    expect(fullKeys.filter(key => recent.messages.some(m => m.key === key))).toEqual(recent.messages.map(m => m.key));
+    expect([full.summary, full.session, full.sources, full.reply]).toEqual([recent.summary, recent.session, recent.sources, recent.reply]);
+    expect(renderSessionThreadText(recent)).toContain('note: Earlier entries are on record. Show them: phm sessions thread RQ-A --all');
+    expect(renderSessionThreadText(full)).not.toContain('--all');
+  });
+
+  it('promises nothing deeper when every record fits, or when the session is not in the list', async () => {
+    const list = await liveList();
+    const small = buildSessionThread(list, 'RQ-A', { sessionsRead: true, bus: bus([message('m1', 'leader', 'RQ-A')]) }, NOW);
+    expect([small.depth, small.deeper]).toEqual(['recent', false]);
+    expect(renderSessionThreadText(small)).not.toContain('--all');
+    expect(buildSessionThread(list, 'RQ-NOPE', { sessionsRead: true, bus: null }, NOW, 'full')).toMatchObject({ session: null, depth: 'full', deeper: false });
+    // Each limited part says so by itself.
+    const only = (over: object) => buildSessionThread(list, 'RQ-A', { sessionsRead: true, bus: bus([]), ...over }, NOW).deeper;
+    expect([only({ activity: activity() }), only({ output: parts().output }), only({ controls: parts().controls }), only({ owner: parts().owner }), only({ bus: parts().bus })])
+      .toEqual([true, true, true, true, true]);
+    expect(only({ activity: activity({ entries: activity().entries.filter(entry => entry.kind !== 'command') }) })).toBe(false);
+  });
+
+  it('keeps the full read bounded and names what it still leaves out', async () => {
+    const many = Array.from({ length: THREAD_LIMITS.full.bus + 5 }, (_, index) => message(`m${index}`, 'RQ-A', 'leader', { ts: ago(2000 - index) }));
+    const full = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, bus: bus(many) }, NOW, 'full');
+    expect([count(full, 'bus'), full.gaps, full.deeper]).toEqual([THREAD_LIMITS.full.bus, ['5 earlier bus messages not shown.'], false]);
+    for (const key of Object.keys(THREAD_LIMITS.recent) as Array<keyof typeof THREAD_LIMITS.recent>) expect([key, THREAD_LIMITS.full[key] > THREAD_LIMITS.recent[key]]).toEqual([key, true]);
+  });
+
+  it('gives the leader its earlier replies, and reads through the depth it was asked for', async () => {
+    const six = replies(['one', 'two', 'three', 'four', 'five', 'six']), list = await liveList();
+    const recent = buildSessionThread(list, 'leader', { sessionsRead: true, bus: bus([]), replies: six }, NOW);
+    const full = buildSessionThread(list, 'leader', { sessionsRead: true, bus: bus([]), replies: six }, NOW, 'full');
+    expect([count(recent, 'reply'), recent.deeper, count(full, 'reply'), full.deeper]).toEqual([THREAD_LIMITS.recent.replies, true, 6, false]);
+    // Newest first in the read, oldest first in the conversation: the earlier reply joins at the top.
+    expect([recent.messages[0]!.text, full.messages[0]!.text]).toEqual(['five', 'six']);
+    const reads = { readMap: fleetMap, readSubagents: async () => [], readActivity: async () => activity(), readBus: () => parts().bus, readOwner: async () => parts().owner,
+      readOrders: async () => trace([]), readOutput: async () => parts().output, readControls: async () => parts().controls };
+    const read = await readSessionThread('RQ-A', { now: NOW, ...reads }), deep = await readSessionThread('RQ-A', { now: NOW, depth: 'full', ...reads });
+    expect([read.depth, read.deeper, count(read, 'bus'), deep.depth, deep.deeper, count(deep, 'bus')]).toEqual(['recent', true, THREAD_BUS_SHOWN, 'full', false, THREAD_BUS_SHOWN + 3]);
+    expect((await readSessionThread('RQ-NOPE', { now: NOW, depth: 'full', ...reads })).depth).toBe('full');
   });
 });

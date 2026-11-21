@@ -19,7 +19,7 @@ import {
 } from './worktrees.js';
 
 export const WORKTREE_REAP_STATUS_SCHEMA = 'worktrees.reap-status.v1';
-export const WORKTREE_REAP_CAP = 25;
+export const WORKTREE_REAP_CAP = 40;
 export const WORKTREE_REAP_MIN_GAP_MS = 30 * 60_000;
 export const WORKTREE_REAP_OFF_FILE = join('queue', 'worktree-reap.off');
 const LAST_FILE = join('queue', 'worktree-reap-last.json');

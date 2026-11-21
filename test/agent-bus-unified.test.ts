@@ -307,6 +307,38 @@ describe('sender-filtered inbox reads', () => {
     expect(filtered.messages).toEqual([]);
     expect(filtered.nextCursor).toBeGreaterThan(0);
   });
+
+  it('counts every filter-matched row across the store only when asked', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'a1', id: 'dm-m1' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'a2', id: 'dm-m2' }, options);
+    await sendDirectMessage({ from: 'orion', to: 'nova', text: 'o1', id: 'dm-m3' }, options);
+    // Mail addressed to someone else never enters the count.
+    await sendDirectMessage({ from: 'atlas', to: 'orion', text: 'not nova', id: 'dm-m4' }, options);
+
+    // Without the flag the page shape is unchanged: no matched field at all.
+    const plain = readAgentInbox('nova', { limit: 2 }, options);
+    if (plain.status !== 'ok') throw new Error(`unexpected ${plain.status}`);
+    expect(plain.messages).toHaveLength(2);
+    expect(plain.matched).toBeUndefined();
+
+    // With it, messages still caps at limit while matched counts every row
+    // the same filters accept — and nextCursor already covers the whole scan.
+    const counted = readAgentInbox('nova', { limit: 2, matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.messages).toHaveLength(2);
+    expect(counted.matched).toBe(3);
+
+    // The count honors the same sender filter and the same after cursor.
+    const filtered = readAgentInbox('nova', { limit: 2, matched: true, from: 'atlas' }, options);
+    if (filtered.status !== 'ok') throw new Error(`unexpected ${filtered.status}`);
+    expect(filtered.matched).toBe(2);
+    const resumed = readAgentInbox('nova', { after: counted.nextCursor, matched: true }, options);
+    if (resumed.status !== 'ok') throw new Error(`unexpected ${resumed.status}`);
+    expect(resumed.matched).toBe(0);
+    expect(resumed.messages).toEqual([]);
+  });
 });
 
 describe('envelope lookup by id', () => {
@@ -560,15 +592,19 @@ describe('DM, channel, handoff and priority wake on the one bus store', () => {
     expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'low', id: 'low' }, options)).toMatchObject({ wake: 'not-requested' });
     expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'page', id: 'p0', priority: 'P0', wake: false }, options)).toMatchObject({ wake: 'queued' });
     expect(await postChannelMessage({ from: 'atlas', channel: 'ops', text: 'all hands', id: 'ops-1', wake: true }, options)).toMatchObject({ wake: 'queued' });
-    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ wakes: [{ id: 'p0' }, { id: 'ops-1' }] });
+    // matched counts every hint the bounded queue tail accepted for the agent,
+    // before the returned slice; truncated stays false while nothing is cut.
+    expect(readAgentWakes('nova', undefined, options))
+      .toMatchObject({ matched: 2, truncated: false, wakes: [{ id: 'p0' }, { id: 'ops-1' }] });
     // The channel sender is not woken by its own post; non-members are not woken.
-    expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ wakes: [] });
-    expect(readAgentWakes('orion', undefined, options)).toMatchObject({ wakes: [] });
+    expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ matched: 0, truncated: false, wakes: [] });
+    expect(readAgentWakes('orion', undefined, options)).toMatchObject({ matched: 0, truncated: false, wakes: [] });
 
     // Same id resent: the store reports duplicate and the wake queue dedupes.
     expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'page', id: 'p0', priority: 'P0' }, options))
       .toMatchObject({ status: 'duplicate', wake: 'queued' });
-    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ wakes: [{ id: 'p0' }, { id: 'ops-1' }] });
+    expect(readAgentWakes('nova', undefined, options))
+      .toMatchObject({ matched: 2, truncated: false, wakes: [{ id: 'p0' }, { id: 'ops-1' }] });
   });
 
   it('orders an inbox page by priority, pages by cursor and still sees legacy alias traffic', async () => {
@@ -636,6 +672,41 @@ describe('DM, channel, handoff and priority wake on the one bus store', () => {
     expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok',
       wakes: [{ id: 'wake-bare', to: 'nova' }, { id: 'wake-id', to: novaId }] });
     expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ status: 'ok', wakes: [] });
+  });
+
+  it('marks unstamped worker-handoff bodies as handoffs under every addressed label', () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    const novaId = stableAgentId('nova');
+    // `fleet handoff-send --apply` posts exactly this: the receivable
+    // worker-handoff body on a legacy envelope with no channel metadata.
+    const handoff = (id: string, to: string, from = 'agent:atlas') =>
+      appendBusInbox({ id, from, to, priority: 'P1', ttl: 60_000,
+        body: { kind: 'worker-handoff', taskId: 'RQ-FLEET-HO-1', prompt: 'take over' } }, options).status;
+    expect(handoff('ho-canon', 'agent:nova')).toBe('posted');
+    expect(handoff('ho-bare', 'nova')).toBe('posted');
+    expect(handoff('ho-id', novaId)).toBe('posted');
+    expect(handoff('ho-group', 'group:release:general')).toBe('posted');
+    // The sender's own channel-addressed handoff is its own post: hidden.
+    expect(handoff('ho-own', 'group:release:general', 'agent:nova')).toBe('posted');
+    // A handoff addressed elsewhere is not this agent's mail.
+    expect(handoff('ho-other', 'agent:atlas', 'agent:nova')).toBe('posted');
+
+    const inbox = readAgentInbox('nova', {}, options);
+    if (inbox.status !== 'ok') throw new Error('unreadable');
+    expect(inbox.messages.map(m => `${m.envelope.id}:${m.kind}`))
+      .toEqual(['ho-canon:handoff', 'ho-bare:handoff', 'ho-id:handoff', 'ho-group:handoff']);
+    // held evidence still attaches: every listed item is receivable work.
+    for (const message of inbox.messages) {
+      expect(message.held).toBe(false);
+    }
+    // Atlas sees nova's channel-addressed handoff as channel mail of kind
+    // handoff, plus the handoff addressed to his own label; his own channel
+    // post stays hidden.
+    const atlasInbox = readAgentInbox('atlas', {}, options);
+    expect(atlasInbox.status === 'ok' && atlasInbox.messages.map(m => `${m.envelope.id}:${m.kind}`))
+      .toEqual(['ho-own:handoff', 'ho-other:handoff']);
   });
 });
 
@@ -864,6 +935,9 @@ describe('v2 work announcements and statuses on the one bus store', () => {
       body: { kind: 'work.post', jobId: 'RQ-POISON', title: 'x', repo: 'a/b', claimKeys: [] } }, options).status).toBe('posted');
     expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-6' }, options))
       .toMatchObject({ status: 'refused', reason: expect.stringContaining('missing-provider') });
+    // The refusal names the retained receipt that poisoned the feed.
+    expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-6' }, options))
+      .toMatchObject({ status: 'refused', reason: expect.stringContaining('receipt poison-1') });
     expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-W-6', status: 'done' }, options))
       .toMatchObject({ status: 'refused' });
     const raw = listBusInboxAfter(0, 10, options);

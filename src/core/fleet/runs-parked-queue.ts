@@ -76,16 +76,41 @@ export function parseDependencyGateIds(text: string): string[] {
   return out;
 }
 
+/** jobs.jsonl field dialects, the same sets dispatchd `_vc_pick` and
+ * metrics-outcomes accept: ids take job|job_id|jobId|id, events
+ * event|type|kind, and phases outcome|state|status plus the producer
+ * aliases phase|result|conclusion. Reconciler rows keep the PUBLISHED
+ * row's publish-shaped event while carrying a terminal outcome;
+ * batcher.project_row maps them to event:"outcome" at read time. */
+const LEDGER_JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const LEDGER_EVENT_KEYS = ['event', 'type', 'kind'] as const;
+const LEDGER_PHASE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const;
+
+const ledgerPick = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim() !== '') return value.trim();
+  }
+  return null;
+};
+
 /** MERGED job ids from a bounded jobs.jsonl metrics ledger. */
 export function mergedJobsFromJsonl(text: string): Set<string> {
   const merged = new Set<string>();
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     try {
-      const row = JSON.parse(line) as { event?: unknown; state?: unknown; job?: unknown };
-      if (row.event === 'outcome' && row.state === 'MERGED' && typeof row.job === 'string' && JOB_ID.test(row.job)) {
-        merged.add(row.job);
-      }
+      const row = JSON.parse(line) as Record<string, unknown>;
+      const job = ledgerPick(row, LEDGER_JOB_KEYS);
+      const phase = ledgerPick(row, LEDGER_PHASE_KEYS)?.toUpperCase() ?? null;
+      if (!job || !JOB_ID.test(job) || phase !== 'MERGED') continue;
+      // Outcome evidence: an outcome/merged event, an eventless phase row
+      // (batcher/_vc_event infer outcome), or a reconciler row whose
+      // terminal phase arrives on a publish-shaped event.
+      const event = ledgerPick(row, LEDGER_EVENT_KEYS)?.toLowerCase() ?? null;
+      if (event !== null && event !== 'outcome' && event !== 'merged' &&
+          row['source'] !== 'metrics-outcomes-reconciler') continue;
+      merged.add(job);
     } catch { /* skip malformed ledger lines */ }
   }
   return merged;

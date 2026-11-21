@@ -45,6 +45,11 @@ describe('commsBriefFacts', () => {
     expect(r.blocker).toBeNull();
   });
 
+  it('lists recorded owner replies not fully delivered', () => {
+    expect(commsBriefFacts(inbox({ 'owner-delivery': rep('healthy', 2) })).line).toBe('Comms: 2 owner replies undelivered');
+    expect(commsBriefFacts(inbox({ 'owner-delivery': rep('healthy', 1) })).line).toBe('Comms: 1 owner reply undelivered');
+  });
+
   it('lists comms requests awaiting an answer with the oldest age', () => {
     const since = new Date(NOW - 40 * 60_000).toISOString();
     const r = commsBriefFacts(inbox({ requests: rep('healthy', 2) }, [

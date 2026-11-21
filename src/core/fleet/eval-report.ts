@@ -217,6 +217,20 @@ const ts = (row: Row, ...names: string[]): number | null => {
   return null;
 };
 
+/**
+ * jobs.jsonl timestamp dialect: ts|timestamp|at|time|mergedAt|closedAt|
+ * recordedAt|updatedAt, with mergedAt/closedAt preferred on terminal rows —
+ * the same field set dispatchd `_vc_pick` and metrics/loop accept.
+ */
+const LEDGER_TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+
+/** First parseable ledger stamp for a row in the given phase; MERGED prefers mergedAt, CLOSED closedAt. */
+const ledgerTs = (row: Row, phase: string): number | null => {
+  const preferred = phase === 'MERGED' ? 'mergedAt' : phase === 'CLOSED' ? 'closedAt' : null;
+  const keys = preferred === null ? LEDGER_TS_KEYS : [preferred, ...LEDGER_TS_KEYS.filter(k => k !== preferred)];
+  return ts(row, ...keys);
+};
+
 const EVENT = (row: Row): string => (str(row, 'event', 'type', 'kind') ?? '').toLowerCase();
 const PHASE = (row: Row): string => (str(row, 'state', 'outcome', 'status') ?? '').toUpperCase();
 const PR_URL_RE = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)\/?$/;
@@ -318,7 +332,7 @@ export function foldJobsLedger(text: string, sinceMs: number, untilMs: number): 
   for (const row of parsed) {
     const event = EVENT(row);
     const phase = PHASE(row);
-    const atMs = ts(row, 'ts', 'timestamp', 'at', 'mergedAt', 'closedAt');
+    const atMs = ledgerTs(row, phase);
     const inWindow = atMs !== null && atMs >= sinceMs && atMs < untilMs;
     const job = jobOf(row);
     const pr = prUrlOf(row);

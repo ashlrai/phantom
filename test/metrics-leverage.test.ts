@@ -1,5 +1,8 @@
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { buildLeverageReport, classifyMerge } from '../src/core/metrics/leverage-class.js';
+import { buildLeverageReport, classifyMerge, readLeverageReport } from '../src/core/metrics/leverage-class.js';
 import { cmdMetrics } from '../src/cli/metrics.js';
 
 const fixtures = [
@@ -45,16 +48,47 @@ describe('buildLeverageReport', () => {
     expect(none).toMatchObject({ known: false, total: null, totals: null, leverageShare: null, perHour: null });
     expect(buildLeverageReport('', null, now).leverageShare).toBeNull();
   });
+  it('reports jobsTruncated only for a bounded tail read', () => {
+    const jobs = row('RQ-DVL-FLEET-1', 10, 1);
+    expect(buildLeverageReport(jobs, null, now).sources.jobsTruncated).toBe(false);
+    expect(buildLeverageReport({ text: jobs, truncated: true }, null, now).sources).toMatchObject({ jobs: 'available', jobsTruncated: true });
+    expect(buildLeverageReport(null, null, now).sources.jobsTruncated).toBe(false);
+  });
+});
+
+describe('readLeverageReport', () => {
+  it('reads the newest bounded tail of an oversized jobs ledger', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'leverage-tail-'));
+    mkdirSync(join(dir, 'metrics'));
+    // Append-only ledger larger than the 16 MiB tail window: the head sentinel
+    // must fall outside the window and the newest outcome row must still fold.
+    const limit = 16 * 1024 * 1024;
+    const now = Date.now();
+    const recent = JSON.stringify({ event: 'outcome', state: 'MERGED', job: 'RQ-DVL-FLEET-TAIL', ts: new Date(now - 60_000).toISOString(), url: 'https://github.com/ashlrai/phantom/pull/901' });
+    writeFileSync(join(dir, 'metrics', 'jobs.jsonl'), 'HEAD-SENTINEL\n' + 'A'.repeat(limit) + '\n' + recent + '\n');
+    const report = await readLeverageReport({ runsDir: dir, now });
+    expect(report.sources).toMatchObject({ jobs: 'available', jobsTruncated: true });
+    expect(report.total).toBe(1);
+    expect(report.totals!.fleet).toBe(1);
+    // A small ledger reads whole and reports no truncation.
+    const small = mkdtempSync(join(tmpdir(), 'leverage-small-'));
+    mkdirSync(join(small, 'metrics'));
+    writeFileSync(join(small, 'metrics', 'jobs.jsonl'), recent + '\n');
+    const whole = await readLeverageReport({ runsDir: small, now });
+    expect(whole.sources.jobsTruncated).toBe(false);
+    expect(whole.total).toBe(1);
+  });
 });
 
 describe('phm metrics leverage', () => {
-  it('prints typed JSON with a schema id and rejects bad flags', () => {
+  it('prints typed JSON with a schema id and rejects bad flags', async () => {
     const out: string[] = [];
-    expect(cmdMetrics(['leverage', '--json', '--hours', '6'], { out: s => out.push(s), err: s => out.push(s) })).toBe(0);
+    expect(await cmdMetrics(['leverage', '--json', '--hours', '6'], { out: s => out.push(s), err: s => out.push(s) })).toBe(0);
     const parsed = JSON.parse(out[0]!);
     expect(parsed.schema).toBe('metrics.leverage.v1');
     expect(parsed.hours).toBe(6);
-    expect(cmdMetrics(['leverage', '--hours', '0'], { out: () => {}, err: () => {} })).toBe(2);
-    expect(cmdMetrics(['leverage', '--bad', 'x'], { out: () => {}, err: () => {} })).toBe(2);
+    expect(parsed.sources.jobsTruncated).toBe(false);
+    expect(await cmdMetrics(['leverage', '--hours', '0'], { out: () => {}, err: () => {} })).toBe(2);
+    expect(await cmdMetrics(['leverage', '--bad', 'x'], { out: () => {}, err: () => {} })).toBe(2);
   });
 });

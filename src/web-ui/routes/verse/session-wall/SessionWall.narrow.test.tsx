@@ -7,6 +7,7 @@ import { findEntries, narrowSessionWall, NO_SCOPE, scopeChoices, sessionWallQuer
 import { barNote } from './WallBar.js';
 import { forgetWallSeen, noteWallSeen, unseenCount } from './wall-seen.js';
 import { takeRequestedWallSession } from './wall-selection.js';
+import { forgetWallView } from './wall-view-store.js';
 
 const AT = '2026-11-20T12:00:00.000Z';
 const session = (id: string, over: Record<string, unknown> = {}) => ({ id, kind: 'worker', agent: 'claude', lane: 'claude', model: 'fixture-model', repo: 'phantom',
@@ -39,7 +40,7 @@ const shownIds = () => within(screen.getByRole('list', { name: 'Conversations' }
 const findBox = () => screen.getByRole('searchbox', { name: 'Find in the conversations on screen' });
 const mount = () => render(<SessionWallPane visible host={{ openPane: vi.fn() } as never} />);
 
-beforeEach(() => { evictAll(); forgetWallSeen(); setMutationToken('a'.repeat(64)); takeRequestedWallSession(); });
+beforeEach(() => { evictAll(); forgetWallSeen(); forgetWallView(); setMutationToken('a'.repeat(64)); takeRequestedWallSession(); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); clearMutationToken(); });
 
 describe('the wall read for one scope', () => {

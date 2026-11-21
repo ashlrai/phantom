@@ -41,6 +41,23 @@ Run the CLI from source with `npm run dev -- --help`.
 
 ## 3. Make one change
 
+Before your agent writes code, check that nobody is already on it. Fleet
+agents open pull requests around the clock, so search open pull requests and
+issues for the area you plan to touch:
+
+```sh
+gh pr list --repo ashlrai/phantom --state open --search "<keyword or path>"
+gh issue list --repo ashlrai/phantom --state open --search "<keyword>"
+```
+
+For a bug fix or a small docs change, go straight to a pull request. For a new
+feature or a larger change, open an issue first with the feature request or bug
+report template so the direction is agreed before the work. Report security
+problems privately as [SECURITY.md](https://github.com/ashlrai/phantom/blob/master/SECURITY.md)
+describes, never in a public issue or pull request. If the change lands on a
+protected path, it waits for the owner's review; see
+[Protected paths wait for the owner](#protected-paths-wait-for-the-owner).
+
 - One coherent outcome per pull request. Keep the diff reviewable.
 - `src/cli/` handlers stay thin; logic goes in `src/core/`. Relative imports end in `.js`.
 - Changing an exported signature means updating `CONTRACT.md` or the matching
@@ -60,7 +77,13 @@ npm run test:ci -- test/<file>.test.ts    # affected backend suites, isolated HO
 npm run test:web                          # only if src/web-ui/ changed
 npm run check:docs                        # if docs changed (verify-changed already ran it when the diff touched markdown or deleted files)
 npx vitest run test/doc-facts.test.ts     # if a documented command, flag or npm script changed
+npm run build                             # if build, packaging or CLI wiring changed
+npm run dev -- verify-safety              # if safety-relevant code changed; read-only, changes nothing
 ```
+
+These match the "How it was verified" checklist in the pull request template
+(`phm verify-safety` there is the installed form of the last line), so tick
+what you ran and say what you skipped.
 
 `verify-changed` records a pass for the current tree, so a repeat run on an
 unchanged tree prints `SKIP verify-changed`; pass `--force` to rerun.
@@ -68,8 +91,16 @@ unchanged tree prints `SKIP verify-changed`; pass `--force` to rerun.
 prefer one command. If authority drift fails, run `npm run authority:regen` and
 list each new Tier-1 root in the pull request body.
 
-If you added or renamed a document, run `npm run docs:sync` and commit what it
-regenerates; the hosted generated-files check fails on a stale tree.
+If you added, renamed or deleted a page under `docs/`, or changed a page's
+`#` title or first sentence, run `node scripts/generate-docs-llms.mjs` and
+commit the updated `docs/llms.txt`. Its page index lists each page's title and
+first sentence, and the required `Check generated files` job reruns the
+generator and fails if any tracked file changes. If you changed `bin/ashlr`,
+commit it, then run `npm run canonical-launcher-digests:regen` (it reads the
+launcher's git history) and commit `scripts/canonical-launcher-digests.json`.
+`npm run docs:sync` regenerates every generated surface (version blocks, site
+pages, CODEMAP, the CLI references) and can also rewrite files you did not
+touch; keep only the output your change caused.
 
 ### Reading `verify-changed` output
 
@@ -155,7 +186,7 @@ when these jobs succeed:
 | Secret-shape scan | Added lines contain nothing token-shaped outside fake test fixtures. |
 | Secret scan (diff) | A second secret scan over the diff. |
 | Classify | Picks the lane (site, docs or full) for the change. |
-| Check generated files | Regenerated docs indexes and launcher digests match what you committed. |
+| Check generated files | `node scripts/generate-docs-llms.mjs` leaves every tracked file unchanged, and the `bin/ashlr` digest is listed in `scripts/canonical-launcher-digests.json`. |
 | Fast gate (typecheck + affected tests) | Type check plus a bounded set of tests selected from your diff (below). |
 
 Quick typecheck and `Check authority drift (hermetic)` also run but are
@@ -256,3 +287,28 @@ Never edit `CODEOWNERS` by hand: `npm run authority:regen` regenerates it, and
 Nothing in this flow weakens a test, bypasses a ruleset or uses an admin
 override; changes that try are refused. See the
 [safety invariants](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md#safety-invariants-contributors-must-never-weaken).
+
+## 8. The other ecosystem repositories
+
+Phantom is one of seven repositories the fleet works on. Each of the other six
+is a separate repository with its own `CONTRIBUTING.md` (setup, tests, checks)
+and `AGENTS.md` (agent rules). Point your agent at those two files first, the
+same way as step 1. The default branch of each is `main`, not `master`, so open
+pull requests with `--base main`.
+
+| Repository | What it is | Read first |
+| --- | --- | --- |
+| [phantom-secrets](https://github.com/ashlrai/phantom-secrets) | Local vault, placeholders and a proxy for supported API credential use. | [CONTRIBUTING.md](https://github.com/ashlrai/phantom-secrets/blob/main/CONTRIBUTING.md), [AGENTS.md](https://github.com/ashlrai/phantom-secrets/blob/main/AGENTS.md) |
+| [locus](https://github.com/ashlrai/locus) | Account and tenant bindings for agent tools. | [CONTRIBUTING.md](https://github.com/ashlrai/locus/blob/main/CONTRIBUTING.md), [AGENTS.md](https://github.com/ashlrai/locus/blob/main/AGENTS.md) |
+| [ashlr-plugin](https://github.com/ashlrai/ashlr-plugin) | Compact tool results and a local usage ledger. | [CONTRIBUTING.md](https://github.com/ashlrai/ashlr-plugin/blob/main/CONTRIBUTING.md), [AGENTS.md](https://github.com/ashlrai/ashlr-plugin/blob/main/AGENTS.md) |
+| [lexicon](https://github.com/ashlrai/lexicon) | Correct recurring speech-to-text errors before agents read them. | [CONTRIBUTING.md](https://github.com/ashlrai/lexicon/blob/main/CONTRIBUTING.md), [AGENTS.md](https://github.com/ashlrai/lexicon/blob/main/AGENTS.md) |
+| [ashlr-md](https://github.com/ashlrai/ashlr-md) | Markdown editing with CLI and MCP interfaces. | [CONTRIBUTING.md](https://github.com/ashlrai/ashlr-md/blob/main/CONTRIBUTING.md), [AGENTS.md](https://github.com/ashlrai/ashlr-md/blob/main/AGENTS.md) |
+| [ashlr-stack](https://github.com/ashlrai/ashlr-stack) | Configure supported development services through CLI and MCP. | [CONTRIBUTING.md](https://github.com/ashlrai/ashlr-stack/blob/main/CONTRIBUTING.md), [AGENTS.md](https://github.com/ashlrai/ashlr-stack/blob/main/AGENTS.md) |
+
+The shape of the work carries over: one focused branch pushed to your fork, the
+repository's own checks run once, a pull request with a conventional title.
+The specifics on this page do not: `scripts/verify-changed.mjs`, `npm run test:ci`,
+the `Merge Gate` job list, the fast-gate selection and the protected-path list
+belong to Phantom. Take each repository's commands, required checks and
+`CODEOWNERS` from its own files. The fleet publisher and
+`phm publish orphans`/`phm publish resume` cover all seven repositories.

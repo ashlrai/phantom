@@ -48,6 +48,7 @@ describe('readNodesView', () => {
         name: 'node-a', isSelf: true, reachable: true, lastSeen: '2026-11-17T12:00:00.000Z', phantom: 'not-running',
         heartbeatAgeSeconds: 'unknown', freeMemoryBytes: 12 * GIB, freeMemoryPercent: 38, load: 2, cpuHeadroomPercent: 75, lanes: 'unknown', jobsRunning: 'unknown', freeSlots: 'unknown',
         stateCode: 'not-running', state: 'reachable but Phantom not running: run `phm node join` here',
+        joined: true, joinCommand: null,
       }],
       reasons: ['no node pool on this computer: run `phm node join` on each computer to pool them'],
     });
@@ -238,7 +239,7 @@ describe('phm nodes', () => {
     const view = JSON.parse(first.out);
     expect(Object.keys(view)).toEqual(['schema', 'schemaVersion', 'asOf', 'self', 'registry', 'nodes', 'reasons']);
     expect(Object.keys(view.nodes[0])).toEqual(['name', 'isSelf', 'reachable', 'lastSeen', 'heartbeatAgeSeconds', 'phantom', 'freeMemoryBytes', 'freeMemoryPercent',
-      'load', 'cpuHeadroomPercent', 'lanes', 'jobsRunning', 'freeSlots', 'stateCode', 'state']);
+      'load', 'cpuHeadroomPercent', 'lanes', 'jobsRunning', 'freeSlots', 'stateCode', 'state', 'joined', 'joinCommand']);
   });
 
   it('--can-take lists only computers ready for that lane', async () => {

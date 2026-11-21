@@ -219,11 +219,26 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 ([`unified-inbox.ts`](../src/core/comms/unified-inbox.ts)) is the read-only
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
-— unresolved `NEEDS-MASON.md` items, unanswered allowlisted teammate texts,
+— unresolved `NEEDS-MASON.md` items, needs-you answers whose planner-inbox
+relay is not confirmed — the same `readNeedsMasonReplyDeliveries` receipts
+`phm fleet needs` reports as `replyDeliveries`, so the two surfaces can never
+disagree; each pending receipt lists as a warn whose retry resolves the same
+id again (the recorded reply is reused, never re-asked) and each receipt that
+failed validation lists as unreadable with its delivery state unknown —
+unanswered allowlisted teammate texts,
 live owner-thread inbound messages no recorded outbound reply cites (the same
 awaiting-reply mark `phm comms status` counts, each item deep-linking
-`phm comms thread` and `phm comms send-owner --reply-to`),
-outbound drafts awaiting approval, live bus envelopes whose body the claim
+`phm comms thread` and `phm comms send-owner --reply-to`), recorded owner
+replies whose channel fanout is not fully delivered — the delivery side of the
+same mark, which counts a reply answered even when every channel refused it
+(each `owner-delivery` item names the unconfirmed destinations as failed,
+pending or unknown and deep-links the resend that retries only them),
+outbound drafts awaiting approval — `phm drafts` items plus pending
+Comms-agent reply drafts that have no cos mirror (every non-email transport,
+or an email mirror that failed to write; a mirrored copy lists through its
+`phm drafts` item while pending and still suppresses the Comms record once
+decided, so one pending reply is one item, and items never carry the
+recipient, which can be a handle) — live bus envelopes whose body the claim
 contract accepts (`isClaimableWork`: a `kind:"work"` body or a protocol-v1
 transport `task` body) with no
 live claim (a live coordination-table row on the envelope's `queue:<id>` key
@@ -236,16 +251,26 @@ open agent-bus v2 work-feed jobs (queued or rescheduled
 jobs the feed shows `blocked` or `failed` — stuck work needs a decision — or
 open announcements that declare no claim keys, which `work claim` refuses
 `no-claim-keys`; those list with `bus show` / `work feed --job` links and the
-status detail when one exists instead of a claim act — read
-through the same projection as `phm agents bus work feed`), plus agent
-conversation threads still waiting on a reply — the same `waiting` threads
-`phm agents conversations --waiting` computes from the one shared
-conversations projection, fleet-wide, each item naming who must answer, how
-long it has waited and deep-linking `phm agents conversations`,
-`phm agents bus show` and a `phm agents bus post --thread` reply template;
-a thread whose waiting message is already a pending bus item or whose `job:`
-thread the feed already lists stays under the bus source, one pending thing
-one item — plus bot seats whose projected handoff plan still has work to
+status detail when one exists instead of a claim act — and `running`/`idle`
+announcements whose declared keys provably lost every live hold, which are
+stalled work only the announcer can move; those list only under complete
+hold coverage, since truncated, unavailable or absent coverage can never
+prove "no hold" — read
+through the same projection as `phm agents bus work feed`), plus a refused
+work feed itself — one high item naming the retained receipt the projection
+blamed (`agents bus show <id>` / `work feed` links, `expiresAt` that
+receipt's TTL deadline; a refusal that names no receipt keeps unknown
+times), since the refusal hides every announced job and refuses the work
+verbs until the receipt expires — plus agent
+conversation threads still needing a person — the same `waiting` and
+`blocked` threads the one shared conversations projection computes,
+fleet-wide: a waiting item names who must answer, how long it has waited
+and deep-links `phm agents conversations`, `phm agents bus show` and a
+`phm agents bus post --thread` reply template; a blocked item names who
+reported the block, who was told and how long it has stood, with the same
+deep links. A thread whose latest message is already a pending bus item or
+whose `job:` thread the feed already lists stays under the bus source, one
+pending thing one item — plus bot seats whose projected handoff plan still has work to
 move (the same `planSeatHandoffs` read `phm bots handoffs` serves; only
 eligible seats with pending, not yet journaled, handoff records list, each
 item deep-linking `phm bots handoff --seat` and `phm bots handoffs`) — plus
@@ -276,7 +301,7 @@ capture drops `approve`, and a truncated or incomplete read reports
 `degraded` with the items it did find) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
-`phm drafts approve`,
+`phm drafts approve`, `phm comms-agent drafts`,
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
 `phm fleet handoff-receive`, `phm agents conversations`,
 `phm bots handoff`, `phm agents bus post`, `phm fleet email-outbox`,

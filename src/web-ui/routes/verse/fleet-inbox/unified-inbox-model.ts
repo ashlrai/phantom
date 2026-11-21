@@ -6,8 +6,8 @@ const DETAIL_MAX = 300;
 /** The CLI twin of this card. */
 export const UNIFIED_INBOX_COMMAND = 'phm comms inbox';
 
-const SOURCES = ['needs-you', 'imessage', 'owner-thread', 'drafts', 'bus', 'conversations', 'seats', 'gmail', 'linkedin', 'requests', 'email-outbox', 'team-approvals', 'proposals'] as const;
-const KINDS = ['needs-you', 'teammate-text', 'owner-message', 'draft-approval', 'bus-work', 'bus-handoff', 'agent-thread', 'seat-handoff', 'gmail-over-target', 'linkedin-message', 'comms-request', 'email-stuck', 'team-approval', 'inbox-proposal'] as const;
+const SOURCES = ['needs-you', 'needs-you-delivery', 'imessage', 'owner-thread', 'owner-delivery', 'drafts', 'bus', 'conversations', 'seats', 'gmail', 'linkedin', 'requests', 'email-outbox', 'team-approvals', 'proposals'] as const;
+const KINDS = ['needs-you', 'needs-you-delivery', 'teammate-text', 'owner-message', 'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'agent-thread', 'seat-handoff', 'gmail-over-target', 'linkedin-message', 'comms-request', 'email-stuck', 'team-approval', 'inbox-proposal'] as const;
 const SEVERITIES = ['info', 'warn', 'high'] as const;
 const STATES = ['healthy', 'missing', 'degraded', 'unavailable'] as const;
 const EXPIRES_SOON_MS = 30 * 60_000;
@@ -72,8 +72,8 @@ export function readUnifiedInboxView(data: unknown): UnifiedInboxView | null {
   return { total: data.total, omitted: data.omitted, sources, items };
 }
 
-const SOURCE_NAMES: Record<InboxSource, string> = { 'needs-you': 'Needs you', imessage: 'iMessage', 'owner-thread': 'Owner thread', drafts: 'Drafts', bus: 'Bus', conversations: 'Conversations', seats: 'Seats', gmail: 'Gmail', linkedin: 'LinkedIn', requests: 'Requests', 'email-outbox': 'Email outbox', 'team-approvals': 'Team approvals', proposals: 'Proposals' };
-const ITEM_LABELS: Record<InboxSource, string> = { 'needs-you': 'Needs you', imessage: 'Teammate text', 'owner-thread': 'Owner message', drafts: 'Draft', bus: 'Bus work', conversations: 'Agent thread', seats: 'Seat handoff', gmail: 'Gmail inbox', linkedin: 'LinkedIn message', requests: 'Comms request', 'email-outbox': 'Stuck reply', 'team-approvals': 'Team approval', proposals: 'Proposal' };
+const SOURCE_NAMES: Record<InboxSource, string> = { 'needs-you': 'Needs you', 'needs-you-delivery': 'Needs-you delivery', imessage: 'iMessage', 'owner-thread': 'Owner thread', 'owner-delivery': 'Owner delivery', drafts: 'Drafts', bus: 'Bus', conversations: 'Conversations', seats: 'Seats', gmail: 'Gmail', linkedin: 'LinkedIn', requests: 'Requests', 'email-outbox': 'Email outbox', 'team-approvals': 'Team approvals', proposals: 'Proposals' };
+const ITEM_LABELS: Record<InboxSource, string> = { 'needs-you': 'Needs you', 'needs-you-delivery': 'Needs-you delivery', imessage: 'Teammate text', 'owner-thread': 'Owner message', 'owner-delivery': 'Undelivered reply', drafts: 'Draft', bus: 'Bus work', conversations: 'Agent thread', seats: 'Seat handoff', gmail: 'Gmail inbox', linkedin: 'LinkedIn message', requests: 'Comms request', 'email-outbox': 'Stuck reply', 'team-approvals': 'Team approval', proposals: 'Proposal' };
 
 /** "Needs you 3 · iMessage 1 · Drafts 0 · Bus degraded 2"; a missing source shows "—", never 0. */
 export function sourceSummary(sources: UnifiedInboxSources): string {
@@ -104,7 +104,7 @@ export function itemLine(item: UnifiedInboxEntry, nowMs: number): { label: strin
 }
 
 const SOURCE_COMMANDS: Record<InboxSource, string> = {
-  'needs-you': 'phm fleet needs', imessage: 'phm fleet teammate-texts', 'owner-thread': 'phm comms thread',
+  'needs-you': 'phm fleet needs', 'needs-you-delivery': 'phm fleet needs', imessage: 'phm fleet teammate-texts', 'owner-thread': 'phm comms thread', 'owner-delivery': 'phm comms thread',
   drafts: 'phm drafts list --status pending', bus: 'phm fleet bus-claim', conversations: 'phm agents conversations',
   seats: 'phm bots handoffs', gmail: 'phm fleet gmail-archive-plan', linkedin: 'phm drafts list --status pending', requests: 'phm comms status',
   'email-outbox': 'phm fleet email-outbox', 'team-approvals': 'phm approvals', proposals: 'phm inbox',

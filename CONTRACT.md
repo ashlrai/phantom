@@ -240,7 +240,11 @@ prefixes, and the PR-visible trust gates'
 `.github/scripts/release-version-provenance.mjs > (version-provenance)`
 rows from the scrub.pl `<blocked> allowed=<n>` count, the gitleaks
 `leaks found: <n>` summary and the provenance `::error::` /
-`check failed:` lines (nonzero counts and verdicts only) -- plus
+`check failed:` lines (nonzero counts and verdicts only), and the
+memory benchmark gate's
+`scripts/benchmark-memory.ts > (memory-benchmark)` rows from the
+`memory benchmark below floor:` stderr block and its two-space-indented
+violation lines -- plus
 summaries. `auditExceptions` is the optional
 `DependencyAuditException[] | null` list (`{id, package, graph}` with
 graph `full` or `raycast-production`); `null` leaves audit reports
@@ -274,7 +278,12 @@ secret-shape and secret-scan groups key on the scanner definition alone
 shape carried inside a PR's own diff stays unattributed) and the
 provenance group's dependency set adds `package.json` and
 `.release-please-manifest.json` as static inputs; the harness ambient
-set does not apply to any of the three.
+set does not apply to any of the three. The memory benchmark gate's
+dependency set is the entry script's import closure -- the benchmark,
+its floors file and the `src/core/memory` implementation -- plus
+`package.json`, `package-lock.json` and `tsconfig.json` seeded as
+static inputs for the toolchain files tsx reads, and the harness
+ambient set does not apply to it either.
 `enqueueBaselineFixes(report,
 absoluteQueuePath)` explicitly writes work-tier master-fix rows deduplicated
 by queue state via `nextFixGeneration`: a failure whose prior fix generations
@@ -452,6 +461,12 @@ explicit row wins: `empty` (the recorded no-diff boolean), `exit_code`
 `failure_class` (only bounded identifier-shaped labels; anything else is
 skipped). All stay `null` when no jobs row recorded them — the fold
 never infers a finish verdict from merge state, PR URLs or event names.
+`merged` reads the jobs-ledger outcome dialect the sibling fleet readers
+share: a terminal phase across
+`phase`/`state`/`outcome`/`status`/`result`/`conclusion`, or a `merged` /
+`closed` event name when no phase field resolves (a resolved phase stays
+authoritative; `mergedAt`/`closedAt` stay the preferred terminal stamps),
+with the `merged` boolean as before; every other spelling stays `null`.
 The fold is read-only and advisory: it
 never routes, ranks, tunes or writes.
 
@@ -1543,16 +1558,27 @@ times are null, and `unknown` names the reason for each. `quiet` is true after
 `threadSessions(list)`, the limits `THREADS_MAX` (40 sessions),
 `THREADS_MESSAGES_SHOWN` (3) and `THREADS_TEXT_CHARS` (400), `THREAD_STATES`
 and the types `SessionThreadsV1`, `SessionThreadsEntry`,
-`SessionThreadsMessage` and `SessionThreadsParts`. `parts` is
+`SessionThreadsMessage`, `SessionThreadsServes` and `SessionThreadsParts`. `parts` is
 `{sessionsRead, bus, activity, replies?, owner?, orders?}`, where `activity`
 maps a job id to its activity read (null when that read failed, no key when it
 was not asked for), `owner` is the Leader inbox, handed to the leader's and
 every worker's thread and to no helper's, and `orders` is the order trace
 (`OrderTraceV1`), handed to the leader's thread and to every worker's that has
-a job. `SessionThreadsV1.sources` is `{sessions, bus, owner, replies, orders}`. Each entry is built by
+a job, and `controls` is the job control file (`readonly JobControlLedgerRow[] | null`,
+undefined when not asked for), handed to every thread whose session has a job.
+`SessionThreadsV1.sources` is `{sessions, bus, owner, replies, orders, controls}`. Each entry is built by
 `buildSessionThread`, so its session, summary, sources, gaps and `reply`
-(its last key, the `SessionThreadReply` of `session-reply.ts`) equal the
-single-session thread for the same records.
+(the `SessionThreadReply` of `session-reply.ts`) equal the
+single-session thread for the same records. Before `reply`, an entry carries
+`control: SessionThreadControl | null`, the single thread's own answer (the
+newest request for the session's job that was not refused; null when none
+stands, for a session with no job, and when the control file was not read).
+An entry's last key is `serves`:
+`{key, at, source, text, truncated, jobs}` for a worker whose job the order
+trace ties to a message of Mason's (the newest such message; `key` is shared
+by every entry serving it, `at` is the inbox's Eastern minute, `text` is null
+when the message is not among the inbox entries read, `jobs` counts every job
+the trace ties to the message), otherwise null.
 `src/core/fleet/session-threads-read.ts` exports `readSessionThreads(options)`
 with `lane`, `repo`, `live` and injectable `readMap`, `readSubagents`,
 `readLeader`, `readActivity`, `readBus`, `readOwner`, `readReplies` and
@@ -1594,6 +1620,54 @@ built by the pure `sessionReply(session | null)` that the new import-free
 `SessionReplySubject` and `AIMABLE_JOB_RE`; `session-thread.ts` re-exports
 `sessionReply` and `SessionThreadReply`, and `renderSessionThreadText` gains
 a "To write to it" line.
+Output (additive): `parts` gains optional `output`
+(`SessionThreadOutputRead | null`: `source`, `lines`, `truncated`, the shape
+`scanJobLog` returns), messages gain the kind `output` (key `output`, the
+newest `THREAD_OUTPUT_LINES` non-blank lines of the session's job log, each
+cut to `THREAD_OUTPUT_LINE_CHARS`), `sources` gains a last key `output`, and
+the `latest` message is left out when the output already ends with it. The
+module exports `sessionOutputLines(lines)` and both limits;
+`session-thread-read.ts` exports `readSessionOutput(job)` and
+`readSessionThread` takes an injectable `readOutput`, asked for a session with
+a job. In `fleet.session-threads.v1` a thread's `output` message keeps its
+newest `THREADS_OUTPUT_LINES` lines; `SessionThreadsParts` gains optional
+`output` (a map by job id), `threadSessions` entries gain `running`, and
+`readSessionThreads` takes `readOutput`, asked only for running sessions.
+Control (additive): `src/core/fleet/job-control.ts` exports the read-only
+`readJobControlLedger({runsDir?})`, the control file as
+`JobControlLedgerRow[]` (oldest first, one row per `requestId`, the last
+status winning; a missing file is no rows), and
+`src/core/fleet/job-control-types.ts` exports that row type
+(`requestId`, `action`, `job`, `lane`, `status`, `reason`, `at`, `by`) and
+`jobControlRecordLabel(row)`. In the thread, `parts` gains optional
+`controls` (`readonly JobControlLedgerRow[] | null`), messages gain the kind
+`control` (key `control:<requestId>`, side `record`, the newest
+`THREAD_CONTROLS_SHOWN` requests for the session's job), `sources` gains a
+last key `controls`, the summary gains a line for the request that stands,
+and the document gains a last top-level key
+`control: SessionThreadControl | null` (`action`, `lane`, `status` of
+`requested` or `applied`, `at`): the newest request not refused.
+`readSessionThread` takes an injectable `readControls`, asked for a session
+with a job. `fleet.session-threads.v1` reads the control file once for the
+whole document when a shown session has a job (`readSessionThreads` takes an
+injectable `readControls`): each such entry carries the same `control`,
+control messages and `sources.controls` as its single thread, and a failed
+read is `sources.controls: 'unavailable'` with one line in `gaps`.
+Depth (additive): `session-thread.ts` exports `SessionThreadDepth`
+(`'recent' | 'full'`), `SESSION_THREAD_DEPTHS`, `SessionThreadLimits` and
+`THREAD_LIMITS` (the limits for each depth; `recent` is the constants above).
+`buildSessionThread(list, id, parts, now, depth = 'recent')` takes the depth
+as an optional fifth argument and `sessionOutputLines(lines, shown =
+THREAD_OUTPUT_LINES)` the number of lines to keep. The document gains two
+last top-level keys: `depth` and `deeper: boolean` (true only for a
+`recent` thread in which a limit left out something `full` would show).
+`SessionThreadReadOptions` gains `depth`, and the default reply read asks
+for one reply more than the depth shows. `cmdSessionThread(args, read)`
+accepts `--all` and calls `read(id, 'full')` for it, `read(id)` otherwise;
+`SessionThreadRead` is `(id, depth?) => Promise<SessionThreadV1>`, and the
+route accepts `depth=recent|full` at most once, passing `'full'` on only
+when asked. `renderSessionThreadText` adds a note naming `--all` when
+`deeper` is true.
 `src/core/fleet/session-thread-read.ts` exports `readSessionThread(id,
 options)` with injectable `readMap`, `readSubagents`, `readActivity`,
 `readBus`, `readOwner` and `readReplies`; each read is guarded on its own and the result is
@@ -1661,11 +1735,16 @@ reject ASCII controls including DEL. Claims grant no execution authority.
 `projectBusWorkFeed(receipts: readonly unknown[], participants?: readonly Participant[], providerFor?: WorkFeedProviderFor, ownerKeyFor?: WorkFeedOwnerKeyFor)`
 in `src/core/agents/bus-work-feed.ts` returns `WorkFeedResult`: either
 `{status:'ok', feed:{v:2,jobs:WorkJob[]}, citations:ReadonlyMap<string,WorkFeedCitation>}`
-or `{status:'refused',reason}`. `WorkFeedCitation` is `{post, status}` — the
+or `{status:'refused',reason, receipt?}`. `WorkFeedCitation` is `{post, status}` — the
 wire ids of the retained `work.post` receipt that announced the job and of
 the newest accepted `work.status` receipt (`status` is null while none has
 moved it), keyed by job id, so every job cites the envelopes its state came
-from; `agents bus show <id>` resolves them.
+from; `agents bus show <id>` resolves them. `receipt` is a
+`WorkFeedRefusalReceipt` (`{id, receivedAt, ttl}` — the wire id, receipt time
+and TTL of the retained envelope whose processing refused the projection),
+present on the body-level refusals (`invalid-body`, `missing-provider`,
+`duplicate-job`, `owner-mismatch`) and absent when no single well-formed
+receipt is the cause (`invalid-receipts`, `invalid-participants`).
 It validates at most 1024 retained receipts in strictly increasing cursor order;
 legacy and unrelated bodies stay opaque. Posts start queued with `owner=from`,
 `to` set to the announcement envelope's routing label, and the announcement's
@@ -1691,7 +1770,8 @@ answer 503.
 
 `readBusWorkFeed({root?, now?, claims?, participants?, providerFor?, ownerKeyFor?})` in `src/core/agents/bus-work-feed-read.ts`
 pages the bounded bus inbox without writes and returns ok/refused/unavailable/
-retryable/invalid with receipt count and `asOf`. On `ok` each job is a
+retryable/invalid with receipt count and `asOf`; a `refused` result carries
+the projection's `receipt` (`WorkFeedRefusalReceipt`) when it named one. On `ok` each job is a
 `BusWorkFeedJob` (`WorkJob` plus `postId` — the announcing `work.post`
 envelope's wire id — and `statusId` — the newest accepted `work.status`
 envelope's wire id, null while none has moved the job), so feed consumers can
@@ -1725,7 +1805,8 @@ exact-label matching). `formatBusWorkFeed(result)` renders the shared human
 lines — each job as `<id> <status> "<title>" detail="<why>" owner=… keys=<claim keys> updated=… post=<postId> [status=<statusId>]`
 with title, detail and keys scrubbed, single-lined and display-clipped (JSON
 keeps the full values; `detail=` and `status=` appear only when present, `post=`
-always) — both feed CLIs use them, and both accept `--to <label>`, `--owner
+always) — a refused read's footer adds `receipt=<id>` when the projection
+blamed a retained envelope — both feed CLIs use them, and both accept `--to <label>`, `--owner
 <agent>` and `--job <id>` beside `--status`. `phm fleet work-feed [--claims]
 [--to <label>] [--owner <agent>] [--job <id>]` and
 `phm agents bus work feed [--status] [--claims] [--to <label>] [--owner
@@ -1796,7 +1877,7 @@ no execution authority; the token returns only to its acquirer.
 `phm agents bus work mine [<agent>]`. `readBusWorkMine(agent, options?)`
 (`BusWorkMineOptions`: `root?`, `runsRoot?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, claims, jobs, announced, next, handoffs, threads, awaiting, wakes, inbox}` or `{status:'invalid',
+asOf, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
@@ -1818,14 +1899,23 @@ claims join, and `claimable` is `true` only on a provably free key, `false`
 only when every declared key is provably held, `null` when coverage is
 `truncated` or `unknown` — `busWorkMineJobAnnotation(job, held, coverage,
 addressed, announced?)` is the exported pure rule. A non-ok feed collapses the section to
-its own status (`refused` keeps `reason`/`receipts`). `announced` is the
+its own status (`refused` keeps `reason`/`receipts` and the blamed `receipt`
+when the projection named one). `announced` is the
 outbound side of the same feed read: every job whose `owner` label resolves
 to the agent under the jobs section's owner matcher that has not reached
 `done` or `terminated`, newest update first, capped at the first 50 shown
 with `matched` the true total and `truncated` definitive — `failed` stays
 listed because only the announcer may move a job and a failed one can still
-be rescheduled or terminated. Each item is a `BusWorkFeedJob` verbatim, so
-it carries the feed's `postId`/`statusId` envelope citations; a job still
+be rescheduled or terminated. Each item is a `BusWorkMineAnnouncedJob` —
+`BusWorkFeedJob` plus the same per-key hold coverage the jobs section
+computes, so it carries the feed's `postId`/`statusId` envelope citations
+and `held`/`heldKeys`/`freeKeys`: `held` is `true` when a declared key has a
+shown live hold, `false` when complete coverage proves none is held or the
+job declares no keys, `null` when coverage cannot prove either way (a
+`running`/`idle` announcement with `held:false` has no live claim on its
+declared scope — the announcer is the only one who can move it);
+`busWorkMineAnnouncedAnnotation(job, held, coverage)` is the exported pure
+rule over the same coverage/`heldByJob` index the jobs section uses. A job still
 open with claim keys appears in both `jobs` (the claimable view) and
 `announced` (the ownership view). A non-ok feed reports the section's own
 `refused`/`unavailable`/`retryable`/`invalid` state, never an empty list.
@@ -1909,12 +1999,33 @@ party owing the reply (null for a topic or `group:` address, an
 unregistered label, or an unreadable registry). Same 20-item cap,
 longest-waiting order, `matched`/`truncated`/`skipped` semantics and
 `unavailable`-on-unreadable rule as `threads`.
+`blocked` is the third view over the same shared conversations read — now
+unfiltered, so all three sections narrow one projection at the frozen
+instant: every `state:'blocked'` thread (a blocker or failed report nothing
+has answered) the agent is a party to, where participation is any
+participant name the section's denotes rule matches — the agent's own
+labels, a name resolving to its identity, or a `group:<channel>:<topic>`
+address of a registry channel it belongs to. A block the agent reported
+itself still lists: the thread stays pending until a newer message moves it
+out of the state. Each `BusWorkMineBlockedItem` carries the conversation
+`id`, the latest message's envelope `id` as `messageId`, its `kind`, the
+sender's `from`/`fromAgent`, the recipient `to`, `lastAt`, `blockedMs`
+(ms the thread has stood blocked at the frozen instant), `messageCount` and
+the scrubbed `subject`; the first 20 show longest-standing first with
+`matched` the true total and `truncated` definitive, same
+`matched`/`truncated`/`skipped`/`unavailable` semantics as `threads`.
 `wakes` reuses
-`readAgentWakes` capped at the newest 20 with `truncated`, or
+`readAgentWakes` capped at the newest 20 with `matched` the count of every
+hint the bounded queue tail matched for the agent before its row cap —
+a lower bound, never a proven total, when `truncated` marks queue-tail or
+cap cuts beyond the shown slice — and
 `unknown-agent`/`unavailable` with `reason`. `inbox` reuses `readAgentInbox`
 for the next page of mail addressed to the agent — same matching, order and
 owner-share receipt checks as `agents bus inbox` — as `{status:'ok', agent,
-messages, nextCursor, truncated}`: each `BusWorkMineInboxMessage` carries
+messages, nextCursor, matched, truncated}`: `matched` is the true pending
+total — every row the same filters accept across the whole retained store,
+counted by a full scan the read performs on request (`page.matched`), while
+`messages` still caps at the page `limit` — each `BusWorkMineInboxMessage` carries
 `cursor`, envelope `id`, `ts`, `priority`, `kind`, `channel`, raw `from`,
 resolved `fromAgent` (null when unregistered), a `summary` through
 `busBodySummary`/`busBodyFallbackSummary`, scrubbed, single-lined and clipped
@@ -1957,16 +2068,22 @@ with a `reason`); they never throw for bad input or storage faults.
 `postLabelMessage`, `sendHandoff`, `sendWakeRequest`, `announceWork`,
 `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
-carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?}, options?)`
+carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?, matched?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label and
 `from` filters by sender through identity-label matching, an unresolvable ref
-keeping exact-label matching; `group.presence` heartbeats are observations
+keeping exact-label matching; `matched: true` scans the whole retained store
+and returns `matched`, the count of every filter-matched row, while
+`messages` still caps at `limit`; `group.presence` heartbeats are observations
 with their own read and never appear as mail of any kind; claimable work and
 worker-handoff items
 additionally carry `held`/`holder` — the same hold evidence
 `readBusEnvelopeById` reports, read once per page, `held` null when a hold
 store cannot be read),
-`readAgentWakes(ref, sinceAt, options?)`, `listBusChannels(agent, options?)`
+`readAgentWakes(ref, sinceAt, options?)` (the ok page carries `matched`,
+every hint the bounded queue tail accepted for the agent before its row
+cap, and `truncated`, true when the 256 KiB observation window or the cap
+cut matches beyond the returned slice — `matched` is then a lower bound,
+never a proven total), `listBusChannels(agent, options?)`
 (the registry channels name-sorted with `createdBy`, `createdAt` and member
 handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or
@@ -2040,9 +2157,12 @@ are routing names and grant no authority.
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
 read-only probe over the five dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
-null when unreadable), the wake queue (`state` plus the observed hint count,
-null unless `ok`), the shared coordination table (`coordinationSummary`) and
-the work-feed projection (job count, or the refusal `reason`). Each section
+null when unreadable), the wake queue (`state`, the observed hint count
+before the row cap — 0 on a verified-missing queue, null when unreadable —
+plus `truncated` for queue-tail or cap cuts, null when the state is
+unknown), the shared coordination table (`coordinationSummary`) and
+the work-feed projection (job count, or the refusal `reason` plus the blamed
+receipt's wire id as `receipt` when the projection named one). Each section
 reports its own real state, a failed probe degrades only its own section, and
 the read never throws, writes or takes a lock; unknown stays null, never zero.
 See [Unified bus](docs/AGENT-BUS.md#unified-bus-identities-dms-channels-handoffs-and-wake).

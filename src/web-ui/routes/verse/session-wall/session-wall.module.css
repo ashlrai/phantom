@@ -11,6 +11,16 @@
 
 /* Find and narrow, above the wall. The note under the controls says what is and is not on screen. */
 .narrowed { display: flex; flex-direction: column; min-width: 0; }
+.wallSide { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
+/* The Leader's conversation beside the cards (or beside an open conversation). Each side scrolls on its own, so the Leader's reply box stays at the foot of the pane. */
+.narrowed[data-leader='beside'] { flex-direction: row; height: 100%; min-height: 0; }
+.narrowed[data-leader='beside'] > .wallSide { flex-basis: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.leaderDock { flex: 0 0 clamp(340px, 36%, 520px); min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; border-left: 1px solid var(--border-subtle); background: var(--bg-surface); animation: session-wall-dock-in var(--duration-base) var(--ease-decelerate); }
+.leaderDock[hidden] { display: none; }
+/* Brings the Leader's conversation back after Hide; on screen only while it is hidden and would fit. */
+.leaderShow { align-self: flex-end; display: inline-flex; align-items: center; gap: var(--space-2); margin: var(--space-2) var(--space-3) 0; padding: 0 var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-full); background: none; color: var(--text-secondary); font: inherit; font-size: var(--text-xs-size); line-height: var(--text-xs-line); cursor: pointer; transition: background var(--duration-fast) var(--ease-standard); }
+.leaderShow:hover, .leaderShow:focus-visible { background: var(--bg-hover); color: var(--text-primary); }
+.leaderShow kbd { padding: 0 var(--space-1); border: 1px solid currentColor; border-radius: var(--radius-xs); font-family: var(--font-mono); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); opacity: 0.8; }
 .bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; padding: var(--space-3) var(--space-3) 0; color: var(--text-primary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); }
 .find { flex: 1 1 200px; max-width: 340px; }
 .pick { flex: 0 1 160px; min-width: 120px; }
@@ -20,10 +30,17 @@
 
 /* As many columns as fit, each wide enough to read a message in. */
 .wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: var(--space-2); align-items: start; margin: 0; padding: 0; list-style: none; }
+/* The heading of one lane or repo on a wall arranged by it: a full row, its name and how many sessions stand under it. */
+.group { grid-column: 1 / -1; display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; padding-top: var(--space-2); border-bottom: 1px solid var(--border-subtle); color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); font-variant-numeric: tabular-nums; animation: session-wall-in var(--duration-base) var(--ease-decelerate); }
+.group:first-child { padding-top: 0; }
+.group > strong { color: var(--text-primary); font-family: var(--font-display); font-size: var(--text-xs-size); line-height: var(--text-xs-line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card { min-width: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-surface-raised); animation: session-wall-in var(--duration-base) var(--ease-decelerate); }
 .card[data-state='quiet'] { border-color: var(--status-warning-solid); }
 .card[data-state='failed'] { border-color: var(--status-danger-solid); }
 .card[data-state='done'], .card[data-state='unknown'] { background: none; }
+/* A pause stands for the job (wall-steer.ts): the border breaks and the running dot holds still. */
+.card[data-steer='paused'] { border-style: dashed; }
+.card[data-steer='paused'] .state::before { animation: none; }
 .open { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; min-width: 0; padding: var(--space-2); border: 0; border-radius: inherit; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .open:hover { background: var(--bg-hover); }
 .open:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
@@ -87,6 +104,16 @@
 .rowState[data-state='failed'] { color: var(--status-danger-fg); }
 /* Messages that arrived since the conversation was last looked at; on a card and on a row. */
 .fresh { flex: none; padding: 0 var(--space-1); border-radius: var(--radius-full); background: var(--status-info-bg); color: var(--status-info-fg); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); font-weight: 600; font-variant-numeric: tabular-nums; animation: session-wall-in var(--duration-base) var(--ease-decelerate); }
+/* Opens the next conversation with new messages (N); above the cards and above the rows. Shown only while something is new. */
+.next { align-self: flex-start; display: inline-flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-2); border: 1px solid transparent; border-radius: var(--radius-full); background: var(--status-info-bg); color: var(--status-info-fg); font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer; transition: border-color var(--duration-fast) var(--ease-standard); animation: session-wall-in var(--duration-base) var(--ease-decelerate); }
+.next:hover { border-color: currentColor; }
+.next:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+.next kbd { padding: 0 var(--space-1); border: 1px solid currentColor; border-radius: var(--radius-xs); font-family: var(--font-mono); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); font-weight: 400; opacity: 0.8; }
+.rail .next { margin: 0 var(--space-2); }
+/* The list is narrowed by the find words: how many rows are left, and the way back to all of them. */
+.railNarrow { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); margin: 0; padding: 0 var(--space-2); color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.railAll { flex: none; padding: 0; border: 0; background: none; color: var(--text-primary); font: inherit; text-decoration: underline; cursor: pointer; }
+.railAll:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
 @container (max-width: 719px) {
   .columns { grid-template-columns: minmax(0, 1fr); }
   .rail { display: none; }
@@ -94,7 +121,8 @@
 
 @keyframes session-wall-live { 50% { opacity: 0.3; } }
 @keyframes session-wall-in { from { opacity: 0; transform: translateY(4px); } }
+@keyframes session-wall-dock-in { from { opacity: 0; transform: translateX(8px); } }
 @media (prefers-reduced-motion: reduce) {
-  .card, .fresh, .state[data-state='running']::before { animation: none; }
-  .filter, .row { transition: none; }
+  .card, .group, .fresh, .next, .leaderDock, .state[data-state='running']::before { animation: none; }
+  .filter, .row, .next, .leaderShow { transition: none; }
 }

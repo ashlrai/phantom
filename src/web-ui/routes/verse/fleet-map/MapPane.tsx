@@ -52,7 +52,7 @@ export const DETAIL_PANE: Readonly<Record<LiveMapNodeKind, string>> = {
 const KIND_WORD: Readonly<Record<LiveMapNodeKind, string>> = { leader: 'leader', lane: 'lane', job: 'job', computer: 'computer', resource: 'pool' };
 const nameOf = (node: LiveMapNode) => `Open ${KIND_WORD[node.kind]} ${node.label}: ${node.detail}`;
 const VIEW_OPTIONS = [{ value: '2d', label: '2D' }, { value: '3d', label: '3D' }] as const;
-const LAYOUT_OPTIONS = [{ value: 'rows', label: 'Rows' }, { value: 'org', label: 'By org' }] as const;
+const LAYOUT_OPTIONS = [{ value: 'rows', label: 'By lane' }, { value: 'org', label: 'By org' }] as const;
 const LEGEND: readonly [LiveMapEdgeKind, string][] = [
   ['reports-to', 'reports to'], ['runs-on', 'runs on'], ['uses-resource', 'uses pool'], ['messaged-in-last-15-min', 'messaged'],
 ];
@@ -116,7 +116,7 @@ export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => 
       <p className={styles.headline}>{mapHeadline(map)}</p>
       {compact && <button type="button" onClick={() => setPhoneMap(false)}>Back to the list</button>}
       {!compact && <Segmented<MapViewMode> options={VIEW_OPTIONS} value={mode} onChange={choose} size="sm" aria-label="Map view" />}
-      {mode === '2d' && <Segmented<MapLayoutMode> options={LAYOUT_OPTIONS} value={arrangement} onChange={arrange} size="sm" aria-label="Map layout" />}
+      {mode === '2d' && <span className={styles.groupBy}>Group: <Segmented<MapLayoutMode> options={LAYOUT_OPTIONS} value={arrangement} onChange={arrange} size="sm" aria-label="Group" /></span>}
       <button type="button" aria-pressed={showMessages} onClick={() => { setShowMessages(on => !on); setHovered(null); }}>Messages</button>
     </div>
     <p className={styles.notice}>Map as of {Number.isFinite(Date.parse(map.generatedAt)) ? <time dateTime={map.generatedAt}>{map.generatedAt}</time> : 'unknown'}.</p>
@@ -128,7 +128,8 @@ export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => 
       : <div className={styles.scroll}>
       <div className={styles.canvas} style={{ width: layout.width, height: layout.height }}>
         {orgLayout?.boxes.map(box => <div key={box.id} className={styles.group} data-org-group={box.id}
-          style={{ left: box.x, top: box.y, width: box.width, height: box.height }}><span>{orgBoxLabel(box)}</span></div>)}
+          style={{ left: box.x, top: box.y, width: box.width, height: box.height }}><span>{orgBoxLabel(box)}</span>
+          {box.members?.map(member => <p key={member.id} className={styles.member} data-planner={member.id}>{member.label}: {member.state}</p>)}</div>)}
         {layout.groups?.map(box => <div key={box.id} className={styles.group} data-map-group={box.id} role="group" aria-label={box.label}
           style={{ left: box.x, top: box.y, width: box.width, height: box.height }}><span>{box.label}</span></div>)}
         <svg className={styles.edges} width={layout.width} height={layout.height} aria-hidden="true">
@@ -161,6 +162,14 @@ export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => 
           const { mid } = messageCurve(a, b);
           return <button key={line.key} type="button" className={styles.waiting} style={{ left: mid.x, top: mid.y - 16 }} data-waiting-line={line.key}
             aria-label={`Waiting for a reply between ${label(line.a)} and ${label(line.b)}. Open thread`} onClick={() => setSelectedThread(line.threadId)}>…</button>;
+        })}
+        {orgLayout && map.edges.filter(edge => edge.kind === 'reports-to').map(edge => {
+          // On a parent link, the newest message between the two agents, either way round.
+          const a = layout.at.get(edge.from), b = layout.at.get(edge.to);
+          const note = said.get(`${edge.from}->${edge.to}`) ?? said.get(`${edge.to}->${edge.from}`);
+          if (!a || !b || !note || !showMessages) return null;
+          return <span key={edge.id} className={styles.linkNote} data-link-note={edge.id} title={`${note.from.name} → ${note.to.name}, ${relativeAt(note.lastAt, now)}: ${note.lastSummary}`}
+            style={{ left: (a.x + b.x) / 2, top: (a.y + b.y) / 2 + 12 }}>“{note.lastSummary}”</span>;
         })}
         {counts.map(pair => {
           const a = layout.at.get(pair.edge.from), b = layout.at.get(pair.edge.to);

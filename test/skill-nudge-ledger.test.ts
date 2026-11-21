@@ -105,6 +105,41 @@ describe('skillNudgeJobsFromLedger', () => {
     expect(byId.get('RQ-L')).toMatchObject({ outcome: 'merged' });
   });
 
+  it('reads the full jobs-ledger dialect: alias events, phase spellings and event-named outcomes', () => {
+    const text = [
+      // Reconciler-style merge: publish-shaped event, terminal phase in `phase`, alias stamp and PR link.
+      launch('RQ-DIA1'),
+      line({ type: 'publish', job: 'RQ-DIA1', phase: 'MERGED',
+        pr_url: 'https://github.com/ashlrai/phantom/pull/42', recordedAt: '2026-10-28T15:30:00.000Z' }),
+      // Closed outcome spelled `result` on a `kind` event.
+      launch('RQ-DIA2'),
+      line({ kind: 'outcome', job: 'RQ-DIA2', result: 'CLOSED',
+        pr: 'https://github.com/ashlrai/phantom/pull/43', updatedAt: '2026-10-28T15:30:00.000Z' }),
+      // Verdict carried only by the event name.
+      launch('RQ-DIA3'),
+      line({ event: 'merged', job: 'RQ-DIA3', lane: 'codex', ts: '2026-10-28T15:30:00.000Z' }),
+      launch('RQ-DIA4'),
+      line({ event: 'closed', job: 'RQ-DIA4', lane: 'codex', ts: '2026-10-28T15:30:00.000Z' }),
+      // A bare outcome event names no verdict; a published row is not terminal.
+      launch('RQ-DIA5'),
+      line({ event: 'outcome', job: 'RQ-DIA5', lane: 'codex', ts: '2026-10-28T15:30:00.000Z' }),
+      launch('RQ-DIA6'),
+      line({ event: 'published', job: 'RQ-DIA6', outcome: 'PUBLISHED',
+        url: 'https://github.com/ashlrai/phantom/pull/44', ts: '2026-10-28T15:30:00.000Z' }),
+      // Phase stays authoritative over the event name.
+      launch('RQ-DIA7'),
+      line({ event: 'closed', job: 'RQ-DIA7', conclusion: 'MERGED', lane: 'codex', ts: '2026-10-28T15:30:00.000Z' }),
+    ].join('\n');
+    const byId = new Map(skillNudgeJobsFromLedger(text).map(job => [job.id, job]));
+    expect(byId.get('RQ-DIA1')).toMatchObject({ outcome: 'merged' });
+    expect(byId.get('RQ-DIA2')).toMatchObject({ outcome: 'failed' });
+    expect(byId.get('RQ-DIA3')).toMatchObject({ outcome: 'merged' });
+    expect(byId.get('RQ-DIA4')).toMatchObject({ outcome: 'failed' });
+    expect(byId.get('RQ-DIA5')).not.toHaveProperty('outcome');
+    expect(byId.get('RQ-DIA6')).not.toHaveProperty('outcome');
+    expect(byId.get('RQ-DIA7')).toMatchObject({ outcome: 'merged' });
+  });
+
   it('marks reverted merges without dropping the merged outcome', () => {
     const text = [
       launch('RQ-M'), outcome('RQ-M', 'MERGED'),

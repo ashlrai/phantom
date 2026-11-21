@@ -101,6 +101,53 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(fold.outcomes).toHaveLength(2);
   });
 
+  it('reads alias timestamp fields and prefers mergedAt/closedAt on terminal rows', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"T1","phase":"CLOSED","timestamp":"2026-11-01T00:00:00Z","closedAt":"2026-11-01T02:00:00Z"}',
+      '{"job":"T1","phase":"MERGED","recordedAt":"2026-11-01T03:00:00Z"}',
+      '{"job":"T2","phase":"MERGED","time":"2026-11-01T01:00:00Z","mergedAt":"2026-11-01T04:00:00Z"}',
+      '{"job":"T2","phase":"CLOSED","updatedAt":"2026-11-01T05:00:00Z"}',
+    ].join('\n'));
+    // T1: the alias-only MERGED stamp (03:00) is later than the CLOSED closedAt (02:00).
+    expect(fold.outcomes.find(o => o.job_id === 'T1')).toMatchObject({ merged: true });
+    // T2: the alias-only CLOSED stamp (05:00) is later than the MERGED mergedAt (04:00).
+    expect(fold.outcomes.find(o => o.job_id === 'T2')).toMatchObject({ merged: false });
+  });
+
+  it('reads the full jobs-ledger outcome dialect: phase aliases and event-named verdicts', () => {
+    const fold = foldRouterOutcomes([
+      // Reconciler-style merge: publish-shaped event, terminal phase in `phase`.
+      '{"job":"D1","event":"publish","phase":"MERGED","pr_url":"https://github.com/o/r/pull/11","ts":"2026-11-01T00:00:00Z"}',
+      // Closed spelled `result` on a `kind` event.
+      '{"job":"D2","kind":"outcome","result":"CLOSED","ts":"2026-11-01T00:00:00Z"}',
+      // Verdict carried only by the event name.
+      '{"job":"D3","event":"merged","lane":"alpha","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"D4","event":"closed","lane":"alpha","ts":"2026-11-01T00:00:00Z"}',
+      // A bare outcome or published event names no verdict.
+      '{"job":"D5","event":"outcome","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"D6","event":"published","outcome":"PUBLISHED","url":"https://github.com/o/r/pull/12","ts":"2026-11-01T00:00:00Z"}',
+      // A resolved phase stays authoritative over the event name.
+      '{"job":"D7","event":"closed","conclusion":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"D8","event":"merged","status":"CLOSED","ts":"2026-11-01T00:00:00Z"}',
+      // Event-named merges order by mergedAt like phase-named ones.
+      '{"job":"D9","phase":"CLOSED","closedAt":"2026-11-01T01:00:00Z"}',
+      '{"job":"D9","event":"merged","mergedAt":"2026-11-01T02:00:00Z"}',
+      '{"job":"D10","event":"merged","mergedAt":"2026-11-01T01:00:00Z"}',
+      '{"job":"D10","phase":"CLOSED","closedAt":"2026-11-01T02:00:00Z"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('D1')?.merged).toBe(true);
+    expect(byId.get('D2')?.merged).toBe(false);
+    expect(byId.get('D3')?.merged).toBe(true);
+    expect(byId.get('D4')?.merged).toBe(false);
+    expect(byId.get('D5')?.merged).toBeNull();
+    expect(byId.get('D6')?.merged).toBeNull();
+    expect(byId.get('D7')?.merged).toBe(true);
+    expect(byId.get('D8')?.merged).toBe(false);
+    expect(byId.get('D9')?.merged).toBe(true);
+    expect(byId.get('D10')?.merged).toBe(false);
+  });
+
   it('refuses to attach URL-only rows when two jobs claim the same PR', () => {
     const text = [
       '{"job":"A","pr_url":"https://github.com/o/r/pull/7"}',

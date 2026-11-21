@@ -109,20 +109,22 @@ export function cmdMetrics(argv: string[], io?: CliIo): number | Promise<number>
       else if (/^\d{1,3}$/.test(value) && +value >= 1 && +value <= 168) hours = +value;
       else { io.err('phm metrics leverage: --hours takes a whole number from 1 to 168.'); return 2; }
     }
-    const report = readLeverageReport({ hours, prsPath: prs });
-    if (json) io.out(JSON.stringify(report, null, 2));
-    else if (!report.known) io.out('Merge leverage: unknown (job metrics file unreadable)');
-    else {
-      io.out(`Fleet and product share: ${report.leverageShare === null ? 'no merges' : `${(report.leverageShare * 100).toFixed(1)}%`} of ${report.total} merges in the last ${hours} hours.`);
-      io.out(MERGE_CLASSES.map(name => `${name} ${report.totals![name]}`).join(' · '));
-    }
-    return 0;
+    return readLeverageReport({ hours, prsPath: prs }).then(report => {
+      if (json) io.out(JSON.stringify(report, null, 2));
+      else if (!report.known) io.out('Merge leverage: unknown (job metrics file unreadable)');
+      else {
+        io.out(`Fleet and product share: ${report.leverageShare === null ? 'no merges' : `${(report.leverageShare * 100).toFixed(1)}%`} of ${report.total} merges in the last ${hours} hours${report.sources.jobsTruncated ? ' (jobs ledger truncated: newest window only)' : ''}.`);
+        io.out(MERGE_CLASSES.map(name => `${name} ${report.totals![name]}`).join(' · '));
+      }
+      return 0;
+    });
   }
   if (sub === 'leverage-mix') {
     if (rest.length && (rest.length !== 2 || rest[0] !== '--prs' || !rest[1] || rest[1].startsWith('-'))) { io.err(USAGE); return 2; }
-    const report = readLeverageMix(rest[1]);
-    io.out(json ? JSON.stringify(report, null, 2) : `Product or fleet improvements: ${report.improvedShare === null ? 'unknown' : `${(report.improvedShare * 100).toFixed(1)}%`} of merges in the last 24 hours (known classifications; unknowns included in total).`);
-    return 0;
+    return readLeverageMix({ prsPath: rest[1] }).then(report => {
+      io.out(json ? JSON.stringify(report, null, 2) : `Product or fleet improvements: ${report.improvedShare === null ? 'unknown' : `${(report.improvedShare * 100).toFixed(1)}%`} of merges in the last 24 hours (known classifications; unknowns included in total)${report.sources.jobsTruncated ? '; jobs ledger truncated: newest window only' : ''}.`);
+      return 0;
+    });
   }
   if (rejectUnknownOptions(rest, sub === 'dashboard' ? { values: ['--out', '--prs'] } : {})) { io.err(USAGE); return 2; }
   try {
@@ -142,10 +144,14 @@ export function cmdMetrics(argv: string[], io?: CliIo): number | Promise<number>
           options.set(key, value);
         }
         const out = options.get('--out') ?? join(ashlrHome(), 'metrics', 'dashboard.html');
-        const html = renderDashboard(rollup(readTelemetry()), runSteward(defaultStewardPolicy()), undefined, readLeverageMix(options.get('--prs')));
-        if (!options.has('--out')) { ensurePrivateDirectory(ashlrHome()); ensurePrivateDirectory(join(ashlrHome(), 'metrics')); }
-        writePrivateFileAtomic(out, html);
-        io.out(out); return 0;
+        return readLeverageMix({ prsPath: options.get('--prs') }).then(leverage => {
+          try {
+            const html = renderDashboard(rollup(readTelemetry()), runSteward(defaultStewardPolicy()), undefined, leverage);
+            if (!options.has('--out')) { ensurePrivateDirectory(ashlrHome()); ensurePrivateDirectory(join(ashlrHome(), 'metrics')); }
+            writePrivateFileAtomic(out, html);
+            io.out(out); return 0;
+          } catch { io.err('phm metrics: unable to process metrics; check the event schema and local file permissions.'); return 1; }
+        });
       }
       case 'record': { if (rest.length !== 1) { io.err(USAGE); return 2; } let input: TelemetryInput; try { input = JSON.parse(rest[0]!) as TelemetryInput; } catch { io.err('phm metrics: invalid JSON event.'); return 2; } const ev = recordEvent(input); io.out(json ? JSON.stringify(ev) : ev.id); return 0; }
       case 'recommend': { const [taskType, ...arms] = rest; if (!taskType || !arms.length) { io.err(USAGE); return 2; } io.out(JSON.stringify(recommend(readTelemetry(), taskType, arms), null, 2)); return 0; }

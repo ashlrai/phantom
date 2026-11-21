@@ -10,7 +10,7 @@
  */
 import type { OwnerChannel } from '../comms/leader-mailbox.js';
 import { fixedOwnerConfigDir, loadOwnerThreadSettings, ownerAllowed, type OwnerThreadSettings } from '../comms/owner-channel.js';
-import { answerAsk, ASK_REPLIES, listAsks, type Ask, type AskAnswerResult, type AskKind, type AsksList, type AsksOptions } from './asks.js';
+import { answerAsk, ASK_REPLIES, askTypeOf, isMasonOnly, listAsks, type Ask, type AskType, type AskAnswerResult, type AskKind, type AsksList, type AsksOptions } from './asks.js';
 
 export type AskResponseKind = 'yes-no' | 'pick-one' | 'short-value';
 /** The four limits only Mason may cross. null = the ask does not say. */
@@ -30,6 +30,9 @@ export interface OpenAsk {
   whatHappens?: string;
   /** The answer is a number (a usage percent), so a card shows one number field. */
   numeric?: boolean;
+  type?: AskType;
+  /** What the fleet did instead of asking Mason (shown with --all); null when it did nothing yet. */
+  fleetDid?: string | null;
 }
 
 export interface BatchAsk {
@@ -49,7 +52,12 @@ export interface BatchAsk {
   whatHappens: string;
   /** Set only when the answer is a number from 0 to 100. */
   numeric?: boolean;
+  type: AskType;
+  fleetDid: string | null;
 }
+
+/** An ask the fleet answered itself: it used what software could read and recorded the action. */
+export interface FleetHandled { question: string; fleetDid: string; at: string }
 
 export interface AskBatch {
   schema: 'asks.batch.v1';
@@ -57,6 +65,10 @@ export interface AskBatch {
   asks: BatchAsk[];
   /** unavailable = the ledger could not be read, so zero asks would be a guess. */
   ledger: AsksList['ledger'];
+  /** Open asks of type other left out of the default view. */
+  otherHidden?: number;
+  /** Only with --all: asks the fleet answered itself, newest first. */
+  fleetHandled?: FleetHandled[];
 }
 
 export const SHORT_VALUE_MAX = 80;
@@ -88,33 +100,40 @@ export function buildAskBatch(open: readonly OpenAsk[], ledger: AskBatch['ledger
       askedAt: ask.askedAt, expires: ask.expires ?? null, hardLimit: ask.hardLimit,
       whatHappens: ask.whatHappens ?? (ask.hardLimit ? LIMIT_LINE[ask.hardLimit] : 'Unknown: the ask does not say.'),
       ...(ask.numeric ? { numeric: true } : {}),
+      type: ask.type ?? 'other', fleetDid: ask.fleetDid ?? null,
     });
   }
   const asks = [...merged.values()].map((ask, i) => ({ ...ask, number: i + 1 }));
   return { schema: 'asks.batch.v1', count: asks.length, asks, ledger };
 }
 
-const FROM_KIND: Record<AskKind | 'signin', Pick<OpenAsk, 'kind' | 'choices' | 'hardLimit' | 'whatHappens' | 'numeric'>> = {
+const FROM_KIND: Record<AskKind | 'signin', Pick<OpenAsk, 'kind' | 'choices' | 'hardLimit' | 'whatHappens' | 'numeric' | 'fleetDid'>> = {
   payment: { kind: 'yes-no', hardLimit: 'money', whatHappens: LIMIT_LINE.money },
-  outreach: { kind: 'yes-no', hardLimit: 'outside-send', whatHappens: LIMIT_LINE['outside-send'] },
+  outreach: { kind: 'yes-no', hardLimit: 'outside-send', whatHappens: LIMIT_LINE['outside-send'], fleetDid: 'Waiting: nothing was sent to the outside person.' },
   password: { kind: 'pick-one', choices: ASK_REPLIES.password, hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
   signin: { kind: 'pick-one', choices: ASK_REPLIES.password, hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
   '2fa': { kind: 'pick-one', choices: ASK_REPLIES['2fa'], hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
   device: { kind: 'pick-one', choices: ASK_REPLIES.device, hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
   // A usage answer is a number, so it is a short value; it is a reading, not a limit.
-  usage: { kind: 'short-value', numeric: true, hardLimit: null, whatHappens: 'Recorded as your latest reading, with the time you said it.' },
+  usage: { kind: 'short-value', numeric: true, hardLimit: null, whatHappens: 'Recorded as your latest reading, with the time you said it.', fleetDid: 'No sensor reading found yet, so it is still open.' },
   // Money is a hard limit, but this answer only records the decision; nothing is spent by it.
-  approval: { kind: 'yes-no', hardLimit: 'money', whatHappens: 'Recorded as your decision. Nothing is spent by this answer.' },
+  approval: { kind: 'yes-no', hardLimit: 'money', whatHappens: 'Recorded as your decision. Nothing is spent by this answer.', fleetDid: 'Waiting: nothing was spent.' },
 };
 
-export const openAskOf = (ask: Ask): OpenAsk => ({
+export const openAskOf = (ask: Ask, fleetDid?: string | null): OpenAsk => ({
   id: ask.id, question: ask.request, askedAt: ask.created, expires: ask.expires, ...FROM_KIND[ask.kind], ...(ask.unblocks ? { whatHappens: ask.unblocks } : {}),
+  type: askTypeOf(ask.kind), ...(fleetDid ? { fleetDid } : {}),
 });
 
-/** The batch Mason sees: the open ledger asks through buildAskBatch. Never throws. */
-export function listAskBatch(options: AsksOptions = {}, list: (o: AsksOptions) => AsksList = listAsks): AskBatch {
+/**
+ * The batch Mason sees: the open ledger asks through buildAskBatch. By default only the four types software cannot
+ * answer (password, two-factor, device-approval, payment); `all` adds type other. Never throws.
+ */
+export function listAskBatch(options: AsksOptions = {}, list: (o: AsksOptions) => AsksList = listAsks, all = false,
+  fleetDidFor: (ask: Ask) => string | null = () => null): AskBatch {
   const asks = list(options);
-  return buildAskBatch(asks.asks.map(openAskOf), asks.ledger);
+  const shown = all ? asks.asks : asks.asks.filter(ask => isMasonOnly(askTypeOf(ask.kind)));
+  return { ...buildAskBatch(shown.map(ask => openAskOf(ask, fleetDidFor(ask))), asks.ledger), otherHidden: asks.asks.length - shown.length };
 }
 
 /** Plain words for a batch line and for a thread reply hint. */
@@ -180,7 +199,8 @@ export async function answerOwnerAsk(input: { askId: string; answer: string; sen
   if (!sender || typeof sender.senderId !== 'string' || !ownerAllowed(sender.channel, sender.senderId, settings)) {
     return out('refused', null, null, 'Only the owner can answer. Nothing was recorded.');
   }
-  const batch = (deps.batch ?? (() => listAskBatch(deps.options)))();
+  // All types: a number or a card tap may answer an `other` ask by id, even though the default list hides it.
+  const batch = (deps.batch ?? (() => listAskBatch(deps.options, listAsks, true)))();
   const ask = batch.asks.find(item => item.ids.includes(askId));
   // The ledger names the real channel; the bus source is the closest surface it knows.
   const record = deps.record ?? ((id, value, channel) => answerAsk(id, value, channel === 'telegram' ? 'telegram' : channel === 'email' ? 'email' : 'cli',

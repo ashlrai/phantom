@@ -4,14 +4,14 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ledgerFinishes } from './empties.js';
 import { jobFamily } from './slot-yield.js';
-import { diagnoseEmptyJob, FLEET_EMPTY_WHY_LOG_LINES } from './empty-why-classify.js';
+import { detectPoolCap, diagnoseEmptyJob, FLEET_EMPTY_WHY_LOG_LINES } from './empty-why-classify.js';
 import type { EmptyJobsReader } from './empty-jobs.js';
 
 export const EMPTY_FAMILIES_SCHEMA = 'jobs.empty.by-family.v1';
 export const EMPTY_FAMILY_ACTIONS = ['stop', 'recut', 'reroute', 'keep'] as const;
 export type EmptyFamilyAction = typeof EMPTY_FAMILY_ACTIONS[number];
 /** Lane problems (sign-in, missing tool) come first: they fail whatever the family asks for. */
-export type EmptyFamilyReason = 'auth_failed' | 'no_gh' | 'tool_missing' | string;
+export type EmptyFamilyReason = 'pool_cap' | 'auth_failed' | 'no_gh' | 'tool_missing' | string;
 
 export interface EmptyFamilyRow {
   family: string; lane: string; launches: number; empty: number; empty_rate: number;
@@ -24,7 +24,7 @@ export const STOP_RATE = 0.8;
 export const STOP_MIN_LAUNCHES = 5;
 /** Below this empty rate a family is healthy enough to keep. */
 export const RECUT_RATE = 0.5;
-const LANE_GAPS = new Set(['auth_failed', 'no_gh', 'tool_missing']);
+const LANE_GAPS = new Set(['pool_cap', 'auth_failed', 'no_gh', 'tool_missing']);
 
 // Checked in this order on the log tail: the first match names the lane gap.
 const GAP_RULES: ReadonlyArray<readonly [string, RegExp]> = [
@@ -36,6 +36,8 @@ const GAP_RULES: ReadonlyArray<readonly [string, RegExp]> = [
 /** Pure: name why one empty job stopped. A gap in the lane wins; otherwise the shared diagnosis; otherwise `unknown`. */
 export function emptyFamilyReason(log: string | null, publish: string | null): string {
   const text = [publish, log].map(part => (part ?? '').split(/\r?\n/).slice(-FLEET_EMPTY_WHY_LOG_LINES).join('\n')).join('\n');
+  // A model at its usage cap is its own reason: not an empty, and not a sign-in problem.
+  if (detectPoolCap(text)) return 'pool_cap';
   const gap = GAP_RULES.find(([, pattern]) => pattern.test(text))?.[0];
   return gap ?? diagnoseEmptyJob(log, publish);
 }

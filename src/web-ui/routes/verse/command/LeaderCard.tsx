@@ -15,6 +15,8 @@ import { asSentence, formatRelative } from '../autonomy/format.js';
 import { STATUS_WORD, expectedDeltaText, isApprovable, isVetoable, memoActions } from '../mind/leader-model.js';
 import { approveLeaderAction } from '../leader/thread-data.js';
 import { LeaderLine } from '../leader/LeaderLine.js';
+import { LiveBuildLine } from '../home/LiveBuildLine.js';
+import { ReleasesLine } from '../home/ReleasesLine.js';
 import { CountdownRing } from './CountdownRing.js';
 import { anchorId, goToSection } from './nav.js';
 import { postLeader, type OptionalRead } from './surface-data.js';
@@ -181,6 +183,8 @@ export function LeaderCard({ read, loading, actions, seatNames }: { read: Option
       )}
       {/* Server-built plain line (`phm leader seat`): where the leader runs and where it moves next. */}
       {state?.seat ? <p className={styles.muted} aria-label="Leader seat">{state.seat.line}</p> : null}
+      <LiveBuildLine className={styles.muted} />
+      <ReleasesLine className={styles.muted} />
       <LeaderLine />
     </Card>
   );

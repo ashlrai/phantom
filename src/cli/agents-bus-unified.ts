@@ -33,7 +33,7 @@ ashlr agents bus channel list [--agent <agent>]
 ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--thread <t>] [--after <cursor>] [--limit <1..100>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
-ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--frame <cli>]
+ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--matched] [--frame <cli>]
 ashlr agents bus wakes [<agent>] [--since <epoch ms>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
@@ -61,7 +61,11 @@ still a registered identity under the same scrub and wake rules.
 --thread on dm, post, channel post, inbox and channel read is the v2 conversation
 label carried by note/context bodies; reads match that field only. --from on
 inbox and channel read narrows to one sender — a handle, agent:<handle>,
-stable id or alias; an unresolvable ref keeps exact-label matching. show
+stable id or alias; an unresolvable ref keeps exact-label matching. --matched
+on inbox reports matched, the true pending total across the whole retained
+store the same filters accept; messages still caps at --limit and nextCursor
+then resumes at the newest shown row, so paging never skips an unshown match.
+show
 resolves one retained envelope by the wire id wake hints, work mine items
 and claim operations cite; an expired id reports not-found, and the read
 needs no identity.
@@ -88,8 +92,9 @@ to still owes, each citing the envelope id show resolves — the
 conversation threads it is waiting on — its own asks and handoffs nobody
 has answered yet, each naming who owes the reply — its
 pending wake hints and the next page of mail addressed
-to it — where every section reports its own read state and unknown stays
-unknown.
+to it — capped sections carry matched (or open for jobs) as their true
+pending total — where every section reports its own read state and unknown
+stays unknown.
 status is a read-only probe of the store, registry, wake queue, coordination
 table, message-id claim journal and work feed; a section that cannot be read
 reports unavailable or unknown, never zero.
@@ -101,7 +106,7 @@ const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
   '--kind']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
-const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--jobs']);
+const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--jobs', '--matched']);
 
 class UsageError extends Error {}
 
@@ -230,7 +235,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           `bytes=${result.store.retainedBytes ?? unknown}/${result.store.maxBytes} ` +
           `live=${result.store.liveCount ?? unknown} expired=${result.store.expiredCount ?? unknown}`,
         `registry ${result.registry.source} identities=${result.registry.identities ?? unknown} channels=${result.registry.channels ?? unknown}`,
-        `wakes ${result.wakes.state} hints=${result.wakes.hints ?? unknown}`,
+        `wakes ${result.wakes.state} hints=${result.wakes.hints ?? unknown} truncated=${result.wakes.truncated ?? unknown}`,
         `coordination ${result.coordination.source} liveClaims=${result.coordination.liveClaims ?? unknown} statuses=${result.coordination.statuses ?? unknown}`,
         `workClaims ${result.workClaims.source} claims=${result.workClaims.claims ?? unknown}`,
         `feed ${result.feed.status}${result.feed.reason === undefined ? '' : `:${result.feed.reason}`} jobs=${result.feed.jobs ?? unknown}`,
@@ -346,14 +351,23 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const agent = sub ?? self;
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
       const page = readAgentInbox(agent, { after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit'),
-        thread: one('--thread'), from: one('--from') }, options);
+        thread: one('--thread'), from: one('--from'), matched: p.bools.has('--matched') }, options);
       if (page.status !== 'ok') return finish(page, '');
-      if (frame) { out(json ? JSON.stringify({ ...page, framed: frameBusInbox(frame as BusCli, page.messages) }) : frameBusInbox(frame as BusCli, page.messages)); return 0; }
-      out(json ? JSON.stringify(page) : [
-        ...page.messages.map(m => `${m.cursor} ${m.priority} ${m.kind === 'channel' ? `#${m.channel}` : m.kind} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}` +
+      // --matched scans the whole store, so the core nextCursor is the store's
+      // end — resuming there would skip unshown matches. The honest resume
+      // point is the newest shown row's cursor: every unshown match sits
+      // beyond it and every shown one at or before it (the same rule the
+      // work mine inbox section applies).
+      const nextCursor = page.matched !== undefined && page.matched > page.messages.length
+        ? Math.max(...page.messages.map(m => m.cursor)) : page.nextCursor;
+      const shown = { ...page, nextCursor };
+      if (frame) { out(json ? JSON.stringify({ ...shown, framed: frameBusInbox(frame as BusCli, page.messages) }) : frameBusInbox(frame as BusCli, page.messages)); return 0; }
+      out(json ? JSON.stringify(shown) : [
+        ...shown.messages.map(m => `${m.cursor} ${m.priority} ${m.kind === 'channel' ? `#${m.channel}` : m.kind} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}` +
           (m.held === undefined ? '' : ` held=${m.held === null ? 'unknown' : m.held ? 'yes' : 'no'}` +
             (m.holder ? ` holder=${m.holder}` : ''))),
-        `nextCursor ${page.nextCursor}`,
+        ...(page.matched === undefined ? [] : [`matched ${page.matched}`]),
+        `nextCursor ${nextCursor}`,
       ].join('\n'));
       return 0;
     }
@@ -383,7 +397,10 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
       const page = readAgentWakes(agent, integer(one('--since'), '--since'), options);
       if (page.status !== 'ok') return finish(page, '');
-      out(json ? JSON.stringify(page) : page.wakes.map(w => `${w.at} ${w.id} ${w.from} -> ${w.to}`).join('\n') || 'No wakes.');
+      out(json ? JSON.stringify(page) : [
+        ...(page.truncated ? [`${page.matched} wake hint(s) matched; the bounded queue tail is truncated — showing the newest ${page.wakes.length}`] : []),
+        ...page.wakes.map(w => `${w.at} ${w.id} ${w.from} -> ${w.to}`),
+      ].join('\n') || 'No wakes.');
       return 0;
     }
     if (verb === 'work' && sub === 'feed') {

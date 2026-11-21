@@ -259,6 +259,12 @@ describe('parseJobsJsonl', () => {
     expect(events.map(e => e.merge)).toEqual([true, false, true, true, true]);
     expect(events[2]!.pool).toBeNull(); // pool unresolved here — the snapshot layer maps it
   });
+  it('reads the job_id spelling from the jobs-ledger dialect', () => {
+    const { events, dropped } = parseJobsJsonl('{"job_id":"RQ-9","pool":"devin","to":"LAND","at":"2026-10-28T01:40:00Z"}');
+    expect(dropped).toBe(0);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ job: 'RQ-9', merge: true });
+  });
 });
 
 // ---------------------------------------------------------------------------

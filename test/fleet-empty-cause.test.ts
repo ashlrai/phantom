@@ -64,6 +64,37 @@ describe('emptyFinishes', () => {
       { id: 'RQ-C1', lane: 'unknown', wallSeconds: null },
     ]);
   });
+
+  it('reads the jobs-ledger field dialect: alias stamps, job_id ids, pool lanes', () => {
+    const ledger = [
+      JSON.stringify({ event: 'finish', job_id: 'RQ-D1', pool: 'claude', wall_s: 40, empty: true, timestamp: ts(1) }),
+      JSON.stringify({ event: 'finish', jobId: 'RQ-D2', lane: 'codex', wall_s: 30, empty: true, recordedAt: ts(2) }),
+      // A terminal row stamped only by mergedAt still lands in the window.
+      JSON.stringify({ event: 'outcome', job: 'RQ-D3', state: 'MERGED', empty: true, mergedAt: ts(1) }),
+      JSON.stringify({ event: 'outcome', job: 'RQ-D4', outcome: 'EMPTY_DONE', updatedAt: ts(3) }),
+    ].join('\n');
+    expect(emptyFinishes(ledger, NOW, 24)).toEqual([
+      { id: 'RQ-D1', lane: 'claude', wallSeconds: 40 },
+      { id: 'RQ-D2', lane: 'codex', wallSeconds: 30 },
+      { id: 'RQ-D3', lane: 'unknown', wallSeconds: null },
+      { id: 'RQ-D4', lane: 'unknown', wallSeconds: null },
+    ]);
+  });
+
+  it('reads the event and phase field dialect: type/kind events, EMPTY_DONE in any state field', () => {
+    const ledger = [
+      // Event spelled 'type'; the empty marker sits in a phase alias.
+      JSON.stringify({ type: 'outcome', job_id: 'RQ-E1', phase: 'EMPTY_DONE', timestamp: ts(1) }),
+      // Event spelled 'kind'; the marker sits in 'result'.
+      JSON.stringify({ kind: 'finish', job: 'RQ-E2', result: 'EMPTY_DONE', at: ts(2) }),
+      // A non-empty finish spelled 'type' with empty:false is not an empty finish.
+      JSON.stringify({ type: 'finish', job: 'RQ-E3', lane: 'claude', empty: false, conclusion: 'MERGED', ts: ts(1) }),
+    ].join('\n');
+    expect(emptyFinishes(ledger, NOW, 24)).toEqual([
+      { id: 'RQ-E1', lane: 'unknown', wallSeconds: null },
+      { id: 'RQ-E2', lane: 'unknown', wallSeconds: null },
+    ]);
+  });
 });
 
 describe('summarizeEmptyCauses', () => {

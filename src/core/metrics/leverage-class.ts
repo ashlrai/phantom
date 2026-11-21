@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { foldJobsLedger, parseGhPullRequests } from '../fleet/eval-report.js';
+import { foldJobsLedger, parseGhPullRequests, type EvalReportJobsRead } from '../fleet/eval-report.js';
+import { readLedgerTail } from '../router/outcomes.js';
 import { runsRoot } from './loop-collect.js';
 
 /** How much a merged PR moves the fleet or the product. `unknown` is shown as unknown, never guessed. */
@@ -39,13 +40,29 @@ type Counts = Record<MergeClass, number>;
 const empty = (): Counts => ({ fleet: 0, product: 0, docs: 0, filler: 0, unknown: 0 });
 
 /**
+ * What a jobsText input may carry: raw ledger text, or the newest bounded
+ * tail plus its cut flag (`truncated` true exactly when older bytes were not
+ * read). A bare string is a complete, untruncated read — the same union the
+ * fleet eval report accepts.
+ */
+export type LeverageJobsText = string | EvalReportJobsRead | null;
+
+/** Bare string means a complete read; { text, truncated } carries the tail cut flag; null is no ledger. */
+export const normalizeLeverageJobs = (jobsText: LeverageJobsText): EvalReportJobsRead | null =>
+  jobsText === null ? null
+    : typeof jobsText === 'string' ? { text: jobsText, truncated: false }
+    : jobsText;
+
+/**
  * `phm metrics leverage`: merges in the last `hours` hours, counted per class per hour.
  * Titles and paths come from an optional gh export; without one only the job id is read, so more merges show as unknown.
  * `leverageShare` is (fleet + product) / all merges, unknowns included; null when nothing merged.
+ * A bounded jobs tail reports `sources.jobsTruncated` — merge counts then cover only the newest ledger bytes.
  */
-export function buildLeverageReport(jobsText: string | null, prsText: string | null, nowMs = Date.now(), hours = 24) {
+export function buildLeverageReport(jobsText: LeverageJobsText, prsText: string | null, nowMs = Date.now(), hours = 24) {
   const since = nowMs - hours * HOUR;
-  const ledger = jobsText === null ? null : foldJobsLedger(jobsText, since, nowMs);
+  const jobsRead = normalizeLeverageJobs(jobsText);
+  const ledger = jobsRead === null ? null : foldJobsLedger(jobsRead.text, since, nowMs);
   const prs = prsText === null ? null : parseGhPullRequests(prsText);
   const merges = new Map<string, MergeFacts & { at: number }>();
   for (const [key, row] of ledger?.outcomes ?? []) {
@@ -68,7 +85,10 @@ export function buildLeverageReport(jobsText: string | null, prsText: string | n
   return {
     schema: 'metrics.leverage.v1' as const,
     known, hours, since: new Date(since).toISOString(), until: new Date(nowMs).toISOString(),
-    sources: { jobs: !ledger ? 'missing' : ledger.counts.ignored ? 'degraded' : 'available', pullRequests: !prs ? 'missing' : prs.ignored ? 'degraded' : 'available' },
+    sources: { jobs: !ledger ? 'missing' : ledger.counts.ignored ? 'degraded' : 'available',
+      /** True when the jobs ledger exceeded the retained tail: merge counts cover only the newest bytes. */
+      jobsTruncated: jobsRead?.truncated ?? false,
+      pullRequests: !prs ? 'missing' : prs.ignored ? 'degraded' : 'available' },
     total: known ? total : null,
     totals: known ? totals : null,
     leverageShare: known && total ? (totals.fleet + totals.product) / total : null,
@@ -77,8 +97,31 @@ export function buildLeverageReport(jobsText: string | null, prsText: string | n
 }
 export type LeverageReport = ReturnType<typeof buildLeverageReport>;
 
-/** Reads the local job ledger (and an optional gh export); unreadable files read as missing, never as zero. */
-export function readLeverageReport(opts: { hours?: number; prsPath?: string; runsDir?: string; now?: number } = {}): LeverageReport {
+export interface ReadLeverageReportOptions {
+  hours?: number;
+  prsPath?: string;
+  runsDir?: string;
+  now?: number;
+  /**
+   * Injected jobs-ledger read — raw text or a bounded tail plus its cut flag;
+   * skips the jobs.jsonl read when set. Null reports an absent ledger.
+   */
+  jobs?: LeverageJobsText;
+}
+
+/**
+ * Reads the jobs ledger's newest bounded tail (readLedgerTail, the same
+ * 16 MiB window every other fleet reader uses) plus an optional gh export.
+ * Unreadable files read as missing, never as zero; an oversized ledger reads
+ * its tail and reports `sources.jobsTruncated` instead of implying full
+ * coverage or refusing the read outright.
+ */
+export async function readLeverageReport(opts: ReadLeverageReportOptions = {}): Promise<LeverageReport> {
   const read = (path: string): string | null => { try { return readFileSync(path, 'utf8'); } catch { return null; } };
-  return buildLeverageReport(read(join(opts.runsDir ?? runsRoot(), 'metrics', 'jobs.jsonl')), opts.prsPath ? read(opts.prsPath) : null, opts.now, opts.hours);
+  let jobs = opts.jobs;
+  if (jobs === undefined) {
+    const tail = await readLedgerTail(join(opts.runsDir ?? runsRoot(), 'metrics', 'jobs.jsonl'));
+    jobs = tail.state === 'read' ? { text: tail.text, truncated: tail.truncated } : null;
+  }
+  return buildLeverageReport(jobs, opts.prsPath ? read(opts.prsPath) : null, opts.now, opts.hours);
 }

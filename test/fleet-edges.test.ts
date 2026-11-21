@@ -21,6 +21,17 @@ describe('fleet edges', () => {
       { from: { address: 'a', provider: null }, to: { address: 'b', provider: null }, messages: 1, messagesLastHour: 1, lastAt: 1001 },
     ]);
   });
+  it('never counts a dead-letter notice as agent-to-agent traffic', () => {
+    const letter = { id: 'dl-1', from: 'bus-router', to: 'bus.dead-letter', priority: 'P2' as const, ttl: 604_800_000,
+      body: { protocol: { version: 1, kind: 'status' }, correlation_id: 'c-1',
+        payload: { deadLetter: { id: 'lost', from: 'a', to: 'b', kind: 'note', reason: 'exhausted', deadLetteredAt: 1, attempts: [] },
+          payloadDropped: false, envelope: null } } };
+    const note = { id: 'note', from: 'a', to: 'b', priority: 'P2' as const, ttl: 9_000_000, body: { text: 'hi' } };
+    const rows = [letter, note].map((envelope, cursor) => ({ cursor, receivedAt: 1000 + cursor, envelope }));
+    expect(projectFleetEdges(rows, 2000)).toEqual([
+      { from: { address: 'a', provider: null }, to: { address: 'b', provider: null }, messages: 1, messagesLastHour: 1, lastAt: 1001 },
+    ]);
+  });
   it('exposes the projection through agents edges', async () => {
     const out: string[] = [];
     expect(await runAgentsCli(['edges', '--json'], line => out.push(line))).toBe(0);

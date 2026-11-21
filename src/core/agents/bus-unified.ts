@@ -363,7 +363,10 @@ function workRoute(to: string | undefined): string | UnifiedSendResult {
  * an unreadable feed refuses the send rather than posting unchecked.
  */
 function workFeedBlocked(feed: BusWorkFeedReadResult): UnifiedSendResult {
-  if (feed.status === 'refused') return refuse('refused', `Work feed is refused (${feed.reason}).`);
+  if (feed.status === 'refused') {
+    return refuse('refused', `Work feed is refused (${feed.reason})` +
+      `${feed.receipt === undefined ? '' : ` at receipt ${feed.receipt.id}`}.`);
+  }
   if (feed.status === 'retryable') return refuse('retryable', 'Work feed read is retryable.');
   if (feed.status === 'invalid') return refuse('invalid', 'Work feed read is invalid.');
   return refuse('unavailable', 'Work feed is unavailable.');
@@ -529,7 +532,10 @@ export interface InboxMessage {
   /** Owner label of the blocking claim when held and known; null otherwise. */
   holder?: string | null;
 }
-export type InboxPage = { status: 'ok'; agent: string; messages: InboxMessage[]; nextCursor: number } |
+export type InboxPage = { status: 'ok'; agent: string; messages: InboxMessage[]; nextCursor: number;
+    /** Every filter-matched row across the whole scan, present only when the
+     * read asked for it (`page.matched`); `messages` still caps at `limit`. */
+    matched?: number } |
   { status: 'invalid' | 'unknown-agent' | 'unavailable' | 'retryable'; reason: string };
 
 const BUS_BODY_SUMMARY_MAX = 200;
@@ -1000,6 +1006,10 @@ function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
  * traffic still addressed to its bare handle, stable id or legacy aliases,
  * and posts in its channels (minus its own and minus `group.presence`
  * heartbeats, which are observations with their own read, never mail).
+ * A handoff is the `channel:'handoff'` stamp or the receivable
+ * `worker-handoff` body — `fleet handoff-send` posts the body on a legacy
+ * envelope — under any of those addresses, so an unstamped or
+ * channel-addressed assignment never reads as plain mail.
  * `thread` narrows the page to
  * `note`/`context` bodies carrying that v2 thread label; `from` narrows by
  * sender through the same identity-label matching `channel read` uses — a
@@ -1009,11 +1019,16 @@ function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
  * it only after handling the page. Claimable work and worker-handoff items
  * additionally carry `held`/`holder` — the same hold evidence `bus show`
  * reports — so an agent paging mail sees whether pending work is already
- * taken without a lookup per message.
+ * taken without a lookup per message. `page.matched` asks for the true
+ * pending total: the scan then covers the whole retained store instead of
+ * stopping at `limit`, counting every row the same filters accept while
+ * `messages` still returns only the first `limit` of them.
  */
-export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string } = {},
+export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string;
+    matched?: boolean } = {},
   options: UnifiedBusOptions = {}): InboxPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread;
+  const countMatched = page.matched === true;
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
     return { status: 'invalid', reason: 'after must be >= 0 and limit 1-100.' };
   }
@@ -1030,6 +1045,7 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   const self = `${AGENT_ADDRESS_PREFIX}${target.identity.handle}`;
   const fromMatch = page.from === undefined ? undefined : agentAddressMatcher(labelIdentityOf(read.registry), page.from);
   const messages: InboxMessage[] = [];
+  let matched = 0;
   let cursor = after;
   scan: for (let index = 0; index < MAX_PAGES; index += 1) {
     const result = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ, { root: options.root, now: options.now, includeOriginalEnvelope: true });
@@ -1044,10 +1060,19 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
       if (isGroupPresenceBody(envelope.body)) continue;
       let kind: InboxKind | null = null;
       const channel = channelOf(envelope.to, target.channels);
-      if (envelope.channel === 'handoff' && target.labels.has(envelope.to)) kind = 'handoff';
+      // A handoff reaches the wire two ways: `agents bus handoff` stamps
+      // `channel:'handoff'`, while `fleet handoff-send` posts the same
+      // receivable `worker-handoff` body on a legacy envelope. Either signal
+      // marks the kind, addressed to any of the agent's labels or to a member
+      // channel's group address from anyone else — the same coverage
+      // `work mine` handoffs and `handoff-receive` apply.
+      const isHandoff = envelope.channel === 'handoff' || isWorkerHandoffBody(envelope.body);
+      const toLabel = target.labels.has(envelope.to);
+      const toChannel = channel !== null && !target.labels.has(envelope.from);
+      if (isHandoff && (toLabel || toChannel)) kind = 'handoff';
       else if (envelope.to === self) kind = 'dm';
-      else if (target.labels.has(envelope.to)) kind = 'legacy';
-      else if (channel && !target.labels.has(envelope.from)) kind = 'channel';
+      else if (toLabel) kind = 'legacy';
+      else if (toChannel) kind = 'channel';
       const matchedKind = kind !== null &&
         (thread === undefined || busBodyThread(envelope.body) === thread) &&
         (fromMatch === undefined || fromMatch(envelope.from)) ? kind : null;
@@ -1059,11 +1084,14 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
         if (receiptState !== 'accepted') continue;
       }
       if (matchedKind !== null) {
-        messages.push({ cursor: row.cursor, receivedAt: row.receivedAt, kind: matchedKind, priority: envelope.priority,
-          fromAgent: resolveAgent(read.registry, envelope.from)?.handle ?? null,
-          channel: matchedKind === 'channel' ? channel : null, envelope });
+        matched += 1;
+        if (!countMatched || messages.length < limit) {
+          messages.push({ cursor: row.cursor, receivedAt: row.receivedAt, kind: matchedKind, priority: envelope.priority,
+            fromAgent: resolveAgent(read.registry, envelope.from)?.handle ?? null,
+            channel: matchedKind === 'channel' ? channel : null, envelope });
+        }
       }
-      if (messages.length === limit) { cursor = row.cursor; break scan; }
+      if (!countMatched && messages.length === limit) { cursor = row.cursor; break scan; }
     }
     if (result.nextCursor <= cursor) break;
     cursor = result.nextCursor;
@@ -1082,27 +1110,36 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
       message.holder = hold.holder;
     }
   }
-  return { status: 'ok', agent: target.identity.handle, messages, nextCursor: cursor };
+  return { status: 'ok', agent: target.identity.handle, messages, nextCursor: cursor,
+    ...(countMatched ? { matched } : {}) };
 }
 
-export type WakePage = { status: 'ok'; agent: string; wakes: BusWakeRow[] } |
+export type WakePage = { status: 'ok'; agent: string; wakes: BusWakeRow[];
+  /** Every hint the bounded queue read matched for the agent, before its row cap; `wakes` shows only the newest slice. */
+  matched: number;
+  /** The queue tail or row cap cut matches beyond `wakes`; false only when the bounded read provably saw them all. */
+  truncated: boolean } |
   { status: 'unknown-agent' | 'unavailable'; reason: string };
 
 /**
  * Wake hints addressed to this identity under any label it resolves through
  * (address, bare handle, stable id or alias) or to one of its channels after
  * `sinceAt`. A wake is only a hint to read the inbox: it carries routing ids,
- * never a body, and grants nothing.
+ * never a body, and grants nothing. `matched` counts every hint the bounded
+ * queue tail matched before its row cap and `truncated` marks older bytes or
+ * matched rows beyond the returned slice — an unreadable queue stays
+ * `unavailable`, never an empty page passed off as "no wakes".
  */
 export function readAgentWakes(ref: string, sinceAt: number | undefined, options: UnifiedBusOptions = {}): WakePage {
   const read = readAgentRegistry(options);
   if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
   const target = addressing(read.registry, ref);
   if (!target) return { status: 'unknown-agent', reason: 'Agent is not a registered identity.' };
-  const wakes = readBusWakes({ root: options.runsRoot, sinceAt });
+  const wakes = readBusWakes({ root: options.runsRoot, sinceAt, match: wake =>
+    target.labels.has(wake.to) || (channelOf(wake.to, target.channels) !== null && !target.labels.has(wake.from)) });
   if (wakes.state === 'unreadable') return { status: 'unavailable', reason: 'Wake queue is unreadable.' };
-  return { status: 'ok', agent: target.identity.handle, wakes: wakes.wakes.filter(wake =>
-    target.labels.has(wake.to) || (channelOf(wake.to, target.channels) !== null && !target.labels.has(wake.from))) };
+  return { status: 'ok', agent: target.identity.handle, wakes: wakes.wakes,
+    matched: wakes.matched ?? 0, truncated: wakes.truncated ?? false };
 }
 
 export interface ChannelListEntry {

@@ -121,6 +121,8 @@ export interface OwnerCommsStatus {
   replyGap: TeammateReplyGap[];
   /** Additive: live inbound messages no recorded outbound reply cites; null when the thread is unreadable. */
   awaitingReply: number | null;
+  /** Additive: recorded replies with at least one fanout destination not confirmed delivered; null when the thread is unreadable. */
+  undeliveredReplies: number | null;
 }
 
 function clock(options: OwnerThreadOptions): number {
@@ -632,21 +634,111 @@ export function readOwnerAwaitingReplies(options: { runsDir: string }): OwnerAwa
   }
 }
 
+/** One fanout destination of a recorded reply that delivery evidence cannot confirm reached the owner. */
+export interface OwnerUndeliveredDestination {
+  channel: OwnerChannel;
+  /** The latest recorded attempt state; 'unknown' when neither the thread nor the bounded receipt journal proves an outcome. */
+  state: 'failed' | 'pending' | 'unknown';
+  /** The scrubbed receipt reason on a failed attempt; null otherwise. */
+  reason: string | null;
+}
+
+/** A recorded outbound reply (`replyTo` set, `fanout` declared) with at least one destination not confirmed delivered. */
+export interface OwnerUndeliveredReply {
+  /** Thread message id (`m<seq>`). */
+  id: string;
+  /** The reply's idempotency key — resending the same text under it retries only unconfirmed destinations. */
+  idempotencyKey: string;
+  /** Idempotency key of the inbound owner message this reply answers — the `--reply-to` value a resend needs. */
+  replyTo: string;
+  /** ISO time the reply was recorded. */
+  at: string;
+  /** Stored reply text; scrubbed at intake, never a secret value. */
+  text: string;
+  /** Fanout destinations without confirmed delivery, in fanout order. */
+  destinations: OwnerUndeliveredDestination[];
+}
+
+export type OwnerUndeliveredReplies =
+  | { status: 'ok'; items: OwnerUndeliveredReply[] }
+  | { status: 'unavailable' };
+
+/**
+ * Recorded replies whose fanout is not fully delivered — the delivery side of
+ * the awaiting-reply mark. `awaitingReplyMessages` counts an inbound answered
+ * once any outbound reply cites it, even when every channel refused the send;
+ * this read is where that gap stays visible. A destination counts as
+ * delivered when the thread's own sent-mark (`deliveries[<key>:<channel>]`)
+ * or the latest receipt journal row says so — the sent-mark survives receipt
+ * journal rotation, and a rotated or crashed-away row reads 'unknown',
+ * never delivered. Notices and hellos carry no `replyTo` and stay out: they
+ * were never replies to a waiting owner message. An unreadable thread
+ * reports `unavailable` — never an empty list passed off as fact.
+ */
+function undeliveredReplyItems(state: ThreadState, runsDir: string): OwnerUndeliveredReply[] {
+  const replies = state.messages.filter(message =>
+    message.direction === 'outbound' && typeof message.replyTo === 'string' &&
+    Array.isArray(message.fanout) && message.fanout.length > 0);
+  if (replies.length === 0) return [];
+  const receipts = readReceipts(runsDir, replies.map(message => message.id));
+  const items: OwnerUndeliveredReply[] = [];
+  for (const message of replies) {
+    const channels = [...new Set(message.fanout!.filter(isOwnerChannel))];
+    if (channels.length === 0) continue;
+    const perChannel = receipts[message.id] ?? {};
+    const destinations: OwnerUndeliveredDestination[] = [];
+    for (const channel of channels) {
+      const receipt = perChannel[channel];
+      if (state.deliveries[`${message.idempotencyKey}:${channel}`] === 'sent' || receipt?.state === 'delivered') continue;
+      destinations.push({
+        channel,
+        state: receipt?.state === 'failed' || receipt?.state === 'pending' ? receipt.state : 'unknown',
+        reason: receipt?.state === 'failed' && typeof receipt.reason === 'string' ? receipt.reason : null,
+      });
+    }
+    if (destinations.length > 0) {
+      items.push({
+        id: message.id, idempotencyKey: message.idempotencyKey,
+        replyTo: message.replyTo!, at: message.at, text: message.text, destinations,
+      });
+    }
+  }
+  return items;
+}
+
+/**
+ * The item-level form of the undelivered-reply read: every live recorded
+ * reply with at least one unconfirmed fanout destination, in thread order.
+ * Resending the same text with `--reply-to <replyTo>` and
+ * `--idempotency-key <idempotencyKey>` reproduces the reply identity —
+ * explicit or derived key alike — and retries only the destinations still
+ * unconfirmed.
+ */
+export function readOwnerUndeliveredReplies(options: { runsDir: string }): OwnerUndeliveredReplies {
+  try {
+    return { status: 'ok', items: undeliveredReplyItems(readState(options), options.runsDir) };
+  } catch {
+    return { status: 'unavailable' };
+  }
+}
+
 export function readOwnerCommsStatus(options: OwnerThreadOptions): OwnerCommsStatus {
   const kill = halted(options);
   const hold = paused(options);
   let messages: number | null = null;
   let awaitingReply: number | null = null;
+  let undeliveredReplies: number | null = null;
   try {
     const state = readState(options);
     messages = (state.base ?? 0) + state.messages.length;
     awaitingReply = awaitingReplyIds(state).length;
-  } catch { /* unreadable thread: both counts stay null, never a fabricated 0 */ }
+    undeliveredReplies = undeliveredReplyItems(state, options.runsDir).length;
+  } catch { /* unreadable thread: all counts stay null, never a fabricated 0 */ }
   return {
     schema: 'comms.owner-thread.status.v1',
     claimKey: OWNER_THREAD_CLAIM_KEY,
     threadId: OWNER_THREAD_ID,
-    kill, paused: hold, messages, awaitingReply,
+    kill, paused: hold, messages, awaitingReply, undeliveredReplies,
     adapters: listAdapterStatus(options.settings, kill, hold),
     replyGap: teammateReplyGapFromInbox(clock(options), options.runsDir),
   };

@@ -1000,7 +1000,8 @@ total; reported logical bytes are not a promise of physical disk space freed.
 `phm home` answers one question: is the fleet healthy and moving? It prints a
 headline (healthy, stalled when no PR merged in 60 minutes, red main, or unknown),
 merged PRs, median time to merge, main per repo, running jobs per lane, the
-resource most at risk of going unused, the last 5 work-log items and unread
+resource most at risk of going unused (with its used percent and burn per
+hour, the reading behind the projection), the last 5 work-log items and unread
 Leader replies (these need `--leader-seen <time>`), and `needsYou`: the open asks
 with the one-word answers each takes. `phm home --json` prints schema `home.v1`
 (the `schema` field is the version): each field is `{state:"ok",value}` or
@@ -1038,6 +1039,14 @@ the pool clears. A ledger it cannot read is reported as unknown and nothing is
 raised or closed. It never signs in and never spends. The self-tick runs it once
 per tick (the `asksSync` field of the planner-tick report).
 
+The fleet self-tick is a dry run unless told otherwise: pass `--apply`, or set
+`PHM_SELF_TICK_APPLY=1` for a run with no terminal (a host timer); a person at a
+terminal still needs `--apply`. Every run, dry or applied, writes
+`queue/self-tick-last.json` (`fleet.self-tick-record.v1`: start and finish times,
+mode, the autofill, gaps and reap hooks, failed steps with their errors) and
+appends one line to `queue/self-tick.jsonl` (newest 500 kept). A hook that did not
+run reads "skipped" with its reason, never 0. Its `--status` flag reads it.
+
 Two kinds carry more than a word. A `usage` ask (`phm asks add usage "<question>"
 --subject grok-ultra --unblocks "<what it frees>"`) takes a percent: `phm asks
 answer <id> 40` stores a usage reading with `source: mason` and its own time in
@@ -1074,13 +1083,16 @@ published, PRs merged, empty jobs and the median time from publish to merge. It
 prints JSON (schema `throughput.v1`) with `as_of`, a plain `headline` such as
 "38 merged in the last 6 hours, median 2m 50s", `totals`, one entry in `buckets`
 per hour and `groups` by lane. `--hours N` sets the window (1 to 168, default 24),
-`--by repo` or `--by tier` changes the grouping and `--text` prints plain lines.
+`--by repo`, `--by tier` or `--by model` changes the grouping and `--text` prints plain lines.
+A job belongs to the model its launch row names; work whose job record names no
+model is the `unknown` group, never spread over the others.
 It reads `~/.ashlr-runs/metrics/jobs.jsonl` and the main-guardian status, and
 changes nothing. Each PR counts once. A value that was not measured is `null`
 (or "unknown"), never zero; lines that are not JSON are skipped and counted in
 `malformed_lines`. Exit 1 means the metrics file could not be read. The desktop
 Throughput pane shows the same report (`GET /api/verse/fleet/runs/throughput`)
 for 6 hours, 24 hours or 7 days, with launched, published and merged drawn as one flow.
+The Models pane reads it with `by=model` for the work line on each model's card.
 
 `phm fleet launches --json` answers the question that comes before throughput: how
 many jobs the fleet starts per hour and which lanes those starts go to. It prints
@@ -1173,7 +1185,27 @@ reset. Zero burn has no exhaustion date; missing observation duration gives
 unknown burn. Expired reset windows and invalid or duplicate evidence degrade
 the metrics slice. Projections are observations and grant no spending authority.
 
+## Gap jobs: drop format and proof
+
+`phm jobs gaps --propose` writes one file per gap into the drop queue the host ingest sweeps. The writer (`src/core/fleet/drop-job-writer.ts`) and the ingest patterns are tested against each other in `test/drop-job-ingest-contract.test.ts` and `test/gap-landing.test.ts`.
+
+| Part | Expected |
+| --- | --- |
+| Drop dir | `<runs dir>/leader/drop/claude/` (the only dir swept for RQ-PHX jobs) |
+| File name | `RQ-PHX-<id>.md`, id is 3 to 40 of A-Z and 0-9 (gap ids are `GAP` plus 10 hex digits, upper case) |
+| Line 1 | `#job repo=<repo> lane=<lane> tier=<tier>`, repo one of the known repos, gap jobs use `lane=claude` (`codex-personal` when the gap names a gh command) and `tier=work` |
+| Size and body | At most 8000 bytes; a body naming `.github/`, `/.codex`, `auth.json` or `CODEOWNERS` is refused |
+| After ingest | File moves to `queue/prompts/`; a row lands in `leader/drop/ingested.tsv`; a launch leaves `<runs dir>/RQ-PHX-<id>.prompt` |
+| Proposer record | `<runs dir>/metrics/gap-proposed.jsonl`, one line per queued gap; a gap proposed in the last 24 h is not proposed again |
+
+`phm doctor supply` prints `Self-supply today: 3 proposed, 2 ingested, 1 launched` (last 24 h; JSON field `selfSupplyToday`). Proposed comes from the record, ingested from gap rows in `ingested.tsv`, launched from the `.prompt` files of those rows. A file that is missing or unreadable reads `unknown` for that count.
+
 ## Daily checks
 - `phm metrics loop` (where the loop waits)
 - `phm map replay --since 6h` (what happened while you were away)
 - `phm asks sync` (the few things only Mason can answer)
+- `phm pools --text` (one line per pool: used, hours to reset, and whether it will leave usage unused)
+
+Reading `phm pools`: a `wasteRisk` of `high` means that pool will leave included usage unused, so queue more work for it. `unknown` means there is no current reading. It is never zero and never spare capacity.
+
+After a pool resets, its row shows as refilled but waiting for its first reading: `wasteRisk` is `unknown` with the reason `no reading for the new window`. This is expected. Nobody needs to read it by hand; the next automatic reading fills it in, so do not add a manual `phm budget add` reading.
