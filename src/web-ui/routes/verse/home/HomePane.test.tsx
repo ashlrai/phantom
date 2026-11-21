@@ -28,7 +28,8 @@ const MISSING: HomeSummary = {
   main: unknown('The main guardian status could not be read.'), running: unknown('No fleet status has been written yet.'), unreadLeaderReplies: unknown('No leader plan log has been written yet.'),
   atRisk: unknown('No resource has a fresh usage reading, a burn rate and a future reset.'), worklog: unknown('No jobs ledger has been written yet.'), needsYou: unknown('The needs-you ledger could not be read.'),
 };
-const CARDS = ['Pools', 'Merged PRs', 'Main', 'Running jobs', 'Most at risk of going unused', 'Work log', 'Leader'];
+// Group order: agents and machines, then usage and delivery (HomePane.board.test.tsx covers the groups).
+const CARDS = ['Leader', 'Running jobs', 'Main', 'Pools', 'Most at risk of going unused', 'Merged PRs', 'Work log'];
 let viewport: ViewportMock | null = null;
 const show = (data: unknown, width = 1440) => {
   viewport = mockViewport(width); state.data = data;
@@ -38,7 +39,7 @@ const card = (name: string) => within(screen.getByRole('region', { name }));
 beforeEach(() => { state.status = 'success'; state.openDockPane.mockClear(); localStorage.clear(); resetHomeChoice(); resetVerseUi(); window.location.hash = ''; });
 afterEach(() => { cleanup(); viewport?.restore(); });
 describe.each([['desktop width', 1440], ['390 px', 390]])('Home at %s', (_name, width) => {
-  it('shows the headline and one column of cards, each with one action', () => {
+  it('shows the headline and the cards in group order, each with one action', () => {
     const view = show(HEALTHY, width);
     expect(screen.getByText(HEALTHY.headline).getAttribute('data-health')).toBe('healthy');
     const cards = [...view.container.querySelectorAll('section section')];
@@ -113,8 +114,16 @@ it('every color and size the Home styles name is a real design token', () => {
     expect(used.filter(name => !defined.has(name)), file).toEqual([]);
   }
 });
-it('is one column at every width: no grid, no row and no width breakpoint', () => {
+it('is one column until the pane itself is wide: the only grid sits in one container rule, and the window is never asked', () => {
   const css = readFileSync(join(process.cwd(), 'src/web-ui/routes/verse/home/home.module.css'), 'utf8');
   expect(css).toMatch(/\.root\s*\{[^}]*flex-direction:\s*column/);
-  expect(css).not.toMatch(/display:\s*grid|flex-direction:\s*row|@media|min-width:\s*[1-9]/);
+  expect(css).toMatch(/\.root\s*\{[^}]*container-type:\s*inline-size/);
+  expect(css.match(/@container/g)).toHaveLength(1);
+  const at = css.indexOf('@container');
+  // Below the board's width nothing sits side by side, and a narrow pane keeps the 44rem reading column.
+  expect(css.slice(0, at)).not.toMatch(/display:\s*grid|flex-direction:\s*row|min-width:\s*[1-9]/);
+  expect(css.slice(0, at)).toMatch(/\.root > \*\s*\{[^}]*max-width:\s*44rem/);
+  expect(css.slice(at)).toMatch(/^@container \(min-width: 64rem\)/);
+  expect(css.slice(at)).toMatch(/\.board\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);\s*align-items:\s*start/);
+  expect(css).not.toMatch(/@media/);
 });
