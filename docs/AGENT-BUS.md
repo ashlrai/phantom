@@ -308,6 +308,15 @@ already taken, and by whom, without a lookup per message; the marker also
 appears inside the frame's bracket on those items. `held` is
 `true`/`false` only when both hold stores were read — a store that cannot
 be read reports `held: null` (unknown), never free.
+`work.post` and `work.status` items additionally carry `job` — the same
+live feed state `show` resolves for the `jobId` the body cites, computed
+with one claims-joined feed read per page rather than a lookup per
+message — so an agent paging mail sees where each announced job stands
+(status, claim coverage, `job: null` on an orphaned citation, or the
+feed's own `refused`/`unavailable` state) without a `show` per item; the
+compact `job=<id>:<state>` marker rides inside the frame's bracket and on
+the human line the same way `held` does, and `work mine`'s inbox section
+carries the same field.
 `phm agents bus wakes <agent>` lists wake hints for the agent and its
 channels. A ref that resolves to no registered identity keeps exact-label
 matching instead — the page reports `scope: 'label'` (vs `'identity'`),
@@ -499,8 +508,9 @@ the whole retained store, counted by the full scan `readAgentInbox` performs
 when asked — and
 claimable work or worker-handoff mail keeps the same tri-state `held`/`holder`
 evidence `agents bus inbox` reports, `null` whenever a hold store cannot be
-read, never a guess, so pending work shows its claim state without a second
-read. The inbox
+read, never a guess, and `work.post`/`work.status` mail keeps the same `job`
+live-feed citation `agents bus inbox` resolves — so pending work shows its
+claim state and each announced job's standing without a second read. The inbox
 section reads one row past the cap so `truncated` is definitive — a full
 window proves mail remains beyond `nextCursor`, a short one proves the scan
 reached the store's end — and `nextCursor` resumes strictly before any

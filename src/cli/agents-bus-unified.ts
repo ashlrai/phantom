@@ -5,7 +5,7 @@ import {
   type BusCli, type BusProvider,
 } from '../core/agents/bus-identity.js';
 import {
-  agentWakeClaimHolderSuffix, announceWork, busBodyFallbackSummary, listBusChannels, postChannelMessage, postLabelMessage,
+  agentWakeClaimHolderSuffix, announceWork, busBodyFallbackSummary, busInboxJobMarker, listBusChannels, postChannelMessage, postLabelMessage,
   readAgentChannel, readAgentInbox, readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
   updateWorkStatus, INBOX_KINDS, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
@@ -72,7 +72,12 @@ the rows it accepts. --matched
 on inbox and channel read reports matched, the true pending total across the
 whole retained store the same filters accept; messages still caps at --limit
 and nextCursor then resumes at the newest shown row, so paging never skips
-an unshown match.
+an unshown match. Inbox rows annotate what they carry: claimable work and
+worker-handoff bodies report held/holder — whether a taken claim or live
+coordination hold already covers the receipt — and work.post/work.status
+bodies report job, the live feed state of the jobId they cite (the same
+annotation show resolves, read once per page), so an agent sees hold and
+job state without a lookup per message.
 show
 resolves one retained envelope by the wire id wake hints, work mine items
 and claim operations cite; an expired id reports not-found, and the read
@@ -423,7 +428,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       out(json ? JSON.stringify(shown) : [
         ...shown.messages.map(m => `${m.cursor} ${m.priority} ${m.kind === 'channel' ? `#${m.channel}` : m.kind} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}` +
           (m.held === undefined ? '' : ` held=${m.held === null ? 'unknown' : m.held ? 'yes' : 'no'}` +
-            (m.holder ? ` holder=${m.holder}` : ''))),
+            (m.holder ? ` holder=${m.holder}` : '')) +
+          (m.job === undefined ? '' : ` ${busInboxJobMarker(m.job)}`)),
         ...(page.matched === undefined ? [] : [`matched ${page.matched}`]),
         `nextCursor ${nextCursor}`,
       ].join('\n'));

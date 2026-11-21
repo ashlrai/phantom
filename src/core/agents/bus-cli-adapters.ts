@@ -17,7 +17,7 @@ import {
   BUS_CLIS, registerAgentIdentity, readAgentRegistry, resolveAgent,
   type AgentIdentity, type AgentRegistryOptions, type BusCli, type BusProvider, type RegisterAgentResult,
 } from './bus-identity.js';
-import { busBodyFallbackSummary, busBodySummary, type InboxMessage } from './bus-unified.js';
+import { busBodyFallbackSummary, busBodySummary, busInboxJobMarker, type InboxMessage } from './bus-unified.js';
 
 export interface BusCliAdapter {
   readonly cli: BusCli;
@@ -159,7 +159,8 @@ export function frameBusInbox(cli: BusCli, messages: readonly InboxMessage[]): s
     const from = message.fromAgent ? `agent:${message.fromAgent}` : `label ${message.envelope.from}`;
     const held = message.held === undefined ? '' :
       ` held=${message.held === null ? 'unknown' : message.held ? 'yes' : 'no'}${message.holder ? ` holder=${message.holder}` : ''}`;
-    const line = clean(`[${message.priority} ${where} id=${message.envelope.id} from ${from}${held}] ${summary(message)}`);
+    const job = message.job === undefined ? '' : ` ${busInboxJobMarker(message.job)}`;
+    const line = clean(`[${message.priority} ${where} id=${message.envelope.id} from ${from}${held}${job}] ${summary(message)}`);
     if (used + line.length + 1 > BUS_INBOX_FRAME_MAX) break;
     lines.push(line);
     used += line.length + 1;

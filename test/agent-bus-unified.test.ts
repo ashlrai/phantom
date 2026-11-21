@@ -700,6 +700,84 @@ describe('inbox hold evidence', () => {
   });
 });
 
+describe('inbox work-feed citations', () => {
+  it('annotates work.post and work.status mail with the live feed job state', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+    // Work mail addressed to atlas lands in its inbox; the feed projects one
+    // live job behind both the announcement and its status report.
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-INB-1', title: 'Inbox job', repo: 'ashlrai/phantom',
+      claimKeys: ['repo:ashlrai/phantom'], to: 'agent:atlas', id: 'inb-post' }, options)).toMatchObject({ status: 'posted' });
+    // A second open job whose only declared key a live coordination hold
+    // covers: announced, queued, provably unclaimable.
+    expect(await announceWork({ from: 'nova', jobId: 'RQ-INB-2', title: 'Held job', repo: 'ashlrai/phantom',
+      claimKeys: ['queue:RQ-INB-2'], to: 'agent:atlas', id: 'inb-post-2' }, options)).toMatchObject({ status: 'posted' });
+    expect(acquireCoordination({ root: options.root, origin: 'resource', key: 'queue:RQ-INB-2',
+      owner: 'nova', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000, sourceId: 'inb-hold',
+      now: options.clock.now, started: new Date(options.clock.now).toISOString() }).status).toBe('acquired');
+    // A third open job with a provably free key stays claimable.
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-INB-3', title: 'Free job', repo: 'ashlrai/phantom',
+      claimKeys: ['path:a/b:src/**'], to: 'agent:atlas', id: 'inb-post-3' }, options)).toMatchObject({ status: 'posted' });
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-INB-1', status: 'running',
+      to: 'agent:atlas', id: 'inb-st' }, options)).toMatchObject({ status: 'posted' });
+    await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'just chat', id: 'inb-dm' }, options);
+
+    const page = readAgentInbox('atlas', {}, options);
+    if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+    const byId = new Map(page.messages.map(m => [m.envelope.id, m]));
+    // Both citations of RQ-INB-1 resolve the same live job — now running —
+    // with the claims join intact; plain mail carries no job field at all.
+    expect(byId.get('inb-post')).toMatchObject({ kind: 'dm',
+      job: { jobId: 'RQ-INB-1', feed: 'ok',
+        job: { id: 'RQ-INB-1', status: 'running', postId: 'inb-post', statusId: 'inb-st' } } });
+    expect(byId.get('inb-st')).toMatchObject({ job: { jobId: 'RQ-INB-1', feed: 'ok',
+      job: { id: 'RQ-INB-1', status: 'running', statusId: 'inb-st' } } });
+    expect(byId.get('inb-post-2')).toMatchObject({ job: { jobId: 'RQ-INB-2', feed: 'ok',
+      job: { id: 'RQ-INB-2', status: 'queued', claimable: false, heldKeys: ['queue:RQ-INB-2'] } } });
+    expect(byId.get('inb-post-3')).toMatchObject({ job: { jobId: 'RQ-INB-3', feed: 'ok',
+      job: { id: 'RQ-INB-3', status: 'queued', claimable: true } } });
+    expect(byId.get('inb-dm')).not.toHaveProperty('job');
+
+    // The frame adapters inject and the shared marker render the same state.
+    const framed = frameBusInbox('claude', page.messages);
+    expect(framed).toContain('id=inb-post from agent:atlas job=RQ-INB-1:running');
+    expect(framed).toContain('id=inb-post-2 from agent:nova job=RQ-INB-2:queued claimable=no');
+    expect(framed).toContain('id=inb-post-3 from agent:atlas job=RQ-INB-3:queued claimable=yes');
+    expect(framed).not.toContain('id=inb-dm from agent:nova job=');
+  });
+
+  it('reports a refused feed per item and an orphaned citation as job-absent', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    // A short-lived announcement leaves its long-lived status orphaned once
+    // the post expires: feed ok, job absent — never a guessed state.
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-INB-X', title: 'Orphaned', repo: 'ashlrai/phantom',
+      claimKeys: ['repo:ashlrai/phantom'], to: 'agent:atlas', id: 'inb-post-x', ttl: 1_000 }, options))
+      .toMatchObject({ status: 'posted' });
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-INB-X', status: 'running',
+      to: 'agent:atlas', id: 'inb-st-x', ttl: 100_000 }, options)).toMatchObject({ status: 'posted' });
+    options.clock.now = 5_000;
+    const orphaned = readAgentInbox('atlas', {}, options);
+    if (orphaned.status !== 'ok') throw new Error(`unexpected ${orphaned.status}`);
+    const st = orphaned.messages.find(m => m.envelope.id === 'inb-st-x');
+    expect(st?.job).toMatchObject({ jobId: 'RQ-INB-X', feed: 'ok', job: null });
+
+    // A receipt that poisons the projection refuses the feed read; every
+    // work citation on the page reports the refusal and its receipt.
+    expect(appendBusInbox({ id: 'inb-poison', from: 'agent:ghost', to: 'leaders', priority: 'P2', ttl: 60_000,
+      body: { kind: 'work.post', jobId: 'RQ-POISON', title: 'x', repo: 'a/b', claimKeys: [] } }, options).status)
+      .toBe('posted');
+    const refused = readAgentInbox('atlas', {}, options);
+    if (refused.status !== 'ok') throw new Error(`unexpected ${refused.status}`);
+    const cited = refused.messages.find(m => m.envelope.id === 'inb-st-x');
+    expect(cited?.job).toMatchObject({ jobId: 'RQ-INB-X', feed: 'refused',
+      reason: 'missing-provider', receipt: { id: 'inb-poison' } });
+  });
+});
+
 describe('DM, channel, handoff and priority wake on the one bus store', () => {
   it('delivers DMs to agent:<handle> with channel metadata from the identity', async () => {
     const options = setup();

@@ -26,8 +26,8 @@ import { readAgentConversations, type AgentConversations } from '../fleet/agent-
 import { plainAge } from '../fleet/agent-conversation-model.js';
 import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobHold, busWorkFeedOwnerMatcher, busWorkFeedToMatcher,
   readBusWorkFeed, type BusWorkFeedHoldCoverage, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
-import { agentWakeClaimHolderSuffix, busBodyFallbackSummary, busBodySummary, readAgentInbox, readAgentWakes,
-  type AgentWakeRow, type InboxKind } from './bus-unified.js';
+import { agentWakeClaimHolderSuffix, busBodyFallbackSummary, busBodySummary, busInboxJobMarker, readAgentInbox, readAgentWakes,
+  type AgentWakeRow, type BusEnvelopeLookupJob, type InboxKind } from './bus-unified.js';
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter } from '../fleet/bus-inbox.js';
 import { BUS_PROTOCOL_KEY, BUS_PRIORITIES, isClaimableWork,
   type BusPriority } from '../fleet/bus-envelope.js';
@@ -139,6 +139,10 @@ export interface BusWorkMineInboxMessage {
   held?: boolean | null;
   /** Owner label of the blocking claim when held and known; null otherwise. */
   holder?: string | null;
+  /** `work.post`/`work.status` mail only: the live feed state of the `jobId`
+   * the body cites — the same `BusEnvelopeLookupJob` `agents bus show`
+   * resolves, read once per inbox page; absent on every other body kind. */
+  job?: BusEnvelopeLookupJob;
 }
 
 export type BusWorkMineInbox =
@@ -513,6 +517,9 @@ function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number)
       // Claimable work and worker-handoff mail keep the hold evidence the
       // inbox read already computed; other kinds carry no held field at all.
       ...(message.held === undefined ? {} : { held: message.held, holder: message.holder ?? null }),
+      // Work-feed citations keep the same live job state the inbox read
+      // resolved; other bodies carry no job field at all.
+      ...(message.job === undefined ? {} : { job: message.job }),
     })),
   };
 }
@@ -1091,7 +1098,8 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
       const from = message.fromAgent ? `agent:${message.fromAgent}` : `label ${message.from}`;
       const held = message.held === undefined ? '' :
         ` held=${message.held === null ? 'unknown' : message.held ? 'yes' : 'no'}${message.holder ? ` holder=${message.holder}` : ''}`;
-      lines.push(`  [${message.priority} ${where} id=${message.id} from ${from}${held}] ${message.summary}`);
+      const job = message.job === undefined ? '' : ` ${busInboxJobMarker(message.job)}`;
+      lines.push(`  [${message.priority} ${where} id=${message.id} from ${from}${held}${job}] ${message.summary}`);
     }
   }
 

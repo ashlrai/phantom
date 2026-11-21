@@ -2162,7 +2162,11 @@ resolved `fromAgent` (null when unregistered), a `summary` through
 to 200 characters for both JSON and human output, and — only on claimable
 work and worker-handoff mail — the same optional `held`/`holder` evidence
 `agents bus inbox` reports (`held` tri-state, `null` when a hold store cannot
-be read, never proven free; absent on other mail kinds). The read asks
+be read, never proven free; absent on other mail kinds), plus — only on
+`work.post`/`work.status` mail — the same optional `job`
+(`BusEnvelopeLookupJob`) live-feed citation `agents bus inbox` resolves, so
+the digest's mail rows answer where each announced job stands without a
+`show` per message. The read asks
 for one row past the 20-message cap so `truncated` is definitive — a full
 window proves mail remains beyond `nextCursor`, a short one proves the scan
 reached the store's end — and on overflow the newest scanned row is the one
@@ -2227,7 +2231,13 @@ with their own read and never appear as mail of any kind; claimable work and
 worker-handoff items
 additionally carry `held`/`holder` — the same hold evidence
 `readBusEnvelopeById` reports, read once per page, `held` null when a hold
-store cannot be read),
+store cannot be read — and `work.post`/`work.status` items additionally
+carry `job` (`BusEnvelopeLookupJob`), the live feed state of the `jobId`
+they cite resolved through the same feed read and job mapping
+`readBusEnvelopeById` applies — one claims-joined feed read per page, only
+when a returned message cites a jobId, so the citation answers where its
+job stands (status, claim coverage, `job:null` on an orphaned citation, or
+the feed's own refused/unavailable state) without a `show` per message),
 `readAgentWakes(ref, sinceAt, options?)` (the ok page carries `scope` —
 `'identity'` when the ref resolved through the registry and every label of
 that identity plus its member channels matched, `'label'` when the ref
@@ -2329,7 +2339,9 @@ legacy mail.
 `detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,
 `frameBusInbox(cli, messages)` renders each body through `busBodySummary`,
 falling back to `busBodyFallbackSummary` for unrecognized bodies; items
-carrying `held` show it inside the line's bracket. Identities
+carrying `held` show it inside the line's bracket, and items carrying `job`
+show the shared `busInboxJobMarker` (`job=<id>:<state>` plus `claimable=`
+when the claims join computed it) the same way. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one

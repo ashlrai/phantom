@@ -294,6 +294,21 @@ describe('phm agents bus (unified)', () => {
     expect(text.join('\n')).toContain('matched 3');
   });
 
+  it('annotates work mail in the inbox with the live feed job state', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-CLI-JOB', '--title', 'CLI job',
+      '--repo', 'a/b', '--claim', 'queue:RQ-CLI-JOB', '--to', 'agent:atlas', '--id', 'cli-wp'])).json)
+      .toMatchObject({ status: 'posted' });
+    const inbox = await run(['inbox', 'atlas']);
+    expect(inbox.code).toBe(0);
+    expect(inbox.json.messages[0]?.job).toMatchObject({ jobId: 'RQ-CLI-JOB', feed: 'ok',
+      job: { id: 'RQ-CLI-JOB', status: 'queued', claimable: true } });
+    // The human line carries the same compact marker the frame injects.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['inbox', 'atlas', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('job=RQ-CLI-JOB:queued claimable=yes');
+  });
+
   it('reports the true pending total on channel read --matched and resumes before unshown posts', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
