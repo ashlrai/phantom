@@ -2250,7 +2250,14 @@ worker-handoff bodies also report `held`/`holder` — whether a taken
 message-id claim or live coordination hold covers the exact receipt, the
 same rule `work mine` next/handoffs and the unified comms inbox apply —
 with `held` null when a hold store cannot be read, never proven free. A
-claim-holder `wh-…` wake-hint id that names no live envelope resolves
+`work.post`/`work.status` body also reports `job` (`BusEnvelopeLookupJob`):
+`{jobId, feed:'ok', job}` with the claims-joined `BusWorkFeedJob` — `job`
+null when the feed is healthy but projects no live job with the id, an
+orphaned citation — `{jobId, feed:'refused', reason, receipt?}` when the
+projection refuses, or `{jobId, feed:'unavailable'|'retryable'|'invalid'}`
+when it cannot be read; the lookup still succeeds either way and an open
+job's `claimable` stays the same tri-state `work feed --claims` reports.
+A claim-holder `wh-…` wake-hint id that names no live envelope resolves
 through the wake queue and the live terminal `work.status` receipts that
 could have generated it — the same re-derivation `wakes` annotates — to
 the citing receipt, returned with a `wakeHint` citation (`to` holder

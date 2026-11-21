@@ -294,10 +294,12 @@ function feedField(value: string, max: number): string {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
-/** One human line per job: the announcement's own title, the newest status's
- * detail when it carries one, claim keys — display-clipped (JSON keeps the
- * full values) — and the wire ids of the retained envelopes the job cites. */
-function feedJobLine(job: BusWorkFeedJob): string {
+/** One human line for a single feed job: the announcement's own title, the
+ * newest status's detail when it carries one, claim keys — display-clipped
+ * (JSON keeps the full values) — and the wire ids of the retained envelopes
+ * the job cites. Shared by the feed list and `agents bus show`'s job
+ * annotation so both render a job identically. */
+export function formatBusWorkFeedJob(job: BusWorkFeedJob): string {
   const title = feedField(job.title, FEED_TITLE_MAX);
   const detail = job.detail === undefined ? '' : feedField(job.detail, FEED_DETAIL_MAX);
   const keys = job.claimKeys.length === 0 ? 'none' : feedField(job.claimKeys.join(','), FEED_KEYS_MAX);
@@ -315,7 +317,7 @@ export function formatBusWorkFeed(result: BusWorkFeedReadResult): string[] {
   const lines: string[] = [];
   if (result.status === 'ok') {
     for (const job of result.jobs) {
-      lines.push(feedJobLine(job));
+      lines.push(formatBusWorkFeedJob(job));
     }
     if (result.claims) {
       for (const hold of result.claims.holds) {

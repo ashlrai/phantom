@@ -149,6 +149,29 @@ describe('phm agents bus (unified)', () => {
     expect(text.join('\n')).toContain('find me');
   });
 
+  it('annotates work envelope lookups with the live feed job', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--job', 'RQ-CLI-SHOW', '--title', 'CLI job', '--repo', 'ashlrai/phantom',
+      '--claim', 'queue:RQ-CLI-SHOW', '--id', 'cli-wpost'], { PHM_AGENT_ID: 'atlas' })).json)
+      .toMatchObject({ status: 'posted' });
+    // The post citation resolves the job's live state — status and claim
+    // coverage — without a second work feed read.
+    const shown = await run(['show', 'cli-wpost']);
+    expect(shown.code).toBe(0);
+    expect(shown.json.job).toMatchObject({ jobId: 'RQ-CLI-SHOW', feed: 'ok',
+      job: { id: 'RQ-CLI-SHOW', status: 'queued', claimable: true, postId: 'cli-wpost', statusId: null } });
+    // Human output prints the same feed line the feed list renders.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['show', 'cli-wpost', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('RQ-CLI-SHOW');
+    expect(text.join('\n')).toContain('claimable=yes');
+    expect(text.join('\n')).toContain('post=cli-wpost');
+    expect((await run(['work', 'status', '--job', 'RQ-CLI-SHOW', '--status', 'running', '--id', 'cli-wst'],
+      { PHM_AGENT_ID: 'atlas' })).json).toMatchObject({ status: 'posted' });
+    expect((await run(['show', 'cli-wst'])).json.job)
+      .toMatchObject({ feed: 'ok', job: { status: 'running', statusId: 'cli-wst', postId: 'cli-wpost' } });
+  });
+
   it('filters inbox and channel reads by --thread', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
