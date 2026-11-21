@@ -408,6 +408,7 @@
 /test/fable-orchestrator.test.ts @masonwyatt23
 /test/fable-world.test.ts @masonwyatt23
 /test/fixture-custody.test.ts @masonwyatt23
+/test/fixtures/ci-baseline/firstpaint-gate.log @masonwyatt23
 /test/fixtures/ci-baseline/trust-shared.log @masonwyatt23
 /test/fixtures/eval/routing.ts @masonwyatt23
 /test/fixtures/fleet-graph/router-queue.md @masonwyatt23

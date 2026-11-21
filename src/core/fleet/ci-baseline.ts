@@ -451,6 +451,43 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   'scripts/benchmark-memory.ts': ['package.json', 'package-lock.json', 'tsconfig.json'],
 };
 
+// The first-paint budget gate measures bundle bytes, not source: the
+// measured dist/ graph has no enumerable closure (the web-ui static
+// closure alone runs to hundreds of modules, past the import walk's
+// bound), so each arm's dependency set is a closed input list -- the
+// checker script, the vite config that folds the first-paint chunks
+// (including the presentation-format group members it names), the
+// manifests that pin the toolchain, the web-ui tsconfig esbuild reads,
+// and the arm's named manifest roots under the vite root. A PR touching
+// a root can grow that arm's measured closure; deeper src/web-ui or
+// src/core changes stay unattributed rather than guessed at, the same
+// convention the perf and memory gates use.
+const FIRST_PAINT_COMMON_INPUTS = [
+  'scripts/check-first-paint-budget.mjs',
+  'vite.config.web.ts',
+  'package.json',
+  'package-lock.json',
+  'src/web-ui/tsconfig.json',
+  'src/web-ui/index.html',
+  'src/web-ui/main.tsx',
+  'src/core/vision/leader-display-text.ts',
+  'src/web-ui/components/charts/format-metric.ts',
+  'src/web-ui/components/format/locale-format.ts',
+] as const;
+const FIRST_PAINT_CHAT_INPUTS = [
+  'src/web-ui/app/VerseConsoleApp.tsx',
+  'src/web-ui/routes/verse/sections/ChatSection.tsx',
+] as const;
+const FIRST_PAINT_PHONE_INPUTS = [
+  'src/web-ui/app/VerseMobileApp.tsx',
+  'src/web-ui/routes/verse/mobile/screens/HomeScreen.tsx',
+] as const;
+const FIRST_PAINT_INPUTS: Record<string, readonly string[]> = {
+  '(first-paint) chat': [...FIRST_PAINT_COMMON_INPUTS, ...FIRST_PAINT_CHAT_INPUTS],
+  '(first-paint) phone': [...FIRST_PAINT_COMMON_INPUTS, ...FIRST_PAINT_PHONE_INPUTS],
+  '(first-paint) gate': [...FIRST_PAINT_COMMON_INPUTS, ...FIRST_PAINT_CHAT_INPUTS, ...FIRST_PAINT_PHONE_INPUTS],
+};
+
 function parseVersionSyncFailures(log: string): Failure[] {
   const out: Failure[] = [];
   for (const line of lines(log)) {
@@ -1281,6 +1318,50 @@ function parseQualificationFlakyFailures(log: string): Failure[] {
   return out;
 }
 
+// The `ci` job's "Capture pack smoke build snapshot" step on the ubuntu
+// authority 1/3 shard runs `npm run check:first-paint:built`
+// (scripts/check-first-paint-budget.mjs --no-build --out-dir
+// dist/core/web/public/next --budget-kb 354 --mobile-budget-kb 250)
+// between the pack-smoke capture and prepare commands. The gate walks the
+// Vite manifest's static-import closure of each first-paint root --
+// index.html -> main.tsx -> the Verse apps -> the chat/home screens --
+// sums the chunk bytes and fails the step when either arm exceeds its
+// budget. A budget break prints no vitest, typecheck, TAP or report shape,
+// so without this shape a red master marked every open PR unknown and
+// queued no fix. Each over-budget verdict groups per arm under
+// `scripts/check-first-paint-budget.mjs > (first-paint) <arm>`: the two
+// arms measure different closures against different budgets, so a phone
+// regression never merges into the chat group. The script's own error
+// path (`check-first-paint-budget: <message>` -- missing manifest,
+// renamed first-paint root, manifest import with no entry) groups under
+// `(first-paint) gate`. Like the other non-test identities these can
+// never resolve through a vitest pass line: shared-baseline, pr-caused or
+// unknown -- never probable-flake. The per-file `N.N KB  <file>` listing,
+// OK verdicts, --json reports, npm lifecycle noise and unrelated output
+// stay unparsed.
+const FIRST_PAINT_FILE = 'scripts/check-first-paint-budget.mjs';
+const FIRST_PAINT_MAX = 8;
+const FIRST_PAINT_OVER_BUDGET = /^OVER BUDGET: (chat|phone)\b.*\bfirst-paint critical JS \d+(?:\.\d+)? KB \(budget \d+(?:\.\d+)? KB\)$/;
+const FIRST_PAINT_GATE_ERROR = /^check-first-paint-budget: \S/;
+
+function parseFirstPaintFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  for (const line of lines(log)) {
+    if (out.length >= FIRST_PAINT_MAX) break;
+    const over = FIRST_PAINT_OVER_BUDGET.exec(line);
+    if (over !== null) {
+      const names = `(first-paint) ${over[1]}`;
+      out.push({ file: FIRST_PAINT_FILE, names, testId: `${FIRST_PAINT_FILE} > ${names}`, excerpt: clean(line) });
+      continue;
+    }
+    if (FIRST_PAINT_GATE_ERROR.test(line)) {
+      const names = '(first-paint) gate';
+      out.push({ file: FIRST_PAINT_FILE, names, testId: `${FIRST_PAINT_FILE} > ${names}`, excerpt: clean(line) });
+    }
+  }
+  return out;
+}
+
 export function parseBaselineFailures(log: string, repo?: string, auditExceptions: readonly DependencyAuditException[] | null = []): Failure[] {
   const result: Failure[] = [];
   const typecheck = new Map<string, Failure>();
@@ -1375,6 +1456,10 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     result.push(failure);
   }
   for (const failure of parseQualificationFlakyFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseFirstPaintFailures(log)) {
     if (result.length >= 100) break;
     result.push(failure);
   }
@@ -1770,11 +1855,11 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     freshness.push({ pr: pr.number, head: pr.headRefOid, state: known ? 'fresh' : 'unknown', ...(!known ? { reason: 'unreadable-log-or-unverified-checkout' } : {}) });
     if (!known) continue;
     for (const failure of found) {
-      // Lint-guard failures are per-file like eslint: the checkers grep
-      // source text and never read a file's imports, so the dependency
-      // set is each guard's closed input list rather than the import
-      // closure walk.
-      const flatInputs = LINT_GUARD_INPUTS[failure.names];
+      // Lint-guard and first-paint failures are per-file/per-arm like
+      // eslint: the checkers grep source text or measure bundle bytes and
+      // never read a file's imports, so the dependency set is each gate's
+      // closed input list rather than the import closure walk.
+      const flatInputs = LINT_GUARD_INPUTS[failure.names] ?? FIRST_PAINT_INPUTS[failure.names];
       const deps = flatInputs !== undefined ? new Set<string>(flatInputs) : await dependencies(failure.file);
       // Generated artifacts are produced by the clean-tree job, not the test
       // runner: the vitest harness ambient set cannot stale them, so only
@@ -1784,7 +1869,8 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // plain .mjs scripts plus their enumerated manifests, the memory
       // benchmark gate a tsx script plus its import closure and seeded
       // toolchain inputs, the eslint/realio-lane/verse-sync-io lint guards
-      // grep source text outside the harness, and the secret-shape/
+      // and the first-paint budget arms read closed input lists outside
+      // the harness, and the secret-shape/
       // secret-scan/version-provenance trust gates have no vitest harness
       // at all, so the ambient set cannot reach any of them.
       const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || flatInputs !== undefined || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);

@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; script?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; script?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -63,7 +63,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : head;
       const receipt = options.bound
         ? `Bound candidate ${options.boundHead ?? sha} to event tree ${'e'.repeat(40)}\n`
@@ -1338,6 +1338,114 @@ describe('CI baseline evidence', () => {
     // A PR that touches the flaky test (or its imports) owns the flake.
     const caused = await analyzeCiBaseline('owner/repo', github({ flaky: true, touched: 'test/example.test.ts' }).gh);
     expect(caused.groups[0]?.action).toBe('pr-caused');
+  });
+  it('parses first-paint budget verdicts as per-arm gate failures', () => {
+    // check:first-paint:built prints one verdict per arm; each over-budget
+    // line groups under the checker script with the arm as the target.
+    const failures = parseBaselineFailures(fixture('firstpaint-shared'), 'owner/repo');
+    expect(failures.map(f => f.testId)).toEqual([
+      'scripts/check-first-paint-budget.mjs > (first-paint) chat',
+      'scripts/check-first-paint-budget.mjs > (first-paint) phone',
+    ]);
+    expect(failures[0]).toMatchObject({ file: 'scripts/check-first-paint-budget.mjs', names: '(first-paint) chat' });
+    expect(failures[1]).toMatchObject({ names: '(first-paint) phone' });
+    expect(failures[0]?.excerpt).toContain('OVER BUDGET: chat first-paint critical JS 381.4 KB (budget 354 KB)');
+    expect(failures[1]?.excerpt).toContain('OVER BUDGET: phone (/verse/m) first-paint critical JS 260.0 KB (budget 250 KB)');
+    // Timestamped job-log lines keep the verdicts.
+    const stamped = fixture('firstpaint-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped, 'owner/repo').map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    // The script's own error path groups under the gate identity.
+    const gate = parseBaselineFailures(fixture('firstpaint-gate'), 'owner/repo');
+    expect(gate).toHaveLength(1);
+    expect(gate[0]).toMatchObject({
+      file: 'scripts/check-first-paint-budget.mjs',
+      names: '(first-paint) gate',
+      testId: 'scripts/check-first-paint-budget.mjs > (first-paint) gate',
+    });
+    expect(gate[0]?.excerpt).toContain('not in the Vite manifest');
+  });
+  it('keeps unrecognized first-paint output unparsed', () => {
+    for (const line of [
+      // OK verdicts and the per-file KB listing carry no failure.
+      'OK: chat first-paint critical JS 300.0 KB (budget 354 KB)',
+      'OK: phone (/verse/m) first-paint critical JS 200.0 KB (budget 250 KB)',
+      '    150.2 KB  assets/VerseConsoleApp-4f2a91c.js',
+      // Only the two measured arms are identities.
+      'OVER BUDGET: desktop first-paint critical JS 380.0 KB (budget 354 KB)',
+      'OVER BUDGET: chat critical JS 380.0 KB (budget 354 KB)',
+      // The verdict requires the measured phrase and both budget figures.
+      'OVER BUDGET: chat first-paint critical JS 380.0 KB',
+      'OVER BUDGET: chat first-paint critical JS 380.0 KB (budget)',
+      // The gate error needs a non-empty message after the prefix.
+      'check-first-paint-budget:',
+      // --json reports are a different shape this parser does not read.
+      '{"ok":false,"desktopOk":false,"totalKb":381.4}',
+    ]) {
+      expect(parseBaselineFailures(line, 'owner/repo'), line).toEqual([]);
+    }
+    // A passing run's whole output stays unparsed.
+    expect(parseBaselineFailures([
+      '    150.2 KB  assets/VerseConsoleApp-4f2a91c.js',
+      'OK: chat first-paint critical JS 300.0 KB (budget 354 KB)',
+      '    88.6 KB  assets/VerseMobileApp-2be771a.js',
+      'OK: phone (/verse/m) first-paint critical JS 200.0 KB (budget 250 KB)',
+      '##[error]Process completed with exit code 1.',
+    ].join('\n'), 'owner/repo')).toEqual([]);
+  });
+  it('groups first-paint failures and attributes each arm its closed inputs', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ firstPaint: true }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups.map(g => g.testId)).toEqual([
+      'scripts/check-first-paint-budget.mjs > (first-paint) chat',
+      'scripts/check-first-paint-budget.mjs > (first-paint) phone',
+    ]);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    // A PR touching the arm's named manifest root owns that arm's break:
+    // the chat group goes pr-caused while the untouched phone arm still
+    // reads shared-baseline.
+    const caused = await analyzeCiBaseline('owner/repo', github({ firstPaint: true, touched: 'src/web-ui/app/VerseConsoleApp.tsx' }).gh);
+    const byId = new Map(caused.groups.map(g => [g.testId, g]));
+    expect(byId.get('scripts/check-first-paint-budget.mjs > (first-paint) chat')?.action).toBe('pr-caused');
+    expect(byId.get('scripts/check-first-paint-budget.mjs > (first-paint) phone')?.action).toBe('queue-master-fix');
+    // The checker script, the vite chunking config and the toolchain
+    // manifests are shared inputs: touching any of them is pr-caused for
+    // both arms.
+    for (const touched of ['scripts/check-first-paint-budget.mjs', 'vite.config.web.ts', 'package.json', 'package-lock.json', 'src/web-ui/tsconfig.json', 'src/web-ui/index.html', 'src/web-ui/main.tsx']) {
+      const config = await analyzeCiBaseline('owner/repo', github({ firstPaint: true, touched }).gh);
+      expect(config.groups.every(g => g.action === 'pr-caused'), touched).toBe(true);
+    }
+    // A deeper src/web-ui module is inside the measured closure but has
+    // no enumerable dep edge: it stays unattributed like the perf and
+    // memory gates' deeper changes.
+    const deep = await analyzeCiBaseline('owner/repo', github({ firstPaint: true, touched: 'src/web-ui/routes/verse/sections/AgentsSection.tsx' }).gh);
+    expect(deep.groups.every(g => g.action === 'queue-master-fix')).toBe(true);
+    // The vitest harness ambient set cannot reach a first-paint failure.
+    const ambient = await analyzeCiBaseline('owner/repo', github({ firstPaint: true, touched: 'vitest.config.ts' }).gh);
+    expect(ambient.groups.every(g => g.action === 'queue-master-fix')).toBe(true);
+  });
+  it('groups first-paint gate errors under the union of both arms', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ firstPaintGate: true }).gh);
+    expect(report.groups.map(g => g.testId)).toEqual(['scripts/check-first-paint-budget.mjs > (first-paint) gate']);
+    expect(report.groups[0]).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+    // Either arm's manifest root is a gate input, so renaming either app
+    // module is pr-caused.
+    for (const touched of ['src/web-ui/app/VerseMobileApp.tsx', 'src/web-ui/routes/verse/sections/ChatSection.tsx', 'vite.config.web.ts']) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ firstPaintGate: true, touched }).gh);
+      expect(caused.groups[0]?.action, touched).toBe('pr-caused');
+    }
+  });
+  it('never resolves first-paint failures through vitest pass lines', async () => {
+    // A budget break on a green master is not a flake: the parenthesized
+    // arm identity can never resolve through a vitest pass line, so a
+    // single unaffected PR stays unknown.
+    const flake = await analyzeCiBaseline('owner/repo', github({ firstPaint: true, count: 1, pass: true, filePass: true }).gh);
+    expect(flake.groups.map(g => g.classification)).toEqual(['unknown', 'unknown']);
+    expect(flake.groups.every(g => g.action === 'unknown' && g.master === 'unknown')).toBe(true);
+    const gateFlake = await analyzeCiBaseline('owner/repo', github({ firstPaintGate: true, count: 1, pass: true, filePass: true }).gh);
+    expect(gateFlake.groups[0]).toMatchObject({ names: '(first-paint) gate', classification: 'unknown', action: 'unknown', master: 'unknown' });
   });
   it('keeps TAP indentation on timestamped job-log lines', () => {
     const block = [
