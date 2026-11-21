@@ -686,7 +686,7 @@ describe('unknown-outcome resolution', () => {
       ],
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('unknown resolution: empty=3 nonzero_exit=5 unresolved=4');
+    expect(out).toContain('unknown resolution: empty=3 nonzero_exit=5 skipped=0 unresolved=4');
     expect(out).toContain('failure_classes=quota:3,authentication:1');
   });
 
@@ -766,7 +766,8 @@ describe('unknown-outcome resolution', () => {
     expect(report).toMatchObject({
       status: 'unavailable',
       unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null,
-      unknown_empty_classes: null, unknown_task_outcomes: null, unknown_unresolved: null,
+      unknown_empty_classes: null, unknown_task_outcomes: null,
+      unknown_skipped: null, unknown_skip_reasons: null, unknown_unresolved: null,
     });
   });
 
@@ -825,6 +826,51 @@ describe('unknown-outcome resolution', () => {
     const { out } = await run(['--runs-dir', runs]);
     expect(out).toContain('unresolved=5');
     expect(out).toContain('task_outcomes=failed:3,deferred:2,done:2,skipped:1,unreported:1');
+  });
+
+  it('counts standing skip-gate declines inside the unknown cohort and exempts them from unresolved', async () => {
+    // dispatchd's skip gate and precheck write skipped_empty/precheck_skip
+    // receipts when they decline a launch; a later claim supersedes the
+    // decline, a dry-run receipt (applied:false) never mints one, and the
+    // detailed dupcheck receipt never joins — its paired skipped_empty row
+    // carries the canonical decline.
+    const skipRow = (job: string, extra: Record<string, unknown>): object =>
+      ({ job, lane: 'alpha', work_class: 'code', event: 'skipped_empty', ...extra });
+    writeLedger([
+      ...merged(20),
+      // Three standing declines: two share the empty-gate reason label,
+      // one carries only the gate's integer code.
+      skipRow('synthetic-skip-reason-1', { reason: 'prompt_empty_same_base_24h' }),
+      skipRow('synthetic-skip-reason-2', { reason: 'prompt_empty_same_base_24h' }),
+      skipRow('synthetic-skip-code', { code: 13 }),
+      // Declined then dispatched: the claim supersedes, leaving an ordinary
+      // in-flight job in the remainder.
+      skipRow('synthetic-skip-dispatched', { reason: 'task_empty_repeat_24h' }),
+      { job: 'synthetic-skip-dispatched', event: 'claim', lane: 'alpha', work_class: 'code' },
+      // A lone dry-run receipt records the job still launched — it mints
+      // no decline and stays an ordinary unresolved row.
+      skipRow('synthetic-skip-dryrun', { reason: 'prompt_empty_same_base_24h', applied: false }),
+      // The detailed dupcheck receipt never joins on its own.
+      { job: 'synthetic-skip-dupcheck', event: 'dupcheck_skip', lane: 'alpha', work_class: 'code', reason: 'already_on_master' },
+      // A plain in-flight job joins the same remainder.
+      event('synthetic-skip-open', 'alpha', 'code', 'VERIFIED'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 7, unclassified_outcomes: 0,
+      unknown_skipped: 3,
+      unknown_skip_reasons: [
+        { reason: 'prompt_empty_same_base_24h', jobs: 2 },
+        { reason: 'code:13', jobs: 1 },
+      ],
+      // The superseded, dry-run, dupcheck-only and open jobs carry no
+      // recorded failure signal and stay unresolved.
+      unknown_unresolved: 4,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('skipped=3 unresolved=4');
+    expect(out).toContain('skip_reasons=prompt_empty_same_base_24h:2,code:13:1');
   });
 
   it('classifies dead launches by their give_up reason and leaves transient receipts unresolved', async () => {

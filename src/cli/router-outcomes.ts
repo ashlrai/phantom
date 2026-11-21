@@ -10,7 +10,8 @@
  * ACU spend and usage provenance labels), the finish row's recorded diff
  * size (diff_files/diff_lines), the batch member's recorded
  * task_outcome word, the dispatch claim's recorded lane override
- * (lane_hint/lane_override) and the advisory pass^k join from
+ * (lane_hint/lane_override), the skip gate's recorded launch decline
+ * (skipped/skip_reason/skip_code) and the advisory pass^k join from
  * eval.lane-scores.v1.
  * RQ-BATCH-* session rows are infrastructure evidence counted in
  * session_rows, never outcomes. Never writes; a missing ledger reports
@@ -136,6 +137,7 @@ function outcomeLine(o: RouterOutcome): string {
     `cost_usd=${text(o.cost_usd)}`, `acus=${text(o.acus)}`, `wall_s=${text(o.wall_s)}`, `ttm_s=${text(o.ttm_s)}`, `queue_wait_s=${text(o.queue_wait_s)}`, `ci_wall_s=${text(o.ci_wall_s)}`, `publish_wait_s=${text(o.publish_wait_s)}`, `tokens_total=${text(o.tokens_total)}`, `passk=${text(o.passk)}`,
     `empty=${text(o.empty)}`, `exit_code=${text(o.exit_code)}`, `failure_class=${text(o.failure_class)}`,
     `empty_class=${text(o.empty_class)}`, `task_outcome=${text(o.task_outcome)}`,
+    `skipped=${text(o.skipped)}`, `skip_reason=${text(o.skip_reason)}`, `skip_code=${text(o.skip_code)}`,
     `lane_hint_blocked_by=${o.lane_hint_blocked_by === null ? 'unknown' : `[${o.lane_hint_blocked_by.join(',')}]`}`,
   ].join(' ');
 }

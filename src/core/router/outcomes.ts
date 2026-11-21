@@ -39,6 +39,11 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // newest-explicit-wins like tokens_total, so a lane's ACU spend — the only
 // cost evidence subscription lanes record — its usage capture gaps and its
 // change size reach router.outcome.v1 instead of stopping at the ledger.
+// The skip gate's launch-decline receipts (`skipped_empty`/`precheck_skip`
+// event rows, `applied:false` dry runs excluded) fold as
+// skipped/skip_reason/skip_code: the newest decline stands until a later
+// claim/batch_claim/launch row supersedes it, so a job the fleet chose not
+// to launch stops reading as an unexplained unknown.
 
 /** Newest-bytes bound retained from the append-only jobs ledger. */
 export const ROUTER_OUTCOME_LEDGER_LIMIT = 16 * 1024 * 1024;
@@ -283,6 +288,52 @@ export interface RouterOutcome {
    * distinct from missing evidence.
    */
   lane_hint_blocked_by: string[] | null;
+  /**
+   * The skip-gate's recorded launch decline — dispatchd's `empty_gate`
+   * and precheck skip paths and restock's empty gate write
+   * `skipped_empty` (with `precheck_skip` the spelling the sibling fleet
+   * readers honor for the same receipts) when they decline a ready line
+   * instead of launching it: `reason` carries the empty-gate vocabulary
+   * (`upkeep_empty_same_base`, `prompt_empty_same_base_24h`,
+   * `task_empty_repeat_24h`), `code` the precheck gate's exit status.
+   * The verdict competes with the dispatch rows on row order like the
+   * claim override pair: the newest decline stands until a later
+   * `claim`/`batch_claim`/`launch` row — or the skip gate's own
+   * `applied:false` dry-run receipt, which records the job still
+   * launched — supersedes it to `false` ("a decline was recorded but
+   * the job dispatched after all"). `finish`/`publish`/`outcome` rows
+   * belong to attempts already decided and never touch it, and a
+   * `dupcheck_skip` receipt never joins — its paired `skipped_empty`
+   * row already carries the canonical decline. `null` means no skip
+   * evidence — never declined or only dry-run receipts — distinct from
+   * `empty`, the finish row's measured no-diff, from a batch member's
+   * `task_outcome` word, and from the queue's terminal no-op verdict.
+   */
+  skipped: boolean | null;
+  /**
+   * The standing skip verdict's recorded reason — the newest skip row's
+   * `reason`, then `empty_reason`, then `skip_reason`, with a
+   * bounded-string `code` as the last resort (sibling readers treat a
+   * string code as the skip's label; integer codes join `skip_code`
+   * instead). Accepted only in the bounded identifier-label shape
+   * `failure_class` uses — the empty-gate vocabulary and bounded code
+   * strings like `open_pr`/`dup` fit; unrecognized spellings are
+   * skipped, never recorded raw. The newest skip row replaces it
+   * wholesale and a superseding dispatch clears it; `null` whenever
+   * `skipped` is not `true` — including precheck-code-only declines,
+   * whose reason stays unrecorded rather than guessed.
+   */
+  skip_reason: string | null;
+  /**
+   * The standing skip verdict's recorded gate code — the newest skip
+   * row's `code`/`precheck_code` as a non-negative safe integer
+   * (dispatchd's precheck exit-status vocabulary, including the
+   * `EMPTY_CODE`/`DUPCHECK_CODE` 14 receipts). String `code` values
+   * join `skip_reason` instead; anything else is skipped, never
+   * recorded raw. Replaced wholesale by the newest skip row and cleared
+   * by a superseding dispatch; `null` whenever `skipped` is not `true`.
+   */
+  skip_code: number | null;
   /** The lane+model's pass^k (passPowK) from the latest eval.lane-scores.v1 projection; null when unknown. */
   passk: number | null;
 }
@@ -552,6 +603,42 @@ const CLAIM_EVENTS: ReadonlySet<string> = new Set(['claim', 'batch_claim']);
  */
 const LANE_OVERRIDE_CODE = /^[a-z][a-z0-9_]{0,63}$/;
 const LANE_OVERRIDE_HINT = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
+
+/**
+ * The skip-gate event names — dispatchd's `empty_gate` and precheck skip
+ * paths write `skipped_empty`, and `precheck_skip` is the spelling the
+ * sibling fleet readers (empties, job-outcomes, slot-yield,
+ * leader-batches) honor for the same receipts, including the
+ * `applied:false` dry-run guard: a dry run records the job still
+ * launched, so it never mints a decline. `dupcheck_skip` stays out —
+ * it is the detailed dupcheck receipt whose paired `skipped_empty`
+ * row already carries the canonical decline.
+ */
+const SKIP_GATE_EVENTS: ReadonlySet<string> = new Set(['skipped_empty', 'precheck_skip']);
+
+/**
+ * The standing skip verdict's recorded reason label — the newest skip
+ * row's `reason`, then `empty_reason`, then `skip_reason`, with a
+ * bounded-string `code` as the last resort (sibling readers treat a
+ * string code as the skip's label; integer codes join `skip_code`
+ * instead). Accepted only in the bounded identifier-label shape
+ * `failure_class` uses; the first recorded spelling decides, so a
+ * malformed reason is skipped rather than replaced by a fallback.
+ */
+const SKIP_REASON_KEYS = ['reason', 'empty_reason', 'skip_reason', 'code'] as const;
+const skipReason = (r: Row): string | null => {
+  const v = str(r, ...SKIP_REASON_KEYS);
+  return v !== null && LEDGER_LABEL.test(v) ? v : null;
+};
+
+/**
+ * The standing skip verdict's recorded gate code — the newest skip
+ * row's `code`/`precheck_code` as a non-negative safe integer
+ * (dispatchd's precheck exit-status vocabulary). String `code` values
+ * join `skip_reason` instead; anything else is skipped, never
+ * recorded raw.
+ */
+const skipCode = (r: Row): number | null => count(r['code']) ?? count(r['precheck_code']);
 
 // Revert evidence uses the same field vocabulary the fleet ledger readers
 // already honor: event names (event/type/kind), terminal state fields
@@ -834,7 +921,8 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       publish_wait_s: publishWaitS.get(j) ?? null,
       empty: null, diff_files: null, diff_lines: null,
       exit_code: null, failure_class: null, empty_class: null,
-      task_outcome: null, lane_hint_blocked_by: null, passk: null,
+      task_outcome: null, lane_hint_blocked_by: null,
+      skipped: null, skip_reason: null, skip_code: null, passk: null,
     };
     o.lane = str(r, 'lane', 'pool', 'arm') ?? o.lane;
     o.model = str(r, 'model') ?? o.model;
@@ -932,6 +1020,30 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
           o.lane_hint_blocked_by = laneHintBlockedBy(r);
         }
       }
+    }
+    // The skip-gate's launch-decline receipts compete with the dispatch
+    // rows on row order like the claim override pair: a
+    // skipped_empty/precheck_skip row (applied !== false — a dry run
+    // records the job still launched) marks the standing decline with
+    // its recorded reason/code, while a later claim/batch_claim/launch
+    // row or a dry-run receipt supersedes it to false. finish/publish/
+    // outcome rows belong to attempts already decided and never touch
+    // the verdict; non-skip, non-dispatch rows leave it alone.
+    const skipEvent = str(r, ...EVENT_NAME_KEYS)?.toLowerCase();
+    if (skipEvent !== undefined && SKIP_GATE_EVENTS.has(skipEvent)) {
+      if (r['applied'] !== false) {
+        o.skipped = true;
+        o.skip_reason = skipReason(r);
+        o.skip_code = skipCode(r);
+      } else if (o.skipped === true) {
+        o.skipped = false;
+        o.skip_reason = null;
+        o.skip_code = null;
+      }
+    } else if (skipEvent !== undefined && QUEUE_DISPATCH_EVENTS.has(skipEvent) && o.skipped === true) {
+      o.skipped = false;
+      o.skip_reason = null;
+      o.skip_code = null;
     }
     outcomes.set(j, o);
   }

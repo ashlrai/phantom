@@ -368,7 +368,27 @@ Entries join only in the bounded lowercase reason-code shape,
 deduplicated in recorded order and capped; a non-array value or a list
 whose entries are all unrecognizable reads as unrecorded (`null`),
 while a recorded empty list stays `[]` — the market's own "nothing
-blocked it" verdict, distinct from missing evidence. `cost_usd`
+blocked it" verdict, distinct from missing evidence. `skipped`,
+`skip_reason` and `skip_code` carry the skip gate's recorded launch
+decline: dispatchd's `empty_gate`/precheck skip paths write
+`skipped_empty` rows (`precheck_skip` is the spelling the sibling fleet
+readers honor for the same receipts), and a row whose `applied` is not
+`false` marks the standing decline — the fleet chose not to launch the
+job. A dry-run receipt (`applied:false`) records the job still
+launched, so it never mints a decline and supersedes a standing one;
+a later `claim`/`batch_claim`/`launch` dispatch row supersedes it the
+same way, while `finish`/`publish`/`outcome` rows never touch the
+verdict. The newest skip row replaces the record wholesale:
+`skip_reason` is its recorded label (`reason`, then `empty_reason`,
+then `skip_reason`, with a bounded-string `code` as the last resort —
+accepted only in the bounded identifier-label shape) and `skip_code`
+its recorded gate code (`code`/`precheck_code` as a non-negative safe
+integer; a string `code` joins `skip_reason` instead).
+`dupcheck_skip` never joins — its paired `skipped_empty` row already
+carries the canonical decline — and all three stay `null`/`false` when
+no skip receipt stands, distinct from the finish row's measured
+`empty` no-diff verdict, the member's `task_outcome` word and terminal
+no-op phases. `cost_usd`
 is an explicit `cost_usd`/`usd`/`cost` field on a jobs row when one is
 recorded; otherwise it is the sum of api-spend call costs naming the job
 (same `job`/`job_id`/`id` attribution and `cost_usd`/`usd`/`cost`
@@ -438,9 +458,15 @@ dispatcher's own `empty_error_rate` does — `unknown_task_outcomes`
 tallies the recorded batch-member `task_outcome` words (the member's
 finish boundary; the requeue words `failed`/`deferred`/`unreported` are
 the recorded failure signal, while `done`/`skipped` members still await
-their own publish verdict) — and `unknown_unresolved` is
+their own publish verdict) — `unknown_skipped` counts jobs whose
+standing launch decision is a recorded skip-gate decline (a
+`skipped_empty`/`precheck_skip` receipt no later dispatch superseded)
+and `unknown_skip_reasons` tallies their recorded reason labels (the
+empty-gate vocabulary, bounded `code` strings and `code:<n>`
+gate-code-only declines, top entries first) — and `unknown_unresolved` is
 the remainder with no
-recorded failure signal and no requeue word (finished cleanly awaiting a
+recorded failure signal, no requeue word and no standing skip
+decline (finished cleanly awaiting a
 verdict, still in flight, or carrying only transient launch receipts). These are counts over the retained window; when the ledger was
 not read they are `null`, never zero. When the ledger exceeds the retained tail the
 report carries `truncated: true` and every count covers the newest bytes
