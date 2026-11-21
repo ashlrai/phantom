@@ -63,7 +63,7 @@ throws never stops the later ones. Each completed pass records itself to
 queue/self-tick-last.json while the lock is still held; --last prints that
 recorded run (or 'no recorded run') without running a step or taking the
 lock, combines only with --json and --runs-dir, and exits 0 even when
-nothing is recorded. --status is the plain-words twin of --last: when the self-tick last ran and how many items each hook produced (autofill, gaps, reap), or 'no self-tick run recorded'; it reads the same file, takes no lock, combines only with --json and --runs-dir (schema fleet.self-tick-status.v1). Exit 0 when every step is ok or the run is busy, 1
+nothing is recorded. --status is the plain-words twin of --last: when the self-tick last ran and how many items each hook produced (autofill, gaps, reap, stranded-requeue), or 'no self-tick run recorded'; it reads the same file, takes no lock, combines only with --json and --runs-dir (schema fleet.self-tick-status.v1). Exit 0 when every step is ok or the run is busy, 1
 when any step failed, 2 on usage.`;
 
 interface Dependencies {
@@ -116,6 +116,8 @@ interface Dependencies {
   emptyStop?: Partial<Pick<Parameters<typeof import('../core/fleet/empty-family-apply.js').runEmptyApplyTick>[0], 'readOff' | 'readReport'>>;
   /** Worktree reap seams for tests (readers, remover); production reads the real worktrees. */
   worktreeReap?: import('../core/fleet/worktrees.js').WorktreesDeps;
+  /** Stranded-requeue seam for tests; production plans over the real runs dir. */
+  strandedRequeue?: typeof import('../core/fleet/stranded-requeue.js').planStrandedRequeue;
   /** Asks sync seam for tests; production syncs the real needs-you ledger. */
   asksSync?: typeof import('../core/fleet/asks-sync.js').syncAsks;
 }
@@ -323,6 +325,14 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       return await (deps.asksSync ?? syncAsks)({ runsDir: root, now, dryRun: !apply });
     } catch { return { state: 'skipped', reason: 'asks sync failed' }; }
   };
+  // Finished jobs whose publish aborted on the fetch race get a recovery row (at most 3 per tick). Never fails the tick.
+  const runStrandedRequeueStage = async (): Promise<unknown> => {
+    if (!deps.strandedRequeue && root !== join(home, '.ashlr-runs')) return { reason: 'custom-runs-dir-no-stranded-requeue' };
+    try {
+      const { planStrandedRequeue } = await import('../core/fleet/stranded-requeue.js');
+      return await (deps.strandedRequeue ?? planStrandedRequeue)(root, { apply, limit: 3, now: now() });
+    } catch (error) { return { error: error instanceof Error ? error.message.slice(0, 120) : 'unknown error' }; }
+  };
   const defaults: SelfTickSteps = {
     // The quota refresh runs first inside this step, so the reading reset-release
     // plans from is current. It is a sub-stage rather than a new step name so the
@@ -385,11 +395,12 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       const emptyStop = await runEmptyStopStage();
       const worktreeReap = await runWorktreeReapStage();
       const asksSync = await runAsksSyncStage();
+      const strandedRequeue = await runStrandedRequeueStage();
       const run = await bind(cmdFleetPlannerTick, { now, spawn: deps.spawn })(argv);
       try {
         const parsed: unknown = JSON.parse(run.output);
         if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          return { ...run, output: JSON.stringify({ ...parsed, autofill, emptyStop, worktreeReap, asksSync }) };
+          return { ...run, output: JSON.stringify({ ...parsed, autofill, emptyStop, worktreeReap, asksSync, strandedRequeue }) };
         }
       } catch { /* the verb's own output stands untouched */ }
       return run;
