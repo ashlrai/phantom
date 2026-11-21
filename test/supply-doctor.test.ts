@@ -100,7 +100,7 @@ describe('self-tick gap hook writes a drop file into the configured drop dir', (
       writeFileSync(join(wt, 'RQ-A', 'BRIDGE_NOTES.md'), '## Remaining gaps\n- Wire the digest into the weekly report\n');
       const report = await runAutofillTick({
         runsDir: runs, apply: true, now: () => NOW, root, entries: [], readOff: async () => false,
-        readLanes: async () => ({ starved: ['claude'], counts: { claude: { running: 0, target: 8, queued: 0 } } }),
+        readLanes: async () => ({ lanes: [{ lane: 'claude', running: 0, target: 8, queued: 0, held: false, remainingPct: 68 }] }),
         fill: async () => ({ error: 'no-target' }),
       });
       expect(report.gaps).toMatchObject({ queued: 1, unknown: false });
