@@ -26,7 +26,7 @@ import { readAgentConversations, type AgentConversations } from '../fleet/agent-
 import { plainAge } from '../fleet/agent-conversation-model.js';
 import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobHold, busWorkFeedOwnerMatcher, busWorkFeedToMatcher,
   readBusWorkFeed, type BusWorkFeedHoldCoverage, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
-import { agentWakeClaimHolderSuffix, busBodyFallbackSummary, busBodySummary, busInboxJobMarker, readAgentInbox, readAgentWakes,
+import { agentWakeClaimHolderSuffix, agentWakeMessageSuffix, busBodyFallbackSummary, busBodySummary, busInboxJobMarker, readAgentInbox, readAgentWakes,
   type AgentWakeRow, type BusEnvelopeLookupJob, type InboxKind } from './bus-unified.js';
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter } from '../fleet/bus-inbox.js';
 import { BUS_PROTOCOL_KEY, BUS_PRIORITIES, isClaimableWork,
@@ -1083,7 +1083,7 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
       `${wakes.scope === 'label' ? ' scope=label' : ''}${wakes.truncated ? '+truncated' : ''}`);
     for (const wake of wakes.wakes) {
       lines.push(`  ${new Date(wake.at).toISOString()} ${wake.id} ${wake.from} -> ${wake.to}` +
-        agentWakeClaimHolderSuffix(wake));
+        agentWakeClaimHolderSuffix(wake) + agentWakeMessageSuffix(wake));
     }
   }
 

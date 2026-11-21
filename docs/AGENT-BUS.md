@@ -333,7 +333,14 @@ each one's citation against the live `work.status` receipts that could have
 generated it: a match annotates the row with `claimHolder` naming the status
 receipt (`statusId`, `jobId`, `status`, optional `detail` — `agents bus show
 <statusId>` resolves it), no reproducing receipt reports `unresolved`, and an
-unreadable bus store reports `unknown`, never a guessed citation.
+unreadable bus store reports `unknown`, never a guessed citation. Every
+other `bus.send` hint carries the triggering envelope's wire id as its own
+`id`, so the same bounded store scan resolves the live message it refers to:
+the row gains `message` — `resolved` with the receipt's summary, priority,
+sender handle, channel and, for claimable work or a `jobId` citation, the
+same `held`/`job` evidence an inbox row carries; `unresolved` when the store
+was read and holds no live envelope with that id; `unknown` when the store
+cannot be read. Triage no longer costs one `agents bus show` per hint.
 
 **Lookup.** `phm agents bus show <id>` resolves one retained envelope by the
 wire id wake hints, `work mine` items and claim operations cite — the third
