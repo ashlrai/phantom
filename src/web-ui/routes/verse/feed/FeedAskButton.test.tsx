@@ -8,6 +8,7 @@ import { setLeaderDraft, subscribeLeaderDraft, takeLeaderDraft } from '../leader
 import { LeaderThreadPane } from '../leader-thread/LeaderThreadPane.js';
 import { resetHomeChoice, setHomeChoice, useHomeView } from '../shell/home-view-store.js';
 import { FeedAskButton } from './FeedAskButton.js';
+import './feed.pane.js';
 import type { FeedItem } from './feed-model.js';
 import './feed.pane.js';
 
