@@ -2,7 +2,8 @@
  * routes/verse/fleet-capacity/FleetCapacityPane.tsx — the Capacity board: how full the lanes ran against their slot
  * targets in the chosen window. A headline and fleet totals, one card per lane (most stalled first), a strip of when
  * the sampler was watching with the launch gaps marked on it, and the worker and leader counts. History comes from
- * GET /api/verse/runs-history; the hold reason, models and lane-truth lines come from their own reads.
+ * GET /api/verse/runs-history; the usage window (GET /api/app/pools), hold reason, models and lane-truth lines come
+ * from their own reads.
  */
 import { laneModelsQuery } from './lane-models-query.js';
 import { laneModelLine, mismatchText, laneModelsHeadline } from './lane-models-model.js';
@@ -22,6 +23,7 @@ import { truthHeadline, verdictText, verdictTone } from './lane-truth-model.js';
 import { ObserveSlice } from '../fleet-observe/ObserveFacts.js';
 import { laneTruthQuery } from './lane-truth-queries.js';
 import { CapacityChart, clock, Facts, LaneCapacityCard } from './LaneCapacityCard.js';
+import { LaneUsage, LaneUsageKey, useLanePools } from './LaneUsage.js';
 
 export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> & Partial<Pick<PaneProps, 'host'>>) {
   const [hours, setHours] = useState<CapacityHours>(24);
@@ -35,6 +37,7 @@ export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> 
   const refetchModels = useRefetch(laneModelsQuery);
   const refreshModels = useRefresh(laneModelsQuery);
   const truth = useQuery(laneTruthQuery, { enabled: active });
+  const pools = useLanePools(active, visible);
   const refetchSnapshot = useRefetch(fleetUsageRunsQuery);
   const refreshSnapshot = useRefresh(fleetUsageRunsQuery);
   const refetchTruth = useRefetch(laneTruthQuery);
@@ -76,7 +79,7 @@ export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> 
       <div className={styles.controls} role="group" aria-label="History window">
         {([6, 24, 72] as const).map((value) => <button type="button" className={styles.button} aria-pressed={hours === value} key={value} onClick={() => setHours(value)}>{value} h</button>)}
       </div>
-      <button type="button" className={styles.button} onClick={() => { refresh(); refreshSnapshot(); refreshTruth(); refreshModels(); }}>Refresh</button>
+      <button type="button" className={styles.button} onClick={() => { refresh(); refreshSnapshot(); refreshTruth(); refreshModels(); pools.refresh(); }}>Refresh</button>
     </header>
     {modelsHeadline ? <p className={styles.muted}>{modelsHeadline}</p> : null}
     {truthHeadlineText ? <p className={styles.truth} data-testid="lane-truth-headline">{truthHeadlineText}</p> : null}
@@ -91,6 +94,7 @@ export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> 
           {stall ? <p className={styles.stall} role="status">{stall}</p> : null}
           <section className={styles.section} aria-labelledby="capacity-lanes"><h3 id="capacity-lanes" className={styles.title}>Lane capacity</h3>
             <p className={styles.muted}>Solid: running · dashed: target · shaded: held · muted band: paused. Breaks indicate missing observations.</p>
+            <LaneUsageKey lanes={lanes.map((lane) => lane.lane)} pools={pools} />
             {lanes.length === 0 ? <p className={styles.muted}>No lanes reported.</p> : <ul className={styles.list}>{lanes.map((lane) => {
               const live = liveLanes.find((item: unknown) => item && typeof item === 'object' && 'lane' in item && item.lane === lane.lane) as Record<string, unknown> | undefined;
               const heldText = live ? laneHeldText({ lane: lane.lane, held: live.held === true, heldReason: typeof live.heldReason === 'string' ? live.heldReason : null }, { resetsAt }) : null;
@@ -99,6 +103,7 @@ export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> 
               const truthRow = truthLanes.find((row) => row.lane === lane.lane);
               const truthLine = truthRow ? verdictText(truthRow) : null;
               return <LaneCapacityCard key={lane.lane} lane={lane} samples={samples} onOpen={() => host?.openPane('fleet-lanes')}>
+                <LaneUsage lane={lane} pools={pools} hours={hours} onOpen={host ? () => host.openPane('fleet-pools') : undefined} />
                 {modelLine ? <p className={styles.muted} data-testid="lane-models">{modelLine}</p> : null}
                 {mismatch ? <p className={styles.truth} data-tone="warning">{mismatch}</p> : null}
                 {heldText ? <p className={styles.muted} data-testid="lane-held">{heldText}</p> : null}
