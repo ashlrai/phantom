@@ -341,6 +341,47 @@ describe('sender-filtered inbox reads', () => {
   });
 });
 
+describe('priority-filtered reads', () => {
+  it('narrows inbox and channel pages to one exact priority band', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'drop everything', priority: 'P0', id: 'dm-p0' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'routine', priority: 'P2', id: 'dm-p2' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'fyi', priority: 'P3', id: 'dm-p3' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'heads up', priority: 'P1', id: 'ch-p1' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'note', priority: 'P2', id: 'ch-p2' }, options);
+
+    const urgent = readAgentInbox('nova', { priority: 'P0' }, options);
+    if (urgent.status !== 'ok') throw new Error(`unexpected ${urgent.status}`);
+    expect(urgent.messages.map(m => m.envelope.id)).toEqual(['dm-p0']);
+    // A channel post addressed to a member channel counts as that agent's mail.
+    expect(readAgentInbox('nova', { priority: 'P1' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'ch-p1' } }] });
+    // --matched counts only the rows the band accepts, and the page still
+    // returns highest priority first inside the filtered set.
+    const counted = readAgentInbox('nova', { priority: 'P2', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(2);
+    expect(counted.messages.map(m => m.envelope.id)).toEqual(['dm-p2', 'ch-p2']);
+    // The band composes with the other page filters.
+    expect(readAgentInbox('nova', { priority: 'P2', from: 'ghost' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    const all = readAgentInbox('nova', {}, options);
+    if (all.status !== 'ok') throw new Error(`unexpected ${all.status}`);
+    expect(all.messages).toHaveLength(5);
+
+    const channel = readAgentChannel('release', { priority: 'P1' }, options);
+    if (channel.status !== 'ok') throw new Error(`unexpected ${channel.status}`);
+    expect(channel.messages.map(m => m.envelope.id)).toEqual(['ch-p1']);
+    expect(readAgentChannel('release', { priority: 'P2' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'ch-p2' } }] });
+    // A band outside P0..P3 refuses closed on both reads.
+    expect(readAgentInbox('nova', { priority: 'P9' as never }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { priority: 'P9' as never }, options)).toMatchObject({ status: 'invalid' });
+  });
+});
+
 describe('envelope lookup by id', () => {
   it('resolves a retained envelope of any kind by its wire id', async () => {
     const options = setup();

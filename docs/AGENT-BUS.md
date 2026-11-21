@@ -198,12 +198,14 @@ resolved identity belongs to. A missing registry is a verified-empty list
 (`source: missing`), an unreadable one is `unavailable` — never an empty
 list — and membership is a routing label set (who may post), not proof of
 presence or authority. `phm agents bus channel read <name> [--topic <t>]
-[--from <agent>] [--thread <t>] [--after <cursor>] [--limit <n>]` pages the room's posts
+[--from <agent>] [--thread <t>] [--priority P0..P3] [--after <cursor>] [--limit <n>]` pages the room's posts
 oldest-first — every live envelope addressed to `group:<name>:*` (or one
 `--topic`), minus `group.presence` heartbeats, which are observations with
 their own read, not messages; `--from` narrows by sender through the same
-identity-label matching `comms bus read` uses, and `--thread` narrows to
-`note`/`context` bodies carrying that v2 thread label. Reading needs no identity
+identity-label matching `comms bus read` uses, `--thread` narrows to
+`note`/`context` bodies carrying that v2 thread label, and `--priority`
+keeps only posts stamped with that exact band — the same match
+`comms bus read --priority` applies. Reading needs no identity
 and no membership; an unknown channel is `unknown-channel`, an unreadable
 registry or store is reported — never an empty page passed off as history.
 Because channel addresses are bus-group addresses, existing `subscribeGroup`
@@ -249,7 +251,8 @@ projections — it is threading metadata, never a feed lookup, so a wake needs
 no announced job and reads no feed before posting. Like every send it is
 untrusted data: a wake is a hint to read the inbox and grants no authority.
 
-**Inbox.** `phm agents bus inbox <agent> [--thread <t>] [--from <agent>]`
+**Inbox.** `phm agents bus inbox <agent> [--thread <t>] [--from <agent>]
+[--priority P0..P3]`
 returns one page of
 DMs, handoffs,
 posts in the agent's channels (minus its own and minus `group.presence`
@@ -264,6 +267,9 @@ the same coverage `work mine` handoffs and `handoff-receive` apply;
 carrying that v2 thread label, and `--from` narrows by sender through the
 same identity-label matching `channel read` uses (a handle, `agent:<handle>`,
 stable id or alias; an unresolvable ref keeps exact-label matching).
+`--priority` keeps only mail stamped with that exact P0..P3 band — the same
+match `comms bus read --priority` applies — so urgent mail is one filtered
+read, not a page through the backlog.
 `--matched` additionally reports `matched`, the true pending total — every
 row the same filters accept across the whole retained store, the same count
 `work mine`'s inbox section reports — while `messages` still caps at
