@@ -474,7 +474,18 @@ section reads one row past the cap so `truncated` is definitive — a full
 window proves mail remains beyond `nextCursor`, a short one proves the scan
 reached the store's end — and `nextCursor` resumes strictly before any
 unshown mail, so `agents bus inbox --after <nextCursor>` continues the page
-without redelivering or skipping. `addressed` marks jobs whose announcement
+without redelivering or skipping. The `mailbox` section is the digest's
+window into the legacy `phm bus` mailbox store (`$ASHLR_HOME/bus-mailbox`,
+the records `phm bus inbox --to <label>` reads and `phm bus ack` clears)
+that the unified bus store never carried: every pending (unacked,
+unexpired) message addressed to any of the agent's labels, merged in the
+mailbox's own priority/acceptance/id drain order, the first 20 shown with
+`matched` the true total and `truncated` definitive. Each item carries the
+envelope `id` `phm bus ack` takes, the `to` label to pass verbatim as
+`--to`, raw `from`, `priority`, `ts`, `expiresAt` and the same scrubbed
+one-line `summary`; an absent store is a verified-empty `ok` and an
+unreadable one reports `unavailable`, never an empty list passed off as
+fact. `addressed` marks jobs whose announcement
 `to` label resolves to the agent's
 identity, and `announced` marks jobs whose `owner` (announcer) label resolves
 to it — the agent posted them and owns their status reports, so the digest
@@ -564,7 +575,11 @@ To move an agent onto the unified bus:
 3. Turn existing `group:<room>:<topic>` rooms into channels by creating a
    channel with the room's name; posts to any topic of that room reach its members.
 4. Drain a `phm bus` mailbox with `phm bus inbox --to <label>` and
-   `phm bus ack`, then send new traffic with `phm agents bus dm`. Copying
+   `phm bus ack`, then send new traffic with `phm agents bus dm`. `work
+   mine`'s `mailbox` section lists the pending rows for every label of the
+   agent's identity (or the literal ref when none resolves) with the `--to`
+   each row needs, so leftover mail is discoverable without knowing which
+   label holds it. Copying
    mailbox records into the store is not supported: it would duplicate ids and
    lose acknowledgment state.
 

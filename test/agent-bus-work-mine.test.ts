@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createAgentChannel, registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
@@ -10,6 +10,7 @@ import { busWorkMineAnnouncedAnnotation, busWorkMineJobAnnotation, formatBusWork
   type BusWorkMineOptions } from '../src/core/agents/bus-work-mine.js';
 import type { BusWorkFeedJob } from '../src/core/agents/bus-work-feed-read.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { createBusMailbox } from '../src/core/fleet/bus-mailbox.js';
 import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
@@ -1405,12 +1406,114 @@ describe('readBusWorkMine', () => {
   });
 });
 
+describe('mailbox section', () => {
+  type Setup = BusWorkMineOptions & { clock: { now: number }; root: string; runsRoot: string };
+
+  /** The legacy `phm bus` mailbox home: the fleet root's parent, as `mailboxHome` defaults it. */
+  function mailbox(options: Setup) {
+    return createBusMailbox(dirname(options.root), options.now);
+  }
+
+  function sendMail(options: Setup, id: string, to: string, changes: Partial<BusEnvelope> = {}): void {
+    const envelope: BusEnvelope = { id, from: 'agent:nova', to, priority: 'P2', ttl: 120_000,
+      body: { text: `legacy note ${id}` }, ...changes };
+    expect(mailbox(options).send(envelope).replayed).toBe(false);
+  }
+
+  it('reports an absent store as verified empty and an unreadable one as unavailable', () => {
+    const options = setup();
+    register(options, 'atlas');
+    const empty = readBusWorkMine('atlas', options);
+    expect(empty.status).toBe('ok');
+    if (empty.status !== 'ok') throw new Error('unreachable');
+    expect(empty.mailbox).toEqual({ status: 'ok', agent: 'atlas', messages: [], matched: 0, truncated: false });
+
+    // A non-directory at the store path is a storage fault, never an empty list.
+    const base = dirname(options.root);
+    writeFileSync(join(base, 'bus-mailbox'), 'not a directory', { mode: 0o600 });
+    const broken = readBusWorkMine('atlas', options);
+    expect(broken.status).toBe('ok');
+    if (broken.status !== 'ok') throw new Error('unreachable');
+    expect(broken.mailbox).toEqual({ status: 'unavailable', reason: 'mailbox-unreadable' });
+  });
+
+  it('lists pending legacy mail under every label of the identity in drain order', () => {
+    const options = setup();
+    expect(registerAgentIdentity({ handle: 'atlas', aliases: ['atlas-alias'] }, options).status).toBe('created');
+    register(options, 'nova');
+    const id = stableAgentId('atlas');
+    sendMail(options, 'm-alias', 'atlas-alias', { priority: 'P1' });
+    sendMail(options, 'm-address', 'agent:atlas');
+    sendMail(options, 'm-bare', 'atlas');
+    sendMail(options, 'm-id', id);
+    sendMail(options, 'm-other', 'agent:nova', { priority: 'P0' });
+    // Acknowledged and expired rows are not pending.
+    sendMail(options, 'm-acked', 'atlas');
+    expect(mailbox(options).ack('m-acked', 'atlas').acknowledged).toBe(true);
+    sendMail(options, 'm-expired', 'atlas', { ttl: 1 });
+    options.clock.now += 10_000;
+
+    for (const ref of ['atlas', 'agent:atlas', 'atlas-alias', id]) {
+      const result = readBusWorkMine(ref, options);
+      expect(result.status).toBe('ok');
+      if (result.status !== 'ok' || result.mailbox.status !== 'ok') throw new Error('unreachable');
+      expect(result.mailbox.matched).toBe(4);
+      expect(result.mailbox.truncated).toBe(false);
+      // P1 alias mail drains before the P2 rows; same priority keeps acceptance order.
+      expect(result.mailbox.messages.map(message => message.id))
+        .toEqual(['m-alias', 'm-address', 'm-bare', 'm-id']);
+      const first = result.mailbox.messages[0]!;
+      expect(first).toMatchObject({ to: 'atlas-alias', from: 'agent:nova', priority: 'P1' });
+      expect(first.ts).toBe(new Date(options.clock.now - 10_000).toISOString());
+      expect(first.expiresAt).toBe(new Date(options.clock.now - 10_000 + 120_000).toISOString());
+      expect(first.summary.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('narrows to the literal ref when the registry is unreadable or the agent is unregistered', () => {
+    const options = setup();
+    expect(registerAgentIdentity({ handle: 'atlas', aliases: ['atlas-alias'] }, options).status).toBe('created');
+    sendMail(options, 'm-address', 'agent:atlas');
+    sendMail(options, 'm-alias', 'atlas-alias');
+    sendMail(options, 'm-bare', 'atlas');
+
+    // Corrupt registry: identity state is unknown, so only the literal ref matches.
+    writeFileSync(join(options.root, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+    const narrowed = readBusWorkMine('agent:atlas', options);
+    expect(narrowed.status).toBe('ok');
+    if (narrowed.status !== 'ok' || narrowed.mailbox.status !== 'ok') throw new Error('unreachable');
+    expect(narrowed.mailbox.matched).toBe(1);
+    expect(narrowed.mailbox.messages[0]).toMatchObject({ id: 'm-address', to: 'agent:atlas' });
+
+    // An unregistered ref likewise matches only its literal label.
+    sendMail(options, 'm-ghost', 'ghost');
+    const literal = readBusWorkMine('ghost', options);
+    expect(literal.status).toBe('ok');
+    if (literal.status !== 'ok' || literal.mailbox.status !== 'ok') throw new Error('unreachable');
+    expect(literal.mailbox.matched).toBe(1);
+    expect(literal.mailbox.messages[0]).toMatchObject({ id: 'm-ghost', to: 'ghost' });
+  });
+
+  it('caps shown mail at twenty with the true matched total', () => {
+    const options = setup();
+    register(options, 'atlas');
+    for (let i = 0; i < 21; i++) sendMail(options, `m-cap-${String(i).padStart(2, '0')}`, 'atlas');
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok' || result.mailbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.mailbox).toMatchObject({ matched: 21, truncated: true });
+    expect(result.mailbox.messages).toHaveLength(20);
+  });
+});
+
 describe('formatBusWorkMine', () => {
   it('renders every section with unknown states spelled out', async () => {
     const options = setup();
     register(options, 'atlas');
     registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
     await announce(options, 'atlas', 'RQ-F-1', ['queue:RQ-F-1']);
+    expect(createBusMailbox(dirname(options.root), options.now).send({ id: 'm-fmt', from: 'agent:nova',
+      to: 'atlas', priority: 'P2', ttl: 120_000, body: { text: 'legacy ping' } }).replayed).toBe(false);
     const result = readBusWorkMine('atlas', options);
     const text = formatBusWorkMine(result).join('\n');
     expect(text).toContain('agent=atlas');
@@ -1427,6 +1530,8 @@ describe('formatBusWorkMine', () => {
     expect(text).toContain('blocked=0 shown=0');
     expect(text).toContain('wakes=0');
     expect(text).toContain('inbox=0');
+    expect(text).toContain('mailbox=1 shown=1');
+    expect(text).toContain('[P2 legacy id=m-fmt from agent:nova to atlas]');
     // A non-ok top-level result renders its status line only.
     expect(formatBusWorkMine({ status: 'invalid', reason: 'invalid-agent' })).toEqual(['invalid: invalid-agent']);
   });
@@ -1468,7 +1573,8 @@ describe('phm agents bus work mine', () => {
       handoffs: { status: 'ok', holds: 'complete', matched: 0, items: [], truncated: false },
       threads: { status: 'ok', source: 'missing', matched: 0, items: [], truncated: false },
       wakes: { status: 'ok', wakes: [] },
-      inbox: { status: 'ok', messages: [], truncated: false } });
+      inbox: { status: 'ok', messages: [], truncated: false },
+      mailbox: { status: 'ok', matched: 0, messages: [], truncated: false } });
   });
 
   it('prints human lines without --json', async () => {

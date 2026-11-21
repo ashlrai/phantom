@@ -1925,9 +1925,9 @@ no execution authority; the token returns only to its acquirer.
 
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
 `phm agents bus work mine [<agent>]`. `readBusWorkMine(agent, options?)`
-(`BusWorkMineOptions`: `root?`, `runsRoot?`, `now?: () => number` frozen once
+(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox}` or `{status:'invalid',
+asOf, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
@@ -2089,6 +2089,22 @@ window proves mail remains beyond `nextCursor`, a short one proves the scan
 reached the store's end — and on overflow the newest scanned row is the one
 dropped, so `nextCursor` resumes strictly before it. A non-ok inbox read
 reports `unknown-agent`/`unavailable`/`retryable`/`invalid` with `reason`.
+`mailbox` is the digest's window into the legacy `phm bus` mailbox store
+(`$ASHLR_HOME/bus-mailbox`, the records `phm bus inbox --to <label>` reads and
+`phm bus ack` clears) that the unified bus store never carried: every pending
+(unacked, unexpired) message addressed to any of the agent's labels, merged in
+the mailbox's own priority/acceptance/id drain order, capped at the first 20
+shown with `matched` the true total and `truncated` definitive. Labels are the
+resolved identity's `agentLabels` set, or the literal ref alone when no
+identity resolves — an unreadable registry or unregistered ref never widens
+the match. Each `BusWorkMineMailboxMessage` carries the envelope `id` (the
+handle `phm bus ack` takes), the `to` label to pass verbatim as `--to`, raw
+`from`, `priority`, `ts`, `expiresAt` and the same scrubbed single-line
+`summary` the inbox section composes. The store home is `mailboxHome`, else
+`dirname(root)` when `root` is set — the fleet root's parent — else
+`ashlrHome()`; an absent store is a verified-empty `ok` (`matched: 0` is
+proven, not fabricated) and an unreadable one reports
+`{status:'unavailable', reason}`.
 `formatBusWorkMine(result)`
 renders the shared human lines — titles and key lists scrubbed, single-lined
 and display-clipped; JSON keeps full values. Exit 0 on a completed read, 2 on

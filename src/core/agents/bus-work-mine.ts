@@ -8,7 +8,8 @@
  * belongs to — in `bus next` order, the conversation threads waiting on its
  * answer, the conversation threads it is waiting on, the blocked conversation
  * threads it is a party to, the wake hints addressed to
- * it and the next page of mail in its inbox. Each section reads the same
+ * it, the next page of mail in its inbox and the pending mail the legacy
+ * `phm bus` mailbox still holds for any of its labels. Each section reads the same
  * projection the dedicated verb
  * serves and keeps its honesty rules: an unreadable store, coordination table,
  * registry or wake queue narrows the match or reports unknown, never an empty
@@ -17,6 +18,7 @@
  * claims, no dispatch.
  */
 import { coordinationRowBlocks, listCoordination } from './claim-store.js';
+import { dirname } from 'node:path';
 import { listBusClaims, type BusClaimsListClaim, type BusClaimsOwnerMatch } from './bus-claims.js';
 import { agentLabels, agentPendingAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity, type AgentRegistry } from './bus-identity.js';
 import { agentName, type AgentMessageKind } from '../fleet/agent-messages.js';
@@ -31,6 +33,7 @@ import { BUS_PROTOCOL_KEY, BUS_PRIORITIES, isClaimableWork,
   type BusPriority } from '../fleet/bus-envelope.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
+import { createBusMailbox } from '../fleet/bus-mailbox.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export interface BusWorkMineOptions {
@@ -38,6 +41,9 @@ export interface BusWorkMineOptions {
   root?: string;
   /** Parent of `bus/wake-queue.jsonl`; default ASHLR_RUNS_DIR or ~/.ashlr-runs. */
   runsRoot?: string;
+  /** ASHLR home owning the legacy `bus-mailbox` store (`$ASHLR_HOME/bus-mailbox`);
+   * default `dirname(root)` when `root` is set — the fleet root's parent — else `ashlrHome()`. */
+  mailboxHome?: string;
   /** Injectable clock, frozen once so every section reads the same instant. */
   now?: () => number;
 }
@@ -142,6 +148,31 @@ export type BusWorkMineInbox =
       /** True only when mail beyond the shown page provably exists. */
       truncated: boolean }
   | { status: 'unknown-agent' | 'unavailable' | 'retryable' | 'invalid'; reason: string };
+
+/** One pending legacy `phm bus` mailbox message addressed to any of the agent's labels. */
+export interface BusWorkMineMailboxMessage {
+  /** Envelope id — the handle `phm bus ack <id> --to <to>` takes. */
+  id: string;
+  /** The agent label the mail is addressed to — pass it verbatim as `--to` to `phm bus inbox`/`ack`. */
+  to: string;
+  /** Raw sender routing label. */
+  from: string;
+  priority: BusPriority;
+  /** ISO of the store acceptance time. */
+  ts: string;
+  /** ISO expiry (acceptance plus TTL); every listed row is unexpired at the frozen instant. */
+  expiresAt: string;
+  /** Scrubbed, single-line body summary, clipped to the digest bound. */
+  summary: string;
+}
+
+export type BusWorkMineMailbox =
+  | { status: 'ok'; agent: string; messages: BusWorkMineMailboxMessage[];
+      /** Every pending legacy-mail row across the agent's labels before the display cap. */
+      matched: number;
+      /** True only when pending rows remain beyond the shown page. */
+      truncated: boolean }
+  | { status: 'unavailable'; reason: string };
 
 /** One live claimable work envelope addressed to the agent, in `bus next` claim order. */
 export interface BusWorkMineNextItem {
@@ -309,13 +340,15 @@ export type BusWorkMineResult =
       next: BusWorkMineNext;
       handoffs: BusWorkMineHandoffs; threads: BusWorkMineThreads; awaiting: BusWorkMineAwaiting;
       blocked: BusWorkMineBlocked;
-      wakes: BusWorkMineWakes; inbox: BusWorkMineInbox }
+      wakes: BusWorkMineWakes; inbox: BusWorkMineInbox; mailbox: BusWorkMineMailbox }
   | { status: 'invalid'; reason: string };
 
 /** Newest open jobs, newest wake hints and next inbox page a digest shows; totals stay honest via `open`/`matched`/`truncated`. */
 const WORK_MINE_JOBS_MAX = 50;
 const WORK_MINE_WAKES_MAX = 20;
 const WORK_MINE_INBOX_MAX = 20;
+/** Pending legacy `phm bus` mailbox rows a digest shows, drain order; `matched` keeps the true total. */
+const WORK_MINE_MAILBOX_MAX = 20;
 /** Claimable envelopes and handoffs a digest shows in claim order; `matched` keeps the true total. */
 const WORK_MINE_NEXT_MAX = 10;
 const WORK_MINE_HANDOFFS_MAX = 20;
@@ -493,6 +526,36 @@ function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number)
       ...(message.held === undefined ? {} : { held: message.held, holder: message.holder ?? null }),
     })),
   };
+}
+
+/**
+ * Pending mail in the legacy `phm bus` mailbox store (`$ASHLR_HOME/bus-mailbox`)
+ * addressed to any of the agent's labels — the records `phm bus inbox --to
+ * <label>` reads and `phm bus ack` clears. The unified bus store never carried
+ * them, so without this section a migrated agent cannot discover leftover
+ * mail. Labels are the resolved identity's `agentLabels` set, or the literal
+ * ref alone when no identity resolves — an unreadable registry or unregistered
+ * ref never widens the match. An absent store is a verified-empty `ok`; an
+ * unreadable one reports `unavailable`, never an empty list passed off as fact.
+ */
+function mailboxSection(agent: string, identity: AgentIdentity | undefined,
+  options: BusWorkMineOptions, nowMs: number): BusWorkMineMailbox {
+  const home = options.mailboxHome ?? (options.root === undefined ? undefined : dirname(options.root));
+  let read: ReturnType<ReturnType<typeof createBusMailbox>['pendingFor']>;
+  try {
+    read = createBusMailbox(home, () => nowMs)
+      .pendingFor(identity === undefined ? [agent] : agentLabels(identity), WORK_MINE_MAILBOX_MAX);
+  } catch {
+    return { status: 'unavailable', reason: 'mailbox-unreadable' };
+  }
+  return { status: 'ok', agent, matched: read.matched, truncated: read.matched > read.messages.length,
+    messages: read.messages.map(row => ({
+      id: row.envelope.id, to: row.envelope.to, from: row.envelope.from,
+      priority: row.envelope.priority, ts: new Date(row.acceptedAt).toISOString(),
+      expiresAt: new Date(row.acceptedAt + row.envelope.ttl).toISOString(),
+      summary: mineField(busBodySummary(row.envelope.body) ?? busBodyFallbackSummary(row.envelope.body),
+        WORK_MINE_SUMMARY_MAX),
+    })) };
 }
 
 /** The claimable body kind an envelope carries: legacy `work` or protocol-v1 `task`. */
@@ -872,8 +935,9 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
     : { status: page.status, reason: page.reason };
 
   const inbox = inboxSection(agent, options, nowMs);
+  const mailbox = mailboxSection(agent, identity, options, nowMs);
 
-  return { status: 'ok', agent: who, asOf, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox };
+  return { status: 'ok', agent: who, asOf, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox };
 }
 
 /** Scrubbed, single-line, clipped display field; '' when nothing readable remains. */
@@ -1038,6 +1102,17 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
       const held = message.held === undefined ? '' :
         ` held=${message.held === null ? 'unknown' : message.held ? 'yes' : 'no'}${message.holder ? ` holder=${message.holder}` : ''}`;
       lines.push(`  [${message.priority} ${where} id=${message.id} from ${from}${held}] ${message.summary}`);
+    }
+  }
+
+  const mailbox = result.mailbox;
+  if (mailbox.status !== 'ok') {
+    lines.push(`mailbox=unknown ${mailbox.status}`);
+  } else {
+    lines.push(`mailbox=${mailbox.matched} shown=${mailbox.messages.length}${mailbox.truncated ? '+truncated' : ''}`);
+    for (const message of mailbox.messages) {
+      lines.push(`  [${message.priority} legacy id=${message.id} from ${message.from} to ${message.to}] ` +
+        `${message.summary} expires=${message.expiresAt}`);
     }
   }
   return lines;

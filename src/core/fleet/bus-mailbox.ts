@@ -85,9 +85,24 @@ const codec: ImmutablePrivateRecordCodec<RecordEntry> = {
     : JSON.stringify(left) === JSON.stringify(right),
 };
 
+/** One pending mailbox message with the store facts `inbox` does not return. */
+export interface BusMailboxPendingMessage {
+  /** The stored envelope; `ttl` is the original acceptance-window TTL, not the remaining budget. */
+  readonly envelope: BusEnvelope;
+  /** Store acceptance time in ms — the message's stable timestamp. */
+  readonly acceptedAt: number;
+}
+
 export interface BusMailbox {
   send(envelope: BusEnvelope): { id: string; replayed: boolean };
   inbox(to: string, limit?: number): { messages: BusEnvelope[]; hasMore: boolean };
+  /**
+   * Pending (unacked, unexpired) mail addressed to ANY of `labels`, merged in
+   * the same priority/acceptance/id order `inbox` applies per label. `matched`
+   * counts every pending row across the labels before `limit`; each row keeps
+   * its own `to` label — the `--to` `inbox`/`ack` take for that message.
+   */
+  pendingFor(labels: readonly string[], limit?: number): { messages: BusMailboxPendingMessage[]; matched: number };
   ack(id: string, to: string): { id: string; acknowledged: true; replayed: boolean };
 }
 
@@ -194,6 +209,30 @@ export function createBusMailbox(
         messages: pending.slice(0, limit).map(r => ({ ...r.envelope, ttl: r.envelope.ttl - (at - r.acceptedAt) })),
         hasMore: pending.length > limit,
       };
+    },
+    pendingFor(labels, limit = 1000) {
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 5000) throw new BusMailboxError('invalid-envelope');
+      const wanted = new Set(labels.filter((label): label is string => typeof label === 'string' && label.length > 0));
+      const records = read();
+      const acks = new Map<string, Set<string>>();
+      for (const record of records) {
+        if (record.kind !== 'ack') continue;
+        let ids = acks.get(record.to);
+        if (ids === undefined) acks.set(record.to, ids = new Set());
+        ids.add(record.id);
+      }
+      const at = now();
+      if (!Number.isSafeInteger(at) || at < 0) throw new BusMailboxError('storage');
+      const pending: BusMailboxPendingMessage[] = [];
+      for (const record of records) {
+        if (record.kind !== 'message' || !wanted.has(record.envelope.to) ||
+          acks.get(record.envelope.to)?.has(record.envelope.id) ||
+          at < record.acceptedAt || at - record.acceptedAt >= record.envelope.ttl) continue;
+        pending.push({ envelope: record.envelope, acceptedAt: record.acceptedAt });
+      }
+      pending.sort((a, b) => a.envelope.priority.localeCompare(b.envelope.priority) ||
+        a.acceptedAt - b.acceptedAt || a.envelope.id.localeCompare(b.envelope.id));
+      return { messages: pending.slice(0, limit), matched: pending.length };
     },
     ack(id, to) {
       validateBusAddress(id); validateBusAddress(to);
