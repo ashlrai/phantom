@@ -31,6 +31,7 @@ const STUCK_LEDGER = 'queue/stuck-jobs.jsonl';
 export interface RunningJob {
   job: string;
   lane: string;
+  repo?: string;
   /** Epoch ms of the start (.dispatched, else the .launch file time); null when unknown. */
   startedMs: number | null;
   /** Epoch ms of the last log write; null when there is no log. */
@@ -116,13 +117,15 @@ export async function readRunningJobs(runsDir: string, laneFilter?: string): Pro
       if (baseKey === null || key === baseKey) continue;
     }
     const line = await smallText(join(runDir, `${job}.line`));
-    const lane = line?.split('\t')[2]?.trim() ?? '';
-    if (!STRAY_ID_PATTERN.test(lane) || (laneFilter && lane !== laneFilter)) continue;
+    const rawLane = line?.split('\t')[2]?.trim() ?? '';
+    const lane = STRAY_ID_PATTERN.test(rawLane) ? rawLane : 'unknown';
+    if (laneFilter && lane !== laneFilter) continue;
+    const repo = line?.split('\t')[1]?.trim() ?? '';
     const dispatched = Number((await smallText(join(runDir, `${job}.dispatched`)))?.trim());
     const launchMs = await mtime(join(runsDir, `${job}.launch`));
     const pidMatch = /\bpid\s+(\d+)\b/.exec((await smallText(join(runsDir, `${job}.launch`))) ?? '');
     jobs.push({
-      job, lane,
+      job, lane, repo: /^[\w./-]{1,120}$/.test(repo) ? scrubSecrets(repo) : 'unknown',
       startedMs: Number.isFinite(dispatched) && dispatched > 0 ? dispatched * 1000 : launchMs,
       logMtimeMs: await mtime(join(runsDir, `${job}.log`)),
       pid: pidMatch ? Number(pidMatch[1]) : null,

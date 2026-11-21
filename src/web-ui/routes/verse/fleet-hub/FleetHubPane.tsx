@@ -6,6 +6,7 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { openDockPane, openFleetWorkspace } from '../dock/dock-store.js';
 import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
 import { parseInboxAt } from '../fleet/interject-ack-model.js';
+import { RunningJobsList } from '../fleet/RunningJobsList.js';
 import { relativeText } from '../ops/ops-runs-model.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { usePanes, type PaneProps } from '../panes/pane-registry.js';
@@ -84,6 +85,7 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
         <span className={styles.count}>Next: {row.unblock}</span>
       </li>)}</ul>
     </section> : null}
+    <RunningJobsList enabled={visible && sectionVisible && documentVisible} />
     <button type="button" className={styles.primary} onClick={() => openDockPane('company')}>Company overview</button>
     <button type="button" className={styles.primary} disabled={workspaceIds.length === 0} onClick={() => openFleetWorkspace(workspaceIds)}>Open fleet workspace</button>
     <button type="button" className={styles.secondary} disabled={presentIds.length === 0} onClick={() => openFleetWorkspace(presentIds)}>Open all fleet panes</button>
