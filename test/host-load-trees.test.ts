@@ -19,7 +19,7 @@ describe('attributeProcessTrees', () => {
       row(13, 10, 20, 'vitest run'), row(14, 13, 5, 'node child'),
     ], [job('one', 10)]);
     expect(by(trees, 'job one')).toEqual({
-      name: 'job one', fleet: true, cpuPercent: 227, memoryMb: 5, descendants: 4,
+      name: 'job one', fleet: true, cpuPercent: 227, memoryMb: 5, descendants: 4, processes: 5,
       topCommands: [{ command: 'tsgo', cpuPercent: 150 }, { command: 'npm (typecheck)', cpuPercent: 50 }, { command: 'vitest', cpuPercent: 20 }],
     });
     expect(trees).toMatchObject({ fleetCpuPercent: 227, totalCpuPercent: 228, fleetShare: 0.996 });

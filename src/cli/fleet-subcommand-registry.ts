@@ -195,6 +195,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'heartbeat': () => import('./fleet-heartbeat.js'),
   'held': () => import('./fleet-held.js'),
   'hold-check': () => import('./fleet-hold-check.js'),
+  'hostload': () => import('./fleet-hostload.js'),
   'ideation': () => import('./fleet-ideation.js'),
   'ideation-status': () => import('./fleet-ideation-status.js'),
   'idle-lanes': () => import('./fleet-idle-lanes.js'),
