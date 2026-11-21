@@ -1,10 +1,10 @@
 /**
  * core/fleet/friction.ts — the dispatch→merge friction ledger (RQ-FRICTION-2).
- * `phm friction` mines ~/.ashlr-runs read-only — jobs.jsonl finishes, the
- * dispatch event log, ready.tsv rows, guardian red-main state, lane slots and
- * the manual-override files — folds operator annotations kept in
- * friction/ledger.jsonl, and scores each recurring drag as
- *   delegation unlocked × 7d frequency × blast radius / cost.
+ * `phm friction` mines ~/.ashlr-runs read-only — jobs.jsonl finishes, backoff
+ * holds and adaptive-concurrency cap sheds, the dispatch event log, ready.tsv
+ * rows, guardian red-main state, lane slots and the manual-override files —
+ * folds operator annotations kept in friction/ledger.jsonl, and scores each
+ * recurring drag as delegation unlocked × 7d frequency × blast radius / cost.
  * An unread source leaves its signals unknown (null), never zero. Evidence
  * stays runs-dir-relative and secret-scrubbed.
  */
@@ -74,7 +74,11 @@ const CATALOG: Record<string, { title: string } & Knobs> = {
   'manual-interventions': { title: 'Holds and overrides a human placed by hand', owner: 'masbot', unlock: 3, blast: 1, cost: 2, primary: 'manual_holds' },
   'wrong-route': { title: 'Jobs routed to the wrong account or tool and moved back', owner: 'router', unlock: 2, blast: 2, cost: 2, primary: 'route_moves' },
   'holds': { title: 'Lane holds and parked rows blocking the queue', owner: 'fleet', unlock: 2, blast: 3, cost: 2, primary: 'hold_events' },
+  'concurrency-throttle': { title: 'Fleet concurrency cap shedding sessions under host pressure', owner: 'fleet', unlock: 2, blast: 3, cost: 2, primary: 'backoffs' },
 };
+
+/** dispatchd.concurrency.v1 zone names; only 'danger' zones shed the cap. */
+const CONC_DANGER_ZONES = ['load', 'memory_pressure', 'mem_free', 'swap', 'disk', 'procs', 'fork', 'rate_limit'] as const;
 
 const cut = (s: string, n = 90): string => scrubSecrets(s.replace(/\s+/g, ' ').trim()).slice(0, n);
 /** Sum nullable counts; null only when every term is unknown. */
@@ -207,12 +211,13 @@ export function mineFriction(input: FrictionInput): FrictionReport {
   const evidence: Record<string, string[]> = Object.fromEntries(Object.keys(CATALOG).map(id => [id, []]));
   const ev = (id: string, text: string) => { const list = evidence[id]!; if (list.length < 3 && !list.includes(text)) list.push(cut(text)); };
 
-  // ── jobs.jsonl: finishes, backoff holds, enqueues, launches ──────────────
+  // ── jobs.jsonl: finishes, backoff holds, enqueues, launches, concurrency sheds ──
   const zero = z(input.jobs);
   let empty = zero, refused = zero, failed = zero, authHolds = zero, quotaSkips = zero, authSkips = zero;
   let anomalousDiffs = zero;
   let badTierEnqueue = zero, precheckParks = zero, quotaHoldJobs = zero, quotaFinish = zero;
-  let deferredEvents = zero;
+  let deferredEvents = zero, concBackoffs = zero, concRaises = zero;
+  const concDanger: Record<string, number | null> = Object.fromEntries(CONC_DANGER_ZONES.map(z => [z, zero]));
   const deferredJobs = new Set<string>();
   const enqueued = new Map<string, number>(); const launched = new Map<string, number>();
   const laneAuthHold = new Map<string, number>(); const laneFinish = new Map<string, number>();
@@ -261,6 +266,22 @@ export function mineFriction(input: FrictionInput): FrictionReport {
       if (r.job) deferredJobs.add(r.job);
       const owner = typeof r.raw.repeatOf === 'string' && JID.test(r.raw.repeatOf) ? r.raw.repeatOf : null;
       ev('deferred-requests', `jobs.jsonl dispatch_deferred job=${r.job ?? 'unknown'}${owner ? ` repeatOf=${owner}` : ''}`);
+    }
+    if (r.event === 'concurrency') {
+      const from = r.raw.from, to = r.raw.to;
+      if (typeof from === 'number' && Number.isFinite(from) && typeof to === 'number' && Number.isFinite(to) && from !== to) {
+        const reason = typeof r.raw.reason === 'string' && r.raw.reason ? ` ${cut(r.raw.reason, 60)}` : '';
+        if (to < from) {
+          concBackoffs = (concBackoffs ?? 0) + 1;
+          ev('concurrency-throttle', `jobs.jsonl concurrency ${from}->${to}${reason}`);
+          const zones = r.raw.zones;
+          if (zones !== null && typeof zones === 'object' && !Array.isArray(zones)) {
+            for (const zone of CONC_DANGER_ZONES) {
+              if ((zones as Record<string, unknown>)[zone] === 'danger') concDanger[zone] = (concDanger[zone] ?? 0) + 1;
+            }
+          }
+        } else concRaises = (concRaises ?? 0) + 1;
+      }
     }
   }
   // A re-login is a nonempty finish on a lane after its newest auth hold.
@@ -399,6 +420,10 @@ export function mineFriction(input: FrictionInput): FrictionReport {
       hold_events: sum([counts.holds, counts.parked, precheckParks]),
       lanes_held: lanesHeld, parked_rows: parkedRows, parked_events: counts.parked,
       unholds: counts.unholds, precheck_parks: precheckParks,
+    },
+    'concurrency-throttle': {
+      backoffs: concBackoffs, raises: concRaises,
+      ...Object.fromEntries(CONC_DANGER_ZONES.map(zone => [`danger_${zone}`, concDanger[zone]])),
     },
   };
   const items: FrictionItem[] = Object.entries(CATALOG).map(([id, spec]) => {
