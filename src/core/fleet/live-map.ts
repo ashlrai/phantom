@@ -65,6 +65,8 @@ export interface LiveMapNode {
   repo?: string | null;
   state?: MapState;
 }
+/** A standing planner (executor, Core orchestrator, main guardian, comms) from `phm org`; the org view groups them as the guardian and loops branches. */
+export interface LiveMapPlanner { id: string; label: string; state: string; doing: string }
 export interface LiveMapEdge {
   id: string;
   kind: LiveMapEdgeKind;
@@ -91,6 +93,8 @@ export interface FleetLiveMap {
   unmappedMessages: number | null;
   /** Plain words for every fact the map could not show. */
   gaps: string[];
+  /** Planners with their one-word state. Absent from older servers, and when the org read failed. */
+  planners?: LiveMapPlanner[];
   /** Where each org node sits in 3D, grouped by who it reports to: the positions the 3D map draws. Absent from older servers. */
   orgLayout?: FleetOrgLayout3D;
   /** Set only when the map was narrowed (`phm map --lane/--repo/--state`): the filters and how many of the jobs matched. */
@@ -208,6 +212,7 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
   const sortedNodes = [...nodes.values()].sort((a, b) => order(a.kind) - order(b.kind)
     // Lanes and computers keep their source order (fixed lane order, this computer first); jobs and resources sort by id.
     || (a.kind === 'job' || a.kind === 'resource' ? cmp(a.id, b.id) : insertion.indexOf(a.id) - insertion.indexOf(b.id)));
+  const planners = tree?.planners?.map(({ id, label, state, doing }): LiveMapPlanner => ({ id, label, state, doing }));
   const sortedEdges = [...edges.values()].sort((a, b) => EDGE_ORDER.indexOf(a.kind) - EDGE_ORDER.indexOf(b.kind) || cmp(a.id, b.id));
   const count = (kind: LiveMapNodeKind) => sortedNodes.filter(row => row.kind === kind).length;
   return {
@@ -220,7 +225,8 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
       computers: computers ? 'available' : 'unknown', resources: usage ? 'available' : 'unknown', messages: messageSource,
     },
     unmappedMessages: unmapped, gaps,
-    orgLayout: orgLayoutOf({ generatedAt: new Date(now).toISOString(), nodes: sortedNodes, edges: sortedEdges }),
+    ...(planners ? { planners } : {}),
+    orgLayout: orgLayoutOf({ generatedAt: new Date(now).toISOString(), nodes: sortedNodes, edges: sortedEdges, planners }),
   };
 }
 

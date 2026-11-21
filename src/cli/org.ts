@@ -10,6 +10,8 @@ export const ORG_USAGE = `Usage: phm org [--json] [--text] [--minutes N]
                                 Every node has a provider, a model, a state (running, idle, held, done, unknown) and what it
                                 is doing in plain words. Lanes add running, target, queued and pool usage. A job whose
                                 publish record has a RESULT line is done, not running.
+                                JSON adds "groups": the Map's "By org" tree (fleet.org-groups.v1: leader, lanes, jobs, Guardian,
+                                Loops, unassigned), or null when the live map could not be read.
                                 JSON is the default (--json says so explicitly); --text prints it for people.
                                 --minutes N sets the message window (1..1440, default 60).
                                 A fact no source reported is null in JSON and "unknown" in text, never 0.
@@ -35,7 +37,12 @@ async function liveOrg(args: string[]): Promise<number> {
     import('../core/verse/fleet-org-map-api.js'), import('../core/fleet/org-map.js'), import('../core/fleet/org-tree.js'), import('../core/util/public-json.js')]);
   // Sanitizing keeps the shape; it only rewrites home paths and secret-shaped strings.
   const tree = sanitizePublicJson((await readFleetOrgMap(mapWindowMinutes(at < 0 ? undefined : args[at + 1]))).tree) as FleetOrgTree;
-  console.log(asText ? renderOrgTreeText(tree) : JSON.stringify(tree, null, 2));
+  if (asText) { console.log(renderOrgTreeText(tree)); return 0; }
+  // `groups` is the tree the Map's "By org" view draws (fleet.org-groups.v1: leader, lanes, jobs, guardian, loops, unassigned).
+  // An unreadable live map is null, not an empty tree, and does not fail the rest.
+  const { readFleetOrgGroups } = await import('../core/verse/fleet-org-groups-api.js');
+  const groups = await readFleetOrgGroups().then(value => sanitizePublicJson(value), () => null);
+  console.log(JSON.stringify({ ...tree, groups }, null, 2));
   return 0;
 }
 

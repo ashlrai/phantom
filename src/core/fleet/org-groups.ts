@@ -7,13 +7,15 @@
  *  - a node with no known parent goes under a group named "unassigned", never dropped or guessed;
  *  - a repeated id keeps its first row and is listed in `duplicates`;
  *  - computers and pools are infrastructure, not members of the org, so they are left out.
+ * - the guardian and the other standing planners (executor, Core orchestrator, comms; "loops") are
+ *    their own branches under the leader, from `map.planners` when the server sent it;
  * Counts add up the leaves below a node (a lane with no jobs counts as itself). A state no source
  * reported counts as `unknown`, never as idle.
  */
-import type { FleetLiveMap, LiveMapNode } from './live-map.js';
+import type { FleetLiveMap, LiveMapNode, LiveMapPlanner } from './live-map.js';
 import type { LaneHealth } from './lane-badge.js';
 
-export type OrgGroupRole = 'leader' | 'group' | 'lane' | 'job';
+export type OrgGroupRole = 'leader' | 'group' | 'lane' | 'job' | 'planner';
 export interface OrgGroupCounts { running: number; queued: number; idle: number; unknown: number }
 export interface OrgGroupNode {
   id: string; role: OrgGroupRole; label: string;
@@ -53,6 +55,10 @@ export interface FleetOrgGroups {
 }
 
 export const UNASSIGNED_GROUP = 'group:unassigned';
+export const GUARDIAN_GROUP = 'group:guardian';
+export const LOOPS_GROUP = 'group:loops';
+/** Branches that hold planners; their counts stay out of the leader's, which count jobs. */
+export const PLANNER_GROUPS: ReadonlySet<string> = new Set([GUARDIAN_GROUP, LOOPS_GROUP]);
 const ROLES: Partial<Record<LiveMapNode['kind'], OrgGroupRole>> = { leader: 'leader', lane: 'lane', job: 'job' };
 const empty = (): OrgGroupCounts => ({ running: 0, queued: 0, idle: 0, unknown: 0 });
 
@@ -64,7 +70,7 @@ export function orgGroupBucket(status: string): keyof OrgGroupCounts {
   return 'unknown';
 }
 
-export function fleetOrgGroups(map: Pick<FleetLiveMap, 'generatedAt' | 'nodes' | 'edges'>): FleetOrgGroups {
+export function fleetOrgGroups(map: Pick<FleetLiveMap, 'generatedAt' | 'nodes' | 'edges' | 'planners'>): FleetOrgGroups {
   const rows = new Map<string, LiveMapNode>();
   const duplicates: string[] = [];
   for (const node of map.nodes) {
@@ -102,6 +108,18 @@ export function fleetOrgGroups(map: Pick<FleetLiveMap, 'generatedAt' | 'nodes' |
     if (node.kind === 'leader') continue;
     make(node.id, ROLES[node.kind]!, node.label, parentOf(node.id));
   }
+  // The guardian is its own branch; the other standing planners share "loops". A branch exists only when it has a planner.
+  const planners = new Map<string, LiveMapPlanner>();
+  // Guardian first, so the branch order does not depend on the order the server listed planners in.
+  for (const planner of [...map.planners ?? []].sort((a, b) => Number(b.id === 'guardian') - Number(a.id === 'guardian'))) {
+    const id = `planner:${planner.id}`;
+    if (planners.has(id)) continue;
+    planners.set(id, planner);
+    const group = planner.id === 'guardian' ? GUARDIAN_GROUP : LOOPS_GROUP;
+    if (!made.has(group)) make(group, 'group', group === GUARDIAN_GROUP ? 'Guardian' : 'Loops', root);
+    const row = make(id, 'planner', planner.label, group);
+    row.status = planner.state;
+  }
   if ([...made.values()].some(node => node.parent === UNASSIGNED_GROUP)) make(UNASSIGNED_GROUP, 'group', 'unassigned', root);
   for (const node of made.values()) if (node.parent !== null) made.get(node.parent)!.children.push(node.id);
 
@@ -110,9 +128,10 @@ export function fleetOrgGroups(map: Pick<FleetLiveMap, 'generatedAt' | 'nodes' |
     ordered.push(node);
     for (const id of node.children) {
       const sub = walk(made.get(id)!);
+      if (node.role === 'leader' && PLANNER_GROUPS.has(id)) continue;
       for (const key of Object.keys(sub) as (keyof OrgGroupCounts)[]) node.counts[key] += sub[key];
     }
-    if (!node.children.length && node.role !== 'leader' && node.role !== 'group') node.counts[orgGroupBucket(rows.get(node.id)!.status)] += 1;
+    if (!node.children.length && node.role !== 'leader' && node.role !== 'group') node.counts[orgGroupBucket(planners.has(node.id) ? planners.get(node.id)!.state : rows.get(node.id)!.status)] += 1;
     return node.counts;
   };
   walk(made.get(root)!);
