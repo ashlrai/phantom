@@ -34,6 +34,12 @@ const jobs = [
   J({ event: 'dispatch_deferred', job: 'RQ-D1', repo: 'phantom', reason: 'duplicate-request', repeatOf: 'RQ-A', ts: iso(2) }),
   J({ event: 'dispatch_deferred', job: 'RQ-D2', repo: 'phantom', reason: 'duplicate-request', repeatOf: 'RQ-B', ts: iso(1) }),
   J({ event: 'dispatch_deferred', job: 'RQ-OLD', repo: 'phantom', reason: 'duplicate-request', repeatOf: 'RQ-A', ts: iso(200) }),
+  J({ event: 'recut_admission', job: 'RQ-R1', repo: 'phantom', action: 'defer', reason: 'recut-in-flight', repeatOf: 'RQ-PHX-RECUT1L1', targetPr: 1, headSha: 'a'.repeat(40), ts: iso(3) }),
+  J({ event: 'recut_admission', job: 'RQ-R1', repo: 'phantom', action: 'defer', reason: 'recut-in-flight', repeatOf: 'RQ-PHX-RECUT1L1', ts: iso(2) }),
+  J({ event: 'recut_admission', job: 'RQ-R2', repo: 'phantom', action: 'defer', reason: 'recut-in-flight', repeatOf: 'RQ-PHX-RECUT2L1', ts: iso(1) }),
+  J({ event: 'recut_admission', job: 'RQ-R3', repo: 'phantom', action: 'skip', reason: 'recut-already-merged', repeatOf: 'RQ-PHX-RECUT3L1', ts: iso(1) }),
+  J({ event: 'recut_admission', job: 'RQ-R4', repo: 'phantom', action: 'ready', reason: 'recut-no-current-coverage', ts: iso(1) }),
+  J({ event: 'recut_admission', job: 'RQ-R5', repo: 'phantom', action: 'defer', reason: 'recut-in-flight', repeatOf: 'RQ-PHX-RECUT9L9', ts: iso(200) }),
 ].join('\n');
 const events = [
   `${local(15)} LAUNCH_DEFERRED RQ-1 PAUSED (requeued)`,
@@ -73,8 +79,9 @@ describe('phm friction miners', () => {
     expect(item(r, 'manual-interventions').signals).toMatchObject({ manual_holds: 1, budget_overrides: 1, kept_jobs: 2 });
     expect(item(r, 'wrong-route').signals).toMatchObject({ route_moves: 1, route_holds: 0 });
     expect(item(r, 'holds').signals).toMatchObject({ hold_events: 4, lanes_held: 2, parked_rows: 1, precheck_parks: 1 });
-    expect(item(r, 'deferred-requests').signals).toMatchObject({ deferred_jobs: 2, deferrals: 3 });
+    expect(item(r, 'deferred-requests').signals).toMatchObject({ deferred_jobs: 4, deferrals: 3, recut_deferrals: 3, recut_deferred_jobs: 2 });
     expect(item(r, 'deferred-requests').evidence[0]).toContain('dispatch_deferred');
+    expect(item(r, 'deferred-requests').evidence.join(' ')).toContain('recut_admission job=RQ-R1 repeatOf=RQ-PHX-RECUT1L1');
     expect(item(r, 'empty-finishes').evidence[0]).toContain('jobs.jsonl');
     expect(item(r, 'empty-finishes').score).toBe(13.5);  // 3 unlock x 3 bad x 3 blast / 2 cost
     expect(r.items[0]!.score ?? -1).toBeGreaterThanOrEqual(r.items.at(-1)!.score ?? -1);
@@ -111,6 +118,23 @@ describe('phm friction miners', () => {
     expect(d.evidence.join(' ')).not.toContain('bad/owner');
     expect(item(mineFriction({ now: NOW }), 'deferred-requests').signals.deferred_jobs).toBeNull();
     expect(item(fixture({ jobs: '' }), 'deferred-requests').signals).toMatchObject({ deferred_jobs: 0, deferrals: 0 });
+  });
+  it('counts recut_admission defers as deferred jobs and ignores other actions', () => {
+    const rows = [
+      J({ event: 'recut_admission', job: 'RQ-R1', repo: 'phantom', action: 'defer', reason: 'recut-in-flight', repeatOf: 'RQ-PHX-RECUT1L1', ts: iso(2) }),
+      J({ event: 'recut_admission', job: 'RQ-R1', repo: 'phantom', action: 'Defer', repeatOf: 'RQ-PHX-RECUT1L1', ts: iso(1) }),
+      J({ event: 'recut_admission', job: 'RQ-R2', repo: 'phantom', action: 'skip', reason: 'recut-already-merged', repeatOf: 'RQ-PHX-RECUT2L1', ts: iso(1) }),
+      J({ event: 'recut_admission', job: 'RQ-R3', repo: 'phantom', action: 'ready', reason: 'recut-no-current-coverage', ts: iso(1) }),
+      J({ event: 'recut_admission', repo: 'phantom', action: 'defer', repeatOf: 'RQ-PHX-RECUT4L1', ts: iso(1) }),
+      J({ event: 'recut_admission', job: 'RQ-R5', repo: 'phantom', action: 'defer', repeatOf: 'bad/owner', ts: iso(0.5) }),
+    ].join('\n');
+    const d = item(mineFriction({ jobs: rows, now: NOW }), 'deferred-requests');
+    expect(d.signals).toMatchObject({ deferred_jobs: 2, deferrals: 0, recut_deferrals: 4, recut_deferred_jobs: 2 });
+    expect(d.evidence.join(' ')).not.toContain('bad/owner');
+    const none = item(mineFriction({ now: NOW }), 'deferred-requests');
+    expect(none.signals).toMatchObject({ recut_deferrals: null, recut_deferred_jobs: null });
+    const empty = item(fixture({ jobs: '' }), 'deferred-requests');
+    expect(empty.signals).toMatchObject({ recut_deferrals: 0, recut_deferred_jobs: 0 });
   });
   it('counts adaptive-concurrency cap sheds and the danger zones behind them', () => {
     const rows = [
