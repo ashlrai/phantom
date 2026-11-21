@@ -206,8 +206,10 @@ ask a maintainer to approve workflow runs for a first-time contributor.
 and the fast gate never skips tests silently:
 
 - **Docs-only diff** (every path is under `docs/` or ends in `.md`):
-  `test/docs-repo-links.test.ts` plus each test whose source names a changed
-  file, up to 25. If none names one, it runs the fallback set.
+  `test/docs-repo-links.test.ts` always runs, plus each test whose source
+  names a changed file by its path or its bare file name, even in a comment,
+  up to 25 in total. A page no test names runs only the link suite; a
+  docs-only diff never takes the fallback set below.
 - **Code diff**: changed test files and a few tests named by path (below)
   always run; tests whose name matches a changed file and tests that import a
   changed module directly fill the rest, up to 25 files in total. Named tests:
