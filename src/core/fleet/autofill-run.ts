@@ -215,6 +215,8 @@ export interface AutofillTickOptions {
   readOff?: (runsDir: string) => Promise<boolean | null>;
   /** Gap harvest seam; defaults to `phm jobs gaps --propose` (readJobGaps with propose). */
   harvestGaps?: (o: { runsDir: string; root: string }) => Promise<JobGapsReport>;
+  /** Newest queued-gap time in ms (null when none); defaults to the gap proposal record. */
+  lastGapQueuedMs?: (runsDir: string, nowMs: number) => Promise<number | null>;
   /** Fill seam; defaults to runQueueAutofill. */
   fill?: (o: RunAutofillOptions) => Promise<QueueAutofillReport | { error: 'no-target' }>;
 }
@@ -230,6 +232,37 @@ export interface AutofillTickReport {
   lanes?: AutofillLaneRow[];
   /** The gap harvest: gaps from no-change jobs, queued as drop jobs. null when it did not run (dry run, autofill off, no starved lane) or failed. Added to v1 as an optional field. */
   gaps?: { candidates: number; queued: number; skipped: number; unknown: boolean } | null;
+  /** Why the gap harvest did not run (or ran and queued nothing); null when it ran and queued something. */
+  gapsNote?: string | null;
+}
+
+/** The gap harvest queues at most once in this long; a tick inside the window records how long ago. */
+export const GAP_HARVEST_MIN_GAP_MS = 10 * 60_000;
+
+async function harvestStep(o: AutofillTickOptions, nowMs: number, off: boolean | null): Promise<Pick<AutofillTickReport, 'gaps' | 'gapsNote'>> {
+  const none = (gapsNote: string) => ({ gaps: null, gapsNote });
+  if (!o.apply) return none('dry run: the gap harvest only runs with apply');
+  if (off === true) return none('autofill is off, so no gap harvest');
+  if (off === null) return none('autofill state unknown, so no gap harvest');
+  try {
+    const last = await (o.lastGapQueuedMs ?? defaultLastGapQueued)(o.runsDir, nowMs);
+    if (last !== null && nowMs - last < GAP_HARVEST_MIN_GAP_MS) return none(`ran ${Math.max(1, Math.round((nowMs - last) / 60_000))} min ago (waits ${GAP_HARVEST_MIN_GAP_MS / 60_000} min)`);
+    const harvest = o.harvestGaps ?? (async (d: { runsDir: string; root: string }) => (await import('./job-gaps.js')).readJobGaps(24, { propose: true, runsDir: d.runsDir, repoDir: d.root, now: nowMs }));
+    const gaps = await harvest({ runsDir: o.runsDir, root: o.root });
+    const proposed = gaps.proposed ?? [];
+    const queued = proposed.filter(p => p.queued).length;
+    const note = gaps.candidates.length === 0
+      ? (gaps.known ? 'no new gaps found' : `no gap source readable: ${gaps.unknownSources.join(', ') || 'unknown'}`.slice(0, 120))
+      : queued === 0 ? `${gaps.candidates.length} gaps found, none queued: ${proposed.find(p => p.skipped)?.skipped ?? 'already known'}`.slice(0, 120) : null;
+    return { gaps: { candidates: gaps.candidates.length, queued, skipped: proposed.length - queued, unknown: !gaps.known }, gapsNote: note };
+  } catch (error) { return none(`the gap harvest failed: ${error instanceof Error ? error.message.slice(0, 80) : 'unknown error'}`); }
+}
+
+async function defaultLastGapQueued(runsDir: string, nowMs: number): Promise<number | null> {
+  const read = await (await import('./gap-proposal-record.js')).readGapProposals(runsDir, nowMs);
+  if (read.state !== 'known') return null;
+  const times = read.proposals.map(p => Date.parse(p.at)).filter(Number.isFinite);
+  return times.length ? Math.max(...times) : null;
 }
 
 export interface AutofillLaneRow { lane: string; starved: boolean; fed: number; why: string }
@@ -242,7 +275,11 @@ export function autofillLaneLines(rows: readonly AutofillLaneRow[]): string[] {
 /** One pass: for each starved lane, fill it up to the hourly cap, unless autofill is off. */
 export async function runAutofillTick(o: AutofillTickOptions): Promise<AutofillTickReport> {
   const nowMs = o.now();
-  const report: AutofillTickReport = { schema: AUTOFILL_TICK_SCHEMA, ts: new Date(nowMs).toISOString(), mode: o.apply ? 'apply' : 'dry-run', reason: null, runs: [] };
+  const report: AutofillTickReport = { schema: AUTOFILL_TICK_SCHEMA, ts: new Date(nowMs).toISOString(), mode: o.apply ? 'apply' : 'dry-run', reason: null, runs: [], gaps: null, gapsNote: null };
+  const off = await (o.readOff ?? readAutofillOff)(o.runsDir);
+  // The self-supply step runs on every apply tick (never per lane, and whether or not a lane is starved).
+  // When it does not run or finds nothing, gapsNote says exactly why.
+  Object.assign(report, await harvestStep(o, nowMs, off));
   const view = await o.readLanes().catch(() => null);
   if (view === null) return { ...report, reason: 'Lane snapshot is unknown.' };
   const verdicts = judgeLanes(view.lanes.filter(f => LANE_NAME.test(f.lane)));
@@ -260,20 +297,9 @@ export async function runAutofillTick(o: AutofillTickOptions): Promise<AutofillT
     return { ...report, lanes: rows(), reason: why ? `No lane is starved: ${why}.` : 'No lane is starved.' };
   }
 
-  const off = await (o.readOff ?? readAutofillOff)(o.runsDir);
   const history = readAutofillEvents(o.runsDir);
   const use = hourlyUse(history, nowMs);
   const fill = o.fill ?? runQueueAutofill;
-  // The self-supply step: once per tick (never per lane), only when a lane is starved, applying, and autofill is on.
-  report.gaps = null;
-  if (o.apply && off === false) {
-    try {
-      const harvest = o.harvestGaps ?? (async (d: { runsDir: string; root: string }) => (await import('./job-gaps.js')).readJobGaps(24, { propose: true, runsDir: d.runsDir, repoDir: d.root, now: nowMs }));
-      const gaps = await harvest({ runsDir: o.runsDir, root: o.root });
-      const proposed = gaps.proposed ?? [];
-      report.gaps = { candidates: gaps.candidates.length, queued: proposed.filter(p => p.queued).length, skipped: proposed.filter(p => !p.queued).length, unknown: !gaps.known };
-    } catch { report.gaps = null; }
-  }
   for (const lane of lanes) {
     const run = (drafted: number, applied: number, skipped: number, reason: string): AutofillEvent =>
       ({ schema: AUTOFILL_EVENT_SCHEMA, ts: new Date(nowMs).toISOString(), lane, drafted, applied, skipped, reason });

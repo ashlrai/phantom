@@ -25,6 +25,11 @@ const readJson = (rel: string): any => JSON.parse(readFileSync(join(runs, rel), 
 const lines = (): any[] => readFileSync(join(runs, SELF_TICK_HISTORY), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
 
 describe('self-tick run record', () => {
+  it('a gap note in the report is the skip reason', () => {
+    const hooks = hooksFromPlannerReport({ autofill: { runs: [], gaps: null, gapsNote: 'ran 4 min ago (waits 10 min)' } });
+    expect(hooks[1]).toEqual({ hook: 'gaps', state: 'skipped', items: null, count: null, note: 'ran 4 min ago (waits 10 min)' });
+  });
+
   it('an apply run writes the last record and one history line with hook counts', async () => {
     await runSelfTick({ apply: true, runsDir: runs, now: () => NOW, steps: fakeSteps() });
     const last = readJson(SELF_TICK_LAST);
@@ -41,7 +46,7 @@ describe('self-tick run record', () => {
 
   it('does not invent a gap candidate count from a queued-only legacy report', () => {
     const hooks = hooksFromPlannerReport({ autofill: { runs: [], gaps: { queued: 2 } } });
-    expect(hooks[1]).toEqual({ hook: 'gaps', state: 'skipped', items: null, count: null, note: 'the gap hook did not run' });
+    expect(hooks[1]).toEqual({ hook: 'gaps', state: 'skipped', items: null, count: null, note: 'no gap note in this report (older build)' });
   });
 
   it('a dry run is marked dry-run and its hooks read skipped, never zero', async () => {
