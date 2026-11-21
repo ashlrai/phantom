@@ -235,9 +235,24 @@ the chart says so. Above it a row of figures gives launched, published, merged,
 the share of finished jobs that changed nothing and the median time to merge,
 each over a line of its own hours, with the busiest hour named. Under the two
 hourly charts each lane has a card: the provider's mark, its merged count, a bar
-against the lane that merged most, its merges hour by hour and its launched,
-published, merge time and changed-nothing readings. A figure the report does
-not hold reads unknown and has no line under it.
+against the lane that merged most, a row of bars for the jobs it launched
+across the window and its launched, published, merge time and changed-nothing
+readings. A figure the report does not hold reads unknown and has no line
+under it.
+
+Under the figures the fleet's own hours are drawn as the same row of bars: a
+bar per hour, as tall as the jobs launched in it, with a mark under each bar
+that had a PR merged. Over 7 days a bar covers 7 hours, as on the Models board.
+Lane bars are drawn against the busiest bar on any lane, so the cards compare.
+These rows are one reading cursor. Point at a bar, or focus a row and press
+Left, Right, Home or End, and that stretch of time is held on the fleet row and
+on every lane card at once: the figures above become that bar's own counts, the
+line under the fleet row says when it was and what happened in it, and each
+lane card says what that lane launched, published and merged. The median is
+kept per hour only, so on a 7 hour bar that figure stays the window's and says
+so. Esc, moving the pointer off the bars or moving focus off the rows lets go.
+While no bar is held each row names its busiest bar. An hour the report holds
+no count for is hatched, and a lane with no hours read gets no bars.
 Pick 6 hours, 24 hours (the default) or 7 days; each choice
 asks the same route `phm throughput --hours 168 --json` reads, so nothing is
 summed in the browser. An unreadable metrics file shows unknown, a quiet window
