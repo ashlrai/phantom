@@ -46,6 +46,10 @@ phm comms-agent drafts --json
 `--lanes` is the candidate set. Omit it and the run reports no lane rather
 than picking one. `--dir` selects an isolated runs directory.
 
+`status` reports the pending inbox depth as `inbox`: a real count of
+messages still awaiting triage, or `null` when the inbox file cannot be
+read — an unreadable store is unknown, never reported as an empty inbox.
+
 MCP tools: `ashlr_comms_agent_status`, `ashlr_comms_agent_drafts`, and
 `ashlr_comms_agent_run`.
 
