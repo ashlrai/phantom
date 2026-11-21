@@ -30,7 +30,7 @@ ashlr agents bus channel create <name> [--from <agent>] [--member <agent>]...
 ashlr agents bus channel join|leave <name> [--agent <agent>]
 ashlr agents bus channel post <name> --text <text> [--from <agent>] [--topic <t>] [--ref <ref>]... [--priority ..] [--wake|--no-wake]
 ashlr agents bus channel list [--agent <agent>]
-ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--thread <t>] [--priority P0..P3] [--matched] [--after <cursor>] [--limit <1..100>]
+ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--matched] [--after <cursor>] [--limit <1..100>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--matched] [--frame <cli>]
@@ -71,8 +71,10 @@ read; it composes with every other inbox filter and --matched counts only
 the rows it accepts. --job on inbox keeps only mail that names one job — a
 work.post/work.status/work.result/wake body declaring that jobId, a
 worker-handoff assigning that fleet job id through taskId, or a
-note/context body carrying the job:<id> thread label — so an agent on one
-job reads its pending mail without paging the whole inbox. --matched
+note/context body carrying the job:<id> thread label — and the same flag
+on channel read keeps only the channel's posts that name it, so an agent
+on one job reads its pending mail and its room's job traffic without
+paging the whole store. --matched
 on inbox and channel read reports matched, the true pending total across the
 whole retained store the same filters accept; messages still caps at --limit
 and nextCursor then resumes at the newest shown row, so paging never skips
@@ -398,7 +400,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       if (sub === 'read') {
         const result = readAgentChannel(arg, { topic: one('--topic'), from: one('--from'), thread: one('--thread'),
-          priority: priorityArg(), matched: p.bools.has('--matched'),
+          priority: priorityArg(), job: one('--job'), matched: p.bools.has('--matched'),
           after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit') }, options);
         if (result.status !== 'ok') return finish(result, '');
         // --matched scans the whole store, so the core nextCursor is the store's

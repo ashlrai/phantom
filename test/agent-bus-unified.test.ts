@@ -666,6 +666,110 @@ describe('job-filtered inbox reads', () => {
   });
 });
 
+describe('job-filtered channel reads', () => {
+  it('keeps only channel posts that name one job across feed citations and job-threaded note/context', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    createAgentChannel({ name: 'other', createdBy: 'atlas' }, options);
+    // Two announced jobs land their work.post on the channel itself.
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-CHJ-A', title: 'Job A', repo: 'ashlrai/phantom',
+      claimKeys: ['repo:ashlrai/phantom'], provider: 'claude', to: 'group:release:general', id: 'cj-post-a' }, options))
+      .toMatchObject({ status: 'posted' });
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-CHJ-B', title: 'Job B', repo: 'ashlrai/phantom',
+      claimKeys: ['repo:ashlrai/phantom'], provider: 'claude', to: 'group:release:general', id: 'cj-post-b' }, options))
+      .toMatchObject({ status: 'posted' });
+    const post = (id: string, body: BusJsonValue, to = 'group:release:general') => {
+      expect(appendBusInbox({ id, from: 'agent:atlas', to, priority: 'P2', ttl: 60_000, body }, options).status).toBe('posted');
+    };
+    // Every feed-citing kind that declares the job matches, plus a
+    // worker-handoff whose taskId cites it.
+    post('cj-st-a', { kind: 'work.status', jobId: 'RQ-CHJ-A', status: 'running' });
+    post('cj-res-a', { kind: 'work.result', jobId: 'RQ-CHJ-A', claimKey: 'repo:ashlrai/phantom',
+      queueId: `peer-work-${'a'.repeat(32)}`, receiptId: `pw-${'b'.repeat(32)}`, outcome: 'complete' });
+    post('cj-wake-a', { kind: 'wake', target: 'agent:nova', reason: 'job done', jobId: 'RQ-CHJ-A' });
+    post('cj-ho-a', { kind: 'worker-handoff', taskId: 'RQ-CHJ-A', prompt: 'take over' });
+    // A note/context carrying the job:<id> thread label is the job's bucket.
+    post('cj-note-a', { kind: 'note', text: 'job A note', thread: 'job:RQ-CHJ-A' });
+    post('cj-ctx-a', { kind: 'context', text: 'job A context', thread: 'job:RQ-CHJ-A' });
+    // Job B mail, a wake citing no job, plain chat, a bare-id thread and a
+    // job-threaded post on another channel all stay out.
+    post('cj-st-b', { kind: 'work.status', jobId: 'RQ-CHJ-B', status: 'running' });
+    post('cj-wake-bare', { kind: 'wake', target: 'agent:nova', reason: 'no job cited' });
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'plain chat', id: 'cj-plain' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'bare thread', thread: 'RQ-CHJ-A', id: 'cj-bare' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'other', text: 'other room', thread: 'job:RQ-CHJ-A', id: 'cj-other' }, options);
+
+    const page = readAgentChannel('release', { job: 'RQ-CHJ-A' }, options);
+    if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+    expect(page.messages.map(m => m.envelope.id).sort())
+      .toEqual(['cj-ctx-a', 'cj-ho-a', 'cj-note-a', 'cj-post-a', 'cj-res-a', 'cj-st-a', 'cj-wake-a'].sort());
+    const jobB = readAgentChannel('release', { job: 'RQ-CHJ-B' }, options);
+    expect(jobB.status === 'ok' && jobB.messages.map(m => m.envelope.id).sort())
+      .toEqual(['cj-post-b', 'cj-st-b'].sort());
+    // A job that only has a bare-thread note and no citation matches nothing.
+    expect(readAgentChannel('release', { job: 'RQ-ABSENT' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    // The unfiltered page still sees everything the filter skipped.
+    const all = readAgentChannel('release', {}, options);
+    if (all.status !== 'ok') throw new Error(`unexpected ${all.status}`);
+    expect(all.messages).toHaveLength(12);
+  });
+
+  it('composes with the other channel filters and --matched counts only accepted rows', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova', 'orion'] }, options);
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-CHJ-1', title: 'Compose job', repo: 'ashlrai/phantom',
+      claimKeys: ['repo:ashlrai/phantom'], provider: 'claude', to: 'group:release:general', id: 'cj2-post' }, options))
+      .toMatchObject({ status: 'posted' });
+    await updateWorkStatus({ from: 'atlas', jobId: 'RQ-CHJ-1', status: 'running', to: 'group:release:deploy',
+      id: 'cj2-st', priority: 'P1' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'channel note',
+      thread: 'job:RQ-CHJ-1', id: 'cj2-ch' }, options);
+    await postChannelMessage({ from: 'orion', channel: 'release', text: 'other sender',
+      thread: 'job:RQ-CHJ-1', id: 'cj2-ch-o' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'deploy note', topic: 'deploy',
+      thread: 'job:RQ-CHJ-1', id: 'cj2-ch-d' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'other job', thread: 'job:RQ-CHJ-2',
+      id: 'cj2-ch-j2' }, options);
+
+    // --job alone keeps every post that names the job.
+    const all = readAgentChannel('release', { job: 'RQ-CHJ-1' }, options);
+    if (all.status !== 'ok') throw new Error(`unexpected ${all.status}`);
+    expect(all.messages.map(m => m.envelope.id).sort())
+      .toEqual(['cj2-ch', 'cj2-ch-d', 'cj2-ch-o', 'cj2-post', 'cj2-st'].sort());
+    // It composes with --topic, --from and --priority.
+    expect(readAgentChannel('release', { job: 'RQ-CHJ-1', topic: 'deploy' }, options))
+      .toMatchObject({ status: 'ok',
+        messages: [{ envelope: { id: 'cj2-st' } }, { envelope: { id: 'cj2-ch-d' } }] });
+    expect(readAgentChannel('release', { job: 'RQ-CHJ-1', from: 'orion' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'cj2-ch-o' } }] });
+    expect(readAgentChannel('release', { job: 'RQ-CHJ-1', priority: 'P1' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'cj2-st' } }] });
+    // --matched counts only the rows the job filter accepts.
+    const counted = readAgentChannel('release', { job: 'RQ-CHJ-1', matched: true, limit: 2 }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.messages).toHaveLength(2);
+    expect(counted.matched).toBe(5);
+    // A job filter that matches nothing still scans the whole store.
+    const empty = readAgentChannel('release', { job: 'RQ-ABSENT', matched: true }, options);
+    if (empty.status !== 'ok') throw new Error(`unexpected ${empty.status}`);
+    expect(empty.messages).toEqual([]);
+    expect(empty.matched).toBe(0);
+    expect(empty.nextCursor).toBeGreaterThan(0);
+  });
+
+  it('refuses a job id that is not a printable label', () => {
+    const options = setup();
+    register(options, 'atlas');
+    createAgentChannel({ name: 'release', createdBy: 'atlas' }, options);
+    expect(readAgentChannel('release', { job: 'has space' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { job: '' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { job: 'x'.repeat(129) }, options)).toMatchObject({ status: 'invalid' });
+  });
+});
+
 describe('envelope lookup by id', () => {
   it('resolves a retained envelope of any kind by its wire id', async () => {
     const options = setup();
