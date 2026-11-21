@@ -55,6 +55,21 @@ has no reply box and a line saying why. **Live log** opens the worker log. Escap
 conversation is read from `GET /api/verse/fleet/control/session-thread` every
 10 seconds; a server without that read says so and shows no conversation.
 
+A reply to a session waits on the Leader, so the conversation says when the
+Leader is not reading. While the Leader's own passes fail, the notice from
+the Leader pane shows just above the reply box: how many passes failed, when
+one last succeeded, the failing pass's first line as the cause, and for a
+worker that a message to it goes through the Leader and is kept in the
+Leader's inbox until a pass succeeds. A session with no reply box shows no
+notice. On the Conversations wall the notice is on screen once: above the
+reply box of the Leader's conversation when that is beside the cards,
+otherwise above the reply box of the conversation you opened, otherwise above
+the cards. In the Leader pane a session opened beside the chat leaves the
+notice to the chat. Every copy shares one kept reading of
+`GET /api/verse/leader/health`, described in [the Leader guide](LEADER.md),
+and refreshes it once a minute while it is on screen; a healthy Leader, an
+unknown reading and a server without that read show nothing.
+
 For a session with a job, the summary opens with what the job has done, as a
 row of named readings: the latest recorded step and how long ago it was, the
 lines added and removed with the number of files changed, the commands seen
