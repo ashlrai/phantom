@@ -27,8 +27,8 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { busClaimJobRef, listBusClaims, type BusClaimsListClaim, type BusClaimsOwnerMatch } from './bus-claims.js';
 import { agentLabels, agentPendingAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity, type AgentRegistry } from './bus-identity.js';
 import { parseClaimKey } from './bus-v2-schema.js';
-import { agentName, type AgentMessageKind } from '../fleet/agent-messages.js';
-import { readAgentConversations, type AgentConversations } from '../fleet/agent-conversations.js';
+import type { AgentMessageKind } from '../fleet/agent-messages.js';
+import { conversationScope, readAgentConversations, type AgentConversations, type ConversationScope } from '../fleet/agent-conversations.js';
 import { plainAge } from '../fleet/agent-conversation-model.js';
 import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobHold, busWorkFeedOwnerMatcher, busWorkFeedToMatcher,
   busWorkJobDispatch, readBusWorkFeed, type BusWorkFeedHoldCoverage, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
@@ -1061,43 +1061,6 @@ function annotateClaimMessages(claims: BusWorkMineClaim[], options: BusWorkMineO
   for (const { claim, id } of targets) {
     claim.message = resolveClaimMessage(id, claim.owner, journal, scan, nowMs, feed, registry);
   }
-}
-
-/**
- * The identity scope both conversation sections share, built once per read:
- * `isSelf` names the agent under any of its labels (with the literal-label
- * fallback when no identity resolves — matching never widens on unknown
- * state), `denotes` reports whether a routing name is the agent — its own
- * labels, a name resolving to its identity, or a `group:<channel>:<topic>`
- * address of a channel it belongs to — and `agentOf` resolves a projection
- * name to a registered handle or null.
- */
-interface ConversationScope {
-  isSelf: (name: string) => boolean;
-  denotes: (name: string) => boolean;
-  agentOf: (name: string) => string | null;
-}
-
-function conversationScope(agent: string, registry: AgentRegistry | undefined,
-  identity: AgentIdentity | undefined): ConversationScope {
-  const selfNames = new Set(identity === undefined ? [] : agentLabels(identity).map(agentName));
-  const channelNames = new Set(registry === undefined || identity === undefined ? [] :
-    registry.channels.filter(channel => channel.members.includes(identity.handle)).map(channel => channel.name));
-  return {
-    isSelf: (name) => identity === undefined
-      ? name === agentName(agent)
-      : selfNames.has(name) || (registry !== undefined && resolveAgent(registry, name)?.id === identity.id),
-    denotes: (name) => {
-      if (identity === undefined) return name === agentName(agent);
-      if (selfNames.has(name)) return true;
-      if (name.startsWith('group:')) {
-        const rest = name.slice('group:'.length), sep = rest.indexOf(':');
-        return sep > 0 && channelNames.has(rest.slice(0, sep));
-      }
-      return registry !== undefined && resolveAgent(registry, name)?.id === identity.id;
-    },
-    agentOf: (name) => registry === undefined ? null : resolveAgent(registry, name)?.handle ?? null,
-  };
 }
 
 /**
