@@ -244,6 +244,23 @@ phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky
   absence; it reads unknown when the fleet read has not answered. The first
   visit shows no card. The last-looked time is kept in this browser profile
   only.
+- **App actions:** the desktop Leader pane shows what Phantom did to this
+  Mac's apps where it happened in the conversation. Each open, focus, quit
+  and restart from the app action log (`phm apps log --json`) is a line with
+  its outcome ("Opened Xcode", "Refused to quit Slack"), the time it was
+  logged and the log's own detail. Actions with nothing said between them
+  form one **Mac apps** group; a group of more than four lists its newest
+  three until you choose **Show N earlier**, and says how many need a look
+  (refused, failed, waiting on you or with no result). **Mac host** opens the
+  pane that lists and opens apps; the conversation itself acts on nothing.
+  Only actions logged since the oldest message shown are placed, so loading
+  earlier messages brings earlier actions with them. **Find** searches them,
+  and **Needs you only** leaves them out. The **App actions** button in the
+  toolbar hides or shows them; the choice is kept in this browser profile,
+  and while they are hidden the log is not read. The log is read every 30
+  seconds while the pane is on screen. If it does not answer the toolbar says
+  **App actions unknown** and no line is drawn; a phone, which the log route
+  does not serve, shows none.
 
 ---
 
