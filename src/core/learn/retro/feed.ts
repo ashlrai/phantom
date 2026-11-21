@@ -39,7 +39,10 @@
  *     vocabulary — a reverted flag, a revert event or state name, or a
  *     parseable reverted_at/revertedAt stamp — and it wins over merge or
  *     success fields on the same row. Non-terminal rows (launch, publish,
- *     running) contribute identity fields but never a status.
+ *     running) contribute identity fields but never a status. A
+ *     `task_outcome` row's `outcome` is the batch member's session word
+ *     (done/skipped/failed/deferred/unreported — 'failed' means the line
+ *     went back to ready.tsv), never a lifecycle verdict.
  *     DONE-NOOP/EMPTY and unknown states stay unknown — they are not
  *     emitted. Cloud/devin tasks follow the same rule, and a
  *     merged-then-reverted task is `failed` like a reverted fleet merge.
@@ -141,6 +144,12 @@ function outcomeStateOf(row: Record<string, unknown>): string {
  * revert event/state name, or a parseable reverted_at/revertedAt stamp).
  */
 function terminalStatus(row: Record<string, unknown>): NightlyJob['status'] | null {
+  // task_outcome rows are batch-session bookkeeping, not lifecycle evidence:
+  // their `outcome` field is the member's BRIDGE_NOTES word (done/skipped/
+  // failed/deferred/unreported), where 'failed' means the line was requeued
+  // to ready.tsv alone. The member's real outcome arrives on its own
+  // publish/reconciler rows, so the session word never mints a job status.
+  if (firstString(row, EVENT_KEYS)?.toLowerCase() === 'task_outcome') return null;
   const state = outcomeStateOf(row);
   if (hasRevertEvidence(row)) return 'failed';
   if (row['merged'] === true || SUCCEEDED_STATES.has(state)) return 'succeeded';
