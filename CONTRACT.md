@@ -523,6 +523,19 @@ other lane's classified cause (`launch_timeout`, `provider_*`,
 `launch_script_error`). All stay `null` when no jobs row recorded them —
 the fold never infers a finish verdict from merge state, PR URLs or
 event names.
+Finish rows also fold dispatchd's `job_usage` block and
+`job_diff_metrics` figures, newest explicit row wins like `wall_s`:
+`acus` (the Devin lane's billed ACU spend — a different unit than
+`cost_usd`, never summed with it; `acus`/`acus_consumed`/`acusConsumed`
+spellings), the token breakdown `tokens_in`/`tokens_out`/
+`tokens_cache_read`/`tokens_cache_write` (snake_case before camelCase),
+the bounded identifier labels `usage_source` (the recorded measurement
+path — `devin-sessions-db`/`claude-result-json`/`tokens-line`) and
+`usage_missing` (the recorded capture-gap reason — `devin-*`/`claude-*`/
+`tokens-line-*`), and the recorded diff size `diff_files`/`diff_lines`
+(`diff_lines` stays `null` when untracked files made the line total
+unmeasurable — recorded unknown, never a partial sum). All stay `null`
+when no jobs row recorded them.
 Batch sessions fold per member like the sibling fleet readers:
 `RQ-BATCH-*` session rows (launch, finish, session-aggregate usage) are
 infrastructure evidence counted in `RouterOutcomeFold.session_rows` —

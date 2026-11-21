@@ -40,9 +40,12 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
     parts.push(`review_findings=${f.fixed + f.rejected + f.ignored}(${e.review_findings_known})`);
   }
   if (e.cost_usd_mean !== null) parts.push(`cost_usd=${e.cost_usd_mean}(${e.cost_known})`);
+  if (e.acus_mean !== null) parts.push(`acus=${e.acus_mean}(${e.acus_known})`);
   if (e.wall_s_mean !== null) parts.push(`wall_s=${e.wall_s_mean}(${e.wall_known})`);
   if (e.ttm_s_mean !== null) parts.push(`ttm_s=${e.ttm_s_mean}(${e.ttm_known})`);
   if (e.tokens_total_mean !== null) parts.push(`tokens_total=${e.tokens_total_mean}(${e.tokens_known})`);
+  if (e.diff_files_mean !== null) parts.push(`diff_files=${e.diff_files_mean}(${e.diff_files_known})`);
+  if (e.diff_lines_mean !== null) parts.push(`diff_lines=${e.diff_lines_mean}(${e.diff_lines_known})`);
   if (e.passk_mean !== null) parts.push(`passk=${e.passk_mean}(${e.passk_known})`);
   return parts.length === 0 ? '' : ` evidence ${parts.join(' ')}`;
 }
@@ -75,6 +78,12 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
       : `${p.work_class}/${p.lane}: insufficient evidence known=${p.known_n}${reverted} need=${report.bounds.min_samples}; baseline ${p.baseline_weight} unchanged${evidence}`;
   });
   const none = report.proposals.length === 0 ? ['insufficient evidence: no classified known outcomes'] : [];
+  const usage = report.usage_missing !== null && report.usage_sources !== null &&
+    (report.usage_missing.length > 0 || report.usage_sources.length > 0)
+    ? [`usage coverage:` +
+        (report.usage_missing.length > 0 ? ` missing=${report.usage_missing.map(c => `${c.usage_missing}:${c.jobs}`).join(',')}` : '') +
+        (report.usage_sources.length > 0 ? ` sources=${report.usage_sources.map(c => `${c.usage_source}:${c.jobs}`).join(',')}` : '')]
+    : [];
   const coverage = [
     ...(report.truncated ? ['coverage: retained tail only; older ledger rows were not read'] : []),
     ...(report.market_state !== 'read'
@@ -83,7 +92,7 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
         ? ['market coverage: retained tail only; work_class joins cover the newest bytes']
         : []),
   ];
-  return [header, counts, ...resolution, `ledger ${report.ledger.path}`, ...coverage, ...rows, ...none];
+  return [header, counts, ...resolution, `ledger ${report.ledger.path}`, ...usage, ...coverage, ...rows, ...none];
 }
 
 export async function cmdFleetRouterWeights(

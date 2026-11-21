@@ -32,7 +32,13 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // outcomes or URL claims, and a member's task_outcome row supplies its
 // recorded end-of-session word — members get no per-member finish row, so
 // their finish verdicts and usage stay null rather than split from the
-// session's aggregates.
+// session's aggregates. Finish rows also carry dispatchd's job_usage block
+// (acus — the Devin lane's billed spend, the token breakdown, and the
+// usage_source/usage_missing provenance labels) plus job_diff_metrics'
+// diff_files/diff_lines: the fold keeps each recorded figure
+// newest-explicit-wins like tokens_total, so a lane's ACU spend — the only
+// cost evidence subscription lanes record — its usage capture gaps and its
+// change size reach router.outcome.v1 instead of stopping at the ledger.
 
 /** Newest-bytes bound retained from the append-only jobs ledger. */
 export const ROUTER_OUTCOME_LEDGER_LIMIT = 16 * 1024 * 1024;
@@ -89,6 +95,28 @@ export interface RouterOutcome {
    */
   tokens_total: number | null;
   /**
+   * The finish row's recorded usage block — dispatchd's job_usage spread,
+   * the same fields every finish metric carries. `acus` is the Devin
+   * lane's billed ACU spend: the only cost figure subscription lanes
+   * record, in a different unit than cost_usd and never summed with it.
+   * `tokens_in`/`tokens_out`/`tokens_cache_read`/`tokens_cache_write` are
+   * the token breakdown behind tokens_total. `usage_source` names the
+   * recorded measurement path (dispatchd's devin-sessions-db /
+   * claude-result-json / tokens-line vocabulary) and `usage_missing` the
+   * recorded reason usage stayed unknowable (its devin-, claude- and
+   * tokens-line- capture-gap vocabulary); both join as bounded
+   * identifier labels, never raw text. Newest explicit row wins like
+   * tokens_total — a later finish row without a recognized value keeps
+   * the earlier one. All stay null when no jobs row recorded them.
+   */
+  acus: number | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  tokens_cache_read: number | null;
+  tokens_cache_write: number | null;
+  usage_source: string | null;
+  usage_missing: string | null;
+  /**
    * Recorded opened-to-merged seconds — the jobs-ledger `ttm_s`/`ttmS`
    * dialect the fleet's merge-pace, merge-graph, throughput, eval-report and
    * job-activity readers share. It belongs to the merge verdict, not to the
@@ -119,6 +147,15 @@ export interface RouterOutcome {
    * event names.
    */
   empty: boolean | null;
+  /**
+   * The finish row's recorded diff size — dispatchd's job_diff_metrics
+   * file count and line total for the job's final tracked tree against
+   * its launch base (BRIDGE_NOTES.md excluded). `diff_lines` stays null
+   * when untracked files made the line total unmeasurable: recorded
+   * unknown, never a partial sum. Newest explicit row wins like wall_s.
+   */
+  diff_files: number | null;
+  diff_lines: number | null;
   exit_code: number | null;
   failure_class: string | null;
   /**
@@ -243,8 +280,8 @@ const num = (v: unknown): number | null => typeof v === 'number' && Number.isFin
 const count = (v: unknown): number | null => Number.isSafeInteger(v) && (v as number) >= 0 ? v as number : null;
 /** Exit statuses are safe integers of either sign — dispatchd records signal exits as negatives. */
 const exitStatus = (v: unknown): number | null => Number.isSafeInteger(v) ? v as number : null;
-/** Failure classifications join only bounded identifier-shaped labels; anything else is skipped, never recorded raw. */
-const FAILURE_CLASS = /^[a-z0-9][a-z0-9_.-]{0,127}$/;
+/** Recorded ledger labels (failure classifications, usage provenance) join only bounded identifier-shaped values; anything else is skipped, never recorded raw. */
+const LEDGER_LABEL = /^[a-z0-9][a-z0-9_.-]{0,127}$/;
 /** Event names across the event|type|kind dialect spelling. */
 const EVENT_NAME_KEYS = ['event', 'type', 'kind'] as const;
 /**
@@ -269,13 +306,28 @@ const EVENT_NAME_KEYS = ['event', 'type', 'kind'] as const;
 const FAILURE_CLASS_KEYS = ['failure_class', 'failureClass', 'failure_reason', 'failureReason', 'pool_error', 'poolError'] as const;
 const failureClass = (r: Row): string | null => {
   const v = str(r, ...FAILURE_CLASS_KEYS);
-  if (v !== null && FAILURE_CLASS.test(v)) return v;
+  if (v !== null && LEDGER_LABEL.test(v)) return v;
   if (str(r, ...EVENT_NAME_KEYS)?.toLowerCase() === 'launch_failed' &&
       str(r, 'action')?.toLowerCase() === 'give_up') {
     const reason = str(r, 'reason');
-    if (reason !== null && FAILURE_CLASS.test(reason)) return reason;
+    if (reason !== null && LEDGER_LABEL.test(reason)) return reason;
   }
   return null;
+};
+
+/**
+ * The finish row's recorded usage provenance labels — `usage_source` names
+ * the measurement path that supplied the usage block (dispatchd's
+ * devin-sessions-db / claude-result-json / tokens-line vocabulary) and
+ * `usage_missing` names why usage stayed unknowable (its devin-, claude-
+ * and tokens-line- capture-gap vocabulary). Both join in the same bounded
+ * identifier shape failure_class uses — dispatchd's vocabulary is closed
+ * today, but the fold records whatever bounded label a producer wrote
+ * rather than second-guessing it; snake_case before camelCase.
+ */
+const usageLabel = (r: Row, ...keys: string[]): string | null => {
+  const v = str(r, ...keys);
+  return v !== null && LEDGER_LABEL.test(v) ? v : null;
 };
 
 /**
@@ -500,7 +552,11 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     const o: RouterOutcome = outcomes.get(j) ?? {
       schema: 'router.outcome.v1', job_id: j, lane: null, model: null, tier: null, work_class: null,
       merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
-      tokens_total: null, ttm_s: null, empty: null, exit_code: null, failure_class: null, empty_class: null,
+      tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
+      tokens_cache_read: null, tokens_cache_write: null,
+      usage_source: null, usage_missing: null,
+      ttm_s: null, empty: null, diff_files: null, diff_lines: null,
+      exit_code: null, failure_class: null, empty_class: null,
       task_outcome: null, passk: null,
     };
     o.lane = str(r, 'lane', 'pool', 'arm') ?? o.lane;
@@ -542,7 +598,16 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     o.cost_usd = num(r['cost_usd']) ?? num(r['usd']) ?? num(r['cost']) ?? o.cost_usd;
     o.wall_s = num(r['wall_s']) ?? o.wall_s;
     o.tokens_total = num(r['tokens_total']) ?? num(r['tokensTotal']) ?? o.tokens_total;
+    o.acus = num(r['acus']) ?? num(r['acus_consumed']) ?? num(r['acusConsumed']) ?? o.acus;
+    o.tokens_in = num(r['tokens_in']) ?? num(r['tokensIn']) ?? o.tokens_in;
+    o.tokens_out = num(r['tokens_out']) ?? num(r['tokensOut']) ?? o.tokens_out;
+    o.tokens_cache_read = num(r['tokens_cache_read']) ?? num(r['tokensCacheRead']) ?? o.tokens_cache_read;
+    o.tokens_cache_write = num(r['tokens_cache_write']) ?? num(r['tokensCacheWrite']) ?? o.tokens_cache_write;
+    o.usage_source = usageLabel(r, 'usage_source', 'usageSource') ?? o.usage_source;
+    o.usage_missing = usageLabel(r, 'usage_missing', 'usageMissing') ?? o.usage_missing;
     if (typeof r['empty'] === 'boolean') o.empty = r['empty'];
+    o.diff_files = num(r['diff_files']) ?? num(r['diffFiles']) ?? o.diff_files;
+    o.diff_lines = num(r['diff_lines']) ?? num(r['diffLines']) ?? o.diff_lines;
     o.exit_code = exitStatus(r['exit_code']) ?? exitStatus(r['exitCode']) ?? o.exit_code;
     o.failure_class = failureClass(r) ?? o.failure_class;
     o.empty_class = emptyClass(r) ?? o.empty_class;
