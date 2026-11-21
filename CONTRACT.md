@@ -240,7 +240,11 @@ prefixes, and the PR-visible trust gates'
 `.github/scripts/release-version-provenance.mjs > (version-provenance)`
 rows from the scrub.pl `<blocked> allowed=<n>` count, the gitleaks
 `leaks found: <n>` summary and the provenance `::error::` /
-`check failed:` lines (nonzero counts and verdicts only) -- plus
+`check failed:` lines (nonzero counts and verdicts only), and the
+memory benchmark gate's
+`scripts/benchmark-memory.ts > (memory-benchmark)` rows from the
+`memory benchmark below floor:` stderr block and its two-space-indented
+violation lines -- plus
 summaries. `auditExceptions` is the optional
 `DependencyAuditException[] | null` list (`{id, package, graph}` with
 graph `full` or `raycast-production`); `null` leaves audit reports
@@ -274,7 +278,12 @@ secret-shape and secret-scan groups key on the scanner definition alone
 shape carried inside a PR's own diff stays unattributed) and the
 provenance group's dependency set adds `package.json` and
 `.release-please-manifest.json` as static inputs; the harness ambient
-set does not apply to any of the three.
+set does not apply to any of the three. The memory benchmark gate's
+dependency set is the entry script's import closure -- the benchmark,
+its floors file and the `src/core/memory` implementation -- plus
+`package.json`, `package-lock.json` and `tsconfig.json` seeded as
+static inputs for the toolchain files tsx reads, and the harness
+ambient set does not apply to it either.
 `enqueueBaselineFixes(report,
 absoluteQueuePath)` explicitly writes work-tier master-fix rows deduplicated
 by queue state via `nextFixGeneration`: a failure whose prior fix generations
@@ -1549,10 +1558,16 @@ maps a job id to its activity read (null when that read failed, no key when it
 was not asked for), `owner` is the Leader inbox, handed to the leader's and
 every worker's thread and to no helper's, and `orders` is the order trace
 (`OrderTraceV1`), handed to the leader's thread and to every worker's that has
-a job. `SessionThreadsV1.sources` is `{sessions, bus, owner, replies, orders}`. Each entry is built by
+a job, and `controls` is the job control file (`readonly JobControlLedgerRow[] | null`,
+undefined when not asked for), handed to every thread whose session has a job.
+`SessionThreadsV1.sources` is `{sessions, bus, owner, replies, orders, controls}`. Each entry is built by
 `buildSessionThread`, so its session, summary, sources, gaps and `reply`
 (the `SessionThreadReply` of `session-reply.ts`) equal the
-single-session thread for the same records. An entry's last key is `serves`:
+single-session thread for the same records. Before `reply`, an entry carries
+`control: SessionThreadControl | null`, the single thread's own answer (the
+newest request for the session's job that was not refused; null when none
+stands, for a session with no job, and when the control file was not read).
+An entry's last key is `serves`:
 `{key, at, source, text, truncated, jobs}` for a worker whose job the order
 trace ties to a message of Mason's (the newest such message; `key` is shared
 by every entry serving it, `at` is the inbox's Eastern minute, `text` is null
@@ -1627,8 +1642,11 @@ and the document gains a last top-level key
 `control: SessionThreadControl | null` (`action`, `lane`, `status` of
 `requested` or `applied`, `at`): the newest request not refused.
 `readSessionThread` takes an injectable `readControls`, asked for a session
-with a job. `fleet.session-threads.v1` does not read the control file: its
-entries carry `sources.controls: 'none'` and no `control` key.
+with a job. `fleet.session-threads.v1` reads the control file once for the
+whole document when a shown session has a job (`readSessionThreads` takes an
+injectable `readControls`): each such entry carries the same `control`,
+control messages and `sources.controls` as its single thread, and a failed
+read is `sources.controls: 'unavailable'` with one line in `gaps`.
 `src/core/fleet/session-thread-read.ts` exports `readSessionThread(id,
 options)` with injectable `readMap`, `readSubagents`, `readActivity`,
 `readBus`, `readOwner` and `readReplies`; each read is guarded on its own and the result is

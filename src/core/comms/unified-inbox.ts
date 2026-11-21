@@ -2,10 +2,21 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates fourteen local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates fifteen local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), act: `phm fleet needs-resolve`.
+ *   needs-you-delivery  recorded needs-you answers whose planner-inbox relay
+ *               is not confirmed — the delivery side of needs-you, the same
+ *               `readNeedsMasonReplyDeliveries` read `phm fleet needs`
+ *               reports as `replyDeliveries`. A resolved item leaves every
+ *               open-item list, so a failed or unrecorded append would be
+ *               invisible here without this source; each pending receipt
+ *               lists as a warn whose retry is resolving the same id again
+ *               (the recorded reply is reused, never re-asked), and each
+ *               receipt that failed validation lists as unreadable — its
+ *               delivery state stays unknown, never delivered. Act:
+ *               `phm fleet needs-resolve`, `phm fleet needs`.
  *   imessage    unanswered allowlisted teammate texts in teammates.jsonl
  *               (`phm fleet teammate-texts`), act: mark answered or claim the
  *               mirrored bus envelope `imessage-teammate-<rowid>`.
@@ -149,6 +160,7 @@ import { BUS_PROTOCOL_KEY, isClaimableWork, type BusPriority } from '../fleet/bu
 import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
+import { readNeedsMasonReplyDeliveries, type NeedsMasonReplyDeliveryReport } from '../fleet/needs-mason-relay.js';
 import { loadConfigReadOnly } from '../config.js';
 import { readEmailDropConfig } from './email-drop-config.js';
 import { probeOutboxDir, readEmailOutbox, type EmailOutboxEntry, type EmailOutboxListing } from './email-outbox.js';
@@ -168,9 +180,9 @@ const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
 
-export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'owner-thread' | 'owner-delivery' | 'drafts' | 'bus' | 'conversations' | 'seats' | 'gmail' | 'linkedin' | 'requests' | 'email-outbox' | 'team-approvals' | 'proposals';
+export type UnifiedInboxSource = 'needs-you' | 'needs-you-delivery' | 'imessage' | 'owner-thread' | 'owner-delivery' | 'drafts' | 'bus' | 'conversations' | 'seats' | 'gmail' | 'linkedin' | 'requests' | 'email-outbox' | 'team-approvals' | 'proposals';
 export type UnifiedInboxSourceState = 'healthy' | 'missing' | 'degraded' | 'unavailable';
-export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'owner-message' | 'owner-reply-undelivered' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-stuck' | 'team-approval' | 'inbox-proposal';
+export type UnifiedInboxKind = 'needs-you' | 'needs-you-delivery' | 'teammate-text' | 'owner-message' | 'owner-reply-undelivered' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-stuck' | 'team-approval' | 'inbox-proposal';
 
 export interface UnifiedInboxItem extends AttentionItem {
   /** Stable, namespaced: `<source>:<ref>` (e.g. `drafts:d-0123…`). */
@@ -224,6 +236,8 @@ export interface UnifiedInboxOptions {
   now?: () => number;
   /** Trusted test seams; defaults read the real stores. */
   readNeeds?: (options: { runsDir?: string }) => NeedsMasonReadResult;
+  /** Reply-delivery seam; default reads the same receipts `phm fleet needs` reports. */
+  readNeedsDeliveries?: typeof readNeedsMasonReplyDeliveries;
   readTexts?: typeof readTeammateTexts;
   listPendingDrafts?: typeof listDrafts;
   /** Comms-agent draft store seam; default reads `<runsDir>/comms-agent/drafts.jsonl`. */
@@ -271,6 +285,56 @@ function needsYouItems(read: NonNullable<UnifiedInboxOptions['readNeeds']>, runs
     act: [`phm fleet needs-resolve ${item.id} --reply "<reply>"`],
   }));
   return { report: { state, pending: items.length }, items };
+}
+
+/**
+ * Recorded needs-you answers whose planner-inbox relay is not confirmed — the
+ * delivery side of needs-you, from the same `readNeedsMasonReplyDeliveries`
+ * read `phm fleet needs` reports as `replyDeliveries`, so the two surfaces
+ * can never disagree. A resolved item leaves every open-item list, so a
+ * failed or unrecorded append would be invisible without this source. Each
+ * pending receipt lists as a warn: "not confirmed", never "undelivered", since
+ * an append that succeeded but whose receipt write failed reads the same. The
+ * retry act resolves the same id again — the recorded reply is reused, never
+ * re-asked. A receipt that failed validation lists as unreadable with its
+ * delivery state honestly unknown; there is no per-item fix, so it keeps the
+ * `phm fleet needs` inspect link only. Receipts carry no timestamp, so
+ * `since`/`expiresAt` stay null. Retrying is agent work; nothing here blocks
+ * Mason. An unreadable store reports 'unavailable', never an empty list
+ * passed off as fact.
+ */
+function needsYouDeliveryItems(read: NonNullable<UnifiedInboxOptions['readNeedsDeliveries']>, runsDir: string | undefined): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let result: NeedsMasonReplyDeliveryReport;
+  try { result = read({ runsDir }); } catch { result = { status: 'unavailable' }; }
+  if (result.status !== 'ok') return { report: { state: 'unavailable', pending: 0 }, items: [] };
+  const items = [
+    ...result.pending.map((entry): Omit<UnifiedInboxItem, 'priority'> => ({
+      id: `needs-you-delivery:${entry.itemId}`,
+      source: 'needs-you-delivery',
+      kind: 'needs-you-delivery',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Needs-you answer ${entry.itemId} not confirmed in the planner inbox`, TITLE_MAX),
+      detail: oneLine(`via ${entry.source}` +
+        (entry.text === null ? ' · ledger text unknown' : ` · "${oneLine(entry.text, 140)}"`), DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      act: [`phm fleet needs-resolve ${entry.itemId}`, 'phm fleet needs'],
+    })),
+    ...result.unsafe.map((itemId): Omit<UnifiedInboxItem, 'priority'> => ({
+      id: `needs-you-delivery:${itemId}`,
+      source: 'needs-you-delivery',
+      kind: 'needs-you-delivery',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Needs-you delivery receipt ${itemId} unreadable`, TITLE_MAX),
+      detail: oneLine('receipt failed validation; delivery state unknown — inspect the needs-mason-delivery directory', DETAIL_MAX),
+      since: null,
+      expiresAt: null,
+      act: ['phm fleet needs'],
+    })),
+  ];
+  return { report: { state: 'healthy', pending: items.length }, items };
 }
 
 function teammateItems(read: typeof readTeammateTexts, runsDir: string | undefined, now: () => number): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
@@ -1168,6 +1232,7 @@ async function emailOutboxItems(read: NonNullable<UnifiedInboxOptions['readEmail
 export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promise<UnifiedInbox> {
   const now = options.now ?? Date.now;
   const needs = needsYouItems(options.readNeeds ?? readNeedsMason, options.runsDir);
+  const needsDelivery = needsYouDeliveryItems(options.readNeedsDeliveries ?? readNeedsMasonReplyDeliveries, options.runsDir);
   const teammates = teammateItems(options.readTexts ?? readTeammateTexts, options.runsDir, now);
   const ownerThread = ownerThreadItems(options.readOwnerAwaiting ?? readOwnerAwaitingReplies, options.runsDir);
   const ownerDelivery = ownerDeliveryItems(options.readOwnerUndelivered ?? readOwnerUndeliveredReplies, options.runsDir);
@@ -1186,6 +1251,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
+    'needs-you-delivery': needsDelivery.report,
     imessage: teammates.report,
     'owner-thread': ownerThread.report,
     'owner-delivery': ownerDelivery.report,
@@ -1200,7 +1266,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'team-approvals': teamApprovals.report,
     proposals: proposals.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

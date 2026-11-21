@@ -8,17 +8,18 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
 import { defaultRunsDir } from './landed-closes-read.js';
+import { BUILD_STALE_COMMITS, BUILD_STALE_HOURS, buildStaleText, buildStaleness, type BuildStaleLimits, type MaybeBuildReport } from './build-stale.js';
 import type { CadenceV1 } from '../release/cadence.js';
 import type { SpendSnapshot } from '../usage/spend.js';
 import type { StarvedRead } from './lane-starved.js';
 import type { ThroughputMark } from './throughput.js';
 
 export const PULSE_ALERTS_SCHEMA = 'fleet.pulse.alerts.v1' as const;
-export const PULSE_ALERT_KINDS = ['stalled', 'starved', 'wasting', 'pool_waste', 'release_stale'] as const;
+export const PULSE_ALERT_KINDS = ['stalled', 'starved', 'wasting', 'pool_waste', 'release_stale', 'build-stale'] as const;
 export type PulseAlertKind = (typeof PULSE_ALERT_KINDS)[number];
 export interface PulseAlertV1 {
   kind: PulseAlertKind;
-  /** The lane, or the pool for pool_waste, or the repo for release_stale; `fleet` for stalled. */
+  /** The lane, or the pool for pool_waste, or the repo for release_stale, or the short running commit for build-stale; `fleet` for stalled. */
   lane: string;
   /** ISO time the trouble began; null when it is a projection with no start (pool_waste). */
   since: string | null;
@@ -34,7 +35,11 @@ export interface PulseAlertsV1 {
 /** Every reader's output as it returned it; null when that reader failed. */
 export interface PulseAlertInputs { marks: readonly ThroughputMark[] | null; starved: StarvedRead | null; spend: SpendSnapshot | null;
   /** Release cadence; absent means not checked, null means the read failed. */
-  releases?: CadenceV1 | null }
+  releases?: CadenceV1 | null;
+  /** The live build (`phm doctor build`); absent means not checked, null means the read failed. */
+  build?: MaybeBuildReport;
+  /** Override the build-stale limits (50 commits, 24 hours). */
+  buildLimits?: BuildStaleLimits }
 
 export const STALL_MINUTES = 30;
 export const WASTING_JOBS = 20;
@@ -52,7 +57,7 @@ const minutesText = (ms: number): string => ms >= 120 * MIN ? `${Math.floor(ms /
 /** Pure: the active alerts for these inputs at `now`. */
 export function buildPulseAlerts(inputs: PulseAlertInputs, now: number): PulseAlertsV1 {
   const alerts: PulseAlertV1[] = [], unknown: string[] = [];
-  const { marks, starved, spend, releases } = inputs;
+  const { marks, starved, spend, releases, build, buildLimits } = inputs;
 
   if (!marks) unknown.push('Stalled, wasting: the job metrics file could not be read.');
   else {
@@ -111,6 +116,16 @@ export function buildPulseAlerts(inputs: PulseAlertInputs, now: number): PulseAl
       fix_hint: `Re-run the release workflow for ${row.repo}: phm release cadence.` });
   }
 
+  if (build === null) unknown.push('Live build: it could not be read.');
+  else if (build) {
+    if (buildStaleness(build, now, buildLimits) === 'unknown') unknown.push('Live build: how far behind master is not known here.');
+    const text = buildStaleText(build, now, buildLimits);
+    if (text && build.commit?.state === 'known') {
+      const behind = build.behind?.state === 'known' ? build.behind.since : null;
+      alerts.push({ kind: 'build-stale', lane: build.commit.sha.slice(0, 7), since: behind ?? null, detail: text.detail, fix_hint: text.fix });
+    }
+  }
+
   const order = (a: PulseAlertV1) => PULSE_ALERT_KINDS.indexOf(a.kind);
   alerts.sort((a, b) => order(a) - order(b));
   return { schema: PULSE_ALERTS_SCHEMA, v: 1, as_of: new Date(now).toISOString(), alerts, unknown };
@@ -150,8 +165,12 @@ function readNotifyState(runsDir: string): NotifyState {
 export async function notifyPulseAlerts(pulse: PulseAlertsV1, opts: { runsDir: string; now: number; senders: PulseNoticeSenders }): Promise<PulseAlertV1[]> {
   const state = readNotifyState(opts.runsDir), sent: PulseAlertV1[] = [];
   const next: NotifyState = {};
-  // Keep only entries still inside the hour, so the file stays small.
-  for (const [key, at] of Object.entries(state)) if (opts.now - at < NOTIFY_EVERY_MS) next[key] = at;
+  // Keep only entries still inside the hour, so the file stays small. A build-stale entry is kept for as long as
+  // that commit stays stale (one notice per commit, not one an hour) and dropped once it recovers.
+  const stale = new Set(pulse.alerts.filter(a => a.kind === 'build-stale').map(alertKey));
+  for (const [key, at] of Object.entries(state)) {
+    if (key.startsWith('build-stale:') ? stale.has(key) : opts.now - at < NOTIFY_EVERY_MS) next[key] = at;
+  }
   for (const alert of pulse.alerts) {
     if (next[alertKey(alert)] !== undefined) continue;
     let took = false;
@@ -188,6 +207,12 @@ async function defaultSenders(runsDir: string): Promise<PulseNoticeSenders> {
   return senders;
 }
 
+/** ASHLR_BUILD_STALE_COMMITS / ASHLR_BUILD_STALE_HOURS override the 50-commit and 24-hour limits; junk keeps the default. */
+function buildLimitsFromEnv(env: NodeJS.ProcessEnv = process.env): BuildStaleLimits {
+  const num = (raw: string | undefined, fallback: number): number => { const n = Number(raw); return raw && Number.isFinite(n) && n >= 0 ? n : fallback; };
+  return { commits: num(env['ASHLR_BUILD_STALE_COMMITS'], BUILD_STALE_COMMITS), hours: num(env['ASHLR_BUILD_STALE_HOURS'], BUILD_STALE_HOURS) };
+}
+
 /** Read every input once. Read-only; a reader that fails leaves its checks unknown. */
 export async function readPulseAlertInputs(runsDir: string, now: number): Promise<PulseAlertInputs> {
   const quiet = <T>(read: Promise<T>): Promise<T | null> => read.catch(() => null);
@@ -200,7 +225,8 @@ export async function readPulseAlertInputs(runsDir: string, now: number): Promis
     quiet(readUsageSpend(join(runsDir, 'queue', 'status.json'), now)),
     quiet(import('../release/cadence.js').then(m => m.readReleaseCadence({ now }))),
   ]);
-  return { marks: ledger === null ? null : throughputMarks(ledger, now - ALERT_LOOKBACK_H * 3_600_000, now).marks, starved, spend, releases };
+  const build = await quiet(import('./build-live.js').then(m => m.readBuildLive({ now: () => now })));
+  return { marks: ledger === null ? null : throughputMarks(ledger, now - ALERT_LOOKBACK_H * 3_600_000, now).marks, starved, spend, releases, build, buildLimits: buildLimitsFromEnv() };
 }
 
 export interface ReadPulseAlertsOpts {
@@ -213,6 +239,6 @@ export interface ReadPulseAlertsOpts {
 export async function readPulseAlerts(opts: ReadPulseAlertsOpts = {}): Promise<PulseAlertsV1> {
   const now = opts.now ?? Date.now(), runsDir = opts.runsDir ?? defaultRunsDir();
   const pulse = buildPulseAlerts(await (opts.read ?? readPulseAlertInputs)(runsDir, now), now);
-  if (opts.notify && pulse.alerts.length) await notifyPulseAlerts(pulse, { runsDir, now, senders: opts.senders ?? await defaultSenders(runsDir) }).catch(() => []);
+  if (opts.notify) await notifyPulseAlerts(pulse, { runsDir, now, senders: opts.senders ?? (pulse.alerts.length ? await defaultSenders(runsDir) : {}) }).catch(() => []);
   return pulse;
 }

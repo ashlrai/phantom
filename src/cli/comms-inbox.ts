@@ -10,7 +10,9 @@ import { parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox
 const HELP = `phm comms inbox [--json]
 phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
-With no verb, lists every pending comms item — unresolved needs-you lines, unanswered iMessage
+With no verb, lists every pending comms item — unresolved needs-you lines, needs-you
+answers not confirmed in the planner inbox or with unreadable delivery receipts,
+unanswered iMessage
 teammate texts, owner-thread messages awaiting a recorded reply, recorded owner
 replies whose channel fanout is not fully delivered, drafts awaiting approval,
 pending bus work (unclaimed envelopes, open, unclaimable or stalled feed jobs and worker handoffs), agent

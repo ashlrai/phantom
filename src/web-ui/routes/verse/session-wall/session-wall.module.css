@@ -38,6 +38,9 @@
 .card[data-state='quiet'] { border-color: var(--status-warning-solid); }
 .card[data-state='failed'] { border-color: var(--status-danger-solid); }
 .card[data-state='done'], .card[data-state='unknown'] { background: none; }
+/* A pause stands for the job (wall-steer.ts): the border breaks and the running dot holds still. */
+.card[data-steer='paused'] { border-style: dashed; }
+.card[data-steer='paused'] .state::before { animation: none; }
 .open { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; min-width: 0; padding: var(--space-2); border: 0; border-radius: inherit; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .open:hover { background: var(--bg-hover); }
 .open:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }

@@ -219,7 +219,7 @@ function ledgerRepos(ledger: string): Map<string, string> {
     if (!line.includes('"repo"')) continue;
     try {
       const row = JSON.parse(line) as Record<string, unknown>;
-      const id = typeof row.job === 'string' ? row.job : row.id;
+      const id = ['job', 'job_id', 'jobId', 'id'].map(key => row[key]).find(v => typeof v === 'string');
       if (typeof id === 'string' && typeof row.repo === 'string' && /^[A-Za-z0-9._-]{1,80}$/.test(row.repo)) repos.set(id, row.repo);
     } catch { /* skip bad line */ }
   }

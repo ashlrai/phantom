@@ -1,6 +1,7 @@
 /**
  * The list beside an open conversation in the Conversations pane: every
- * session as one row (who, state, when it last spoke, its newest line, how
+ * session as one row (who, state, a pause or request that stands for its job,
+ * when it last spoke, its newest line, how
  * many messages arrived since Mason last looked), so moving from one
  * conversation to the next never means going back to the wall. Drawn from the
  * wall's own read; hidden by the stylesheet when the pane is too narrow for
@@ -14,7 +15,9 @@ import { sessionAge } from '../../../../core/fleet/live-sessions.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 import { findEntries, STATE_WORD, wallHeadline, type SessionWallRead, type WallEntry } from './session-wall-model.js';
 import { nextUnseen, unseenCount, unseenSessions } from './wall-seen.js';
+import { steerMark } from './wall-steer.js';
 import styles from './session-wall.module.css';
+import steerStyles from './wall-steer.module.css';
 
 /** A row's one line of conversation: the newest thing said, or the newest record when nothing was said. */
 export function railPreview(entry: WallEntry): string {
@@ -94,7 +97,7 @@ export function SessionRail({ read, failed, openId, onPick, onClose, find = '', 
     </button>}
     {read && <ul className={styles.railList}>
       {listed.map(entry => {
-        const { session } = entry, unread = unseenCount(entry, openId);
+        const { session } = entry, unread = unseenCount(entry, openId), mark = steerMark(entry);
         return <li key={session.id}>
           <button type="button" className={styles.row} data-rail={session.id} data-state={session.state}
             aria-current={session.id === openId ? 'true' : undefined} onClick={() => onPick(session.id)}>
@@ -104,7 +107,7 @@ export function SessionRail({ read, failed, openId, onPick, onClose, find = '', 
               {unread > 0 && <span className={styles.fresh}>{unread} new</span>}
               <span className={styles.muted}>{session.lastMessageAgeSeconds === null ? 'unknown' : sessionAge(session.lastMessageAgeSeconds)}</span>
             </span>
-            <span className={styles.rowLine}><span className={styles.rowState} data-state={session.state}>{STATE_WORD[session.state]}</span> {railPreview(entry)}</span>
+            <span className={styles.rowLine}><span className={styles.rowState} data-state={session.state}>{STATE_WORD[session.state]}</span> {mark && <><span className={steerStyles.rowMark} data-tone={mark.tone}>{mark.text}</span> </>}{railPreview(entry)}</span>
           </button>
         </li>;
       })}

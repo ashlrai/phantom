@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; script?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; script?: boolean; membench?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -63,7 +63,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.script ? 'script-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : head;
       const receipt = options.bound
         ? `Bound candidate ${options.boundHead ?? sha} to event tree ${'e'.repeat(40)}\n`
@@ -1002,6 +1002,78 @@ describe('CI baseline evidence', () => {
     // A singleton unaffected failure can never prove a master pass.
     const singleton = await analyzeCiBaseline('owner/repo', github({ script: true, count: 1, pass: true, contents }).gh);
     for (const group of singleton.groups.slice(0, 3)) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('parses memory benchmark floor violations as gate failures', () => {
+    const failures = parseBaselineFailures(fixture('membench-shared'));
+    expect(failures.map(f => f.testId)).toEqual(['scripts/benchmark-memory.ts > (memory-benchmark)']);
+    expect(failures[0]).toMatchObject({ file: 'scripts/benchmark-memory.ts', names: '(memory-benchmark)' });
+    expect(failures[0]?.excerpt).toContain('memory benchmark below floor:');
+    expect(failures[0]?.excerpt).toContain('overall: 400 passed, floor 407');
+    expect(failures[0]?.excerpt).toContain('agent writes validation: 22 duplicate facts served, ceiling 10');
+    // Timestamped job-log lines keep the violation indent and parse identically.
+    const stamped = fixture('membench-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped).map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    expect(parseBaselineFailures(stamped)[0]?.excerpt).toContain('retrieval held-out: 30 passed, floor 34');
+    // A bare header, non-indented followers, deeper indents, the passing
+    // measurement run and unrelated lines stay unparsed.
+    for (const bad of [
+      'memory benchmark below floor:',
+      'memory benchmark below floor:\noverall: 400 passed, floor 407',
+      'memory benchmark below floor:\n    overall: 400 passed, floor 407',
+      'memory benchmark below floor:\n  ',
+      '  overall: 400 passed, floor 407',
+      '{"gate":{"pass":true,"violations":[]}}',
+      'npm error code 1',
+    ]) {
+      expect(parseBaselineFailures(bad), bad.slice(0, 60)).toEqual([]);
+    }
+    const secret = 'ghp_' + 'a'.repeat(36);
+    const leaky = ['memory benchmark below floor:', `  forbidden text leaked token ${secret}`, ''].join('\n');
+    expect(parseBaselineFailures(leaky)[0]?.excerpt).not.toContain(secret);
+  });
+  it('groups memory benchmark failures and attributes closure and toolchain inputs', async () => {
+    const contents = {
+      'scripts/benchmark-memory.ts': "import { runMemoryBenchmark } from '../src/core/local-eval/memory-benchmark.js';\nimport { memoryBenchmarkFloorViolations } from '../src/core/local-eval/memory-benchmark-floors.js';",
+      'src/core/local-eval/memory-benchmark.ts': "import { buildMemoryContextPack } from '../memory/pack.js';",
+      'src/core/local-eval/memory-benchmark-floors.ts': "import type { MemoryBenchmarkReport } from './memory-benchmark.js';",
+      'src/core/memory/pack.ts': "import { canonicalJson } from '../authority/canonical-json.js';",
+      'src/core/authority/canonical-json.ts': 'export {};',
+    };
+    const report = await analyzeCiBaseline('owner/repo', github({ membench: true, contents }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(1);
+    expect(report.groups[0]).toMatchObject({
+      testId: 'scripts/benchmark-memory.ts > (memory-benchmark)',
+      classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2],
+    });
+    expect(report.groups[0]?.brief).toContain('scripts/benchmark-memory.ts > (memory-benchmark)');
+    // The gate script, its import closure and the seeded toolchain inputs
+    // are PR-caused; the vitest harness ambient set cannot reach a tsx
+    // gate, so harness and unrelated changes share the baseline.
+    for (const touched of [
+      'scripts/benchmark-memory.ts',
+      'src/core/local-eval/memory-benchmark.ts',
+      'src/core/local-eval/memory-benchmark-floors.ts',
+      'src/core/memory/pack.ts',
+      'src/core/authority/canonical-json.ts',
+      'package.json',
+      'package-lock.json',
+      'tsconfig.json',
+    ]) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ membench: true, touched, contents }).gh);
+      expect(caused.groups[0]?.action, touched).toBe('pr-caused');
+    }
+    for (const touched of ['vitest.config.mock-compat.ts', 'vitest.config.ts', 'test/setup/home.ts', 'pnpm-lock.yaml', 'src/core/status.ts', 'docs/README.md']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ membench: true, touched, contents }).gh);
+      expect(shared.groups[0]?.classification, `${touched} -> shared`).toBe('shared-baseline');
+    }
+    // Without the entry script's contents its dependency closure cannot be
+    // proved, so the group stays unknown rather than guess at attribution.
+    const partial = await analyzeCiBaseline('owner/repo', github({ membench: true, contents: {} }).gh);
+    expect(partial.groups[0]?.classification).toBe('unknown');
+    // A singleton unaffected failure can never prove a master pass.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ membench: true, count: 1, pass: true, contents }).gh);
+    expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown' });
   });
   it('keeps TAP indentation on timestamped job-log lines', () => {
     const block = [

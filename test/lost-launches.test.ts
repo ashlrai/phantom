@@ -38,6 +38,18 @@ describe('findLostLaunches', () => {
     const r = findLostLaunches([row('launch', 'A', 100), row('launch', 'B', 50), row('launch', 'OLD', 3000)], undefined, NOW, 24);
     expect(r.lost.map(l => l.job)).toEqual(['B', 'A']);
   });
+  it('reads the jobs-ledger dialect: job_id/jobId/id, type/kind events, pool lanes and alternate timestamps', () => {
+    const lines = [
+      JSON.stringify({ type: 'launch', job_id: 'A', pool: 'claude', repo: 'phantom', time: ago(45) }),
+      JSON.stringify({ kind: 'finish', id: 'A', recordedAt: ago(40) }),
+      JSON.stringify({ type: 'launch', jobId: 'B', lane: 'work', updatedAt: ago(45) }),
+      JSON.stringify({ event: 'launch', job: 'C', ts: ago(45), closedAt: ago(44) }),
+    ];
+    const { lost, skipped } = findLostLaunches(lines, undefined, NOW);
+    expect(skipped).toBe(0);
+    expect(lost.map(l => l.job)).toEqual(['B', 'C']);
+    expect(lost.find(l => l.job === 'B')).toMatchObject({ lane: 'work', repo: null, launched_at: ago(45) });
+  });
   it('requeueHint is a tab row and never claims unknown fields', () => {
     expect(requeueHint({ job: 'A', lane: 'claude', repo: 'phantom', launched_at: null, reason: 'x' })).toBe('A\tphantom\tclaude');
     expect(requeueHint({ job: 'A', lane: null, repo: null, launched_at: null, reason: 'x' })).toBe('A\t<repo>\t<lane>');

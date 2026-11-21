@@ -158,6 +158,30 @@ carry no audit v2 document and stay unparsed, as do invalid reports
 (non-v2 schema, malformed severity counts), reports with no preceding
 step echo, clean reports (`total: 0`) and unrelated JSON.
 
+The `ci` job's "Memory benchmark regression gate" step on the ubuntu
+authority 3/3 shard runs `npm run --silent bench:memory -- --check >
+/dev/null`, so the script's pretty-printed JSON report never reaches the
+job log; only its stderr verdict does. Each governed-arm measurement that
+falls below its floor in `src/core/local-eval/memory-benchmark-floors.ts`
+prints one line indented two spaces under a `memory benchmark below
+floor:` header -- case counts, passed counts vs floor, leak/step/waste
+ceilings and open pending decisions -- and the step exits non-zero while
+any stands. Violations group under the entry script as
+`scripts/benchmark-memory.ts > (memory-benchmark)`: the gate's verdict is
+binary, so one identity covers the whole block. The script's import
+closure (the benchmark, its floors and the whole `src/core/memory`
+implementation) plus `package.json`, `package-lock.json` and
+`tsconfig.json` -- the toolchain files that shape how tsx compiles and
+resolves it, seeded as static inputs -- is the dependency set a master
+fix restores, and the vitest harness ambient set does not apply. Like
+the other non-test identities these groups can never resolve through a
+vitest pass line and classify `shared-baseline`, `pr-caused` or
+`unknown` -- never `probable-flake`. The measurement run without
+`--check`, the discarded JSON report, `MEMORY_BENCH_ARGUMENTS` usage
+errors (exit 2 with no stderr), passing runs, a bare header with no
+violation lines, non-indented or deeper-indented followers and unrelated
+output stay unparsed.
+
 The `ci` job's pack-smoke steps on the ubuntu authority 1/3 shard verify
 the same-job build before the suites run and again in `Pack smoke
 (exports map)`: `Capture pack smoke build snapshot` runs

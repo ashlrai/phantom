@@ -18,7 +18,7 @@ const HEALTHY: HomeSummary = {
   mergedLastHour: { state: 'ok', value: 2 }, merged24h: { state: 'ok', value: 31 }, medianMergeSeconds: { state: 'ok', value: 360 },
   main: { state: 'ok', value: [{ repo: 'phantom', state: 'green' }, { repo: 'locus', state: 'red' }] },
   running: { state: 'ok', value: [{ lane: 'claude', running: 3, target: 8 }, { lane: 'grok', running: 1, target: null }] },
-  atRisk: { state: 'ok', value: { resource: 'claude', percentUnused: 50, resetAt: '2026-11-17T22:00:00.000Z', reason: '50.0% will expire unused in 10.0h at current burn.' } },
+  atRisk: { state: 'ok', value: { resource: 'claude', percentUnused: 50, resetAt: '2026-11-17T22:00:00.000Z', reason: '50.0% will expire unused in 10.0h at current burn.', usedPercent: 40, burnPctPerHour: 1 } },
   worklog: { state: 'ok', value: [{ at: '2026-11-17T11:50:00.000Z', kind: 'merged', text: 'Merged a fake change', url: null }, { at: '2026-11-17T11:40:00.000Z', kind: 'leader', text: 'Leader: a fake reply', url: null }] },
   unreadLeaderReplies: { state: 'ok', value: 2 }, needsYou: { state: 'ok', value: [] },
 };
