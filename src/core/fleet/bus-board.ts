@@ -8,7 +8,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, unlinkSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { AshlrConfig } from '../types.js';
 import { fsyncDirectory } from '../util/durability.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
@@ -107,6 +107,42 @@ interface BusBoardDigest {
   threads: BusBoardPendingThread[];
   deliveries: { matched: number; items: BusBoardDelivery[]; truncated: boolean };
   tasks: { matched: number; items: BusBoardPendingTask[]; truncated: boolean };
+}
+
+/** Where the board state file and its fleet queue live for one fleet root. */
+export type BusBoardStoragePaths =
+  | { status: 'ok'; boardRoot: string; queueRoot: string }
+  | { status: 'invalid' };
+
+/**
+ * The one board path derivation `phm bus board`, `agents bus work mine` and
+ * `agents bus status` share: `<dirname(fleetRoot)>/bus` for state and
+ * `<fleetRoot>/bus-queue` for the fleet queue — `<ashlrHome>/bus` and
+ * `<ashlrHome>/fleet/bus-queue` on the default root — unless
+ * `fleet.sharedQueue` runs in attested filesystem mode, where the configured
+ * path is the queue and `<path>/bus` the board. A filesystem-mode config
+ * without `trustedCoherentStorage: true` and an absolute path is 'invalid',
+ * never guessed; callers report their own unavailable state.
+ */
+export function busBoardStoragePaths(fleetRoot: string, cfg: AshlrConfig): BusBoardStoragePaths {
+  const shared = cfg.fleet?.sharedQueue;
+  if (shared?.mode === 'filesystem') {
+    if (shared.trustedCoherentStorage !== true || typeof shared.path !== 'string' || !isAbsolute(shared.path)) {
+      return { status: 'invalid' };
+    }
+    return { status: 'ok', queueRoot: shared.path, boardRoot: join(shared.path, 'bus') };
+  }
+  return { status: 'ok', boardRoot: join(dirname(fleetRoot), 'bus'), queueRoot: join(fleetRoot, 'bus-queue') };
+}
+
+/** Stored board row counts from a lock-free state read. */
+export interface BusBoardStateSummary {
+  threads: number;
+  tasks: number;
+  deliveries: number;
+  receipts: number;
+  /** Deliveries no receipt row acknowledges — board mail still awaiting receipt. */
+  pendingDeliveries: number;
 }
 
 export interface BusBoardOptions {
@@ -558,6 +594,30 @@ export class BusBoard {
           ...task, content: { trust: 'untrusted' as const, text: presentBusBoardText(task.content.text) },
         })),
       },
+    };
+  }
+
+  /**
+   * Lock-free, non-creating probe of the stored board for `agents bus
+   * status`: the same event-bus gate and strict state validation every read
+   * applies, without the writer lock, directory creation or claim-index join
+   * `transaction` performs. Returns the stored row counts — deliveries split
+   * into total and still-unacknowledged — or null when no state.json exists
+   * (a verified-empty board). Throws on an unsafe, unreadable or invalid
+   * store; the caller reports unavailable, never an empty count.
+   */
+  inspect(): BusBoardStateSummary | null {
+    this.enabled();
+    const file = join(this.root, 'state.json');
+    if (!existsSync(file)) return null;
+    const state = this.read();
+    const acknowledged = new Set((state.receipts ?? []).map((receipt) => receipt.deliveryId));
+    return {
+      threads: state.threads.length,
+      tasks: state.tasks.length,
+      deliveries: state.deliveries.length,
+      receipts: state.receipts?.length ?? 0,
+      pendingDeliveries: state.deliveries.filter((delivery) => !acknowledged.has(delivery.id)).length,
     };
   }
 

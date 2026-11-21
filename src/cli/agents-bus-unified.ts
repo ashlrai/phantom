@@ -121,9 +121,9 @@ under the same labels — capped sections carry matched (or open for jobs) as th
 pending total — where every section reports its own read state and unknown
 stays unknown.
 status is a read-only probe of the store, registry, wake queue, coordination
-table, message-id claim journal, work feed, owner-chat share receipts and the
-legacy mailbox; a section that cannot be read reports unavailable or unknown,
-never zero.
+table, message-id claim journal, work feed, owner-chat share receipts, the
+legacy mailbox and the shared task board with its fleet queue; a section that
+cannot be read reports unavailable or unknown, never zero.
 No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
 
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
@@ -299,6 +299,9 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         `feed ${result.feed.status}${result.feed.reason === undefined ? '' : `:${result.feed.reason}`} jobs=${result.feed.jobs ?? unknown}`,
         `mailbox ${result.mailbox.source} pending=${result.mailbox.pending ?? unknown}`,
         `ownerChat ${result.ownerChat.source} receipts=${result.ownerChat.receipts ?? unknown}`,
+        `board ${result.board.source} threads=${result.board.threads ?? unknown} ` +
+          `tasks=${result.board.tasks ?? unknown} pending=${result.board.pendingDeliveries ?? unknown} ` +
+          `claims=${result.board.claims ?? unknown}`,
         `as-of=${result.asOf}`,
       ].join('\n'));
       return 0;

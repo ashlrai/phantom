@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -8,9 +8,12 @@ import { announceWork, sendDirectMessage, sendWakeRequest, type UnifiedBusOption
 import { writeOwnerChatReceipts, type OwnerChatReceipt } from '../src/core/agents/chat-owner-receipts.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { BusBoard } from '../src/core/fleet/bus-board.js';
 import { createBusMailbox } from '../src/core/fleet/bus-mailbox.js';
+import { SharedStore } from '../src/core/fleet/shared-store.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
+import type { AshlrConfig } from '../src/core/types.js';
 import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
 
 const dirs: string[] = [];
@@ -41,6 +44,10 @@ describe('readUnifiedBusStatus', () => {
     expect(status.mailbox).toEqual({ source: 'missing', pending: 0 });
     // A verifiably absent receipts ledger holds no rows: 0 is proven.
     expect(status.ownerChat).toEqual({ source: 'missing', receipts: 0 });
+    // A verifiably absent board holds no rows: 0 is the real count, and the
+    // queue claim index reads as an empty-but-readable store.
+    expect(status.board).toEqual({ source: 'missing', threads: 0, tasks: 0,
+      pendingDeliveries: 0, claims: 'readable' });
     expect(Number.isNaN(Date.parse(status.asOf))).toBe(false);
   });
 
@@ -190,6 +197,97 @@ describe('readUnifiedBusStatus', () => {
   });
 });
 
+describe('board section', () => {
+  /** The shared task board at the paths the probe derives from the fleet root. */
+  function board(options: UnifiedBusStatusOptions) {
+    return new BusBoard({ root: join(dirname(options.root!), 'bus'),
+      fleet: new SharedStore(join(options.root!, 'bus-queue'), 60_000),
+      cfg: { foundry: {} } as AshlrConfig });
+  }
+
+  it('reports a never-written board as verified missing without creating its store', () => {
+    const options = setup();
+    options.board = { config: { foundry: {} } as AshlrConfig };
+    const status = readUnifiedBusStatus(options);
+    expect(status.board).toEqual({ source: 'missing', threads: 0, tasks: 0,
+      pendingDeliveries: 0, claims: 'readable' });
+    // Read-only: the probe never creates the board or queue directories.
+    expect(existsSync(join(dirname(options.root!), 'bus'))).toBe(false);
+    expect(existsSync(join(options.root!, 'bus-queue'))).toBe(false);
+    expect(status.store.source).toBe('missing');
+  });
+
+  it('counts stored board rows and deliveries still awaiting receipt', async () => {
+    const options = setup();
+    options.board = { config: { foundry: {} } as AshlrConfig };
+    const store = board(options);
+    const threadId = store.createThread('nova', 'Coordination').id;
+    store.joinThread('atlas', threadId);
+    await store.post('nova', threadId, 'probe mail');
+    store.createTask('nova', threadId, 'item-1', 'Board task');
+    // Two members each got one delivery; atlas's receipt leaves one pending.
+    const delivery = store.readThread('atlas', threadId)[0]!;
+    store.acknowledge('atlas', threadId, delivery.id);
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.board).toEqual({ source: 'available', threads: 1, tasks: 1,
+      pendingDeliveries: 1, claims: 'readable' });
+    expect(status.store.source).toBe('missing');
+  });
+
+  it('reports an unreadable board as unavailable while the queue stays probed', async () => {
+    const options = setup();
+    options.board = { config: { foundry: {} } as AshlrConfig };
+    const store = board(options);
+    const threadId = store.createThread('nova', 'Faults').id;
+    store.createTask('nova', threadId, 'item-x', 'Task');
+
+    // Corrupt board state: unavailable with null counts, never an empty board.
+    writeFileSync(join(dirname(options.root!), 'bus', 'state.json'), '{broken', { mode: 0o600 });
+    const status = readUnifiedBusStatus(options);
+    expect(status.board).toEqual({ source: 'unavailable', threads: null, tasks: null,
+      pendingDeliveries: null, claims: 'readable' });
+    expect(status.store.source).toBe('missing');
+  });
+
+  it('keeps the board readable while reporting an unreadable queue claim index', async () => {
+    const options = setup();
+    options.board = { config: { foundry: {} } as AshlrConfig };
+    const store = board(options);
+    const threadId = store.createThread('nova', 'Queue fault').id;
+    store.createTask('nova', threadId, 'item-x', 'Task');
+
+    mkdirSync(join(options.root!, 'bus-queue'), { recursive: true });
+    writeFileSync(join(options.root!, 'bus-queue', 'ashlr-fleet-queue.json'), '{broken', { mode: 0o600 });
+    const status = readUnifiedBusStatus(options);
+    expect(status.board).toEqual({ source: 'available', threads: 1, tasks: 1,
+      pendingDeliveries: 0, claims: 'unreadable' });
+  });
+
+  it('derives board paths from a configured shared queue and fails closed without attestation', async () => {
+    const options = setup();
+    const sharedDir = join(dirname(options.root!), 'shared-queue');
+    const cfg = { foundry: {}, fleet: { sharedQueue: { mode: 'filesystem' as const,
+      path: sharedDir, trustedCoherentStorage: true } } } as AshlrConfig;
+    options.board = { config: cfg };
+    const store = new BusBoard({ root: join(sharedDir, 'bus'),
+      fleet: new SharedStore(sharedDir, 60_000), cfg });
+    const threadId = store.createThread('nova', 'Shared').id;
+    store.createTask('nova', threadId, 'item-s', 'Shared task');
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.board).toEqual({ source: 'available', threads: 1, tasks: 1,
+      pendingDeliveries: 0, claims: 'readable' });
+
+    // A shared-queue config without the coherent-storage attestation is
+    // unavailable — the probe never guesses an untrusted queue path.
+    options.board = { config: { foundry: {}, fleet: { sharedQueue: { mode: 'filesystem' as const,
+      path: sharedDir } } } as AshlrConfig };
+    expect(readUnifiedBusStatus(options).board).toEqual({ source: 'unavailable', threads: null,
+      tasks: null, pendingDeliveries: null, claims: null });
+  });
+});
+
 describe('phm agents bus status', () => {
   it('prints one honest line per section in human mode and the object as JSON', async () => {
     const options = setup();
@@ -205,6 +303,8 @@ describe('phm agents bus status', () => {
     expect(json.feed.status).toBe('ok');
     expect(json.mailbox).toEqual({ source: 'missing', pending: 0 });
     expect(json.ownerChat).toEqual({ source: 'missing', receipts: 0 });
+    expect(json.board).toEqual({ source: 'missing', threads: 0, tasks: 0,
+      pendingDeliveries: 0, claims: 'readable' });
 
     const text: string[] = [];
     expect(await runAgentsBusUnified(['status', '--root', options.root!], t => text.push(t), () => {}, {})).toBe(0);
@@ -214,6 +314,7 @@ describe('phm agents bus status', () => {
     expect(lines.join('\n')).toContain('feed ok jobs=0');
     expect(lines.join('\n')).toContain('mailbox missing pending=0');
     expect(lines.join('\n')).toContain('ownerChat missing receipts=0');
+    expect(lines.join('\n')).toContain('board missing threads=0 tasks=0 pending=0 claims=readable');
     expect(lines.join('\n')).toContain('wakes missing hints=0 truncated=false');
   });
 });
