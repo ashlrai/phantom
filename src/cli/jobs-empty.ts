@@ -96,7 +96,7 @@ export async function cmdJobs(args: string[], read = readEmptyJobs, readFamilies
     await (await import('../core/queue/dupcheck-gate.js')).recordDupcheckOutcomes(runsRoot(), report.tagged).catch(() => 0);
   }
   if (json) console.log(JSON.stringify(report));
-  else if (by && report.tags) for (const line of (await import('../core/fleet/empty-tags.js')).formatEmptyTags(report.tags, by, hours)) console.log(line);
+  else if (by && report.digest) for (const line of (await import('../core/fleet/empty-digest.js')).formatEmptyDigest(report.digest, by, hours)) console.log(line);
   else if (report.total === 0) console.log('No empty jobs.');
   else {
     console.log(`${report.total} empty jobs in the last ${hours} hours`);
