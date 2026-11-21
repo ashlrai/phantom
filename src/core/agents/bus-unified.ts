@@ -1021,11 +1021,11 @@ function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
  * same bucket the messages and conversations projections group under
  * `job:<id>`. Every other body kind cites no job and never matches; a bare
  * `<id>` thread label is a different conversation bucket and does not match
- * either. `agents bus inbox`/`channel read` and `comms bus read`/`watch`
- * apply this one rule for their `job` filters, so a job-scoped read can
- * never disagree about what names a job; the citation half (`busBodyJobId`)
- * is the same field the message, channel, inbox and work-mine annotations
- * key on.
+ * either. `agents bus inbox`/`channel read`, `comms bus read`/`watch` and
+ * `fleet bus-follow` apply this one rule for their `job` filters, so a
+ * job-scoped read can never disagree about what names a job; the citation
+ * half (`busBodyJobId`) is the same field the message, channel, inbox and
+ * work-mine annotations key on.
  */
 export function busBodyJobMatch(body: unknown, job: string): boolean {
   return busBodyJobId(body) === job || busBodyThread(body) === `job:${job}`;

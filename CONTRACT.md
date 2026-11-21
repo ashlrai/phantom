@@ -2573,8 +2573,9 @@ render clipped to 512 characters. `workFeedJobId(body)` returns the
 `wake`) declares, undefined for every other kind, and
 `busBodyJobMatch(body, job)` is the shared job-scoped read rule — a
 feed-citing `jobId`, a `worker-handoff` `taskId`, or the `job:<id>` thread
-label — that `readAgentInbox`, `readAgentChannel` and `comms bus
-read`/`watch --job` all apply, and
+label — that `readAgentInbox`, `readAgentChannel`, `comms bus
+read`/`watch --job` and `followBusStream` (`fleet bus-follow --job`) all
+apply, and
 `jobAnnotationFromFeed(feed, jobId)` maps one already-read
 `BusWorkFeedReadResult` to the `BusEnvelopeLookupJob` every citing read
 shares — the inbox page, `readBusEnvelopeById`, wake referents and the

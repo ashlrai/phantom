@@ -4,6 +4,7 @@ import { isAbsolute } from 'node:path';
 import { BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxPage } from './bus-inbox.js';
 import type { BusEnvelope } from './bus-envelope.js';
 import { agentPendingAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
+import { busBodyJobMatch } from '../agents/bus-unified.js';
 
 export const BUS_FOLLOW_MAX_DURATION_MS = 3_600_000;
 export const BUS_FOLLOW_MIN_INTERVAL_MS = 100;
@@ -30,6 +31,14 @@ export interface BusFollowRequest {
    * keep exact-label matching, so unknown identity state never widens the
    * stream. Filtering is not authentication. */
   to?: string;
+  /** Optional job filter: the same `busBodyJobMatch` citation rule
+   * `agents bus inbox --job` applies — a `work.post`/`work.status`/
+   * `work.result`/`wake` body declaring the `jobId`, a `worker-handoff`
+   * assigning that fleet job id through `taskId`, or a `note`/`context`
+   * body carrying the `job:<id>` thread label. Every other body kind cites
+   * no job and never matches; checkpoints still advance past filtered rows
+   * exactly like `--to`, so a job-scoped stream resumes on the same cursor. */
+  job?: string;
   intervalMs?: number;
   /** Selects an existing local store; never creates or mutates inbox files. */
   root?: string;
@@ -39,6 +48,7 @@ export function validBusFollowRequest(request: BusFollowRequest): boolean {
   return Number.isSafeInteger(request.after) && request.after >= 0 &&
     Number.isSafeInteger(request.durationMs) && request.durationMs >= 1 && request.durationMs <= BUS_FOLLOW_MAX_DURATION_MS &&
     (request.to === undefined || label(request.to)) &&
+    (request.job === undefined || label(request.job)) &&
     (request.intervalMs === undefined || (Number.isSafeInteger(request.intervalMs) &&
       request.intervalMs >= BUS_FOLLOW_MIN_INTERVAL_MS && request.intervalMs <= BUS_FOLLOW_MAX_INTERVAL_MS)) &&
     (request.root === undefined || (isAbsolute(request.root) && !request.root.includes('\0')));
@@ -127,6 +137,7 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
       let accepted = true;
       for (const row of page.messages) {
         if (!addressedTo(row.envelope.to, row.envelope.from)) continue;
+        if (request.job !== undefined && !busBodyJobMatch(row.envelope.body, request.job)) continue;
         if (!(await emit({ type: 'message', cursor: row.cursor, receivedAt: row.receivedAt, envelope: row.envelope }))) {
           status = aborted() ? 'cancelled' : 'output-unavailable';
           accepted = false;

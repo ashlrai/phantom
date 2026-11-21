@@ -123,6 +123,38 @@ it('keeps exact-label matching when the identity registry is unreadable', async 
   expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 2 });
 });
 
+it('delivers only envelopes citing --job while checkpoints advance past the rest', async () => {
+  const job = 'RQ-TEST-JOB-1';
+  post('plain');
+  post('other-job', 'worker-a', { body: { kind: 'work.post', jobId: 'RQ-OTHER-JOB', title: 'x' } });
+  post('work-post', 'worker-a', { body: { kind: 'work.post', jobId: job, title: 'x' } });
+  post('wake', 'worker-a', { body: { kind: 'wake', target: 'worker-a', reason: 'go', jobId: job } });
+  post('thread-note', 'worker-a', { body: { kind: 'note', thread: `job:${job}` } });
+  post('bare-thread', 'worker-a', { body: { kind: 'note', thread: job } });
+  post('handoff', 'worker-a', { body: { kind: 'worker-handoff', taskId: job, prompt: 'run it' } });
+  // work.claim/release carry jobId as an operation parameter, never a citation.
+  post('claim-op', 'worker-a', { body: { kind: 'work.claim', op: 'acquire', jobId: job } });
+  const { records, pending, expire } = follow({ job });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['work-post', 'wake', 'thread-note', 'handoff']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 8 });
+});
+
+it('applies --job on top of --to matching', async () => {
+  const job = 'RQ-TEST-JOB-2';
+  post('mine-job', 'worker-a', { body: { kind: 'work.post', jobId: job, title: 'x' } });
+  post('mine-other', 'worker-a');
+  post('theirs-job', 'worker-b', { body: { kind: 'work.post', jobId: job, title: 'x' } });
+  const { records, pending, expire } = follow({ to: 'worker-a', job });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['mine-job']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
 it('resumes from an emitted checkpoint without redelivering messages', async () => {
   post('first');
   const before = follow();
@@ -229,6 +261,9 @@ it('bus-follow rejects invalid arguments before touching the store', async () =>
     ['--after', '0', '--duration-ms', '100', '--interval-ms', '99', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--interval-ms', '60001', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--to', 'bad label', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--job', 'bad label', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--job=', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--job', 'RQ-1', '--job', 'RQ-2', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--root', 'relative', '--json'],
     ['--after', '0', '--duration-ms', '100', '--root', root, '--to', '--json']]) {
     expect(await cmdFleetBusFollow(args, { emit, list })).toBe(2);
@@ -249,6 +284,19 @@ it('emits scrubbed JSONL through the CLI and expires with a final checkpoint', a
   expect(emitted.join()).not.toContain('fake-token-value');
   expect(emitted.join()).not.toContain('FAKE0000000000000000');
   expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 1 });
+});
+
+it('filters the CLI stream by --job', async () => {
+  post('noise');
+  post('hit', 'worker-a', { body: { kind: 'work.post', jobId: 'RQ-CLI-JOB', title: 't' } });
+  const emitted: string[] = [];
+  const code = await cmdFleetBusFollow(['--after', '0', '--duration-ms', '250', '--interval-ms', '100',
+    '--job', 'RQ-CLI-JOB', '--root', root, '--json'],
+    { emit: (json: string) => { emitted.push(json); } });
+  expect(code).toBe(0);
+  const rows = emitted.map(line => JSON.parse(line) as BusFollowRecord);
+  expect(messages(rows).map(row => row.envelope.id)).toEqual(['hit']);
+  expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 2 });
 });
 
 it('owns its help and dispatches through the fleet verb convention', async () => {
