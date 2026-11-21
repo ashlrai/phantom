@@ -1014,7 +1014,10 @@ function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
  * `note`/`context` bodies carrying that v2 thread label; `from` narrows by
  * sender through the same identity-label matching `channel read` uses — a
  * ref that resolves through the registry matches every label of that
- * identity, an unresolvable ref keeps exact-label matching. Returned highest
+ * identity, an unresolvable ref keeps exact-label matching. `priority` keeps
+ * only envelopes stamped with that exact P0..P3 band — the same match
+ * `comms bus read --priority` applies — so urgent mail is one filtered read,
+ * not a page through the backlog. Returned highest
  * priority first; `nextCursor` covers every scanned row, so callers persist
  * it only after handling the page. Claimable work and worker-handoff items
  * additionally carry `held`/`holder` — the same hold evidence `bus show`
@@ -1025,9 +1028,9 @@ function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
  * `messages` still returns only the first `limit` of them.
  */
 export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string;
-    matched?: boolean } = {},
+    matched?: boolean; priority?: BusPriority } = {},
   options: UnifiedBusOptions = {}): InboxPage {
-  const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread;
+  const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
   const countMatched = page.matched === true;
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
     return { status: 'invalid', reason: 'after must be >= 0 and limit 1-100.' };
@@ -1037,6 +1040,9 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   }
   if (page.from !== undefined && (typeof page.from !== 'string' || page.from.length === 0 || page.from.length > 128)) {
     return { status: 'invalid', reason: 'Invalid sender filter.' };
+  }
+  if (priority !== undefined && !BUS_PRIORITIES.includes(priority)) {
+    return { status: 'invalid', reason: 'Invalid priority.' };
   }
   const read = readAgentRegistry(options);
   if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
@@ -1075,7 +1081,8 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
       else if (toChannel) kind = 'channel';
       const matchedKind = kind !== null &&
         (thread === undefined || busBodyThread(envelope.body) === thread) &&
-        (fromMatch === undefined || fromMatch(envelope.from)) ? kind : null;
+        (fromMatch === undefined || fromMatch(envelope.from)) &&
+        (priority === undefined || envelope.priority === priority) ? kind : null;
       if (matchedKind !== null && envelope.origin_bridge === 'agent-chat-owner') {
         try { ownerReceipts ??= readOwnerChatReceipts(ownerChatRoot(options.root)); }
         catch { return { status: 'unavailable', reason: 'Owner share receipts unavailable.' }; }
@@ -1276,6 +1283,11 @@ export interface ChannelReadOptions {
    * Every other body kind — and a note without the field — never matches.
    */
   thread?: string;
+  /**
+   * Priority filter: only posts stamped with this exact P0..P3 band — the
+   * same match `comms bus read --priority` applies.
+   */
+  priority?: BusPriority;
   after?: number;
   limit?: number;
 }
@@ -1291,13 +1303,14 @@ export type ChannelReadPage =
  * membership: membership gates posting only, and the rows are the same
  * shared store `comms bus group read` sees. `from` narrows by sender through
  * the same identity-label matching `comms bus read` uses; `thread` narrows to
- * `note`/`context` bodies carrying that v2 thread label. `nextCursor`
+ * `note`/`context` bodies carrying that v2 thread label, and `priority`
+ * narrows to posts stamped with that exact P0..P3 band. `nextCursor`
  * covers every scanned row, so callers persist it only after handling the
  * page; a missing registry means no channel exists, an unreadable one or an
  * unreadable store is reported, never an empty page passed off as history.
  */
 export function readAgentChannel(name: string, page: ChannelReadOptions = {}, options: UnifiedBusOptions = {}): ChannelReadPage {
-  const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread;
+  const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
   if (typeof name !== 'string' || !agentChannelNameSchema.safeParse(name).success) {
     return { status: 'invalid', reason: 'Invalid channel name.' };
   }
@@ -1306,6 +1319,9 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
   }
   if (thread !== undefined && (typeof thread !== 'string' || !THREAD.test(thread))) {
     return { status: 'invalid', reason: 'Invalid thread label.' };
+  }
+  if (priority !== undefined && !BUS_PRIORITIES.includes(priority)) {
+    return { status: 'invalid', reason: 'Invalid priority.' };
   }
   let exact: string | undefined;
   if (page.topic !== undefined) {
@@ -1337,7 +1353,8 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
       const presence = isGroupPresenceBody(body);
       if (!presence && envelope.to.startsWith(prefix) && (exact === undefined || envelope.to === exact) &&
           (fromMatch === undefined || fromMatch(envelope.from)) &&
-          (thread === undefined || busBodyThread(body) === thread)) {
+          (thread === undefined || busBodyThread(body) === thread) &&
+          (priority === undefined || envelope.priority === priority)) {
         messages.push({ cursor: row.cursor, receivedAt: row.receivedAt, priority: envelope.priority,
           topic: envelope.to.slice(prefix.length),
           fromAgent: resolveAgent(read.registry, envelope.from)?.handle ?? null, envelope });
