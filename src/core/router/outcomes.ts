@@ -201,6 +201,18 @@ const hasRevertStamp = (r: Row): boolean =>
     return typeof v === 'string' && v.trim() !== '' && Number.isFinite(Date.parse(v));
   });
 
+/**
+ * jobs.jsonl timestamp dialect: ts|timestamp|at|time|mergedAt|closedAt|
+ * recordedAt|updatedAt, with mergedAt/closedAt preferred on terminal rows —
+ * the same field set dispatchd `_vc_pick` and metrics/loop accept.
+ */
+const LEDGER_TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+/** Timestamp keys for a row in the given phase; MERGED prefers mergedAt, CLOSED closedAt. */
+const ledgerTsKeys = (phase: string): readonly string[] => {
+  const preferred = phase === 'MERGED' ? 'mergedAt' : phase === 'CLOSED' ? 'closedAt' : null;
+  return preferred === null ? LEDGER_TS_KEYS : [preferred, ...LEDGER_TS_KEYS.filter(k => k !== preferred)];
+};
+
 /** A github.com pull URL in the canonical shape dispatchd and the fleet writers emit. */
 const GITHUB_PULL_URL = /^https:\/\/github\.com\/([^/?#\s]+)\/([^/?#\s]+)\/pull\/([1-9]\d*)\/?$/i;
 
@@ -327,7 +339,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     const state = (str(r, 'phase', 'state', 'outcome', 'status') ?? '').toUpperCase();
     const merged = state === 'MERGED' ? true : state === 'CLOSED' ? false : typeof r['merged'] === 'boolean' ? r['merged'] : null;
     if (merged !== null) {
-      const ts = Date.parse(str(r, 'ts', 'timestamp', 'at', 'mergedAt', 'closedAt') ?? '') || 0;
+      const ts = Date.parse(str(r, ...ledgerTsKeys(state)) ?? '') || 0;
       if (ts >= (mergedAt.get(j) ?? -1)) { o.merged = merged; mergedAt.set(j, ts); }
     }
     // Sticky-true, matching metrics-ingest: any recorded revert evidence wins

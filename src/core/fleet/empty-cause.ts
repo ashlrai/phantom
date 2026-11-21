@@ -8,6 +8,7 @@
  * Read-only; bounded, no-follow reads through readSource.
  */
 import { join } from 'node:path';
+import { parseLedgerTs } from '../metrics/loop.js';
 import { readSource } from './runs-parked-queue.js';
 
 export const EMPTY_CAUSES = ['sandbox_denied', 'no_candidate', 'precheck_skip', 'tool_missing', 'timeout', 'model_error', 'unknown'] as const;
@@ -81,6 +82,35 @@ const seconds = (value: unknown): number | null => typeof value === 'number' && 
 export interface LedgerRow { row: Record<string, unknown>; id: string; lane: string; at: number }
 
 /**
+ * jobs.jsonl field dialects, the same sets dispatchd `_vc_pick`,
+ * metrics/loop and queue/job-outcomes accept: job ids take
+ * job|job_id|jobId|id, the lane alias pool and timestamps
+ * ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt. `at` stays
+ * the row's own stamp in dialect order — consumers that need the PR's own
+ * mergedAt read that field themselves (merge-latency, throughput).
+ */
+const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const LANE_KEYS = ['lane', 'pool'] as const;
+const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+
+const pickString = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim() !== '') return value.trim();
+  }
+  return null;
+};
+
+/** First parseable stamp among the ledger's timestamp fields, in dialect order. */
+function ledgerAt(row: Record<string, unknown>): number | null {
+  for (const field of TS_KEYS) {
+    const at = parseLedgerTs(row[field]);
+    if (at !== null) return at;
+  }
+  return null;
+}
+
+/**
  * Pure: in-window ledger rows that name a safe job id. `malformed` counts non-blank lines that are not JSON objects.
  * `anyJob` also keeps rows with no job id (PR outcome rows are keyed by URL) under the id ''.
  */
@@ -95,12 +125,12 @@ export function ledgerRows(ledger: string, now: number, hours: number, anyJob = 
       if (!value || typeof value !== 'object' || Array.isArray(value)) { malformed++; continue; }
       row = value as Record<string, unknown>;
     } catch { malformed++; continue; }
-    const id = typeof row.job === 'string' ? row.job : row.id ?? (anyJob ? '' : null);
+    const id = pickString(row, JOB_ID_KEYS) ?? (anyJob ? '' : null);
     // The id names a log file, so refuse anything that could leave the runs dir.
-    if (typeof id !== 'string' || !(SAFE_ID.test(id) || (anyJob && id === ''))) continue;
-    const at = typeof row.ts === 'string' ? Date.parse(row.ts.trim().replace(/([+-]\d{2})(\d{2})$/, '$1:$2')) : NaN;
-    if (!Number.isFinite(at) || at > now || at < now - hours * 3_600_000) continue;
-    rows.push({ row, id, lane: text(row.lane), at });
+    if (id === null || !(SAFE_ID.test(id) || (anyJob && id === ''))) continue;
+    const at = ledgerAt(row);
+    if (at === null || at > now || at < now - hours * 3_600_000) continue;
+    rows.push({ row, id, lane: text(pickString(row, LANE_KEYS)), at });
   }
   return { rows, malformed };
 }

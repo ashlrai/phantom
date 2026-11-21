@@ -101,6 +101,19 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(fold.outcomes).toHaveLength(2);
   });
 
+  it('reads alias timestamp fields and prefers mergedAt/closedAt on terminal rows', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"T1","phase":"CLOSED","timestamp":"2026-11-01T00:00:00Z","closedAt":"2026-11-01T02:00:00Z"}',
+      '{"job":"T1","phase":"MERGED","recordedAt":"2026-11-01T03:00:00Z"}',
+      '{"job":"T2","phase":"MERGED","time":"2026-11-01T01:00:00Z","mergedAt":"2026-11-01T04:00:00Z"}',
+      '{"job":"T2","phase":"CLOSED","updatedAt":"2026-11-01T05:00:00Z"}',
+    ].join('\n'));
+    // T1: the alias-only MERGED stamp (03:00) is later than the CLOSED closedAt (02:00).
+    expect(fold.outcomes.find(o => o.job_id === 'T1')).toMatchObject({ merged: true });
+    // T2: the alias-only CLOSED stamp (05:00) is later than the MERGED mergedAt (04:00).
+    expect(fold.outcomes.find(o => o.job_id === 'T2')).toMatchObject({ merged: false });
+  });
+
   it('refuses to attach URL-only rows when two jobs claim the same PR', () => {
     const text = [
       '{"job":"A","pr_url":"https://github.com/o/r/pull/7"}',

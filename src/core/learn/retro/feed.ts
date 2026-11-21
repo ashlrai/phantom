@@ -69,7 +69,12 @@ import { learnHome, NIGHTLY_MAX_BYTES, NIGHTLY_MAX_RECORDS, readNightlyFile } fr
 
 const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const STATE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const;
-const TS_KEYS = ['ts', 'timestamp', 'at', 'mergedAt', 'closedAt'] as const;
+/**
+ * jobs.jsonl timestamp dialect: ts|timestamp|at|time|mergedAt|closedAt|
+ * recordedAt|updatedAt — the same field set and order dispatchd `_vc_pick`
+ * and metrics/loop accept.
+ */
+const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
 const PLAYBOOK_KEYS = ['playbook', 'work_class'] as const;
 const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr'] as const;
