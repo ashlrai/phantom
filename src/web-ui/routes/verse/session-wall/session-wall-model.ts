@@ -63,10 +63,14 @@ export interface WallEntry {
   /** Null for a session with no job, when its activity was not read, and from a server that does not say. */
   work: WallWork | null;
 }
+/** `ended` is finished or failed; `unknown` is every other state that is not running. */
+export interface WallUnshown { running: number; ended: number; unknown: number }
 export interface SessionWallRead {
   generatedAt: string;
   /** Every session in the list; `entries` may hold fewer. Null when the read did not say. */
   total: number | null;
+  /** The sessions the read left out because it holds a fixed number, by what the list says of each. Null when the read did not say. */
+  unshown: WallUnshown | null;
   entries: WallEntry[];
   gaps: string[];
   /** The narrowing the server says it applied; null when the read did not say. */
@@ -155,6 +159,13 @@ function narrowEntry(raw: unknown): WallEntry | null {
   };
 }
 
+/** Believed only when all three are counts. */
+function narrowUnshown(raw: unknown): WallUnshown | null {
+  if (!object(raw)) return null;
+  const running = count(raw.running), ended = count(raw.ended), unknown = count(raw.unknown);
+  return running === null || ended === null || unknown === null ? null : { running, ended, unknown };
+}
+
 /** Null when this is not a session-threads read. */
 export function narrowSessionWall(raw: unknown): SessionWallRead | null {
   if (!object(raw) || raw.schema !== 'fleet.session-threads.v1' || !Array.isArray(raw.threads)) return null;
@@ -166,7 +177,8 @@ export function narrowSessionWall(raw: unknown): SessionWallRead | null {
   // Believed only when every part is a value the route could have applied.
   const scope = f && (f.lane === null || scopeName(f.lane)) && (f.repo === null || scopeName(f.repo)) && typeof f.live === 'boolean'
     ? { lane: scopeName(f.lane), repo: scopeName(f.repo), live: f.live } : null;
-  return { generatedAt: time(raw.generatedAt) ?? new Date(0).toISOString(), total: total === null ? null : Math.max(total, entries.length), entries, gaps: lines(raw.gaps), scope };
+  return { generatedAt: time(raw.generatedAt) ?? new Date(0).toISOString(), total: total === null ? null : Math.max(total, entries.length),
+    unshown: object(raw.counts) ? narrowUnshown(raw.counts.unshown) : null, entries, gaps: lines(raw.gaps), scope };
 }
 
 export const sessionWallQuery: QueryDef<SessionWallRead | null> = {

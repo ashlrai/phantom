@@ -680,8 +680,13 @@ replies are read once, and the recorded activity once for each job shown.
 - `filter`: `lane`, `repo` (null when not set) and `live` (true when only
   running sessions were asked for). They work as they do for the session list.
 - `counts`: `sessions` (every session in the list), `shown` (the ones in
-  `threads`) and `states`, a count of the shown sessions under each of
-  `running`, `quiet`, `idle`, `done`, `failed` and `unknown`.
+  `threads`), `states`, a count of the shown sessions under each of
+  `running`, `quiet`, `idle`, `done`, `failed` and `unknown`, and `unshown`,
+  a count of the sessions left out because the read holds 40: `running`,
+  `ended` (finished or failed) and `unknown` (any other state). All three are
+  0 when nothing was left out. The read gives up finished sessions first, the
+  longest silent before a newer one, then failed ones, so `unshown.running`
+  is above 0 only when more than 40 sessions are running.
 - `threads[]` in the order of the session tree: the leader, then each worker
   followed by its helpers. At most 40. Each has `session` and `summary[]`
   exactly as the session thread gives them, `messages[]` (the newest 3

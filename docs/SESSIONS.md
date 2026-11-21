@@ -144,7 +144,9 @@ your Leader inbox messages, and a worker's the ones you aimed at it with
 `@<job>`. Routing counts too: under each of your messages the leader's lines
 list the jobs serving it, and a worker's summary names the message it serves.
 `--lane`, `--repo` and `--live` narrow it the same way they narrow
-the tree. It shows up to 40 sessions and says how many it left out. `--json`
+the tree. It shows up to 40 sessions, running ones before ended ones, and
+says how many it left out and of which kind ("12 more sessions not shown (12
+ended)"). `--json`
 prints `fleet.session-threads.v1`; when the session list cannot be read it
 says so and exits 1 instead of printing an empty list. See
 [session threads](FLEET-API.md#session-threads).
@@ -231,7 +233,10 @@ and come back. The Lane and Repo menus and "Running only" narrow the read
 itself, the same way `--lane`, `--repo` and `--live` narrow
 `phm sessions threads`. The read returns at most 40 sessions, so this is how
 you reach one it left out; a line under the bar says how many are not on
-screen. "Running only" leaves out sessions that have finished. The menus list
+screen. The read gives up ended sessions before running ones, and a line
+under the wall's headline says which kind is off screen: "Every running
+session is here. 12 ended sessions are not" in plain text, or a marked line
+when a running session, or one whose state is unknown, did not fit. "Running only" leaves out sessions that have finished. The menus list
 the lanes and repos seen since the pane opened. "Every session" removes the
 narrowing. If the server answers for a different narrowing than the one you
 chose, the line says so instead of labelling the cards wrongly. Marks for new

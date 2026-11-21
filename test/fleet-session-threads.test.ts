@@ -17,7 +17,7 @@ import type { FleetSessionV1, FleetSessionsV1 } from '../src/core/fleet/runs-ses
 import { buildLiveSessions } from '../src/core/fleet/live-sessions.js';
 import { buildSessionThread, type SessionThreadOutputRead, type SessionThreadOwnerRead } from '../src/core/fleet/session-thread.js';
 import {
-  buildSessionThreads, renderSessionThreadsText, threadSessions, workOf, THREADS_MAX, THREADS_MESSAGES_SHOWN, THREADS_TEXT_CHARS, type SessionThreadsV1,
+  buildSessionThreads, leftOutWords, pickSessions, renderSessionThreadsText, threadSessions, workOf, THREADS_MAX, THREADS_MESSAGES_SHOWN, THREADS_TEXT_CHARS, type SessionThreadsV1,
 } from '../src/core/fleet/session-threads.js';
 import { readSessionThreads } from '../src/core/fleet/session-threads-read.js';
 import { readFleetSessionMap } from '../src/core/fleet/sessions-view.js';
@@ -293,9 +293,33 @@ describe('buildSessionThreads', () => {
     const list = await liveList(many);
     expect(threadSessions(list)).toMatchObject({ total: THREADS_MAX + 5 });
     const read = buildSessionThreads(list, { sessionsRead: true, bus: bus([]), activity: none }, NOW);
-    expect(read.counts).toMatchObject({ sessions: THREADS_MAX + 5, shown: THREADS_MAX });
+    // Every one of them is running, so the ones left out are running too, and the read says so.
+    expect(read.counts).toMatchObject({ sessions: THREADS_MAX + 5, shown: THREADS_MAX, unshown: { running: 5, ended: 0, unknown: 0 } });
     expect(read.threads).toHaveLength(THREADS_MAX);
-    expect(read.gaps).toContain(`5 more sessions not shown: the read holds ${THREADS_MAX}. Narrow it with a lane or repo, or ask for running ones only.`);
+    expect(read.threads[0]!.session.id).toBe('leader');
+    expect(read.gaps).toContain(`5 more sessions not shown (5 running): the read holds ${THREADS_MAX}, running sessions first. Narrow it with a lane or repo, or ask for running ones only.`);
+    // A list within the limit leaves nothing out.
+    expect(buildSessionThreads(await liveList(), { sessionsRead: true, bus: bus([]), activity: none }, NOW).counts.unshown).toEqual({ running: 0, ended: 0, unknown: 0 });
+  });
+
+  it('leaves out finished sessions before failed ones, and both before a running one', () => {
+    type Listed = Parameters<typeof pickSessions>[0][number];
+    const node = (id: string, state: Listed['state'], spoke: number | null = null, kind: Listed['kind'] = 'worker') =>
+      ({ id, kind, state, lastMessageAt: spoke === null ? null : ago(spoke) }) as Listed;
+    // The list's own order: lane by lane, so the running session on the last lane comes last.
+    const listed = [node('leader', 'idle', null, 'leader'), node('DONE-OLD', 'done', 50), node('DONE-NEW', 'done', 5), node('FAILED', 'failed', 40),
+      node('DONE-UNDATED', 'done'), node('UNSURE', 'unknown'), node('RUN-LAST-LANE', 'running', 1)];
+    const ids = (max: number) => pickSessions(listed, max).kept.map(entry => entry.id);
+    expect(pickSessions(listed, 7)).toEqual({ kept: listed, left: { running: 0, ended: 0, unknown: 0 } });
+    // Kept in the list's order, whatever was dropped: the undated finished one goes first, then the one that spoke longest ago.
+    expect(ids(6)).toEqual(['leader', 'DONE-OLD', 'DONE-NEW', 'FAILED', 'UNSURE', 'RUN-LAST-LANE']);
+    expect(ids(5)).toEqual(['leader', 'DONE-NEW', 'FAILED', 'UNSURE', 'RUN-LAST-LANE']);
+    expect(ids(4)).toEqual(['leader', 'FAILED', 'UNSURE', 'RUN-LAST-LANE']);
+    expect(pickSessions(listed, 3)).toMatchObject({ kept: [{ id: 'leader' }, { id: 'UNSURE' }, { id: 'RUN-LAST-LANE' }], left: { running: 0, ended: 4, unknown: 0 } });
+    expect(pickSessions(listed, 2)).toMatchObject({ kept: [{ id: 'leader' }, { id: 'RUN-LAST-LANE' }], left: { running: 0, ended: 4, unknown: 1 } });
+    expect(pickSessions(listed, 1).left).toEqual({ running: 1, ended: 4, unknown: 1 });
+    expect([leftOutWords({ running: 0, ended: 0, unknown: 0 }), leftOutWords({ running: 0, ended: 4, unknown: 0 }), leftOutWords({ running: 1, ended: 4, unknown: 1 })])
+      .toEqual(['', '4 ended', '1 running, 4 ended, 1 with state unknown']);
   });
 
   it('renders every session for people on a few lines each', async () => {
