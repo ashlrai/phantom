@@ -279,7 +279,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
               lane: view.lane, running: view.liveJobs ?? null,
               target: (view.lane === LOCAL_LANE ? clampLocalTarget(view.slotTarget ?? null, room) : view.slotTarget) ?? null,
               queued: view.queueDepth ?? null,
-              held: view.hold?.held === true, remainingPct: view.credit.remainingPct,
+              held: view.hold?.held === true, remainingPct: view.credit.remainingPct, resetAt: view.credit.resetAt,
             })),
           };
         },

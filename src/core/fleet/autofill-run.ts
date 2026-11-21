@@ -15,6 +15,7 @@ import { createConfigReader, runsDirOf } from './dynconfig.js';
 import type { BottleneckIdea } from './bottleneck-ideas.js';
 import { followUpCandidates, ideaCandidates, readFollowUps, type FollowUp } from './autofill-sources.js';
 import type { JobGapsReport } from './job-gaps.js';
+import { gapLaneRoom, waitingWords } from './gap-lane-room.js';
 import { judgeLanes, type LaneFacts, type LaneVerdict } from './autofill-lanes.js';
 import { planAutofill, type QueueAutofillReport } from './queue-autofill.js';
 
@@ -214,7 +215,7 @@ export interface AutofillTickOptions {
   /** Kill-switch seam; defaults to the live config. */
   readOff?: (runsDir: string) => Promise<boolean | null>;
   /** Gap harvest seam; defaults to `phm jobs gaps --propose` (readJobGaps with propose). */
-  harvestGaps?: (o: { runsDir: string; root: string }) => Promise<JobGapsReport>;
+  harvestGaps?: (o: { runsDir: string; root: string; lanes?: readonly LaneFacts[] }) => Promise<JobGapsReport>;
   /** Newest queued-gap time in ms (null when none); defaults to the gap proposal record. */
   lastGapQueuedMs?: (runsDir: string, nowMs: number) => Promise<number | null>;
   /** Fill seam; defaults to runQueueAutofill. */
@@ -247,13 +248,20 @@ async function harvestStep(o: AutofillTickOptions, nowMs: number, off: boolean |
   try {
     const last = await (o.lastGapQueuedMs ?? defaultLastGapQueued)(o.runsDir, nowMs);
     if (last !== null && nowMs - last < GAP_HARVEST_MIN_GAP_MS) return none(`ran ${Math.max(1, Math.round((nowMs - last) / 60_000))} min ago (waits ${GAP_HARVEST_MIN_GAP_MS / 60_000} min)`);
-    const harvest = o.harvestGaps ?? (async (d: { runsDir: string; root: string }) => (await import('./job-gaps.js')).readJobGaps(24, { propose: true, runsDir: d.runsDir, repoDir: d.root, now: nowMs }));
-    const gaps = await harvest({ runsDir: o.runsDir, root: o.root });
+    // Lane readings steer the gaps to a lane with room; unreadable lanes fall back to the old routing.
+    const lanes = (await o.readLanes().catch(() => null))?.lanes;
+    const harvest = o.harvestGaps ?? (async (d: { runsDir: string; root: string; lanes?: readonly LaneFacts[] }) => (await import('./job-gaps.js')).readJobGaps(24, { propose: true, runsDir: d.runsDir, repoDir: d.root, now: nowMs, ...(d.lanes ? { lanes: d.lanes } : {}) }));
+    const gaps = await harvest({ runsDir: o.runsDir, root: o.root, ...(lanes ? { lanes } : {}) });
     const proposed = gaps.proposed ?? [];
     const queued = proposed.filter(p => p.queued).length;
+    const waiting = lanes ? waitingWords(gapLaneRoom(lanes, nowMs).waiting) : '';
+    const queuedLanes = [...new Set(proposed.filter(p => p.queued).map(p => p.lane).filter((l): l is string => !!l))];
+    const busy = (lane: string): string => { const f = lanes?.find(l => l.lane === lane); return f && f.running !== null && f.target !== null ? ` (${f.running} of ${f.target} busy)` : ''; };
+    const found = `${gaps.candidates.length} gaps found`;
     const note = gaps.candidates.length === 0
       ? (gaps.known ? 'no new gaps found' : `no gap source readable: ${gaps.unknownSources.join(', ') || 'unknown'}`.slice(0, 120))
-      : queued === 0 ? `${gaps.candidates.length} gaps found, none queued: ${proposed.find(p => p.skipped)?.skipped ?? 'already known'}`.slice(0, 120) : null;
+      : queued === 0 ? `${found}, none queued: ${proposed.find(p => p.skipped)?.skipped ?? 'already known'}${waiting ? `; ${waiting}` : ''}`.slice(0, 200)
+      : waiting ? `${found}, queued ${queued} for ${queuedLanes.map(l => `${l}${busy(l)}`).join(', ') || 'a lane'}; ${waiting}`.slice(0, 200) : null;
     return { gaps: { candidates: gaps.candidates.length, queued, skipped: proposed.length - queued, unknown: !gaps.known }, gapsNote: note };
   } catch (error) { return none(`the gap harvest failed: ${error instanceof Error ? error.message.slice(0, 80) : 'unknown error'}`); }
 }

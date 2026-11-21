@@ -20,6 +20,8 @@ export interface LaneFacts {
   held: boolean;
   /** Share of the pool still unspent (0-100); null when no budget reading exists. */
   remainingPct: number | null;
+  /** When the pool refills (ISO); optional, used only to say when a spent lane is back. */
+  resetAt?: string | null;
 }
 
 export interface LaneVerdict {
