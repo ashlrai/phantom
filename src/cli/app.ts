@@ -1,5 +1,6 @@
 /** Desktop status, leader steering and held restart reporting. */
 import {defaultAppUpdateStatusDeps, readAppUpdateStatus, type AppUpdateStatusDependencies} from '../core/app-update-status.js';
+import {updateDoctor, type UpdateDoctorReport} from '../core/desktop/update-doctor.js';
 import {steerLeaders} from '../core/fleet/app-steer.js';
 
 export {readAppUpdateStatus, defaultAppUpdateStatusDeps} from '../core/app-update-status.js';
@@ -20,13 +21,14 @@ const APP_RESTART_HELD = {
 } as const;
 
 const USAGE = `usage: phm app update status [--json]
+       phm app update-doctor [--json]
        phm app steer --text <message> [--json]
        phm app restart --json
 
 Reports a held restart (exit 1) while the native UI owns live runtime state.
 Does not quit, signal processes, replace bundles, or resume authority.
 See docs/APP-RESTART.md for the ownership audit and remaining implementation.`;
-export async function cmdApp(args: string[], dependencies?: AppUpdateStatusDependencies | {runsDir?: string}): Promise<number> {
+export async function cmdApp(args: string[], dependencies?: AppUpdateStatusDependencies | {runsDir?: string}, doctor?: () => Promise<UpdateDoctorReport>): Promise<number> {
   if (args[0] === 'restart') {
     if (args.includes('--help') || args.includes('-h')) {console.log(USAGE); return 0;}
     if (args.length !== 2 || args[1] !== '--json') {console.error(USAGE); return 2;}
@@ -48,6 +50,13 @@ export async function cmdApp(args: string[], dependencies?: AppUpdateStatusDepen
     else if (result.ok) console.log(result.status === 'accepted' ? 'Sent to the leaders.' : 'Already sent in the last 10 minutes.');
     else console.error(`error: not sent (${result.reason})`);
     return result.ok ? 0 : 1;
+  }
+  if (args[0] === 'update-doctor') {
+    if (args.includes('--help') || args.includes('-h')) {console.log(USAGE); return 0;}
+    if (args.length > 2 || args.length === 2 && args[1] !== '--json') {console.error(USAGE); return 2;}
+    const report = await (doctor ?? updateDoctor)();
+    console.log(args.includes('--json') ? JSON.stringify(report) : `${report.verdict.replaceAll('_', ' ')}: ${report.next_step}`);
+    return 0;
   }
   if (args.length === 0 || args.length === 1 && ['help', '--help', '-h'].includes(args[0]!)) {console.log(USAGE); return 0;}
   if (args[0] !== 'update' || args[1] !== 'status' || args.length > 3 || args.length === 3 && args[2] !== '--json') {console.error(USAGE); return 2;}
