@@ -4,7 +4,9 @@
  * so the threshold and the wording exist once.
  *
  * Stale = more than BUILD_STALE_COMMITS commits behind master, or missing a commit that merged more than
- * BUILD_STALE_HOURS ago. Unknown is its own answer and never raises an alert.
+ * BUILD_STALE_HOURS ago. Unknown is its own answer and never raises an alert, with one exception: a build that
+ * cannot say which commit it is (nothing embedded at build time and no git checkout) can never be measured, so
+ * it would read unknown forever. That is "unidentified", and it does raise the build-stale alert.
  */
 import type { BuildLiveReport } from './build-live.js';
 
@@ -47,4 +49,10 @@ export function buildStaleText(r: MaybeBuildReport, now: number, limits: BuildSt
   if (!behind || buildStaleness(r, now, limits) !== 'stale') return null;
   const since = Number.isFinite(sinceMs(behind.since)) ? ` (since ${day(behind.since as string)})` : '';
   return { detail: `The running phm is ${commits(behind.count)} behind master${since}. Merged fleet features are not live.`, fix: 'Fix: rebuild from master.' };
+}
+
+/** The alert's two sentences for a build with no identity (no embedded commit, no git checkout), or null when it has one. */
+export function buildUnidentifiedText(r: MaybeBuildReport): { detail: string; fix: string } | null {
+  if (!r || r.commit?.state !== 'unknown') return null;
+  return { detail: `The running phm cannot say which commit it was built from (${r.commit.why}), so nobody can tell whether it is current.`, fix: 'Fix: rebuild from a master checkout.' };
 }

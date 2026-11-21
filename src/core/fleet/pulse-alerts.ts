@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
 import { defaultRunsDir } from './landed-closes-read.js';
-import { BUILD_STALE_COMMITS, BUILD_STALE_HOURS, buildStaleText, buildStaleness, type BuildStaleLimits, type MaybeBuildReport } from './build-stale.js';
+import { BUILD_STALE_COMMITS, BUILD_STALE_HOURS, buildStaleText, buildStaleness, buildUnidentifiedText, type BuildStaleLimits, type MaybeBuildReport } from './build-stale.js';
 import type { CadenceV1 } from '../release/cadence.js';
 import type { SpendSnapshot } from '../usage/spend.js';
 import type { StarvedRead } from './lane-starved.js';
@@ -118,7 +118,9 @@ export function buildPulseAlerts(inputs: PulseAlertInputs, now: number): PulseAl
 
   if (build === null) unknown.push('Live build: it could not be read.');
   else if (build) {
-    if (buildStaleness(build, now, buildLimits) === 'unknown') unknown.push('Live build: how far behind master is not known here.');
+    const unidentified = buildUnidentifiedText(build);
+    if (unidentified) alerts.push({ kind: 'build-stale', lane: 'unidentified', since: null, detail: unidentified.detail, fix_hint: unidentified.fix });
+    else if (buildStaleness(build, now, buildLimits) === 'unknown') unknown.push('Live build: how far behind master is not known here.');
     const text = buildStaleText(build, now, buildLimits);
     if (text && build.commit?.state === 'known') {
       const behind = build.behind?.state === 'known' ? build.behind.since : null;
