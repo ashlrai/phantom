@@ -24,7 +24,8 @@ export function suggestedTarget(
 
 const format = (value: number): string => new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(value);
 
-function resetText(atMs: number, hours: number): string {
+/** When the window resets: a countdown inside a day, the local date and time past it. */
+export function resetText(atMs: number, hours: number): string {
   if (hours >= 24) {
     return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(atMs).replace(',', '');
   }

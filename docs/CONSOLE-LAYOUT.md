@@ -417,11 +417,23 @@ dashed when nothing does) and labelled readings for running against target,
 free now, freeing soon, waiting and shortfall. The lane name opens Lanes and a
 run-out time opens Usage. When the drop folder cannot be read, the pending
 files are unknown rather than zero: the card counts queued jobs only and each
-shortfall reads "up to N". Under the cards, the waste forecast draws each
-weekly window at reset (used, what the current burn adds, hatched for what
-goes unused) beside the target that would use it. Slots and waiting jobs come
-from the read `phm fleet runs --json` prints; run-out times and the forecast
-from the leader's resource ledger.
+shortfall reads "up to N". Slots and waiting jobs come from the read
+`phm fleet runs --json` prints; run-out times and the forecast from the
+leader's resource ledger (`phm resources ledger --json`).
+
+Under the cards, the waste forecast is a row per weekly window, most unused
+first. Each row names the lane beside its provider mark, gives the share set
+to go unused at the reset and a word for it (High, Watch, On track), and draws
+the window on the same bar as Pools and Home: used so far, what the measured
+burn adds by the reset, the share left unused outlined in amber, and a mark
+for how much of the window's time has gone, counting seven days back from the
+reset. The line under the bar gives the reset, the burn that would use the
+window, the burn measured and how far use sits from an even spend. Where the
+ledger has no burn for a lane the row says "burning unknown", the figure reads
+"up to N% unused" and the bar draws the used share only; nothing is projected.
+A lane that is running below what the window needs gets the target that would
+use it and a Set target button on its own line; a held lane says to release it
+first.
 
 The Usage pane is the provider-account side of the same picture: one card per
 signed-in account (Claude, Codex, Grok) with its brand mark, plan and exactly
