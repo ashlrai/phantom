@@ -20,6 +20,8 @@ export const AGENT_MESSAGES_MAX_LIMIT = 1024;
 export const AGENT_MESSAGES_DEFAULT_LIMIT = 50;
 /** Conversation key prefix for messages about one job (`job:<jobId>`). */
 export const JOB_THREAD_PREFIX = 'job:';
+/** A job id is the same printable label every bus job citation carries. */
+const JOB_ID = /^[\x21-\x7e]{1,128}$/;
 const SUMMARY_MAX = 160;
 
 export interface AgentRef { name: string; lane: string | null }
@@ -48,8 +50,8 @@ export interface AgentMessages {
   /** Damaged bus rows skipped while reading. */
   skipped: number;
 }
-/** `with` narrows `agent` to the two-way talk between that agent and one other; `kind` keeps one classified kind; `priority` keeps one envelope band. */
-export interface AgentMessagesQuery { since?: number; agent?: string; with?: string; kind?: AgentMessageKind; priority?: BusPriority; limit?: number }
+/** `with` narrows `agent` to the two-way talk between that agent and one other; `kind` keeps one classified kind; `priority` keeps one envelope band; `job` keeps the traffic that names one job. */
+export interface AgentMessagesQuery { since?: number; agent?: string; with?: string; kind?: AgentMessageKind; priority?: BusPriority; job?: string; limit?: number }
 
 type Body = Record<string, unknown>;
 const record = (value: unknown): Body | null =>
@@ -219,7 +221,14 @@ export function projectAgentMessages(rows: readonly BusInboxReceipt[],
  * `agent`/`with` match a routing label or lane exactly as before; when
  * `identityOf` resolves both sides to the same registered identity, the labels
  * count as one agent, so a handle, alias and `agent:` address never split a
- * filter. An unresolvable side changes nothing.
+ * filter. An unresolvable side changes nothing. `job` keeps a message that
+ * names the job through any channel the row itself reports: its `job` link,
+ * a live `jobState` citation (`jobId` on a feed-citing body or `taskId` on a
+ * worker-handoff) or membership in the `job:<id>` conversation bucket —
+ * replies into the thread and claim operations mapped through a declared
+ * claim key count, exactly the rows `conversation` already groups. Every
+ * match is a real projected field, never a text guess; a message naming no
+ * job never passes.
  */
 export function filterAgentMessages(messages: readonly AgentMessage[], query: AgentMessagesQuery,
   identityOf?: AgentIdentityKeyFor): AgentMessage[] {
@@ -229,9 +238,11 @@ export function filterAgentMessages(messages: readonly AgentMessage[], query: Ag
   const peerKey = identityOf && query.with ? identityOf(agentName(query.with)) : undefined;
   const is = (ref: AgentRef, name: string, key: string | undefined) =>
     ref.name.toLowerCase() === name || ref.lane === name || (key !== undefined && identityOf?.(ref.name) === key);
+  const jobThread = query.job === undefined ? null : `${JOB_THREAD_PREFIX}${query.job}`;
   return messages.filter(m => (query.since === undefined || Date.parse(m.ts) >= query.since)
     && (query.kind === undefined || m.kind === query.kind)
     && (query.priority === undefined || m.priority === query.priority)
+    && (query.job === undefined || m.job === query.job || m.jobState?.jobId === query.job || m.conversation === jobThread)
     && (!agent || (peer ? (is(m.from, agent, agentKey) && is(m.to, peer, peerKey)) || (is(m.from, peer, peerKey) && is(m.to, agent, agentKey)) : is(m.from, agent, agentKey) || is(m.to, agent, agentKey))));
 }
 
@@ -282,7 +293,7 @@ export function parseSince(value: string, now = Date.now()): number | null {
 }
 
 /** Shared validation for CLI flags and API query params. */
-export function parseAgentMessagesQuery(input: { since?: string; agent?: string; with?: string; kind?: string; priority?: string; limit?: string }, now = Date.now()):
+export function parseAgentMessagesQuery(input: { since?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; limit?: string }, now = Date.now()):
   { ok: true; query: AgentMessagesQuery } | { ok: false; error: string } {
   const query: AgentMessagesQuery = {};
   if (input.kind !== undefined) {
@@ -297,6 +308,12 @@ export function parseAgentMessagesQuery(input: { since?: string; agent?: string;
       return { ok: false, error: '--priority takes P0, P1, P2 or P3.' };
     }
     query.priority = input.priority as BusPriority;
+  }
+  if (input.job !== undefined) {
+    if (!JOB_ID.test(input.job)) {
+      return { ok: false, error: '--job takes a job id (printable label, 1-128 chars).' };
+    }
+    query.job = input.job;
   }
   if (input.since !== undefined) {
     const since = parseSince(input.since, now);

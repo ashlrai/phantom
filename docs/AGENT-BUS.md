@@ -18,9 +18,10 @@ To see what agents are saying to each other, run `phm messages` (JSON by
 default, `--text` for people, `--since 15m`, `--agent <name|lane>`,
 `--with <name|lane>` for only what that agent and one other said to each
 other, `--kind <ask|reply|handoff|status|blocker>` for only one classified
-kind, `--priority <P0|P1|P2|P3>` for only one envelope band, `--limit <n>`)
+kind, `--priority <P0|P1|P2|P3>` for only one envelope band, `--job <id>`
+for only the traffic that names one job, `--limit <n>`)
 or GET `/api/verse/agent-bus/messages` with the same
-`since`, `agent`, `with`, `kind`, `priority` and `limit` params. Both return `agent-messages.v1`: newest
+`since`, `agent`, `with`, `kind`, `priority`, `job` and `limit` params. Both return `agent-messages.v1`: newest
 first, each with `id`, `ts`, `priority` (the envelope's P0–P3 band, the
 same band `comms bus read --priority` filters on), `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line
@@ -65,7 +66,14 @@ filter and `matched` counts only the rows it accepts. `--priority` keeps
 only mail stamped with that exact P0..P3 band — the same match `comms bus
 read --priority` and `agents bus inbox --priority` apply — so urgent
 agent-to-agent traffic is one filtered read, and `--text` prints the band
-on every line. `--agent` and `--with` match through
+on every line. `--job` keeps only the messages the projection itself ties to
+one job — a row's `job` link, a live `jobState` citation, or membership in
+the `job:<id>` conversation bucket, so replies into the thread and claim
+operations the bucket groups count — giving one job's whole bus traffic as a
+single filtered read. It is wider than the `agents bus inbox --job` and
+`agents bus channel read --job` citation scope, which matches only bodies
+that declare the job; here the row's own reported fields decide, and a
+message that names no job never passes. `--agent` and `--with` match through
 the agent identity registry beside the store: a handle, alias or `agent:`
 address of one registered identity counts as that agent, so its labels never
 split the filter. With no readable registry the match stays on the literal
