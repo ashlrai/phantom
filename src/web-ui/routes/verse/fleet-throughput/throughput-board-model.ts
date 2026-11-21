@@ -17,13 +17,14 @@ export interface Figure {
   /** The hour with the most, for the three counts; null when every hour is zero or unknown. */
   peak: Peak | null;
   caption: string | null;
+  /** True while the tile shows one held bar of the reading cursor instead of the window (throughput-cursor-model.ts). */
+  held?: boolean;
 }
 export interface LaneRow {
   name: string;
   merged: number | null; launched: number | null; published: number | null;
   /** Merged against the lane that merged most, 0..1; null when this lane's count is unknown or no lane merged. */
   share: number | null;
-  trend: Series | null;
   /** "1 of 40 (3%)", "none finished" or "unknown". */
   emptyText: string;
   emptyRate: number | null;
@@ -90,10 +91,9 @@ export function figures(report: ThroughputReport): Figure[] {
 export function laneRows(groups: readonly ThroughputGroup[]): LaneRow[] {
   const top = Math.max(0, ...groups.map(group => group.totals.merged ?? 0));
   const rank = (value: number | null): number => value === null ? -1 : value;
-  return groups.map(({ name, totals, buckets }): LaneRow => ({
+  return groups.map(({ name, totals }): LaneRow => ({
     name, merged: totals.merged, launched: totals.launched, published: totals.published,
     share: totals.merged === null || top === 0 ? null : totals.merged / top,
-    trend: drawn(buckets.map(hour => hour.merged)),
     emptyText: emptyText(totals), emptyRate: totals.finished ? totals.empty_rate : null,
     median: span(totals.median_publish_to_merge_s),
   })).sort((a, b) => rank(b.merged) - rank(a.merged) || rank(b.launched) - rank(a.launched) || a.name.localeCompare(b.name));
