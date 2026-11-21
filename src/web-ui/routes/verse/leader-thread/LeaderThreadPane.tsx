@@ -20,7 +20,6 @@ import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../flee
 import { ordersTraceQuery } from '../fleet-inbox/fleet-inbox-queries.js';
 import { narrowOrderTrace, type OrderTraceV1 } from '../fleet-inbox/order-trace-model.js';
 import { readMerges, type Merged, type Pending } from '../fleet-merges/fleet-merges-model.js';
-import { JobRefs } from '../fleet/JobRefs.js';
 import { narrowWorkers, validJob } from '../fleet/workers-card-model.js';
 import { jobDetailQuery } from '../fleet/workers-card-queries.js';
 import { DirectivesStrip } from '../leader/DirectivesStrip.js';
@@ -41,6 +40,7 @@ import { canSend, scrollTargetIndex, trimReply } from './thread-reply-model.js';
 import { stepMatch, threadMatches, type ThreadFindItem } from './thread-find-model.js';
 import { LeaderCatchUp } from './LeaderCatchUp.js';
 import { mentionedRefs } from './thread-refs.js';
+import { MentionedSessions } from './MentionedSessions.js';
 import { splitScreenshotMarkers } from './thread-screenshots.js';
 import { ThreadScreenshot } from './ThreadScreenshot.js';
 import { ReplyAttachment } from './ReplyAttachment.js';
@@ -119,9 +119,7 @@ function LineView({ line, match, current }: { line: LabeledLine; match?: boolean
             ? <div className={leaderStyles.leaderText}>
               <div className={leaderStyles.prose}><MessageMarkdown text={line.text} /></div>
               {line.receipt ? <DeliveryReceipt items={line.receipt} /> : null}
-              {refs.length ? <div className={styles.refs} aria-label="Mentioned">Mentioned: {refs.map((ref, index) => <span key={ref}>
-                {index ? ' ' : null}<JobRefs text={ref.replace(/([^#])#/, '$1 #')} onOpenJob={job => { requestWorkerLogJob(job); openDockPane('worker-log'); }} />
-              </span>)}</div> : null}
+              <MentionedSessions refs={refs} onOpenLog={job => { requestWorkerLogJob(job); openDockPane('worker-log'); }} onOpenConversation={openConversationFromLeader} />
             </div>
             : <div className={leaderStyles.masonItem}>
               {splitScreenshotMarkers(line.text).map((segment, index) => segment.kind === 'shot'
