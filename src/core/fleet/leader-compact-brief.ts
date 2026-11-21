@@ -14,6 +14,7 @@ import { LIVE_JOBS_FILE, type LiveJobsReport } from './live-jobs.js';
 import { parseReadyRows } from './ready-row-edit.js';
 import { parseStopFile, stopFilePath, stoppedFamilies } from './stop-file.js';
 import { readSource } from './runs-parked-queue.js';
+import { fleetGhosts } from './ghosts.js';
 
 export const LEADER_COMPACT_FILE = 'queue/leader-brief.json';
 const clean = (s: string) => scrubSecrets(s).replace(/\s+/g, ' ').slice(0, 80);
@@ -32,12 +33,13 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now()) {
     return cache.get(file)!;
   };
   const quiet = async <T>(p: Promise<T>): Promise<T | null> => p.catch(() => null);
-  const [snapshot, tail, pace, guardian, liveText, stopText, ready] = await Promise.all([
+  const [snapshot, tail, pace, guardian, liveText, stopText, ready, ghosts] = await Promise.all([
     quiet(readChiefOfStaffSnapshot('auto', { runsDir, now: () => new Date(now), read })),
     readTail(join(runsDir, 'metrics/jobs.jsonl'), 8 * 1024 * 1024),
     quiet(readFleetPace({ runsDir, now: () => now })), quiet(readGuardianGlance(runsDir, now)),
     quiet(read(join(runsDir, LIVE_JOBS_FILE))), stopFilePath() ? quiet(read(stopFilePath()!)) : null,
     quiet(read(join(runsDir, 'queue/ready.tsv'))),
+    fleetGhosts({ runsDir, now: () => now }),
   ]);
   sources.ledger = tail === null ? 'missing' : tail.truncated ? 'bounded tail' : 'healthy';
   sources.guardian = guardian?.length ? 'healthy' : 'missing';
@@ -60,7 +62,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now()) {
   const readyRows = ready === null ? null : parseReadyRows(ready);
   const lanes = (snapshot?.snapshot.lanes ?? []).map(l => {
     const finished = [...new Map(rows.filter(r => r.lane === l.lane && ledgerEventName(r.row) === 'finish').map(r => [`${r.id}:${r.at}`, r])).values()].slice(-20);
-    return { lane: clean(l.lane), running: l.running, queued: readyRows?.filter(r => r.lane === l.lane).length ?? null,
+    return { lane: clean(l.lane), running: l.running, ghosts: ghosts.known ? ghosts.jobs.filter(j => j.lane === l.lane && j.state === 'ghost').length : null, queued: readyRows?.filter(r => r.lane === l.lane).length ?? null,
       target: l.target, held: l.held, emptyRate: finished.length ? finished.filter(r => r.row.empty === true).length / finished.length : null };
   });
   let live: LiveJobsReport | null = null;
@@ -99,7 +101,7 @@ export async function writeCompactBrief(runsDir: string, now = Date.now(), file 
 }
 export function compactBriefLines(b: CompactLeaderBrief): string[] {
   const lines = [`Leader: ${b.state} (${b.at})`, `Lanes: ${b.lanes.length}; pools: ${b.pools.length}`,
-    ...b.lanes.slice(0, 3).map(l => `${l.lane}: ${l.running ?? '?'}/${l.target ?? '?'}, ${l.queued ?? '?'} queued, held ${l.held ?? '?'}, empty ${l.emptyRate === null ? '?' : Math.round(l.emptyRate * 100) + '%'}`),
+    ...b.lanes.map(l => `${l.lane}: ${l.running ?? '?'}/${l.target ?? '?'}, ${l.ghosts ?? '?'} ghosts, ${l.queued ?? '?'} queued, held ${l.held ?? '?'}, empty ${l.emptyRate === null ? '?' : Math.round(l.emptyRate * 100) + '%'}`),
     ...b.pools.slice(0, 2).map(p => `${p.pool}: ${p.usedPct ?? '?'}%, reset ${p.hoursToReset ?? '?'}h, burn ${p.burnPerHour ?? '?'}/h, safe ${p.safeBurn ?? '?'}/h, ${p.verdict}`),
     ...b.families.slice(0, 2).map(f => `${f.family}: ${f.launches} launches, ${f.prs} PRs, ${f.merges} merges, ${f.empty} empty (2h)`),
     `Quiet/stuck: ${b.attention.map(j => j.id).join(', ') || (b.sources[LIVE_JOBS_FILE] === 'healthy' ? 'none recorded' : 'unknown')}`,

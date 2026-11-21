@@ -356,8 +356,8 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       return bind(cmdFleetStrayStop, {
         ...deps.stray,
         ledgerFile: join(root, 'stray-stops.jsonl'),
-        // Ghost markers and stuck jobs ride the same apply step; the note reads "lane: N ghosts closed, M stuck stopped".
-        stuck: { runsDir: root, now, ...deps.stray?.stuck },
+        // Ghosts use the bounded reaping handoff in runSelfTick; this step only stops stuck jobs.
+        stuck: { runsDir: root, now, ...deps.stray?.stuck, closeGhosts: false },
         now: () => new Date(now()),
       })(argv);
     },

@@ -36,6 +36,7 @@
 import { join } from 'node:path';
 import { LIVE_JOBS_FILE, readLiveJobs, writeLiveJobs } from './live-jobs.js';
 import { writeCompactBrief } from './leader-compact-brief.js';
+import { fleetGhosts, type GhostReport } from './ghosts.js';
 import {
   acquireLocalStoreLockWithOutcome,
   releaseLocalStoreLock,
@@ -97,6 +98,7 @@ export interface SelfTickReport {
   steps: SelfTickStepResult[];
   liveJobs?: 'written' | 'failed';
   leaderBrief?: 'written' | 'failed';
+  ghosts?: GhostReport;
 }
 
 export interface SelfTickOutcome {
@@ -160,6 +162,8 @@ export async function runSelfTick(options: RunSelfTickOptions): Promise<SelfTick
   }
   const argv = ['--json', ...(options.apply === true ? ['--apply'] : []), '--runs-dir', runsDir];
   try {
+    try { report.ghosts = await fleetGhosts({ runsDir, now: clock, apply: options.apply, minAgeHours: 6, limit: 10 }); }
+    catch { report.ghosts = { schema: 'fleet.ghosts.v1', known: false, jobs: [], marked: [] }; }
     try { await writeLiveJobs(join(runsDir, LIVE_JOBS_FILE), await readLiveJobs({ runsDir, now: clock })); report.liveJobs = 'written'; }
     catch { report.liveJobs = 'failed'; }
     for (const step of SELF_TICK_STEP_ORDER) {
