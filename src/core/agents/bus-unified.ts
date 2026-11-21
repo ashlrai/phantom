@@ -1146,35 +1146,7 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
     cursor = result.nextCursor;
   }
   messages.sort((a, b) => a.priority.localeCompare(b.priority) || a.cursor - b.cursor);
-  // Claimable work and worker handoffs carry the same hold evidence `bus
-  // show` reports; the hold stores are read once for the page, and only
-  // when a candidate is present.
-  const heldCandidates = messages.filter(m => isClaimableWork(m.envelope.body) || isWorkerHandoffBody(m.envelope.body));
-  if (heldCandidates.length > 0) {
-    const stores = readHoldStores(options);
-    for (const message of heldCandidates) {
-      const hold = holdForReceipt({ id: message.envelope.id, cursor: message.cursor,
-        receivedAt: message.receivedAt, envelope: message.envelope }, stores);
-      message.held = hold.held;
-      message.holder = hold.holder;
-    }
-  }
-  // Work-feed citations get the same live job state `bus show` resolves:
-  // one claims-joined feed read per page, only when a returned message
-  // cites a jobId — never one feed read per message.
-  const jobCitations = new Map<InboxMessage, string>();
-  for (const message of messages) {
-    const jobId = workFeedJobId(message.envelope.body);
-    if (jobId !== undefined) jobCitations.set(message, jobId);
-  }
-  if (jobCitations.size > 0) {
-    let feed: BusWorkFeedReadResult | undefined;
-    try { feed = readBusWorkFeed({ root: options.root, now: options.now, claims: true }); }
-    catch { feed = undefined; }
-    for (const [message, jobId] of jobCitations) {
-      message.job = feed === undefined ? { jobId, feed: 'unavailable' } : jobAnnotationFromFeed(feed, jobId);
-    }
-  }
+  annotateLiveEvidence(messages, options);
   return { status: 'ok', agent: target.identity.handle, messages, nextCursor: cursor,
     ...(countMatched ? { matched } : {}) };
 }
@@ -1475,6 +1447,24 @@ export interface ChannelReadMessage {
   /** Registered handle of the sender label, or null. A label is never authentication. */
   fromAgent: string | null;
   envelope: BusEnvelope;
+  /**
+   * Claimable work and worker-handoff bodies only: whether a taken
+   * message-id claim or a live coordination hold provably covers the exact
+   * receipt — the same evidence `bus show` and `agents bus inbox` report.
+   * `held` false is proof of free; null means a hold store could not be
+   * read (unknown, never proven free). Absent on every other body kind.
+   */
+  held?: boolean | null;
+  /** Owner label of the blocking claim when held and known; null otherwise. */
+  holder?: string | null;
+  /**
+   * Bodies that declare a `jobId` (`work.post`, `work.status`, `work.result`
+   * or `wake`): the live work-feed state of the job the body cites — the
+   * same `BusEnvelopeLookupJob` `bus show` resolves, computed with one feed
+   * read per page so a channel transcript answers where each announced job
+   * stands without a lookup per message. Absent on every other body kind.
+   */
+  job?: BusEnvelopeLookupJob;
 }
 export interface ChannelReadOptions {
   /** Restrict the page to one topic; default every topic of the channel. */
@@ -1526,9 +1516,13 @@ export type ChannelReadPage =
  * page; `page.matched` asks for the true pending total the way
  * `readAgentInbox` does — the scan then covers the whole retained store,
  * counting every post the same filters accept while `messages` still caps
- * at `limit`. A missing registry means no channel exists, an unreadable
- * one or an unreadable store is reported, never an empty page passed off
- * as history.
+ * at `limit`. Returned rows carry the same live evidence `agents bus
+ * inbox` annotates: claimable work and worker-handoff posts report
+ * `held`/`holder` and feed-citing bodies (`work.post`, `work.status`,
+ * `work.result`, `wake`) report `job`, each store read once per page and
+ * only when a candidate is present. A missing registry means no channel
+ * exists, an unreadable one or an unreadable store is reported, never an
+ * empty page passed off as history.
  */
 export function readAgentChannel(name: string, page: ChannelReadOptions = {}, options: UnifiedBusOptions = {}): ChannelReadPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
@@ -1591,6 +1585,7 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
     if (result.nextCursor <= cursor) break;
     cursor = result.nextCursor;
   }
+  annotateLiveEvidence(messages, options);
   return { status: 'ok', channel: name, messages, nextCursor: cursor,
     ...(countMatched ? { matched } : {}) };
 }
@@ -1746,6 +1741,45 @@ export function jobAnnotationFromFeed(feed: BusWorkFeedReadResult, jobId: string
       ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
   }
   return { jobId, feed: feed.status };
+}
+
+/**
+ * The live evidence a page of bus receipts carries, shared by `agents bus
+ * inbox` and `agents bus channel read` so both resolve the same rows
+ * identically: claimable work and worker-handoff bodies get `held`/`holder`
+ * — whether a taken message-id claim or a live coordination hold provably
+ * covers the exact receipt, the same evidence `bus show` reports — and
+ * bodies that declare a `jobId` (`work.post`, `work.status`, `work.result`
+ * or `wake`) get `job`, the live feed state of the job they cite. Each
+ * store is read at most once per page and only when a candidate is
+ * present; a store that cannot be read degrades the annotation to
+ * unknown, never to free or empty. Mutates the page rows in place.
+ */
+function annotateLiveEvidence<T extends { cursor: number; receivedAt: number; envelope: BusEnvelope;
+    held?: boolean | null; holder?: string | null; job?: BusEnvelopeLookupJob }>(
+  messages: T[], options: UnifiedBusOptions): void {
+  const heldCandidates = messages.filter(m => isClaimableWork(m.envelope.body) || isWorkerHandoffBody(m.envelope.body));
+  if (heldCandidates.length > 0) {
+    const stores = readHoldStores(options);
+    for (const message of heldCandidates) {
+      const hold = holdForReceipt({ id: message.envelope.id, cursor: message.cursor,
+        receivedAt: message.receivedAt, envelope: message.envelope }, stores);
+      message.held = hold.held;
+      message.holder = hold.holder;
+    }
+  }
+  const jobCitations = new Map<T, string>();
+  for (const message of messages) {
+    const jobId = workFeedJobId(message.envelope.body);
+    if (jobId !== undefined) jobCitations.set(message, jobId);
+  }
+  if (jobCitations.size === 0) return;
+  let feed: BusWorkFeedReadResult | undefined;
+  try { feed = readBusWorkFeed({ root: options.root, now: options.now, claims: true }); }
+  catch { feed = undefined; }
+  for (const [message, jobId] of jobCitations) {
+    message.job = feed === undefined ? { jobId, feed: 'unavailable' } : jobAnnotationFromFeed(feed, jobId);
+  }
 }
 
 /**

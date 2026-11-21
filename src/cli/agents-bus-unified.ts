@@ -75,7 +75,8 @@ job reads its pending mail without paging the whole inbox. --matched
 on inbox and channel read reports matched, the true pending total across the
 whole retained store the same filters accept; messages still caps at --limit
 and nextCursor then resumes at the newest shown row, so paging never skips
-an unshown match. Inbox rows annotate what they carry: claimable work and
+an unshown match. Inbox and channel-read rows annotate what they carry:
+claimable work and
 worker-handoff bodies report held/holder — whether a taken claim or live
 coordination hold already covers the receipt — and work.post/work.status
 bodies report job, the live feed state of the jobId they cite (the same
@@ -400,7 +401,10 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           ? Math.max(...result.messages.map(m => m.cursor)) : result.nextCursor;
         const shown = { ...result, nextCursor };
         out(json ? JSON.stringify(shown) : [
-          ...shown.messages.map(m => `${m.cursor} ${m.priority} #${shown.channel}:${m.topic} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}`),
+          ...shown.messages.map(m => `${m.cursor} ${m.priority} #${shown.channel}:${m.topic} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}` +
+            (m.held === undefined ? '' : ` held=${m.held === null ? 'unknown' : m.held ? 'yes' : 'no'}` +
+              (m.holder ? ` holder=${m.holder}` : '')) +
+            (m.job === undefined ? '' : ` ${busInboxJobMarker(m.job)}`)),
           ...(result.matched === undefined ? [] : [`matched ${result.matched}`]),
           `nextCursor ${nextCursor}`,
         ].join('\n'));

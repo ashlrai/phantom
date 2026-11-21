@@ -210,7 +210,14 @@ keeps only posts stamped with that exact band — the same match
 true pending total — every post the same filters accept across the whole
 retained store — while `messages` still caps at `--limit`; because that
 read scans to the store's end, `nextCursor` then resumes at the newest
-shown row's cursor, the same rule `inbox --matched` applies. Reading needs
+shown row's cursor, the same rule `inbox --matched` applies. Returned rows
+carry the same live evidence `inbox` annotates: claimable work and
+worker-handoff posts report `held`/`holder` — whether a taken claim or
+live hold already covers the exact receipt — and `work.post`,
+`work.status`, `work.result` and `wake` posts report `job`, the live
+feed state of the job they cite, each store read once per page and only
+when a candidate is present (an unreadable store degrades the field to
+unknown, never to free or empty). Reading needs
 no identity and no membership; an unknown channel is `unknown-channel`, an
 unreadable registry or store is reported — never an empty page passed off
 as history.
