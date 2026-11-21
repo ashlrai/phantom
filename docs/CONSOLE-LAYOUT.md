@@ -297,7 +297,17 @@ each provider's mark. A model's card says whether the router would launch it
 and why not when it would not, then lists the lanes that name it with the tiers
 that pick it, the last launch that used it, the date official docs last
 confirmed the name, and the source page. Verify (or Check again) on the card
-re-reads that page. The switch narrows the board to Needs attention or Routable
+re-reads that page. At the foot of the card is the work that model did: one row
+of bars for the jobs launched on it across the last 24 hours (a bar an hour) or
+7 days (a bar per 7 hours), a mark under each bar in which a PR merged, and the
+counts in words (jobs launched, PRs merged, finished jobs that came back
+empty). Every card is drawn against the busiest bar on the board, so cards
+compare, and each provider's heading totals its models' launches. A job counts
+for the model its launch row names. A model with nothing recorded shows an
+empty line and says so; when the report cannot be read every card is hatched
+and reads "work unknown", never zero. Launches whose record names no model are
+counted in a sentence above the cards and for no card, and names jobs launched
+under that the registry lacks are listed after the providers. The switch narrows the board to Needs attention or Routable
 (arrow keys move it), and models the provider docs name that the registry lacks
 are listed at the end. The registry, the check and the lane model table are
 read separately: when one cannot be read the board says which, and the facts it
@@ -307,6 +317,7 @@ agents:
 ```sh
 phm models --json
 phm models check --json
+phm throughput --by model --json
 ```
 
 The Lanes pane is one board of every lane's slots. The headline counts slots
