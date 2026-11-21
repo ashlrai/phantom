@@ -143,3 +143,28 @@ describe('supply doctor self-held lanes', () => {
     expect(supplyDoctorLines(blind).join('\n')).toMatch(/Self-held lanes: unknown/);
   });
 });
+
+describe('top EMPTY reason in the verdict', () => {
+  const withEmpty = (readEmpty: () => Promise<{ total: number; reasons: Record<string, number> } | null>) =>
+    readSupplyDoctor({ runsDir: runs, now: () => NOW, readOff: async () => false, readCandidates: async () => null, readEmpty });
+
+  it('names the most common real reason and keeps unknown out of the top slot', async () => {
+    seedDrop([row('2026-11-19 14:00:00', 'ONE', 'claude')]);
+    const report = await withEmpty(async () => ({ total: 9, reasons: { unknown: 5, 'already-shipped': 3, 'lane-held': 1 } }));
+    expect(report.empty).toEqual({ state: 'known', total: 9, top: { reason: 'already-shipped', count: 3 } });
+    expect(report.verdict).toContain('top EMPTY reason in 24 h: already-shipped (3 of 9)');
+    expect(supplyDoctorLines(report)).toContain('EMPTY jobs in 24 h: 9, most often already-shipped (3); see "phm jobs empty".');
+  });
+
+  it('adds nothing to the verdict when there are no empties, only unknown, or the metrics are unreadable', async () => {
+    seedDrop([row('2026-11-19 14:00:00', 'ONE', 'claude')]);
+    const none = await withEmpty(async () => ({ total: 0, reasons: {} }));
+    expect(none.empty).toEqual({ state: 'known', total: 0, top: null });
+    const onlyUnknown = await withEmpty(async () => ({ total: 2, reasons: { unknown: 2 } }));
+    expect(onlyUnknown.verdict).not.toContain('EMPTY');
+    const blind = await withEmpty(async () => { throw new Error('boom'); });
+    expect(blind.empty).toEqual({ state: 'unknown', why: 'job metrics unreadable' });
+    expect(blind.verdict).not.toContain('EMPTY');
+    expect(supplyDoctorLines(blind)).toContain('EMPTY jobs: unknown (job metrics unreadable).');
+  });
+});

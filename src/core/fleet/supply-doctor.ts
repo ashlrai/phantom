@@ -52,10 +52,14 @@ export interface SupplyDoctorReport {
   lost_launches: { state: 'known'; count: number; newest: LostLaunch[] } | { state: 'unknown'; why: string };
   /** Lanes whose own wrapper held every launch in the last 60 min (3+ held, 0 finishes); unknown when the event log is unreadable. */
   selfHeld: { state: 'known'; windowMinutes: number; lanes: LaneHeldRow[] } | { state: 'unknown'; why: string };
+  /** Why EMPTY jobs stopped in 24 h (same reasons as `phm jobs empty`); top is null when none or only unknown. Unknown when the job metrics cannot be read. */
+  empty: { state: 'known'; total: number; top: { reason: string; count: number } | null } | { state: 'unknown'; why: string };
   verdict: string;
 }
 
 export interface SupplyDoctorOptions {
+  /** EMPTY jobs in 24 h by final reason; null when unreadable. Defaults to the empty-job reader. */
+  readEmpty?: (runsDir: string, nowMs: number) => Promise<{ total: number; reasons: Record<string, number> } | null>;
   runsDir?: string;
   now?: () => number;
   /** true = autofill off, false = on, null = unreadable. Defaults to the live config. */
@@ -125,10 +129,12 @@ async function readRejected(dir: string, nowMs: number): Promise<SupplyDoctorRep
   return { state: 'known', path: dir, total24h, byReason: Object.fromEntries(Object.entries(byReason).sort(([a], [b]) => a.localeCompare(b))) };
 }
 
-function verdictOf(report: Pick<SupplyDoctorReport, 'ingested' | 'selfSupply' | 'hook' | 'lost_launches'>): string {
+function verdictOf(report: Pick<SupplyDoctorReport, 'ingested' | 'selfSupply' | 'hook' | 'lost_launches' | 'empty'>): string {
+  const top = report.empty.state === 'known' ? report.empty.top : null;
+  const empty = top ? `; top EMPTY reason in 24 h: ${top.reason} (${top.count} of ${(report.empty as { total: number }).total})` : '';
   const lost = report.lost_launches.state === 'known' && report.lost_launches.count > 0
     ? `; ${report.lost_launches.count} ${report.lost_launches.count === 1 ? 'job' : 'jobs'} lost at launch in 24 h` : '';
-  return supplyVerdict(report) + lost;
+  return supplyVerdict(report) + lost + empty;
 }
 
 function supplyVerdict(report: Pick<SupplyDoctorReport, 'ingested' | 'selfSupply' | 'hook'>): string {
@@ -153,14 +159,22 @@ export async function readSupplyDoctor(opts: SupplyDoctorOptions = {}): Promise<
     return r.known ? r.lost : null;
   });
   const readEvents = opts.readEvents ?? readDispatchEventsLog;
-  const [ingested, rejected, off, found, lost, events] = await Promise.all([
+  const readEmpty = opts.readEmpty ?? (async (dir: string, at: number) => {
+    const r = await (await import('./empty-jobs.js')).readEmptyJobs(24, dir, undefined, at);
+    return r?.final ? { total: r.total, reasons: r.final.reasons } : null;
+  });
+  const [ingested, rejected, off, found, lost, events, emptyRead] = await Promise.all([
     readIngested(join(runsDir, 'leader', 'drop', 'ingested.tsv'), nowMs),
     readRejected(join(runsDir, 'leader', 'drop', 'done'), nowMs),
     readOff(runsDir).catch(() => null),
     readCandidates(runsDir).catch(() => null),
     readLost(runsDir, nowMs).catch(() => null),
     readEvents(runsDir).catch(() => null),
+    readEmpty(runsDir, nowMs).catch(() => null),
   ]);
+  // Real reasons outrank unknown: a lone unknown pile is not a reason.
+  const topEmpty = emptyRead ? Object.entries(emptyRead.reasons).filter(([r, n]) => r !== 'unknown' && n > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0] : undefined;
   const held = computeLanesHeld(events, nowMs);
   const gap = ingested.state === 'known' ? ingested.sources.find(s => s.source === 'gap') : undefined;
   const selfSupply = {
@@ -177,6 +191,7 @@ export async function readSupplyDoctor(opts: SupplyDoctorOptions = {}): Promise<
       ? { state: 'known', windowMinutes: held.windowMinutes, lanes: held.lanes.filter(r => r.selfHeld) }
       : { state: 'unknown', why: 'dispatch event log unreadable' },
     candidates: found ? { state: 'known', ...found } : { state: 'unknown', why: 'job metrics unreadable' },
+    empty: emptyRead ? { state: 'known', total: emptyRead.total, top: topEmpty ? { reason: topEmpty[0], count: topEmpty[1] } : null } : { state: 'unknown', why: 'job metrics unreadable' },
     lost_launches: lost ? { state: 'known', count: lost.length, newest: lost.slice(0, 5) } : { state: 'unknown', why: 'job metrics unreadable' } } as SupplyDoctorReport;
   report.verdict = verdictOf(report);
   return report;
@@ -205,6 +220,8 @@ export function supplyDoctorLines(report: SupplyDoctorReport): string[] {
   if (report.selfHeld.state === 'unknown') lines.push(`Self-held lanes: unknown (${report.selfHeld.why}).`);
   else if (!report.selfHeld.lanes.length) lines.push('Self-held lanes: none.');
   else for (const r of report.selfHeld.lanes) lines.push(`Self-held lane: ${r.reason}; skipped until a launch there finishes.`);
+  if (report.empty.state === 'unknown') lines.push(`EMPTY jobs: unknown (${report.empty.why}).`);
+  else lines.push(`EMPTY jobs in 24 h: ${report.empty.total}${report.empty.top ? `, most often ${report.empty.top.reason} (${report.empty.top.count}); see "phm jobs empty"` : ''}.`);
   lines.push(`Self-tick gap hook: ${report.hook.enabled === null ? 'unknown' : report.hook.enabled ? 'on' : 'off'}.`);
   return lines;
 }
