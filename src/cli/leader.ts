@@ -65,7 +65,7 @@ Usage:
   phm leader replies [--json] [--limit n] [--file PATH]  show the last 10 (or n) PLAN-LOG replies, one line each, newest first (JSON: leader.replies.v1; path from comms.leaderPlanLogPath)
   phm leader replies sync [--json]  copy new PLAN-LOG replies to the Leader thread
   phm leader thread [--limit n] [--text]  your messages and the leader's replies, oldest first, with received/answered (JSON, --text for people)
-  phm leader thread [--since <hours>] [--json]  the whole conversation, inbox + outbox + plan-log replies, with the channel of each message
+  phm leader thread --since <hours|time> [--limit <n>] [--json]  the whole conversation, inbox + outbox + plan-log replies, with channel and PR refs of each message
   phm leader thread --follow [--since messageId] [--json]  stream the in-process Leader conversation
   phm leader answer <questionId> "<text>"
   phm leader approve <actionId>
@@ -444,7 +444,7 @@ async function runThreadCli(sub: string, args: string[]): Promise<number> {
     }
     args.push(...tail);
   }
-  // `thread --since <hours>` is the merged inbox + outbox + plan-log thread (leader-thread.ts); `--follow --since <id>` keeps its meaning.
+  // `thread --since <hours|time> [--limit n]` is the merged inbox + outbox + plan-log thread (leader-thread.ts); `--follow --since <id>` keeps its meaning.
   if (sub === 'thread' && args.includes('--since') && !args.includes('--follow')) return (await import('./leader-thread.js')).runLeaderThreadCli(args);
   const thread = await import('../core/vision/leader-thread.js');
   if (sub === 'thread') {

@@ -40,6 +40,9 @@ export function TodayCard({ home }: { home: HomeSummary | null }) {
           : today.emptyPools.map((pool) => <Row key={pool.id} title={pool.label} trailing={<Badge tone="warning">{pool.returns}</Badge>} />)}
       </Section>
       <AsksCard />
+      <Section title="Leader">
+        <Row title="Talk to the leader" subtitle="Your messages and the hourly replies, newest last" onClick={() => navigate({ screen: 'leader' })} label="Open the Leader thread" />
+      </Section>
     </div>
   );
 }
