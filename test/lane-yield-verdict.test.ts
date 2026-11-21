@@ -43,6 +43,31 @@ describe('parseLaneJobs', () => {
     expect(out.map(j => [j.job, j.empty, j.merged])).toEqual([['a', true, false], ['b', false, true]]);
     expect(laneYieldAll(out, ['claude']).map(l => l.lane)).toEqual(['claude', 'zai']);
   });
+
+  it('folds the jobs-ledger dialect: reconciler merges, alias fields and empty phases count', () => {
+    const lines = [
+      // Launch via jobId/pool/timestamp; merge arrives only as an eventless
+      // metrics-outcomes reconciler row — invisible to the narrow reader.
+      JSON.stringify({ type: 'launch', jobId: 'a', pool: 'zai', timestamp: '2026-11-20T10:00:00Z' }),
+      JSON.stringify({ jobId: 'a', prUrl: 'https://github.com/o/r/pull/1', outcome: 'MERGED', mergedAt: '2026-11-20T12:00:00Z', source: 'metrics-outcomes-reconciler' }),
+      // Launch via job_id/lane/ts; a DONE-NOOP outcome phase is an empty finish.
+      JSON.stringify({ event: 'launch', job_id: 'b', lane: 'zai', ts: '2026-11-20T10:00:00Z' }),
+      JSON.stringify({ event: 'outcome', job: 'b', status: 'DONE-NOOP' }),
+      // A publish row keeping event:'publish' with resolved MERGED phase counts too.
+      JSON.stringify({ kind: 'launch', id: 'c', lane: 'zai', at: '2026-11-20T10:00:00Z' }),
+      JSON.stringify({ event: 'publish', jobId: 'c', prUrl: 'https://github.com/o/r/pull/3', outcome: 'MERGED', source: 'metrics-outcomes-reconciler' }),
+      // Resolved non-merge outcomes still do not count as finished jobs.
+      JSON.stringify({ event: 'launch', job: 'd', lane: 'zai', ts: '2026-11-20T10:00:00Z' }),
+      JSON.stringify({ event: 'outcome', job: 'd', state: 'CLOSED' }),
+    ].join('\n');
+    const out = parseLaneJobs(lines);
+    expect(out.map(j => [j.job, j.lane, j.empty, j.merged])).toEqual([
+      ['a', 'zai', false, true],
+      ['b', 'zai', true, false],
+      ['c', 'zai', false, true],
+    ]);
+    expect(out.find(j => j.job === 'a')!.at).toBe(Date.parse('2026-11-20T12:00:00Z'));
+  });
 });
 
 describe('routing skips low-yield lanes', () => {

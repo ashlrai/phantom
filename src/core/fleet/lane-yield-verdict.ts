@@ -7,6 +7,7 @@
  *   low-yield  20 or more finished jobs and empty_rate >= 0.8
  *   productive everything else
  */
+import { parseLedgerTs } from '../metrics/loop.js';
 import { hasRevertEvidence } from './slot-yield.js';
 
 export const VERDICT_UNKNOWN_BELOW = 10;
@@ -53,31 +54,106 @@ export function laneYield(jobs: readonly unknown[], lane: string, window?: Yield
   return { jobs: n, empty, merged, empty_rate: n ? round(empty / n) : null, merged_per_job: n ? round(merged / n) : null, verdict };
 }
 
+/**
+ * jobs.jsonl field dialects, the same sets lane-yield-weight.computeLaneYield,
+ * visit-sync.classifyRow, queue/job-outcomes.parseJobOutcomeRows and
+ * metrics/reward-feed.foldJobsLedgerRewards accept: job ids take
+ * job|job_id|jobId|id, the event name event|type|kind ('published'
+ * normalizes to 'publish'), the phase state|outcome|status, timestamps
+ * ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt (mergedAt/
+ * closedAt preferred on terminal rows) and the lane alias pool. Eventless
+ * rows carrying a resolved PR phase (MERGED/CLOSED/OPEN) read as 'outcome',
+ * the dispatchd _vc_event convention — that is how metrics-outcomes
+ * reconciler rows (`jobId`/`prUrl`/`outcome`/`status` + `source`) arrive.
+ */
+const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const EVENT_KEYS = ['event', 'type', 'kind'] as const;
+const PHASE_KEYS = ['state', 'outcome', 'status'] as const;
+const LANE_KEYS = ['lane', 'pool'] as const;
+const TS_FIELDS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+
+/** Terminal "no work" phases: the fleet's empty-outcome vocabulary (skill-nudge EMPTY_PHASES, launch_precheck _TERMINAL_EMPTY). */
+const EMPTY_PHASES: ReadonlySet<string> = new Set(['DONE-NOOP', 'EMPTY', 'EMPTY_DONE', 'SKIPPED-EMPTY', 'NOOP']);
+/** Named events that can carry a resolved PR phase or an empty verdict. */
+const OUTCOME_EVENTS: ReadonlySet<string> = new Set(['outcome', 'result', 'resolved', 'resolution']);
+const FINISH_EVENTS: ReadonlySet<string> = new Set(['finish', 'finished', 'complete', 'completed']);
+const RESOLVED_PHASES: ReadonlySet<string> = new Set(['MERGED', 'CLOSED', 'OPEN']);
+
+const firstString = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+};
+const phaseOf = (row: Record<string, unknown>): string => (firstString(row, PHASE_KEYS) ?? '').toUpperCase();
+
+/** First parseable stamp among the ledger's timestamp fields; MERGED prefers mergedAt, CLOSED closedAt. */
+const eventTs = (row: Record<string, unknown>, phase: string): number | null => {
+  const preferred = phase === 'MERGED' ? 'mergedAt' : phase === 'CLOSED' ? 'closedAt' : null;
+  const fields = preferred === null ? TS_FIELDS : [preferred, ...TS_FIELDS.filter(f => f !== preferred)];
+  for (const field of fields) {
+    const at = parseLedgerTs(row[field]);
+    if (at !== null) return at;
+  }
+  return null;
+};
+
+/** Named lifecycle event, or the phase-inferred 'outcome' for eventless resolved-PR rows. */
+const ledgerEvent = (row: Record<string, unknown>, phase: string): string | null => {
+  const named = firstString(row, EVENT_KEYS)?.toLowerCase() ?? null;
+  if (named !== null) return named === 'published' ? 'publish' : named;
+  return RESOLVED_PHASES.has(phase) ? 'outcome' : null;
+};
+
+/**
+ * Merge evidence: a `merged: true` flag, a 'merged' event name, or a MERGED
+ * phase on an outcome-ish row — 'outcome' (named or phase-inferred, which
+ * covers reconciler rows), 'publish' (a reconciler row copied from a
+ * publish row keeps its event) or the wider outcome event names.
+ */
+const mergeEvidence = (row: Record<string, unknown>, event: string | null, phase: string): boolean =>
+  row['merged'] === true || event === 'merged'
+  || (phase === 'MERGED' && event !== null
+    && (event === 'publish' || OUTCOME_EVENTS.has(event)));
+
+/** Empty evidence: `empty: true` on a finish or outcome-ish row, or a terminal no-work phase on an outcome row. */
+const emptyEvidence = (row: Record<string, unknown>, event: string | null, phase: string): boolean =>
+  event !== null && (
+    (FINISH_EVENTS.has(event) && row['empty'] === true)
+    || (OUTCOME_EVENTS.has(event) && (row['empty'] === true || EMPTY_PHASES.has(phase))));
+
 /** Fold the jobs ledger into one record per finished job, on the lane of its latest launch. Bad lines are skipped. */
 export function parseLaneJobs(ledger: string): LaneJob[] {
   type Launch = { lane: string; at: number };
   const launches = new Map<string, Launch>();
   const done = new Map<string, { at: number | null; empty: boolean; merged: boolean }>();
   const reverted = new Set<string>();
-  const time = (v: unknown): number | null => { const t = typeof v === 'string' ? Date.parse(v) : NaN; return Number.isFinite(t) ? t : null; };
   for (const line of ledger.split('\n')) {
     let row: unknown;
     try { row = JSON.parse(line); } catch { continue; }
-    if (!isObject(row) || typeof row.job !== 'string' || !row.job.trim()) continue;
-    const id = row.job.trim();
-    const at = time(row.ts);
-    if (row.event === 'launch') {
-      const lane = typeof row.lane === 'string' ? row.lane.trim() : '';
+    if (!isObject(row)) continue;
+    const id = firstString(row, JOB_KEYS);
+    if (!id) continue;
+    const phase = phaseOf(row);
+    const event = ledgerEvent(row, phase);
+    const at = eventTs(row, phase);
+    if (event === 'launch') {
+      const lane = firstString(row, LANE_KEYS) ?? '';
       const prev = launches.get(id);
       if (lane && (!prev || (at ?? 0) >= prev.at)) launches.set(id, { lane, at: at ?? 0 });
       continue;
     }
     if (hasRevertEvidence(row)) reverted.add(id);
-    const merged = row.event === 'outcome' && (row.state === 'MERGED' || row.outcome === 'MERGED');
-    const finished = row.event === 'finish';
+    const merged = mergeEvidence(row, event, phase);
+    // A finish row always ends the job; an outcome-ish row ends it only when
+    // it carries empty evidence — resolved non-merge outcomes (CLOSED, OPEN,
+    // RECORDED) stay uncounted, as before.
+    const finished = event !== null && (FINISH_EVENTS.has(event)
+      || (OUTCOME_EVENTS.has(event) && (row['empty'] === true || EMPTY_PHASES.has(phase))));
     if (!merged && !finished) continue;
     const prev = done.get(id) ?? { at: null, empty: false, merged: false };
-    done.set(id, { at: Math.max(prev.at ?? 0, at ?? 0) || null, empty: prev.empty || (finished && row.empty === true), merged: prev.merged || merged });
+    done.set(id, { at: Math.max(prev.at ?? 0, at ?? 0) || null, empty: prev.empty || emptyEvidence(row, event, phase), merged: prev.merged || merged });
   }
   const out: LaneJob[] = [];
   for (const [job, d] of done) {
