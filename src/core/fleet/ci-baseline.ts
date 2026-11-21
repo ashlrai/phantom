@@ -1034,6 +1034,80 @@ function parseMemoryBenchmarkFailures(log: string): Failure[] {
   return out;
 }
 
+// The `ci` job's "Lint" step on the ubuntu authority 3/3 shard runs
+// `npm run lint` (`eslint . && npm run lint:realio-lane && npm run
+// lint:verse-sync-io`). ESLint's stylish formatter prints each file with
+// messages as its absolute path followed by `line:col severity message
+// ruleId` table rows, then closes the run with a
+// `✖ N problems (X errors, Y warnings)` summary. A lint break prints no
+// vitest FAIL, TAP, typecheck or report shape, so without this shape a red
+// master marked every open PR unknown and queued no fix. Errors group per
+// file under a `<file> > (lint)` identity, like `(typecheck)`: eslint's
+// rules are per-file, so the unit a master fix restores is the file's own
+// content plus the flat config and dependency manifests -- never its
+// import closure -- and the vitest harness ambient set does not apply.
+// Only `error` rows are failures: `eslint .` exits nonzero on errors alone
+// and warnings never fail the step without --max-warnings, so a
+// warnings-only file emits nothing. Stylish prints `result.filePath`, an
+// absolute runner path, so headers resolve through the same
+// `/<work>/<repo>/<repo>/` checkout marker as TAP locations; anything else
+// stays unparsed. Like the other non-test identities it can never resolve
+// through a vitest pass line: shared-baseline, pr-caused or unknown --
+// never probable-flake.
+const LINT_NAMES = '(lint)';
+const LINT_INPUTS = ['eslint.config.js', 'package.json', 'package-lock.json'] as const;
+const LINT_MAX = 100;
+const LINT_MESSAGES_PER_FILE = 8;
+const LINT_SUMMARY = /^✖\s+\d+\s+problems?\s+\(\d+\s+errors?,\s+\d+\s+warnings?\)\s*$/;
+const LINT_MESSAGE = /^(\d+):(\d+)\s+(error|warning)\s/;
+const LINT_FILE_EXT = /\.(?:[jt]sx?|m[jt]s|c[jt]s)$/;
+
+// Stylish prints the linted file's absolute path as a bare header line.
+// Only paths under the Actions checkout marker resolve to repo-relative
+// files; every other absolute path stays unparsed rather than guessed at,
+// the same convention as tapRepoFile.
+function lintHeaderFile(line: string, repo: string | undefined): string | null {
+  if (!line.startsWith('/')) return null;
+  const repoName = repo?.split('/')[1];
+  if (repoName === undefined) return null;
+  const marker = `/${repoName}/${repoName}/`;
+  const at = line.indexOf(marker);
+  if (at < 0) return null;
+  const path = line.slice(at + marker.length);
+  if (!path || posix.normalize(path) !== path || path.includes('..') || posix.isAbsolute(path)) return null;
+  return LINT_FILE_EXT.test(path) ? path : null;
+}
+
+function parseLintFailures(log: string, repo: string | undefined): Failure[] {
+  const byFile = new Map<string, string[]>();
+  let sawSummary = false;
+  let current: string[] | null = null;
+  for (const line of lines(log)) {
+    if (LINT_SUMMARY.test(line)) { sawSummary = true; continue; }
+    const message = LINT_MESSAGE.exec(line);
+    if (message !== null) {
+      if (message[3] === 'error' && current !== null && current.length < LINT_MESSAGES_PER_FILE) current.push(line);
+      continue;
+    }
+    const file = lintHeaderFile(line, repo);
+    if (file === null) { current = null; continue; }
+    let parts = byFile.get(file);
+    if (parts === undefined) {
+      if (byFile.size >= LINT_MAX) { current = null; continue; }
+      parts = [];
+      byFile.set(file, parts);
+    }
+    current = parts;
+  }
+  if (!sawSummary) return [];
+  const out: Failure[] = [];
+  for (const [file, parts] of byFile) {
+    if (parts.length === 0) continue;
+    out.push({ file, names: LINT_NAMES, testId: `${file} > ${LINT_NAMES}`, excerpt: clean(parts.join('\n')) });
+  }
+  return out;
+}
+
 export function parseBaselineFailures(log: string, repo?: string, auditExceptions: readonly DependencyAuditException[] | null = []): Failure[] {
   const result: Failure[] = [];
   const typecheck = new Map<string, Failure>();
@@ -1112,6 +1186,10 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     result.push(failure);
   }
   for (const failure of parseMemoryBenchmarkFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseLintFailures(log, repo)) {
     if (result.length >= 100) break;
     result.push(failure);
   }
@@ -1194,11 +1272,17 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     else if (fetched.ok && fetched.source !== null) auditExceptions = parseAuditExceptions(fetched.source);
   }
   const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text, repo, auditExceptions));
+  // Parenthesized identities are gate checks, not vitest tests: only
+  // '(suite)' resolves through pass evidence, because the file loading is
+  // what failed. '(lint)', '(typecheck)' and the other gate names can never
+  // be flakes even when their file happens to be a test path a green-module
+  // line could otherwise match.
+  const filePassable = (names: string) => names === SUITE_NAMES || !names.startsWith('(');
   // A suite failure has no per-test pass line to match: the file loading and
   // running at all is what resolves it. The default reporter's green-module
   // line (`✓ file (N tests)`) is the same evidence at file granularity -- a
   // green module means every test it contains passed on master.
-  const passes = (f: Failure) => masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
+  const passes = (f: Failure) => filePassable(f.names) && masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
     const m = PASS_LINE.exec(line);
     if (m) return m[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
     return FILE_PASS_LINE.exec(line)?.[1] === f.file;
@@ -1501,7 +1585,10 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     freshness.push({ pr: pr.number, head: pr.headRefOid, state: known ? 'fresh' : 'unknown', ...(!known ? { reason: 'unreadable-log-or-unverified-checkout' } : {}) });
     if (!known) continue;
     for (const failure of found) {
-      const deps = await dependencies(failure.file);
+      // Lint failures are per-file: eslint's rules never read a file's
+      // imports, so the dependency set is the closed config/manifest input
+      // list rather than the import closure walk.
+      const deps = failure.names === LINT_NAMES ? new Set<string>(LINT_INPUTS) : await dependencies(failure.file);
       // Generated artifacts are produced by the clean-tree job, not the test
       // runner: the vitest harness ambient set cannot stale them, so only
       // the generator-input deps decide touched. The version-sync gate reads
@@ -1512,7 +1599,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // toolchain inputs, and the secret-shape/secret-scan/
       // version-provenance trust gates have no vitest harness at all, so
       // the ambient set cannot reach any of them.
-      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
+      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || failure.names === LINT_NAMES || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
       const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
       observations.push({ pr, failure, touched, runId: failure.runId });
     }

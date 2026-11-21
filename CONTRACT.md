@@ -243,11 +243,14 @@ prefixes, and the PR-visible trust gates'
 `.github/scripts/release-version-provenance.mjs > (version-provenance)`
 rows from the scrub.pl `<blocked> allowed=<n>` count, the gitleaks
 `leaks found: <n>` summary and the provenance `::error::` /
-`check failed:` lines (nonzero counts and verdicts only), and the
+`check failed:` lines (nonzero counts and verdicts only), the
 memory benchmark gate's
 `scripts/benchmark-memory.ts > (memory-benchmark)` rows from the
 `memory benchmark below floor:` stderr block and its two-space-indented
-violation lines -- plus
+violation lines, and the `ci` job's Lint step eslint stylish output as
+`<file> > (lint)` rows -- absolute checkout-marker file headers,
+`line:col severity message ruleId` rows, `error` severity only and gated
+on the `✖ N problems` run summary -- plus
 summaries. `auditExceptions` is the optional
 `DependencyAuditException[] | null` list (`{id, package, graph}` with
 graph `full` or `raycast-production`); `null` leaves audit reports
@@ -286,7 +289,13 @@ dependency set is the entry script's import closure -- the benchmark,
 its floors file and the `src/core/memory` implementation -- plus
 `package.json`, `package-lock.json` and `tsconfig.json` seeded as
 static inputs for the toolchain files tsx reads, and the harness
-ambient set does not apply to it either.
+ambient set does not apply to it either. The lint gate's dependency set
+is `eslint.config.js`, `package.json` and `package-lock.json` -- never
+the failing file's import closure, since eslint's rules are per-file --
+and the harness ambient set does not apply to it either. Parenthesized
+gate identities other than `(suite)` can never resolve a master pass or
+flake classification, even when their file is a test path a green-module
+line could otherwise match.
 `enqueueBaselineFixes(report,
 absoluteQueuePath)` explicitly writes work-tier master-fix rows deduplicated
 by queue state via `nextFixGeneration`: a failure whose prior fix generations

@@ -38,6 +38,29 @@ every diagnostic line for one file merges into a single failure excerpt. A
 groups classify as `shared-baseline`, `pr-caused` or `unknown` -- never
 `probable-flake`.
 
+The `ci` job's "Lint" step on the ubuntu authority 3/3 shard runs
+`npm run lint` (`eslint . && npm run lint:realio-lane && npm run
+lint:verse-sync-io`). ESLint's stylish formatter prints each file with
+messages as its absolute path followed by `line:col severity message
+ruleId` rows and closes the run with a `✖ N problems (X errors, Y
+warnings)` summary; a lint break prints no vitest, typecheck or TAP line,
+so without this shape a red master marked every open PR unknown. Error
+rows group per file under a `<file> > (lint)` identity -- warnings never
+fail the step without `--max-warnings`, so warnings-only files emit
+nothing -- and stylish's absolute `result.filePath` headers resolve
+through the same `/<work>/<repo>/<repo>/` checkout marker as TAP
+locations; runs without the summary line, paths outside the marker and
+non-lintable paths stay unparsed. ESLint's rules are per-file, so the
+dependency set is the failing file itself plus `eslint.config.js`,
+`package.json` and `package-lock.json`: a file the failing source merely
+imports does not count as touched, and the vitest harness ambient set
+does not apply. Like `(typecheck)` it can never resolve through a vitest
+pass line, so these groups classify `shared-baseline`, `pr-caused` or
+`unknown` -- never `probable-flake`. The pass-line guard covers every
+parenthesized gate identity, which also closes the hole where a
+`(typecheck)` failure on a test path could read a green module line as a
+master pass.
+
 The `.github/tests/*.test.mjs` contract suites run under `node --test`, which
 prints TAP on the Node 22 CI image. `not ok N - name` results resolve their
 file from the diagnostic block's absolute `location:` path through the
