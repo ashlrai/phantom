@@ -75,14 +75,22 @@ mark per repository.
 Home's **Pools** card is a resource bar: one tile per pool, as many across as
 fit (two on a phone). A tile shows the provider's mark and the pool's name,
 the share left as the large figure, how long the pool lasts at the measured
-burn, when it resets, and the used bar along its bottom edge. A pool that
+burn, when it resets, how its window ends at that burn, and a bar along its
+bottom edge. The ending is the runway's own verdict: "70% unused at its
+reset", "dry 46 h before its reset", "on pace to use it all", or "not
+projected" with the reading that is missing. The bar is split the same way:
+used so far is solid, what the burn uses before the reset is lighter, and the
+gap after them is the share left unused; a pool that runs dry early fills to
+the end in amber. A line under the tiles counts the pools by ending and
+holds the key to the bars. A pool that
 empties before it resets has its figure and that line in amber. A pool with
-no reading says "usage unknown" in place of a figure, and Local shows "free,
+no reading says "usage unknown" in place of a figure and has a hatched bar,
+and Local shows "free,
 limited by memory" with no bar. The line under the title names the pool that
 will not last to its reset (or counts them), counts pools without a usage
 reading, and gives the soonest reset and the time the readings were taken.
-Select a tile to list that pool's running jobs under the bar; a job opens in
-the Worker log. **Open Pools** opens the Pools pane. The same readings for
+Select a tile to list that pool's running jobs under the bar, below the
+runway's advice for that pool; a job opens in the Worker log. **Open Pools** opens the Pools pane. The same readings for
 agents:
 
 ```sh

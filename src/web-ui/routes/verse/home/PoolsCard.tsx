@@ -1,8 +1,8 @@
 /** Home's resource bar. Home and phone share the existing phm pool runway JSON; missing readings stay unknown.
  * One tile per pool: the provider's mark and the pool's name, the share left as the figure, how long it lasts and when it resets,
- * and a used bar along the tile's bottom edge (hatched for an unread pool, never empty). A tile opens that pool's running jobs under the bar. */
+ * how it ends its window at the measured burn, and a bar along the tile's bottom edge split the same way (hatched for an unread pool, never empty).
+ * A tile opens that pool's running jobs and the runway's advice for it under the bar. */
 import { useId, useState } from 'react';
-import { Meter } from '../../../components/primitives/Meter.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 import { isRunwaySnapshot, type PoolRunway, type RunwaySnapshot } from '../../../../core/usage/runway.js';
 import { apiGet } from '../../../data/client.js';
@@ -11,6 +11,9 @@ import type { QueryDef } from '../../../data/queries.js';
 import { JOB_ID_RE } from '../fleet-job-log/job-id.js';
 import { fleetRunsQuery } from '../mobile/runs-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { PoolEndingBar, PoolEndingKey } from './PoolEndingBar.js';
+import { endingSummary, poolEnding, poolHours as hours } from './pool-ending-model.js';
+import ending from './pool-ending.module.css';
 import styles from './home.module.css';
 import bar from './pools-card.module.css';
 
@@ -25,7 +28,6 @@ const POOLS = [['claude', 'Claude'], ['codex-personal', 'Personal Codex'], ['cod
   ['grok', 'Grok'], ['devin', 'Devin'], [LOCAL, 'Local'], ['claude-api', 'Claude API gift']] as const;
 type PoolName = readonly [pool: string, name: string];
 const measured = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
-const hours = (n: number) => n < 1 ? `${Math.max(1, Math.round(n * 60))} min` : `${Math.round(n)} h`;
 
 export interface PoolParts {
   /** Whole percent left in the window; null when there is no usage reading. */
@@ -95,6 +97,8 @@ export function PoolsCard({ visible = true, onOpenJob, onOpenPools }: {
   const rows: PoolName[] = [...POOLS, ...(snapshot?.pools.filter(row => !POOLS.some(([pool]) => pool === row.pool)).map(row => [row.pool, row.pool] as const) ?? [])];
   const selectedName = rows.find(([pool]) => pool === selected)?.[1] ?? null;
   const workers = jobs.data?.workers?.filter(worker => worker.lane === selected) ?? [];
+  // The runway's own sentence for the open pool. Local has no window, so there is none to give.
+  const advice = selected === null || selected === LOCAL ? '' : snapshot?.pools.find(row => row.pool === selected)?.advice ?? '';
   return <section className={styles.card} aria-label="Pools"><h3>Pools</h3>
     {snapshot ? <div className={bar.summary}>{poolsSummary(snapshot, rows).map(part => <span key={part}>{part}</span>)}</div> : null}
     {read.status === 'error' ? <p role="status">Pool readings unavailable; usage and times are unknown.</p> : null}
@@ -102,8 +106,7 @@ export function PoolsCard({ visible = true, onOpenJob, onOpenPools }: {
       const local = pool === LOCAL;
       const reading = snapshot?.pools.find(row => row.pool === pool);
       const parts = poolParts(reading);
-      const usedPercent = reading?.usedPercent;
-      const used = measured(usedPercent) ? usedPercent : null;
+      const end = poolEnding(reading);
       const open = selected === pool;
       return <li key={pool} className={bar.tile} data-selected={open || undefined}>
         {/* The label is the whole reading in one sentence; the tile lays the same words out for the eye. */}
@@ -116,11 +119,15 @@ export function PoolsCard({ visible = true, onOpenJob, onOpenPools }: {
               : <span className={bar.figure}>{parts.leftPercent}%<span className={bar.unit}>left</span></span>}
           <span className={bar.detail} data-runway>{local ? 'limited by memory' : parts.runway}</span>
           {local ? null : <span className={bar.detail}>{parts.reset}</span>}
+          {/* How the window ends at this burn, in the server's own verdict; an unread pool has nothing more to say. */}
+          {local || end.words === null ? null : <span className={bar.detail} data-ending={end.kind}>{end.words}</span>}
         </button>
-        {local ? null : <Meter variant="line" value={used} max={100} className={used === null ? styles.unknownMeter : undefined} aria-label={`${name} used`} />}
+        {local ? null : <PoolEndingBar name={name} ending={end} />}
       </li>;
     })}</ul>
+    {snapshot ? <PoolEndingKey summary={endingSummary(rows.filter(([pool]) => pool !== LOCAL).map(([pool]) => snapshot.pools.find(row => row.pool === pool)))} /> : null}
     {selected !== null && selectedName !== null ? <div id={`${id}-jobs`} role="region" aria-label={`${selectedName} running jobs`} className={bar.jobs}>
+      {advice ? <p className={ending.advice}>Runway advice: {advice}</p> : null}
       <span className={bar.jobsTitle}>Running on {selectedName}</span>
       {jobs.status === 'error' || (jobs.data && !Array.isArray(jobs.data.workers)) ? <p>Running jobs unknown.</p> : !jobs.data ? <p>Reading jobs…</p> : workers.length === 0 ? <p>No running jobs.</p>
         : <ul className={bar.jobList}>{workers.map(worker => <li key={worker.job}><button type="button" className={styles.action}

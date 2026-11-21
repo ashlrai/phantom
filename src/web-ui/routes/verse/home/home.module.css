@@ -23,7 +23,6 @@
 .meters li { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
 .meters .action { align-self: stretch; text-align: start; }
 /* No reading: hatched, so an unknown bar never looks like an empty (0% used) one. */
-.unknownMeter [role='meter'] { background: repeating-linear-gradient(135deg, var(--status-unknown-solid) 0 2px, transparent 2px 6px); }
 .command { font-family: var(--font-mono, monospace); font-size: var(--text-xs-size); overflow-wrap: anywhere; }
 /* Pulse: five rows, title and value on one line, the plain line under them. Wraps the same at 390 px and wide. */
 .pulse { display: flex; flex-direction: column; gap: var(--space-2); }
