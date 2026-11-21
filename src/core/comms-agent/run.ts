@@ -291,11 +291,15 @@ export async function commsStatus(runsDir: string): Promise<{
   role: typeof COMMS_AGENT_ROLE;
   kill: KillState;
   paused: boolean;
+  /** Pending inbox messages still awaiting triage; null when the inbox file
+   * cannot be read — an unreadable store is unknown, never an empty inbox. */
+  inbox: number | null;
   drafts: number;
   sendsLogged: number;
   adapters: string[];
 }> {
-  const [drafts, sends] = await Promise.all([
+  const [inbox, drafts, sends] = await Promise.all([
+    readInbox(runsDir).then(read => read.messages.length).catch(() => null),
     listDrafts(runsDir).catch(() => []),
     readSendLog(runsDir).catch(() => []),
   ]);
@@ -308,6 +312,7 @@ export async function commsStatus(runsDir: string): Promise<{
     role: COMMS_AGENT_ROLE,
     kill: readKillState(),
     paused: readPauseState(),
+    inbox,
     drafts: drafts.filter(draft => draft.status === 'pending').length,
     sendsLogged: sends.length,
     adapters,

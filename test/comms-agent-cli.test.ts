@@ -1,7 +1,7 @@
 /**
  * CLI and MCP surface for the Comms role.
  */
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -48,13 +48,28 @@ describe('phm comms-agent', () => {
 
     const status = capture();
     expect(await cmdCommsAgent(['status', '--dir', runsDir, '--json'])).toBe(0);
-    const snapshot = JSON.parse(status.lines.at(-1) ?? '{}') as { role: { id: string; lane: null; grokRequired: boolean }; sendsLogged: number };
+    const snapshot = JSON.parse(status.lines.at(-1) ?? '{}') as { role: { id: string; lane: null; grokRequired: boolean }; inbox: number | null; sendsLogged: number };
     expect(snapshot.role.id).toBe('comms');
     expect(snapshot.role.lane).toBeNull();
     expect(snapshot.role.grokRequired).toBe(false);
+    // The kept 'person' message still awaits a sent reply's resolution pass, so
+    // one pending inbox row remains; status reports the real depth, not a guess.
+    expect(snapshot.inbox).toBe(1);
     expect(snapshot.sendsLogged).toBe(0);
     status.restore();
   }, 60_000);
+
+  it('status reports inbox null when the inbox file cannot be read', async () => {
+    const runsDir = temp();
+    // A malformed inbox is unreadable, not empty: status must say unknown, never 0.
+    mkdirSync(join(runsDir, 'comms-agent'), { recursive: true });
+    writeFileSync(join(runsDir, 'comms-agent', 'inbox.json'), '{ not json', { mode: 0o600 });
+    const status = capture();
+    expect(await cmdCommsAgent(['status', '--dir', runsDir, '--json'])).toBe(0);
+    const snapshot = JSON.parse(status.lines.at(-1) ?? '{}') as { inbox: number | null };
+    expect(snapshot.inbox).toBeNull();
+    status.restore();
+  });
 
   it('exposes status, drafts and run as native MCP tools', async () => {
     const runsDir = temp();
