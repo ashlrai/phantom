@@ -42,7 +42,7 @@ For what each failing step means and how to fix it, see
 | Variable | Default | Description |
 |---|---|---|
 | `PHANTOM_TSC_CACHE_DIR` | `<git-common-dir>/phantom-tsc-cache` | Directory that holds the shared incremental build-info cache across worktrees. |
-| `PHANTOM_TSC_SLOTS` | `3` | Machine-wide cap on concurrent typechecks, shared across worktrees through the git common dir. |
+| `PHANTOM_TSC_SLOTS` | `3` | Machine-wide cap on concurrent typechecks, shared across worktrees through the git common dir. Must be an integer from 1 to 64. |
 | `PHANTOM_TSC_TIMEOUT_SECONDS` | `900` (15 min) | Hard timeout (seconds) for each `tsgo`/`tsc --noEmit` run, which is killed with `SIGKILL` when it exceeds it; also bounds the wait for a typecheck slot (`FAIL tsc slot wait`). |
 | `PHANTOM_VERIFY_PASSED_DIR` | `<git-common-dir>/phantom-verify-passed` | Directory holding one marker file per passed state, shared across worktrees. |
 | `PHANTOM_VERIFY_FORCE` | unset | Truthy (`1`, `true`, `yes`, `on`) reruns verify instead of skipping an already-passed state; identical to `--force`. |

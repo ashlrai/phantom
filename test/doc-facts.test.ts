@@ -72,6 +72,7 @@ const DOCS = [
   'docs/RELIABILITY.md',
   'docs/RESOURCE-POOLS.md',
   'docs/contracts/CONTRACT-SELECTOR.md',
+  'docs/verify-changed.md',
   // Operating guides AGENTS.md and README.md link to. Linked guides that are
   // missing here (QUEUE, FLEET-API, CHANNELS, AGENT-BUS, SESSIONS, VERSE and
   // others) name verbs that dispatch but that completions SUBCOMMANDS does

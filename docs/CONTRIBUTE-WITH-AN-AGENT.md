@@ -94,6 +94,9 @@ what you ran and say what you skipped.
 
 `verify-changed` records a pass for the current tree, so a repeat run on an
 unchanged tree prints `SKIP verify-changed`; pass `--force` to rerun.
+[docs/verify-changed.md](verify-changed.md) is the full reference: each step
+in order, the environment variables, the pass record and the type-check slots
+shared across worktrees.
 `npm run gate` runs the build, static checks and related tests together if you
 prefer one command. If authority drift fails, run `npm run authority:regen` and
 list each new Tier-1 root in the pull request body.

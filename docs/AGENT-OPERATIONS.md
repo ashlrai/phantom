@@ -42,7 +42,7 @@ The command consumes route evidence because invoking the legacy router can publi
 | Run the CLI from source, no build | `npm run dev -- <command>` or `npx tsx src/cli/index.ts <command>` |
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
 | Install the source build on `PATH` | `./install.sh` (builds, symlinks `bin/ashlr` into `~/.local/bin`) |
-| Worker pre-PR static checks | `node scripts/verify-changed.mjs` once in the foreground; replaces worker runs of full typecheck and lint, runs the docs link check when the diff touches markdown or deletes files, the quarantine-ledger check when test files or `queue/quarantine.tsv` change, and a syntax check of each changed file by type (Python, shell, Perl, shebang scripts, JSON, XML, Rust, Swift, YAML, TOML, CSS, Vitest snapshots, patch diffs) |
+| Worker pre-PR static checks | `node scripts/verify-changed.mjs` once in the foreground; replaces worker runs of full typecheck and lint, runs the docs link check when the diff touches markdown or deletes files, the quarantine-ledger check when test files or `queue/quarantine.tsv` change, and a syntax check of each changed file by type (Python, shell, Perl, shebang scripts, JSON, XML, Rust, Swift, YAML, TOML, CSS, Vitest snapshots, patch diffs); reference in [verify-changed.md](verify-changed.md) |
 | Type check (backend + web) | `npm run typecheck` |
 | Fast type check via the native compiler (same projects as `typecheck`) | `npm run typecheck:fast` |
 | Lint (ESLint + real-I/O lane + Phantom console sync-I/O guards) | `npm run lint` |
