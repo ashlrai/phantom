@@ -10,7 +10,7 @@ const NOW = Date.parse('2026-11-21T12:00:00Z');
 let dir: string;
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'live-jobs-')); await mkdir(join(dir, 'queue/run'), { recursive: true }); });
 afterEach(async () => { vi.restoreAllMocks(); await rm(dir, { recursive: true, force: true }); });
-const read = () => readLiveJobs({ runsDir: dir, now: () => NOW, alive: pid => pid === 12 });
+const read = () => readLiveJobs({ runsDir: dir, wtRoot: dir, now: () => NOW, alive: pid => pid === 12 });
 async function job(id: string, minutes: number, pid: number | null = 12) {
   await writeFile(join(dir, `queue/run/${id}.line`), `${id}\tphantom\tlocal\twork\tworking`);
   await writeFile(join(dir, `queue/run/${id}.dispatched`), String((NOW - 120 * 60_000) / 1000));
@@ -36,15 +36,27 @@ it('writes a private sibling temp then renames, retaining the previous file on f
   const file = join(dir, 'live.json'), report = await read(); await writeFile(file, 'old');
   await writeLiveJobs(file, report, async (temp, target) => {
     expect(target).toBe(file); expect(temp).toMatch(/\.tmp$/); expect(await readFile(file, 'utf8')).toBe('old');
-    expect(JSON.parse(await readFile(temp, 'utf8'))).toEqual(report); expect((await stat(temp)).mode & 0o777).toBe(0o600); await rename(temp, target);
+    expect(JSON.parse(await readFile(temp, 'utf8'))).toMatchObject({ running: [], finished_recent: [] }); expect((await stat(temp)).mode & 0o777).toBe(0o600); await rename(temp, target);
   });
   await expect(writeLiveJobs(file, report, async () => { throw new Error('blocked'); })).rejects.toThrow('blocked');
-  expect(JSON.parse(await readFile(file, 'utf8'))).toEqual(report); expect((await readdir(dir)).some(n => n.endsWith('.tmp'))).toBe(false);
+  expect(JSON.parse(await readFile(file, 'utf8'))).toMatchObject({ running: [], finished_recent: [] }); expect((await readdir(dir)).some(n => n.endsWith('.tmp'))).toBe(false);
   const output = vi.spyOn(console, 'log').mockImplementation(() => {});
   expect(await cmdJobsLive(['--json', '--write', file], read)).toBe(0); expect(JSON.parse(output.mock.calls[0]![0])).toEqual(report);
 });
 it('refreshes the queue snapshot every acquired tick, including dry runs', async () => {
   const steps = Object.fromEntries(SELF_TICK_STEP_ORDER.map(s => [s, async () => ({ exitCode: 0, output: '{}' })])) as SelfTickSteps;
   expect((await runSelfTick({ runsDir: dir, now: () => NOW, steps })).report.liveJobs).toBe('written');
-  expect(JSON.parse(await readFile(join(dir, 'queue/live-jobs.json'), 'utf8'))).toEqual(await read());
+  expect(JSON.parse(await readFile(join(dir, 'queue/live-jobs.json'), 'utf8'))).toMatchObject({ running: [], finished_recent: [] });
+});
+
+it('writes a small snapshot for 500 worktrees and 10 running jobs', async () => {
+  const wt = join(dir, 'worktrees'); await mkdir(wt);
+  for (let i = 0; i < 500; i++) await mkdir(join(wt, `job${i}`));
+  for (let i = 0; i < 10; i++) await job(`job${i}`, 1);
+  const report = await readLiveJobs({ runsDir: dir, wtRoot: wt, now: () => NOW, alive: () => true });
+  const file = join(dir, 'snapshot.json'); await writeLiveJobs(file, report);
+  const data = await readFile(file, 'utf8'); const snapshot = JSON.parse(data);
+  expect(snapshot.running).toHaveLength(10); expect(snapshot.other_worktrees).toBe(490);
+  expect(Buffer.byteLength(data)).toBeLessThan(32 * 1024);
+  expect(data).not.toContain('lastLine'); expect(data).not.toContain('working');
 });
