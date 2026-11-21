@@ -237,6 +237,32 @@ describe('phm messages projection', () => {
     expect(parseAgentMessagesQuery({ since: '1h', agent: 'claude', limit: '10' }, T0)).toEqual({ ok: true, query: { since: T0 - 3_600_000, agent: 'claude', limit: 10 } });
   });
 
+  it('filters to one classified kind and counts only the rows it accepts', () => {
+    const root = store();
+    post(root, T0, { id: 'q1', from: 'a', to: 'b', body: { kind: 'note', text: 'can you review the parser?' } });
+    post(root, T0 + 1_000, { id: 'r1', from: 'b', to: 'a', body: { kind: 'note', text: 'looks good', replyTo: 'q1' } });
+    post(root, T0 + 2_000, { id: 's1', from: 'a', to: 'b', body: { kind: 'work.status', jobId: 'RQ-KIND1', status: 'running' } });
+    post(root, T0 + 3_000, { id: 'x1', from: 'a', to: 'b', body: { kind: 'cos-blocked', reason: 'CI red on master' } });
+    const asks = read(root, { kind: 'ask' });
+    expect(asks.messages.map(m => m.id)).toEqual(['q1']);
+    expect(asks.matched).toBe(1);
+    const blockers = read(root, { kind: 'blocker' });
+    expect(blockers.messages.map(m => m.id)).toEqual(['x1']);
+    expect(blockers.matched).toBe(1);
+    // Kind composes with the other filters; an unmatched kind is an empty page, not an error.
+    const scoped = read(root, { kind: 'reply', agent: 'a' });
+    expect(scoped.messages.map(m => m.id)).toEqual(['r1']);
+    expect(read(root, { kind: 'handoff' }).messages).toEqual([]);
+    expect(read(root, { kind: 'handoff' }).matched).toBe(0);
+  });
+
+  it('parses --kind case-insensitively and refuses an unknown kind', () => {
+    expect(parseAgentMessagesQuery({ kind: 'ASK' })).toEqual({ ok: true, query: { kind: 'ask' } });
+    expect(parseAgentMessagesQuery({ kind: 'blocker', limit: '5' })).toEqual({ ok: true, query: { kind: 'blocker', limit: 5 } });
+    expect(parseAgentMessagesQuery({ kind: 'chatter' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ kind: '' }).ok).toBe(false);
+  });
+
   it('serves the same read at GET /api/verse/agent-bus/messages', async () => {
     const calls: unknown[] = [];
     const api = createAgentBusApi({ messages: query => { calls.push(query); return { schema: 'agent-messages.v1', source: 'missing', messages: [], matched: 0, skipped: 0 }; } });
@@ -247,12 +273,13 @@ describe('phm messages projection', () => {
       const handled = await api(ctx, { url, headers: {} } as never, res, url.split('?')[0]!, 'GET');
       return { handled, status: status || (res as { statusCode: number }).statusCode, body };
     };
-    const ok = await send('/api/verse/agent-bus/messages?agent=claude&limit=5');
+    const ok = await send('/api/verse/agent-bus/messages?agent=claude&kind=ask&limit=5');
     expect(ok.handled).toBe(true);
     expect(ok.status).toBe(200);
     expect(JSON.parse(ok.body)).toMatchObject({ schema: 'agent-messages.v1' });
-    expect(calls).toEqual([{ agent: 'claude', limit: 5 }]);
+    expect(calls).toEqual([{ kind: 'ask', agent: 'claude', limit: 5 }]);
     expect((await send('/api/verse/agent-bus/messages?limit=0')).status).toBe(400);
+    expect((await send('/api/verse/agent-bus/messages?kind=chatter')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?after=1')).status).toBe(400);
   });
 });

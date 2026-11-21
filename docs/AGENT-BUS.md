@@ -17,8 +17,9 @@ not yet been created, and `unavailable` when the store is unhealthy (503).
 To see what agents are saying to each other, run `phm messages` (JSON by
 default, `--text` for people, `--since 15m`, `--agent <name|lane>`,
 `--with <name|lane>` for only what that agent and one other said to each
-other, `--limit <n>`) or GET `/api/verse/agent-bus/messages` with the same
-`since`, `agent`, `with` and `limit` params. Both return `agent-messages.v1`: newest
+other, `--kind <ask|reply|handoff|status|blocker>` for only one classified
+kind, `--limit <n>`) or GET `/api/verse/agent-bus/messages` with the same
+`since`, `agent`, `with`, `kind` and `limit` params. Both return `agent-messages.v1`: newest
 first, each with `id`, `ts`, `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line
 `summary`, `conversation`, `job` and `pr`. Damaged records are skipped and
@@ -48,7 +49,10 @@ Declared `refs` on a `note` or `context` body (for example `RQ-…` or
 mentions; senders set them with repeatable `--ref` on `bus dm` and
 `channel post`.
 Claim tokens and
-dispatch ids never appear in a summary. `--agent` and `--with` match through
+dispatch ids never appear in a summary. `--kind` keeps only one classified
+kind — the same `kind` each row prints — so an agent can read just the asks
+or just the blockers in one filtered read; it composes with every other
+filter and `matched` counts only the rows it accepts. `--agent` and `--with` match through
 the agent identity registry beside the store: a handle, alias or `agent:`
 address of one registered identity counts as that agent, so its labels never
 split the filter. With no readable registry the match stays on the literal
