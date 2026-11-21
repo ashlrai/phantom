@@ -53,7 +53,7 @@ export function LaneCapacityCard({ lane, samples, onOpen, children }: { lane: La
     const value = sample.lanes.find((item) => item.lane === lane.lane);
     return { atMs: Date.parse(sample.at), running: value?.running ?? null, target: value?.target ?? null };
   });
-  return <li className={styles.lane} data-tone={lane.stallMinutes > 0 ? 'warning' : undefined}>
+  return <li className={styles.lane} data-board-card data-tone={lane.stallMinutes > 0 ? 'warning' : undefined}>
     <div className={styles.line}>
       <ProviderBadge of={lane.lane} iconOnly size={14} />
       <strong><button type="button" className={styles.laneButton} aria-label={`Open ${lane.lane} in Lanes`} onClick={onOpen}>{lane.lane}</button></strong>

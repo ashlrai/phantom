@@ -49,7 +49,8 @@ over time with a lane per seat (arrow keys on the time axis read one slice). Rou
 shares one row of names with Pools, Usage, Models, Lanes, Capacity and Supply;
 each name carries a few live words when its board has something to flag
 (`2 too fast`, `1 at limit`, `2 no seat`, `1 not routable`, `3 short`), and
-`[` and `]` step between the boards. See
+`[` and `]` step between the boards. Inside a board, `J` and `K` step
+through its cards and `G` and `Shift+G` jump to the first and last. See
 [Console layout](docs/CONSOLE-LAYOUT.md).
 
 ## Desktop control ("computer use", macOS)
