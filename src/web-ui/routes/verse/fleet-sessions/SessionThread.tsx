@@ -9,7 +9,9 @@
  * While it is open the conversation is followed (thread-follow.ts): messages that
  * arrive with the end on screen scroll into view, the rest wait under a "New" mark.
  * A conversation read to its end before (thread-read-store.ts) opens at the first
- * message that arrived since, under the same mark.
+ * message that arrived since, under the same mark. A running worker's job is paused,
+ * resumed, stopped or moved from the row under the header (ThreadControls.tsx), and
+ * each such request reads in the conversation as a record line.
  */
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { sessionAge } from '../../../../core/fleet/live-sessions.js';
@@ -23,8 +25,11 @@ import { inboxHeld } from '../leader-thread/inbox-held-model.js';
 import { sendLeaderInboxMessage } from '../leader-thread/leader-inbox-data.js';
 import { MessageMarkdown } from '../MessageMarkdown.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { ThreadEarlier } from './ThreadEarlier.js';
+import { ThreadWork } from './ThreadWork.js';
 import { onRecord, replyText, routedRow, sessionThreadQuery, sourcesLine, STATE_WORD, threadFailure, THREAD_POLL_MS, THREAD_REPLY_MAX,
   type SessionThread as Thread, type ThreadMessage } from './session-thread-model.js';
+import { ThreadControls } from './ThreadControls.js';
 import { dayBreaks, NEW_MARK_ATTR, newCountLabel, useThreadFollow } from './thread-follow.js';
 import { noteThreadRead, unreadSince } from './thread-read-store.js';
 import styles from './session-thread.module.css';
@@ -43,7 +48,7 @@ function Bubble({ message }: { message: ThreadMessage }) {
     </li>;
   }
   if (message.side === 'record') {
-    return <li className={styles.record} data-side="record">
+    return <li className={styles.record} data-side="record" data-kind={message.kind}>
       <span className={styles.recordLabel}>{message.label}</span>{message.text && <span>{message.text}</span>}{at && <time dateTime={message.at!}>{at}</time>}
     </li>;
   }
@@ -118,8 +123,7 @@ export function SessionThreadView({ thread, sent, onSent, markKey = null }: Sess
   return <>
     <div className={styles.summary} aria-label="Summary">
       <span className={styles.summaryTitle}>Summary <span className={styles.muted}>from the records, as of {clockTime(thread.generatedAt) || 'an unknown time'}</span></span>
-      {thread.summary.length === 0 ? <p className={styles.plain}>Summary unknown: the read returned none.</p>
-        : thread.summary.map(line => <p key={line} className={styles.plain}>{line}</p>)}
+      <ThreadWork thread={thread} />
     </div>
     {thread.messages.length === 0 && waiting.length === 0
       ? <p className={styles.empty} role="status">Nothing is recorded for {session.id} yet.</p>
@@ -136,7 +140,7 @@ export function SessionThreadView({ thread, sent, onSent, markKey = null }: Sess
         </li>)}
       </ol>}
     <p className={styles.sources}>{sourcesLine(thread)}</p>
-    {thread.gaps.length > 0 && <ul className={styles.gaps} aria-label="Not shown">{thread.gaps.map(gap => <li key={gap}>{gap}</li>)}</ul>}
+    <ThreadEarlier thread={thread} />
     <ReplyBox thread={thread} onSent={onSent} />
   </>;
 }
@@ -147,14 +151,16 @@ export interface SessionThreadProps {
   onBack: () => void;
   /** Opens the session's live log (pause and stop live there); given only for a session with a job. */
   onOpenLog?: (job: string) => void;
-  /** Where Back and Esc return to, in words, when the conversation is opened from somewhere other than the Sessions pane. */
-  backTo?: { label: string; text: string };
+  /** Where Back and Esc return to, in words, when the conversation is opened from somewhere other than the Sessions pane. `title` replaces the button's tooltip where Esc does something else. */
+  backTo?: { label: string; text: string; title?: string };
+  /** False where the conversation sits beside something else and must not take the keyboard when it appears. */
+  autoFocus?: boolean;
 }
 
 const BACK_TO_SESSIONS = { label: 'Back to all sessions', text: '← Sessions' };
 const NOTHING_UNREAD: readonly string[] = [];
 
-export function SessionThread({ id, visible, onBack, onOpenLog, backTo = BACK_TO_SESSIONS }: SessionThreadProps) {
+export function SessionThread({ id, visible, onBack, onOpenLog, backTo = BACK_TO_SESSIONS, autoFocus = true }: SessionThreadProps) {
   const def = useMemo(() => sessionThreadQuery(id), [id]);
   const read = useQuery(def, { enabled: visible, freshMs: THREAD_POLL_MS });
   const refetch = useRefetch(def);
@@ -173,7 +179,7 @@ export function SessionThread({ id, visible, onBack, onOpenLog, backTo = BACK_TO
   const { caughtUp, jumpToNew } = follow;
   const openMark = unreadAtOpen[0] ?? null;
   const atOpenMark = openMark !== null && follow.markKey === openMark;
-  useEffect(() => { root.current?.focus(); }, [id]);
+  useEffect(() => { if (autoFocus) root.current?.focus(); }, [id, autoFocus]);
   // Open at the newest message, the way a conversation reads, unless messages arrived since it was last read: then open at the first of those.
   // Later reads are followed or held by useThreadFollow; a line sent from here always scrolls into view.
   useEffect(() => { if (loaded && (openMark === null || sent.length > 0)) end.current?.scrollIntoView?.({ block: 'nearest' }); }, [loaded, sent.length, openMark]);
@@ -199,7 +205,7 @@ export function SessionThread({ id, visible, onBack, onOpenLog, backTo = BACK_TO
   };
   return <section ref={root} className={styles.root} tabIndex={-1} aria-label={`Session ${id}`} onKeyDown={onKeyDown}>
     <header className={styles.header}>
-      <button type="button" className={styles.back} onClick={onBack} aria-label={backTo.label} title={`${backTo.label} (Esc)`}>{backTo.text}</button>
+      <button type="button" className={styles.back} onClick={onBack} aria-label={backTo.label} title={backTo.title ?? `${backTo.label} (Esc)`}>{backTo.text}</button>
       {session?.kind === 'worker' && session.lane !== 'unknown' && <ProviderBadge of={session.lane} iconOnly size={14} />}
       <strong className={styles.id}>{id}</strong>
       {session && <span className={styles.state} data-state={session.state}>{STATE_WORD[session.state]}</span>}
@@ -218,6 +224,7 @@ export function SessionThread({ id, visible, onBack, onOpenLog, backTo = BACK_TO
     {failure && thread && <p className={styles.notice} role="status">
       {failure.kind === 'gone' ? 'This session has left the list. Showing the last read.' : 'Refresh failed. Showing the last read, which may be stale.'}
     </p>}
+    {thread && <ThreadControls thread={thread} onDone={refetch} />}
     {thread ? <SessionThreadView thread={thread} sent={sent} markKey={follow.markKey} onSent={line => setSent(lines => [...lines, line])} />
       : failure ? <div className={styles.fault} role="alert" data-kind={failure.kind}>
         <p className={styles.plain}>{failure.text}</p>

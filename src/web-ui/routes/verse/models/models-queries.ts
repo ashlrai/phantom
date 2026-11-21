@@ -1,12 +1,15 @@
 /**
  * The Models board's reads and its one action. Each read is the JSON a CLI command prints:
- * `phm models --json` (registry), `phm models check --json` (check), `phm models verify <id> --source <url>` (verify).
+ * `phm models --json` (registry), `phm models check --json` (check), `phm models verify <id> --source <url>` (verify),
+ * and `phm throughput --by model --json` (the work each model did in the window).
  */
 import type { ModelCheckReport } from '../../../../core/fleet/model-check.js';
 import type { ModelRegistryList, ModelRegistryRow } from '../../../../core/fleet/model-verify.js';
+import type { ThroughputReport } from '../../../../core/fleet/throughput.js';
 import { getMutationToken, touchMutationHold } from '../../../data/auth-store.js';
 import { apiGet, apiPost } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
+import type { WorkWindow } from './model-work-model.js';
 
 export const MODELS_PATH = '/api/verse/fleet/control/models';
 
@@ -29,6 +32,18 @@ export const modelCheckQuery: QueryDef<ModelCheckReport> = {
     return report;
   },
 };
+
+/** A server that predates `by=model` refuses the grouping; that and any other shape is unreadable, never "no work". */
+const workQuery = (hours: WorkWindow): QueryDef<ThroughputReport> => ({
+  key: `fleet-throughput-${hours}-model`,
+  fetch: async signal => {
+    const report = await apiGet<ThroughputReport>(`/api/verse/fleet/runs/throughput?hours=${hours}&by=model`, signal);
+    if (!report || report.schema !== 'throughput.v1' || report.by !== 'model' || !Array.isArray(report.groups)) throw new Error('unexpected throughput report');
+    return report;
+  },
+});
+// One stable definition per window, so switching back reuses the last reading while it refreshes.
+export const MODEL_WORK_QUERIES: Readonly<Record<WorkWindow, QueryDef<ThroughputReport>>> = { 24: workQuery('24'), 168: workQuery('168') };
 
 export async function postVerifyModel(id: string, source: string): Promise<ModelRegistryRow> {
   const token = getMutationToken();

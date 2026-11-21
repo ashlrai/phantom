@@ -1,5 +1,7 @@
-/* One column of plain cards. It reads the same at 390 px and on a wide window: nothing sits side by side. */
-.root { display: flex; flex-direction: column; gap: var(--space-3); width: 100%; max-width: 44rem; margin: 0 auto; padding: var(--space-3); min-width: 0; overflow-y: auto; overflow-wrap: anywhere; }
+/* Plain cards in two named groups. A pane narrower than the board keeps one 44rem reading column, the same at 390 px; a wide pane
+   sets the groups side by side (the container rule at the end). The pane measures itself, so the window's width is never asked. */
+.root { display: flex; flex-direction: column; gap: var(--space-3); width: 100%; max-width: 88rem; margin: 0 auto; padding: var(--space-3); min-width: 0; overflow-y: auto; overflow-wrap: anywhere; container-type: inline-size; }
+.root > * { align-self: center; width: 100%; max-width: 44rem; }
 .headline { margin: 0; color: var(--text-primary); font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); }
 .headline[data-health='red'] { color: var(--status-danger-fg); }
 .headline[data-health='stalled'] { color: var(--status-warning-fg); }
@@ -23,7 +25,6 @@
 .meters li { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
 .meters .action { align-self: stretch; text-align: start; }
 /* No reading: hatched, so an unknown bar never looks like an empty (0% used) one. */
-.unknownMeter [role='meter'] { background: repeating-linear-gradient(135deg, var(--status-unknown-solid) 0 2px, transparent 2px 6px); }
 .command { font-family: var(--font-mono, monospace); font-size: var(--text-xs-size); overflow-wrap: anywhere; }
 /* Pulse: five rows, title and value on one line, the plain line under them. Wraps the same at 390 px and wide. */
 .pulse { display: flex; flex-direction: column; gap: var(--space-2); }
@@ -48,3 +49,15 @@
 .alerts { margin-top: var(--space-2); }
 .alertList { margin: 0; padding: var(--space-2); list-style: none; display: flex; flex-direction: column; gap: 2px; border-radius: var(--radius-md); border-left: 3px solid var(--status-danger-solid); background: var(--status-danger-bg); color: var(--status-danger-fg); font-size: var(--text-sm-size, 0.875rem); }
 .tileNote { color: var(--text-secondary); font-size: var(--text-xs-size); }
+
+/* The board: the two named groups of cards. One after the other here; the container rule below sets them side by side. */
+.board, .column { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+/* A group's name: the global micro-label, over its cards. The cards' own titles sit one heading level under it. */
+.column > .columnTitle { margin: 0; color: var(--text-secondary); }
+/* A pane at least 64rem wide: the groups are two equal columns, each as wide as the reading column and never stretched to the
+   other's height, and the Pulse rows run across instead of down. Home beside an open chat is narrower and stays one column. */
+@container (min-width: 64rem) {
+  .root > * { max-width: none; }
+  .board { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  .root .pulse { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: var(--space-3) var(--space-4); align-items: start; }
+}

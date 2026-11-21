@@ -8,7 +8,6 @@ import {
   foldJobsLedger,
   formatFleetEvalReport,
   parseGhPullRequests,
-  FLEET_EVAL_OBSERVATION_WINDOW_MS,
   type EvalObservationRow,
   type FleetEvalReport,
 } from '../src/core/fleet/eval-report.js';
@@ -65,6 +64,23 @@ describe('foldJobsLedger', () => {
     expect(fold.activity.filter((a) => a.kind === 'publish' && a.lane === 'devin')).toHaveLength(3);
     // Out-of-window launch (RQ-OLD) is not an activity event.
     expect(fold.activity.filter((a) => a.kind === 'launch')).toHaveLength(6);
+  });
+
+  it('reads alias timestamp fields and prefers mergedAt on terminal rows', () => {
+    const since = NOW - 7 * 86_400_000;
+    const text = [
+      JSON.stringify({ event: 'launch', job: 'RQ-T1', lane: 'devin', tier: 'work', recordedAt: '2026-11-05T00:00:00Z' }),
+      JSON.stringify({ event: 'finish', job: 'RQ-T1', lane: 'devin', exit_code: 0, updatedAt: '2026-11-05T01:00:00Z' }),
+      JSON.stringify({ event: 'publish', job: 'RQ-T1', url: 'https://github.com/ashlrai/phantom/pull/200', time: '2026-11-05T01:10:00Z' }),
+      // MERGED prefers mergedAt: the row stamp sits outside the window, the merge inside.
+      JSON.stringify({ event: 'outcome', job: 'RQ-T1', url: 'https://github.com/ashlrai/phantom/pull/200', state: 'MERGED', ts: '2026-10-20T00:00:00Z', mergedAt: '2026-11-05T10:00:00Z' }),
+    ].join('\n');
+    const fold = foldJobsLedger(text, since, NOW);
+    expect(fold.activity.filter((a) => a.kind === 'launch')).toHaveLength(1);
+    expect(fold.activity.filter((a) => a.kind === 'finish')).toHaveLength(1);
+    expect(fold.activity.filter((a) => a.kind === 'publish')).toHaveLength(1);
+    expect(fold.activity.filter((a) => a.kind === 'merged')).toHaveLength(1);
+    expect(fold.outcomes.get('https://github.com/ashlrai/phantom/pull/200')).toMatchObject({ state: 'MERGED' });
   });
 });
 
@@ -254,7 +270,7 @@ describe('cmdFleetEvalReport', () => {
 
   it('prints JSON, wires args, and registers the verb', async () => {
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const deps = await depsFor();
     expect(await cmdFleetEvalReport(['--json', '--prs', 'prs.json'], deps)).toBe(0);
     const report = JSON.parse(String(out.mock.calls[0]![0])) as FleetEvalReport;

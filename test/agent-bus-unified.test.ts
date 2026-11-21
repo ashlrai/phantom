@@ -7,9 +7,9 @@ import {
   registerAgentIdentity, resolveAgent, stableAgentId,
 } from '../src/core/agents/bus-identity.js';
 import {
-  announceWork, busBodySummary, listBusChannels, postChannelMessage, postLabelMessage, readAgentChannel, readAgentInbox,
-  readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest, shouldWake, updateWorkStatus,
-  type UnifiedBusOptions,
+  agentWakeClaimHolderSuffix, announceWork, busBodySummary, listBusChannels, postChannelMessage, postLabelMessage,
+  readAgentChannel, readAgentInbox, readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff,
+  sendWakeRequest, shouldWake, updateWorkStatus, type AgentWakeRow, type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
@@ -341,6 +341,47 @@ describe('sender-filtered inbox reads', () => {
   });
 });
 
+describe('priority-filtered reads', () => {
+  it('narrows inbox and channel pages to one exact priority band', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'drop everything', priority: 'P0', id: 'dm-p0' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'routine', priority: 'P2', id: 'dm-p2' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'fyi', priority: 'P3', id: 'dm-p3' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'heads up', priority: 'P1', id: 'ch-p1' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'note', priority: 'P2', id: 'ch-p2' }, options);
+
+    const urgent = readAgentInbox('nova', { priority: 'P0' }, options);
+    if (urgent.status !== 'ok') throw new Error(`unexpected ${urgent.status}`);
+    expect(urgent.messages.map(m => m.envelope.id)).toEqual(['dm-p0']);
+    // A channel post addressed to a member channel counts as that agent's mail.
+    expect(readAgentInbox('nova', { priority: 'P1' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'ch-p1' } }] });
+    // --matched counts only the rows the band accepts, and the page still
+    // returns highest priority first inside the filtered set.
+    const counted = readAgentInbox('nova', { priority: 'P2', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(2);
+    expect(counted.messages.map(m => m.envelope.id)).toEqual(['dm-p2', 'ch-p2']);
+    // The band composes with the other page filters.
+    expect(readAgentInbox('nova', { priority: 'P2', from: 'ghost' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    const all = readAgentInbox('nova', {}, options);
+    if (all.status !== 'ok') throw new Error(`unexpected ${all.status}`);
+    expect(all.messages).toHaveLength(5);
+
+    const channel = readAgentChannel('release', { priority: 'P1' }, options);
+    if (channel.status !== 'ok') throw new Error(`unexpected ${channel.status}`);
+    expect(channel.messages.map(m => m.envelope.id)).toEqual(['ch-p1']);
+    expect(readAgentChannel('release', { priority: 'P2' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'ch-p2' } }] });
+    // A band outside P0..P3 refuses closed on both reads.
+    expect(readAgentInbox('nova', { priority: 'P9' as never }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { priority: 'P9' as never }, options)).toMatchObject({ status: 'invalid' });
+  });
+});
+
 describe('envelope lookup by id', () => {
   it('resolves a retained envelope of any kind by its wire id', async () => {
     const options = setup();
@@ -592,15 +633,19 @@ describe('DM, channel, handoff and priority wake on the one bus store', () => {
     expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'low', id: 'low' }, options)).toMatchObject({ wake: 'not-requested' });
     expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'page', id: 'p0', priority: 'P0', wake: false }, options)).toMatchObject({ wake: 'queued' });
     expect(await postChannelMessage({ from: 'atlas', channel: 'ops', text: 'all hands', id: 'ops-1', wake: true }, options)).toMatchObject({ wake: 'queued' });
-    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ wakes: [{ id: 'p0' }, { id: 'ops-1' }] });
+    // matched counts every hint the bounded queue tail accepted for the agent,
+    // before the returned slice; truncated stays false while nothing is cut.
+    expect(readAgentWakes('nova', undefined, options))
+      .toMatchObject({ matched: 2, truncated: false, wakes: [{ id: 'p0' }, { id: 'ops-1' }] });
     // The channel sender is not woken by its own post; non-members are not woken.
-    expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ wakes: [] });
-    expect(readAgentWakes('orion', undefined, options)).toMatchObject({ wakes: [] });
+    expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ matched: 0, truncated: false, wakes: [] });
+    expect(readAgentWakes('orion', undefined, options)).toMatchObject({ matched: 0, truncated: false, wakes: [] });
 
     // Same id resent: the store reports duplicate and the wake queue dedupes.
     expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'page', id: 'p0', priority: 'P0' }, options))
       .toMatchObject({ status: 'duplicate', wake: 'queued' });
-    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ wakes: [{ id: 'p0' }, { id: 'ops-1' }] });
+    expect(readAgentWakes('nova', undefined, options))
+      .toMatchObject({ matched: 2, truncated: false, wakes: [{ id: 'p0' }, { id: 'ops-1' }] });
   });
 
   it('orders an inbox page by priority, pages by cursor and still sees legacy alias traffic', async () => {
@@ -668,6 +713,41 @@ describe('DM, channel, handoff and priority wake on the one bus store', () => {
     expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok',
       wakes: [{ id: 'wake-bare', to: 'nova' }, { id: 'wake-id', to: novaId }] });
     expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ status: 'ok', wakes: [] });
+  });
+
+  it('marks unstamped worker-handoff bodies as handoffs under every addressed label', () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    const novaId = stableAgentId('nova');
+    // `fleet handoff-send --apply` posts exactly this: the receivable
+    // worker-handoff body on a legacy envelope with no channel metadata.
+    const handoff = (id: string, to: string, from = 'agent:atlas') =>
+      appendBusInbox({ id, from, to, priority: 'P1', ttl: 60_000,
+        body: { kind: 'worker-handoff', taskId: 'RQ-FLEET-HO-1', prompt: 'take over' } }, options).status;
+    expect(handoff('ho-canon', 'agent:nova')).toBe('posted');
+    expect(handoff('ho-bare', 'nova')).toBe('posted');
+    expect(handoff('ho-id', novaId)).toBe('posted');
+    expect(handoff('ho-group', 'group:release:general')).toBe('posted');
+    // The sender's own channel-addressed handoff is its own post: hidden.
+    expect(handoff('ho-own', 'group:release:general', 'agent:nova')).toBe('posted');
+    // A handoff addressed elsewhere is not this agent's mail.
+    expect(handoff('ho-other', 'agent:atlas', 'agent:nova')).toBe('posted');
+
+    const inbox = readAgentInbox('nova', {}, options);
+    if (inbox.status !== 'ok') throw new Error('unreadable');
+    expect(inbox.messages.map(m => `${m.envelope.id}:${m.kind}`))
+      .toEqual(['ho-canon:handoff', 'ho-bare:handoff', 'ho-id:handoff', 'ho-group:handoff']);
+    // held evidence still attaches: every listed item is receivable work.
+    for (const message of inbox.messages) {
+      expect(message.held).toBe(false);
+    }
+    // Atlas sees nova's channel-addressed handoff as channel mail of kind
+    // handoff, plus the handoff addressed to his own label; his own channel
+    // post stays hidden.
+    const atlasInbox = readAgentInbox('atlas', {}, options);
+    expect(atlasInbox.status === 'ok' && atlasInbox.messages.map(m => `${m.envelope.id}:${m.kind}`))
+      .toEqual(['ho-own:handoff', 'ho-other:handoff']);
   });
 });
 
@@ -995,6 +1075,141 @@ describe('terminal work.status wakes live claim holders', () => {
     const done = await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-1', status: 'done', id: 'w-h-bad' }, options);
     expect(done).toMatchObject({ status: 'posted', claimHoldersWoken: null });
     expect(readAgentWakes('nova', undefined, options)).toMatchObject({ wakes: [] });
+  });
+
+  it('resolves each claim-holder hint to the terminal status receipt that cites it', async () => {
+    const options = ready();
+    expect(await announceWork({ from: 'atlas', ...announceFor('RQ-H-1') }, options)).toMatchObject({ status: 'posted' });
+    hold(options, 'queue:RQ-H-1', 'agent:nova');
+    hold(options, 'path:ashlrai/phantom:src/**', 'agent:orion');
+    const done = await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-1', status: 'done',
+      detail: 'merged', id: 'w-h-ctx' }, options);
+    expect(done).toMatchObject({ status: 'posted', claimHoldersWoken: 2 });
+
+    // Each holder's hint re-derives the same status receipt under its own label.
+    for (const agent of ['nova', 'orion']) {
+      const page = readAgentWakes(agent, undefined, options);
+      expect(page).toMatchObject({ status: 'ok' });
+      if (page.status !== 'ok') throw new Error('unreachable');
+      expect(page.wakes).toHaveLength(1);
+      expect(page.wakes[0]).toMatchObject({
+        id: expect.stringMatching(/^wh-[a-f0-9]{32}$/), from: 'agent:atlas',
+        claimHolder: { statusId: 'w-h-ctx', jobId: 'RQ-H-1', status: 'done', detail: 'merged' },
+      });
+      // The cited receipt is a real envelope `agents bus show` resolves.
+      expect(readBusEnvelopeById('w-h-ctx', options)).toMatchObject({ status: 'ok' });
+    }
+    // Ordinary hints carry no claim-holder annotation at all.
+    expect(await sendWakeRequest({ from: 'atlas', to: 'nova', reason: 'ping', id: 'wk-plain' }, options))
+      .toMatchObject({ status: 'posted' });
+    const nova = readAgentWakes('nova', undefined, options);
+    if (nova.status !== 'ok') throw new Error('unreachable');
+    const plain = nova.wakes.find(row => row.id === 'wk-plain');
+    expect(plain).toBeDefined();
+    expect(plain).not.toHaveProperty('claimHolder');
+  });
+
+  it('resolves a wh-… hint id through the lookup to its citing status receipt', async () => {
+    const options = ready();
+    expect(await announceWork({ from: 'atlas', ...announceFor('RQ-S-1') }, options)).toMatchObject({ status: 'posted' });
+    hold(options, 'queue:RQ-S-1', 'agent:nova');
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-S-1', status: 'done', detail: 'merged', id: 'w-s-ctx' }, options))
+      .toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    const page = readAgentWakes('nova', undefined, options);
+    if (page.status !== 'ok') throw new Error('unreachable');
+    const hint = page.wakes.find(row => row.id.startsWith('wh-'));
+    expect(hint).toBeDefined();
+    // The hint id itself resolves: the message is the live status receipt
+    // and wakeHint carries the citation the wakes read annotated.
+    expect(readBusEnvelopeById(hint!.id, options)).toMatchObject({ status: 'ok', id: hint!.id,
+      message: { envelope: { id: 'w-s-ctx' } },
+      wakeHint: { to: 'agent:nova', statusId: 'w-s-ctx', jobId: 'RQ-S-1', status: 'done', detail: 'merged' } });
+  });
+
+  it('keeps a real wh- shaped envelope ahead of hint resolution and misses honestly', async () => {
+    const options = ready();
+    // Envelope ids are caller-chosen printable tokens: a live receipt with a
+    // wh- shaped id wins over hint interpretation and carries no wakeHint.
+    const literal = `wh-${'b'.repeat(32)}`;
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'literal id', id: literal }, options))
+      .toMatchObject({ status: 'posted' });
+    const shown = readBusEnvelopeById(literal, options);
+    expect(shown).toMatchObject({ status: 'ok', id: literal, message: { envelope: { id: literal } } });
+    expect(shown.status === 'ok' && shown.wakeHint).toBeUndefined();
+    // No retained hint row and no envelope: honest not-found, never a guess.
+    const absent = `wh-${'0'.repeat(32)}`;
+    expect(readBusEnvelopeById(absent, options)).toEqual({ status: 'not-found', id: absent });
+  });
+
+  it('reports not-found once the citing receipt expires', async () => {
+    const options = ready();
+    expect(await announceWork({ from: 'atlas', ...announceFor('RQ-S-2') }, options)).toMatchObject({ status: 'posted' });
+    hold(options, 'queue:RQ-S-2', 'agent:nova');
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-S-2', status: 'failed', id: 'w-s-ttl', ttl: 1_000 }, options))
+      .toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    const page = readAgentWakes('nova', undefined, options);
+    if (page.status !== 'ok') throw new Error('unreachable');
+    const hint = page.wakes.find(row => row.id.startsWith('wh-'));
+    expect(hint).toBeDefined();
+    // The hint row outlives the receipt: with the status expired no live
+    // receipt reproduces it, so the lookup is honestly not-found.
+    options.clock.now += 2_000;
+    expect(readBusEnvelopeById(hint!.id, options)).toEqual({ status: 'not-found', id: hint!.id });
+  });
+
+  it('reports unavailable when the wake queue cannot be read', async () => {
+    const options = ready();
+    expect(await announceWork({ from: 'atlas', ...announceFor('RQ-S-3') }, options)).toMatchObject({ status: 'posted' });
+    hold(options, 'queue:RQ-S-3', 'agent:nova');
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-S-3', status: 'done', id: 'w-s-q' }, options))
+      .toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    const page = readAgentWakes('nova', undefined, options);
+    if (page.status !== 'ok') throw new Error('unreachable');
+    const hint = page.wakes.find(row => row.id.startsWith('wh-'));
+    expect(hint).toBeDefined();
+    // A directory where the queue file belongs makes the read fail closed.
+    const queueFile = join(options.runsRoot!, 'bus', 'wake-queue.jsonl');
+    rmSync(queueFile);
+    mkdirSync(queueFile);
+    expect(readBusEnvelopeById(hint!.id, options)).toMatchObject({ status: 'unavailable' });
+  });
+
+  it('marks a claim-holder hint unresolved once its status receipt expires', async () => {
+    const options = ready();
+    expect(await announceWork({ from: 'atlas', ...announceFor('RQ-H-1') }, options)).toMatchObject({ status: 'posted' });
+    hold(options, 'queue:RQ-H-1', 'agent:nova');
+    const done = await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-1', status: 'failed',
+      id: 'w-h-ttl', ttl: 1_000 }, options);
+    expect(done).toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ wakes: [{
+      claimHolder: { statusId: 'w-h-ttl', jobId: 'RQ-H-1', status: 'failed' } }] });
+    // The queue hint outlives the receipt: with the status expired no live
+    // receipt reproduces it, so the citation is honestly unresolved — not guessed.
+    options.clock.now += 2_000;
+    const page = readAgentWakes('nova', undefined, options);
+    expect(page).toMatchObject({ status: 'ok', wakes: [{ claimHolder: 'unresolved' }] });
+  });
+
+  it('marks claim-holder hints unknown when the bus store cannot be read', async () => {
+    const options = ready();
+    expect(await announceWork({ from: 'atlas', ...announceFor('RQ-H-1') }, options)).toMatchObject({ status: 'posted' });
+    hold(options, 'queue:RQ-H-1', 'agent:nova');
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-1', status: 'done', id: 'w-h-unk' }, options))
+      .toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    // The wake queue is a separate store: it still reads, but no status receipt can be checked.
+    writeFileSync(join(options.root!, 'bus-inbox', 'messages.json'), 'not json', { mode: 0o600 });
+    const page = readAgentWakes('nova', undefined, options);
+    expect(page).toMatchObject({ status: 'ok', wakes: [{ claimHolder: 'unknown' }] });
+  });
+
+  it('spells the claim-holder suffix for human lines on every wake shape', () => {
+    const row: AgentWakeRow = { kind: 'bus.send', id: 'wk-1', from: 'agent:a', to: 'agent:b', at: 0 };
+    expect(agentWakeClaimHolderSuffix(row)).toBe('');
+    expect(agentWakeClaimHolderSuffix({ ...row, claimHolder: 'unresolved' })).toBe(' claim-holder=unresolved');
+    expect(agentWakeClaimHolderSuffix({ ...row, claimHolder: 'unknown' })).toBe(' claim-holder=unknown');
+    expect(agentWakeClaimHolderSuffix({ ...row,
+      claimHolder: { statusId: 'w-h-1', jobId: 'RQ-H-1', status: 'done' } }))
+      .toBe(' claim-holder job=RQ-H-1 status=done receipt=w-h-1');
   });
 });
 

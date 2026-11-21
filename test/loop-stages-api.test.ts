@@ -42,7 +42,7 @@ async function getMetrics(query: string, loopReleases?: () => Promise<{ releases
 
 describe('loop stages from the metrics route', () => {
   it('returns the same metrics.loop-stages.v1 numbers as phm metrics loop for one fixture', async () => {
-    const readers = { runsDir: '/nowhere', now: () => NOW, readText: async (p: string) => p.endsWith('jobs.jsonl') ? ledger : null, gh,
+    const readers = { runsDir: '/nowhere', now: () => NOW, readText: async (p: string) => p.endsWith('jobs.jsonl') ? { text: ledger, truncated: false } : null, gh,
       installed: async () => null, nodes: () => null, peerTasks: async () => null, ncpu: () => 4 } as unknown as LoopReaders;
     const out: string[] = [];
     expect(await cmdMetricsLoop(['--dry-run', '--json'], { out: l => out.push(l), err: () => {}, readers })).toBe(0);

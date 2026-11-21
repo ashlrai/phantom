@@ -2,8 +2,8 @@
  * The Conversations pane's read: one request for every session,
  * GET /api/verse/fleet/control/session-threads (the fleet.session-threads.v1
  * document `phm sessions threads --json` prints). Each entry carries what
- * Mason wrote, where the Leader routed it, and where a reply to that session
- * would go. An opened conversation is the Sessions pane's own view and read
+ * Mason wrote, where the Leader routed it, which message of Mason's it serves,
+ * the pause, stop or move that stands for its job, what its job has done as numbers (`work`), and where a reply to that session would go. An opened conversation is the Sessions pane's own view and read
  * (fleet-sessions/SessionThread.tsx), so nothing about one thread is narrowed
  * here. The wire shape is narrowed, so the pane also builds against a server
  * that predates the read. Narrowing is defensive: a malformed entry or message
@@ -13,7 +13,7 @@
 import { SESSION_FILTER_RE } from '../../../../core/fleet/live-sessions.js';
 import { ApiError, apiGet, readFailureReason } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
-import { replyRoute, type ReplyRoute } from '../fleet-sessions/session-thread-model.js';
+import { narrowHelpers, narrowWork, replyRoute, standing, type ReplyRoute, type StandingControl, type ThreadWork } from '../fleet-sessions/session-thread-model.js';
 
 export const SESSION_THREADS_API = '/api/verse/fleet/control/session-threads';
 /** The server builds the read at most once per 5 s; the pane asks every 10 s while visible. */
@@ -33,12 +33,35 @@ export interface WallSession {
   state: WallState;
   lastMessageAgeSeconds: number | null;
   prUrl: string | null;
+  /** The helpers below it, as the session list counts them; null when the read did not say. */
+  helpers: { below: number; running: number; failed: number } | null;
+}
+/** What a session's job has done, as the read's `work` key gives it: the shape, and the narrowing, an opened conversation uses for the same key. */
+export type WallWork = ThreadWork;
+/** The message of Mason's a session's job serves, as the read ties them (the job's prompt cites it). */
+export interface WallServes {
+  /** The same on every session serving the same message. */
+  key: string;
+  /** The message's time as the inbox wrote it: Eastern wall time to the minute. */
+  at: string;
+  source: string | null;
+  /** Mason's words; null when the read did not hold them. */
+  text: string | null;
+  truncated: boolean;
+  /** Every job routed for the message, on screen or not; null when the read did not say. */
+  jobs: number | null;
 }
 /** One session's short conversation: `messages` holds only the newest few of `messageCount`. */
 export interface WallEntry {
   session: WallSession; summary: string[]; messages: WallMessage[]; messageCount: number; gaps: string[];
   /** Where words written to this session go: the read's own answer, or the same rule applied here for a server that sends none. */
   reply: ReplyRoute;
+  /** Null when its job cites no message of Mason's, and from a server that does not say. */
+  serves: WallServes | null;
+  /** The pause, resume, stop or move that stands for the session's job, as the control file records it. Null when none stands, and from a server that does not say. */
+  control: StandingControl | null;
+  /** Null for a session with no job, when its activity was not read, and from a server that does not say. */
+  work: WallWork | null;
 }
 export interface SessionWallRead {
   generatedAt: string;
@@ -94,6 +117,14 @@ function narrowMessage(raw: unknown): WallMessage | null {
   };
 }
 
+/** Null unless it names a message and its time; a count that is not one reads as unknown. */
+function narrowServes(raw: unknown): WallServes | null {
+  if (!object(raw)) return null;
+  const key = text(raw.key), at = text(raw.at);
+  if (!key || !at) return null;
+  return { key, at, source: text(raw.source), text: text(raw.text, MAX_TEXT), truncated: raw.truncated === true, jobs: count(raw.jobs) };
+}
+
 /** Null when the entry names no session. */
 function narrowEntry(raw: unknown): WallEntry | null {
   if (!object(raw) || !object(raw.session)) return null;
@@ -107,6 +138,7 @@ function narrowEntry(raw: unknown): WallEntry | null {
     lane: text(s.lane) ?? 'unknown', model: text(s.model) ?? 'unknown', repo: text(s.repo) ?? 'unknown',
     jobId: text(s.jobId), parentId: text(s.parentId), state: oneOf(s.state, WALL_STATES, 'unknown'),
     lastMessageAgeSeconds: count(s.lastMessageAgeSeconds), prUrl: prUrl && PR.test(prUrl) ? prUrl : null,
+    helpers: narrowHelpers(s.helpers),
   };
   return {
     session, summary: lines(raw.summary), messages,
@@ -114,6 +146,12 @@ function narrowEntry(raw: unknown): WallEntry | null {
     messageCount: Math.max(count(raw.messageCount) ?? 0, messages.length), gaps: lines(raw.gaps),
     // Believed only for this session's own job, the rule the opened conversation applies to the same field.
     reply: replyRoute(session, raw.reply),
+    // Only a worker serves a message; the leader routes them and a helper stands with its worker.
+    serves: session.kind === 'worker' ? narrowServes(raw.serves) : null,
+    // Asked of a job, so believed only on a session that has one.
+    control: session.jobId !== null ? standing(raw.control) : null,
+    // Work is a job's, so it is believed only on a session that has one.
+    work: session.jobId !== null ? narrowWork(raw.work) : null,
   };
 }
 

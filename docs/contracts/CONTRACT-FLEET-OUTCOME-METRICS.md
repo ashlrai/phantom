@@ -190,9 +190,18 @@ as "Stopped families" on the Job yield card.
 `hasRevertEvidence(row)` and `unknownJobYield(hours)`; `yieldTally(...).jobYield()`
 streams the same report. `readJobYield(path, hours?, now?, read?)` in
 `metrics-series.ts` owns the read.
-Rows used: `launch`, `finish` (`empty`), `precheck_skip`, `publish` and
-`outcome` (`state`). Only launches inside the window count; a relaunched job is
-several launches and a MERGED job is credited once. A merge recorded as reverted
+Rows fold through the fleet jobs-ledger dialect — job ids
+`job|job_id|jobId|id`, event names `event|type|kind` (`published` reads as
+`publish`), phases `state|outcome|status`, the timestamp aliases and the
+`pool` lane alias, with eventless PUBLISHED/MERGED/CLOSED/OPEN rows inferring
+`publish`/`outcome` — the same field sets `fleet/lane-yield-weight` accepts,
+so `metrics-outcomes` reconciler rows count. Lifecycle rows: `launch`,
+`finish` (`empty`), skip events (`precheck_skip`, `skipped_empty`; a row with
+`applied:false` is a dry run and does not count), `publish` (`class`
+`pr`/`empty`/`abort*`, or any PR url under `url|pr_url|prUrl|pr|html_url`)
+and resolved outcomes (`merged:true`, a `merged` event, or a resolved phase on
+an outcome-ish or publish row). Only launches inside the window count; a
+relaunched job is several launches and a MERGED job is credited once. A merge recorded as reverted
 (`hasRevertEvidence`: `reverted:true`, a parseable `reverted_at`/`revertedAt`
 stamp, a `revert`/`reverted` event name or terminal state field — the router
 outcome fold's vocabulary) is credited as `reverted`, never as a held merge;

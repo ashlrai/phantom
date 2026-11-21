@@ -49,12 +49,12 @@ describe('supplyCardModel', () => {
     expect(m.rejects).toBe('Top reject reason: too-large, 2 in 24 h.');
     expect(m.lastLanded).toBe('Last landed job: 20 min ago.');
   });
-  it('shows the live build and self-tick lines, or unknown for an older Mac', () => {
+  it('shows the self-tick line (the live build moved to the Leader card), or unknown for an older Mac', () => {
     const full = { ...LANDED, build: { verdict: 'live build is 644 commits behind master; merged fleet features may not be running' }, selfTick: { line: 'no self-tick run recorded' } } as unknown as SupplyDoctorReport;
     const m = supplyCardModel(full);
-    expect(m.buildLine).toBe('Live build: live build is 644 commits behind master; merged fleet features may not be running.');
+    expect(m).not.toHaveProperty('buildLine');
     expect(m.selfTickLine).toBe('Self-tick: no self-tick run recorded.');
-    expect(supplyCardModel(LANDED).buildLine).toContain('unknown');
+    expect(supplyCardModel(LANDED).selfTickLine).toContain('unknown');
   });
   it('not landed: warns, zero gap, says nothing landed yet', () => {
     const m = supplyCardModel(NOT_LANDED);

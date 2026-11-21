@@ -40,7 +40,7 @@ import {
   type LocalStoreLockAcquireResult,
 } from './local-store-lock.js';
 import { noticeOverdueSlackRequests, noticeOverdueTeammateTexts } from '../comms/teammate-overdue.js';
-import { writeSelfTickLast } from './self-tick-last.js';
+import { appendSelfTickLine, writeSelfTickLast } from './self-tick-last.js';
 
 export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'owner-live' | 'order-notices' | 'board-notify' | 'recheck-record' | 'needs-triage' | 'teammate-overdue' | 'landed-sweep' | 'stray-stop' | 'meter-incident' | 'waste-incident' | 'cos-work';
 /** Fixed execution order — release first so the planner sees freed slots; cos-work last. */
@@ -80,11 +80,16 @@ export interface SelfTickStepResult {
   exitCode: number;
   /** The step's parsed --json output, or null when nothing parseable printed. */
   report: unknown;
+  /** Set only when the step threw: the error's message, shortened. */
+  error?: string;
 }
 
 export interface SelfTickReport {
   v: 1;
+  /** When the run started. */
   at: string;
+  /** When it finished; set on every run, busy ones included. */
+  finishedAt?: string;
   mode: 'apply' | 'dry-run';
   state: 'ran' | 'busy';
   steps: SelfTickStepResult[];
@@ -114,6 +119,8 @@ export interface RunSelfTickOptions {
    * while the lock is still held; a throwing write changes nothing.
    */
   writeLast?: (runsDir: string, report: SelfTickReport) => void;
+  /** History seam; defaults to appendSelfTickLine on queue/self-tick.jsonl. Called for every run, busy ones included. */
+  appendLine?: (runsDir: string, report: SelfTickReport) => void;
 }
 
 const parseReport = (output: string): unknown => {
@@ -133,9 +140,18 @@ export async function runSelfTick(options: RunSelfTickOptions): Promise<SelfTick
   const runsDir = options.runsDir;
   const acquire = options.acquireLock ?? ((path: string) =>
     acquireLocalStoreLockWithOutcome(path, 0, { anchorPath: runsDir, exactPrivateStorage: true }));
+  const clock = options.now ?? Date.now;
+  const appendLine = options.appendLine ?? appendSelfTickLine;
+  // The history line is best-effort too: a full disk must not change the run's result.
+  const appendHistory = (): void => {
+    report.finishedAt = new Date(clock()).toISOString();
+    try { appendLine(runsDir, report); } catch { /* history is best-effort */ }
+  };
   const held = acquire(join(runsDir, SELF_TICK_LOCK));
   if (held.state !== 'acquired') {
     report.state = 'busy';
+    // A busy run only joins the history: last.json keeps naming the pass that holds the lock.
+    appendHistory();
     return { report, exitCode: 0, lock: held.state };
   }
   const argv = ['--json', ...(options.apply === true ? ['--apply'] : []), '--runs-dir', runsDir];
@@ -162,13 +178,15 @@ export async function runSelfTick(options: RunSelfTickOptions): Promise<SelfTick
           exitCode,
           report: parseReport(output),
         });
-      } catch {
-        report.steps.push({ step, state: 'failed', exitCode: 1, report: null });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        report.steps.push({ step, state: 'failed', exitCode: 1, report: null, error: message.slice(0, 200) });
       }
     }
     // Persisted while the lock is still held so a `--last` read can never
     // see a pass that is still mid-flight. A throwing write must not change
     // the steps' exit code or skip the release in finally.
+    appendHistory();
     try {
       (options.writeLast ?? writeSelfTickLast)(runsDir, report);
     } catch { /* the record is best-effort; the run's result already stands */ }

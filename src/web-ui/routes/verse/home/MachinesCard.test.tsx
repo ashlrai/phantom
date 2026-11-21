@@ -11,7 +11,7 @@ vi.mock('../../../data/hooks.js', () => ({ useQuery: () => state.read, useRefetc
 
 const GIB = 1024 ** 3, AT = '2026-11-17T12:00:00.000Z';
 const row = (name: string, extra: Partial<NodeRow> = {}): NodeRow => ({ name, isSelf: false, reachable: true, lastSeen: AT, heartbeatAgeSeconds: 2, phantom: 'running',
-  freeMemoryBytes: 12 * GIB, freeMemoryPercent: 37, load: 1.5, cpuHeadroomPercent: 80, lanes: ['claude'], jobsRunning: [], freeSlots: 2, stateCode: 'ready', state: 'ready for work', ...extra });
+  freeMemoryBytes: 12 * GIB, freeMemoryPercent: 37, load: 1.5, cpuHeadroomPercent: 80, lanes: ['claude'], jobsRunning: [], freeSlots: 2, stateCode: 'ready', state: 'ready for work', joined: true, joinCommand: null, ...extra });
 const view = (nodes: NodeRow[]): NodesView => ({ schema: 'phantom.nodes-view.v1', schemaVersion: 1, asOf: AT, self: 'alpha', registry: 'local', nodes, reasons: [] });
 const pool = (nodes: NodeRow[]) => buildNodesPool(view(nodes), { selfOffload: true, disk: new Map([['alpha', 100 * GIB]]) });
 const POOL = pool([

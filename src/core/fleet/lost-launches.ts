@@ -10,6 +10,7 @@ import { lstat, open, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
+import { parseLedgerTs } from '../metrics/loop.js';
 
 export const LOST_LAUNCHES_SCHEMA = 'jobs.lost.v1';
 export const LOST_LAUNCH_GRACE_MS = 30 * 60_000;
@@ -37,6 +38,28 @@ export interface LostLaunchesReport {
 export type LaunchHeads = Map<string, string | { line: string; at?: number }> | Record<string, string | { line: string; at?: number }>;
 
 const str = (v: unknown): string | null => typeof v === 'string' && v.trim() ? v.trim() : null;
+/**
+ * jobs.jsonl field dialects: job|job_id|jobId|id, event|type|kind,
+ * lane|pool and ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt.
+ */
+const pick = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const v = str(row[key]);
+    if (v !== null) return v;
+  }
+  return null;
+};
+const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const EVENT_KEYS = ['event', 'type', 'kind'] as const;
+const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+const LANE_KEYS = ['lane', 'pool'] as const;
+const tsOf = (row: Record<string, unknown>): number => {
+  for (const key of TS_KEYS) {
+    const v = row[key];
+    if (v !== undefined && v !== null) return parseLedgerTs(v) ?? NaN;
+  }
+  return NaN;
+};
 
 export function launchErrorReason(line: string): string | null {
   const text = line.trim();
@@ -55,13 +78,14 @@ export function findLostLaunches(lines: Iterable<string>, heads: LaunchHeads | u
     let row: Record<string, unknown>;
     try { const v: unknown = JSON.parse(line); if (!v || typeof v !== 'object' || Array.isArray(v)) { skipped++; continue; } row = v as Record<string, unknown>; }
     catch { skipped++; continue; }
-    const job = str(row['job']) ?? str(row['job_id']) ?? str(row['id']);
-    const ts = typeof row['ts'] === 'string' ? Date.parse(row['ts']) : NaN;
+    const job = pick(row, JOB_KEYS);
+    const ts = tsOf(row);
     if (!job || !Number.isFinite(ts)) { skipped++; continue; }
-    if (row['event'] === 'launch') {
+    const event = pick(row, EVENT_KEYS);
+    if (event === 'launch') {
       const prior = launches.get(job);
-      if (!prior || ts >= prior.at) launches.set(job, { at: ts, lane: str(row['lane']), repo: str(row['repo']) });
-    } else if (row['event'] === 'finish' || row['event'] === 'publish') ended.set(job, Math.max(ended.get(job) ?? -Infinity, ts));
+      if (!prior || ts >= prior.at) launches.set(job, { at: ts, lane: pick(row, LANE_KEYS), repo: str(row['repo']) });
+    } else if (event === 'finish' || event === 'publish') ended.set(job, Math.max(ended.get(job) ?? -Infinity, ts));
   }
   const entries = heads instanceof Map ? [...heads] : Object.entries(heads ?? {});
   const failed = new Map<string, { reason: string; at?: number }>();

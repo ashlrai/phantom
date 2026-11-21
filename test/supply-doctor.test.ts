@@ -100,7 +100,7 @@ describe('self-tick gap hook writes a drop file into the configured drop dir', (
       writeFileSync(join(wt, 'RQ-A', 'BRIDGE_NOTES.md'), '## Remaining gaps\n- Wire the digest into the weekly report\n');
       const report = await runAutofillTick({
         runsDir: runs, apply: true, now: () => NOW, root, entries: [], readOff: async () => false,
-        readLanes: async () => ({ starved: ['claude'], counts: { claude: { running: 0, target: 8, queued: 0 } } }),
+        readLanes: async () => ({ lanes: [{ lane: 'claude', running: 0, target: 8, queued: 0, held: false, remainingPct: 68 }] }),
         fill: async () => ({ error: 'no-target' }),
       });
       expect(report.gaps).toMatchObject({ queued: 1, unknown: false });
@@ -141,6 +141,31 @@ describe('supply doctor self-held lanes', () => {
     const blind = await readSupplyDoctor({ ...base, readEvents: async () => null });
     expect(blind.selfHeld.state).toBe('unknown');
     expect(supplyDoctorLines(blind).join('\n')).toMatch(/Self-held lanes: unknown/);
+  });
+});
+
+describe('top EMPTY reason in the verdict', () => {
+  const withEmpty = (readEmpty: () => Promise<{ total: number; reasons: Record<string, number> } | null>) =>
+    readSupplyDoctor({ runsDir: runs, now: () => NOW, readOff: async () => false, readCandidates: async () => null, readEmpty });
+
+  it('names the most common real reason and keeps unknown out of the top slot', async () => {
+    seedDrop([row('2026-11-19 14:00:00', 'ONE', 'claude')]);
+    const report = await withEmpty(async () => ({ total: 9, reasons: { unknown: 5, 'already-shipped': 3, 'lane-held': 1 } }));
+    expect(report.empty).toEqual({ state: 'known', total: 9, top: { reason: 'already-shipped', count: 3 } });
+    expect(report.verdict).toContain('top EMPTY reason in 24 h: already-shipped (3 of 9)');
+    expect(supplyDoctorLines(report)).toContain('EMPTY jobs in 24 h: 9, most often already-shipped (3); see "phm jobs empty".');
+  });
+
+  it('adds nothing to the verdict when there are no empties, only unknown, or the metrics are unreadable', async () => {
+    seedDrop([row('2026-11-19 14:00:00', 'ONE', 'claude')]);
+    const none = await withEmpty(async () => ({ total: 0, reasons: {} }));
+    expect(none.empty).toEqual({ state: 'known', total: 0, top: null });
+    const onlyUnknown = await withEmpty(async () => ({ total: 2, reasons: { unknown: 2 } }));
+    expect(onlyUnknown.verdict).not.toContain('EMPTY');
+    const blind = await withEmpty(async () => { throw new Error('boom'); });
+    expect(blind.empty).toEqual({ state: 'unknown', why: 'job metrics unreadable' });
+    expect(blind.verdict).not.toContain('EMPTY');
+    expect(supplyDoctorLines(blind)).toContain('EMPTY jobs: unknown (job metrics unreadable).');
   });
 });
 

@@ -3,6 +3,9 @@
  * with the router's answer (routable or not, and why), the lanes and tiers that pick it, the last launch that used
  * it, when official docs last confirmed the name, and one action: "Verify" or "Check again"
  * (`phm models verify <id> --source <url>`; the server re-reads the doc page and its refusal is shown as written).
+ * At the foot of each row: the jobs launched on that model across the last 24 hours or 7 days, the PRs merged and
+ * the jobs that came back empty (`phm throughput --by model`, model-work-model.ts), read apart from the rest.
+ * Pointing at one bar, or moving along a focused row with Left and Right, holds that stretch of time on every card.
  *
  * Three reads, joined in models-board-model.ts: the registry (`phm models --json`), the check
  * (`phm models check --json`) and the lane model table (GET /api/verse/fleet/runs/lane-models). A read that fails
@@ -17,7 +20,10 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
 import { laneModelsQuery } from '../fleet-capacity/lane-models-query.js';
 import { boardGroups, boardModels, filterCounts, groupLine, lanesText, matchesFilter, modelsHeadline, type BoardModel, type ModelFilter } from './models-board-model.js';
-import { modelCheckQuery, modelRegistryQuery, postVerifyModel } from './models-queries.js';
+import { ModelWorkLine, WorkSummary } from './ModelWork.js';
+import { launchedBy, workBoard, WORK_WINDOWS, type ModelWork, type WorkBoard, type WorkWindow } from './model-work-model.js';
+import { MODEL_WORK_QUERIES, modelCheckQuery, modelRegistryQuery, postVerifyModel } from './models-queries.js';
+import work from './model-work.module.css';
 import styles from './models.module.css';
 
 const FILTERS: readonly { value: ModelFilter; word: string; none: string }[] = [
@@ -45,8 +51,9 @@ function lastLaunchText(model: BoardModel, launches: boolean, nowMs: number): st
   return launches ? 'not the latest on any lane' : null;
 }
 
-function ModelItem({ model, launches, nowMs, state, onVerify }: {
+function ModelItem({ model, launches, nowMs, state, onVerify, did, board, cursor, onCursor }: {
   model: BoardModel; launches: boolean; nowMs: number; state: RowState | undefined; onVerify: (source: string) => void;
+  did: ModelWork | undefined; board: WorkBoard; cursor: string | null; onCursor: (start: string | null) => void;
 }) {
   const [typed, setTyped] = useState('');
   const recorded = model.sourceUrl?.startsWith('https://') ? model.sourceUrl : null;
@@ -78,15 +85,20 @@ function ModelItem({ model, launches, nowMs, state, onVerify }: {
       {state && 'done' in state ? <span className={styles.note} role="status">Confirmed by the docs today.</span> : null}
       {state && 'error' in state ? <span className={styles.bad} role="alert">{state.error}</span> : null}
     </div>}
+    {did ? <ModelWorkLine work={did} board={board} cursor={cursor} onCursor={onCursor} /> : null}
   </li>;
 }
 
 export function ModelsPane({ visible = true }: { visible?: boolean }) {
   const [filter, setFilter] = useState<ModelFilter>('all');
+  const [workWindow, setWorkWindow] = useState<WorkWindow>('24');
+  // The reading cursor: the start of the one bar every card reads out. It belongs to a window, so switching lets go.
+  const [cursor, setCursor] = useState<string | null>(null);
   const [states, setStates] = useState<ReadonlyMap<string, RowState>>(new Map());
   const registryRead = useQuery(modelRegistryQuery, { enabled: visible, freshMs: 60_000 });
   const checkRead = useQuery(modelCheckQuery, { enabled: visible, freshMs: 60_000 });
   const lanesRead = useQuery(laneModelsQuery, { enabled: visible, freshMs: 30_000 });
+  const workRead = useQuery(MODEL_WORK_QUERIES[workWindow], { enabled: visible, freshMs: 60_000 });
   const refetchRegistry = useRefetch(modelRegistryQuery);
   const refetchCheck = useRefetch(modelCheckQuery);
   const set = (id: string, state: RowState) => setStates(prev => new Map(prev).set(id, state));
@@ -112,6 +124,8 @@ export function ModelsPane({ visible = true }: { visible?: boolean }) {
   const groups = boardGroups(models.filter(model => matchesFilter(model, filter)));
   const launches = lanes?.source === 'ok' && lanes.launches !== null;
   const nowMs = Date.now();
+  // Its own read: when it fails, the rows still draw and only their work reads unknown.
+  const board = workBoard({ report: workRead.data ?? null, failed: workRead.status === 'error', hours: Number(workWindow), ids: models.map(model => model.id) });
   return <section className={styles.root} aria-label="Models">
     <p className={styles.headline}>{modelsHeadline(models.length, check)}</p>
     {registryDown ? <p className={styles.message} data-unknown role="status">Could not read the model registry, so its state is unknown.</p> : null}
@@ -127,17 +141,29 @@ export function ModelsPane({ visible = true }: { visible?: boolean }) {
     </> : null}
     {models.length === 0 ? (registryDown || (report !== null && !check) ? null
       : <p className={styles.message}>No models are registered yet. Add one with: phm models verify &lt;id&gt; --provider &lt;name&gt; --source &lt;official doc URL&gt;</p>) : <>
-      <Segmented size="sm" aria-label="Show models" value={filter} onChange={setFilter}
-        options={FILTERS.map(({ value, word }) => ({ value, label: `${word} ${counts[value]}` }))} />
+      <div className={work.switches}>
+        <Segmented size="sm" aria-label="Show models" value={filter} onChange={setFilter}
+          options={FILTERS.map(({ value, word }) => ({ value, label: `${word} ${counts[value]}` }))} />
+        <Segmented size="sm" aria-label="Work window" value={workWindow} onChange={next => { setWorkWindow(next); setCursor(null); }} options={WORK_WINDOWS} />
+      </div>
+      <WorkSummary board={board} cursor={cursor} />
       {groups.length === 0 ? <p className={styles.message} role="status">{FILTERS.find(item => item.value === filter)!.none}</p> : groups.map(group => {
         const name = providerLabel(group.provider);
+        const launched = launchedBy(board, group.models.map(model => model.id));
         return <section key={group.provider ?? ''} className={styles.group} aria-label={`${name} models`}>
-          <div className={styles.groupHead}><ProviderMark provider={group.provider} /><h3>{name}</h3><span>{groupLine(group)}</span></div>
+          <div className={styles.groupHead}><ProviderMark provider={group.provider} /><h3>{name}</h3><span>{groupLine(group)}</span>
+            {launched === null ? null : <span data-group-work>{launched === 1 ? '1 job' : `${launched} jobs`} launched in the last {board.span}</span>}</div>
           <ul className={styles.list}>{group.models.map(model => <ModelItem key={model.id} model={model} launches={launches} nowMs={nowMs}
-            state={states.get(model.id)} onVerify={source => verify(model.id, source)} />)}</ul>
+            state={states.get(model.id)} onVerify={source => verify(model.id, source)} did={board.works.get(model.id)} board={board} cursor={cursor} onCursor={setCursor} />)}</ul>
         </section>;
       })}
     </>}
+    {board.strangers.length > 0 ? <section className={styles.group} aria-label="Launched under a name the registry lacks">
+      <div className={styles.groupHead}><h3>Launched under a name the registry lacks</h3></div>
+      <ul className={styles.missing}>{board.strangers.map(stranger => <li key={stranger.name}>
+        <ProviderMark provider={stranger.name} /><strong>{stranger.name}</strong><span>{stranger.words}</span>
+      </li>)}</ul>
+    </section> : null}
     {check && check.missing.length > 0 ? <section className={styles.group} aria-label="Models missing from the registry">
       <div className={styles.groupHead}><h3>In provider docs, missing from the registry</h3></div>
       <ul className={styles.missing}>{check.missing.map(model => <li key={`${model.provider} ${model.id}`}>

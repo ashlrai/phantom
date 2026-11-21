@@ -51,10 +51,48 @@ the server's answer, the `reply` field of the read, so the pane and
 asks for the dispatch token when none is held, and a refused send keeps your
 words and shows the reason. What you sent shows as "You, from here" until the
 next read carries the inbox's own record of it. A session that is not running
-has no reply box and a line saying why. **Live log** opens the worker log,
-where pause and stop live. Escape or **Sessions** returns to the tree. The
+has no reply box and a line saying why. **Live log** opens the worker log. Escape or **Sessions** returns to the tree. The
 conversation is read from `GET /api/verse/fleet/control/session-thread` every
 10 seconds; a server without that read says so and shows no conversation.
+
+For a session with a job, the summary opens with what the job has done, as a
+row of named readings: the latest recorded step and how long ago it was, the
+lines added and removed with the number of files changed, the commands seen
+in its log, and how many of its helpers are running or failed. They are the
+readings on the session's Conversations card, taken from the `work` key of
+the same read, so a card and the conversation it opens agree. A reading the
+read could not measure says "unknown" rather than 0. The sentences that
+state those values, and the one giving the pull request (its link is in the
+header), are left out of the summary below the row; every other sentence
+stays. A session with no job, or a server that sends no `work`, shows the
+summary as sentences only. In the list beside an open conversation, each
+session with a job has one more line: its lines added and removed, then the
+name of its latest step and how long ago, and any failed helpers.
+
+A conversation opens at the newest entries of each record: 50 bus messages,
+10 of your messages, the Leader's last 5 replies, 12 log lines. When the
+records hold more, a row under the conversation says so and offers **Show
+earlier** (or press E anywhere in the conversation but a text field). The
+entries on screen stay while the deeper read is made, then the row says how
+many earlier entries joined them, with **Go to the first** and **Show fewer**
+beside it. The conversation stays whole while you follow it, and goes back to
+the newest entries after a reload. It is the read `phm sessions thread <id>
+--all` makes: more of the same records, never another source, and still
+bounded (400 bus messages, the newest 200 inbox entries, 120 log lines), with
+anything beyond that listed as left out. A server that names no depth shows
+the list of what was left out and no button.
+
+A worker that is running, quiet or of unknown state has a row under the
+header to steer its job without leaving the conversation: **Pause** (or
+**Resume** while a pause stands), **Stop**, which asks first, and **Move…**,
+which reads the lanes when you open it and lists a held or full lane without
+letting you choose it. Each makes the same request as `phm job <action>`,
+asks for the mutation token when none is held, and says the receipt in the
+row: done, requested and waiting for the dispatcher, or refused with the
+reason. The conversation is then read again, and every request recorded for
+the job shows in it as a line with what became of it. A pause or any request
+the dispatcher has not applied yet is also named beside the buttons. A
+finished session, the leader and a helper have no such row.
 
 An open conversation is followed while it grows. A message that arrives while
 the end of the conversation is on screen scrolls into view. Once you have
@@ -100,10 +138,24 @@ The console's Conversations pane puts every session on one screen. Each
 session is a card: its id, state and when it last spoke, the summary, and its
 newest messages, with what was said to it on the right and what it said on the
 left. A running session's card ends with the last 3 lines it wrote to its
-log. The pane makes one request for all of them
+log. Under a card's first lines is what its job has done: the newest recorded
+step with how long ago it was, the size of the diff (lines added and removed,
+and in how many files), the commands seen in its log, and how many of its
+helpers are running or failed. A part that could not be read says "unknown"
+rather than 0, and a session with no job shows none of it. These are the
+values the summary states in words, so the card leaves those sentences out
+and keeps the rest. A session that opened a pull request has a link to it at
+the foot of its card. The pane makes one request for all of them
 (`GET /api/verse/fleet/control/session-threads`) and asks again every 10
 seconds while it is on screen. The buttons above the cards show only the
-sessions in one state. Arrow keys or J and K move between cards, Enter opens
+sessions in one state. The Order control in the bar, or O, changes where the
+cards stand without adding or dropping one: Fleet order is the list's own
+(the leader, then each worker with its helpers), Latest first leads with the
+session that spoke most recently and puts one with no known time last, and By
+lane or By repo puts the sessions under one heading per lane or repo that
+counts them by state, with a helper under its worker's heading. The leader
+stays first in every order. The choice is kept in the browser, and the list
+beside an open conversation follows it. Arrow keys or J and K move between cards, Enter opens
 one and Esc comes back to the same card. An opened card shows that session's
 whole conversation. Under each of your messages in the leader's conversation
 is a short list of the jobs the Leader routed it to, each with its lane, how
@@ -126,6 +178,25 @@ J and K move to the next and previous conversation from anywhere except a
 text field. In the list, Up, Down, Home and End move between rows, Enter opens
 one and Esc returns to the cards. A narrower pane shows the conversation
 alone, and J and K still work.
+
+A pane at least 1000 px wide keeps the Leader's conversation on the right of
+the cards, so you can read every session and write to the Leader on one
+screen. It is the same conversation the leader's card opens: the Leader's
+replies, your messages, where each one was routed, and a reply box that
+writes to the Leader's inbox. It reads
+`GET /api/verse/fleet/control/session-thread?id=leader` every 10 seconds
+while the pane is on screen, and it still does when the cards are narrowed to
+a lane or repo, which lists no leader. It never takes the keyboard when it
+appears. Press L anywhere outside a text field to put the cursor in its reply
+box; Esc there returns to the cards and leaves the conversation where it is.
+The leader's card shows no "new" mark while its conversation is beside the
+cards. Hide puts the conversation away, which is kept in this browser across
+a reload; "Leader conversation" above the cards, or L, brings it back. From
+1360 px the Leader stays on the right of an open conversation as well, as a
+third column. In a pane between the two widths an open conversation covers
+it, and words already typed to the Leader are still in the box when you come
+back. In a pane too narrow for it, L opens the leader's own conversation with
+the cursor in the reply box.
 
 A card or row shows "3 new" when the session holds three more messages than
 when you last had it open, or than when the pane first showed it. The counts
@@ -151,6 +222,21 @@ narrowing. If the server answers for a different narrowing than the one you
 chose, the line says so instead of labelling the cards wrongly. Marks for new
 messages on sessions outside the narrowed list are kept.
 
+The same words are also looked for in every session's whole conversation.
+Once you stop typing, a list under the bar names each session that holds
+them, with the lines that do and the words marked: who said the line, when,
+and the words around the find. It reaches what the cards cannot: something
+said long before a session's newest messages, the end of a job's log, and
+sessions past the 40 on screen (a search reads up to 120). It keeps the lane,
+repo and "Running only" you narrowed to. A session listed with no line holds
+the words in its id, lane, repo or summary. Click a result, or press Down
+from the find box and Enter, to open that conversation; arrow keys move
+between results and go on to the cards after the last one. A word needs two
+letters. If the search cannot be read the list says why and the cards are
+still filtered. From a terminal, `phm sessions find <words>` prints the same
+results; add `--json` for the document described under
+[session find](FLEET-API.md#session-find).
+
 The pane opens the way you left it: the words in the find box and the lane,
 repo and "Running only" you narrowed to are kept in this browser, across a
 reload or a restart of the app, until you clear them. Only that view is kept,
@@ -160,6 +246,52 @@ opens the first one, and N again goes on to the next, starting over from the
 top after the last. Beside an open conversation the list is narrowed by the
 same find words (the open conversation always keeps its row), J and K walk
 only the rows listed, and "Show all" brings the rest back.
+
+"What Mason asked" sits above the cards when a session on screen serves one of
+your messages. It is one row of buttons, newest message first: the time you
+wrote it and where from, its first words, a dot per session coloured by state,
+and a line such as "2 of 4 routed jobs on screen". Choose one and only the
+sessions working on that message stay, with the whole message on a line under
+the row and the state buttons counting just those sessions. Choose it again,
+press Esc or use "Every session" to bring the rest back. Left and Right move
+along the row. A helper is listed with the worker it helps. The last button,
+"No message cited", holds the sessions tied to none: a job serves a message
+only when its prompt cites it, so this is standing work or work the Leader
+started itself, not work nobody asked for. A job that serves several of your
+messages is listed under the newest. The row counts only the sessions on
+screen, after the find box and the lane, repo and running narrowing. Nothing
+extra is requested: each session's entry in the read carries the message it
+serves (`serves`).
+
+A card says what was asked of its session's job. "Paused" or "Pause
+requested" sits beside the state while a pause stands, the card's border is
+dashed and its running dot holds still; "Stop requested" or "Move to codex
+requested" shows while the dispatcher has not applied the request yet. The
+same words are on the session's row beside an open conversation. A finished
+resume, stop or move leaves no mark, and neither does a session whose job has
+ended; the conversation keeps each request as a line. When any session on
+screen carries a mark, a "Paused or asked" button joins the state buttons and
+keeps only those sessions. With the keyboard on a card, P pauses its job, or
+resumes it while a pause stands. It is the same call as `phm job pause` and
+`phm job resume`, so it needs the mutation token (the unlock dialog opens when
+none is held) and the same refusals apply. The receipt is said in a line above
+the cards, which leaves once the card itself shows the request; a refusal
+stays until you dismiss it. S stops the job after asking, the same as
+`phm job stop`. M opens a list of the other lanes from the fleet read, each
+with what it is running; a held lane and a lane with no free slot are listed
+with the reason and cannot be chosen. Up and Down move through the lanes,
+Enter moves the job (`phm job move`), Esc leaves it where it is. If the fleet
+read does not answer, the list says the lanes are unknown. P, S and M do
+nothing for the Leader, a helper or a finished session except say so. The
+conversation keeps its own Pause, Stop and Move buttons.
+
+The card says a request from the moment the server records it, on the
+receipt's word, and P goes by what the card says. The marks otherwise come
+with the wall's own read (`control` on each entry), which is up to about 15
+seconds behind the request. A read made 45 seconds or more after the receipt
+that still does not show the request is believed instead. If the control record
+cannot be read, no card is marked and a line under the cards says controls are
+unknown.
 
 To read one session as a conversation instead of a log, run
 `phm sessions thread <id>`. The id is `leader`, a job id or a subagent id from
@@ -177,10 +309,19 @@ followed by a "Routed to" line listing its jobs with lane, state and pull
 request. A job counts only when its prompt cites your message's time. A message aimed at a worker goes to the leader, and nothing
 records the worker reading it, so its label says "Mason to the Leader, aimed
 at" the job. Lines starting `>` were said to the session, `<` is the
-session speaking and `-` is a recorded step. The summary is assembled from the
+session speaking and `-` is a recorded step, which includes each pause,
+resume, stop or move asked of its job with what became of it. The summary is assembled from the
 records, not written by a model. A "To write to it" line near the end says
 where a message to that session goes, or why none can be sent. `--json` prints `fleet.session-thread.v1`;
 an unknown id exits 2. See [session thread](FLEET-API.md#session-thread).
+
+The thread shows the newest few of each record. When earlier ones exist it
+ends with a note naming the command that shows them:
+`phm sessions thread <id> --all`. That prints up to 400 bus messages, every
+message of yours in the newest 200 inbox entries, 40 Leader replies, 60
+commands and changed files, 40 control requests and the last 120 lines of the
+log. In the JSON, `depth` is `recent` or `full`, and `deeper` is true when
+a `recent` read left out something `--all` would show.
 
 For old heartbeats or quiet jobs, run `phm sessions reconcile --json` (omit
 `--json` for plain text). The typed `reconcileSessions` API returns

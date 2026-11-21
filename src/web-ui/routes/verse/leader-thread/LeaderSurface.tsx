@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
+import { useLeaderReading } from './leader-reading.js';
 import { SessionThread } from '../fleet-sessions/SessionThread.js';
 import { liveSessionsQuery, SESSIONS_POLL_MS } from '../fleet-sessions/sessions-model.js';
 import type { PaneProps } from '../panes/pane-registry.js';
@@ -42,6 +43,8 @@ export function LeaderSurface({ visible, host }: Pick<PaneProps, 'visible' | 'ho
     [...(chat.current?.querySelectorAll<HTMLElement>('[data-roster-thread]') ?? [])].find(button => button.dataset.rosterThread === from)?.focus();
   }, [threadId]);
   const openLog = (job: string) => { requestWorkerLogJob(job); host.openPane('worker-log'); };
+  // A job named in the chat (a routed row, a command's answer, /thread) opens here too, not in another pane.
+  useLeaderReading(root, threadId, setThreadId);
   const reading = threadId !== null;
   // Covered: the conversation is over the chat, so the strip is not on screen to keep the list fresh.
   const covered = reading && !beside;

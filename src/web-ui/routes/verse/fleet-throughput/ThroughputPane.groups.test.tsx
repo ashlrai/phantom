@@ -57,7 +57,7 @@ it('words a report by repo as repos, and keeps merges with no repo in the record
   expect(within(cards[1]!).getByText('repo unknown')).toBeTruthy();
   // A repo is not a provider: no mark is drawn for one, in the bar's legend or on its card.
   expect(view.container.querySelectorAll('[data-share] li svg')).toHaveLength(0);
-  expect(screen.getByRole('img', { name: /^repo unknown: PRs merged per hour/ })).toBeTruthy();
+  expect(within(cards[1]!).getByRole('slider', { name: /^repo unknown jobs launched, a bar per hour/ })).toBeTruthy();
   expect(screen.getByText('Throughput by repo', { ignore: false })).toBeTruthy();
   expect(screen.queryByRole('list', { name: 'Lanes, most merged first' })).toBeNull();
 });

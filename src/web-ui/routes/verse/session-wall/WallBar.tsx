@@ -10,6 +10,9 @@
  * screen holds: how many sessions match, what the server narrowed to, and how
  * many it left out.
  *
+ * Order changes nothing about which sessions are shown, only where they stand
+ * (wall-order.ts); the line says what an order other than the fleet's does.
+ *
  * "/" puts the cursor here (SessionWall.tsx). In the box, Down or Enter moves
  * to the first card, Esc clears the words, and Esc on an empty box goes back
  * to the cards.
@@ -18,6 +21,7 @@ import type { KeyboardEvent } from 'react';
 import { Input } from '../../../components/primitives/Input.js';
 import { Select } from '../../../components/primitives/Select.js';
 import { findEntries, isScoped, NO_SCOPE, sameScope, scopeWords, type SessionWallRead, type WallScope } from './session-wall-model.js';
+import { isWallOrder, ORDER_NOTE, ORDER_WORD, WALL_ORDERS, type WallOrder } from './wall-order.js';
 import styles from './session-wall.module.css';
 
 export interface WallBarProps {
@@ -32,12 +36,15 @@ export interface WallBarProps {
   read: SessionWallRead | null;
   /** Hand the keyboard to the cards. */
   onLeave: () => void;
+  /** The order the sessions stand in; the control is drawn only when it can be changed. */
+  order?: WallOrder;
+  onOrder?: (order: WallOrder) => void;
 }
 
 export interface BarNote { text: string; tone: 'plain' | 'warn' }
 
 /** What the line under the controls says; null when there is nothing to add to the headline. */
-export function barNote(read: SessionWallRead | null, scope: WallScope, find: string): BarNote | null {
+export function barNote(read: SessionWallRead | null, scope: WallScope, find: string, order: WallOrder = 'fleet'): BarNote | null {
   if (!read) return null;
   const parts: string[] = [];
   const on = read.entries.length;
@@ -49,11 +56,14 @@ export function barNote(read: SessionWallRead | null, scope: WallScope, find: st
   if (isScoped(scope)) parts.push(`Showing ${scopeWords(scope)}${read.scope === null ? ', as asked; the read did not confirm it' : ''}`);
   const unshown = read.total === null ? 0 : read.total - on;
   if (unshown > 0) parts.push(isScoped(scope) ? `${unshown} more not on screen` : `${unshown} more not on screen: narrow by lane, repo or running to reach them`);
+  // An order means something only with two sessions to put in it.
+  const arranged = ORDER_NOTE[order];
+  if (arranged && on > 1) parts.push(arranged);
   return parts.length > 0 ? { text: parts.join(' · '), tone: 'plain' } : null;
 }
 
-export function WallBar({ find, onFind, scope, onScope, lanes, repos, read, onLeave }: WallBarProps) {
-  const note = barNote(read, scope, find);
+export function WallBar({ find, onFind, scope, onScope, lanes, repos, read, onLeave, order = 'fleet', onOrder }: WallBarProps) {
+  const note = barNote(read, scope, find, order);
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'ArrowDown' || event.key === 'Enter') { event.preventDefault(); onLeave(); return; }
     if (event.key !== 'Escape') return;
@@ -76,6 +86,10 @@ export function WallBar({ find, onFind, scope, onScope, lanes, repos, read, onLe
     </Select>
     <button type="button" className={styles.filter} aria-pressed={scope.live} onClick={() => onScope({ ...scope, live: !scope.live })}>Running only</button>
     {isScoped(scope) && <button type="button" className={styles.link} onClick={() => onScope(NO_SCOPE)}>Every session</button>}
+    {onOrder && <Select size="sm" className={styles.pick} aria-label="Order" title="The order the sessions stand in (O takes the next one)" value={order}
+      onChange={event => { if (isWallOrder(event.target.value)) onOrder(event.target.value); }}>
+      {WALL_ORDERS.map(choice => <option key={choice} value={choice}>{ORDER_WORD[choice]}</option>)}
+    </Select>}
     {note && <p className={styles.barNote} role="status" data-tone={note.tone}>{note.text}</p>}
   </div>;
 }

@@ -17,3 +17,6 @@
 .pair > * { min-width: 0; }
 .unread { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .unread .meta { margin-top: 0; }
+
+/* Keep the group title readable beside the longer description. */
+.root > figure > figcaption > span:first-child { flex-shrink: 0; }

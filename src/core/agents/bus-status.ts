@@ -36,8 +36,10 @@ export interface UnifiedBusStatus {
   /** Wake hint queue behind `wake`, `wakes` and priority fan-out. */
   wakes: {
     state: 'missing' | 'unreadable' | 'ok';
-    /** Hints observed in the bounded queue tail; null unless state is ok. */
+    /** Hints observed in the bounded queue tail, before the read's row cap; null unless the queue was read. */
     hints: number | null;
+    /** Older bytes or hints sit beyond the bounded tail or row cap; null when the queue state is unknown. */
+    truncated: boolean | null;
   };
   /** Shared coordination table behind `claim` and feed `--claims` joins. */
   coordination: {
@@ -92,9 +94,9 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
   let wakes: UnifiedBusStatus['wakes'];
   try {
     const read = readBusWakes({ root: options.runsRoot });
-    wakes = { state: read.state, hints: read.state === 'ok' ? read.wakes.length : null };
+    wakes = { state: read.state, hints: read.matched, truncated: read.truncated };
   } catch {
-    wakes = { state: 'unreadable', hints: null };
+    wakes = { state: 'unreadable', hints: null, truncated: null };
   }
 
   let coordination: UnifiedBusStatus['coordination'];

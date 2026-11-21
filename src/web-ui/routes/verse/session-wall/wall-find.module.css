@@ -1,0 +1,38 @@
+/* "Found in whole conversations", between the find box and the cards: one row per session, the lines that hold a word under its name. */
+.found { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; padding: var(--space-2) var(--space-3) 0; font-size: var(--text-xs-size); line-height: var(--text-xs-line); }
+.head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); margin: 0; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.found[data-find='reading'] .head { animation: wall-find-reading var(--duration-pulse, 2s) var(--ease-standard) infinite; }
+.again { flex: none; padding: 0; border: 0; background: none; color: var(--text-primary); font: inherit; text-decoration: underline; cursor: pointer; }
+.again:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+
+/* No taller than a third of the pane, so the cards the box also filters stay in sight under a long list. */
+.results { display: flex; flex-direction: column; gap: 2px; max-height: min(34vh, 320px); margin: 0; padding: 0; overflow-y: auto; list-style: none; transition: opacity var(--duration-fast) var(--ease-standard); }
+.results[data-stale] { opacity: 0.55; }
+.result { min-width: 0; animation: wall-find-in var(--duration-base) var(--ease-decelerate); }
+.open { display: flex; flex-direction: column; gap: 2px; width: 100%; min-width: 0; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-subtle); border-left-width: 2px; border-radius: var(--radius-sm); background: var(--bg-surface-raised); color: inherit; font: inherit; text-align: left; cursor: pointer; transition: background var(--duration-fast) var(--ease-standard); }
+.open:hover { background: var(--bg-hover); }
+.open:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; background: var(--bg-hover); }
+.result[data-state='running'] .open { border-left-color: var(--status-success-solid); }
+.result[data-state='quiet'] .open { border-left-color: var(--status-warning-solid); }
+.result[data-state='failed'] .open { border-left-color: var(--status-danger-solid); }
+.top { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.id { min-width: 0; overflow: hidden; font-family: var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.meta, .more, .label { color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); font-variant-numeric: tabular-nums; }
+.meta { flex: none; margin-left: auto; white-space: nowrap; }
+
+/* A line that holds a word: who said it, then the words around it. Said to the session sits indented, as its bubble sits right in the conversation. */
+.line { display: grid; grid-template-columns: minmax(0, 14ch) minmax(0, 1fr); gap: var(--space-2); align-items: baseline; min-width: 0; }
+.line[data-side='other'] { padding-left: var(--space-3); }
+.line[data-side='record'] .text { color: var(--text-secondary); }
+.line[data-summary] { grid-template-columns: minmax(0, 1fr); }
+.label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.text { min-width: 0; overflow-wrap: anywhere; }
+.mark { padding: 0 1px; border-radius: 2px; background: var(--status-warning-bg, var(--bg-selected)); color: inherit; font-weight: 600; }
+.gaps { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; color: var(--text-secondary); }
+
+@keyframes wall-find-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+@keyframes wall-find-reading { 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) {
+  .result, .found[data-find='reading'] .head { animation: none; }
+  .results, .open { transition: none; }
+}

@@ -1,0 +1,27 @@
+/* What was asked of a session's job, beside its state on a card and on a row: solid for a pause that stands, dashed for a request still waiting. */
+.mark { flex: none; padding: 0 var(--space-2); border: 1px dashed currentColor; border-radius: var(--radius-full); color: var(--status-warning-fg); font-weight: 600; animation: wall-steer-in var(--duration-base) var(--ease-decelerate); }
+.mark[data-tone='paused'] { border-style: solid; border-color: transparent; background: var(--status-warning-bg); }
+.rowMark { font-weight: 600; color: var(--status-warning-fg); }
+.rowMark::after { content: ' \00b7'; font-weight: 400; color: var(--text-secondary); }
+
+/* The receipt of P, S or M, above the cards. */
+.said { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); margin: 0; padding: var(--space-2) var(--space-3) 0; color: var(--text-secondary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); overflow-wrap: anywhere; animation: wall-steer-in var(--duration-base) var(--ease-decelerate); }
+.said[data-tone='done'] { color: var(--status-success-fg); }
+.said[data-tone='refused'] { color: var(--status-danger-fg); }
+.dismiss { flex: none; padding: 0; border: 0; background: none; color: var(--text-secondary); font: inherit; text-decoration: underline; cursor: pointer; }
+.dismiss:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+
+/* M: the lanes a job can move to (WallMove.tsx). One row per lane; a lane that cannot take it is dimmed and says why. */
+.lanes { display: flex; flex-direction: column; gap: var(--space-1); max-height: 50vh; margin: var(--space-3) 0; padding: 0; overflow-y: auto; list-style: none; }
+.lane { display: flex; align-items: baseline; gap: var(--space-2); width: 100%; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: none; color: var(--text-primary); font: inherit; font-size: var(--text-sm-size); line-height: var(--text-sm-line); text-align: left; cursor: pointer; }
+.lane > span:last-child { margin-left: auto; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.lane:hover:not(:disabled), .lane:focus-visible { border-color: var(--border-focus); background: var(--bg-hover); outline: none; }
+.lane:disabled { border-style: dashed; color: var(--text-secondary); cursor: not-allowed; }
+.lane[data-blocked='held'] > span:last-child { color: var(--status-warning-fg); }
+.moveNote { margin: var(--space-3) 0; color: var(--text-secondary); font-size: var(--text-sm-size); line-height: var(--text-sm-line); }
+.moveActions { display: flex; justify-content: flex-end; }
+.cancel { padding: var(--space-2) var(--space-4); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-secondary); font: inherit; font-size: var(--text-sm-size); cursor: pointer; }
+.cancel:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+
+@keyframes wall-steer-in { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .mark, .said { animation: none; } }

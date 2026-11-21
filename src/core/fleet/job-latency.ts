@@ -11,6 +11,27 @@ const jobPhases = [
 type Events = Map<string, number[]>;
 
 /**
+ * jobs.jsonl timestamp dialect: ts|timestamp|at|time|mergedAt|closedAt|
+ * recordedAt|updatedAt, with mergedAt/closedAt preferred on terminal rows —
+ * the same field set dispatchd `_vc_pick` and metrics/loop accept.
+ */
+const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+
+/** First parseable stamp among the ledger's timestamp fields for one boundary; merged prefers mergedAt, closed closedAt. */
+function boundaryTs(row: Record<string, unknown>, event: string): number {
+  const preferred = event === 'merged' ? 'mergedAt' : event === 'closed' ? 'closedAt' : null;
+  const fields = preferred === null ? TS_KEYS : [preferred, ...TS_KEYS.filter(f => f !== preferred)];
+  for (const field of fields) {
+    const value = row[field];
+    if (typeof value === 'string') {
+      const at = Date.parse(value);
+      if (Number.isFinite(at)) return at;
+    }
+  }
+  return NaN;
+}
+
+/**
  * Canonical boundary name for one ledger row, or undefined when the row is
  * not lifecycle evidence. Terminal PR state outranks the event name: the
  * outcomes reconciler copies the publish row and only swaps the outcome, so
@@ -28,7 +49,7 @@ function boundaryEvent(row: Record<string, unknown>): string | undefined {
   if (state === 'MERGED') return 'merged';
   if (state === 'CLOSED') return 'closed';
   if (state === 'PUBLISHED') return 'publish';
-  const raw = row.event ?? row.type;
+  const raw = row.event ?? row.type ?? row.kind;
   if (raw === 'enqueue' || raw === 'enqueued') return 'queued';
   if (raw === 'published') return 'publish';
   return typeof raw === 'string' ? raw : undefined;
@@ -48,8 +69,7 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
     } catch { ignored++; continue; }
     const id = row.job ?? row.job_id ?? row.jobId ?? row.id;
     const event = boundaryEvent(row);
-    const time = event === 'merged' && row.mergedAt !== undefined ? row.mergedAt : row.ts ?? row.timestamp ?? row.at;
-    const at = typeof time === 'string' ? Date.parse(time) : NaN;
+    const at = event === undefined ? NaN : boundaryTs(row, event);
     if (typeof id !== 'string' || !id || event === undefined) { ignored++; continue; }
     const events = jobs.get(id) ?? new Map<string, number[]>();
     const times = events.get(event) ?? [];

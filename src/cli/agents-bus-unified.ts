@@ -5,8 +5,8 @@ import {
   type BusCli, type BusProvider,
 } from '../core/agents/bus-identity.js';
 import {
-  announceWork, busBodyFallbackSummary, listBusChannels, postChannelMessage, postLabelMessage, readAgentChannel,
-  readAgentInbox, readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
+  agentWakeClaimHolderSuffix, announceWork, busBodyFallbackSummary, listBusChannels, postChannelMessage, postLabelMessage,
+  readAgentChannel, readAgentInbox, readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
   updateWorkStatus, type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { WORK_STATUSES, parseClaimKey, type WorkJob } from '../core/agents/bus-v2-schema.js';
@@ -17,7 +17,7 @@ import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, 
 import { formatBusWorkMine, readBusWorkMine } from '../core/agents/bus-work-mine.js';
 import { readUnifiedBusStatus } from '../core/agents/bus-status.js';
 import { scrubSecrets } from '../core/util/scrub.js';
-import type { BusPriority } from '../core/fleet/bus-envelope.js';
+import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import { seatParticipants } from '../core/bots/seats.js';
 
 export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'post', 'channel', 'handoff', 'wake', 'inbox', 'wakes', 'show', 'adapters', 'claim', 'work', 'status']);
@@ -30,10 +30,10 @@ ashlr agents bus channel create <name> [--from <agent>] [--member <agent>]...
 ashlr agents bus channel join|leave <name> [--agent <agent>]
 ashlr agents bus channel post <name> --text <text> [--from <agent>] [--topic <t>] [--ref <ref>]... [--priority ..] [--wake|--no-wake]
 ashlr agents bus channel list [--agent <agent>]
-ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--thread <t>] [--after <cursor>] [--limit <1..100>]
+ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--thread <t>] [--priority P0..P3] [--after <cursor>] [--limit <1..100>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
-ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--frame <cli>]
+ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--priority P0..P3] [--matched] [--frame <cli>]
 ashlr agents bus wakes [<agent>] [--since <epoch ms>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
@@ -61,10 +61,20 @@ still a registered identity under the same scrub and wake rules.
 --thread on dm, post, channel post, inbox and channel read is the v2 conversation
 label carried by note/context bodies; reads match that field only. --from on
 inbox and channel read narrows to one sender — a handle, agent:<handle>,
-stable id or alias; an unresolvable ref keeps exact-label matching. show
+stable id or alias; an unresolvable ref keeps exact-label matching. --priority
+on inbox and channel read keeps only one exact P0..P3 band — the same match
+comms bus read --priority applies — so urgent mail is one filtered read, not
+a page through the backlog. --matched
+on inbox reports matched, the true pending total across the whole retained
+store the same filters accept; messages still caps at --limit and nextCursor
+then resumes at the newest shown row, so paging never skips an unshown match.
+show
 resolves one retained envelope by the wire id wake hints, work mine items
 and claim operations cite; an expired id reports not-found, and the read
-needs no identity.
+needs no identity. A claim-holder wh-… hint id resolves through the wake
+queue to the live terminal work.status receipt that cites it, returned
+with its wakeHint citation; a hint no live receipt reproduces reports
+not-found.
 A terminal work status also queues a routing-only wake hint for each live claim
 holder on the job's keys; --no-wake opts out. work feed and claim list are
 read-only and need no identity; work feed --to keeps jobs announced to that
@@ -102,7 +112,7 @@ const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
   '--kind']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
-const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--jobs']);
+const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--jobs', '--matched']);
 
 class UsageError extends Error {}
 
@@ -211,6 +221,15 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     const send = {
       priority: one('--priority') as BusPriority | undefined, ttl: integer(one('--ttl'), '--ttl'), id: one('--id'), wake,
     };
+    // Read-side --priority is an enum like --frame/--status: a bad band is a
+    // usage error here and an 'invalid' result inside the core read.
+    const priorityArg = (): BusPriority | undefined => {
+      const value = one('--priority');
+      if (value !== undefined && !(BUS_PRIORITIES as readonly string[]).includes(value)) {
+        throw new UsageError('--priority must be P0, P1, P2 or P3.');
+      }
+      return value as BusPriority | undefined;
+    };
     const [verb, sub, arg, ...extra] = p.positionals;
     const finish = (result: { status: string; reason?: string }, human: string): number => {
       const ok = !('reason' in result) || result.reason === undefined;
@@ -231,7 +250,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           `bytes=${result.store.retainedBytes ?? unknown}/${result.store.maxBytes} ` +
           `live=${result.store.liveCount ?? unknown} expired=${result.store.expiredCount ?? unknown}`,
         `registry ${result.registry.source} identities=${result.registry.identities ?? unknown} channels=${result.registry.channels ?? unknown}`,
-        `wakes ${result.wakes.state} hints=${result.wakes.hints ?? unknown}`,
+        `wakes ${result.wakes.state} hints=${result.wakes.hints ?? unknown} truncated=${result.wakes.truncated ?? unknown}`,
         `coordination ${result.coordination.source} liveClaims=${result.coordination.liveClaims ?? unknown} statuses=${result.coordination.statuses ?? unknown}`,
         `workClaims ${result.workClaims.source} claims=${result.workClaims.claims ?? unknown}`,
         `feed ${result.feed.status}${result.feed.reason === undefined ? '' : `:${result.feed.reason}`} jobs=${result.feed.jobs ?? unknown}`,
@@ -316,7 +335,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       if (sub === 'read') {
         const result = readAgentChannel(arg, { topic: one('--topic'), from: one('--from'), thread: one('--thread'),
-          after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit') }, options);
+          priority: priorityArg(), after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit') }, options);
         if (result.status !== 'ok') return finish(result, '');
         out(json ? JSON.stringify(result) : [
           ...result.messages.map(m => `${m.cursor} ${m.priority} #${result.channel}:${m.topic} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}`),
@@ -347,14 +366,23 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const agent = sub ?? self;
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
       const page = readAgentInbox(agent, { after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit'),
-        thread: one('--thread'), from: one('--from') }, options);
+        thread: one('--thread'), from: one('--from'), priority: priorityArg(), matched: p.bools.has('--matched') }, options);
       if (page.status !== 'ok') return finish(page, '');
-      if (frame) { out(json ? JSON.stringify({ ...page, framed: frameBusInbox(frame as BusCli, page.messages) }) : frameBusInbox(frame as BusCli, page.messages)); return 0; }
-      out(json ? JSON.stringify(page) : [
-        ...page.messages.map(m => `${m.cursor} ${m.priority} ${m.kind === 'channel' ? `#${m.channel}` : m.kind} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}` +
+      // --matched scans the whole store, so the core nextCursor is the store's
+      // end — resuming there would skip unshown matches. The honest resume
+      // point is the newest shown row's cursor: every unshown match sits
+      // beyond it and every shown one at or before it (the same rule the
+      // work mine inbox section applies).
+      const nextCursor = page.matched !== undefined && page.matched > page.messages.length
+        ? Math.max(...page.messages.map(m => m.cursor)) : page.nextCursor;
+      const shown = { ...page, nextCursor };
+      if (frame) { out(json ? JSON.stringify({ ...shown, framed: frameBusInbox(frame as BusCli, page.messages) }) : frameBusInbox(frame as BusCli, page.messages)); return 0; }
+      out(json ? JSON.stringify(shown) : [
+        ...shown.messages.map(m => `${m.cursor} ${m.priority} ${m.kind === 'channel' ? `#${m.channel}` : m.kind} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}` +
           (m.held === undefined ? '' : ` held=${m.held === null ? 'unknown' : m.held ? 'yes' : 'no'}` +
             (m.holder ? ` holder=${m.holder}` : ''))),
-        `nextCursor ${page.nextCursor}`,
+        ...(page.matched === undefined ? [] : [`matched ${page.matched}`]),
+        `nextCursor ${nextCursor}`,
       ].join('\n'));
       return 0;
     }
@@ -375,6 +403,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         `  ${busBodyFallbackSummary(m.envelope.body)}`,
         ...(result.held === undefined ? [] : [`  held=${result.held === null ? 'unknown' : result.held ? 'yes' : 'no'}` +
           (result.holder ? ` holder=${result.holder}` : '')]),
+        ...(result.wakeHint === undefined ? [] : [`  via claim-holder wake hint ${result.id}` +
+          ` to=${result.wakeHint.to} job=${result.wakeHint.jobId} status=${result.wakeHint.status}`]),
       ].join('\n'));
       return 0;
     }
@@ -384,7 +414,10 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
       const page = readAgentWakes(agent, integer(one('--since'), '--since'), options);
       if (page.status !== 'ok') return finish(page, '');
-      out(json ? JSON.stringify(page) : page.wakes.map(w => `${w.at} ${w.id} ${w.from} -> ${w.to}`).join('\n') || 'No wakes.');
+      out(json ? JSON.stringify(page) : [
+        ...(page.truncated ? [`${page.matched} wake hint(s) matched; the bounded queue tail is truncated — showing the newest ${page.wakes.length}`] : []),
+        ...page.wakes.map(w => `${w.at} ${w.id} ${w.from} -> ${w.to}` + agentWakeClaimHolderSuffix(w)),
+      ].join('\n') || 'No wakes.');
       return 0;
     }
     if (verb === 'work' && sub === 'feed') {

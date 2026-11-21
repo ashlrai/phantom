@@ -146,6 +146,20 @@ describe('fleet lane-reward', () => {
     expect(fold.attempts.get('RQ-FAKE-T1')?.outcome).toBe('closed');
   });
 
+  it('reads alias timestamp fields and prefers mergedAt/closedAt on terminal rows', () => {
+    const fold = foldLaneRewardAttempts(rows(
+      { event: 'finish', job: 'RQ-FAKE-W1', lane: 'lane-a', tokens_total: 100 },
+      // MERGED prefers mergedAt and CLOSED prefers closedAt over the row stamp.
+      { event: 'outcome', job: 'RQ-FAKE-W1', state: 'MERGED', time: '2026-10-31T07:00:00Z', mergedAt: '2026-10-31T08:00:00Z' },
+      { event: 'outcome', job: 'RQ-FAKE-W1', state: 'CLOSED', timestamp: '2026-10-31T07:30:00Z', closedAt: '2026-10-31T09:00:00Z' },
+      // An alias-only stamp still orders: the later MERGED record beats the earlier CLOSED ts.
+      { event: 'outcome', job: 'RQ-FAKE-W3', state: 'MERGED', recordedAt: '2026-10-31T10:00:00Z' },
+      { event: 'outcome', job: 'RQ-FAKE-W3', state: 'CLOSED', ts: '2026-10-31T09:00:00Z' },
+    ));
+    expect(fold.attempts.get('RQ-FAKE-W1')?.outcome).toBe('closed');
+    expect(fold.attempts.get('RQ-FAKE-W3')?.outcome).toBe('merged');
+  });
+
   it('wires the real inspector by default and reports degraded sources', async () => {
     expect(defaultLaneRewardDeps.score).toBe(inspectOneAskReward);
     expect(defaultLaneRewardDeps.score({ outcome: { kind: 'published' }, tokens: 10, weight: 1, nowMs: NOW }))

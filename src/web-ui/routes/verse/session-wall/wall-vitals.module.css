@@ -1,0 +1,29 @@
+/* A card's vitals (WallVitals.tsx): the newest step on one line, then small figures. Quiet type; only a failure or the diff's two colours stand out. */
+.vitals { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); font-variant-numeric: tabular-nums; }
+/* The step: what it was, its detail cut to the line, and its age held at the right edge. */
+.step { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.event { flex: none; max-width: 50%; overflow: hidden; color: var(--text-primary); font-family: var(--font-mono); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.stepText { flex: 1 1 0; min-width: 0; overflow: hidden; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
+.when { flex: none; margin-left: auto; color: var(--text-secondary); }
+.figures { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--space-3); row-gap: 2px; min-width: 0; color: var(--text-secondary); }
+.figures > span { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; white-space: nowrap; }
+.figures > span[data-unknown], .when[data-unknown] { font-style: italic; }
+.figures > span[data-failed] { color: var(--status-danger-fg); }
+.added { color: var(--status-success-fg); }
+.removed { color: var(--status-danger-fg); }
+/* Added then removed, in proportion to each other. */
+.bar { flex: none; display: inline-flex; width: 28px; height: 4px; overflow: hidden; border-radius: var(--radius-full); background: var(--border-subtle); }
+.bar > i { min-width: 2px; }
+.bar > i[data-part='added'] { background: var(--status-success-solid); }
+.bar > i[data-part='removed'] { background: var(--status-danger-solid); }
+/* A rail row's vitals (RailVitalsLine): one line, the diff at the left and the newest step's name and age at the right. */
+.railVitals { display: flex; align-items: center; gap: var(--space-2); min-width: 0; color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.railVitals > span { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.railVitals > span[data-unknown], .railStep > span[data-unknown] { font-style: italic; }
+.railVitals > span[data-failed] { color: var(--status-danger-fg); }
+.railVitals > .railStep { flex: 0 1 auto; margin-left: auto; overflow: hidden; }
+.railStep > .event { max-width: none; color: var(--text-secondary); font-weight: 500; }
+/* The pull request link sits over the card's last line, at its left; the reply line keeps the right (session-wall.module.css gives it room). */
+.pr { position: absolute; left: var(--space-2); bottom: var(--space-2); padding: 0 var(--space-1); border-radius: var(--radius-xs); color: var(--text-link); font-family: var(--font-mono); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); font-variant-numeric: tabular-nums; text-decoration: underline; text-underline-offset: 2px; }
+.pr:hover { background: var(--bg-hover); }
+.pr:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }

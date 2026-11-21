@@ -2,14 +2,23 @@
  * The line a typed command leaves in the Leader conversation ("3 working now:
  * RQ-A (claude, spoke 2m ago) …"). It reads like the other system lines, and
  * every job it names is a button that opens that session as a conversation,
- * so `/who` is also the way into any of them. PR numbers link as they do in
- * the Leader's own messages.
+ * so `/who` is also the way into any of them: in the Leader pane it opens
+ * beside the chat (leader-reading.ts). PR numbers link as they do in the
+ * Leader's own messages.
  */
 import { Fragment } from 'react';
 import { clockTime } from '../leader/thread-model.js';
 import { pullUrl, splitRefs } from '../fleet/job-refs.js';
 import leaderStyles from '../leader/leader.module.css';
+import { useIsReading } from './leader-reading.js';
 import styles from './composer-result.module.css';
+
+/** One named session; marked while its conversation is open in this Leader pane. */
+function SessionButton({ id, onOpen }: { id: string; onOpen: (job: string) => void }) {
+  const reading = useIsReading(id);
+  return <button type="button" className={styles.session} aria-label={`Open the conversation with ${id}`} aria-current={reading ? 'true' : undefined}
+    data-conversation-door={id} onClick={() => onOpen(id)}>{id}</button>;
+}
 
 export function ComposerResultLine({ text, at, onOpenConversation }: {
   text: string;
@@ -21,8 +30,7 @@ export function ComposerResultLine({ text, at, onOpenConversation }: {
   return <p className={`${leaderStyles.system} ${styles.result}`} data-composer-result>
     {splitRefs(text).map((segment, index) => {
       if (segment.kind === 'job') {
-        return <button key={index} type="button" className={styles.session} aria-label={`Open the conversation with ${segment.value}`}
-          onClick={() => onOpenConversation(segment.value)}>{segment.value}</button>;
+        return <SessionButton key={index} id={segment.value} onOpen={onOpenConversation} />;
       }
       const href = segment.kind === 'pr' && segment.repo && segment.number ? pullUrl(segment.repo, segment.number) : null;
       if (href) return <a key={index} href={href} target="_blank" rel="noopener noreferrer">{segment.value}</a>;

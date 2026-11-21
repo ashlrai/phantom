@@ -1,10 +1,56 @@
 /** Hourly merge observations shared by the CLI and console. */
+import { parseLedgerTs } from '../metrics/loop.js';
+
 export interface MergeGraphBucket { start: string; merges: number; medianSeconds: number | null }
 export interface MergeGraphReport {
   schema: 'metrics.merges.v1'; known: boolean; windowHours: 24;
   lanes: { lane: string; buckets: MergeGraphBucket[] }[] | null;
 }
 const HOUR = 3_600_000;
+
+/**
+ * jobs.jsonl field dialects, the same sets dispatchd's _vc_* helpers,
+ * metrics/loop.ts jobTimelines and fleet/eval-report.ts foldJobsLedger
+ * accept: job ids take job|job_id|jobId|id; the event name event|type|kind;
+ * the phase outcome|state|status (outcome first, so a reconciler-swapped
+ * outcome beats a stale copied state); timestamps prefer mergedAt on MERGED
+ * rows then ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt
+ * (dispatchd's %z stamps need parseLedgerTs); the lane alias pool|arm; the
+ * ledger ttm reads ttm_s|ttmS.
+ */
+const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const EVENT_KEYS = ['event', 'type', 'kind'] as const;
+const PHASE_KEYS = ['outcome', 'state', 'status'] as const;
+const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
+const TTM_KEYS = ['ttm_s', 'ttmS'] as const;
+
+const firstString = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+};
+
+/** First parseable stamp; a MERGED row's mergedAt is the GitHub merge instant and wins. */
+function ledgerTs(row: Record<string, unknown>, phase: string): number | null {
+  const fields = phase === 'MERGED' ? ['mergedAt', ...TS_KEYS.filter(k => k !== 'mergedAt')] : TS_KEYS;
+  for (const key of fields) {
+    const at = parseLedgerTs(row[key]);
+    if (at !== null) return at;
+  }
+  return null;
+}
+
+function ledgerTtm(row: Record<string, unknown>): number | null {
+  for (const key of TTM_KEYS) {
+    const value = row[key];
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
+  }
+  return null;
+}
+
 export function mergeGraph(raw: string | null, now = Date.now()): MergeGraphReport {
   const base = { schema: 'metrics.merges.v1', windowHours: 24 } as const;
   if (raw === null) return { ...base, known: false, lanes: null };
@@ -15,14 +61,22 @@ export function mergeGraph(raw: string | null, now = Date.now()): MergeGraphRepo
   for (const line of raw.split(/\r?\n/)) {
     let row: Record<string, unknown>;
     try { const parsed: unknown = JSON.parse(line); if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue; row = parsed as Record<string, unknown>; } catch { continue; }
-    const id = row.job ?? row.job_id;
-    const at = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
-    if (typeof id !== 'string' || !id.trim() || !Number.isFinite(at) || at > now) continue;
-    const lane = typeof row.lane === 'string' && row.lane.trim() ? row.lane.trim() : null;
-    if (row.event === 'launch' && lane && at >= (launches.get(id)?.at ?? -Infinity)) launches.set(id, { lane, at });
-    if (row.event !== 'outcome' || row.state !== 'MERGED' || at < start || at >= end || at < (merges.get(id)?.at ?? -Infinity)) continue;
-    const seconds = typeof row.ttm_s === 'number' && Number.isFinite(row.ttm_s) && row.ttm_s >= 0 ? row.ttm_s : null;
-    merges.set(id, { lane, at, seconds });
+    const id = firstString(row, JOB_KEYS);
+    if (id === null) continue;
+    const phase = (firstString(row, PHASE_KEYS) ?? '').toUpperCase();
+    const event = (firstString(row, EVENT_KEYS) ?? '').toLowerCase();
+    // A terminal outcome/state/status of MERGED is merge evidence whatever the
+    // event name says — the metrics-outcomes reconciler copies the PUBLISHED
+    // row and only swaps the outcome, so its rows keep event:'publish' beside
+    // outcome/status MERGED. A `merged` event counts only with no phase, and a
+    // contradictory terminal state still wins over the event name.
+    const isMerge = phase === 'MERGED' || (phase === '' && event === 'merged');
+    const at = ledgerTs(row, phase);
+    if (at === null || at > now) continue;
+    const lane = firstString(row, LANE_KEYS);
+    if (event === 'launch' && lane !== null && at >= (launches.get(id)?.at ?? -Infinity)) launches.set(id, { lane, at });
+    if (!isMerge || at < start || at >= end || at < (merges.get(id)?.at ?? -Infinity)) continue;
+    merges.set(id, { lane, at, seconds: ledgerTtm(row) });
   }
   const groups = new Map<string, { count: number; times: number[] }[]>();
   for (const [id, merge] of merges) {

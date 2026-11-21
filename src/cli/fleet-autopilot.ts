@@ -72,7 +72,7 @@ export async function cmdFleetAutopilot(args: string[], deps: FleetAutopilotDeps
     }
     else { console.error(USAGE); return 2; }
   }
-  const state = await (deps.loadState ?? ((o) => readFleetAutopilotState(o)))({ runsDir: runsDir ?? join(homedir(), '.ashlr-runs'), repos });
+  const state = await (deps.loadState ?? ((o) => readFleetAutopilotState({ ...o, localWorkers: async () => (await (await import('../core/fleet/local-capacity.js')).readLocalCapacity({ runsDir: o.runsDir })).workers })))({ runsDir: runsDir ?? join(homedir(), '.ashlr-runs'), repos });
   const report = sanitizePublicJson(planFleetAutopilot(state)) as AutopilotReport;
   console.log(json ? JSON.stringify(report) : formatAutopilotReport(report));
   return 0;

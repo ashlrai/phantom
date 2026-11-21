@@ -66,6 +66,15 @@ describe('buildLoopStages', () => {
     expect(buildLoopStages(row('RQ-A', 'finish', 5), null, now).headline).toBe('Biggest wait: unknown (no job has two timestamps for any stage)');
   });
 
+  it('flags a jobs tail cut at the read cap and says so in the text lines', () => {
+    const ledger = complete('RQ-ONE', 1).join('\n');
+    const cut = buildLoopStages(ledger, null, now, undefined, null, true);
+    expect(cut.jobs_truncated).toBe(true);
+    expect(loopStagesText(cut).join('\n')).toContain('tail was cut');
+    expect(buildLoopStages(ledger, null, now, undefined, null, false).jobs_truncated).toBe(false);
+    expect(buildLoopStages(ledger, null, now).jobs_truncated).toBeNull();
+  });
+
   it('writes the slowest-stage sentence in minutes, seconds or hours', () => {
     expect(minutesText(41)).toBe('41 min');
     expect(minutesText(0.5)).toBe('30 s');
@@ -85,7 +94,7 @@ describe('parseSince', () => {
 describe('phm metrics loop --since --json', () => {
   const readers = (ledger: string): LoopReaders => ({
     runsDir: '/nowhere', now: () => now,
-    readText: async (path: string) => path.endsWith('jobs.jsonl') ? ledger : null,
+    readText: async (path: string) => path.endsWith('jobs.jsonl') ? { text: ledger, truncated: false } : null,
     gh: async (args: string[]) => args[0] === 'api' ? JSON.stringify([{ tag_name: 'v0', created_at: min(-100) }, { tag_name: 'v1', created_at: min(100) }]) : null,
     installed: async () => null, nodes: () => null, peerTasks: async () => null, ncpu: () => 4,
   } as unknown as LoopReaders);

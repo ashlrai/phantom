@@ -39,6 +39,14 @@ it('says unknown with the reason when releases cannot be read', () => {
   expect(screen.getByText(/Merged to released: unknown\. GitHub releases could not be read/)).toBeTruthy();
 });
 
+it('warns when the jobs tail was cut at the read cap', () => {
+  render(<LoopStagesCard report={buildLoopStages(ledger, null, now, undefined, null, true)} />);
+  expect(screen.getByText(/tail was cut at the read cap/)).toBeTruthy();
+  cleanup();
+  render(<LoopStagesCard report={buildLoopStages(ledger, null, now)} />);
+  expect(screen.queryByText(/tail was cut/)).toBeNull();
+});
+
 it('offers one 24 hours / 7 days control and reports the pick', () => {
   const picks: string[] = [];
   render(<LoopStagesCard report={buildLoopStages(ledger, null, now, 7 * 86_400_000)} range="7d" onWindow={w => picks.push(w)} />);

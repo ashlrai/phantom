@@ -12,9 +12,10 @@ function thread(over: Partial<SessionThread> = {}, session: Partial<SessionThrea
     session: { id: 'RQ-A', kind: 'worker', lane: 'claude', model: 'fixture-model', repo: 'phantom', jobId: 'RQ-A', parentId: 'leader', state: 'running',
       lastMessageAgeSeconds: 120, prUrl: null, ...session },
     summary: ['Running for 30 minutes on claude.', 'It last said: Running the tests.'],
-    messages: [],
+    messages: [], depth: null, deeper: false,
     sources: { activity: 'available', bus: 'none', owner: 'none', replies: 'none', orders: 'none' },
     gaps: [],
+    control: null,
     reply: { to: 'job', job: 'RQ-A', hint: '' },
     ...over,
   };
@@ -137,6 +138,13 @@ describe('/thread', () => {
       expect(await runSessionCommand({ name: 'thread', arg: 'RQ-A' }, d)).toBe('Opened RQ-A in Conversations. The session list did not answer, so the name is unchecked.');
       expect(d.openConversation).toHaveBeenCalledExactlyOnceWith('RQ-A');
     }
+  });
+
+  it('says so when the conversation opened in the Leader pane itself', async () => {
+    const here = deps({ openConversation: vi.fn(() => 'leader' as const) });
+    expect(await runSessionCommand({ name: 'thread', arg: 'RQ-A' }, here)).toBe('Opened the conversation with RQ-A (running, claude). Esc in it comes back here.');
+    const unchecked = deps({ openConversation: vi.fn(() => 'leader' as const), sessions: vi.fn(async () => null) });
+    expect(await runSessionCommand({ name: 'thread', arg: 'RQ-A' }, unchecked)).toBe('Opened RQ-A here. The session list did not answer, so the name is unchecked.');
   });
 });
 

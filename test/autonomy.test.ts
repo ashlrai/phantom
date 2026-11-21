@@ -24,6 +24,14 @@ it('counts all-agent merges, releases and fleet improvements with a stable wire 
   expect(json(buildAutonomy(input(rows.reverse(), { releases: [json({ repo: 'phantom', tag: 'v1', publishedAt: at() })] })))).toBe(json(report));
   expect(Object.keys(report)).toEqual(['schema', 'generatedAt', 'windowHours', 'merged', 'mergedPerHour', 'withoutHumanShare', 'selfImprovementShare', 'releases', 'mainGreenShare', 'headline', 'actorsKnown', 'filesKnown', 'malformedLines', 'pathRules']);
 });
+it('reads jobs-ledger dialect spellings for outcome rows', () => {
+  const dialect = { type: 'outcome', job_id: 'RQ-DIALECT-1', phase: 'MERGED', recordedAt: at(),
+    repo: 'ashlrai/phantom', html_url: 'https://github.com/ashlrai/phantom/pull/88',
+    author: bot, mergedBy: bot, reviews: [], files: ['src/cli/fleet.ts'] };
+  const report = buildAutonomy(input([pull(), dialect]));
+  expect(report.merged).toBe(2);
+  expect(report.malformedLines).toBe(0);
+});
 it.each(['author', 'mergedBy', 'reviews'])('detects a human %s even when other actors are missing', role => {
   const extra = role === 'reviews' ? { reviews: [{ state: 'APPROVED', author: human }] } : { [role]: human };
   expect(buildAutonomy(input([pull(), pull(2, extra)])).withoutHumanShare).toBe(0.5);

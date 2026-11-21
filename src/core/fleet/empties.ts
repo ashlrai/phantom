@@ -8,7 +8,7 @@
  * null (JSON) or "unknown" (text), never zero.
  */
 import { join } from 'node:path';
-import { classifyEmptyCause, EMPTY_CAUSE_TAIL_LINES, exists, ledgerRows, readText, type EmptyCause, type EmptyEvidence, type LedgerRow } from './empty-cause.js';
+import { classifyEmptyCause, EMPTY_CAUSE_TAIL_LINES, exists, ledgerEventName, ledgerRows, ledgerStateTokens, readText, type EmptyCause, type EmptyEvidence, type LedgerRow } from './empty-cause.js';
 import { REASON_LINE, TIMEOUT_EXITS } from './lane-empty-causes.js';
 
 export const EMPTY_REASONS = ['already_on_master', 'no_eligible_target', 'no_diff', 'blocked_tool', 'tool_missing', 'precheck_skip', 'timeout', 'model_error', 'unknown'] as const;
@@ -41,14 +41,15 @@ export function finishesIn(rows: readonly LedgerRow[]): (EmptiesFinish & { at: n
   const launches = new Map<string, number>();
   for (const { row, id, lane, at } of [...rows].sort((a, b) => a.at - b.at)) {
     if (!id) continue;
-    if (row.event === 'launch') {
+    const eventName = ledgerEventName(row);
+    if (eventName === 'launch') {
       launches.set(id, at);
       continue;
     }
     // `applied: false` is the skip gate's dry run: the job still launched, so only its finish row counts.
-    const skipped = SKIP_EVENTS.has(row.event as string) && row.applied !== false;
-    const marked = [row.event, row.outcome, row.state].includes('EMPTY_DONE');
-    const ended = row.event === 'finish' || (row.event === 'outcome' && typeof row.empty === 'boolean');
+    const skipped = eventName !== null && SKIP_EVENTS.has(eventName) && row.applied !== false;
+    const marked = ledgerStateTokens(row).includes('EMPTY_DONE');
+    const ended = eventName === 'finish' || (eventName === 'outcome' && typeof row.empty === 'boolean');
     if (!skipped && !marked && !ended) continue;
     const previous = newest.get(id);
     const launch = launches.get(id);

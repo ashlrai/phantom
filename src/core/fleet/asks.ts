@@ -25,6 +25,19 @@ import { join } from 'node:path';
 
 export const ASK_KINDS = ['password', '2fa', 'device', 'payment', 'outreach', 'usage', 'approval'] as const;
 export type AskKind = typeof ASK_KINDS[number];
+/**
+ * The type every ask carries. Only the first four are things software cannot do for Mason; the rest are `other`
+ * and are hidden from his default lists (`phm asks list --all` shows them with what the fleet did instead).
+ */
+export const ASK_TYPES = ['password', 'two-factor', 'device-approval', 'payment', 'other'] as const;
+export type AskType = typeof ASK_TYPES[number];
+const TYPE_OF: Record<AskKind | 'signin', AskType> = {
+  password: 'password', signin: 'password', '2fa': 'two-factor', device: 'device-approval', payment: 'payment',
+  outreach: 'other', usage: 'other', approval: 'other',
+};
+export const askTypeOf = (kind: AskKind | 'signin'): AskType => TYPE_OF[kind];
+/** True for the four types Mason is asked about by default. */
+export const isMasonOnly = (type: AskType): boolean => type !== 'other';
 /** `later` records "not now": the asker reads it and may ask again; nothing is snoozed here. */
 export const ASK_ANSWERS = ['yes', 'no', 'done', 'later'] as const;
 export type AskAnswer = typeof ASK_ANSWERS[number];
@@ -49,6 +62,8 @@ export interface Ask {
   shortId: string;
   /** `signin` for a sign-in ask (stored as the `password` kind), else the stored kind. */
   kind: AskKind | 'signin';
+  /** password, two-factor, device-approval, payment or other. */
+  type: AskType;
   /** One plain line: what Mason is asked to do (the question). */
   request: string;
   /** Allowed replies, one word each. Empty when the reply is a value (see replyHint). */
@@ -78,6 +93,8 @@ export interface AsksList {
   fleetDecides: number;
   /** Asks past their expiry: hidden from `asks`, counted here so the hiding is visible. */
   expiredHidden: number;
+  /** Open asks of type other, left out of this list (set by onlyMasonAsks; 0 when the list is not filtered). */
+  otherHidden?: number;
 }
 
 export type AskAnswerStatus = 'answered' | 'already-answered' | 'refused' | 'unknown' | 'ambiguous' | 'invalid' | 'unavailable';
@@ -113,7 +130,7 @@ const WORDING: Array<[AskKind, RegExp]> = [
   ['payment', /\b(payment|pay\s+(?:for|the)|billing|invoice|purchase|top[- ]?up|credit\s+card|card\s+(?:declined|update))\b|\$\s*\d/i],
 ];
 
-const runsDirOf = (options: AsksOptions): string =>
+export const runsDirOf = (options: AsksOptions): string =>
   options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
 const isKind = (value: unknown): value is AskKind => typeof value === 'string' && (ASK_KINDS as readonly string[]).includes(value);
 export const isAskAnswer = (value: unknown): value is AskAnswer => typeof value === 'string' && (ASK_ANSWERS as readonly string[]).includes(value);
@@ -177,7 +194,7 @@ export function listAsks(options: AsksOptions = {}): AsksList {
     if (expiryMs(ask.expires) <= nowMs) { expiredHidden++; continue; }
     const createdMs = ask.created === null ? NaN : Date.parse(ask.created);
     asks.push({
-      id: item.id, shortId: shorts.get(item.id)!, kind: reportKind(ask), request: ask.request, replies: [...ASK_REPLIES[ask.kind]],
+      id: item.id, shortId: shorts.get(item.id)!, kind: reportKind(ask), type: askTypeOf(reportKind(ask)), request: ask.request, replies: [...ASK_REPLIES[ask.kind]],
       replyHint: ask.kind === 'usage' ? 'a number from 0 to 100' : null, unblocks: ask.unblocks, subject: ask.subject, created: ask.created,
       ageSeconds: Number.isFinite(createdMs) ? Math.max(0, Math.floor((nowMs - createdMs) / 1000)) : null, expires: ask.expires,
     });
@@ -186,6 +203,12 @@ export function listAsks(options: AsksOptions = {}): AsksList {
   asks.sort((a, b) => expiryMs(a.expires) - expiryMs(b.expires));
   return { schema: 'asks.v1', asOf: new Date(nowMs).toISOString(), ledger: ledger.status, count: asks.length, asks,
     fleetDecides: open.filter(item => !APPROVAL_LINE.test(item.text)).length - asks.length - expiredHidden, expiredHidden };
+}
+
+/** The default view: only the four types software cannot answer. The rest are counted, not listed. */
+export function onlyMasonAsks(list: AsksList): AsksList {
+  const asks = list.asks.filter(ask => isMasonOnly(ask.type));
+  return { ...list, asks, count: asks.length, otherHidden: list.asks.length - asks.length };
 }
 
 export type RaiseAskResult =
@@ -359,9 +382,11 @@ export function formatAge(seconds: number | null): string {
 
 export function asksText(list: AsksList): string[] {
   if (list.ledger === 'unavailable') return ['Asks: unknown (the needs-you ledger could not be read).'];
-  if (list.count === 0) return ['Nothing needs you.'];
+  const more = (list.otherHidden ?? 0) > 0 ? ` ${list.otherHidden} more the fleet handles: phm asks list --all` : '';
+  if (list.count === 0) return [`Nothing needs you.${more}`];
   return [
     `${list.count} ${list.count === 1 ? 'ask needs' : 'asks need'} you. Answer with: phm asks answer <id> <reply>`,
     ...list.asks.map(ask => `${ask.shortId}  ${ask.kind.padEnd(8)}  ${formatAge(ask.ageSeconds).padStart(7)}  ${ask.request} [${ask.replyHint ?? ask.replies.join('/')}]${ask.unblocks ? ` -> ${ask.unblocks}` : ''}${ask.expires ? ` (expires ${ask.expires.slice(0, 10)})` : ''}`),
+    ...(more ? [more.trim()] : []),
   ];
 }

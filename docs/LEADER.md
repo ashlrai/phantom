@@ -244,6 +244,41 @@ phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky
   absence; it reads unknown when the fleet read has not answered. The first
   visit shows no card. The last-looked time is kept in this browser profile
   only.
+- **App actions:** the desktop Leader pane shows what Phantom did to this
+  Mac's apps where it happened in the conversation. Each open, focus, quit
+  and restart from the app action log (`phm apps log --json`) is a line with
+  its outcome ("Opened Xcode", "Refused to quit Slack"), the time it was
+  logged and the log's own detail. Actions with nothing said between them
+  form one **Mac apps** group; a group of more than four lists its newest
+  three until you choose **Show N earlier**, and says how many need a look
+  (refused, failed, waiting on you or with no result). **Mac host** opens the
+  pane that lists and opens apps; the conversation itself acts on nothing.
+  Only actions logged since the oldest message shown are placed, so loading
+  earlier messages brings earlier actions with them. **Find** searches them,
+  and **Needs you only** leaves them out. The **App actions** button in the
+  toolbar hides or shows them; the choice is kept in this browser profile,
+  and while they are hidden the log is not read. The log is read every 30
+  seconds while the pane is on screen. If it does not answer the toolbar says
+  **App actions unknown** and no line is drawn; a phone, which the log route
+  does not serve, shows none.
+- **Leader health:** when the Leader's own passes fail, the desktop Leader
+  pane says so just above the reply box, where you are about to write. One
+  failed pass is a warning. From two in a row, the count at which
+  `phm fleet leader-health` exits 1, the notice turns red and says the Leader
+  is not reading you: what you send is kept in its inbox until a pass
+  succeeds. It gives the number of failed passes, how long ago a pass last
+  succeeded (or that the dispatch log holds none), and the first line the
+  failing pass wrote as the cause, or "unknown" when it left no output. When
+  the cause names its own fix, as an expired Claude sign-in does, a button
+  copies that command. **Open the journal** opens the Leader journal and
+  **Check again** reads now. After a notice has been on screen, the first
+  read that counts no failure says the Leader is passing again until you
+  dismiss it. A healthy Leader, a log with no pass in it and a read that did
+  not answer show no notice; the line under the reply box still says when the
+  last pass ran. The pane reads `GET /api/verse/leader/health` (read session
+  required; the same `fleet.leader-health.v1` document as
+  `phm fleet leader-health --json`) once a minute while it is on screen, and
+  the server shares one reading for 15 seconds.
 
 ---
 

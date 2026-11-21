@@ -38,20 +38,40 @@ describe('phm fleet self-tick --status', () => {
     expect(s).toMatchObject({ state: 'recorded', at: AT, ageSeconds: 1800, mode: 'apply' });
     if (s.state !== 'recorded') throw new Error('expected a record');
     expect(s.hooks).toEqual([
-      { hook: 'autofill', state: 'ran', items: 3, note: null },
-      { hook: 'gaps', state: 'ran', items: 2, note: null },
-      { hook: 'reap', state: 'ran', items: 7, note: null },
+      { hook: 'autofill', state: 'ran', items: 3, count: null, note: null },
+      { hook: 'gaps', state: 'ran', items: 2, count: 5, note: null },
+      { hook: 'reap', state: 'ran', items: 7, count: null, note: null },
     ]);
     expect(selfTickStatusLines(s)).toEqual([
-      `self-tick last ran ${AT} (30 min ago, apply)`, '  autofill 3 items', '  gaps 2 items', '  reap 7 items',
+      `self-tick last ran ${AT} (30 min ago, apply)`, '  autofill 3 items', '  gaps: 5 candidates, 2 queued', '  reap 7 items',
     ]);
   });
 
-  it('a hook that did not run is skipped with its reason, never a zero', () => {
+  it('a gap hook that ran and found no candidates says zero candidates, and JSON carries count 0', () => {
+    record({ autofill: { runs: [], reason: 'No lane is starved.', gaps: { candidates: 0, queued: 0, skipped: 0, unknown: false } } });
+    const s = readSelfTickStatus(runs, NOW);
+    if (s.state !== 'recorded') throw new Error('expected a record');
+    expect(s.hooks[1]).toEqual({ hook: 'gaps', state: 'ran', items: 0, count: 0, note: null });
+    expect(selfTickStatusLines(s)[2]).toBe('  gaps: 0 candidates (no Remaining gaps found)');
+    expect(JSON.parse(JSON.stringify(s)).hooks[1]).toMatchObject({ count: 0 });
+  });
+
+  it('a gap hook that did not run is skipped with its reason, never a zero', () => {
     record({ autofill: { reason: 'custom-runs-dir-no-autofill' }, worktreeReap: { state: 'skipped', reason: 'below the warn line' } });
     const s = readSelfTickStatus(runs, NOW);
     if (s.state !== 'recorded') throw new Error('expected a record');
-    expect(s.hooks.map(h => [h.hook, h.state, h.items])).toEqual([['autofill', 'skipped', null], ['gaps', 'not-recorded', null], ['reap', 'skipped', null]]);
+    expect(s.hooks.map(h => [h.hook, h.state, h.items, h.count])).toEqual([
+      ['autofill', 'skipped', null, null], ['gaps', 'skipped', null, null], ['reap', 'skipped', null, null],
+    ]);
+    expect(selfTickStatusLines(s)[2]).toBe('  gaps: skipped (custom-runs-dir-no-autofill)');
+    expect(selfTickStatusLines(s)[3]).toBe('  reap skipped (below the warn line)');
+  });
+
+  it('a record with autofill but no gap numbers reads the gap hook as skipped for the reason given', () => {
+    record({ autofill: { runs: [], reason: 'No lane is starved.', gaps: null } });
+    const s = readSelfTickStatus(runs, NOW);
+    if (s.state !== 'recorded') throw new Error('expected a record');
+    expect(selfTickStatusLines(s)[2]).toBe('  gaps: skipped (no gap note in this report (older build))');
   });
 
   it('a record without hook numbers reads not recorded', () => {

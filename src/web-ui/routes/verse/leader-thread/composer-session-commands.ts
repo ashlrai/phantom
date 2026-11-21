@@ -17,8 +17,8 @@ import { openDockPane } from '../dock/dock-store.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { sessionThreadQuery, STATE_WORD, threadFailure, type SessionThread } from '../fleet-sessions/session-thread-model.js';
 import { liveSessionsQuery } from '../fleet-sessions/sessions-model.js';
-import { requestWallSession } from '../session-wall/wall-selection.js';
 import { sessionArg, type ComposerCommandName } from './composer-commands.js';
+import { openConversationFromLeader, type ReadingPlace } from './leader-reading.js';
 import { rosterHeadline, rosterRows } from './leader-roster-model.js';
 
 export type SessionCommandName = Extract<ComposerCommandName, 'who' | 'thread' | 'summary' | 'log'>;
@@ -34,14 +34,15 @@ export interface SessionCommandDeps {
   sessions: () => Promise<LiveSessionsV1 | null>;
   /** One session as a conversation; null when the answer is not one. */
   thread: (id: string) => Promise<SessionThread | null>;
-  openConversation: (id: string) => void;
+  /** Opens the session as a conversation; may say where, so the answer can (`leader`: in the Leader pane itself). */
+  openConversation: (id: string) => ReadingPlace | void;
   openLog: (job: string) => void;
 }
 
 export const liveSessionDeps: SessionCommandDeps = {
   sessions: () => liveSessionsQuery.fetch(),
   thread: id => sessionThreadQuery(id).fetch(),
-  openConversation: id => { requestWallSession(id); openDockPane('session-wall'); },
+  openConversation: openConversationFromLeader,
   openLog: job => { requestWorkerLogJob(job); openDockPane('worker-log'); },
 };
 
@@ -92,14 +93,14 @@ async function thread(id: string, deps: SessionCommandDeps): Promise<string> {
   let list: LiveSessionsV1 | null = null;
   try { list = await deps.sessions(); } catch { /* opened unchecked below */ }
   if (list === null) {
-    // The Conversations pane makes its own read and says so when it cannot find the session.
-    deps.openConversation(id);
-    return `Opened ${id} in Conversations. The session list did not answer, so the name is unchecked.`;
+    // The conversation makes its own read and says so when it cannot find the session.
+    const place = deps.openConversation(id);
+    return `Opened ${id} ${place === 'leader' ? 'here' : 'in Conversations'}. The session list did not answer, so the name is unchecked.`;
   }
   const node = namedSession(list, id);
   if (node === null) return `No session named ${id} is in the session list, so nothing was opened. /who lists the ones working now.`;
-  deps.openConversation(node.id);
-  return `Opened the conversation with ${node.jobId ?? node.id} (${STATE_WORD[node.state]}, ${laneWords(node.lane)}).`;
+  const place = deps.openConversation(node.id);
+  return `Opened the conversation with ${node.jobId ?? node.id} (${STATE_WORD[node.state]}, ${laneWords(node.lane)}).${place === 'leader' ? ' Esc in it comes back here.' : ''}`;
 }
 
 async function summary(id: string, deps: SessionCommandDeps): Promise<string> {

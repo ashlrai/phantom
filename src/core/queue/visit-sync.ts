@@ -47,7 +47,7 @@ function str(value: unknown): string | null {
 }
 
 function stateOf(row: Record<string, unknown>): string {
-  return String(row.outcome ?? row.state ?? row.status ?? '').toUpperCase();
+  return String(row.outcome ?? row.state ?? row.status ?? row.phase ?? row.result ?? row.conclusion ?? '').toUpperCase();
 }
 
 const TS_FIELDS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
@@ -64,7 +64,7 @@ function eventTs(row: Record<string, unknown>, state: string): number | null {
 }
 
 function urlOf(row: Record<string, unknown>): string | null {
-  for (const key of ['url', 'prUrl', 'pr'] as const) {
+  for (const key of ['url', 'prUrl', 'pr_url', 'pr', 'html_url'] as const) {
     const value = str(row[key]);
     if (value) return value.replace(/\/+$/, '');
   }
@@ -93,7 +93,7 @@ function classifyRow(row: Record<string, unknown>, order: number, now: number): 
   return {
     kind, at, order,
     url: urlOf(row),
-    lane: str(row.lane),
+    lane: str(row.lane ?? row.pool),
     action: str(row.action),
     launchedFalse: row.launched === false,
   };
