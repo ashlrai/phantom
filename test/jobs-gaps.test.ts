@@ -266,3 +266,45 @@ describe('gaps from published jobs', () => {
     expect(await cmdJobsGaps(['--max', 'many'], read)).toBe(2);
   });
 });
+
+describe('gaps and lanes that can run them', () => {
+  const dropDir = join('leader', 'drop', 'claude');
+  const lane = (name: string, over: Record<string, unknown> = {}) => ({ lane: name, running: 0, target: 8, queued: 0, held: false, remainingPct: 68, resetAt: null, ...over });
+  const stuckLanes = [lane('codex-personal', { queued: 10, remainingPct: 0, resetAt: '2026-11-21T20:30:00Z' }), lane('claude', { remainingPct: 68 })];
+  const dropFiles = async () => (await readdir(join(root, dropDir)).catch(() => [])).filter(f => f.endsWith('.md'));
+  const fillPrompts = async (n: number) => {
+    await mkdir(join(root, 'queue', 'prompts'), { recursive: true });
+    for (let i = 0; i < n; i++) await writeFile(join(root, 'queue', 'prompts', `RQ-PHX-FULL${String(i).padStart(3, '0')}.md`), 'waiting\n');
+  };
+  const run = (lanes: readonly unknown[] | undefined) => readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, ...none, ...(lanes ? { lanes: lanes as never } : {}) });
+
+  it('queues gaps for the idle lane when only rows on a used-up pool fill the queue', async () => {
+    await seed({ 'RQ-A': '## Gaps\n- Wire the digest into the weekly report\n' });
+    await fillPrompts(40);
+    const report = await run(stuckLanes);
+    expect(report.proposed).toMatchObject([{ queued: true, lane: 'claude', skipped: null }]);
+    expect(await dropFiles()).toHaveLength(1);
+  });
+
+  it('skips with the full reason when the rows can launch', async () => {
+    await seed({ 'RQ-A': '## Gaps\n- Wire the digest into the weekly report\n' });
+    await fillPrompts(40);
+    const report = await run([lane('claude', { queued: 1, running: 1 })]);
+    expect(report.proposed).toMatchObject([{ queued: false, skipped: 'the job queue is full' }]);
+    expect(await dropFiles()).toHaveLength(0);
+  });
+
+  it('moves gap work to the next lane with room and skips when no lane has any', async () => {
+    await seed({ 'RQ-A': '## Gaps\n- Wire the digest into the weekly report\n' });
+    expect((await run([lane('claude', { held: true }), lane('codex-local', { running: 2, target: 7 })])).proposed).toMatchObject([{ queued: true, lane: 'codex-local' }]);
+    await rm(join(root, 'metrics', 'gap-proposed.jsonl'), { force: true });
+    await rm(join(root, dropDir), { recursive: true, force: true });
+    expect((await run([lane('claude', { running: 8 })])).proposed).toMatchObject([{ queued: false, skipped: 'no lane has free slots and usage left' }]);
+  });
+
+  it('keeps the old routing when the lanes are unknown', async () => {
+    await seed({ 'RQ-A': '## Gaps\n- Wire the digest into the weekly report\n' });
+    expect((await run(undefined)).proposed).toMatchObject([{ queued: true }]);
+    expect((await readFile(join(root, dropDir, (await dropFiles())[0]!), 'utf8')).split('\n')[0]).toBe('#job repo=phantom lane=claude tier=work');
+  });
+});

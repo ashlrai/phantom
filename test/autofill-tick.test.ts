@@ -230,3 +230,25 @@ describe('autofill tick gap harvest', () => {
     expect(failing.runs).toHaveLength(1);
   });
 });
+
+describe('autofill tick gap note with lanes that cannot launch', () => {
+  it('names the lane that got the gaps and the rows waiting on a used-up pool', async () => {
+    const lanes: LaneSnapshotView = { lanes: [
+      { lane: 'claude', running: 0, target: 8, queued: 0, held: false, remainingPct: 68 },
+      { lane: 'codex-personal', running: 0, target: 1, queued: 10, held: false, remainingPct: 0, resetAt: '2026-11-21T20:30:00Z' },
+    ] };
+    const gaps = { schema: 'jobs.gaps.v1', sinceHours: 24, known: true, unknownSources: [], jobsScanned: 1, jobsWithoutGaps: [], candidates: new Array(36).fill({ title: 'a', repo: 'phantom', sourceJob: 'J', why: 'w' }),
+      dropped: [], proposed: [{ title: 'a', repo: 'phantom', sourceJob: 'J', why: 'w', jobId: 'GAPX', queued: true, skipped: null, lane: 'claude' }] } as never;
+    const seen: unknown[] = [];
+    const report = await tick({}, { readLanes: async () => lanes, lastGapQueuedMs: async () => null, harvestGaps: async o => { seen.push(o.lanes); return gaps; } });
+    expect(seen[0]).toEqual(lanes.lanes);
+    expect(report.gapsNote).toMatch(/^36 gaps found, queued 1 for claude \(0 of 8 busy\); 10 rows wait on codex-personal \(back \w{3} .*(AM|PM)\)$/);
+  });
+
+  it('never writes on a dry run', async () => {
+    const harvestGaps = vi.fn();
+    const report = await tick({ claude: 0 }, { harvestGaps }, false);
+    expect(harvestGaps).not.toHaveBeenCalled();
+    expect(report.gaps).toBeNull();
+  });
+});

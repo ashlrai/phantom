@@ -19,7 +19,7 @@ export interface SelfTickHook {
 
 const rec = (v: unknown): Record<string, unknown> | null => typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Record<string, unknown> : null;
 const num = (v: unknown): number | null => typeof v === 'number' && Number.isFinite(v) ? v : null;
-const text = (v: unknown): string | null => typeof v === 'string' ? v.slice(0, 120) : null;
+const text = (v: unknown): string | null => typeof v === 'string' ? v.slice(0, 200) : null;
 const missing = (hook: SelfTickHookName): SelfTickHook => ({ hook, state: 'not-recorded', items: null, count: null, note: null });
 const skipped = (hook: SelfTickHookName, reason: unknown): SelfTickHook => ({ hook, state: 'skipped', items: null, count: null, note: text(reason) });
 const failed = (hook: SelfTickHookName, error: unknown): SelfTickHook => ({ hook, state: 'failed', items: null, count: null, note: text(error) ?? 'unknown error' });
