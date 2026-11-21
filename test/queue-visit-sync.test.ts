@@ -12,6 +12,19 @@ const at = (visits: QueueVisit[], job: string, station: string, attempt = 1) =>
   visits.find(v => v.station === station && v.id === `${job}:a${attempt}`);
 
 describe('queueVisitsFromJobs', () => {
+  it('reads the jobs-ledger field dialect', () => {
+    const { visits, jobs, invalid } = queueVisitsFromJobs(ledger(
+      { type: 'enqueue', job_id: 'RQ-D', pool: 'dialect-lane', timestamp: T('14:00:00') },
+      { type: 'launch', job_id: 'RQ-D', pool: 'dialect-lane', timestamp: T('14:00:30') },
+      { kind: 'finish', jobId: 'RQ-D', lane: 'dialect-lane', at: T('14:02:00') },
+      { type: 'publish', job: 'RQ-D', pr_url: 'https://github.com/x/y/pull/9', time: T('14:02:30') },
+      { kind: 'outcome', result: 'MERGED', id: 'RQ-D', html_url: 'https://github.com/x/y/pull/9', mergedAt: '2026-11-05T14:06:00+00:00' },
+    ), NOW);
+    expect(invalid).toBe(0);
+    expect(at(visits, 'RQ-D', 'merged')).toMatchObject({ pool: 'dialect-lane' });
+    expect(jobs.get('RQ-D')?.lane).toBe('dialect-lane');
+  });
+
   it('folds a full lifecycle into per-station visits', () => {
     const { visits, invalid } = queueVisitsFromJobs(ledger(
       { event: 'enqueue', job: 'RQ-A', repo: 'phantom', lane: 'codex-personal', tier: 'work', ts: T('14:00:00') },
