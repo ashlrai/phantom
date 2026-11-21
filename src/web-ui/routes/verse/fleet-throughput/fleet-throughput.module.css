@@ -1,6 +1,7 @@
 /* One readable column: the window switch and headline on top, then the flow and the hourly charts. Wraps the same at 390 px. */
 .root { display: flex; flex-direction: column; gap: var(--space-3); width: 100%; max-width: 56rem; margin: 0 auto; padding: var(--space-3); min-width: 0; overflow-wrap: anywhere; }
 .head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.switches { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .head h2 { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-weight: var(--font-weight-semibold); }
 .headline { margin: 0; color: var(--text-primary); font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; }
 .meta, .note { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }

@@ -157,6 +157,13 @@ hourly charts each lane has a card: the provider's mark, its merged count, a bar
 against the lane that merged most, its merges hour by hour and its launched,
 published, merge time and changed-nothing readings. A figure the report does
 not hold reads unknown and has no line under it.
+A second switch groups those cards by lane (the default), repo or tier, the
+same grouping `phm throughput --by repo --json` gives. Above the cards one bar
+splits the window's merged PRs between the groups, with each part's count and
+share named under it: up to six groups get a colour, the rest are folded into
+one part that says how many it holds, and merges whose job record names no
+lane, repo or tier are a hatched part labelled unknown. The bar is left out
+when nothing merged or a count is unknown. Only lanes carry a provider mark.
 Pick 6 hours, 24 hours (the default) or 7 days; each choice
 asks the same route `phm throughput --hours 168 --json` reads, so nothing is
 summed in the browser. An unreadable metrics file shows unknown, a quiet window
