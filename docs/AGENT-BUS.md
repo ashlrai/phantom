@@ -979,8 +979,9 @@ authority.
 `{v:1, status, jobs?, receipts, asOf}`; the two CLIs share one status filter,
 one announcement-address filter, newest-first order, hold regrouping and
 human rendering — each job line names the announcement's title, the newest
-status detail when the job carries one, claim keys and, on claim-annotated
-open jobs, `claimable=yes|no|unknown`,
+status detail when the job carries one, the declared dispatch spec
+(`tier=… scope="…" acceptance="…"`) when the post carried one, claim keys and,
+on claim-annotated open jobs, `claimable=yes|no|unknown`,
 scrubbed, single-lined and display-clipped while JSON keeps the full values.
 `--to <label>` keeps only jobs whose post was addressed to
 that routing label; like `bus next`, `bus-follow`, handoff receive and claim

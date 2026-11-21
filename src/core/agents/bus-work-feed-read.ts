@@ -4,7 +4,7 @@ import { coordinationRowBlocks, listCoordination, type CoordinationOrigin } from
 import { projectBusWorkFeed, type WorkFeedOwnerKeyFor, type WorkFeedProviderFor, type WorkFeedRefusalReceipt, type WorkFeedResult } from './bus-work-feed.js';
 import { agentAddressMatcher, agentIdentityKeys, readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
 import { scrubSecrets } from '../util/scrub.js';
-import type { Participant, WorkJob } from './bus-v2-schema.js';
+import type { Participant, WorkDispatch, WorkJob } from './bus-v2-schema.js';
 
 /** One live coordination lease blocking a job's declared claim key. */
 export interface BusWorkFeedHold {
@@ -286,6 +286,8 @@ export function projectBusWorkFeedView(result: BusWorkFeedReadResult, filters: B
 const FEED_TITLE_MAX = 160;
 const FEED_DETAIL_MAX = 200;
 const FEED_KEYS_MAX = 480;
+const DISPATCH_SCOPE_MAX = 200;
+const DISPATCH_ACCEPTANCE_MAX = 160;
 
 /** Scrubbed, single-line, clipped display field; '' when nothing readable remains. */
 function feedField(value: string, max: number): string {
@@ -294,8 +296,26 @@ function feedField(value: string, max: number): string {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
+/**
+ * The `dispatch` spec a `work.post` declared, rendered for the job line as
+ * ` tier=<t> scope="<clipped>" acceptance="<clipped>"` — the tier verbatim,
+ * scope and acceptance scrubbed, single-lined and display-clipped like every
+ * other feed field (JSON keeps the full values; `agents bus show <postId>`
+ * reads the untruncated body). '' when the job carries no dispatch, so
+ * callers append the result unconditionally.
+ */
+export function busWorkJobDispatch(dispatch: WorkDispatch | undefined): string {
+  if (dispatch === undefined) return '';
+  const scope = feedField(dispatch.scope, DISPATCH_SCOPE_MAX);
+  const acceptance = feedField(dispatch.acceptance, DISPATCH_ACCEPTANCE_MAX);
+  return ` tier=${dispatch.tier}` +
+    `${scope === '' ? '' : ` scope="${scope}"`}` +
+    `${acceptance === '' ? '' : ` acceptance="${acceptance}"`}`;
+}
+
 /** One human line for a single feed job: the announcement's own title, the
- * newest status's detail when it carries one, claim keys — display-clipped
+ * newest status's detail when it carries one, the declared dispatch spec when
+ * the post carried one, claim keys — display-clipped
  * (JSON keeps the full values) — and the wire ids of the retained envelopes
  * the job cites. Shared by the feed list and `agents bus show`'s job
  * annotation so both render a job identically. */
@@ -307,7 +327,7 @@ export function formatBusWorkFeedJob(job: BusWorkFeedJob): string {
     : ` claimable=${job.claimable === null ? 'unknown' : job.claimable ? 'yes' : 'no'}`;
   return `${job.id} ${job.status}${title === '' ? '' : ` "${title}"`}` +
     `${detail === '' ? '' : ` detail="${detail}"`}` +
-    ` owner=${job.owner} to=${job.to} provider=${job.provider} repo=${job.repo} keys=${keys}${claimable} ` +
+    ` owner=${job.owner} to=${job.to} provider=${job.provider} repo=${job.repo}${busWorkJobDispatch(job.dispatch)} keys=${keys}${claimable} ` +
     `updated=${new Date(job.updatedAt).toISOString()} post=${job.postId}` +
     `${job.statusId === null ? '' : ` status=${job.statusId}`}`;
 }
