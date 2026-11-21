@@ -7,15 +7,6 @@
 /* The share that would expire is the one thing to read at a glance; the words beside it say what the number is. */
 .figure { display: flex; align-items: baseline; gap: var(--space-1); color: var(--text-secondary); font-size: var(--text-xs-size); }
 .figure strong { color: var(--text-primary); font-family: var(--font-display); font-size: var(--text-xl-size); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; line-height: 1.1; letter-spacing: var(--tracking-display); }
-/* One bar, left to right: used now (solid), more by the reset at the measured burn (the same colour, lighter),
-   then the part left over, an empty track outlined in amber. Use is not health, so the fill is the accent. */
-.bar { display: flex; height: 0.375rem; border-radius: var(--radius-full); background: var(--meter-track); overflow: hidden; }
-.bar i { display: block; box-sizing: border-box; height: 100%; transition: width var(--duration-slow) var(--ease-standard); }
-.bar i[data-part='used'], .key li[data-part='used']::before { background: var(--accent-500); }
-.bar i[data-part='more'], .key li[data-part='more']::before { background: var(--accent-500); opacity: 0.4; }
-.bar i[data-part='unused'], .key li[data-part='unused']::before { border: 1px solid var(--status-warning-solid); }
-.bar i[data-part='unused'] { border-radius: 0 var(--radius-full) var(--radius-full) 0; }
+/* The bar is the design system's WindowBar; the key under it uses the bar's own swatches. */
 .key { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); margin: 0; padding: 0; list-style: none; }
 .key li { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
-.key li::before { content: ''; flex: none; box-sizing: border-box; width: 0.5rem; height: 0.5rem; border-radius: var(--radius-sm); }
-@media (prefers-reduced-motion: reduce) { .bar i { transition: none; } }
