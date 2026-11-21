@@ -48,6 +48,9 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
   if (e.diff_files_mean !== null) parts.push(`diff_files=${e.diff_files_mean}(${e.diff_files_known})`);
   if (e.diff_lines_mean !== null) parts.push(`diff_lines=${e.diff_lines_mean}(${e.diff_lines_known})`);
   if (e.passk_mean !== null) parts.push(`passk=${e.passk_mean}(${e.passk_known})`);
+  if (e.lane_overrides_known > 0 && e.lane_override_reasons !== null) {
+    parts.push(`lane_overrides=${e.lane_overrides_known}(${e.lane_override_reasons.map(r => `${r.reason}:${r.jobs}`).join(',')})`);
+  }
   return parts.length === 0 ? '' : ` evidence ${parts.join(' ')}`;
 }
 

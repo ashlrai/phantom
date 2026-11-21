@@ -87,6 +87,20 @@ export interface RouterWeightEvidence {
    * reason. A coverage count only; the reason tally lives at set level.
    */
   usage_missing_known: number;
+  /**
+   * Group outcomes (the known cohort) whose newest dispatch claim left
+   * its recorded lane hint — the market's `resource_fit` /
+   * `unknown_preference` / `preferred_lane_fallback` override or a
+   * `batch_session` move, per the claim/batch_claim rows the outcome
+   * fold carries as `lane_override`. A lane absorbing fallback work
+   * shows its off-hint share here, so a merge rate built partly on
+   * rerouted jobs reads differently than one built on preferred
+   * assignments. `lane_override_reasons` tallies the recorded reason
+   * codes over the same cohort, most jobs first; null when no outcome
+   * recorded an override — never zero-filled.
+   */
+  lane_overrides_known: number;
+  lane_override_reasons: { reason: string; jobs: number }[] | null;
 }
 
 export interface RouterWeightProposalOptions {
@@ -189,6 +203,8 @@ interface WeightEvidenceTally {
   diffFilesSum: number; diffFilesKnown: number;
   diffLinesSum: number; diffLinesKnown: number;
   usageMissingKnown: number;
+  laneOverrides: number;
+  overrideReasons: Map<string, number>;
 }
 
 const freshTally = (): WeightEvidenceTally => ({
@@ -198,6 +214,7 @@ const freshTally = (): WeightEvidenceTally => ({
   tokensSum: 0, tokensKnown: 0, passkSum: 0, passkKnown: 0,
   acusSum: 0, acusKnown: 0, diffFilesSum: 0, diffFilesKnown: 0,
   diffLinesSum: 0, diffLinesKnown: 0, usageMissingKnown: 0,
+  laneOverrides: 0, overrideReasons: new Map(),
 });
 
 /**
@@ -207,6 +224,8 @@ const freshTally = (): WeightEvidenceTally => ({
  * the requeue words are the member's recorded failure signal.
  */
 const TASK_OUTCOME_RETRY: ReadonlySet<string> = new Set(['failed', 'deferred', 'unreported']);
+
+const MAX_OVERRIDE_REASONS = 8;
 
 const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   ci_first_pass_known: t.ciKnown,
@@ -233,6 +252,12 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   diff_lines_known: t.diffLinesKnown,
   diff_lines_mean: t.diffLinesKnown === 0 ? null : round6(t.diffLinesSum / t.diffLinesKnown),
   usage_missing_known: t.usageMissingKnown,
+  lane_overrides_known: t.laneOverrides,
+  lane_override_reasons: t.laneOverrides === 0 ? null
+    : [...t.overrideReasons.entries()]
+        .map(([reason, jobs]) => ({ reason, jobs }))
+        .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
+        .slice(0, MAX_OVERRIDE_REASONS),
 });
 
 /**
@@ -241,7 +266,8 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
  * weight moves toward the observed held-merge rate — merged outcomes recorded as reverted count as
  * known evidence but never as held merges — capped at maxShift and clamped to [0, 1]. Each proposal
  * also reports the group's other recorded outcome signals (CI verdicts, review findings, cost, wall
- * time, merge latency, queue-admission wait, pass^k) as advisory evidence over the same known cohort.
+ * time, merge latency, queue-admission wait, pass^k, dispatch lane overrides) as advisory evidence
+ * over the same known cohort.
  */
 export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: RouterWeightProposalOptions = {}): RouterWeightProposalSet {
   const minSamples = opts.minSamples ?? ROUTER_WEIGHT_DEFAULT_MIN_SAMPLES;
@@ -320,6 +346,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     if (o.diff_files !== null) { t.diffFilesKnown++; t.diffFilesSum += o.diff_files; }
     if (o.diff_lines !== null) { t.diffLinesKnown++; t.diffLinesSum += o.diff_lines; }
     if (o.usage_missing !== null) t.usageMissingKnown++;
+    if (o.lane_override !== null) {
+      t.laneOverrides++;
+      t.overrideReasons.set(o.lane_override, (t.overrideReasons.get(o.lane_override) ?? 0) + 1);
+    }
     groups.set(key, g);
     known++;
   }
