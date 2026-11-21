@@ -10,7 +10,9 @@
  * cursor in the reply box, Esc comes back. While a conversation is open and
  * the pane is wide enough, the other sessions stay listed beside it
  * (SessionRail.tsx) and J and K step to the next and previous conversation.
- * The bar above the wall (WallBar.tsx) finds among the sessions on screen and
+ * The bar above the wall (WallBar.tsx) finds among the sessions on screen,
+ * and under it the same words are looked for in every session's whole
+ * conversation (WallFind.tsx). The bar also
  * asks the server for one lane, one repo or only running sessions; both are
  * kept across a reload. N opens the next conversation with new messages; the
  * counts behind the "N new" marks are kept across a reload too (wall-seen.ts).
@@ -19,7 +21,9 @@
  * O changes the card order; the side list follows it. A card says when a
  * pause stands for its job or a request is waiting (wall-steer.ts), a button
  * keeps only those sessions, and P pauses or resumes the focused card's job
- * (WallSteer.tsx).
+ * (WallSteer.tsx). Under its facts a card draws what its job has done: the
+ * newest recorded step and its age, the diff, the commands seen, its helpers
+ * and a link to its pull request (wall-vitals.ts, WallVitals.tsx).
  */
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { sessionAge } from '../../../../core/fleet/live-sessions.js';
@@ -32,6 +36,7 @@ import { clockTime } from '../leader/thread-model.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { LeaderDock } from './LeaderDock.js';
+import { WallFind } from './WallFind.js';
 import { newLabel, railEntries, railStep, SessionRail } from './SessionRail.js';
 import { leaderIdOf, loadLeaderHidden, saveLeaderHidden, useLeaderRoom } from './wall-leader.js';
 import { nextUnseen, noteWallSeen, unseenCount, unseenSessions } from './wall-seen.js';
@@ -45,18 +50,22 @@ import { WallRequests } from './WallRequests.js';
 import { servedEntries } from './wall-requests-model.js';
 import { steeredEntries, steerMark } from './wall-steer.js';
 import { useWallSteer } from './WallSteer.js';
+import { cardVitals, hasVitals, summaryLeft } from './wall-vitals.js';
+import { CardPullRequest, CardVitalsLine } from './WallVitals.js';
 import styles from './session-wall.module.css';
 import steerStyles from './wall-steer.module.css';
 
 const spoke = (session: WallSession) => (session.lastMessageAgeSeconds === null ? 'last spoke unknown' : `spoke ${sessionAge(session.lastMessageAgeSeconds)} ago`);
 
 /** One session on the wall. The card is a single button, so its text stays plain; the opened conversation renders markdown. */
-function Card({ entry, fresh, onOpen }: { entry: WallEntry; fresh: number; onOpen: (id: string) => void }) {
-  const { session } = entry, summaryId = useId(), freshId = useId(), markId = useId();
+function Card({ entry, fresh, at, onOpen }: { entry: WallEntry; fresh: number; at: string; onOpen: (id: string) => void }) {
+  const { session } = entry, summaryId = useId(), freshId = useId(), markId = useId(), vitalsId = useId();
+  // Measured against the read's own time, so the step's age and the read agree.
+  const vitals = cardVitals(entry, at), drawn = hasVitals(vitals), left = summaryLeft(entry.summary, vitals);
   const earlier = entry.messageCount - entry.messages.length;
   const mark = steerMark(entry);
-  const described = [mark && markId, fresh > 0 && freshId, summaryId].filter(Boolean).join(' ');
-  return <li className={styles.card} data-state={session.state} data-steer={mark?.tone}>
+  const described = [mark && markId, fresh > 0 && freshId, drawn && vitalsId, summaryId].filter(Boolean).join(' ');
+  return <li className={styles.card} data-state={session.state} data-steer={mark?.tone} data-pr={vitals.pr ? '' : undefined}>
     <button type="button" className={styles.open} data-card={session.id} onClick={() => onOpen(session.id)}
       aria-label={`${session.id}, ${STATE_WORD[session.state]}`} aria-describedby={described}>
       <span className={styles.top}>
@@ -72,7 +81,8 @@ function Card({ entry, fresh, onOpen }: { entry: WallEntry; fresh: number; onOpe
         <span>{session.repo === 'unknown' ? 'repo unknown' : session.repo}</span>
         {session.kind === 'subagent' && <span>{session.parentId ? `helps ${session.parentId}` : 'parent unknown'}</span>}
       </span>
-      <span id={summaryId} className={styles.summary}>{entry.summary.length > 0 ? entry.summary.join(' ') : 'Summary unknown: the read returned none.'}</span>
+      {drawn && <CardVitalsLine vitals={vitals} id={vitalsId} />}
+      <span id={summaryId} className={styles.summary}>{entry.summary.length > 0 ? left.join(' ') : 'Summary unknown: the read returned none.'}</span>
       <span className={styles.lines}>
         {earlier > 0 && <span className={styles.record}>{earlier} earlier</span>}
         {entry.messages.map(message => message.side === 'record'
@@ -85,6 +95,7 @@ function Card({ entry, fresh, onOpen }: { entry: WallEntry; fresh: number; onOpe
       </span>
       <span className={styles.replyTo} data-to={entry.reply.to} title={entry.reply.hint}>{replyLine(entry.reply)}</span>
     </button>
+    {vitals.pr && <CardPullRequest pr={vitals.pr} session={session.id} />}
   </li>;
 }
 
@@ -178,7 +189,7 @@ export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_S
               {order === 'lane' && head.name !== null && <ProviderBadge of={head.name} iconOnly size={12} />}
               <strong>{head.label}</strong><span>{head.count}</span>
             </li>}
-            <Card entry={entry} fresh={unseenCount(entry, readingId)} onOpen={onOpen} />
+            <Card entry={entry} fresh={unseenCount(entry, readingId)} at={read.generatedAt} onOpen={onOpen} />
           </Fragment>;
         })}
       </ul>}
@@ -309,6 +320,9 @@ export function SessionWallPane({ visible, host }: Pick<PaneProps, 'visible' | '
     // The bar keeps its place in the tree through every state below, so choosing a lane never takes the keyboard off the control.
     side = <>
       {(wall || isScoped(scope)) && <WallBar find={find} onFind={setFind} scope={scope} onScope={setScope} lanes={choices.lanes} repos={choices.repos} read={wall} order={order} onOrder={setOrder}
+        onLeave={() => wrap.current?.querySelector<HTMLButtonElement>('button[data-found], button[data-card]')?.focus()} />}
+      {/* The same words, looked for in whole conversations; Down past its last result goes on to the cards. */}
+      {wall && <WallFind find={find} scope={scope} visible={visible} onOpen={id => setOpen({ id, toReply: false })}
         onLeave={() => wrap.current?.querySelector<HTMLButtonElement>('button[data-card]')?.focus()} />}
       {room > 0 && leaderHidden && <button type="button" className={styles.leaderShow} onClick={() => setLeaderHidden(false)} title="Show the Leader conversation beside the cards (L writes to the Leader)">
         Leader conversation <kbd>L</kbd>

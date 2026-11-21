@@ -177,6 +177,32 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['channel', 'read', 'release', '--thread', ''])).toMatchObject({ code: 1, json: { status: 'invalid' } });
   });
 
+  it('filters inbox and channel reads by --priority', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'urgent', '--priority', 'P0', '--id', 'p-dm'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'routine', '--priority', 'P2', '--id', 'p-dm2'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'heads up', '--priority', 'P1', '--id', 'p-ch'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    const urgent = await run(['inbox', 'nova', '--priority', 'P0']);
+    expect(urgent.code).toBe(0);
+    expect(urgent.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['p-dm']);
+    const channel = await run(['channel', 'read', 'release', '--priority', 'P1']);
+    expect(channel.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['p-ch']);
+    // --matched counts only the band the same filters accept.
+    const counted = await run(['inbox', 'nova', '--priority', 'P2', '--matched']);
+    expect(counted.json.matched).toBe(1);
+    expect(counted.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['p-dm2']);
+    // A band outside P0..P3 is a usage error on both reads.
+    expect(await run(['inbox', 'nova', '--priority', 'P9'])).toMatchObject({ code: 2 });
+    expect(await run(['channel', 'read', 'release', '--priority', 'high'])).toMatchObject({ code: 2 });
+  });
+
   it('reports the true pending total with --matched and resumes before unshown mail', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
