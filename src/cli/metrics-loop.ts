@@ -44,6 +44,7 @@ export async function cmdMetricsLoop(args: string[], deps: { out?: (l: string) =
     `Cost per merged PR: ${show(report.cost_per_merged_pr, (c: { usd: number }) => `$${c.usd}`)}`,
     `Top constraint: ${hints.top_constraint.name} (${hints.top_constraint.evidence})`,
     `Bets share: ${share.reason}`,
+    ...(report.truncated_sources.length ? [`Truncated ledger tails (newest bytes only): ${report.truncated_sources.join(', ')}`] : []),
     ...(writes ? [`Wrote ${writes.loop}`] : []),
   ].join('\n'));
   return 0;

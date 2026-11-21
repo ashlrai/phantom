@@ -12,10 +12,12 @@ import { computeLaneYield, NEUTRAL_WEIGHT, type LaneYieldRow } from '../core/fle
 import { readFleetRunsDirState } from '../core/fleet/runs-dir-state.js';
 import { buildFleetLiveSnapshot } from '../core/verse/fleet-live-api.js';
 import { computeLaneHealth, laneHealthLine, stuckBadge } from '../core/fleet/lane-health.js';
+import { readLanePressure } from '../core/fleet/lane-memory-pressure.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const USAGE = `Usage: phm lanes --json | phm lanes health [--json] | phm lanes fit --lane <lane> [--json]
        phm lanes yield [--json] [--since 24h] | phm lanes held [--json] | phm lanes caps [--check <prompt-file>] [--json]
+       phm lanes pressure [--json]
 Calls, error rate, p50 latency and deployed commit per lane over the last 12 h,
 plus a "stuck" badge with phase age for any run past its phase timeout.
 "phm lanes yield" shows merged PRs per launch over each lane's last 50 jobs, the empty rate and the
@@ -26,6 +28,9 @@ names the lane), "productive", or "unknown" (under 10 finished jobs).
 launches and no finished job is "self-held": the router skips it until a launch there finishes or 60 min pass.
 "phm lanes caps" shows what each lane's sandbox can do (gh, network, browser, files outside the
 worktree); with --check it says which lanes can run the job in that prompt file.
+"phm lanes pressure" says, per lane, whether this Mac's memory is throttling it and why. Lanes whose model runs
+on this Mac (codex-local by default, or memory_class "local" in queue/slots.json) step down first; cloud lanes keep
+their target until memory is critical (under 15% free, or swap growing fast while memory is short). Read-only.
 Figures that cannot be measured print "unknown".`;
 
 const pct = (n: number | null): string => n === null ? 'unknown' : `${Math.round(n * 100)}%`;
@@ -113,6 +118,17 @@ export async function cmdLanes(args: string[]): Promise<number> {
     return 0;
   }
   if (args[0] === 'caps') return lanesCaps(args.slice(1));
+  if (args[0] === 'pressure') {
+    const flags = args.slice(1);
+    if (flags.some(x => x !== '--json') || flags.length > 1) { console.error(USAGE); return 2; }
+    const report = await readLanePressure();
+    if (flags.length) console.log(JSON.stringify(sanitizePublicJson(report)));
+    else {
+      for (const row of report.lanes) console.log(row.reason);
+      for (const gap of report.gaps) console.log(`Note: ${gap}`);
+    }
+    return 0;
+  }
   if (args[0] === 'fit') {
     const flags = args.slice(1);
     const laneIndex = flags.indexOf('--lane');

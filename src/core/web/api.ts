@@ -2075,6 +2075,20 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/map/messages ──────────────────────────────────────
+    // The last agent-to-agent messages (fleet.map-messages.v1) for the live
+    // edges on the fleet map and the phone list; the read behind `phm fleet
+    // map messages --json`. READ-ONLY bus read; short scrubbed summaries, never
+    // bodies. Same no-auth read class as /api/fleet/message-graph.
+    if (path === '/api/fleet/map/messages' && method === 'GET') {
+      const { mapMessagesResponse } = await import('../fleet/map-messages.js');
+      let response: ReturnType<typeof mapMessagesResponse>;
+      try { response = mapMessagesResponse(req.url ?? path); }
+      catch { response = { status: 503, body: { error: 'Map messages unavailable.' } }; }
+      sendJson(res, response.status, response.body);
+      return true;
+    }
+
     // ── GET /api/fleet/sessions ──────────────────────────────────────────
     // Unified agent-session list (fleet.sessions.v1): queued/parked/
     // launching/running/publishing/exited/stale sessions plus a bounded

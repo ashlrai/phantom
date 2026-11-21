@@ -43,6 +43,17 @@ export const THREAD_OUTPUT_LINES = 12, THREAD_OUTPUT_LINE_CHARS = 240;
 /** The newest pause, resume, stop and move requests a thread shows. */
 export const THREAD_CONTROLS_SHOWN = 5;
 
+/** How much of each record a thread shows: `recent` is the newest few (the limits above), `full` is as much as the thread's reads hold. */
+export type SessionThreadDepth = 'recent' | 'full';
+export const SESSION_THREAD_DEPTHS: readonly SessionThreadDepth[] = ['recent', 'full'];
+export interface SessionThreadLimits { bus: number; commands: number; files: number; replies: number; owner: number; orders: number; outputLines: number; controls: number }
+/** `full` is bounded too: by what each read returns (the inbox window, the end of the log) and by a size a client can draw. */
+export const THREAD_LIMITS: Readonly<Record<SessionThreadDepth, SessionThreadLimits>> = {
+  recent: { bus: THREAD_BUS_SHOWN, commands: THREAD_COMMANDS_SHOWN, files: THREAD_FILES_SHOWN, replies: THREAD_REPLIES_SHOWN, owner: THREAD_OWNER_SHOWN,
+    orders: THREAD_ORDERS_SHOWN, outputLines: THREAD_OUTPUT_LINES, controls: THREAD_CONTROLS_SHOWN },
+  full: { bus: 400, commands: 60, files: 60, replies: 40, owner: THREAD_OWNER_WINDOW, orders: 25, outputLines: 120, controls: 40 },
+};
+
 /** `quiet` is a running session with no output for the list's quiet window. */
 export type SessionThreadState = 'quiet' | SessionState;
 export type SessionThreadSource = 'available' | 'none' | 'unavailable';
@@ -108,6 +119,10 @@ export interface SessionThreadV1 {
   reply: SessionThreadReply;
   /** Null when no request stands (none was made, every one was refused, or the control file was not read). */
   control: SessionThreadControl | null;
+  /** How much of each record this read shows (`THREAD_LIMITS`). */
+  depth: SessionThreadDepth;
+  /** True for a `recent` read that left out something a `full` read of the same records would show. Always false for `full`, whose own omissions are in `gaps`. */
+  deeper: boolean;
 }
 
 /** What the reader hands the builder. `undefined` means "not asked for" (the session has no job, or is not the leader). */
@@ -212,11 +227,11 @@ function routingMessage(key: string, order: TracedOrder, self: string | null): S
   };
 }
 
-/** The lines of a job log worth showing: blank ones dropped, the newest THREAD_OUTPUT_LINES kept, each cut to THREAD_OUTPUT_LINE_CHARS. */
-export function sessionOutputLines(lines: readonly string[]): { lines: string[]; earlier: number } {
+/** The lines of a job log worth showing: blank ones dropped, the newest `shown` (THREAD_OUTPUT_LINES unless told) kept, each cut to THREAD_OUTPUT_LINE_CHARS. */
+export function sessionOutputLines(lines: readonly string[], shown: number = THREAD_OUTPUT_LINES): { lines: string[]; earlier: number } {
   const written = lines.map(line => line.trimEnd()).filter(line => line.trim() !== '');
-  return { earlier: Math.max(0, written.length - THREAD_OUTPUT_LINES),
-    lines: written.slice(-THREAD_OUTPUT_LINES).map(line => (line.length > THREAD_OUTPUT_LINE_CHARS ? `${line.slice(0, THREAD_OUTPUT_LINE_CHARS - 1)}…` : line)) };
+  return { earlier: Math.max(0, written.length - shown),
+    lines: written.slice(-shown).map(line => (line.length > THREAD_OUTPUT_LINE_CHARS ? `${line.slice(0, THREAD_OUTPUT_LINE_CHARS - 1)}…` : line)) };
 }
 
 /** The bus messages about one session, oldest first: the ones naming its job, or sent by or to it. */
@@ -226,7 +241,8 @@ export function sessionBusMessages(session: Pick<SessionThreadSession, 'id' | 'j
     .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
 }
 
-function activityMessages(activity: FleetJobActivityV1): SessionThreadMessage[] {
+/** `cut` is whether more commands or changed files are on record than `limits` lets through. */
+function activityMessages(activity: FleetJobActivityV1, limits: SessionThreadLimits): { messages: SessionThreadMessage[]; cut: boolean } {
   const { entries } = activity, out: SessionThreadMessage[] = [];
   const report = (name: 'brief' | 'notes') => {
     const entry = entries.find(e => e.kind === 'report' && e.name === name);
@@ -241,39 +257,48 @@ function activityMessages(activity: FleetJobActivityV1): SessionThreadMessage[] 
   const commands = entries.filter(entry => entry.kind === 'command');
   if (commands.length > 0) out.push({
     key: 'commands', kind: 'commands', side: 'session', at: null, format: 'mono',
-    label: commands.length > THREAD_COMMANDS_SHOWN ? `Ran ${plural(commands.length, 'command')}, last ${THREAD_COMMANDS_SHOWN} shown` : `Ran ${plural(commands.length, 'command')}`,
-    text: commands.slice(-THREAD_COMMANDS_SHOWN).map(command => command.text).join('\n'),
+    label: commands.length > limits.commands ? `Ran ${plural(commands.length, 'command')}, last ${limits.commands} shown` : `Ran ${plural(commands.length, 'command')}`,
+    text: commands.slice(-limits.commands).map(command => command.text).join('\n'),
   });
   const files = entries.find(entry => entry.kind === 'files');
+  // The activity read lists a bounded number of files itself; only what it lists can be shown.
+  const listed = files?.kind === 'files' ? files.files.slice(0, limits.files) : [];
   if (files?.kind === 'files' && files.state !== 'missing' && files.totals.files > 0) out.push({
     key: 'files', kind: 'files', side: 'session', at: null, format: 'mono',
     label: `Changed ${plural(files.totals.files, 'file')}, +${files.totals.added} −${files.totals.removed}${files.state === 'degraded' ? ', partial' : ''}`,
-    text: [...files.files.slice(0, THREAD_FILES_SHOWN).map(file => file.path),
-      ...(files.totals.files > THREAD_FILES_SHOWN ? [`and ${files.totals.files - THREAD_FILES_SHOWN} more`] : [])].join('\n'),
+    text: [...listed.map(file => file.path),
+      ...(files.totals.files > listed.length ? [`and ${files.totals.files - listed.length} more`] : [])].join('\n'),
   });
   if (notes) out.push({ key: 'notes', kind: 'notes', side: 'session', label: `Notes${notes.truncated ? ' (truncated)' : ''}`, at: null, text: notes.text, format: 'markdown' });
-  return out;
+  return { messages: out, cut: commands.length > limits.commands || (files?.kind === 'files' && files.files.length > limits.files) };
 }
 
-/** The thread for session `id` in `list`. A session the list does not hold gives `session: null`, never an invented one. */
-export function buildSessionThread(list: LiveSessionsV1, id: string, parts: SessionThreadParts, now: number): SessionThreadV1 {
+/**
+ * The thread for session `id` in `list`. A session the list does not hold gives `session: null`, never an invented one.
+ * `depth` chooses the limits; the parts are the same either way, so `full` shows more of what was read, never another source.
+ */
+export function buildSessionThread(list: LiveSessionsV1, id: string, parts: SessionThreadParts, now: number, depth: SessionThreadDepth = 'recent'): SessionThreadV1 {
   const node = flatTree(list.tree.roots).map(entry => entry.node).find(entry => entry.id === id && entry.kind !== 'unknown-parent');
   const base = { schema: SESSION_THREAD_SCHEMA, generatedAt: new Date(now).toISOString(), id } as const;
   if (!node) {
     return { ...base, session: null, summary: [], messages: [],
       sources: { sessions: parts.sessionsRead ? 'available' : 'unavailable', activity: 'none', bus: 'none', owner: 'none', replies: 'none', orders: 'none', output: 'none', controls: 'none' },
-      gaps: [parts.sessionsRead ? `No session ${id} in the list. Finished sessions stay for an hour.` : 'Sessions unknown: the session list could not be read.'], reply: sessionReply(null), control: null };
+      gaps: [parts.sessionsRead ? `No session ${id} in the list. Finished sessions stay for an hour.` : 'Sessions unknown: the session list could not be read.'], reply: sessionReply(null), control: null, depth, deeper: false };
   }
   const row = node.jobId === null ? undefined : list.sessions.find(entry => entry.job === node.jobId);
   const session = sessionOf(node, row), leader = session.kind === 'leader';
   const gaps: string[] = [], messages: SessionThreadMessage[] = [];
+  const limits = THREAD_LIMITS[depth];
+  // Set wherever a limit leaves something out, so a `recent` read can say a deeper one holds more.
+  let cut = false;
 
   let activity: SessionThreadSource = 'none';
   if (parts.activity === null) { activity = 'unavailable'; gaps.push('Activity unknown: this session\'s recorded activity could not be read.'); }
   else if (parts.activity) {
-    const recorded = activityMessages(parts.activity);
-    messages.push(...recorded);
-    activity = recorded.length > 0 ? 'available' : 'none';
+    const recorded = activityMessages(parts.activity, limits);
+    messages.push(...recorded.messages);
+    activity = recorded.messages.length > 0 ? 'available' : 'none';
+    if (recorded.cut) cut = true;
     if (parts.activity.truncated) gaps.push('Older activity is outside the recorded window.');
   }
 
@@ -281,8 +306,8 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   if (parts.bus === null || parts.bus.source === 'unavailable') { bus = 'unavailable'; gaps.push('Bus messages unknown: the agent bus could not be read.'); }
   else {
     const about = sessionBusMessages(session, parts.bus.messages);
-    if (about.length > THREAD_BUS_SHOWN) gaps.push(`${plural(about.length - THREAD_BUS_SHOWN, 'earlier bus message')} not shown.`);
-    for (const m of about.slice(-THREAD_BUS_SHOWN)) messages.push({
+    if (about.length > limits.bus) { cut = true; gaps.push(`${plural(about.length - limits.bus, 'earlier bus message')} not shown.`); }
+    for (const m of about.slice(-limits.bus)) messages.push({
       key: `bus:${m.id}`, kind: 'bus', side: m.from.name.toLowerCase() === id.toLowerCase() ? 'session' : 'other',
       label: `${m.from.name} to ${m.to.name}, ${m.kind}`, at: when(m.ts), text: m.summary, format: 'plain',
     });
@@ -295,10 +320,11 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   if (parts.owner === null || parts.owner?.sourceState === 'degraded') { owner = 'unavailable'; gaps.push('Messages from Mason unknown: the Leader inbox could not be read.'); }
   else if (parts.owner) {
     aimed = sessionOwnerMessages(session, parts.owner.entries);
-    if (aimed.length > THREAD_OWNER_SHOWN) {
-      gaps.push(leader ? 'Earlier messages from Mason are not shown here; the Leader chat holds them.' : `${plural(aimed.length - THREAD_OWNER_SHOWN, 'earlier message')} from Mason not shown.`);
+    if (aimed.length > limits.owner) {
+      cut = true;
+      gaps.push(leader ? 'Earlier messages from Mason are not shown here; the Leader chat holds them.' : `${plural(aimed.length - limits.owner, 'earlier message')} from Mason not shown.`);
     }
-    aimed.slice(-THREAD_OWNER_SHOWN).forEach((entry, index) => said.push({
+    aimed.slice(-limits.owner).forEach((entry, index) => said.push({
       key: `owner:${entry.id ?? `${entry.at}#${index}`}`, kind: 'owner', side: 'other', at: ownerAt(entry), text: entry.text, format: 'plain',
       label: `${leader ? 'Mason to Leader' : `Mason to the Leader, aimed at ${session.jobId}`}${entry.channel ? `, from ${entry.channel}` : ''}`,
     }));
@@ -311,7 +337,8 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
     if (parts.replies === null || parts.replies?.sourceState === 'unknown') { replies = 'unavailable'; gaps.push('Leader replies unknown: the plan log could not be read.'); }
     else if (parts.replies) {
       // Newest first in the read; a conversation reads oldest first.
-      [...parts.replies.replies.slice(0, THREAD_REPLIES_SHOWN)].reverse().forEach((reply, index) => answered.push({
+      if (parts.replies.replies.length > limits.replies) cut = true;
+      [...parts.replies.replies.slice(0, limits.replies)].reverse().forEach((reply, index) => answered.push({
         key: `reply:${index}`, kind: 'reply', side: 'session', label: 'Leader to Mason', at: reply.at === 'unknown' || reply.at === '' ? null : reply.at, text: reply.text, format: 'plain',
       }));
       if (parts.replies.replies.length > 0) replies = 'available';
@@ -326,7 +353,7 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
     if (trace.sources.prompts === 'degraded') gaps.push('Routing may be incomplete: not every job prompt could be read.');
     if (leader) {
       const jobs = new Map<string, OrderTraceJob>();
-      aimed.slice(-THREAD_OWNER_SHOWN).forEach((entry, index) => {
+      aimed.slice(-limits.owner).forEach((entry, index) => {
         const order = orderOf(trace.orders, entry);
         if (!order || order.jobs.length === 0) return;
         routedAfter.set(said[index]!, routingMessage(said[index]!.key.slice('owner:'.length), order, null));
@@ -339,8 +366,8 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
     } else if (session.jobId !== null) {
       // Newest first in the trace, like the inbox it is built from.
       const serves = trace.orders.filter(order => order.jobs.some(job => job.id === session.jobId)).reverse();
-      if (serves.length > THREAD_ORDERS_SHOWN) gaps.push(`${plural(serves.length - THREAD_ORDERS_SHOWN, 'earlier message')} from Mason that this session serves not shown.`);
-      for (const order of serves.slice(-THREAD_ORDERS_SHOWN)) {
+      if (serves.length > limits.orders) { cut = true; gaps.push(`${plural(serves.length - limits.orders, 'earlier message')} from Mason that this session serves not shown.`); }
+      for (const order of serves.slice(-limits.orders)) {
         const entry = parts.owner?.entries.find(candidate => orderOf([order], candidate) !== undefined);
         const key = entry?.id ?? `${order.at}#${order.source}`, from = entry?.channel ?? order.source;
         origin.push(entry
@@ -373,8 +400,8 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   if (parts.controls === null) { controls = 'unavailable'; gaps.push('Controls unknown: the job control record could not be read.'); }
   else if (parts.controls && session.jobId !== null) {
     const asked = parts.controls.filter(row => row.job === session.jobId);
-    if (asked.length > THREAD_CONTROLS_SHOWN) gaps.push(`${plural(asked.length - THREAD_CONTROLS_SHOWN, 'earlier control request')} not shown.`);
-    for (const row of asked.slice(-THREAD_CONTROLS_SHOWN)) messages.push({
+    if (asked.length > limits.controls) { cut = true; gaps.push(`${plural(asked.length - limits.controls, 'earlier control request')} not shown.`); }
+    for (const row of asked.slice(-limits.controls)) messages.push({
       key: `control:${row.requestId}`, kind: 'control', side: 'record', label: jobControlRecordLabel(row), at: when(row.at), format: 'plain',
       text: `${row.by ? `Asked from ${row.by}. ` : ''}${row.status === 'applied' ? 'Done.' : row.status === 'refused' ? row.reason ?? 'Refused.' : PENDING_CONTROL}`,
     });
@@ -391,8 +418,9 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   let output: SessionThreadSource = 'none', wrote: string[] = [];
   if (parts.output === null || parts.output?.source === 'degraded') { output = 'unavailable'; gaps.push('Output unknown: this session\'s log could not be read.'); }
   else if (parts.output && parts.output.source !== 'missing') {
-    const { lines, earlier } = sessionOutputLines(parts.output.lines);
+    const { lines, earlier } = sessionOutputLines(parts.output.lines, limits.outputLines);
     wrote = lines;
+    if (earlier > 0) cut = true;
     if (lines.length > 0) {
       output = 'available';
       messages.push({ key: 'output', kind: 'output', side: 'session', at: null, text: lines.join('\n'), format: 'mono',
@@ -405,7 +433,7 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   if (node.lastMessage !== null && !repeated) messages.push({ key: 'latest', kind: 'latest', side: 'session', label: 'Latest', at: when(node.lastMessageAt), text: node.lastMessage, format: 'plain' });
   if (session.jobId === null && !leader) gaps.push('This session has no job record: its steps, commands and changed files are not recorded.');
   return { ...base, session, summary: [...summaryOf(session, node, row, parts.activity, aimed, routed), ...steered], messages,
-    sources: { sessions: 'available', activity, bus, owner, replies, orders, output, controls }, gaps, reply: sessionReply(session), control };
+    sources: { sessions: 'available', activity, bus, owner, replies, orders, output, controls }, gaps, reply: sessionReply(session), control, depth, deeper: depth === 'recent' && cut };
 }
 
 const PENDING_CONTROL = 'The dispatcher has not applied it yet.';
@@ -421,8 +449,9 @@ export function renderSessionThreadText(thread: SessionThreadV1): string {
     lines.push(`${SIDE_MARK[message.side]} ${message.label}${message.at ? ` [${message.at}]` : ''}`);
     for (const line of message.text.split('\n')) lines.push(`    ${line}`);
   }
-  if (thread.gaps.length > 0) lines.push('');
+  if (thread.gaps.length > 0 || thread.deeper) lines.push('');
   for (const gap of thread.gaps) lines.push(`note: ${gap}`);
+  if (thread.deeper) lines.push(`note: Earlier entries are on record. Show them: phm sessions thread ${session.id} --all`);
   lines.push(`To write to it: ${thread.reply.hint}`);
   lines.push(`${session.jobId === null ? '' : `Full log: phm sessions tail ${session.jobId}. `}Every session: phm sessions. Updated ${thread.generatedAt}.`);
   return lines.join('\n');

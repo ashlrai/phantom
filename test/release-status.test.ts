@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { formatReleases, formatReleaseStatus, getLocalReleaseStatus, getReleases, getReleaseStatus, releaseCadence, RELEASES_SCHEMA } from '../src/core/release/status.js';
+import { formatReleases, formatReleaseStatus, getLocalReleaseStatus, getReleases, getReleaseStatus, releaseCadence, releaseRoots, releasesLeaderLine, RELEASES_SCHEMA } from '../src/core/release/status.js';
 import { cmdRelease, cmdReleases } from '../src/cli/release.js';
 import { cadenceMinutesFromEnv, TRAIN_SCHEMA } from '../src/core/release/train.js';
 
@@ -115,7 +115,7 @@ describe('release cadence', () => {
     releaseCadence([{ repo: 'ashlrai/locus', latestTag, taggedAt: days === null ? null : daysAgo(days), mergedPrsSinceTag, readable }], now).repos[0]!;
 
   it('is fresh inside both limits, and at exactly 7 days and 50 PRs', () => {
-    expect(one('v1.0.0', 2, 3)).toEqual({ repo: 'ashlrai/locus', latestTag: 'v1.0.0', taggedAt: daysAgo(2), ageDays: 2, mergedPrsSince: 3, recentPrs: null, verdict: 'fresh', suggestion: 'locus: 3 PRs since v1.0.0 2 days ago; fresh' });
+    expect(one('v1.0.0', 2, 3)).toEqual({ repo: 'ashlrai/locus', latestTag: 'v1.0.0', taggedAt: daysAgo(2), ageDays: 2, mergedPrsSince: 3, recentPrs: null, reason: null, verdict: 'fresh', suggestion: 'locus: 3 PRs since v1.0.0 2 days ago; fresh' });
     expect(one('v1.0.0', 7, 50)).toMatchObject({ ageDays: 7, verdict: 'fresh' });
     expect(one('v1.0.0', 1, 1).suggestion).toBe('locus: 1 PR since v1.0.0 1 day ago; fresh');
   });
@@ -193,5 +193,85 @@ describe('release cadence', () => {
     expect(cmdReleases(['--tag'])).toBe(2);
     expect(cmdReleases(['--json', '--json'])).toBe(2);
     expect(String(err.mock.calls.at(-1)?.[0])).toBe('phm releases [--json]\n');
+  });
+});
+
+describe('release discovery roots and unreadable repos', () => {
+  const made: string[] = [];
+  afterEach(() => { for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+  const scratch = () => { const dir = mkdtempSync(join(tmpdir(), 'release-roots-')); made.push(dir); return dir; };
+  /** A clone with one tag and `after` commits since it; `ref: false` leaves origin/HEAD unset, `tag: false` skips the tag. */
+  function clone(root: string, name: string, opts: { after?: number; ref?: boolean; tag?: boolean } = {}) {
+    const path = join(root, name);
+    const git = (...args: string[]) => execFileSync('git', ['-C', path, ...args], { stdio: 'ignore' });
+    execFileSync('git', ['init', '-q', '-b', 'main', path]);
+    git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.invalid');
+    git('commit', '--allow-empty', '-qm', 'first');
+    if (opts.tag !== false) git('tag', 'v1.0.0');
+    for (let n = 1; n <= (opts.after ?? 0); n += 1) git('commit', '--allow-empty', '-qm', `change ${n} (#${n})`);
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+    if (opts.ref !== false) git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  }
+  const SEVEN = ['phantom', 'phantom-secrets', 'locus', 'lexicon', 'ashlr-plugin', 'ashlr-stack', 'ashlr-md'];
+
+  it('finds all seven repos', () => {
+    const root = scratch();
+    for (const name of SEVEN) clone(root, name, { after: 1 });
+    const report = getReleases({ root, installed: () => ({ version: null, revision: null }) as never });
+    expect(report.repos.map(row => row.repo)).toEqual(SEVEN.map(name => `ashlrai/${name}`));
+    expect(report.counts).toMatchObject({ fresh: 7, unknown: 0 });
+    expect(report.repos.every(row => row.reason === null)).toBe(true);
+  });
+
+  it('lists a missing repo as not found with every path it tried', () => {
+    const first = scratch(), second = scratch();
+    for (const name of SEVEN.filter(name => name !== 'locus')) clone(first, name, { after: 1 });
+    const report = getReleases({ roots: [first, second], installed: () => ({ version: null, revision: null }) as never });
+    const locus = report.repos.find(row => row.repo === 'ashlrai/locus')!;
+    expect(locus.verdict).toBe('unknown');
+    expect(locus.reason).toBe(`not found (tried ${join(first, 'locus')}, ${join(second, 'locus')})`);
+    expect(locus.suggestion).toBe(`locus: not found (tried ${join(first, 'locus')}, ${join(second, 'locus')})`);
+    expect(report.counts).toMatchObject({ fresh: 6, unknown: 1 });
+  });
+
+  it('reads unknown with a reason, and does not throw, when there is no default-branch ref', () => {
+    const root = scratch();
+    clone(root, 'phantom', { after: 3, ref: false });
+    const row = getReleases({ root, repos: ['phantom'], installed: () => ({ version: null, revision: null }) as never }).repos[0]!;
+    expect(row).toMatchObject({ verdict: 'unknown', latestTag: 'v1.0.0', mergedPrsSince: null });
+    expect(row.reason).toMatch(/^no default-branch ref/);
+    expect(row.suggestion).toContain('cannot tell if a release is due (no default-branch ref');
+  });
+
+  it('reads "no release yet" with the reason when the clone has no tags', () => {
+    const root = scratch();
+    clone(root, 'lexicon', { after: 2, tag: false });
+    const row = getReleases({ root, repos: ['lexicon'] }).repos[0]!;
+    expect(row).toMatchObject({ verdict: 'no release yet', latestTag: null, reason: 'no tags in this clone' });
+    expect(row.suggestion).toBe('lexicon: no release yet (no tags in this clone)');
+  });
+
+  it('reads the configured repo roots before the default folder, without writing the config', () => {
+    const home = scratch(), configured = join(scratch(), 'code');
+    mkdirSync(configured, { recursive: true });
+    mkdirSync(join(home, '.ashlr'), { recursive: true });
+    const configFile = join(home, '.ashlr', 'config.json');
+    writeFileSync(configFile, JSON.stringify({ version: 1, roots: [configured] }));
+    clone(configured, 'locus', { after: 1 });
+    clone(join(home, 'Projects', 'ashlrai'), 'lexicon', { after: 1 });
+    vi.stubEnv('HOME', home);
+    expect(releaseRoots()).toEqual([configured, join(home, 'Projects', 'ashlrai')]);
+    const report = getReleases({ repos: ['locus', 'lexicon', 'ashlr-md'] });
+    expect(report.repos.map(row => row.verdict)).toEqual(['fresh', 'fresh', 'unknown']);
+    expect(report.repos[2]!.reason).toBe(`not found (tried ${join(configured, 'ashlr-md')}, ${join(home, 'Projects', 'ashlrai', 'ashlr-md')})`);
+    expect(JSON.parse(readFileSync(configFile, 'utf8'))).toEqual({ version: 1, roots: [configured] });
+  });
+
+  it('writes the one Leader card line', () => {
+    const now = Date.parse('2026-11-20T00:00:00Z'), day = (n: number) => new Date(now - n * 86_400_000).toISOString();
+    expect(releasesLeaderLine(releaseCadence([{ repo: 'ashlrai/locus', latestTag: 'v1.4.0', taggedAt: day(9), mergedPrsSinceTag: 23 }], now))).toBe('Release due: locus (23 PRs since v1.4.0, 9 days)');
+    expect(releasesLeaderLine(releaseCadence([{ repo: 'ashlrai/locus', latestTag: 'v1.4.0', taggedAt: day(1), mergedPrsSinceTag: 2 }], now))).toBe('Releases: all fresh');
+    expect(releasesLeaderLine(releaseCadence([{ repo: 'ashlrai/locus', latestTag: 'v1.4.0', taggedAt: day(1), mergedPrsSinceTag: 2 }, { repo: 'ashlrai/lexicon', latestTag: null, taggedAt: null, mergedPrsSinceTag: null, readable: false }], now))).toBe('Releases: none due (1 unknown)');
+    expect(releasesLeaderLine(null)).toBe('Releases: unknown');
   });
 });

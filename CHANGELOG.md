@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.56 |
-| Latest dated changelog release (2026-11-21) | 3.30.56 |
+| Source package | 3.30.57 |
+| Latest dated changelog release (2026-11-21) | 3.30.57 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -168,6 +168,21 @@ Merged after #7384 (#7385 to #7604). Bridge, recovery and release bookkeeping is
 ### Removed
 
 - Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
+
+## [3.30.57] - 2026-11-21
+
+
+### Changes
+
+* **FIXUP-CI-phantom-release-prep-705205:** FIXUP-CI-phantom-release-prep-705205 ([#7745](https://github.com/ashlrai/phantom/issues/7745)) ([826edc2](https://github.com/ashlrai/phantom/commit/826edc2b0cf78afd08874d98e154ba231531f1f2))
+* **RQ-CEILNULLN22GQ8:** RQ-CEILNULLN22GQ8: slots.json `"ceiling": null` means no fix ([#7754](https://github.com/ashlrai/phantom/issues/7754)) ([2349c1b](https://github.com/ashlrai/phantom/commit/2349c1b7f6c7d138e38fb530c776b1d813bdbb14))
+* RQ-CL-DESK-1795227991 ([#7746](https://github.com/ashlrai/phantom/issues/7746)) ([1fc3983](https://github.com/ashlrai/phantom/commit/1fc3983e4f14b6cdb470d685e4d63a767cd9aba5))
+* **RQ-CL-DESK-1795229389:** ([#7753](https://github.com/ashlrai/phantom/issues/7753)) ([68ed6cc](https://github.com/ashlrai/phantom/commit/68ed6cc351a48ace3b15cbe43ff5d9e4b5ad6423))
+* **RQ-CL-DESK2-1795228303:** ([#7743](https://github.com/ashlrai/phantom/issues/7743)) ([018fd41](https://github.com/ashlrai/phantom/commit/018fd413566edd57e28e5f0e71df2d79bcf4f088))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795229679-N17:** ([#7750](https://github.com/ashlrai/phantom/issues/7750)) ([4ad9e31](https://github.com/ashlrai/phantom/commit/4ad9e31e37b9d81a164bf0d81b5640d2c428fa51))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795228374-N17:** ([#7744](https://github.com/ashlrai/phantom/issues/7744)) ([fbf9c9f](https://github.com/ashlrai/phantom/commit/fbf9c9ff1db1d2048b6e3ac07c26903414ec4d61))
+* **RQ-DOCSSYNCDATEN22EQ8:** RQ-DOCSSYNCDATEN22EQ8 ([#7748](https://github.com/ashlrai/phantom/issues/7748)) ([06f422d](https://github.com/ashlrai/phantom/commit/06f422d1891de9e5907968ba28591cf10c4accad))
+* **RQ-MEMSPLITN22GQ8:** RQ-MEMSPLITN22GQ8: memory pressure throttles local lanes, no ([#7751](https://github.com/ashlrai/phantom/issues/7751)) ([a5ffc1d](https://github.com/ashlrai/phantom/commit/a5ffc1def6f59dfafab0b7d0dfeebdea7ee945bc))
 
 ## [3.30.56] - 2026-11-21
 

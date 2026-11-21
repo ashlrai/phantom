@@ -1114,24 +1114,32 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
     ...(countMatched ? { matched } : {}) };
 }
 
-export type WakePage = { status: 'ok'; agent: string; wakes: BusWakeRow[] } |
+export type WakePage = { status: 'ok'; agent: string; wakes: BusWakeRow[];
+  /** Every hint the bounded queue read matched for the agent, before its row cap; `wakes` shows only the newest slice. */
+  matched: number;
+  /** The queue tail or row cap cut matches beyond `wakes`; false only when the bounded read provably saw them all. */
+  truncated: boolean } |
   { status: 'unknown-agent' | 'unavailable'; reason: string };
 
 /**
  * Wake hints addressed to this identity under any label it resolves through
  * (address, bare handle, stable id or alias) or to one of its channels after
  * `sinceAt`. A wake is only a hint to read the inbox: it carries routing ids,
- * never a body, and grants nothing.
+ * never a body, and grants nothing. `matched` counts every hint the bounded
+ * queue tail matched before its row cap and `truncated` marks older bytes or
+ * matched rows beyond the returned slice — an unreadable queue stays
+ * `unavailable`, never an empty page passed off as "no wakes".
  */
 export function readAgentWakes(ref: string, sinceAt: number | undefined, options: UnifiedBusOptions = {}): WakePage {
   const read = readAgentRegistry(options);
   if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
   const target = addressing(read.registry, ref);
   if (!target) return { status: 'unknown-agent', reason: 'Agent is not a registered identity.' };
-  const wakes = readBusWakes({ root: options.runsRoot, sinceAt });
+  const wakes = readBusWakes({ root: options.runsRoot, sinceAt, match: wake =>
+    target.labels.has(wake.to) || (channelOf(wake.to, target.channels) !== null && !target.labels.has(wake.from)) });
   if (wakes.state === 'unreadable') return { status: 'unavailable', reason: 'Wake queue is unreadable.' };
-  return { status: 'ok', agent: target.identity.handle, wakes: wakes.wakes.filter(wake =>
-    target.labels.has(wake.to) || (channelOf(wake.to, target.channels) !== null && !target.labels.has(wake.from))) };
+  return { status: 'ok', agent: target.identity.handle, wakes: wakes.wakes,
+    matched: wakes.matched ?? 0, truncated: wakes.truncated ?? false };
 }
 
 export interface ChannelListEntry {

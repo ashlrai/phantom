@@ -73,6 +73,33 @@ describe('job outcomes', () => {
     expect((await readJobOutcomes({ hours: 24, now: NOW, runsDir: dir })).lanes.map(l => l.lane)).toEqual(['zai', 'codex']);
   });
 
+  it('classifies reconciler and alias-spelled outcome rows', () => {
+    // A reconciler row keeps a publish-shaped event while carrying the terminal phase.
+    expect(classifyJobOutcome({ events: [{ type: 'publish', phase: 'MERGED', pr_url: PR }], publish: null, empty: false, exitCode: null }))
+      .toEqual({ outcome: 'merged', pr: PR });
+    expect(classifyJobOutcome({ events: [{ kind: 'outcome', status: 'CLOSED', pr: PR }], publish: null, empty: false, exitCode: null }))
+      .toEqual({ outcome: 'pr_closed', pr: PR });
+    // finish/launch rows that carry a terminal phase are outcome evidence too.
+    expect(classifyJobOutcome({ events: [{ event: 'finish', conclusion: 'MERGED', prUrl: PR }], publish: null, empty: false, exitCode: 0 }))
+      .toEqual({ outcome: 'merged', pr: PR });
+  });
+
+  it('reads outcome-only jobs written in the jobs-ledger dialect', async () => {
+    const dir = await runs([
+      // Reconciler merge: publish event + terminal phase, alias stamp and PR link.
+      { type: 'publish', job: 'RQ-REC', phase: 'MERGED', pr_url: PR, recordedAt: at(30) },
+      // Alias-spelled closed outcome with no finish row at all.
+      { kind: 'outcome', job: 'RQ-ALIAS', status: 'CLOSED', pr: PR, updatedAt: at(30) },
+      // A finish event spelled 'type' still counts as the job's finish.
+      { type: 'finish', job: 'RQ-FIN', pool: 'zai', exit_code: 1, empty: true, timestamp: at(20) },
+    ]);
+    const report = await readJobOutcomes({ hours: 24, now: NOW, runsDir: dir });
+    const byJob = new Map(report.jobs.map(job => [job.job, job]));
+    expect(byJob.get('RQ-REC')).toMatchObject({ outcome: 'merged', pr: PR });
+    expect(byJob.get('RQ-ALIAS')).toMatchObject({ outcome: 'pr_closed', pr: PR });
+    expect(byJob.get('RQ-FIN')).toMatchObject({ outcome: 'empty', lane: 'zai', exit_code: 1 });
+  });
+
   it('reports unknown when the ledger is missing, and a plain line for an idle lane', async () => {
     const report = await readJobOutcomes({ hours: 24, now: NOW, runsDir: join(tmpdir(), 'no-such-runs-dir-for-outcomes') });
     expect(report).toMatchObject({ known: false, total: 0 });

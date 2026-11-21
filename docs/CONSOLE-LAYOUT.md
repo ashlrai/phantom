@@ -52,6 +52,19 @@ remain `null` in JSON and unknown in Home. Spent means subscription quota used,
 not a monetary cost estimate. Resource collection and lane diagnostics remain
 owned by their existing APIs.
 
+Home files its cards under two named groups. **Agents and machines** is who
+is working and what needs you: Decisions, From your leader, Leader, Working
+now, Running jobs, Machines, This Mac and Main. **Usage and delivery** is
+what the work costs and what it produced: Pools, Most at risk of going
+unused, Merged PRs, Shipped today, Work log and Disk. When the Home pane is
+at least 64rem wide (1024px at the default text size) the groups sit side by
+side as two columns, each card keeping its own height, and the Pulse rows run
+across the top instead of down. In a narrower pane (Home beside an open
+chat, or a small window) the groups follow each other in one column. The
+pane's own width decides, not the window's. Keyboard and screen-reader order
+is the same at every width: the first group, then the second. The layout
+adds no request.
+
 Home's **Running jobs** card is a tile per lane: the provider's mark and the
 lane name, the number of jobs running, and one square per target slot, filled
 for each running job (a lane with more than 24 slots draws one bar of the
@@ -94,7 +107,10 @@ projected" with the reading that is missing. The bar is split the same way:
 used so far is solid, what the burn uses before the reset is lighter, and the
 gap after them is the share left unused; a pool that runs dry early fills to
 the end in amber. A line under the tiles counts the pools by ending and
-holds the key to the bars. A pool that
+holds the key to the bars. The tile's bar, the Most at risk card's bar and
+the bar on each Pools board card are one design-system component
+(`components/primitives/WindowBar.tsx`), so a part looks and reads the same
+on all three. A pool that
 empties before it resets has its figure and that line in amber. A pool with
 no reading says "usage unknown" in place of a figure and has a hatched bar,
 and Local shows "free,
@@ -251,9 +267,13 @@ Every figure is computed from the samples `GET /api/verse/runs-history`
 returned, so unwatched time is never counted as idle or as full.
 
 The Pools pane is one board of every resource pool, most at risk of going
-unused first. Each card has the pool's plain-words line, a bar (solid: used so
-far; lighter: where the current burn ends by reset; marker: time elapsed in
-the window) and labelled readings: used, left, the reset as a countdown and a
+unused first. Each card has the pool's plain-words line, a bar and labelled
+readings. The bar is the one Home draws for a pool (solid: used so far;
+lighter: what the current burn adds by its reset; an empty stretch outlined
+in amber: the share left unused at the reset), with a mark for the time
+elapsed in the window; a pool the view tells to slow down fills in amber, a
+pool with no usage reading is hatched, and a key under the cards names each
+part. The readings: used, left, the reset as a countdown and a
 local time, burn per hour and its basis, unused at reset, jobs running against
 the slot target, and how long ago the reading was taken and by which reader.
 Under the bar, a plan pool draws its window so far: every stored reading from
@@ -297,7 +317,23 @@ each provider's mark. A model's card says whether the router would launch it
 and why not when it would not, then lists the lanes that name it with the tiers
 that pick it, the last launch that used it, the date official docs last
 confirmed the name, and the source page. Verify (or Check again) on the card
-re-reads that page. The switch narrows the board to Needs attention or Routable
+re-reads that page. At the foot of the card is the work that model did: one row
+of bars for the jobs launched on it across the last 24 hours (a bar an hour) or
+7 days (a bar per 7 hours), a mark under each bar in which a PR merged, and the
+counts in words (jobs launched, PRs merged, finished jobs that came back
+empty). Every card is drawn against the busiest bar on the board, so cards
+compare, and each provider's heading totals its models' launches. A job counts
+for the model its launch row names. A model with nothing recorded shows an
+empty line and says so; when the report cannot be read every card is hatched
+and reads "work unknown", never zero. Launches whose record names no model are
+counted in a sentence above the cards and for no card, and names jobs launched
+under that the registry lacks are listed after the providers. The bars are also
+a reading cursor shared by the whole board: point at one bar, or focus a row
+and press Left or Right (Home and End jump to the oldest and newest bar), and
+that stretch of time is held on every card, each card's words become its own
+jobs launched and PRs merged in it, and the line above the cards gives the
+fleet's counts for it from the report's own hours. Esc, moving the pointer off
+the bars or moving focus off the rows lets go. The switch narrows the board to Needs attention or Routable
 (arrow keys move it), and models the provider docs name that the registry lacks
 are listed at the end. The registry, the check and the lane model table are
 read separately: when one cannot be read the board says which, and the facts it
@@ -307,6 +343,7 @@ agents:
 ```sh
 phm models --json
 phm models check --json
+phm throughput --by model --json
 ```
 
 The Lanes pane is one board of every lane's slots. The headline counts slots

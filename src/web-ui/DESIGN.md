@@ -472,6 +472,13 @@ both themes.
 | Queued / parked | `--chart-queued-outline` | An outline with no fill. |
 | Engines | `--engine-*` | Identity only (see below). |
 
+**Usage windows.** How a usage window ends is always drawn by
+`components/primitives/WindowBar.tsx`: used so far in the accent, what the measured burn
+adds by the reset in the same colour at 40%, and the share left unused as an empty stretch
+outlined in `--status-warning-solid`. Use is not health, so the fill never takes a status
+colour for being high; amber fill is kept for a window that runs dry before its reset. No
+reading is a hatched track, never an empty bar. Do not hand-roll this split in a route's CSS.
+
 **Engines.** Each engine is marked by a 2px tick and a monogram tile
 (`ENGINE_MONOGRAM`) in text contexts. Since 3.11.1 engine tiles, seat chips, lane ticks and the resource bar
 show the provider's own mark (`components/primitives/BrandMark.tsx` over the brand registry `src/core/brand/registry.ts`, path data from @lobehub/icons, MIT) to

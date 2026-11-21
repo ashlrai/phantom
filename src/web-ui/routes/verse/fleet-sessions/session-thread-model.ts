@@ -11,6 +11,7 @@ import { isJobControlAction, type JobControlAction } from '../../../../core/flee
 import { sessionReply, type SessionThreadReply } from '../../../../core/fleet/session-reply.js';
 import { ApiError, apiGet, readFailureReason } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
+import { wantsEarlier } from './thread-depth.js';
 
 export const SESSION_THREAD_API = '/api/verse/fleet/control/session-thread';
 /** The server shares one session map for 5 s; the open thread asks every 10 s while visible. */
@@ -18,7 +19,8 @@ export const THREAD_POLL_MS = 10_000;
 /** Mirror of the inbox limit (core/fleet/mason-inbox.ts); the server re-checks. */
 export const THREAD_REPLY_MAX = 6_000;
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const MAX_MESSAGES = 200, MAX_TEXT = 8_000, MAX_LINE = 400;
+/** A read with its earlier entries (`depth=full`) holds several hundred messages; the newest-entries read holds far fewer. */
+const MAX_MESSAGES = 800, MAX_TEXT = 8_000, MAX_LINE = 400;
 
 export type ThreadSide = 'session' | 'other' | 'record';
 export type ThreadFormat = 'plain' | 'mono' | 'markdown';
@@ -52,6 +54,10 @@ export interface SessionThread {
   reply: ReplyRoute;
   /** Null when no request stands, and for a server that does not read the control file. */
   control: StandingControl | null;
+  /** How much of each record the read shows; null for a server that does not say (it cannot be asked for more). */
+  depth: 'recent' | 'full' | null;
+  /** The server's word that a `full` read of the same records holds more than this `recent` one. */
+  deeper: boolean;
 }
 
 type Obj = Record<string, unknown>;
@@ -119,6 +125,7 @@ export function narrowSessionThread(raw: unknown): SessionThread | null {
     sources: { activity: source('activity'), bus: source('bus'), owner: source('owner'), replies: source('replies'), orders: source('orders'),
       ...(sources.output === undefined ? {} : { output: source('output') }), ...(sources.controls === undefined ? {} : { controls: source('controls') }) },
     gaps: lines(raw.gaps), reply: replyRoute(session, raw.reply), control: standing(raw.control),
+    depth: raw.depth === 'recent' || raw.depth === 'full' ? raw.depth : null, deeper: raw.depth === 'recent' && raw.deeper === true,
   };
 }
 
@@ -149,10 +156,15 @@ export function threadFailure(error: unknown): ThreadFailure {
   return { kind: 'unavailable', text: `${readFailureReason(error)} It retries every few seconds.` };
 }
 
+/**
+ * One cache entry per session whatever the depth: asking for the earlier entries (thread-depth.ts) changes what the
+ * next read asks, not which entry it fills, so the conversation on screen stays while the deeper one is read.
+ */
 export function sessionThreadQuery(id: string): QueryDef<SessionThread | null> {
   return {
     key: `verse-fleet-session-thread:${id}`,
-    fetch: async signal => (SESSION_ID.test(id) ? narrowSessionThread(await apiGet<unknown>(`${SESSION_THREAD_API}?id=${encodeURIComponent(id)}`, signal)) : null),
+    fetch: async signal => (SESSION_ID.test(id)
+      ? narrowSessionThread(await apiGet<unknown>(`${SESSION_THREAD_API}?id=${encodeURIComponent(id)}${wantsEarlier(id) ? '&depth=full' : ''}`, signal)) : null),
   };
 }
 
