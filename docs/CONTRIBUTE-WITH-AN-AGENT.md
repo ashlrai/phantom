@@ -119,7 +119,7 @@ exit code is non-zero if any of them failed.
 | Python syntax check | A `.py` file or an extensionless script with a python shebang changed | Fix the reported `SyntaxError`. The files are compiled with `python3` without writing bytecode; with no working `python3` the step prints `SKIP`. |
 | Shell syntax check | A `.sh` file or an extensionless script with a `sh`/`bash`/`dash` shebang changed | Fix the parse error `bash -n` reports. With no working `bash` the step prints `SKIP`. |
 | Node syntax check | An extensionless script with a `node` shebang changed | Fix the parse error `node --check` reports; launchers like `bin/ashlr` carry no extension, so the shebang decides. The check runs under the same node runtime, so it never prints `SKIP`. |
-| JSON syntax check | A `.json` file changed | Fix the parse error `JSON.parse` reports; every failing file is named. The check needs no external tool, so it never prints `SKIP` for a changed `.json` file. |
+| JSON syntax check | A `.json` or `.webmanifest` file changed | Fix the parse error `JSON.parse` reports; every failing file is named. The check needs no external tool, so it never prints `SKIP` for a changed `.json` or `.webmanifest` file. |
 | XML syntax check | A `.xml`, `.plist` or `.svg` file changed | Fix the parse error `xml.etree.ElementTree` reports. Binary and ASCII `.plist` encodings skip the parser; with no working `python3` the step prints `SKIP`. |
 | Rust syntax check | A `.rs` file changed | Fix the parse error `rustfmt` reports; with no working `rustfmt` the step prints `SKIP`. |
 | Swift syntax check | A `.swift` file changed | Fix the parse error `swiftc -parse` reports; with no working `swiftc` the step prints `SKIP`. |
