@@ -1931,11 +1931,15 @@ unregistered label, or an unreadable registry). Same 20-item cap,
 longest-waiting order, `matched`/`truncated`/`skipped` semantics and
 `unavailable`-on-unreadable rule as `threads`.
 `wakes` reuses
-`readAgentWakes` capped at the newest 20 with `truncated`, or
+`readAgentWakes` capped at the newest 20 with `matched` the count of every
+hint the bounded queue read matched and `truncated`, or
 `unknown-agent`/`unavailable` with `reason`. `inbox` reuses `readAgentInbox`
 for the next page of mail addressed to the agent — same matching, order and
 owner-share receipt checks as `agents bus inbox` — as `{status:'ok', agent,
-messages, nextCursor, truncated}`: each `BusWorkMineInboxMessage` carries
+messages, nextCursor, matched, truncated}`: `matched` is the true pending
+total — every row the same filters accept across the whole retained store,
+counted by a full scan the read performs on request (`page.matched`), while
+`messages` still caps at the page `limit` — each `BusWorkMineInboxMessage` carries
 `cursor`, envelope `id`, `ts`, `priority`, `kind`, `channel`, raw `from`,
 resolved `fromAgent` (null when unregistered), a `summary` through
 `busBodySummary`/`busBodyFallbackSummary`, scrubbed, single-lined and clipped
@@ -1978,10 +1982,12 @@ with a `reason`); they never throw for bad input or storage faults.
 `postLabelMessage`, `sendHandoff`, `sendWakeRequest`, `announceWork`,
 `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
-carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?}, options?)`
+carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?, matched?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label and
 `from` filters by sender through identity-label matching, an unresolvable ref
-keeping exact-label matching; `group.presence` heartbeats are observations
+keeping exact-label matching; `matched: true` scans the whole retained store
+and returns `matched`, the count of every filter-matched row, while
+`messages` still caps at `limit`; `group.presence` heartbeats are observations
 with their own read and never appear as mail of any kind; claimable work and
 worker-handoff items
 additionally carry `held`/`holder` — the same hold evidence

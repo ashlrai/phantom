@@ -91,7 +91,9 @@ export type BusWorkMineAnnounced =
   | { status: 'unavailable' | 'retryable' | 'invalid' };
 
 export type BusWorkMineWakes =
-  | { status: 'ok'; agent: string; wakes: BusWakeRow[]; truncated: boolean }
+  | { status: 'ok'; agent: string; wakes: BusWakeRow[];
+      /** Every wake hint the bounded queue read matched for the agent; `wakes` shows only the newest cap. */
+      matched: number; truncated: boolean }
   | { status: 'unknown-agent' | 'unavailable'; reason: string };
 
 /** One mail row addressed to the agent, summarized the way the inbox frame reads it. */
@@ -121,6 +123,9 @@ export type BusWorkMineInbox =
   | { status: 'ok'; agent: string; messages: BusWorkMineInboxMessage[];
       /** Resume cursor for `agents bus inbox --after`; covers every scanned row. */
       nextCursor: number;
+      /** Every pending mail row the inbox match rules accept across the
+       * retained store; `messages` shows only the oldest cap. */
+      matched: number;
       /** True only when mail beyond the shown page provably exists. */
       truncated: boolean }
   | { status: 'unknown-agent' | 'unavailable' | 'retryable' | 'invalid'; reason: string };
@@ -265,7 +270,7 @@ export type BusWorkMineResult =
       wakes: BusWorkMineWakes; inbox: BusWorkMineInbox }
   | { status: 'invalid'; reason: string };
 
-/** Newest open jobs, newest wake hints and next inbox page a digest shows; totals stay honest via `open`/`truncated`. */
+/** Newest open jobs, newest wake hints and next inbox page a digest shows; totals stay honest via `open`/`matched`/`truncated`. */
 const WORK_MINE_JOBS_MAX = 50;
 const WORK_MINE_WAKES_MAX = 20;
 const WORK_MINE_INBOX_MAX = 20;
@@ -365,15 +370,18 @@ function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: stri
 /**
  * The next page of mail addressed to the agent — the same matching, order and
  * owner-share receipt checks `agents bus inbox` applies, capped at the oldest
- * WORK_MINE_INBOX_MAX pending messages. One extra row is read past the cap so
- * `truncated` is definitive: a full window proves mail remains beyond
- * `nextCursor`, a short one proves the scan reached the store's end. When the
- * window overflows the newest row is the one dropped, so `nextCursor` resumes
- * strictly before it and `agents bus inbox --after` redelivers nothing shown
- * and skips nothing pending.
+ * WORK_MINE_INBOX_MAX pending messages. The read asks for the matched total
+ * too, so `matched` reports every pending row the same filters accept across
+ * the whole retained store, not just the shown window. One extra row is read
+ * past the cap so `truncated` is definitive: a full window proves mail remains
+ * beyond `nextCursor`, a short one proves the scan reached the store's end.
+ * When the window overflows the newest row is the one dropped, so `nextCursor`
+ * resumes strictly before it and `agents bus inbox --after` redelivers nothing
+ * shown and skips nothing pending.
  */
 function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number): BusWorkMineInbox {
-  const page = readAgentInbox(agent, { limit: WORK_MINE_INBOX_MAX + 1 }, { root: options.root, now: () => nowMs });
+  const page = readAgentInbox(agent, { limit: WORK_MINE_INBOX_MAX + 1, matched: true },
+    { root: options.root, now: () => nowMs });
   if (page.status !== 'ok') return { status: page.status, reason: page.reason };
   let shown = page.messages, nextCursor = page.nextCursor, truncated = false;
   if (page.messages.length > WORK_MINE_INBOX_MAX) {
@@ -387,6 +395,7 @@ function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number)
   }
   return {
     status: 'ok', agent: page.agent, nextCursor, truncated,
+    matched: page.matched ?? shown.length,
     messages: shown.map(message => ({
       cursor: message.cursor, id: message.envelope.id, ts: new Date(message.receivedAt).toISOString(),
       priority: message.priority, kind: message.kind, channel: message.channel,
@@ -732,7 +741,8 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
   const page = readAgentWakes(agent, undefined,
     { root: options.root, runsRoot: options.runsRoot, now: () => nowMs });
   const wakes: BusWorkMineWakes = page.status === 'ok'
-    ? { status: 'ok', agent: page.agent, truncated: page.wakes.length > WORK_MINE_WAKES_MAX,
+    ? { status: 'ok', agent: page.agent, matched: page.wakes.length,
+        truncated: page.wakes.length > WORK_MINE_WAKES_MAX,
         wakes: page.wakes.slice(-WORK_MINE_WAKES_MAX) }
     : { status: page.status, reason: page.reason };
 
@@ -869,7 +879,7 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
   if (wakes.status !== 'ok') {
     lines.push(`wakes=unknown ${wakes.status}`);
   } else {
-    lines.push(`wakes=${wakes.wakes.length}${wakes.truncated ? '+truncated' : ''}`);
+    lines.push(`wakes=${wakes.matched} shown=${wakes.wakes.length}${wakes.truncated ? '+truncated' : ''}`);
     for (const wake of wakes.wakes) {
       lines.push(`  ${new Date(wake.at).toISOString()} ${wake.id} ${wake.from} -> ${wake.to}`);
     }
@@ -879,7 +889,8 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
   if (inbox.status !== 'ok') {
     lines.push(`inbox=unknown ${inbox.status}`);
   } else {
-    lines.push(`inbox=${inbox.messages.length}${inbox.truncated ? '+truncated' : ''} nextCursor=${inbox.nextCursor}`);
+    lines.push(`inbox=${inbox.matched} shown=${inbox.messages.length}${inbox.truncated ? '+truncated' : ''} ` +
+      `nextCursor=${inbox.nextCursor}`);
     for (const message of inbox.messages) {
       const where = message.kind === 'channel' ? `#${message.channel}` : message.kind;
       const from = message.fromAgent ? `agent:${message.fromAgent}` : `label ${message.from}`;

@@ -307,6 +307,38 @@ describe('sender-filtered inbox reads', () => {
     expect(filtered.messages).toEqual([]);
     expect(filtered.nextCursor).toBeGreaterThan(0);
   });
+
+  it('counts every filter-matched row across the store only when asked', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'a1', id: 'dm-m1' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'a2', id: 'dm-m2' }, options);
+    await sendDirectMessage({ from: 'orion', to: 'nova', text: 'o1', id: 'dm-m3' }, options);
+    // Mail addressed to someone else never enters the count.
+    await sendDirectMessage({ from: 'atlas', to: 'orion', text: 'not nova', id: 'dm-m4' }, options);
+
+    // Without the flag the page shape is unchanged: no matched field at all.
+    const plain = readAgentInbox('nova', { limit: 2 }, options);
+    if (plain.status !== 'ok') throw new Error(`unexpected ${plain.status}`);
+    expect(plain.messages).toHaveLength(2);
+    expect(plain.matched).toBeUndefined();
+
+    // With it, messages still caps at limit while matched counts every row
+    // the same filters accept — and nextCursor already covers the whole scan.
+    const counted = readAgentInbox('nova', { limit: 2, matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.messages).toHaveLength(2);
+    expect(counted.matched).toBe(3);
+
+    // The count honors the same sender filter and the same after cursor.
+    const filtered = readAgentInbox('nova', { limit: 2, matched: true, from: 'atlas' }, options);
+    if (filtered.status !== 'ok') throw new Error(`unexpected ${filtered.status}`);
+    expect(filtered.matched).toBe(2);
+    const resumed = readAgentInbox('nova', { after: counted.nextCursor, matched: true }, options);
+    if (resumed.status !== 'ok') throw new Error(`unexpected ${resumed.status}`);
+    expect(resumed.matched).toBe(0);
+    expect(resumed.messages).toEqual([]);
+  });
 });
 
 describe('envelope lookup by id', () => {

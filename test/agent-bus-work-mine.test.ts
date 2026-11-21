@@ -142,7 +142,7 @@ describe('readBusWorkMine', () => {
     expect(byId.has('RQ-M-4')).toBe(false);
 
     // Wakes: the hint addressed to atlas under any of its labels.
-    expect(result.wakes).toMatchObject({ status: 'ok', agent: 'atlas', truncated: false });
+    expect(result.wakes).toMatchObject({ status: 'ok', agent: 'atlas', matched: 1, truncated: false });
     if (result.wakes.status !== 'ok') throw new Error('unreachable');
     expect(result.wakes.wakes).toEqual([expect.objectContaining({ id: 'wk-mine-1', from: 'agent:nova', to: 'agent:atlas' })]);
 
@@ -151,6 +151,7 @@ describe('readBusWorkMine', () => {
     expect(result.inbox.status).toBe('ok');
     if (result.inbox.status !== 'ok') throw new Error('unreachable');
     expect(result.inbox.truncated).toBe(false);
+    expect(result.inbox.matched).toBe(2);
     expect(result.inbox.messages.map(m => m.id)).toEqual(['post-RQ-M-3', 'wk-mine-1']);
     expect(result.inbox.messages[0]).toMatchObject({ kind: 'dm', from: 'agent:nova', fromAgent: 'nova' });
     expect(result.inbox.messages[0]!.summary).toContain('RQ-M-3');
@@ -399,8 +400,10 @@ describe('readBusWorkMine', () => {
     if (result.status !== 'ok') throw new Error('unreachable');
     expect(result.inbox.status).toBe('ok');
     if (result.inbox.status !== 'ok') throw new Error('unreachable');
-    // 21 pending: the oldest 20 show, the newest is provably beyond nextCursor.
+    // 21 pending: the oldest 20 show, the newest is provably beyond nextCursor,
+    // and matched reports the true pending total, not just the shown window.
     expect(result.inbox.truncated).toBe(true);
+    expect(result.inbox.matched).toBe(21);
     expect(result.inbox.messages).toHaveLength(20);
     const shownIds = result.inbox.messages.map(m => m.id);
     expect(shownIds).not.toContain('dm-t-21');
@@ -428,7 +431,37 @@ describe('readBusWorkMine', () => {
     expect(exact.inbox.status).toBe('ok');
     if (exact.inbox.status !== 'ok') throw new Error('unreachable');
     expect(exact.inbox.truncated).toBe(false);
+    expect(exact.inbox.matched).toBe(20);
     expect(exact.inbox.messages).toHaveLength(20);
+  });
+
+  it('reports the true wake-hint and mail totals when the shown windows overflow', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+    for (let i = 1; i <= 25; i += 1) {
+      expect(await sendWakeRequest({ from: 'nova', to: 'atlas', reason: `wake ${i}`,
+        id: `wk-over-${String(i).padStart(2, '0')}` }, options)).toMatchObject({ status: 'posted' });
+    }
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    // 25 matched hints, newest 20 shown — matched is the total, not the window.
+    expect(result.wakes.status).toBe('ok');
+    if (result.wakes.status !== 'ok') throw new Error('unreachable');
+    expect(result.wakes.matched).toBe(25);
+    expect(result.wakes.truncated).toBe(true);
+    expect(result.wakes.wakes).toHaveLength(20);
+    expect(result.wakes.wakes[0]).toMatchObject({ id: 'wk-over-06' });
+    expect(result.wakes.wakes.at(-1)).toMatchObject({ id: 'wk-over-25' });
+    // The same 25 wake envelopes are also pending mail: the inbox total agrees.
+    expect(result.inbox.status).toBe('ok');
+    if (result.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.inbox.matched).toBe(25);
+    expect(result.inbox.truncated).toBe(true);
+    expect(result.inbox.messages).toHaveLength(20);
   });
 
   it('carries the inbox hold evidence on claimable and handoff mail only', async () => {

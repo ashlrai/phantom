@@ -532,7 +532,10 @@ export interface InboxMessage {
   /** Owner label of the blocking claim when held and known; null otherwise. */
   holder?: string | null;
 }
-export type InboxPage = { status: 'ok'; agent: string; messages: InboxMessage[]; nextCursor: number } |
+export type InboxPage = { status: 'ok'; agent: string; messages: InboxMessage[]; nextCursor: number;
+    /** Every filter-matched row across the whole scan, present only when the
+     * read asked for it (`page.matched`); `messages` still caps at `limit`. */
+    matched?: number } |
   { status: 'invalid' | 'unknown-agent' | 'unavailable' | 'retryable'; reason: string };
 
 const BUS_BODY_SUMMARY_MAX = 200;
@@ -1012,11 +1015,16 @@ function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
  * it only after handling the page. Claimable work and worker-handoff items
  * additionally carry `held`/`holder` — the same hold evidence `bus show`
  * reports — so an agent paging mail sees whether pending work is already
- * taken without a lookup per message.
+ * taken without a lookup per message. `page.matched` asks for the true
+ * pending total: the scan then covers the whole retained store instead of
+ * stopping at `limit`, counting every row the same filters accept while
+ * `messages` still returns only the first `limit` of them.
  */
-export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string } = {},
+export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string;
+    matched?: boolean } = {},
   options: UnifiedBusOptions = {}): InboxPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread;
+  const countMatched = page.matched === true;
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
     return { status: 'invalid', reason: 'after must be >= 0 and limit 1-100.' };
   }
@@ -1033,6 +1041,7 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   const self = `${AGENT_ADDRESS_PREFIX}${target.identity.handle}`;
   const fromMatch = page.from === undefined ? undefined : agentAddressMatcher(labelIdentityOf(read.registry), page.from);
   const messages: InboxMessage[] = [];
+  let matched = 0;
   let cursor = after;
   scan: for (let index = 0; index < MAX_PAGES; index += 1) {
     const result = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ, { root: options.root, now: options.now, includeOriginalEnvelope: true });
@@ -1062,11 +1071,14 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
         if (receiptState !== 'accepted') continue;
       }
       if (matchedKind !== null) {
-        messages.push({ cursor: row.cursor, receivedAt: row.receivedAt, kind: matchedKind, priority: envelope.priority,
-          fromAgent: resolveAgent(read.registry, envelope.from)?.handle ?? null,
-          channel: matchedKind === 'channel' ? channel : null, envelope });
+        matched += 1;
+        if (!countMatched || messages.length < limit) {
+          messages.push({ cursor: row.cursor, receivedAt: row.receivedAt, kind: matchedKind, priority: envelope.priority,
+            fromAgent: resolveAgent(read.registry, envelope.from)?.handle ?? null,
+            channel: matchedKind === 'channel' ? channel : null, envelope });
+        }
       }
-      if (messages.length === limit) { cursor = row.cursor; break scan; }
+      if (!countMatched && messages.length === limit) { cursor = row.cursor; break scan; }
     }
     if (result.nextCursor <= cursor) break;
     cursor = result.nextCursor;
@@ -1085,7 +1097,8 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
       message.holder = hold.holder;
     }
   }
-  return { status: 'ok', agent: target.identity.handle, messages, nextCursor: cursor };
+  return { status: 'ok', agent: target.identity.handle, messages, nextCursor: cursor,
+    ...(countMatched ? { matched } : {}) };
 }
 
 export type WakePage = { status: 'ok'; agent: string; wakes: BusWakeRow[] } |
