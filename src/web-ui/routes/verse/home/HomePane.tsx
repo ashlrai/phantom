@@ -14,6 +14,7 @@ import { readLastSeen } from '../shell/last-seen-store.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { setVerseSection } from '../verse-ui-store.js';
 import { ApprovalsCard } from './ApprovalsCard.js';
+import { AtRiskReading } from './AtRiskReading.js';
 import { DeliveryCard } from './DeliveryCard.js';
 import { DiskCard } from './DiskCard.js';
 import { MachinesCard } from './MachinesCard.js';
@@ -81,7 +82,7 @@ export function HomePane({ visible }: PaneProps) {
       <Value field={home.running}>{lanes => <RunningLanes lanes={lanes} />}</Value>
     </Card>
     <Card title="Most at risk of going unused" action="Open Usage" onOpen={() => openPane('fleet-usage')}>
-      <p><Value field={home.atRisk}>{risk => risk ? `${risk.resource}. ${risk.reason}` : 'Nothing is set to expire unused.'}</Value></p>
+      <Value field={home.atRisk}>{risk => risk ? <AtRiskReading risk={risk} /> : <p>Nothing is set to expire unused.</p>}</Value>
     </Card>
     {/* The day drawn by kind of event, on the Work log view's own 24 hour read; the summary's rows stand in until it answers. */}
     <WorklogCard summary={home.worklog} visible={visible} onOpen={() => { window.location.hash = '#/work/log'; }} onOpenJob={openPoolJob} />
