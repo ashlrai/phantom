@@ -15,6 +15,7 @@ import type { FleetJobActivityV1 } from '../src/core/fleet/runs-job-activity.js'
 import type { FleetSessionV1, FleetSessionsV1 } from '../src/core/fleet/runs-sessions.js';
 import { buildLiveSessions, flatTree } from '../src/core/fleet/live-sessions.js';
 import { buildSessionThread, THREAD_LIMITS, renderSessionThreadText, sessionBusMessages, sessionOutputLines, sessionOwnerMessages, sessionReply, THREAD_BUS_SHOWN, THREAD_CONTROLS_SHOWN, THREAD_ORDERS_SHOWN, THREAD_OUTPUT_LINES, THREAD_OUTPUT_LINE_CHARS, THREAD_OWNER_SHOWN, THREAD_ROUTED_SHOWN, type SessionThreadOutputRead, type SessionThreadOwnerRead } from '../src/core/fleet/session-thread.js';
+import type { SessionThreadParts } from '../src/core/fleet/session-thread.js';
 import { readSessionThread } from '../src/core/fleet/session-thread-read.js';
 import { readFleetSessionMap } from '../src/core/fleet/sessions-view.js';
 import { createFleetSessionThreadApi } from '../src/core/verse/fleet-session-thread-api.js';
@@ -284,6 +285,22 @@ describe('buildSessionThread', () => {
     const unreadable = buildSessionThread(buildLiveSessions(null, NOW), 'RQ-A', { sessionsRead: false, bus: null }, NOW);
     expect(unreadable).toMatchObject({ session: null, sources: { sessions: 'unavailable' }, gaps: ['Sessions unknown: the session list could not be read.'] });
     expect(buildSessionThread(await liveList(), 'unknown parent', { sessionsRead: true, bus: null }, NOW).session).toBeNull();
+  });
+
+  it('gives what the job has done as values, after gaps, and null where no activity was read', async () => {
+    const list = await liveList(), read = (id: string, parts: Partial<SessionThreadParts> = {}) => buildSessionThread(list, id, { sessionsRead: true, bus: bus([]), ...parts }, NOW);
+    const worker = read('RQ-A', { activity: activity() });
+    // The newest step of the fixture carries no time; it reads null, never "now".
+    expect(worker.work).toEqual({ commands: 10, files: { count: 1, added: 12, removed: 3, partial: false }, step: { event: 'publish', summary: 'pr=9', at: null } });
+    // The values are the ones the summary states in words.
+    expect(worker.summary).toEqual(expect.arrayContaining(['10 commands seen, 1 file changed (+12 −3).', 'Latest step: publish pr=9.']));
+    const keys = Object.keys(worker);
+    expect(keys.slice(keys.indexOf('gaps'), keys.indexOf('reply') + 1)).toEqual(['gaps', 'work', 'reply']);
+    const unread = read('RQ-A', { activity: { ...activity(), sources: { ...activity().sources, commands: 'degraded' }, entries: [] } });
+    expect(unread.work).toEqual({ commands: null, files: null, step: null });
+    // Not asked for, failed, a session with no job, and no session at all: no work, and `sources.activity` says which.
+    expect([read('RQ-A').work, read('RQ-A', { activity: null }).work, read('leader', { activity: activity() }).work, read('RQ-NOPE').work]).toEqual([null, null, null, null]);
+    expect([read('RQ-A').sources.activity, read('RQ-A', { activity: null }).sources.activity]).toEqual(['none', 'unavailable']);
   });
 
   it('says where a message to the session goes, and that a finished, jobless or unknown session takes none', async () => {

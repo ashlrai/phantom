@@ -13,7 +13,7 @@
 import { SESSION_FILTER_RE } from '../../../../core/fleet/live-sessions.js';
 import { ApiError, apiGet, readFailureReason } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
-import { replyRoute, standing, type ReplyRoute, type StandingControl } from '../fleet-sessions/session-thread-model.js';
+import { narrowHelpers, narrowWork, replyRoute, standing, type ReplyRoute, type StandingControl, type ThreadWork } from '../fleet-sessions/session-thread-model.js';
 
 export const SESSION_THREADS_API = '/api/verse/fleet/control/session-threads';
 /** The server builds the read at most once per 5 s; the pane asks every 10 s while visible. */
@@ -36,13 +36,8 @@ export interface WallSession {
   /** The helpers below it, as the session list counts them; null when the read did not say. */
   helpers: { below: number; running: number; failed: number } | null;
 }
-/** What a session's job has done, as the read's `work` key gives it. A part that could not be read is null: unknown, not zero. */
-export interface WallWork {
-  commands: number | null;
-  files: { count: number; added: number; removed: number; partial: boolean } | null;
-  /** The newest recorded step; `at` is null when it carried no time that parses. */
-  step: { event: string; summary: string; at: string | null } | null;
-}
+/** What a session's job has done, as the read's `work` key gives it: the shape, and the narrowing, an opened conversation uses for the same key. */
+export type WallWork = ThreadWork;
 /** The message of Mason's a session's job serves, as the read ties them (the job's prompt cites it). */
 export interface WallServes {
   /** The same on every session serving the same message. */
@@ -128,26 +123,6 @@ function narrowServes(raw: unknown): WallServes | null {
   const key = text(raw.key), at = text(raw.at);
   if (!key || !at) return null;
   return { key, at, source: text(raw.source), text: text(raw.text, MAX_TEXT), truncated: raw.truncated === true, jobs: count(raw.jobs) };
-}
-
-/** Null unless every count is one. */
-function narrowHelpers(raw: unknown): WallSession['helpers'] {
-  if (!object(raw)) return null;
-  const below = count(raw.below), running = count(raw.running), failed = count(raw.failed);
-  return below === null || running === null || failed === null ? null : { below, running, failed };
-}
-
-/** Null when the read carries no work for the session. Each part is narrowed on its own, so one malformed part reads unknown and the rest stand. */
-function narrowWork(raw: unknown): WallWork | null {
-  if (!object(raw)) return null;
-  const f = object(raw.files) ? raw.files : null, files = f ? { count: count(f.count), added: count(f.added), removed: count(f.removed) } : null;
-  const s = object(raw.step) ? raw.step : null, event = s ? text(s.event) : null;
-  return {
-    commands: count(raw.commands),
-    files: files && files.count !== null && files.added !== null && files.removed !== null
-      ? { count: files.count, added: files.added, removed: files.removed, partial: f!.partial === true } : null,
-    step: s && event ? { event, summary: text(s.summary) ?? '', at: time(s.at) } : null,
-  };
 }
 
 /** Null when the entry names no session. */

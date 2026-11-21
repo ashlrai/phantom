@@ -778,6 +778,12 @@ messages Mason wrote in the Leader inbox and, for the leader,
   where, its state and when it last spoke, its helpers, its pull request,
   commands seen and files changed, and its latest recorded step. No model
   writes it, and a fact no record holds reads "unknown".
+- `work`, between `gaps` and `reply`: what the session's job has done, as
+  the values behind those summary sentences, in the shape each
+  [session threads](#session-threads) entry carries: `{commands, files,
+  step}`, where a null part is unknown, not zero. It is null for a session
+  with no job and when the job's activity was not read; `sources.activity`
+  tells those apart.
 - `messages[]` in reading order: the brief it was given, each recorded step,
   the last 8 commands, up to 6 changed files, its notes, the newest 50 bus
   messages that name its job or were sent by or to it, the newest 10 messages

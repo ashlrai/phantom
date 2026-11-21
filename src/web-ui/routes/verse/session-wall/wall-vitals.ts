@@ -10,6 +10,9 @@
 import { sessionAge } from '../../../../core/fleet/live-sessions.js';
 import type { WallEntry } from './session-wall-model.js';
 
+/** What the vitals are read from: a wall entry, or an opened conversation, which carries the same keys. */
+export type VitalsSubject = Pick<WallEntry, 'work'> & { session: Pick<WallEntry['session'], 'helpers' | 'prUrl'> };
+
 export interface CardVitals {
   /** The newest recorded step. `ago` is null when the step or the read carries no usable time. */
   step: { event: string; summary: string; ago: string | null } | null;
@@ -31,7 +34,7 @@ function stepAgo(at: string | null, generatedAt: string): string | null {
   return Number.isFinite(seconds) && seconds >= 0 ? sessionAge(seconds) : null;
 }
 
-export function cardVitals(entry: WallEntry, generatedAt: string): CardVitals {
+export function cardVitals(entry: VitalsSubject, generatedAt: string): CardVitals {
   const { work, session } = entry;
   const number = session.prUrl?.match(/\/pull\/(\d+)\/?$/)?.[1];
   return {

@@ -96,6 +96,15 @@ export interface SessionThreadSession {
 }
 /** The request that stands for a session's job: the newest one the dispatcher did not turn down. */
 export interface SessionThreadControl { action: JobControlAction; lane: string | null; status: 'requested' | 'applied'; at: string }
+/** What a session's job has done, as values: the ones the summary's "commands seen, files changed" and "Latest step" sentences state in words. */
+export interface SessionThreadWork {
+  /** Commands seen in the job's log; null when the log's commands could not be read. */
+  commands: number | null;
+  /** The job's changed files; `partial` when the change read was degraded. Null when no change read answered. */
+  files: { count: number; added: number; removed: number; partial: boolean } | null;
+  /** The newest recorded step, `at` as the ledger wrote it (null when it carried no time that parses). Null when no step is recorded. */
+  step: { event: string; summary: string; at: string | null } | null;
+}
 export interface SessionThreadV1 {
   schema: typeof SESSION_THREAD_SCHEMA;
   generatedAt: string;
@@ -115,6 +124,11 @@ export interface SessionThreadV1 {
   sources: { sessions: 'available' | 'unavailable'; activity: SessionThreadSource; bus: SessionThreadSource; owner: SessionThreadSource; replies: SessionThreadSource; orders: SessionThreadSource; output: SessionThreadSource; controls: SessionThreadSource };
   /** Plain words for every part the thread could not show. */
   gaps: string[];
+  /**
+   * What the session's job has done (`sessionWork`), the same answer its entry in `fleet.session-threads.v1` gives. Null for a
+   * session with no job, a job whose activity was not asked for, and a failed activity read: `sources.activity` tells those apart.
+   */
+  work: SessionThreadWork | null;
   /** How to write to this session (session-reply.ts), so every client aims a message the same way. */
   reply: SessionThreadReply;
   /** Null when no request stands (none was made, every one was refused, or the control file was not read). */
@@ -158,6 +172,19 @@ function sessionOf(node: SessionNode, row: LiveSessionRow | undefined): SessionT
     parentId: node.kind === 'leader' ? null : node.parentId, state: node.state === 'running' && row?.quiet === true ? 'quiet' : node.state,
     startedAt: node.startedAt, ageSeconds: row?.ageSeconds ?? null, lastMessageAt: node.lastMessageAt, lastMessageAgeSeconds: node.lastMessageAgeSeconds,
     prUrl: row?.prUrl ?? null, computer: row?.computer ?? 'unknown', helpers: { ...node.counts },
+  };
+}
+
+/** The same records, and the same rules, as the summary's "commands seen, files changed" and "Latest step" sentences below. */
+export function sessionWork(activity: FleetJobActivityV1 | null | undefined): SessionThreadWork | null {
+  if (!activity) return null;
+  const files = activity.entries.find(entry => entry.kind === 'files');
+  const last = activity.entries.filter(entry => entry.kind === 'event').at(-1);
+  return {
+    commands: activity.sources.commands === 'healthy' ? activity.counts.commands : null,
+    files: !files || files.state === 'missing' ? null
+      : { count: files.totals.files, added: files.totals.added, removed: files.totals.removed, partial: files.state === 'degraded' },
+    step: last ? { event: last.event, summary: last.summary, at: last.at && Number.isFinite(Date.parse(last.at)) ? last.at : null } : null,
   };
 }
 
@@ -283,7 +310,7 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   if (!node) {
     return { ...base, session: null, summary: [], messages: [],
       sources: { sessions: parts.sessionsRead ? 'available' : 'unavailable', activity: 'none', bus: 'none', owner: 'none', replies: 'none', orders: 'none', output: 'none', controls: 'none' },
-      gaps: [parts.sessionsRead ? `No session ${id} in the list. Finished sessions stay for an hour.` : 'Sessions unknown: the session list could not be read.'], reply: sessionReply(null), control: null, depth, deeper: false };
+      gaps: [parts.sessionsRead ? `No session ${id} in the list. Finished sessions stay for an hour.` : 'Sessions unknown: the session list could not be read.'], work: null, reply: sessionReply(null), control: null, depth, deeper: false };
   }
   const row = node.jobId === null ? undefined : list.sessions.find(entry => entry.job === node.jobId);
   const session = sessionOf(node, row), leader = session.kind === 'leader';
@@ -433,7 +460,8 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   if (node.lastMessage !== null && !repeated) messages.push({ key: 'latest', kind: 'latest', side: 'session', label: 'Latest', at: when(node.lastMessageAt), text: node.lastMessage, format: 'plain' });
   if (session.jobId === null && !leader) gaps.push('This session has no job record: its steps, commands and changed files are not recorded.');
   return { ...base, session, summary: [...summaryOf(session, node, row, parts.activity, aimed, routed), ...steered], messages,
-    sources: { sessions: 'available', activity, bus, owner, replies, orders, output, controls }, gaps, reply: sessionReply(session), control, depth, deeper: depth === 'recent' && cut };
+    sources: { sessions: 'available', activity, bus, owner, replies, orders, output, controls }, gaps,
+    work: session.jobId !== null ? sessionWork(parts.activity) : null, reply: sessionReply(session), control, depth, deeper: depth === 'recent' && cut };
 }
 
 const PENDING_CONTROL = 'The dispatcher has not applied it yet.';
