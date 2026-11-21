@@ -1083,13 +1083,16 @@ published, PRs merged, empty jobs and the median time from publish to merge. It
 prints JSON (schema `throughput.v1`) with `as_of`, a plain `headline` such as
 "38 merged in the last 6 hours, median 2m 50s", `totals`, one entry in `buckets`
 per hour and `groups` by lane. `--hours N` sets the window (1 to 168, default 24),
-`--by repo` or `--by tier` changes the grouping and `--text` prints plain lines.
+`--by repo`, `--by tier` or `--by model` changes the grouping and `--text` prints plain lines.
+A job belongs to the model its launch row names; work whose job record names no
+model is the `unknown` group, never spread over the others.
 It reads `~/.ashlr-runs/metrics/jobs.jsonl` and the main-guardian status, and
 changes nothing. Each PR counts once. A value that was not measured is `null`
 (or "unknown"), never zero; lines that are not JSON are skipped and counted in
 `malformed_lines`. Exit 1 means the metrics file could not be read. The desktop
 Throughput pane shows the same report (`GET /api/verse/fleet/runs/throughput`)
 for 6 hours, 24 hours or 7 days, with launched, published and merged drawn as one flow.
+The Models pane reads it with `by=model` for the work line on each model's card.
 
 `phm fleet launches --json` answers the question that comes before throughput: how
 many jobs the fleet starts per hour and which lanes those starts go to. It prints
