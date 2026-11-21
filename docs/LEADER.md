@@ -280,7 +280,7 @@ phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky
   `phm fleet leader-health --json`) once a minute while it is on screen, and
   the server shares one reading for 15 seconds. The same notice shows above a
   session's reply box and on the Conversations wall, because those messages
-  go through the same inbox; see [Sessions](SESSIONS.md).
+  go through the same inbox; see [Sessions](https://github.com/ashlrai/phantom/blob/master/docs/SESSIONS.md).
 
 ---
 
