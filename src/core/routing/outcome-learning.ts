@@ -13,6 +13,8 @@
  * the log. This module does not read the home directory, spend, or merge.
  */
 import { betaSample, createSeededRng, gammaSample, type BanditRng } from './bandit.js';
+import { ledgerAtMs, ledgerEventName, ledgerJobId, ledgerLane, ledgerPhase } from '../fleet/empty-cause.js';
+import { ledgerEventTs, ledgerLifecycleEvent, ledgerOutcomeState } from '../fleet/jobs-ledger-dialect.js';
 
 export const OUTCOME_LEARNING_SCHEMA = 'routing.outcome-learning.v1' as const;
 
@@ -128,6 +130,8 @@ export interface LearnedRoute {
 interface Cell extends OutcomeCellView {
   mergeMinutes: number;
   timedMerges: number;
+  /** Attempts whose usage was measured or estimated. Internal to the fold; the view reports usage/attempts. */
+  usageAttempts: number;
 }
 
 interface AssignEvent {
@@ -144,7 +148,8 @@ interface OutcomeEvent {
   kind: 'outcome';
   job: string;
   state: 'merged' | 'closed' | 'dirty' | 'fixup';
-  usage: number;
+  /** Measured allowance spent. Null when the outcome carried no usage reading — never zeroed. */
+  usage: number | null;
   minutes: number | null;
   breakage: number;
 }
@@ -344,7 +349,7 @@ function blankCell(resource: string, model: string, jobType: string, repo: strin
   return {
     resource, model, jobType, repo,
     attempts: 0, censored: 0, merges: 0, goodMerges: 0, breakages: 0, dirty: 0, fixups: 0,
-    usage: 0, mergeMinutes: 0, timedMerges: 0,
+    usage: 0, mergeMinutes: 0, timedMerges: 0, usageAttempts: 0,
     mergeRate: 0, goodMergeRate: 0, breakageRate: 0, dirtyRate: 0, fixupRate: 0,
     meanUsage: 0, meanMinutesToMerge: null,
   };
@@ -356,7 +361,7 @@ function cellKey(resource: string, model: string, jobType: string, repo: string)
 
 function publish(cell: Cell): OutcomeCellView {
   const attempts = cell.attempts;
-  const { mergeMinutes, timedMerges, ...view } = cell;
+  const { mergeMinutes, timedMerges, usageAttempts: _usageAttempts, ...view } = cell;
   return {
     ...view,
     mergeRate: attempts > 0 ? cell.merges / attempts : 0,
@@ -415,7 +420,10 @@ function fold(events: readonly ParsedEvent[], malformed: number, censor?: Censor
     const key = cellKey(assign.resource, assign.model, assign.jobType, assign.repo);
     const cell = cells.get(key) ?? blankCell(assign.resource, assign.model, assign.jobType, assign.repo);
     cell.attempts += 1;
-    cell.usage += event.usage;
+    if (event.usage !== null) {
+      cell.usage += event.usage;
+      cell.usageAttempts += 1;
+    }
     switch (event.state) {
       case 'merged':
         cell.merges += 1;
@@ -447,6 +455,7 @@ function fold(events: readonly ParsedEvent[], malformed: number, censor?: Censor
     cells.set(key, cell);
     finished += 1;
   }
+  reconcileUsage(cells);
   if (censor !== undefined && Number.isFinite(censor.nowMs)) {
     finished += censorStale(cells, open, events, censor);
   }
@@ -498,10 +507,34 @@ function censorStale(
     cell.attempts += count;
     cell.censored += count;
     cell.usage += mean * count;
+    cell.usageAttempts += count;
     cells.set(key, cell);
     added += count;
   }
   return added;
+}
+
+/**
+ * Charge each finished attempt whose outcome carried no usage reading the mean
+ * of the attempts that did report one — the cell's own mean, else the fleet's.
+ * When no attempt anywhere reported usage there is no measured cost to
+ * project, so nothing is added: missing readings never read as zero spend.
+ */
+function reconcileUsage(cells: Map<string, Cell>): void {
+  let fleetUsage = 0;
+  let fleetMeasured = 0;
+  for (const cell of cells.values()) {
+    fleetUsage += cell.usage;
+    fleetMeasured += cell.usageAttempts;
+  }
+  const fleetMean = fleetMeasured > 0 ? fleetUsage / fleetMeasured : 0;
+  for (const cell of cells.values()) {
+    const missing = cell.attempts - cell.usageAttempts;
+    if (missing <= 0) continue;
+    const mean = cell.usageAttempts > 0 ? cell.usage / cell.usageAttempts : fleetMean;
+    cell.usage += mean * missing;
+    cell.usageAttempts = cell.attempts;
+  }
 }
 
 /**
@@ -511,6 +544,97 @@ function censorStale(
 export function learnOutcomes(text: string, censor?: CensorOptions): OutcomeLearning {
   const parsed = parseEvents(text);
   return fold(parsed.events, parsed.malformed, censor);
+}
+
+/**
+ * The jobs-ledger dialect: dispatchd's `launch` rows are the assigns — `lane`
+ * is the resource and `tier` keys job type, the only work-shape field the
+ * ledger records — `finish` rows carry the token reading (`tokens_total`) an
+ * outcome joins by job id, and the metrics-outcomes reconciler's terminal
+ * rows are the merge verdicts. Operational rows (concurrency, posture, route
+ * decisions, claims that never launched) are not outcome evidence and are
+ * skipped without counting as malformed.
+ */
+function ledgerAssign(row: Record<string, unknown>): AssignEvent | null {
+  const job = ledgerJobId(row);
+  const repo = row['repo'];
+  const resource = ledgerLane(row);
+  const model = row['model'];
+  const jobType = row['tier'];
+  const atMs = ledgerAtMs(row);
+  if (!ident(job) || !ident(repo) || !ident(resource) || !ident(model) || !ident(jobType)
+    || atMs === null || !Number.isFinite(atMs)) return null;
+  return { kind: 'assign', job, repo, resource, model, jobType, atMs };
+}
+
+function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed: number } {
+  const events: ParsedEvent[] = [];
+  let malformed = 0;
+  const usageByJob = new Map<string, number>();
+  const launchAtByJob = new Map<string, number>();
+  const resolvedJobs = new Set<string>();
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed === '') continue;
+    let row: Record<string, unknown>;
+    try {
+      const value: unknown = JSON.parse(trimmed);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) { malformed += 1; continue; }
+      row = value as Record<string, unknown>;
+    } catch { malformed += 1; continue; }
+    const eventName = ledgerEventName(row);
+    if (eventName === 'launch') {
+      const assign = ledgerAssign(row);
+      if (assign === null) { malformed += 1; continue; }
+      events.push(assign);
+      launchAtByJob.set(assign.job, assign.atMs);
+      resolvedJobs.delete(assign.job);
+      continue;
+    }
+    if (eventName === 'finish') {
+      const job = ledgerJobId(row);
+      const usage = finiteNumber(row['tokens_total']);
+      if (job !== null && ident(job) && usage !== null) usageByJob.set(job, usage);
+      continue;
+    }
+    const phase = ledgerPhase(row);
+    const lifecycle = ledgerLifecycleEvent(row, phase);
+    const state = ledgerOutcomeState(row, lifecycle, phase);
+    if (state !== 'MERGED' && state !== 'CLOSED') continue;
+    const job = ledgerJobId(row);
+    if (job === null || !ident(job) || resolvedJobs.has(job)) continue;
+    resolvedJobs.add(job);
+    const atMs = ledgerEventTs(row, phase);
+    const launchAt = launchAtByJob.get(job);
+    const minutes = atMs !== null && launchAt !== undefined && atMs > launchAt ? (atMs - launchAt) / 60_000 : null;
+    events.push({
+      kind: 'outcome', job,
+      state: state === 'MERGED' ? 'merged' : 'closed',
+      usage: usageByJob.get(job) ?? null,
+      minutes, breakage: 0,
+    });
+  }
+  return { events, malformed };
+}
+
+/**
+ * Learn from the two evidence sources the fleet actually writes: the dispatch
+ * event log's ASSIGN/OUTCOME dialect and the jobs ledger's launch/finish/
+ * reconciler rows. Either text may be null when its file was unreadable; a
+ * null source contributes nothing. Events fold in the order given.
+ */
+export function learnFleetOutcomes(
+  dispatchLog: string | null,
+  jobsLedger: string | null,
+  censor?: CensorOptions,
+): OutcomeLearning {
+  const dispatch = dispatchLog === null
+    ? { events: [] as ParsedEvent[], malformed: 0 }
+    : parseEvents(dispatchLog);
+  const ledger = jobsLedger === null
+    ? { events: [] as ParsedEvent[], malformed: 0 }
+    : parseJobsLedgerEvents(jobsLedger);
+  return fold([...dispatch.events, ...ledger.events], dispatch.malformed + ledger.malformed, censor);
 }
 
 function stableId(parts: readonly string[]): string {

@@ -2,13 +2,14 @@
  * Outcome learning: log posteriors, Thompson exploration, usage-before-reset,
  * critical jobs, and the shared desktop/CLI view.
  */
-import { readFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cmdFleetOutcomes } from '../src/cli/fleet-outcomes.js';
 import { formatOutcomeLearning } from '../desktop/outcome-learning-view.js';
 import {
+  learnFleetOutcomes,
   learnOutcomes,
   learnedSeatPenalty,
   offersFromLearning,
@@ -203,5 +204,64 @@ describe('outcome learning', () => {
     const critical = JSON.parse(explained.out) as { route: { explanation: string; action: string; resource: string } };
     expect(critical.route).toMatchObject({ action: 'dispatch', resource: 'devin' });
     expect(critical.route.explanation).toBe('Sent to Devin because CMP Codex resets in 40 min with 5% left.');
+  });
+
+  describe('jobs ledger outcomes', () => {
+    const LEDGER = [
+      JSON.stringify({ event: 'launch', job: 'J-1', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T00:00:00+00:00' }),
+      JSON.stringify({ event: 'finish', job: 'J-1', lane: 'devin', tokens_total: 1200, wall_s: 600 }),
+      JSON.stringify({ event: 'launch', job: 'J-2', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T01:00:00+00:00' }),
+      JSON.stringify({ event: 'finish', job: 'J-2', lane: 'devin', tokens_total: 800, wall_s: 300 }),
+      JSON.stringify({ event: 'launch', job: 'J-3', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T02:00:00+00:00' }),
+      JSON.stringify({ event: 'concurrency', from: 1, to: 2, reason: 'test', zones: {} }),
+      JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-1', prUrl: 'https://github.com/ashlrai/phantom/pull/1', outcome: 'MERGED', mergedAt: '2026-11-01T00:30:00+00:00', ts: '2026-11-01T00:31:00+00:00' }),
+      JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-2', prUrl: 'https://github.com/ashlrai/phantom/pull/2', outcome: 'CLOSED', closedAt: '2026-11-01T02:00:00+00:00', ts: '2026-11-01T02:01:00+00:00' }),
+      JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-3', prUrl: 'https://github.com/ashlrai/phantom/pull/3', outcome: 'MERGED', mergedAt: '2026-11-01T03:00:00+00:00', ts: '2026-11-01T03:01:00+00:00' }),
+      'not json at all',
+    ].join('\n');
+
+    it('folds launch, finish and reconciler rows into outcome cells', () => {
+      const view = outcomeLearningView(learnFleetOutcomes(null, LEDGER));
+      expect(view.finished).toBe(3);
+      expect(view.malformed).toBe(1);
+      const cell = view.cells.find((c) => c.resource === 'devin' && c.jobType === 'work');
+      // J-3 merged with no finish row: its usage is charged the cell mean (1000), never zeroed.
+      expect(cell).toMatchObject({
+        resource: 'devin', model: 'swe-2-max', jobType: 'work', repo: 'phantom',
+        attempts: 3, merges: 2, goodMerges: 2, censored: 0,
+      });
+      expect(cell?.meanUsage).toBeCloseTo(1000);
+      expect(cell?.meanMinutesToMerge).toBeCloseTo(45);
+    });
+
+    it('keeps dispatch-log learning identical when the ledger is absent', () => {
+      const viaFleet = learnFleetOutcomes(LOG, null);
+      const viaPlain = learnOutcomes(LOG);
+      expect(viaFleet).toEqual(viaPlain);
+      expect(learnFleetOutcomes(null, null)).toMatchObject({ finished: 0, malformed: 0, cells: [] });
+    });
+
+    it('serves the ledger view through --ledger and the default runs path', async () => {
+      home = mkdtempSync(join(tmpdir(), 'outcome-ledger-'));
+      const ledgerPath = join(home, 'jobs.jsonl');
+      writeFileSync(ledgerPath, LEDGER);
+      const flagged = await run(['--ledger', ledgerPath, '--json']);
+      expect(flagged.code).toBe(0);
+      expect(JSON.parse(flagged.out)).toMatchObject({ schema: 'routing.outcome-learning.v1', finished: 3 });
+      // Default path: <runs>/metrics/jobs.jsonl, runs dir pinned for determinism.
+      const runsDir = join(home, 'runs');
+      const priorRunsDir = process.env['ASHLR_RUNS_DIR'];
+      process.env['ASHLR_RUNS_DIR'] = runsDir;
+      try {
+        mkdirSync(join(runsDir, 'metrics'), { recursive: true });
+        writeFileSync(join(runsDir, 'metrics', 'jobs.jsonl'), LEDGER);
+        const def = await run(['--json']);
+        expect(def.code).toBe(0);
+        expect(JSON.parse(def.out)).toMatchObject({ finished: 3 });
+      } finally {
+        if (priorRunsDir === undefined) delete process.env['ASHLR_RUNS_DIR'];
+        else process.env['ASHLR_RUNS_DIR'] = priorRunsDir;
+      }
+    });
   });
 });

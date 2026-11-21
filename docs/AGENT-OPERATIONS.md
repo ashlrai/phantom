@@ -199,13 +199,14 @@ are written. `task` stays untrusted prompt data on each emitted job.
 
 ### Outcome learning
 
-`phm fleet outcomes --events <log> --json` reads a dispatch event log and
-prints, for each resource, model, job type, and repo, the merge rate, time to
-merge, usage, and breakage rate. It also lists improvement jobs for recurring
-failures. `phm fleet outcomes route` adds the next assignment and a
+`phm fleet outcomes --events <log> --json` reads a dispatch event log plus the
+jobs ledger (`metrics/jobs.jsonl`, bounded tail; `--ledger <file>` overrides)
+and prints, for each resource, model, job type, and repo, the merge rate, time
+to merge, usage, and breakage rate. It also lists improvement jobs for
+recurring failures. `phm fleet outcomes route` adds the next assignment and a
 plain-language reason. The same types are exported from
 `src/core/routing/outcome-learning.ts` for the desktop app. There is no
-routing setting to tune: the log is the memory. Critical jobs are never held
+routing setting to tune: the logs are the memory. Critical jobs are never held
 for an exhausted resource, and allowance that resets soon is still spent when
 that resource can finish the job.
 
