@@ -21,9 +21,9 @@ import { usedPercentText } from '../percent-text.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { formatRelative } from '../verse-model.js';
 import styles from './fleet-router.module.css';
-import { ROUTER_DIFFICULTIES, ROUTER_TASKS, routeAt, routeSeats, routerDecisionsQuery, routerRoutesQuery, seatBrand, summarizeDecisions, tableShares, type BudgetRoute, type RouteSeat } from './router-model.js';
+import { ROUTER_DIFFICULTIES, ROUTER_KINDS, ROUTER_TASKS, routeAt, routeSeats, routerDecisionsQuery, routerRoutesQuery, seatBrand, summarizeDecisions, tableShares, type BudgetRoute, type RouteSeat } from './router-model.js';
 
-const KINDS = ROUTER_TASKS.length * ROUTER_DIFFICULTIES.length;
+const KINDS = ROUTER_KINDS;
 
 const RECENT = 6;
 const AUDIENCES = [{ value: 'fleet', label: 'Fleet work' }, { value: 'owner', label: 'Your request' }] as const;

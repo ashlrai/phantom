@@ -36,6 +36,9 @@ export function fleetTotals(lanes: readonly LaneSeries[]): BoardTotals {
   return totals;
 }
 
+/** The fleet's fill as the board writes it; a window with no target has no percentage. */
+export const fillText = (totals: BoardTotals): string => totals.fillPct === null ? 'no target' : `${round(totals.fillPct)}%`;
+
 export function boardHeadline(totals: BoardTotals, laneCount: number): string {
   if (laneCount === 0) return 'No lanes reported in this window';
   if (totals.fillPct === null) return 'No lane had a target in this window';
@@ -69,7 +72,7 @@ export function place(segment: Segment, fromMs: number, toMs: number): { left: n
 
 export function totalFacts(totals: BoardTotals, watched: number, hours: number): BoardFact[] {
   return [
-    { label: 'Filled', value: totals.fillPct === null ? 'no target' : `${round(totals.fillPct)}%`, note: 'running over target, by sample' },
+    { label: 'Filled', value: fillText(totals), note: 'running over target, by sample' },
     { label: 'Idle', value: slotSpan(totals.idleSlotMinutes), note: 'open slots over time' },
     { label: 'Held', value: span(totals.heldMinutes), note: 'lane time on hold' },
     { label: 'Stalled', value: span(totals.stallMinutes), note: 'open slots with work queued', tone: totals.stallMinutes > 0 ? 'warning' : undefined },
