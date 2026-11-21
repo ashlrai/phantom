@@ -442,6 +442,13 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   '.github/scripts/ci-fast-inputs.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-green-reuse.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-mcp-selection.mjs': ['.github/workflows/ci.yml'],
+  // The memory benchmark gate runs `tsx scripts/benchmark-memory.ts`
+  // (npm run bench:memory -- --check): its import closure covers the
+  // benchmark, its floors file and the whole src/core/memory
+  // implementation, but not the toolchain files that shape how tsx
+  // compiles and resolves it -- the manifest carrying the script and
+  // pinned deps, its lockfile and the tsconfig tsx reads.
+  'scripts/benchmark-memory.ts': ['package.json', 'package-lock.json', 'tsconfig.json'],
 };
 
 function parseVersionSyncFailures(log: string): Failure[] {
@@ -968,6 +975,65 @@ function parseCiScriptGateFailures(log: string): Failure[] {
   return out;
 }
 
+// The `ci` job's "Memory benchmark regression gate" step on the ubuntu
+// authority 3/3 shard runs `npm run --silent bench:memory -- --check >
+// /dev/null`: the redirect discards the script's pretty-printed JSON
+// report, so the job log carries only what the gate writes to stderr --
+//   memory benchmark below floor:
+//     <violation>
+//     <violation>
+// one line indented two spaces per governed-arm measurement that fell
+// below its floor in src/core/local-eval/memory-benchmark-floors.ts
+// (case counts, passed counts vs floor, leak/step/waste ceilings, open
+// pending decisions). A memory regression on master fails this shard on
+// every freshly opened PR with no vitest, typecheck or TAP line naming
+// it, so without this shape those PRs read unknown and queue no fix.
+// The gate's verdict is binary -- the step fails while any violation
+// stands -- so each block groups under the entry script as
+// `scripts/benchmark-memory.ts > (memory-benchmark)`: the script plus
+// its import closure (the benchmark, its floors and the whole
+// src/core/memory implementation) and the seeded toolchain inputs is
+// the unit a master fix restores, and like the other non-test
+// identities it can never resolve through a vitest pass line --
+// shared-baseline, pr-caused or unknown, never probable-flake. The
+// measurement run without --check, the discarded JSON report,
+// MEMORY_BENCH_ARGUMENTS usage errors (exit 2, no stderr), passing
+// runs, a bare header with no violation lines and unrelated output
+// stay unparsed.
+const MEMORY_BENCHMARK_FILE = 'scripts/benchmark-memory.ts';
+const MEMORY_BENCHMARK_NAMES = '(memory-benchmark)';
+const MEMORY_BENCHMARK_HEADER = 'memory benchmark below floor:';
+const MEMORY_BENCHMARK_MAX = 8;
+const MEMORY_BENCHMARK_VIOLATIONS_MAX = 48;
+const MEMORY_BENCHMARK_VIOLATION = /^ {2}\S/;
+
+function parseMemoryBenchmarkFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  // Timestamped job-log lines keep the violation indent: the strip removes
+  // the stamp and its single separating space only, the same convention as
+  // the TAP and report parsers.
+  const raw = stripVTControlCharacters(log).split('\n')
+    .map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+ /, '').replace(/\r$/, ''));
+  for (let i = 0; i < raw.length && out.length < MEMORY_BENCHMARK_MAX; i++) {
+    if (raw[i]!.trimEnd() !== MEMORY_BENCHMARK_HEADER) continue;
+    const violations: string[] = [];
+    for (let j = i + 1; j < raw.length && violations.length < MEMORY_BENCHMARK_VIOLATIONS_MAX; j++) {
+      const line = raw[j]!;
+      if (!MEMORY_BENCHMARK_VIOLATION.test(line)) break;
+      violations.push(line);
+    }
+    if (violations.length === 0) continue;
+    out.push({
+      file: MEMORY_BENCHMARK_FILE,
+      names: MEMORY_BENCHMARK_NAMES,
+      testId: `${MEMORY_BENCHMARK_FILE} > ${MEMORY_BENCHMARK_NAMES}`,
+      excerpt: clean([MEMORY_BENCHMARK_HEADER, ...violations].join('\n')),
+    });
+    i += violations.length;
+  }
+  return out;
+}
+
 export function parseBaselineFailures(log: string, repo?: string, auditExceptions: readonly DependencyAuditException[] | null = []): Failure[] {
   const result: Failure[] = [];
   const typecheck = new Map<string, Failure>();
@@ -1042,6 +1108,10 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     result.push(failure);
   }
   for (const failure of parseCiScriptGateFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseMemoryBenchmarkFailures(log)) {
     if (result.length >= 100) break;
     result.push(failure);
   }
@@ -1437,10 +1507,12 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // the generator-input deps decide touched. The version-sync gate reads
       // exactly its enumerated metadata inputs, the dependency-audit gate
       // exactly its lockfile input set, the pack-smoke/artifact gates
-      // plain .mjs scripts plus their enumerated manifests, and the
-      // secret-shape/secret-scan/version-provenance trust gates have no
-      // vitest harness at all, so the ambient set cannot reach any of them.
-      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
+      // plain .mjs scripts plus their enumerated manifests, the memory
+      // benchmark gate a tsx script plus its import closure and seeded
+      // toolchain inputs, and the secret-shape/secret-scan/
+      // version-provenance trust gates have no vitest harness at all, so
+      // the ambient set cannot reach any of them.
+      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
       const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
       observations.push({ pr, failure, touched, runId: failure.runId });
     }
