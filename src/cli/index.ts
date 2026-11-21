@@ -3390,8 +3390,10 @@ async function main(): Promise<void> {
 
       case 'owner-live': {
         // Why each phone channel is on or off, and the one step that changes it (src/cli/fleet-owner-live.ts).
-        const { cmdOwnerLiveStatus } = await import('./fleet-owner-live.js');
-        process.exitCode = rest[0] === 'status' ? await cmdOwnerLiveStatus(rest.slice(1)) : (console.error('usage: phm owner-live status [--json]'), 2);
+        const { cmdOwnerLiveStatus, cmdOwnerLiveSwitch } = await import('./fleet-owner-live.js');
+        process.exitCode = rest[0] === 'status' ? await cmdOwnerLiveStatus(rest.slice(1))
+          : rest[0] === 'enable' || rest[0] === 'disable' ? await cmdOwnerLiveSwitch(rest)
+          : (console.error('usage: phm owner-live status|enable imessage|disable imessage [--json]'), 2);
         break;
       }
 
