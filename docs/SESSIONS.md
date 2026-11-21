@@ -103,7 +103,14 @@ left. A running session's card ends with the last 3 lines it wrote to its
 log. The pane makes one request for all of them
 (`GET /api/verse/fleet/control/session-threads`) and asks again every 10
 seconds while it is on screen. The buttons above the cards show only the
-sessions in one state. Arrow keys or J and K move between cards, Enter opens
+sessions in one state. The Order control in the bar, or O, changes where the
+cards stand without adding or dropping one: Fleet order is the list's own
+(the leader, then each worker with its helpers), Latest first leads with the
+session that spoke most recently and puts one with no known time last, and By
+lane or By repo puts the sessions under one heading per lane or repo that
+counts them by state, with a helper under its worker's heading. The leader
+stays first in every order. The choice is kept in the browser, and the list
+beside an open conversation follows it. Arrow keys or J and K move between cards, Enter opens
 one and Esc comes back to the same card. An opened card shows that session's
 whole conversation. Under each of your messages in the leader's conversation
 is a short list of the jobs the Leader routed it to, each with its lane, how
