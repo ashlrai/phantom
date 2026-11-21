@@ -30,6 +30,10 @@ const jobs = [
   J({ event: 'autobackoff_hold', lane: 'claude', job: 'RQ-U', ts: iso(7), pattern: 'usage_limit' }),
   J({ event: 'autobackoff_skip', lane: 'devin', job: 'RQ-T', ts: iso(6), pattern: 'usage_limit' }),
   J({ event: 'precheck_parked', job: 'RQ-S', lane: 'devin', ts: iso(5), code: 13 }),
+  J({ event: 'dispatch_deferred', job: 'RQ-D1', repo: 'phantom', reason: 'duplicate-request', repeatOf: 'RQ-A', ts: iso(3) }),
+  J({ event: 'dispatch_deferred', job: 'RQ-D1', repo: 'phantom', reason: 'duplicate-request', repeatOf: 'RQ-A', ts: iso(2) }),
+  J({ event: 'dispatch_deferred', job: 'RQ-D2', repo: 'phantom', reason: 'duplicate-request', repeatOf: 'RQ-B', ts: iso(1) }),
+  J({ event: 'dispatch_deferred', job: 'RQ-OLD', repo: 'phantom', reason: 'duplicate-request', repeatOf: 'RQ-A', ts: iso(200) }),
 ].join('\n');
 const events = [
   `${local(15)} LAUNCH_DEFERRED RQ-1 PAUSED (requeued)`,
@@ -69,6 +73,8 @@ describe('phm friction miners', () => {
     expect(item(r, 'manual-interventions').signals).toMatchObject({ manual_holds: 1, budget_overrides: 1, kept_jobs: 2 });
     expect(item(r, 'wrong-route').signals).toMatchObject({ route_moves: 1, route_holds: 0 });
     expect(item(r, 'holds').signals).toMatchObject({ hold_events: 4, lanes_held: 2, parked_rows: 1, precheck_parks: 1 });
+    expect(item(r, 'deferred-requests').signals).toMatchObject({ deferred_jobs: 2, deferrals: 3 });
+    expect(item(r, 'deferred-requests').evidence[0]).toContain('dispatch_deferred');
     expect(item(r, 'empty-finishes').evidence[0]).toContain('jobs.jsonl');
     expect(item(r, 'empty-finishes').score).toBe(13.5);  // 3 unlock x 3 bad x 3 blast / 2 cost
     expect(r.items[0]!.score ?? -1).toBeGreaterThanOrEqual(r.items.at(-1)!.score ?? -1);
@@ -93,6 +99,18 @@ describe('phm friction miners', () => {
     const r = fixture({ jobs: J({ event: 'finish', job: 'RQ-1', ts: iso(200), empty: true }) });
     expect(item(r, 'empty-finishes').signals.bad).toBe(0);
     expect(item(r, 'wrong-route').signals.route_moves).toBe(1); // the 200h-old ROUTE line is not counted
+  });
+  it('counts dispatch_deferred dedup receipts without inventing job ids', () => {
+    const rows = [
+      J({ event: 'dispatch_deferred', repo: 'phantom', reason: 'duplicate-request', repeatOf: 'RQ-A', ts: iso(1) }),
+      J({ event: 'dispatch_deferred', job: 'RQ-D1', repeatOf: 'bad/owner', ts: iso(2) }),
+    ].join('\n');
+    const r = mineFriction({ jobs: rows, now: NOW });
+    const d = item(r, 'deferred-requests');
+    expect(d.signals).toMatchObject({ deferrals: 2, deferred_jobs: 1 });
+    expect(d.evidence.join(' ')).not.toContain('bad/owner');
+    expect(item(mineFriction({ now: NOW }), 'deferred-requests').signals.deferred_jobs).toBeNull();
+    expect(item(fixture({ jobs: '' }), 'deferred-requests').signals).toMatchObject({ deferred_jobs: 0, deferrals: 0 });
   });
   it('scrubs secret-shaped text out of evidence', () => {
     const token = 'sk-ant-' + 'a1'.repeat(30);

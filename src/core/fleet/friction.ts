@@ -70,6 +70,7 @@ const CATALOG: Record<string, { title: string } & Knobs> = {
   'invalid-tier': { title: 'Queue rows and enqueues carrying a tier dispatchd skips', owner: 'queuegen', unlock: 2, blast: 2, cost: 1, primary: 'ready_rows' },
   'red-main': { title: 'Default branches sitting red', owner: 'main-guardian', unlock: 3, blast: 3, cost: 2, primary: 'repos_red' },
   'stale-ready': { title: 'READY rows unclaimed past the stale boundary', owner: 'dispatchd', unlock: 2, blast: 2, cost: 1, primary: 'unclaimed' },
+  'deferred-requests': { title: 'READY rows deferred as duplicate requests of claimed work', owner: 'queuegen', unlock: 2, blast: 2, cost: 1, primary: 'deferred_jobs' },
   'manual-interventions': { title: 'Holds and overrides a human placed by hand', owner: 'masbot', unlock: 3, blast: 1, cost: 2, primary: 'manual_holds' },
   'wrong-route': { title: 'Jobs routed to the wrong account or tool and moved back', owner: 'router', unlock: 2, blast: 2, cost: 2, primary: 'route_moves' },
   'holds': { title: 'Lane holds and parked rows blocking the queue', owner: 'fleet', unlock: 2, blast: 3, cost: 2, primary: 'hold_events' },
@@ -211,6 +212,8 @@ export function mineFriction(input: FrictionInput): FrictionReport {
   let empty = zero, refused = zero, failed = zero, authHolds = zero, quotaSkips = zero, authSkips = zero;
   let anomalousDiffs = zero;
   let badTierEnqueue = zero, precheckParks = zero, quotaHoldJobs = zero, quotaFinish = zero;
+  let deferredEvents = zero;
+  const deferredJobs = new Set<string>();
   const enqueued = new Map<string, number>(); const launched = new Map<string, number>();
   const laneAuthHold = new Map<string, number>(); const laneFinish = new Map<string, number>();
   for (const r of jobs ?? []) {
@@ -253,6 +256,12 @@ export function mineFriction(input: FrictionInput): FrictionReport {
     if (r.event === 'autobackoff_skip') quotaSkips = (quotaSkips ?? 0) + 1;
     if (r.event === 'authbackoff_skip') authSkips = (authSkips ?? 0) + 1;
     if (r.event === 'precheck_parked') precheckParks = (precheckParks ?? 0) + 1;
+    if (r.event === 'dispatch_deferred') {
+      deferredEvents = (deferredEvents ?? 0) + 1;
+      if (r.job) deferredJobs.add(r.job);
+      const owner = typeof r.raw.repeatOf === 'string' && JID.test(r.raw.repeatOf) ? r.raw.repeatOf : null;
+      ev('deferred-requests', `jobs.jsonl dispatch_deferred job=${r.job ?? 'unknown'}${owner ? ` repeatOf=${owner}` : ''}`);
+    }
   }
   // A re-login is a nonempty finish on a lane after its newest auth hold.
   let relogins: number | null = jobs === null ? null : 0;
@@ -380,6 +389,7 @@ export function mineFriction(input: FrictionInput): FrictionReport {
     'invalid-tier': { ready_rows: badTierRows, enqueued: badTierEnqueue },
     'red-main': { repos_red: reposRed, max_red_hours: maxRedH },
     'stale-ready': { unclaimed, unknown_age: unknownAge, max_age_hours: maxAgeH, queued: readyRows },
+    'deferred-requests': { deferred_jobs: jobs === null ? null : deferredJobs.size, deferrals: deferredEvents },
     'manual-interventions': { manual_holds: manualHolds, budget_overrides: overrideCount, kept_jobs: kept },
     'wrong-route': {
       route_moves: sum([counts.routes, counts.routeHolds, counts.routeInvalid]),
