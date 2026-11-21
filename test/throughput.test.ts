@@ -64,6 +64,14 @@ describe('throughput report', () => {
     expect(build(LEDGER.join('\n'), { by: 'tier' }).groups.map(g => g.name)).toEqual(['fast', 'frontier', 'unknown']);
   });
 
+  it('reads jobs-ledger dialect spellings for events, phases and PR links', () => {
+    const d = build([
+      JSON.stringify({ type: 'launch', job_id: 'RQ-D', pool: 'claude', repo: 'phantom', tier: 'work', time: at(50) }),
+      JSON.stringify({ kind: 'publish', id: 'RQ-D', html_url: pr(21), timestamp: at(45) }),
+      JSON.stringify({ type: 'outcome', job: 'RQ-D', result: 'MERGED', updatedAt: at(40), url: pr(21) }),
+    ].join('\n'));
+    expect(d.totals).toMatchObject({ launched: 1, published: 1, merged: 1 });
+  });
   it('skips and counts malformed lines', () => {
     expect(report.malformed_lines).toBe(2);
     expect(throughputText(report)).toContain('Metrics lines that could not be read and were skipped: 2.');
