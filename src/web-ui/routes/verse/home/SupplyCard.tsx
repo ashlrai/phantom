@@ -33,6 +33,8 @@ export function SupplyBody({ report, error }: { report: SupplyDoctorReport | nul
     </ul>}
     <p>{m.rejects}</p>
     <p>{m.lastLanded}</p>
+    <p>{m.buildLine}</p>
+    <p>{m.selfTickLine}</p>
     <p>Every number: <code className={styles.command}>{m.command}</code></p>
   </>;
 }

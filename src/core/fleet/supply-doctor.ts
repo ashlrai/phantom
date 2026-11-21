@@ -18,6 +18,8 @@ import { lstat, open, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { LostLaunch } from './lost-launches.js';
+import { readBuildLive, type BuildLiveReport } from './build-live.js';
+import { readSelfTickStatus, type SelfTickStatus } from './self-tick-status.js';
 import { readDispatchEventsLog } from './dispatch-events-read.js';
 import { computeLanesHeld, type LaneHeldRow } from './lane-held.js';
 import { parseDoneName, parseIngestedTsv } from './drop-job-fate.js';
@@ -52,6 +54,10 @@ export interface SupplyDoctorReport {
   lost_launches: { state: 'known'; count: number; newest: LostLaunch[] } | { state: 'unknown'; why: string };
   /** Lanes whose own wrapper held every launch in the last 60 min (3+ held, 0 finishes); unknown when the event log is unreadable. */
   selfHeld: { state: 'known'; windowMinutes: number; lanes: LaneHeldRow[] } | { state: 'unknown'; why: string };
+  /** Is the running phm the merged code? Same report as `phm doctor build --json`. */
+  build: BuildLiveReport;
+  /** When the self-tick last ran and what its hooks produced. Same report as `phm fleet self-tick --status --json`. */
+  selfTick: SelfTickStatus;
   verdict: string;
 }
 
@@ -65,6 +71,9 @@ export interface SupplyDoctorOptions {
   readEvents?: (runsDir: string) => Promise<string | null>;
   readCandidates?: (runsDir: string) => Promise<{ noChange: number; published: number } | null>;
   /** Lost launches in 24 h, newest first. Defaults to the lost-launch finder; null when unreadable. */
+  /** Seams for the build and self-tick lines; default to the real readers. */
+  readBuild?: () => BuildLiveReport;
+  readSelfTick?: (runsDir: string, nowMs: number) => SelfTickStatus;
   readLost?: (runsDir: string, nowMs: number) => Promise<LostLaunch[] | null>;
 }
 
@@ -177,6 +186,8 @@ export async function readSupplyDoctor(opts: SupplyDoctorOptions = {}): Promise<
       ? { state: 'known', windowMinutes: held.windowMinutes, lanes: held.lanes.filter(r => r.selfHeld) }
       : { state: 'unknown', why: 'dispatch event log unreadable' },
     candidates: found ? { state: 'known', ...found } : { state: 'unknown', why: 'job metrics unreadable' },
+    build: (opts.readBuild ?? readBuildLive)(),
+    selfTick: (opts.readSelfTick ?? readSelfTickStatus)(runsDir, nowMs),
     lost_launches: lost ? { state: 'known', count: lost.length, newest: lost.slice(0, 5) } : { state: 'unknown', why: 'job metrics unreadable' } } as SupplyDoctorReport;
   report.verdict = verdictOf(report);
   return report;
@@ -205,6 +216,8 @@ export function supplyDoctorLines(report: SupplyDoctorReport): string[] {
   if (report.selfHeld.state === 'unknown') lines.push(`Self-held lanes: unknown (${report.selfHeld.why}).`);
   else if (!report.selfHeld.lanes.length) lines.push('Self-held lanes: none.');
   else for (const r of report.selfHeld.lanes) lines.push(`Self-held lane: ${r.reason}; skipped until a launch there finishes.`);
+  lines.push(`Live build: ${report.build.verdict}.`);
+  lines.push(`Self-tick: ${report.selfTick.line}.`);
   lines.push(`Self-tick gap hook: ${report.hook.enabled === null ? 'unknown' : report.hook.enabled ? 'on' : 'off'}.`);
   return lines;
 }
