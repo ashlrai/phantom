@@ -94,6 +94,10 @@ export async function ingestSlackLeaderEnvelope(message: BusEnvelope, options: S
   // cannot be delivered, so nothing is ever dropped. An injected writer or
   // the local leader journal keeps its durable record at ingest instead.
   const statusReply = options.statusReply, statusAsk = Boolean(statusReply && text !== undefined && statusReply.ask(text));
+  // A long message that asks for a live-state recheck carries other content for
+  // the Leader, so it is never deferred: MASON-INBOX gets it at ingest as always,
+  // and the in-thread recheck verdict is an addition to that record.
+  const evidenceAsk = Boolean(statusReply) && !statusAsk && text !== undefined && isLiveEvidenceAsk(text);
   const deferInbox = statusAsk && appendInbox !== undefined && options.appendInbox === undefined;
   const receivedAt = (options.now ?? Date.now)();
   const network = createLeaderNetwork({ ...sources, runsDir, busRoot: options.busRoot, now: options.now, appendInbox,
@@ -118,7 +122,7 @@ export async function ingestSlackLeaderEnvelope(message: BusEnvelope, options: S
         ? { requestId: result.requestId } : {}) }, { runsDir });
   }
   let statusAnswer: Promise<SlackStatusAnswer> | undefined;
-  if (statusAsk && result.requestId && result.status !== 'duplicate') {
+  if ((statusAsk || evidenceAsk) && result.requestId && result.status !== 'duplicate') {
     // Detached so the socket ack is not held behind the brief read or the post;
     // the reply goes through the same journaled route and never alters ingest.
     const fallback = deferInbox ? {
@@ -127,7 +131,7 @@ export async function ingestSlackLeaderEnvelope(message: BusEnvelope, options: S
       text: text!.replace(/\r\n?/g, '\n').trim(),
     } : undefined;
     statusAnswer = (result.status === 'accepted'
-      ? answerOwnerStatus(statusReply!, result.requestId, network, runsDir, new Date(receivedAt), text!)
+      ? answerOwnerStatus(evidenceAsk ? recheckOnly(statusReply!) : statusReply!, result.requestId, network, runsDir, new Date(receivedAt), text!)
       : Promise.resolve({ answered: false, reason: 'ask did not reach the Leader bus' }))
       .then(async outcome => {
         if (outcome.answered || !fallback) return outcome;
@@ -143,6 +147,34 @@ export async function ingestSlackLeaderEnvelope(message: BusEnvelope, options: S
   // Same unified owner thread the other channels feed; the Slack thread ref rides along so the reply goes back to it.
   if (durable && text) await noteUnifiedOwner('slack', identity.id, text, checked.value.id, receivedAt, options, message.channel_ref);
   return { owned: true, durable, ...(statusAnswer ? { statusAnswer } : {}) };
+}
+
+/** Signal groups for a long owner message that asks Phantom to recheck live
+ * state, e.g. "recheck the current runtime ... return runtime identity, a fresh
+ * shared context/claims read and the owner of the Dot bridge". */
+export const LIVE_EVIDENCE_SIGNALS: readonly RegExp[] = [
+  /\bre-?(?:check|verify)\b[^.\n]{0,40}\b(?:runtime|live state)\b/,
+  /\bruntime identity\b/,
+  /\bfresh\b[^.\n]{0,30}\bclaims?\b[^.\n]{0,20}\bread\b/,
+  /\bowner of (?:the |a )?(?:\w+ )?bridge\b|\bbridge owner\b/,
+  /\b(?:cannot|can't|can not|unable to) reach live state\b|\bmissing bridge\b/,
+];
+
+/** True for a message of at most 4000 chars matching at least two distinct
+ * signal groups. Short exact asks ("recheck", "status") are matched earlier by
+ * the injected `statusReply.ask`, so they never reach this. Pure. */
+export function isLiveEvidenceAsk(text: string): boolean {
+  if (typeof text !== 'string' || text.trim() === '' || text.length > 4000) return false;
+  const folded = text.toLowerCase().replace(/[’‘]/g, "'");
+  return LIVE_EVIDENCE_SIGNALS.filter(signal => signal.test(folded)).length >= 2;
+}
+
+/** Answers a long evidence ask with the exact recheck reply a short "recheck"
+ * gets (the injected composer never falls through to the digest), headed by a
+ * line saying the full message was also recorded. Never fabricates state. */
+function recheckOnly(statusReply: SlackStatusReply): SlackStatusReply {
+  return { ask: statusReply.ask, fallback: statusReply.fallback,
+    compose: async (runsDir, now) => `Phantom recheck (full message recorded for the Leader):\n${await statusReply.compose(runsDir, now, 'recheck')}` };
 }
 
 /** Compose with the existing status builder and send through the journaled
