@@ -19,8 +19,8 @@ export interface HomeSummary {
   mergedLastHour: HomeField<number>; merged24h: HomeField<number>; medianMergeSeconds: HomeField<number>;
   main: HomeField<{ repo: string; state: 'green' | 'red' | 'unknown' }[]>;
   running: HomeField<{ lane: string; running: number; target: number | null }[]>;
-  /** The allowance most at risk of expiring unused at its reset; null when none is. */
-  atRisk: HomeField<{ resource: string; percentUnused: number; resetAt: string; reason: string } | null>;
+  /** The allowance most at risk of expiring unused at its reset; null when none is. `usedPercent` and `burnPctPerHour` are the reading the projection was made from. */
+  atRisk: HomeField<{ resource: string; percentUnused: number; resetAt: string; reason: string; usedPercent: number; burnPctPerHour: number } | null>;
   worklog: HomeField<{ at: string; kind: WorklogKind; text: string; url: string | null }[]>;
   /** Leader replies in the last 24 hours that are newer than the caller's last-read time. */
   unreadLeaderReplies: HomeField<number>;
@@ -51,7 +51,9 @@ export function buildHome(sources: HomeSources, now: number, leaderSeenMs?: numb
     : unknown(!ledger || ledger.sources.status === 'missing' ? 'No fleet status has been written yet.' : 'The fleet status has no readable lane counts.');
   // The plan ranks expiring allowances first, nearest reset first.
   const plan = ledger ? ledgerWindowPlan(ledger, now) : [], wasting = plan.find(row => row.verdict === 'wasting');
-  const atRisk: HomeSummary['atRisk'] = wasting ? ok({ resource: wasting.resource, percentUnused: Math.round(wasting.projectedPercentLeftAtReset! * 10) / 10, resetAt: wasting.resetAt!, reason: wasting.reason })
+  const atRisk: HomeSummary['atRisk'] = wasting ? ok({ resource: wasting.resource, percentUnused: Math.round(wasting.projectedPercentLeftAtReset! * 10) / 10, resetAt: wasting.resetAt!, reason: wasting.reason,
+    // A wasting verdict is only given with a usage reading and a burn rate, so both are numbers here.
+    usedPercent: wasting.usedPercent!, burnPctPerHour: wasting.burnPctPerHour! })
     : plan.some(row => row.verdict !== 'unknown') ? ok(null) : unknown('No resource has a fresh usage reading, a burn rate and a future reset.');
   const missing = worklog ? Object.values(worklog.sources).flatMap(source => source.state === 'unknown' ? [source.reason] : []) : ['The work log could not be read.'], rows = worklog?.rows ?? [];
   const items: HomeSummary['worklog'] = rows.length || !missing.length ? ok(rows.slice(0, 5).map(({ at, kind, text, url }) => ({ at, kind, text, url }))) : unknown(missing.join(' '));

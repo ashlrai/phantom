@@ -1000,7 +1000,8 @@ total; reported logical bytes are not a promise of physical disk space freed.
 `phm home` answers one question: is the fleet healthy and moving? It prints a
 headline (healthy, stalled when no PR merged in 60 minutes, red main, or unknown),
 merged PRs, median time to merge, main per repo, running jobs per lane, the
-resource most at risk of going unused, the last 5 work-log items and unread
+resource most at risk of going unused (with its used percent and burn per
+hour, the reading behind the projection), the last 5 work-log items and unread
 Leader replies (these need `--leader-seen <time>`), and `needsYou`: the open asks
 with the one-word answers each takes. `phm home --json` prints schema `home.v1`
 (the `schema` field is the version): each field is `{state:"ok",value}` or

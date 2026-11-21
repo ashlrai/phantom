@@ -63,6 +63,18 @@ unknown (a hollow ring on a dashed outline), then green, under one line that
 names the red ones. It says the default branches are green only when every
 one is. Both draw the lists `phm home` prints and read nothing else.
 
+Home's **Most at risk of going unused** card draws the allowance `phm home`
+names: the provider's mark and the resource, the countdown to its reset with
+the local time, the share projected to expire unused as the one figure, and
+one bar of how the window ends. Left to right the bar is the share used now,
+the share the measured burn adds by the reset (the same colour, lighter) and
+the part left over (an empty track outlined in amber); a key under the bar
+states each share and the burn an hour. The split comes from `usedPercent`
+and `burnPctPerHour` in the summary's `atRisk` field; a server that does not
+send them gets one "used by its reset" share, never a guessed split. A reset
+time that has passed is said in words and not counted down. With nothing at
+risk the card says so, and with no fresh reading it gives the reason.
+
 Home's card column draws each reading beside the words that state it. The
 headline has a state mark (green healthy, amber stalled, red main, a hollow
 ring for unknown) and the time the summary was read underneath; if a refresh
