@@ -15,6 +15,37 @@ export const BUILD_STALE_HOURS = 24;
 export interface BuildStaleLimits { commits: number; hours: number }
 export const DEFAULT_BUILD_STALE_LIMITS: BuildStaleLimits = { commits: BUILD_STALE_COMMITS, hours: BUILD_STALE_HOURS };
 
+/** What the operator may save: whole numbers in these ranges. Env overrides keep their looser "any number >= 0" rule. */
+export const BUILD_STALE_COMMITS_RANGE = { min: 1, max: 10_000 } as const;
+export const BUILD_STALE_HOURS_RANGE = { min: 1, max: 8_760 } as const;
+/** The saved half of the limits (config `fleet.buildStale`); null means "use the default". */
+export interface SavedBuildStaleLimits { commits: number | null; hours: number | null }
+
+const inRange = (n: unknown, r: { min: number; max: number }): n is number => typeof n === 'number' && Number.isInteger(n) && n >= r.min && n <= r.max;
+export const validBuildStaleCommits = (n: unknown): n is number => inRange(n, BUILD_STALE_COMMITS_RANGE);
+export const validBuildStaleHours = (n: unknown): n is number => inRange(n, BUILD_STALE_HOURS_RANGE);
+
+/** Read the saved limits off whatever config holds; anything out of range or not a number reads as unset. */
+export function savedBuildStaleLimits(raw: unknown): SavedBuildStaleLimits {
+  const row = typeof raw === 'object' && raw !== null ? raw as Record<string, unknown> : {};
+  return { commits: validBuildStaleCommits(row['commits']) ? row['commits'] : null, hours: validBuildStaleHours(row['hours']) ? row['hours'] : null };
+}
+
+/**
+ * The limits in force: ASHLR_BUILD_STALE_COMMITS / ASHLR_BUILD_STALE_HOURS win (a one-off override; junk is ignored),
+ * then the saved Settings value, then the default.
+ */
+export function resolveBuildStaleLimits(saved: SavedBuildStaleLimits, env: Record<string, string | undefined> = {}): BuildStaleLimits & { envOverride: { commits: boolean; hours: boolean } } {
+  const fromEnv = (raw: string | undefined): number | null => { const n = Number(raw); return raw && Number.isFinite(n) && n >= 0 ? n : null; };
+  const commits = fromEnv(env['ASHLR_BUILD_STALE_COMMITS']);
+  const hours = fromEnv(env['ASHLR_BUILD_STALE_HOURS']);
+  return {
+    commits: commits ?? saved.commits ?? BUILD_STALE_COMMITS,
+    hours: hours ?? saved.hours ?? BUILD_STALE_HOURS,
+    envOverride: { commits: commits !== null, hours: hours !== null },
+  };
+}
+
 export type BuildStaleness = 'current' | 'behind' | 'stale' | 'unknown';
 
 /** An older Mac's report has no `build` (or no `since`); both read as unknown or as "no date", never as current. */
