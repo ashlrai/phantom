@@ -96,6 +96,16 @@ describe('mineIncidentSignals', () => {
     expect(mine.sources).toEqual({ jobs: 'read', events: 'missing' });
   });
 
+  it('reads jobs-ledger dialect spellings for ids, events, stamps and phases', () => {
+    const jobs = [
+      JSON.stringify({ type: 'launch', job_id: 'RQ-DIA-1', lane: 'codex', repo: 'phantom', tier: 'work', recordedAt: iso(NOW - H) }),
+      JSON.stringify({ kind: 'finish', id: 'RQ-DIA-1', lane: 'codex', repo: 'phantom', exit_code: 1, updatedAt: iso(NOW - H) }),
+      JSON.stringify({ type: 'outcome', jobId: 'RQ-DIA-2', conclusion: 'CLOSED', prUrl: 'https://github.com/ashlrai/phantom/pull/9', source: 'metrics-outcomes-reconciler', mergedAt: iso(NOW - H) }),
+    ];
+    const mine = mineIncidentSignals({ jobs: jobs.join('\n'), nowMs: NOW });
+    expect(mine.signals.filter((s) => s.cls === 'lane-error').map((s) => s.key)).toEqual(['lane-error:codex:exit-1']);
+    expect(mine.signals.filter((s) => s.cls === 'merge-conflict').map((s) => s.key)).toEqual(['merge-conflict:ashlrai/phantom']);
+  });
   it('classifies pool_error, failure_class, empty-diff and exit codes', () => {
     const jobs = [
       finish('RQ-A-1', { pool_error: 'Rate Limit!! 429' }),

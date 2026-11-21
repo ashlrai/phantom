@@ -321,6 +321,8 @@ export interface LoopReport {
   schema: typeof LOOP_SCHEMA;
   at: string;
   sources: Record<string, string>;
+  /** Sources whose bounded tail read was cut at the cap: every count folded from them covers only the newest bytes. Empty when nothing was cut or no read reported truncation. */
+  truncated_sources: string[];
   throughput: Measured<Rates>;
   idea_to_merged_minutes: Measured<Distribution>;
   merged_to_installed_minutes: Measured<MergedToInstalled>;

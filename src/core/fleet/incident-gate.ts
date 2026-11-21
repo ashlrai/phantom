@@ -218,13 +218,22 @@ const tsMs = (v: unknown): number => {
   return Number.isFinite(t) ? t : NaN;
 };
 
+const strOf = (r: Record<string, unknown>, fields: readonly string[]): string | null => {
+  for (const field of fields) {
+    const v = r[field];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return null;
+};
 const jobIdOf = (r: Record<string, unknown>): string | null => {
-  for (const field of ['job', 'jobId', 'job_id'] as const) {
+  for (const field of ['job', 'job_id', 'jobId', 'id'] as const) {
     const v = r[field];
     if (typeof v === 'string' && JOB_ID.test(v)) return v;
   }
   return null;
 };
+/** Phase spellings a jobs.jsonl row may carry; any terminal value marks the row. */
+const PHASE_FIELDS = ['outcome', 'status', 'state', 'phase', 'result', 'conclusion'] as const;
 
 function jobRows(text: string): RawRow[] {
   const rows: RawRow[] = [];
@@ -239,17 +248,15 @@ function jobRows(text: string): RawRow[] {
       // outcome — batcher.read_rows projects them to event:"outcome" at read
       // time; this miner applies the same projection. Event-less rows with an
       // outcome/status/state marker are outcome rows too.
-      let event = typeof r.event === 'string' ? r.event : null;
-      const terminal = r.outcome === 'MERGED' || r.outcome === 'CLOSED' ||
-        r.status === 'MERGED' || r.status === 'CLOSED';
+      let event = strOf(r, ['event', 'type', 'kind']);
+      const terminal = PHASE_FIELDS.some(field => r[field] === 'MERGED' || r[field] === 'CLOSED');
       if (r.source === 'metrics-outcomes-reconciler' && terminal) event = 'outcome';
-      if (event === null &&
-          (typeof r.outcome === 'string' || typeof r.status === 'string' || typeof r.state === 'string')) {
+      if (event === null && PHASE_FIELDS.some(field => typeof r[field] === 'string')) {
         event = 'outcome';
       }
       if (event === null) continue;
       rows.push({
-        at: tsMs(r.ts ?? r.at ?? r.timestamp),
+        at: tsMs(r.ts ?? r.at ?? r.timestamp ?? r.time ?? r.mergedAt ?? r.closedAt ?? r.recordedAt ?? r.updatedAt),
         event,
         job: jobIdOf(r),
         lane: laneOf(r.lane ?? r.pool),
@@ -363,7 +370,7 @@ export function mineIncidentSignals(input: IncidentGateInput): IncidentMineResul
       workFailure(code, laneFor(r), repoFor(r),
         r.job ? incidentJobKind(r.job) : null, r.at, `${detail} code=${String(r.raw.code ?? '?')}`);
     } else if (r.event === 'outcome') {
-      const state = String(r.raw.state ?? r.raw.outcome ?? r.raw.status ?? '').toUpperCase();
+      const state = String(r.raw.state ?? r.raw.outcome ?? r.raw.status ?? r.raw.phase ?? r.raw.result ?? r.raw.conclusion ?? '').toUpperCase();
       const repo = repoFor(r);
       if (state !== 'CLOSED' || repo === null) continue;
       observed++;

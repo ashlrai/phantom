@@ -2143,6 +2143,10 @@ export async function handleVerseApi(
       // Read-only weekly summary of merged work; the same report as `phm shipped --json`.
       return (await import('./whats-new-api.js')).handleShippedApi(req, res, method);
     }
+    if (path === `${VERSE_API_PREFIX}/fleet/lane-supply`) {
+      // Read-only lane supply report; the same fleet.lane-supply.v1 as `phm fleet lane-supply --json`.
+      return (await import('./lane-supply-api.js')).handleLaneSupplyApi(req, res, method);
+    }
     if (path === `${VERSE_API_PREFIX}/supply`) {
       // Read-only self-supply report; the same doctor.supply.v1 as `phm doctor supply --json`.
       return (await import('./supply-api.js')).handleSupplyApi(req, res, method);

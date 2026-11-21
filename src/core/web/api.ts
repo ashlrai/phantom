@@ -2019,6 +2019,15 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/local-capacity ────────────────────────────────────
+    // How many local-model workers fit in free memory (local.capacity.v1), the same answer as
+    // `phm local capacity`. Read-only (vm_stat and the process table); unknown is workers: null.
+    if (path === '/api/fleet/local-capacity' && method === 'GET') {
+      const { readLocalCapacity } = await import('../fleet/local-capacity.js');
+      sendJson(res, 200, await readLocalCapacity());
+      return true;
+    }
+
     // ── GET /api/fleet/activity ─────────────────────────────────────────
     // RQ-SWE3-OBSERVABILITY-2: per-job launch->finish->publish lifecycle and
     // timing folded from the host metrics ledger (metrics/jobs.jsonl) — the
@@ -2062,6 +2071,20 @@ export async function handleApi(
       let response: ReturnType<typeof messageGraphResponse>;
       try { response = messageGraphResponse(req.url ?? path); }
       catch { response = { status: 503, body: { error: 'Message graph unavailable.' } }; }
+      sendJson(res, response.status, response.body);
+      return true;
+    }
+
+    // ── GET /api/fleet/map/messages ──────────────────────────────────────
+    // The last agent-to-agent messages (fleet.map-messages.v1) for the live
+    // edges on the fleet map and the phone list; the read behind `phm fleet
+    // map messages --json`. READ-ONLY bus read; short scrubbed summaries, never
+    // bodies. Same no-auth read class as /api/fleet/message-graph.
+    if (path === '/api/fleet/map/messages' && method === 'GET') {
+      const { mapMessagesResponse } = await import('../fleet/map-messages.js');
+      let response: ReturnType<typeof mapMessagesResponse>;
+      try { response = mapMessagesResponse(req.url ?? path); }
+      catch { response = { status: 503, body: { error: 'Map messages unavailable.' } }; }
       sendJson(res, response.status, response.body);
       return true;
     }
@@ -2836,7 +2859,8 @@ export async function handleApi(
         import('../fleet/runs-resource-ledger.js'), import('../fleet/pools-view.js'), import('../fleet/usage-history.js'),
       ]);
       const now = Date.now();
-      sendJson(res, 200, buildPoolsView(await readResourceLedger({ now: () => now }), now, await readUsageSamples({ nowMs: now })));
+      const { readLiveCaps } = await import('../fleet/model-caps.js');
+      sendJson(res, 200, buildPoolsView(await readResourceLedger({ now: () => now }), now, await readUsageSamples({ nowMs: now }), await readLiveCaps(now)));
       return true;
     }
 

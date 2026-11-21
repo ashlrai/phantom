@@ -30,6 +30,19 @@ const SUITE_FAIL_LINE = /^FAIL\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/[^\s>]+
 const SUITE_NAMES = '(suite)';
 const PASS_LINE = /^[\u2713\u2714\u221a]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/\S+)\s*>\s*(.+?)(?:\s+\d+(?:\.\d+)?m?s)?$/;
 
+// The default reporter emits no per-test pass line for a green file; it
+// summarizes the whole module instead:
+//   ✓ |unit| test/example.test.ts (4 tests) 4ms
+// A green module means every test it contains passed on that run -- the
+// finest pass evidence the default reporter produces.
+const FILE_PASS_LINE = /^[✓✔√]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/[^\s>]+\.test\.[cm]?[jt]sx?)\s+\(\d+ tests?(?:\s*\|[^)]*)?\)(?:\s+\d+(?:\.\d+)?m?s)?$/;
+
+// .github/scripts/ci-source-binding.mjs verifies `git rev-parse HEAD` equals
+// the candidate revision and prints this receipt in every bound CI job:
+//   Bound candidate <sha> to event tree <tree>
+//   Bound candidate <sha> to event merge <sha> of base <sha>...
+const BOUND_LINE = /^Bound candidate ([a-f0-9]{40}) to event (?:tree|merge) [a-f0-9]{40}/;
+
 // TypeScript diagnostics (tsc/tsgo non-pretty output, identical in CI) name a
 // repo-relative file, position and diagnostic code:
 //   src/core/foo.ts(41,9): error TS2322: Type 'string' is not assignable ...
@@ -429,6 +442,13 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   '.github/scripts/ci-fast-inputs.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-green-reuse.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-mcp-selection.mjs': ['.github/workflows/ci.yml'],
+  // The memory benchmark gate runs `tsx scripts/benchmark-memory.ts`
+  // (npm run bench:memory -- --check): its import closure covers the
+  // benchmark, its floors file and the whole src/core/memory
+  // implementation, but not the toolchain files that shape how tsx
+  // compiles and resolves it -- the manifest carrying the script and
+  // pinned deps, its lockfile and the tsconfig tsx reads.
+  'scripts/benchmark-memory.ts': ['package.json', 'package-lock.json', 'tsconfig.json'],
 };
 
 function parseVersionSyncFailures(log: string): Failure[] {
@@ -955,6 +975,65 @@ function parseCiScriptGateFailures(log: string): Failure[] {
   return out;
 }
 
+// The `ci` job's "Memory benchmark regression gate" step on the ubuntu
+// authority 3/3 shard runs `npm run --silent bench:memory -- --check >
+// /dev/null`: the redirect discards the script's pretty-printed JSON
+// report, so the job log carries only what the gate writes to stderr --
+//   memory benchmark below floor:
+//     <violation>
+//     <violation>
+// one line indented two spaces per governed-arm measurement that fell
+// below its floor in src/core/local-eval/memory-benchmark-floors.ts
+// (case counts, passed counts vs floor, leak/step/waste ceilings, open
+// pending decisions). A memory regression on master fails this shard on
+// every freshly opened PR with no vitest, typecheck or TAP line naming
+// it, so without this shape those PRs read unknown and queue no fix.
+// The gate's verdict is binary -- the step fails while any violation
+// stands -- so each block groups under the entry script as
+// `scripts/benchmark-memory.ts > (memory-benchmark)`: the script plus
+// its import closure (the benchmark, its floors and the whole
+// src/core/memory implementation) and the seeded toolchain inputs is
+// the unit a master fix restores, and like the other non-test
+// identities it can never resolve through a vitest pass line --
+// shared-baseline, pr-caused or unknown, never probable-flake. The
+// measurement run without --check, the discarded JSON report,
+// MEMORY_BENCH_ARGUMENTS usage errors (exit 2, no stderr), passing
+// runs, a bare header with no violation lines and unrelated output
+// stay unparsed.
+const MEMORY_BENCHMARK_FILE = 'scripts/benchmark-memory.ts';
+const MEMORY_BENCHMARK_NAMES = '(memory-benchmark)';
+const MEMORY_BENCHMARK_HEADER = 'memory benchmark below floor:';
+const MEMORY_BENCHMARK_MAX = 8;
+const MEMORY_BENCHMARK_VIOLATIONS_MAX = 48;
+const MEMORY_BENCHMARK_VIOLATION = /^ {2}\S/;
+
+function parseMemoryBenchmarkFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  // Timestamped job-log lines keep the violation indent: the strip removes
+  // the stamp and its single separating space only, the same convention as
+  // the TAP and report parsers.
+  const raw = stripVTControlCharacters(log).split('\n')
+    .map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+ /, '').replace(/\r$/, ''));
+  for (let i = 0; i < raw.length && out.length < MEMORY_BENCHMARK_MAX; i++) {
+    if (raw[i]!.trimEnd() !== MEMORY_BENCHMARK_HEADER) continue;
+    const violations: string[] = [];
+    for (let j = i + 1; j < raw.length && violations.length < MEMORY_BENCHMARK_VIOLATIONS_MAX; j++) {
+      const line = raw[j]!;
+      if (!MEMORY_BENCHMARK_VIOLATION.test(line)) break;
+      violations.push(line);
+    }
+    if (violations.length === 0) continue;
+    out.push({
+      file: MEMORY_BENCHMARK_FILE,
+      names: MEMORY_BENCHMARK_NAMES,
+      testId: `${MEMORY_BENCHMARK_FILE} > ${MEMORY_BENCHMARK_NAMES}`,
+      excerpt: clean([MEMORY_BENCHMARK_HEADER, ...violations].join('\n')),
+    });
+    i += violations.length;
+  }
+  return out;
+}
+
 export function parseBaselineFailures(log: string, repo?: string, auditExceptions: readonly DependencyAuditException[] | null = []): Failure[] {
   const result: Failure[] = [];
   const typecheck = new Map<string, Failure>();
@@ -1032,6 +1111,10 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     if (result.length >= 100) break;
     result.push(failure);
   }
+  for (const failure of parseMemoryBenchmarkFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
   return result;
 }
 
@@ -1063,6 +1146,15 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       const checkout = output.findIndex(line => /(?:^|\/)git log -1 --format=%H$/.test(line));
       if (checkout >= 0) {
         if (output[checkout + 1] !== head) return null;
+        result.push({ conclusion: job.conclusion, text: r.stdout });
+        continue;
+      }
+      // Bound CI jobs prove the checkout through the source-binding receipt
+      // instead of a raw `git log -1` echo; the bound revision must equal the
+      // analyzed head exactly like the marker's following line does.
+      const bound = output.find(line => BOUND_LINE.test(line));
+      if (bound !== undefined) {
+        if (BOUND_LINE.exec(bound)![1] !== head) return null;
         result.push({ conclusion: job.conclusion, text: r.stdout });
         continue;
       }
@@ -1103,10 +1195,13 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   }
   const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text, repo, auditExceptions));
   // A suite failure has no per-test pass line to match: the file loading and
-  // running at all (any verbose pass in it) is what resolves it.
+  // running at all is what resolves it. The default reporter's green-module
+  // line (`✓ file (N tests)`) is the same evidence at file granularity -- a
+  // green module means every test it contains passed on master.
   const passes = (f: Failure) => masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
     const m = PASS_LINE.exec(line);
-    return m?.[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
+    if (m) return m[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
+    return FILE_PASS_LINE.exec(line)?.[1] === f.file;
   }));
   // Bundler-resolution candidates for one normalized repo-relative spec base.
   // Explicit extensions keep TypeScript precedence (.js -> .ts before .tsx,
@@ -1412,10 +1507,12 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // the generator-input deps decide touched. The version-sync gate reads
       // exactly its enumerated metadata inputs, the dependency-audit gate
       // exactly its lockfile input set, the pack-smoke/artifact gates
-      // plain .mjs scripts plus their enumerated manifests, and the
-      // secret-shape/secret-scan/version-provenance trust gates have no
-      // vitest harness at all, so the ambient set cannot reach any of them.
-      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
+      // plain .mjs scripts plus their enumerated manifests, the memory
+      // benchmark gate a tsx script plus its import closure and seeded
+      // toolchain inputs, and the secret-shape/secret-scan/
+      // version-provenance trust gates have no vitest harness at all, so
+      // the ambient set cannot reach any of them.
+      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
       const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
       observations.push({ pr, failure, touched, runId: failure.runId });
     }

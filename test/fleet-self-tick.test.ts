@@ -266,7 +266,7 @@ describe('fleet self-tick', () => {
       schema: 'queue.autofill.v1' as const, lane: o.lane, min: 6, running: 0, target: 6, queued: 0, applied: true, summary: 'ok', skipped: [],
       drafted: [{ id: 'RQ-FIXTURE-1', repo: 'phantom', tier: 'work', goal: 'g', acceptance: 'a', why: 'w' }],
     }));
-    const starved = { readLanes: async () => ({ starved: ['claude'], counts: { claude: { running: 0, target: 6, queued: 0 } } }), readOff: async () => false, fill };
+    const starved = { readLanes: async () => ({ lanes: [{ lane: 'claude', running: 0, target: 6, queued: 0, held: false, remainingPct: 68 }] }), readOff: async () => false, fill };
     const { report } = await run(['--apply', '--json', '--runs-dir', runsDir], { autofill: starved, ...quietSweep });
     const planner = report!.steps.find(step => step.step === 'planner-tick')!.report as { autofill: { runs: { lane: string; applied: number }[] } };
     expect(planner.autofill.runs).toMatchObject([{ lane: 'claude', applied: 1 }]);
@@ -274,7 +274,7 @@ describe('fleet self-tick', () => {
     expect(await readFile(QUEUE_EVENTS(), 'utf8')).toMatch(/ AUTOFILL \{.*"lane":"claude".*\} src=autofill/);
 
     fill.mockClear();
-    const none = { readLanes: async () => ({ starved: [], counts: {} }), readOff: async () => false, fill };
+    const none = { readLanes: async () => ({ lanes: [] }), readOff: async () => false, fill };
     const quiet = await run(['--apply', '--json', '--runs-dir', runsDir], { autofill: none, ...quietSweep });
     expect(fill).not.toHaveBeenCalled();
     expect((quiet.report!.steps.find(step => step.step === 'planner-tick')!.report as { autofill: { reason: string } }).autofill.reason).toBe('No lane is starved.');

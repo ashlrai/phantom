@@ -2,8 +2,8 @@
  * `phm throughput`: what the fleet produced per hour (RQ-THROUGHPUTN17PQ8).
  *
  * One read of the job metrics file gives jobs launched, PRs published, PRs merged,
- * empty jobs and the median publish-to-merge time, per hour and per lane, repo or
- * tier. It reuses the `phm empties` readers (same rows, same empty rule) and the
+ * empty jobs and the median publish-to-merge time, per hour and per lane, repo,
+ * tier or model (the model a job's launch row names). It reuses the `phm empties` readers (same rows, same empty rule) and the
  * main-guardian status. The desktop Throughput pane shows this exact report.
  * Anything not measured is null (JSON) or "unknown" (text), never zero.
  */
@@ -12,7 +12,7 @@ import { finishesIn } from './empties.js';
 import { readFleetMainHealth } from './main-health.js';
 import { outcomePercentile } from './outcome-metrics.js';
 
-export const THROUGHPUT_BY = ['lane', 'repo', 'tier'] as const;
+export const THROUGHPUT_BY = ['lane', 'repo', 'tier', 'model'] as const;
 export type ThroughputBy = (typeof THROUGHPUT_BY)[number];
 export const THROUGHPUT_MAX_HOURS = 168;
 
@@ -43,7 +43,7 @@ export interface ThroughputReport {
   totals: ThroughputCounts;
   /** One per hour, oldest first; the last one ends at `as_of`. */
   buckets: ThroughputHour[];
-  /** One per lane, repo or tier (`by`), sorted by name. */
+  /** One per lane, repo, tier or model (`by`), sorted by name; `unknown` holds the work whose job record names none. */
   groups: ThroughputGroup[];
 }
 
@@ -57,8 +57,38 @@ const LEDGER_TAIL_BYTES = 32 * 1024 * 1024;
 const PR_URL = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/([1-9]\d*)\/?$/i;
 const NONE: ThroughputCounts = { launched: null, published: null, merged: null, finished: null, empty: null, empty_rate: null, median_publish_to_merge_s: null, merge_time_unknown: null };
 const label = (value: unknown): string | null => typeof value === 'string' && /^[\w][\w.:@/-]{0,79}$/.test(value.trim()) ? value.trim() : null;
+/**
+ * jobs.jsonl field dialects beyond the id/lane/ts sets ledgerRows already
+ * accepts: the event name event|type|kind, the phase
+ * phase|state|outcome|status|result|conclusion and the PR link
+ * url|prUrl|pr_url|pr|html_url — the same aliases dispatchd `_vc_event`,
+ * `_vc_phase` and `_vc_pr` read.
+ */
+const eventName = (row: Record<string, unknown>): string | null => {
+  for (const key of ['event', 'type', 'kind'] as const) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+};
+const phaseName = (row: Record<string, unknown>): string | null => {
+  for (const key of ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) return value.trim().toUpperCase();
+  }
+  return null;
+};
+const prLink = (row: Record<string, unknown>): string => {
+  for (const key of ['url', 'prUrl', 'pr_url', 'pr', 'html_url'] as const) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+};
 /** `ashlrai/phantom` and `phantom` are one repo. */
 const repoName = (value: unknown): string | null => label(value)?.split('/').pop()?.toLowerCase() || null;
+/** A model id as the launch row wrote it (the same names `phm fleet lane-models` accepts); anything else is no name. */
+const modelName = (value: unknown): string | null => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}$/.test(value.trim()) ? value.trim() : null;
 
 /** Pure: validate the window and grouping for the CLI and the desktop API. Null when either is invalid. */
 export function throughputOptions(hours?: string | null, by?: string | null): { hours: number; by: ThroughputBy } | null {
@@ -73,20 +103,20 @@ function marksOf(rows: readonly LedgerRow[], since: number, now: number, perLaun
   const launches = new Map<string, { job: string; at: number }>();
   const prs = new Map<string, { job: string; repo: string | null; published?: number; merged?: number; ttm?: number }>();
   for (const { row, id, at } of rows) {
-    const event = row.event ?? (row.source === 'metrics-outcomes-reconciler' ? 'outcome' : null);
+    const event = eventName(row) ?? (row.source === 'metrics-outcomes-reconciler' ? 'outcome' : null);
     if (id) {
-      // The launch row decides a job's lane, repo and tier; other rows only fill gaps.
+      // The launch row decides a job's lane, repo, tier and model; other rows only fill gaps.
       const route = routes.get(id) ?? {};
-      for (const [key, value] of [['lane', label(row.lane ?? row.pool)], ['repo', repoName(row.repo)], ['tier', label(row.tier)]] as const) {
+      for (const [key, value] of [['lane', label(row.lane ?? row.pool)], ['repo', repoName(row.repo)], ['tier', label(row.tier)], ['model', modelName(row.model)]] as const) {
         if (value && (event === 'launch' || !route[key])) route[key] = value;
       }
       routes.set(id, route);
       if (event === 'launch') launches.set(`${id}@${at}`, { job: id, at });
     }
-    const merged = event === 'merged' || (event === 'outcome' && (row.state ?? row.outcome ?? row.status) === 'MERGED');
+    const merged = event === 'merged' || (event === 'outcome' && phaseName(row) === 'MERGED');
     const published = event === 'publish' || event === 'published';
     if (!merged && !published) continue;
-    const url = PR_URL.exec(String(row.url ?? row.prUrl ?? row.pr_url ?? row.pr ?? ''));
+    const url = PR_URL.exec(prLink(row));
     // A publish row without a PR link is an empty or aborted publish, not a PR.
     if (!url && (published || !id)) continue;
     // Re-emitted rows for one PR count once, at their earliest time.
@@ -103,7 +133,7 @@ function marksOf(rows: readonly LedgerRow[], since: number, now: number, perLaun
   }
   const routeOf = (job: string, repo?: string | null): Route => {
     const route = routes.get(job);
-    return { lane: route?.lane ?? 'unknown', repo: repo ?? route?.repo ?? 'unknown', tier: route?.tier ?? 'unknown' };
+    return { lane: route?.lane ?? 'unknown', repo: repo ?? route?.repo ?? 'unknown', tier: route?.tier ?? 'unknown', model: route?.model ?? 'unknown' };
   };
   const marks: Mark[] = [...launches.values()].map(({ job, at }): Mark => ({ kind: 'launched', at, route: routeOf(job) }));
   for (const pr of prs.values()) {
@@ -119,7 +149,7 @@ function marksOf(rows: readonly LedgerRow[], since: number, now: number, perLaun
     // The work log counts how each launch ended, so a job launched twice has two endings and a skipped job has none.
     const runs = new Map<string, LedgerRow[]>(), launched = new Map<string, number>();
     for (const row of [...ended].sort((x, y) => x.at - y.at)) {
-      const run = `${row.id}#${launched.set(row.id, (launched.get(row.id) ?? 0) + (row.row.event === 'launch' ? 1 : 0)).get(row.id)}`;
+      const run = `${row.id}#${launched.set(row.id, (launched.get(row.id) ?? 0) + (eventName(row.row) === 'launch' ? 1 : 0)).get(row.id)}`;
       runs.set(run, [...(runs.get(run) ?? []), row]);
     }
     finishes = [...runs.values()].flatMap(run => finishesIn(run)).filter(finish => !finish.skipped);

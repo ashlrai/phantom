@@ -52,6 +52,7 @@ named nested type. Relative source links refer to the source checkout.
 | GET | `/api/fleet` | none | [FleetStatus](../src/core/fleet/status.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet'` |
 | GET | `/api/fleet/lanes` | none | [FleetLaneSnapshot](../src/core/fleet/lane-console.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/lanes'` |
 | GET | `/api/fleet/message-graph` | since (10m, 2h, 1d, epoch ms or ISO; default 15m) | [FleetMessageGraph](../src/core/fleet/message-graph.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/message-graph?since=1h'` |
+| GET | `/api/fleet/map/messages` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), limit (1 to 100; default 20) | [MapMessages](../src/core/fleet/map-messages.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/map/messages?limit=10'` |
 | GET | `/api/fleet/activity` | hours, limit | [AgentActivityReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/activity?hours=6'` |
 | GET | `/api/fleet/verified-completion` | hours (claim window, default 24, max 168) | [VerifiedCompletionReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/verified-completion'` |
 | GET | `/api/fleet/sessions` | none | [FleetSessionsV1](../src/core/fleet/runs-sessions.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/sessions'` |
@@ -698,16 +699,46 @@ replies are read once, and the recorded activity once for each job shown.
   message in the leader's thread, and a worker with a job opens with the
   message it serves (kind `order`) and says so in its summary. Helpers get
   none. The trace is read once for the whole document.
+- `serves` comes after `reply`. For a worker whose job serves a message
+  of Mason's it is `{key, at, source, text, truncated, jobs}`: the newest such
+  message, with a `key` every entry serving it shares, the inbox's own time
+  (`at`, Eastern, to the minute), Mason's words cut at 400 characters (`text`,
+  null when the message is not among the inbox entries read) and `jobs`, a
+  count of every job the trace ties to the message, including ones this
+  document does not show. It is null for the leader, a helper, a worker
+  without a job, a job whose prompt cites no message, and when the trace was
+  not read; `sources.orders` tells an unread trace from no citation. A screen
+  can group the sessions by `serves.key` to show who is working on what.
+- `work` is each entry's last key: what the session's job has done, as the
+  values behind the summary's own sentences, so a screen can draw them
+  without reading prose. `{commands, files, step}`: `commands` is the count
+  of commands seen in the job's log (null when the log's commands could not
+  be read); `files` is `{count, added, removed, partial}` for the job's
+  changed files, with `partial` true when the change read was cut short
+  (null when no change read answered); `step` is the newest recorded step,
+  `{event, summary, at}`, with `at` null when the record carried no time
+  that parses (null when no step is recorded). A null part is unknown, not
+  zero. `work` itself is null for a session with no job and when the job's
+  activity was not read; the entry's `sources.activity` tells those apart.
+- `control` sits just before `reply` in each entry: the pause, resume, stop
+  or move that stands for the session's job, `{action, lane, status, at}`
+  with `status` `requested` or `applied`, the same answer
+  `phm sessions thread <id>` gives. It is the newest request the dispatcher
+  did not refuse, so after a resume it reads `resume`, not null. It is null
+  when no request stands, for a session with no job, and when the control
+  file could not be read; `sources.controls` tells those apart. The requests
+  themselves are `control` messages in the thread and the summary names the
+  one that stands. The control file is read once for the whole document.
 - What a running session wrote is part of its thread: an `output` message
   with the last 3 lines of its log (the newest 400 characters of them when
   they are longer, `truncated` true when anything was left out). Only running
   sessions have their log read here; a finished one's thread ends with its
   outcome, and its single thread still shows its output.
 - `sources`: `sessions` (`available` or `unavailable`), and `bus`, `owner`,
-  `replies` and `orders` (`available`, `none` when the read answered and no
-  shown session has any, or `unavailable`). `gaps[]` holds the session list's
-  own gaps, a line counting the sessions left out past 40, and a failed bus,
-  inbox or order trace read.
+  `replies`, `orders` and `controls` (`available`, `none` when the read
+  answered and no shown session has any, or `unavailable`). `gaps[]` holds
+  the session list's own gaps, a line counting the sessions left out past 40,
+  and a failed bus, inbox, order trace or control file read.
 
 Each read fails on its own: a job whose activity could not be read says so in
 its own `gaps` and the other threads are whole. The route answers 503 when the
@@ -720,8 +751,8 @@ as the session list.
 
 ### Session thread
 
-`phm sessions thread <id> [--json]` reads one session as a conversation, and
-`GET /api/verse/fleet/control/session-thread?id=<id>` serves the same
+`phm sessions thread <id> [--all] [--json]` reads one session as a conversation, and
+`GET /api/verse/fleet/control/session-thread?id=<id>[&depth=full]` serves the same
 `fleet.session-thread.v1` document with a current read session. The id is
 `leader`, a job id or a subagent id from the session tree. It adds no source:
 it joins the session's row in `fleet.live-sessions.v1`, the job's
@@ -729,6 +760,15 @@ it joins the session's row in `fleet.live-sessions.v1`, the job's
 messages Mason wrote in the Leader inbox and, for the leader,
 `leader.replies.v1`.
 
+- `depth` and `deeper`, the last two keys: the limits below are the default
+  depth, `recent`. `--all` (or `depth=full`) reads the same records and shows
+  more of them: up to 400 bus messages, every message of Mason's in the inbox
+  entries read, 40 leader replies, 60 commands, 60 changed files, 25 served
+  messages, 40 control requests and 120 log lines. `deeper` is true for a
+  `recent` thread that left out something the `full` one would show, so a
+  client knows whether to offer the earlier entries; it is always false for
+  `full`, whose own omissions are lines in `gaps`. The route answers 400 for
+  any other `depth` value, or for `depth` given twice.
 - `session`: `id`, `kind`, `agent`, `lane`, `model`, `repo`, `jobId`,
   `parentId` (null for the leader), `state` (`quiet` for a running session
   with no output for 10 minutes, otherwise the tree's state), `startedAt`,
@@ -738,6 +778,12 @@ messages Mason wrote in the Leader inbox and, for the leader,
   where, its state and when it last spoke, its helpers, its pull request,
   commands seen and files changed, and its latest recorded step. No model
   writes it, and a fact no record holds reads "unknown".
+- `work`, between `gaps` and `reply`: what the session's job has done, as
+  the values behind those summary sentences, in the shape each
+  [session threads](#session-threads) entry carries: `{commands, files,
+  step}`, where a null part is unknown, not zero. It is null for a session
+  with no job and when the job's activity was not read; `sources.activity`
+  tells those apart.
 - `messages[]` in reading order: the brief it was given, each recorded step,
   the last 8 commands, up to 6 changed files, its notes, the newest 50 bus
   messages that name its job or were sent by or to it, the newest 10 messages
@@ -745,7 +791,7 @@ messages Mason wrote in the Leader inbox and, for the leader,
   it wrote to its log, then its last
   message. Each has `key`, `kind`
   (`order`, `routing`, `brief`, `step`, `commands`, `files`, `notes`, `bus`,
-  `owner`, `reply`, `output`, `latest`),
+  `owner`, `reply`, `control`, `output`, `latest`),
   `side` (`session` when it speaks, `other` when someone speaks to it,
   `record` for a recorded step), `label`, `at` (null when the record has no
   time), `text` and `format` (`plain`, `mono` or `markdown`).
@@ -782,8 +828,20 @@ messages Mason wrote in the Leader inbox and, for the leader,
   the served message is outside the inbox entries read, the `order` names
   its time and says its text was not read. The server reads the trace at
   most once every 15 seconds.
+- Control requests (`control`) come from the job control file that
+  `phm job pause|resume|stop|move` and
+  `POST /api/verse/fleet/runs/control` write. A thread for a session with a
+  job shows the newest 5 requests for that job, before its output, each as a
+  record: the label says what was asked and what became of it ("Pause
+  requested", "Paused", "Move to codex refused"), `at` is when it was
+  recorded, and the text names the surface that asked (`cli`, `desktop`,
+  `mobile`) and either that the dispatcher has not applied it yet, that it
+  is done, or the refusal's reason. A request reads as applied only when
+  the file holds that answer. `sources.controls` is `none` when the file
+  holds nothing for the job and `unavailable`, with a line in `gaps`, when
+  it could not be read.
 - `sources`: `sessions` (`available` or `unavailable`) and `activity`, `bus`,
-  `owner`, `replies`, `orders` (`available`, `none` when the read answered with nothing for this
+  `owner`, `replies`, `orders`, `output`, `controls` (`available`, `none` when the read answered with nothing for this
   session, or `unavailable`). `gaps[]` says in plain words what is missing.
 - `reply`: where a message written to this session goes, so every client
   aims it the same way. `to` is `leader` (the Leader inbox as it is), `job`
@@ -794,12 +852,54 @@ messages Mason wrote in the Leader inbox and, for the leader,
   finished session, a helper without a job and an unknown id get `none`. No
   route writes to a worker directly: the inbox belongs to the leader, and
   the write is `POST /api/verse/leader/inbox`.
+- `control`: the request that stands for the session's job, which is the
+  newest one not refused: `action` (`pause`, `resume`, `stop`, `move`),
+  `lane` (the target of a move, otherwise null), `status` (`requested` or
+  `applied`) and `at`. Null when none stands or the file was not read. The
+  summary says the same in one line. A client uses it to offer Resume in
+  place of Pause.
 
 Each read fails on its own, so a thread with an unreadable bus still shows the
 rest. The route answers 404 for an id the list does not hold (finished
 sessions leave after an hour), 503 when the session list cannot be read, and
 400 for anything but one `id`. The CLI exits 2 for an unknown id and 1 when
 the list cannot be read. Text is scrubbed the same way as the session list.
+
+### Session find
+
+`phm sessions find <words> [--lane <lane>] [--repo <repo>] [--live] [--json]`
+looks for words in every session's whole conversation, and
+`GET /api/verse/fleet/control/session-find?q=<words>[&lane=L][&repo=R][&live=1]`
+serves the same `fleet.session-find.v1` document with a current read session.
+It adds no source: each session is searched as the thread
+`phm sessions thread <id> --all` builds, so a word said long before a
+session's newest messages is found.
+
+- `words`: the query in lower case, split on spaces, without repeats. A word
+  is two characters or more; at most 8 are taken from at most 200 characters.
+- `filter`: `lane`, `repo` and `live`, as for the session list.
+- `counts`: `sessions` in the list, `searched` conversations read (at most
+  120, in session tree order) and `found` results.
+- `results[]`: a session is a result when every word is somewhere in its id,
+  kind, lane, model, repo, parent, summary or messages. Case is ignored.
+  - `session` and `summary`: as in a session thread.
+  - `hits`: the newest 5 messages holding at least one word, oldest of them
+    first. Each has the thread message's `key`, `kind`, `side`, `label` and
+    `at`; `text` is on one line, cut to the 240 characters around the first
+    word found, with `…` where it was cut (`truncated`). `hits` is empty when
+    the words are only in the session's facts or summary.
+  - `hitCount` and `messageCount`: messages holding a word, and messages in
+    the conversation searched.
+- `sources`: `sessions`, `bus`, `owner` and `orders`, each `available`, `none`
+  or `unavailable`. `gaps` says in words what was not searched, including
+  sessions past the 120.
+
+Each conversation is scrubbed the same way as the session list before it is
+searched, so a query can neither show nor confirm a secret. The route reads
+the fleet at most once per filter per 5 seconds, whatever the words. It
+answers 400 without a usable `q` or for an unknown parameter, and 503 when the
+session list cannot be read. The CLI exits 0 for a read (finding nothing is
+still a read), 1 when the list cannot be read and 2 for bad usage.
 
 ### Desktop workbench actions (WB-4)
 

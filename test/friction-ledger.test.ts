@@ -73,6 +73,15 @@ describe('phm friction miners', () => {
     expect(item(r, 'empty-finishes').score).toBe(13.5);  // 3 unlock x 3 bad x 3 blast / 2 cost
     expect(r.items[0]!.score ?? -1).toBeGreaterThanOrEqual(r.items.at(-1)!.score ?? -1);
   });
+  it('reads jobs-ledger dialect spellings for events, ids, lanes and stamps', () => {
+    const dialectJobs = [
+      J({ type: 'finish', job_id: 'RQ-E1', pool: 'devin', recordedAt: iso(3), empty: true, exit_code: 0 }),
+      J({ kind: 'enqueue', id: 'RQ-E2', lane: 'codex', time: iso(2), tier: 'bogus-tier' }),
+    ].join('\n');
+    const r = mineFriction({ jobs: dialectJobs, now: NOW });
+    expect(item(r, 'empty-finishes').signals).toMatchObject({ empty: 1 });
+    expect(item(r, 'invalid-tier').signals.enqueued).toBe(1);
+  });
   it('keeps signals unknown (null), never zero, when sources are missing', () => {
     const r = mineFriction({ now: NOW });
     expect(item(r, 'empty-finishes').signals.bad).toBeNull();

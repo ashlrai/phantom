@@ -127,6 +127,45 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs).toHaveLength(1);
     expect(inputs[0]).toMatchObject({ pool: null, repo: null, merged: false });
   });
+
+  it('reads alias timestamp fields on dispatch and outcome rows', () => {
+    const text = [
+      line({ event: 'launch', job: 'RQ-ALIAS', repo: 'ashlrai/phantom', lane: 'codex-cmp', tier: 'work', recordedAt: '2026-10-28T10:00:00-0400' }),
+      line({ event: 'outcome', job: 'RQ-ALIAS', state: 'MERGED', url: 'https://github.com/ashlrai/phantom/pull/88', updatedAt: '2026-10-28T15:31:00.000Z' }),
+    ].join('\n');
+    const inputs = foldJobsLedgerRewards(text, NOW_MS);
+    expect(inputs).toEqual([{
+      jobId: 'RQ-ALIAS', pool: 'codex-cmp', repo: 'ashlrai/phantom',
+      merged: true, dispatchedAt: DISPATCH_ISO, mergedAt: '2026-10-28T15:31:00.000Z', costUsd: null,
+    }]);
+  });
+
+  it('reads merged/closed event names as verdicts when no phase field resolves', () => {
+    const text = [
+      launch('RQ-EV'),
+      line({ event: 'merged', job: 'RQ-EV', url: 'https://github.com/ashlrai/phantom/pull/55', mergedAt: '2026-10-28T15:30:00.000Z', ts: '2026-10-28T15:31:00.000Z' }),
+      claim('RQ-CL'),
+      line({ event: 'closed', job: 'RQ-CL', url: 'https://github.com/ashlrai/phantom/pull/56', closedAt: '2026-10-28T16:00:00.000Z', ts: '2026-10-28T16:01:00.000Z' }),
+    ].join('\n');
+    const inputs = foldJobsLedgerRewards(text, NOW_MS);
+    expect(inputs).toHaveLength(2);
+    expect(inputs.find((i) => i.jobId === 'RQ-EV')).toMatchObject({ merged: true, mergedAt: MERGED_ISO });
+    expect(inputs.find((i) => i.jobId === 'RQ-CL')).toMatchObject({ merged: false, mergedAt: null });
+  });
+
+  it('keeps a resolved phase authoritative over the event name', () => {
+    const text = [
+      launch('RQ-PH'),
+      // A non-terminal phase blocks the 'merged' event verdict: still unresolved.
+      line({ event: 'merged', job: 'RQ-PH', state: 'OPEN', ts: '2026-10-28T15:31:00.000Z' }),
+      launch('RQ-PC'),
+      // A CLOSED phase beats a 'merged' event name on the same row.
+      line({ event: 'merged', job: 'RQ-PC', state: 'CLOSED', url: 'https://github.com/ashlrai/phantom/pull/57', closedAt: '2026-10-28T16:00:00.000Z', ts: '2026-10-28T16:01:00.000Z' }),
+    ].join('\n');
+    const inputs = foldJobsLedgerRewards(text, NOW_MS);
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatchObject({ jobId: 'RQ-PC', merged: false, mergedAt: null });
+  });
 });
 
 describe('writeRewardSignals', () => {

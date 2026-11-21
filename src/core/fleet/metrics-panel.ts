@@ -41,7 +41,7 @@ export async function readMetricsPanel(runsDir = runsRoot(), now = Date.now(), s
     /** The `phm metrics leverage` report: merges per class per hour, from job ids only (no PR titles here). */
     leverage,
     /** The `phm metrics loop` stage times, with releases read through the same reader as the CLI. */
-    loopStages: buildLoopStages(jobsTail.state === 'read' ? jobsTail.text : null, loopReleases.releases, now, loop.sinceMs ?? LOOP_STAGES_DEFAULT_SINCE_MS, loopReleases.reason),
+    loopStages: buildLoopStages(jobsTail.state === 'read' ? jobsTail.text : null, loopReleases.releases, now, loop.sinceMs ?? LOOP_STAGES_DEFAULT_SINCE_MS, loopReleases.reason, jobsTail.state === 'read' ? jobsTail.truncated : undefined),
     series,
     hourlyMerges: series.known ? series.hours.map(hour => hour.merged!) : null,
     lanes: [...names].sort().map(lane => {

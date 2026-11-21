@@ -68,6 +68,7 @@ describe('phm agents bus (unified)', () => {
     const framed = await run(['inbox', '--frame', 'cursor'], { PHM_AGENT_ID: 'nova' });
     expect(framed.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS MESSAGES');
     const wakes = await run(['wakes', 'nova']);
+    expect(wakes.json).toMatchObject({ matched: 2, truncated: false });
     expect(wakes.json.wakes.map((w: { id: string }) => w.id)).toEqual(['cli-dm', 'cli-ho']);
     const adapters = await run(['adapters']);
     expect(adapters.json.adapters.map((a: { cli: string }) => a.cli)).toEqual(['claude', 'codex', 'devin', 'cursor', 'grok']);
@@ -174,6 +175,66 @@ describe('phm agents bus (unified)', () => {
     // A thread label must be a printable v2 label; anything else fails closed.
     expect(await run(['inbox', 'nova', '--thread', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
     expect(await run(['channel', 'read', 'release', '--thread', ''])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
+  it('filters inbox and channel reads by --priority', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'urgent', '--priority', 'P0', '--id', 'p-dm'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'routine', '--priority', 'P2', '--id', 'p-dm2'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'heads up', '--priority', 'P1', '--id', 'p-ch'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    const urgent = await run(['inbox', 'nova', '--priority', 'P0']);
+    expect(urgent.code).toBe(0);
+    expect(urgent.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['p-dm']);
+    const channel = await run(['channel', 'read', 'release', '--priority', 'P1']);
+    expect(channel.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['p-ch']);
+    // --matched counts only the band the same filters accept.
+    const counted = await run(['inbox', 'nova', '--priority', 'P2', '--matched']);
+    expect(counted.json.matched).toBe(1);
+    expect(counted.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['p-dm2']);
+    // A band outside P0..P3 is a usage error on both reads.
+    expect(await run(['inbox', 'nova', '--priority', 'P9'])).toMatchObject({ code: 2 });
+    expect(await run(['channel', 'read', 'release', '--priority', 'high'])).toMatchObject({ code: 2 });
+  });
+
+  it('reports the true pending total with --matched and resumes before unshown mail', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    for (const id of ['m-1', 'm-2', 'm-3']) {
+      expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', id, '--id', id])).json)
+        .toMatchObject({ status: 'posted' });
+    }
+    // Without the flag the page shape is unchanged: no matched field at all.
+    const plain = await run(['inbox', 'nova']);
+    expect(plain.json.matched).toBeUndefined();
+
+    const first = await run(['inbox', 'nova', '--matched', '--limit', '2']);
+    expect(first.code).toBe(0);
+    expect(first.json.matched).toBe(3);
+    expect(first.json.messages).toHaveLength(2);
+    // nextCursor resumes at the newest shown row: the unshown match sits beyond it.
+    const shownCursors = first.json.messages.map((m: { cursor: number }) => m.cursor);
+    expect(first.json.nextCursor).toBe(Math.max(...shownCursors));
+
+    const second = await run(['inbox', 'nova', '--matched', '--limit', '2', '--after', String(first.json.nextCursor)]);
+    expect(second.json.matched).toBe(1);
+    expect(second.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['m-3']);
+
+    const done = await run(['inbox', 'nova', '--matched', '--after', String(second.json.nextCursor)]);
+    expect(done.json.matched).toBe(0);
+    expect(done.json.messages).toEqual([]);
+
+    // Human output names the total as well.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['inbox', 'nova', '--matched', '--limit', '2', '--root', root],
+      t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('matched 3');
   });
 
   it('records repeatable --ref values as v2 note refs on dm and channel post', async () => {

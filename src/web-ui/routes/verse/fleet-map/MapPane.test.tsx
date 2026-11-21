@@ -21,7 +21,7 @@ const NOW = Date.parse('2026-11-17T12:00:00Z'), AT = new Date(NOW).toISOString()
 const receipt = (from: string, to: string, receivedAt: number) => ({ cursor: 1, receivedAt,
   envelope: { id: `${from}-${to}-${receivedAt}`, from, to, priority: 'P2' as const, ttl: 3_600_000, body: { text: 'fixture' } } });
 const computer = (name: string, jobs: string[], isSelf = false): NodeRow => ({ name, isSelf, reachable: true, lastSeen: AT, heartbeatAgeSeconds: 2, phantom: 'running',
-  freeMemoryBytes: 8e9, freeMemoryPercent: 25, load: 1, cpuHeadroomPercent: 50, lanes: ['claude'], jobsRunning: jobs, freeSlots: 1, stateCode: 'ready', state: 'ready for work' });
+  freeMemoryBytes: 8e9, freeMemoryPercent: 25, load: 1, cpuHeadroomPercent: 50, lanes: ['claude'], jobsRunning: jobs, freeSlots: 1, stateCode: 'ready', state: 'ready for work', joined: true, joinCommand: null });
 
 function fleet(): FleetLiveMap {
   const messages = { schema: 'fleet.edges.v1' as const, source: 'available' as const, edges: projectFleetEdges([

@@ -4,9 +4,10 @@
  * difficulty, one unlogged preview per cell; choosing a cell draws that answer as the order seats would
  * be tried, each with its provider mark, the share of its usage window already used and its
  * reset, then the seats held back with the router's reason. Below, the recorded decision log
- * is counted by chosen seat. The pane decides nothing.
+ * is counted by chosen seat and drawn over time: a lane per seat, a column per equal slice of
+ * the span read, each column readable on its own. The pane decides nothing.
  */
-import { useState, type KeyboardEvent } from 'react';
+import { useRef, useState, type KeyboardEvent } from 'react';
 import type { ShadowDecisionRecord } from '../../../../core/routing/budget-store.js';
 import type { BudgetView } from '../../../../core/routing/policy.js';
 import type { RoutingDifficulty, RoutingTask, SeatDecision } from '../../../../core/routing/types.js';
@@ -20,6 +21,7 @@ import type { PaneProps } from '../panes/pane-registry.js';
 import { usedPercentText } from '../percent-text.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { formatRelative } from '../verse-model.js';
+import { TIMELINE_COLUMNS, columnWords, decisionTimeline, stepColumn, timelineWords } from './decision-timeline-model.js';
 import styles from './fleet-router.module.css';
 import { ROUTER_DIFFICULTIES, ROUTER_KINDS, ROUTER_TASKS, routeAt, routeSeats, routerDecisionsQuery, routerRoutesQuery, seatBrand, summarizeDecisions, tableShares, type BudgetRoute, type RouteSeat } from './router-model.js';
 
@@ -30,6 +32,8 @@ const AUDIENCES = [{ value: 'fleet', label: 'Fleet work' }, { value: 'owner', la
 type Audience = typeof AUDIENCES[number]['value'];
 const labelOf = (view: BudgetView | null, seatId: string | null): string =>
   seatId === null ? 'No seat' : view?.seatInfo.find(seat => seat.seatId === seatId)?.label ?? seatId;
+/** A column's edge on the time axis; a span of most of a day or more names the day too. */
+const clock = (days: boolean) => (ms: number): string => new Date(ms).toLocaleString(undefined, days ? { weekday: 'short', hour: 'numeric', minute: '2-digit' } : { hour: 'numeric', minute: '2-digit' });
 const ago = (iso: string, now: number): string => { const text = formatRelative(iso, now); return text === '' ? 'time unknown' : text === 'now' ? 'just now' : `${text} ago`; };
 
 function Usage({ seat, now }: { seat: RouteSeat; now: number }) {
@@ -108,21 +112,70 @@ function Route({ decision, view, now }: { decision: SeatDecision; view: BudgetVi
 }
 
 function Log({ records, view, now }: { records: readonly ShadowDecisionRecord[]; view: BudgetView | null; now: number }) {
+  // The column being read, by its place on the time axis. Pointing reads it; a click or the keyboard keeps it.
+  const [picked, setPicked] = useState<number | null>(null);
+  const scrub = useRef<HTMLDivElement>(null);
   if (records.length === 0) return <p className={styles.meta}>No routing decisions are recorded yet.</p>;
   const log = summarizeDecisions(records);
+  const timeline = decisionTimeline(records, now);
+  const column = timeline && picked !== null ? timeline.columns[picked] ?? null : null;
+  const at = clock(timeline !== null && timeline.endMs - timeline.startMs > 20 * 3_600_000);
+  const label = (seatId: string | null) => labelOf(view, seatId);
+  const keep = (index: number) => { setPicked(index); scrub.current?.focus(); };
+  const key = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      // Esc lets go of the column first; a second Esc is the pane's.
+      if (picked !== null) { event.stopPropagation(); setPicked(null); }
+      return;
+    }
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const next = stepColumn(event.key, picked, TIMELINE_COLUMNS);
+    if (next === null) return;
+    event.preventDefault();
+    setPicked(next);
+  };
+  // With a column read, the list under the chart is that column's decisions instead of the newest ones.
+  const shown = column ? column.records.map(place => records[place]!) : records;
   return <>
     <p className={styles.meta}>Last {log.total} recorded{log.from ? `, since ${ago(log.from, now)}` : ''}. {log.ranKnown === 0 ? 'None of them records which seat actually ran.'
       : `${log.ranKnown} record the seat that ran; ${log.ranElsewhere} of those ran on a different seat than the one chosen.`}</p>
+    {/* Leaving the chart lets go of a column that was only pointed at; one kept with a click or the keyboard stays. */}
+    <div className={styles.timeline} onMouseLeave={() => { if (document.activeElement !== scrub.current) setPicked(null); }}>
     <ul className={styles.bars} aria-label="Decisions by chosen seat">{log.seats.map(seat => {
       const percent = Math.round(seat.share * 100);
+      const lane = timeline?.lanes.find(row => row.seatId === seat.seatId);
       return <li key={String(seat.seatId)} className={styles.bar} aria-label={`${labelOf(view, seat.seatId)}: ${seat.count} of ${log.total} decisions`}>
         <span className={styles.name}>{seat.seatId === null ? null : <BrandMark brand={seatBrand(view, seat.seatId)} size={16} />}{labelOf(view, seat.seatId)}</span>
-        <span className={styles.track}><span className={styles.fill} data-none={seat.seatId === null || undefined} style={{ width: `${seat.share * 100}%` }} /></span>
+        {/* The lane: this seat's decisions in each column, every lane against the same tallest cell. Without a readable time there is only the share. */}
+        {timeline ? <span className={styles.bins} aria-hidden="true">{timeline.columns.map((_, index) => {
+          const count = lane?.counts[index] ?? 0;
+          return <span key={index} className={styles.bin} data-bin={index} data-picked={picked === index || undefined} data-moved={(lane?.moved[index] ?? 0) > 0 || undefined}
+            onMouseEnter={() => setPicked(index)} onClick={() => keep(index)}>
+            {count > 0 ? <span className={styles.stem} data-none={seat.seatId === null || undefined} style={{ height: `${count / timeline.peak * 100}%` }} /> : null}
+          </span>;
+        })}</span>
+          : <span className={styles.track}><span className={styles.fill} data-none={seat.seatId === null || undefined} style={{ width: `${seat.share * 100}%` }} /></span>}
         <span className={styles.count}>{seat.count} · {percent === 0 ? '<1' : percent}%</span>
       </li>;
     })}</ul>
-    <h3 className={styles.sub}>Latest</h3>
-    <ul className={styles.recent} aria-label="Latest decisions">{records.slice(0, RECENT).map((record, index) => {
+    {timeline ? <div className={styles.axis}>
+      {/* The time axis is the one tab stop: a slider with a value per column, each said in full. */}
+      <div ref={scrub} className={styles.scrub} role="slider" tabIndex={0} aria-label="Recorded decisions over time" aria-orientation="horizontal"
+        aria-valuemin={1} aria-valuemax={TIMELINE_COLUMNS} aria-valuenow={(picked ?? TIMELINE_COLUMNS - 1) + 1}
+        aria-valuetext={picked === null ? timelineWords(timeline) : columnWords(timeline, picked, label, at)}
+        onKeyDown={key} onBlur={() => setPicked(null)}>
+        {timeline.columns.map((tick, index) => <span key={index} className={styles.tick} data-tick={index} data-picked={picked === index || undefined}
+          data-empty={tick.total === 0 || undefined} data-moved={tick.moved > 0 || undefined} onMouseEnter={() => setPicked(index)} onClick={() => setPicked(index)} />)}
+      </div>
+      <span className={styles.ends} aria-hidden="true"><span>{at(timeline.startMs)}</span><span>{timeline.endMs > now ? at(timeline.endMs) : 'now'}</span></span>
+    </div> : null}
+    </div>
+    {timeline === null ? <p className={styles.caption}>None of these decisions carries a readable time, so they are not drawn over time.</p>
+      : picked === null ? <p className={styles.caption}>{timelineWords(timeline)}{log.ranElsewhere > 0 ? ' An amber cap marks work that ran on another seat.' : ''} Point at a column, or use the arrow keys on the time axis, to read it.</p>
+        : <p className={styles.caption} data-column={picked + 1}>{columnWords(timeline, picked, label, at)}</p>}
+    <h3 className={styles.sub}>{column ? 'In this column' : 'Latest'}</h3>
+    {column && shown.length === 0 ? <p className={styles.caption}>No decisions in this column.</p> : null}
+    <ul className={styles.recent} aria-label={column ? 'Decisions in this column' : 'Latest decisions'}>{shown.slice(0, RECENT).map((record, index) => {
       const chosen = record.decision?.seatId ?? null, ran = record.actual?.seatId ?? null;
       return <li key={`${record.at}-${index}`}>
         <span className={styles.when}>{ago(record.at, now)}</span>
@@ -131,6 +184,7 @@ function Log({ records, view, now }: { records: readonly ShadowDecisionRecord[];
         {ran !== null && ran !== chosen ? <span className={styles.ran}>ran on {labelOf(view, ran)}</span> : null}
       </li>;
     })}</ul>
+    {column && shown.length > RECENT ? <p className={styles.caption}>and {shown.length - RECENT} more in this column.</p> : null}
   </>;
 }
 

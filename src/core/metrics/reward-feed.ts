@@ -12,8 +12,10 @@
  *
  * THE RULES, and why:
  *   - RESOLVED MERGE EVIDENCE ONLY. A row is emitted only for a job whose PR
- *     lifecycle reached an authoritative resolution: MERGED (state/outcome
- *     MERGED or merged:true) or CLOSED-unmerged (state CLOSED or merged:false).
+ *     lifecycle reached an authoritative resolution: MERGED (a terminal phase
+ *     across phase|state|outcome|status|result|conclusion, a 'merged' event
+ *     name when no phase field resolves, or merged:true) or CLOSED-unmerged
+ *     (the same dialect for 'closed'/CLOSED or merged:false).
  *     Task-level rows — launch, finish, DONE-NOOP, OPEN, task_outcome —
  *     never count: a job that failed before publishing has unknown merge
  *     state, not a proven non-merge, and stays unwritten.
@@ -52,7 +54,13 @@ import {
 
 const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const STATE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const;
-const TS_KEYS = ['ts', 'timestamp', 'at', 'mergedAt', 'closedAt'] as const;
+/**
+ * jobs.jsonl timestamp dialect: ts|timestamp|at|time|mergedAt|closedAt|
+ * recordedAt|updatedAt — the same field set and order dispatchd `_vc_pick`
+ * and metrics/loop accept. `at` stays the row's own stamp; the GitHub merge
+ * time is read separately through MERGED_AT_KEYS.
+ */
+const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 const MERGED_AT_KEYS = ['mergedAt', 'merged_at', 'closedAt', 'closed_at'] as const;
 const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
 const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr'] as const;
@@ -90,6 +98,22 @@ function ledgerTs(row: Record<string, unknown>): number | null {
 
 function stateOf(row: Record<string, unknown>): string {
   return (firstString(row, STATE_KEYS) ?? '').toUpperCase();
+}
+
+/**
+ * Event names that carry a terminal merge verdict when no phase field
+ * resolves — the 'merged'/'closed' convention job-outcomes, the router
+ * outcome fold and the fleet yield readers share. A resolved phase stays
+ * authoritative over the event name; every other spelling stays unknown.
+ */
+const OUTCOME_EVENT_STATES: Readonly<Record<string, string>> = { merged: 'MERGED', closed: 'CLOSED' };
+
+/** Terminal phase across the state dialect, or the event-name verdict when no phase field resolves. */
+function outcomeStateOf(row: Record<string, unknown>): string {
+  const state = stateOf(row);
+  if (state !== '') return state;
+  const event = firstString(row, EVENT_KEYS);
+  return event === null ? '' : OUTCOME_EVENT_STATES[event.toLowerCase()] ?? '';
 }
 
 /** The GitHub merge timestamp a MERGED row carries, when it has one. */
@@ -167,7 +191,7 @@ export function foldJobsLedgerRewards(
       noteDispatch(acc, { ms: at, lane: firstString(row, LANE_KEYS) });
     }
     if (hasRevertEvidence(row)) acc.revertMs = Math.max(acc.revertMs ?? 0, at);
-    const state = stateOf(row);
+    const state = outcomeStateOf(row);
     if (row['merged'] === true || MERGE_STATES.has(state)) {
       const mergedAtMs = mergedAtValue(row) ?? at;
       if (acc.merge === null || at >= acc.merge.atMs) acc.merge = { atMs: at, mergedAtMs };

@@ -25,4 +25,13 @@ describe('generator yield', () => {
     const report = generatorYield([row({ job: 'RQ-DRAIN-1', state: 'MERGED' }), row({ job: 'RQ-DRAIN-2', empty: true }), JSON.stringify({ job: 'OLD', ts: '2026-11-01T00:00:00Z' })].join('\n'), 24, now);
     expect(report.generators).toMatchObject([{ generator: 'drain', jobs: 2, merged: 1, tokensPerMergedPr: null }]);
   });
+  it('reads the jobs-ledger field dialect', () => {
+    const report = generatorYield([
+      JSON.stringify({ job_id: 'RQ-FOOA9Q8', type: 'finish', timestamp: '2026-11-09T10:00:00Z', result: 'empty', pr_url: 'https://github.com/x/y/pull/1' }),
+      JSON.stringify({ id: 'RQ-FOOA9Q8', kind: 'outcome', status: 'MERGED', at: '2026-11-09T10:05:00Z', html_url: 'https://github.com/x/y/pull/1' }),
+    ].join('\n'), 24, now);
+    expect(report.generators).toEqual([
+      { generator: 'filler', jobs: 1, prs: 1, merged: 1, emptyRate: 1, medianDiffLines: null, tokensPerMergedPr: null },
+    ]);
+  });
 });

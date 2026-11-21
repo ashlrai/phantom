@@ -5,6 +5,9 @@
  * that job, Esc closes. In an empty box ↑ brings back what Mason already said.
  * The list is read only while it is open, from the same sessions list the
  * Sessions pane shows; nothing is sent until the message is.
+ *
+ * After a command that takes an argument (`/release `, `/stop `, `/app `…)
+ * the same place lists what the command accepts (CommandArgAssist.tsx).
  */
 import { useId, useMemo, useState, type ChangeEvent, type Dispatch, type KeyboardEvent, type ReactNode, type RefObject, type SetStateAction, type SyntheticEvent } from 'react';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
@@ -12,7 +15,9 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { insertMention, mentionQuery } from '../fleet/interject-target-model.js';
 import { liveSessionsQuery, SESSIONS_POLL_MS } from '../fleet-sessions/sessions-model.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { useCommandArgs } from './CommandArgAssist.js';
 import { mentionOptions, recallStep, stepOption } from './composer-assist-model.js';
+import { parseComposerDraft } from './composer-commands.js';
 import styles from './composer-assist.module.css';
 
 type Box = HTMLTextAreaElement;
@@ -67,6 +72,9 @@ export function useComposerAssist({ draft, setDraft, inputRef, enabled, sent }: 
     setClosed(true);
     place(next.text, next.caret);
   }
+  // The `@` list wins when both apply (`/thread @`); Esc closes whichever is open.
+  const args = useCommandArgs({ id, draft, caret, enabled: enabled && !closed && !open, selected, setSelected,
+    onChoose: text => { setClosed(true); place(text, text.length); } });
 
   function onKeyDown(event: KeyboardEvent<Box>): boolean {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return false;
@@ -77,8 +85,15 @@ export function useComposerAssist({ draft, setDraft, inputRef, enabled, sent }: 
       if (event.key === 'Escape') { setClosed(true); return take(); }
       if (!plain || active < 0) return false;
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { setSelected(stepOption(shown.length, active, event.key === 'ArrowDown' ? 1 : -1)); return take(); }
+      // A command whose session is already typed in full (`/thread @RQ-A`) runs on Enter, with or without the list read.
+      const typedInFull = selected === 0 && caret === draft.length && shown.some(option => option.id === query) && parseComposerDraft(draft).kind === 'command';
+      if (event.key === 'Enter' && typedInFull) return false;
       if (event.key === 'Enter' || event.key === 'Tab') { choose(shown[active]!.id); return take(); }
       return false;
+    }
+    if (args.open) {
+      if (event.key === 'Escape') { setClosed(true); return take(); }
+      return plain && args.onKey(event.key) ? take() : false;
     }
     if (!enabled || !plain) return false;
     if (event.key === 'Escape' && recalling) { setRecallAt(null); place('', 0); return take(); }
@@ -117,6 +132,8 @@ export function useComposerAssist({ draft, setDraft, inputRef, enabled, sent }: 
         {read.error ? <span data-tone="unknown">Refresh failed; this list may be stale</span> : null}
       </p>}
     </div>;
+  } else if (args.open) {
+    panel = args.panel;
   } else if (recalling) {
     panel = <p className={styles.recall} role="status">Earlier message {recallAt + 1} of {sent.length} · <kbd>↑</kbd> older · <kbd>↓</kbd> newer · <kbd>esc</kbd> clears</p>;
   }
@@ -125,8 +142,8 @@ export function useComposerAssist({ draft, setDraft, inputRef, enabled, sent }: 
     inputProps: {
       onChange: event => { setDraft(event.target.value); setCaret(event.target.selectionStart); setClosed(false); setSelected(0); setRecallAt(null); },
       onSelect: event => setCaret(event.currentTarget.selectionStart),
-      'aria-controls': shown.length > 0 ? listId : undefined,
-      'aria-activedescendant': active >= 0 ? `${id}-session-${active}` : undefined,
+      'aria-controls': shown.length > 0 ? listId : args.listId,
+      'aria-activedescendant': active >= 0 ? `${id}-session-${active}` : args.activeId,
       'aria-autocomplete': 'list',
     },
     onKeyDown,

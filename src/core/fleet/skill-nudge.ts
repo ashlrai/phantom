@@ -9,6 +9,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { SkillCard } from '../types.js';
 import type { MetricsJob } from './metrics-ingest.js';
+import { ledgerEventName, ledgerPhase } from './empty-cause.js';
 import { readSkillCardCorpus, recordSkillCard, sanitizeSkillCard } from './skill-records.js';
 import { hasRevertEvidence } from './slot-yield.js';
 import {
@@ -95,10 +96,14 @@ export function nudgeSkillsFromJobs(jobs: readonly SkillNudgeJob[], ts = new Dat
 // Field provenance, all real ledger evidence:
 //   - id/lane: job plus the last execution-side lane (enqueue/queued rows are
 //     queue hints and never set the lane).
-//   - outcome: the latest terminal lifecycle phase on any row — outcome/state/
-//     status fields are the producer convention (dispatchd _vc_phase,
-//     metrics-outcomes reconciler rows inherit the published row's event name,
-//     so the phase field decides, not the event). MERGED->merged,
+//   - outcome: the latest terminal lifecycle phase on any row — the phase
+//     fields (phase|state|outcome|status|result|conclusion via the shared
+//     ledgerPhase accessor) are the producer convention (dispatchd
+//     _vc_phase, metrics-outcomes reconciler rows inherit the published
+//     row's event name, so the phase field decides, not the event). When no
+//     phase field resolves, the event name itself can carry the verdict —
+//     'merged'/'closed' outcome events and 'revert'/'reverted' names map the
+//     same way job-outcomes reads them. MERGED->merged,
 //     CLOSED/FAILED/ERROR->failed, DONE-NOOP and empty-family->empty,
 //     CANCELLED->cancelled, REVERT/REVERTED->merged with reverted evidence.
 //     PUBLISHED/OPEN and task-level words (done/skipped/deferred) never
@@ -119,8 +124,6 @@ export function nudgeSkillsFromJobs(jobs: readonly SkillNudgeJob[], ts = new Dat
 
 const LEDGER_JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const LEDGER_LANE_KEYS = ['lane', 'pool', 'arm'] as const;
-const LEDGER_PHASE_KEYS = ['outcome', 'state', 'status'] as const;
-const LEDGER_EVENT_KEYS = ['event', 'type', 'kind'] as const;
 const LEDGER_ACTION_KEYS = ['action'] as const;
 /** Same identifier alphabet draftSkillNudges accepts for id, lane and failureClass. */
 const LEDGER_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
@@ -155,14 +158,28 @@ function firstString(row: Record<string, unknown>, keys: readonly string[]): str
   return null;
 }
 
-function phaseOf(row: Record<string, unknown>): NudgeOutcome | undefined {
-  const phase = firstString(row, LEDGER_PHASE_KEYS)?.toUpperCase();
-  if (phase === undefined) return undefined;
-  if (MERGED_PHASES.has(phase) || REVERT_PHASES.has(phase)) return 'merged';
-  if (FAILED_PHASES.has(phase)) return 'failed';
-  if (EMPTY_PHASES.has(phase)) return 'empty';
-  if (CANCELLED_PHASES.has(phase)) return 'cancelled';
-  return undefined;
+/** Event names (post-normalization, lowercase) that carry a terminal verdict with no phase field. */
+const EVENT_OUTCOMES: Readonly<Record<string, NudgeOutcome>> = {
+  merged: 'merged', closed: 'failed', revert: 'merged', reverted: 'merged',
+};
+
+/**
+ * The job's terminal outcome on one row: the phase fields decide first (the
+ * authoritative outcome signal); when none of them names a known phase the
+ * event name itself may carry the verdict, the same merged/closed mapping
+ * job-outcomes applies. Revert names resolve like their phase spellings —
+ * merged evidence the reverted flag then discounts.
+ */
+function outcomeOf(row: Record<string, unknown>): NudgeOutcome | undefined {
+  const phase = ledgerPhase(row);
+  if (phase !== null) {
+    if (MERGED_PHASES.has(phase) || REVERT_PHASES.has(phase)) return 'merged';
+    if (FAILED_PHASES.has(phase)) return 'failed';
+    if (EMPTY_PHASES.has(phase)) return 'empty';
+    if (CANCELLED_PHASES.has(phase)) return 'cancelled';
+  }
+  const event = ledgerEventName(row);
+  return event === null ? undefined : EVENT_OUTCOMES[event];
 }
 
 /** Fixed-label failure classifications only; anything else stays unknown. */
@@ -202,7 +219,7 @@ export function skillNudgeJobsFromLedger(text: string): SkillNudgeJob[] {
       jobs.set(id, acc);
     }
     acc.lastLine = lineNo;
-    const event = firstString(row, LEDGER_EVENT_KEYS)?.toLowerCase() ?? null;
+    const event = ledgerEventName(row);
     if (event !== null && !QUEUE_HINT_EVENTS.has(event)) {
       const lane = firstString(row, LEDGER_LANE_KEYS);
       if (lane !== null && LEDGER_ID_PATTERN.test(lane)) acc.lane = lane;
@@ -219,7 +236,7 @@ export function skillNudgeJobsFromLedger(text: string): SkillNudgeJob[] {
     const failureClass = failureClassOf(row, event);
     if (failureClass !== null) acc.failureClass = failureClass;
     if (hasRevertEvidence(row)) acc.reverted = true;
-    const outcome = phaseOf(row);
+    const outcome = outcomeOf(row);
     if (outcome !== undefined) acc.outcome = outcome;
   }
   return [...jobs.entries()]

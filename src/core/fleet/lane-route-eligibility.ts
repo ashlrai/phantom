@@ -76,7 +76,7 @@ export function laneHoldActive(row: Pick<LaneTargetRow, 'held' | 'heldUntil'>, n
 
 /** The target after clamping to the lane's own bounds. */
 export function effectiveLaneTarget(row: Pick<LaneTargetRow, 'target' | 'floor' | 'ceiling'>): number {
-  return Math.max(row.floor, Math.min(row.ceiling, row.target));
+  return Math.max(row.floor, Math.min(row.ceiling ?? Number.POSITIVE_INFINITY, row.target));
 }
 
 function paidProven(lane: string, windows: readonly ThroughputWindow[]): boolean {

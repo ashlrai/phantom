@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { rejectUnknownOptions } from './args.js';
 import { formatWorktreeReapStatus, readWorktreeReapStatus } from '../core/fleet/worktree-reap-tick.js';
-import { defaultRunsRoot, formatWorktrees, readWorktrees, type WorktreesDeps, type WorktreesReport } from '../core/fleet/worktrees.js';
+import { defaultRunsRoot, defaultWtRoot, formatWorktrees, readWorktrees, worktreeRemoveCommands, type WorktreesDeps, type WorktreesPlan, type WorktreesReport } from '../core/fleet/worktrees.js';
 
 export interface WorktreeReport {
   name: string;
@@ -47,19 +47,20 @@ export function reportWorktrees(root: string, now = Date.now()): WorktreeReport[
 }
 
 const REPORT_USAGE = 'Usage: phm worktrees report [--dir <worktrees-dir>] [--json]';
-const USAGE = `Usage: phm worktrees [--json] [--reap [--dry-run | --apply | --status]]
+const USAGE = `Usage: phm worktrees [--json] [--reap [--dry-run | --apply | --plan | --status]]
        phm worktrees report [--dir <worktrees-dir>] [--json]
        phm worktrees prune [--dry-run | --apply] [--json]
 
 List every job worktree with its job, repo, state (live job, merged PR, empty
 result, open PR, kept on purpose, unknown), age, size and whether it is safe to
-remove. Safe means: merged or empty, over 6 hours old, no uncommitted changes,
+remove. Safe means: merged or empty, over 2 hours old, no uncommitted changes,
 no live job and not kept on purpose.
   --reap            Preview removal of the safe worktrees (a dry run).
+  --reap --plan     Print only the git worktree remove commands, one per line, for a script to run.
   --reap --apply    Remove them with git worktree remove (never --force).
   --reap --status   Show the scheduled reap: on or off, last run, removed, skipped, freed.
 The fleet self-tick runs this reap on its own when there are more than 40
-worktrees: up to 25 removals, once per 30 minutes. Create queue/worktree-reap.off
+worktrees: up to 40 removals, once per 30 minutes. Create queue/worktree-reap.off
 in the runs directory to turn it off.`;
 
 type Output = { log: (text: string) => void; error: (text: string) => void };
@@ -71,10 +72,11 @@ export async function cmdWorktrees(args: string[], deps: WorktreesDeps & { outpu
     return 0;
   }
   if (args[0] === 'report') return cmdWorktreesReport(args.slice(1), out);
-  const allowed = ['--json', '--reap', '--dry-run', '--apply', '--status'];
+  const modes = ['--dry-run', '--apply', '--plan', '--status'];
+  const allowed = ['--json', '--reap', ...modes];
   const bad = args.find(arg => !allowed.includes(arg));
-  if (bad !== undefined || new Set(args).size !== args.length || ['--dry-run', '--apply', '--status'].filter(flag => args.includes(flag)).length > 1
-    || (['--dry-run', '--apply', '--status'].some(flag => args.includes(flag)) && !args.includes('--reap'))) {
+  if (bad !== undefined || new Set(args).size !== args.length || modes.filter(flag => args.includes(flag)).length > 1
+    || (modes.some(flag => args.includes(flag)) && !args.includes('--reap'))) {
     out.error(bad !== undefined ? `Unknown argument: ${bad}\n${USAGE}` : USAGE);
     return 2;
   }
@@ -86,10 +88,17 @@ export async function cmdWorktrees(args: string[], deps: WorktreesDeps & { outpu
       return 0;
     } catch { out.error('Cannot read the reap status.'); return 1; }
   }
+  const plan = args.includes('--plan');
   const mode = !args.includes('--reap') ? 'list' : args.includes('--apply') ? 'apply' : 'dry-run';
   let report: WorktreesReport;
   try { report = await readWorktrees(mode, deps); }
   catch { out.error('Cannot read worktrees.'); return 1; }
+  if (plan) {
+    const commands = worktreeRemoveCommands(report, deps.wtRoot ?? defaultWtRoot());
+    if (args.includes('--json')) out.log(JSON.stringify({ schema: 'worktrees.plan.v1', commands } satisfies WorktreesPlan));
+    else for (const command of commands) out.log(command);
+    return 0;
+  }
   if (args.includes('--json')) out.log(JSON.stringify(report));
   else for (const line of formatWorktrees(report)) out.log(line);
   return (report.removals ?? []).every(removal => removal.status === 'removed') ? 0 : 1;

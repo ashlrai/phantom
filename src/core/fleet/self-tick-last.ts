@@ -12,13 +12,21 @@
  * whole payload in the queue.
  */
 import { randomUUID } from 'node:crypto';
-import { chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { sanitizePublicJson } from '../util/public-json.js';
+import { hooksFromPlannerReport } from './self-tick-hooks.js';
 import { SELF_TICK_STEP_ORDER, type SelfTickReport, type SelfTickStepName } from './self-tick.js';
 
 /** Last-report path relative to the runs dir, under the queue/ directory. */
 export const SELF_TICK_LAST = 'queue/self-tick-last.json';
+
+/** One-line-per-run history path, beside the last record; only its newest lines are kept. */
+export const SELF_TICK_HISTORY = 'queue/self-tick.jsonl';
+export const SELF_TICK_HISTORY_KEEP_LINES = 500;
+
+/** The schema name of both the last record and each history line. */
+export const SELF_TICK_RECORD_SCHEMA = 'fleet.self-tick-record.v1';
 
 /** A step report whose JSON exceeds this is stored as { truncated: true }. */
 const STEP_REPORT_MAX_BYTES = 16 * 1024;
@@ -61,6 +69,45 @@ const storedReport = (report: unknown): unknown => {
 };
 
 /**
+ * The plain facts of one run: schema, start and finish times, mode, ran or busy, the three hooks and
+ * the failed steps with their errors. Shared by the last record and each history line.
+ */
+function recordSummary(report: SelfTickReport) {
+  const planner = report.steps.find((step) => step.step === 'planner-tick');
+  return {
+    schema: SELF_TICK_RECORD_SCHEMA,
+    startedAt: report.at,
+    finishedAt: report.finishedAt ?? report.at,
+    at: report.at,
+    mode: report.mode,
+    state: report.state,
+    hooks: report.state === 'busy' ? [] : hooksFromPlannerReport(sanitizePublicJson(planner?.report ?? null), report.mode),
+    failedSteps: report.steps
+      .filter((step) => step.state === 'failed')
+      .map((step) => ({ step: step.step, error: step.error ?? null })),
+  };
+}
+
+/**
+ * Append this run's one line to queue/self-tick.jsonl and keep the newest 500. Runs under no lock
+ * for a busy run, so the trim rewrites through tmp+rename; a racing append loses at most one line.
+ */
+export function appendSelfTickLine(runsDir: string, report: SelfTickReport): void {
+  const path = join(runsDir, SELF_TICK_HISTORY);
+  mkdirSync(dirname(path), { recursive: true });
+  appendFileSync(path, `${JSON.stringify(recordSummary(report))}\n`, { mode: 0o600 });
+  const lines = readFileSync(path, 'utf8').split('\n').filter((line) => line !== '');
+  if (lines.length <= SELF_TICK_HISTORY_KEEP_LINES) return;
+  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(tmp, `${lines.slice(-SELF_TICK_HISTORY_KEEP_LINES).join('\n')}\n`, { mode: 0o600, flag: 'wx' });
+    renameSync(tmp, path);
+  } finally {
+    try { unlinkSync(tmp); } catch { /* renamed already */ }
+  }
+}
+
+/**
  * Persist the last self-tick report atomically: a fresh tmp file in the same
  * directory renamed over the target, mode 0o600, with the queue dir made
  * first. Callers run this inside the self-tick lock, so plain rename (not
@@ -71,14 +118,13 @@ export function writeSelfTickLast(runsDir: string, report: SelfTickReport): void
   mkdirSync(dirname(path), { recursive: true });
   const persisted = {
     v: SELF_TICK_LAST_VERSION,
-    at: report.at,
-    mode: report.mode,
-    state: report.state,
+    ...recordSummary(report),
     steps: report.steps.map((step) => ({
       step: step.step,
       state: step.state,
       exitCode: step.exitCode,
       report: storedReport(step.report),
+      ...(step.error === undefined ? {} : { error: step.error }),
     })),
   };
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;

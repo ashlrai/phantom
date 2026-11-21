@@ -52,6 +52,19 @@ remain `null` in JSON and unknown in Home. Spent means subscription quota used,
 not a monetary cost estimate. Resource collection and lane diagnostics remain
 owned by their existing APIs.
 
+Home files its cards under two named groups. **Agents and machines** is who
+is working and what needs you: Decisions, From your leader, Leader, Working
+now, Running jobs, Machines, This Mac and Main. **Usage and delivery** is
+what the work costs and what it produced: Pools, Most at risk of going
+unused, Merged PRs, Shipped today, Work log and Disk. When the Home pane is
+at least 64rem wide (1024px at the default text size) the groups sit side by
+side as two columns, each card keeping its own height, and the Pulse rows run
+across the top instead of down. In a narrower pane (Home beside an open
+chat, or a small window) the groups follow each other in one column. The
+pane's own width decides, not the window's. Keyboard and screen-reader order
+is the same at every width: the first group, then the second. The layout
+adds no request.
+
 Home's **Running jobs** card is a tile per lane: the provider's mark and the
 lane name, the number of jobs running, and one square per target slot, filled
 for each running job (a lane with more than 24 slots draws one bar of the
@@ -62,6 +75,18 @@ filled. Home's **Main** card is a mark per repository, red first, then
 unknown (a hollow ring on a dashed outline), then green, under one line that
 names the red ones. It says the default branches are green only when every
 one is. Both draw the lists `phm home` prints and read nothing else.
+
+Home's **Most at risk of going unused** card draws the allowance `phm home`
+names: the provider's mark and the resource, the countdown to its reset with
+the local time, the share projected to expire unused as the one figure, and
+one bar of how the window ends. Left to right the bar is the share used now,
+the share the measured burn adds by the reset (the same colour, lighter) and
+the part left over (an empty track outlined in amber); a key under the bar
+states each share and the burn an hour. The split comes from `usedPercent`
+and `burnPctPerHour` in the summary's `atRisk` field; a server that does not
+send them gets one "used by its reset" share, never a guessed split. A reset
+time that has passed is said in words and not counted down. With nothing at
+risk the card says so, and with no fresh reading it gives the reason.
 
 Home's card column draws each reading beside the words that state it. The
 headline has a state mark (green healthy, amber stalled, red main, a hollow
@@ -75,14 +100,25 @@ mark per repository.
 Home's **Pools** card is a resource bar: one tile per pool, as many across as
 fit (two on a phone). A tile shows the provider's mark and the pool's name,
 the share left as the large figure, how long the pool lasts at the measured
-burn, when it resets, and the used bar along its bottom edge. A pool that
+burn, when it resets, how its window ends at that burn, and a bar along its
+bottom edge. The ending is the runway's own verdict: "70% unused at its
+reset", "dry 46 h before its reset", "on pace to use it all", or "not
+projected" with the reading that is missing. The bar is split the same way:
+used so far is solid, what the burn uses before the reset is lighter, and the
+gap after them is the share left unused; a pool that runs dry early fills to
+the end in amber. A line under the tiles counts the pools by ending and
+holds the key to the bars. The tile's bar, the Most at risk card's bar and
+the bar on each Pools board card are one design-system component
+(`components/primitives/WindowBar.tsx`), so a part looks and reads the same
+on all three. A pool that
 empties before it resets has its figure and that line in amber. A pool with
-no reading says "usage unknown" in place of a figure, and Local shows "free,
+no reading says "usage unknown" in place of a figure and has a hatched bar,
+and Local shows "free,
 limited by memory" with no bar. The line under the title names the pool that
 will not last to its reset (or counts them), counts pools without a usage
 reading, and gives the soonest reset and the time the readings were taken.
-Select a tile to list that pool's running jobs under the bar; a job opens in
-the Worker log. **Open Pools** opens the Pools pane. The same readings for
+Select a tile to list that pool's running jobs under the bar, below the
+runway's advice for that pool; a job opens in the Worker log. **Open Pools** opens the Pools pane. The same readings for
 agents:
 
 ```sh
@@ -121,6 +157,51 @@ visible. The same report for agents:
 phm nodes pool --json
 ```
 
+Home's **Shipped today** card lists every pull request the fleet merged in
+the last 24 hours, newest first. Two sentences lead: how many merged, across
+how many repositories and at what rate, then the median time from open to
+merge and the pull request that stayed open longest. When more than one
+repository merged, a row of buttons (each with its count, underlined by its
+share of the list) narrows the list to one; choose it again, or **All**, to
+go back. Each row gives the merge time, the lane's provider mark, a link to
+the pull request, the lane and the time it was open. Under the row a line
+runs across the feed's own 24 hours: it starts where the pull request was
+opened and ends in a dot at its merge, and fades in from the left edge when
+it was opened before the window. When the feed names the job that made the
+pull request, the job id opens that job in the Worker log. Nothing is filled
+in: a row with no time open says "open time unknown" and gets a hollow dot
+and no line, a missing lane reads "lane unknown", an incomplete feed counts
+what it lists and says the totals are unknown, and no line is drawn when the
+feed does not give its window. The card reads the feed again every 10
+minutes while visible and says when a refresh failed. The same feed for
+agents:
+
+```sh
+phm shipped --since 24h --json
+```
+
+Home's **Work log** card shows what the fleet did in the last 24 hours. One
+sentence counts the events by kind: merged, launched, finished, no change,
+leader and incident. Under it each kind that happened gets a row: its name
+and count, a strip of 48 squares running across the report's 24 hours (a
+filled square is a half hour in which that kind happened, darker where more
+happened within that row) and the time it last happened. A kind's name is a
+button that narrows the list below to that kind; choose it again to go back.
+The list holds the newest eight events with the time, the kind, the lane's
+provider mark and the event in words. A merge links to its pull request,
+"3 times" marks a line that stands for repeated events of one job, and a job
+id opens that job in the Worker log. Nothing is filled in: a source the
+report could not read is named under the sentence as not counted, an event
+with no readable time is listed as "time unknown" and gets no square, and no
+strip is drawn when the report does not give its hours. The card reads the
+report every minute while visible. Until the first read answers, or on a
+server that does not serve the report, it lists the few newest lines the
+Home summary carries. The same report for agents:
+
+```sh
+phm worklog --hours 24 --json
+```
+
 The Metrics pane is one board of the last 24 hours. It leads with the merged
 PR counts and the busiest hour, then four numbers (the first with a line of
 the merges in each hour), the two hourly charts side by side and a ranked bar
@@ -154,9 +235,24 @@ the chart says so. Above it a row of figures gives launched, published, merged,
 the share of finished jobs that changed nothing and the median time to merge,
 each over a line of its own hours, with the busiest hour named. Under the two
 hourly charts each lane has a card: the provider's mark, its merged count, a bar
-against the lane that merged most, its merges hour by hour and its launched,
-published, merge time and changed-nothing readings. A figure the report does
-not hold reads unknown and has no line under it.
+against the lane that merged most, a row of bars for the jobs it launched
+across the window and its launched, published, merge time and changed-nothing
+readings. A figure the report does not hold reads unknown and has no line
+under it.
+
+Under the figures the fleet's own hours are drawn as the same row of bars: a
+bar per hour, as tall as the jobs launched in it, with a mark under each bar
+that had a PR merged. Over 7 days a bar covers 7 hours, as on the Models board.
+Lane bars are drawn against the busiest bar on any lane, so the cards compare.
+These rows are one reading cursor. Point at a bar, or focus a row and press
+Left, Right, Home or End, and that stretch of time is held on the fleet row and
+on every lane card at once: the figures above become that bar's own counts, the
+line under the fleet row says when it was and what happened in it, and each
+lane card says what that lane launched, published and merged. The median is
+kept per hour only, so on a 7 hour bar that figure stays the window's and says
+so. Esc, moving the pointer off the bars or moving focus off the rows lets go.
+While no bar is held each row names its busiest bar. An hour the report holds
+no count for is hatched, and a lane with no hours read gets no bars.
 Pick 6 hours, 24 hours (the default) or 7 days; each choice
 asks the same route `phm throughput --hours 168 --json` reads, so nothing is
 summed in the browser. An unreadable metrics file shows unknown, a quiet window
@@ -180,7 +276,26 @@ its fill, the running line over the dashed target with the first and last
 sample times and the value of the top edge, and labelled readings: the last
 sample, idle, held and, only when it happened, stalled. Lanes that stalled
 come first, then the most idle. A lane with no target says "no target", not a
-percentage. The Launch gaps strip draws the window once: filled where samples
+percentage.
+
+Under its slot readings each card carries the lane's **usage window**, read
+from the lane's own row of `phm pools --json` (`GET /api/app/pools`, the read
+the Pools board and Home share): the share used, when it resets (as a
+countdown and a local time) and how old the reading is, then the bar the
+Pools board draws, with the mark for the time gone. One line under the bar
+says how the window ends at the measured burn. When usage is set to go unused
+and the lane also left slots open in the chosen window, that line names both
+figures and turns amber, for example "68% set to go unused at the reset, and
+4.5 slot-h of its slots sat open in the last 24 h." A window that runs empty
+before its reset says when. A lane with no reading, a lane `phm pools` does
+not list and a failed read all say "usage unknown" over a hatched bar and
+give the reason; a lane with nothing metered says "no usage window" and a
+credit lane gives its balance, both without a bar. A refresh that fails keeps
+the last view and labels it "last reading". The words **Usage window** open
+the Pools pane, and a key above the cards names the parts of the bar once a
+card has a measured window.
+
+The Launch gaps strip draws the window once: filled where samples
 exist, amber where a launch gap was found, hatched where nobody was watching.
 The charts share one cursor. Point at any lane's chart and the sample taken
 nearest is marked on every lane at once, on the Launch gaps strip and on the
@@ -196,9 +311,13 @@ Every figure is computed from the samples `GET /api/verse/runs-history`
 returned, so unwatched time is never counted as idle or as full.
 
 The Pools pane is one board of every resource pool, most at risk of going
-unused first. Each card has the pool's plain-words line, a bar (solid: used so
-far; lighter: where the current burn ends by reset; marker: time elapsed in
-the window) and labelled readings: used, left, the reset as a countdown and a
+unused first. Each card has the pool's plain-words line, a bar and labelled
+readings. The bar is the one Home draws for a pool (solid: used so far;
+lighter: what the current burn adds by its reset; an empty stretch outlined
+in amber: the share left unused at the reset), with a mark for the time
+elapsed in the window; a pool the view tells to slow down fills in amber, a
+pool with no usage reading is hatched, and a key under the cards names each
+part. The readings: used, left, the reset as a countdown and a
 local time, burn per hour and its basis, unused at reset, jobs running against
 the slot target, and how long ago the reading was taken and by which reader.
 Under the bar, a plan pool draws its window so far: every stored reading from
@@ -216,6 +335,19 @@ stood then.
 Claude's per-model weekly windows sit under its card. A credits pool shows its
 balance and no bar. The line under the headline names the next reset, and the
 switch narrows the list to Behind, On pace or Unknown (arrow keys move it).
+Above the switch, **Runway ahead** puts every plan pool on one line of time
+from the reading to the furthest reset, soonest reset first: a line to the
+pool's reset with a ring at it, the countdown and local time, and what the
+view projects in words. A pool that runs empty first stops where
+`projectedEmptyAt` says and the wait from there to its reset is hatched
+("empty in 10 h, then dry 2 d 2 h until reset"), amber only where the pool's
+own verdict is slow down or fully used. A pool with no usage or burn reading
+is dashed and says so, a held lane says held, and neither is projected.
+Claude's per-model windows follow their pool with their reset and usage only.
+Credit balances, lanes without a window and resets that have passed are named
+under the line with the reason. A pool's name is a button: it brings that
+pool's card into view and puts the keyboard on it, showing it again if the
+switch had hidden it. With no reset ahead the section is not drawn.
 Every value is read from `pools.v1`; one it does not hold reads unknown, never
 zero. The same rows and the same stored readings for agents:
 
@@ -229,7 +361,23 @@ each provider's mark. A model's card says whether the router would launch it
 and why not when it would not, then lists the lanes that name it with the tiers
 that pick it, the last launch that used it, the date official docs last
 confirmed the name, and the source page. Verify (or Check again) on the card
-re-reads that page. The switch narrows the board to Needs attention or Routable
+re-reads that page. At the foot of the card is the work that model did: one row
+of bars for the jobs launched on it across the last 24 hours (a bar an hour) or
+7 days (a bar per 7 hours), a mark under each bar in which a PR merged, and the
+counts in words (jobs launched, PRs merged, finished jobs that came back
+empty). Every card is drawn against the busiest bar on the board, so cards
+compare, and each provider's heading totals its models' launches. A job counts
+for the model its launch row names. A model with nothing recorded shows an
+empty line and says so; when the report cannot be read every card is hatched
+and reads "work unknown", never zero. Launches whose record names no model are
+counted in a sentence above the cards and for no card, and names jobs launched
+under that the registry lacks are listed after the providers. The bars are also
+a reading cursor shared by the whole board: point at one bar, or focus a row
+and press Left or Right (Home and End jump to the oldest and newest bar), and
+that stretch of time is held on every card, each card's words become its own
+jobs launched and PRs merged in it, and the line above the cards gives the
+fleet's counts for it from the report's own hours. Esc, moving the pointer off
+the bars or moving focus off the rows lets go. The switch narrows the board to Needs attention or Routable
 (arrow keys move it), and models the provider docs name that the registry lacks
 are listed at the end. The registry, the check and the lane model table are
 read separately: when one cannot be read the board says which, and the facts it
@@ -239,6 +387,7 @@ agents:
 ```sh
 phm models --json
 phm models check --json
+phm throughput --by model --json
 ```
 
 The Lanes pane is one board of every lane's slots. The headline counts slots
@@ -283,7 +432,25 @@ flagged it, never from a 100% reading, because credits can keep that account
 usable. Each window shows its bar, percent and reset as a countdown plus a
 local clock time; Claude's reset is the provider's own sentence, so no clock
 time is derived for it. A window with no reading has a hatched bar, not an
-empty one. Tokens last hour totals the lanes that reported a figure, says how
+empty one. The bar is the same one the Pools board draws, and it is never
+coloured for being high: a limit is the provider's flag, drawn as its own full
+bar. Where the accounts read holds the window's start, the bar carries a mark
+for how much of the window's time has gone and a line under it gives that
+share, how many points use sits behind or ahead of an even spend, and when the
+window began. The start is the provider's own (Grok's billing period) or seven
+days before a reset the server confirmed as weekly, and the line says which. A
+window whose start the read does not hold has no mark and no pace line; nothing
+is projected here, because this read has no burn rate (the Pools board has).
+Above the cards, Resets ahead puts every window that gave its reset
+as a date and time on one line that starts at now, soonest first: the wait
+drawn to a dot at the reset, the countdown and local time, and the usage now
+in words (a percent, "limit reached" with a square in place of the dot, or
+"usage unknown"). The scale is hours from now on a line shorter than a day
+and a half, local midnights beyond. The fleet's own Codex personal reading
+joins the line when the fleet read carries its reset. A window with a sentence
+for a reset, with none, or with one that has passed is named under the line
+with that reason and gets no position; with no dated reset at all the line is
+not drawn. Tokens last hour totals the lanes that reported a figure, says how
 many did not, and draws each lane as a thin bar against the busiest lane.
 Accounts come from `GET /api/verse/accounts` and lane tokens from
 `GET /api/verse/fleet/runs`. `phm usage limits [--json]` prints the same
@@ -305,8 +472,20 @@ along the row) to draw its answer as a numbered try order. Each seat has a bar
 of the share of its binding usage window already used and that window's reset
 time; seats the router holds back are listed underneath with its reason and
 when they become eligible again. Below, the last 200 recorded routing
-decisions are counted by chosen seat as ranked bars, with the six newest
-listed and any whose work ran on a different seat marked. A decision is the
+decisions are counted by chosen seat and drawn over time: one row per seat,
+most chosen first, each holding a lane of 24 columns that cut the span from
+the oldest decision read to now into equal slices. A column's height is how
+many decisions chose that seat in that slice, every lane against the same
+tallest cell so lanes compare, and an amber cap marks a slice whose work ran
+on a different seat than the one chosen. The span never reaches back past the
+oldest decision read, and a decision whose time cannot be read is counted in
+words and not drawn (with no readable time at all, the rows keep plain share
+bars). Point at a column to read it: the line under the chart gives its start
+and end, its count, the seats chosen in it and how many ran elsewhere, and
+the list below becomes that column's decisions (six shown, the rest
+counted) instead of the six newest. The time axis under the lanes is one tab
+stop: Left and Right step a column, Home and End jump to the oldest and
+newest, Esc lets go, and a click keeps a column until focus leaves. A decision is the
 seat the router chose, not proof the work ran there. The pane decides nothing
 and launches nothing: besides the previews it reads `GET /api/verse/budget`
 (seat usage, resets and the time that usage was read) and
@@ -388,7 +567,10 @@ became work sits a routing trail: one row per job whose prompt cites the
 message, with the lane it was routed to, a four-step track (queued, launched,
 published, merged) and the recorded result. On a job that has launched, the
 id opens its Worker log and "Conversation" opens what that session was told,
-said and did in the Conversations pane; a published or merged job links its
+said and did without leaving the Leader pane: beside the chat when the pane
+is wide enough, over it otherwise. The row is lit and its button reads
+"Conversation open" while that session is the one open, and closing it (Esc)
+puts the keyboard back on the button. A published or merged job links its
 PR. A job that ended with nothing to publish says so. A message from the last
 six hours that no job cites reads "Not routed to a lane yet". If the job
 prompts could not be read it reads routing unknown instead, and a job with no
@@ -398,6 +580,22 @@ trail reads `GET /api/verse/leader/orders`, the same order trace as:
 
 ```sh
 phm fleet orders --json
+```
+
+A job the Leader names in one of its own messages is live too. Under the
+message, each named job is one chip: a dot and words for what that session is
+doing now ("running · claude · spoke 2m ago", "quiet 14m", "finished",
+"failed"), the last thing it said while it is working, and Log for its Worker
+log. The job id opens the session as a conversation in the same place a
+routed job's does, and is underlined while it is the one open. A job the
+session list does not hold reads "not in the session list" and is never
+called finished; when the list cannot be read every chip reads "state
+unknown". Pull requests the message names stay links on their own line. The
+chips read the list the Working now strip already reads, so they add no
+request:
+
+```sh
+phm sessions --json
 ```
 
 ## Fleet telemetry and Show Mode
