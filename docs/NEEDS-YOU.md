@@ -78,4 +78,7 @@ failed append retries only when the same item id is resolved again.
 `replyDeliveries.pending` (with the resolved ledger text when it is readable)
 plus unreadable receipts under `replyDeliveries.unsafe`, so a dropped relay is
 visible instead of silent; `phm fleet needs-resolve <nm-id>` re-sends the
-recorded reply.
+recorded reply. `phm comms inbox` lists the same receipts as
+`needs-you-delivery` items — a pending answer as a warn deep-linking the
+retry, an unreadable receipt with its delivery state unknown — so the two
+surfaces can never disagree.
