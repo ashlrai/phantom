@@ -1251,6 +1251,12 @@ export async function handleApi(
       sendJson(res, 200, await readUsageSpend());
       return true;
     }
+    if (path === '/api/usage/burn' && method === 'GET') {
+      // Same report as `phm fleet burn --json` (usage.burn.v1).
+      const { readBurnWho } = await import('../usage/burn-who.js');
+      sendJson(res, 200, await readBurnWho());
+      return true;
+    }
     if (path === '/api/usage/runway' && method === 'GET') {
       // Same snapshot as `phm pool runway --json` (pool.runway.v1).
       const { readPoolRunway } = await import('../usage/runway-read.js');
