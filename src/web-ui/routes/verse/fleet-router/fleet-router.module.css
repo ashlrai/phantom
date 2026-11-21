@@ -52,18 +52,40 @@ button.cell:hover { background: var(--bg-hover); }
 .bar { display: grid; grid-template-columns: minmax(7rem, 12rem) minmax(0, 1fr) 5.5rem; align-items: center; gap: var(--space-2); font-size: var(--text-xs-size); }
 .bar .track { flex: none; height: 0.5rem; }
 .count { color: var(--text-secondary); font-variant-numeric: tabular-nums; text-align: end; }
+/* Decisions over time: each seat's row holds a lane of columns, one per equal slice of the span read, with the time axis under them on the same grid. */
+.timeline { display: flex; flex-direction: column; gap: var(--space-1); }
+.bins, .scrub { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 1px; min-width: 0; }
+.bins { height: 1.5rem; }
+.bin { display: flex; align-items: flex-end; box-sizing: border-box; height: 100%; border-bottom: 1px solid var(--border-subtle); cursor: pointer; }
+.bin[data-picked] { background: var(--bg-selected); }
+.stem { display: block; box-sizing: border-box; width: 100%; min-height: 2px; border-radius: 1px 1px 0 0; background: var(--accent-500); transition: height var(--duration-base) var(--ease-decelerate); }
+.stem[data-none] { background: var(--status-unknown-solid); }
+/* Work that ran on another seat than the one chosen caps the column. */
+.bin[data-moved] .stem { border-top: 2px solid var(--status-warning-solid); }
+.axis { display: grid; grid-template-columns: minmax(7rem, 12rem) minmax(0, 1fr) 5.5rem; column-gap: var(--space-2); row-gap: 0.125rem; }
+.scrub, .ends { grid-column: 2; }
+.scrub { height: 0.625rem; border-radius: var(--radius-sm); cursor: pointer; }
+.scrub:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 2px; }
+.tick { box-sizing: border-box; border-top: 2px solid var(--border-strong); }
+.tick[data-empty] { border-top-color: var(--border-subtle); }
+.tick[data-moved] { border-top-color: var(--status-warning-solid); }
+.tick[data-picked] { border-top-color: var(--accent-500); background: var(--bg-selected); }
+.ends { display: flex; justify-content: space-between; gap: var(--space-2); color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.caption { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
 .recent { gap: var(--space-1); }
 .recent li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
 .when { flex: 0 0 4.5rem; }
 .ran { color: var(--status-warning-fg); }
 
 @keyframes enter { from { opacity: 0; transform: translateY(2px); } }
-@media (prefers-reduced-motion: reduce) { .seat { animation: none; } .fill, .cell { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .seat { animation: none; } .fill, .cell, .stem { transition: none; } }
 @media (max-width: 30rem) {
   .table th[scope='row'], .table thead td { width: 3rem; }
   .cell { padding: var(--space-1); }
   .seat { grid-template-columns: 1.5rem minmax(0, 1fr); }
   .seat .usage, .seat[data-held] .usage + .usage { grid-column: 2; }
   .bar { grid-template-columns: minmax(0, 1fr) 5.5rem; }
-  .bar .track { grid-column: 1 / -1; grid-row: 2; }
+  .bar .track, .bar .bins { grid-column: 1 / -1; grid-row: 2; }
+  .axis { grid-template-columns: minmax(0, 1fr); }
+  .scrub, .ends { grid-column: 1; }
 }
