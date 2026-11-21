@@ -58,6 +58,9 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
     `unknown resolution: empty=${report.unknown_empty} nonzero_exit=${report.unknown_nonzero_exit} unresolved=${report.unknown_unresolved}` +
       (report.unknown_failure_classes !== null && report.unknown_failure_classes.length > 0
         ? ` failure_classes=${report.unknown_failure_classes.map(c => `${c.failure_class}:${c.jobs}`).join(',')}`
+        : '') +
+      (report.unknown_empty_classes !== null && report.unknown_empty_classes.length > 0
+        ? ` empty_classes=${report.unknown_empty_classes.map(c => `${c.empty_class}:${c.jobs}`).join(',')}`
         : ''),
   ];
   const rows = report.proposals.map(p => {

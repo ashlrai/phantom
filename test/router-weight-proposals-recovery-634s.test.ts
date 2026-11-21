@@ -457,6 +457,35 @@ describe('unknown-outcome resolution', () => {
     expect(out).toContain('failure_classes=launch_timeout:1,provider_usage_limit:1,rate_limit:1');
   });
 
+  it('tallies the recorded empty_class verdicts inside the unknown cohort', async () => {
+    // dispatchd's classify_empty triage splits the empty share: no_diff is a
+    // healthy no-op, error the infrastructure share, unknown a capture gap.
+    writeLedger([
+      ...merged(20),
+      finishRow('synthetic-unq-nd-1', { empty: true, exit_code: 0, empty_class: 'no_diff' }),
+      finishRow('synthetic-unq-nd-2', { empty: true, exit_code: 0, empty_class: 'no_diff' }),
+      finishRow('synthetic-unq-err-1', { empty: true, exit_code: 1, empty_class: 'error', failure_class: 'quota' }),
+      finishRow('synthetic-unq-unk-1', { empty: true, empty_class: 'unknown' }),
+      // Out-of-vocabulary spellings never mint a class tally.
+      finishRow('synthetic-unq-bad', { empty: true, exit_code: 1, empty_class: 'infra' }),
+      // A verified row with no finish signal stays unresolved and untallied.
+      event('synthetic-unq-open', 'alpha', 'code', 'VERIFIED'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 6,
+      unknown_empty: 5, unknown_nonzero_exit: 2, unknown_unresolved: 1,
+      unknown_empty_classes: [
+        { empty_class: 'no_diff', jobs: 2 },
+        { empty_class: 'error', jobs: 1 },
+        { empty_class: 'unknown', jobs: 1 },
+      ],
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('empty_classes=no_diff:2,error:1,unknown:1');
+  });
+
   it('never counts finish signals from the known cohort as unknown resolution', async () => {
     writeLedger([
       // A merged job can still carry a nonzero exit (the PR landed anyway)

@@ -99,7 +99,11 @@ export interface RouterWeightProposalSet {
    * was not 0 — the two overlap, since a crashed run usually diffs nothing.
    * `unknown_failure_classes` tallies the recorded failure classifications
    * (failure_class, else failure_reason, else pool_error),
-   * top entries first. `unknown_unresolved` is the remainder with no
+   * top entries first. `unknown_empty_classes` tallies the recorded
+   * finish-row `empty_class` verdicts — dispatchd's classify_empty triage
+   * (`no_diff` healthy no-op, `error` infrastructure, `unknown` capture
+   * gap) — so the empty share splits the way the dispatcher's own
+   * empty_error_rate does. `unknown_unresolved` is the remainder with no
    * finish failure signal — finished cleanly and awaiting a merge verdict,
    * or still in flight; the ledger simply records no terminal productivity
    * outcome for it. All are counts of recorded evidence over the retained
@@ -108,6 +112,7 @@ export interface RouterWeightProposalSet {
   unknown_empty: number;
   unknown_nonzero_exit: number;
   unknown_failure_classes: { failure_class: string; jobs: number }[];
+  unknown_empty_classes: { empty_class: string; jobs: number }[];
   unknown_unresolved: number;
 }
 
@@ -170,6 +175,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   let known = 0, unknown = 0, unclassified = 0;
   let unknownEmpty = 0, unknownNonzeroExit = 0, unknownUnresolved = 0;
   const failureClasses = new Map<string, number>();
+  const emptyClasses = new Map<string, number>();
   for (const o of outcomes) {
     if (!isRouteId(o.work_class) || !isRouteId(o.lane)) { unclassified++; continue; }
     if (o.merged === null) {
@@ -184,6 +190,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
       if (empty) unknownEmpty++;
       if (nonzeroExit) unknownNonzeroExit++;
       if (o.failure_class !== null) failureClasses.set(o.failure_class, (failureClasses.get(o.failure_class) ?? 0) + 1);
+      if (o.empty_class !== null) emptyClasses.set(o.empty_class, (emptyClasses.get(o.empty_class) ?? 0) + 1);
       if (!empty && !nonzeroExit && o.failure_class === null) unknownUnresolved++;
       continue;
     }
@@ -224,9 +231,14 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     .map(([failure_class, jobs]) => ({ failure_class, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.failure_class.localeCompare(b.failure_class))
     .slice(0, 10);
+  const topEmptyClasses = [...emptyClasses.entries()]
+    .map(([empty_class, jobs]) => ({ empty_class, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.empty_class.localeCompare(b.empty_class))
+    .slice(0, 10);
   return { proposals, known_outcomes: known, unknown_outcomes: unknown, unclassified_outcomes: unclassified,
     unknown_empty: unknownEmpty, unknown_nonzero_exit: unknownNonzeroExit,
-    unknown_failure_classes: topFailureClasses, unknown_unresolved: unknownUnresolved };
+    unknown_failure_classes: topFailureClasses, unknown_empty_classes: topEmptyClasses,
+    unknown_unresolved: unknownUnresolved };
 }
 
 export interface RouterWeightProposalReport {
@@ -261,6 +273,12 @@ export interface RouterWeightProposalReport {
   unknown_nonzero_exit: number | null;
   /** Top recorded failure classifications inside the unknown cohort, by jobs; empty when none recorded. */
   unknown_failure_classes: { failure_class: string; jobs: number }[] | null;
+  /**
+   * Top recorded finish-row empty_class verdicts inside the unknown
+   * cohort, by jobs — dispatchd's classify_empty triage (no_diff/error/
+   * unknown). Null when the ledger was not read; empty when none recorded.
+   */
+  unknown_empty_classes: { empty_class: string; jobs: number }[] | null;
   unknown_unresolved: number | null;
   proposals: RouterWeightProposal[];
 }
@@ -274,13 +292,15 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     market_state: read.market_state, market_truncated: read.market_truncated, bounds };
   if (read.state !== 'read') {
     return { ...head, status: 'unavailable', known_outcomes: null, unknown_outcomes: null, unclassified_outcomes: null,
-      unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null, unknown_unresolved: null, proposals: [] };
+      unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null, unknown_empty_classes: null,
+      unknown_unresolved: null, proposals: [] };
   }
   const set = proposeRouterWeights(read.outcomes, { ...opts, minSamples: bounds.min_samples, maxShift: bounds.max_shift });
   const status = set.proposals.some(p => p.status === 'proposed') ? 'proposed' : 'insufficient-evidence';
   return { ...head, status, known_outcomes: set.known_outcomes, unknown_outcomes: set.unknown_outcomes,
     unclassified_outcomes: set.unclassified_outcomes,
     unknown_empty: set.unknown_empty, unknown_nonzero_exit: set.unknown_nonzero_exit,
-    unknown_failure_classes: set.unknown_failure_classes, unknown_unresolved: set.unknown_unresolved,
+    unknown_failure_classes: set.unknown_failure_classes, unknown_empty_classes: set.unknown_empty_classes,
+    unknown_unresolved: set.unknown_unresolved,
     proposals: set.proposals };
 }
