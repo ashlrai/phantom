@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; script?: boolean; membench?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; script?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -63,7 +63,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : head;
       const receipt = options.bound
         ? `Bound candidate ${options.boundHead ?? sha} to event tree ${'e'.repeat(40)}\n`
@@ -1074,6 +1074,91 @@ describe('CI baseline evidence', () => {
     // A singleton unaffected failure can never prove a master pass.
     const singleton = await analyzeCiBaseline('owner/repo', github({ membench: true, count: 1, pass: true, contents }).gh);
     expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('parses eslint stylish output as per-file lint failures', () => {
+    const failures = parseBaselineFailures(fixture('lint-shared'), 'owner/repo');
+    expect(failures.map(f => f.testId)).toEqual([
+      'src/core/example.ts > (lint)',
+      'src/core/other.ts > (lint)',
+    ]);
+    expect(failures[0]).toMatchObject({ file: 'src/core/example.ts', names: '(lint)' });
+    expect(failures[0]?.excerpt).toContain('no-console');
+    expect(failures[1]?.excerpt).toContain('no-unused-vars');
+    // Timestamped job-log lines keep the path header and message rows.
+    const stamped = fixture('lint-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped, 'owner/repo').map(f => f.testId)).toEqual(failures.map(f => f.testId));
+  });
+  it('keeps unrecognized lint output unparsed', () => {
+    // No `✖ N problems` summary means the stylish block is not eslint's.
+    expect(parseBaselineFailures([
+      '/home/runner/work/repo/repo/src/core/example.ts',
+      '  12:7  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any',
+    ].join('\n'), 'owner/repo')).toEqual([]);
+    // Absolute paths outside the Actions checkout marker stay unparsed.
+    for (const header of [
+      '/other/layout/src/core/example.ts',
+      '/home/runner/work/repo/repo/../escape.ts',
+      '/home/runner/work/repo/repo/src/core/example.md',
+      'src/core/example.ts',
+    ]) {
+      expect(parseBaselineFailures([
+        header,
+        '  12:7  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any',
+        '✖ 1 problem (1 error, 0 warnings)',
+      ].join('\n'), 'owner/repo'), header).toEqual([]);
+    }
+    // Warnings never fail `eslint .` without --max-warnings: a warnings-only
+    // file emits nothing even when the summary reports problems.
+    expect(parseBaselineFailures([
+      '/home/runner/work/repo/repo/src/core/example.ts',
+      '  12:7  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any',
+      '✖ 1 problem (0 errors, 1 warning)',
+    ].join('\n'), 'owner/repo')).toEqual([]);
+    // Orphan message rows with no file header attach to nothing.
+    expect(parseBaselineFailures([
+      '  12:7  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any',
+      '✖ 1 problem (1 error, 0 warnings)',
+    ].join('\n'), 'owner/repo')).toEqual([]);
+  });
+  it('groups lint failures and attributes lint inputs, never imports', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ lint: true }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(2);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ names: '(lint)', classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    expect(report.groups.map(g => g.testId)).toEqual(['src/core/example.ts > (lint)', 'src/core/other.ts > (lint)']);
+    // The failing file itself is pr-caused; so are the flat config and the
+    // dependency manifests. A file the failing source merely imports is
+    // not: eslint's rules are per-file and never read the import closure.
+    const caused = await analyzeCiBaseline('owner/repo', github({ lint: true, touched: 'src/core/example.ts' }).gh);
+    const byId = new Map(caused.groups.map(g => [g.testId, g]));
+    expect(byId.get('src/core/example.ts > (lint)')?.action).toBe('pr-caused');
+    expect(byId.get('src/core/other.ts > (lint)')?.action).toBe('queue-master-fix');
+    for (const touched of ['eslint.config.js', 'package.json', 'package-lock.json']) {
+      const config = await analyzeCiBaseline('owner/repo', github({ lint: true, touched }).gh);
+      expect(config.groups.every(g => g.action === 'pr-caused'), touched).toBe(true);
+    }
+    const contents = {
+      'src/core/example.ts': "import { dep } from './dep.js';\nexport const x = dep;",
+      'src/core/dep.ts': 'export const dep = 1;',
+      'src/core/other.ts': 'export const y = 2;',
+    };
+    const imported = await analyzeCiBaseline('owner/repo', github({ lint: true, touched: 'src/core/dep.ts', contents }).gh);
+    expect(imported.groups.every(g => g.action === 'queue-master-fix')).toBe(true);
+    // The vitest harness ambient set cannot reach a lint failure either.
+    const ambient = await analyzeCiBaseline('owner/repo', github({ lint: true, touched: 'vitest.config.ts' }).gh);
+    expect(ambient.groups.every(g => g.action === 'queue-master-fix')).toBe(true);
+  });
+  it('never resolves lint failures through vitest pass lines', async () => {
+    // A lint break on a test file must not read probable-flake: a green
+    // vitest module says nothing about eslint, so the group stays unknown.
+    const flake = await analyzeCiBaseline('owner/repo', github({ lintTestFile: true, count: 1, pass: true, filePass: true }).gh);
+    expect(flake.groups[0]).toMatchObject({ testId: 'test/example.test.ts > (lint)', classification: 'unknown', action: 'unknown', master: 'unknown' });
+    // Two unaffected PRs still group shared-baseline on a test path.
+    const shared = await analyzeCiBaseline('owner/repo', github({ lintTestFile: true }).gh);
+    expect(shared.groups[0]).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail' });
   });
   it('keeps TAP indentation on timestamped job-log lines', () => {
     const block = [
