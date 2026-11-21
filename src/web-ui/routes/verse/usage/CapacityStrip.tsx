@@ -11,14 +11,20 @@
  *       window applies.
  *       Reserved for you 40% · Autonomy: Eligible
  *
- * Each bar reads left to right: used (solid), what autonomy may still use
- * (track), and the band KEPT FOR YOU (hatched) past a tick at 100 − reserve —
- * so "Reserved for you 40%" is something you can see, not just read. The
- * reserve applies to the binding window; the other windows carry no tick.
+ * Each bar is the shared usage-window bar (components/primitives/WindowBar,
+ * the one the resource boards and the drawer's account cards draw): used
+ * (solid), what autonomy may still use (track), and the band KEPT FOR YOU
+ * (hatched) past a tick at 100 − reserve, so "Reserved for you 40%" is
+ * something you can see, not just read. The reserve applies to the binding
+ * window; the other windows carry no tick. Where the seat's reset provenance
+ * holds the window's start, the full strip also marks how far the window's
+ * time has run and says so under the bar; a window with no known start gets
+ * no mark and no line.
  *
  * Honesty (docs/VERSE-TELEMETRY-V2.md), enforced by the model and kept here:
- *   - no reading → a dashed track and the words "no reading", never a 0% bar;
- *   - a flagged limit → "limit reached", never "100%";
+ *   - no reading, or a reading no longer current → a hatched track and the
+ *     words ("no reading", "… · last"), never a 0% bar and no time mark;
+ *   - a flagged limit → a full red bar and "limit reached", never "100%";
  *   - reset prose is printed verbatim, never turned into a countdown;
  *   - every state is a WORD first; colour only reinforces it.
  *
@@ -30,12 +36,14 @@
  *   useCapacityRows()                           the rows, for a custom layout
  *                                               (the rail ring, the seat chip).
  */
-import { useId, useMemo, type CSSProperties, type ReactNode } from 'react';
+import { useId, useMemo, type ReactNode } from 'react';
 import type { BudgetView } from '../../../../core/routing/policy.js';
 import type { SeatHealthReport } from '../../../../core/verse/health-types.js';
 import type { VerseBootstrap, VerseSeat } from '../../../data/api-types.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { Tooltip } from '../../../components/primitives/Tooltip.js';
+import { WindowBar, WindowBarSwatch } from '../../../components/primitives/WindowBar.js';
+import { elapsedWords, leadWords, startClock, startWords, windowPace } from '../fleet-usage/window-pace-model.js';
 import { MonogramTile } from '../apps/MonogramTile.js';
 import { budgetQuery } from '../budget/budget-queries.js';
 import { useSeatHealth } from '../health/useSeatHealth.js';
@@ -59,7 +67,7 @@ import {
 } from './capacity-strip-model.js';
 import styles from './CapacityStrip.module.css';
 
-/** Above this share of a window the bar turns amber (the word "tight" rides with it). */
+/** At this share of a window the figure beside the bar turns amber (the word "tight" rides with it); the bar never does. */
 const TIGHT_AT = 90;
 
 /** How often an accounts strip re-reads the clock ("usable again in 7h", "checked 2m ago"). */
@@ -114,55 +122,63 @@ function pct(n: number): number {
   return Math.max(0, Math.min(100, Math.round(n)));
 }
 
-function WindowBar({
+function WindowLine({
   row,
   w,
   reservePercent,
   compact,
+  now,
 }: {
   row: CapacityRow;
   w: CapacityWindowRow;
   reservePercent: number | null;
   compact: boolean;
+  now: number;
 }) {
   const sentence = windowSentence(row, w, w.binding ? reservePercent : null);
-  const ceiling = w.binding && reservePercent !== null && reservePercent > 0 ? 100 - pct(reservePercent) : null;
-  let track: ReactNode;
-  let value: ReactNode;
-  if (row.quotaCurrent === false) {
-    track = <span className={styles.trackUnknown} role="img" aria-label={sentence} />;
-    value = <span className={styles.value} data-level="unknown">{w.limitReached ? 'limit was flagged' : w.usedPercent === null ? 'usage unknown' : `${percentText(w.usedPercent)} used`} · last</span>;
+  // The meter is named for whose window it is; the rest of the sentence is its value.
+  const head = `${row.label} ${w.label}`;
+  const said = sentence.startsWith(`${head}: `) ? sentence.slice(head.length + 2) : sentence;
+  const current = row.quotaCurrent !== false;
+  let level: 'ok' | 'tight' | 'limit' | 'unknown';
+  let value: string;
+  // Null draws the hatched track: no reading, or one that is no longer current. Never a 0% bar.
+  let used: number | null = null;
+  if (!current) {
+    level = 'unknown';
+    value = `${w.limitReached ? 'limit was flagged' : w.usedPercent === null ? 'usage unknown' : `${percentText(w.usedPercent)} used`} · last`;
   } else if (w.limitReached) {
-    track = (
-      <span className={styles.track} role="img" aria-label={sentence}>
-        <span className={styles.used} data-level="limit" style={{ width: '100%' }} />
-      </span>
-    );
-    value = <span className={styles.value} data-level="limit">limit reached</span>;
+    level = 'limit';
+    value = 'limit reached';
+    used = 100;
   } else if (w.usedPercent === null) {
-    // Absence drawn as absence. Never a 0% bar.
-    track = <span className={styles.trackUnknown} role="img" aria-label={sentence} />;
-    value = <span className={styles.value} data-level="unknown">no reading</span>;
+    level = 'unknown';
+    value = 'no reading';
   } else {
-    const used = pct(w.usedPercent);
-    const level = used >= TIGHT_AT ? 'tight' : 'ok';
-    track = (
-      <span className={styles.track} role="img" aria-label={sentence}>
-        {ceiling !== null ? (
-          <span className={styles.reserve} style={{ left: `${ceiling}%`, width: `${100 - ceiling}%` } as CSSProperties} />
-        ) : null}
-        <span className={styles.used} data-level={level} style={{ width: `${used}%` }} />
-        {ceiling !== null ? <span className={styles.ceiling} style={{ left: `${ceiling}%` }} /> : null}
-      </span>
-    );
-    value = <span className={styles.value} data-level={level}>{percentText(w.usedPercent)}</span>;
+    used = pct(w.usedPercent);
+    level = used >= TIGHT_AT ? 'tight' : 'ok';
+    value = percentText(w.usedPercent);
   }
+  // The reserve is drawn against a measured share only: a flagged limit has no share to hold it against.
+  const kept = level !== 'limit' && used !== null && w.binding && reservePercent !== null && reservePercent > 0 ? pct(reservePercent) : null;
+  // Time gone is read only on the full strip and only against a current reading: a retained one may describe
+  // an earlier window. No known start means no pace at all.
+  const pace = !compact && current
+    ? windowPace({ usedPercent: w.usedPercent, resetsAt: w.resetsAt, limitReached: w.limitReached, measured: w.usedPercent !== null, period: w.period }, now)
+    : null;
   return (
     <div className={styles.bar} data-binding={w.binding || undefined} data-compact={compact || undefined}>
       <Tooltip label={w.label} placement="top"><span className={styles.barLabel} tabIndex={0}>{w.label.replace(/ window$/, '')}</span></Tooltip>
-      {track}
-      {value}
-      {!compact && row.quotaCurrent !== false && w.resetText !== null ? <Tooltip label={w.resetText} placement="top"><span className={styles.reset} tabIndex={0}>{w.resetText}</span></Tooltip> : null}
+      <WindowBar className={styles.track} label={head} valueText={pace ? `${said}, ${elapsedWords(pace)}` : said} valueNow={level === 'limit' ? null : used}
+        used={used} kept={kept} elapsed={pace?.elapsedPct ?? null} ending={level === 'limit' ? 'spent' : undefined} />
+      <span className={styles.value} data-level={level}>{value}</span>
+      {!compact && current && w.resetText !== null ? <Tooltip label={w.resetText} placement="top"><span className={styles.reset} tabIndex={0}>{w.resetText}</span></Tooltip> : null}
+      {pace !== null ? (
+        <span className={styles.pace} data-pace={pace.lead === null ? 'unread' : pace.lead < 0 ? 'behind' : pace.lead > 0 ? 'ahead' : 'level'}>
+          {used !== null ? <WindowBarSwatch part="elapsed" /> : null}
+          {[elapsedWords(pace), leadWords(pace), startWords(pace, startClock(now))].filter(Boolean).join(' · ')}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -212,6 +228,7 @@ function CapacityRowView({
   onSelectSeat,
   selected,
   status,
+  now,
 }: {
   row: CapacityRow;
   compact: boolean;
@@ -219,6 +236,7 @@ function CapacityRowView({
   onSelectSeat: CapacityStripProps['onSelectSeat'];
   selected: boolean;
   status: AccountStatus | null;
+  now: number;
 }) {
   const tone = capacityTone(row.cls);
   const binding = row.windows.find((w) => w.binding) ?? null;
@@ -254,7 +272,7 @@ function CapacityRowView({
         {windows.length > 0 ? (
           <div className={styles.bars}>
             {windows.map((w) => (
-              <WindowBar key={w.id} row={row} w={w} reservePercent={reserve?.percent ?? null} compact={compact} />
+              <WindowLine key={w.id} row={row} w={w} reservePercent={reserve?.percent ?? null} compact={compact} now={now} />
             ))}
           </div>
         ) : null}
@@ -339,6 +357,7 @@ export function CapacityStrip({
               renderActions={renderActions}
               onSelectSeat={onSelectSeat}
               selected={selectedSeatId === row.seatId}
+              now={now}
               status={accounts
                 ? accountStatus(row, { healthRead, now, checking: accounts.checkingSeatId === row.seatId })
                 : null}

@@ -60,7 +60,11 @@ describe('CapacityStrip', () => {
     expect(within(rows[1]!).getByText('blocked')).toBeInTheDocument();
     expect(within(rows[2]!).getByText('no reading')).toBeInTheDocument();
     // The unread seat has no bar at all.
-    expect(within(rows[2]!).queryAllByRole('img')).toHaveLength(0);
+    expect(within(rows[2]!).queryAllByRole('meter')).toHaveLength(0);
+    // A flagged limit is a full bar with no number behind it.
+    const flagged = within(rows[1]!).getAllByRole('meter').find(meter => meter.getAttribute('data-ending') === 'spent')!;
+    expect(flagged).not.toHaveAttribute('aria-valuenow');
+    expect((flagged.querySelector('[data-part="used"]') as HTMLElement).style.width).toBe('100%');
     // Real readings are printed as percentages…
     expect(within(rows[0]!).getByText('92%')).toBeInTheDocument();
     // …and the flagged limit is "limit reached", never 100%.
@@ -71,16 +75,22 @@ describe('CapacityStrip', () => {
   it('prints reset prose verbatim and names each bar for assistive tech', () => {
     render(<CapacityStrip seats={[CLAUDE]} />);
     expect(screen.getAllByText('resets Sep 25 at 7pm (America/New_York)').length).toBeGreaterThan(0);
-    expect(screen.getByRole('img', { name: 'Claude Max weekly window: 85% used, resets Sep 25 at 7pm (America/New_York)' })).toBeInTheDocument();
+    const weekly = screen.getByRole('meter', { name: 'Claude Max weekly window' });
+    expect(weekly).toHaveAttribute('aria-valuetext', '85% used, resets Sep 25 at 7pm (America/New_York)');
+    expect(weekly).toHaveAttribute('aria-valuenow', '85');
   });
 
   it('shows "Reserved for you 40%" with the autonomy word, and marks the kept band on the binding bar', () => {
     const { container } = render(<CapacityStrip seats={[CLAUDE]} budget={BUDGET} />);
     expect(screen.getByText(/Reserved for you 40%/)).toBeInTheDocument();
     expect(screen.getByText('Held back')).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: /weekly fable window: 92% used; 40% kept for you/ })).toBeInTheDocument();
-    // Exactly one reserve band: the reserve binds the binding window only.
-    expect(container.querySelectorAll('[class*="reserve"]')).toHaveLength(1);
+    const binding = screen.getByRole('meter', { name: 'Claude Max weekly fable window' });
+    expect(binding.getAttribute('aria-valuetext')).toMatch(/^92% used; 40% kept for you/);
+    // Exactly one reserve band, from 60% to the end: the reserve binds the binding window only.
+    const bands = container.querySelectorAll('[data-part="kept"]');
+    expect(bands).toHaveLength(1);
+    expect(binding).toContainElement(bands[0] as HTMLElement);
+    expect((bands[0] as HTMLElement).style.left).toBe('60%');
   });
 
   it('retains gray original values at a non-aligned expiry and removes current forecasts',()=>{
@@ -171,7 +181,7 @@ describe('CapacityStrip', () => {
 
   it('compact density: one line per seat, binding window only, no reset text', () => {
     render(<CapacityStrip seats={[CLAUDE, GROK_SEAT]} density="compact" />);
-    expect(screen.getAllByRole('img')).toHaveLength(2);
+    expect(screen.getAllByRole('meter')).toHaveLength(2);
     expect(screen.queryByText(/resets Sep/)).not.toBeInTheDocument();
     // No headline by default in compact.
     expect(screen.queryByText(/accounts with current usage/)).not.toBeInTheDocument();
@@ -259,11 +269,14 @@ describe('CapacityStrip styles', () => {
     }
   });
 
-  it('draws the used bar from the quantity ramp, never the accent', () => {
+  it('hands the bar to the shared WindowBar and paints none of its own', () => {
+    // DESIGN.md, Usage windows: a route does not hand-roll the used / kept split in its own CSS.
     const source = readFileSync(resolve(process.cwd(), 'src/web-ui', CSS), 'utf8');
-    const used = /\.used \{[^}]*\}/.exec(source)![0];
-    expect(used).toContain('var(--data-seq-5)');
+    expect(source).not.toMatch(/\.(used|reserve|ceiling|trackUnknown)\b/);
     expect(source).not.toMatch(/background:[^;]*--accent/);
+    const tsx = readFileSync(resolve(process.cwd(), 'src/web-ui/routes/verse/usage/CapacityStrip.tsx'), 'utf8');
+    expect(tsx).toContain("from '../../../components/primitives/WindowBar.js'");
+    expect(tsx).not.toMatch(/role="img"/);
   });
 });
 
