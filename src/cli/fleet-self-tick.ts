@@ -25,7 +25,7 @@ import { cmdFleetCosWork } from './fleet-cos-work.js';
 import { QueueStore } from '../core/queue/store.js';
 import type { SpawnLike } from '../core/fleet/planner-run.js';
 import { runSelfTick, type RunSelfTickOptions, type SelfTickStep, type SelfTickSteps } from '../core/fleet/self-tick.js';
-import { refreshClaudeQuotaPeriodically, refreshHeldClaudeQuota, type Probe } from '../core/fleet/claude-quota-refresh.js';
+import { claudeQuotaFromLedger, refreshClaudeQuotaPeriodically, refreshHeldClaudeQuota, type PeriodicClaudeQuotaReport, type Probe } from '../core/fleet/claude-quota-refresh.js';
 import { readSelfTickLast } from '../core/fleet/self-tick-last.js';
 import { gapsHookLine, hooksFromPlannerReport, readSelfTickStatus, selfTickStatusLines } from '../core/fleet/self-tick-status.js';
 import { capSelfTickLog, selfTickLogPath } from '../core/fleet/self-tick-log-cap.js';
@@ -330,11 +330,13 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     // dir with no injected probe never scans PATH or spawns a real claude.
     'reset-release': async (argv) => {
       const sandboxed = deps.claudeProbe === undefined && deps.claudeFindCommand === undefined && root !== join(home, '.ashlr-runs');
-      const claudeQuota = sandboxed
-        ? { state: 'unavailable', weeklyPct: null, observedAt: null, reason: 'custom-runs-dir-no-claude-probe' }
+      const probed = sandboxed
+        ? { state: 'unavailable', weeklyPct: null, observedAt: null, reason: 'custom-runs-dir-no-claude-probe' } as PeriodicClaudeQuotaReport
         : await refreshClaudeQuotaPeriodically({
           runsDir: root, now, apply, probe: deps.claudeProbe, findCommand: deps.claudeFindCommand,
         });
+      // A failed probe is not a failed step: fall back to the reading `phm pools` shows.
+      const claudeQuota = probed.state === 'unavailable' ? await claudeQuotaFromLedger({ runsDir: root, now }) ?? probed : probed;
       const held = deps.claudeProbe === undefined && deps.claudeFindCommand === undefined ? {} : {
         refreshClaude: (o: { runsDir: string; now: () => number }) =>
           refreshHeldClaudeQuota({ ...o, probe: deps.claudeProbe, findCommand: deps.claudeFindCommand }),
