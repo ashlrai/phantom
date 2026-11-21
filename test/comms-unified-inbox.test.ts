@@ -56,9 +56,10 @@ afterEach(() => { vi.restoreAllMocks(); roots.splice(0).forEach(r => rmSync(r, {
 // The requests store lives at ~/.ashlr/comms, outside this file's temp dirs;
 // pin it to a verified-empty read so the suite stays hermetic. The requests
 // source has its own describe block below with an injected reader.
-const read = (): Promise<UnifiedInbox> => readUnifiedInbox({
+const read = (extra: Partial<UnifiedInboxOptions> = {}): Promise<UnifiedInbox> => readUnifiedInbox({
   runsDir, busRoot, now: () => now,
   readRequests: () => ({ status: 'missing', requests: [] }),
+  ...extra,
 });
 
 function postWork(id: string, extra: { priority?: 'P0' | 'P1' | 'P2' | 'P3'; ttl?: number; kind?: string; at?: number } = {}) {
@@ -2025,6 +2026,78 @@ describe('readUnifiedInbox ordering and bounds', () => {
   });
 });
 
+describe('readUnifiedInbox view filters', () => {
+  it('narrows items by source while per-source reports stay unfiltered', async () => {
+    postWork('flt-bus');
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const all = await read();
+    expect(all.total).toBe(2);
+    expect(all.filter).toBeUndefined();
+
+    const busOnly = await read({ filter: { source: 'bus' } });
+    expect(busOnly.filter).toEqual({ source: 'bus' });
+    expect(busOnly.total).toBe(1);
+    expect(busOnly.items.map(i => i.id)).toEqual(['bus:flt-bus']);
+    // The source report is the unfiltered store truth: needs-you still has
+    // its pending item even though the narrowed view shows none of them.
+    expect(busOnly.sources['needs-you'].pending).toBe(1);
+    expect(busOnly.sources.bus.pending).toBe(1);
+
+    const none = await read({ filter: { source: 'gmail' } });
+    expect(none.total).toBe(0);
+    expect(none.items).toEqual([]);
+    expect(none.omitted).toBe(0);
+    expect(none.sources.bus.pending).toBe(1);
+    expect(none.sources['needs-you'].pending).toBe(1);
+  });
+
+  it('ANDs severity and blocking dimensions over stored item fields', async () => {
+    postWork('flt-p0', { priority: 'P0' });   // bus: high, non-blocking
+    postWork('flt-p1', { priority: 'P1' });   // bus: warn, non-blocking
+    postWork('flt-p2');                        // bus: info, non-blocking
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');  // needs-you: warn, blocking
+    recordTeammateText({ rowid: 77, handle: '+1555fake', text: 'status?' }, runsDir, new Date(now - 60_000));  // imessage: info, non-blocking
+
+    const high = await read({ filter: { severity: 'high' } });
+    expect(high.total).toBe(1);
+    expect(high.items.map(i => i.id)).toEqual(['bus:flt-p0']);
+
+    const warn = await read({ filter: { severity: 'warn' } });
+    expect(warn.total).toBe(2);
+    expect(warn.items.map(i => i.source).sort()).toEqual(['bus', 'needs-you']);
+    expect(warn.items.find(i => i.source === 'bus')!.id).toBe('bus:flt-p1');
+    expect(warn.items.every(i => i.severity === 'warn')).toBe(true);
+
+    const blocking = await read({ filter: { blocking: true } });
+    expect(blocking.total).toBe(1);
+    expect(blocking.items[0]!.source).toBe('needs-you');
+
+    const nonBlockingBus = await read({ filter: { source: 'bus', blocking: false } });
+    expect(nonBlockingBus.total).toBe(3);
+    expect(nonBlockingBus.items.every(i => i.source === 'bus' && !i.blocking)).toBe(true);
+
+    const warnBus = await read({ filter: { source: 'bus', severity: 'warn' } });
+    expect(warnBus.total).toBe(1);
+    expect(warnBus.items[0]!.id).toBe('bus:flt-p1');
+  });
+
+  it('counts total and omitted over the matched set and treats an empty filter as unfiltered', async () => {
+    postWorkSnapshot(Array.from({ length: UNIFIED_INBOX_MAX_ITEMS + 5 }, (_, i) => `flt-${i}`));
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const busOnly = await read({ filter: { source: 'bus' } });
+    expect(busOnly.total).toBe(UNIFIED_INBOX_MAX_ITEMS + 5);
+    expect(busOnly.items).toHaveLength(UNIFIED_INBOX_MAX_ITEMS);
+    expect(busOnly.omitted).toBe(5);
+    const needsOnly = await read({ filter: { source: 'needs-you' } });
+    expect(needsOnly.total).toBe(1);
+    expect(needsOnly.omitted).toBe(0);
+
+    const empty = await read({ filter: {} });
+    expect(empty.filter).toBeUndefined();
+    expect(empty.total).toBe(UNIFIED_INBOX_MAX_ITEMS + 6);
+  });
+});
+
 describe('phm comms inbox cli', () => {
   const setupCli = () => {
     const command = createCommsInboxCommand({ runsDir, busRoot });
@@ -2061,12 +2134,71 @@ describe('phm comms inbox cli', () => {
   it('keeps read/post and help while refusing malformed unified invocations', async () => {
     const { command, lines } = setupCli();
     expect(await command(['--help'])).toBe(0);
-    expect(lines().at(-1)).toContain('phm comms inbox [--json]');
+    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--severity <info|warn|high>] [--blocking] [--json]');
     for (const args of [['--json', '--json'], ['unified'], ['--limit', '5'], ['bogus', '--json']]) {
       expect(await command(args)).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
     }
     expect(await command(['read', '--json'])).toBe(0);
     expect(JSON.parse(lines().at(-1)!)).toEqual({ sourceState: 'missing', entries: [] });
+  });
+
+  it('filters the unified JSON view by source, severity and blocking', async () => {
+    const { command, json } = setupCli();
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    postWork('cli-bus', { priority: 'P0' });
+    postWork('cli-bus2');
+
+    expect(await command(['--source', 'bus', '--json'])).toBe(0);
+    let report = json();
+    expect(report.filter).toEqual({ source: 'bus' });
+    expect(report.total).toBe(2);
+    expect(report.items.every(i => i.source === 'bus')).toBe(true);
+    expect(report.sources['needs-you'].pending).toBe(1);
+
+    expect(await command(['--severity', 'high', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ severity: 'high' });
+    expect(report.total).toBe(1);
+    expect(report.items[0]!.id).toBe('bus:cli-bus');
+
+    expect(await command(['--blocking', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ blocking: true });
+    expect(report.total).toBe(1);
+    expect(report.items[0]!.source).toBe('needs-you');
+
+    expect(await command(['--source', 'bus', '--severity', 'info', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ source: 'bus', severity: 'info' });
+    expect(report.total).toBe(1);
+    expect(report.items[0]!.id).toBe('bus:cli-bus2');
+  });
+
+  it('labels the human footer with the applied filter and unfiltered counts', async () => {
+    const { command, lines } = setupCli();
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    postWork('cli-human');
+    expect(await command(['--source', 'bus'])).toBe(0);
+    const out = lines().join('\n');
+    expect(out).toContain('1 pending matching source=bus');
+    expect(out).toContain('unfiltered:');
+    expect(out).toContain('needs-you 1');
+    // A filter matching nothing says so instead of "Nothing pending."
+    expect(await command(['--source', 'gmail'])).toBe(0);
+    expect(lines().at(-1)).toBe('Nothing pending matching source=gmail.');
+  });
+
+  it('refuses malformed unified filter invocations', async () => {
+    const { command, lines } = setupCli();
+    for (const args of [
+      ['--source'], ['--source', 'bogus'], ['--source', 'bus', '--source', 'bus'],
+      ['--severity'], ['--severity', 'P0'], ['--severity', 'warn', '--severity', 'info'],
+      ['--blocking', '--blocking'], ['--json', '--source'], ['--source', '--json'],
+      ['--source', 'read'], ['--blocking', 'true'],
+    ]) {
+      expect(await command(args), args.join(' ')).toBe(2);
+      expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
+    }
   });
 });

@@ -74,7 +74,11 @@ stdout with or without `--json`:
 | read degraded | 1 | `{sourceState:"degraded",entries:[]}` |
 | invalid options | 2 | `{status:"invalid"}` |
 
-Missing is not evidence of a healthy empty inbox. Read selects the newest
+Missing is not evidence of a healthy empty inbox. With no verb, `phm comms
+inbox` is instead the unified pending view ([docs/CHANNELS.md](CHANNELS.md#unified-inbox)):
+`--source <name>`, `--severity <info|warn|high>` and `--blocking` narrow its
+items while `sources` keeps every store's real unfiltered pending count.
+Read selects the newest
 matching entries, returns them oldest first, and defaults to 50 (limit 1–200).
 `source` is metadata, not identity. Duplicate receipts last only for the
 receiver process lifetime. Post reads owner-controlled stable regular UTF-8
