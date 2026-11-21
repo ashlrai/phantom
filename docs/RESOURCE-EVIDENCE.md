@@ -62,6 +62,12 @@ Usage board): the provider's own period start, or seven days before a reset
 the server qualified as weekly. A window without that provenance has no mark
 and no line; the start is never guessed from the window's name.
 
+The capacity strip (the account rows in Apps, Usage, the new-chat dialog and
+onboarding) draws its windows on the same bar from the same seat rows, with
+the same reserve band and the same rule for a flagged limit and for a missing
+or outdated reading. Its full layout carries the time mark and the line under
+it; the compact one-line layout shows the bar alone.
+
 Connect native CLI accounts for subscription work, configure API resources separately,
 or run models on your own hardware. Routing is provider-neutral: an account's
 supported execution path, model capabilities and current evidence determine which

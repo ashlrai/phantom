@@ -258,49 +258,10 @@
   color: var(--text-secondary);
 }
 
-/* used (solid) · room (track) · kept for you (hatched, past the tick). */
+/* The bar itself is the shared primitives/WindowBar (used, the kept band, the time mark); this class only
+   places it in the row. */
 .track {
-  position: relative;
-  display: block;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: var(--meter-track);
-  overflow: hidden;
-}
-.trackUnknown {
-  display: block;
-  height: 6px;
-  border-radius: var(--radius-full);
-  border: 1px dashed var(--border-strong);
-}
-.used {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  border-radius: var(--radius-full);
-  background: var(--data-seq-5);
-  transition: width var(--duration-base) var(--ease-standard);
-}
-.used[data-level='tight'] { background: var(--status-warning-solid); }
-.used[data-level='limit'] { background: var(--status-danger-solid); }
-.reserve {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  background: repeating-linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--text-tertiary) 34%, transparent) 0 2px,
-    transparent 2px 5px
-  );
-}
-.ceiling {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  margin-left: -1px;
-  background: var(--text-secondary);
+  min-width: 0;
 }
 
 .value {
@@ -323,6 +284,16 @@
   white-space: nowrap;
 }
 
+/* How far the window's time has run, under its bar. Present only where the window's start is known. */
+.pace {
+  grid-column: 2 / -1;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.pace[data-pace='behind'] { color: var(--text-secondary); }
+.pace i { margin-inline-end: var(--space-1); }
+
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -343,10 +314,12 @@
     grid-template-columns: minmax(0, 1fr) auto;
     row-gap: var(--space-1);
   }
-  .bar .track,
-  .bar .trackUnknown {
+  .bar .track {
     grid-column: 1 / -1;
     grid-row: 2;
+  }
+  .pace {
+    grid-column: 1 / -1;
   }
   .reset {
     grid-column: 1 / -1;
@@ -356,15 +329,8 @@
   .bar[data-compact] {
     grid-template-columns: minmax(3rem, auto) minmax(3rem, 1fr) auto;
   }
-  .bar[data-compact] .track,
-  .bar[data-compact] .trackUnknown {
+  .bar[data-compact] .track {
     grid-column: auto;
     grid-row: auto;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .used {
-    transition: none;
   }
 }
