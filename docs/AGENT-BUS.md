@@ -511,7 +511,7 @@ free set. Exit 0 acquired,
 2 invalid, 1 otherwise. Claims still coordinate scope only — holding one
 never permits a merge, a push, or spending.
 
-**Per-agent work view.** `phm agents bus work mine [<agent>]` is the read-only
+**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>]` is the read-only
 digest that answers "what is pending for this agent" in one call: the live
 coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block — the reverse of `work feed --claims`,
@@ -664,7 +664,24 @@ the agent's own channel posts — so work posted to a shared channel is pending
 for its members without a second read, and the `next` items are exactly the
 receipts `bus next --to <agent>` matches under the same rule; an unreadable or
 missing registry and an unresolvable ref contribute no channels, so matching
-never widens on unknown state. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
+never widens on unknown state. `--job <id>` narrows the whole digest to
+one job — "what is pending for this agent on this job" — under the same
+`busBodyJobMatch` citation rule `inbox --job` applies (a feed `jobId`
+body, a `worker-handoff` `taskId`, or the `job:<id>` thread bucket),
+joined with the feed-id and board `itemId` joins each section already
+makes: feed jobs and announced jobs match by id; a claim lists only when
+it provably relates — declared-key overlap with an announced job or a
+leased message body naming the job; `next`/`handoffs` keep only
+pending-work envelopes whose body cites the job (claimable work receipts
+name no job, so `next` is empty under `--job`, while handoffs keep their
+`taskId` hits); threads, awaiting and blocked pass the job into the one
+shared conversations read; wakes and inbox apply their own job filters;
+mailbox mail keeps only bodies citing the job; and the board keeps only
+threads carrying a task whose `itemId` is the job id, with that thread's
+deliveries and rollup riding along. Every count stays the filtered
+total, the result echoes `job` in JSON and the human header prints
+`job=<id>`, and a row whose job relation cannot be proven stays out of
+the match rather than padding it. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
 exact-label claim matching, reports `identity: null`, answers `unknown-agent`
 for inbox rather than an empty list, and reads wakes under `scope: 'label'`
 — the same literal-`to` matching `agents bus wakes` applies — so pending

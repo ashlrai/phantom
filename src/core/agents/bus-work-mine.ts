@@ -26,14 +26,14 @@ import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { busClaimJobRef, listBusClaims, type BusClaimsListClaim, type BusClaimsOwnerMatch } from './bus-claims.js';
 import { agentLabels, agentPendingAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity, type AgentRegistry } from './bus-identity.js';
-import { parseClaimKey } from './bus-v2-schema.js';
-import type { AgentMessageKind } from '../fleet/agent-messages.js';
+import { busBodyThread, parseClaimKey } from './bus-v2-schema.js';
+import { JOB_THREAD_PREFIX, type AgentMessageKind } from '../fleet/agent-messages.js';
 import { conversationScope, readAgentConversations, type AgentConversations, type ConversationScope } from '../fleet/agent-conversations.js';
 import { plainAge } from '../fleet/agent-conversation-model.js';
 import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobHold, busWorkFeedOwnerMatcher, busWorkFeedToMatcher,
   busWorkJobDispatch, readBusWorkFeed, type BusWorkFeedHoldCoverage, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
-import { agentWakeClaimHolderSuffix, agentWakeMessageSuffix, busBodyFallbackSummary, busBodyJobId, busBodySummary, busInboxJobMarker,
-  jobAnnotationFromFeed, readAgentInbox, readAgentWakes,
+import { agentWakeClaimHolderSuffix, agentWakeMessageSuffix, busBodyFallbackSummary, busBodyJobId, busBodyJobMatch,
+  busBodySummary, busInboxJobMarker, jobAnnotationFromFeed, readAgentInbox, readAgentWakes,
   type AgentWakeRow, type BusEnvelopeLookupJob, type InboxKind } from './bus-unified.js';
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { BUS_PROTOCOL_KEY, BUS_PRIORITIES, isClaimableWork,
@@ -73,6 +73,14 @@ export interface BusWorkMineOptions {
   mailboxHome?: string;
   /** Shared task board digest overrides; production derives the board CLI's paths. */
   board?: BusWorkMineBoardOptions;
+  /** Keep only work that names this job id — the same citation rule
+   * `agents bus inbox --job` applies (`busBodyJobMatch`: feed `jobId`
+   * bodies, worker-handoff `taskId`s, `job:<id>` thread buckets) joined
+   * with the feed-id and board `itemId` identity citations each section
+   * already makes. Claimable work receipts name no job citation, so `next`
+   * comes back empty under a job filter; every section's count stays the
+   * filtered total, never the unfiltered one. */
+  job?: string;
   /** Injectable clock, frozen once so every section reads the same instant. */
   now?: () => number;
 }
@@ -131,6 +139,12 @@ export type BusWorkMineClaimMessage =
       summary: string;
       /** Same live feed citation the inbox section resolves, present only on job-citing bodies. */
       job?: BusEnvelopeLookupJob;
+      /** Every job id the leased body names under the `busBodyJobMatch`
+       * citation rule — the feed `jobId`, a worker-handoff `taskId` or the
+       * `job:<id>` thread bucket — sorted and deduplicated; the set a
+       * `--job` claims filter matches against. Absent when the body names
+       * no job. */
+      jobIds?: string[];
       /** Journal pin state: `true` when a claims-journal row backs this exact
        * receipt triple, `false` when the journal read cleanly but holds no row
        * for this claim (coordination/journal drift — resolved by bare id),
@@ -464,6 +478,8 @@ export type BusWorkMineBlocked =
 
 export type BusWorkMineResult =
   | { status: 'ok'; agent: BusWorkMineAgent; asOf: string;
+      /** The job filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
+      job?: string;
       claims: BusWorkMineClaims; jobs: BusWorkMineJobs; announced: BusWorkMineAnnounced;
       next: BusWorkMineNext;
       handoffs: BusWorkMineHandoffs; threads: BusWorkMineThreads; awaiting: BusWorkMineAwaiting;
@@ -546,13 +562,15 @@ function feedHoldIndex(feed: Extract<BusWorkFeedReadResult, { status: 'ok' }>): 
   return busWorkFeedHoldIndex(feed.claims);
 }
 
-function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined): BusWorkMineJobs {
+function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined,
+  jobId?: string): BusWorkMineJobs {
   if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
     ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
   if (feed.status !== 'ok') return { status: feed.status };
   const { coverage, heldByJob } = feedHoldIndex(feed);
   const open = feed.jobs
-    .filter(job => BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length > 0)
+    .filter(job => BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length > 0 &&
+      (jobId === undefined || job.id === jobId))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const toMatch = busWorkFeedToMatcher(agent, { root });
   const ownerMatch = busWorkFeedOwnerMatcher(agent, { root });
@@ -586,14 +604,16 @@ const ANNOUNCED_DONE: ReadonlySet<BusWorkFeedJob['status']> = new Set(['done', '
  * or unreadable registry keeps exact-label matching and never widens; a
  * non-ok feed reports its own state, never an empty list.
  */
-function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined): BusWorkMineAnnounced {
+function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined,
+  jobId?: string): BusWorkMineAnnounced {
   if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
     ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
   if (feed.status !== 'ok') return { status: feed.status };
   const ownerMatch = busWorkFeedOwnerMatcher(agent, { root });
   const { coverage, heldByJob } = feedHoldIndex(feed);
   const live = feed.jobs
-    .filter(job => !ANNOUNCED_DONE.has(job.status) && ownerMatch(job.owner))
+    .filter(job => !ANNOUNCED_DONE.has(job.status) && ownerMatch(job.owner) &&
+      (jobId === undefined || job.id === jobId))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   return { status: 'ok', matched: live.length,
     items: live.slice(0, WORK_MINE_ANNOUNCED_MAX)
@@ -614,7 +634,8 @@ function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: stri
  * shown and skips nothing pending.
  */
 function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number): BusWorkMineInbox {
-  const page = readAgentInbox(agent, { limit: WORK_MINE_INBOX_MAX + 1, matched: true },
+  const page = readAgentInbox(agent, { limit: WORK_MINE_INBOX_MAX + 1, matched: true,
+    ...(options.job === undefined ? {} : { job: options.job }) },
     { root: options.root, now: () => nowMs });
   if (page.status !== 'ok') return { status: page.status, reason: page.reason };
   let shown = page.messages, nextCursor = page.nextCursor, truncated = false;
@@ -659,10 +680,12 @@ function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number)
 function mailboxSection(agent: string, identity: AgentIdentity | undefined,
   options: BusWorkMineOptions, nowMs: number): BusWorkMineMailbox {
   const home = options.mailboxHome ?? (options.root === undefined ? undefined : dirname(options.root));
+  const job = options.job;
   let read: ReturnType<ReturnType<typeof createBusMailbox>['pendingFor']>;
   try {
     read = createBusMailbox(home, () => nowMs)
-      .pendingFor(identity === undefined ? [agent] : agentLabels(identity), WORK_MINE_MAILBOX_MAX);
+      .pendingFor(identity === undefined ? [agent] : agentLabels(identity), WORK_MINE_MAILBOX_MAX,
+        job === undefined ? undefined : message => busBodyJobMatch(message.envelope.body, job));
   } catch {
     return { status: 'unavailable', reason: 'mailbox-unreadable' };
   }
@@ -728,7 +751,7 @@ function boardSection(agent: string, identity: AgentIdentity | undefined,
   }
   try {
     const labels = identity === undefined ? [agent] : agentLabels(identity);
-    const digest = new BusBoard({ root: boardRoot, fleet, cfg }).pendingFor(labels, nowMs);
+    const digest = new BusBoard({ root: boardRoot, fleet, cfg }).pendingFor(labels, nowMs, options.job);
     return {
       status: 'ok', peers: digest.peers, claims: digest.claims, threads: digest.threads,
       deliveries: {
@@ -837,6 +860,12 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
       const envelope = row.envelope;
       replyCites.push(...busReplyCitations(envelope));
       if (!pendingAddress(envelope.to, envelope.from)) continue;
+      // A job filter keeps only envelopes whose body names the job — the same
+      // `busBodyJobMatch` citation rule `agents bus inbox --job` applies. It
+      // runs after replyCites so a job-filtered handoff still sees its answer;
+      // claimable work receipts name no job citation, so `next` comes back
+      // empty under `--job` while handoffs keep their `taskId` hits.
+      if (options.job !== undefined && !busBodyJobMatch(envelope.body, options.job)) continue;
       const kind = claimableKind(envelope.body);
       if (kind !== null) {
         nextCandidates.push({
@@ -1026,6 +1055,15 @@ function resolveClaimMessage(id: string, owner: string, journal: BusWorkClaimVie
   if (receipt === undefined) return { status: 'not-found', id };
   const body = receipt.envelope.body;
   const jobId = busBodyJobId(body);
+  // Every job the body names under the `busBodyJobMatch` citation rule —
+  // the feed `jobId`/`taskId` citation plus the `job:<id>` thread bucket —
+  // so a `--job` claims filter keys on the same set the inbox filter does.
+  const jobIds = new Set<string>();
+  if (jobId !== undefined) jobIds.add(jobId);
+  const thread = busBodyThread(body);
+  if (thread !== null && thread.startsWith(JOB_THREAD_PREFIX) && thread.length > JOB_THREAD_PREFIX.length) {
+    jobIds.add(thread.slice(JOB_THREAD_PREFIX.length));
+  }
   // The page receipt's ttl is elapsed-adjusted; the original envelope keeps
   // the wire ttl, so expiry is receipt time plus the ttl the sender set.
   const ttl = receipt.originalEnvelope?.ttl ?? receipt.envelope.ttl;
@@ -1037,6 +1075,7 @@ function resolveClaimMessage(id: string, owner: string, journal: BusWorkClaimVie
     bodyKind: claimMessageBodyKind(body),
     summary: mineField(busBodySummary(body) ?? busBodyFallbackSummary(body), WORK_MINE_SUMMARY_MAX),
     ...(jobId === undefined ? {} : { job: jobAnnotationFromFeed(feed, jobId) }),
+    ...(jobIds.size === 0 ? {} : { jobIds: [...jobIds].sort() }),
     pinned };
 }
 
@@ -1183,12 +1222,24 @@ function blockedSection(conversations: AgentConversations, scope: ConversationSc
  * non-ok feed leaves `jobs` absent on claims and reports its own state in the
  * jobs section; non-ok claims, next, handoffs, wakes or inbox reads report
  * their own state rather than zero or an empty list. `threads`, `awaiting`
- * and `blocked` share the one conversations read — unfiltered, so waits the
- * agent owes, waits the agent is owed and blocked threads it is a party to
- * all narrow the same projection at the frozen instant.
+ * and `blocked` share the one conversations read — narrowed to job-naming
+ * threads when `options.job` is set, the same `job` query
+ * `agents conversations --job` applies — so waits the agent owes, waits the
+ * agent is owed and blocked threads it is a party to all narrow the same
+ * projection at the frozen instant. `options.job` applies the
+ * `busBodyJobMatch` citation rule every `--job` bus read shares — plus the
+ * feed-id and board `itemId` identity joins — across every section: feed
+ * jobs match by id, claims by declared-key overlap with an announced job
+ * or a leased body's job citations, pending work and mail by body
+ * citation, threads/wakes/inbox by their own job filters, and board work
+ * by the job-carrying-thread rule `BusBoard.pendingFor` applies. Counts
+ * stay filtered totals; a section that cannot prove the relation reports
+ * its own read state, never a padded match.
  */
 export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {}): BusWorkMineResult {
   if (!AGENT_REF.test(agent)) return { status: 'invalid', reason: 'invalid-agent' };
+  // The same printable-label rule every `--job` read surface applies.
+  if (options.job !== undefined && !AGENT_REF.test(options.job)) return { status: 'invalid', reason: 'invalid-job' };
   const nowMs = (options.now ?? Date.now)();
   const asOf = new Date(nowMs).toISOString();
 
@@ -1204,13 +1255,17 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
         owner: claimsRead.owner ?? { ref: agent, identity: null, registry: who.registry } };
 
   const feed = readBusWorkFeed({ root: options.root, now: () => nowMs, claims: true });
-  const jobs = jobsSection(feed, agent, options.root);
-  const announced = announcedSection(feed, agent, options.root);
+  const jobs = jobsSection(feed, agent, options.root, options.job);
+  const announced = announcedSection(feed, agent, options.root, options.job);
   const { next, handoffs } = pendingWorkSections(agent, options, nowMs, registry);
-  // One unfiltered conversations read backs all three thread views: waits the
-  // agent owes, its own unanswered asks and blocked threads it is a party to
-  // share the same projection and frozen instant.
-  const conversations = readAgentConversations({}, { root: options.root, now: () => nowMs });
+  // One conversations read backs all three thread views: waits the agent
+  // owes, its own unanswered asks and blocked threads it is a party to.
+  // A job filter narrows the shared projection to threads naming the job —
+  // the same `job` query `agents conversations --job` applies — so all
+  // three sections stay consistent at the frozen instant.
+  const conversations = readAgentConversations(
+    options.job === undefined ? {} : { job: options.job },
+    { root: options.root, now: () => nowMs });
   const scope = conversationScope(agent, registry, identity);
   const threads = threadsSection(conversations, scope);
   const awaiting = awaitingSection(conversations, scope);
@@ -1225,10 +1280,25 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       }
     }
     annotateClaimMessages(claims.claims, options, nowMs, feed, registry);
+    const job = options.job;
+    if (job !== undefined) {
+      // A claim lists under a job filter only when it provably relates to the
+      // job: a declared-key overlap with an announced job (`jobs`, present
+      // only on an ok feed) or a leased message body naming the job
+      // (`jobIds`, the `busBodyJobMatch` citation set — a claim on a
+      // work.post or handoff envelope relates to the job it cites). A claim
+      // whose relation cannot be proven — a scope key, an unreadable feed, an
+      // unresolvable message — never lists, matching every other section's
+      // "unknown stays out of the match" rule.
+      claims.claims = claims.claims.filter(claim =>
+        claim.jobs?.some(ref => ref.id === job) === true ||
+        (claim.message?.status === 'resolved' && claim.message.jobIds?.includes(job) === true));
+    }
   }
 
   const page = readAgentWakes(agent, undefined,
-    { root: options.root, runsRoot: options.runsRoot, now: () => nowMs });
+    { root: options.root, runsRoot: options.runsRoot, now: () => nowMs },
+    options.job === undefined ? {} : { job: options.job });
   const wakes: BusWorkMineWakes = page.status === 'ok'
     ? { status: 'ok', agent: page.agent, scope: page.scope, matched: page.matched,
         truncated: page.truncated || page.matched > WORK_MINE_WAKES_MAX,
@@ -1239,7 +1309,9 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
   const mailbox = mailboxSection(agent, identity, options, nowMs);
   const board = boardSection(agent, identity, options, nowMs);
 
-  return { status: 'ok', agent: who, asOf, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board };
+  return { status: 'ok', agent: who, asOf,
+    ...(options.job === undefined ? {} : { job: options.job }),
+    claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board };
 }
 
 /** Human suffix naming the message an `origin:'message'` claim leases; '' on every other claim. */
@@ -1267,7 +1339,8 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
   const lines: string[] = [];
   const who = result.agent;
   lines.push(`agent=${who.handle ?? who.ref} ref=${who.ref} identity=${who.identity ?? '-'} ` +
-    `registry=${who.registry} as-of=${result.asOf}`);
+    `registry=${who.registry} as-of=${result.asOf}` +
+    (result.job === undefined ? '' : ` job=${result.job}`));
 
   const claims = result.claims;
   if (claims.status !== 'ok') {

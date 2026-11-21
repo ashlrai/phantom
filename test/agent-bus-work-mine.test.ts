@@ -1612,6 +1612,102 @@ describe('readBusWorkMine', () => {
     const claim = result.claims.claims.find(row => row.key === 'queue:w-blind');
     expect(claim!.message).toEqual({ status: 'unavailable', id: 'w-blind' });
   });
+
+  it('filters the digest to one job id across every section', async () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+
+    // Two open feed jobs: nova announced RQ-J-1 to atlas, atlas announced RQ-J-2.
+    await announce(options, 'nova', 'RQ-J-1', ['queue:RQ-J-1'], 'agent:atlas');
+    await announce(options, 'atlas', 'RQ-J-2', ['queue:RQ-J-2']);
+    // A job-threaded ask and a plain ask: only the job thread names RQ-J-1.
+    expect(await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'question on job one?',
+      thread: 'job:RQ-J-1', id: 'ask-job' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'unrelated question?',
+      thread: 't-plain', id: 'ask-plain' }, options)).toMatchObject({ status: 'posted' });
+    // Handoffs for two different jobs; only RQ-J-1's survives the filter.
+    expect(await sendHandoff({ from: 'nova', to: 'atlas', taskId: 'RQ-J-1',
+      prompt: 'do job one', id: 'ho-j1' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendHandoff({ from: 'nova', to: 'atlas', taskId: 'RQ-J-9',
+      prompt: 'do another job', id: 'ho-j9' }, options)).toMatchObject({ status: 'posted' });
+    // Claimable work names no job citation, so `next` is empty under --job.
+    postClaimable(options, 'w-free');
+    // A wake that names no job never matches the filter.
+    expect(await sendWakeRequest({ from: 'nova', to: 'atlas', reason: 'ping', id: 'wk-plain' }, options))
+      .toMatchObject({ status: 'posted' });
+    // Claims: one overlapping RQ-J-1's declared key, one unrelated scope key,
+    // and a message claim leasing the RQ-J-1 announcement itself.
+    claim(options, 'queue:RQ-J-1', 'atlas', 'test:atlas-j1', options.clock.now);
+    claim(options, 'repo:a/c', 'atlas', 'test:atlas-x', options.clock.now);
+    takeWork(options, 'post-RQ-J-1', 'atlas');
+
+    const result = readBusWorkMine('atlas', { ...options, job: 'RQ-J-1' });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.job).toBe('RQ-J-1');
+    expect(formatBusWorkMine(result)[0]).toContain('job=RQ-J-1');
+
+    // Claims keep the declared-key overlap and the leased job-citing body;
+    // the unrelated scope claim drops out.
+    expect(result.claims.status).toBe('ok');
+    if (result.claims.status !== 'ok') throw new Error('unreachable');
+    expect(result.claims.claims.map(row => row.key).sort())
+      .toEqual(['queue:RQ-J-1', 'queue:post-RQ-J-1']);
+    const leased = result.claims.claims.find(row => row.key === 'queue:post-RQ-J-1');
+    expect(leased!.message).toMatchObject({ status: 'resolved', jobIds: ['RQ-J-1'] });
+
+    // Feed sections match by job id: only RQ-J-1 is open, and atlas announced
+    // only RQ-J-2 so its announced view is empty under this filter.
+    expect(result.jobs).toMatchObject({ status: 'ok', open: 1 });
+    if (result.jobs.status !== 'ok') throw new Error('unreachable');
+    expect(result.jobs.jobs.map(entry => entry.id)).toEqual(['RQ-J-1']);
+    expect(result.announced).toMatchObject({ status: 'ok', matched: 0, items: [] });
+
+    // next is empty — claimable receipts name no job.
+    expect(result.next).toMatchObject({ status: 'ok', matched: 0, items: [] });
+    // Only the RQ-J-1 handoff survives.
+    expect(result.handoffs).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(result.handoffs.items.map(item => item.id)).toEqual(['ho-j1']);
+
+    // Two threads name RQ-J-1 and wait on atlas: the job:RQ-J-1 bucket (the
+    // announcement and the job-threaded ask share it) and the RQ-J-1
+    // handoff whose taskId is the job citation. The plain ask and the
+    // RQ-J-9 handoff threads drop out.
+    expect(result.threads).toMatchObject({ status: 'ok', matched: 2 });
+    if (result.threads.status !== 'ok') throw new Error('unreachable');
+    const byId = new Map(result.threads.items.map(item => [item.id, item]));
+    expect([...byId.keys()].sort()).toEqual(['ho-j1', 'job:RQ-J-1']);
+    expect(byId.get('job:RQ-J-1')).toMatchObject({ kind: 'ask', waitingOn: 'atlas' });
+    expect(byId.get('ho-j1')).toMatchObject({ kind: 'handoff', waitingOn: 'atlas' });
+    expect(result.awaiting).toMatchObject({ status: 'ok', matched: 0 });
+    expect(result.blocked).toMatchObject({ status: 'ok', matched: 0 });
+
+    // Only the wake hint whose referent names RQ-J-1 (the handoff) matches;
+    // the job-less wake request stays out.
+    expect(result.wakes).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.wakes.status !== 'ok') throw new Error('unreachable');
+    expect(result.wakes.wakes.map(wake => wake.id)).toEqual(['ho-j1']);
+
+    // Inbox keeps only mail naming RQ-J-1: the work.post announcement, the
+    // job-threaded note and the RQ-J-1 handoff.
+    expect(result.inbox.status).toBe('ok');
+    if (result.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.inbox.matched).toBe(3);
+    expect(result.inbox.messages.map(message => message.id).sort())
+      .toEqual(['ask-job', 'ho-j1', 'post-RQ-J-1']);
+  });
+
+  it('rejects a job id outside the printable-label rule', () => {
+    const options = setup();
+    register(options, 'atlas');
+    expect(readBusWorkMine('atlas', { ...options, job: 'bad job' }))
+      .toEqual({ status: 'invalid', reason: 'invalid-job' });
+    expect(readBusWorkMine('atlas', { ...options, job: '' }))
+      .toEqual({ status: 'invalid', reason: 'invalid-job' });
+  });
 });
 
 describe('mailbox section', () => {
@@ -1711,6 +1807,25 @@ describe('mailbox section', () => {
     if (result.status !== 'ok' || result.mailbox.status !== 'ok') throw new Error('unreachable');
     expect(result.mailbox).toMatchObject({ matched: 21, truncated: true });
     expect(result.mailbox.messages).toHaveLength(20);
+  });
+
+  it('filters pending mail by the same job citation the unified inbox applies', () => {
+    const options = setup();
+    register(options, 'atlas');
+    sendMail(options, 'm-job-thread', 'atlas',
+      { body: { kind: 'note', thread: 'job:RQ-M-1', text: 'job one note' } });
+    sendMail(options, 'm-job-handoff', 'atlas',
+      { body: { kind: 'worker-handoff', taskId: 'RQ-M-1', prompt: 'job one handoff' } });
+    sendMail(options, 'm-other-job', 'atlas',
+      { body: { kind: 'note', thread: 'job:RQ-M-2', text: 'job two note' } });
+    sendMail(options, 'm-plain', 'atlas');
+
+    const result = readBusWorkMine('atlas', { ...options, job: 'RQ-M-1' });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok' || result.mailbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.mailbox).toMatchObject({ matched: 2, truncated: false });
+    expect(result.mailbox.messages.map(message => message.id).sort())
+      .toEqual(['m-job-handoff', 'm-job-thread']);
   });
 });
 
@@ -1873,6 +1988,44 @@ describe('board section', () => {
       path: sharedDir } } } as AshlrConfig };
     expect(section(readBusWorkMine('atlas', options))).toEqual({ status: 'unavailable', reason: 'board-unreadable' });
   });
+
+  it('scopes the digest to threads carrying a task for the job', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    const store = board(options);
+    const jobThread = store.createThread('nova', 'Job one coordination').id;
+    store.joinThread('atlas', jobThread);
+    store.createTask('nova', jobThread, 'RQ-J-1', 'Job one task');
+    store.createTask('nova', jobThread, 'RQ-J-2', 'Sibling job task');
+    await store.post('nova', jobThread, 'job one ping');
+    // A second thread with no task for RQ-J-1 stays out of the filtered digest.
+    const otherThread = store.createThread('nova', 'Unrelated coordination').id;
+    store.joinThread('atlas', otherThread);
+    store.createTask('nova', otherThread, 'RQ-J-9', 'Unrelated task');
+    await store.post('nova', otherThread, 'unrelated ping');
+
+    const unfiltered = section(readBusWorkMine('atlas', options));
+    expect(unfiltered.status).toBe('ok');
+    if (unfiltered.status !== 'ok') throw new Error('unreachable');
+    expect(unfiltered.tasks.matched).toBe(3);
+    expect(unfiltered.threads).toHaveLength(2);
+
+    const filtered = section(readBusWorkMine('atlas', { ...options, job: 'RQ-J-1' }));
+    expect(filtered.status).toBe('ok');
+    if (filtered.status !== 'ok') throw new Error('unreachable');
+    // Only the job-carrying thread lists; its rollup counts the job's task alone.
+    expect(filtered.threads).toHaveLength(1);
+    expect(filtered.threads[0]).toMatchObject({ id: jobThread, pendingDeliveries: 1,
+      tasks: { open: 1, held: 0, ambiguous: 0, unknown: 0 } });
+    // Tasks list only on the per-item citation: the sibling job's task drops.
+    expect(filtered.tasks).toMatchObject({ matched: 1, truncated: false });
+    expect(filtered.tasks.items[0]).toMatchObject({ threadId: jobThread, itemId: 'RQ-J-1',
+      title: 'Job one task' });
+    // The thread's delivery to atlas rides along; the other thread's does not.
+    expect(filtered.deliveries).toMatchObject({ matched: 1, truncated: false });
+    expect(filtered.deliveries.items[0]).toMatchObject({ threadId: jobThread, summary: 'job one ping' });
+    expect(filtered.peers).toEqual(['atlas']);
+  });
 });
 
 describe('formatBusWorkMine', () => {
@@ -1975,5 +2128,18 @@ describe('phm agents bus work mine', () => {
     expect((await run(['work', 'mine'], {})).code).toBe(2);
     expect((await run(['work', 'mine', 'atlas', 'extra'], {})).code).toBe(2);
     expect((await run(['work', 'mine', 'bad agent'], {})).code).toBe(2);
+  });
+
+  it('accepts --job and echoes the applied filter', async () => {
+    const env = { PHM_AGENT_ID: 'atlas' };
+    await run(['id', 'register', 'atlas', '--cli', 'claude'], env);
+    const result = await run(['work', 'mine', '--job', 'RQ-X-1'], env);
+    expect(result.code).toBe(0);
+    expect(result.json).toMatchObject({ status: 'ok', job: 'RQ-X-1',
+      jobs: { status: 'ok', open: 0, jobs: [] },
+      handoffs: { status: 'ok', matched: 0 } });
+    const bad = await run(['work', 'mine', '--job', 'bad job'], env);
+    expect(bad.code).toBe(2);
+    expect(bad.json).toMatchObject({ status: 'invalid', reason: 'invalid-job' });
   });
 });

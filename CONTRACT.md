@@ -2266,12 +2266,14 @@ while reuse on another key cannot relocate it. Claims coordinate only and grant
 no execution authority; the token returns only to its acquirer.
 
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
-`phm agents bus work mine [<agent>]`. `readBusWorkMine(agent, options?)`
-(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `now?: () => number` frozen once
+`phm agents bus work mine [<agent>] [--job <id>]`. `readBusWorkMine(agent, options?)`
+(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `job?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board}` or `{status:'invalid',
+asOf, job?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board}` or `{status:'invalid',
 reason}` for a
-ref outside the printable-label rule. `agent` echoes `ref`, resolved
+ref outside the printable-label rule, or a `job` outside the same rule
+(`invalid-job`). `job` echoes the applied filter and is absent on an
+unfiltered read. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
 `claims` reuses
 `listBusClaims({owner})` — identity-aware owner matching with exact-label
@@ -2290,7 +2292,11 @@ labels, resolved `fromAgent` (null unregistered), `bodyKind` (top-level
 row's `(id, cursor, receivedAt)` triple matches the live receipt, `false`
 when the journal reads clean but holds no row for the claim (bare-id
 fallback to the newest same-id receipt), `null` when the journal is
-unreadable. A journal-pinned triple no live receipt reproduces reports
+unreadable. `resolved` also carries `jobIds` — every job id the leased
+body names under the `busBodyJobMatch` citation rule (the feed `jobId`,
+a `worker-handoff` `taskId`, the `job:<id>` thread label), sorted and
+deduplicated, absent when the body names none — the set a `--job`
+claims filter matches against. A journal-pinned triple no live receipt reproduces reports
 `{status:'not-found'}` — a same-id replacement is a different generation —
 and an inbox read that is not `ok` reports `{status:'unavailable'|
 'retryable'|'invalid'}` while the claim row itself still lists. Every other
@@ -2514,7 +2520,33 @@ never grants execution authority.
 renders the shared human lines — titles, the declared dispatch spec and key
 lists scrubbed, single-lined and display-clipped (the same
 `busWorkJobDispatch` tag the feed job line prints); JSON keeps full values.
-Exit 0 on a completed read, 2 on an invalid agent.
+Exit 0 on a completed read, 2 on an invalid agent or job.
+
+`options.job` narrows the whole digest to one job id under the same
+`busBodyJobMatch` citation rule the inbox/channel `job` filters apply —
+a feed `jobId` body, a `worker-handoff` `taskId`, or the `job:<id>`
+thread label — joined with the feed-id and board `itemId` identity
+citations each section already makes: `jobs`/`announced` match feed job
+ids, `claims` keep a row only when it provably relates — declared-key
+overlap with an announced job (`claim.jobs`, present only on an ok feed)
+or a resolved leased message whose body names the job (`message.jobIds`)
+— `next`/`handoffs` filter the shared pending-work walk by
+`busBodyJobMatch` (claimable `kind:'work'`/protocol-`task` receipts name
+no job citation, so `next` comes back empty under `--job` while
+worker-handoffs keep their `taskId` hits),
+`threads`/`awaiting`/`blocked` pass `job` into the one shared
+conversations read, `wakes`/`inbox` pass it to `readAgentWakes`/
+`readAgentInbox`, `mailbox` applies the same body predicate through
+`BusMailbox.pendingFor`'s `match` argument (applied before `matched` and
+`limit` count, so the filtered total is the filtered total), and `board`
+passes it to `BusBoard.pendingFor`, which scopes the digest to threads
+carrying a task whose `itemId` equals the job id — the fleet item and
+bus job share the id namespace — with that thread's deliveries and
+rollup riding along while `tasks` list only on the per-item citation.
+Every count stays the filtered total — `matched`/`open`/`truncated` all
+measure the filtered sets — and a row whose job relation cannot be
+proven (a scope-key claim, an unreadable feed, an unresolvable message)
+stays out of the match rather than padding it.
 
 ### Unified agent bus (RQ-BUS-UNIFY-1)
 
