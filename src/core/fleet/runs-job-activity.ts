@@ -50,6 +50,7 @@ import {
 import { getFleetJobChanges, type FleetJobChangesV1, type FleetJobChangesOptions } from './runs-job-changes.js';
 import { getFleetJobText, type FleetJobTextV1 } from './runs-job-texts.js';
 import { readSource, type Source } from './runs-parked-queue.js';
+import { ledgerEventName } from './empty-cause.js';
 
 // ---------------------------------------------------------------------------
 // Wire shape — fleet.job.activity.v1
@@ -162,8 +163,8 @@ const SUMMARY_FIELDS = new Set([
   'swap_gb', 'pid', 'src', 'pattern', 'until', 'count', 'auth_failures',
 ]);
 
-const JOB_KEYS = ['job', 'job_id', 'jobId'] as const;
-const AT_KEYS = ['ts', 'timestamp', 'at', 'time'] as const;
+const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const AT_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 
 // ---------------------------------------------------------------------------
 // Command extraction — conservative: a line is a command only when it starts
@@ -271,9 +272,9 @@ export function parseJobLedgerEvents(text: string, job: string, max: number): { 
     if (typeof row !== 'object' || row === null || Array.isArray(row)) continue;
     const record = row as Record<string, unknown>;
     if (rowJob(record) !== job) continue;
-    const event = typeof record['event'] === 'string' ? cleanField(record['event'], MAX_EVENT_CHARS) : '';
-    if (event === '') continue;
-    matched.push({ kind: 'event', at: rowAt(record), event, summary: summarizeRow(record) });
+    const event = ledgerEventName(record);
+    if (event === null) continue;
+    matched.push({ kind: 'event', at: rowAt(record), event: cleanField(event, MAX_EVENT_CHARS), summary: summarizeRow(record) });
   }
   const clipped = matched.length > max;
   return { events: clipped ? matched.slice(-max) : matched, matched: matched.length, clipped };

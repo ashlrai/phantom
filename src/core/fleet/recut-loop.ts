@@ -92,6 +92,7 @@ import {
   type MergeBacklogReadV1,
 } from './merge-backlog-read.js';
 import { collapseJobOutcomes, parseJobOutcomeRows, type JobOutcome } from '../queue/job-outcomes.js';
+import { ledgerEventName, ledgerJobId } from './empty-cause.js';
 import { findSupersededPrs, type MergedFleetPr } from './superseded-prs.js';
 
 export const RECUT_LOOP_LANE = 'codex-personal';
@@ -465,9 +466,12 @@ async function readInflightPrs(runsDir: string, dropDir: string): Promise<{ prs:
   for (const line of metrics.text.split('\n')) {
     try {
       const row: unknown = JSON.parse(line);
-      if (!object(row) || typeof row['job'] !== 'string') continue;
-      if (row['event'] === 'finish') states.set(row['job'], false);
-      else if (row['event'] === 'enqueue' || row['event'] === 'launch' || row['event'] === 'claim') states.set(row['job'], true);
+      if (!object(row)) continue;
+      const job = ledgerJobId(row);
+      if (job === null) continue;
+      const event = ledgerEventName(row);
+      if (event === 'finish') states.set(job, false);
+      else if (event === 'enqueue' || event === 'launch' || event === 'claim') states.set(job, true);
     } catch { /* incomplete or malformed metric */ }
   }
   const prs = new Set<number>();

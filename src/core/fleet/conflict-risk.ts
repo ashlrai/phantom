@@ -56,6 +56,8 @@ import {
   type MergeBacklogItem,
 } from './merge-backlog-plan.js';
 import { readMergeBacklogStates } from './merge-backlog-read.js';
+import { parseLedgerTs } from '../metrics/loop.js';
+import { ledgerAtMs, ledgerEventName, ledgerJobId, ledgerPhase, ledgerPrUrl } from './empty-cause.js';
 
 export const CONFLICT_RISK_SCHEMA = 'fleet.conflict-risk.v1' as const;
 
@@ -262,12 +264,15 @@ export function ledgerMergeCount(text: string, repo: string, windowMs: number, n
     try { parsed = JSON.parse(line); } catch { continue; }
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
     const row = parsed as Record<string, unknown>;
-    if (row['event'] !== 'outcome' || row['state'] !== 'MERGED') continue;
-    const job = row['job'];
-    if (typeof job !== 'string' || !job.trim()) continue;
-    const at = typeof row['ts'] === 'string' ? Date.parse(row['ts']) : NaN;
-    if (!Number.isFinite(at) || at > nowMs || at < nowMs - windowMs) continue;
-    const match = typeof row['url'] === 'string' ? MERGED_URL_RE.exec(row['url']) : null;
+    // The terminal phase is the authoritative merge signal: reconciler rows
+    // keep a publish-shaped event while carrying MERGED, and 'merged' names it.
+    if (ledgerPhase(row) !== 'MERGED' && ledgerEventName(row) !== 'merged') continue;
+    const job = ledgerJobId(row);
+    if (job === null) continue;
+    const at = parseLedgerTs(row['mergedAt']) ?? ledgerAtMs(row);
+    if (at === null || at > nowMs || at < nowMs - windowMs) continue;
+    const raw = ledgerPrUrl(row);
+    const match = raw !== null ? MERGED_URL_RE.exec(raw) : null;
     if (!match || match[1]!.toLowerCase() !== wanted) continue;
     if ((latest.get(job) ?? -Infinity) < at) latest.set(job, at);
   }
