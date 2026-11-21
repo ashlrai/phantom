@@ -28,6 +28,8 @@ import { readWtAudit, type WtAuditDeps, type WtAuditReport, type WtAuditEntry, t
 
 /** Hours of quiet before a worktree of each class is safe to remove. Only these two classes can ever be safe. */
 export const WORKTREES_SAFE_AGE_HOURS = { merged: 2, empty: 2 } as const satisfies Partial<Record<WorktreeState, number>>;
+/** Hours of quiet before a worktree with no publish record counts as a launch that died (`stale-no-publish`). */
+export const WORKTREES_STALE_HOURS = 24;
 /** The command every warning about the worktree count points to. */
 export const WORKTREES_PLAN_COMMAND = 'phm worktrees --reap --plan';
 /** Fleet warning level for job worktrees on one host. */
@@ -57,6 +59,8 @@ export interface WorktreeRow {
   clean: boolean | null;
   /** true when the job is judged finished from its exit code alone (no publish record). */
   exitOnly: boolean;
+  /** true when it is removable only as `stale-no-publish`: no publish record, no live job, quiet for the stale window. */
+  stale: boolean;
   safe: boolean;
   hold: WorktreeHold | null;
 }
@@ -64,6 +68,8 @@ export interface WorktreeRow {
 export interface WorktreeRemoval {
   job: string;
   status: 'removed' | 'refused' | 'failed';
+  /** Set on a removal that was a `stale-no-publish` reap. */
+  via?: 'stale-no-publish';
   reason?: 'state-changed' | 'uncommitted-changes' | 'unpushed-commits' | 'unsafe-path' | 'git-remove-failed';
 }
 
@@ -77,6 +83,8 @@ export interface WorktreesReport {
   reclaimableBytes: number;
   /** false when a size scan timed out: reclaimableBytes is then a floor. */
   reclaimableComplete: boolean;
+  /** Apply mode only: bytes of the worktrees actually removed (measured before removal). */
+  freedBytes?: number;
   mode: 'list' | 'dry-run' | 'apply';
   rows: WorktreeRow[];
   removals?: WorktreeRemoval[];
@@ -97,6 +105,8 @@ export interface WorktreesDeps extends Pick<WtAuditDeps, 'fs' | 'readJobs' | 'ps
   remove?: (path: string, wtRoot: string) => Promise<void>;
   /** Records one removal attempt; default appends to queue/worktree-reap.jsonl. */
   logRemoval?: (entry: WorktreeRemoval & { at: string }) => Promise<void>;
+  /** Hours of quiet before a no-publish-record worktree is reaped as `stale-no-publish`. Default 24. */
+  staleHours?: number;
   /** Most safe rows to attempt in one apply; the rest wait for the next run. Default: all. */
   maxRemovals?: number;
 }
@@ -126,8 +136,11 @@ function unknownHold(entry: WtAuditEntry): WorktreeHold {
 }
 
 /** Gates that need no Git call: state, audit blockers, age. */
-function preHold(entry: WtAuditEntry, state: WorktreeState, sourcesOk: boolean): WorktreeHold | null {
-  if (state === 'unknown') return unknownHold(entry);
+function preHold(entry: WtAuditEntry, state: WorktreeState, sourcesOk: boolean, staleHours: number): WorktreeHold | null {
+  if (state === 'unknown') {
+    const hold = unknownHold(entry);
+    return isStale(entry, state, sourcesOk, staleHours) ? null : hold;
+  }
   const byState = HOLD_OF_STATE[state];
   if (byState) return byState;
   // A finished job has no base file for the audit's own reaper, which only
@@ -141,6 +154,12 @@ function preHold(entry: WtAuditEntry, state: WorktreeState, sourcesOk: boolean):
   const minHours = state === 'merged' || state === 'empty' ? WORKTREES_SAFE_AGE_HOURS[state] : Infinity;
   if (entry.ageHours === null || entry.ageHours < minHours) return 'too-new';
   return null;
+}
+
+/** A launch that died before publishing: no publish record, nothing live or kept, quiet for the stale window. */
+function isStale(entry: WtAuditEntry, state: WorktreeState, sourcesOk: boolean, staleHours: number): boolean {
+  return state === 'unknown' && sourcesOk && unknownHold(entry) === 'no-publish-record'
+    && entry.ageHours !== null && entry.ageHours >= staleHours;
 }
 
 const run = promisify(execFile);
@@ -195,7 +214,8 @@ export async function readWorktrees(mode: WorktreesReport['mode'] = 'list', deps
     ...(deps.ps ? { ps: deps.ps } : {}), ...(deps.readPins ? { readPins: deps.readPins } : {}),
   });
   const audit = await readAudit();
-  const rows = rowsOf(audit);
+  const staleHours = deps.staleHours ?? WORKTREES_STALE_HOURS;
+  const rows = rowsOf(audit, staleHours);
 
   // Git and size scans run only for rows that passed every cheaper gate.
   const isClean = deps.isClean ?? defaultIsClean;
@@ -206,7 +226,7 @@ export async function readWorktrees(mode: WorktreesReport['mode'] = 'list', deps
     row.clean = Date.now() < cleanDeadline ? await isClean(path).catch(() => null) : null;
     row.hold = row.clean === true ? null : row.clean === false ? 'uncommitted-changes' : 'not-checked';
     // Only an exit-code-only finish can hide committed work that was never published.
-    if (row.hold === null && row.exitOnly) {
+    if (row.hold === null && (row.exitOnly || row.stale)) {
       const unpushed = await hasUnpushed(path).catch(() => null);
       row.hold = unpushed === true ? 'unpushed-commits' : unpushed === null ? 'not-checked' : null;
     }
@@ -239,8 +259,10 @@ export async function readWorktrees(mode: WorktreesReport['mode'] = 'list', deps
   };
   if (mode === 'apply') {
     // Git checks can take a while; a job relaunched or kept since then must win.
-    const fresh = new Map(rowsOf(await readAudit()).map(row => [row.job, row]));
+    const fresh = new Map(rowsOf(await readAudit(), staleHours).map(row => [row.job, row]));
     report.removals = await removeSafe(rows, fresh, wtRoot, runsRoot, isClean, hasUnpushed, deps, deps.maxRemovals);
+    const bytesOf = new Map(rows.map(r => [r.job, r.bytes ?? 0]));
+    report.freedBytes = report.removals.filter(r => r.status === 'removed').reduce((sum, r) => sum + (bytesOf.get(r.job) ?? 0), 0);
   }
   return report;
 }
@@ -252,7 +274,7 @@ export async function countJobWorktrees(deps: WorktreesDeps = {}): Promise<numbe
     ...(deps.fs ? { fs: deps.fs } : {}), ...(deps.readJobs ? { readJobs: deps.readJobs } : {}),
     ...(deps.ps ? { ps: deps.ps } : {}), ...(deps.readPins ? { readPins: deps.readPins } : {}),
   });
-  return rowsOf(audit).length;
+  return rowsOf(audit, WORKTREES_STALE_HOURS).length;
 }
 
 /** false when a safety source could not be read; nothing is then safe. */
@@ -261,7 +283,7 @@ function sourcesHealthy(s: WtAuditReport['sources']): boolean {
     && s.pins === 'valid' && ![s.queue, s.keep, s.run, s.status].includes('degraded');
 }
 
-function rowsOf(audit: Pick<WtAuditReport, 'worktrees' | 'sources'>): WorktreeRow[] {
+function rowsOf(audit: Pick<WtAuditReport, 'worktrees' | 'sources'>, staleHours: number): WorktreeRow[] {
   const sourcesOk = sourcesHealthy(audit.sources);
   const rows: WorktreeRow[] = [];
   for (const entry of audit.worktrees) {
@@ -269,7 +291,8 @@ function rowsOf(audit: Pick<WtAuditReport, 'worktrees' | 'sources'>): WorktreeRo
     if (state === null) continue;
     rows.push({
       job: entry.name, repo: entry.repo, state, ageHours: entry.ageHours, bytes: null, clean: null,
-      exitOnly: entry.state === 'finished', safe: false, hold: preHold(entry, state, sourcesOk),
+      exitOnly: entry.state === 'finished', stale: isStale(entry, state, sourcesOk, staleHours), safe: false,
+      hold: preHold(entry, state, sourcesOk, staleHours),
     });
   }
   return rows.sort((a, b) => a.job.localeCompare(b.job));
@@ -286,21 +309,22 @@ async function removeSafe(
     await appendFile(file, `${JSON.stringify(entry)}\n`, { mode: 0o600 });
   });
   const removals: WorktreeRemoval[] = [];
+  const via = (row: WorktreeRow) => (row.stale ? { via: 'stale-no-publish' as const } : {});
   for (const row of rows.filter(r => r.safe).slice(0, Math.max(0, maxRemovals))) {
     const path = join(wtRoot, row.job);
     let removal: WorktreeRemoval;
     const latest = fresh.get(row.job);
-    if (latest?.state !== row.state || latest.hold !== null) removal = { job: row.job, status: 'refused', reason: 'state-changed' };
+    if (latest?.state !== row.state || latest.hold !== null) removal = { job: row.job, status: 'refused', reason: 'state-changed', ...via(row) };
     // Re-check right before removal: work may have landed since the read.
-    else if (await isClean(path).catch(() => null) !== true) removal = { job: row.job, status: 'refused', reason: 'uncommitted-changes' };
-    else if (row.exitOnly && await hasUnpushed(path).catch(() => null) !== false) removal = { job: row.job, status: 'refused', reason: 'unpushed-commits' };
+    else if (await isClean(path).catch(() => null) !== true) removal = { job: row.job, status: 'refused', reason: 'uncommitted-changes', ...via(row) };
+    else if ((row.exitOnly || row.stale) && await hasUnpushed(path).catch(() => null) !== false) removal = { job: row.job, status: 'refused', reason: 'unpushed-commits', ...via(row) };
     else {
-      try { await remove(path, wtRoot); removal = { job: row.job, status: 'removed' }; }
+      try { await remove(path, wtRoot); removal = { job: row.job, status: 'removed', ...via(row) }; }
       catch (error) {
         // Git output can name private files, so only a fixed reason is kept.
         removal = (error as { unsafePath?: boolean }).unsafePath
-          ? { job: row.job, status: 'refused', reason: 'unsafe-path' }
-          : { job: row.job, status: 'failed', reason: 'git-remove-failed' };
+          ? { job: row.job, status: 'refused', reason: 'unsafe-path', ...via(row) }
+          : { job: row.job, status: 'failed', reason: 'git-remove-failed', ...via(row) };
       }
     }
     removals.push(removal);
@@ -361,7 +385,7 @@ export function formatWorktrees(report: WorktreesReport): string[] {
   else if (shown.length) {
     lines.push(['JOB', 'REPO', 'STATE', 'AGE', 'SIZE', 'SAFE TO REMOVE'].join('\t'));
     for (const row of shown) {
-      lines.push([row.job, row.repo ?? '-', STATE_WORDS[row.state],
+      lines.push([row.job, row.repo ?? '-', row.stale ? 'stale, never published' : STATE_WORDS[row.state],
         row.ageHours === null ? '-' : `${Math.round(row.ageHours)} h`,
         row.bytes === null ? '-' : formatBytes(row.bytes),
         row.safe ? 'yes' : `no, ${holdWords(row)}`].join('\t'));
@@ -375,7 +399,13 @@ export function formatWorktrees(report: WorktreesReport): string[] {
   lines.push(`Safe to remove: ${c.safe} (${formatBytes(report.reclaimableBytes)}${report.reclaimableComplete ? '' : ' or more'}).`);
   if (!report.sourcesOk) lines.push('Some records could not be read, so nothing is marked safe to remove.');
   for (const removal of report.removals ?? []) {
-    lines.push(`${removal.job}: ${removal.status}${removal.reason ? ` (${removal.reason.replace(/-/g, ' ')})` : ''}.`);
+    lines.push(`${removal.job}: ${removal.status}${removal.via ? ' stale-no-publish' : ''}${removal.reason ? ` (${removal.reason.replace(/-/g, ' ')})` : ''}.`);
+  }
+  const stale = report.rows.filter(r => r.safe && r.stale);
+  if (stale.length && report.mode !== 'apply') lines.push(`Stale, never published (no publish record, no live job, clean): ${stale.length}.`);
+  if (report.mode === 'apply') {
+    const done = (report.removals ?? []).filter(r => r.status === 'removed');
+    lines.push(`Removed ${done.length} (${done.filter(r => r.via).length} stale-no-publish), freed ${formatBytes(report.freedBytes ?? 0)}.`);
   }
   if (report.mode === 'dry-run') lines.push(c.safe ? 'Dry run: nothing was removed. Run phm worktrees --reap --apply to remove them.' : 'Dry run: nothing was removed.');
   else if (report.mode === 'list' && c.safe) lines.push('Run phm worktrees --reap to preview removal.');
