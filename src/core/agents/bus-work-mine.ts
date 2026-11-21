@@ -1,6 +1,7 @@
 /**
  * `agents bus work mine`: one read answering "what is pending for this agent" —
- * the live claims it holds under any of its labels, the open work-feed jobs it
+ * the live claims it holds under any of its labels — message-id leases
+ * resolved to the live envelope they cover — the open work-feed jobs it
  * could still claim, the work-feed jobs it announced that have not finished —
  * each with the live claim coverage of its declared keys —
  * the claimable work envelopes and worker-handoff
@@ -25,17 +26,19 @@ import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { busClaimJobRef, listBusClaims, type BusClaimsListClaim, type BusClaimsOwnerMatch } from './bus-claims.js';
 import { agentLabels, agentPendingAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity, type AgentRegistry } from './bus-identity.js';
+import { parseClaimKey } from './bus-v2-schema.js';
 import { agentName, type AgentMessageKind } from '../fleet/agent-messages.js';
 import { readAgentConversations, type AgentConversations } from '../fleet/agent-conversations.js';
 import { plainAge } from '../fleet/agent-conversation-model.js';
 import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobHold, busWorkFeedOwnerMatcher, busWorkFeedToMatcher,
   readBusWorkFeed, type BusWorkFeedHoldCoverage, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
-import { agentWakeClaimHolderSuffix, agentWakeMessageSuffix, busBodyFallbackSummary, busBodySummary, busInboxJobMarker, readAgentInbox, readAgentWakes,
+import { agentWakeClaimHolderSuffix, agentWakeMessageSuffix, busBodyFallbackSummary, busBodySummary, busInboxJobMarker,
+  jobAnnotationFromFeed, readAgentInbox, readAgentWakes, workFeedJobId,
   type AgentWakeRow, type BusEnvelopeLookupJob, type InboxKind } from './bus-unified.js';
-import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter } from '../fleet/bus-inbox.js';
+import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { BUS_PROTOCOL_KEY, BUS_PRIORITIES, isClaimableWork,
   type BusPriority } from '../fleet/bus-envelope.js';
-import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
+import { inspectBusWorkClaims, type BusWorkClaimView } from '../fleet/bus-work-claims.js';
 import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
 import { createBusMailbox } from '../fleet/bus-mailbox.js';
 import { ashlrHome } from '../cloud/store.js';
@@ -102,8 +105,49 @@ export interface BusWorkMineAgent {
   registry: 'missing' | 'available' | 'unavailable';
 }
 
+/**
+ * The live envelope an `origin:'message'` claim's `queue:<id>` key leases —
+ * the same resolution `agents bus show` performs, shared across all of a
+ * digest's message claims in one bounded store walk. The claim's journal row
+ * pins the exact `(id, cursor, receivedAt)` receipt `bus next`/`bus-claim`
+ * took, so a same-id receipt that replaced the pinned generation reports
+ * `not-found` — the claim does not cover it — never the wrong message.
+ */
+export type BusWorkMineClaimMessage =
+  | { status: 'resolved'; id: string; cursor: number;
+      /** ISO receipt time of the pinned envelope. */
+      ts: string;
+      /** ISO expiry of the retained envelope the claim leased. */
+      expiresAt: string;
+      priority: BusPriority;
+      /** Raw `to` routing label the envelope was addressed to. */
+      to: string;
+      /** Raw `from` routing label; `fromAgent` is its resolved handle or null. */
+      from: string;
+      fromAgent: string | null;
+      /** Protocol body kind verbatim (`task`, `work`, `note`, ...); null when the body carries none. */
+      bodyKind: string | null;
+      /** Scrubbed, single-line body summary, clipped to the digest bound. */
+      summary: string;
+      /** Same live feed citation the inbox section resolves, present only on jobId-bearing bodies. */
+      job?: BusEnvelopeLookupJob;
+      /** Journal pin state: `true` when a claims-journal row backs this exact
+       * receipt triple, `false` when the journal read cleanly but holds no row
+       * for this claim (coordination/journal drift — resolved by bare id),
+       * `null` when the journal could not be read and pinning is unknown. */
+      pinned: boolean | null }
+  | { status: 'not-found'; id: string }
+  | { status: 'unavailable' | 'retryable' | 'invalid'; id: string };
+
+/** A live coordination claim plus, on `origin:'message'` rows, the message it leases. */
+export type BusWorkMineClaim = BusClaimsListClaim & {
+  /** Present only on `origin:'message'` claims — a `queue:<envelope-id>` lease
+   * covers one retained message; every other origin covers a scope key, not mail. */
+  message?: BusWorkMineClaimMessage;
+};
+
 export type BusWorkMineClaims =
-  | { status: 'ok'; source: 'missing' | 'available'; claims: BusClaimsListClaim[];
+  | { status: 'ok'; source: 'missing' | 'available'; claims: BusWorkMineClaim[];
       owner: BusClaimsOwnerMatch }
   | { status: 'unavailable' };
 
@@ -892,6 +936,135 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
   return { next, handoffs };
 }
 
+/** The envelope id an `origin:'message'` claim's `queue:` key leases; undefined for any other key shape. */
+function claimMessageId(key: string): string | undefined {
+  const parsed = parseClaimKey(key);
+  return parsed?.kind === 'queue' ? parsed.queue : undefined;
+}
+
+/** Every live receipt the bounded store walk serves, grouped by envelope id — the join behind claim-message resolution. */
+function claimMessageReceipts(options: BusWorkMineOptions, nowMs: number):
+  | { status: 'ok'; byId: Map<string, BusInboxReceipt[]> }
+  | { status: 'unavailable' | 'retryable' | 'invalid' } {
+  const byId = new Map<string, BusInboxReceipt[]>();
+  let cursor = 0, finished = false;
+  for (let index = 0; index < WORK_MINE_NEXT_MAX_PAGES && !finished; index += 1) {
+    const page = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ,
+      { root: options.root, now: () => nowMs, includeOriginalEnvelope: true });
+    if (page.status !== 'ok') {
+      return { status: page.status === 'retryable' ? 'retryable' : page.status === 'invalid' ? 'invalid' : 'unavailable' };
+    }
+    for (const row of page.messages) {
+      const list = byId.get(row.envelope.id);
+      if (list === undefined) byId.set(row.envelope.id, [row]);
+      else list.push(row);
+    }
+    if (page.messages.length < BUS_INBOX_MAX_READ) { finished = true; break; }
+    if (page.nextCursor <= cursor) return { status: 'retryable' };
+    cursor = page.nextCursor;
+  }
+  if (!finished) return { status: 'retryable' };
+  return { status: 'ok', byId };
+}
+
+/** The protocol body kind a claim-message resolution reports: top-level `kind`, else `protocol.kind` on bus-transport v1 bodies; null when neither is a string. */
+function claimMessageBodyKind(body: unknown): string | null {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
+  const record = body as Record<string, unknown>;
+  if (typeof record['kind'] === 'string') return record['kind'];
+  const proto = record['protocol'];
+  if (proto !== null && typeof proto === 'object' && !Array.isArray(proto)) {
+    const kind = (proto as Record<string, unknown>)['kind'];
+    if (typeof kind === 'string') return kind;
+  }
+  return null;
+}
+
+/**
+ * Resolve one message claim to the live envelope its journal row pinned — or,
+ * when the journal cannot vouch for a triple, to the live receipt now
+ * carrying the id with `pinned` marking the difference. `journal` is null
+ * when the claims journal could not be read: resolution then falls back to
+ * the bare id and reports `pinned: null` rather than hiding the claim's
+ * message. When journal rows exist for the claim's owner label but none
+ * matches a live receipt triple, the pinned message is gone and the claim
+ * reports `not-found` — a same-id receipt that replaced it is a different
+ * generation the claim does not cover. `feed` is the same read the jobs
+ * section annotates, so a `jobId` citation resolves identically; `registry`
+ * decorates `fromAgent` best-effort.
+ */
+function resolveClaimMessage(id: string, owner: string, journal: BusWorkClaimView[] | null,
+  scan: ReturnType<typeof claimMessageReceipts>, nowMs: number,
+  feed: BusWorkFeedReadResult, registry: AgentRegistry | undefined): BusWorkMineClaimMessage {
+  if (scan.status !== 'ok') return { status: scan.status, id };
+  const candidates = scan.byId.get(id) ?? [];
+  // The unpinned fallbacks take the newest same-id receipt — the scan walks
+  // cursor order, so the last entry is the latest generation the id carried.
+  let receipt: BusInboxReceipt | undefined;
+  let pinned: boolean | null;
+  if (journal === null) {
+    pinned = null;
+    receipt = candidates.at(-1);
+  } else {
+    const rows = journal.filter(row => row.id === id && row.owner === owner);
+    if (rows.length === 0) {
+      pinned = false;
+      receipt = candidates.at(-1);
+    } else {
+      // Live-lease rows pin first: the coordination claim is live, so the
+      // journal row backing it should be too; completed and expired rows are
+      // the drift fallback, tried in file order after them.
+      const liveRows = rows.filter(row => row.completedAt === null && row.leaseUntil > nowMs);
+      const settledRows = rows.filter(row => row.completedAt !== null || row.leaseUntil <= nowMs);
+      for (const row of [...liveRows, ...settledRows]) {
+        const found = candidates.find(candidate =>
+          candidate.cursor === row.cursor && candidate.receivedAt === row.receivedAt);
+        if (found !== undefined) { receipt = found; break; }
+      }
+      pinned = receipt !== undefined;
+      if (receipt === undefined) return { status: 'not-found', id };
+    }
+  }
+  if (receipt === undefined) return { status: 'not-found', id };
+  const body = receipt.envelope.body;
+  const jobId = workFeedJobId(body);
+  // The page receipt's ttl is elapsed-adjusted; the original envelope keeps
+  // the wire ttl, so expiry is receipt time plus the ttl the sender set.
+  const ttl = receipt.originalEnvelope?.ttl ?? receipt.envelope.ttl;
+  return { status: 'resolved', id, cursor: receipt.cursor,
+    ts: new Date(receipt.receivedAt).toISOString(),
+    expiresAt: new Date(receipt.receivedAt + ttl).toISOString(),
+    priority: receipt.envelope.priority, to: receipt.envelope.to, from: receipt.envelope.from,
+    fromAgent: registry === undefined ? null : resolveAgent(registry, receipt.envelope.from)?.handle ?? null,
+    bodyKind: claimMessageBodyKind(body),
+    summary: mineField(busBodySummary(body) ?? busBodyFallbackSummary(body), WORK_MINE_SUMMARY_MAX),
+    ...(jobId === undefined ? {} : { job: jobAnnotationFromFeed(feed, jobId) }),
+    pinned };
+}
+
+/**
+ * Annotate every `origin:'message'` claim with the live envelope its
+ * `queue:<id>` key leases — the resolution `agents bus show` performs per
+ * id, shared across all of a digest's message claims in one bounded store
+ * walk and one journal read, so N claims never cost N scans. Claims of
+ * every other origin cover scope keys, not mail, and stay unannotated. A
+ * store or journal that cannot be read degrades only the annotation — the
+ * claim rows themselves still list, the same rule `held` follows.
+ */
+function annotateClaimMessages(claims: BusWorkMineClaim[], options: BusWorkMineOptions,
+  nowMs: number, feed: BusWorkFeedReadResult, registry: AgentRegistry | undefined): void {
+  const targets = claims
+    .map(claim => ({ claim, id: claim.origin === 'message' ? claimMessageId(claim.key) : undefined }))
+    .filter((entry): entry is { claim: BusWorkMineClaim; id: string } => entry.id !== undefined);
+  if (targets.length === 0) return;
+  const journalRead = inspectBusWorkClaims(options.root);
+  const journal = journalRead.source === 'unavailable' ? null : journalRead.claims;
+  const scan = claimMessageReceipts(options, nowMs);
+  for (const { claim, id } of targets) {
+    claim.message = resolveClaimMessage(id, claim.owner, journal, scan, nowMs, feed, registry);
+  }
+}
+
 /**
  * The identity scope both conversation sections share, built once per read:
  * `isSelf` names the agent under any of its labels (with the literal-label
@@ -1043,7 +1216,9 @@ function blockedSection(conversations: AgentConversations, scope: ConversationSc
  * --owner`, `work feed`, the `bus next` and `handoff-receive` walks, `wakes`
  * and `inbox` — into one snapshot. The claims
  * join names the announced jobs each held claim's keys block, from the same
- * feed read the jobs section annotates, so the two views cannot disagree. A
+ * feed read the jobs section annotates, so the two views cannot disagree;
+ * `origin:'message'` claims additionally resolve their `queue:<id>` key to
+ * the live envelope the message-id lease covers. A
  * non-ok feed leaves `jobs` absent on claims and reports its own state in the
  * jobs section; non-ok claims, next, handoffs, wakes or inbox reads report
  * their own state rather than zero or an empty list. `threads`, `awaiting`
@@ -1080,12 +1255,15 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
   const awaiting = awaitingSection(conversations, scope);
   const blocked = blockedSection(conversations, scope, nowMs);
 
-  if (claims.status === 'ok' && feed.status === 'ok') {
-    for (const claim of claims.claims) {
-      claim.jobs = feed.jobs
-        .filter(job => job.claimKeys.some(key => coordinationRowBlocks(claim, key)))
-        .map(busClaimJobRef);
+  if (claims.status === 'ok') {
+    if (feed.status === 'ok') {
+      for (const claim of claims.claims) {
+        claim.jobs = feed.jobs
+          .filter(job => job.claimKeys.some(key => coordinationRowBlocks(claim, key)))
+          .map(busClaimJobRef);
+      }
     }
+    annotateClaimMessages(claims.claims, options, nowMs, feed, registry);
   }
 
   const page = readAgentWakes(agent, undefined,
@@ -1101,6 +1279,18 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
   const board = boardSection(agent, identity, options, nowMs);
 
   return { status: 'ok', agent: who, asOf, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board };
+}
+
+/** Human suffix naming the message an `origin:'message'` claim leases; '' on every other claim. */
+function claimMessageSuffix(message: BusWorkMineClaimMessage | undefined): string {
+  if (message === undefined) return '';
+  if (message.status === 'resolved') {
+    const kind = message.bodyKind === null ? '' : ` ${message.bodyKind}`;
+    const job = message.job === undefined ? '' : ` ${busInboxJobMarker(message.job)}`;
+    const pinned = message.pinned === true ? '' : ` pinned=${message.pinned === null ? 'unknown' : 'no'}`;
+    return ` msg=${message.id}${kind} "${message.summary}" from=${message.from} to=${message.to}${job}${pinned}`;
+  }
+  return ` msg=${message.id} ${message.status}`;
 }
 
 /** Scrubbed, single-line, clipped display field; '' when nothing readable remains. */
@@ -1129,7 +1319,8 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
         : row.jobs.length === 0 ? 'none'
         : row.jobs.map(job => `${job.id}(${job.status})`).join(',');
       lines.push(`  ${row.key} owner=${row.owner} origin=${row.origin} ` +
-        `until=${new Date(row.leaseUntil).toISOString()} source=${row.sourceId} jobs=${blocked}`);
+        `until=${new Date(row.leaseUntil).toISOString()} source=${row.sourceId} jobs=${blocked}` +
+        claimMessageSuffix(row.message));
     }
   }
 

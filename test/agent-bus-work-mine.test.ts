@@ -1430,6 +1430,140 @@ describe('readBusWorkMine', () => {
     expect(result.blocked).toMatchObject({ matched: 21, truncated: true, skipped: 0 });
     expect(result.blocked.items).toHaveLength(20);
   });
+
+  it('resolves message-id claims to the live envelope they lease', async () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+    // A claimable work envelope and a plain note — the journal leases any
+    // retained receipt, not only claimable work.
+    postClaimable(options, 'w-lease', { priority: 'P1' });
+    const note = appendBusInbox({ id: 'n-lease', from: 'agent:atlas', to: 'agent:nova',
+      priority: 'P2', ttl: 120_000, body: { kind: 'note', text: 'lease me anyway' } },
+      { root: options.root, now: options.now });
+    expect(note.status).toBe('posted');
+    takeWork(options, 'w-lease', 'nova');
+    takeWork(options, 'n-lease', 'nova');
+    // A scope claim covers a key, not mail, and stays bare.
+    claim(options, 'repo:a/b', 'nova', 'test:nova-scope', options.clock.now);
+
+    const result = readBusWorkMine('nova', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok' || result.claims.status !== 'ok') throw new Error('unreachable');
+    const byKey = new Map(result.claims.claims.map(row => [row.key, row]));
+    const work = byKey.get('queue:w-lease');
+    expect(work).toMatchObject({ origin: 'message', owner: 'nova' });
+    const workMessage = work!.message!;
+    expect(workMessage).toMatchObject({ status: 'resolved', id: 'w-lease', priority: 'P1',
+      to: 'agent:atlas', from: 'agent:nova', fromAgent: 'nova', bodyKind: 'work',
+      ts: new Date(options.clock.now).toISOString(),
+      expiresAt: new Date(options.clock.now + 120_000).toISOString(),
+      pinned: true });
+    if (workMessage.status === 'resolved') expect(workMessage.summary).toContain('fake work w-lease');
+    const noteClaim = byKey.get('queue:n-lease');
+    expect(noteClaim!.message).toMatchObject({ status: 'resolved', id: 'n-lease',
+      bodyKind: 'note', from: 'agent:atlas', to: 'agent:nova', pinned: true });
+    // Every claim in the digest is nova's; the resource claim carries no message.
+    expect(result.claims.claims.every(row => row.owner === 'nova')).toBe(true);
+    expect(byKey.get('repo:a/b')!.message).toBeUndefined();
+
+    // The human line names the leased message inline.
+    const line = formatBusWorkMine(result).find(text => text.includes('queue:w-lease'))!;
+    expect(line).toContain('msg=w-lease work "work: fake work w-lease"');
+    expect(line).toContain('from=agent:nova to=agent:atlas');
+    expect(line).not.toContain('pinned=');
+  });
+
+  it('annotates a claimed feed announcement with the job its body cites', async () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: 'opus' } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+    await announce(options, 'atlas', 'RQ-L-1', ['queue:RQ-L-1']);
+    // The work.post receipt itself is claimable mail: lease it like any message.
+    takeWork(options, 'post-RQ-L-1', 'nova');
+
+    const result = readBusWorkMine('nova', options);
+    if (result.status !== 'ok' || result.claims.status !== 'ok') throw new Error('unreachable');
+    const claim = result.claims.claims.find(row => row.key === 'queue:post-RQ-L-1');
+    expect(claim).toMatchObject({ origin: 'message' });
+    expect(claim!.message).toMatchObject({ status: 'resolved', id: 'post-RQ-L-1',
+      bodyKind: 'work.post', pinned: true,
+      job: { jobId: 'RQ-L-1', feed: 'ok', job: { id: 'RQ-L-1', status: 'queued' } } });
+    expect(formatBusWorkMine(result).find(text => text.includes('queue:post-RQ-L-1')))
+      .toContain('job=RQ-L-1:queued');
+  });
+
+  it('reports a claim whose pinned receipt is gone as not-found, never a same-id stand-in', () => {
+    const options = setup(Date.now());
+    register(options, 'nova');
+    postClaimable(options, 'w-ghost-pin');
+    // Drift: a live message claim plus a journal row pinning a receipt triple
+    // the store never served — the live same-id receipt is a different
+    // generation the claim does not cover.
+    const fakeToken = 'a'.repeat(64);
+    mkdirSync(join(options.root, 'bus-work-claims'), { mode: 0o700 });
+    writeFileSync(join(options.root, 'bus-work-claims', 'claims.json'), JSON.stringify([{
+      id: 'w-ghost-pin', cursor: 999_999, receivedAt: 1, ttl: 120_000, token: fakeToken,
+      owner: 'nova', leaseMs: 60_000, leaseUntil: 60_001, completedAt: null,
+    }]), { mode: 0o600 });
+    expect(acquireCoordination({ root: options.root, origin: 'message', key: 'queue:w-ghost-pin',
+      owner: 'nova', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000,
+      sourceId: 'w-ghost-pin:999999:1', now: options.clock.now }).status).toBe('acquired');
+
+    const result = readBusWorkMine('nova', options);
+    if (result.status !== 'ok' || result.claims.status !== 'ok') throw new Error('unreachable');
+    const claim = result.claims.claims.find(row => row.key === 'queue:w-ghost-pin');
+    expect(claim!.message).toEqual({ status: 'not-found', id: 'w-ghost-pin' });
+    expect(formatBusWorkMine(result).find(text => text.includes('queue:w-ghost-pin')))
+      .toContain('msg=w-ghost-pin not-found');
+  });
+
+  it('resolves by bare id with pinned unknown when the claim journal cannot be read', () => {
+    const options = setup(Date.now());
+    register(options, 'nova');
+    postClaimable(options, 'w-unpinned');
+    takeWork(options, 'w-unpinned', 'nova');
+    writeFileSync(join(options.root, 'bus-work-claims', 'claims.json'), '{invalid', { mode: 0o600 });
+
+    const result = readBusWorkMine('nova', options);
+    if (result.status !== 'ok' || result.claims.status !== 'ok') throw new Error('unreachable');
+    const claim = result.claims.claims.find(row => row.key === 'queue:w-unpinned');
+    expect(claim!.message).toMatchObject({ status: 'resolved', id: 'w-unpinned', pinned: null });
+    expect(formatBusWorkMine(result).find(text => text.includes('queue:w-unpinned')))
+      .toContain('pinned=unknown');
+  });
+
+  it('marks a coordination claim with no journal row as unpinned drift', () => {
+    const options = setup(Date.now());
+    register(options, 'nova');
+    postClaimable(options, 'w-drift');
+    // A message-origin coordination claim whose journal row never landed:
+    // resolution falls back to the bare id and says the pin is absent.
+    expect(acquireCoordination({ root: options.root, origin: 'message', key: 'queue:w-drift',
+      owner: 'nova', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000,
+      sourceId: 'w-drift:1:1', now: options.clock.now }).status).toBe('acquired');
+
+    const result = readBusWorkMine('nova', options);
+    if (result.status !== 'ok' || result.claims.status !== 'ok') throw new Error('unreachable');
+    const claim = result.claims.claims.find(row => row.key === 'queue:w-drift');
+    expect(claim!.message).toMatchObject({ status: 'resolved', id: 'w-drift', pinned: false });
+    expect(formatBusWorkMine(result).find(text => text.includes('queue:w-drift')))
+      .toContain('pinned=no');
+  });
+
+  it('degrades claim-message resolution when the bus store cannot be read', () => {
+    const options = setup(Date.now());
+    register(options, 'nova');
+    postClaimable(options, 'w-blind');
+    takeWork(options, 'w-blind', 'nova');
+    writeFileSync(join(options.root, 'bus-inbox', 'messages.json'), '{invalid', { mode: 0o600 });
+
+    const result = readBusWorkMine('nova', options);
+    if (result.status !== 'ok' || result.claims.status !== 'ok') throw new Error('unreachable');
+    const claim = result.claims.claims.find(row => row.key === 'queue:w-blind');
+    expect(claim!.message).toEqual({ status: 'unavailable', id: 'w-blind' });
+  });
 });
 
 describe('mailbox section', () => {

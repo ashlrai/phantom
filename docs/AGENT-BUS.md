@@ -468,7 +468,24 @@ digest that answers "what is pending for this agent" in one call: the live
 coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block — the reverse of `work feed --claims`,
 each carrying the feed's `postId`/`statusId` receipt citations like `claim
-list --jobs`),
+list --jobs`). An `origin:'message'` claim — the `queue:<envelope-id>` lease
+`bus next`/`bus-claim` take on one retained receipt — additionally resolves
+to that live envelope in the same bounded store walk the next/handoffs
+sections use, so the digest names the message a claim covers without a
+`bus show` per row: id, cursor, receipt and expiry times, priority, raw
+`to`/`from` labels with the resolved `fromAgent`, body kind, a scrubbed
+one-line summary and, on `jobId`-bearing bodies, the same live feed
+citation the inbox resolves. The claims journal pins the exact
+`(id, cursor, receivedAt)` receipt generation the lease took: a live row
+matching that triple resolves `pinned:true`; journal rows for the claim
+whose triple no live receipt reproduces report `not-found` — a same-id
+receipt that replaced the pinned generation is a different message the
+claim does not cover, never a stand-in; a clean journal with no row for
+the claim falls back to the newest same-id receipt with `pinned:false`,
+and an unreadable journal resolves by bare id with `pinned:null`. An
+unreadable inbox degrades only the annotation (`unavailable`/`retryable`/
+`invalid`) while the claim row itself still lists — the same rule `held`
+follows, and no token or lease internal ever leaves the read,
 the open work-feed jobs (`queued`/`rescheduled`, declaring at least one claim
 key; newest 50 shown, `open` keeps the true total) annotated per declared key —
 `freeKeys`/`heldKeys` plus a tri-state

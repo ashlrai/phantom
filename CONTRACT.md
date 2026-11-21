@@ -2074,7 +2074,23 @@ ref outside the printable-label rule. `agent` echoes `ref`, resolved
 fallback — as `{status:'ok', source, claims, owner}` or `{status:'unavailable'}`;
 each claim row is a `BusClaimsListClaim` that gains `jobs` (the announced jobs
 its keys block, `{id, owner, status, title, detail?}`) only when the feed read is `ok`,
-absent otherwise. `jobs` reports the open feed jobs
+absent otherwise. A claim row is a `BusWorkMineClaim`: on `origin:'message'`
+claims (`queue:<envelope-id>` keys) it also carries `message`, a
+`BusWorkMineClaimMessage` naming the retained envelope the lease covers —
+resolved across all message claims in one bounded inbox walk plus one
+`inspectBusWorkClaims` journal read, never one scan per claim. `resolved`
+carries `id`, `cursor`, ISO `ts`/`expiresAt`, `priority`, raw `to`/`from`
+labels, resolved `fromAgent` (null unregistered), `bodyKind` (top-level
+`kind`, else `protocol.kind`), a scrubbed clipped `summary`, optional live
+`job` feed citation on `jobId` bodies and `pinned` — `true` when a journal
+row's `(id, cursor, receivedAt)` triple matches the live receipt, `false`
+when the journal reads clean but holds no row for the claim (bare-id
+fallback to the newest same-id receipt), `null` when the journal is
+unreadable. A journal-pinned triple no live receipt reproduces reports
+`{status:'not-found'}` — a same-id replacement is a different generation —
+and an inbox read that is not `ok` reports `{status:'unavailable'|
+'retryable'|'invalid'}` while the claim row itself still lists. Every other
+origin covers a scope key, not mail, and carries no `message`. `jobs` reports the open feed jobs
 (`BUS_FEED_OPEN_STATUSES`, at least one claim key, newest 50 of `open`) as
 `BusWorkMineJob` (`BusWorkFeedJob` — so it carries the feed's `postId`/`statusId`
 envelope citations — plus `addressed`, `announced`, `freeKeys`,
