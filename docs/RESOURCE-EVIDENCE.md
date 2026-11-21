@@ -46,6 +46,22 @@ it does not imply available allowance. Sign-in, recorded credits and historical
 readings alone do not count as current usage. Chat and Fleet readiness appear
 separately in each account card.
 
+Each usage window on an account card is drawn on the bar the resource boards
+share (`components/primitives/WindowBar.tsx`). The fill is the share used. A
+hatched band at the end of the binding window is the reserve kept for you, and
+the line under the bar names it ("40% kept for you"). A flagged limit fills the
+bar in red and shows "limit reached" with no percentage. A window with no
+reading, or with a reading that is no longer current, is a hatched track.
+
+A mark across the bar shows how much of the window's time has gone, and the
+line under it says so in words with how far use sits from an even spend ("71%
+of the window gone · use is 9 points behind an even spend"). The mark needs the
+window's start, which comes from the reset provenance on the seat
+(`GET /api/verse/seats`, the same provenance `GET /api/verse/accounts` gives the
+Usage board): the provider's own period start, or seven days before a reset
+the server qualified as weekly. A window without that provenance has no mark
+and no line; the start is never guessed from the window's name.
+
 Connect native CLI accounts for subscription work, configure API resources separately,
 or run models on your own hardware. Routing is provider-neutral: an account's
 supported execution path, model capabilities and current evidence determine which
