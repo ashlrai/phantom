@@ -7,9 +7,9 @@ import {
   registerAgentIdentity, resolveAgent, stableAgentId,
 } from '../src/core/agents/bus-identity.js';
 import {
-  announceWork, busBodySummary, listBusChannels, postChannelMessage, postLabelMessage, readAgentChannel, readAgentInbox,
-  readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest, shouldWake, updateWorkStatus,
-  type UnifiedBusOptions,
+  agentWakeClaimHolderSuffix, announceWork, busBodySummary, listBusChannels, postChannelMessage, postLabelMessage,
+  readAgentChannel, readAgentInbox, readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff,
+  sendWakeRequest, shouldWake, updateWorkStatus, type AgentWakeRow, type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
@@ -1034,6 +1034,76 @@ describe('terminal work.status wakes live claim holders', () => {
     const done = await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-1', status: 'done', id: 'w-h-bad' }, options);
     expect(done).toMatchObject({ status: 'posted', claimHoldersWoken: null });
     expect(readAgentWakes('nova', undefined, options)).toMatchObject({ wakes: [] });
+  });
+
+  it('resolves each claim-holder hint to the terminal status receipt that cites it', async () => {
+    const options = ready();
+    expect(await announceWork({ from: 'atlas', ...announceFor('RQ-H-1') }, options)).toMatchObject({ status: 'posted' });
+    hold(options, 'queue:RQ-H-1', 'agent:nova');
+    hold(options, 'path:ashlrai/phantom:src/**', 'agent:orion');
+    const done = await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-1', status: 'done',
+      detail: 'merged', id: 'w-h-ctx' }, options);
+    expect(done).toMatchObject({ status: 'posted', claimHoldersWoken: 2 });
+
+    // Each holder's hint re-derives the same status receipt under its own label.
+    for (const agent of ['nova', 'orion']) {
+      const page = readAgentWakes(agent, undefined, options);
+      expect(page).toMatchObject({ status: 'ok' });
+      if (page.status !== 'ok') throw new Error('unreachable');
+      expect(page.wakes).toHaveLength(1);
+      expect(page.wakes[0]).toMatchObject({
+        id: expect.stringMatching(/^wh-[a-f0-9]{32}$/), from: 'agent:atlas',
+        claimHolder: { statusId: 'w-h-ctx', jobId: 'RQ-H-1', status: 'done', detail: 'merged' },
+      });
+      // The cited receipt is a real envelope `agents bus show` resolves.
+      expect(readBusEnvelopeById('w-h-ctx', options)).toMatchObject({ status: 'ok' });
+    }
+    // Ordinary hints carry no claim-holder annotation at all.
+    expect(await sendWakeRequest({ from: 'atlas', to: 'nova', reason: 'ping', id: 'wk-plain' }, options))
+      .toMatchObject({ status: 'posted' });
+    const nova = readAgentWakes('nova', undefined, options);
+    if (nova.status !== 'ok') throw new Error('unreachable');
+    const plain = nova.wakes.find(row => row.id === 'wk-plain');
+    expect(plain).toBeDefined();
+    expect(plain).not.toHaveProperty('claimHolder');
+  });
+
+  it('marks a claim-holder hint unresolved once its status receipt expires', async () => {
+    const options = ready();
+    expect(await announceWork({ from: 'atlas', ...announceFor('RQ-H-1') }, options)).toMatchObject({ status: 'posted' });
+    hold(options, 'queue:RQ-H-1', 'agent:nova');
+    const done = await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-1', status: 'failed',
+      id: 'w-h-ttl', ttl: 1_000 }, options);
+    expect(done).toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ wakes: [{
+      claimHolder: { statusId: 'w-h-ttl', jobId: 'RQ-H-1', status: 'failed' } }] });
+    // The queue hint outlives the receipt: with the status expired no live
+    // receipt reproduces it, so the citation is honestly unresolved — not guessed.
+    options.clock.now += 2_000;
+    const page = readAgentWakes('nova', undefined, options);
+    expect(page).toMatchObject({ status: 'ok', wakes: [{ claimHolder: 'unresolved' }] });
+  });
+
+  it('marks claim-holder hints unknown when the bus store cannot be read', async () => {
+    const options = ready();
+    expect(await announceWork({ from: 'atlas', ...announceFor('RQ-H-1') }, options)).toMatchObject({ status: 'posted' });
+    hold(options, 'queue:RQ-H-1', 'agent:nova');
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-1', status: 'done', id: 'w-h-unk' }, options))
+      .toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    // The wake queue is a separate store: it still reads, but no status receipt can be checked.
+    writeFileSync(join(options.root!, 'bus-inbox', 'messages.json'), 'not json', { mode: 0o600 });
+    const page = readAgentWakes('nova', undefined, options);
+    expect(page).toMatchObject({ status: 'ok', wakes: [{ claimHolder: 'unknown' }] });
+  });
+
+  it('spells the claim-holder suffix for human lines on every wake shape', () => {
+    const row: AgentWakeRow = { kind: 'bus.send', id: 'wk-1', from: 'agent:a', to: 'agent:b', at: 0 };
+    expect(agentWakeClaimHolderSuffix(row)).toBe('');
+    expect(agentWakeClaimHolderSuffix({ ...row, claimHolder: 'unresolved' })).toBe(' claim-holder=unresolved');
+    expect(agentWakeClaimHolderSuffix({ ...row, claimHolder: 'unknown' })).toBe(' claim-holder=unknown');
+    expect(agentWakeClaimHolderSuffix({ ...row,
+      claimHolder: { statusId: 'w-h-1', jobId: 'RQ-H-1', status: 'done' } }))
+      .toBe(' claim-holder job=RQ-H-1 status=done receipt=w-h-1');
   });
 });
 

@@ -24,14 +24,13 @@ import { readAgentConversations, type AgentConversations } from '../fleet/agent-
 import { plainAge } from '../fleet/agent-conversation-model.js';
 import { BUS_FEED_OPEN_STATUSES, busWorkFeedOwnerMatcher, busWorkFeedToMatcher, readBusWorkFeed,
   type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
-import { busBodyFallbackSummary, busBodySummary, readAgentInbox, readAgentWakes,
-  type InboxKind } from './bus-unified.js';
+import { agentWakeClaimHolderSuffix, busBodyFallbackSummary, busBodySummary, readAgentInbox, readAgentWakes,
+  type AgentWakeRow, type InboxKind } from './bus-unified.js';
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter } from '../fleet/bus-inbox.js';
 import { BUS_PROTOCOL_KEY, BUS_PRIORITIES, isClaimableWork,
   type BusPriority } from '../fleet/bus-envelope.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
-import type { BusWakeRow } from '../fleet/bus-wake-queue.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export interface BusWorkMineOptions {
@@ -103,7 +102,7 @@ export type BusWorkMineAnnounced =
   | { status: 'unavailable' | 'retryable' | 'invalid' };
 
 export type BusWorkMineWakes =
-  | { status: 'ok'; agent: string; wakes: BusWakeRow[];
+  | { status: 'ok'; agent: string; wakes: AgentWakeRow[];
       /** Every wake hint the bounded queue tail matched for the agent before its row cap; `wakes` shows only the newest digest cap. */
       matched: number;
       /** The queue tail or a row cap cut matches beyond `wakes` — matched is then a lower bound, never proven total. */
@@ -1022,7 +1021,8 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
   } else {
     lines.push(`wakes=${wakes.matched} shown=${wakes.wakes.length}${wakes.truncated ? '+truncated' : ''}`);
     for (const wake of wakes.wakes) {
-      lines.push(`  ${new Date(wake.at).toISOString()} ${wake.id} ${wake.from} -> ${wake.to}`);
+      lines.push(`  ${new Date(wake.at).toISOString()} ${wake.id} ${wake.from} -> ${wake.to}` +
+        agentWakeClaimHolderSuffix(wake));
     }
   }
 
