@@ -6,7 +6,7 @@
  * A hook that did not run is 'skipped' with its reason, a hook that threw is 'failed' with the error,
  * and one whose numbers are missing is 'not-recorded'. None of them reads as a zero.
  */
-export type SelfTickHookName = 'autofill' | 'gaps' | 'reap';
+export type SelfTickHookName = 'autofill' | 'gaps' | 'reap' | 'stranded-requeue';
 
 /** items = what the hook produced (jobs applied, gap jobs queued, worktrees removed); null unless it ran. */
 export interface SelfTickHook {
@@ -27,7 +27,7 @@ const failed = (hook: SelfTickHookName, error: unknown): SelfTickHook => ({ hook
 /** The three hooks out of the planner-tick step's stored report, for a run in the given mode. */
 export function hooksFromPlannerReport(planner: unknown, mode: 'apply' | 'dry-run' = 'apply'): SelfTickHook[] {
   const row = rec(planner);
-  if (!row) return [missing('autofill'), missing('gaps'), missing('reap')];
+  if (!row) return [missing('autofill'), missing('gaps'), missing('reap'), missing('stranded-requeue')];
 
   const auto = rec(row['autofill']);
   let autofill = missing('autofill');
@@ -63,5 +63,16 @@ export function hooksFromPlannerReport(planner: unknown, mode: 'apply' | 'dry-ru
     else if (state === 'dry-run') reap = skipped('reap', 'dry run: nothing removed');
     else if (state === 'skipped') reap = skipped('reap', reapRow['reason']);
   }
-  return [autofill, gaps, reap];
+  // The line is "requeued=N gave_up=N already=N"; items is what was requeued.
+  const sr = rec(row['strandedRequeue']);
+  let stranded = missing('stranded-requeue');
+  if (sr) {
+    if (typeof sr['error'] === 'string') stranded = failed('stranded-requeue', sr['error']);
+    else if (typeof sr['reason'] === 'string') stranded = skipped('stranded-requeue', sr['reason']);
+    else if (Array.isArray(sr['requeued'])) {
+      stranded = mode === 'dry-run' ? skipped('stranded-requeue', text(sr['summary']) ?? 'dry run')
+        : { hook: 'stranded-requeue', state: 'ran', items: (sr['requeued'] as unknown[]).length, count: null, note: text(sr['summary']) };
+    }
+  }
+  return [autofill, gaps, reap, stranded];
 }
