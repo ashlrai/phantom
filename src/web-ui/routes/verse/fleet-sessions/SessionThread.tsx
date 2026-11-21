@@ -27,6 +27,7 @@ import { sendLeaderInboxMessage } from '../leader-thread/leader-inbox-data.js';
 import { MessageMarkdown } from '../MessageMarkdown.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { ThreadEarlier } from './ThreadEarlier.js';
+import { ThreadWork } from './ThreadWork.js';
 import { onRecord, replyText, routedRow, sessionThreadQuery, sourcesLine, STATE_WORD, threadFailure, THREAD_POLL_MS, THREAD_REPLY_MAX,
   type SessionThread as Thread, type ThreadMessage } from './session-thread-model.js';
 import { ThreadControls } from './ThreadControls.js';
@@ -125,8 +126,7 @@ export function SessionThreadView({ thread, sent, onSent, markKey = null, aboveR
   return <>
     <div className={styles.summary} aria-label="Summary">
       <span className={styles.summaryTitle}>Summary <span className={styles.muted}>from the records, as of {clockTime(thread.generatedAt) || 'an unknown time'}</span></span>
-      {thread.summary.length === 0 ? <p className={styles.plain}>Summary unknown: the read returned none.</p>
-        : thread.summary.map(line => <p key={line} className={styles.plain}>{line}</p>)}
+      <ThreadWork thread={thread} />
     </div>
     {thread.messages.length === 0 && waiting.length === 0
       ? <p className={styles.empty} role="status">Nothing is recorded for {session.id} yet.</p>

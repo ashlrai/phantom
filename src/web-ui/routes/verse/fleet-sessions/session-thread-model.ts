@@ -35,6 +35,15 @@ export interface ThreadSession {
   state: ThreadState;
   lastMessageAgeSeconds: number | null;
   prUrl: string | null;
+  /** The helpers below it, as the session list counts them; null (or absent, in a thread built by hand) when the read did not say. */
+  helpers?: { below: number; running: number; failed: number } | null;
+}
+/** What a session's job has done, as the read's `work` key gives it. A part that could not be read is null: unknown, not zero. */
+export interface ThreadWork {
+  commands: number | null;
+  files: { count: number; added: number; removed: number; partial: boolean } | null;
+  /** The newest recorded step; `at` is null when it carried no time that parses. */
+  step: { event: string; summary: string; at: string | null } | null;
 }
 /** Who a reply written in the thread reaches, or why it cannot be sent from here. */
 export type ReplyRoute =
@@ -51,6 +60,8 @@ export interface SessionThread {
   /** `output` (the session's own log lines) is absent when the server that answered does not read it. */
   sources: { activity: ThreadSource; bus: ThreadSource; owner: ThreadSource; replies: ThreadSource; orders: ThreadSource; output?: ThreadSource; controls?: ThreadSource };
   gaps: string[];
+  /** Null for a session with no job, when its activity was not read, and from a server that does not say. A narrowed read always carries the key. */
+  work?: ThreadWork | null;
   reply: ReplyRoute;
   /** Null when no request stands, and for a server that does not read the control file. */
   control: StandingControl | null;
@@ -64,6 +75,7 @@ type Obj = Record<string, unknown>;
 const object = (v: unknown): v is Obj => v !== null && typeof v === 'object' && !Array.isArray(v);
 const text = (v: unknown, max = MAX_LINE): string | null => (typeof v === 'string' && v !== '' ? v.slice(0, max) : null);
 const time = (v: unknown): string | null => { const at = text(v); return at && Number.isFinite(Date.parse(at)) ? at : null; };
+const count = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
 const oneOf = <T extends string>(v: unknown, allowed: readonly T[], fallback: T): T => (allowed.includes(v as T) ? v as T : fallback);
 const lines = (v: unknown): string[] => (Array.isArray(v) ? v.map(line => text(line)).filter((line): line is string => line !== null).slice(0, 20) : []);
 const PR = /^https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+\/?$/;
@@ -78,6 +90,26 @@ function narrowMessage(raw: unknown): ThreadMessage | null {
     key, kind: text(raw.kind) ?? 'unknown', side: oneOf<ThreadSide>(raw.side, ['session', 'other', 'record'], 'record'),
     // A leader reply's `at` is its own heading time, not always ISO; anything that does not parse reads as no time.
     label: text(raw.label) ?? 'Unlabelled', at: time(raw.at), text: body, format: oneOf<ThreadFormat>(raw.format, ['plain', 'mono', 'markdown'], 'plain'),
+  };
+}
+
+/** Null unless every count is one. */
+export function narrowHelpers(raw: unknown): { below: number; running: number; failed: number } | null {
+  if (!object(raw)) return null;
+  const below = count(raw.below), running = count(raw.running), failed = count(raw.failed);
+  return below === null || running === null || failed === null ? null : { below, running, failed };
+}
+
+/** Null when the read carries no work for the session. Each part is narrowed on its own, so one malformed part reads unknown and the rest stand. */
+export function narrowWork(raw: unknown): ThreadWork | null {
+  if (!object(raw)) return null;
+  const f = object(raw.files) ? raw.files : null, files = f ? { count: count(f.count), added: count(f.added), removed: count(f.removed) } : null;
+  const s = object(raw.step) ? raw.step : null, event = s ? text(s.event) : null;
+  return {
+    commands: count(raw.commands),
+    files: files && files.count !== null && files.added !== null && files.removed !== null
+      ? { count: files.count, added: files.added, removed: files.removed, partial: f!.partial === true } : null,
+    step: s && event ? { event, summary: text(s.summary) ?? '', at: time(s.at) } : null,
   };
 }
 
@@ -116,7 +148,7 @@ export function narrowSessionThread(raw: unknown): SessionThread | null {
     lane: text(s.lane) ?? 'unknown', model: text(s.model) ?? 'unknown', repo: text(s.repo) ?? 'unknown',
     jobId: text(s.jobId), parentId: text(s.parentId),
     state: oneOf<ThreadState>(s.state, ['quiet', 'running', 'idle', 'done', 'failed', 'unknown'], 'unknown'),
-    lastMessageAgeSeconds: age, prUrl: prUrl && PR.test(prUrl) ? prUrl : null,
+    lastMessageAgeSeconds: age, prUrl: prUrl && PR.test(prUrl) ? prUrl : null, helpers: narrowHelpers(s.helpers),
   };
   const source = (name: string) => oneOf(sources[name], SOURCES, 'unavailable');
   return {
@@ -124,7 +156,8 @@ export function narrowSessionThread(raw: unknown): SessionThread | null {
     summary: lines(raw.summary), messages,
     sources: { activity: source('activity'), bus: source('bus'), owner: source('owner'), replies: source('replies'), orders: source('orders'),
       ...(sources.output === undefined ? {} : { output: source('output') }), ...(sources.controls === undefined ? {} : { controls: source('controls') }) },
-    gaps: lines(raw.gaps), reply: replyRoute(session, raw.reply), control: standing(raw.control),
+    // Work is a job's, so it is believed only on a session that has one.
+    gaps: lines(raw.gaps), work: session.jobId !== null ? narrowWork(raw.work) : null, reply: replyRoute(session, raw.reply), control: standing(raw.control),
     depth: raw.depth === 'recent' || raw.depth === 'full' ? raw.depth : null, deeper: raw.depth === 'recent' && raw.deeper === true,
   };
 }

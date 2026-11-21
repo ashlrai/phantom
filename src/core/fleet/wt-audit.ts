@@ -305,6 +305,8 @@ export interface WtEvidence {
   rc: boolean;
   pid: boolean;
   reapingMarker: boolean;
+  /** A `<job>.publish` file exists, even when it holds no RESULT line. */
+  publishFile?: boolean;
   publish: { class: PublishClass; url: string | null } | null;
   ledger: WtJobLedger | undefined;
   ledgerMergedUrl: boolean;
@@ -340,6 +342,8 @@ export interface WtAuditEntry {
     statusNamed: boolean; statusKept: boolean; statusReaping: boolean; keepListed: boolean;
     pinned: boolean; psAlive: boolean; psReaping: boolean; psPublishing: boolean;
     ledgerRows: number; outcome: string | null; publishClass: PublishClass | null;
+    /** A publish file exists; with publishClass null it holds no readable RESULT line. */
+    publishFile: boolean;
   };
 }
 
@@ -447,7 +451,7 @@ export function classifyEntry(ev: WtEvidence, ctx: WtAuditContext): Omit<WtAudit
       psAlive: ev.psAlive, psReaping: ev.psReaping, psPublishing: ev.psPublishing,
       ledgerRows: ledger?.rows ?? 0,
       outcome,
-      publishClass: ev.publish?.class ?? null,
+      publishClass: ev.publish?.class ?? null, publishFile: ev.publishFile ?? ev.publish !== null,
     },
   };
 }
@@ -597,6 +601,7 @@ export async function readWtAudit(deps: ReadWtAuditOptions = {}): Promise<WtAudi
       baseMatch: base.match,
       dispatched: runSet.has(`${name}.dispatched`),
       rc: runSet.has(`${name}.rc`),
+      publishFile: hasPublish,
       pid: runSet.has(`${name}.pid`) || runsSet.has(`${name}.pid`),
       reapingMarker: runSet.has(`${name}.reaping`),
       publish,

@@ -1009,6 +1009,7 @@ describe('readBusWorkMine', () => {
     expect(result.next).toEqual({ status: 'unavailable', reason: 'Bus store is not readable.' });
     expect(result.handoffs).toEqual({ status: 'unavailable', reason: 'Bus store is not readable.' });
     expect(result.threads).toEqual({ status: 'unavailable', reason: 'Bus store is not readable.' });
+    expect(result.blocked).toEqual({ status: 'unavailable', reason: 'Bus store is not readable.' });
   });
 
   it('lists conversation threads waiting on the agent and clears them once answered', async () => {
@@ -1161,6 +1162,8 @@ describe('readBusWorkMine', () => {
     if (empty.status !== 'ok') throw new Error('unreachable');
     expect(empty.threads).toMatchObject({ status: 'ok', source: 'missing', matched: 0,
       items: [], truncated: false, skipped: 0 });
+    expect(empty.blocked).toMatchObject({ status: 'ok', source: 'missing', matched: 0,
+      items: [], truncated: false, skipped: 0 });
 
     // A poisoned store is unknown, never an empty list.
     postClaimable(options, 'w-1');
@@ -1170,6 +1173,7 @@ describe('readBusWorkMine', () => {
     if (down.status !== 'ok') throw new Error('unreachable');
     expect(down.threads).toEqual({ status: 'unavailable', reason: 'Bus store is not readable.' });
     expect(down.awaiting).toEqual({ status: 'unavailable', reason: 'Bus store is not readable.' });
+    expect(down.blocked).toEqual({ status: 'unavailable', reason: 'Bus store is not readable.' });
   });
 
   it('lists conversations the agent is waiting on and clears them once answered', async () => {
@@ -1288,6 +1292,117 @@ describe('readBusWorkMine', () => {
     expect(narrowed.awaiting.items[0]).toMatchObject({ messageId: 'out-alias',
       waitingOnAgent: null, fromAgent: null });
   });
+
+  it('lists blocked threads the agent is a party to, longest-standing first', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'ghost');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+    registerAgentIdentity({ handle: 'ghost', runtime: { cli: 'grok', provider: 'local', model: null } }, options);
+
+    const post = (id: string, from: string, to: string, body: Record<string, unknown>) => {
+      const posted = appendBusInbox({ id, from, to, priority: 'P2', ttl: 120_000, body },
+        { root: options.root, now: options.now });
+      expect(posted.status).toBe('posted');
+    };
+    // Two blocked threads atlas is a party to — one it reported itself — plus
+    // one between agents atlas never touched, an answered thread and a done one.
+    post('blk-old', 'agent:atlas', 'agent:nova',
+      { kind: 'blocker', text: 'deploy blocked on creds', thread: 't-old' });
+    options.clock.now += 60_000;
+    post('blk-new', 'agent:nova', 'agent:atlas',
+      { kind: 'blocker', text: 'review blocked on access', thread: 't-new' });
+    post('blk-other', 'agent:nova', 'agent:ghost',
+      { kind: 'blocker', text: 'ghost-side block', thread: 't-other' });
+    post('ask-1', 'agent:nova', 'agent:atlas', { kind: 'note', text: 'still open?', thread: 't-ask' });
+    post('ans-1', 'agent:atlas', 'agent:nova', { kind: 'note', text: 'yes', thread: 't-ask' });
+    post('done-1', 'agent:nova', 'agent:atlas',
+      { kind: 'note', text: 'shipped it', status: 'done', thread: 't-done' });
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.blocked).toMatchObject({ status: 'ok', source: 'available', matched: 2,
+      truncated: false, skipped: 0 });
+    if (result.blocked.status !== 'ok') throw new Error('unreachable');
+    // Longest-standing first: the block atlas reported an hour ago leads, and
+    // the block it reported itself still lists — the thread stays pending.
+    expect(result.blocked.items.map(item => item.id)).toEqual(['t-old', 't-new']);
+    const old = result.blocked.items[0]!;
+    expect(old).toMatchObject({ messageId: 'blk-old', kind: 'blocker', from: 'atlas',
+      fromAgent: 'atlas', to: 'nova', messageCount: 1 });
+    expect(old.subject).toContain('deploy blocked on creds');
+    expect(old.blockedMs).toBe(60_000);
+    expect(old.lastAt).toBe(new Date(1_000).toISOString());
+    const fresh = result.blocked.items[1]!;
+    expect(fresh).toMatchObject({ messageId: 'blk-new', kind: 'blocker', from: 'nova',
+      fromAgent: 'nova', to: 'atlas', messageCount: 1 });
+    expect(fresh.blockedMs).toBe(0);
+    expect(formatBusWorkMine(result).join('\n')).toContain('blocked=2 shown=2');
+
+    // A party to none of atlas's threads sees only its own block.
+    const ghost = readBusWorkMine('ghost', options);
+    if (ghost.status !== 'ok' || ghost.blocked.status !== 'ok') throw new Error('unreachable');
+    expect(ghost.blocked.matched).toBe(1);
+    expect(ghost.blocked.items[0]).toMatchObject({ id: 't-other', messageId: 'blk-other' });
+    // nova is a party to both atlas threads plus its own other block.
+    const nova = readBusWorkMine('nova', options);
+    if (nova.status !== 'ok' || nova.blocked.status !== 'ok') throw new Error('unreachable');
+    expect(nova.blocked.matched).toBe(3);
+  });
+
+  it('lists blocked threads touching channels the agent belongs to', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'ghost', 'ops');
+    for (const handle of ['atlas', 'nova', 'ghost', 'ops']) {
+      registerAgentIdentity({ handle,
+        runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    }
+    // eng: atlas + nova. ops: ops only.
+    expect(createAgentChannel({ name: 'eng', createdBy: 'atlas', members: ['nova'] }, options).status)
+      .toBe('created');
+    expect(createAgentChannel({ name: 'ops', createdBy: 'ops' }, options).status).toBe('created');
+
+    const post = (id: string, from: string, to: string, text: string) => {
+      const posted = appendBusInbox({ id, from, to, priority: 'P2', ttl: 120_000,
+        body: { kind: 'blocker', text, thread: id } }, { root: options.root, now: options.now });
+      expect(posted.status).toBe('posted');
+    };
+    post('blk-eng', 'agent:ghost', 'group:eng:general', 'eng deploy blocked');
+    post('blk-ops', 'agent:ghost', 'group:ops:general', 'ops deploy blocked');
+    post('blk-self', 'agent:atlas', 'group:eng:general', 'atlas-reported eng block');
+
+    const atlas = readBusWorkMine('atlas', options);
+    if (atlas.status !== 'ok' || atlas.blocked.status !== 'ok') throw new Error('unreachable');
+    // Both eng-addressed blocks — including atlas's own report — and never ops.
+    expect(atlas.blocked.matched).toBe(2);
+    expect(atlas.blocked.items.map(item => item.id).sort()).toEqual(['blk-eng', 'blk-self']);
+    const nova = readBusWorkMine('nova', options);
+    if (nova.status !== 'ok' || nova.blocked.status !== 'ok') throw new Error('unreachable');
+    expect(nova.blocked.matched).toBe(2);
+    const ops = readBusWorkMine('ops', options);
+    if (ops.status !== 'ok' || ops.blocked.status !== 'ok') throw new Error('unreachable');
+    expect(ops.blocked.matched).toBe(1);
+    expect(ops.blocked.items[0]).toMatchObject({ id: 'blk-ops' });
+  });
+
+  it('caps shown blocked threads at twenty with the true total', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+    for (let i = 0; i < 21; i++) {
+      const posted = appendBusInbox({ id: `blk-cap-${i}`, from: 'agent:nova', to: 'agent:atlas',
+        priority: 'P2', ttl: 120_000,
+        body: { kind: 'blocker', text: `block ${i}`, thread: `t-cap-${i}` } },
+        { root: options.root, now: options.now });
+      expect(posted.status).toBe('posted');
+    }
+    const result = readBusWorkMine('atlas', options);
+    if (result.status !== 'ok' || result.blocked.status !== 'ok') throw new Error('unreachable');
+    expect(result.blocked).toMatchObject({ matched: 21, truncated: true, skipped: 0 });
+    expect(result.blocked.items).toHaveLength(20);
+  });
 });
 
 describe('formatBusWorkMine', () => {
@@ -1309,6 +1424,7 @@ describe('formatBusWorkMine', () => {
     expect(text).toContain('next=0 shown=0 holds=complete');
     expect(text).toContain('handoffs=0 shown=0 holds=complete');
     expect(text).toContain('threads=0 shown=0');
+    expect(text).toContain('blocked=0 shown=0');
     expect(text).toContain('wakes=0');
     expect(text).toContain('inbox=0');
     // A non-ok top-level result renders its status line only.

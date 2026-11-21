@@ -1,9 +1,11 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Script } from 'node:vm';
 
 /**
  * Paths whose change can move the authority drift snapshots: src/ (Tier-1 roots and closure),
@@ -52,6 +54,8 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     swiftFiles: changed.filter((path) => existing.has(path) && /\.swift$/.test(path)),
     yamlFiles: changed.filter((path) => existing.has(path) && /\.ya?ml$/.test(path)),
     tomlFiles: changed.filter((path) => existing.has(path) && /\.toml$/.test(path)),
+    cssFiles: changed.filter((path) => existing.has(path) && /\.css$/i.test(path)),
+    snapFiles: changed.filter((path) => existing.has(path) && /\.snap$/i.test(path)),
   };
 }
 
@@ -513,6 +517,99 @@ export function runTomlSyntaxCheck(root, files, spawn = spawnSync) {
     return false;
   }
   console.log('PASS toml syntax check');
+  return true;
+}
+
+/**
+ * The CSS grammar step uses lightningcss — the parser Vite bundles for the
+ * web-ui build — resolved through vite's own dependency closure. pnpm keeps
+ * transitive packages out of the root node_modules, so the check anchors
+ * require resolution at vite's real manifest path rather than probing
+ * node_modules/lightningcss directly; npm's flat layout resolves the same
+ * way. esbuild's CSS parser was rejected for this step: it recovers from
+ * nearly every malformed construct and would only ever catch an
+ * unterminated comment, while lightningcss enforces the grammar vite
+ * applies (errorRecovery stays off, so the first real error fails).
+ */
+export function cssParserPreflight(root, exists = existsSync) {
+  const viteManifest = resolve(root, 'node_modules/vite/package.json');
+  if (!exists(viteManifest)) {
+    return { ok: false, reason: 'node_modules/vite/package.json is absent; run npm ci to restore it' };
+  }
+  try {
+    createRequire(realpathSync(viteManifest)).resolve('lightningcss');
+  } catch {
+    return { ok: false, reason: 'lightningcss is not resolvable through the installed vite; run npm ci to restore it' };
+  }
+  return { ok: true };
+}
+
+// The child resolves lightningcss the same way the preflight does — through
+// vite's real (un-symlinked) manifest — so pnpm's transitive layout and npm's
+// flat layout both work. Each file reports its first parse error as
+// `path:line:column: message` and the run exits 1 when any file fails.
+const CSS_SYNTAX_CHECK = `import { readFileSync, realpathSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
+const req = createRequire(realpathSync(resolve('node_modules/vite/package.json')));
+const { transform } = req('lightningcss');
+let failed = false;
+for (const path of process.argv.slice(1)) {
+  try {
+    await transform({ filename: path, code: readFileSync(path), errorRecovery: false });
+  } catch (error) {
+    const loc = error && error.loc && Number.isInteger(error.loc.line)
+      ? ':' + error.loc.line + ':' + error.loc.column
+      : '';
+    const message = String(error && error.message ? error.message : error).split('\\n')[0];
+    console.error(path + loc + ': ' + message);
+    failed = true;
+  }
+}
+process.exit(failed ? 1 : 0);
+`;
+
+/** Syntax-check changed .css files with the vite-bundled lightningcss parser; false on any parse failure. */
+export function runCssSyntaxCheck(root, files, spawn = spawnSync) {
+  const result = spawn(process.execPath, ['--input-type=module', '-e', CSS_SYNTAX_CHECK, ...files], {
+    cwd: root, encoding: 'utf8', timeout: 120000,
+  });
+  if (result.status !== 0) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL css syntax check');
+    return false;
+  }
+  console.log('PASS css syntax check');
+  return true;
+}
+
+/**
+ * Vitest `.snap` snapshot modules are `exports[`name`] = <serialized>;`
+ * statement lists — JavaScript that eslint's lintFiles glob and the
+ * tsconfig include both skip, so a hand edit or a merge-conflict marker
+ * survives until vitest loads the suite. `node --check` refuses the unknown
+ * extension, but node's script parser is available in-process through
+ * `vm.Script`, so like the JSON check there is no preflight or SKIP path.
+ * The error stack's first line already carries `path:line`.
+ */
+export function runSnapSyntaxCheck(root, files, read = readFileSync) {
+  const failures = [];
+  for (const path of files) {
+    try {
+      new Script(read(resolve(root, path), 'utf8'), { filename: path });
+    } catch (error) {
+      const stack = typeof error?.stack === 'string' ? error.stack.split('\n') : [];
+      const where = stack[0]?.startsWith(`${path}:`) ? stack[0].slice(path.length) : '';
+      failures.push(`${path}${where}: ${error.message}`);
+    }
+  }
+  if (failures.length) {
+    for (const failure of failures) console.error(`FAIL snap syntax check: ${failure}`);
+    return false;
+  }
+  console.log('PASS snap syntax check');
   return true;
 }
 
@@ -1074,6 +1171,21 @@ function main() {
     } else if (!runTomlSyntaxCheck(root, selection.tomlFiles)) {
       process.exitCode = 1;
     }
+  }
+  if (selection.cssFiles.length === 0) {
+    console.log('PASS css syntax check skipped: no css change');
+  } else {
+    const css = cssParserPreflight(root);
+    if (!css.ok) {
+      console.log(`SKIP css syntax check: ${css.reason}`);
+    } else if (!runCssSyntaxCheck(root, selection.cssFiles)) {
+      process.exitCode = 1;
+    }
+  }
+  if (selection.snapFiles.length === 0) {
+    console.log('PASS snap syntax check skipped: no snapshot change');
+  } else if (!runSnapSyntaxCheck(root, selection.snapFiles)) {
+    process.exitCode = 1;
   }
   if (selection.quarantineCheck) {
     try {

@@ -2019,6 +2019,15 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/local-capacity ────────────────────────────────────
+    // How many local-model workers fit in free memory (local.capacity.v1), the same answer as
+    // `phm local capacity`. Read-only (vm_stat and the process table); unknown is workers: null.
+    if (path === '/api/fleet/local-capacity' && method === 'GET') {
+      const { readLocalCapacity } = await import('../fleet/local-capacity.js');
+      sendJson(res, 200, await readLocalCapacity());
+      return true;
+    }
+
     // ── GET /api/fleet/activity ─────────────────────────────────────────
     // RQ-SWE3-OBSERVABILITY-2: per-job launch->finish->publish lifecycle and
     // timing folded from the host metrics ledger (metrics/jobs.jsonl) — the

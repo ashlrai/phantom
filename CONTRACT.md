@@ -461,6 +461,12 @@ explicit row wins: `empty` (the recorded no-diff boolean), `exit_code`
 `failure_class` (only bounded identifier-shaped labels; anything else is
 skipped). All stay `null` when no jobs row recorded them — the fold
 never infers a finish verdict from merge state, PR URLs or event names.
+`merged` reads the jobs-ledger outcome dialect the sibling fleet readers
+share: a terminal phase across
+`phase`/`state`/`outcome`/`status`/`result`/`conclusion`, or a `merged` /
+`closed` event name when no phase field resolves (a resolved phase stays
+authoritative; `mergedAt`/`closedAt` stay the preferred terminal stamps),
+with the `merged` boolean as before; every other spelling stays `null`.
 The fold is read-only and advisory: it
 never routes, ranks, tunes or writes.
 
@@ -1552,7 +1558,8 @@ times are null, and `unknown` names the reason for each. `quiet` is true after
 `threadSessions(list)`, the limits `THREADS_MAX` (40 sessions),
 `THREADS_MESSAGES_SHOWN` (3) and `THREADS_TEXT_CHARS` (400), `THREAD_STATES`
 and the types `SessionThreadsV1`, `SessionThreadsEntry`,
-`SessionThreadsMessage`, `SessionThreadsServes` and `SessionThreadsParts`. `parts` is
+`SessionThreadsMessage`, `SessionThreadsServes`, `SessionThreadsWork` and `SessionThreadsParts`,
+and the pure `workOf(activity)`. `parts` is
 `{sessionsRead, bus, activity, replies?, owner?, orders?}`, where `activity`
 maps a job id to its activity read (null when that read failed, no key when it
 was not asked for), `owner` is the Leader inbox, handed to the leader's and
@@ -1567,12 +1574,22 @@ single-session thread for the same records. Before `reply`, an entry carries
 `control: SessionThreadControl | null`, the single thread's own answer (the
 newest request for the session's job that was not refused; null when none
 stands, for a session with no job, and when the control file was not read).
-An entry's last key is `serves`:
+After `reply` comes `serves`:
 `{key, at, source, text, truncated, jobs}` for a worker whose job the order
 trace ties to a message of Mason's (the newest such message; `key` is shared
 by every entry serving it, `at` is the inbox's Eastern minute, `text` is null
 when the message is not among the inbox entries read, `jobs` counts every job
 the trace ties to the message), otherwise null.
+An entry's last key is `work: SessionThreadsWork | null`, built by
+`workOf` from the job's activity read: `{commands, files, step}` with
+`commands: number | null` (null when the log's commands were not read
+healthy), `files: {count, added, removed, partial} | null` (null when no
+change read answered, `partial` for a degraded one) and
+`step: {event, summary, at} | null` (the newest recorded step; `at` null
+when it does not parse). These are the values the summary's "commands seen,
+files changed" and "Latest step" sentences state. `work` is null for a
+session with no job, a job whose activity was not asked for and a failed
+activity read.
 `src/core/fleet/session-threads-read.ts` exports `readSessionThreads(options)`
 with `lane`, `repo`, `live` and injectable `readMap`, `readSubagents`,
 `readLeader`, `readActivity`, `readBus`, `readOwner`, `readReplies` and
@@ -1662,6 +1679,15 @@ accepts `--all` and calls `read(id, 'full')` for it, `read(id)` otherwise;
 route accepts `depth=recent|full` at most once, passing `'full'` on only
 when asked. `renderSessionThreadText` adds a note naming `--all` when
 `deeper` is true.
+Work (additive): the document gains a top-level key between `gaps` and
+`reply`, `work: SessionThreadWork | null`: `{commands, files, step}` as
+described for an entry of `fleet.session-threads.v1` above, null for a
+session with no job, a job whose activity was not asked for, a failed
+activity read and an unknown id. `session-thread.ts` exports the type and
+the pure `sessionWork(activity)` that builds it; in `session-threads.ts`,
+`SessionThreadsWork` is now an alias of that type and `workOf` of that
+function, so an entry and its single thread give the same answer. The last
+four top-level keys stay `reply`, `control`, `depth`, `deeper`.
 `src/core/fleet/session-thread-read.ts` exports `readSessionThread(id,
 options)` with injectable `readMap`, `readSubagents`, `readActivity`,
 `readBus`, `readOwner` and `readReplies`; each read is guarded on its own and the result is
@@ -1700,6 +1726,33 @@ exported. Lane `doing` for idle and held lanes now names the reason. Additive;
 when that read had no verdict) and each `messages[]` row gains optional `lastAt`
 (ISO, newest message on the line). `OrgTreeInputs.laneHealth` and
 `FleetOrgReaders.laneHealth` are new. Additive; `version` stays 1.
+
+## Session find (`fleet.session-find.v1`)
+
+`src/core/fleet/session-find.ts` exports the pure
+`buildSessionFind(list, parts, words, now)`, `findWords(query)`,
+`findSessions(list)`, `renderSessionFindText(read)`, `SESSION_FIND_SCHEMA`,
+`FIND_SESSIONS_MAX` (120), `FIND_HITS_SHOWN` (5), `FIND_TEXT_CHARS` (240),
+`FIND_QUERY_CHARS` (200), `FIND_WORDS_MAX` (8) and the types `SessionFindV1`,
+`SessionFindResult` and `SessionFindHit`. `parts` is the `SessionThreadsParts`
+the session threads builder takes. Key order: `schema`, `generatedAt`,
+`words`, `filter` (`lane`, `repo`, `live`), `counts` (`sessions`, `searched`,
+`found`), `results`, `sources` (`sessions`, `bus`, `owner`, `orders`), `gaps`.
+A result: `session`, `summary`, `hits`, `hitCount`, `messageCount`. A hit:
+`key`, `kind`, `side`, `label`, `at`, `text`, `truncated`. Each session is
+searched as its `full` depth thread, after that thread is scrubbed.
+`src/core/fleet/session-threads-read.ts` exports `readSessionFind(query,
+options)`, `readSessionFindParts(options)` and `SessionThreadsPartsRead`,
+with the injectable reads `readSessionThreads` takes. `src/cli/sessions.ts`
+exports `cmdSessionFind(args, read)` for
+`phm sessions find <words> [--lane <lane>] [--repo <repo>] [--live] [--json]`
+(exit 0 read, 1 list unreadable, 2 usage).
+`src/core/verse/fleet-session-find-api.ts` exports
+`createFleetSessionFindApi(read)`, `defaultSessionFindRead(readParts)`,
+`handleFleetSessionFindApi` and `SESSION_FIND_PATH` for
+`GET /api/verse/fleet/control/session-find?q=<words>` (read session required;
+200, 400, 401, 405, 503). It adds no source and writes nothing. Fields are
+listed in `docs/FLEET-API.md`.
 
 ## Runtime-dynamic fleet config (RQ-DYNCONFIG-1)
 
@@ -1871,7 +1924,7 @@ no execution authority; the token returns only to its acquirer.
 `phm agents bus work mine [<agent>]`. `readBusWorkMine(agent, options?)`
 (`BusWorkMineOptions`: `root?`, `runsRoot?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, claims, jobs, announced, next, handoffs, threads, awaiting, wakes, inbox}` or `{status:'invalid',
+asOf, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
@@ -1993,11 +2046,27 @@ party owing the reply (null for a topic or `group:` address, an
 unregistered label, or an unreadable registry). Same 20-item cap,
 longest-waiting order, `matched`/`truncated`/`skipped` semantics and
 `unavailable`-on-unreadable rule as `threads`.
+`blocked` is the third view over the same shared conversations read — now
+unfiltered, so all three sections narrow one projection at the frozen
+instant: every `state:'blocked'` thread (a blocker or failed report nothing
+has answered) the agent is a party to, where participation is any
+participant name the section's denotes rule matches — the agent's own
+labels, a name resolving to its identity, or a `group:<channel>:<topic>`
+address of a registry channel it belongs to. A block the agent reported
+itself still lists: the thread stays pending until a newer message moves it
+out of the state. Each `BusWorkMineBlockedItem` carries the conversation
+`id`, the latest message's envelope `id` as `messageId`, its `kind`, the
+sender's `from`/`fromAgent`, the recipient `to`, `lastAt`, `blockedMs`
+(ms the thread has stood blocked at the frozen instant), `messageCount` and
+the scrubbed `subject`; the first 20 show longest-standing first with
+`matched` the true total and `truncated` definitive, same
+`matched`/`truncated`/`skipped`/`unavailable` semantics as `threads`.
 `wakes` reuses
 `readAgentWakes` capped at the newest 20 with `matched` the count of every
 hint the bounded queue tail matched for the agent before its row cap —
 a lower bound, never a proven total, when `truncated` marks queue-tail or
-cap cuts beyond the shown slice — and
+cap cuts beyond the shown slice — claim-holder `wh-…` rows carrying the
+same `claimHolder` citation `readAgentWakes` resolves — and
 `unknown-agent`/`unavailable` with `reason`. `inbox` reuses `readAgentInbox`
 for the next page of mail addressed to the agent — same matching, order and
 owner-share receipt checks as `agents bus inbox` — as `{status:'ok', agent,
@@ -2047,10 +2116,12 @@ with a `reason`); they never throw for bad input or storage faults.
 `postLabelMessage`, `sendHandoff`, `sendWakeRequest`, `announceWork`,
 `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
-carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?, matched?}, options?)`
-(`thread` keeps only `note`/`context` bodies carrying that v2 thread label and
+carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?, priority?, matched?}, options?)`
+(`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
-keeping exact-label matching; `matched: true` scans the whole retained store
+keeping exact-label matching, and `priority` keeps only envelopes stamped
+with that exact P0..P3 band — the same match `comms bus read --priority`
+applies; `matched: true` scans the whole retained store
 and returns `matched`, the count of every filter-matched row, while
 `messages` still caps at `limit`; `group.presence` heartbeats are observations
 with their own read and never appear as mail of any kind; claimable work and
@@ -2062,17 +2133,22 @@ store cannot be read),
 every hint the bounded queue tail accepted for the agent before its row
 cap, and `truncated`, true when the 256 KiB observation window or the cap
 cut matches beyond the returned slice — `matched` is then a lower bound,
-never a proven total), `listBusChannels(agent, options?)`
+never a proven total; claim-holder `wh-…` hints additionally carry
+`claimHolder` — the live terminal `work.status` receipt re-derived as the
+hint's citation as `{statusId, jobId, status, detail?}`, `'unresolved'`
+when no live receipt reproduces it, `'unknown'` when the bus store cannot
+be read), `listBusChannels(agent, options?)`
 (the registry channels name-sorted with `createdBy`, `createdAt` and member
 handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or
 `available`, `agent` the resolved handle or null, and an unknown ref or
 unreadable registry answers `unknown-agent`/`unavailable`, never an empty
-list), `readAgentChannel(name, {topic, from, thread, after, limit}, options?)`
+list), `readAgentChannel(name, {topic, from, thread, priority, after, limit}, options?)`
 (one oldest-first page of a registry channel's live posts addressed to
 `group:<name>:*` — or one topic — with `group.presence` heartbeats
-excluded; `from` filters by sender through identity-label matching and
+excluded; `from` filters by sender through identity-label matching,
 `thread` keeps only `note`/`context` bodies carrying that v2 thread label,
+and `priority` keeps only posts stamped with that exact P0..P3 band,
 `nextCursor` covers every scanned row, a missing registry answers
 `unknown-channel`, and an unreadable registry or store answers
 `unavailable`/`retryable`, never an empty page passed off as history),
@@ -2085,7 +2161,15 @@ unreadable registry never hides the envelope; claimable work and
 worker-handoff bodies also report `held`/`holder` — whether a taken
 message-id claim or live coordination hold covers the exact receipt, the
 same rule `work mine` next/handoffs and the unified comms inbox apply —
-with `held` null when a hold store cannot be read, never proven free),
+with `held` null when a hold store cannot be read, never proven free. A
+claim-holder `wh-…` wake-hint id that names no live envelope resolves
+through the wake queue and the live terminal `work.status` receipts that
+could have generated it — the same re-derivation `wakes` annotates — to
+the citing receipt, returned with a `wakeHint` citation (`to` holder
+label, `statusId`, `jobId`, `status`, optional `detail`); a hint with no
+retained row or no reproducing receipt answers `not-found`, an unreadable
+wake queue `unavailable`, never a guessed receipt. Envelope ids are
+caller-chosen, so a real receipt always wins over hint interpretation),
 `shouldWake(priority, requested, handoff?)`
 and `busBodySummary(body)` — a pure, secret-scrubbed read of a bus body for
 inbox surfaces (`note`/`context`/`worker-handoff` return their message text,

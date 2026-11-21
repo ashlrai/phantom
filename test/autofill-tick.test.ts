@@ -194,14 +194,61 @@ describe('autofill tick gap harvest', () => {
     expect(report.schema).toBe('queue.autofill.tick.v1');
     expect(report.gaps).toEqual({ candidates: 1, queued: 1, skipped: 0, unknown: false });
   });
-  it('does not harvest on a dry run, with autofill off, or with no starved lane; a failed harvest never fails the tick', async () => {
+  it('harvests on every apply tick, even with no starved lane', async () => {
     const harvestGaps = vi.fn(async () => gapsReport);
-    await tick({ claude: 0 }, { harvestGaps }, false);
-    await tick({ claude: 0 }, { harvestGaps, readOff: async () => true });
-    await tick({}, { harvestGaps });
+    const report = await tick({}, { harvestGaps, lastGapQueuedMs: async () => null });
+    expect(harvestGaps).toHaveBeenCalledTimes(1);
+    expect(report.reason).toBe('No lane is starved.');
+    expect(report.gaps).toEqual({ candidates: 1, queued: 1, skipped: 0, unknown: false });
+    expect(report.gapsNote).toBeNull();
+  });
+  it('never writes on a dry run and says why', async () => {
+    const harvestGaps = vi.fn(async () => gapsReport);
+    const report = await tick({ claude: 0 }, { harvestGaps }, false);
     expect(harvestGaps).not.toHaveBeenCalled();
-    const failing = await tick({ claude: 0 }, { harvestGaps: async () => { throw new Error('boom'); } });
+    expect(report.gapsNote).toBe('dry run: the gap harvest only runs with apply');
+  });
+  it('names autofill off as the reason', async () => {
+    const harvestGaps = vi.fn(async () => gapsReport);
+    const report = await tick({ claude: 0 }, { harvestGaps, readOff: async () => true });
+    expect(harvestGaps).not.toHaveBeenCalled();
+    expect(report.gapsNote).toBe('autofill is off, so no gap harvest');
+  });
+  it('a tick inside the rate limit records how long ago the last queue was', async () => {
+    const harvestGaps = vi.fn(async () => gapsReport);
+    const report = await tick({ claude: 0 }, { harvestGaps, lastGapQueuedMs: async () => NOW - 4 * 60_000 });
+    expect(harvestGaps).not.toHaveBeenCalled();
+    expect(report.gapsNote).toBe('ran 4 min ago (waits 10 min)');
+  });
+  it('says so when no gap source was readable or no gap was found; a failed harvest never fails the tick', async () => {
+    const empty = { ...(gapsReport as object), candidates: [], proposed: [], known: false, unknownSources: ['published jobs'] } as never;
+    const unreadable = await tick({ claude: 0 }, { harvestGaps: async () => empty, lastGapQueuedMs: async () => null });
+    expect(unreadable.gapsNote).toBe('no gap source readable: published jobs');
+    const failing = await tick({ claude: 0 }, { harvestGaps: async () => { throw new Error('boom'); }, lastGapQueuedMs: async () => null });
     expect(failing.gaps).toBeNull();
+    expect(failing.gapsNote).toBe('the gap harvest failed: boom');
     expect(failing.runs).toHaveLength(1);
+  });
+});
+
+describe('autofill tick gap note with lanes that cannot launch', () => {
+  it('names the lane that got the gaps and the rows waiting on a used-up pool', async () => {
+    const lanes: LaneSnapshotView = { lanes: [
+      { lane: 'claude', running: 0, target: 8, queued: 0, held: false, remainingPct: 68 },
+      { lane: 'codex-personal', running: 0, target: 1, queued: 10, held: false, remainingPct: 0, resetAt: '2026-11-21T20:30:00Z' },
+    ] };
+    const gaps = { schema: 'jobs.gaps.v1', sinceHours: 24, known: true, unknownSources: [], jobsScanned: 1, jobsWithoutGaps: [], candidates: new Array(36).fill({ title: 'a', repo: 'phantom', sourceJob: 'J', why: 'w' }),
+      dropped: [], proposed: [{ title: 'a', repo: 'phantom', sourceJob: 'J', why: 'w', jobId: 'GAPX', queued: true, skipped: null, lane: 'claude' }] } as never;
+    const seen: unknown[] = [];
+    const report = await tick({}, { readLanes: async () => lanes, lastGapQueuedMs: async () => null, harvestGaps: async o => { seen.push(o.lanes); return gaps; } });
+    expect(seen[0]).toEqual(lanes.lanes);
+    expect(report.gapsNote).toMatch(/^36 gaps found, queued 1 for claude \(0 of 8 busy\); 10 rows wait on codex-personal \(back \w{3} .*(AM|PM)\)$/);
+  });
+
+  it('never writes on a dry run', async () => {
+    const harvestGaps = vi.fn();
+    const report = await tick({ claude: 0 }, { harvestGaps }, false);
+    expect(harvestGaps).not.toHaveBeenCalled();
+    expect(report.gaps).toBeNull();
   });
 });

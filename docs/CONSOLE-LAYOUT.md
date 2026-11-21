@@ -235,9 +235,24 @@ the chart says so. Above it a row of figures gives launched, published, merged,
 the share of finished jobs that changed nothing and the median time to merge,
 each over a line of its own hours, with the busiest hour named. Under the two
 hourly charts each lane has a card: the provider's mark, its merged count, a bar
-against the lane that merged most, its merges hour by hour and its launched,
-published, merge time and changed-nothing readings. A figure the report does
-not hold reads unknown and has no line under it.
+against the lane that merged most, a row of bars for the jobs it launched
+across the window and its launched, published, merge time and changed-nothing
+readings. A figure the report does not hold reads unknown and has no line
+under it.
+
+Under the figures the fleet's own hours are drawn as the same row of bars: a
+bar per hour, as tall as the jobs launched in it, with a mark under each bar
+that had a PR merged. Over 7 days a bar covers 7 hours, as on the Models board.
+Lane bars are drawn against the busiest bar on any lane, so the cards compare.
+These rows are one reading cursor. Point at a bar, or focus a row and press
+Left, Right, Home or End, and that stretch of time is held on the fleet row and
+on every lane card at once: the figures above become that bar's own counts, the
+line under the fleet row says when it was and what happened in it, and each
+lane card says what that lane launched, published and merged. The median is
+kept per hour only, so on a 7 hour bar that figure stays the window's and says
+so. Esc, moving the pointer off the bars or moving focus off the rows lets go.
+While no bar is held each row names its busiest bar. An hour the report holds
+no count for is hatched, and a lane with no hours read gets no bars.
 Pick 6 hours, 24 hours (the default) or 7 days; each choice
 asks the same route `phm throughput --hours 168 --json` reads, so nothing is
 summed in the browser. An unreadable metrics file shows unknown, a quiet window
@@ -261,7 +276,26 @@ its fill, the running line over the dashed target with the first and last
 sample times and the value of the top edge, and labelled readings: the last
 sample, idle, held and, only when it happened, stalled. Lanes that stalled
 come first, then the most idle. A lane with no target says "no target", not a
-percentage. The Launch gaps strip draws the window once: filled where samples
+percentage.
+
+Under its slot readings each card carries the lane's **usage window**, read
+from the lane's own row of `phm pools --json` (`GET /api/app/pools`, the read
+the Pools board and Home share): the share used, when it resets (as a
+countdown and a local time) and how old the reading is, then the bar the
+Pools board draws, with the mark for the time gone. One line under the bar
+says how the window ends at the measured burn. When usage is set to go unused
+and the lane also left slots open in the chosen window, that line names both
+figures and turns amber, for example "68% set to go unused at the reset, and
+4.5 slot-h of its slots sat open in the last 24 h." A window that runs empty
+before its reset says when. A lane with no reading, a lane `phm pools` does
+not list and a failed read all say "usage unknown" over a hatched bar and
+give the reason; a lane with nothing metered says "no usage window" and a
+credit lane gives its balance, both without a bar. A refresh that fails keeps
+the last view and labels it "last reading". The words **Usage window** open
+the Pools pane, and a key above the cards names the parts of the bar once a
+card has a measured window.
+
+The Launch gaps strip draws the window once: filled where samples
 exist, amber where a launch gap was found, hatched where nobody was watching.
 Every figure is computed from the samples `GET /api/verse/runs-history`
 returned, so unwatched time is never counted as idle or as full.
@@ -388,7 +422,16 @@ flagged it, never from a 100% reading, because credits can keep that account
 usable. Each window shows its bar, percent and reset as a countdown plus a
 local clock time; Claude's reset is the provider's own sentence, so no clock
 time is derived for it. A window with no reading has a hatched bar, not an
-empty one. Above the cards, Resets ahead puts every window that gave its reset
+empty one. The bar is the same one the Pools board draws, and it is never
+coloured for being high: a limit is the provider's flag, drawn as its own full
+bar. Where the accounts read holds the window's start, the bar carries a mark
+for how much of the window's time has gone and a line under it gives that
+share, how many points use sits behind or ahead of an even spend, and when the
+window began. The start is the provider's own (Grok's billing period) or seven
+days before a reset the server confirmed as weekly, and the line says which. A
+window whose start the read does not hold has no mark and no pace line; nothing
+is projected here, because this read has no burn rate (the Pools board has).
+Above the cards, Resets ahead puts every window that gave its reset
 as a date and time on one line that starts at now, soonest first: the wait
 drawn to a dot at the reset, the countdown and local time, and the usage now
 in words (a percent, "limit reached" with a square in place of the dot, or

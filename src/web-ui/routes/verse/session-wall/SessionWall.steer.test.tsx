@@ -110,7 +110,7 @@ describe('P on a card', () => {
   it('pauses the job, says the receipt, and lets the card take over once the read shows it', async () => {
     const wall = { current: [entry(LEADER), entry(session('RQ-A')), entry(session('RQ-B'))] as unknown[] };
     const answered = { hold: true };
-    const posts = serve(wall, () => { if (!answered.hold) wall.current = [entry(LEADER), entry(session('RQ-A'), stands('pause', 'requested')), entry(session('RQ-B'))]; return {}; });
+    const posts = serve(wall, () => { if (!answered.hold) wall.current = [entry(LEADER), entry(session('RQ-A'), stands('resume', 'requested')), entry(session('RQ-B'))]; return {}; });
     pane();
     await screen.findByRole('button', { name: 'RQ-A, running' });
     expect(screen.getByText(/P pauses or resumes the job of the card the keyboard is on/)).toBeTruthy();
@@ -119,21 +119,18 @@ describe('P on a card', () => {
     expect(said.closest('[role="status"]')?.getAttribute('data-tone')).toBe('waiting');
     expect(posts).toHaveLength(1);
     expect(posts[0]!.body).toEqual({ id: 'RQ-A', action: 'pause' });
-    // The keyboard stays on the card, and the wall was read again; this read does not show the request yet, so the line stays.
+    // The keyboard stays on the card, and the card says the request at once on the receipt's word. The read does not show it yet, so the line stays.
     expect(document.activeElement).toBe(card('RQ-A'));
-    expect(card('RQ-A').querySelector('[data-tone]')).toBeNull();
+    await waitFor(() => expect(card('RQ-A').querySelector('[data-tone="paused"]')?.textContent).toBe('Pause requested'));
+    expect(screen.getByText('Pause requested for RQ-A. P on its card resumes it.')).toBeTruthy();
+    expect(card('RQ-B').querySelector('[data-tone]')).toBeNull();
 
-    // P again before the read catches up asks for a pause again; the server answers with the same request.
+    // P goes by what the card says, so it resumes. This time the read carries the request, and the line leaves it to the card.
     answered.hold = false;
     press('RQ-A', 'p');
-    await waitFor(() => expect(card('RQ-A').querySelector('[data-tone="paused"]')?.textContent).toBe('Pause requested'));
-    await waitFor(() => expect(screen.queryByText(/Pause requested for RQ-A/)).toBeNull());
-    expect(posts.map(post => (post.body as { action: string }).action)).toEqual(['pause', 'pause']);
-
-    // With the pause on the card, P resumes.
-    press('RQ-A', 'p');
-    expect(await screen.findByText('Resume requested for RQ-A. P on its card pauses it again.')).toBeTruthy();
-    expect(posts.at(-1)!.body).toEqual({ id: 'RQ-A', action: 'resume' });
+    await waitFor(() => expect(card('RQ-A').querySelector('[data-tone="asked"]')?.textContent).toBe('Resume requested'));
+    await waitFor(() => expect(screen.queryByText(/requested for RQ-A/)).toBeNull());
+    expect(posts.map(post => post.body)).toEqual([{ id: 'RQ-A', action: 'pause' }, { id: 'RQ-A', action: 'resume' }]);
   });
 
   it('says a refusal in the server\'s words and keeps it until dismissed', async () => {

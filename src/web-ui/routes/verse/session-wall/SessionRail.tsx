@@ -1,7 +1,8 @@
 /**
  * The list beside an open conversation in the Conversations pane: every
  * session as one row (who, state, a pause or request that stands for its job,
- * when it last spoke, its newest line, how
+ * when it last spoke, its newest line, the size of its job's diff and its newest
+ * recorded step with how long ago (WallVitals.tsx), how
  * many messages arrived since Mason last looked), so moving from one
  * conversation to the next never means going back to the wall. Drawn from the
  * wall's own read; hidden by the stylesheet when the pane is too narrow for
@@ -15,6 +16,8 @@ import { sessionAge } from '../../../../core/fleet/live-sessions.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 import { findEntries, STATE_WORD, wallHeadline, type SessionWallRead, type WallEntry } from './session-wall-model.js';
 import { nextUnseen, unseenCount, unseenSessions } from './wall-seen.js';
+import { RailVitalsLine } from './WallVitals.js';
+import { cardVitals } from './wall-vitals.js';
 import { steerMark } from './wall-steer.js';
 import styles from './session-wall.module.css';
 import steerStyles from './wall-steer.module.css';
@@ -108,6 +111,7 @@ export function SessionRail({ read, failed, openId, onPick, onClose, find = '', 
               <span className={styles.muted}>{session.lastMessageAgeSeconds === null ? 'unknown' : sessionAge(session.lastMessageAgeSeconds)}</span>
             </span>
             <span className={styles.rowLine}><span className={styles.rowState} data-state={session.state}>{STATE_WORD[session.state]}</span> {mark && <><span className={steerStyles.rowMark} data-tone={mark.tone}>{mark.text}</span> </>}{railPreview(entry)}</span>
+            <RailVitalsLine vitals={cardVitals(entry, read.generatedAt)} />
           </button>
         </li>;
       })}

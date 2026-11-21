@@ -46,7 +46,14 @@ export interface RouterOutcome {
    * ledger recorded one — unknown stays null, never derived.
    */
   work_class: string | null;
-  /** true only on an explicit MERGED state or merged:true; false on CLOSED or merged:false; else null. */
+  /**
+   * true on explicit MERGED merge evidence — a MERGED terminal phase across
+   * phase|state|outcome|status|result|conclusion, or a 'merged' event name
+   * when no phase field resolves — or merged:true; false on CLOSED evidence
+   * likewise or merged:false; else null. A resolved phase stays
+   * authoritative over the event name, and mergedAt/closedAt stay the
+   * preferred stamps on terminal rows.
+   */
   merged: boolean | null;
   /**
    * true on explicit revert evidence — reverted:true, a revert event name or
@@ -189,7 +196,13 @@ const failureClass = (r: Row): string | null => {
 // revertedAt stamps (ask status stream and outcome metrics dialects).
 const REVERT_NAMES: ReadonlySet<string> = new Set(['revert', 'reverted']);
 const REVERT_EVENT_KEYS = ['event', 'type', 'kind'];
-const REVERT_STATE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'];
+/**
+ * jobs.jsonl terminal-phase dialect: phase|state|outcome|status plus the
+ * producer aliases result|conclusion — the same field set and order the
+ * fleet's shared ledgerPhase accessor and sibling outcome readers accept.
+ * Merge and revert resolution share it.
+ */
+const PHASE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const;
 const hasRevertName = (r: Row, keys: readonly string[]): boolean =>
   keys.some(k => {
     const v = r[k];
@@ -211,6 +224,21 @@ const LEDGER_TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt',
 const ledgerTsKeys = (phase: string): readonly string[] => {
   const preferred = phase === 'MERGED' ? 'mergedAt' : phase === 'CLOSED' ? 'closedAt' : null;
   return preferred === null ? LEDGER_TS_KEYS : [preferred, ...LEDGER_TS_KEYS.filter(k => k !== preferred)];
+};
+
+/**
+ * Event names that carry a terminal merge verdict when no phase field
+ * resolves — the job-outcomes convention ('merged'/'closed'). A resolved
+ * phase always stays authoritative over the event name, and every other
+ * event or phase spelling resolves nothing: unknown stays unknown.
+ */
+const OUTCOME_EVENT_STATES: Readonly<Record<string, string>> = { merged: 'MERGED', closed: 'CLOSED' };
+
+/** Uppercased terminal phase for merge resolution; the event name only when no phase field resolves. */
+const mergePhase = (r: Row): string => {
+  const phase = (str(r, ...PHASE_KEYS) ?? '').toUpperCase();
+  if (phase !== '') return phase;
+  return OUTCOME_EVENT_STATES[(str(r, 'event', 'type', 'kind') ?? '').toLowerCase()] ?? '';
 };
 
 /** A github.com pull URL in the canonical shape dispatchd and the fleet writers emit. */
@@ -336,7 +364,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     o.model = str(r, 'model') ?? o.model;
     o.tier = str(r, 'tier') ?? o.tier;
     o.work_class = str(r, 'work_class') ?? o.work_class;
-    const state = (str(r, 'phase', 'state', 'outcome', 'status') ?? '').toUpperCase();
+    const state = mergePhase(r);
     const merged = state === 'MERGED' ? true : state === 'CLOSED' ? false : typeof r['merged'] === 'boolean' ? r['merged'] : null;
     if (merged !== null) {
       const ts = Date.parse(str(r, ...ledgerTsKeys(state)) ?? '') || 0;
@@ -346,7 +374,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     // and a later reverted:false cannot undo it; explicit false only stands
     // when no positive evidence exists anywhere in the job's rows.
     if (o.reverted !== true) {
-      if (r['reverted'] === true || hasRevertStamp(r) || hasRevertName(r, REVERT_EVENT_KEYS) || hasRevertName(r, REVERT_STATE_KEYS)) {
+      if (r['reverted'] === true || hasRevertStamp(r) || hasRevertName(r, REVERT_EVENT_KEYS) || hasRevertName(r, PHASE_KEYS)) {
         o.reverted = true;
       } else if (r['reverted'] === false) {
         o.reverted = false;
