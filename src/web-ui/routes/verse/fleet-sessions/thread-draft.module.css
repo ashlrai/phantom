@@ -1,0 +1,9 @@
+/* Unsent words wait in this session's reply box: a dashed outline, the way an unfinished thing is drawn, quieter than the "new" count beside it. */
+.mark { flex: none; padding: 0 var(--space-1); border: 1px dashed var(--border-strong); border-radius: var(--radius-full); color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); font-weight: 600; }
+/* Under the reply box: the draft was kept from before. In place of the box: words left for a session that no longer takes a message. */
+.kept { grid-column: 1 / -1; margin: 0; color: var(--text-secondary); }
+.left { display: grid; gap: var(--space-1); justify-items: start; padding-top: var(--space-2); }
+.left p { margin: 0; }
+.words { max-width: 100%; padding: var(--space-1) var(--space-2); border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); white-space: pre-wrap; overflow-wrap: anywhere; }
+.discard { padding: var(--space-1) var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: none; color: inherit; font: inherit; cursor: pointer; }
+.discard:hover, .discard:focus-visible { background: var(--bg-hover); }

@@ -262,6 +262,20 @@ list is forgotten. In a private window the marks last until it is closed. They a
 conversation's message total, and the read keeps only the newest part of a
 long conversation, so a session whose total has stopped growing shows no mark.
 
+Words you type to a session stay with that session. Move to another
+conversation with J, K or a click and the box there is empty; come back and
+your words are in the box again, under a line saying when the draft was last
+edited. While they wait, the session's card and its row in the list say
+"Draft" (not while its reply box is on screen). Drafts are kept in this
+browser for up to 40 sessions, so they are still there after a reload or a
+restart of the app; in a private window they last until it is closed. Nothing
+sends a draft except Enter or Send in its own conversation. If the session
+finishes first, its conversation shows the words where the reply box was,
+with "Discard the draft". A message still on its way when you move on is
+filed under the session it was written to, and a sent line that no record
+names yet is shown again when you reopen that conversation in the same
+window. The Sessions pane and the Leader pane keep the same drafts.
+
 A bar above the cards finds and narrows. Press `/` and type: only the sessions
 holding every word stay, matched against each session's id, lane, model, repo,
 state, summary and the newest messages on its card. Find looks only at the
