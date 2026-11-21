@@ -708,16 +708,25 @@ replies are read once, and the recorded activity once for each job shown.
   without a job, a job whose prompt cites no message, and when the trace was
   not read; `sources.orders` tells an unread trace from no citation. A screen
   can group the sessions by `serves.key` to show who is working on what.
+- `control` sits just before `reply` in each entry: the pause, resume, stop
+  or move that stands for the session's job, `{action, lane, status, at}`
+  with `status` `requested` or `applied`, the same answer
+  `phm sessions thread <id>` gives. It is the newest request the dispatcher
+  did not refuse, so after a resume it reads `resume`, not null. It is null
+  when no request stands, for a session with no job, and when the control
+  file could not be read; `sources.controls` tells those apart. The requests
+  themselves are `control` messages in the thread and the summary names the
+  one that stands. The control file is read once for the whole document.
 - What a running session wrote is part of its thread: an `output` message
   with the last 3 lines of its log (the newest 400 characters of them when
   they are longer, `truncated` true when anything was left out). Only running
   sessions have their log read here; a finished one's thread ends with its
   outcome, and its single thread still shows its output.
 - `sources`: `sessions` (`available` or `unavailable`), and `bus`, `owner`,
-  `replies` and `orders` (`available`, `none` when the read answered and no
-  shown session has any, or `unavailable`). `gaps[]` holds the session list's
-  own gaps, a line counting the sessions left out past 40, and a failed bus,
-  inbox or order trace read.
+  `replies`, `orders` and `controls` (`available`, `none` when the read
+  answered and no shown session has any, or `unavailable`). `gaps[]` holds
+  the session list's own gaps, a line counting the sessions left out past 40,
+  and a failed bus, inbox, order trace or control file read.
 
 Each read fails on its own: a job whose activity could not be read says so in
 its own `gaps` and the other threads are whole. The route answers 503 when the

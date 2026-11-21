@@ -214,6 +214,26 @@ screen, after the find box and the lane, repo and running narrowing. Nothing
 extra is requested: each session's entry in the read carries the message it
 serves (`serves`).
 
+A card says what was asked of its session's job. "Paused" or "Pause
+requested" sits beside the state while a pause stands, the card's border is
+dashed and its running dot holds still; "Stop requested" or "Move to codex
+requested" shows while the dispatcher has not applied the request yet. The
+same words are on the session's row beside an open conversation. A finished
+resume, stop or move leaves no mark, and neither does a session whose job has
+ended; the conversation keeps each request as a line. When any session on
+screen carries a mark, a "Paused or asked" button joins the state buttons and
+keeps only those sessions. With the keyboard on a card, P pauses its job, or
+resumes it while a pause stands. It is the same call as `phm job pause` and
+`phm job resume`, so it needs the mutation token (the unlock dialog opens when
+none is held) and the same refusals apply. The receipt is said in a line above
+the cards, which leaves once the card itself shows the request; a refusal
+stays until you dismiss it. P does nothing for the Leader, a helper or a
+finished session except say so. Stop and Move stay inside the conversation,
+where Stop asks first. The marks come with the wall's own read (`control` on
+each entry), up to about 15 seconds behind the request. If the control record
+cannot be read, no card is marked and a line under the cards says controls are
+unknown.
+
 To read one session as a conversation instead of a log, run
 `phm sessions thread <id>`. The id is `leader`, a job id or a subagent id from
 the tree. It prints a short summary (what the session is, its state, commands

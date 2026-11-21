@@ -122,7 +122,7 @@ export function narrowSessionThread(raw: unknown): SessionThread | null {
   };
 }
 
-function standing(raw: unknown): StandingControl | null {
+export function standing(raw: unknown): StandingControl | null {
   if (!object(raw) || !isJobControlAction(raw.action) || (raw.status !== 'requested' && raw.status !== 'applied')) return null;
   return { action: raw.action, lane: text(raw.lane, 40), status: raw.status };
 }
