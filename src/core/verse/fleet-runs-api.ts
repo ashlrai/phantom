@@ -586,6 +586,16 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       sendJson(res, 200, await readLeaderReplies({ limit, planLog }));
       return true;
     }
+    // The Leader panel's "Phone updates" row reads the same owner-live.status.v1 as `phm owner-live status --json`. Read only.
+    if (path === '/api/verse/fleet/runs/owner-live') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const { ownerThreadOptions } = await import('../../cli/comms-owner-thread.js');
+      const { cmdOwnerLiveStatus } = await import('../../cli/fleet-owner-live.js');
+      let body = '';
+      await cmdOwnerLiveStatus(['--json'], { options: ownerThreadOptions(), output: text => { body = text; } });
+      sendJson(res, 200, JSON.parse(body));
+      return true;
+    }
     // The phone's four tiles read the same fleet.brief.v1 as `phm status --brief --json`.
     if (path === '/api/verse/fleet/runs/brief') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }

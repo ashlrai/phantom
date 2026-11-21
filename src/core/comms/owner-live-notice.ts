@@ -12,6 +12,9 @@
  */
 import { OWNER_CHANNELS, type OwnerChannel } from './leader-mailbox.js';
 import type { OwnerAdapterStatus } from './owner-channel.js';
+import type { LeaderReply } from '../fleet/mason-outbox.js';
+import { sendLeaderReplyToPhone, type OwnerLiveReplyReport } from './owner-live-reply.js';
+import { readOwnerLiveStatus, type PhoneChannel } from './owner-live-status.js';
 import {
   readOwnerCommsStatus,
   readOwnerThread,
@@ -59,6 +62,8 @@ export type OwnerLiveNoticeReason =
 export interface OwnerLiveNoticeSkip {
   channel: OwnerChannel;
   reason: OwnerLiveNoticeReason;
+  /** Plain words: why, and the one step that changes it. Ids and tokens never appear. */
+  detail?: string;
 }
 
 export interface OwnerLiveNoticeReport {
@@ -73,6 +78,8 @@ export interface OwnerLiveNoticeReport {
   failed: OwnerLiveNoticeSkip[];
   /** Channels never planned, with why. Carries no owner message text. */
   skipped: OwnerLiveNoticeSkip[];
+  /** The hourly newest-leader-reply send; absent when the caller passed no replies. */
+  reply?: OwnerLiveReplyReport;
 }
 
 /**
@@ -82,7 +89,7 @@ export interface OwnerLiveNoticeReport {
  */
 export async function sendOwnerLiveNotices(
   options: OwnerThreadOptions,
-  send: { apply: boolean },
+  send: { apply: boolean; replies?: readonly LeaderReply[] },
 ): Promise<OwnerLiveNoticeReport> {
   const status = readOwnerCommsStatus(options);
   const messages = readOwnerThread(options).messages;
@@ -106,14 +113,17 @@ export async function sendOwnerLiveNotices(
   const planned = new Set(plans.map(plan => plan.channel));
   const adapters = new Map(status.adapters.map(adapter => [adapter.id, adapter]));
   const skipped: OwnerLiveNoticeSkip[] = [];
+  const live = new Map(readOwnerLiveStatus(options.settings, { halted: status.kill, paused: status.paused }).channels.map(c => [c.channel as OwnerChannel, c]));
   for (const channel of OWNER_CHANNELS) {
     if (channel === 'desktop' || planned.has(channel)) continue;
     const adapter = adapters.get(channel);
     // A comms pause disables every adapter without flagging `halted`; report
     // both holds as 'halted' so the skip reason matches the report's `halted`.
     const held = adapter?.halted === true || status.paused;
+    const why = live.get(channel as PhoneChannel);
     skipped.push({
       channel,
+      ...(adapter?.enabled !== true && why ? { detail: why.nextStep ? `${why.reason} Next: ${why.nextStep}` : why.reason } : {}),
       reason: adapter?.enabled !== true
         ? (held ? 'halted' : 'disabled')
         : messages.some(message => message.direction === 'inbound' && message.channel === channel)
@@ -121,6 +131,8 @@ export async function sendOwnerLiveNotices(
           : 'no-inbound',
     });
   }
+  const reply = send.replies === undefined ? undefined
+    : await sendLeaderReplyToPhone(options, { apply: send.apply, replies: send.replies, halted: status.kill, paused: status.paused });
   return {
     v: 1,
     halted: status.kill || status.paused,
@@ -128,5 +140,6 @@ export async function sendOwnerLiveNotices(
     sent,
     failed,
     skipped,
+    ...(reply ? { reply } : {}),
   };
 }
