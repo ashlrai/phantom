@@ -661,7 +661,14 @@ read (`source` plus stored `threads`, `tasks` and `pendingDeliveries`
 counts — deliveries no receipt acknowledges — and a `claims` flag for the
 queue claim index's readability, which `work mine` reports as `unknown`
 holds when unreadable; 0 counts on a verified-missing board, null when
-unreadable). Each section reports its own real
+unreadable), plus the claim-store drift verdict the claim journal and the
+coordination table imply — the same `fleet.claim-drift.v1` read
+`ashlr fleet claim-drift` serves, run over the probe's own two reads so the
+verdict describes the same snapshots: `claimDrift.state` is VERIFIED when
+every live message claim has its coordination partner under the same owner,
+DRIFT with `matched` plus per-kind `busOnly`/`coordOnly`/`ownerMismatch`
+counts naming the disagreeing rows, or UNKNOWN with every count null when a
+side cannot be read — never zero. Each section reports its own real
 state — a store that cannot be read reports `unavailable` with null counts,
 never zero, and the probe never throws, writes or takes a lock. Use it before a
 session assumes the bus is healthy.

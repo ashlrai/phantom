@@ -133,7 +133,8 @@ pending total — where every section reports its own read state and unknown
 stays unknown.
 status is a read-only probe of the store, registry, wake queue, coordination
 table, message-id claim journal, work feed, owner-chat share receipts, the
-legacy mailbox and the shared task board with its fleet queue; a section that
+legacy mailbox, the shared task board with its fleet queue and the claim-drift
+verdict comparing the claim journal with the coordination table; a section that
 cannot be read reports unavailable or unknown, never zero.
 No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
 
@@ -307,6 +308,9 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         `wakes ${result.wakes.state} hints=${result.wakes.hints ?? unknown} truncated=${result.wakes.truncated ?? unknown}`,
         `coordination ${result.coordination.source} liveClaims=${result.coordination.liveClaims ?? unknown} statuses=${result.coordination.statuses ?? unknown}`,
         `workClaims ${result.workClaims.source} claims=${result.workClaims.claims ?? unknown}`,
+        `claimDrift ${result.claimDrift.state} matched=${result.claimDrift.matched ?? unknown} ` +
+          `busOnly=${result.claimDrift.busOnly ?? unknown} coordOnly=${result.claimDrift.coordOnly ?? unknown} ` +
+          `ownerMismatch=${result.claimDrift.ownerMismatch ?? unknown}`,
         `feed ${result.feed.status}${result.feed.reason === undefined ? '' : `:${result.feed.reason}`} jobs=${result.feed.jobs ?? unknown}`,
         `mailbox ${result.mailbox.source} pending=${result.mailbox.pending ?? unknown}`,
         `ownerChat ${result.ownerChat.source} receipts=${result.ownerChat.receipts ?? unknown}`,
