@@ -234,6 +234,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'kept': () => import('./fleet-kept.js'),
   'kept-age': () => import('./fleet-kept-age.js'),
   'kept-worktrees': () => import('./fleet-kept-worktrees.js'),
+  'landed': () => import('./fleet-landed.js'),
   'landed-close': () => import('./fleet-landed-close.js'),
   'landed-sweep': () => import('./fleet-landed-sweep.js'),
   'lane-autohold': () => import('./fleet-lane-autohold.js'),
