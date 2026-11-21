@@ -32,6 +32,8 @@ import { subscribeWallSelection, takeRequestedWallSession } from './wall-selecti
 import { findEntries, isScoped, NO_SCOPE, replyLine, scopeChoices, scopeWords, sessionWallQueryFor, stateCounts, STATE_WORD, WALL_POLL_MS, WALL_STATES, wallFailure, wallHeadline,
   type SessionWallRead, type WallEntry, type WallFailure, type WallScope, type WallSession, type WallState } from './session-wall-model.js';
 import { WallBar } from './WallBar.js';
+import { WallRequests } from './WallRequests.js';
+import { servedEntries } from './wall-requests-model.js';
 import styles from './session-wall.module.css';
 
 const spoke = (session: WallSession) => (session.lastMessageAgeSeconds === null ? 'last spoke unknown' : `spoke ${sessionAge(session.lastMessageAgeSeconds)} ago`);
@@ -88,7 +90,10 @@ export interface WallViewProps {
 export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_SCOPE }: WallViewProps) {
   const [only, setOnly] = useState<WallState | null>(null);
   const list = useRef<HTMLUListElement>(null);
-  const found = findEntries(read.entries, find);
+  const [asked, setAsked] = useState<string | null>(null);
+  const onScreen = findEntries(read.entries, find);
+  // One message of Mason's leaves only the sessions serving it; the state buttons then count those.
+  const found = servedEntries(onScreen, asked);
   // Counted from the sessions the find box leaves, so a state button never promises a card it cannot show.
   const counts = stateCounts(found);
   const unshown = read.total === null ? 0 : read.total - read.entries.length;
@@ -124,6 +129,7 @@ export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_S
         <button key={state} type="button" className={styles.filter} data-state={state} aria-pressed={filter === state}
           onClick={() => setOnly(filter === state ? null : state)}>{STATE_WORD[state]} <span>{counts[state]}</span></button>)}
     </div>}
+    <WallRequests entries={onScreen} chosen={asked} onChoose={setAsked} />
     {read.entries.length === 0
       ? <p className={styles.empty} role="status">{read.total ? 'The list holds sessions, but none came back as a conversation.'
         : isScoped(scope) ? `No sessions in ${scopeWords(scope)} right now. This keeps asking; "Every session" shows the rest.`

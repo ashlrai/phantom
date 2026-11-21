@@ -1543,7 +1543,7 @@ times are null, and `unknown` names the reason for each. `quiet` is true after
 `threadSessions(list)`, the limits `THREADS_MAX` (40 sessions),
 `THREADS_MESSAGES_SHOWN` (3) and `THREADS_TEXT_CHARS` (400), `THREAD_STATES`
 and the types `SessionThreadsV1`, `SessionThreadsEntry`,
-`SessionThreadsMessage` and `SessionThreadsParts`. `parts` is
+`SessionThreadsMessage`, `SessionThreadsServes` and `SessionThreadsParts`. `parts` is
 `{sessionsRead, bus, activity, replies?, owner?, orders?}`, where `activity`
 maps a job id to its activity read (null when that read failed, no key when it
 was not asked for), `owner` is the Leader inbox, handed to the leader's and
@@ -1551,8 +1551,13 @@ every worker's thread and to no helper's, and `orders` is the order trace
 (`OrderTraceV1`), handed to the leader's thread and to every worker's that has
 a job. `SessionThreadsV1.sources` is `{sessions, bus, owner, replies, orders}`. Each entry is built by
 `buildSessionThread`, so its session, summary, sources, gaps and `reply`
-(its last key, the `SessionThreadReply` of `session-reply.ts`) equal the
-single-session thread for the same records.
+(the `SessionThreadReply` of `session-reply.ts`) equal the
+single-session thread for the same records. An entry's last key is `serves`:
+`{key, at, source, text, truncated, jobs}` for a worker whose job the order
+trace ties to a message of Mason's (the newest such message; `key` is shared
+by every entry serving it, `at` is the inbox's Eastern minute, `text` is null
+when the message is not among the inbox entries read, `jobs` counts every job
+the trace ties to the message), otherwise null.
 `src/core/fleet/session-threads-read.ts` exports `readSessionThreads(options)`
 with `lane`, `repo`, `live` and injectable `readMap`, `readSubagents`,
 `readLeader`, `readActivity`, `readBus`, `readOwner`, `readReplies` and
