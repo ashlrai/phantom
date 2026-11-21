@@ -17,6 +17,7 @@ import { apiGet, readFailureReason } from '../../../../data/client.js';
 import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import type { QueryDef } from '../../../../data/queries.js';
 import { BriefTiles, briefQuery } from '../BriefTiles.js';
+import { TodayCard } from '../TodayCard.js';
 import { ApprovalsCard, approvalAsksQuery } from '../../home/ApprovalsCard.js';
 import { LeaderRepliesCard, leaderRepliesQuery } from '../../home/LeaderRepliesCard.js';
 import { LiveBuildLine } from '../../home/LiveBuildLine.js';
@@ -82,6 +83,7 @@ export function HomeGlance() {
   const health = home ? healthLine(home) : null;
   return (
     <>
+      <TodayCard home={home} />
       <BriefTiles />
       <PulseStrip />
       <PulseCard />
