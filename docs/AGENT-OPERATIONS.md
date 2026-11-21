@@ -1012,6 +1012,14 @@ main green or red), approvals as one-tap buttons (`phm approvals`), a message
 box that posts to the fleet inbox, and what shipped in the last 24 hours
 (`phm shipped --since 1d`).
 
+`phm today` is the phone's Today screen in a terminal: one sentence (PRs merged
+in the last hour, jobs running, the empty pool and when it is back, questions
+waiting), jobs running per lane, the empty pools with their return time, and
+the open asks with the answers each takes (reply with `phm asks answer`, or
+tap on the phone, which uses the same verified route). `phm today --json`
+prints schema `today.v1` and is exactly what the screen shows; a source that
+cannot be read is `null` with a reason in `unknown`, never zero.
+
 `phm mobile check` renders every registered desktop view 390 px wide in the web
 UI's test renderer and reports, per view, content wider than the screen, tap
 targets under 44 px and text under 12 px, worst view first.

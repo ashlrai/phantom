@@ -2302,6 +2302,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'today': {
+        const { cmdToday } = await import('./today.js');
+        process.exitCode = await cmdToday(rest);
+        break;
+      }
+
       case 'throughput': {
         const { cmdThroughput } = await import('./throughput.js');
         process.exitCode = await cmdThroughput(rest);
