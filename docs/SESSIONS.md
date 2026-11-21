@@ -124,7 +124,14 @@ The console's Conversations pane puts every session on one screen. Each
 session is a card: its id, state and when it last spoke, the summary, and its
 newest messages, with what was said to it on the right and what it said on the
 left. A running session's card ends with the last 3 lines it wrote to its
-log. The pane makes one request for all of them
+log. Under a card's first lines is what its job has done: the newest recorded
+step with how long ago it was, the size of the diff (lines added and removed,
+and in how many files), the commands seen in its log, and how many of its
+helpers are running or failed. A part that could not be read says "unknown"
+rather than 0, and a session with no job shows none of it. These are the
+values the summary states in words, so the card leaves those sentences out
+and keeps the rest. A session that opened a pull request has a link to it at
+the foot of its card. The pane makes one request for all of them
 (`GET /api/verse/fleet/control/session-threads`) and asks again every 10
 seconds while it is on screen. The buttons above the cards show only the
 sessions in one state. The Order control in the bar, or O, changes where the
