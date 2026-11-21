@@ -146,3 +146,9 @@ mine` carries the same digest as its `board` section — one locked snapshot
 under every routing label the agent's identity answers to, with the same
 hold-state honesty — so an agent on the board finds its pending deliveries
 and tasks without a separate `board pending --peer` read per label.
+`BusBoard.pendingAll` is the fleet-wide form — every thread member as the
+label set in the same locked snapshot and queue read — and `phm comms
+inbox`'s `board` source projects it: every unacknowledged delivery and
+every task whose hold is not `held`, across all peers, with the same
+untrusted-content and missing/unavailable/degraded honesty; the projection
+reads only and never acknowledges or claims.

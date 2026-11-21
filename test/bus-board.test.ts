@@ -513,6 +513,54 @@ describe('bus board pendingFor digest', () => {
   });
 });
 
+describe('bus board pendingAll digest', () => {
+  it('lists every unacknowledged delivery and every task across all threads in one read', async () => {
+    const store = board();
+    const first = threadWith('alice', 'bob');
+    const second = store.createThread('carol', 'Second').id;
+    store.joinThread('dave', second);
+    await store.post('alice', first, 'for the first thread');
+    await store.post('bob', first, 'another first-thread post');
+    await store.post('carol', second, 'for the second thread');
+    store.createTask('alice', first, 'item-open', 'Open task');
+    const held = store.createTask('alice', first, 'item-held', 'Held task');
+    store.claimTask('alice', held.id);
+    store.createTask('dave', second, 'item-other', 'Other thread task');
+    // Acknowledging one delivery removes only that row from the fleet view.
+    const before = store.pendingAll();
+    expect(before.deliveries.matched).toBe(6); // two member deliveries per post
+    const target = before.deliveries.items.find((d) => d.recipient === 'bob' && d.threadId === first)!;
+    store.acknowledge('bob', first, target.id);
+
+    const digest = store.pendingAll();
+    expect(digest.peers.sort()).toEqual(['alice', 'bob', 'carol', 'dave']);
+    expect(digest.claims).toBe('readable');
+    expect(digest.deliveries.matched).toBe(5);
+    expect(digest.deliveries.truncated).toBe(false);
+    expect(digest.tasks.matched).toBe(3);
+    const byItem = new Map(digest.tasks.items.map((row) => [row.itemId, row]));
+    expect(byItem.get('item-open')).toMatchObject({ hold: 'open', claimed: false });
+    expect(byItem.get('item-held')).toMatchObject({ hold: 'held', claimed: true });
+    expect(byItem.get('item-other')).toMatchObject({ hold: 'open', claimed: false });
+    // Every thread joined; the digest is the union of both peers' pendingFor reads.
+    expect(digest.threads.map((row) => row.id).sort()).toEqual([first, second].sort());
+    // Stored untrusted text, same contract as pendingFor — never the display frame.
+    const stored = JSON.parse(digest.deliveries.items[0]!.content.text) as { body?: { text?: string } };
+    expect(typeof stored.body?.text).toBe('string');
+    // Reading acknowledged nothing else.
+    expect(store.pendingAll().deliveries.matched).toBe(5);
+  });
+
+  it('returns an empty honest digest when the board has no threads', () => {
+    const digest = board().pendingAll();
+    expect(digest.peers).toEqual([]);
+    expect(digest.claims).toBe('readable');
+    expect(digest.threads).toEqual([]);
+    expect(digest.deliveries).toEqual({ matched: 0, items: [], truncated: false });
+    expect(digest.tasks).toEqual({ matched: 0, items: [], truncated: false });
+  });
+});
+
 describe('phm bus CLI end-to-end', () => {
   let output: string[];
   const loadConfig = () => ({}) as AshlrConfig;

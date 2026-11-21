@@ -283,7 +283,25 @@ the `--to` `phm bus inbox`/`ack` take — with `since` the store acceptance
 time and `expiresAt` acceptance plus TTL; titles reuse the shared bus body
 composer so a secret-shaped body never reaches the item raw, an absent store
 is `missing` while an unreadable one is `unavailable`, never an empty list
-passed off as fact) — plus agent
+passed off as fact) — plus pending work on the shared task board across
+EVERY peer (`phm bus thread`/`task`/`board`,
+[docs/BUS-THREADS.md](BUS-THREADS.md)): the fleet-wide
+`BusBoard.pendingAll` digest — the same locked snapshot and queue read
+`pendingFor` serves per label set, where `work mine`'s board section still
+needs the agent's labels ahead of time and `phm bus board pending` takes
+one `--peer` at a time — lists every unacknowledged delivery (board mail
+awaiting `thread ack`; the wire TTL bounds live observers only, so `since`
+is the delivery's recorded `createdAt` and `expiresAt` stays null) and
+every task whose observed hold is not `held` — `open` is claimable work,
+`ambiguous` an expired claim record the claim path never reclaims,
+`unknown` a hold the unreadable queue could not prove, and `held` is
+in-flight work that never lists; tasks store no timestamp, so their
+`since`/`expiresAt` stay null — each item deep-links `phm bus thread
+pending`/`ack` for a delivery and `phm bus task claim`/`list` or `phm bus
+board pending` for a task, an absent board is `missing`, an unreadable
+board, config or queue is `unavailable`, and unreadable claims or a
+truncated item list is `degraded`, never an empty list passed off as fact —
+plus agent
 conversation threads still needing a person — the same `waiting` and
 `blocked` threads the one shared conversations projection computes,
 fleet-wide: a waiting item names who must answer, how long it has waited
@@ -343,7 +361,8 @@ imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms th
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
 `phm fleet handoff-receive`, `phm agents conversations`,
 `phm bots handoff`, `phm agents bus post`, `phm fleet email-outbox`,
-`phm bus inbox`, `phm bus ack`,
+`phm bus inbox`, `phm bus ack`, `phm bus thread pending`, `phm bus thread
+ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
 `phm team approve|deny`, `phm inbox approve|reject`,
 `phm fleet slack-trace`, `phm channels slack status`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
