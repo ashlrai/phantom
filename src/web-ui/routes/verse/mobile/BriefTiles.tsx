@@ -4,10 +4,12 @@
  * "unknown", never 0. Green or red appears only where it means something: main branches, and a plan
  * that runs out before it resets.
  */
+import type { ReactNode } from 'react';
 import { FLEET_BRIEF_SCHEMA, type FleetBrief } from '../../../../core/fleet/status-brief.js';
 import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
+import { HourShippedLine } from '../home/HourShippedLine.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useMobile } from './mobile-context.js';
 import styles from './BriefTiles.module.css';
@@ -50,9 +52,10 @@ export function briefTiles(b: FleetBrief | null): Tile[] {
   ];
 }
 
-export function BriefTilesView({ brief, onOpen }: { brief: FleetBrief | null; onOpen: () => void }) {
+export function BriefTilesView({ brief, onOpen, lead }: { brief: FleetBrief | null; onOpen: () => void; lead?: ReactNode }) {
   return (
     <section className={styles.tiles} aria-label="Fleet at a glance">
+      {lead}
       {briefTiles(brief).map(tile => (
         <button key={tile.id} type="button" className={styles.tile} data-tone={tile.tone} data-unknown={tile.value === 'unknown' || undefined}
           aria-label={`${tile.label}: ${tile.value}. ${tile.note}. Open details.`} onClick={onOpen}>
@@ -70,5 +73,5 @@ export function BriefTiles() {
   const read = useQuery(briefQuery);
   const refetch = useRefetch(briefQuery);
   usePollWhileVisible(refetch, 30_000);
-  return <BriefTilesView brief={read.data ?? null} onOpen={() => navigate({ screen: 'fleet' })} />;
+  return <BriefTilesView brief={read.data ?? null} onOpen={() => navigate({ screen: 'fleet' })} lead={<HourShippedLine className={styles.hour} />} />;
 }

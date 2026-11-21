@@ -35,6 +35,8 @@ export interface BriefFacts {
   nowMs: number;
   sinceMs: number;
   shipped: BriefItem[];
+  /** "Last hour: 5 shipped (3 fleet, ...)" from local git (phm shipped --since 1h); null/absent = not readable. */
+  hourLine?: string | null;
   /** PRs opened in the window (count only — the shipped line leads with merges). */
   prsOpened: number;
   /** The credential-visible search is incomplete or unavailable, not an empty result. */
@@ -79,6 +81,8 @@ export interface BriefSources {
   driveReport?: () => string | null;
   holds?: () => Array<{ repo: string; kind: string; reason: string }>;
   autonomy?: () => { on: boolean; mode: string | null };
+  /** The plain last-hour line, or null when local git could not be read. */
+  hourLine?: () => Promise<string | null> | string | null;
   /** The unified comms inbox (read-only), or null when unavailable. */
   comms?: () => Promise<UnifiedInbox | null> | UnifiedInbox | null;
 }
@@ -100,11 +104,12 @@ function call<T>(fn: (() => T) | undefined, fallback: T): T {
   }
 }
 
-type ResolvedSources = Required<Omit<BriefSources, 'digest' | 'comms'>> & Pick<BriefSources, 'comms'>;
+type ResolvedSources = Required<Omit<BriefSources, 'digest' | 'comms' | 'hourLine'>> & Pick<BriefSources, 'comms' | 'hourLine'>;
 
 async function defaults(): Promise<ResolvedSources> {
   const base: ResolvedSources = {
     comms: () => null,
+    hourLine: () => null,
     leader: () => null,
     cloudTasks: () => [],
     devinTasks: () => [],
@@ -117,6 +122,13 @@ async function defaults(): Promise<ResolvedSources> {
     try { await fn(); } catch { /* keep the empty default */ }
   };
   await Promise.all([
+    safe(async () => {
+      const { readHourShipped } = await import('../fleet/shipped-hour.js');
+      base.hourLine = async () => {
+        const report = await readHourShipped();
+        return report.complete || report.items.length > 0 ? report.headline : null;
+      };
+    }),
     safe(async () => {
       const { readUnifiedInbox } = await import('./unified-inbox.js');
       base.comms = () => readUnifiedInbox();
@@ -205,6 +217,9 @@ export async function gatherBriefFacts(sinceMs: number, nowMs: number, overrides
     comms = null;
   }
 
+  let hourLine: string | null = null;
+  try { hourLine = (await src.hourLine?.()) ?? null; } catch { hourLine = null; }
+
   const leader = call(src.leader, null);
   const blockers: string[] = [];
   if (comms?.blocker) blockers.push(comms.blocker);
@@ -234,6 +249,7 @@ export async function gatherBriefFacts(sinceMs: number, nowMs: number, overrides
     nowMs,
     sinceMs,
     shipped,
+    hourLine,
     prsOpened,
     mergeCountUnavailable,
     fleet: digest?.fleet ?? null,
@@ -273,6 +289,7 @@ function header(kind: BriefKind, nowMs: number, timeZone: string): string {
 export function composeBrief(kind: BriefKind, facts: BriefFacts, opts: { narrative?: string | null; timeZone?: string } = {}): string {
   const tz = opts.timeZone ?? 'America/New_York';
   const lines = [header(kind, facts.nowMs, tz)];
+  if (facts.hourLine) lines.push(facts.hourLine);
   const opened = facts.prsOpened > 0 ? ` · ${facts.prsOpened} PR${facts.prsOpened === 1 ? '' : 's'} opened` : '';
   const unavailable = facts.mergeCountUnavailable === true;
   if (facts.shipped.length > 0) {
