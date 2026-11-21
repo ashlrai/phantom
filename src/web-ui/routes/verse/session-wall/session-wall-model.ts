@@ -3,7 +3,7 @@
  * GET /api/verse/fleet/control/session-threads (the fleet.session-threads.v1
  * document `phm sessions threads --json` prints). Each entry carries what
  * Mason wrote, where the Leader routed it, which message of Mason's it serves,
- * and where a reply to that session would go. An opened conversation is the Sessions pane's own view and read
+ * the pause, stop or move that stands for its job, and where a reply to that session would go. An opened conversation is the Sessions pane's own view and read
  * (fleet-sessions/SessionThread.tsx), so nothing about one thread is narrowed
  * here. The wire shape is narrowed, so the pane also builds against a server
  * that predates the read. Narrowing is defensive: a malformed entry or message
@@ -13,7 +13,7 @@
 import { SESSION_FILTER_RE } from '../../../../core/fleet/live-sessions.js';
 import { ApiError, apiGet, readFailureReason } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
-import { replyRoute, type ReplyRoute } from '../fleet-sessions/session-thread-model.js';
+import { replyRoute, standing, type ReplyRoute, type StandingControl } from '../fleet-sessions/session-thread-model.js';
 
 export const SESSION_THREADS_API = '/api/verse/fleet/control/session-threads';
 /** The server builds the read at most once per 5 s; the pane asks every 10 s while visible. */
@@ -54,6 +54,8 @@ export interface WallEntry {
   reply: ReplyRoute;
   /** Null when its job cites no message of Mason's, and from a server that does not say. */
   serves: WallServes | null;
+  /** The pause, resume, stop or move that stands for the session's job, as the control file records it. Null when none stands, and from a server that does not say. */
+  control: StandingControl | null;
 }
 export interface SessionWallRead {
   generatedAt: string;
@@ -139,6 +141,8 @@ function narrowEntry(raw: unknown): WallEntry | null {
     reply: replyRoute(session, raw.reply),
     // Only a worker serves a message; the leader routes them and a helper stands with its worker.
     serves: session.kind === 'worker' ? narrowServes(raw.serves) : null,
+    // Asked of a job, so believed only on a session that has one.
+    control: session.jobId !== null ? standing(raw.control) : null,
   };
 }
 
