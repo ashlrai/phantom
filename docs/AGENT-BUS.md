@@ -190,16 +190,6 @@ exact-label matching, so unknown identity state never widens which handoffs
 run. The check still only proves the envelope's addressee; routing labels are
 never authenticated identities.
 
-`phm fleet handoff-receive` and `phm fleet handoff-reply` run one retained
-`worker-handoff` for the caller's `--to`. The flag names the recipient
-identity, not one literal label: a handoff addressed to the `agent:` address,
-bare handle, stable id or any alias of that identity all match, through the
-same registry read the inbox, wakes and `bus next` claims use. A `--to`
-naming no registered identity — and an unreadable registry — keeps
-exact-label matching, so unknown identity state never widens which handoffs
-run. The check still only proves the envelope's addressee; routing labels are
-never authenticated identities.
-
 Channel posts are refused unless the sender is a member
 (`phm agents bus channel create|join|leave`). `phm agents bus channel list
 [--agent <handle>]` is the read side: it prints every registry channel with
@@ -609,7 +599,7 @@ own read state — `missing`/`available`/`unavailable` for claims,
 unreadable dependency degrades only its own section. Exit 0 on a completed
 read, 2 on an invalid agent ref.
 
-**Status.** `phm agents bus status [--json]` is a read-only probe of the eight
+**Status.** `phm agents bus status [--json]` is a read-only probe of the nine
 dependencies every verb above touches: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
 the wake queue (state, observed hint count before the row cap, and whether
@@ -620,11 +610,17 @@ the work-feed projection (job count, or the refusal reason when the feed
 is poisoned), the legacy `phm bus` mailbox store `work mine` still reads
 (`source` plus a store-wide `pending` count of unacked, unexpired messages
 across every recipient label — totals only, never labels; 0 on a
-verified-missing store, null when unreadable), and the owner-chat share
+verified-missing store, null when unreadable), the owner-chat share
 receipts ledger `inbox` consults before showing `agent-chat-owner` envelopes
 (`source` plus a retained `receipts` row count; an unreadable ledger makes
 those reads report unavailable, so the probe names it directly — 0 on a
-verified-missing ledger, null when unreadable). Each section reports its own real
+verified-missing ledger, null when unreadable), and the shared task board
+with its fleet queue that `work mine`'s board section and `phm bus board`
+read (`source` plus stored `threads`, `tasks` and `pendingDeliveries`
+counts — deliveries no receipt acknowledges — and a `claims` flag for the
+queue claim index's readability, which `work mine` reports as `unknown`
+holds when unreadable; 0 counts on a verified-missing board, null when
+unreadable). Each section reports its own real
 state — a store that cannot be read reports `unavailable` with null counts,
 never zero, and the probe never throws, writes or takes a lock. Use it before a
 session assumes the bus is healthy.

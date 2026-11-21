@@ -1,27 +1,37 @@
 /** One read-only health probe over every store the unified `agents bus` verbs
  * touch: the message inbox, the identity registry, the wake queue, the shared
  * coordination table, the message-id claim journal, the v2 work feed, the
+ * shared task board and fleet queue `work mine`'s board section reads, the
  * owner-chat share receipts ledger `inbox` consults for `agent-chat-owner`
  * envelopes and the legacy `phm bus` mailbox `work mine` still reads. Each
  * section reports its own real state; a section that cannot be read reports
  * unavailable or null, never zero, and the whole read never throws. Read-only:
  * takes no writer lock, writes nothing, makes no network calls and grants
  * nothing. */
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { inspectBusInbox, busPathMissing, type BusInboxInspection } from '../fleet/bus-inbox.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { createBusMailbox } from '../fleet/bus-mailbox.js';
+import { BusBoard, busBoardStoragePaths, type BusBoardStateSummary } from '../fleet/bus-board.js';
+import { SharedStore } from '../fleet/shared-store.js';
+import { ashlrHome } from '../cloud/store.js';
+import { loadConfigReadOnlyStrict } from '../config.js';
+import type { AshlrConfig } from '../types.js';
 import { coordinationSummary } from './claim-store.js';
 import { readBusWakes } from '../fleet/bus-wake-queue.js';
 import { readAgentRegistry } from './bus-identity.js';
 import { readBusWorkFeed, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import { ownerChatRoot, ownerReceiptDir, readOwnerChatReceipts } from './chat-owner-receipts.js';
+import type { BusWorkMineBoardOptions } from './bus-work-mine.js';
 
 export interface UnifiedBusStatusOptions {
   /** Same root as BusInboxOptions.root; default `$ASHLR_HOME/fleet`. */
   root?: string;
   /** Parent of `bus/wake-queue.jsonl`; default ASHLR_RUNS_DIR or ~/.ashlr-runs. */
   runsRoot?: string;
+  /** Shared task board and fleet queue overrides; production derives the same
+   * paths `phm bus board` and `work mine` use. */
+  board?: BusWorkMineBoardOptions;
   now?: () => number;
 }
 
@@ -95,6 +105,70 @@ export interface UnifiedBusStatus {
      * cannot be read. */
     receipts: number | null;
   };
+  /** Shared task board (`<dirname(fleetRoot)>/bus/state.json`, or the
+   * configured shared queue's `path/bus`) plus the fleet queue claim index
+   * (`<fleetRoot>/bus-queue`, or the shared queue `path`) behind `work mine`'s
+   * board section, the `phm bus board` verbs and the unified inbox board
+   * source — the one pending-work store the status probe used to leave
+   * unprobed, so a sick board reported all-green. */
+  board: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Stored board threads; 0 on a verified-missing board, null when the
+     * state cannot be read. */
+    threads: number | null;
+    /** Stored board tasks; same convention. */
+    tasks: number | null;
+    /** Deliveries no receipt acknowledges — board mail still awaiting
+     * receipt; same convention. */
+    pendingDeliveries: number | null;
+    /** Fleet queue claim-index readability: 'unreadable' degrades every board
+     * task hold and the queue-backed claim evidence to unknown in `work mine`
+     * and the inbox; null when the queue was not probed (invalid shared-queue
+     * config or non-absolute override). */
+    claims: 'readable' | 'unreadable' | null;
+  };
+}
+
+/** The board probe: shared task board state plus the fleet queue claim index
+ * behind its task holds — the same stores `work mine`'s board section and
+ * `phm bus board` read, derived by the same `busBoardStoragePaths` helper.
+ * A never-written board is a verified-missing source with real zeros; an
+ * unreadable board, malformed config or untrusted shared-queue path reports
+ * unavailable with null counts. The queue's own readability is probed
+ * independently and reported whenever the paths derive, so a corrupt board
+ * state never hides a sick queue — or vice versa. */
+function probeBusBoard(options: UnifiedBusStatusOptions): UnifiedBusStatus['board'] {
+  const unavailable = (claims: 'readable' | 'unreadable' | null) =>
+    ({ source: 'unavailable' as const, threads: null, tasks: null,
+      pendingDeliveries: null, claims });
+  const overrides = options.board;
+  if ((overrides?.root !== undefined && !isAbsolute(overrides.root)) ||
+      (overrides?.queueRoot !== undefined && !isAbsolute(overrides.queueRoot))) {
+    return unavailable(null);
+  }
+  let cfg: AshlrConfig;
+  try {
+    cfg = overrides?.config ?? loadConfigReadOnlyStrict();
+  } catch {
+    return unavailable(null);
+  }
+  const paths = busBoardStoragePaths(options.root ?? join(ashlrHome(), 'fleet'), cfg);
+  if (paths.status !== 'ok') return unavailable(null);
+  const shared = cfg.fleet?.sharedQueue;
+  const fleet = new SharedStore(overrides?.queueRoot ?? paths.queueRoot,
+    overrides?.leaseMs ?? shared?.leaseMs);
+  const claims = fleet.readClaimIndex().readable ? 'readable' as const : 'unreadable' as const;
+  let summary: BusBoardStateSummary | null;
+  try {
+    summary = new BusBoard({ root: overrides?.root ?? paths.boardRoot, fleet, cfg }).inspect();
+  } catch {
+    return unavailable(claims);
+  }
+  if (summary === null) {
+    return { source: 'missing', threads: 0, tasks: 0, pendingDeliveries: 0, claims };
+  }
+  return { source: 'available', threads: summary.threads, tasks: summary.tasks,
+    pendingDeliveries: summary.pendingDeliveries, claims };
 }
 
 /** Compose the dependency reads. Each probe is isolated: one failing
@@ -175,5 +249,12 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     ownerChat = { source: 'unavailable', receipts: null };
   }
 
-  return { asOf, store, registry, wakes, coordination, workClaims, feed, mailbox, ownerChat };
+  let board: UnifiedBusStatus['board'];
+  try {
+    board = probeBusBoard(options);
+  } catch {
+    board = { source: 'unavailable', threads: null, tasks: null, pendingDeliveries: null, claims: null };
+  }
+
+  return { asOf, store, registry, wakes, coordination, workClaims, feed, mailbox, ownerChat, board };
 }

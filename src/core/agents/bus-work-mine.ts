@@ -40,7 +40,7 @@ import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
 import { createBusMailbox } from '../fleet/bus-mailbox.js';
 import { ashlrHome } from '../cloud/store.js';
 import { loadConfigReadOnlyStrict } from '../config.js';
-import { BusBoard, type BusBoardPendingThread, type BusBoardTaskHold } from '../fleet/bus-board.js';
+import { BusBoard, busBoardStoragePaths, type BusBoardPendingThread, type BusBoardTaskHold } from '../fleet/bus-board.js';
 import type { BusBoardDelivery } from '../fleet/bus-delivery.js';
 import { SharedStore } from '../fleet/shared-store.js';
 import { neutralisePageText } from '../verse/browser-act-policy.js';
@@ -684,18 +684,10 @@ function boardSection(agent: string, identity: AgentIdentity | undefined,
     return unavailable;
   }
   const shared = cfg.fleet?.sharedQueue;
-  const fleetRoot = options.root ?? join(ashlrHome(), 'fleet');
-  let boardRoot = join(dirname(fleetRoot), 'bus');
-  let queueRoot = join(fleetRoot, 'bus-queue');
-  if (shared?.mode === 'filesystem') {
-    if (shared.trustedCoherentStorage !== true || typeof shared.path !== 'string' || !isAbsolute(shared.path)) {
-      return unavailable;
-    }
-    queueRoot = shared.path;
-    boardRoot = join(queueRoot, 'bus');
-  }
-  boardRoot = options.board?.root ?? boardRoot;
-  queueRoot = options.board?.queueRoot ?? queueRoot;
+  const paths = busBoardStoragePaths(options.root ?? join(ashlrHome(), 'fleet'), cfg);
+  if (paths.status !== 'ok') return unavailable;
+  const boardRoot = options.board?.root ?? paths.boardRoot;
+  const queueRoot = options.board?.queueRoot ?? paths.queueRoot;
   const fleet = new SharedStore(queueRoot, options.board?.leaseMs ?? shared?.leaseMs);
   if (!existsSync(join(boardRoot, 'state.json'))) {
     const index = fleet.readClaimIndex();

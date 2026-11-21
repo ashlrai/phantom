@@ -2441,7 +2441,7 @@ when the claims join computed it) the same way. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
-read-only probe over the eight dependencies the unified verbs touch — the
+read-only probe over the nine dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
 null when unreadable), the wake queue (`state`, the observed hint count
 before the row cap — 0 on a verified-missing queue, null when unreadable —
@@ -2453,11 +2453,16 @@ receipt's wire id as `receipt` when the projection named one), the legacy
 `phm bus` mailbox store (`createBusMailbox(...).inspect()` under the fleet
 root's parent — `source` plus a store-wide `pending` count of unacked,
 unexpired messages across every recipient label, 0 on a verified-missing
-store, null when unreadable; totals only, never labels), and the owner-chat
+store, null when unreadable; totals only, never labels), the owner-chat
 share receipts ledger (`readOwnerChatReceipts` under the same fleet root —
 `source` plus a retained `receipts` row count that `inbox`/`work mine`
 require before showing `agent-chat-owner` envelopes, 0 on a verified-missing
-ledger, null when unreadable). Each section
+ledger, null when unreadable), and the shared task board with its fleet queue
+(`BusBoard.inspect()` plus `SharedStore.readClaimIndex()` under the paths
+`busBoardStoragePaths` derives — `source` plus stored `threads`, `tasks` and
+`pendingDeliveries` counts, 0 on a verified-missing board, null when
+unreadable, and a `claims` readability flag that stays null only when the
+queue was never probed). Each section
 reports its own real state, a failed probe degrades only its own section, and
 the read never throws, writes or takes a lock; unknown stays null, never zero.
 See [Unified bus](docs/AGENT-BUS.md#unified-bus-identities-dms-channels-handoffs-and-wake).
