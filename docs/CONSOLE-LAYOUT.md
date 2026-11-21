@@ -273,7 +273,16 @@ flagged it, never from a 100% reading, because credits can keep that account
 usable. Each window shows its bar, percent and reset as a countdown plus a
 local clock time; Claude's reset is the provider's own sentence, so no clock
 time is derived for it. A window with no reading has a hatched bar, not an
-empty one. Tokens last hour totals the lanes that reported a figure, says how
+empty one. Above the cards, Resets ahead puts every window that gave its reset
+as a date and time on one line that starts at now, soonest first: the wait
+drawn to a dot at the reset, the countdown and local time, and the usage now
+in words (a percent, "limit reached" with a square in place of the dot, or
+"usage unknown"). The scale is hours from now on a line shorter than a day
+and a half, local midnights beyond. The fleet's own Codex personal reading
+joins the line when the fleet read carries its reset. A window with a sentence
+for a reset, with none, or with one that has passed is named under the line
+with that reason and gets no position; with no dated reset at all the line is
+not drawn. Tokens last hour totals the lanes that reported a figure, says how
 many did not, and draws each lane as a thin bar against the busiest lane.
 Accounts come from `GET /api/verse/accounts` and lane tokens from
 `GET /api/verse/fleet/runs`. `phm usage limits [--json]` prints the same
