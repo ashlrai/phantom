@@ -6,6 +6,7 @@ export async function cmdJobs(args: string[], read = readEmptyJobs, readFamilies
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(usage); return 0; }
   if (isJobControlAction(args[0])) return (await import('./job.js')).cmdJobControl(args[0], args.slice(1), 'jobs');
   if (args[0] === 'tail') return (await import('./job.js')).cmdJobTail(args.slice(1));
+  if (args[0] === 'family-stops') return (await import('./jobs-family-stops.js')).cmdJobsFamilyStops(args.slice(1));
   if (args[0] === 'yield') return (await import('./jobs-yield.js')).cmdJobsYield(args.slice(1));
   if (args[0] === 'empty-why') return (await import('./jobs-yield.js')).cmdJobsYield(args.slice(1), undefined, Date.now(), true);
   if (args[0] === 'cost') return (await import('./jobs-cost.js')).cmdJobsCost(args.slice(1));

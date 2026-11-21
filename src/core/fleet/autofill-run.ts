@@ -75,7 +75,8 @@ async function readFirstSources(o: RunAutofillOptions, repo: string) {
   const followUps = await (o.readFollowUps ?? (() => readFollowUps(runsDir, now)))().catch(() => []);
   const stopped = await (o.readStopped ?? (async () => {
     const report = await (await import('./empty-families.js')).readEmptyFamilies(24, runsDir, now);
-    return report ? new Set(report.families.filter(f => f.action === 'stop' && f.lane === o.lane).map(f => f.family)) : null;
+    const families = await (await import('./empty-family-stops.js')).readFamilyStops(join(runsDir, 'metrics/jobs.jsonl'), now);
+    return new Set([...(report?.families.filter(f => f.action === 'stop' && f.lane === o.lane).map(f => f.family) ?? []), ...families.stops.map(s => s.key)]);
   }))().catch(() => null);
   const { open, skipped } = ideaCandidates(ideas, repo);
   return { first: [...open, ...followUpCandidates(followUps, repo)], shippedIdeas: skipped, stoppedFamilies: stopped ?? undefined };
