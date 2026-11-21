@@ -45,8 +45,8 @@ afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
 const NOTES = [
   '## Remaining gaps',
-  '- Wire the digest into the weekly report',
-  '- Cover the stale lock case in tests',
+  '- Wire the digest into phm report weekly',
+  '- Cover stale locks in test/report.test.ts',
   '- Run gh pr list in the nightly sweep',
   '',
 ].join('\n');
@@ -67,19 +67,19 @@ async function propose(lanes: LaneFacts[], pace: Map<string, PaceVerdict>) {
 describe('gap proposals with pace', () => {
   it('sends rows off an ahead pool and says so in one line', async () => {
     const { report, lanes } = await propose(LANES, new Map([['claude', verdict('claude', 'ahead')]]));
-    expect(lanes['Wire the digest into the weekly report']).toBe('codex-local');
+    expect(lanes['Wire the digest into phm report weekly']).toBe('codex-local');
     expect(lanes['Run gh pr list in the nightly sweep']).toBe('codex-personal');
     expect(report.paceNotes).toHaveLength(1);
     expect(report.paceNotes![0]).toMatch(/^claude ahead of pace \(empty .+, reset .+\): sent 2 rows to codex-local instead$/);
   });
   it('prefers a behind pool', async () => {
     const { lanes, report } = await propose(LANES, new Map([['codex-local', verdict('codex-local', 'behind')]]));
-    expect(lanes['Wire the digest into the weekly report']).toBe('codex-local');
+    expect(lanes['Wire the digest into phm report weekly']).toBe('codex-local');
     expect(report.paceNotes!.join(' ')).toContain('codex-local is behind pace');
   });
   it('leaves routing unchanged when pace is unknown or missing', async () => {
     const { lanes, report } = await propose(LANES, new Map([['claude', verdict('claude', 'unknown')]]));
-    expect(lanes['Wire the digest into the weekly report']).toBe('claude');
+    expect(lanes['Wire the digest into phm report weekly']).toBe('claude');
     expect(report.paceNotes).toBeUndefined();
   });
   it('never sends a gh row to a lane without gh, and holds it with the reason', async () => {
