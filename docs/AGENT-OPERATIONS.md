@@ -63,20 +63,24 @@ so docs, configs and data files get their readers too; `gate:full` remains the
 backstop for readers neither finds. Neither replaces hosted CI or the
 [release guide](RELEASING.md).
 
-**Hosted CI.** A pull request or merge-queue commit runs only the fast gate:
-the secret-shape scan, lane classification, and quick typecheck with
-CODEOWNERS and Tier-1 import-closure drift checks, including docs-only changes,
-all on Ubuntu. `Merge Gate` is the one
-required check and fails unless exactly that selection ran and every full lane
-was skipped. No pull request or merge-queue commit may occupy a macOS or
-Windows runner: the `ci` Ubuntu/Windows matrix, the Mac exhaustive lanes
+**Hosted CI.** A pull request or merge-queue commit, docs-only changes
+included, runs only fast Ubuntu jobs. `Merge Gate` is the one required check.
+It passes only when `Secret-shape scan`, `Secret scan (diff)`,
+`Classify PR site lane`, `Check generated files` and `Fast gate (typecheck + affected tests)` succeed
+and every full lane was skipped. `Quick typecheck` and
+`Check authority drift (hermetic)` (CODEOWNERS and Tier-1 import-closure
+drift) also run but are advisory. A direct push to master takes the same gate
+without the fast gate. No pull request or merge-queue commit may occupy a macOS
+or Windows runner: the `ci` Ubuntu/Windows matrix, the Mac exhaustive lanes
 (`Mac exhaustive (N/4)`, `Mac exhaustive (isolated)`), the shared-macOS and
-native-broker lanes, and the Windows service authority run only in the daily
-scheduled run on master, on manual dispatch (optionally sliced by `mac_shard`),
-or on the reusable release call — where the caller's push event still defers
-the macOS and Windows-service legs to the daily run while the `ci` matrix,
-including its Windows portability legs, stays the release's native gate
-(`.github/workflows/ci.yml`).
+native-broker lanes, and the Windows service authority run only in the
+scheduled run on master (every six hours), on manual dispatch (optionally
+sliced by `mac_shard`), or on the reusable release call — where the caller's
+push event still defers the macOS and Windows-service legs to the scheduled
+run while the `ci` matrix, including its Windows portability legs, stays the
+release's native gate (`.github/workflows/ci.yml`). The tests the fast gate
+selects are listed in
+[Contribute with an agent](CONTRIBUTE-WITH-AN-AGENT.md#which-tests-the-fast-gate-runs).
 
 **Fast test timing.** `npm run test:fast` runs the unit project with the existing isolated-home watchdog. It records Vitest file elapsed times in milliseconds and flags files over 20 seconds with a suggested split. The budget is advisory; test failures still fail the command. Pass Vitest filters after `--` for a focused run. Each run replaces the local report, so focused runs only contain selected files.
 
