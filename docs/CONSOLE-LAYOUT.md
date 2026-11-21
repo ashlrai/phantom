@@ -182,6 +182,16 @@ sample, idle, held and, only when it happened, stalled. Lanes that stalled
 come first, then the most idle. A lane with no target says "no target", not a
 percentage. The Launch gaps strip draws the window once: filled where samples
 exist, amber where a launch gap was found, hatched where nobody was watching.
+The charts share one cursor. Point at any lane's chart and the sample taken
+nearest is marked on every lane at once, on the Launch gaps strip and on the
+Workers / leaders chart: the line under each chart becomes that sample's time
+and what the lane held then (`18 of 24 running, 8 queued, held`; a lane the
+sample does not name is "not reported in this sample"), and the line above
+the cards gives the fleet at that moment (slots running of target, lanes,
+queued, lanes held, paused). Each chart is also a slider: with it focused,
+Left and Right step one sample, Page Up and Page Down a tenth of the window,
+Home and End jump to the oldest and newest, Esc lets go, and Tab to the next
+chart keeps the moment. Nothing is drawn between samples.
 Every figure is computed from the samples `GET /api/verse/runs-history`
 returned, so unwatched time is never counted as idle or as full.
 
