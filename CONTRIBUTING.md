@@ -74,7 +74,7 @@ To install the CLI while developing:
 | `npm run eval:routing` | Score the offline routing corpus: local share, escalation reasons, accuracy, and a labeled frontier dollar estimate. Not part of CI. |
 | `npm run dev:web` | Run the Vite development server; it does not commission providers or enable dispatch |
 | `npm run lint` | ESLint plus real-I/O membership and Phantom console synchronous-I/O guards |
-| `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master, run one type check, run the documentation link check when the diff touches markdown or deletes files, run the quarantine-ledger check when test files or `queue/quarantine.tsv` change, and syntax-check changed `.py` files with `python3`, changed `.sh` files with `bash -n`, changed `.pl` files with `perl -c`, changed `.json`/`.webmanifest` files with `JSON.parse`, and changed `.xml`/`.plist`/`.plist.in`/`.svg` files with `python3`'s ElementTree parser, changed `.rs` files with `rustfmt`, changed `.swift` files with `swiftc -parse`, changed `.yaml`/`.yml` files with the bundled `yaml` package, changed `.toml` files with `smol-toml`, and changed `.css` files with the `lightningcss` parser Vite bundles, and changed `.snap` files with node's script parser, and changed `.patch`/`.diff` files with `git apply --stat`; the fast local gate before pushing. Repeats on an unchanged tree are skipped (`--force` reruns). Merge Gate still runs the full check. |
+| `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master, run one type check, run the documentation link check when the diff touches markdown or deletes files, run the quarantine-ledger check when test files or `queue/quarantine.tsv` change, and syntax-check changed `.py` files with `python3`, changed `.sh` files with `bash -n`, changed `.pl` files with `perl -c`, changed `.json`/`.webmanifest` files with `JSON.parse`, and changed `.xml`/`.plist`/`.plist.in`/`.svg` files with `python3`'s ElementTree parser, changed `.rs` files with `rustfmt`, changed `.swift` files with `swiftc -parse`, changed `.yaml`/`.yml` files with the bundled `yaml` package, changed `.toml` files with `smol-toml`, and changed `.css` files with the `lightningcss` parser Vite bundles, and changed `.snap` files with node's script parser, and changed `.patch`/`.diff` files with `git apply --stat`; the fast local gate before pushing. Repeats on an unchanged tree are skipped (`--force` reruns). It does not replace `Merge Gate`, which on a pull request runs the fast gate. |
 | `npm run check:docs` | Validate operator documentation file links and anchors locally, without network requests |
 | `npm run check:perf` | Time the committed CLI cold-path budgets in `perf/budgets.json` (hyperfine when installed); advisory in CI, never a required check |
 | `npm run docs:sync` | Regenerate every generated docs surface (freshness blocks, site pages, CODEMAP inventory, llms indexes); `-- --check` reports drift without writing |
@@ -236,12 +236,14 @@ Hosted CI includes exhaustive Ubuntu shards, named Windows portability contracts
 four exhaustive Mac partitions, a separate Mac lane for all isolated suites
 (two at a time, each in its own home with one worker; locally they stay serial
 unless `ASHLR_TEST_CI_ISOLATED_CONCURRENCY=2`), macOS queue coverage and native
-broker checks. The four exhaustive Mac
-partitions run on master pushes and on pull requests labelled `ci:full-mac`; on
-other pull requests they are skipped and `Merge Gate` reports them as deferred
-to post-merge. The isolated Mac lane, macOS queue coverage and native broker
-checks run on every pull request that is ready for review; a draft pull request
-skips those three until it is marked ready, which starts a full run. Local tests
+broker checks. None of these run on a pull request or in the merge queue:
+there, `Merge Gate` requires only the secret scans, classification, the
+generated-file check and the fast gate (type check plus affected tests); see
+[What CI requires](docs/CONTRIBUTE-WITH-AN-AGENT.md#6-what-ci-requires). The
+full Ubuntu, Windows and macOS lanes run on the six-hour scheduled `master`
+run, on manual dispatch and on reusable workflow calls; the scheduled run
+rotates the exhaustive Mac partitions through seven daily slices, and a
+dispatch runs the complete set. Failures there are fixed forward. Local tests
 and hosted checks prove different environments. Inspect each actual run and report unavailable or
 skipped coverage separately; do not weaken checks to make a release pass.
 
