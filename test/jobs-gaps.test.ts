@@ -311,9 +311,10 @@ describe('gaps and lanes that can run them', () => {
 
   it('skips with the full reason when the rows can launch', async () => {
     await seed({ 'RQ-A': '## Gaps\n- Wire the digest into the weekly report\n' });
-    await fillPrompts(40);
+    await mkdir(join(root, 'queue'), { recursive: true });
+    await writeFile(join(root, 'queue', 'ready.tsv'), Array.from({ length: 40 }, (_, i) => `RQ-RDY${i}\tphantom\tclaude\twork\tplain row ${i}`).join('\n') + '\n');
     const report = await run([lane('claude', { queued: 1, running: 1 })]);
-    expect(report.proposed).toMatchObject([{ queued: false, skipped: 'the job queue is full' }]);
+    expect(report.proposed).toMatchObject([{ queued: false, skipped: 'the job queue is full (40 launchable rows, limit 40)' }]);
     expect(await dropFiles()).toHaveLength(0);
   });
 
