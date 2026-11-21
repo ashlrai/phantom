@@ -7,6 +7,8 @@ import type { BetsProposal } from '../src/core/fleet/bets-propose.js';
 import { planAutofill, QUEUE_AUTOFILL_SCHEMA } from '../src/core/fleet/queue-autofill.js';
 import { parseFollowUps, STEP_ZERO, SHIP_PARTIAL, type AutofillCandidate } from '../src/core/fleet/autofill-sources.js';
 import { QueueStore } from '../src/core/queue/store.js';
+import { readGeneratorYield } from '../src/core/queue/generator-yield.js';
+import { runQueueAutofill } from '../src/core/fleet/autofill-run.js';
 
 const bet = (n: number): BetsProposal => ({
   rank: n, id: `RQ-BET${n}`, repo: 'phantom', lane: 'claude', source: 'todo', size: 100, userFacing: false, score: 100 - n, verdict: 'new',
@@ -60,6 +62,19 @@ describe('queue autofill plan', () => {
     expect(r).toMatchObject({ queued: null, running: null, target: null, drafted: [] });
     expect(r.summary).toContain('unknown');
   });
+  it('traces same-batch duplicates and already-completed targets by source', () => {
+    const first = bet(1);
+    const report = planAutofill({ ...base, min: 5, queued: 0, proposed: {
+      proposals: [first, first, { ...first, id: 'RQ-COPY' }], droppedGoals: ['Already completed target'],
+    } });
+    expect(report.drafted.map(d => d.id)).toEqual(['RQ-BET1']);
+    expect(report.trace).toEqual([
+      { job: expect.any(String), src: 'autofill:bet', event: 'rejected', reason: 'already_completed' },
+      { job: 'RQ-BET1', src: 'autofill:bet', event: 'drafted' },
+      { job: 'RQ-BET1', src: 'autofill:bet', event: 'rejected', reason: 'duplicate' },
+      { job: 'RQ-COPY', src: 'autofill:bet', event: 'rejected', reason: 'duplicate' },
+    ]);
+  });
 });
 
 describe('phm queue autofill', () => {
@@ -78,7 +93,7 @@ describe('phm queue autofill', () => {
     root = root || fixtureRoot();
     dir = dir || mkdtempSync(join(tmpdir(), 'autofill-'));
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const code = await cmdQueueAutofill([...args, '--dir', dir], { readLane: async () => ({ running: 1, target: 8, queued }), root });
+    const code = await cmdQueueAutofill([...args, '--dir', dir], { readLane: async () => ({ running: 1, target: 8, queued }), root, runsDir: dir });
     return { code, out: log.mock.calls.map(c => String(c[0])).join('\n') };
   };
 
@@ -90,6 +105,7 @@ describe('phm queue autofill', () => {
     expect(report.drafted).toHaveLength(2);
     expect(report.drafted[0]).toMatchObject({ repo: 'phantom', tier: 'work' });
     expect((await new QueueStore(dir).read()).jobs).toHaveLength(0);
+    expect(await readGeneratorYield(dir)).toMatchObject({ generationKnown: false });
 
     const applied = JSON.parse((await run(['--lane', 'claude', '--min', '2', '--apply', '--json'], 0)).out);
     expect(applied.applied).toBe(true);
@@ -168,7 +184,7 @@ describe('autofill source order', () => {
       const idea = { id: 'empty-launches:alpha', signal: 'empty-launches', title: 'Alpha jobs end empty', evidence: {}, payoff: { score: 5, text: 'saves slots' }, task: 'Cut the alpha job family.', why: 'w', lane: 'claude', status: 'proposed' } as const;
       const shipped = { ...idea, id: 'empty-launches:beta', title: 'Beta jobs end empty', status: 'shipped' } as const;
       const code = await cmdQueueAutofill(['--lane', 'claude', '--min', '2', '--apply', '--json', '--dir', dir], {
-        readLane: async () => ({ running: 0, target: 4, queued: 0 }), root,
+        readLane: async () => ({ running: 0, target: 4, queued: 0 }), root, runsDir: dir,
         sources: { readIdeas: async () => [idea, shipped], readFollowUps: async () => [{ text: 'build the quiet retry path', fromJob: 'RQ-ZED1' }], readStopped: async () => new Set<string>() },
       });
       const report = JSON.parse(String(log.mock.calls[0]![0]));
@@ -178,6 +194,17 @@ describe('autofill source order', () => {
       expect(report.skipped[0].reason).toContain('Already queued or shipped');
       const jobs = (await new QueueStore(dir).read()).jobs;
       expect(jobs.every(j => j.scope.startsWith(STEP_ZERO))).toBe(true);
+      expect((await readGeneratorYield(dir)).generators).toMatchObject([
+        { generator: 'autofill:follow-up', drafted: 1, rejected: 0, launched: 0, prs: 0 },
+        { generator: 'autofill:idea', drafted: 1, rejected: 1, launched: 0, prs: 0 },
+      ]);
+      const capped = join(dir, 'capped');
+      await runQueueAutofill({ lane: 'claude', counts: { running: 0, target: 4, queued: 0 }, min: 2, limit: 0,
+        apply: true, root, dir: capped, runsDir: capped, entries: [], readIdeas: async () => [idea],
+        readFollowUps: async () => [], readStopped: async () => new Set() });
+      expect((await readGeneratorYield(capped)).generators).toMatchObject([
+        { generator: 'autofill:idea', drafted: 0, rejected: 1, rejections: { hourly_cap: 1 } },
+      ]);
     } finally { vi.restoreAllMocks(); rmSync(dir, { recursive: true, force: true }); rmSync(root, { recursive: true, force: true }); }
   });
 });
