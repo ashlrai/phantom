@@ -16,6 +16,17 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.59](https://github.com/ashlrai/phantom/compare/v3.30.58...v3.30.59) (2026-11-21)
+
+
+### Changes
+
+* **RQ-CL-DESK2-1795236703:** ([#7803](https://github.com/ashlrai/phantom/issues/7803)) ([8fbef20](https://github.com/ashlrai/phantom/commit/8fbef2039cbb1f4f003ea3cf6aee4a482bd7ae73))
+* **RQ-CL-DESK2-1795237311:** ([#7810](https://github.com/ashlrai/phantom/issues/7810)) ([1a7f374](https://github.com/ashlrai/phantom/commit/1a7f3740eef5e50e3a11fde3ab09e999ea63bb50))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795236440-N17:** ([#7805](https://github.com/ashlrai/phantom/issues/7805)) ([67a18bd](https://github.com/ashlrai/phantom/commit/67a18bd9b0fd944bb962f6bbd78e3554cbef7b9e))
+* **RQ-SLATEPLANN22KQ8:** RQ-SLATEPLANN22KQ8: the planner says plainly when no fallbac ([#7804](https://github.com/ashlrai/phantom/issues/7804)) ([aaf79df](https://github.com/ashlrai/phantom/commit/aaf79df7550b508c5e33838a712de1113bd10ac4))
+* **RQ-WTSTATEN22KQ8:** RQ-WTSTATEN22KQ8: worktree reap classifies "state-unknown" w ([#7808](https://github.com/ashlrai/phantom/issues/7808)) ([be7b9d4](https://github.com/ashlrai/phantom/commit/be7b9d4a5e70210292d4b4e17587626f972f6582))
+
 ## [Unreleased]
 
 ### Since v3.30.40
