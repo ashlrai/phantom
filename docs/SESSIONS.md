@@ -35,10 +35,14 @@ See [live sessions](FLEET-API.md#live-sessions).
 Every row in the Sessions pane also has a **Thread** button. It opens that
 session as a conversation in the same pane: a summary assembled from the
 session's records, then what was said to it on the right, what it said and did
-on the left, and its recorded steps in the centre. A "Routed to" record lists
+on the left, and its recorded steps in the centre. The conversation ends with
+an "Output" block: the last 12 lines the session wrote to its log, set like a
+terminal, with a caret pulsing after the last line while the session is
+running. It changes with each read, so it shows what the session is doing
+now without opening the log. A "Routed to" record lists
 the jobs serving one of your messages, one row per job with its lane, state
 and pull request link. A line under the conversation says whether activity,
-bus messages, your messages and routing are shown, not recorded or unknown,
+output, bus messages, your messages and routing are shown, not recorded or unknown,
 and anything left out is listed. The reply box writes to the Leader's inbox,
 the same route as the Leader chat, with the session's job id in front
 (`@RQ-...`) so the Leader knows which session you mean. Where a reply goes is
@@ -95,7 +99,8 @@ says so and exits 1 instead of printing an empty list. See
 The console's Conversations pane puts every session on one screen. Each
 session is a card: its id, state and when it last spoke, the summary, and its
 newest messages, with what was said to it on the right and what it said on the
-left. The pane makes one request for all of them
+left. A running session's card ends with the last 3 lines it wrote to its
+log. The pane makes one request for all of them
 (`GET /api/verse/fleet/control/session-threads`) and asks again every 10
 seconds while it is on screen. The buttons above the cards show only the
 sessions in one state. Arrow keys or J and K move between cards, Enter opens
@@ -161,7 +166,9 @@ To read one session as a conversation instead of a log, run
 the tree. It prints a short summary (what the session is, its state, commands
 seen, files changed, latest step), then the brief it was given, its recorded
 steps, what it ran and changed, its notes, the agent bus messages about it,
-what you wrote to it and its last message. For a worker, "what you wrote" is
+what you wrote to it, the last 12 lines it wrote to its own log (labelled
+"Output", redacted like `phm sessions tail`) and its last message when the
+output does not already end with it. For a worker, "what you wrote" is
 every message in the Leader inbox that names it as `@<job id>`; for the
 leader it is every message you sent, placed between the leader's replies in
 time order. The thread also shows where your work went: a worker opens with

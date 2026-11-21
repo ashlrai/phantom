@@ -43,7 +43,8 @@ export interface SessionThread {
   session: ThreadSession;
   summary: string[];
   messages: ThreadMessage[];
-  sources: { activity: ThreadSource; bus: ThreadSource; owner: ThreadSource; replies: ThreadSource; orders: ThreadSource };
+  /** `output` (the session's own log lines) is absent when the server that answered does not read it. */
+  sources: { activity: ThreadSource; bus: ThreadSource; owner: ThreadSource; replies: ThreadSource; orders: ThreadSource; output?: ThreadSource };
   gaps: string[];
   reply: ReplyRoute;
 }
@@ -110,7 +111,8 @@ export function narrowSessionThread(raw: unknown): SessionThread | null {
   return {
     generatedAt: time(raw.generatedAt) ?? new Date(0).toISOString(), session,
     summary: lines(raw.summary), messages,
-    sources: { activity: source('activity'), bus: source('bus'), owner: source('owner'), replies: source('replies'), orders: source('orders') },
+    sources: { activity: source('activity'), bus: source('bus'), owner: source('owner'), replies: source('replies'), orders: source('orders'),
+      ...(sources.output === undefined ? {} : { output: source('output') }) },
     gaps: lines(raw.gaps), reply: replyRoute(session, raw.reply),
   };
 }
@@ -160,7 +162,8 @@ export const STATE_WORD: Readonly<Record<ThreadState, string>> = {
 export function sourcesLine(thread: SessionThread): string {
   const word = (name: string, source: ThreadSource) => `${name} ${source === 'available' ? 'shown' : source === 'none' ? 'none recorded' : 'unknown'}`;
   const { sources, session } = thread, leader = session.kind === 'leader';
-  return [word('Activity', sources.activity), word('bus messages', sources.bus),
+  // Only a session with a job has a log to write to, and only a server that reads it says so.
+  return [word('Activity', sources.activity), ...(sources.output !== undefined && session.jobId !== null ? [word('output', sources.output)] : []), word('bus messages', sources.bus),
     ...(session.kind === 'subagent' ? [] : [word('your messages', sources.owner)]),
     ...(leader ? [word('replies to you', sources.replies)] : []), word('routing', sources.orders)].join(' · ');
 }

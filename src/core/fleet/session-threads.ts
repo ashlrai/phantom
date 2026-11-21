@@ -5,8 +5,8 @@
  *
  * Pure, and no source of its own. Each entry is the same thread
  * `phm sessions thread <id>` builds (session-thread.ts), cut down to its
- * summary and newest messages (what Mason wrote to it and where the Leader
- * routed it included), so a screen
+ * summary and newest messages (what Mason wrote to it, where the Leader
+ * routed it and the last lines a running session wrote included), so a screen
  * that shows every session at once makes one request instead of one per
  * session. Sessions come in the order of the session tree: the leader, then
  * each worker followed by its helpers. The reader lives in
@@ -19,17 +19,22 @@ import type { OrderTraceV1 } from './order-trace.js';
 import type { FleetJobActivityV1 } from './runs-job-activity.js';
 import type { SessionThreadReply } from './session-reply.js';
 import {
-  buildSessionThread, type SessionThreadMessage, type SessionThreadOwnerRead, type SessionThreadSession, type SessionThreadSource,
+  buildSessionThread, type SessionThreadMessage, type SessionThreadOutputRead, type SessionThreadOwnerRead, type SessionThreadSession, type SessionThreadSource,
   type SessionThreadState, type SessionThreadV1,
 } from './session-thread.js';
 
 export const SESSION_THREADS_SCHEMA = 'fleet.session-threads.v1';
 /** The most sessions one read holds, the newest messages each one carries, and the longest message text. */
 export const THREADS_MAX = 40, THREADS_MESSAGES_SHOWN = 3, THREADS_TEXT_CHARS = 400;
+/** The newest lines of a session's own output a short thread carries. */
+export const THREADS_OUTPUT_LINES = 3;
 /** `counts.states` keys, in the order they print. */
 export const THREAD_STATES: readonly SessionThreadState[] = ['running', 'quiet', 'idle', 'done', 'failed', 'unknown'];
 
-/** Key order is the JSON contract. A thread message, with `truncated` true when `text` was cut to THREADS_TEXT_CHARS. */
+/**
+ * Key order is the JSON contract. A thread message, with `truncated` true when `text` was cut to THREADS_TEXT_CHARS.
+ * An `output` message keeps its newest THREADS_OUTPUT_LINES lines, cut from the front, since the end of a log is the news.
+ */
 export interface SessionThreadsMessage extends SessionThreadMessage { truncated: boolean }
 export interface SessionThreadsEntry {
   session: SessionThreadSession;
@@ -71,15 +76,24 @@ export interface SessionThreadsParts {
   owner?: SessionThreadOwnerRead | null;
   /** The order trace, shared by the leader's thread and every worker's that has a job. Undefined when not asked for; null when the read failed. */
   orders?: OrderTraceV1 | null;
+  /** The end of each running job's log, by job id. A job with no key was not asked for; null means its read failed. */
+  output?: ReadonlyMap<string, SessionThreadOutputRead | null>;
 }
 
-/** The sessions a threads read shows, in tree order, and how many the list holds in all. */
-export function threadSessions(list: LiveSessionsV1): { shown: { id: string; jobId: string | null; kind: string }[]; total: number } {
+/** The sessions a threads read shows, in tree order, and how many the list holds in all. `running` is the tree's own state. */
+export function threadSessions(list: LiveSessionsV1): { shown: { id: string; jobId: string | null; kind: string; running: boolean }[]; total: number } {
   const nodes = flatTree(list.tree.roots).map(entry => entry.node).filter(node => node.kind !== 'unknown-parent');
-  return { shown: nodes.slice(0, THREADS_MAX).map(node => ({ id: node.id, jobId: node.jobId, kind: node.kind })), total: nodes.length };
+  return { shown: nodes.slice(0, THREADS_MAX).map(node => ({ id: node.id, jobId: node.jobId, kind: node.kind, running: node.state === 'running' })), total: nodes.length };
 }
 
 function clipped(message: SessionThreadMessage): SessionThreadsMessage {
+  if (message.kind === 'output') {
+    const lines = message.text.split('\n'), newest = lines.slice(-THREADS_OUTPUT_LINES).join('\n'), long = newest.length > THREADS_TEXT_CHARS;
+    const fewer = lines.length > THREADS_OUTPUT_LINES;
+    // The label counts the lines carried here, not the ones the single thread shows.
+    return { ...message, label: fewer ? `${message.label.slice(0, message.label.lastIndexOf(','))}, last ${THREADS_OUTPUT_LINES} lines of its log` : message.label,
+      text: long ? `…${newest.slice(1 - THREADS_TEXT_CHARS).trimStart()}` : newest, truncated: long || fewer };
+  }
   const cut = message.text.length > THREADS_TEXT_CHARS;
   return { ...message, text: cut ? `${message.text.slice(0, THREADS_TEXT_CHARS - 1).trimEnd()}…` : message.text, truncated: cut };
 }
@@ -99,6 +113,7 @@ export function buildSessionThreads(list: LiveSessionsV1, parts: SessionThreadsP
     // A helper is never named in the Leader inbox, so it gets no inbox, as in the single thread's reader.
     const thread = buildSessionThread(list, id, { sessionsRead: true, bus: parts.bus,
       ...(jobId !== null && parts.activity.has(jobId) ? { activity: parts.activity.get(jobId) } : {}),
+      ...(jobId !== null && parts.output?.has(jobId) ? { output: parts.output.get(jobId) } : {}),
       ...(kind !== 'subagent' && parts.owner !== undefined ? { owner: parts.owner } : {}),
       ...(kind === 'leader' && parts.replies !== undefined ? { replies: parts.replies } : {}),
       // Routing goes to the same sessions the single thread's reader gives it to: the leader and a worker with a job.
