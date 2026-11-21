@@ -178,7 +178,9 @@ nothing running and rows queued. `resets_in_h` is hours to the reset, `as_of`
 and `reading_age_min` say when the last reading was taken and how old it is.
 Optional fields: `running`, `target` (slots) and `queued_rows` (rows waiting for the lane; `null` is unknown, never 0), `queued_hours` (ready jobs times the pool's median job time over
 the last 72 h; `0` for an empty queue, `null` when unknown) and `blocked: "sign-in"`
-with `blocked_fix` when the lane is held for a sign-in (verdict "blocked: sign-in").
+with `blocked_fix` when the lane is held for a sign-in (verdict "blocked: sign-in"). `sentence`
+is the row in one plain line ("Claude: 45% used, 6 days left, on pace"; pace is "on pace",
+"behind: will leave N% unused", "spent until Fri 6 PM" or "unknown"), and the desktop chart shows it.
 Fractions are 0 to 1; a pool with no current reading has `null` fractions and
 `state: "unknown"`, never zero. The desktop Spend down panel and the phone Home Pools card
 draw only this JSON.

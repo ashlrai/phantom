@@ -27,6 +27,13 @@ describe('buildSpendDown', () => {
     });
   });
 
+  it('writes one plain sentence per pool: on pace, behind, spent and unknown', () => {
+    expect(only(lane('claude', { usedPct: 50, burnPctPerHour: 0.35, resetAt: at(144) })).sentence).toBe('Claude: 50% used, 6 days left, on pace');
+    expect(only(lane('claude', { usedPct: 50, burnPctPerHour: 0.1 })).sentence).toMatch(/^Claude: 50% used, 4 days left, behind: will leave \d+% unused$/);
+    expect(only(lane('zai', { usedPct: 100, resetAt: at(5) })).sentence).toMatch(/^Zai: 100% used, 5 hours left, spent until \w{3} \d{1,2} [AP]M$/);
+    expect(only(lane('grok', { usedPct: null, observation: null as never })).sentence).toBe('Grok: unknown');
+  });
+
   it('under-spending: says how much will be left and to add work', () => {
     // 72% used with 31 h left, burning 0.3 %/h: ends near 81%, 19% unused.
     const row = only(lane('claude', { usedPct: 72, resetAt: at(31), burnPctPerHour: 0.3 }));
