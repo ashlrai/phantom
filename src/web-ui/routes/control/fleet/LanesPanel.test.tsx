@@ -27,6 +27,7 @@ const SNAPSHOT = {
   lanes: [
     {
       lane: 'devin',
+      caps: { gh: true, browser: true, network: true, signedIn: true },
       queueDepth: 2,
       liveJobs: 1,
       mergesPerHour: 1,
@@ -38,6 +39,7 @@ const SNAPSHOT = {
     },
     {
       lane: 'grok-ultra',
+      caps: { gh: false, browser: true, network: true, signedIn: true },
       queueDepth: 1,
       liveJobs: 0,
       mergesPerHour: 0,
@@ -95,6 +97,16 @@ describe('LanesPanel', () => {
     // Source-health line keeps "empty" distinguishable from "unreadable".
     expect(screen.getByText(/ready\.tsv healthy \(6 rows\)/)).toBeInTheDocument();
     expect(screen.getByText(/budgets healthy/)).toBeInTheDocument();
+  });
+
+  it('shows capability badges on each map lane: all-true, no gh, unknown', async () => {
+    vi.stubGlobal('fetch', respond(SNAPSHOT));
+    render(<LanesPanel />);
+    const caps = async (lane: string) => (await screen.findByRole('list', { name: `${lane} capabilities` })).textContent;
+    expect(await caps('devin')).toBe('ghbrowsernetworksigned in');
+    expect(await caps('grok-ultra')).toBe('no ghbrowsernetworksigned in');
+    expect(await caps('local-omlx')).toBe('gh: unknownbrowser: unknownnetwork: unknownsigned in: unknown');
+    expect(screen.getAllByText('no gh')[0]).toHaveAttribute('title', 'no gh: jobs that run gh go elsewhere.');
   });
 
   it('opens and closes lane evidence without treating unknown metrics as zero', async () => {
