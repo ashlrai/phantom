@@ -1,0 +1,26 @@
+.pane { display: flex; flex-direction: column; min-width: 0; height: 100%; overflow: auto; color: var(--text-primary); font-family: var(--font-ui); }
+.header, .transport, .stage, .footer, .empty { padding: var(--space-4); }
+.header h2 { margin: 0; font-size: var(--text-md-size); font-family: var(--font-display); }
+.header p, .empty { color: var(--text-secondary); font-size: var(--text-sm-size); line-height: 1.5; }
+.sources, .buttons { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.sources { position: relative; }
+.fileLabel { font-size: var(--text-xs-size); padding: var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); cursor: pointer; }
+.fileInput { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.sources:has(.fileInput:focus-visible) .fileLabel { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+.transport { display: grid; gap: var(--space-3); border-block: 1px solid var(--border-subtle); background: var(--bg-canvas); }
+.transport label, .status, .footer { font-size: var(--text-xs-size); color: var(--text-secondary); }
+.transport input { width: 100%; min-width: 0; }
+.title { overflow-wrap: anywhere; font-size: var(--text-sm-size); }
+.stage { flex: 1; min-width: 0; }
+.status { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.entry { border-left: 2px solid var(--border-strong, var(--text-tertiary)); padding-left: var(--space-3); }
+.entry h3 { font-size: var(--text-sm-size); margin-block: var(--space-3); }
+.entry pre { white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2; font-family: var(--font-mono); font-size: var(--text-xs-size); line-height: 1.6; }
+.entry p { font-size: var(--text-sm-size); }
+.entry[data-kind='diff'] { border-left-style: double; border-left-width: 4px; }
+.timeline { list-style: none; padding: 0; margin-top: var(--space-5); }
+.timeline button { display: flex; align-items: baseline; gap: var(--space-3); width: 100%; padding: var(--space-2); color: var(--text-secondary); text-align: left; background: transparent; border: 0; border-radius: var(--radius-sm); font: inherit; font-size: var(--text-xs-size); cursor: pointer; }
+.timeline button:hover, .timeline button[aria-current] { background: var(--bg-hover); color: var(--text-primary); }
+.timeline span { font-variant-numeric: tabular-nums; min-width: 2ch; }
+.timeline button:focus-visible, .transport input:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+.footer { margin-top: auto; border-top: 1px solid var(--border-subtle); }
