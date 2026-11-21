@@ -276,7 +276,26 @@ its fill, the running line over the dashed target with the first and last
 sample times and the value of the top edge, and labelled readings: the last
 sample, idle, held and, only when it happened, stalled. Lanes that stalled
 come first, then the most idle. A lane with no target says "no target", not a
-percentage. The Launch gaps strip draws the window once: filled where samples
+percentage.
+
+Under its slot readings each card carries the lane's **usage window**, read
+from the lane's own row of `phm pools --json` (`GET /api/app/pools`, the read
+the Pools board and Home share): the share used, when it resets (as a
+countdown and a local time) and how old the reading is, then the bar the
+Pools board draws, with the mark for the time gone. One line under the bar
+says how the window ends at the measured burn. When usage is set to go unused
+and the lane also left slots open in the chosen window, that line names both
+figures and turns amber, for example "68% set to go unused at the reset, and
+4.5 slot-h of its slots sat open in the last 24 h." A window that runs empty
+before its reset says when. A lane with no reading, a lane `phm pools` does
+not list and a failed read all say "usage unknown" over a hatched bar and
+give the reason; a lane with nothing metered says "no usage window" and a
+credit lane gives its balance, both without a bar. A refresh that fails keeps
+the last view and labels it "last reading". The words **Usage window** open
+the Pools pane, and a key above the cards names the parts of the bar once a
+card has a measured window.
+
+The Launch gaps strip draws the window once: filled where samples
 exist, amber where a launch gap was found, hatched where nobody was watching.
 Every figure is computed from the samples `GET /api/verse/runs-history`
 returned, so unwatched time is never counted as idle or as full.
