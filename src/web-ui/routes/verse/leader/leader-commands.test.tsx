@@ -113,6 +113,18 @@ describe('Command’s Leader card', () => {
     expect(screen.getByLabelText('Leader seat')).toHaveTextContent('Leader: Opus 5.5 on Claude, next: GPT-6.1 Sol on Codex');
   });
 
+  it('says whether the live build is current, how far behind it is, or unknown', async () => {
+    const supply = (build?: unknown) => ({ schema: 'doctor.supply.v1', verdict: 'v', ingested: { state: 'known', path: 'p', sources: [] }, rejected: { state: 'known', path: 'p', total24h: 0, byReason: {} },
+      selfSupply: { landed24h: 0, lastLanded: null }, hook: {}, ...(build ? { build } : {}) });
+    const known = (count: number, since: string | null) => ({ commit: { state: 'known', sha: 'abc1234', source: 'git' }, behind: { state: 'known', count, ref: 'origin/master', since } });
+    for (const [build, line] of [[known(0, null), 'Live build: current'], [known(644, '2026-11-12T08:00:00.000Z'), 'Live build: 644 behind (since Nov 12)'], [undefined, 'Live build: unknown']] as const) {
+      stubSurfaceFetch({ routes: { '/api/verse/leader/thread': { messages: [] }, '/api/verse/supply': supply(build) } });
+      render(<LeaderCardHarness />);
+      expect(await screen.findByLabelText('Live build')).toHaveTextContent(line);
+      cleanup(); evictAll();
+    }
+  });
+
   it('previews the Leader’s latest message and opens the composer on Mind', async () => {
     stubSurfaceFetch({ routes: { '/api/verse/leader/thread': { messages: [...threadMessages(), msg({ id: 'z', at: new Date().toISOString(), channel: 'telegram', text: '**Lanes** raised. See [memo](https://x).' })] } } });
     render(<LeaderCardHarness />);
