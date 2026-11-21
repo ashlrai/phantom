@@ -87,8 +87,11 @@ export function githubJson(path, invoke = execFileSync, sleep = (ms) => Atomics.
     }));
     const body = response.slice(split + separator.length);
     if (status >= 200 && status < 300) return JSON.parse(body);
-    const delay = rateLimitDelay(status, headers, body, attempt);
-    if (delay === null) throw new Error(`GitHub API request failed (HTTP ${status})`);
+    // Transient server errors (500/502/503/504) are retried with backoff; the
+    // daily run otherwise fails on a single GitHub blip.
+    const transient = status === 500 || status === 502 || status === 503 || status === 504;
+    const delay = transient ? 1000 * 2 ** (attempt - 1) : rateLimitDelay(status, headers, body, attempt);
+    if (delay === null || (transient && (attempt === 4 || waited + delay >= 180_000))) throw new Error(`GitHub API request failed (HTTP ${status})`);
     if (attempt === 4 || waited + delay >= 180_000) throw new Error(`GitHub API rate limit persisted after ${attempt} attempt(s); retry budget exhausted`);
     waited += delay;
     sleep(delay);

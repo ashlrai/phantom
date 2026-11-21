@@ -26,6 +26,24 @@ test('waits for a reset header in a mocked response', () => {
   assert.equal(calls, 2);
   assert.ok(waits[0] >= 1000 && waits[0] <= 3000);
 });
+test('retries a transient 5xx response with backoff', () => {
+  let calls = 0;
+  const waits = [];
+  const bad = 'HTTP/2 500\r\n\r\n{"message":"Server Error"}';
+  assert.deepEqual(githubJson(path, () => ++calls < 3 ? bad : ok, (ms) => waits.push(ms)), { sha: 'ok' });
+  assert.equal(calls, 3);
+  assert.deepEqual(waits, [1000, 2000]);
+});
+test('a persistent 5xx still fails with its status after four attempts', () => {
+  let calls = 0;
+  assert.throws(() => githubJson(path, () => { calls++; return 'HTTP/2 502\r\n\r\n{}'; }, () => {}), /HTTP 502/);
+  assert.equal(calls, 4);
+});
+test('a 404 is not retried', () => {
+  let calls = 0;
+  assert.throws(() => githubJson(path, () => { calls++; return 'HTTP/2 404\r\n\r\n{}'; }, () => {}), /HTTP 404/);
+  assert.equal(calls, 1);
+});
 test('fails after four attempts', () => {
   let calls = 0;
   assert.throws(() => githubJson(path, () => { calls++; return limited(); }, () => {}), /rate limit persisted after 4/);
