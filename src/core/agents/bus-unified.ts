@@ -1012,6 +1012,19 @@ function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
 }
 
 /**
+ * The job-scoped inbox filter: mail that names one job — a feed-citing body
+ * (`work.post`, `work.status`, `work.result` or `wake`) declaring that
+ * `jobId` through the same field the feed projection keys on, or a
+ * `note`/`context` body carrying the `job:<id>` v2 thread label, the same
+ * bucket the messages and conversations projections group under `job:<id>`.
+ * Every other body kind cites no job and never matches; a bare `<id>` thread
+ * label is a different conversation bucket and does not match either.
+ */
+function inboxJobMatch(body: unknown, job: string): boolean {
+  return workFeedJobId(body) === job || busBodyThread(body) === `job:${job}`;
+}
+
+/**
  * One page of an identity's inbox: DMs and handoffs to `agent:<handle>`,
  * traffic still addressed to its bare handle, stable id or legacy aliases,
  * and posts in its channels (minus its own and minus `group.presence`
@@ -1027,7 +1040,11 @@ function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
  * identity, an unresolvable ref keeps exact-label matching. `priority` keeps
  * only envelopes stamped with that exact P0..P3 band — the same match
  * `comms bus read --priority` applies — so urgent mail is one filtered read,
- * not a page through the backlog. Returned highest
+ * not a page through the backlog. `job` keeps only mail that names one job:
+ * a feed-citing body (`work.post`, `work.status`, `work.result` or `wake`)
+ * declaring that `jobId`, or a `note`/`context` body carrying the
+ * `job:<id>` v2 thread label — the same bucket the messages and
+ * conversations projections group under `job:<id>`. Returned highest
  * priority first; `nextCursor` covers every scanned row, so callers persist
  * it only after handling the page. Claimable work and worker-handoff items
  * additionally carry `held`/`holder` — the same hold evidence `bus show`
@@ -1044,11 +1061,11 @@ function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
  * `messages` still returns only the first `limit` of them.
  */
 export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string;
-    matched?: boolean; priority?: BusPriority; kind?: InboxKind } = {},
+    matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string } = {},
   options: UnifiedBusOptions = {}): InboxPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
   const countMatched = page.matched === true;
-  const kindFilter = page.kind;
+  const kindFilter = page.kind, jobFilter = page.job;
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
     return { status: 'invalid', reason: 'after must be >= 0 and limit 1-100.' };
   }
@@ -1063,6 +1080,9 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   }
   if (kindFilter !== undefined && !INBOX_KINDS.includes(kindFilter)) {
     return { status: 'invalid', reason: 'Invalid kind.' };
+  }
+  if (jobFilter !== undefined && (typeof jobFilter !== 'string' || !THREAD.test(jobFilter))) {
+    return { status: 'invalid', reason: 'Invalid job id.' };
   }
   const read = readAgentRegistry(options);
   if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
@@ -1102,6 +1122,7 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
       const matchedKind = kind !== null &&
         (kindFilter === undefined || kind === kindFilter) &&
         (thread === undefined || busBodyThread(envelope.body) === thread) &&
+        (jobFilter === undefined || inboxJobMatch(envelope.body, jobFilter)) &&
         (fromMatch === undefined || fromMatch(envelope.from)) &&
         (priority === undefined || envelope.priority === priority) ? kind : null;
       if (matchedKind !== null && envelope.origin_bridge === 'agent-chat-owner') {

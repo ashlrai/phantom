@@ -474,6 +474,95 @@ describe('kind-filtered inbox reads', () => {
   });
 });
 
+describe('job-filtered inbox reads', () => {
+  it('keeps only mail that names one job across feed citations and job-threaded note/context', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    // Two announced jobs back the feed-citing bodies below.
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-JOB-A', title: 'Job A', repo: 'ashlrai/phantom',
+      claimKeys: ['repo:ashlrai/phantom'], provider: 'claude', to: 'agent:nova', id: 'jb-post-a' }, options)).toMatchObject({ status: 'posted' });
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-JOB-B', title: 'Job B', repo: 'ashlrai/phantom',
+      claimKeys: ['repo:ashlrai/phantom'], provider: 'claude', to: 'agent:nova', id: 'jb-post-b' }, options)).toMatchObject({ status: 'posted' });
+    const post = (id: string, body: BusJsonValue, to = 'agent:nova') => {
+      expect(appendBusInbox({ id, from: 'agent:atlas', to, priority: 'P2', ttl: 60_000, body }, options).status).toBe('posted');
+    };
+    // Every feed-citing kind that declares the job matches.
+    post('jb-st-a', { kind: 'work.status', jobId: 'RQ-JOB-A', status: 'running' });
+    post('jb-res-a', { kind: 'work.result', jobId: 'RQ-JOB-A', claimKey: 'repo:ashlrai/phantom',
+      queueId: `peer-work-${'a'.repeat(32)}`, receiptId: `pw-${'b'.repeat(32)}`, outcome: 'complete' });
+    post('jb-wake-a', { kind: 'wake', target: 'agent:nova', reason: 'job done', jobId: 'RQ-JOB-A' });
+    // A note/context carrying the job:<id> thread label is the job's
+    // conversation bucket — the same one the messages/conversations
+    // projections group under.
+    post('jb-note-a', { kind: 'note', text: 'job A note', thread: 'job:RQ-JOB-A' });
+    post('jb-ctx-a', { kind: 'context', text: 'job A context', thread: 'job:RQ-JOB-A' });
+    // Job B mail, a wake citing no job, plain chat and a bare-id thread all
+    // name a different conversation and stay out.
+    post('jb-st-b', { kind: 'work.status', jobId: 'RQ-JOB-B', status: 'running' });
+    post('jb-wake-bare', { kind: 'wake', target: 'agent:nova', reason: 'no job cited' });
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'plain chat', id: 'jb-dm' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'bare thread', thread: 'RQ-JOB-A', id: 'jb-bare' }, options);
+
+    const page = readAgentInbox('nova', { job: 'RQ-JOB-A' }, options);
+    if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+    expect(page.messages.map(m => m.envelope.id).sort())
+      .toEqual(['jb-ctx-a', 'jb-note-a', 'jb-post-a', 'jb-res-a', 'jb-st-a', 'jb-wake-a'].sort());
+    // A job that only has a bare-thread note and no feed citation matches
+    // nothing — the filter names the job:<id> bucket, not the bare label.
+    expect(readAgentInbox('nova', { job: 'RQ-ABSENT' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    // The unfiltered page still sees everything the filter skipped.
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages.length).toBe(11);
+  });
+
+  it('composes with the other inbox filters and --matched counts only accepted rows', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-JC-1', title: 'Compose job', repo: 'ashlrai/phantom',
+      claimKeys: ['repo:ashlrai/phantom'], provider: 'claude', to: 'agent:nova', id: 'jc-post' }, options)).toMatchObject({ status: 'posted' });
+    await updateWorkStatus({ from: 'atlas', jobId: 'RQ-JC-1', status: 'running', to: 'agent:nova',
+      id: 'jc-st', priority: 'P1' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'channel note',
+      thread: 'job:RQ-JC-1', id: 'jc-ch' }, options);
+    await sendDirectMessage({ from: 'orion', to: 'nova', text: 'other sender', thread: 'job:RQ-JC-1',
+      id: 'jc-dm-o' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'other job', thread: 'job:RQ-JC-2',
+      id: 'jc-dm-j2' }, options);
+
+    // --job alone keeps every delivery kind that names the job.
+    const all = readAgentInbox('nova', { job: 'RQ-JC-1' }, options);
+    if (all.status !== 'ok') throw new Error(`unexpected ${all.status}`);
+    expect(all.messages.map(m => `${m.kind}:${m.envelope.id}`).sort())
+      .toEqual(['channel:jc-ch', 'dm:jc-dm-o', 'dm:jc-post', 'dm:jc-st'].sort());
+    // It composes with --kind, --from and --priority.
+    expect(readAgentInbox('nova', { job: 'RQ-JC-1', kind: 'channel' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'jc-ch' } }] });
+    expect(readAgentInbox('nova', { job: 'RQ-JC-1', from: 'orion' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'dm', envelope: { id: 'jc-dm-o' } }] });
+    expect(readAgentInbox('nova', { job: 'RQ-JC-1', priority: 'P1' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'jc-st' } }] });
+    // --matched counts only the rows the job filter accepts.
+    const counted = readAgentInbox('nova', { job: 'RQ-JC-1', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(4);
+    // A job filter that matches nothing still scans the whole store.
+    const empty = readAgentInbox('nova', { job: 'RQ-ABSENT' }, options);
+    if (empty.status !== 'ok') throw new Error(`unexpected ${empty.status}`);
+    expect(empty.messages).toEqual([]);
+    expect(empty.nextCursor).toBeGreaterThan(0);
+  });
+
+  it('refuses a job id that is not a printable label', () => {
+    const options = setup();
+    register(options, 'nova');
+    expect(readAgentInbox('nova', { job: 'has space' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentInbox('nova', { job: '' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentInbox('nova', { job: 'x'.repeat(129) }, options)).toMatchObject({ status: 'invalid' });
+  });
+});
+
 describe('envelope lookup by id', () => {
   it('resolves a retained envelope of any kind by its wire id', async () => {
     const options = setup();

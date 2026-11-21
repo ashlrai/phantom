@@ -33,7 +33,7 @@ ashlr agents bus channel list [--agent <agent>]
 ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--thread <t>] [--priority P0..P3] [--matched] [--after <cursor>] [--limit <1..100>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
-ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--matched] [--frame <cli>]
+ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--matched] [--frame <cli>]
 ashlr agents bus wakes [<agent>] [--since <epoch ms>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
@@ -68,7 +68,10 @@ a page through the backlog. --kind on inbox keeps only one delivery kind —
 dm, channel, handoff or legacy, the same kind each inbox row prints — so an
 agent can read just its handoffs or just its direct mail in one filtered
 read; it composes with every other inbox filter and --matched counts only
-the rows it accepts. --matched
+the rows it accepts. --job on inbox keeps only mail that names one job — a
+work.post/work.status/work.result/wake body declaring that jobId, or a
+note/context body carrying the job:<id> thread label — so an agent on one
+job reads its pending mail without paging the whole inbox. --matched
 on inbox and channel read reports matched, the true pending total across the
 whole retained store the same filters accept; messages still caps at --limit
 and nextCursor then resumes at the newest shown row, so paging never skips
@@ -426,7 +429,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const agent = sub ?? self;
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
       const page = readAgentInbox(agent, { after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit'),
-        thread: one('--thread'), from: one('--from'), priority: priorityArg(), kind: kindArg(), matched: p.bools.has('--matched') }, options);
+        thread: one('--thread'), from: one('--from'), priority: priorityArg(), kind: kindArg(), job: one('--job'),
+        matched: p.bools.has('--matched') }, options);
       if (page.status !== 'ok') return finish(page, '');
       // --matched scans the whole store, so the core nextCursor is the store's
       // end — resuming there would skip unshown matches. The honest resume
