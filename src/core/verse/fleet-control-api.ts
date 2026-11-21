@@ -374,6 +374,10 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   if (path === '/api/verse/fleet/control/session-threads') {
     return (await import('./fleet-session-threads-api.js')).handleFleetSessionThreadsApi(ctx, req, res, path, method);
   }
+  // Words looked for in every session's whole conversation, behind `phm sessions find`.
+  if (path === '/api/verse/fleet/control/session-find') {
+    return (await import('./fleet-session-find-api.js')).handleFleetSessionFindApi(ctx, req, res, path, method);
+  }
   // The joined Macs as one pool, behind `phm nodes pool` and the Machines card on Home.
   if (path === '/api/verse/fleet/control/nodes-pool') {
     return (await import('./fleet-nodes-pool-api.js')).handleFleetNodesPoolApi(ctx, req, res, path, method);

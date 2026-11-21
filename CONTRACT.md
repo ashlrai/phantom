@@ -1718,6 +1718,33 @@ when that read had no verdict) and each `messages[]` row gains optional `lastAt`
 (ISO, newest message on the line). `OrgTreeInputs.laneHealth` and
 `FleetOrgReaders.laneHealth` are new. Additive; `version` stays 1.
 
+## Session find (`fleet.session-find.v1`)
+
+`src/core/fleet/session-find.ts` exports the pure
+`buildSessionFind(list, parts, words, now)`, `findWords(query)`,
+`findSessions(list)`, `renderSessionFindText(read)`, `SESSION_FIND_SCHEMA`,
+`FIND_SESSIONS_MAX` (120), `FIND_HITS_SHOWN` (5), `FIND_TEXT_CHARS` (240),
+`FIND_QUERY_CHARS` (200), `FIND_WORDS_MAX` (8) and the types `SessionFindV1`,
+`SessionFindResult` and `SessionFindHit`. `parts` is the `SessionThreadsParts`
+the session threads builder takes. Key order: `schema`, `generatedAt`,
+`words`, `filter` (`lane`, `repo`, `live`), `counts` (`sessions`, `searched`,
+`found`), `results`, `sources` (`sessions`, `bus`, `owner`, `orders`), `gaps`.
+A result: `session`, `summary`, `hits`, `hitCount`, `messageCount`. A hit:
+`key`, `kind`, `side`, `label`, `at`, `text`, `truncated`. Each session is
+searched as its `full` depth thread, after that thread is scrubbed.
+`src/core/fleet/session-threads-read.ts` exports `readSessionFind(query,
+options)`, `readSessionFindParts(options)` and `SessionThreadsPartsRead`,
+with the injectable reads `readSessionThreads` takes. `src/cli/sessions.ts`
+exports `cmdSessionFind(args, read)` for
+`phm sessions find <words> [--lane <lane>] [--repo <repo>] [--live] [--json]`
+(exit 0 read, 1 list unreadable, 2 usage).
+`src/core/verse/fleet-session-find-api.ts` exports
+`createFleetSessionFindApi(read)`, `defaultSessionFindRead(readParts)`,
+`handleFleetSessionFindApi` and `SESSION_FIND_PATH` for
+`GET /api/verse/fleet/control/session-find?q=<words>` (read session required;
+200, 400, 401, 405, 503). It adds no source and writes nothing. Fields are
+listed in `docs/FLEET-API.md`.
+
 ## Runtime-dynamic fleet config (RQ-DYNCONFIG-1)
 
 `src/core/fleet/dynconfig.ts` exports `createConfigReader`, `sharedConfigReader`,

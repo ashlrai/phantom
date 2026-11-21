@@ -859,6 +859,42 @@ sessions leave after an hour), 503 when the session list cannot be read, and
 400 for anything but one `id`. The CLI exits 2 for an unknown id and 1 when
 the list cannot be read. Text is scrubbed the same way as the session list.
 
+### Session find
+
+`phm sessions find <words> [--lane <lane>] [--repo <repo>] [--live] [--json]`
+looks for words in every session's whole conversation, and
+`GET /api/verse/fleet/control/session-find?q=<words>[&lane=L][&repo=R][&live=1]`
+serves the same `fleet.session-find.v1` document with a current read session.
+It adds no source: each session is searched as the thread
+`phm sessions thread <id> --all` builds, so a word said long before a
+session's newest messages is found.
+
+- `words`: the query in lower case, split on spaces, without repeats. A word
+  is two characters or more; at most 8 are taken from at most 200 characters.
+- `filter`: `lane`, `repo` and `live`, as for the session list.
+- `counts`: `sessions` in the list, `searched` conversations read (at most
+  120, in session tree order) and `found` results.
+- `results[]`: a session is a result when every word is somewhere in its id,
+  kind, lane, model, repo, parent, summary or messages. Case is ignored.
+  - `session` and `summary`: as in a session thread.
+  - `hits`: the newest 5 messages holding at least one word, oldest of them
+    first. Each has the thread message's `key`, `kind`, `side`, `label` and
+    `at`; `text` is on one line, cut to the 240 characters around the first
+    word found, with `…` where it was cut (`truncated`). `hits` is empty when
+    the words are only in the session's facts or summary.
+  - `hitCount` and `messageCount`: messages holding a word, and messages in
+    the conversation searched.
+- `sources`: `sessions`, `bus`, `owner` and `orders`, each `available`, `none`
+  or `unavailable`. `gaps` says in words what was not searched, including
+  sessions past the 120.
+
+Each conversation is scrubbed the same way as the session list before it is
+searched, so a query can neither show nor confirm a secret. The route reads
+the fleet at most once per filter per 5 seconds, whatever the words. It
+answers 400 without a usable `q` or for an unknown parameter, and 503 when the
+session list cannot be read. The CLI exits 0 for a read (finding nothing is
+still a read), 1 when the list cannot be read and 2 for bad usage.
+
 ### Desktop workbench actions (WB-4)
 
 `POST /api/wb/v1/action` requires dispatch enabled, the existing mutation

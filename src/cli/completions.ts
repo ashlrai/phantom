@@ -224,7 +224,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   // Mirror the verb switch in src/cli/trail.ts (cmdTrail).
   trail: ['claim', 'beat', 'release', 'save', 'list', 'show', 'resume', 'sweep', '--json', '--help'],
   // Mirror the verb switch in src/cli/sessions.ts (cmdSessions).
-  sessions: ['tail', 'thread', 'threads', 'list', 'revoke', 'create', 'show', 'resume', 'terminate', 'reconcile', 'help', '--lane', '--repo', '--json'],
+  sessions: ['tail', 'thread', 'threads', 'find', 'list', 'revoke', 'create', 'show', 'resume', 'terminate', 'reconcile', 'help', '--lane', '--repo', '--json'],
   cloud: ['launch', 'list', 'refresh', 'improve', 'budget', 'backlog', 'stats', 'help'],
   // Mirror the verb switch in src/cli/jev.ts (runJevCli).
   jev: ['status', 'test', 'help'],

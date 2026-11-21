@@ -10,7 +10,9 @@
  * cursor in the reply box, Esc comes back. While a conversation is open and
  * the pane is wide enough, the other sessions stay listed beside it
  * (SessionRail.tsx) and J and K step to the next and previous conversation.
- * The bar above the wall (WallBar.tsx) finds among the sessions on screen and
+ * The bar above the wall (WallBar.tsx) finds among the sessions on screen,
+ * and under it the same words are looked for in every session's whole
+ * conversation (WallFind.tsx). The bar also
  * asks the server for one lane, one repo or only running sessions; both are
  * kept across a reload. N opens the next conversation with new messages; the
  * counts behind the "N new" marks are kept across a reload too (wall-seen.ts).
@@ -36,6 +38,7 @@ import { clockTime } from '../leader/thread-model.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { LeaderDock } from './LeaderDock.js';
+import { WallFind } from './WallFind.js';
 import { newLabel, railEntries, railStep, SessionRail } from './SessionRail.js';
 import { leaderIdOf, loadLeaderHidden, saveLeaderHidden, useLeaderRoom } from './wall-leader.js';
 import { nextUnseen, noteWallSeen, unseenCount, unseenSessions } from './wall-seen.js';
@@ -321,6 +324,9 @@ export function SessionWallPane({ visible, host }: Pick<PaneProps, 'visible' | '
     // The bar keeps its place in the tree through every state below, so choosing a lane never takes the keyboard off the control.
     side = <>
       {(wall || isScoped(scope)) && <WallBar find={find} onFind={setFind} scope={scope} onScope={setScope} lanes={choices.lanes} repos={choices.repos} read={wall} order={order} onOrder={setOrder}
+        onLeave={() => wrap.current?.querySelector<HTMLButtonElement>('button[data-found], button[data-card]')?.focus()} />}
+      {/* The same words, looked for in whole conversations; Down past its last result goes on to the cards. */}
+      {wall && <WallFind find={find} scope={scope} visible={visible} onOpen={id => setOpen({ id, toReply: false })}
         onLeave={() => wrap.current?.querySelector<HTMLButtonElement>('button[data-card]')?.focus()} />}
       {room > 0 && leaderHidden && <button type="button" className={styles.leaderShow} onClick={() => setLeaderHidden(false)} title="Show the Leader conversation beside the cards (L writes to the Leader)">
         Leader conversation <kbd>L</kbd>
