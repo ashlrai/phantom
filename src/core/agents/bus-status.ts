@@ -1,12 +1,15 @@
 /** One read-only health probe over every store the unified `agents bus` verbs
  * touch: the message inbox, the identity registry, the wake queue, the shared
- * coordination table, the message-id claim journal and the v2 work feed. Each
+ * coordination table, the message-id claim journal, the v2 work feed and the
+ * legacy `phm bus` mailbox `work mine` still reads. Each
  * section reports its own real state; a section that cannot be read reports
  * unavailable or null, never zero, and the whole read never throws. Read-only:
  * takes no writer lock, writes nothing, makes no network calls and grants
  * nothing. */
+import { dirname } from 'node:path';
 import { inspectBusInbox, type BusInboxInspection } from '../fleet/bus-inbox.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
+import { createBusMailbox } from '../fleet/bus-mailbox.js';
 import { coordinationSummary } from './claim-store.js';
 import { readBusWakes } from '../fleet/bus-wake-queue.js';
 import { readAgentRegistry } from './bus-identity.js';
@@ -71,9 +74,18 @@ export interface UnifiedBusStatus {
      * absent when the refusal names none or the feed is not refused. */
     receipt?: string;
   };
+  /** Legacy `phm bus` mailbox store (`$ASHLR_HOME/bus-mailbox`) behind the
+   * `work mine` mailbox section and `phm bus inbox|ack`. */
+  mailbox: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Pending (unacked, unexpired) messages across every recipient label —
+     * a store-wide total, never per-label detail; 0 on a verified-missing
+     * store, null when the store cannot be read. */
+    pending: number | null;
+  };
 }
 
-/** Compose the six dependency reads. Each probe is isolated: one failing
+/** Compose the seven dependency reads. Each probe is isolated: one failing
  * store degrades only its own section. */
 export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): UnifiedBusStatus {
   const now = options.now ?? Date.now;
@@ -127,5 +139,14 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     feed = { status: 'unavailable', jobs: null };
   }
 
-  return { asOf, store, registry, wakes, coordination, workClaims, feed };
+  // The mailbox home is the fleet root's parent — the same derivation
+  // `work mine` applies — so a custom root probes the matching scratch store.
+  let mailbox: UnifiedBusStatus['mailbox'];
+  try {
+    mailbox = createBusMailbox(options.root === undefined ? undefined : dirname(options.root), now).inspect();
+  } catch {
+    mailbox = { source: 'unavailable', pending: null };
+  }
+
+  return { asOf, store, registry, wakes, coordination, workClaims, feed, mailbox };
 }

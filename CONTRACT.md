@@ -2321,14 +2321,19 @@ carrying `held` show it inside the line's bracket. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
-read-only probe over the five dependencies the unified verbs touch — the
+read-only probe over the seven dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
 null when unreadable), the wake queue (`state`, the observed hint count
 before the row cap — 0 on a verified-missing queue, null when unreadable —
 plus `truncated` for queue-tail or cap cuts, null when the state is
-unknown), the shared coordination table (`coordinationSummary`) and
+unknown), the shared coordination table (`coordinationSummary`),
+the message-id claim journal (`inspectBusWorkClaims` retained-record count),
 the work-feed projection (job count, or the refusal `reason` plus the blamed
-receipt's wire id as `receipt` when the projection named one). Each section
+receipt's wire id as `receipt` when the projection named one), and the legacy
+`phm bus` mailbox store (`createBusMailbox(...).inspect()` under the fleet
+root's parent — `source` plus a store-wide `pending` count of unacked,
+unexpired messages across every recipient label, 0 on a verified-missing
+store, null when unreadable; totals only, never labels). Each section
 reports its own real state, a failed probe degrades only its own section, and
 the read never throws, writes or takes a lock; unknown stays null, never zero.
 See [Unified bus](docs/AGENT-BUS.md#unified-bus-identities-dms-channels-handoffs-and-wake).

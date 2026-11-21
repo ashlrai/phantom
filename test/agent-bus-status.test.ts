@@ -1,12 +1,13 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { readUnifiedBusStatus, type UnifiedBusStatusOptions } from '../src/core/agents/bus-status.js';
 import { announceWork, sendDirectMessage, sendWakeRequest, type UnifiedBusOptions } from '../src/core/agents/bus-unified.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { createBusMailbox } from '../src/core/fleet/bus-mailbox.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
@@ -35,10 +36,12 @@ describe('readUnifiedBusStatus', () => {
     expect(status.workClaims).toEqual({ source: 'missing', claims: null });
     // A missing store is an empty feed, matching `work feed` semantics.
     expect(status.feed).toEqual({ status: 'ok', jobs: 0 });
+    // A verifiably absent mailbox holds no pending mail: 0 is proven.
+    expect(status.mailbox).toEqual({ source: 'missing', pending: 0 });
     expect(Number.isNaN(Date.parse(status.asOf))).toBe(false);
   });
 
-  it('counts real rows across all six sections after bus activity', async () => {
+  it('counts real rows across all seven sections after bus activity', async () => {
     const options = setup();
     const bus: UnifiedBusOptions = options;
     for (const handle of ['atlas', 'nova']) {
@@ -66,6 +69,7 @@ describe('readUnifiedBusStatus', () => {
     expect(status.coordination.source).toBe('available');
     expect(status.coordination.liveClaims).toBe(1);
     expect(status.feed).toEqual({ status: 'ok', jobs: 1 });
+    expect(status.mailbox).toEqual({ source: 'missing', pending: 0 });
   });
 
   it('keeps an unreadable registry unknown while the rest of the bus stays readable', () => {
@@ -125,6 +129,35 @@ describe('readUnifiedBusStatus', () => {
     expect(degraded.coordination.source).toBe('available');
     expect(degraded.feed.status).toBe('ok');
   });
+
+  it('counts pending legacy mailbox mail and degrades only that section when unreadable', () => {
+    const options = setup();
+    // The mailbox home is the fleet root's parent — the same derivation
+    // `work mine` and the status probe both apply.
+    const mailbox = createBusMailbox(dirname(options.root!), options.now);
+    const send = (id: string, to: string, ttl = 60_000) => mailbox.send({ id, from: 'agent:atlas', to,
+      priority: 'P2', ttl, body: { text: 'fake legacy mail' } });
+    send('m-pending-1', 'atlas');
+    send('m-pending-2', 'agent:nova');
+    send('m-acked', 'atlas');
+    expect(mailbox.ack('m-acked', 'atlas').acknowledged).toBe(true);
+    send('m-expired', 'atlas', 1_000);
+    // Advance the shared clock past the short TTL: the row stays retained but
+    // is no longer pending, so the count proves real pending, not raw records.
+    options.clock.now += 2_000;
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.mailbox).toEqual({ source: 'available', pending: 2 });
+    expect(status.store.source).toBe('missing');
+    expect(status.coordination.source).toBe('missing');
+
+    // A mailbox path that is not a directory reads unavailable, never zero.
+    const broken = setup();
+    writeFileSync(join(dirname(broken.root!), 'bus-mailbox'), 'not a directory', { mode: 0o600 });
+    const degraded = readUnifiedBusStatus(broken);
+    expect(degraded.mailbox).toEqual({ source: 'unavailable', pending: null });
+    expect(degraded.store.source).toBe('missing');
+  });
 });
 
 describe('phm agents bus status', () => {
@@ -140,6 +173,7 @@ describe('phm agents bus status', () => {
     expect(json.wakes.state).toBe('missing');
     expect(json.workClaims).toEqual({ source: 'missing', claims: null });
     expect(json.feed.status).toBe('ok');
+    expect(json.mailbox).toEqual({ source: 'missing', pending: 0 });
 
     const text: string[] = [];
     expect(await runAgentsBusUnified(['status', '--root', options.root!], t => text.push(t), () => {}, {})).toBe(0);
@@ -147,6 +181,7 @@ describe('phm agents bus status', () => {
     expect(lines[0]).toMatch(/^store missing /);
     expect(lines.join('\n')).toContain('workClaims missing claims=unknown');
     expect(lines.join('\n')).toContain('feed ok jobs=0');
+    expect(lines.join('\n')).toContain('mailbox missing pending=0');
     expect(lines.join('\n')).toContain('wakes missing hints=0 truncated=false');
   });
 });
