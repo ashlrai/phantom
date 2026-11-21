@@ -1,19 +1,21 @@
 /** One read-only health probe over every store the unified `agents bus` verbs
  * touch: the message inbox, the identity registry, the wake queue, the shared
- * coordination table, the message-id claim journal, the v2 work feed and the
- * legacy `phm bus` mailbox `work mine` still reads. Each
+ * coordination table, the message-id claim journal, the v2 work feed, the
+ * owner-chat share receipts ledger `inbox` consults for `agent-chat-owner`
+ * envelopes and the legacy `phm bus` mailbox `work mine` still reads. Each
  * section reports its own real state; a section that cannot be read reports
  * unavailable or null, never zero, and the whole read never throws. Read-only:
  * takes no writer lock, writes nothing, makes no network calls and grants
  * nothing. */
-import { dirname } from 'node:path';
-import { inspectBusInbox, type BusInboxInspection } from '../fleet/bus-inbox.js';
+import { dirname, join } from 'node:path';
+import { inspectBusInbox, busPathMissing, type BusInboxInspection } from '../fleet/bus-inbox.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { createBusMailbox } from '../fleet/bus-mailbox.js';
 import { coordinationSummary } from './claim-store.js';
 import { readBusWakes } from '../fleet/bus-wake-queue.js';
 import { readAgentRegistry } from './bus-identity.js';
 import { readBusWorkFeed, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
+import { ownerChatRoot, ownerReceiptDir, readOwnerChatReceipts } from './chat-owner-receipts.js';
 
 export interface UnifiedBusStatusOptions {
   /** Same root as BusInboxOptions.root; default `$ASHLR_HOME/fleet`. */
@@ -83,9 +85,19 @@ export interface UnifiedBusStatus {
      * store, null when the store cannot be read. */
     pending: number | null;
   };
+  /** Owner-chat share receipts ledger (`$ASHLR_HOME/fleet/owner-chat-receipts`)
+   * behind the `inbox`/`work mine` filter on `agent-chat-owner` envelopes: an
+   * unreadable ledger makes those reads report unavailable, so the probe
+   * names the dependency directly. */
+  ownerChat: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Retained receipt rows; 0 on a verified-missing ledger, null when it
+     * cannot be read. */
+    receipts: number | null;
+  };
 }
 
-/** Compose the seven dependency reads. Each probe is isolated: one failing
+/** Compose the dependency reads. Each probe is isolated: one failing
  * store degrades only its own section. */
 export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): UnifiedBusStatus {
   const now = options.now ?? Date.now;
@@ -148,5 +160,20 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     mailbox = { source: 'unavailable', pending: null };
   }
 
-  return { asOf, store, registry, wakes, coordination, workClaims, feed, mailbox };
+  // Same root derivation `readAgentInbox` applies to the share receipts
+  // ledger. readOwnerChatReceipts verifies either path absent as an empty
+  // ledger, so existence is probed first: a never-written store reports
+  // missing rather than available-with-zero.
+  let ownerChat: UnifiedBusStatus['ownerChat'];
+  try {
+    const chatRoot = ownerChatRoot(options.root);
+    const dir = ownerReceiptDir(chatRoot);
+    ownerChat = busPathMissing(dir) || busPathMissing(join(dir, 'receipts.json'))
+      ? { source: 'missing', receipts: 0 }
+      : { source: 'available', receipts: readOwnerChatReceipts(chatRoot).length };
+  } catch {
+    ownerChat = { source: 'unavailable', receipts: null };
+  }
+
+  return { asOf, store, registry, wakes, coordination, workClaims, feed, mailbox, ownerChat };
 }
