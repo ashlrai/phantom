@@ -19,7 +19,13 @@ Dispatchd `launch` rows are the assigns — `lane` is the resource and `tier`
 keys job type, the only work-shape field the ledger records — `finish` rows
 supply the `tokens_total` usage reading joined by job id, and the
 metrics-outcomes reconciler's `MERGED`/`CLOSED` rows are the verdicts.
-Minutes-to-merge is the reconciler stamp minus the launch stamp. An outcome
+A `finish` row that records `empty: true` — dispatchd's diff check found
+nothing publishable, so no PR can ever carry a verdict — resolves its open
+assign as a closed non-merge on the spot and charges the row's own
+`tokens_total`; `empty` absent, `false`, or `null` (unmeasured) leaves the
+attempt open for the reconciler, and `pool_error`/`failure_class` fields on
+a non-empty finish never close it. Minutes-to-merge is the reconciler stamp
+minus the launch stamp. An outcome
 with no usage reading is charged the measured mean of its cell (the fleet
 mean when the cell has none); when nothing anywhere reported usage, missing
 readings stay uncharged rather than reading as zero spend. `phm fleet

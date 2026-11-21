@@ -555,7 +555,14 @@ export function learnOutcomes(text: string, censor?: CensorOptions): OutcomeLear
  * is the resource and `tier` keys job type, the only work-shape field the
  * ledger records — `finish` rows carry the token reading (`tokens_total`) an
  * outcome joins by job id, and the metrics-outcomes reconciler's terminal
- * rows are the merge verdicts. `launch_failed`/`launch_terminal` rows are the
+ * rows are the merge verdicts. A `finish` row recording `empty: true` is the
+ * attempt's own death certificate — the diff check found nothing publishable,
+ * so no PR can ever carry a verdict — and resolves its open assign as a
+ * closed non-merge charged with the row's own `tokens_total`; `empty`
+ * absent, `false` or `null` (unmeasured) leaves the attempt open, and
+ * `pool_error`/`failure_class`/`failure_reason`/`empty_class` can ride a
+ * finish whose diff still publishes so they never close on their own.
+ * `launch_failed`/`launch_terminal` rows are the
  * recorded death of an attempt: each resolves its open assign as a closed
  * non-merge so a requeued relaunch counts as a second attempt instead of
  * silently overwriting the first in the fold's open map. Only rows naming a
@@ -663,7 +670,22 @@ function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed
     if (eventName === 'finish') {
       const job = ledgerJobId(row);
       const usage = finiteNumber(row['tokens_total']);
-      if (job !== null && ident(job) && usage !== null) usageByJob.set(job, usage);
+      if (job !== null && ident(job)) {
+        if (usage !== null) usageByJob.set(job, usage);
+        // A finish whose diff check recorded empty:true is the attempt's own
+        // death certificate: nothing publishable means no PR can ever carry a
+        // reconciler verdict, so the open assign resolves as a closed
+        // non-merge now instead of waiting out the censor horizon. The row's
+        // tokens_total is the attempt's recorded spend — an empty run still
+        // burned allowance, so the outcome carries it rather than null. Only
+        // the explicit boolean closes: an absent or false `empty` is
+        // unmeasured or non-empty, and pool_error/failure_class can ride a
+        // finish whose diff still publishes.
+        if (row['empty'] === true && openJobs.has(job)) {
+          openJobs.delete(job);
+          events.push({ kind: 'outcome', job, state: 'closed', usage, minutes: null, breakage: 0 });
+        }
+      }
       continue;
     }
     if (eventName === 'task_outcome') {

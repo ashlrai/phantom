@@ -263,6 +263,60 @@ describe('outcome learning', () => {
       expect(cell?.mergeRate).toBeCloseTo(1 / 3);
     });
 
+    it('closes an attempt whose finish recorded an empty diff, carrying its spend', () => {
+      const ledger = [
+        // J-E1 finished with nothing publishable: the row is the attempt's own
+        // death certificate — no PR can ever carry a reconciler verdict, so
+        // the open assign resolves now instead of staying invisible.
+        JSON.stringify({ event: 'launch', job: 'J-E1', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T00:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-E1', lane: 'devin', tokens_total: 400, wall_s: 200, empty: true, empty_class: 'no_diff' }),
+        // J-E2 measured a real diff (empty:false): still open for the
+        // reconciler's CLOSED verdict.
+        JSON.stringify({ event: 'launch', job: 'J-E2', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T01:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-E2', lane: 'devin', tokens_total: 900, wall_s: 300, empty: false }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-E2', prUrl: 'https://github.com/ashlrai/phantom/pull/21', outcome: 'CLOSED', closedAt: '2026-11-01T02:00:00+00:00', ts: '2026-11-01T02:01:00+00:00' }),
+        // J-E3's finish predates the empty field (absent = unmeasured): open
+        // for the MERGED verdict.
+        JSON.stringify({ event: 'launch', job: 'J-E3', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T03:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-E3', lane: 'devin', tokens_total: 700, wall_s: 300 }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-E3', prUrl: 'https://github.com/ashlrai/phantom/pull/22', outcome: 'MERGED', mergedAt: '2026-11-01T04:00:00+00:00', ts: '2026-11-01T04:01:00+00:00' }),
+        // J-E4's empty finish closes attempt one; the requeued relaunch is a
+        // fresh assign whose non-empty finish merges.
+        JSON.stringify({ event: 'launch', job: 'J-E4', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T05:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-E4', lane: 'devin', tokens_total: 300, wall_s: 100, empty: true }),
+        JSON.stringify({ event: 'launch', job: 'J-E4', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T06:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-E4', lane: 'devin', tokens_total: 1100, wall_s: 400, empty: false }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-E4', prUrl: 'https://github.com/ashlrai/phantom/pull/23', outcome: 'MERGED', mergedAt: '2026-11-01T07:00:00+00:00', ts: '2026-11-01T07:01:00+00:00' }),
+        // J-E5's empty finish names no open assign (its launch fell out of
+        // the window): the usage reading records and nothing resolves.
+        JSON.stringify({ event: 'finish', job: 'J-E5', lane: 'devin', tokens_total: 200, wall_s: 90, empty: true }),
+        // J-E6's non-empty finish still carries failure fields; the diff
+        // published, so only the reconciler verdict may close it.
+        JSON.stringify({ event: 'launch', job: 'J-E6', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T08:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-E6', lane: 'devin', tokens_total: 500, wall_s: 250, empty: false, failure_class: 'rate_limited', pool_error: 'throttled' }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-E6', prUrl: 'https://github.com/ashlrai/phantom/pull/24', outcome: 'MERGED', mergedAt: '2026-11-01T09:00:00+00:00', ts: '2026-11-01T09:01:00+00:00' }),
+        // J-E7's diff metrics were unmeasured (empty:null): not a death
+        // certificate, so the reconciler's MERGED verdict still resolves it.
+        JSON.stringify({ event: 'launch', job: 'J-E7', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T10:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-E7', lane: 'devin', tokens_total: 600, wall_s: 280, empty: null }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-E7', prUrl: 'https://github.com/ashlrai/phantom/pull/25', outcome: 'MERGED', mergedAt: '2026-11-01T11:00:00+00:00', ts: '2026-11-01T11:01:00+00:00' }),
+      ].join('\n');
+      const view = outcomeLearningView(learnFleetOutcomes(null, ledger));
+      expect(view.finished).toBe(7);
+      expect(view.malformed).toBe(0);
+      const cell = view.cells.find((c) => c.resource === 'devin' && c.jobType === 'work');
+      // E1 closed-empty, E2 closed, E3 merged, E4 closed + merged, E6 merged,
+      // E7 merged: seven attempts, four merges — the empty finishes count as
+      // their own failed attempts instead of vanishing.
+      expect(cell).toMatchObject({ attempts: 7, merges: 4, goodMerges: 4, censored: 0 });
+      expect(cell?.mergeRate).toBeCloseTo(4 / 7);
+      // Every resolved attempt carried its own tokens_total: the empty
+      // finishes' spend is recorded, not imputed.
+      expect(cell?.meanUsage).toBeCloseTo(4500 / 7);
+      // Each merged attempt launched one hour before its verdict.
+      expect(cell?.meanMinutesToMerge).toBeCloseTo(60);
+    });
+
     it('folds batch members per line and never the session id', () => {
       // A typical session id fits ident(): before this fold it opened an
       // attempt that could never resolve. It must now skip as infrastructure.

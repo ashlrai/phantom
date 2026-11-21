@@ -212,7 +212,12 @@ that resource can finish the job. In the jobs ledger, `launch` rows open an
 attempt and the reconciler's `MERGED`/`CLOSED` rows close it; a
 `launch_failed`/`launch_terminal` row closes the still-open attempt as an
 unmerged one, so a dead launch the dispatcher requeues and retries counts as
-its own failed attempt rather than disappearing into the relaunch. Batch
+its own failed attempt rather than disappearing into the relaunch. A `finish`
+row recording `empty: true` — the diff check found nothing publishable —
+closes the attempt the same way and charges the row's recorded `tokens_total`,
+so empty runs count as failed attempts with their real spend instead of
+waiting out the censor horizon; `empty` absent, `false` or `null` stays open
+for the reconciler. Batch
 sessions count per member: a `batch_claim` row is the member's dispatch
 record and the session's `launch` row (under its `RQ-BATCH-*` id) opens one
 attempt per member; a requeue-word `task_outcome` or a session-id
