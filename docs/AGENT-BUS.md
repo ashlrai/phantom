@@ -308,8 +308,9 @@ already taken, and by whom, without a lookup per message; the marker also
 appears inside the frame's bracket on those items. `held` is
 `true`/`false` only when both hold stores were read — a store that cannot
 be read reports `held: null` (unknown), never free.
-`work.post` and `work.status` items additionally carry `job` — the same
-live feed state `show` resolves for the `jobId` the body cites, computed
+Items whose body declares a `jobId` — `work.post`, `work.status`,
+`work.result` or `wake` — additionally carry `job`: the same
+live feed state `show` resolves for the job the body cites, computed
 with one claims-joined feed read per page rather than a lookup per
 message — so an agent paging mail sees where each announced job stands
 (status, claim coverage, `job: null` on an orphaned citation, or the
@@ -347,8 +348,9 @@ message-id claim or a live coordination hold already covers that exact
 receipt, the same evidence `work mine` next/handoffs and the unified comms
 inbox show. `held` is `true`/`false` only when both hold stores were read —
 a store that cannot be read reports `held: null` (unknown), never free.
-A `work.post` or `work.status` body additionally reports `job`: the live
-work-feed state of the `jobId` the body cites — the same projection
+A body that declares a `jobId` — `work.post`, `work.status`,
+`work.result` or `wake` — additionally reports `job`: the live
+work-feed state of the job the body cites — the same projection
 `work feed` serves, joined with claim coverage — so the `post=`/`status=`
 citation resolves to where the job stands without a second read. `feed` is
 `ok` with the projected `job` (`null` when the feed is healthy but projects
@@ -439,7 +441,9 @@ post → feed → claim → status loop never makes a caller reconstruct key
 conventions. An undeclared `--key`, a job the feed does not show, a non-open
 status or a job with no claim keys refuses before any lease; a refused or
 unreadable feed refuses rather than claiming against a guessed job. The
-result echoes the announced job and, on `acquired`, the fencing token for its
+result echoes the announced job — with the feed's `postId`/`statusId`
+receipt citations, so `agents bus show <postId>` reads the announcement
+behind every outcome — and, on `acquired`, the fencing token for its
 acquirer only; a conflict names the holder, never a token. `acquired` and
 `conflict` also carry `scope` — the live coordination holds on the job's
 *other* declared claim keys (the targeted key excluded), each
@@ -455,7 +459,9 @@ never permits a merge, a push, or spending.
 **Per-agent work view.** `phm agents bus work mine [<agent>]` is the read-only
 digest that answers "what is pending for this agent" in one call instead of
 five: the live coordination claims it holds under any of its labels (with the
-announced jobs each claim's keys block, the reverse of `work feed --claims`),
+announced jobs each claim's keys block — the reverse of `work feed --claims`,
+each carrying the feed's `postId`/`statusId` receipt citations like `claim
+list --jobs`),
 the open work-feed jobs (`queued`/`rescheduled`, declaring at least one claim
 key; newest 50 shown, `open` keeps the true total) annotated per declared key —
 `freeKeys`/`heldKeys` plus a tri-state
@@ -508,7 +514,8 @@ the whole retained store, counted by the full scan `readAgentInbox` performs
 when asked — and
 claimable work or worker-handoff mail keeps the same tri-state `held`/`holder`
 evidence `agents bus inbox` reports, `null` whenever a hold store cannot be
-read, never a guess, and `work.post`/`work.status` mail keeps the same `job`
+read, never a guess, and mail whose body declares a `jobId` — `work.post`,
+`work.status`, `work.result` or `wake` — keeps the same `job`
 live-feed citation `agents bus inbox` resolves — so pending work shows its
 claim state and each announced job's standing without a second read. The inbox
 section reads one row past the cap so `truncated` is definitive — a full
@@ -839,7 +846,9 @@ not resolve or the registry is unreadable (the JSON `owner` field reports the
 `ref`, resolved `identity` or null, and `registry` state). A missing table
 reads as a verified-empty list; an unreadable one stays `unavailable`, never
 zero. With `--jobs` each claim also names the announced work-feed jobs its
-keys block (`{id, owner, status, title, detail?}` — the reverse of `work feed --claims`),
+keys block (`{id, owner, status, title, detail?, postId, statusId}` — the
+reverse of `work feed --claims`, with the same retained receipt citations
+so a blocked job names its `agents bus show` handles),
 and the JSON `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
 

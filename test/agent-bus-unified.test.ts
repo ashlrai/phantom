@@ -776,6 +776,42 @@ describe('inbox work-feed citations', () => {
     expect(cited?.job).toMatchObject({ jobId: 'RQ-INB-X', feed: 'refused',
       reason: 'missing-provider', receipt: { id: 'inb-poison' } });
   });
+
+  it('annotates work.result and wake jobId citations with the same live feed state', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    // One announced job backs every citation kind below; the feed projects it.
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-RES-1', title: 'Result job', repo: 'ashlrai/phantom',
+      claimKeys: ['repo:ashlrai/phantom'], to: 'agent:nova', id: 'res-post' }, options)).toMatchObject({ status: 'posted' });
+    const post = (id: string, body: BusJsonValue) => {
+      expect(appendBusInbox({ id, from: 'agent:nova', to: 'agent:nova', priority: 'P2', ttl: 60_000, body }, options).status).toBe('posted');
+    };
+    post('res-result', { kind: 'work.result', jobId: 'RQ-RES-1', claimKey: 'repo:ashlrai/phantom',
+      queueId: `peer-work-${'a'.repeat(32)}`, receiptId: `pw-${'b'.repeat(32)}`, outcome: 'complete' });
+    post('res-wake', { kind: 'wake', target: 'agent:nova', reason: 'job finished', jobId: 'RQ-RES-1' });
+    post('res-wake-bare', { kind: 'wake', target: 'agent:nova', reason: 'no job cited' });
+    // show resolves the same live feed job behind a result receipt and a wake —
+    // the result's own outcome never masquerades as feed state.
+    for (const id of ['res-result', 'res-wake']) {
+      expect(readBusEnvelopeById(id, options)).toMatchObject({ status: 'ok',
+        job: { jobId: 'RQ-RES-1', feed: 'ok',
+          job: { id: 'RQ-RES-1', status: 'queued', postId: 'res-post' } } });
+    }
+    // A wake that cites no jobId annotates nothing.
+    const bare = readBusEnvelopeById('res-wake-bare', options);
+    if (bare.status !== 'ok') throw new Error('missing wake');
+    expect(bare).not.toHaveProperty('job');
+    // The inbox page carries the same annotation on both citation kinds.
+    const page = readAgentInbox('nova', {}, options);
+    if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+    const byId = new Map(page.messages.map(m => [m.envelope.id, m]));
+    expect(byId.get('res-result')?.job).toMatchObject({ jobId: 'RQ-RES-1', feed: 'ok',
+      job: { id: 'RQ-RES-1', status: 'queued' } });
+    expect(byId.get('res-wake')?.job).toMatchObject({ jobId: 'RQ-RES-1', feed: 'ok',
+      job: { id: 'RQ-RES-1', status: 'queued' } });
+    expect(byId.get('res-wake-bare')).not.toHaveProperty('job');
+  });
 });
 
 describe('DM, channel, handoff and priority wake on the one bus store', () => {

@@ -533,11 +533,12 @@ export interface InboxMessage {
   /** Owner label of the blocking claim when held and known; null otherwise. */
   holder?: string | null;
   /**
-   * `work.post`/`work.status` bodies only: the live work-feed state of the
-   * `jobId` the body cites — the same `BusEnvelopeLookupJob` `bus show`
-   * resolves, computed with one feed read per page so an agent paging mail
-   * sees where each announced job stands without a lookup per message.
-   * Absent on every other body kind.
+   * Bodies that declare a `jobId` — `work.post`, `work.status`,
+   * `work.result` and `wake`: the live work-feed state of the job the body
+   * cites — the same `BusEnvelopeLookupJob` `bus show` resolves, computed
+   * with one feed read per page so an agent paging mail sees where each
+   * announced job stands without a lookup per message. Absent on every
+   * other body kind.
    */
   job?: BusEnvelopeLookupJob;
 }
@@ -1031,8 +1032,9 @@ function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
  * it only after handling the page. Claimable work and worker-handoff items
  * additionally carry `held`/`holder` — the same hold evidence `bus show`
  * reports — so an agent paging mail sees whether pending work is already
- * taken without a lookup per message. `work.post`/`work.status` items
- * additionally carry `job` — the live feed state of the `jobId` they cite,
+ * taken without a lookup per message. Items whose body declares a `jobId`
+ * (`work.post`, `work.status`, `work.result` or `wake`) additionally carry
+ * `job` — the live feed state of the job they cite,
  * the same `BusEnvelopeLookupJob` `bus show` resolves — read once per page,
  * so a work announcement or status report answers where its job stands
  * (status, claim coverage, or the feed's own refusal) without a `show`
@@ -1223,8 +1225,8 @@ export function agentWakeClaimHolderSuffix(wake: AgentWakeRow): string {
 }
 
 /**
- * Compact `job=<id>:<state>` marker naming the live feed state a
- * `work.post`/`work.status` citation resolves to — shared by the inbox
+ * Compact `job=<id>:<state>` marker naming the live feed state a body
+ * kind's `jobId` citation resolves to — shared by the inbox
  * human line, the `--frame` adapter block and `work mine`'s inbox lines so
  * every surface renders it identically. An open job's `claimable` tri-state
  * rides along when the claims-joined feed read computed it; a refused feed
@@ -1475,8 +1477,8 @@ export interface BusEnvelopeLookupMessage {
   envelope: BusEnvelope;
 }
 /**
- * The live work-feed state behind a `work.post`/`work.status` body's own
- * `jobId` citation — the same projection `work feed` serves, joined with
+ * The live work-feed state behind a feed-citing body's own `jobId`
+ * citation — the same projection `work feed` serves, joined with
  * live claim coverage. `feed:'ok'` with `job:null` means the feed is
  * healthy but projects no live job with the id — an orphaned status whose
  * announcement expired, never a guessed state. `refused` names the feed
@@ -1493,11 +1495,11 @@ export type BusEnvelopeLookupJob =
 export type BusEnvelopeLookup =
   | { status: 'ok'; id: string; message: BusEnvelopeLookupMessage;
       /**
-       * Present only when the resolved body is a `work.post` or
-       * `work.status`: the live feed state of the `jobId` it cites, so the
-       * citation `work feed` and `work mine` print resolves to where the
-       * job stands — status, claim coverage and the receipts behind it —
-       * without a second read.
+       * Present only when the resolved body declares a `jobId` (`work.post`,
+       * `work.status`, `work.result` or `wake`): the live feed state of the
+       * job it cites, so the citation `work feed` and `work mine` print
+       * resolves to where the job stands — status, claim coverage and the
+       * receipts behind it — without a second read.
        */
       job?: BusEnvelopeLookupJob;
       /**
@@ -1572,15 +1574,24 @@ function envelopeHold(receipt: { id: string; cursor: number; receivedAt: number;
 }
 
 /**
- * The `jobId` a `work.post`/`work.status` body cites through the same field
- * the feed projection keys on, read verbatim — every other body kind cites
- * nothing and annotates nothing. The `jobId` must be a printable label like
- * the schema requires; a malformed one cites nothing.
+ * The retained v2 body kinds whose `jobId` is a feed citation: `work.post`,
+ * `work.status` and `work.result` require it, `wake` declares it optional.
+ * `work.claim`/`work.release` name jobs or keys too, but they execute as
+ * claim operations rather than appending as mail, so their `jobId` is an
+ * operation parameter, not a citation — and every other body kind cites
+ * nothing and annotates nothing.
+ */
+const WORK_FEED_JOB_ID_KINDS: ReadonlySet<string> = new Set(['work.post', 'work.status', 'work.result', 'wake']);
+
+/**
+ * The `jobId` a feed-citing body carries through the same field the feed
+ * projection keys on, read verbatim. The `jobId` must be a printable label
+ * like the schema requires; a malformed one cites nothing.
  */
 function workFeedJobId(body: unknown): string | undefined {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return undefined;
   const record = body as Record<string, unknown>;
-  if (record['kind'] !== 'work.post' && record['kind'] !== 'work.status') return undefined;
+  if (typeof record['kind'] !== 'string' || !WORK_FEED_JOB_ID_KINDS.has(record['kind'])) return undefined;
   const jobId = record['jobId'];
   if (typeof jobId !== 'string' || !THREAD.test(jobId)) return undefined;
   return jobId;
@@ -1607,10 +1618,11 @@ function jobAnnotationFromFeed(feed: BusWorkFeedReadResult, jobId: string): BusE
 }
 
 /**
- * The work-feed state a `work.post`/`work.status` body cites through its
- * `jobId` — the same field the feed projection keys on, read verbatim, so
- * every other body kind returns undefined and no job state is ever guessed
- * from text. The feed read joins live claim coverage, so an open job also
+ * The work-feed state a feed-citing body (`work.post`, `work.status`,
+ * `work.result` or `wake`) cites through its `jobId` — the same field the
+ * feed projection keys on, read verbatim, so every other body kind returns
+ * undefined and no job state is ever guessed from text. The feed read joins
+ * live claim coverage, so an open job also
  * answers `claimable` — degraded to null, never free, when a hold store
  * cannot be read. A feed that cannot be read reports its own state; the
  * envelope lookup itself still succeeds.
@@ -1693,9 +1705,10 @@ function findClaimHolderWakeHint(id: string, options: UnifiedBusOptions): BusEnv
  * never hides the envelope itself. Claimable work and worker-handoff bodies
  * additionally report `held`/`holder` — whether a taken claim or live
  * coordination hold already covers the envelope, the same evidence `work
- * mine` next/handoffs and the unified comms inbox show. A `work.post` or
- * `work.status` body additionally reports `job` — the live work-feed state
- * of the `jobId` it cites, with claim coverage, or the feed's own refusal /
+ * mine` next/handoffs and the unified comms inbox show. A body that
+ * declares a `jobId` (`work.post`, `work.status`, `work.result` or `wake`)
+ * additionally reports `job` — the live work-feed state
+ * of the job it cites, with claim coverage, or the feed's own refusal /
  * unavailable state when the projection cannot answer; the lookup still
  * succeeds either way. Envelope ids are
  * caller-chosen printable tokens, so a real receipt always wins over hint

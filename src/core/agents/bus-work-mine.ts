@@ -19,7 +19,7 @@
  */
 import { coordinationRowBlocks, listCoordination } from './claim-store.js';
 import { dirname } from 'node:path';
-import { listBusClaims, type BusClaimsListClaim, type BusClaimsOwnerMatch } from './bus-claims.js';
+import { busClaimJobRef, listBusClaims, type BusClaimsListClaim, type BusClaimsOwnerMatch } from './bus-claims.js';
 import { agentLabels, agentPendingAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity, type AgentRegistry } from './bus-identity.js';
 import { agentName, type AgentMessageKind } from '../fleet/agent-messages.js';
 import { readAgentConversations, type AgentConversations } from '../fleet/agent-conversations.js';
@@ -139,9 +139,10 @@ export interface BusWorkMineInboxMessage {
   held?: boolean | null;
   /** Owner label of the blocking claim when held and known; null otherwise. */
   holder?: string | null;
-  /** `work.post`/`work.status` mail only: the live feed state of the `jobId`
-   * the body cites — the same `BusEnvelopeLookupJob` `agents bus show`
-   * resolves, read once per inbox page; absent on every other body kind. */
+  /** Mail whose body declares a `jobId` (`work.post`, `work.status`,
+   * `work.result` or `wake`) only: the live feed state of the job the body
+   * cites — the same `BusEnvelopeLookupJob` `agents bus show` resolves,
+   * read once per inbox page; absent on every other body kind. */
   job?: BusEnvelopeLookupJob;
 }
 
@@ -917,8 +918,7 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
     for (const claim of claims.claims) {
       claim.jobs = feed.jobs
         .filter(job => job.claimKeys.some(key => coordinationRowBlocks(claim, key)))
-        .map(job => ({ id: job.id, owner: job.owner, status: job.status, title: job.title,
-          ...(job.detail === undefined ? {} : { detail: job.detail }) }));
+        .map(busClaimJobRef);
     }
   }
 

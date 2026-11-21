@@ -476,12 +476,13 @@ describe('phm agents bus (unified)', () => {
     expect((await run(['work', 'feed', '--claims'])).json.claims.holds)
       .toEqual([expect.objectContaining({ jobId: 'RQ-FEED', claimKey: 'repo:ashlrai/phantom', owner: 'atlas' })]);
 
-    // --jobs is the reverse join: the claim names the feed job it blocks.
+    // --jobs is the reverse join: the claim names the feed job it blocks,
+    // with the retained post/status receipt citations behind it.
     const withJobs = await run(['claim', 'list', '--jobs']);
     expect(withJobs.json).toMatchObject({ status: 'ok', source: 'available', feed: 'ok' });
     expect(withJobs.json.claims[0].jobs)
       .toEqual([{ id: 'RQ-FEED', owner: 'agent:atlas', status: 'running', title: 'Read me',
-        detail: 'picked up the feed' }]);
+        detail: 'picked up the feed', postId: 'cli-feed', statusId: 'cli-feed-s' }]);
     // Without --jobs no feed join or feed state is reported.
     expect(claims.json.feed).toBeUndefined();
     expect(claims.json.claims[0].jobs).toBeUndefined();
@@ -497,7 +498,7 @@ describe('phm agents bus (unified)', () => {
     expect(claimText.join('\n')).toContain('claims=1 source=available');
     const claimJobsText: string[] = [];
     expect(await runAgentsBusUnified(['claim', 'list', '--jobs', '--root', root], t => claimJobsText.push(t), () => {}, {})).toBe(0);
-    expect(claimJobsText.join('\n')).toContain('jobs=RQ-FEED(running) "Read me" detail="picked up the feed"');
+    expect(claimJobsText.join('\n')).toContain('jobs=RQ-FEED(running) "Read me" detail="picked up the feed" post=cli-feed status=cli-feed-s');
     expect(claimJobsText.join('\n')).toContain('feed=ok');
   });
 
@@ -512,7 +513,8 @@ describe('phm agents bus (unified)', () => {
       '--owner', 'worker-1', '--id', 'cli-wc-1']);
     expect(claimed.code).toBe(0);
     expect(claimed.json).toMatchObject({ status: 'acquired',
-      job: { id: 'RQ-CLI-CLAIM', owner: 'agent:atlas', status: 'queued', repo: 'ashlrai/phantom' },
+      job: { id: 'RQ-CLI-CLAIM', owner: 'agent:atlas', status: 'queued', repo: 'ashlrai/phantom',
+        postId: 'cli-wc', statusId: null },
       claim: { claimKey: 'queue:RQ-CLI-CLAIM', owner: 'worker-1', leaseMs: 600000 } });
     expect(claimed.json.claim.token).toMatch(/^[a-f0-9]{64}$/);
     // The new hold joins the job on the feed read, owner label and all.

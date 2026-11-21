@@ -1950,6 +1950,9 @@ token, and `mismatched-token`/`expired`/`lost`/`invalid`/`unavailable`/`full`
 are bare statuses), `executeBusClaimBody(body, opId, options?)` (returns
 undefined for non-claim bodies so opaque mail still appends),
 `BUS_CLAIM_HTTP_STATUS`, `busClaimExitCode(result)` and `newBusClaimOpId()`.
+`busClaimJobRef(BusWorkFeedJob)` projects one announced feed job to the
+`BusClaimJobRef` claim views share — id, announcer, status, title, newest
+detail and the `postId`/`statusId` receipt citations.
 `listBusClaims(BusClaimsListOptions)` (`root?`, `now?`, `key?`, `owner?`,
 `jobs?`) is the
 read-side companion: it returns the live coordination claims as
@@ -1965,7 +1968,9 @@ label, and the result's `owner` field (`ref`, resolved `identity` or null,
 `registry` state) reports which mode applied so a label match is never
 mistaken for identity proof. With `jobs:true` each claim gains an optional
 `jobs` list of the announced work-feed jobs its keys block (`{id, owner,
-status, title, detail?}` per job, the reverse of the feed's `--claims` hold join) and the
+status, title, detail?, postId, statusId}` per job — `postId`/`statusId`
+the retained `work.post`/`work.status` receipt wire ids `agents bus show`
+reads, the reverse of the feed's `--claims` hold join) and the
 result's `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
 `phm agents bus claim list [--key] [--owner] [--jobs]`
@@ -1978,7 +1983,10 @@ declared claim keys (`queue:<jobId>` preferred, else the first declared; an
 explicit `key` must be declared) and acquires through the same
 `executeBusClaimBody` path, so overlap with every other claim origin still
 decides in one place. `BusWorkJobClaimResult` echoes the announced job
-(`{id, owner, repo, title, status, detail?}`) on every outcome that found it:
+(`{id, owner, repo, title, status, detail?, postId, statusId}` — `postId`/
+`statusId` the feed job's retained `work.post`/`work.status` receipt wire
+ids, so `agents bus show <postId>` reads the announcement behind every
+outcome that found it) on every outcome that found it:
 `acquired` carries the claim with the fencing token for its acquirer only,
 `conflict` the holder without one, and
 `invalid`/`refused`/`unavailable`/`retryable`/`full` carry a slug `reason`
@@ -2163,7 +2171,8 @@ to 200 characters for both JSON and human output, and — only on claimable
 work and worker-handoff mail — the same optional `held`/`holder` evidence
 `agents bus inbox` reports (`held` tri-state, `null` when a hold store cannot
 be read, never proven free; absent on other mail kinds), plus — only on
-`work.post`/`work.status` mail — the same optional `job`
+mail whose body declares a `jobId` (`work.post`, `work.status`,
+`work.result` or `wake`) — the same optional `job`
 (`BusEnvelopeLookupJob`) live-feed citation `agents bus inbox` resolves, so
 the digest's mail rows answer where each announced job stands without a
 `show` per message. The read asks
@@ -2231,8 +2240,9 @@ with their own read and never appear as mail of any kind; claimable work and
 worker-handoff items
 additionally carry `held`/`holder` — the same hold evidence
 `readBusEnvelopeById` reports, read once per page, `held` null when a hold
-store cannot be read — and `work.post`/`work.status` items additionally
-carry `job` (`BusEnvelopeLookupJob`), the live feed state of the `jobId`
+store cannot be read — and items whose body declares a `jobId`
+(`work.post`, `work.status`, `work.result` or `wake`) additionally
+carry `job` (`BusEnvelopeLookupJob`), the live feed state of the job
 they cite resolved through the same feed read and job mapping
 `readBusEnvelopeById` applies — one claims-joined feed read per page, only
 when a returned message cites a jobId, so the citation answers where its
@@ -2280,7 +2290,8 @@ worker-handoff bodies also report `held`/`holder` — whether a taken
 message-id claim or live coordination hold covers the exact receipt, the
 same rule `work mine` next/handoffs and the unified comms inbox apply —
 with `held` null when a hold store cannot be read, never proven free. A
-`work.post`/`work.status` body also reports `job` (`BusEnvelopeLookupJob`):
+body that declares a `jobId` (`work.post`, `work.status`, `work.result` or
+`wake`) also reports `job` (`BusEnvelopeLookupJob`):
 `{jobId, feed:'ok', job}` with the claims-joined `BusWorkFeedJob` — `job`
 null when the feed is healthy but projects no live job with the id, an
 orphaned citation — `{jobId, feed:'refused', reason, receipt?}` when the

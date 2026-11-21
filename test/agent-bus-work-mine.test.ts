@@ -145,9 +145,11 @@ describe('readBusWorkMine', () => {
     expect(result.claims.owner).toMatchObject({ ref: 'atlas', identity: stableAgentId('atlas'), registry: 'available' });
     const keys = result.claims.claims.map(row => row.key).sort();
     expect(keys).toEqual(['path:c/d:src/**', 'pr:ashlrai/phantom#9', 'repo:a/b']);
-    // The claim->job join names the feed job each lease's keys block.
+    // The claim->job join names the feed job each lease's keys block, with
+    // the retained post/status receipt citations behind it.
     const repoClaim = result.claims.claims.find(row => row.key === 'repo:a/b');
-    expect(repoClaim?.jobs).toEqual([{ id: 'RQ-M-2', owner: 'agent:atlas', status: 'queued', title: 'Job RQ-M-2' }]);
+    expect(repoClaim?.jobs).toEqual([{ id: 'RQ-M-2', owner: 'agent:atlas', status: 'queued', title: 'Job RQ-M-2',
+      postId: 'post-RQ-M-2', statusId: null }]);
     const pathClaim = result.claims.claims.find(row => row.key === 'path:c/d:src/**');
     expect(pathClaim?.jobs).toEqual([]);
 
@@ -199,7 +201,8 @@ describe('readBusWorkMine', () => {
     await announce(options, 'atlas', 'RQ-M-D', ['repo:a/b']);
     claim(options, 'repo:a/b', 'atlas', 'test:atlas-d', options.clock.now);
     expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-M-D',
-      status: 'rescheduled', detail: 'waiting on fake upstream' }, options)).toMatchObject({ status: 'posted' });
+      status: 'rescheduled', detail: 'waiting on fake upstream', id: 'ws-RQ-M-D' }, options))
+      .toMatchObject({ status: 'posted' });
 
     const result = readBusWorkMine('atlas', options);
     expect(result.status).toBe('ok');
@@ -208,11 +211,12 @@ describe('readBusWorkMine', () => {
     // rescheduled stays open, so the job lists with the reason it was rescheduled.
     expect(result.jobs.jobs.find(entry => entry.id === 'RQ-M-D'))
       .toMatchObject({ status: 'rescheduled', detail: 'waiting on fake upstream' });
-    // The claim->job join names the same detail on the blocked job.
+    // The claim->job join names the same detail and receipt citations.
     if (result.claims.status !== 'ok') throw new Error('unreachable');
     const repoClaim = result.claims.claims.find(row => row.key === 'repo:a/b');
     expect(repoClaim?.jobs).toEqual([{ id: 'RQ-M-D', owner: 'agent:atlas',
-      status: 'rescheduled', title: 'Job RQ-M-D', detail: 'waiting on fake upstream' }]);
+      status: 'rescheduled', title: 'Job RQ-M-D', detail: 'waiting on fake upstream',
+      postId: 'post-RQ-M-D', statusId: 'ws-RQ-M-D' }]);
     // The human line names the detail too (the claims line prints `RQ-M-D(rescheduled)`).
     const line = formatBusWorkMine(result).find(text => text.includes('RQ-M-D rescheduled'));
     expect(line).toContain('detail="waiting on fake upstream"');
