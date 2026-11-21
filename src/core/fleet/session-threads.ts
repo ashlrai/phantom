@@ -8,7 +8,8 @@
  * summary and newest messages (what Mason wrote to it, where the Leader
  * routed it, what was asked of its job and the last lines a running session
  * wrote included), plus the pause, resume, stop or move that stands for its
- * job (`control`) and the message of Mason's its job serves (`serves`), so a screen
+ * job (`control`), the message of Mason's its job serves (`serves`) and what its
+ * job has done as numbers (`work`), so a screen
  * that shows every session at once makes one request instead of one per
  * session. Sessions come in the order of the session tree: the leader, then
  * each worker followed by its helpers. The reader lives in
@@ -52,6 +53,18 @@ export interface SessionThreadsServes {
   /** Every job the trace ties to the message, whether or not this read shows its session. */
   jobs: number;
 }
+/**
+ * What a session's job has done, as the values behind the summary's own sentences ("3 commands seen, 2 files changed",
+ * "Latest step: …"), so a screen can draw them without reading prose. Nothing here is a new measurement.
+ */
+export interface SessionThreadsWork {
+  /** Commands seen in the job's log; null when the log's commands could not be read. */
+  commands: number | null;
+  /** The job's changed files; `partial` when the change read was degraded. Null when no change read answered. */
+  files: { count: number; added: number; removed: number; partial: boolean } | null;
+  /** The newest recorded step, `at` as the ledger wrote it (null when it carried no time that parses). Null when no step is recorded. */
+  step: { event: string; summary: string; at: string | null } | null;
+}
 export interface SessionThreadsEntry {
   session: SessionThreadSession;
   /** The same sentences `phm sessions thread <id>` prints. */
@@ -71,10 +84,15 @@ export interface SessionThreadsEntry {
   /** Where words written to this session go, the answer its single thread gives, so a screen of every session can offer a reply without a second read. */
   reply: SessionThreadReply;
   /**
-   * The newest message of Mason's this session's job serves; the entry's last key. Null for the leader, a helper and a worker
+   * The newest message of Mason's this session's job serves. Null for the leader, a helper and a worker
    * without a job, when no prompt of the job cites a message, and when the trace was not read: `sources.orders` tells those apart.
    */
   serves: SessionThreadsServes | null;
+  /**
+   * What the session's job has done; the entry's last key. Null for a session with no job, a job whose activity was not asked
+   * for, and a failed activity read: `sources.activity` tells those apart.
+   */
+  work: SessionThreadsWork | null;
 }
 export interface SessionThreadsV1 {
   schema: typeof SESSION_THREADS_SCHEMA;
@@ -137,6 +155,19 @@ function servedBy(messages: readonly SessionThreadMessage[], jobId: string | nul
   return { key: cited.key.slice('order:'.length), at: order.at, source: order.source, text: said?.text ?? null, truncated: said?.truncated ?? false, jobs: order.jobs.length };
 }
 
+/** The same records, and the same rules, as the summary's "commands seen, files changed" and "Latest step" sentences (session-thread.ts). */
+export function workOf(activity: FleetJobActivityV1 | null | undefined): SessionThreadsWork | null {
+  if (!activity) return null;
+  const files = activity.entries.find(entry => entry.kind === 'files');
+  const last = activity.entries.filter(entry => entry.kind === 'event').at(-1);
+  return {
+    commands: activity.sources.commands === 'healthy' ? activity.counts.commands : null,
+    files: !files || files.state === 'missing' ? null
+      : { count: files.totals.files, added: files.totals.added, removed: files.totals.removed, partial: files.state === 'degraded' },
+    step: last ? { event: last.event, summary: last.summary, at: last.at && Number.isFinite(Date.parse(last.at)) ? last.at : null } : null,
+  };
+}
+
 /** Every session in `list` as a short thread. An unreadable list gives no threads and says so; it never reads as an empty fleet. */
 export function buildSessionThreads(list: LiveSessionsV1, parts: SessionThreadsParts, now: number): SessionThreadsV1 {
   const states = Object.fromEntries(THREAD_STATES.map(state => [state, 0])) as Record<SessionThreadState, number>;
@@ -162,7 +193,8 @@ export function buildSessionThreads(list: LiveSessionsV1, parts: SessionThreadsP
     states[thread.session.state] += 1;
     threads.push({ session: thread.session, summary: thread.summary, messages: thread.messages.slice(-THREADS_MESSAGES_SHOWN).map(clipped),
       messageCount: thread.messages.length, sources: thread.sources, gaps: thread.gaps, control: thread.control, reply: thread.reply,
-      serves: kind === 'worker' ? servedBy(thread.messages, jobId, parts.orders) : null });
+      serves: kind === 'worker' ? servedBy(thread.messages, jobId, parts.orders) : null,
+      work: jobId !== null ? workOf(parts.activity.get(jobId)) : null });
   }
   const gaps = [...list.gaps];
   if (total > shown.length) gaps.push(`${total - shown.length} more session${total - shown.length === 1 ? '' : 's'} not shown: the read holds ${THREADS_MAX}. Narrow it with a lane or repo, or ask for running ones only.`);

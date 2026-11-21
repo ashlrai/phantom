@@ -17,7 +17,7 @@ import type { FleetSessionV1, FleetSessionsV1 } from '../src/core/fleet/runs-ses
 import { buildLiveSessions } from '../src/core/fleet/live-sessions.js';
 import { buildSessionThread, type SessionThreadOutputRead, type SessionThreadOwnerRead } from '../src/core/fleet/session-thread.js';
 import {
-  buildSessionThreads, renderSessionThreadsText, threadSessions, THREADS_MAX, THREADS_MESSAGES_SHOWN, THREADS_TEXT_CHARS, type SessionThreadsV1,
+  buildSessionThreads, renderSessionThreadsText, threadSessions, workOf, THREADS_MAX, THREADS_MESSAGES_SHOWN, THREADS_TEXT_CHARS, type SessionThreadsV1,
 } from '../src/core/fleet/session-threads.js';
 import { readSessionThreads } from '../src/core/fleet/session-threads-read.js';
 import { readFleetSessionMap } from '../src/core/fleet/sessions-view.js';
@@ -119,11 +119,37 @@ describe('buildSessionThreads', () => {
     const read = buildSessionThreads(await liveList(), { sessionsRead: true, bus: bus([]), activity: new Map() }, NOW);
     expect(read.threads.map(entry => [entry.session.id, entry.reply.to, entry.reply.mention])).toEqual([['leader', 'leader', null], ['RQ-A', 'job', '@RQ-A'], ['RQ-QUIET', 'job', '@RQ-QUIET']]);
     for (const entry of read.threads) {
-      expect(Object.keys(entry).slice(-3)).toEqual(['control', 'reply', 'serves']);
+      expect(Object.keys(entry).slice(-4)).toEqual(['control', 'reply', 'serves', 'work']);
       expect(entry.control).toBeNull();
       expect(entry.serves).toBeNull();
       expect(entry.reply.hint).not.toBe('');
     }
+  });
+
+  it('carries what each job has done as values, the ones its summary states in words', async () => {
+    const changed = (state: 'live' | 'degraded' | 'missing') => ({ kind: 'files', state, baseSha: 'abc', files: [], totals: { files: 2, added: 40, removed: 3 }, truncated: false, refusals: [] });
+    const withFiles = (state: 'live' | 'degraded' | 'missing'): FleetJobActivityV1 => ({ ...activity(), entries: [...activity().entries, changed(state)] as FleetJobActivityV1['entries'] });
+    const read = buildSessionThreads(await liveList(), { sessionsRead: true, bus: bus([]), activity: new Map<string, FleetJobActivityV1 | null>([['RQ-A', withFiles('live')], ['RQ-QUIET', null]]) }, NOW);
+    const [leader, worker, quiet] = read.threads as [SessionThreadsV1['threads'][number], SessionThreadsV1['threads'][number], SessionThreadsV1['threads'][number]];
+    expect(worker.work).toEqual({ commands: 1, files: { count: 2, added: 40, removed: 3, partial: false }, step: { event: 'verify', summary: 'tests green', at: ago(4) } });
+    // The sentences and the values come from the same records.
+    expect(worker.summary).toContain('1 command seen, 2 files changed (+40 −3).');
+    expect(worker.summary).toContain(`Latest step: verify tests green at ${ago(4)}.`);
+    // The leader has no job; a failed activity read is not "nothing done".
+    expect([leader.work, quiet.work]).toEqual([null, null]);
+    expect(quiet.sources.activity).toBe('unavailable');
+    // A job whose activity was not asked for carries none either.
+    expect(buildSessionThreads(await liveList(), { sessionsRead: true, bus: bus([]), activity: none }, NOW).threads.map(entry => entry.work)).toEqual([null, null, null]);
+
+    // Each part that could not be read is null on its own: unknown, never zero.
+    expect(workOf(withFiles('degraded'))?.files).toEqual({ count: 2, added: 40, removed: 3, partial: true });
+    expect(workOf(withFiles('missing'))?.files).toBeNull();
+    expect(workOf(activity())?.files).toBeNull();
+    expect(workOf({ ...activity(), sources: { ...activity().sources, commands: 'degraded' } })?.commands).toBeNull();
+    const undated = { ...activity(), entries: [{ kind: 'event', at: 'soon', event: 'launch', summary: '' }] as FleetJobActivityV1['entries'] };
+    expect(workOf(undated)?.step).toEqual({ event: 'launch', summary: '', at: null });
+    expect(workOf({ ...activity(), entries: [] })).toEqual({ commands: 1, files: null, step: null });
+    expect([workOf(null), workOf(undefined)]).toEqual([null, null]);
   });
 
   it('carries what Mason wrote: every message on the leader, the aimed ones on that worker, none on the rest', async () => {

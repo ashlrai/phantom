@@ -699,7 +699,7 @@ replies are read once, and the recorded activity once for each job shown.
   message in the leader's thread, and a worker with a job opens with the
   message it serves (kind `order`) and says so in its summary. Helpers get
   none. The trace is read once for the whole document.
-- `serves` is each entry's last key. For a worker whose job serves a message
+- `serves` comes after `reply`. For a worker whose job serves a message
   of Mason's it is `{key, at, source, text, truncated, jobs}`: the newest such
   message, with a `key` every entry serving it shares, the inbox's own time
   (`at`, Eastern, to the minute), Mason's words cut at 400 characters (`text`,
@@ -709,6 +709,17 @@ replies are read once, and the recorded activity once for each job shown.
   without a job, a job whose prompt cites no message, and when the trace was
   not read; `sources.orders` tells an unread trace from no citation. A screen
   can group the sessions by `serves.key` to show who is working on what.
+- `work` is each entry's last key: what the session's job has done, as the
+  values behind the summary's own sentences, so a screen can draw them
+  without reading prose. `{commands, files, step}`: `commands` is the count
+  of commands seen in the job's log (null when the log's commands could not
+  be read); `files` is `{count, added, removed, partial}` for the job's
+  changed files, with `partial` true when the change read was cut short
+  (null when no change read answered); `step` is the newest recorded step,
+  `{event, summary, at}`, with `at` null when the record carried no time
+  that parses (null when no step is recorded). A null part is unknown, not
+  zero. `work` itself is null for a session with no job and when the job's
+  activity was not read; the entry's `sources.activity` tells those apart.
 - `control` sits just before `reply` in each entry: the pause, resume, stop
   or move that stands for the session's job, `{action, lane, status, at}`
   with `status` `requested` or `applied`, the same answer

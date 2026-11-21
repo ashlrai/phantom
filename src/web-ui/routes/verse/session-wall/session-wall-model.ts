@@ -3,7 +3,7 @@
  * GET /api/verse/fleet/control/session-threads (the fleet.session-threads.v1
  * document `phm sessions threads --json` prints). Each entry carries what
  * Mason wrote, where the Leader routed it, which message of Mason's it serves,
- * the pause, stop or move that stands for its job, and where a reply to that session would go. An opened conversation is the Sessions pane's own view and read
+ * the pause, stop or move that stands for its job, what its job has done as numbers (`work`), and where a reply to that session would go. An opened conversation is the Sessions pane's own view and read
  * (fleet-sessions/SessionThread.tsx), so nothing about one thread is narrowed
  * here. The wire shape is narrowed, so the pane also builds against a server
  * that predates the read. Narrowing is defensive: a malformed entry or message
@@ -33,6 +33,15 @@ export interface WallSession {
   state: WallState;
   lastMessageAgeSeconds: number | null;
   prUrl: string | null;
+  /** The helpers below it, as the session list counts them; null when the read did not say. */
+  helpers: { below: number; running: number; failed: number } | null;
+}
+/** What a session's job has done, as the read's `work` key gives it. A part that could not be read is null: unknown, not zero. */
+export interface WallWork {
+  commands: number | null;
+  files: { count: number; added: number; removed: number; partial: boolean } | null;
+  /** The newest recorded step; `at` is null when it carried no time that parses. */
+  step: { event: string; summary: string; at: string | null } | null;
 }
 /** The message of Mason's a session's job serves, as the read ties them (the job's prompt cites it). */
 export interface WallServes {
@@ -56,6 +65,8 @@ export interface WallEntry {
   serves: WallServes | null;
   /** The pause, resume, stop or move that stands for the session's job, as the control file records it. Null when none stands, and from a server that does not say. */
   control: StandingControl | null;
+  /** Null for a session with no job, when its activity was not read, and from a server that does not say. */
+  work: WallWork | null;
 }
 export interface SessionWallRead {
   generatedAt: string;
@@ -119,6 +130,26 @@ function narrowServes(raw: unknown): WallServes | null {
   return { key, at, source: text(raw.source), text: text(raw.text, MAX_TEXT), truncated: raw.truncated === true, jobs: count(raw.jobs) };
 }
 
+/** Null unless every count is one. */
+function narrowHelpers(raw: unknown): WallSession['helpers'] {
+  if (!object(raw)) return null;
+  const below = count(raw.below), running = count(raw.running), failed = count(raw.failed);
+  return below === null || running === null || failed === null ? null : { below, running, failed };
+}
+
+/** Null when the read carries no work for the session. Each part is narrowed on its own, so one malformed part reads unknown and the rest stand. */
+function narrowWork(raw: unknown): WallWork | null {
+  if (!object(raw)) return null;
+  const f = object(raw.files) ? raw.files : null, files = f ? { count: count(f.count), added: count(f.added), removed: count(f.removed) } : null;
+  const s = object(raw.step) ? raw.step : null, event = s ? text(s.event) : null;
+  return {
+    commands: count(raw.commands),
+    files: files && files.count !== null && files.added !== null && files.removed !== null
+      ? { count: files.count, added: files.added, removed: files.removed, partial: f!.partial === true } : null,
+    step: s && event ? { event, summary: text(s.summary) ?? '', at: time(s.at) } : null,
+  };
+}
+
 /** Null when the entry names no session. */
 function narrowEntry(raw: unknown): WallEntry | null {
   if (!object(raw) || !object(raw.session)) return null;
@@ -132,6 +163,7 @@ function narrowEntry(raw: unknown): WallEntry | null {
     lane: text(s.lane) ?? 'unknown', model: text(s.model) ?? 'unknown', repo: text(s.repo) ?? 'unknown',
     jobId: text(s.jobId), parentId: text(s.parentId), state: oneOf(s.state, WALL_STATES, 'unknown'),
     lastMessageAgeSeconds: count(s.lastMessageAgeSeconds), prUrl: prUrl && PR.test(prUrl) ? prUrl : null,
+    helpers: narrowHelpers(s.helpers),
   };
   return {
     session, summary: lines(raw.summary), messages,
@@ -143,6 +175,8 @@ function narrowEntry(raw: unknown): WallEntry | null {
     serves: session.kind === 'worker' ? narrowServes(raw.serves) : null,
     // Asked of a job, so believed only on a session that has one.
     control: session.jobId !== null ? standing(raw.control) : null,
+    // Work is a job's, so it is believed only on a session that has one.
+    work: session.jobId !== null ? narrowWork(raw.work) : null,
   };
 }
 

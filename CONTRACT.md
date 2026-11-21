@@ -1558,7 +1558,8 @@ times are null, and `unknown` names the reason for each. `quiet` is true after
 `threadSessions(list)`, the limits `THREADS_MAX` (40 sessions),
 `THREADS_MESSAGES_SHOWN` (3) and `THREADS_TEXT_CHARS` (400), `THREAD_STATES`
 and the types `SessionThreadsV1`, `SessionThreadsEntry`,
-`SessionThreadsMessage`, `SessionThreadsServes` and `SessionThreadsParts`. `parts` is
+`SessionThreadsMessage`, `SessionThreadsServes`, `SessionThreadsWork` and `SessionThreadsParts`,
+and the pure `workOf(activity)`. `parts` is
 `{sessionsRead, bus, activity, replies?, owner?, orders?}`, where `activity`
 maps a job id to its activity read (null when that read failed, no key when it
 was not asked for), `owner` is the Leader inbox, handed to the leader's and
@@ -1573,12 +1574,22 @@ single-session thread for the same records. Before `reply`, an entry carries
 `control: SessionThreadControl | null`, the single thread's own answer (the
 newest request for the session's job that was not refused; null when none
 stands, for a session with no job, and when the control file was not read).
-An entry's last key is `serves`:
+After `reply` comes `serves`:
 `{key, at, source, text, truncated, jobs}` for a worker whose job the order
 trace ties to a message of Mason's (the newest such message; `key` is shared
 by every entry serving it, `at` is the inbox's Eastern minute, `text` is null
 when the message is not among the inbox entries read, `jobs` counts every job
 the trace ties to the message), otherwise null.
+An entry's last key is `work: SessionThreadsWork | null`, built by
+`workOf` from the job's activity read: `{commands, files, step}` with
+`commands: number | null` (null when the log's commands were not read
+healthy), `files: {count, added, removed, partial} | null` (null when no
+change read answered, `partial` for a degraded one) and
+`step: {event, summary, at} | null` (the newest recorded step; `at` null
+when it does not parse). These are the values the summary's "commands seen,
+files changed" and "Latest step" sentences state. `work` is null for a
+session with no job, a job whose activity was not asked for and a failed
+activity read.
 `src/core/fleet/session-threads-read.ts` exports `readSessionThreads(options)`
 with `lane`, `repo`, `live` and injectable `readMap`, `readSubagents`,
 `readLeader`, `readActivity`, `readBus`, `readOwner`, `readReplies` and
