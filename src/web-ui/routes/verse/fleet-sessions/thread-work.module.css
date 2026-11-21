@@ -1,0 +1,19 @@
+/* What a session's job has done, at the top of its conversation (ThreadWork.tsx): a row of readings, each a small name over its value. Figures line up; only a failure and the diff's two colours stand out. */
+.work { display: flex; flex-wrap: wrap; column-gap: var(--space-5); row-gap: var(--space-2); margin: var(--space-1) 0; padding: 0 0 var(--space-2); border-bottom: 1px solid var(--border-subtle); font-variant-numeric: tabular-nums; }
+.reading { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+/* The step is the reading with words in it: it takes the room the others leave and cuts its detail to one line. */
+.reading[data-reading='step'] { flex: 1 1 16rem; }
+.reading > dt { color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); letter-spacing: 0.04em; text-transform: uppercase; }
+.reading > dd { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; margin: 0; white-space: nowrap; }
+.reading > dd[data-unknown], .when[data-unknown] { color: var(--text-secondary); font-style: italic; }
+.reading > dd[data-failed] { color: var(--status-danger-fg); }
+.event { flex: none; max-width: 50%; overflow: hidden; font-family: var(--font-mono); font-weight: 600; text-overflow: ellipsis; }
+.stepText { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--text-secondary); text-overflow: ellipsis; }
+.when, .quiet { flex: none; color: var(--text-secondary); }
+.added { color: var(--status-success-fg); }
+.removed { color: var(--status-danger-fg); }
+/* Added then removed, in proportion to each other. */
+.bar { flex: none; align-self: center; display: inline-flex; width: 40px; height: 4px; overflow: hidden; border-radius: var(--radius-full); background: var(--border-subtle); }
+.bar > i { min-width: 2px; }
+.bar > i[data-part='added'] { background: var(--status-success-solid); }
+.bar > i[data-part='removed'] { background: var(--status-danger-solid); }

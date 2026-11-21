@@ -23,8 +23,8 @@ import type { OrderTraceV1 } from './order-trace.js';
 import type { FleetJobActivityV1 } from './runs-job-activity.js';
 import type { SessionThreadReply } from './session-reply.js';
 import {
-  buildSessionThread, type SessionThreadControl, type SessionThreadMessage, type SessionThreadOutputRead, type SessionThreadOwnerRead, type SessionThreadSession, type SessionThreadSource,
-  type SessionThreadState, type SessionThreadV1,
+  buildSessionThread, sessionWork, type SessionThreadControl, type SessionThreadMessage, type SessionThreadOutputRead, type SessionThreadOwnerRead, type SessionThreadSession, type SessionThreadSource,
+  type SessionThreadState, type SessionThreadV1, type SessionThreadWork,
 } from './session-thread.js';
 
 export const SESSION_THREADS_SCHEMA = 'fleet.session-threads.v1';
@@ -57,14 +57,8 @@ export interface SessionThreadsServes {
  * What a session's job has done, as the values behind the summary's own sentences ("3 commands seen, 2 files changed",
  * "Latest step: …"), so a screen can draw them without reading prose. Nothing here is a new measurement.
  */
-export interface SessionThreadsWork {
-  /** Commands seen in the job's log; null when the log's commands could not be read. */
-  commands: number | null;
-  /** The job's changed files; `partial` when the change read was degraded. Null when no change read answered. */
-  files: { count: number; added: number; removed: number; partial: boolean } | null;
-  /** The newest recorded step, `at` as the ledger wrote it (null when it carried no time that parses). Null when no step is recorded. */
-  step: { event: string; summary: string; at: string | null } | null;
-}
+/** The single thread's `work` (session-thread.ts), carried on each entry here under the name it first had. */
+export type SessionThreadsWork = SessionThreadWork;
 export interface SessionThreadsEntry {
   session: SessionThreadSession;
   /** The same sentences `phm sessions thread <id>` prints. */
@@ -155,18 +149,8 @@ function servedBy(messages: readonly SessionThreadMessage[], jobId: string | nul
   return { key: cited.key.slice('order:'.length), at: order.at, source: order.source, text: said?.text ?? null, truncated: said?.truncated ?? false, jobs: order.jobs.length };
 }
 
-/** The same records, and the same rules, as the summary's "commands seen, files changed" and "Latest step" sentences (session-thread.ts). */
-export function workOf(activity: FleetJobActivityV1 | null | undefined): SessionThreadsWork | null {
-  if (!activity) return null;
-  const files = activity.entries.find(entry => entry.kind === 'files');
-  const last = activity.entries.filter(entry => entry.kind === 'event').at(-1);
-  return {
-    commands: activity.sources.commands === 'healthy' ? activity.counts.commands : null,
-    files: !files || files.state === 'missing' ? null
-      : { count: files.totals.files, added: files.totals.added, removed: files.totals.removed, partial: files.state === 'degraded' },
-    step: last ? { event: last.event, summary: last.summary, at: last.at && Number.isFinite(Date.parse(last.at)) ? last.at : null } : null,
-  };
-}
+/** `sessionWork` (session-thread.ts) under the name it first had: an entry and its single thread give the same answer. */
+export const workOf = sessionWork;
 
 /** Every session in `list` as a short thread. An unreadable list gives no threads and says so; it never reads as an empty fleet. */
 export function buildSessionThreads(list: LiveSessionsV1, parts: SessionThreadsParts, now: number): SessionThreadsV1 {

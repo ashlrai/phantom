@@ -1679,6 +1679,15 @@ accepts `--all` and calls `read(id, 'full')` for it, `read(id)` otherwise;
 route accepts `depth=recent|full` at most once, passing `'full'` on only
 when asked. `renderSessionThreadText` adds a note naming `--all` when
 `deeper` is true.
+Work (additive): the document gains a top-level key between `gaps` and
+`reply`, `work: SessionThreadWork | null`: `{commands, files, step}` as
+described for an entry of `fleet.session-threads.v1` above, null for a
+session with no job, a job whose activity was not asked for, a failed
+activity read and an unknown id. `session-thread.ts` exports the type and
+the pure `sessionWork(activity)` that builds it; in `session-threads.ts`,
+`SessionThreadsWork` is now an alias of that type and `workOf` of that
+function, so an entry and its single thread give the same answer. The last
+four top-level keys stay `reply`, `control`, `depth`, `deeper`.
 `src/core/fleet/session-thread-read.ts` exports `readSessionThread(id,
 options)` with injectable `readMap`, `readSubagents`, `readActivity`,
 `readBus`, `readOwner` and `readReplies`; each read is guarded on its own and the result is

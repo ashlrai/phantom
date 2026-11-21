@@ -55,6 +55,20 @@ has no reply box and a line saying why. **Live log** opens the worker log. Escap
 conversation is read from `GET /api/verse/fleet/control/session-thread` every
 10 seconds; a server without that read says so and shows no conversation.
 
+For a session with a job, the summary opens with what the job has done, as a
+row of named readings: the latest recorded step and how long ago it was, the
+lines added and removed with the number of files changed, the commands seen
+in its log, and how many of its helpers are running or failed. They are the
+readings on the session's Conversations card, taken from the `work` key of
+the same read, so a card and the conversation it opens agree. A reading the
+read could not measure says "unknown" rather than 0. The sentences that
+state those values, and the one giving the pull request (its link is in the
+header), are left out of the summary below the row; every other sentence
+stays. A session with no job, or a server that sends no `work`, shows the
+summary as sentences only. In the list beside an open conversation, each
+session with a job has one more line: its lines added and removed, then the
+name of its latest step and how long ago, and any failed helpers.
+
 A conversation opens at the newest entries of each record: 50 bus messages,
 10 of your messages, the Leader's last 5 replies, 12 log lines. When the
 records hold more, a row under the conversation says so and offers **Show
