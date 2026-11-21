@@ -1257,6 +1257,12 @@ export async function handleApi(
       sendJson(res, 200, await readBurnWho());
       return true;
     }
+    if (path === '/api/fleet/pace' && method === 'GET') {
+      // Same report as `phm fleet pace --json` (fleet.pace.v1).
+      const { readFleetPace } = await import('../fleet/pace-verdict.js');
+      sendJson(res, 200, await readFleetPace());
+      return true;
+    }
     if (path === '/api/usage/runway' && method === 'GET') {
       // Same snapshot as `phm pool runway --json` (pool.runway.v1).
       const { readPoolRunway } = await import('../usage/runway-read.js');

@@ -1,5 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { buildFleetPace } from '../../../../core/fleet/pace-verdict.js';
 import { SPENDDOWN_SCHEMA, type SpendDownRow, type SpendDownV1 } from '../../../../core/fleet/pools-spenddown.js';
 import { evictAll } from '../../../data/cache.js';
 import { renderMobile, stubFetch } from '../mobile/mobile.test-support.js';
@@ -115,5 +116,34 @@ describe('phone Home spend down card', () => {
     const { container } = renderMobile(<SpendDownCard />);
     await new Promise(resolve => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe('pace verdict under each row (fleet.pace.v1)', () => {
+  const NOW = Date.parse('2026-11-19T10:00:00Z');
+  const p = (id: string, usedPct: number | null, hoursLeft: number | null, burn: number | null) =>
+    ({ id, usedPct, hoursLeft, burnPctPerHour: burn, resetAt: hoursLeft === null ? null : new Date(NOW + hoursLeft * 3_600_000).toISOString() });
+  const pace = buildFleetPace({ generatedAt: FIXTURE.generated_at, pools: [p('claude', 64, 100, 2), p('codex-cmp', 50, 50, 1), p('zai', 30, 100, 0.1), p('grok', null, null, null)] }, NOW);
+
+  it('desktop shows the word and one sentence for ahead, behind, on pace and unknown', () => {
+    render(<SpendDownChart data={FIXTURE} pace={pace} />);
+    const lines = screen.getAllByTestId('pace-sentence');
+    expect(lines.map(el => el.getAttribute('data-pace'))).toEqual(['ahead', 'on-pace', 'behind', 'unknown']);
+    expect(lines.map(el => el.querySelector('strong')!.textContent)).toEqual(['ahead', 'on pace', 'behind', 'unknown']);
+    expect(lines[0]!.textContent).toMatch(/Claude: 64%, empty about .*, resets .*\. Ahead of pace\.$/u);
+    expect(lines[3]!.textContent).toBe('unknown Grok: unknown, no usable reading.');
+  });
+
+  it('shows no verdict line when the pace read is missing', () => {
+    render(<SpendDownChart data={FIXTURE} pace={null} />);
+    expect(screen.queryAllByTestId('pace-sentence')).toHaveLength(0);
+  });
+
+  it('phone card shows the same sentences from GET /api/fleet/pace', async () => {
+    stubFetch({ 'GET /api/app/pools/spenddown': FIXTURE, 'GET /api/fleet/pace': pace });
+    renderMobile(<SpendDownCard />);
+    expect(await screen.findByText(/Claude: 64%, empty about/u)).toBeVisible();
+    expect(screen.getByText(/Zai: 30%, resets .*Behind pace, room left over\./u)).toBeVisible();
+    expect(screen.getByText(/Grok: unknown, no usable reading\./u)).toBeVisible();
   });
 });
