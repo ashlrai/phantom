@@ -40,6 +40,9 @@ import { recordClockSample } from '../core/fleet/sleep-gaps.js';
 import { recordDiskSample } from '../core/fleet/host-disk.js';
 
 const usage = `Usage: ashlr fleet self-tick [--json] [--runs-dir <abs>] [--apply] [--last] [--status]
+Default: a dry run that changes nothing and says what it would do. Switch to a real run with --apply,
+or, when there is no terminal (a host timer), by setting PHM_SELF_TICK_APPLY=1. Every run, dry or
+not, writes queue/self-tick-last.json and appends one line to queue/self-tick.jsonl (newest 500 kept).
 One locked pass of Phantom's self-management: reset-release first (it first
 refreshes Claude's native weekly reading when the persisted one is older than
 30 minutes, probing once on --apply only; a lane it frees counts as a free slot for the planner step), then lane-autohold, then
@@ -100,6 +103,10 @@ interface Dependencies {
   claudeFindCommand?: () => string | null;
   /** Autofill seams for tests (lane read, kill switch, fill); production reads the real lanes and config. */
   autofill?: Partial<Pick<import('../core/fleet/autofill-run.js').AutofillTickOptions, 'readLanes' | 'readOff' | 'fill'>>;
+  /** Terminal seam for the PHM_SELF_TICK_APPLY rule; production reads process.stdout.isTTY. */
+  isTty?: boolean;
+  /** Environment seam for tests; production reads process.env. */
+  env?: Record<string, string | undefined>;
   /** Free-disk reading seam for tests; production reads the real volume. */
   diskSample?: () => Promise<import('../core/fleet/host-top-view.js').HostDiskSample | null>;
   /** Keep-awake seams for tests (platform, power, caffeinate spawn, queue depth); production reads the real ones. */
@@ -202,9 +209,13 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       runsDir = value;
     } else return invalid();
   }
+  // The default is a dry run. A run with no terminal (a host timer) applies when the host sets
+  // PHM_SELF_TICK_APPLY=1; a person at a terminal must still pass --apply. Read-only modes ignore it.
+  const flagApply = apply;
+  if (!last && !status && !apply && (deps.env ?? process.env).PHM_SELF_TICK_APPLY === '1' && !(deps.isTty ?? process.stdout.isTTY === true)) apply = true;
   // --last is a read-only report of the last recorded pass: nothing runs,
   // no lock is taken, so --apply has no meaning beside it.
-  if ((last || status) && apply) return invalid();
+  if ((last || status) && flagApply) return invalid();
   if (last && status) return invalid();
   // One root for the lock and all fifteen steps: the verbs' own fallbacks
   // (ASHLR_RUNS_DIR, ~/.ashlr-runs) resolve here once, so the lock domain
@@ -267,7 +278,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
         ...deps.autofill,
       });
     } catch (error) {
-      return { reason: `autofill failed: ${error instanceof Error ? error.message.slice(0, 120) : 'unknown error'}` };
+      return { reason: 'autofill failed', error: error instanceof Error ? error.message.slice(0, 120) : 'unknown error' };
     }
   };
   // At most once an hour, retire READY jobs of empty-heavy families (off with empty_stop.off). Never fails the tick.
@@ -286,7 +297,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     try {
       const { runWorktreeReapTick } = await import('../core/fleet/worktree-reap-tick.js');
       return await runWorktreeReapTick({ runsDir: root, apply, now: now(), ...(deps.worktreeReap ? { deps: deps.worktreeReap } : {}) });
-    } catch { return { state: 'skipped', reason: 'worktree reap failed' }; }
+    } catch (error) { return { state: 'failed', error: error instanceof Error ? error.message.slice(0, 120) : 'unknown error' }; }
   };
   // One asks sync per tick: raises the sign-in and expiring-credit asks and closes cleared ones. Never fails the tick.
   const runAsksSyncStage = async (): Promise<unknown> => {

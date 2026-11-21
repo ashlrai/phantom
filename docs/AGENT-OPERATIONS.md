@@ -1038,6 +1038,14 @@ the pool clears. A ledger it cannot read is reported as unknown and nothing is
 raised or closed. It never signs in and never spends. The self-tick runs it once
 per tick (the `asksSync` field of the planner-tick report).
 
+The fleet self-tick is a dry run unless told otherwise: pass `--apply`, or set
+`PHM_SELF_TICK_APPLY=1` for a run with no terminal (a host timer); a person at a
+terminal still needs `--apply`. Every run, dry or applied, writes
+`queue/self-tick-last.json` (`fleet.self-tick-record.v1`: start and finish times,
+mode, the autofill, gaps and reap hooks, failed steps with their errors) and
+appends one line to `queue/self-tick.jsonl` (newest 500 kept). A hook that did not
+run reads "skipped" with its reason, never 0. Its `--status` flag reads it.
+
 Two kinds carry more than a word. A `usage` ask (`phm asks add usage "<question>"
 --subject grok-ultra --unblocks "<what it frees>"`) takes a percent: `phm asks
 answer <id> 40` stores a usage reading with `source: mason` and its own time in

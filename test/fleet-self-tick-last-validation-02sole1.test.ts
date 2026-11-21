@@ -103,7 +103,7 @@ describe('self-tick last record: writer round trips', () => {
       'lane-autohold': async () => { throw new Error('seam exploded'); },
     };
     const { report } = await runSelfTick({ runsDir, steps: throwing, now: () => NOW_MS });
-    expect(report.steps[1]).toEqual({ step: 'lane-autohold', state: 'failed', exitCode: 1, report: null });
+    expect(report.steps[1]).toEqual({ step: 'lane-autohold', state: 'failed', exitCode: 1, report: null, error: 'seam exploded' });
     expect(readSelfTickLast(runsDir, NOW_MS)).toMatchObject({ state: 'ok', failedSteps: ['lane-autohold'] });
   });
 
