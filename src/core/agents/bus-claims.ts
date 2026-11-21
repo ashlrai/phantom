@@ -58,7 +58,9 @@ type ReleaseBody = z.infer<typeof workReleaseBodySchema>;
 /**
  * Deterministic lease source id: a retried operation on the same claim key
  * replaces its own row instead of conflicting with it, while the same operation
- * id reused on a different key cannot silently relocate the first lease.
+ * id reused on a different key cannot silently relocate the first lease. The
+ * store binds that row to the acquiring owner, so a different owner presenting
+ * the same id conflicts with the live holder rather than replacing it.
  */
 function sourceIdFor(opId: string, claimKey: string): string {
   const digest = createHash('sha256').update(claimKey, 'utf8').digest('hex').slice(0, 16);

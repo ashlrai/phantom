@@ -394,6 +394,16 @@ export function acquireCoordination(input: CoordinationAcquire): CoordinationRes
       !(drafted.origin === 'team' && row.owner === drafted.owner));
     if (conflict) return { status: 'conflict' as const, holder: { owner: conflict.owner, key: conflict.key, leaseUntil: conflict.leaseUntil } };
     const index = data.claims.findIndex(row => row.origin === drafted.origin && row.sourceId === drafted.sourceId);
+    const held = index >= 0 ? data.claims[index] : undefined;
+    // A source id names one operation, so only its owner may retry it into a new
+    // row; the same id presented by a different owner is a conflict, never a
+    // silent takeover that kills the holder's fencing token. Board leases are
+    // entity upserts — a task handoff deliberately moves itemId to a new owner —
+    // so that origin keeps last-writer-wins. An expired row is dead weight either
+    // way and stays replaceable, as the seat-handoff fencing tests rely on.
+    if (held && drafted.origin !== 'board' && held.owner !== drafted.owner && live(held, now)) {
+      return { status: 'conflict' as const, holder: { owner: held.owner, key: held.key, leaseUntil: held.leaseUntil } };
+    }
     if (index >= 0) data.claims[index] = drafted;
     else data.claims.push(drafted);
     return { status: 'acquired' as const, token: drafted.token, leaseUntil: drafted.leaseUntil };
