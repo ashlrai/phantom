@@ -129,6 +129,21 @@ export interface RouterOutcome {
    */
   ttm_s: number | null;
   /**
+   * Recorded queue-admission seconds — the jobs-ledger arrival stamp
+   * (`enqueue`/`enqueued`/`queued`, the boundary job-latency's queue_wait
+   * phase names `queued`) to the job's first dispatch (`claim`/
+   * `batch_claim`/`launch`, the same dispatch set reward-feed pairs), both
+   * read across the retained rows' `ts`/`timestamp`/`at`/`time` dialect.
+   * The fold derives it once per job: the earliest dispatch stamp minus
+   * the latest arrival stamp at or before it, so a requeued job's later
+   * arrivals never move its first-dispatch wait and a same-tick
+   * admission records a real 0. Null when the job recorded no arrival at
+   * or before its first dispatch — a direct dispatch, a member claimed
+   * only through its batch session, or rows that never wrote the
+   * boundary — unknown, never zero and never another phase's duration.
+   */
+  queue_wait_s: number | null;
+  /**
    * Recorded productivity verdicts, newest explicit row wins like cost_usd
    * and wall_s. `empty` is the boolean a finish row records for its diff
    * check (true = the run produced no diff); `exit_code` is the worker's
@@ -375,6 +390,18 @@ const taskOutcome = (r: Row): string | null => {
   return word !== null && TASK_OUTCOME_WORDS.has(word) ? word : null;
 };
 
+/**
+ * Queue-admission boundary spellings. Arrival rows are the queue wait's
+ * start — dispatchd's `enqueue` plus the `enqueued`/`queued` aliases
+ * job-latency's boundaryEvent folds to its `queued` phase start. Dispatch
+ * rows are its end — `claim`/`batch_claim`/`launch`, the same set
+ * reward-feed's DISPATCH_EVENTS pairs for dispatch evidence. Event names
+ * compare case-insensitively across the event|type|kind dialect, the same
+ * tolerance failure_class and the revert names use.
+ */
+const QUEUE_ARRIVAL_EVENTS: ReadonlySet<string> = new Set(['enqueue', 'enqueued', 'queued']);
+const QUEUE_DISPATCH_EVENTS: ReadonlySet<string> = new Set(['claim', 'batch_claim', 'launch']);
+
 // Revert evidence uses the same field vocabulary the fleet ledger readers
 // already honor: event names (event/type/kind), terminal state fields
 // (phase/state/outcome/status/result/conclusion) and the reverted_at /
@@ -540,6 +567,39 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
   const urlToJob = new Map([...claims].filter(([u, jobs]) => !ambiguous.has(u) && jobs.size === 1)
     .map(([u, jobs]) => [u, [...jobs][0]!] as const));
 
+  // Queue-admission evidence, derived once per job from the same boundary
+  // stamps job-latency's queue_wait phase pairs: arrival rows (enqueue/
+  // enqueued/queued) start the wait, dispatch rows (claim/batch_claim/
+  // launch) end it. queue_wait_s is the earliest dispatch minus the latest
+  // arrival at or before it — a requeue's later arrivals never move the
+  // first-dispatch wait, and a job with no recorded arrival before its
+  // first dispatch stays absent here so its outcome keeps null.
+  const queueMarks = new Map<string, { arrivals: number[]; dispatches: number[] }>();
+  for (const r of rows) {
+    const j = jobId(r);
+    if (!j || j.startsWith(BATCH_SESSION_PREFIX)) continue;
+    const event = str(r, ...EVENT_NAME_KEYS);
+    if (event === null) continue;
+    const name = event.toLowerCase();
+    const arrival = QUEUE_ARRIVAL_EVENTS.has(name);
+    if (!arrival && !QUEUE_DISPATCH_EVENTS.has(name)) continue;
+    const at = Date.parse(str(r, ...LEDGER_TS_KEYS) ?? '');
+    if (!Number.isFinite(at)) continue;
+    const marks = queueMarks.get(j) ?? { arrivals: [], dispatches: [] };
+    (arrival ? marks.arrivals : marks.dispatches).push(at);
+    queueMarks.set(j, marks);
+  }
+  const queueWaitS = new Map<string, number>();
+  for (const [j, marks] of queueMarks) {
+    if (marks.arrivals.length === 0 || marks.dispatches.length === 0) continue;
+    const firstDispatch = Math.min(...marks.dispatches);
+    let admission = Number.NEGATIVE_INFINITY;
+    for (const a of marks.arrivals) if (a <= firstDispatch && a > admission) admission = a;
+    if (admission === Number.NEGATIVE_INFINITY) continue;
+    const waitMs = firstDispatch - admission;
+    if (waitMs >= 0) queueWaitS.set(j, waitMs / 1000);
+  }
+
   const outcomes = new Map<string, RouterOutcome>();
   const mergedAt = new Map<string, number>();
   let unattached = 0;
@@ -555,7 +615,8 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
       tokens_cache_read: null, tokens_cache_write: null,
       usage_source: null, usage_missing: null,
-      ttm_s: null, empty: null, diff_files: null, diff_lines: null,
+      ttm_s: null, queue_wait_s: queueWaitS.get(j) ?? null,
+      empty: null, diff_files: null, diff_lines: null,
       exit_code: null, failure_class: null, empty_class: null,
       task_outcome: null, passk: null,
     };
