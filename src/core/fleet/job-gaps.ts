@@ -55,6 +55,8 @@ export interface DroppedGap extends GapCandidate { reason: GapDropReason; matche
 export interface ProposedGap extends GapCandidate { /** Lane the job was written for; null when not queued. */ lane?: string | null; jobId: string | null; queued: boolean; skipped: string | null; /** Absolute path of the written drop file, or null when nothing was written. */ path: string | null; /** Plain-words reason when the contract refused the job, else null. */ refused: string | null }
 /** `known` is false when the job metrics file cannot be read; `unknownSources` names dedupe sources that could not be read. */
 export interface JobGapsReport {
+  /** Ready rows that cannot launch now (lane held, pool spent or every slot busy); set with `propose` and lane readings. They do not make the queue full. */
+  parked?: number;
   schema: typeof JOB_GAPS_SCHEMA;
   sinceHours: number;
   known: boolean;
@@ -356,6 +358,7 @@ export async function readJobGaps(hours: number, opts: { propose?: boolean } & J
     const paceNotes: string[] = [];
     report.proposed = await proposeGaps(report.candidates, runsDir, opts.write, opts.maxNew ?? maxNewFromEnv(), now, room, opts.pace, paceNotes);
     if (paceNotes.length) report.paceNotes = paceNotes;
+    if (room) report.parked = room.stuck;
   }
   return report;
 }
