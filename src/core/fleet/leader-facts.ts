@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { defaultCloudGh } from '../cloud/tracker.js';
 import type { CloudGh } from '../cloud/pr-actions.js';
+import { ledgerAtMs, ledgerEventName, ledgerJobId, ledgerPrUrl } from './empty-cause.js';
 
 type Row = Record<string, unknown>;
 export interface LeaderFacts {
@@ -15,6 +16,15 @@ const object = (v: unknown): v is Row => !!v && typeof v === 'object' && !Array.
 const repoName = (s: string) => /^[\w.-]+(?:\/[\w.-]+)?$/.test(s) ? (s.includes('/') ? s : `ashlrai/${s}`) : null;
 const urlPattern = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/([1-9]\d*)$/;
 const date = (v: unknown) => typeof v === 'string' && Number.isFinite(Date.parse(v)) ? Date.parse(v) : NaN;
+/** First parseable ledger stamp in dialect order (ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt). */
+const stamp = (row: Row) => ledgerAtMs(row) ?? NaN;
+const firstField = (row: Row, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim() !== '') return value.trim();
+  }
+  return null;
+};
 async function api(gh: CloudGh, args: string[]): Promise<unknown> {
   try { const result = await gh(args); return result.ok ? JSON.parse(result.stdout) as unknown : null; } catch { return null; }
 }
@@ -36,21 +46,21 @@ export async function writeLeaderFacts(root: string, gh: CloudGh = defaultCloudG
     try {
       const row: unknown = JSON.parse(line);
       if (!object(row)) { damaged = true; continue; }
-      const id = row.job ?? row.job_id ?? row.jobId;
-      if (typeof id === 'string' && candidates.has(id) && Number.isFinite(date(row.ts ?? row.at ?? row.timestamp))) {
+      const id = ledgerJobId(row);
+      if (id !== null && candidates.has(id) && Number.isFinite(stamp(row))) {
         const list = rows.get(id) ?? []; list.push(row); rows.set(id, list);
       }
     } catch { damaged = true; }
   }
   const jobs: LeaderFacts['jobs'] = [];
   for (const [id, repo] of candidates) {
-    const events = (rows.get(id) ?? []).sort((a, b) => date(a.ts ?? a.at ?? a.timestamp) - date(b.ts ?? b.at ?? b.timestamp));
-    if (events.length && !events.some(row => { const t = date(row.ts ?? row.at ?? row.timestamp); return t >= now - 48 * 3600000 && t <= now; })) continue;
-    const publish = [...events].reverse().find(row => row.event === 'publish' && date(row.ts ?? row.at ?? row.timestamp) <= now);
-    const rawUrl = publish?.url ?? publish?.pr_url ?? publish?.prUrl;
+    const events = (rows.get(id) ?? []).sort((a, b) => stamp(a) - stamp(b));
+    if (events.length && !events.some(row => { const t = stamp(row); return t >= now - 48 * 3600000 && t <= now; })) continue;
+    const publish = [...events].reverse().find(row => ledgerEventName(row) === 'publish' && stamp(row) <= now);
+    const rawUrl = publish ? ledgerPrUrl(publish) : null;
     const match = typeof rawUrl === 'string' ? urlPattern.exec(rawUrl) : null;
     const pr_url = match && (!repo || match[1] === repo) ? rawUrl as string : null;
-    const result = publish?.result ?? publish?.outcome ?? publish?.state;
+    const result = publish ? firstField(publish, ['result', 'outcome', 'state', 'phase', 'status', 'conclusion']) : null;
     const job: LeaderFacts['jobs'][number] = { id, repo, publish_result: typeof result === 'string' ? result : pr_url ? 'published' : null, pr_url, pr_state: null, merged_at: null };
     if (pr_url && match) {
       const pr = await api(gh, ['api', `repos/${match[1]}/pulls/${match[2]}`]);

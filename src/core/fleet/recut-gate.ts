@@ -16,6 +16,7 @@
  */
 import { execFile } from 'node:child_process';
 import { readLedgerLines, type YieldLineReader } from './ledger-lines.js';
+import { ledgerAtMs, ledgerEventName, ledgerJobId } from './empty-cause.js';
 import { jobKind, yieldTally } from './slot-yield.js';
 import { readLiveStops, stopFilePath, stoppedBy } from './stop-file.js';
 
@@ -121,13 +122,18 @@ export async function readRecutGateFacts(target: string, opts: RecutGateReadOpti
   const launched = new Map<string, number>(), ended = new Map<string, { empty: boolean; at: number }>();
   const known = await (opts.read ?? readLedgerLines)(opts.metrics, line => {
     tally.add(line);
-    let row: { event?: unknown; job?: unknown; ts?: unknown; empty?: unknown; repo?: unknown };
-    try { row = JSON.parse(line) as typeof row; } catch { return; }
-    if (typeof row?.job !== 'string' || typeof row.ts !== 'string') return;
-    const at = Date.parse(row.ts);
-    if (!Number.isFinite(at) || jobKind(row.job, typeof row.repo === 'string' ? row.repo : undefined) !== t.family) return;
-    if (row.event === 'launch') launched.set(row.job, Math.max(launched.get(row.job) ?? 0, at));
-    if (row.event === 'finish' && at >= (ended.get(row.job)?.at ?? 0)) ended.set(row.job, { empty: row.empty === true, at });
+    let row: Record<string, unknown>;
+    try {
+      const value: unknown = JSON.parse(line);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+      row = value as Record<string, unknown>;
+    } catch { return; }
+    const job = ledgerJobId(row), at = ledgerAtMs(row);
+    if (job === null || at === null) return;
+    if (jobKind(job, typeof row.repo === 'string' ? row.repo : undefined) !== t.family) return;
+    const event = ledgerEventName(row);
+    if (event === 'launch') launched.set(job, Math.max(launched.get(job) ?? 0, at));
+    if (event === 'finish' && at >= (ended.get(job)?.at ?? 0)) ended.set(job, { empty: row.empty === true, at });
   }).catch(() => false);
   const stopList = known ? tally.jobYield().families.filter(row => row.verdict === 'stop').map(row => row.family) : null;
   const lastJobs = [...ended].sort((a, b) => b[1].at - a[1].at).slice(0, n)

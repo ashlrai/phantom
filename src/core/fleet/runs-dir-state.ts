@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
 import { fleetNotRunning, type LaunchRecord, type NotRunningRow } from './fleet-held.js';
 import { GLOBAL_SLOT_KEYS, LANE_ID_RE } from './runs-lane-targets.js';
+import { ledgerEventName, ledgerJobId, ledgerLane, ledgerPrUrl, ledgerStamp } from './empty-cause.js';
 
 export interface FleetRunsLane {
   seat?: { health: 'ok'|'degraded'|'down'|'unknown'; usedPct: number|null; resetAt: string|null; observedAt: string|null; passAt: string|null; passMs: number|null;
@@ -86,18 +87,24 @@ function metrics(text: string, nowMs: number) {
   for (const line of text.split(/\r?\n/).filter(Boolean)) {
     let row: Record<string, unknown>;
     try { row = object(JSON.parse(line)); } catch { corrupt = true; continue; }
-    if (!safeId(row.job) || !timestamp(row.ts) || (row.lane != null && !validLane(String(row.lane)))) { corrupt = true; continue; }
-    const age = nowMs - Date.parse(row.ts);
+    const job = ledgerJobId(row), stamp = ledgerStamp(row);
+    // Every lane|pool field present must name a valid lane; a contradiction corrupts the row.
+    const laneFields = [row.lane, row.pool];
+    const laneBad = laneFields.some(value => value !== null && value !== undefined && !validLane(String(value)));
+    if (!safeId(job) || !timestamp(stamp) || laneBad) { corrupt = true; continue; }
+    const age = nowMs - Date.parse(stamp);
     if (age < 0 || age > 3600000) continue;
-    const lane = typeof row.lane === 'string' ? row.lane : null;
-    if (row.event === 'finish' && lane && number(row.tokens_total) !== null) {
+    const lane = ledgerLane(row);
+    const event = ledgerEventName(row);
+    if (event === 'finish' && lane && number(row.tokens_total) !== null) {
       const sum = (tokensByLane[lane] ?? 0) + (row.tokens_total as number);
       if (Number.isSafeInteger(sum)) tokensByLane[lane] = sum;
       else corrupt = true;
-    } else if (row.event === 'publish' && row.class === 'pr') {
-      const url = typeof row.url === 'string' && /^https:\/\/github\.com\/[^\s?#]+$/.test(row.url) && scrubSecrets(row.url) === row.url ? row.url : null;
-      publishes.push({ job: row.job, lane, url, at: row.ts });
-    } else if (row.event === 'finish') corrupt = true;
+    } else if (event === 'publish' && row.class === 'pr') {
+      const raw = ledgerPrUrl(row);
+      const url = raw !== null && /^https:\/\/github\.com\/[^\s?#]+$/.test(raw) && scrubSecrets(raw) === raw ? raw : null;
+      publishes.push({ job, lane, url, at: stamp });
+    } else if (event === 'finish') corrupt = true;
   }
   publishes.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   return { tokensByLane, publishes: publishes.slice(0, 50), corrupt };

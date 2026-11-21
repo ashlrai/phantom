@@ -1,3 +1,5 @@
+import { ledgerAtMs, ledgerEventName, ledgerLane } from './empty-cause.js';
+
 /** Summarize the latest eight valid finishes per lane, ordered by finish time. */
 export interface LaneDeadSignal {
   lane: string;
@@ -12,16 +14,18 @@ export function laneDeadSignals(rows: readonly unknown[]): { lanes: LaneDeadSign
   rows.forEach((row, order) => {
     if (!row || typeof row !== 'object' || Array.isArray(row)) { malformedRows++; return; }
     const value = row as Record<string, unknown>;
-    if (typeof value.event !== 'string') { malformedRows++; return; }
-    if (value.event !== 'finish') return;
-    const time = typeof value.ts === 'string' ? Date.parse(value.ts) : NaN;
-    if (typeof value.lane !== 'string' || !value.lane || typeof value.empty !== 'boolean' ||
-        typeof value.exit_code !== 'number' || !Number.isSafeInteger(value.exit_code) || !Number.isFinite(time)) {
+    const event = ledgerEventName(value);
+    if (event === null) { malformedRows++; return; }
+    if (event !== 'finish') return;
+    const time = ledgerAtMs(value);
+    const lane = ledgerLane(value);
+    if (lane === null || typeof value.empty !== 'boolean' ||
+        typeof value.exit_code !== 'number' || !Number.isSafeInteger(value.exit_code) || time === null) {
       malformedRows++; return;
     }
-    const lane = finishes.get(value.lane) ?? [];
-    lane.push({ time, failed: value.empty && value.exit_code !== 0, order });
-    finishes.set(value.lane, lane);
+    const finishesFor = finishes.get(lane) ?? [];
+    finishesFor.push({ time, failed: value.empty && value.exit_code !== 0, order });
+    finishes.set(lane, finishesFor);
   });
   const lanes = [...finishes].map(([lane, values]): LaneDeadSignal => {
     const latest = values.sort((a, b) => b.time - a.time || b.order - a.order).slice(0, 8);

@@ -14,6 +14,7 @@ import { isAbsolute, join, normalize, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { scrubSecrets } from '../util/scrub.js';
 import { parseEtime, parsePsTable } from './runs-live-workers.js';
+import { ledgerEventName, ledgerJobId, ledgerLane } from './empty-cause.js';
 
 export const VERSE_FLEET_CONTROL_STRAY_SLOTS_PATH = '/api/verse/fleet/control/stray-slots';
 
@@ -88,6 +89,27 @@ async function text(path: string, limit: number): Promise<string> {
   } finally { await file.close(); }
 }
 
+/**
+ * Latest lifecycle state per job from jobs.jsonl text, in the jobs-ledger
+ * field dialect (job|job_id|jobId|id, event|type|kind, lane|pool). A start,
+ * launch or finish row claims the job; the last matching row wins. Throws on
+ * a malformed line, same as the ledger read it replaces.
+ */
+export function strayJobStates(metrics: string): Map<string, { lane: string; finished: boolean }> {
+  const latest = new Map<string, { lane: string; finished: boolean }>();
+  for (const line of metrics.split('\n').filter(Boolean)) {
+    const row: unknown = JSON.parse(line);
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+    const record = row as Record<string, unknown>;
+    const job = ledgerJobId(record), lane = ledgerLane(record), event = ledgerEventName(record);
+    if (job !== null && STRAY_ID_PATTERN.test(job) && lane !== null && STRAY_ID_PATTERN.test(lane) &&
+        (event === 'start' || event === 'launch' || event === 'finish')) {
+      latest.set(job, { lane, finished: event === 'finish' });
+    }
+  }
+  return latest;
+}
+
 export const defaultStrayReaders: StrayReaders = {
   async readProcesses() {
     const { stdout } = await run('/bin/ps', ['-axo', 'pid=,etime=,command='], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
@@ -114,14 +136,7 @@ export const defaultStrayReaders: StrayReaders = {
   async readJobs() {
     const root = join(homedir(), '.ashlr-runs');
     const metrics = await text(join(root, 'metrics/jobs.jsonl'), 8 * 1024 * 1024);
-    const latest = new Map<string, { lane: string; finished: boolean }>();
-    for (const line of metrics.split('\n').filter(Boolean)) {
-      const row = JSON.parse(line) as Record<string, unknown>;
-      if (typeof row.job === 'string' && STRAY_ID_PATTERN.test(row.job) && typeof row.lane === 'string' && STRAY_ID_PATTERN.test(row.lane) &&
-          ['start', 'launch', 'finish'].includes(String(row.event))) {
-        latest.set(row.job, { lane: row.lane, finished: row.event === 'finish' });
-      }
-    }
+    const latest = strayJobStates(metrics);
     const jobs: StrayJob[] = [];
     for (const [id, state] of latest) {
       const base = await text(join(root, `${id}.base`), 16 * 1024);
