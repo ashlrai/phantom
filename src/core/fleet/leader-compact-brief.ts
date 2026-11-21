@@ -14,12 +14,13 @@ import { LIVE_JOBS_FILE, type LiveJobsReport } from './live-jobs.js';
 import { parseReadyRows } from './ready-row-edit.js';
 import { parseStopFile, stopFilePath, stoppedFamilies } from './stop-file.js';
 import { readSource } from './runs-parked-queue.js';
+import { readHostFamilies } from './host-families.js';
 
 export const LEADER_COMPACT_FILE = 'queue/leader-brief.json';
 const clean = (s: string) => scrubSecrets(s).replace(/\s+/g, ' ').slice(0, 80);
 type Counts = { family: string; launches: number; prs: number; merges: number; empty: number };
 
-export async function readCompactBrief(runsDir = runsRoot(), now = Date.now()) {
+export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), hostLoadReader = readHostFamilies) {
   const cache = new Map<string, Promise<string>>();
   const sources: Record<string, string> = {};
   const read = (file: string): Promise<string> => {
@@ -32,17 +33,19 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now()) {
     return cache.get(file)!;
   };
   const quiet = async <T>(p: Promise<T>): Promise<T | null> => p.catch(() => null);
-  const [snapshot, tail, pace, guardian, liveText, stopText, ready] = await Promise.all([
+  const [snapshot, tail, pace, guardian, liveText, stopText, ready, hostLoad] = await Promise.all([
     quiet(readChiefOfStaffSnapshot('auto', { runsDir, now: () => new Date(now), read })),
     readTail(join(runsDir, 'metrics/jobs.jsonl'), 8 * 1024 * 1024),
     quiet(readFleetPace({ runsDir, now: () => now })), quiet(readGuardianGlance(runsDir, now)),
     quiet(read(join(runsDir, LIVE_JOBS_FILE))), stopFilePath() ? quiet(read(stopFilePath()!)) : null,
     quiet(read(join(runsDir, 'queue/ready.tsv'))),
+    hostLoadReader(),
   ]);
   sources.ledger = tail === null ? 'missing' : tail.truncated ? 'bounded tail' : 'healthy';
   sources.guardian = guardian?.length ? 'healthy' : 'missing';
   sources.pace = pace?.pools.length ? 'healthy' : 'missing';
   sources.stops = stopText === null ? 'unknown' : 'healthy';
+  sources.hostLoad = hostLoad.state === 'known' ? 'healthy' : 'unknown';
   const rows = ledgerRows(tail?.text ?? '', now, 24).rows.sort((a, b) => a.at - b.at);
   const groups = new Map<string, Counts>(), seen = new Set<string>();
   for (const { row, id, at } of rows.filter(r => r.at >= now - 2 * 3_600_000)) {
@@ -79,6 +82,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now()) {
     families: [...groups.values()].sort((a, b) => a.prs / Math.max(1, a.launches) - b.prs / Math.max(1, b.launches) || b.launches - a.launches || a.family.localeCompare(b.family)),
     attention, liveAt: typeof live?.generatedAt === 'string' ? clean(live.generatedAt) : null, main: (guardian ?? []).map(g => ({ repo: clean(g.repo), state: g.state, stale: g.stale })),
     medianOpenToMergeSeconds: buildMergeLatency({ ledger: tail?.text ?? null, now, hours: 24, by: 'repo', metricsPath: '' }).open_to_merge?.p50_s ?? null,
+    hostLoad: { ...hostLoad, families: hostLoad.families.slice(0, 5), omitted: hostLoad.omitted + Math.max(0, hostLoad.families.length - 5) },
     stopped: stops, omitted: 0,
   };
   // Drop the lowest-priority rows, explicitly counting omissions, until the entire wire payload fits.

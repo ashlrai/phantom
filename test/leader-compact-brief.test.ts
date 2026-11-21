@@ -5,9 +5,12 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { compactBriefLines, LEADER_COMPACT_FILE, readCompactBrief } from '../src/core/fleet/leader-compact-brief.js';
 import { runSelfTick, SELF_TICK_STEP_ORDER, type SelfTickSteps } from '../src/core/fleet/self-tick.js';
 import { cmdLeaderBrief } from '../src/cli/leader-brief.js';
+import { groupHostFamilies } from '../src/core/fleet/host-families.js';
+import * as hostFamilies from '../src/core/fleet/host-families.js';
 let dir: string;
 const now = Date.parse('2026-11-21T12:00:00Z'), at = new Date(now).toISOString();
 beforeEach(async () => {
+  vi.spyOn(hostFamilies, 'readHostFamilies').mockResolvedValue(groupHostFamilies(null));
   dir = await mkdtemp(join(tmpdir(), 'leader-brief-'));
   vi.stubEnv('ASHLR_RUNS_DIR', dir); vi.stubEnv('ASHLR_JOBS_STOP_FILE', join(dir, 'stops.tsv'));
   await mkdir(join(dir, 'queue')); await mkdir(join(dir, 'metrics'));
@@ -26,7 +29,9 @@ it('bounds 500 jobs, ranks zero PRs in six launches first, and reads status and 
   await writeFile(join(dir, 'queue/status.json'), JSON.stringify({ last_tick: at, paused: false, lanes: { local: { running: 2, held: false } }, budget: { local: { used_pct: 40, hours_to_reset: 10, burn_pct_per_hour: 2 } } }));
   await writeFile(join(dir, 'queue/ready.tsv'), 'waiting\tphantom\tlocal\twork\tplain\n');
   await writeFile(join(dir, 'stops.tsv'), `^empty.*$\t${now / 1000 + 60}\tquiet\n`);
-  const b = await readCompactBrief(dir, now);
+  const host = groupHostFamilies(Array.from({ length: 8 }, (_, i) => `${100 + i} 1 5 1024 00:01 worker /repo/wt/RQ-WORK-${i}`).join('\n'));
+  const b = await readCompactBrief(dir, now, async () => host);
+  expect(b.hostLoad.families).toHaveLength(5); expect(b.hostLoad.omitted).toBe(3);
   expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(8192);
   expect(b.families[0]).toMatchObject({ family: 'empty-*', launches: 6, prs: 0, empty: 6 });
   expect(b.lanes[0]).toMatchObject({ running: 2, queued: 1, target: 4, held: false, emptyRate: 0 });
