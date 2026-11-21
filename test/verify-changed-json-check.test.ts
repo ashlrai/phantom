@@ -5,12 +5,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { runJsonSyntaxCheck, selectChangedFiles } from '../scripts/verify-changed.mjs';
 
 describe('selectChangedFiles json coverage', () => {
-  it('selects existing .json files and skips deleted, non-json and .jsonl paths', () => {
+  it('selects existing .json and .webmanifest files and skips deleted, non-json and .jsonl paths', () => {
     const selection = selectChangedFiles(
-      ['package.json', 'fleet/manifest.json', 'src/core/x.ts', 'gone.json', 'metrics/jobs.jsonl', 'README.md'],
-      ['package.json', 'fleet/manifest.json', 'src/core/x.ts', 'metrics/jobs.jsonl', 'README.md'],
+      ['package.json', 'fleet/manifest.json', 'src/web-ui/public/app/manifest.webmanifest', 'src/core/x.ts', 'gone.json', 'metrics/jobs.jsonl', 'README.md'],
+      ['package.json', 'fleet/manifest.json', 'src/web-ui/public/app/manifest.webmanifest', 'src/core/x.ts', 'metrics/jobs.jsonl', 'README.md'],
     );
-    expect(selection.jsonFiles).toEqual(['fleet/manifest.json', 'package.json']);
+    expect(selection.jsonFiles).toEqual(['fleet/manifest.json', 'package.json', 'src/web-ui/public/app/manifest.webmanifest']);
   });
 });
 

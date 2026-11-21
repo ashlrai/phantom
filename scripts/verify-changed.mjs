@@ -43,7 +43,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     lintFiles: changed.filter((path) => existing.has(path) && /\.(?:[cm]?js|[cm]?ts|tsx|jsx)$/.test(path)),
     pythonFiles: changed.filter((path) => existing.has(path) && /\.py$/.test(path)),
     shellFiles: changed.filter((path) => existing.has(path) && /\.sh$/.test(path)),
-    jsonFiles: changed.filter((path) => existing.has(path) && /\.json$/.test(path)),
+    jsonFiles: changed.filter((path) => existing.has(path) && /\.(?:json|webmanifest)$/.test(path)),
     xmlFiles: changed.filter((path) => existing.has(path) && /\.(?:xml|plist|svg)$/.test(path)),
     webTypecheck: changed.some((path) => path.startsWith('src/web-ui/')),
     authorityDrift: changed.some(affectsAuthorityDrift),
@@ -295,11 +295,13 @@ export function runNodeSyntaxCheck(root, files, spawn = spawnSync) {
 }
 
 /**
- * Strict-parse changed .json files with JSON.parse — the same grammar
- * tscCachePaths already applies to tsconfig.json and sync-plan's checkSyntax
- * applies to fleet machinery — so a failure is a real break for package.json,
- * manifests, schemas and registries. No external interpreter is needed, so
- * unlike the Python and shell checks there is no preflight or SKIP path; every
+ * Strict-parse changed .json and .webmanifest files with JSON.parse — the
+ * same grammar tscCachePaths already applies to tsconfig.json and sync-plan's
+ * checkSyntax applies to fleet machinery, and the grammar the Web App
+ * Manifest spec requires of `application/manifest+json` — so a failure is a
+ * real break for package.json, manifests, schemas, registries and the PWA
+ * manifest the web UI ships. No external interpreter is needed, so unlike
+ * the Python and shell checks there is no preflight or SKIP path; every
  * failing path is named with its parse error.
  */
 export function runJsonSyntaxCheck(root, files, read = readFileSync) {
@@ -1153,7 +1155,7 @@ function main() {
     process.exitCode = 1;
   }
   if (selection.jsonFiles.length === 0) {
-    console.log('PASS json syntax check skipped: no json change');
+    console.log('PASS json syntax check skipped: no json or webmanifest change');
   } else if (!runJsonSyntaxCheck(root, selection.jsonFiles)) {
     process.exitCode = 1;
   }
