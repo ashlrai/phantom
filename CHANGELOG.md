@@ -16,6 +16,19 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.55](https://github.com/ashlrai/phantom/compare/v3.30.54...v3.30.55) (2026-11-21)
+
+
+### Changes
+
+* **RQ-CL-DESK-1795224423:** ([#7714](https://github.com/ashlrai/phantom/issues/7714)) ([e7212e8](https://github.com/ashlrai/phantom/commit/e7212e8131626946826fc192aa570d2d15d8deda))
+* **RQ-CL-DESK-1795224906:** ([#7718](https://github.com/ashlrai/phantom/issues/7718)) ([897b5c8](https://github.com/ashlrai/phantom/commit/897b5c864c6b16c4552a8d658bfbec62b741d61c))
+* **RQ-CL-DESK2-1795224532:** ([#7715](https://github.com/ashlrai/phantom/issues/7715)) ([2d65cd6](https://github.com/ashlrai/phantom/commit/2d65cd6de4413be0a61b12333cede5d930bf6866))
+* **RQ-CL-DOCS-1795225026:** ([#7717](https://github.com/ashlrai/phantom/issues/7717)) ([5733ec7](https://github.com/ashlrai/phantom/commit/5733ec73c3c4451292d82b7a141c001815d0bae1))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795224726-N17:** ([#7719](https://github.com/ashlrai/phantom/issues/7719)) ([64db07b](https://github.com/ashlrai/phantom/commit/64db07b8e6823d358c27d357093958441672adfa))
+* **RQ-RECEIPTSN22CQ8:** RQ-RECEIPTSN22CQ8: honest state word on chat replies ([#7713](https://github.com/ashlrai/phantom/issues/7713)) ([82a676b](https://github.com/ashlrai/phantom/commit/82a676ba7b61568035845aaa5bf50d0c2fce7a2c))
+* **RQ-TAILNODESN22CQ8:** RQ-TAILNODESN22CQ8: Tailscale computers show up as "not join ([#7716](https://github.com/ashlrai/phantom/issues/7716)) ([bcd3bf3](https://github.com/ashlrai/phantom/commit/bcd3bf3abed237288c703728b00db4c8c838a763))
+
 ## [Unreleased]
 
 ### Since v3.30.40
