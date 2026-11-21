@@ -355,6 +355,59 @@ describe('phm messages projection', () => {
     expect(parseAgentMessagesQuery({ priority: '' }).ok).toBe(false);
   });
 
+  it('filters to one job across citations, thread members and claim operations', () => {
+    const root = store();
+    post(root, T0, { id: 'j1', from: 'agent:planner', to: 'leaders',
+      body: { kind: 'work.post', jobId: 'RQ-JOB1', title: 'Fix the parser', repo: 'a/b',
+        claimKeys: ['repo:a/b'], provider: 'devin' } });
+    post(root, T0 + 1_000, { id: 'j2', from: 'agent:worker', to: 'agent:planner',
+      body: { kind: 'work.status', jobId: 'RQ-JOB1', status: 'running' } });
+    post(root, T0 + 2_000, { id: 'j3', from: 'agent:planner', to: 'agent:worker',
+      body: { kind: 'worker-handoff', taskId: 'RQ-JOB1', prompt: 'take it over' } });
+    // work.claim is an operation, not a citation: no jobState, but the row's
+    // own job link and job:<id> conversation still tie it to the job.
+    post(root, T0 + 3_000, { id: 'j4', from: 'agent:worker', to: 'agent:planner',
+      body: { kind: 'work.claim', op: 'acquire', jobId: 'RQ-JOB1', claimKey: 'repo:a/b', owner: 'agent:worker', leaseMs: 60_000 } });
+    // A reply into the job's conversation inherits the job:<id> bucket.
+    post(root, T0 + 4_000, { id: 'j5', from: 'agent:worker', to: 'agent:planner',
+      body: { kind: 'note', text: 'halfway there', replyTo: 'j2' } });
+    // A note carrying the job:<id> thread label joins the same bucket.
+    post(root, T0 + 5_000, { id: 't1', from: 'a', to: 'b',
+      body: { kind: 'note', text: 'fyi on the job', thread: 'job:RQ-JOB1' } });
+    // The row's job link is the projection's own call — a declared ref or a
+    // prose mention the summary carries both count.
+    post(root, T0 + 6_000, { id: 'p1', from: 'a', to: 'b',
+      body: { kind: 'note', text: 'RQ-JOB1 looks close to done' } });
+    // Another job's post and plain uncited traffic never pass the filter.
+    post(root, T0 + 7_000, { id: 'x1', from: 'agent:planner', to: 'leaders',
+      body: { kind: 'work.post', jobId: 'RQ-JOB2', title: 'Other work', repo: 'a/c',
+        claimKeys: ['repo:a/c'], provider: 'devin' } });
+    post(root, T0 + 8_000, { id: 'n1', from: 'a', to: 'b', body: { kind: 'note', text: 'lunch?' } });
+    const job1 = read(root, { job: 'RQ-JOB1' });
+    expect(job1.messages.map(m => m.id)).toEqual(['p1', 't1', 'j5', 'j4', 'j3', 'j2', 'j1']);
+    expect(job1.matched).toBe(7);
+    expect(job1.messages.find(m => m.id === 'j4')).not.toHaveProperty('jobState');
+    expect(job1.messages.find(m => m.id === 'j5')).not.toHaveProperty('jobState');
+    expect(job1.messages.find(m => m.id === 'j3')!.jobState).toMatchObject({ jobId: 'RQ-JOB1' });
+    // The other job and uncited mail stay out; an unknown job is an empty page.
+    expect(read(root, { job: 'RQ-JOB2' }).messages.map(m => m.id)).toEqual(['x1']);
+    expect(read(root, { job: 'RQ-GONE' })).toMatchObject({ matched: 0, messages: [] });
+    // --job composes with the other filters and matched still counts only
+    // the rows every filter accepts; limit caps the page, not the count.
+    expect(read(root, { job: 'RQ-JOB1', kind: 'handoff' }).messages.map(m => m.id)).toEqual(['j3']);
+    expect(read(root, { job: 'RQ-JOB1', agent: 'planner' }).messages.map(m => m.id))
+      .toEqual(['j5', 'j4', 'j3', 'j2', 'j1']);
+    expect(read(root, { job: 'RQ-JOB1', limit: 2 })).toMatchObject({ matched: 7, messages: [{ id: 'p1' }, { id: 't1' }] });
+  });
+
+  it('parses --job as a printable label and refuses anything else', () => {
+    expect(parseAgentMessagesQuery({ job: 'RQ-JOB1' })).toEqual({ ok: true, query: { job: 'RQ-JOB1' } });
+    expect(parseAgentMessagesQuery({ job: 'RQ-JOB1', kind: 'ask', limit: '5' })).toEqual({ ok: true, query: { job: 'RQ-JOB1', kind: 'ask', limit: 5 } });
+    expect(parseAgentMessagesQuery({ job: 'has space' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ job: '' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ job: 'x'.repeat(129) }).ok).toBe(false);
+  });
+
   it('serves the same read at GET /api/verse/agent-bus/messages', async () => {
     const calls: unknown[] = [];
     const api = createAgentBusApi({ messages: query => { calls.push(query); return { schema: 'agent-messages.v1', source: 'missing', messages: [], matched: 0, skipped: 0 }; } });
@@ -365,14 +418,15 @@ describe('phm messages projection', () => {
       const handled = await api(ctx, { url, headers: {} } as never, res, url.split('?')[0]!, 'GET');
       return { handled, status: status || (res as { statusCode: number }).statusCode, body };
     };
-    const ok = await send('/api/verse/agent-bus/messages?agent=claude&kind=ask&priority=P0&limit=5');
+    const ok = await send('/api/verse/agent-bus/messages?agent=claude&kind=ask&priority=P0&job=RQ-JOB1&limit=5');
     expect(ok.handled).toBe(true);
     expect(ok.status).toBe(200);
     expect(JSON.parse(ok.body)).toMatchObject({ schema: 'agent-messages.v1' });
-    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', agent: 'claude', limit: 5 }]);
+    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', agent: 'claude', job: 'RQ-JOB1', limit: 5 }]);
     expect((await send('/api/verse/agent-bus/messages?limit=0')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?kind=chatter')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?priority=urgent')).status).toBe(400);
+    expect((await send('/api/verse/agent-bus/messages?job=has%20space')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?after=1')).status).toBe(400);
   });
 });

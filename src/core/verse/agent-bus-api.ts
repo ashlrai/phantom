@@ -8,7 +8,7 @@
  * own status; unreadable or invalid storage returns 503. Its only parameter is
  * `claims=true`, which adds the same live coordination-hold join the CLIs'
  * `--claims` flag produces.
- * GET /api/verse/agent-bus/messages[?since=15m&agent=claude&with=leader&kind=ask&priority=P0&limit=50] is the same
+ * GET /api/verse/agent-bus/messages[?since=15m&agent=claude&with=leader&kind=ask&priority=P0&job=RQ-1&limit=50] is the same
  * read as `phm messages` (agent-messages.ts): newest first, scrubbed summaries.
  * GETs require a current read session. Responses wrap store outcomes with v: 1;
  * missing storage reads as an empty page, while status reports source: missing.
@@ -114,7 +114,7 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
     try { params = new URL(req.url ?? path, 'http://localhost').searchParams; }
     catch { sendJson(res, 400, { error: 'Invalid query.' }); return true; }
     const allowed = method === 'GET' && path === PATH ? ['after', 'limit']
-      : method === 'GET' && path === MESSAGES ? ['since', 'agent', 'with', 'kind', 'priority', 'limit']
+      : method === 'GET' && path === MESSAGES ? ['since', 'agent', 'with', 'kind', 'priority', 'job', 'limit']
       : method === 'GET' && path === WORK_FEED ? ['claims'] : [];
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1)) {
       sendJson(res, 400, { error: 'Invalid query.' }); return true;
@@ -133,7 +133,7 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
         const parsed = parseAgentMessagesQuery({ since: params.get('since') ?? undefined,
           agent: params.get('agent') ?? undefined, with: params.get('with') ?? undefined,
           kind: params.get('kind') ?? undefined, priority: params.get('priority') ?? undefined,
-          limit: params.get('limit') ?? undefined });
+          job: params.get('job') ?? undefined, limit: params.get('limit') ?? undefined });
         if (!parsed.ok) { sendJson(res, 400, { error: parsed.error }); return true; }
         const result = (deps.messages ?? readAgentMessages)(parsed.query);
         sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
