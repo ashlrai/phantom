@@ -1055,3 +1055,607 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'doctor worktree [--repair] [--json]', desc: 'Can this checkout typecheck and lint? Reports node_modules, tsgo and eslint, with the one command that fixes each. Also shows the source checkout (branch, commits behind, lockfile) and its repair log; --repair runs npm ci in this worktree only.', topic: 'core' },
   { cmd: 'doctor build [--json]', desc: 'Is the phm running on this host the code the fleet merged? The running commit (embedded at build time, else HEAD of the directory phm runs from), its branch, and how many commits it is behind origin/master (local ref, no network), then one verdict line. Unknown stays unknown, with the reason. Reads only; never fetches, pulls or rebuilds.', topic: 'core' },
   { cmd: 'doctor supply [--json]', desc: 'Is self-supply landing jobs? Per source in the host ingest log: last ingest and jobs in 24 h; rejected drops by reason; whether the self-tick gap hook is on; the live build line and the last self-tick line; gap candidates now by source (no-change vs published); self-held lanes (3+ held launches, no finish in 60 min); the top EMPTY reason in 24 h; one verdict line. Gap jobs show as source gap. Missing files read as unknown with the path.', topic: 'core' },
+  { cmd: 'doctor',                       desc: 'One-glance health check: config, phantom, providers, ecosystem.', topic: 'core' },
+  { cmd: 'init [--yes]',                 desc: 'Idempotent onboarding: ensure config, detect phantom + models, set editor.', topic: 'core' },
+  { cmd: 'desktop install [--upgrade [--require-app] [--to x.y.z] | --rollback] [--apply]', desc: 'Inspect signed macOS arm64 artifacts; explicitly install on an empty system or upgrade/roll back a managed CLI after Stop/drain. Never resumes authority.', topic: 'core' },
+  { cmd: 'desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]', desc: 'Operate macOS desktop apps through the desktop-operator helper. Reads are free. focus, scroll, type and click post a bus intent first. KILL and comms pause block writes.', topic: 'core' },
+  { cmd: 'apps log [--limit <n>] [--json]', desc: 'Every app open, focus, quit and restart on record in the feed, newest first, with its outcome. Read-only.', topic: 'core' },
+  { cmd: 'apps list|open|quit|restart|focus|status [<app>] [--json] [--dry-run] | apps request open|quit|focus <app> [--json]', desc: 'Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Per-app action policy; logged to the feed. Requests and unsafe quits go to needs-you.', topic: 'core' },
+  { cmd: 'browser [tabs|doctor|open <url>|shot [<path.png>]|close] [--json]', desc: 'Drive Safari, Phantom\'s own agent browser: list agent tabs, open a web address, save a screenshot, close its windows. doctor says whether remote automation is on and the one step to enable it. Chrome is always refused.', topic: 'core' },
+  { cmd: 'desktopctl capabilities|status|run <resource> [--json]', desc: 'Drive Claude, Codex, Devin and a browser as interchangeable desktop resources. Flag-gated by ~/.ashlr/desktopctl.json; reports missing TCC grants, never prompts. Logged to the feed.', topic: 'core' },
+  { cmd: 'desktop-update inspect|apply --stage <32hex> --json', desc: 'Verify signed paired updates; apply after native exit, Stop/drain and unchanged active grant. Never resumes the resident.', topic: 'core' },
+  { cmd: 'app update status [--json]', desc: 'Inspect local desktop update status without downloading or installing. Read-only: reports current stage, available version, deferred reason, running job counts. Exit 0 success, 2 bad usage.', topic: 'core' },
+  { cmd: 'update [--check] [--json]',    desc: 'Self-update; mutation requires service registration proven absent and not running. --check remains read-only.', topic: 'core' },
+  { cmd: 'self-swap [--plan | --apply --supervised] [--json]', desc: 'Plan a versioned install swap; apply builds, probes, flips current and drains the old supervised process.', topic: 'core' },
+  { cmd: 'upgrade [--check] [--json]',   desc: 'Same as update.', topic: 'core' },
+  { cmd: 'runtime install --store <absolute> --artifact <absolute> --sha256 <hash> --revision <sha> --version <version>', desc: 'Install exact offline candidate bytes into a private store; not production qualification or service activation.', topic: 'core' },
+  { cmd: 'runtime status|rollback --store <absolute> [--json]', desc: 'Verify local candidate selection or explicitly restore the previous verified installation.', topic: 'core' },
+  { cmd: 'runtime run --store <absolute> -- universe <args>', desc: 'Run Universe in the foreground using the verified installed candidate; operational commands require explicit absolute --root.', topic: 'core' },
+  { cmd: 'orient [--repo <r>] [--json]', desc: 'Session-start context: genome hits, health, backlog, pending proposals, attention (read-only).', topic: 'core' },
+  { cmd: 'docs --agent [--json]',        desc: 'Agent cheat sheet: the CLI-first contract (commands, safety classes, JSON shapes).', topic: 'core' },
+  { cmd: 'docs cli [--check] [--json]', desc: 'Regenerate docs/CLI-REFERENCE.md from the command registry; --check lists missing, removed or stale commands without writing (exit 1 on drift).', topic: 'core' },
+  { cmd: 'check [--base <ref>] [--json]', desc: 'Run incremental typechecks, cached lint and affected tests from a Phantom checkout; development feedback only.', topic: 'core' },
+  { cmd: 'commands [--json]',            desc: 'List every command: what it does, its arguments and whether it changes state. The desktop palette (Cmd+K) shows the same list.', topic: 'core' },
+  { cmd: 'completions zsh|bash',         desc: 'Print a shell completion script to stdout.', topic: 'core' },
+  { cmd: 'plugins init|list|info|enable|disable', desc: 'Plugins under ~/.ashlr/plugins/ (default-off). --json on every verb. init, enable and disable take --dry-run (writes nothing). enable prompts only on a terminal; otherwise use --yes. list --all adds Claude Code plugins (the Plugins pane).', topic: 'core' },
+  { cmd: 'x <name> [args...]',           desc: "Run an enabled plugin's command.", topic: 'core' },
+  { cmd: 'help [<topic>|--all|--search <term>]', desc: 'Topic-grouped help; --all prints every command; --search <term> filters.', topic: 'core' },
+  { cmd: 'version',                      desc: 'Print the installed ashlr version (aliases: --version, -v).', topic: 'core' },
+
+  { cmd: 'run "<goal>" [opts]',          desc: 'Decompose goal into tasks; execute via local model (Ollama/LM Studio).', topic: 'run' },
+  { cmd: 'run show <id>',                desc: 'Print a past run in detail.', topic: 'run' },
+  { cmd: 'runs [--json]',                desc: 'List past runs (newest first).', topic: 'run' },
+  { cmd: 'models [--json]',              desc: 'List the model registry (verified, unverified, stale) and local models.', topic: 'run' },
+  { cmd: 'models check [--json] [--diff <file>]', desc: 'Report every model the router can pick: confirmed, stale or unconfirmed (not routable).', topic: 'run' },
+  { cmd: 'models radar [--json] [--from <folder>] [--fetch]', desc: 'List new, retired and renamed model ids from saved provider release notes, with a proposed registry patch.', topic: 'run' },
+  { cmd: 'models verify <id> --source <url>', desc: 'Mark one model verified once its official doc page names the exact id.', topic: 'run' },
+  { cmd: 'models verify [--text]',       desc: 'Show model verification status and age (JSON by default).', topic: 'run' },
+  { cmd: 'models pull <name> [--yes]',   desc: 'Explicitly pull an Ollama model (large download; confirm first).', topic: 'run' },
+  { cmd: 'models start',                 desc: 'Best-effort start a locally-installed Ollama (never downloads).', topic: 'run' },
+  { cmd: 'local-runtime <status|start|stop|restart|reshape|logs|resolve-model>', desc: 'Supervise the loopback llama-server serving runtime (parallel local fleet engine); manual and attended.', topic: 'run' },
+  { cmd: 'local-runtime install|uninstall', desc: 'Add or remove the opt-in launch agent that keeps llama-server up across logout/crashes; install is refused while the kill switch is engaged.', topic: 'run' },
+
+  { cmd: 'spec new "<goal>" [--project]', desc: 'Author a versioned end-state spec artifact (local-first model).', topic: 'swarm' },
+  { cmd: 'spec list [--project <path>]', desc: 'List all spec artifacts, newest version per spec.', topic: 'swarm' },
+  { cmd: 'spec show <id>',               desc: 'Print a spec artifact in full.', topic: 'swarm' },
+  { cmd: 'spec refine <id> "<note>"',    desc: 'Produce a new version of a spec incorporating the note.', topic: 'swarm' },
+  { cmd: 'swarm "<goal>" [opts]',        desc: 'Decompose goal into a contracts-first DAG; run a fleet of agents.', topic: 'swarm' },
+  { cmd: 'swarm <specId> [opts]',        desc: 'Run a swarm against an existing spec artifact.', topic: 'swarm' },
+  { cmd: 'swarm show <id>',              desc: 'Print a past swarm run in detail.', topic: 'swarm' },
+  { cmd: 'swarms [--json]',              desc: 'List past swarm runs (newest first).', topic: 'swarm' },
+
+  { cmd: 'memory add|list|search|forget [--json]', desc: 'Persistent agent memory: add, list, search, and forget entries (preference|doctrine|fact). Refuses secret-shaped text. See docs/MEMORY.md.', topic: 'memory' },
+  { cmd: 'recall "<query>"',             desc: 'Search shared genome memory; return top relevant entries with scores.', topic: 'memory' },
+  { cmd: 'learn "<text>" [opts]',        desc: 'Append a note to shared genome memory (local-first, append-only).', topic: 'memory' },
+  { cmd: 'genome',                       desc: 'Genome status/health: entry count, projects covered, store size.', topic: 'memory' },
+  { cmd: 'memory <add|list|search|forget>', desc: 'Manage local durable preferences, doctrine and facts.', topic: 'memory' },
+  { cmd: 'radar <list|run|diff>', desc: 'Observe public documentation and compare bounded local snapshots.', topic: 'knowledge' },
+
+  { cmd: 'knowledge build',              desc: 'Index enrolled repos locally (read-only, secret-scrubbed) for portfolio RAG.', topic: 'knowledge' },
+  { cmd: 'ask "<question>"',             desc: 'Local RAG across the indexed portfolio; cites repo/file:line. --allow-cloud opt-in. `ask status` prints the ask.status.v1 stream from the metrics jobs ledger.', topic: 'knowledge' },
+  { cmd: 'knowledge impact <target>',    desc: 'Show references + dependents of a file/symbol within and across enrolled repos.', topic: 'knowledge' },
+  { cmd: 'knowledge graph',              desc: 'Print the portfolio knowledge graph (repos/modules/deps + cross-repo findings).', topic: 'knowledge' },
+  { cmd: 'wiki build [repo] [--all]',    desc: 'Private architecture wiki per repo (local models; cited, verified file:line). Only stale pages rebuild.', topic: 'knowledge' },
+  { cmd: 'wiki ask "<question>"',        desc: 'Answer from the wiki + index + genome with verified file:line citations, or say "not found".', topic: 'knowledge' },
+  { cmd: 'wiki status [repo]',           desc: 'Wiki freshness: generated at <commit>, N pages stale.', topic: 'knowledge' },
+
+  { cmd: 'enroll list',                  desc: 'List enrolled repos + kill switch state.', topic: 'autonomy' },
+  { cmd: 'enroll add <repo> [--locus-firm]', desc: 'Enroll a repo for autonomous work. First enroll soft-offers locus.firm when locus CLI is present; --locus-firm / ASHLR_LOCUS_FIRM=1 enable without prompt (default off).', topic: 'autonomy' },
+  { cmd: 'enroll remove <repo>',         desc: 'Remove a repo from the enrollment registry.', topic: 'autonomy' },
+  { cmd: 'enroll kill on|off',           desc: 'Toggle the global autonomous kill switch.', topic: 'autonomy' },
+  { cmd: 'backlog',                      desc: 'Scored work queue across enrolled repos (issues, TODOs, tests, deps, docs, security, plugins, goals, hygiene, invention).', topic: 'autonomy' },
+  { cmd: 'select [--json] [--dry-run] [--top <n>]', desc: 'Rank candidates by value x leverage / (time + usage), fund the top 5 as READY lines, record picks with predicted value.', topic: 'autonomy' },
+  { cmd: 'backlog refresh',              desc: 'Re-scan all enrolled repos and rebuild the backlog.', topic: 'autonomy' },
+  { cmd: 'release-articles status|enable|disable|import|sync [--json]', desc: 'Configure release-backed article task handoffs; sync verifies public GitHub/npm evidence and never publishes directly.', topic: 'autonomy' },
+  { cmd: 'release status [--json | --text] [--file <release-state.json>]', desc: 'Show local publication, signed assets, updater, merged PRs, cadence and autorun reason. JSON by default; --text for people.', topic: 'autonomy' },
+  { cmd: 'releases [--json]', desc: 'Show which Ashlr repo is due a release: latest tag, its age, PRs merged since, and the single most overdue repo. Reads local clones; never tags or publishes.', topic: 'autonomy' },
+  { cmd: 'release cadence [--repos <a,b>] [--json]', desc: 'How stale is each repo\'s latest release, from public GitHub: fresh, due (6 to 24 hours with merges since), stale (over 24 hours with merges since), or a release with 0 assets. Never tags or publishes.', topic: 'autonomy' },
+  { cmd: 'release notes [--since <tag-or-date>] [--repo <name>] [--json] [--markdown] [--write]', desc: 'Summarize local mainline changes since the latest release tag. --markdown prints plain words for a reader: a three-sentence summary, then short lists under plain headings. Use --write to prepend notes to CHANGELOG.md. With --repo <name> --since <tag>, read merged PR titles and bodies from GitHub and group them Added, Changed, Fixed, Security.', topic: 'autonomy' },
+  { cmd: 'backlog --source <src>',       desc: `Filter backlog by source: ${BACKLOG_SOURCE_FILTER_HELP}.`, topic: 'autonomy' },
+  { cmd: 'backlog --repo <path>',        desc: 'Filter backlog to a specific enrolled repo.', topic: 'autonomy' },
+  { cmd: 'backlog --limit <n>',          desc: 'Show only the top N items.', topic: 'autonomy' },
+  { cmd: 'backlog --json',               desc: 'Emit raw JSON backlog.', topic: 'autonomy' },
+  { cmd: 'inbox',                        desc: 'Approval inbox: list pending proposals (the outward-action gate).', topic: 'autonomy' },
+  { cmd: 'drafts list|show|approve|reject [--json]', desc: 'Outbound drafts waiting for owner approval; approve records, never sends. See docs/DRAFTS.md.', topic: 'autonomy' },
+  { cmd: 'comms-agent status|run|drafts [--json]', desc: 'Comms role under the Leader. Triage archives bulk and bot mail and drafts replies. Sends need an owner standing approval. No lane is hard-coded. See docs/COMMS-AGENT.md.', topic: 'autonomy' },
+  { cmd: 'inbox show <id>',              desc: 'Full detail of a proposal incl. diff (read-only).', topic: 'autonomy' },
+  { cmd: 'inbox approve <id>',           desc: 'Confirm + apply an approved proposal to its dedicated local branch.', topic: 'autonomy' },
+  { cmd: 'inbox approve <id> --yes',     desc: 'Approve without interactive prompt (non-TTY safe).', topic: 'autonomy' },
+  { cmd: 'inbox submit <id>',            desc: 'Caller-confirm, freshly verify, and hand one signed frontier proposal to a protected PR; never merges main.', topic: 'autonomy' },
+  { cmd: 'inbox submit <id> --yes',      desc: 'Records non-interactive caller intent, not an authenticated human receipt; all verification and remote gates remain.', topic: 'autonomy' },
+  { cmd: 'inbox reject <id>',            desc: 'Discard a pending proposal; applies nothing.', topic: 'autonomy' },
+  { cmd: 'inbox --json',                 desc: 'Emit JSON for inbox list, show, approve, submit, or automerge results.', topic: 'autonomy' },
+  { cmd: 'ideas [--json|--text]',        desc: 'Rank next bets by expected leverage with why, lane and status; missing local signals stay unknown.', topic: 'autonomy' },
+  { cmd: 'drive [--once --dry-run] [--tick <seconds>]', desc: 'Supervise the Mac queue through an installed host bridge; dry-run plans only. See docs/DRIVE.md.', topic: 'autonomy' },
+  { cmd: 'daemon start --once',          desc: 'Currently refuses before effects because compiled daemon trust roots are empty; use owner-invoked run/swarm or the dry-run form.', topic: 'autonomy' },
+  { cmd: 'daemon start --once --dry-run', desc: 'Plan only: which backlog items WOULD be worked (no swarm/proposal).', topic: 'autonomy' },
+  { cmd: 'daemon start --once --drain diagnostic-reslices --limit 3', desc: 'Dormant non-dry diagnostic drain; compiled daemon trust roots are empty.', topic: 'autonomy' },
+  { cmd: 'daemon stop',                  desc: 'Halt the daemon: set kill switch + clear running state.', topic: 'autonomy' },
+  { cmd: 'daemon status',                desc: "Daemon roll-up: running?, today's spend vs cap, pending proposals.", topic: 'autonomy' },
+  { cmd: 'daemon activation-preflight --request <path> [--json]', desc: 'Read-only verification of operator-custodied signed candidate and rollback artifacts; grants no service authority.', topic: 'safety' },
+  { cmd: 'daemon activate --request <path> --authorize <digest> --confirm <digest> [--json]', desc: 'Dormant permit-gated 3.2.7 selection; preserves loaded=false and the exact disabled bit, and never starts a service.', topic: 'safety' },
+  { cmd: 'daemon service-status',        desc: 'Read-only OS service state; remains available during the resident-mutation restriction.', topic: 'autonomy' },
+  { cmd: 'daemon uninstall',             desc: 'Remove an existing OS service; remains available during the resident-mutation restriction.', topic: 'autonomy' },
+  { cmd: 'daemon install',               desc: 'Temporarily unavailable: install/reinstall/repair/restart authority is withheld.', topic: 'autonomy' },
+  { cmd: 'daemon recover-state --dry-run|--execute', desc: 'Preview or explicitly execute one exact quarantine of a malformed daemon state (the fix when `daemon status` shows a state issue).', topic: 'autonomy' },
+  { cmd: 'daemon resolve-state --dry-run|--execute', desc: 'Preview or explicitly resolve one exact quarantine, restoring daemon state after `daemon recover-state`.', topic: 'autonomy' },
+  { cmd: 'worker setup',                 desc: 'Temporarily unavailable and fail-closed before config, enrollment, queue, wizard, or service mutation.', topic: 'autonomy' },
+  { cmd: 'pr resolve-conflicts [--repo owner/name] [--pr N] [--apply] [--json]', desc: 'Dry-run append-union conflict repair; apply verifies an isolated merge and exports a supersede bundle. See docs/PR-CONFLICT-RESOLVER.md.', topic: 'autonomy' },
+  { cmd: 'prs triage [--repo ashlrai/<name>] [--limit N] --json', desc: 'Read-only classification of open pull requests.', topic: 'autonomy' },
+  { cmd: 'log [--since 6h] [--lane <lane>] [--repo <repo>] [--json]', desc: 'What the fleet did, one row per job, newest first, under a one-line summary: jobs, merged, no-change rate and median time to merge.', topic: 'observability' },
+  { cmd: 'worklog [--hours 6] [--kind <kind>] [--repo <repo>] [--lane <lane>] [--json]', desc: 'One feed of what the fleet did, newest first: merges, launches, empty jobs, leader replies and incidents.', topic: 'observability' },
+  { cmd: 'library [--json|--text] [--kind file|media|memory|message|context] [--since 1h] [--q text]', desc: 'Search Library files, media, agent memory, messages and context, newest first, with owner and size. Read-only; show <id> prints one item; list [--json] keeps the leader-file format.', topic: 'observability' },
+  { cmd: 'fleet status [--json]',        desc: 'Read-only fleet snapshot: daemon, per-backend dispatches+quota, queue, proposals, merges, paused state.', topic: 'autonomy' },
+  { cmd: 'graph status --fleet <file> [--seats <file>] [--json]',        desc: 'Read the graph.v1 agent, engine/account, model and MCP registry; declarations only.', topic: 'autonomy' },
+  { cmd: 'fleet vitals [--runs-dir <directory>] [--json]', desc: 'Read first-minute launch process and sampled CPU costs and the top empty-job causes; missing evidence stays unknown.', topic: 'autonomy' },
+  { cmd: 'fleet evidence doctor <source>', desc: 'Bounded read-only diagnosis for one decisions, judge, action, dispatch, manifest, or candidate ledger.', topic: 'autonomy' },
+  { cmd: 'fleet direction [--json]',     desc: 'Read-only autonomous direction report: mode, resource posture, guard blocks, and next actions.', topic: 'autonomy' },
+  { cmd: 'fleet automerge-canary status|prepare-shadow|activate-shadow|halt', desc: 'Prepare or operate the bounded observation-only shadow canary; enforce mode remains unsupported.', topic: 'autonomy' },
+  { cmd: 'fleet xreview run|decide --request <file>', desc: 'Cross-model review on another pool (no tools, no credentials) and the deterministic SHA-bound auto-merge decision; never merges.', topic: 'autonomy' },
+  { cmd: 'fleet pause',                  desc: 'Pause the fleet: engage the global kill switch (idempotent).', topic: 'autonomy' },
+  { cmd: 'fleet resume',                 desc: 'Resume the fleet: release the global kill switch (idempotent).', topic: 'autonomy' },
+  { cmd: 'recovery list|inspect',         desc: 'Inspect bounded metadata-only prepared/committed tool-effect evidence.', topic: 'autonomy' },
+  { cmd: 'recovery attest|abandon',       desc: 'Record an exact interactive terminal no-replay disposition for one prepared effect.', topic: 'autonomy' },
+  { cmd: 'goals add <objective>',        desc: 'Register a high-level OBJECTIVE (goal); decomposed into ordered milestones (local, no LLM by default).', topic: 'autonomy' },
+  { cmd: 'goals plan <id>',              desc: 'Decompose a goal into ordered milestones + author/link each milestone spec (LOCAL-FIRST; --allow-cloud to use cloud).', topic: 'autonomy' },
+  { cmd: 'goals advance <id>',           desc: 'Advance the next actionable milestone via a SANDBOXED, proposal-only swarm (ENROLLED repos only; emits a PENDING proposal).', topic: 'autonomy' },
+  { cmd: 'goals status [id]',            desc: 'Read-only roll-up of goal/milestone progress + linked swarm/proposal state (mutates nothing).', topic: 'autonomy' },
+  { cmd: 'goals recover-stale',           desc: 'Reset stale proposal-less in-progress goal lanes back to pending so the fleet can advance them again.', topic: 'autonomy' },
+  { cmd: 'goals repair-timestamps',        desc: 'Linux/macOS-only dry-run or exact-plan repair for stale goal updatedAt values (offline, byte-surgical, backed up).', topic: 'autonomy' },
+  { cmd: 'roadmap <run|resume|status>',  desc: 'Goal Loop: run a roadmap of milestone files, one FRESH agent process per milestone; resumable from state.json (LOCAL-FIRST; --allow-cloud for API engines).', topic: 'autonomy' },
+  { cmd: 'setup',                        desc: 'Temporarily unavailable: refuses before config or wizard effects; use owner-invoked run/swarm or daemon dry-run while compiled runtime roots are empty.', topic: 'core' },
+  { cmd: 'goal "<objective>"',           desc: 'Live owner-invoked objective → plan → one sandboxed proposal-only advance; never resident or unattended authority.', topic: 'autonomy' },
+  { cmd: 'goal "<objective>" --direct',  desc: 'One owner-invoked proposal-only run with bounded --json output; no unattended authority or verification proof.', topic: 'autonomy' },
+  { cmd: 'loop',                         desc: 'Dormant non-dry conductor loop: compiled conductor trust roots are empty; use loop --dry-run.', topic: 'autonomy' },
+  { cmd: 'loop leases [clear <task-id>] [--dry-run]', desc: 'List simple-conductor leases needing reconciliation; clear one only when its owner is provably not running.', topic: 'autonomy' },
+  { cmd: 'conductor-permit request|mint|inspect|stage', desc: 'Dormant signed one-shot goal-conductor permit operator; fail-closed while source trust roots are empty.', topic: 'autonomy' },
+  { cmd: 'website status|auto|pause|off', desc: 'Inspect or pause automatic phm.dev publication; Auto resumes within its existing signed website scope.', topic: 'autonomy' },
+  { cmd: 'website prepare --image <digest>', desc: 'Qualify the fixed website publisher and a real offline Linux x64 production build before one-time commissioning.', topic: 'autonomy' },
+  { cmd: 'authority status [--json]',     desc: 'Standing authority: grant state, autonomy switch, Stop, rollout stage, ledger chain and custody (read-only).', topic: 'autonomy' },
+  { cmd: 'authority switch <off|propose|autonomous>', desc: 'Lower autonomy instantly; raise it only up to what the signed grant allows (past it needs Touch ID).', topic: 'autonomy' },
+  { cmd: 'authority stop|clear-stop',     desc: 'Engage Stop (~/.ashlr/KILL: halts running agents, cancels armed merges) or clear it; stopping never asks, clearing is ledgered first.', topic: 'autonomy' },
+  { cmd: 'authority grant|re-approve [--yes]', desc: 'Sign a standing grant (or its continuation) with Touch ID via ashlr-custody and install it; fail-closed while compiled trust roots are empty.', topic: 'autonomy' },
+  { cmd: 'authority revoke [--reason <text>]', desc: 'Engage Stop, switch autonomy off and require a new signed grant (Touch ID) to resume.', topic: 'autonomy' },
+  { cmd: 'authority ledger verify|tail',  desc: 'Verify or read the hash-chained authority ledger (~/.ashlr/authority/ledger.jsonl).', topic: 'autonomy' },
+  { cmd: 'authority protect --print|--apply', desc: 'Print (or apply after confirmation) the GitHub rulesets for the grant\'s server-enforced repos.', topic: 'autonomy' },
+  { cmd: 'authority setup [--dry-run [--json]]', desc: 'Guided Phase 0: custody key, trust-root PR, GitHub App, Claude token, canary, rulesets, first grant, switch, daemon service — asks before every step; --dry-run --json prints the checklist as JSON.', topic: 'autonomy' },
+  { cmd: 'feed [--json] [--since 1h] [--kind merged] [--limit N]', desc: 'What the fleet did, newest first: merges (bursts grouped), releases, failures, lane pauses, incidents and Leader replies, each with a time and a link.', topic: 'autonomy' },
+  { cmd: 'leader show|run|tick|veto',     desc: 'The Leader (Visionary): show the latest memo and actions, run it now, apply due class-B actions (tick), veto an action or a whole memo (--memo).', topic: 'autonomy' },
+  { cmd: 'org [--text]', desc: 'The live organization as a tree: leader, planners, lanes with running, target, queued and pool usage, and each running job with tier, age and goal. JSON by default; unknown stays unknown.', topic: 'autonomy' },
+  { cmd: 'org show|join|plan [--file <org.toml>] [--json]', desc: 'Declarative co-founder org model: show members and lanes, opt your own machine into lanes with join, or propose queue assignments with plan. Nothing is sent on join.', topic: 'autonomy' },
+  { cmd: 'leader status|ask|org|assign [--json]', desc: 'Digital co-founder: world-backed status, owner ask, declarative org chart, and RQ assignment. Escalates only for secrets, money, outside sends, and owner-data destruction. KILL stops it. No new model spend.', topic: 'autonomy' },
+  { cmd: 'leader seat --pick', desc: 'Print only the lane and model a leader launcher should use now: the current seat while it is healthy, else the fallback whose plan resets soonest with usage left. Exit 3 with a plain reason when no other plan has usage left.', topic: 'autonomy' },
+  { cmd: 'leader seat [pick] [--json]', desc: 'Show where the leader runs and where it moves next: a confirmed frontier model on a healthy pool that is not exhausted or rate-limited in the last hour, most runway first. --json adds healthy, used_pct and reset_at for the current plan, and an ordered fallback list (leader.seat.v1). Read-only; exit 3 when no seat is available.', topic: 'autonomy' },
+  { cmd: 'leader run --seat auto --prompt-file <file> --dry-run [--json]', desc: 'Print the exact leader command (claude -p, codex exec or gemini) for the chosen seat without running it; no environment values. Exit 3 when no seat is available.', topic: 'autonomy' },
+  { cmd: 'leader inbox [--json]', desc: 'Inspect the durable CEO inbox/outbox; --text records a policy-checked message.', topic: 'autonomy' },
+  { cmd: 'leader say|thread|answer|approve|directives', desc: 'Talk to the Leader: say something through the verified inbox writer, read your messages and its replies as one chat with received/answered state, answer a memo question, approve a pending action (applied only if the grant allows), add or retire standing directives.', topic: 'autonomy' },
+  { cmd: 'leader brief [--since 2h] [--json]', desc: 'What happened to the leader\'s last bets and what to queue next, in one read: each src=leader job as published (PR url), no change (its first gap sentence), failed, running or queued; lanes with running/target and queued; pools with used %, hours to reset and waste risk; the admission state; and the top 5 open gaps. Anything unreadable shows as unknown with the reason, exit 0. JSON is leader.brief.v1. Read-only.', topic: 'autonomy' },
+  { cmd: 'leader replies [--json] [--limit N] [--file PATH]', desc: 'Show recent Leader replies from the plan log, newest first.', topic: 'autonomy' },
+  { cmd: 'outbox from-log [--file <plan-log.md>] [--apply] [--json]', desc: 'Copy the leader\'s newest "Reply for Mason" from the plan log into MASON-OUTBOX.md beside it so Mason hears it hourly; dry run by default, --apply appends once. Nothing leaves the team.', topic: 'autonomy' },
+  { cmd: 'leader oversight-plist --print', desc: 'Print (never install) the nightly ai.ashlr.oversight LaunchAgent that runs `ashlr leader tick --wait` instead of the legacy Strategist; install by hand per docs/AUTHORITY.md.', topic: 'autonomy' },
+  { cmd: 'cloud launch "<task>" [--repo o/n] [--base b]', desc: 'Start a Claude Code cloud session that delivers a draft PR (spends Claude credits; never merges). Repo defaults to this folder\'s GitHub origin.', topic: 'autonomy' },
+  { cmd: 'playbook list|show|new|edit|run <id>', desc: 'Versioned task templates every lane runs under (`!fix-bug` in any task text): list them, show one with per-version outcomes, write a new version in $EDITOR, or run one in the cloud / Devin lane (`--repo o/n --lane cloud|devin`).', topic: 'autonomy' },
+  { cmd: 'openai-agents sessions|inspect|turns [session-id] [--json]', desc: 'Read bounded managed OpenAI Agents API metadata. API access is separate from subscriptions; no execution qualification or mutations.', topic: 'autonomy' },
+  { cmd: 'agents bus channels list|test <id> [--json]', desc: 'List registered channel adapters and probe the local bus or handoff store.', topic: 'autonomy' },
+  { cmd: 'agents bus contract [--json]', desc: 'Print the Agent Bus v2 contract: schema version, providers, body kinds, work statuses, claim key forms. Read-only.', topic: 'autonomy' },
+  { cmd: 'agents bus id register|list [<handle>] [--json]', desc: 'Stable agent identity registry: one agt_ id per handle across providers and models.', topic: 'autonomy' },
+  { cmd: 'agents bus dm|channel|handoff ... [--json]', desc: 'Unified agent bus: DMs, member-only channels and handoffs on the one local bus store, with priority wake.', topic: 'autonomy' },
+  { cmd: 'agents bus inbox|wakes|show|adapters [<agent|id>] [--json]', desc: 'Read an identity inbox or wake hints, one retained envelope by id, or list the claude/codex/devin/cursor/grok session adapters. Read-only.', topic: 'autonomy' },
+  { cmd: 'agents roster [--json]', desc: 'Unified live session roster. One probe per source, about 5s each, unknown on timeout or an unverified command. Read-only.', topic: 'autonomy' },
+  { cmd: 'agents mesh status [--json]', desc: 'Flat agent mesh: direct addresses, lanes, last-seen and current tasks. Read-only.', topic: 'autonomy' },
+  { cmd: 'bus thread|task <verb> [--peer <id>] [--json]', desc: 'Shared task board: local threads plus task claim, handoff, renew and release tied to fenced fleet queue claims. Cooperative labels only; no execution authority.', topic: 'autonomy' },
+  { cmd: 'bus recent [--since 5m] [--json]', desc: 'Who messaged whom lately: agent-to-agent messages from the last 5 minutes, newest first, with a plain summary of at most 100 characters. The Fleet map pulses the same lines. Read only.', topic: 'autonomy' },
+  { cmd: 'bus send|inbox|ack [--json]', desc: 'Durable local message mailbox: send JSON, read a recipient inbox and acknowledge messages; separate from the task board. `phm bus send --help` for options.', topic: 'autonomy' },
+  { cmd: 'metrics merges', desc: 'Show hourly merges and median open-to-merge time by lane for the last 24 hours.', topic: 'autonomy' },
+  { cmd: 'metrics ingest --jobs <file> --status <file>', desc: 'Read local lane and tier merge metrics and advisory routing priors; always JSON.', topic: 'autonomy' },
+  { cmd: 'metrics loop [--since 24h] [--dry-run] [--json]', desc: 'Where the loop waits (p50 and p90 per stage, slowest stage in words), then self-awareness: merges and opens per hour, idea-to-merged-to-installed minutes, cost per merged PR, capacity per node; writes loop, selection-hint and bets-share files.', topic: 'autonomy' },
+  { cmd: 'bets [--since 24h] [--json]', desc: 'What the leader decided and whether it worked: its src=leader jobs grouped by batch (ids ending in the same N<day><letter>Q8), each bet as queued, running, PR open, merged or empty (with the reason when known), and the batch hit rate (merged of merged plus empty; unknown until something is judged). JSON is fleet.leader-bets.v1. Read-only.', topic: 'autonomy' },
+  { cmd: 'bets check "<goal text>" [--json]', desc: 'Before queuing work: does it already exist? Looks the goal up in CLI help, API routes, web-ui panes and docs headings; says new, partial or exists with up to 10 matches and one suggested delta. Read-only, offline.', topic: 'autonomy' },
+  { cmd: 'bets check --from-prompt <file> [--gate] [--json]', desc: 'Step 0 for a job: reads the task from a queue prompt file; --gate exits 0 new, 2 partial, 3 exists, 1 error. Read-only, offline.', topic: 'autonomy' },
+  { cmd: 'bets propose [--lane <lane>] [--count <n>] [--json]', desc: 'A lane proposes its own next work: gathers TODO/FIXME comments, open roadmap items, skipped tests and undocumented commands, drops what bets check says exists, ranks user-facing then smallest first; each row has an id, repo, size, goal and Acceptance line. Read-only, writes no queue file.', topic: 'autonomy' },
+  { cmd: 'plan check <file> [--min-bets N] [--drained <lane,...>] [--no-dup] [--json]', desc: 'Before queuing from a leader plan: catches too few bets, malformed READY lines, bets with no Acceptance, duplicate ids, bets on a drained lane and bets that look already shipped (runs plan dup per line). Exit 0 ok, 2 problems. Read-only, offline.', topic: 'autonomy' },
+  { cmd: 'plan dup "<bet text>" [--repo <name>] [--json]', desc: 'Has this bet already shipped? Matches it against CLI verbs, the last 30 days of merged PR titles and commit subjects, and docs headings; says new, partly-shipped or shipped with scored matches. Keyword overlap only, no model calls. Exit 0 new, 2 partly-shipped, 3 shipped.', topic: 'autonomy' },
+  { cmd: 'bets suggest [--json] [--limit N]', desc: 'Rank the next jobs worth queuing from idle lanes, expiring usage, red mains and unreleased repos, each with a queue line to copy; bets explain <id> shows the scoring. Read-only.', topic: 'autonomy' },
+  { cmd: 'bets list|launch|score|kill [--json]', desc: 'Bets lane ledger: launch scored experiments, run the kill-fast scorer, kill by hand. Append-only metrics/bets.jsonl.', topic: 'autonomy' },
+  { cmd: 'metrics levers [--window <7d|30d>] [--json]', desc: 'Rank three opportunity proxies from local activity and fleet rollups.', topic: 'autonomy' },
+  { cmd: 'benchmark run|--compare-reports', desc: 'Explicit local-agent benchmark trials, or offline matched-receipt comparison; real checkers and private traces.', topic: 'autonomy' },
+  { cmd: 'devin connect [--org org-…]',   desc: 'Connect Devin (Cognition): paste the API key at a hidden prompt; it is verified and stored in the macOS Keychain, never in a file.', topic: 'autonomy' },
+  { cmd: 'devin launch "<task>" [--repo o/n] [--base b]', desc: 'Start a Devin session that delivers a PR on ashlr-devin/<id> through the standing gates (spends ACUs, hard-capped per session; never merges).', topic: 'autonomy' },
+  { cmd: 'devin land --session <id> [--repo phantom] [--apply]', desc: "Land a Devin session's attached bundle + pr.md through the pinned fork-only publish.sh, then arm auto-merge unless publish.sh withheld it (dry run by default).", topic: 'autonomy' },
+  { cmd: 'devin autoland [--apply] [--cap N] [--json]', desc: 'Land finished sessions owned by the connected key; pause/resume controls resident passes.', topic: 'autonomy' },
+  { cmd: 'routines list|status|run <id>|tick|migrate|launchd|run <file.json>|explain <id>|export|import|rebalance', desc: 'Routines: UTC-cron YAML schedules with executor failover; learned local-first placement runs; portable provider placement registry. See docs/ROUTINES.md.', topic: 'autonomy' },
+  { cmd: 'automations list|templates|add|enable|disable|remove', desc: 'Automations: labelled issues, a red default branch, RRULE schedules, a local webhook or Telegram /task become tasks for the fleet, cloud, Devin or review — with queue, per-day, concurrency and spend limits.', topic: 'autonomy' },
+  { cmd: 'automations fire <id> [--dry-run]', desc: 'Check one automation\'s trigger now and dispatch what it finds through the lane\'s own gates (grant, KILL, budgets); --dry-run shows what would happen and writes nothing.', topic: 'autonomy' },
+  { cmd: 'decide --question <text> --options <a,b,c> [--context <file>] [--json]', desc: 'One typed decision: the cheapest verified router model picks one of the options, or the answer is unknown. It never guesses.', topic: 'autonomy' },
+  { cmd: 'jev status [--json]',          desc: 'Jev (TypeSafe) typed decisions today: on/keyed, decisions by kind, avg confidence, fallback rate, est. cost, latency. Reads the local ledger only.', topic: 'autonomy' },
+  { cmd: 'jev test "<text>" [--kind intent|task-class|engine-error|lane|claim|triage]', desc: 'One live Jev decision on the text (one paid call when keyed): shows the label, confidence and whether Jev or the deterministic rule won.', topic: 'autonomy' },
+  { cmd: 'devin status|list|refresh|message|budget|fleet', desc: 'Devin connection and readiness, tasks and their PRs, a status refresh, replies to waiting sessions, the ACU budget, and whether the fleet may launch sessions.', topic: 'autonomy' },
+  { cmd: 'cloud list|refresh|improve|budget|backlog', desc: 'Cloud tasks and their PRs, a GitHub refresh, self-improvement launches (--count N), the credit budget (an estimate; flags update it) and the backlog.', topic: 'autonomy' },
+  { cmd: 'mirror list|add|sync|path|remove|reconcile', desc: 'The fleet\'s own mirror clones under ~/.ashlr/fleet/mirrors (your checkouts are never touched); reconcile plans enrollment from the grant (--apply).', topic: 'autonomy' },
+  { cmd: 'vision <show|review|preview|shadow|approve|reconcile|set>', desc: 'Mission OS: inspect strategy, preview a bounded DAG, record observation-only shadow evidence, or explicitly adopt planning state.', topic: 'autonomy' },
+  { cmd: 'manager [--apply-rejects]',    desc: 'Frontier judge scorecard over pending proposals (shadow mode by default; never merges).', topic: 'autonomy' },
+  { cmd: 'best-of-n [--repo --title -n]', desc: 'Generate N candidate diffs (multi-model), critic-select, file the winner as a proposal (M142/M333).', topic: 'autonomy' },
+  { cmd: 'context read | write [--json]', desc: 'Read current company context or save a sourced note.', topic: 'run' },
+  { cmd: 'mason thread [--since <dur>] [--json]', desc: 'Mason\'s one thread across every channel: messages and replies in time order, each tagged Received, Assigned, Running, Blocked or Verified with its jobs. Read-only.', topic: 'autonomy' },
+  { cmd: 'comms <status|thread|send-owner|cycle|digest>',  desc: 'Operator comms. status --json, thread and send-owner are the one owner thread; replies go only to the configured owner. KILL halts adapters.', topic: 'autonomy' },
+  { cmd: 'connectors add|list|remove|show|import|exec|config [--json]', desc: 'Manage credential-free connector profiles, launch connectors with phantom-injected credentials, and print client configs that hold no token.', topic: 'autonomy' },
+  { cmd: 'agentnet peers list|read|send | channels propose | identity register [--json]', desc: 'Session-bound team peer messages, verified inbox and Slack provisioning drafts.', topic: 'autonomy' },
+  { cmd: 'channels add <kind> | status [--json] | slack status|map [--json]', desc: 'Bring a channel up (config only, credentials stay in custody), read the per-channel rollup, or inspect the Slack bridge mapping offline.', topic: 'autonomy' },
+  { cmd: 'imessage doctor|poll [--apply] [--json]', desc: 'iMessage intake: doctor checks permissions and config; poll counts waiting messages (dry run), --apply receipts them. Never prints message text.', topic: 'autonomy' },
+  { cmd: 'director',                     desc: 'Retired — the Leader handles this (see `ashlr leader`). Still prints the read-only fleet god-view; sends nothing.', topic: 'autonomy' },
+  { cmd: 'invent',                       desc: 'Generative backlog invention — propose novel high-value work items.', topic: 'autonomy' },
+  { cmd: 'ideas list [--human]', desc: 'Rank what the fleet should fix next from local signals (empty launches, main-guardian fixups, disk trend, idle lanes, unspent usage). JSON by default; unreadable signals show as unknown.', topic: 'autonomy' },
+  { cmd: 'ideas queue <id> [--json]', desc: 'Queue one idea from `ideas list` as a job; the same idea queues once.', topic: 'autonomy' },
+  { cmd: 'universe <demo|init|run|status|archive>', desc: 'Local experiment evolution: run competing code variants, measure them, and reuse winning artifacts.', topic: 'autonomy' },
+  { cmd: 'universe console --root <absolute> [--port N] [--json]', desc: 'Foreground read-only Universe console on loopback; explicit root, ephemeral port by default, no service activation.', topic: 'autonomy' },
+  { cmd: 'universe graph <id> [--node <node-id>]', desc: 'Read-only experiment evidence graph: trace selected parents, feedback, campaigns, and local branch receipts.', topic: 'autonomy' },
+  { cmd: 'universe compare <baseline> <challenger>', desc: 'Compare explicit campaign outcomes and resource coverage; read-only local evidence, not production acceptance.', topic: 'autonomy' },
+  { cmd: 'universe portfolio <plan|run> --manifest <file.json>', desc: 'Plan or run explicit campaign dependencies with foreground invocation bounds; completed campaigns are not accepted artifacts.', topic: 'autonomy' },
+  { cmd: 'universe integration plan --manifest <private-absolute.json>', desc: 'Read-only composition of pinned local deliveries: inspect exact-path overlays and conflicts, without writing Git or claiming combined acceptance.', topic: 'autonomy' },
+  { cmd: 'universe integration evaluate --manifest <private-absolute.json>', desc: 'Evaluate one pinned combined candidate locally; durable private evidence and confirmed-settlement replay, no model generation or Git publication.', topic: 'autonomy' },
+  { cmd: 'universe integration inspect --manifest <private-absolute.json>', desc: 'Read and verify an existing evaluation receipt and digest; never starts missing work.', topic: 'autonomy' },
+  { cmd: 'universe integration deliver --manifest <private-absolute.json>', desc: 'Deliver an explicitly pinned passing combination to a new local branch, without rerunning its evaluator or advancing an existing branch.', topic: 'autonomy' },
+  { cmd: 'universe integration inspect-delivery --manifest <private-absolute.json>', desc: 'Verify a completed combined delivery and read its receipt digest without creating or reconciling branches.', topic: 'autonomy' },
+  { cmd: 'universe integration handoff --manifest <private-absolute.json>', desc: 'Register a new explicit downstream experiment from the verified combined commit, with source lineage and a fresh comparator; no execution.', topic: 'autonomy' },
+  { cmd: 'universe controller run --manifest <private-absolute.json>', desc: 'Run an explicitly enrolled campaign DAG with a persisted deadline and dispatch checkpoints across restarts; never retry uncertain work.', topic: 'autonomy' },
+  { cmd: 'universe controller status <id>', desc: 'Read controller deadline, outcomes and unsettled dispatches without execution or recovery writes.', topic: 'autonomy' },
+  { cmd: 'universe campaign <init|status|run|resume|pause|stop>', desc: 'Register, inspect, execute or request control of bounded campaigns; run/resume can pair --deliver-branch with --deliver-base for local-only delivery.', topic: 'autonomy' },
+  { cmd: 'universe campaign check <id> --root <absolute> [--json]', desc: 'Read recorded recovery evidence only; exit 0 can include held or terminal snapshots and never grants permission to resume.', topic: 'autonomy' },
+  { cmd: 'universe resources check --resource-runtime <private-absolute.json> [--json]', desc: 'Check explicit local resource configuration without provider contact; validity is not authentication, quota or campaign admission.', topic: 'autonomy' },
+  { cmd: 'universe preparation-measurement --input <absolute-report.json> [--json]', desc: 'Read reported preparation checks and counts from one explicit file; diagnostic only, not a score or acceptance evidence. No store discovery, execution or provider calls.', topic: 'autonomy' },
+  { cmd: 'universe preparation-measurement-calibrate <id> --root <absolute> --capture <id1> --capture <id2> --capture <id3> --expected-source-digest <sha256> [--json]', desc: 'Calibrate three retained diagnostic captures against their frozen seed; no execution or acceptance.', topic: 'autonomy' },
+  { cmd: 'universe preparation-measurement-compare <id> --root <absolute> --capture <id> --calibration <absolute-json> [--json]', desc: 'Compare a captured candidate with full artifact scope and region regression checks; diagnostic only.', topic: 'autonomy' },
+  { cmd: 'universe campaign supervise <id> [id ...] --root <absolute> --max-duration-ms <N> [--delivery-plan <private-absolute.json>]', desc: 'Bounded foreground supervision of a fixed queue; optional plan reconciles completed local branch deliveries without rerunning workers.', topic: 'autonomy' },
+  { cmd: 'universe deliver <id> --trial <elite-trial-id> --branch codex/<name>', desc: 'Explicitly write the exact current elite to a local branch; no checkout change, merge, push or deployment.', topic: 'autonomy' },
+  { cmd: 'universe deliveries <id> [--root <path>] [--json]', desc: 'Read local delivery receipts; pending/degraded evidence is not completed or verified delivery.', topic: 'autonomy' },
+  { cmd: 'eval [--limit N]',             desc: 'Local-agent eval harness: adaptive prompts OFF vs ON, steps/done/tokens (M44).', topic: 'run' },
+  { cmd: 'eval attention [--window 1d|7d|30d]', desc: 'Metadata-only fleet attention report: context pressure, retrieval, yield, routing, and traces.', topic: 'run' },
+  { cmd: 'eval checkpoints --file <fixture.json> [--json]', desc: 'Compare scripted context retention and input-token estimates; requires PHANTOM_CHECKPOINTS=1.', topic: 'run' },
+  { cmd: 'skills list [--status <s>] [--limit N] [--json]', desc: 'List skills learned from merged PRs (newest revision each; counts are real or "unknown").', topic: 'run' },
+  { cmd: 'skills list --all [--json]', desc: 'Every skill fleet agents have: Claude Code, Codex and learned (the Skills pane).', topic: 'run' },
+  { cmd: 'eval prompts --dataset <jobs.jsonl>', desc: 'Per-class prompt-variant A/B replay; promotes a variant only on a significant lift.', topic: 'run' },
+  { cmd: 'skills audit <pack-path> [--json]', desc: 'Read-only quarantine audit for external skill structure, trigger routing, collisions, and behavioral fixtures.', topic: 'run' },
+  { cmd: 'reflect [--since <Nd>]',       desc: 'Score your OWN past runs/swarms locally; report effectiveness/cost deltas (read-only).', topic: 'autonomy' },
+  { cmd: 'reflect playbooks [--persist]', desc: 'Distill repeatable playbooks from past swarms (report-only; --persist writes them to the genome).', topic: 'autonomy' },
+  { cmd: 'reflect propose',              desc: 'Emit routing/policy/prompt tuning suggestions as PENDING inbox proposals (never auto-applies).', topic: 'autonomy' },
+  { cmd: 'health',                       desc: 'Score every ENROLLED repo on quality (tests/docs/deps/security/debt/CI/conventions); ranked, read-only.', topic: 'autonomy' },
+  { cmd: 'health <repo>',                desc: 'Per-repo health detail with the per-dimension breakdown + worst offenders (ENROLLED only).', topic: 'autonomy' },
+  { cmd: 'health propose',               desc: 'Emit deterministic safe-fix advisories as PENDING inbox proposals (never auto-applies).', topic: 'autonomy' },
+  { cmd: 'sweep report [--repo <dir>]', desc: 'Write a local weekly deletion review report from a Phantom checkout.', topic: 'autonomy' },
+  { cmd: 'digest',                       desc: 'Write an ORG-LEVEL portfolio digest (health, goals, costs, today) to ~/.ashlr/digests/ (LOCAL-FIRST; reads only).', topic: 'autonomy' },
+  { cmd: 'digest --notify',              desc: 'Also deliver the digest via a configured Slack/Discord webhook (OPT-IN; no-op when unconfigured).', topic: 'autonomy' },
+
+  { cmd: 'queue report --events <file> [--json]', desc: 'Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.', topic: 'observability' },
+  { cmd: 'autonomy [--hours 24] [--json]', desc: 'Measure merges, human involvement, fleet improvements, releases and main health from local evidence.', topic: 'observability' },
+  { cmd: 'queue add|claim|done|block|replay|list|import|export', desc: 'Local job queue with atomic claims, JSON snapshots and a read-only Markdown mirror.', topic: 'autonomy' },
+  { cmd: 'issues [--retry] [--dir <queue-directory>] [--json]', desc: 'Group failed queue jobs by error; --retry queues one READY retry per failed job without duplicates.', topic: 'autonomy' },
+  { cmd: 'signals [--json]', desc: 'Read real repository adoption signals.', topic: 'observability' },
+  { cmd: 'radar list|run|diff [--json]', desc: 'Observe public docs and package metadata; GET only, six-hour per-source floor.', topic: 'observability' },
+  { cmd: 'observe session <id> [--json]', desc: 'Read one roster session. Transcript stays unknown until desktop-operator registers a reader.', topic: 'observability' },
+  { cmd: 'friction [--json]', desc: 'Mine the runs dir for recurring dispatch→merge friction; ledger keeps before/after metrics.', topic: 'observability' },
+  { cmd: 'memory add|list|search|forget [--json]', desc: 'Durable markdown memory under ~/.phantom/memory; secret-shaped text refused.', topic: 'memory' },
+  { cmd: 'app update status [--json]', desc: 'Read the local signed desktop-update stage and deferral counts; never downloads or installs.', topic: 'core' },
+  { cmd: 'app steer --text <msg> [--json]', desc: 'Send one message to the leader agents through the shared inbox receiver.', topic: 'core' },
+  { cmd: 'pulse [--window 1d|7d|30d]',   desc: 'Local observability dashboard: tokens, cost, sessions, commits.', topic: 'observability' },
+  { cmd: 'pulse --json',                 desc: 'Machine-readable ActivityRollup (+ additive .forecast field; Raycast Pulse view).', topic: 'observability' },
+  { cmd: 'pulse --project <name>',       desc: 'Restrict pulse rollup to a single project.', topic: 'observability' },
+  { cmd: 'pulse merge-latency [--jobs <jobs.jsonl>] [--json]', desc: 'Merge latency diagnosis: observed time waiting for checks, running checks and waiting to merge, with the top wastes. Read-only; unknown stays unknown.', topic: 'observability' },
+  { cmd: 'pulse-export',                 desc: 'Fleet→pulse OTLP backfill/manual export.', topic: 'observability' },
+  { cmd: 'pulse-test',                   desc: 'Fleet→pulse connectivity + auth probe (read-only).', topic: 'observability' },
+  { cmd: 'resource [--json] [--directory <fleet-directory>]', desc: 'Refresh the shared resource.v1 view in fleet.json from recorded inputs.', topic: 'observability' },
+  { cmd: 'resources [--json] [--watch]', desc: 'Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).', topic: 'observability' },
+  { cmd: 'capacity publish [--json]', desc: 'Refresh local subscription usage metadata once with this node’s local authentication.', topic: 'observability' },
+  { cmd: 'estates [--json] [--repo <repo-id>]', desc: 'Per-repo estate cards: health, CI, security. Read-only portfolio view.', topic: 'observability' },
+  { cmd: 'main blame --good <sha> --check "<cmd>" [--bad <sha>] [--repo <path>] [--json]', desc: 'Name the first merge that turned the default branch red. Bisects in a temp worktree; read-only.', topic: 'observability' },
+  { cmd: 'ci baseline [--repo owner/repo] [--json] [--queue] [--queue-file /absolute/path] [--apply]', desc: 'Analyze shared CI baselines; plan master fixes and post-merge branch updates.', topic: 'observability' },
+  { cmd: 'ci reruns [--json]', desc: 'Read resident CI rerun journal, verdicts and hourly counts.', topic: 'observability' },
+  { cmd: 'ci-metrics [--json]', desc: 'Per-repo daily turn-time (red to green) metrics; writes ~/.ashlr/ci-metrics.json.', topic: 'observability' },
+  { cmd: 'daily-fix validate|filter|dispatch|parse-fixup [--json]', desc: 'Daily CI re-run helper: validate dispatch inputs against the allowlist, preview the job/test filter, emit the gh workflow command, or aggregate fixup-queue lines.', topic: 'observability' },
+  { cmd: 'wb <secrets|steer|reprioritize|stop> [--apply] [--json]', desc: 'Workbench actions from the terminal: read secret custody, append a steer note, re-prioritize an unclaimed queue line, or stop a job. Mutating verbs are a dry run unless --apply.', topic: 'observability' },
+  { cmd: 'amplify <status|tick|goal> [--json]', desc: 'Objective, expiring capacity, vitals and leader decisions; tick journals advisory actions only.', topic: 'observability' },
+  { cmd: 'budget <show|add> [--json]', desc: 'Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.', topic: 'observability' },
+  { cmd: 'budget get [--json]', desc: 'Read the owner spend budget in USD. A missing provider is 0 for the month. This does not change the budget.', topic: 'observability' },
+  { cmd: 'budget set --provider <id> --period day|week|month --usd <n> [--json]', desc: 'Owner-only spend budget change from an interactive terminal, with one audit line. An amount above 0 stays ineffective until a Security pin-chain or owner signature root exists. Agents and non-TTY calls are refused. The committed default stays 0.', topic: 'observability' },
+  { cmd: 'usage',                        desc: 'Frontier usage table: per-engine calls/tokens/cost + window state.', topic: 'observability' },
+  { cmd: 'usage live [--json] [--watch] [--browser [--headed]] [--interval <seconds>]', desc: 'Live usage, resets and alerts. Official readouts first; --browser reads each provider usage page in a dedicated profile. Alerts at 80 and 95 percent and for allowance projected to expire unspent.', topic: 'observability' },
+  { cmd: 'usage resource-live [--json] [--watch] [--force] [--show] [--browser]', desc: 'Read every allowance and write state/resource-live.json: readings with source and observed time, the burn-down spend order, and a reset decision draft for Mason. Unverified readings are null.', topic: 'observability' },
+  { cmd: 'usage limits [--json] [--accounts-root <dir>]', desc: 'Every provider account (Claude, Codex, Grok): each window\'s used percent, flagged limits and reset times, with the headline and next reset the console\'s Usage pane shows. Unknown where no reading exists.', topic: 'observability' },
+  { cmd: 'usage producers [--since 6h] [--json]', desc: 'Who started jobs: each dispatcher lane and outside loop, with jobs, models, wall minutes, PRs published and merged. Unknown where no record says.', topic: 'observability' },
+  { cmd: 'usage history --lane <id> [--json] [--runs-dir <abs>]', desc: 'Read seven days of measured per-lane allowance history.', topic: 'observability' },
+  { cmd: 'usage sensors [--json] [--refresh] [--file <snapshot>]', desc: 'Per-lane usage readings with age and stale status. A reading at or after staleAfter is unknown and is not headroom. Refresh uses official APIs and CLIs only.', topic: 'observability' },
+  { cmd: 'route explain [--json]', desc: 'Read dispatcher pools and route-moves-per-hour.', topic: 'autonomy' },
+  { cmd: 'route decide --input <file|-> [--root <directory>] --json', desc: 'Suggest a schema-validated route without changing launch behavior.', topic: 'autonomy' },
+  { cmd: 'pools [--text]', desc: 'Per resource: burn from the last 6 h of readings, when it runs empty or how much goes unused, and a plain verdict (slow down, add work). JSON (pools.v1) by default.', topic: 'observability' },
+  { cmd: 'pools waste [--json]', desc: 'Which pool is about to waste included usage within 12 hours, and the one fix in plain words. A sign-in fix also goes on the phone Asks card.', topic: 'observability' },
+  { cmd: 'route failover --input <file|-> --failed-lane <lane> --failure <quota|5xx|timeout|near_reset> [--attempted a,b] [--root <directory>] [--record] --json', desc: 'Select an advisory fallback lane; optional receipt only, live dispatcher unwired.', topic: 'autonomy' },
+  { cmd: 'map [--json] [--lane l] [--repo r] [--state s] | map edges [--json] [--since 10m] | map replay [--json] [--since 6h] [--step 5m]', desc: 'The whole fleet on one map: leader, lanes, running jobs, computers and pools, with who reports to whom, what runs where and who messaged whom in the last 15 minutes. map edges lists those messages as from agent, to agent, count, last time and the first 80 characters of the last message, with each agent\'s org role. map replay shows the fleet as it was, one frame per step (default the last 6 hours, every 5 minutes): jobs running, launches, PRs opened, merges and message lines; history nobody recorded reads unknown. Read only.', topic: 'autonomy' },
+  { cmd: 'messages [--since 15m] [--agent <name>] [--with <name>] [--limit <n>] [--text]', desc: 'What agents are saying to each other: asks, replies, handoffs, status and blockers, newest first, with the related job or PR. --agent with --with shows only what those two said to each other.', topic: 'autonomy' },
+  { cmd: 'inventory [--kind <kind>] [--json]', desc: 'Everything this install can use in one list: messaging channels, connectors, plugins, skills and tools, each ready, needs setup, off, error or unknown, with the tool gap between lanes. Read only.', topic: 'autonomy' },
+  { cmd: 'tools [--json] [--lane <lane>]', desc: 'Which lane has which tool, a parity score per lane and the top 3 gaps with a fix. Read only.', topic: 'autonomy' },
+  { cmd: 'tools parity [--json] [--lane <lane>]', desc: 'Lanes by tool family (MCP servers, CLI on PATH, skills, plugins, web search, browser, computer use, gh): present, missing or unknown, with a fix per missing cell.', topic: 'autonomy' },
+  { cmd: 'tools requires --needs <need,...> [--text]', desc: 'List the lanes that can run a job with these needs, e.g. --needs github-read,browser.', topic: 'autonomy' },
+  { cmd: 'route fit --input <file|-> [--worktree <directory>] --json', desc: 'Check that a lane can do a job (gh, network, browser, outside files) and name the next lane or gh context pack.', topic: 'autonomy' },
+  { cmd: 'pool runway [--json]', desc: 'Will each pool last until it resets? One line per pool: used, burn per hour, hours to empty, hours to reset, and a state (starve, spend, pace or unknown) with what to do. Read-only.', topic: 'autonomy' },
+  { cmd: 'pool admission [--json]', desc: 'Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.', topic: 'autonomy' },
+  { cmd: 'admission explain [--json]', desc: 'Read existing admission inputs, the adaptive launch interval and its reason. Advisory; launches nothing.', topic: 'autonomy' },
+  { cmd: 'queue [--json]', desc: 'List queued jobs in launch order: position, id, repo, lane, tier, age and any newer cycle that replaces them.', topic: 'autonomy' },
+  { cmd: 'queue top|lane|drop <id> [<lane>] [--dry-run] [--json]', desc: 'Steer one queued job: move it to the front, to another lane, or out of the queue (kept in queue/dropped.tsv).', topic: 'autonomy' },
+  { cmd: 'queue supersede [--json] [--apply]', desc: 'List queued jobs that a newer cycle of the same job replaces; --apply archives them.', topic: 'autonomy' },
+  { cmd: 'queue autofill --lane <lane> [--min <n>] [--apply] [--json]', desc: 'Keep a lane fed: when it has fewer than --min ready jobs (default its slot target), draft the gap from open Ideas items first, then "Not built" follow-ups from recent empty jobs, then bets propose; skip anything already shipped or queued and any stopped job family. Every prompt starts with Step 0 (search master, deliver only the delta). Each --json row has a source (idea, follow-up or bet). With --apply add the rest as READY jobs. Dry run by default; says "Lane is full." when nothing is needed.', topic: 'autonomy' },
+  { cmd: 'queue autofill --status [--json]', desc: 'Show whether self-tick autofill is on, the last runs, and how many bets are left this hour (4 per lane, 12 in all). Turn it off with fleet config set autofill.off 1.', topic: 'autonomy' },
+  { cmd: 'queue dedupe [--file <router-queue.md>] [--apply] [--json]', desc: 'Find repeated READY jobs; preview by default, or mark repeats superseded with --apply.', topic: 'autonomy' },
+  { cmd: 'queue dupcheck <job-id|prompt-file> [--gate] [--json]', desc: 'Before launching a job: is its work already on master? Looks up the commands, flags, files and panels the goal names in the CLI list, docs/CLI-REFERENCE.md, the file tree and PRs merged in the last 7 days; says likely_done, partial, new or unknown with the matching file or PR (schema queue.dupcheck.v1). --gate is what the dispatcher runs: skip (high confidence it is done, never launched), warn (launch with a "Check this first" line) or launch, recorded in metrics/dupcheck.jsonl (schema queue.dupcheck-gate.v1).', topic: 'autonomy' },
+  { cmd: 'queue dupcheck --stats [--json]', desc: 'How the pre-launch check is doing: skips, warned and plain launches, launches that ended empty as already_done, and skips that were relaunched (schema queue.dupcheck-stats.v1).', topic: 'autonomy' },
+  { cmd: 'queue wait [--events <file>] [--json]', desc: 'Show the oldest recorded queued PR and why it is waiting; required checks stay enforced.', topic: 'observability' },
+  { cmd: 'queue stats [--json] [--window <seconds>]', desc: 'Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.', topic: 'observability' },
+  { cmd: 'queue batches [--runs <directory>] [--json]', desc: 'Show each batch line’s PR, empty reason, failure or unknown result.', topic: 'observability' },
+  { cmd: 'queue visits-sync [--jobs <path>] [--queue <path>] [--journal <path>] [--apply] [--json]', desc: 'Fold the jobs ledger and live router queue into station visits for the visit journal that queue stats reads. Dry run unless --apply; recorded timestamps only, missing boundaries stay open or absent.', topic: 'observability' },
+  { cmd: 'repos rank [proposals] [--json] [--recompute]', desc: 'Repository scheduling rank from seed priority, local merged-PR recency and autonomy leverage (daily ceiling); proposals are read-only.', topic: 'observability' },
+  { cmd: 'job pause|resume|stop|move <id> [--lane <lane>] [--dry-run] [--json]', desc: 'Steer one fleet job: pause, resume, stop, or move it to another lane. Returns a receipt: requested, applied, refused or unknown.', topic: 'observability' },
+  { cmd: 'job say <id> "<text>" [--dry-run] [--json]', desc: 'Send one note to a running job ("also update the docs"). A finished job refuses it.', topic: 'observability' },
+  { cmd: 'job notes <id> [--json]', desc: 'List the notes sent to one job.', topic: 'observability' },
+  { cmd: 'job cost <id> [--json]',       desc: 'Per-model-call cost breakdown for one fleet job: tokens in/out, model and cost (or \'unknown\').', topic: 'observability' },
+  { cmd: 'job tail <id> [--lines N] [--follow] [--json]', desc: 'What a fleet job is doing now: status, lane, model, start and PR, then its redacted last log lines; --follow streams new ones.', topic: 'observability' },
+  { cmd: 'job show <id> [--tail N] [--follow] [--json]', desc: 'One window into a fleet job: state in plain words, lane, model, repo, tier, start, finish, PR, then its redacted last log lines; --follow streams new ones.', topic: 'observability' },
+  { cmd: 'telemetry [status]',           desc: 'M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.', topic: 'observability' },
+  { cmd: 'telemetry test',               desc: 'Emit a synthetic metadata-only test span; report sink+ok.', topic: 'observability' },
+  { cmd: 'audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]', desc: 'Tail the append-only audit trail; --team lists workspace actions (read-only).', topic: 'observability' },
+  { cmd: 'receipt list|status|show <run>|verify <run>|timeline <run> [--json]', desc: 'Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only).', topic: 'observability' },
+
+  { cmd: 'mcp',                          desc: 'Run the MCP aggregation gateway on stdio (point any agent here; includes the native ashlr_* tools; list them with tools/list).', topic: 'integrations' },
+  { cmd: 'checkpoint save <source> <destination> <worktree> [--json]', desc: 'Save a handoff with a Git worktree inventory. See docs/AGENT-CHECKPOINT.md.', topic: 'integrations' },
+  { cmd: 'checkpoint resume <file> [--json]', desc: 'Validate and print a structured agent checkpoint for a fresh session. See docs/AGENT-CHECKPOINT.md.', topic: 'integrations' },
+  { cmd: 'trail claim|beat|release <claim-key> [--json]', desc: 'Stigmergic work-item markers: claim a key, heartbeat progress, release. File-based coordination; no execution authority. See docs/STIGMERGY.md.', topic: 'autonomy' },
+  { cmd: 'trail list|show|resume|sweep|save [--json]', desc: 'Read claim markers, pick up a stalled claim with its saved checkpoint, or evaporate expired markers. See docs/STIGMERGY.md.', topic: 'autonomy' },
+  { cmd: 'sessions [--lane <lane>] [--repo <repo>] [--json] [--live]', desc: 'Every agent session as one tree (leader, workers, subagents): model, repo, state, when it last spoke (quiet after 10 min) and its last message. --live shows only running ones.', topic: 'observability' },
+  { cmd: 'sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json]', desc: 'Every session as a short conversation on one screen: its summary and newest 3 messages, yours included, leader first. Read only.', topic: 'observability' },
+  { cmd: 'sessions tail <id> [--follow] [--lines N] [--json]', desc: 'What one session is doing now: its last 200 log lines, redacted; --follow streams new ones. The same stream the map side panel shows.', topic: 'observability' },
+  { cmd: 'sessions thread <id> [--json]', desc: 'One session as a conversation: a summary, then its brief, steps, commands, changed files, notes, bus messages and last message. Read only.', topic: 'observability' },
+  { cmd: 'sessions reconcile [--json]', desc: 'Check local runs against worker processes and job metrics: live, finished or unknown. Read only.', topic: 'observability' },
+  { cmd: 'sessions list|revoke <id> [--json]', desc: 'See running MCP gateway sessions and block one; every gateway call is logged (caller, tool, verdict) with arguments redacted, kept 14 days.', topic: 'integrations' },
+  { cmd: 'sessions create|show|resume|terminate [sesn_id] [--json]', desc: 'Resumable agent sessions: agent profile id and version, environment id and an append-only event log; each turn is one phm queue job. Statuses idle, running, rescheduling, terminated.', topic: 'autonomy' },
+  { cmd: 'mcp list',                     desc: 'List native ashlr tools + discovered MCP servers with per-server tool counts.', topic: 'integrations' },
+  { cmd: 'mcp doctor',                   desc: 'Per-server MCP health: does it start? how many tools?', topic: 'integrations' },
+  { cmd: 'autopilot <pr> [--apply] [--watch]', desc: 'Drive one of Phantom\'s own PRs to green: fix red CI and review feedback with an agent, merge a conflicting or behind base, re-run infra failures once, re-verify; stops and says why when a failure is not the PR\'s. Plan only unless --apply; never force-pushes or merges the PR.', topic: 'integrations' },
+  { cmd: 'land auto [--repo <o/n>] [--apply] [--json]', desc: 'Merge autopilot over the fleet\'s open PRs: classifies each as green-ready/behind/conflicting/red-required; --apply (needs PHANTOM_MERGE_AUTOPILOT=1) updates behind branches (merge only), enqueues DRAIN for conflicts and FIXUP for a failing required check. Holds honored, 3 actions/PR/24h.', topic: 'integrations' },
+  { cmd: 'metrics <summary|dashboard|record|recommend|ingest|levers>', desc: 'Local telemetry: value-weighted PRs shipped per token/second/$, leaderboards, UCB1 allocation, HTML dashboard, router-metrics ingest and opportunity proxies.', topic: 'integrations' },
+  { cmd: 'improve propose [--open-pr --repo <dir>]', desc: 'Self-improvement loop: evidence-backed proposals ranked by realized leverage; --open-pr opens DRAFT PRs from an isolated worktree.', topic: 'integrations' },
+  { cmd: 'improve register|measure|outcomes|promote|sync-backlog|discover|observe|lessons', desc: 'Record a proposal\'s deterministic metric, measure it at the PR\'s exact merge base and head, record merges and the reverts that cancel their credit, compare proposers against the deterministic baseline, register cloud backlog PRs that declare a metric, add backlog items from member issues, a red default branch and proposals, compare cloud runs served lessons against the holdout run without them, and queue auto-merge only when checks are green and the metric improved.', topic: 'integrations' },
+  { cmd: 'improve nightly [--json] [--limit <1-200>]', desc: 'Read-only report of the nightly ONE-TEAM self-improvement state: completed night, retained observation counts, advisory priors, pending lessons and proposed improvement jobs. Never writes, attests or dispatches.', topic: 'integrations' },
+  { cmd: 'steward disk [--apply] [--json]', desc: 'Measure Codex/Claude/Phantom log roots against retention + quota; dry run unless --apply (deletes oldest eligible files only).', topic: 'integrations' },
+  { cmd: 'lanes fit --lane <lane> [--json]', desc: 'Show job kinds to send or avoid from measured PR rates.', topic: 'observability' },
+  { cmd: 'lanes caps [--check <prompt-file>] [--json]', desc: 'Show which lanes can use gh, network or a browser, or which can run a job.', topic: 'observability' },
+  { cmd: 'lanes yield [--json] [--since 24h]', desc: 'A verdict per lane over --since (low-yield = 80% or more of 20+ finished jobs empty, which the router will not remap onto; unknown under 10 jobs), then merged PRs per launch over each lane\'s last 50 jobs, by size, with empty rate and the weight the router uses (unknown below 10 jobs = neutral 1).', topic: 'observability' },
+  { cmd: 'lanes held [--json]', desc: 'Lanes whose own wrapper held launches in the last 60 min. 3 or more held and no finished job = self-held: the router skips the lane until a launch there finishes or 60 min pass. JSON: lanes.held.v1.', topic: 'observability' },
+  { cmd: 'lanes --json', desc: 'Read dispatcher pools, slot caps and local endpoint health.', topic: 'observability' },
+  { cmd: 'lanes health [--json]', desc: 'Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.', topic: 'observability' },
+  { cmd: 'approvals [--team <id>] [--json]', desc: 'What needs a human: decisions only Mason can make first, then pending team approvals, the Security pin queue (read-only) and explicit holds; same projection as the desktop Approvals panel.', topic: 'integrations' },
+  { cmd: 'approvals ask --question <text> --options yes,no [--expires <iso>] [--by <name>] [--json]', desc: 'For agents: raise one decision only Mason can make, with its own options; it is numbered and an identical open one is reused.', topic: 'integrations' },
+  { cmd: 'approvals answer <ref> <option> [--json]', desc: 'Mason only (agent processes are refused): record his answer once, with who answered, the channel and the time. It only records; nothing is paid or sent.', topic: 'integrations' },
+  { cmd: 'team [list|show|view|join|invite|remove|role|link|approve|deny|claim|release|say] [--json]', desc: 'Team directory and bus: with no verb, lists teammates with their pools, seats and running jobs; pending teammate drafts, identity evidence; membership and approvals keep their existing gates.', topic: 'integrations' },
+  { cmd: 'team add <display-name> [--pools a,b] [--share percent] [--seats a,b] [--dry-run|--apply] [--json]', desc: 'Owner only: save one teammate record (name, role, the pools they bring, agent seat ids) in the team store. --dry-run checks and saves nothing; nothing is ever sent. Their other computer joins with phm node join.', topic: 'integrations' },
+  { cmd: 'companions [--json] [--root <dir>] [--bin-dir <dir>]', desc: 'Read-only Secrets/Locus/Lexicon executable identity and version inventory; no runtime readiness or activation.', topic: 'integrations' },
+  { cmd: 'mcp install <claude|ashlrcode>', desc: 'Add the ashlr gateway to a target mcpServers config (backs up first).', topic: 'integrations' },
+  { cmd: 'gh <pr|issue|ci>',             desc: 'Read GitHub open PRs, issues, or CI status for the current repo (read-only).', topic: 'integrations' },
+  { cmd: 'gh pr create',                 desc: 'Create a PR via gh CLI — explicit + confirm-gated (the only gh mutation).', topic: 'integrations' },
+  { cmd: 'vercel <ls|logs>',             desc: 'Read recent Vercel deployments or latest build logs (read-only).', topic: 'integrations' },
+  { cmd: 'wire [claude|codex|cursor|all]', desc: 'Wire ashlr MCP gateway into editor config(s); defaults to detected editors.', topic: 'integrations' },
+  { cmd: 'wire status [claude|codex|cursor|gemini|all]', desc: 'Read-only report of whether each editor is wired to the ashlr gateway.', topic: 'integrations' },
+  { cmd: 'wire --claude-md',             desc: 'Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).', topic: 'integrations' },
+  { cmd: 'notify test',                  desc: 'Send a test ping to the configured webhook(s); no-op if none are set.', topic: 'integrations' },
+  { cmd: 'notify route <type> [--text]', desc: 'Preview an owner update route in JSON (default) or plain words; never sends.', topic: 'integrations' },
+  { cmd: 'notify route <update.json> [--json]', desc: 'Classify one update (decision, shipped, incident, digest, fyi) and print its delivery plan by your rules; never sends.', topic: 'integrations' },
+  { cmd: 'notify rules [--json] | rules set <type> <channel>', desc: 'Show or change which channel each update type goes to. Same JSON as GET /api/notify/rules.', topic: 'integrations' },
+  { cmd: 'stack [status|list|providers|recommend|scan|doctor|add|apply]', desc: 'Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).', topic: 'integrations' },
+  { cmd: 'ecosystem doctor [--json] [--deep]', desc: 'Read-only sibling-repository health scan across the ecosystem.', topic: 'integrations' },
+  { cmd: 'ecosystem changelog [--json] [--since <window>] [--as-of <instant>] [--root <path>] [--max-pages <n>] [--write]', desc: 'Render the ecosystem changelog from public sources.', topic: 'integrations' },
+
+  { cmd: 'worktrees [--json] [--reap [--dry-run | --apply]]', desc: 'List job worktrees by state and remove the ones safe to remove.', topic: 'safety' },
+  { cmd: 'worktrees prune [--dry-run | --apply] [--json]', desc: 'Preview or remove clean, inactive worktrees for finished jobs.', topic: 'safety' },
+  { cmd: 'worktrees report [--dir <path>] [--json]', desc: 'Report worktree age, size, last log time and job state.', topic: 'safety' },
+  { cmd: 'host top [--json] [--groups] [--floor GB]', desc: 'Show what is using this Mac in plain buckets (fleet workers, local model server, Docker, each desktop app, Phantom, indexing, other) with load, memory pressure, swap used, the free-disk trend (GB per hour, hours to the floor; under 12 hours is a warning) and one suggestion. Read-only: never quits anything; JSON is host.top.v1.', topic: 'safety' },
+  { cmd: 'host load [--json] [--by-tree]', desc: 'Show what is loading this computer: fleet workers per job, local models, desktop apps, the system and other. --by-tree counts each job\'s builds and tests with it and shows the fleet\'s share of CPU. Also says who owns the load (fleet jobs, Claude loop, Devin cloud, local model, main guardian, other), the admission guard state and any job idle over 45 minutes that still uses CPU. Read-only; JSON is host.load.v1 with owners in host.load.owners.v1.', topic: 'safety' },
+  { cmd: 'disk [--wt-dir <abs>] [--json]', desc: 'Read-only disk report for agent worktrees: sizes, lifecycle state, and the bytes safe to reclaim.', topic: 'safety' },
+  { cmd: 'disk-maint [--apply] [--json] [--only <class>] [--allow <class>]', desc: 'Standing disk maintenance: rotate/compress quiet logs, prune dead session leftovers, stale staging and recovery dirs, and remove merged worktrees. Dry run unless --apply; protect-list never touches ~/.codex*, model weights, Docker, client trees or secrets.', topic: 'safety' },
+  { cmd: 'autofix [--apply] [--dry-run] [--json] [--only <fixer>]', desc: 'Act on Eng Ops incident files (prefix a, b, d, e; g is detect-only). Dry run unless --apply. Refuses when ~/.ashlr/KILL exists. Never reads the incident body into a command. See docs/AUTOFIX.md.', topic: 'safety' },
+  { cmd: 'nodes [--json] [--can-take <lane>]', desc: 'Your computers as one pool: which are reachable, running Phantom and ready for work. Read only.', topic: 'safety' },
+  { cmd: 'nodes pool [--json]', desc: 'Your Macs as one pool, this Mac first: online or not, free slots, running jobs, load, free memory and disk, offload on or off, last seen, and a total such as "2 Macs, 11 free slots". Read only.', topic: 'safety' },
+  { cmd: 'nodes plan [--json]', desc: 'Plan which queued job fits which computer, with suggested free slots per computer. Read only: it launches and moves nothing.', topic: 'safety' },
+  { cmd: 'nodes offload [--dry-run] [--json]', desc: 'Opt-in: when this computer would hold a launch and another passes doctor, choose that computer for a ready job and record why. --dry-run shows what would move; `nodes offload on|off` flips the setting.', topic: 'safety' },
+  { cmd: 'node join|beat|enqueue|plan|pull|complete|status [--json]', desc: 'Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases.', topic: 'safety' },
+  { cmd: 'node bootstrap --dry-run [--json]', desc: 'Plan a persistent Linux node; registry integration is a stub, no provisioning.', topic: 'safety' },
+  { cmd: 'sandbox list',                 desc: 'List active git-worktree sandboxes (M21 safety foundation).', topic: 'safety' },
+  { cmd: 'sandbox diff <id>',            desc: 'Show diff of a sandbox vs its base HEAD.', topic: 'safety' },
+  { cmd: 'sandbox cleanup <id>',         desc: 'Remove a sandbox worktree and scratch branch.', topic: 'safety' },
+  { cmd: 'sandbox gc',                   desc: 'Reclaim STALE orphan sandboxes (crash leftovers); H5 explicit human repair surface for the orphan sweep.', topic: 'safety' },
+  { cmd: 'seams',                        desc: 'Cloud-ready seam diagnostic: every v2 store, active=local, cloud=gated (read-only).', topic: 'safety' },
+  { cmd: 'seams status',                 desc: 'Same as `seams`: list seams + active impl; proves local-first + cloud gated on Mason.', topic: 'safety' },
+  { cmd: 'test --changed [--base <ref>] [--json]', desc: 'Run tests related to changed files, or the full suite when unknown.', topic: 'safety' },
+  { cmd: 'verify change --worktree <path> [--checks typecheck,unit,lint,secrets]', desc: 'Run trusted worktree checks; JSON verdict and ten-line handoff.', topic: 'safety' },
+  { cmd: 'verify done --worktree <path> [--contract <path>] [--plan]', desc: 'Evaluate a worktree\'s done-contract (floor + verify commands + attested acceptance); notes-file expectation when no contract exists.', topic: 'safety' },
+  { cmd: 'engineering-receipt --events <file.jsonl> [--claims <file>] [--task <text>] [--json]', desc: 'Engineering receipt from tool events (Evidence) vs model statements (Claims); needs PHANTOM_RECEIPTS=1.', topic: 'safety' },
+  { cmd: 'verify-safety',                desc: 'Read-only self-check of the hard safety invariants (enrollment/kill-switch/daemon/scrub/cloud-gate); mutates nothing.', topic: 'safety' },
+  { cmd: 'verify-pr',                    desc: 'Verify an explicitly reviewed maintainer PR through the host-owned App check; no merge or deploy.', topic: 'safety' },
+  { cmd: 'preflight [--json]',           desc: 'Read-only first-activation readiness check: ready=true|false + blockers/warnings (model/enrollment/kill/daemon/writeable/sandbox/git/phantom/locus); mutates nothing.', topic: 'safety' },
+  { cmd: 'onboard [--locus-firm]',       desc: 'Guided first safe activation: preflight → enroll ONE repo → optional Locus firm soft-offer → dry-run PLAN → point at `ashlr inbox`. TTY-aware; --yes/non-TTY prints steps (firm only with --locus-firm or ASHLR_LOCUS_FIRM=1). NEVER auto-applies.', topic: 'safety' },
+  { cmd: 'onboard --rollback <repo>',    desc: 'One-command undo of a first activation: unenroll + sweep orphan sandboxes + optional --kill. Inward cleanup only; H6-audited.', topic: 'safety' },
+  { cmd: 'onboard --ecosystem [--json]', desc: 'Detect existing tools, key binding names and loopback endpoints; select toggles and grant one integration bundle. See docs/ECOSYSTEM-ONBOARDING.md.', topic: 'core' },
+  { cmd: 'demo [--no-cleanup] [--json]', desc: 'Watch the FULL autonomous chain run on a DISPOSABLE tmp repo (isolated tmp ~/.ashlr; proposal-only; auto-cleans). NEVER touches your portfolio or applies anything.', topic: 'safety' },
+
+  { cmd: 'ideas [--json]', desc: 'Read recorded fleet ideas.', topic: 'observability' },
+  { cmd: 'goals [--json]', desc: 'Show dispatcher throughput, empty rates and resource resets.', topic: 'observability' },
+  { cmd: 'top [--once] [--json]', desc: 'Read-only per-pool capacity and reset pressure snapshot.', topic: 'web' },
+  { cmd: 'tui [--once]',                 desc: 'Interactive terminal dashboard (alias: dash). --once renders one frame and exits.', topic: 'web' },
+  { cmd: 'dash [--once]',                desc: 'Alias of `tui` — interactive terminal dashboard.', topic: 'web' },
+  { cmd: 'dashboard [--stop|--status]',  desc: 'Open the persistent fleet dashboard service (ai.ashlr.serve); --status/--stop inspect or unload it (no install/repair — resident mutation is withheld).', topic: 'web' },
+  { cmd: 'serve [--port N]',             desc: 'Start local web dashboard + JSON API on 127.0.0.1 (default port 7777).', topic: 'web' },
+  { cmd: 'serve --open',                 desc: 'Start dashboard and open browser automatically.', topic: 'web' },
+  { cmd: 'serve --allow-dispatch',       desc: 'Enable guarded POST /api/run + web inbox approve/reject (prints session token).', topic: 'web' },
+  { cmd: 'console [--port N] [--no-open]', desc: 'Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.', topic: 'web' },
+  { cmd: 'verse [--port N] [--no-open]', desc: 'Alias of `console` (the original name; same flags). Opens /verse/, the same page.', topic: 'web' },
+  { cmd: 'settings appearance [set]', desc: 'Read or change the app theme, accent (hex), density and font size: [--json] to read; [--theme <t>] [--accent <hex>] [--density <d>] [--font-size <n>] to change, --reset for defaults. A running desktop or phone app applies it live.', topic: 'web' },
+
+  { cmd: 'pages publish <file.md|file.json> [--slug <s>] [--title <t>] [--json]', desc: 'Publish a report into the loopback dashboard at /pages/<slug> (stored under ~/.ashlr/pages; nothing public).', topic: 'web' },
+  { cmd: 'pages list [--json]',          desc: 'List published report pages, newest first.', topic: 'web' },
+
+  { cmd: 'new <name> [opts]',            desc: 'Scaffold a project from a template (next-app, node-cli, mcp-server, minimal).', topic: 'scaffold' },
+  { cmd: 'ship [path] [opts]',           desc: 'Pre-ship gate (lint/test/build) + optional confirm-gated deploy.', topic: 'scaffold' },
+];
+
+/** Per-topic example blocks (relocated from the former inline cmdHelp). */
+const TOPIC_EXAMPLES: Partial<Record<HelpTopic, string[]>> = {
+  run: [
+    'ashlr run "list all open GitHub issues in this repo"',
+    'ashlr run "summarize recent commits" --budget 8000 --max-steps 5',
+    'ashlr run "audit TODOs" --no-memory          # skip genome injection',
+    'ashlr run show <id>                          # inspect a past run',
+    'ashlr run "x" --estimate                     # predict cost before running',
+  ],
+  swarm: [
+    'ashlr spec new "build a REST API with auth and tests"',
+    'ashlr swarm "build a REST API with auth" --dry-run   # plan only',
+    'ashlr swarm spec-abc123 --budget 40000 --parallel 3',
+    'ashlr swarm "refactor auth module" --background      # detached',
+  ],
+  memory: [
+    'ashlr recall "how does the orchestrator work"',
+    'ashlr learn "prefer bge-m3 for embeddings" --tags embeddings,ollama',
+    'ashlr learn "ashlr-hub uses NodeNext ESM" --project ashlr-hub',
+  ],
+  scaffold: [
+    'ashlr new my-app --template next-app',
+    'ashlr new my-tool --template node-cli --category dev-tools',
+    'ashlr ship --deploy vercel --confirm                 # gate + REAL deploy',
+  ],
+  autonomy: [
+    'ashlr enroll add ~/code/my-repo && ashlr backlog refresh',
+    'ashlr daemon start --once --dry-run                  # plan only',
+    'ashlr run "<goal>"                                   # owner-invoked one-shot work',
+    'ashlr swarm "<goal>"                                 # owner-invoked multi-agent work',
+    'ashlr fleet direction --json                         # resource-aware mode recommendation',
+    'ashlr inbox && ashlr inbox approve <id>',
+  ],
+};
+
+/** Flag reference lines printed with `help run` / `help swarm` / `help --all`. */
+const FLAG_LINES: Partial<Record<HelpTopic, string[]>> = {
+  run: ['--budget N  --max-steps N  --parallel N  --engine builtin|ashlrcode|aw|claude|codex  --allow-cloud  --no-tools  --no-memory  --resume <id>  --estimate  --json  --over-budget'],
+  swarm: ['--budget N  --parallel N (positive safe integer; default 3)  --background  --resume <id>  --dry-run  --estimate  --allow-cloud  --project <path>  --over-budget'],
+};
+
+const TOPICS: HelpTopic[] = [
+  'core', 'run', 'swarm', 'memory', 'knowledge', 'autonomy',
+  'observability', 'integrations', 'safety', 'web', 'scaffold',
+];
+
+function renderEntries(entries: HelpEntry[]): string {
+  const c = makeColors(isTty());
+  const w = Math.max(...entries.map((e) => e.cmd.length));
+  return entries.map((e) => `    ${c.cyan(pad(e.cmd, w))}  ${e.desc}`).join('\n');
+}
+
+/** All command entries tagged with a given topic (single source of truth). */
+function entriesForTopic(topic: HelpTopic): HelpEntry[] {
+  return HELP_ENTRIES.filter((e) => e.topic === topic);
+}
+
+function renderTopic(topic: HelpTopic): void {
+  const c = makeColors(isTty());
+  const entries = entriesForTopic(topic);
+  console.log('');
+  console.log('  ' + c.bold(TOPIC_LABELS[topic]));
+  console.log('');
+  console.log(renderEntries(entries));
+  const flags = FLAG_LINES[topic];
+  if (flags) {
+    console.log('');
+    for (const f of flags) console.log('  ' + c.bold('flags:') + ' ' + c.dim(f));
+  }
+  const examples = TOPIC_EXAMPLES[topic];
+  if (examples) {
+    console.log('');
+    console.log('  ' + c.bold('Examples:'));
+    for (const ex of examples) console.log(`    ${c.cyan(ex)}`);
+  }
+  console.log('');
+}
+
+function renderSummary(): void {
+  const c = makeColors(isTty());
+  console.log('');
+  console.log(c.bold('  Phantom') + c.dim(' — phm, the CLI for agentic engineers (ashlr remains compatible)'));
+  console.log('');
+  for (const topic of TOPICS) {
+    const entries = entriesForTopic(topic);
+    const headliners = entries.slice(0, 3).map((e) => e.cmd.split(' ')[0]);
+    const unique = [...new Set(headliners)].join(', ');
+    console.log(`    ${c.cyan(pad(topic, 14))}  ${TOPIC_LABELS[topic]} ${c.dim(`(${unique}, …)`)}`);
+  }
+  console.log('');
+  console.log('  ' + c.dim('phm init') + ' · ' + c.dim('phm doctor') + ' · ' + c.dim('phm verse') + '  start here: onboard, health check, console');
+  console.log('  ' + c.dim('phm help <topic>') + '      full table for one topic');
+  console.log('  ' + c.dim('phm help --search <t>') + ' find a command by keyword');
+  console.log('  ' + c.dim('phm help --all') + '        every command (the legacy full table)');
+  console.log('  ' + c.dim('phm docs --agent') + '      the agent contract cheat sheet');
+  console.log('');
+}
+
+function renderAll(): void {
+  const c = makeColors(isTty());
+  console.log('');
+  console.log(c.bold('  Phantom') + c.dim(' — every command (phm or ashlr)'));
+  for (const topic of TOPICS) {
+    console.log('');
+    console.log('  ' + c.bold(TOPIC_LABELS[topic]));
+    console.log(renderEntries(entriesForTopic(topic)));
+  }
+  console.log('');
+  for (const [t, lines] of Object.entries(FLAG_LINES)) {
+    for (const f of lines ?? []) console.log('  ' + c.bold(`${t} flags:`) + ' ' + c.dim(f));
+  }
+  console.log('');
+}
+
+/** The one help-table reader: entries whose command or description contains `term` (case-insensitive). Shared by `help --search` and `bets check`. */
+export function searchHelpEntries(term: string, entries: readonly HelpEntry[] = HELP_ENTRIES): HelpEntry[] {
+  const t = term.toLowerCase();
+  return entries.filter((e) => e.cmd.toLowerCase().includes(t) || e.desc.toLowerCase().includes(t));
+}
+
+/** `ashlr help [<topic>] [--search <term>] [--all]` — exit 0, except 2 for an unknown topic. */
+export async function cmdHelp(args: string[]): Promise<number> {
+  const c = makeColors(isTty());
+
+  if (args.includes('--all')) {
+    renderAll();
+    return 0;
+  }
+
+  const searchIdx = args.indexOf('--search');
+  if (searchIdx !== -1) {
+    const term = (args[searchIdx + 1] ?? '').toLowerCase();
+    if (!term) {
+      console.log(c.dim('usage: ashlr help --search <term>'));
+      return 0;
+    }
+    const hits = searchHelpEntries(term);
+    console.log('');
+    if (hits.length === 0) {
+      console.log(c.dim(`  no commands match "${term}" — try \`ashlr help --all\``));
+    } else {
+      console.log(renderEntries(hits));
+    }
+    console.log('');
+    return 0;
+  }
+
+  const topicArg = args.find((a) => !a.startsWith('-'));
+  if (topicArg) {
+    if ((TOPICS as string[]).includes(topicArg)) {
+      renderTopic(topicArg as HelpTopic);
+      return 0;
+    }
+    // `phm help doctor` names a command, not a topic: show that command's rows.
+    const wanted = topicArg.toLowerCase();
+    const commandHits = HELP_ENTRIES.filter((e) => e.cmd.split(/\s+/)[0]?.toLowerCase() === wanted);
+    if (commandHits.length > 0) {
+      console.log('');
+      console.log(renderEntries(commandHits));
+      console.log('');
+      console.log('  ' + c.dim(`phm help ${commandHits[0]!.topic}`) + '  more commands in this topic');
+      console.log('');
+      return 0;
+    }
+    // Unknown topic is a usage error (exit 2, like an unknown command) so agents can tell a typo from success.
+    console.error(`Unknown help topic "${topicArg}".`);
+    const { didYouMean } = await import('./completions.js');
+    const lower = topicArg.toLowerCase();
+    const guess = TOPICS.find((t) => t.startsWith(lower)) ?? didYouMean(lower, TOPICS);
+    if (guess) console.error(`Did you mean ${c.cyan(`phm help ${guess}`)}?`);
+    console.error(c.dim(`Topics: ${TOPICS.join(', ')}. Run \`phm help\` for the list.`));
+    return 2;
+  }
+
+  renderSummary();
+  return 0;
+}
