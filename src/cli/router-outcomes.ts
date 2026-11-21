@@ -122,6 +122,7 @@ function outcomeLine(o: RouterOutcome): string {
     `merged=${text(o.merged)}`, `reverted=${text(o.reverted)}`, `ci_first_pass=${text(o.ci_first_pass)}`, `review=${review}`,
     `cost_usd=${text(o.cost_usd)}`, `wall_s=${text(o.wall_s)}`, `ttm_s=${text(o.ttm_s)}`, `passk=${text(o.passk)}`,
     `empty=${text(o.empty)}`, `exit_code=${text(o.exit_code)}`, `failure_class=${text(o.failure_class)}`,
+    `empty_class=${text(o.empty_class)}`,
   ].join(' ');
 }
 

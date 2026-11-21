@@ -310,8 +310,10 @@ merge verdict and cleared when a later verdict is not a merge),
 `work_class`, the finish-row productivity verdicts (`empty`,
 `exit_code`, `failure_class` — the row's recorded failure
 classification, resolved `failure_class` → `failure_reason` →
-`pool_error` so non-devin lanes' causes join too; explicit row fields
-only, `null` when unrecorded) and the advisory `passk` join from
+`pool_error` so non-devin lanes' causes join too — and `empty_class`,
+the row's recorded empty-diff classification in dispatchd's closed
+`classify_empty` vocabulary `no_diff`/`error`/`unknown`; explicit row
+fields only, `null` when unrecorded) and the advisory `passk` join from
 `eval.lane-scores.v1`. `work_class` is the class a jobs row recorded when
 one exists; otherwise it is the job's newest `work-market.v1`
 `route_decision` class — the market's own classification of the job,
@@ -379,7 +381,12 @@ diff), `unknown_nonzero_exit` counts jobs whose newest `exit_code` was
 not 0 — the two overlap, since a crashed run usually diffs nothing —
 `unknown_failure_classes` tallies the recorded failure classifications
 (`failure_class`, else `failure_reason`, else `pool_error`; top entries
-first), and `unknown_unresolved` is the remainder with no
+first), `unknown_empty_classes` tallies the recorded finish-row
+`empty_class` verdicts — dispatchd's `classify_empty` triage, so the
+empty share splits healthy `no_diff` no-ops from the `error`
+infrastructure share and `unknown` capture gaps the way the
+dispatcher's own `empty_error_rate` does — and `unknown_unresolved` is
+the remainder with no
 finish failure signal (finished cleanly awaiting a verdict, or still in
 flight). These are counts over the retained window; when the ledger was
 not read they are `null`, never zero. When the ledger exceeds the retained tail the

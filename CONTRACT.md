@@ -497,14 +497,18 @@ to no join; `authorityEvidence: null` skips the join and an explicit
 array is used as given. Revert evidence is sticky-true like
 metrics-ingest, so a recorded revert is never contradicted by a later
 `reverted:false`; it is `null` when neither source records anything
-either way. Finish rows also fold three productivity verdicts, newest
+either way. Finish rows also fold four productivity verdicts, newest
 explicit row wins: `empty` (the recorded no-diff boolean), `exit_code`
-(the worker's recorded exit status, negative signal exits included) and
+(the worker's recorded exit status, negative signal exits included),
 `failure_class` — the finish row's recorded failure classification,
 resolved `failure_class`, then `failure_reason`, then `pool_error`
 (snake_case before camelCase within each, the precedence the skill-nudge
 ledger reader shares) and accepted only as bounded identifier-shaped
-labels; anything else is skipped, never recorded raw. dispatchd writes
+labels; anything else is skipped, never recorded raw — and `empty_class`,
+the finish row's recorded empty-diff classification in dispatchd's closed
+`classify_empty` vocabulary (`no_diff`/`error`/`unknown`, snake_case
+before camelCase; unrecognized spellings skipped, never recorded raw).
+dispatchd writes
 `failure_class` only for the devin pool, so the fallbacks carry every
 other lane's classified cause (`launch_timeout`, `provider_*`,
 `agent_exit_nonzero`, `exit_status_missing`, pool errors like

@@ -96,13 +96,29 @@ export interface RouterOutcome {
    * classification — `failure_class`, then `failure_reason`, then
    * `pool_error`, the precedence the skill-nudge ledger reader shares —
    * accepted only in the bounded identifier shape (values outside it are
-   * skipped, never guessed or recorded raw). All stay null when no jobs row
+   * skipped, never guessed or recorded raw); `empty_class` is the finish
+   * row's recorded empty-diff classification in dispatchd's closed
+   * classify_empty vocabulary. All stay null when no jobs row
    * recorded them — unknown, never inferred from merged state, PR URLs or
    * event names.
    */
   empty: boolean | null;
   exit_code: number | null;
   failure_class: string | null;
+  /**
+   * The finish row's recorded empty-diff classification — dispatchd's
+   * `classify_empty` verdict (contrib/mac/launch_precheck.py), the same
+   * triage its 24h rollup uses for `empty_error_rate`: `no_diff` is a
+   * clean exit that produced nothing publishable (a healthy no-op),
+   * `error` is a nonzero exit or pool error (the lane-penalizing
+   * infrastructure share), `unknown` means no exit status was recorded
+   * (a possible capture gap, not blamed on the prompt). The vocabulary is
+   * closed — unrecognized spellings are skipped, never recorded raw — and
+   * like failure_class the newest row carrying a recognized value wins;
+   * a later finish row without one keeps it. Null when no jobs row
+   * recorded one.
+   */
+  empty_class: string | null;
   /** The lane+model's pass^k (passPowK) from the latest eval.lane-scores.v1 projection; null when unknown. */
   passk: number | null;
 }
@@ -212,6 +228,21 @@ const FAILURE_CLASS_KEYS = ['failure_class', 'failureClass', 'failure_reason', '
 const failureClass = (r: Row): string | null => {
   const v = str(r, ...FAILURE_CLASS_KEYS);
   return v !== null && FAILURE_CLASS.test(v) ? v : null;
+};
+
+/**
+ * The finish row's recorded empty-diff classification. dispatchd writes
+ * `empty_class` from launch_precheck.classify_empty — a closed three-value
+ * vocabulary (EMPTY_NO_DIFF/EMPTY_ERROR/EMPTY_UNKNOWN), so unlike
+ * failure_class the fold accepts only those labels: an unrecognized
+ * spelling is not evidence of a known class and stays null. snake_case
+ * before camelCase, the same dialect tolerance the other finish fields use.
+ */
+const EMPTY_CLASS_KEYS = ['empty_class', 'emptyClass'] as const;
+const EMPTY_CLASSES: ReadonlySet<string> = new Set(['no_diff', 'error', 'unknown']);
+const emptyClass = (r: Row): string | null => {
+  const v = str(r, ...EMPTY_CLASS_KEYS);
+  return v !== null && EMPTY_CLASSES.has(v) ? v : null;
 };
 
 // Revert evidence uses the same field vocabulary the fleet ledger readers
@@ -382,7 +413,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     const o: RouterOutcome = outcomes.get(j) ?? {
       schema: 'router.outcome.v1', job_id: j, lane: null, model: null, tier: null, work_class: null,
       merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
-      ttm_s: null, empty: null, exit_code: null, failure_class: null, passk: null,
+      ttm_s: null, empty: null, exit_code: null, failure_class: null, empty_class: null, passk: null,
     };
     o.lane = str(r, 'lane', 'pool', 'arm') ?? o.lane;
     o.model = str(r, 'model') ?? o.model;
@@ -425,6 +456,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     if (typeof r['empty'] === 'boolean') o.empty = r['empty'];
     o.exit_code = exitStatus(r['exit_code']) ?? exitStatus(r['exitCode']) ?? o.exit_code;
     o.failure_class = failureClass(r) ?? o.failure_class;
+    o.empty_class = emptyClass(r) ?? o.empty_class;
     const f = r['review_findings'];
     if (f !== null && typeof f === 'object' && !Array.isArray(f)) {
       const fixed = count((f as Row)['fixed']), rejected = count((f as Row)['rejected']), ignored = count((f as Row)['ignored']);

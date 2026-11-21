@@ -198,7 +198,7 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(fold.outcomes).toEqual([{
       schema: 'router.outcome.v1', job_id: 'U1', lane: null, model: null, tier: null, work_class: null,
       merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
-      ttm_s: null, empty: null, exit_code: null, failure_class: null, passk: null,
+      ttm_s: null, empty: null, exit_code: null, failure_class: null, empty_class: null, passk: null,
     }]);
   });
 
@@ -310,6 +310,41 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(byId.get('G6')?.failure_class).toBeNull();
     // The newest classified row wins; a later row with none keeps it.
     expect(byId.get('G7')?.failure_class).toBe('launch_timeout');
+  });
+
+  it('folds the finish row empty_class in its closed classify_empty vocabulary', () => {
+    const fold = foldRouterOutcomes([
+      // dispatchd writes empty_class from classify_empty: no_diff for a
+      // clean empty finish, error for a nonzero exit or pool error, unknown
+      // when no exit status was recorded.
+      '{"job":"E1","event":"finish","empty":true,"exit_code":0,"empty_class":"no_diff"}',
+      '{"job":"E2","event":"finish","empty":true,"exit_code":1,"empty_class":"error"}',
+      '{"job":"E3","event":"finish","empty":true,"empty_class":"unknown"}',
+      // camelCase spelling joins; null and non-empty finishes carry nothing.
+      '{"job":"E4","event":"finish","empty":true,"exit_code":0,"emptyClass":"no_diff"}',
+      '{"job":"E5","event":"finish","empty":false,"exit_code":0,"empty_class":null}',
+      // Out-of-vocabulary spellings are skipped, never recorded raw.
+      '{"job":"E6","event":"finish","empty":true,"empty_class":"infra"}',
+      '{"job":"E7","event":"finish","empty":true,"empty_class":"Error"}',
+      '{"job":"E8","event":"finish","empty":true,"empty_class":42}',
+      // The newest recognized value wins; a later row without one keeps it.
+      '{"job":"E9","event":"finish","empty":true,"exit_code":1,"empty_class":"error"}',
+      '{"job":"E9","event":"finish","empty":true,"exit_code":0,"empty_class":"no_diff"}',
+      '{"job":"E9","event":"finish","empty":false,"exit_code":0}',
+      '{"job":"E10","event":"claim"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('E1')?.empty_class).toBe('no_diff');
+    expect(byId.get('E2')?.empty_class).toBe('error');
+    expect(byId.get('E3')?.empty_class).toBe('unknown');
+    expect(byId.get('E4')?.empty_class).toBe('no_diff');
+    expect(byId.get('E5')?.empty_class).toBeNull();
+    expect(byId.get('E6')?.empty_class).toBeNull();
+    expect(byId.get('E7')?.empty_class).toBeNull();
+    expect(byId.get('E8')?.empty_class).toBeNull();
+    // Newest recognized wins; the trailing finish row carried no class.
+    expect(byId.get('E9')?.empty_class).toBe('no_diff');
+    expect(byId.get('E10')?.empty_class).toBeNull();
   });
 
   it('reads the real folder and filters by lane', async () => {
