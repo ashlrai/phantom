@@ -16,7 +16,8 @@ Each stop re-reads the evidence and refuses a pid that is no longer a stray. Nev
 export interface StrayStopPlanned { lane: string; job: string; pid: number; ageSeconds: number | null }
 export interface StrayStopOutcome { lane: string; job: string; pid: number; result: 'signalled' | 'already-gone' | 'refused' | 'failed'; code?: string }
 export interface StrayStopCliV1 {
-  v: 1; mode: 'dry-run' | 'apply'; planned: StrayStopPlanned[]; results: StrayStopOutcome[];
+  /** ok=false means the evidence could not be read; `reason` says why in plain words. */
+  v: 1; ok: boolean; reason?: string; checked: { lanes: number; strays: number }; mode: 'dry-run' | 'apply'; planned: StrayStopPlanned[]; results: StrayStopOutcome[];
   summary: { planned: number; signalled: number; alreadyGone: number; refused: number; failed: number; capped: boolean };
 }
 
@@ -47,12 +48,19 @@ export async function cmdFleetStrayStop(args: string[], deps: Partial<StrayStopD
   };
   const limit = max ?? DEFAULT_MAX;
   let found: StrayStopPlanned[];
+  let checked = { lanes: 0, strays: 0 };
   try {
     const report = await stopDeps.readStraySlots();
-    found = report.lanes.filter(l => !lanes.size || lanes.has(l.lane))
-      .flatMap(l => l.strays.map(s => ({ lane: l.lane, job: s.job, pid: s.pid, ageSeconds: s.ageSeconds })));
-  } catch {
-    error('error: fleet stray-stop unavailable\n'); return 1;
+    const scoped = report.lanes.filter(l => !lanes.size || lanes.has(l.lane));
+    found = scoped.flatMap(l => l.strays.map(s => ({ lane: l.lane, job: s.job, pid: s.pid, ageSeconds: s.ageSeconds })));
+    checked = { lanes: scoped.length, strays: found.length };
+  } catch (cause) {
+    // Always say why: the self-tick records this output instead of a null report.
+    const reason = scrubSecrets(`could not read the process and job evidence: ${cause instanceof Error && cause.message ? cause.message : 'unknown error'}`.slice(0, 200));
+    const failed: StrayStopCliV1 = { v: 1, ok: false, reason, checked, mode: apply ? 'apply' : 'dry-run', planned: [], results: [],
+      summary: { planned: 0, signalled: 0, alreadyGone: 0, refused: 0, failed: 0, capped: false } };
+    if (json) output(JSON.stringify(failed)); else output(`Stray stop failed: ${reason}`);
+    return 1;
   }
   const planned = found.slice(0, limit);
   const results: StrayStopOutcome[] = [];
@@ -68,7 +76,7 @@ export async function cmdFleetStrayStop(args: string[], deps: Partial<StrayStopD
   }
   const count = (r: StrayStopOutcome['result']) => results.filter(x => x.result === r).length;
   const out: StrayStopCliV1 = {
-    v: 1, mode: apply ? 'apply' : 'dry-run', planned, results,
+    v: 1, ok: true, checked, mode: apply ? 'apply' : 'dry-run', planned, results,
     summary: { planned: planned.length, signalled: count('signalled'), alreadyGone: count('already-gone'), refused: count('refused'), failed: count('failed'), capped: found.length > limit },
   };
   if (json) output(JSON.stringify(out));
@@ -76,6 +84,7 @@ export async function cmdFleetStrayStop(args: string[], deps: Partial<StrayStopD
     const lines = planned.map(p => `${apply ? '' : 'would stop '}${p.lane} ${p.job} pid=${p.pid} age=${p.ageSeconds ?? 'unknown'}s`
       + (apply ? ` -> ${results.find(r => r.pid === p.pid && r.lane === p.lane && r.job === p.job)?.result ?? ''}` : ''));
     const s = out.summary;
+    lines.push(`Checked ${checked.lanes} lane(s): ${checked.strays} stray(s) found.`);
     lines.push(apply
       ? `Stray stop: ${s.signalled} signalled, ${s.alreadyGone} already gone, ${s.refused} refused, ${s.failed} failed.`
       : `Dry run: ${s.planned} stray(s) planned; pass --apply to stop them.`);

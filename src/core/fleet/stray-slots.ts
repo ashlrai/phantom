@@ -123,7 +123,12 @@ export const defaultStrayReaders: StrayReaders = {
         catch (error) { if (!['ENOENT', 'ESRCH', 'EACCES', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; }
       }));
     } else if (process.platform === 'darwin') {
-      const result = await run('/usr/sbin/lsof', ['-a', '-d', 'cwd', '-Fn', '-w'], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
+      // lsof exits 1 when it cannot read some processes' cwd but still prints the rest; keep what it printed.
+      const result = await run('/usr/sbin/lsof', ['-a', '-d', 'cwd', '-Fn', '-w'], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 })
+        .catch((error: { code?: unknown; stdout?: unknown }) => {
+          if (error.code === 1 && typeof error.stdout === 'string' && error.stdout) return { stdout: error.stdout };
+          throw error;
+        });
       const byPid = new Map(rows.map(row => [row.pid, row]));
       let pid = 0;
       for (const line of result.stdout.split('\n')) {
@@ -139,9 +144,10 @@ export const defaultStrayReaders: StrayReaders = {
     const latest = strayJobStates(metrics);
     const jobs: StrayJob[] = [];
     for (const [id, state] of latest) {
-      const base = await text(join(root, `${id}.base`), 16 * 1024);
-      const match = /^\S+\s+\S+\s+([^\r\n]+)/.exec(base);
-      if (!match || !isAbsolute(match[1])) throw new Error('invalid worktree');
+      // A job with no readable base file has no known worktree, so it cannot hold a stray: skip it, do not fail the whole read.
+      const base = await text(join(root, `${id}.base`), 16 * 1024).catch(() => null);
+      const match = base === null ? null : /^\S+\s+\S+\s+([^\r\n]+)/.exec(base);
+      if (!match || !isAbsolute(match[1])) continue;
       jobs.push({ id, ...state, worktree: match[1].trim() });
     }
     return jobs;

@@ -125,6 +125,13 @@ const safe = (value: unknown): string => JSON.stringify(sanitizePublicJson(value
   .replace(/[\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 
 /** A short per-step summary for human output, read defensively. */
+/** Why a failed step failed, in plain words: the step's own `reason`, else the thrown error, else a note that nothing was reported. */
+function failureReason(report: unknown, error: string | undefined): string {
+  const reason = typeof report === 'object' && report !== null ? (report as Record<string, unknown>)['reason'] : undefined;
+  if (typeof reason === 'string' && reason) return `reason: ${reason}`;
+  return error ? `error: ${error}` : 'no reason reported';
+}
+
 function summary(step: string, report: unknown): string {
   if (typeof report !== 'object' || report === null) return '';
   const row = report as Record<string, unknown>;
@@ -486,7 +493,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   } else {
     const lines = [`fleet self-tick: ${apply ? 'APPLIED' : 'DRY-RUN — no changes made'}`];
     for (const step of report.steps) {
-      const detail = step.state === 'ok' ? summary(step.step, step.report) : '';
+      const detail = step.state === 'ok' ? summary(step.step, step.report) : failureReason(step.report, step.error);
       lines.push(`  ${step.step}  ${step.state}  exit=${step.exitCode}${detail ? `  ${safe(detail)}` : ''}`);
     }
     output(lines.join('\n'));
