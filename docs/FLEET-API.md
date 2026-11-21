@@ -566,7 +566,7 @@ compute scene draws its message lines at the same thickness.
 
 #### Agent conversations
 
-`phm agents conversations [--agent <name>] [--waiting] [--job <id>] [--waiting-on <name>] [--json]`
+`phm agents conversations [--agent <name>] [--waiting] [--blocked] [--job <id>] [--waiting-on <name>] [--json]`
 groups the same bus read into threads by reply chain and by the declared
 conversation label a body carries, longest-waiting first and then newest
 first. `--agent` matches a participant's routing label and, through
@@ -576,7 +576,11 @@ match stays on the literal label. `--job <id>` keeps the whole threads that
 name that job — the `job:<id>` bucket itself or a member message citing it
 through the same channels `phm messages --job` honors (a `jobId`/`taskId`
 body citation or the message's reported job link) — never a partial message
-list, and it composes with `--agent` and `--waiting`. `--waiting-on <name>`
+list, and it composes with `--agent` and `--waiting`. `--blocked` keeps only
+the threads a blocker or failed report left unanswered — the same
+`state:'blocked'` the unified inbox and `work mine` report — and composes
+with every other filter (a thread cannot be both waiting and blocked, so
+`--waiting --blocked` is an honest empty list). `--waiting-on <name>`
 keeps the waiting threads that one agent owes a reply on — the same
 `work mine threads` rule over the shared conversations read: `waiting.on`
 names the agent under any of its identity labels or a
@@ -596,7 +600,7 @@ conversation; only the synthesized per-pair fallback stays reply-chain
 rooted. `group.presence` heartbeats are expiring observations with their own
 read (`phm comms bus group presence`), never messages: they form no thread
 and cannot answer a waiting one. `--json` prints `agents.conversations.v1` (`version` 1), and
-`GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&job=RQ-1&waitingOn=claude]`
+`GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&blocked=1&job=RQ-1&waitingOn=claude]`
 serves the same read with a current read session.
 
 - `conversations[]`: `id`, `participants[]` (`name`, `label`, `known`, `node`;

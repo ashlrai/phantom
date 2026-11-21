@@ -440,8 +440,8 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'agents.messages.v1 {schema, version, generatedAt, since, source, messages[{at, from, to, kind, summary, threadId?, fromName, toName}], pairs[{from, to, count, lastAt, recent[]}], matched, skipped}',
   },
   {
-    usage: 'ashlr agents conversations [--agent <name>] [--waiting] [--job <id>] [--waiting-on <name>] [--json]',
-    description: 'Agent-to-agent messages grouped into threads by reply chain: participants, latest subject, message count, last activity and one state (waiting for reply, answered, blocked or done). Longest-waiting first. An agent no label proves reads "unknown agent". --job keeps the whole threads that name one job; --waiting-on keeps the waiting threads one agent owes a reply on. Read only.',
+    usage: 'ashlr agents conversations [--agent <name>] [--waiting] [--blocked] [--job <id>] [--waiting-on <name>] [--json]',
+    description: 'Agent-to-agent messages grouped into threads by reply chain: participants, latest subject, message count, last activity and one state (waiting for reply, answered, blocked or done). Longest-waiting first. An agent no label proves reads "unknown agent". --blocked keeps the threads a blocker or failed report left unanswered; --job keeps the whole threads that name one job; --waiting-on keeps the waiting threads one agent owes a reply on. Read only.',
     safety: 'read',
     jsonShape: 'agents.conversations.v1 {schema, version, generatedAt, source, conversations[{id, participants[], subject, messageCount, lastAt, state, stateText, waiting, jobs[], links[], messages[]}], waiting, skipped}',
   },

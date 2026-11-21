@@ -1104,7 +1104,7 @@ function annotateClaimMessages(claims: BusWorkMineClaim[], options: BusWorkMineO
 
 /**
  * The conversation threads whose latest message still wants this agent's
- * answer — the same thread state `agents conversations --waiting-only`
+ * answer — the same thread state `agents conversations --waiting`
  * computes, narrowed to waits the agent (or a channel it belongs to) owes.
  * `waiting.on` is the conversation projection's recipient name with routing
  * prefixes already stripped, so matching goes through the same identity

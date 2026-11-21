@@ -564,7 +564,7 @@ routing label they take as `--to` (a channel-addressed handoff matches only
 its literal `group:<channel>:<topic>` label), the body's
 `taskId`, sender and the same tri-state hold evidence — the conversation
 threads waiting on its answer: the same `waiting` threads
-`agents conversations --waiting-only` computes, narrowed to waits the agent
+`agents conversations --waiting` computes, narrowed to waits the agent
 owes under any of its labels or a `group:<channel>:<topic>` address of a
 channel it belongs to, minus threads whose waiting message it sent itself
 (the first 20 longest-waiting shown, `matched` the true total; each item

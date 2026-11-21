@@ -74,6 +74,21 @@ describe('conversations from messages', () => {
     expect(filterConversations(list, { agent: 'grok', waitingOnly: true })).toEqual([]);
   });
 
+  it('filters to blocked threads only and composes with the other filters', () => {
+    const list = buildConversations([
+      say('a', 'claude', 'leader', 0, { kind: 'blocker', subject: 'need access' }),
+      say('b', 'leader', 'claude', 1, { kind: 'ask', subject: 'build ok?' }),
+      say('c', 'grok', 'zai', 2, { kind: 'status', state: 'blocked', subject: 'quota out' }),
+      say('d', 'zai', 'grok', 3, { kind: 'reply', replyTo: 'c' }),
+    ], NOW);
+    // 'a' is blocked by kind; 'c'+'d' is answered; 'b' waits — only 'a' stays.
+    expect(filterConversations(list, { blockedOnly: true }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { blockedOnly: true, agent: 'claude' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { blockedOnly: true, agent: 'grok' })).toEqual([]);
+    // A thread cannot be both waiting and blocked: the intersection is empty.
+    expect(filterConversations(list, { blockedOnly: true, waitingOnly: true })).toEqual([]);
+  });
+
   it('an identity resolver matches every label of one agent, an unresolvable side stays strict', () => {
     const list = buildConversations([say('a', 'one', 'two', 0, { kind: 'ask' }), say('b', 'three', 'four', 1, { kind: 'status' })], NOW);
     const same = (label: string) => ['one', 'two', 'query-label'].includes(label) ? 'agt_same' : undefined;
@@ -176,6 +191,20 @@ describe('v2 work threads', () => {
     expect(readAgentConversations({ job: 'RQ-PEER9', agent: 'peer-b' }, { root, now: () => NOW }).conversations!.map(c => c.id))
       .toEqual(['job:RQ-PEER9']);
     expect(readAgentConversations({ job: 'RQ-PEER9', agent: 'peer-c' }, { root, now: () => NOW }).conversations).toEqual([]);
+  });
+
+  it('a --blocked read keeps only the threads a failure left unanswered', () => {
+    const root = bus(WORK);
+    const blocked = readAgentConversations({ blockedOnly: true }, { root, now: () => NOW });
+    // RQ-PEER9's failed work.result blocks its thread; RQ-PEER10 completed.
+    expect(blocked.conversations!.map(c => c.id)).toEqual(['job:RQ-PEER9']);
+    expect(blocked.conversations![0]).toMatchObject({ state: 'blocked', stateText: 'blocked' });
+    // `waiting` still counts the whole bus, not the filtered view.
+    expect(blocked.waiting).toBe(0);
+    // It composes with --job: the done job's intersection is an honest empty.
+    expect(readAgentConversations({ blockedOnly: true, job: 'RQ-PEER10' }, { root, now: () => NOW }).conversations).toEqual([]);
+    expect(readAgentConversations({ blockedOnly: true, job: 'RQ-PEER9' }, { root, now: () => NOW }).conversations!.map(c => c.id))
+      .toEqual(['job:RQ-PEER9']);
   });
 
   it('a custom-labeled thread reports and filters the job its handoff cites', () => {
@@ -411,15 +440,37 @@ describe('phm agents conversations --json', () => {
     expect(errors.pop()).toContain('Usage: phm agents conversations');
   });
 
+  it('the CLI --blocked prints only the threads a blocker or failure left', async () => {
+    const root = bus([
+      [T0, 'b1', 'claude', 'leader', { kind: 'blocker', text: 'need access' }],
+      [T0 + MIN, 'b2', 'leader', 'claude', { kind: 'note', text: 'fyi only' }],
+      [T0 + 2 * MIN, 'b3', 'grok', 'zai', { kind: 'status', status: 'blocked', text: 'quota out' }],
+    ]);
+    const lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    expect(await run(['--blocked', '--json'])).toBe(0);
+    const printed = JSON.parse(lines.pop()!);
+    expect(printed.conversations.map((c: { id: string }) => c.id).sort()).toEqual(['b1', 'b3']);
+    expect(printed.conversations.every((c: { state: string }) => c.state === 'blocked')).toBe(true);
+    // Text mode names the state too, and --blocked composes with --agent.
+    expect(await run(['--blocked', '--agent', 'grok'])).toBe(0);
+    const text = lines.pop()!;
+    expect(text).toContain('blocked');
+    expect(text).toContain('zai');
+    expect(text).not.toContain('need access');
+  });
+
   it('the API serves the same read behind a read session and checks its query', async () => {
     const root = bus(CHAT);
-    const api = createFleetLiveMapApi(undefined, undefined, undefined, query => readAgentConversations(query, { root, now: () => NOW }));
-    const call = async (url: string, readSession: unknown = { expiresAt: Date.now() + 60_000 }) => {
-      let status = 0, body = '';
-      const res = { writeHead: (code: number) => { status = code; return res; }, setHeader: () => res, end: (text?: string) => { body = text ?? ''; }, statusCode: 0 };
-      await api({ readSession } as never, { url, headers: {} } as never, res as never, AGENT_CONVERSATIONS_PATH, 'GET');
-      return { status: status || res.statusCode, body: body ? JSON.parse(body) : null };
-    };
+    const serve = (module: ReturnType<typeof createFleetLiveMapApi>) =>
+      async (url: string, readSession: unknown = { expiresAt: Date.now() + 60_000 }) => {
+        let status = 0, body = '';
+        const res = { writeHead: (code: number) => { status = code; return res; }, setHeader: () => res, end: (text?: string) => { body = text ?? ''; }, statusCode: 0 };
+        await module({ readSession } as never, { url, headers: {} } as never, res as never, AGENT_CONVERSATIONS_PATH, 'GET');
+        return { status: status || res.statusCode, body: body ? JSON.parse(body) : null };
+      };
+    const call = serve(createFleetLiveMapApi(undefined, undefined, undefined,
+      query => readAgentConversations(query, { root, now: () => NOW })));
     const ok = await call(`${AGENT_CONVERSATIONS_PATH}?waiting=1`);
     expect(ok.status).toBe(200);
     expect(ok.body.conversations).toHaveLength(1);
@@ -433,7 +484,22 @@ describe('phm agents conversations --json', () => {
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?waitingOn=a&waitingOn=b`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?job=`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?job=a&job=b`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?blocked=`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?blocked=2`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?blocked=1&blocked=0`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?extra=1`)).status).toBe(400);
     expect((await call(AGENT_CONVERSATIONS_PATH, null)).status).toBe(401);
+    // blocked=1 keeps only the blocked threads, same as --blocked.
+    const blockedRoot = bus([
+      [T0, 'b1', 'claude', 'leader', { kind: 'blocker', text: 'need access' }],
+      [T0 + MIN, 'b2', 'leader', 'claude', { kind: 'note', text: 'fyi only' }],
+    ]);
+    const blockedCall = serve(createFleetLiveMapApi(undefined, undefined, undefined,
+      query => readAgentConversations(query, { root: blockedRoot, now: () => NOW })));
+    const only = await blockedCall(`${AGENT_CONVERSATIONS_PATH}?blocked=1`);
+    expect(only.status).toBe(200);
+    expect(only.body.conversations.map((c: { id: string }) => c.id)).toEqual(['b1']);
+    const all = await blockedCall(AGENT_CONVERSATIONS_PATH);
+    expect(all.body.conversations).toHaveLength(2);
   });
 });
