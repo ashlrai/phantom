@@ -12,6 +12,7 @@ import type { ShadowDecisionRecord } from '../../../../core/routing/budget-store
 import type { BudgetView } from '../../../../core/routing/policy.js';
 import type { RoutingDifficulty, RoutingTask, SeatDecision } from '../../../../core/routing/types.js';
 import { describeResetAt } from '../../../../core/verse/seat-readiness.js';
+import { Button } from '../../../components/primitives/Button.js';
 import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { Segmented } from '../../../components/primitives/Segmented.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -21,6 +22,8 @@ import type { PaneProps } from '../panes/pane-registry.js';
 import { usedPercentText } from '../percent-text.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { formatRelative } from '../verse-model.js';
+import { DecisionFlow } from './DecisionFlow.js';
+import { pinMatches, type FlowPin } from './decision-flow-model.js';
 import { TIMELINE_COLUMNS, columnWords, decisionTimeline, stepColumn, timelineWords } from './decision-timeline-model.js';
 import styles from './fleet-router.module.css';
 import { ROUTER_DIFFICULTIES, ROUTER_KINDS, ROUTER_TASKS, routeAt, routeSeats, routerDecisionsQuery, routerRoutesQuery, seatBrand, summarizeDecisions, tableShares, type BudgetRoute, type RouteSeat } from './router-model.js';
@@ -114,6 +117,8 @@ function Route({ decision, view, now }: { decision: SeatDecision; view: BudgetVi
 function Log({ records, view, now }: { records: readonly ShadowDecisionRecord[]; view: BudgetView | null; now: number }) {
   // The column being read, by its place on the time axis. Pointing reads it; a click or the keyboard keeps it.
   const [picked, setPicked] = useState<number | null>(null);
+  // The name kept in the flow diagram: the list at the bottom is held to its decisions.
+  const [pin, setPin] = useState<FlowPin | null>(null);
   const scrub = useRef<HTMLDivElement>(null);
   if (records.length === 0) return <p className={styles.meta}>No routing decisions are recorded yet.</p>;
   const log = summarizeDecisions(records);
@@ -136,6 +141,8 @@ function Log({ records, view, now }: { records: readonly ShadowDecisionRecord[];
   };
   // With a column read, the list under the chart is that column's decisions instead of the newest ones.
   const shown = column ? column.records.map(place => records[place]!) : records;
+  const listed = pin ? shown.filter(record => pinMatches(pin, record)) : shown;
+  const base = column ? 'In this column' : 'Latest';
   return <>
     <p className={styles.meta}>Last {log.total} recorded{log.from ? `, since ${ago(log.from, now)}` : ''}. {log.ranKnown === 0 ? 'None of them records which seat actually ran.'
       : `${log.ranKnown} record the seat that ran; ${log.ranElsewhere} of those ran on a different seat than the one chosen.`}</p>
@@ -173,9 +180,13 @@ function Log({ records, view, now }: { records: readonly ShadowDecisionRecord[];
     {timeline === null ? <p className={styles.caption}>None of these decisions carries a readable time, so they are not drawn over time.</p>
       : picked === null ? <p className={styles.caption}>{timelineWords(timeline)}{log.ranElsewhere > 0 ? ' An amber cap marks work that ran on another seat.' : ''} Point at a column, or use the arrow keys on the time axis, to read it.</p>
         : <p className={styles.caption} data-column={picked + 1}>{columnWords(timeline, picked, label, at)}</p>}
-    <h3 className={styles.sub}>{column ? 'In this column' : 'Latest'}</h3>
-    {column && shown.length === 0 ? <p className={styles.caption}>No decisions in this column.</p> : null}
-    <ul className={styles.recent} aria-label={column ? 'Decisions in this column' : 'Latest decisions'}>{shown.slice(0, RECENT).map((record, index) => {
+    {/* The same decisions as a flow: the column being read when there is one, else every decision read. */}
+    <DecisionFlow records={shown} label={label} brand={seatId => seatBrand(view, seatId)} pin={pin} onPin={setPin} />
+    {pin ? <div className={styles.head}><h3 className={styles.sub}>{base}: {pin.label}</h3><Button size="sm" onClick={() => setPin(null)}>Show all</Button></div>
+      : <h3 className={styles.sub}>{base}</h3>}
+    {column && shown.length === 0 ? <p className={styles.caption}>No decisions in this column.</p>
+      : pin && listed.length === 0 ? <p className={styles.caption}>No decisions for {pin.label}{column ? ' in this column' : ''}.</p> : null}
+    <ul className={styles.recent} aria-label={column ? 'Decisions in this column' : 'Latest decisions'}>{listed.slice(0, RECENT).map((record, index) => {
       const chosen = record.decision?.seatId ?? null, ran = record.actual?.seatId ?? null;
       return <li key={`${record.at}-${index}`}>
         <span className={styles.when}>{ago(record.at, now)}</span>
@@ -184,7 +195,7 @@ function Log({ records, view, now }: { records: readonly ShadowDecisionRecord[];
         {ran !== null && ran !== chosen ? <span className={styles.ran}>ran on {labelOf(view, ran)}</span> : null}
       </li>;
     })}</ul>
-    {column && shown.length > RECENT ? <p className={styles.caption}>and {shown.length - RECENT} more in this column.</p> : null}
+    {(column || pin) && listed.length > RECENT ? <p className={styles.caption}>and {listed.length - RECENT} more{column ? ' in this column' : ''}.</p> : null}
   </>;
 }
 

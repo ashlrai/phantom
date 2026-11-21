@@ -1,0 +1,33 @@
+/* Recorded decisions as a flow: what was asked on the left, the seat chosen on the right, a band per pair between them. */
+.flow { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.head h3 { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-weight: var(--font-weight-semibold); }
+.diagram { display: grid; grid-template-columns: minmax(5rem, 11rem) minmax(2rem, 1fr) minmax(5rem, 13rem); align-items: start; min-width: 0; }
+.side { position: relative; margin: 0; padding: 0; list-style: none; min-width: 0; }
+.side li { position: absolute; inset-inline: 0; }
+
+/* A name: its bar against the bands (as tall as its count), then the label and the count. */
+.node { display: flex; align-items: flex-start; gap: var(--space-2); box-sizing: border-box; width: 100%; height: 100%; padding: 0; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text-secondary); font: inherit; font-size: var(--text-xs-size); line-height: 1.25rem; text-align: start; cursor: pointer; }
+.side[data-side='from'] .count { order: 1; }
+.side[data-side='from'] .bar { order: 2; }
+.node:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 1px; }
+.bar { flex: 0 0 0.25rem; display: block; border-radius: 1px; background: var(--accent-500); transition: height var(--duration-base) var(--ease-decelerate); }
+.node[data-none] .bar { background: var(--status-unknown-solid); }
+.name { display: inline-flex; flex: 1 1 auto; align-items: center; gap: var(--space-1); min-width: 0; color: var(--text-primary); font-weight: var(--font-weight-semibold); }
+.label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.count { font-variant-numeric: tabular-nums; }
+.node[data-none] .name { color: var(--status-warning-fg); }
+.node:hover .label, .node[data-lit] .label { text-decoration: underline; text-underline-offset: 0.2em; }
+.node[aria-pressed='true'] { background: var(--bg-selected); }
+
+/* The bands stretch across whatever width is left; their thickness is in pixels and does not stretch. */
+.bands { display: block; width: 100%; overflow: visible; }
+.bands path { fill: var(--accent-500); opacity: 0.28; transition: opacity var(--duration-fast) var(--ease-decelerate); }
+.bands path[data-none] { fill: var(--status-unknown-solid); }
+/* While a name is read its bands stand out and the rest step back. */
+.diagram[data-reading] .bands path { opacity: 0.08; }
+.diagram[data-reading] .bands path[data-lit] { opacity: 0.6; }
+.caption { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) { .bar, .bands path { transition: none; } }
+@media (forced-colors: active) { .bar { background: CanvasText; } .bands path { fill: CanvasText; } }
