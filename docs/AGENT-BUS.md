@@ -577,7 +577,7 @@ own read state — `missing`/`available`/`unavailable` for claims,
 unreadable dependency degrades only its own section. Exit 0 on a completed
 read, 2 on an invalid agent ref.
 
-**Status.** `phm agents bus status [--json]` is a read-only probe of the seven
+**Status.** `phm agents bus status [--json]` is a read-only probe of the eight
 dependencies every verb above touches: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
 the wake queue (state, observed hint count before the row cap, and whether
@@ -585,10 +585,14 @@ the bounded tail or cap truncated older hints), the shared coordination table
 (live claims and status rows), the message-id claim journal behind `fleet
 bus-next`/`bus-claim` and the `work mine` hold state (retained claim records),
 the work-feed projection (job count, or the refusal reason when the feed
-is poisoned), and the legacy `phm bus` mailbox store `work mine` still reads
+is poisoned), the legacy `phm bus` mailbox store `work mine` still reads
 (`source` plus a store-wide `pending` count of unacked, unexpired messages
 across every recipient label — totals only, never labels; 0 on a
-verified-missing store, null when unreadable). Each section reports its own real
+verified-missing store, null when unreadable), and the owner-chat share
+receipts ledger `inbox` consults before showing `agent-chat-owner` envelopes
+(`source` plus a retained `receipts` row count; an unreadable ledger makes
+those reads report unavailable, so the probe names it directly — 0 on a
+verified-missing ledger, null when unreadable). Each section reports its own real
 state — a store that cannot be read reports `unavailable` with null counts,
 never zero, and the probe never throws, writes or takes a lock. Use it before a
 session assumes the bus is healthy.

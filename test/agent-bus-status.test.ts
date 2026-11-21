@@ -1,10 +1,11 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { readUnifiedBusStatus, type UnifiedBusStatusOptions } from '../src/core/agents/bus-status.js';
 import { announceWork, sendDirectMessage, sendWakeRequest, type UnifiedBusOptions } from '../src/core/agents/bus-unified.js';
+import { writeOwnerChatReceipts, type OwnerChatReceipt } from '../src/core/agents/chat-owner-receipts.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { createBusMailbox } from '../src/core/fleet/bus-mailbox.js';
@@ -38,10 +39,12 @@ describe('readUnifiedBusStatus', () => {
     expect(status.feed).toEqual({ status: 'ok', jobs: 0 });
     // A verifiably absent mailbox holds no pending mail: 0 is proven.
     expect(status.mailbox).toEqual({ source: 'missing', pending: 0 });
+    // A verifiably absent receipts ledger holds no rows: 0 is proven.
+    expect(status.ownerChat).toEqual({ source: 'missing', receipts: 0 });
     expect(Number.isNaN(Date.parse(status.asOf))).toBe(false);
   });
 
-  it('counts real rows across all seven sections after bus activity', async () => {
+  it('counts real rows across all sections after bus activity', async () => {
     const options = setup();
     const bus: UnifiedBusOptions = options;
     for (const handle of ['atlas', 'nova']) {
@@ -70,6 +73,7 @@ describe('readUnifiedBusStatus', () => {
     expect(status.coordination.liveClaims).toBe(1);
     expect(status.feed).toEqual({ status: 'ok', jobs: 1 });
     expect(status.mailbox).toEqual({ source: 'missing', pending: 0 });
+    expect(status.ownerChat).toEqual({ source: 'missing', receipts: 0 });
   });
 
   it('keeps an unreadable registry unknown while the rest of the bus stays readable', () => {
@@ -158,6 +162,32 @@ describe('readUnifiedBusStatus', () => {
     expect(degraded.mailbox).toEqual({ source: 'unavailable', pending: null });
     expect(degraded.store.source).toBe('missing');
   });
+
+  it('counts owner-chat share receipts and degrades only that section when the ledger is unreadable', () => {
+    const options = setup();
+    // The ledger lives under the fleet root; writeOwnerChatReceipts needs the
+    // private directory chain to exist first, the same way the ingress does.
+    mkdirSync(options.root!, { recursive: true, mode: 0o700 });
+    mkdirSync(join(options.root!, 'owner-chat-receipts'), { mode: 0o700 });
+    const receipt: OwnerChatReceipt = { id: `owner-chat-${'a'.repeat(32)}`,
+      recipients: [`agt_${'b'.repeat(20)}`], contentDigest: 'c'.repeat(64),
+      envelopeDigest: 'd'.repeat(64), state: 'accepted', cursor: 1, receivedAt: 1_000 };
+    writeOwnerChatReceipts(options.root!, [receipt]);
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.ownerChat).toEqual({ source: 'available', receipts: 1 });
+    expect(status.store.source).toBe('missing');
+
+    // A corrupt ledger is the exact failure `inbox` reports as unavailable;
+    // the probe must name it rather than leaving status all-green.
+    const file = join(options.root!, 'owner-chat-receipts', 'receipts.json');
+    writeFileSync(file, '{not json');
+    chmodSync(file, 0o600);
+    const degraded = readUnifiedBusStatus(options);
+    expect(degraded.ownerChat).toEqual({ source: 'unavailable', receipts: null });
+    expect(degraded.store.source).toBe('missing');
+    expect(degraded.feed.status).toBe('ok');
+  });
 });
 
 describe('phm agents bus status', () => {
@@ -174,6 +204,7 @@ describe('phm agents bus status', () => {
     expect(json.workClaims).toEqual({ source: 'missing', claims: null });
     expect(json.feed.status).toBe('ok');
     expect(json.mailbox).toEqual({ source: 'missing', pending: 0 });
+    expect(json.ownerChat).toEqual({ source: 'missing', receipts: 0 });
 
     const text: string[] = [];
     expect(await runAgentsBusUnified(['status', '--root', options.root!], t => text.push(t), () => {}, {})).toBe(0);
@@ -182,6 +213,7 @@ describe('phm agents bus status', () => {
     expect(lines.join('\n')).toContain('workClaims missing claims=unknown');
     expect(lines.join('\n')).toContain('feed ok jobs=0');
     expect(lines.join('\n')).toContain('mailbox missing pending=0');
+    expect(lines.join('\n')).toContain('ownerChat missing receipts=0');
     expect(lines.join('\n')).toContain('wakes missing hints=0 truncated=false');
   });
 });
