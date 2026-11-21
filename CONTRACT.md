@@ -653,6 +653,33 @@ row, `false` once superseded, and `skip_reason`/`skip_code` are `null`
 whenever `skipped` is not `true` — a decline distinct from the finish
 row's measured `empty` no-diff verdict, the batch member's
 `task_outcome` word, and terminal no-op phases like `DONE-NOOP`.
+`deferred`/`defer_reason`/`defer_repeat_of` are the fleet's recorded
+keep-queued launch verdict: dispatchd's launch loop writes
+`dispatch_deferred` when a ready line's request digest is already
+covered by an earlier job's claim (`duplicate-request`, with the
+covering job under `repeatOf`), `recut_admission` rows carry the recut
+coverage verdict under `action` — `defer` marks the standing deferral
+(`recut-in-flight`, the in-flight or merged prior under `repeatOf`)
+while `ready`/`skip` resolve the blocker — and `precheck_parked` marks
+the precheck park (the bounded park reason under `reason`, no cover).
+The verdict competes with the other launch-decision rows on row order
+like the skip decline: the newest keep-queued receipt stands until a
+later `claim`/`batch_claim`/`launch` dispatch row or a skip-gate
+decline — the fleet's newer recorded decision about the same queued
+job — supersedes it to `false`, while `finish`/`publish`/`outcome`
+rows belong to attempts already decided and never touch it; an
+unrecognized recut `action` or non-defer event leaves it alone.
+`defer_reason` is the newest defer row's recorded label (`reason`,
+then `defer_reason`, in the bounded identifier-label shape —
+`duplicate-request`, `recut-in-flight`, the precheck park reasons —
+malformed spellings skipped, never recorded raw) and
+`defer_repeat_of` its recorded covering job (`repeatOf`/`repeat_of` in
+the bounded job-id shape; a `precheck_parked` row parks the job itself
+and records none). Both are replaced wholesale by the newest defer
+row and cleared with the verdict; all three stay `null`/`false` when
+no keep-queued receipt stands — distinct from `skipped` (the skip
+gate's decline), `task_outcome` `deferred` (a batch member's requeue
+word) and queue waits that write no receipt.
 `merged` reads the jobs-ledger outcome dialect the sibling fleet readers
 share: a terminal phase across
 `phase`/`state`/`outcome`/`status`/`result`/`conclusion`, or a `merged` /

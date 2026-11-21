@@ -13,7 +13,9 @@
  * size (diff_files/diff_lines), the batch member's recorded
  * task_outcome word, the dispatch claim's recorded lane override
  * (lane_hint/lane_override), the skip gate's recorded launch decline
- * (skipped/skip_reason/skip_code), the fleet's recorded empty tag
+ * (skipped/skip_reason/skip_code), the fleet's recorded keep-queued
+ * verdict (deferred/defer_reason/defer_repeat_of), the fleet's recorded
+ * empty tag
  * (empty_tag, joined from metrics/empty-tags.jsonl) and the advisory
  * pass^k join from eval.lane-scores.v1.
  * RQ-BATCH-* session rows are infrastructure evidence counted in
@@ -148,6 +150,7 @@ function outcomeLine(o: RouterOutcome): string {
     `empty=${text(o.empty)}`, `exit_code=${text(o.exit_code)}`, `failure_class=${text(o.failure_class)}`,
     `empty_class=${text(o.empty_class)}`, `empty_tag=${text(o.empty_tag)}`, `task_outcome=${text(o.task_outcome)}`,
     `skipped=${text(o.skipped)}`, `skip_reason=${text(o.skip_reason)}`, `skip_code=${text(o.skip_code)}`,
+    `deferred=${text(o.deferred)}`, `defer_reason=${text(o.defer_reason)}`, `defer_repeat_of=${text(o.defer_repeat_of)}`,
     `lane_hint_blocked_by=${o.lane_hint_blocked_by === null ? 'unknown' : `[${o.lane_hint_blocked_by.join(',')}]`}`,
   ].join(' ');
 }

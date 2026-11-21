@@ -69,7 +69,7 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
   const counts = `known=${report.known_outcomes} unknown=${report.unknown_outcomes} unclassified=${report.unclassified_outcomes} ` +
     `min_samples=${report.bounds.min_samples} max_shift=${report.bounds.max_shift}`;
   const resolution = report.unknown_unresolved === null ? [] : [
-    `unknown resolution: empty=${report.unknown_empty} nonzero_exit=${report.unknown_nonzero_exit} skipped=${report.unknown_skipped} unresolved=${report.unknown_unresolved}` +
+    `unknown resolution: empty=${report.unknown_empty} nonzero_exit=${report.unknown_nonzero_exit} skipped=${report.unknown_skipped} deferred=${report.unknown_deferred} unresolved=${report.unknown_unresolved}` +
       (report.unknown_failure_classes !== null && report.unknown_failure_classes.length > 0
         ? ` failure_classes=${report.unknown_failure_classes.map(c => `${c.failure_class}:${c.jobs}`).join(',')}`
         : '') +
@@ -81,6 +81,9 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
         : '') +
       (report.unknown_skip_reasons !== null && report.unknown_skip_reasons.length > 0
         ? ` skip_reasons=${report.unknown_skip_reasons.map(c => `${c.reason}:${c.jobs}`).join(',')}`
+        : '') +
+      (report.unknown_defer_reasons !== null && report.unknown_defer_reasons.length > 0
+        ? ` defer_reasons=${report.unknown_defer_reasons.map(c => `${c.reason}:${c.jobs}`).join(',')}`
         : '') +
       (report.unknown_empty_tags !== null && report.unknown_empty_tags.length > 0
         ? ` empty_tags=${report.unknown_empty_tags.map(c => `${c.tag}:${c.jobs}`).join(',')}`

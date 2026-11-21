@@ -688,7 +688,7 @@ describe('unknown-outcome resolution', () => {
       ],
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('unknown resolution: empty=3 nonzero_exit=5 skipped=0 unresolved=4');
+    expect(out).toContain('unknown resolution: empty=3 nonzero_exit=5 skipped=0 deferred=0 unresolved=4');
     expect(out).toContain('failure_classes=quota:3,authentication:1');
   });
 
@@ -834,6 +834,7 @@ describe('unknown-outcome resolution', () => {
       unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null,
       unknown_empty_classes: null, unknown_task_outcomes: null,
       unknown_skipped: null, unknown_skip_reasons: null, unknown_empty_tags: null,
+      unknown_deferred: null, unknown_defer_reasons: null,
       unknown_unresolved: null,
     });
   });
@@ -936,7 +937,7 @@ describe('unknown-outcome resolution', () => {
       unknown_unresolved: 4,
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('skipped=3 unresolved=4');
+    expect(out).toContain('skipped=3 deferred=0 unresolved=4');
     expect(out).toContain('skip_reasons=prompt_empty_same_base_24h:2,code:13:1');
   });
 
@@ -973,6 +974,59 @@ describe('unknown-outcome resolution', () => {
     const { out } = await run(['--runs-dir', runs]);
     expect(out).toContain('unresolved=3');
     expect(out).toContain('failure_classes=authentication:1,launch_timeout:1,provider_unavailable:1');
+  });
+
+  it('counts standing keep-queued verdicts inside the unknown cohort and exempts them from unresolved', async () => {
+    // dispatchd's launch loop writes dispatch_deferred (duplicate-request),
+    // recut_admission defer/ready/skip and precheck_parked receipts when it
+    // keeps a ready job queued; a later dispatch, decline or resolved recut
+    // verdict supersedes the deferral.
+    const deferRow = (job: string, extra: Record<string, unknown>): object =>
+      ({ job, lane: 'alpha', work_class: 'code', event: 'dispatch_deferred', ...extra });
+    writeLedger([
+      ...merged(20),
+      // Three standing deferrals across the three receipt families.
+      deferRow('synthetic-def-dup-1', { reason: 'duplicate-request', repeatOf: 'RQ-OWNER-1' }),
+      deferRow('synthetic-def-dup-2', { reason: 'duplicate-request', repeatOf: 'RQ-OWNER-2' }),
+      { job: 'synthetic-def-recut', event: 'recut_admission', lane: 'alpha', work_class: 'code',
+        reason: 'recut-in-flight', action: 'defer', repeatOf: 'RQ-RECUT-7' },
+      { job: 'synthetic-def-park', event: 'precheck_parked', lane: 'alpha', work_class: 'code',
+        code: 13, reason: 'files_and_tests_exist', retry_at: 1762000000, attempt: 1 },
+      // Deferred then dispatched: the claim supersedes, leaving an ordinary
+      // in-flight job in the remainder.
+      deferRow('synthetic-def-dispatched', { reason: 'duplicate-request', repeatOf: 'RQ-OWNER-9' }),
+      { job: 'synthetic-def-dispatched', event: 'claim', lane: 'alpha', work_class: 'code' },
+      // Deferred then declined: the skip gate's newer decision supersedes.
+      { job: 'synthetic-def-declined', event: 'precheck_parked', lane: 'alpha', work_class: 'code',
+        code: 13, reason: 'symbols_defined' },
+      { job: 'synthetic-def-declined', event: 'skipped_empty', lane: 'alpha', work_class: 'code',
+        reason: 'prompt_empty_same_base_24h' },
+      // A recut 'ready' verdict resolves the blocker without a dispatch.
+      { job: 'synthetic-def-ready', event: 'recut_admission', lane: 'alpha', work_class: 'code',
+        reason: 'recut-in-flight', action: 'defer', repeatOf: 'RQ-RECUT-8' },
+      { job: 'synthetic-def-ready', event: 'recut_admission', lane: 'alpha', work_class: 'code',
+        reason: 'recut-no-current-coverage', action: 'ready' },
+      // A plain in-flight job joins the same remainder.
+      event('synthetic-def-open', 'alpha', 'code', 'VERIFIED'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 8, unclassified_outcomes: 0,
+      unknown_deferred: 4,
+      unknown_defer_reasons: [
+        { reason: 'duplicate-request', jobs: 2 },
+        { reason: 'files_and_tests_exist', jobs: 1 },
+        { reason: 'recut-in-flight', jobs: 1 },
+      ],
+      // The superseded, resolved and open jobs carry no recorded launch
+      // decision and stay unresolved; the declined job counts as skipped.
+      unknown_skipped: 1,
+      unknown_unresolved: 3,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('deferred=4 unresolved=3');
+    expect(out).toContain('defer_reasons=duplicate-request:2,files_and_tests_exist:1,recut-in-flight:1');
   });
 });
 

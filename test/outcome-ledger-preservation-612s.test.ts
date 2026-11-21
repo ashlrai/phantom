@@ -218,7 +218,8 @@ describe('router outcome ledger (612S preservation)', () => {
       ttm_s: null, queue_wait_s: null, ci_wall_s: null, publish_wait_s: null, empty: null, diff_files: null, diff_lines: null,
       exit_code: null, failure_class: null, empty_class: null, empty_tag: null,
       task_outcome: null, lane_hint_blocked_by: null,
-      skipped: null, skip_reason: null, skip_code: null, passk: null,
+      skipped: null, skip_reason: null, skip_code: null,
+      deferred: null, defer_reason: null, defer_repeat_of: null, passk: null,
     }]);
   });
 
@@ -784,6 +785,68 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(byId.get('K10')).toMatchObject({ skipped: null, skip_reason: null, skip_code: null });
     expect(byId.get('K11')).toMatchObject({ skipped: true, skip_reason: null, skip_code: null });
     expect(byId.get('K12')).toMatchObject({ skipped: false, skip_reason: null, skip_code: null });
+  });
+
+  it('folds the keep-queued verdicts, newest dispatch or decline supersedes', () => {
+    const fold = foldRouterOutcomes([
+      // D1: duplicate-request deferral — reason and covering job join.
+      '{"job":"D1","event":"dispatch_deferred","repo":"phantom","reason":"duplicate-request","repeatOf":"RQ-OWNER-1"}',
+      // D2: recut admission defer — the in-flight prior joins as the cover.
+      '{"job":"D2","event":"recut_admission","repo":"phantom","reason":"recut-in-flight","action":"defer","repeatOf":"RQ-RECUT-9","targetPr":9,"headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}',
+      // D3: precheck park — the bounded park reason joins, no cover exists.
+      '{"job":"D3","event":"precheck_parked","repo":"phantom","lane":"alpha","code":13,"reason":"files_and_tests_exist","retry_at":1762000000,"attempt":2}',
+      // D4: deferred, then dispatched — the claim supersedes to false and
+      // clears the recorded reason/cover wholesale.
+      '{"job":"D4","event":"dispatch_deferred","repo":"phantom","reason":"duplicate-request","repeatOf":"RQ-OWNER-4"}',
+      '{"job":"D4","event":"claim","lane":"alpha"}',
+      // D5: recut defer, then the blocker resolves — 'ready' supersedes to
+      // false even without a dispatch row.
+      '{"job":"D5","event":"recut_admission","repo":"phantom","reason":"recut-in-flight","action":"defer","repeatOf":"RQ-RECUT-5"}',
+      '{"job":"D5","event":"recut_admission","repo":"phantom","reason":"recut-no-current-coverage","action":"ready","repeatOf":null}',
+      // D6: recut defer, then the recut already merged — 'skip' resolves the
+      // verdict the same way (the paired DONE-NOOP outcome row never
+      // touches it either).
+      '{"job":"D6","event":"recut_admission","repo":"phantom","reason":"recut-in-flight","action":"defer","repeatOf":"RQ-RECUT-6"}',
+      '{"job":"D6","event":"recut_admission","repo":"phantom","reason":"recut-already-merged","action":"skip","repeatOf":"RQ-PHX-RECUT6L1"}',
+      '{"job":"D6","event":"outcome","state":"DONE-NOOP","repo":"phantom"}',
+      // D7: deferred, then the skip gate declines the job — the newer
+      // launch decision supersedes the deferral.
+      '{"job":"D7","event":"precheck_parked","repo":"phantom","lane":"alpha","code":13,"reason":"symbols_defined"}',
+      '{"job":"D7","event":"skipped_empty","lane":"alpha","reason":"prompt_empty_same_base_24h"}',
+      // D8: a launch row supersedes like claim does.
+      '{"job":"D8","event":"dispatch_deferred","repo":"phantom","reason":"duplicate-request","repeatOf":"RQ-OWNER-8"}',
+      '{"job":"D8","event":"launch","lane":"alpha"}',
+      // D9: unbounded reason text and a malformed cover still mint the
+      // verdict — the labels join null, never recorded raw — and an
+      // unrecognized recut action leaves the standing verdict alone.
+      '{"job":"D9","event":"dispatch_deferred","repo":"phantom","reason":"not a bounded label!","repeatOf":"bad cover!"}',
+      '{"job":"D9","event":"recut_admission","repo":"phantom","reason":"recut-in-flight","action":"maybe"}',
+      // D10: finish/publish/outcome rows belong to attempts already
+      // decided and never touch the standing verdict.
+      '{"job":"D10","event":"dispatch_deferred","repo":"phantom","reason":"duplicate-request","repeatOf":"RQ-OWNER-10"}',
+      '{"job":"D10","event":"finish","lane":"alpha","empty":true}',
+      // D11: a defer after a supersede stands again — newest wins.
+      '{"job":"D11","event":"precheck_parked","repo":"phantom","lane":"alpha","code":13,"reason":"unproven_completion"}',
+      '{"job":"D11","event":"claim","lane":"alpha"}',
+      '{"job":"D11","event":"recut_admission","repo":"phantom","reason":"recut-in-flight","action":"defer","repeatOf":"RQ-RECUT-11"}',
+      // D12: non-defer events carrying lookalike fields never mint one.
+      '{"job":"D12","event":"launch","lane":"alpha","defer_reason":"duplicate-request","repeatOf":"RQ-OWNER-12"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('D1')).toMatchObject({ deferred: true, defer_reason: 'duplicate-request', defer_repeat_of: 'RQ-OWNER-1' });
+    expect(byId.get('D2')).toMatchObject({ deferred: true, defer_reason: 'recut-in-flight', defer_repeat_of: 'RQ-RECUT-9' });
+    expect(byId.get('D3')).toMatchObject({ deferred: true, defer_reason: 'files_and_tests_exist', defer_repeat_of: null });
+    expect(byId.get('D4')).toMatchObject({ deferred: false, defer_reason: null, defer_repeat_of: null });
+    expect(byId.get('D5')).toMatchObject({ deferred: false, defer_reason: null, defer_repeat_of: null });
+    expect(byId.get('D6')).toMatchObject({ deferred: false, defer_reason: null, defer_repeat_of: null });
+    expect(byId.get('D7')).toMatchObject({ deferred: false, defer_reason: null, defer_repeat_of: null, skipped: true, skip_reason: 'prompt_empty_same_base_24h' });
+    expect(byId.get('D8')).toMatchObject({ deferred: false, defer_reason: null, defer_repeat_of: null });
+    // Malformed labels and covers join null while the verdict stands; the
+    // unrecognized recut action leaves it untouched.
+    expect(byId.get('D9')).toMatchObject({ deferred: true, defer_reason: null, defer_repeat_of: null });
+    expect(byId.get('D10')).toMatchObject({ deferred: true, defer_reason: 'duplicate-request', defer_repeat_of: 'RQ-OWNER-10', empty: true });
+    expect(byId.get('D11')).toMatchObject({ deferred: true, defer_reason: 'recut-in-flight', defer_repeat_of: 'RQ-RECUT-11' });
+    expect(byId.get('D12')).toMatchObject({ deferred: null, defer_reason: null, defer_repeat_of: null });
   });
 
   it('never lets a session row claim a PR URL or resolve an outcome', () => {
