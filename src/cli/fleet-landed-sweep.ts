@@ -32,6 +32,8 @@ export interface FleetLandedSweepDeps {
 interface SweepResult {
   v: 1; inspected: number; landed: number; planned: number;
   closed: number; skipped: number; failed: number; error?: string;
+  /** Plain reason the sweep did nothing because its input was not there (exit 0). */
+  skippedReason?: string;
 }
 
 const num = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -67,6 +69,7 @@ export async function cmdFleetLandedSweep(args: string[], deps: FleetLandedSweep
   const finish = (code: number, message?: string): number => {
     if (message !== undefined) result.error = message;
     if (json) output(JSON.stringify(result));
+    else if (result.skippedReason !== undefined) output(`landed-sweep: skipped, ${result.skippedReason}`);
     else {
       output(`landed-sweep: inspected=${result.inspected} landed=${result.landed} planned=${result.planned} ` +
         `closed=${result.closed} skipped=${result.skipped} failed=${result.failed}${message ? ` error=${message}` : ''}`);
@@ -75,14 +78,22 @@ export async function cmdFleetLandedSweep(args: string[], deps: FleetLandedSweep
   };
 
   let reportText = '';
+  let inputGap: string | undefined;
   const inspectCode = await cmdFleetDirtyLanded(['--json'], {
     ...(deps.gh === undefined ? {} : { gh: deps.gh }),
     ...(deps.remote === undefined ? {} : { remote: deps.remote }),
     ...(deps.now === undefined ? {} : { now: () => new Date(deps.now!()) }),
     output: text => { reportText = text; },
+    onFailure: (kind, message) => { if (kind === 'unavailable') inputGap = message; },
   });
+  // The report is built here from `gh pr list`. When gh cannot answer (not installed, signed out,
+  // offline) there is nothing to sweep: say so and let the tick go on. Bad data still fails.
+  if (inputGap !== undefined) {
+    result.skippedReason = `no landed report yet: it is built from gh pr list, which could not be read (${inputGap})`;
+    return finish(0);
+  }
   const report = inspectCode === 0 ? parseJson(reportText) : null;
-  if (report === null) return finish(1, 'dirty-landed report unreadable');
+  if (report === null) return finish(1, 'dirty-landed report unreadable: gh pr list output was not a valid report');
   result.inspected = Array.isArray(report['prs']) ? report['prs'].length : 0;
   const counts = report['counts'];
   result.landed = typeof counts === 'object' && counts !== null ? num((counts as Record<string, unknown>)['landed']) : 0;
