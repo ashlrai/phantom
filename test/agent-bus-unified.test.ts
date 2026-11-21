@@ -592,15 +592,19 @@ describe('DM, channel, handoff and priority wake on the one bus store', () => {
     expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'low', id: 'low' }, options)).toMatchObject({ wake: 'not-requested' });
     expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'page', id: 'p0', priority: 'P0', wake: false }, options)).toMatchObject({ wake: 'queued' });
     expect(await postChannelMessage({ from: 'atlas', channel: 'ops', text: 'all hands', id: 'ops-1', wake: true }, options)).toMatchObject({ wake: 'queued' });
-    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ wakes: [{ id: 'p0' }, { id: 'ops-1' }] });
+    // matched counts every hint the bounded queue tail accepted for the agent,
+    // before the returned slice; truncated stays false while nothing is cut.
+    expect(readAgentWakes('nova', undefined, options))
+      .toMatchObject({ matched: 2, truncated: false, wakes: [{ id: 'p0' }, { id: 'ops-1' }] });
     // The channel sender is not woken by its own post; non-members are not woken.
-    expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ wakes: [] });
-    expect(readAgentWakes('orion', undefined, options)).toMatchObject({ wakes: [] });
+    expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ matched: 0, truncated: false, wakes: [] });
+    expect(readAgentWakes('orion', undefined, options)).toMatchObject({ matched: 0, truncated: false, wakes: [] });
 
     // Same id resent: the store reports duplicate and the wake queue dedupes.
     expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'page', id: 'p0', priority: 'P0' }, options))
       .toMatchObject({ status: 'duplicate', wake: 'queued' });
-    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ wakes: [{ id: 'p0' }, { id: 'ops-1' }] });
+    expect(readAgentWakes('nova', undefined, options))
+      .toMatchObject({ matched: 2, truncated: false, wakes: [{ id: 'p0' }, { id: 'ops-1' }] });
   });
 
   it('orders an inbox page by priority, pages by cursor and still sees legacy alias traffic', async () => {

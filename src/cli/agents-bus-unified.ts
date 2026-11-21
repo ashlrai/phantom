@@ -235,7 +235,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           `bytes=${result.store.retainedBytes ?? unknown}/${result.store.maxBytes} ` +
           `live=${result.store.liveCount ?? unknown} expired=${result.store.expiredCount ?? unknown}`,
         `registry ${result.registry.source} identities=${result.registry.identities ?? unknown} channels=${result.registry.channels ?? unknown}`,
-        `wakes ${result.wakes.state} hints=${result.wakes.hints ?? unknown}`,
+        `wakes ${result.wakes.state} hints=${result.wakes.hints ?? unknown} truncated=${result.wakes.truncated ?? unknown}`,
         `coordination ${result.coordination.source} liveClaims=${result.coordination.liveClaims ?? unknown} statuses=${result.coordination.statuses ?? unknown}`,
         `workClaims ${result.workClaims.source} claims=${result.workClaims.claims ?? unknown}`,
         `feed ${result.feed.status}${result.feed.reason === undefined ? '' : `:${result.feed.reason}`} jobs=${result.feed.jobs ?? unknown}`,
@@ -397,7 +397,10 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
       const page = readAgentWakes(agent, integer(one('--since'), '--since'), options);
       if (page.status !== 'ok') return finish(page, '');
-      out(json ? JSON.stringify(page) : page.wakes.map(w => `${w.at} ${w.id} ${w.from} -> ${w.to}`).join('\n') || 'No wakes.');
+      out(json ? JSON.stringify(page) : [
+        ...(page.truncated ? [`${page.matched} wake hint(s) matched; the bounded queue tail is truncated — showing the newest ${page.wakes.length}`] : []),
+        ...page.wakes.map(w => `${w.at} ${w.id} ${w.from} -> ${w.to}`),
+      ].join('\n') || 'No wakes.');
       return 0;
     }
     if (verb === 'work' && sub === 'feed') {
