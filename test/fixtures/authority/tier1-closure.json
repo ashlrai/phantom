@@ -634,6 +634,7 @@
     "src/core/fleet/inbox-channel-line.ts",
     "src/core/fleet/inbox-channel-slug.ts",
     "src/core/fleet/job-state.ts",
+    "src/core/fleet/jobs-ledger-dialect.ts",
     "src/core/fleet/judge-decision-metadata.ts",
     "src/core/fleet/judge-trace.ts",
     "src/core/fleet/lane-badge.ts",
