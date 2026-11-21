@@ -64,6 +64,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'capability-audit': () => import('./fleet-capability-audit.js'),
   'changelog': () => import('./fleet-changelog.js'),
   'channel-health': () => import('./fleet-channel-health.js'),
+  'connect': () => import('./fleet-connect.js'),
   'checks-red': () => import('./fleet-checks-red.js'),
   'chief-of-staff': () => import('./fleet-chief-of-staff.js'),
   'ci-annotations': () => import('./fleet-ci-annotations.js'),

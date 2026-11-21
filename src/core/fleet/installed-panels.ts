@@ -1,3 +1,4 @@
+export const INVALID_MANIFEST_AGENTS = 'None (invalid manifest)';
 /**
  * installed-panels.ts: what plugins and skills fleet agents have, for the
  * desktop Plugins and Skills panes and `phm plugins|skills list --all --json`.
