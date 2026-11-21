@@ -647,6 +647,7 @@
 /test/leader-reliability-314.test.ts @masonwyatt23
 /test/leader-run-310b.test.ts @masonwyatt23
 /test/leader-seat-310b.test.ts @masonwyatt23
+/test/leader-seat-swap.test.ts @masonwyatt23
 /test/leader-seat-transports-310b.test.ts @masonwyatt23
 /test/leader-seat.test.ts @masonwyatt23
 /test/leader-store-cas-310.test.ts @masonwyatt23

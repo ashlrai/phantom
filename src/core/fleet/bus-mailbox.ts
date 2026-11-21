@@ -93,6 +93,28 @@ export interface BusMailboxPendingMessage {
   readonly acceptedAt: number;
 }
 
+/** Pending (unacked, unexpired) messages in the mailbox's own drain order —
+ * the shared filter `pendingFor` narrows by label and `inspect` counts
+ * store-wide. `at` is the caller's clock reading; callers validate it. */
+function pendingMailboxMessages(records: readonly RecordEntry[], at: number): BusMailboxPendingMessage[] {
+  const acks = new Map<string, Set<string>>();
+  for (const record of records) {
+    if (record.kind !== 'ack') continue;
+    let ids = acks.get(record.to);
+    if (ids === undefined) acks.set(record.to, ids = new Set());
+    ids.add(record.id);
+  }
+  const pending: BusMailboxPendingMessage[] = [];
+  for (const record of records) {
+    if (record.kind !== 'message' || acks.get(record.envelope.to)?.has(record.envelope.id) ||
+      at < record.acceptedAt || at - record.acceptedAt >= record.envelope.ttl) continue;
+    pending.push({ envelope: record.envelope, acceptedAt: record.acceptedAt });
+  }
+  pending.sort((a, b) => a.envelope.priority.localeCompare(b.envelope.priority) ||
+    a.acceptedAt - b.acceptedAt || a.envelope.id.localeCompare(b.envelope.id));
+  return pending;
+}
+
 export interface BusMailbox {
   send(envelope: BusEnvelope): { id: string; replayed: boolean };
   inbox(to: string, limit?: number): { messages: BusEnvelope[]; hasMore: boolean };
@@ -103,6 +125,14 @@ export interface BusMailbox {
    * its own `to` label — the `--to` `inbox`/`ack` take for that message.
    */
   pendingFor(labels: readonly string[], limit?: number): { messages: BusMailboxPendingMessage[]; matched: number };
+  /**
+   * Read-only health probe for status surfaces: `missing` is a verified-empty
+   * store (`pending` 0 is proven, not fabricated), `available` carries the
+   * count of pending messages across every recipient label, and `unavailable`
+   * means the store could not be read — `pending` stays null, never a guess.
+   * Reports totals only, never labels; writes nothing.
+   */
+  inspect(): { source: 'missing' | 'available' | 'unavailable'; pending: number | null };
   ack(id: string, to: string): { id: string; acknowledged: true; replayed: boolean };
 }
 
@@ -123,7 +153,9 @@ export function createBusMailbox(
     defaultMaxBytes: 64 * 1024 * 1024, hardMaxBytes: 64 * 1024 * 1024,
     codecForRead: () => codec, codecForWrite: () => codec,
   };
-  const read = (): RecordEntry[] => {
+  // `readDetailed` preserves the missing/healthy distinction `inspect`
+  // reports; `read` keeps the records-only contract every other caller uses.
+  const readDetailed = (): { state: 'missing' | 'ok'; records: RecordEntry[] } => {
     // existsSync (used by the generic reader) treats dangling links and some
     // I/O failures as absence. Check them explicitly before accepting empty.
     for (const path of [home, config.rootPath]) {
@@ -131,15 +163,16 @@ export function createBusMailbox(
         const stat = lstatSync(path);
         if (!stat.isDirectory() || stat.isSymbolicLink()) throw new BusMailboxError('storage');
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { state: 'missing', records: [] };
         throw new BusMailboxError('storage');
       }
     }
     const result = readImmutablePrivateRecords(config, { requireComplete: true });
-    if (result.sourceState === 'missing') return [];
+    if (result.sourceState === 'missing') return { state: 'missing', records: [] };
     if (!result.complete || result.sourceState === 'degraded') throw new BusMailboxError('storage');
-    return result.records;
+    return { state: 'ok', records: result.records };
   };
+  const read = (): RecordEntry[] => readDetailed().records;
   const write = (record: RecordEntry): boolean => {
     try { ensurePrivateDirectory(home); } catch { throw new BusMailboxError('storage'); }
     let capacity = false;
@@ -213,26 +246,21 @@ export function createBusMailbox(
     pendingFor(labels, limit = 1000) {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 5000) throw new BusMailboxError('invalid-envelope');
       const wanted = new Set(labels.filter((label): label is string => typeof label === 'string' && label.length > 0));
-      const records = read();
-      const acks = new Map<string, Set<string>>();
-      for (const record of records) {
-        if (record.kind !== 'ack') continue;
-        let ids = acks.get(record.to);
-        if (ids === undefined) acks.set(record.to, ids = new Set());
-        ids.add(record.id);
-      }
       const at = now();
       if (!Number.isSafeInteger(at) || at < 0) throw new BusMailboxError('storage');
-      const pending: BusMailboxPendingMessage[] = [];
-      for (const record of records) {
-        if (record.kind !== 'message' || !wanted.has(record.envelope.to) ||
-          acks.get(record.envelope.to)?.has(record.envelope.id) ||
-          at < record.acceptedAt || at - record.acceptedAt >= record.envelope.ttl) continue;
-        pending.push({ envelope: record.envelope, acceptedAt: record.acceptedAt });
-      }
-      pending.sort((a, b) => a.envelope.priority.localeCompare(b.envelope.priority) ||
-        a.acceptedAt - b.acceptedAt || a.envelope.id.localeCompare(b.envelope.id));
+      const pending = pendingMailboxMessages(read(), at).filter(message => wanted.has(message.envelope.to));
       return { messages: pending.slice(0, limit), matched: pending.length };
+    },
+    inspect() {
+      try {
+        const detailed = readDetailed();
+        if (detailed.state === 'missing') return { source: 'missing' as const, pending: 0 };
+        const at = now();
+        if (!Number.isSafeInteger(at) || at < 0) return { source: 'unavailable' as const, pending: null };
+        return { source: 'available' as const, pending: pendingMailboxMessages(detailed.records, at).length };
+      } catch {
+        return { source: 'unavailable' as const, pending: null };
+      }
     },
     ack(id, to) {
       validateBusAddress(id); validateBusAddress(to);

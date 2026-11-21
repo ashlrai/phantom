@@ -275,6 +275,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         `coordination ${result.coordination.source} liveClaims=${result.coordination.liveClaims ?? unknown} statuses=${result.coordination.statuses ?? unknown}`,
         `workClaims ${result.workClaims.source} claims=${result.workClaims.claims ?? unknown}`,
         `feed ${result.feed.status}${result.feed.reason === undefined ? '' : `:${result.feed.reason}`} jobs=${result.feed.jobs ?? unknown}`,
+        `mailbox ${result.mailbox.source} pending=${result.mailbox.pending ?? unknown}`,
         `as-of=${result.asOf}`,
       ].join('\n'));
       return 0;
