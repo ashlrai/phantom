@@ -54,6 +54,24 @@ const DOCS = [
   'CONSTITUTION.md',
   'docs/STANDING-AUTHORITY.md',
   'docs/AGENTS-MD-AUDIT.md',
+  // Pages CONTRIBUTING.md, the contributor guide, AGENT-OPERATIONS.md and
+  // AGENT-TOOLCHAIN.md link a contributor to next. Linked pages still missing:
+  // LEADER, AUTHORITY, RELEASING, FLEET-COORDINATION, FLEET-MCP-ONRAMP,
+  // CLI-REFERENCE and fleet/pr-hygiene name verbs that dispatch but that
+  // completions does not list yet; RESIDENT-RUNTIME names deleted commands on
+  // purpose; desktop/README.md documents its own package.json scripts.
+  'docs/ARCHITECTURE.md',
+  'docs/BUN-SHARDS.md',
+  'docs/CLOUD.md',
+  'docs/DELETION-SWEEP.md',
+  'docs/DEPENDENCY-SECURITY.md',
+  'docs/DEVIN.md',
+  'docs/FOUNDRY-CONFIG.md',
+  'docs/LOCAL-FLEET.md',
+  'docs/OWNER-ASSIST.md',
+  'docs/RELIABILITY.md',
+  'docs/RESOURCE-POOLS.md',
+  'docs/contracts/CONTRACT-SELECTOR.md',
   // Operating guides AGENTS.md and README.md link to. Linked guides that are
   // missing here (QUEUE, FLEET-API, CHANNELS, AGENT-BUS, SESSIONS, VERSE and
   // others) name verbs that dispatch but that completions SUBCOMMANDS does
