@@ -25,7 +25,7 @@ const routes = (work: unknown) => ({ [PATH]: registry, [`${PATH}/check`]: null, 
 
 const model = (id: string) => screen.getByRole('listitem', { name: `${id} model` });
 const line = (id: string) => model(id).querySelector<HTMLElement>('[data-work]')!;
-const bars = (id: string) => [...line(id).querySelectorAll<HTMLElement>('[role="img"] i')].map(bar => bar.style.height);
+const bars = (id: string) => [...line(id).querySelectorAll<HTMLElement>('[data-work-strip] i')].map(bar => bar.style.height);
 
 beforeEach(() => { evictAll(); vi.useFakeTimers({ toFake: ['Date'], now: WORK_NOW }); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -37,7 +37,7 @@ describe('Models board work line', () => {
     expect(await screen.findByText('Last 24 hours: 15 jobs launched, 6 PRs merged, 3 of 13 finished jobs empty, under 3 model names.')).toBeInTheDocument();
     expect(stub.fetchMock.mock.calls.map(call => String(call[0])).filter(url => url.includes(WORK))).toEqual([`${WORK}?hours=24&by=model`]);
     expect(line('opus')).toHaveAttribute('data-work', 'worked');
-    expect(within(model('opus')).getByRole('img', { name: 'opus jobs launched over the last 24 hours, a bar per hour: most in one bar 4' })).toBeInTheDocument();
+    expect(within(model('opus')).getByRole('slider', { name: 'opus jobs launched over the last 24 hours, a bar per hour: most in one bar 4' })).toBeInTheDocument();
     expect(bars('opus')).toHaveLength(24);
     expect([bars('opus')[3], bars('opus')[22], bars('opus')[23], bars('opus')[0]]).toEqual(['50%', '100%', '25%', '0%']);
     expect(line('opus').querySelectorAll('[data-merged]')).toHaveLength(2);
@@ -75,7 +75,7 @@ describe('Models board work line', () => {
     fireEvent.click(within(windows).getByRole('radio', { name: '7 days' }));
     expect(await screen.findByText('Last 7 days: 30 jobs launched, 12 PRs merged, 4 of 28 finished jobs empty, under 1 model name.')).toBeInTheDocument();
     expect(stub.fetchMock.mock.calls.map(call => String(call[0])).filter(url => url.includes(WORK))).toEqual([`${WORK}?hours=24&by=model`, `${WORK}?hours=168&by=model`]);
-    expect(within(model('opus')).getByRole('img', { name: 'opus jobs launched over the last 7 days, a bar per 7 hours: most in one bar 21' })).toBeInTheDocument();
+    expect(within(model('opus')).getByRole('slider', { name: 'opus jobs launched over the last 7 days, a bar per 7 hours: most in one bar 21' })).toBeInTheDocument();
     expect(bars('opus')).toHaveLength(24);
     expect([bars('opus')[0], bars('opus')[22]]).toEqual(['43%', '100%']);
     expect(within(line('opus')).getByText('Last 7 days')).toBeInTheDocument();

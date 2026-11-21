@@ -1,6 +1,6 @@
 /** The Models board's work reading: counts and bars come from the per-model throughput report and nothing else. */
 import { describe, expect, it } from 'vitest';
-import { barHeight, launchedBy, spanWords, workBoard, workColumns, workWords } from './model-work-model.js';
+import { barHeight, columnWhen, columnWords, cursorAt, cursorLine, cursorMove, launchedBy, spanWords, workBoard, workColumns, workWords } from './model-work-model.js';
 import { workCounts, workGroup, workReport } from './model-work.test-support.js';
 
 const IDS = ['opus', 'fresh', 'b-unknown'];
@@ -11,6 +11,52 @@ const groups = [
   workGroup('unknown', { launched: 5, merged: 2, finished: 5, empty: 0 }, { 12: { launched: 5, merged: 2 } }),
 ];
 const read = (report: Parameters<typeof workBoard>[0]['report'], failed = false, hours = 24) => workBoard({ report, failed, hours, ids: IDS });
+
+describe('reading cursor', () => {
+  const columns = workColumns(groups[0]!);
+  const start = (index: number) => columns[index]!.start;
+
+  it('names the stretch a bar covers, and the end\'s day only when it is another one', () => {
+    // 2026-11-18T12:00Z is the end of the fixture's window: the last bar is 11:00 to 12:00 UTC that Wednesday.
+    const hour = columnWhen(columns[23]!, 'UTC');
+    expect(hour).toMatch(/^Wed 11:00.* to 12:00/);
+    expect(hour.match(/Wed/g)).toHaveLength(1);
+    expect(columnWhen({ start: '2026-11-18T20:00:00.000Z', hours: 7 }, 'UTC')).toMatch(/^Wed 8:00.* to Thu 3:00/);
+    expect(columnWhen({ start: 'not a time', hours: 1 })).toBe('time unknown');
+    expect(columnWords({ launched: 1, merged: 2 })).toBe('1 job launched, 2 PRs merged');
+  });
+
+  it('finds the held bar by its start, and holds none for a start the row lacks', () => {
+    expect(cursorAt(columns, start(22))).toBe(22);
+    expect(cursorAt(columns, null)).toBeNull();
+    expect(cursorAt(columns, '2026-01-01T00:00:00.000Z')).toBeNull();
+  });
+
+  it('moves a bar at a time, stops at the ends, starts from the newest bar and leaves other keys alone', () => {
+    expect(cursorMove(columns, start(22), 'ArrowLeft')).toBe(start(21));
+    expect(cursorMove(columns, start(23), 'ArrowRight')).toBe(start(23));
+    expect(cursorMove(columns, start(0), 'ArrowLeft')).toBe(start(0));
+    expect(cursorMove(columns, null, 'ArrowLeft')).toBe(start(22));
+    expect(cursorMove(columns, start(5), 'Home')).toBe(start(0));
+    expect(cursorMove(columns, start(5), 'End')).toBe(start(23));
+    expect(cursorMove(columns, start(5), 'Escape')).toBeNull();
+    expect(cursorMove(columns, null, 'Escape')).toBeUndefined();
+    expect(cursorMove(columns, start(5), 'j')).toBeUndefined();
+    expect(cursorMove([], null, 'ArrowLeft')).toBeUndefined();
+  });
+
+  it('reads the fleet for the held bar from the report\'s own hours, and nothing without a reading', () => {
+    const fleet = workGroup('fleet', {}, { 22: { launched: 9, merged: 4 } }).buckets;
+    const board = read(workReport(groups, { buckets: fleet }));
+    expect(board.fleet).toHaveLength(24);
+    expect(cursorLine(board, start(22), 'UTC')).toBe(`${columnWhen(columns[22]!, 'UTC')}: 9 jobs launched, 4 PRs merged across the fleet.`);
+    expect(cursorLine(board, null)).toBeNull();
+    expect(read(null, true).fleet).toEqual([]);
+    expect(cursorLine(read(null, true), start(22))).toBeNull();
+    // Seven days fold the fleet's hours into the same 24 bars the rows draw.
+    expect(read(workReport([workGroup('opus', { launched: 1 }, { 0: { launched: 1 } }, 168)], { hours: 168 }), false, 168).fleet).toHaveLength(24);
+  });
+});
 
 describe('work words', () => {
   it('says the counts the report holds, and unknown for one it does not', () => {
