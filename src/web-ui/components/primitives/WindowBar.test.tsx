@@ -52,6 +52,28 @@ describe('WindowBar', () => {
     expect(parts(meter)).toEqual([['used', '100%'], ['more', '0%'], ['elapsed', '64.3%']]);
   });
 
+  it('hatches the share held back at the window\'s end, after the shares and before the time mark', () => {
+    const { rerender } = render(<WindowBar label="Claude weekly window" valueText="62% used; 40% kept for you" valueNow={62} used={62} kept={40} elapsed={71.4} />);
+    const meter = screen.getByRole('meter');
+    expect(parts(meter)).toEqual([['used', '62%'], ['kept', '40%'], ['elapsed', '71.4%']]);
+    expect((meter.querySelector('[data-part="kept"]') as HTMLElement).style.left).toBe('60%');
+    // Nothing held back is no band; an edge is too thin for one; no reading has nothing to hold back from.
+    rerender(<WindowBar label="Claude weekly window" valueText="62% used" valueNow={62} used={62} kept={0} />);
+    expect(parts(screen.getByRole('meter'))).toEqual([['used', '62%']]);
+    rerender(<WindowBar size="edge" label="Claude weekly window" valueText="62% used" valueNow={62} used={62} kept={40} />);
+    expect(parts(screen.getByRole('meter'))).toEqual([['used', '62%']]);
+    rerender(<WindowBar label="Claude weekly window" valueText="no reading" valueNow={null} used={null} kept={40} />);
+    expect(screen.getByRole('meter').children).toHaveLength(0);
+  });
+
+  it('keeps a flagged limit a full bar with no number: the ending says spent', () => {
+    render(<WindowBar label="Codex weekly window" valueText="limit reached" valueNow={null} used={100} ending="spent" />);
+    const meter = screen.getByRole('meter');
+    expect(parts(meter)).toEqual([['used', '100%']]);
+    expect(meter).toHaveAttribute('data-ending', 'spent');
+    expect(meter).not.toHaveAttribute('aria-valuenow');
+  });
+
   it('gives a key a swatch per part that says nothing itself', () => {
     const { container } = render(<span><WindowBarSwatch part="unused" />left over</span>);
     const swatch = container.querySelector('i')!;
