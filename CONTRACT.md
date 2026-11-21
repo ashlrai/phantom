@@ -1559,7 +1559,17 @@ times are null, and `unknown` names the reason for each. `quiet` is true after
 `THREADS_MESSAGES_SHOWN` (3) and `THREADS_TEXT_CHARS` (400), `THREAD_STATES`
 and the types `SessionThreadsV1`, `SessionThreadsEntry`,
 `SessionThreadsMessage`, `SessionThreadsServes`, `SessionThreadsWork` and `SessionThreadsParts`,
-and the pure `workOf(activity)`. `parts` is
+and the pure `workOf(activity)`. It also exports the pure
+`pickSessions(nodes, max)`, which returns `{kept, left}`: the sessions a
+bounded read keeps, in the list's order, and a `SessionsLeftOut` count
+(`running`, `ended`, `unknown`) of the rest. A list within `max` is kept
+whole. A longer one gives up finished sessions first (longest silent first),
+then failed ones, then ones whose state is neither running nor ended, and a
+running one only when more than `max` are running; the leader is always kept.
+`threadSessions(list)` returns that count as `left`, the read carries it as
+`counts.unshown` (after `states`; all zero when nothing was left out), and
+`leftOutWords(left)` gives the words the gap sentence uses ("3 running, 2
+ended"). `findSessions` in `session-find.ts` picks its 120 the same way. `parts` is
 `{sessionsRead, bus, activity, replies?, owner?, orders?}`, where `activity`
 maps a job id to its activity read (null when that read failed, no key when it
 was not asked for), `owner` is the Leader inbox, handed to the leader's and

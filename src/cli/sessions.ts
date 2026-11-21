@@ -45,7 +45,8 @@ const USAGE = `Usage:
   phm sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json]
                                       Every session as a short conversation on one screen:
                                       its summary and its newest 3 messages, yours included,
-                                      leader first. Up to 40 sessions. Read only; exit 1
+                                      leader first. Up to 40 sessions, running ones before
+                                      ended ones. Read only; exit 1
                                       when the session list could not be read.
   phm sessions find <words> [--lane <lane>] [--repo <repo>] [--live] [--json]
                                       The sessions whose whole conversation holds every

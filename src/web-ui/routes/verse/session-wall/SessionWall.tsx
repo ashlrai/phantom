@@ -26,6 +26,9 @@
  * Under its facts a card draws what its job has done: the newest recorded
  * step and its age, the diff, the commands seen, its helpers and a link to
  * its pull request (wall-vitals.ts, WallVitals.tsx).
+ * When the list holds more sessions than the read carries, a line under the
+ * headline says which kind is off screen; the read gives up ended sessions
+ * before running ones (wall-unshown.ts, WallUnshown.tsx).
  */
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { sessionAge } from '../../../../core/fleet/live-sessions.js';
@@ -49,6 +52,8 @@ import { findEntries, isScoped, NO_SCOPE, replyLine, scopeChoices, scopeWords, s
   type SessionWallRead, type WallEntry, type WallFailure, type WallScope, type WallSession, type WallState } from './session-wall-model.js';
 import { WallBar } from './WallBar.js';
 import { WallRequests } from './WallRequests.js';
+import { WallUnshown } from './WallUnshown.js';
+import { isUnshownGap, unshownNotice } from './wall-unshown.js';
 import { servedEntries } from './wall-requests-model.js';
 import { isSteerKey, steeredEntries, steerMark, withLanded, type SteerKey } from './wall-steer.js';
 import { useWallSteer } from './WallSteer.js';
@@ -118,12 +123,14 @@ export interface WallViewProps {
   order?: WallOrder;
   /** P, S or M on a card: pause or resume its job, stop it, move it. Without it the keys do nothing. */
   onSteer?: (entry: WallEntry, key: SteerKey) => void;
+  /** Narrows the read to running sessions, offered when the read left sessions out without saying which kind. */
+  onRunningOnly?: () => void;
 }
 
 /** The button that keeps only the sessions with a pause in force or a request waiting. */
 const STEERED = 'steered';
 
-export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_SCOPE, readingId = null, order = 'fleet', onSteer }: WallViewProps) {
+export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_SCOPE, readingId = null, order = 'fleet', onSteer, onRunningOnly }: WallViewProps) {
   const [only, setOnly] = useState<WallState | typeof STEERED | null>(null);
   const list = useRef<HTMLUListElement>(null);
   const [asked, setAsked] = useState<string | null>(null);
@@ -140,6 +147,8 @@ export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_S
   const shown = arrangeEntries(filter === null ? found : filter === STEERED ? steered : found.filter(entry => entry.session.state === filter), order, read.entries);
   const heads = groupHeads(shown, order, read.entries);
   const next = nextUnseen(shown, readingId);
+  // The notice under the headline says which sessions are off screen; the read's own sentence for it is not said twice.
+  const gaps = unshownNotice(read, scope) === null ? read.gaps : read.gaps.filter(gap => !isUnshownGap(gap));
   useEffect(() => { if (focusId !== null) cardsIn(list.current).find(card => card.dataset.card === focusId)?.focus(); }, [focusId]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLUListElement>) => {
@@ -164,6 +173,7 @@ export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_S
   };
   return <section className={styles.root} aria-label="Every session as a conversation">
     <p className={styles.headline}>{wallHeadline(read)}</p>
+    <WallUnshown read={read} scope={scope} onRunningOnly={onRunningOnly} />
     {next !== null && <button type="button" className={styles.next} data-next-new={next} onClick={() => onOpen(next)} title="Open the first conversation with new messages (N)">
       {newLabel(unseenSessions(shown, readingId))} <kbd>N</kbd>
     </button>}
@@ -195,7 +205,7 @@ export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_S
           </Fragment>;
         })}
       </ul>}
-    {read.gaps.length > 0 && <ul className={styles.gaps} aria-label="Not shown">{read.gaps.map(gap => <li key={gap}>{gap}</li>)}</ul>}
+    {gaps.length > 0 && <ul className={styles.gaps} aria-label="Not shown">{gaps.map(gap => <li key={gap}>{gap}</li>)}</ul>}
     <p className={styles.notice}>Updated {clockTime(read.generatedAt) || 'at an unknown time'}. Enter opens a conversation, R opens it ready to reply, N opens the next with new messages, / finds, L writes to the Leader, O changes the order{onSteer ? ', P pauses or resumes the job of the card the keyboard is on, S stops it, M moves it to another lane' : ''}. Summaries are assembled from the records, not written by a model. Same read for agents: <code>phm sessions threads --json</code></p>
   </section>;
 }
@@ -334,7 +344,8 @@ export function SessionWallPane({ visible, host }: Pick<PaneProps, 'visible' | '
       {wall ? <>
         {failure && <p className={styles.stale} role="status">Refresh failed; showing the last read, which may be stale.</p>}
         {steer.line}
-        <WallView read={wall} onOpen={(id, toReply = false) => setOpen({ id, toReply })} focusId={focusId} find={find} scope={scope} readingId={readingId} order={order} onSteer={steer.steer} />
+        <WallView read={wall} onOpen={(id, toReply = false) => setOpen({ id, toReply })} focusId={focusId} find={find} scope={scope} readingId={readingId} order={order} onSteer={steer.steer}
+          onRunningOnly={() => setScope(now => ({ ...now, live: true }))} />
       </> : <div className={styles.root}>
         {failure ? <Fault failure={failure} onRetry={refetch}><button type="button" className={styles.link} onClick={() => host.openPane('fleet-sessions')}>Open Sessions</button></Fault>
           : read.data === null ? <p className={styles.fault} role="alert">The server answered with something that is not a list of session conversations.</p>
