@@ -81,6 +81,10 @@ To install the CLI while developing:
 | `node scripts/check-test-names.mjs` | Flag duplicate test names across `test/` that collide in name-keyed reports |
 | `node scripts/generate-cli-docs.mjs` | Regenerate `docs/cli.md` from `phm --help` output; `--check` compares without writing |
 | `npm run typecheck` | Strict backend and web type checks, without emitting files |
+| `npm run typecheck:fast` | The same two projects through `tsgo`, the native compiler; what `npm run gate` phase A runs |
+| `npm run gate` | Fast local gate: build, static checks, the tests related to your diff and the smoke set (`-- --base <ref>` picks the diff base; `npm run gate:full` runs the complete suites instead) |
+| `npm run check:quarantine` | Verify that every added `.skip`/`.todo`/`.only` has a live row in `queue/quarantine.tsv` |
+| `npm run install:worktree` | Shared pnpm install for trusted local worktrees (see [Shared installs](#shared-installs-for-trusted-local-worktrees)) |
 | `npm run build` | Check candidate version sync, compile the backend, generate the authority surface, copy assets, build the built-in preparation evaluator and the web console, then generate dependency inventory and Git build identity in `dist/` |
 
 For explicit Bun-compatible test inventories, see the standalone
@@ -276,7 +280,7 @@ imports and never introduce Node-only runtime imports into browser modules.
 `src/core/` and `src/cli/` primarily use Node builtins. The declared runtime
 dependencies are `@modelcontextprotocol/sdk` for MCP, `marked` for external-skill
 Markdown analysis, `tar` for managed-runtime archives, `smol-toml` and `yaml` for
-TOML/YAML parsing, and `@simplewebauthn/server`, `@simplewebauthn/browser`,
+TOML/YAML parsing, `zod` for runtime schema validation, and `@simplewebauthn/server`, `@simplewebauthn/browser`,
 `jose`, `reflect-metadata` and `web-push` for the optional phone gateway. They
 are listed in `bundleDependencies`, bundled in the package and verified by the release dependency inventory. **Do not add a
 runtime dependency casually:** reuse an existing utility first, and change the
@@ -306,7 +310,7 @@ Author attribution (Mason Wyatt / `masonwyatt23` / ashlr.ai) is intentional and 
 
 Phantom is built **contract-first**: interfaces and types are authored before code, so multiple agents can build disjoint modules in parallel without colliding.
 
-1. **Use the owning subsystem's canonical types.** `src/core/types.ts` holds shared Hub types. Universe, Resources and local-runtime also own focused type modules; import their existing contracts instead of duplicating them or growing a global catch-all. Browser consumers should use type-only imports for server DTOs.
+1. **Use the owning subsystem's canonical types.** `src/core/types.ts` is the public entry point for shared Hub types: a barrel of `export type *` lines over the domain modules in `src/core/types/` (`config.ts`, `engines.ts`, …), where each declaration lives. Edit the domain module, not the barrel. Universe, Resources and local-runtime also own focused type modules; import their existing contracts instead of duplicating them or growing a global catch-all. Browser consumers should use type-only imports for server DTOs.
 
 2. **`CONTRACT.md` plus per-milestone files** (`docs/contracts/CONTRACT-M<N>.md`) are the binding interface spec. Each pins the exported function signatures and type shapes a milestone's modules must satisfy. Do not change an exported signature without updating the corresponding contract file in the same change.
 
@@ -341,7 +345,7 @@ If you are adding a new safety invariant, the pattern is: add the invariant to `
 
 Backends are registered in `src/core/run/engine-registry.ts`. To add a new one:
 
-1. Add an entry to `BUILTIN_ENGINE_REGISTRY` with `id`, `kind`, `tier` (`local | mid | frontier`) and either `bin`/`argv` (a `cli-agent`) or `api` (an `api-model`); see `EngineSpec` in `src/core/types.ts`.
+1. Add an entry to `BUILTIN_ENGINE_REGISTRY` with `id`, `kind`, `tier` (`local | mid | frontier`) and either `bin`/`argv` (a `cli-agent`) or `api` (an `api-model`); see `EngineSpec` in `src/core/types/engines.ts`.
 2. If it is API-based (OpenAI-compatible), confirm it works through the existing `provider-client.ts` path.
 3. Add a `cfg.foundry.engines` example to `docs/examples/foundry.config.json`.
 4. Add a test that asserts the new entry resolves to byte-identical argv and that its tier is correct.
@@ -354,7 +358,7 @@ Portfolio scanners live in `src/core/portfolio/scanners.ts`. Each scanner is an 
 
 ## Adding a new comms transport
 
-Comms transports live in `src/core/integrations/` (`telegram.ts`, `imessage.ts`). There is no shared transport interface: add the transport module, extend the `comms.channel` union in `src/core/types.ts`, branch on it in `runCommsCycle` in `src/core/comms/dispatch.ts`, and add a hermetic test with a mock transport.
+Comms transports live in `src/core/integrations/` (`telegram.ts`, `imessage.ts`). There is no shared transport interface: add the transport module, extend the `comms.channel` union in `src/core/types/config.ts`, branch on it in `runCommsCycle` in `src/core/comms/dispatch.ts`, and add a hermetic test with a mock transport.
 
 ---
 
@@ -376,7 +380,8 @@ src/
 ├── api/           # Public SDK entrypoints (`@ashlr/phantom`, `/core`, `/types`, `/plugin`)
 ├── cli/           # Thin argv dispatchers — parse, delegate to core, format output
 ├── core/
-│   ├── types.ts   # Shared Hub types; subsystems also own focused contracts
+│   ├── types.ts   # Barrel re-exporting the shared Hub types
+│   ├── types/     # Shared Hub types by domain (config, engines, …); subsystems also own focused contracts
 │   ├── universe/  # Experiments, evaluation, campaigns, archive, graph, delivery
 │   ├── resources/ # Worker bindings, quota admission, ledger, foreground queue
 │   ├── local-runtime/ # Pinned package install, verification and rollback

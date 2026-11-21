@@ -145,7 +145,7 @@ separate [execution boundaries](ARCHITECTURE.md#current-runtime-map).
 - **Sandboxed by construction.** The legacy autonomous loop routes external engines through `runEngineSandboxed`: a throwaway git worktree with push credentials severed and scrubbed diff capture.
 - **OS-level confinement.** Optionally wraps each run with `sandbox-exec` (macOS) or `bwrap`/`firejail` (Linux) — read-jailed to the worktree, network egress blocked.
 - **Kill-switch.** `touch ~/.ashlr/KILL` gates legacy enrolled-repo mutations. Explicit Universe campaigns and Resource Pool sessions have their own cancellation controls; this is not a universal process kill command.
-- **Small, explicit dependency boundary.** Core and CLI primarily use Node builtins; the declared runtime dependencies in `package.json` include MCP transport (`@modelcontextprotocol/sdk`), Markdown (`marked`), archives (`tar`), YAML/TOML parsing (`yaml`, `smol-toml`), and the optional remote phone gateway (`jose`, `@simplewebauthn/*`, `web-push`). Backends are CLIs or APIs you explicitly configure.
+- **Small, explicit dependency boundary.** Core and CLI primarily use Node builtins; the declared runtime dependencies in `package.json` include MCP transport (`@modelcontextprotocol/sdk`), Markdown (`marked`), archives (`tar`), YAML/TOML parsing (`yaml`, `smol-toml`), runtime schema validation (`zod`), and the optional remote phone gateway (`jose`, `@simplewebauthn/*`, `web-push`). Backends are CLIs or APIs you explicitly configure.
 - **Self-improving.** The fleet can target its own source, but a self-authored diff is ineligible to merge unless the full invariant suite passes flag-off and flag-on, and any diff that weakens a safety test is refused by construction.
 
 ---
