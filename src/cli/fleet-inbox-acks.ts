@@ -3,6 +3,8 @@ import { closeSync, fstatSync, openSync, readFileSync, readSync } from 'node:fs'
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { acknowledgeInboxEntries, inboxAckEntry, type InboxAckSenders } from '../core/fleet/inbox-ack.js';
+import { isAnsweredByReplies, noChannelReason, type AckReply } from '../core/fleet/inbox-ack-match.js';
+import { readOutboxEntries } from '../core/fleet/mason-outbox.js';
 import { INBOX_CHANNEL_LINE, INBOX_HEADING } from '../core/fleet/inbox-channel-line.js';
 import { scrubSecrets } from '../core/util/scrub.js';
 
@@ -73,7 +75,7 @@ function readLedger(runsDir: string): { done: Map<string, { status: string; reas
   return { done, malformed };
 }
 
-function report(raws: readonly string[], runsDir: string): { rows: Row[]; malformed: number } {
+function report(raws: readonly string[], runsDir: string, replies: readonly AckReply[]): { rows: Row[]; malformed: number } {
   const { done, malformed } = readLedger(runsDir);
   const rows = raws.map((raw): Row => {
     const entry = inboxAckEntry(raw, '');
@@ -81,7 +83,8 @@ function report(raws: readonly string[], runsDir: string): { rows: Row[]; malfor
     const base = { entryId: entry.entryId, channel: entry.channel, text: entry.text || raw };
     if (hit?.status === 'acked') return { ...base, state: 'acked' };
     if (hit?.status === 'skipped') return { ...base, state: 'skipped', ...(hit.reason ? { reason: hit.reason } : {}) };
-    return { ...base, state: entry.channel ? 'pending' : 'no-channel' };
+    if (isAnsweredByReplies({ entryId: entry.entryId, raw }, replies)) return { ...base, state: 'acked', reason: 'answered in a leader reply' };
+    return entry.channel ? { ...base, state: 'pending' } : { ...base, state: 'no-channel', reason: noChannelReason(/^## .*? ET \(([^)]+)\)/.exec(raw)?.[1] ?? null) };
   });
   return { rows, malformed };
 }
@@ -119,11 +122,12 @@ export async function cmdFleetInboxAcks(args: string[], deps: FleetInboxAcksDeps
   const raws = splitEntries(readTail(join(runsDir, 'leader', 'MASON-INBOX.md'))).slice(-limit);
   const now = deps.now ?? (() => new Date());
 
-  let result = report(raws, runsDir);
+  const replies: AckReply[] = (await readOutboxEntries({ runsDir, limit: 5000 })).entries;
+  let result = report(raws, runsDir, replies);
   if (flush) {
     const pending = raws.filter((_, i) => result.rows[i]!.state === 'pending');
     await acknowledgeInboxEntries(pending, runsDir, now().toISOString(), deps.senders);
-    result = report(raws, runsDir);
+    result = report(raws, runsDir, replies);
   }
   const { rows, malformed } = result;
   const count = (s: State): number => rows.filter(r => r.state === s).length;
@@ -139,7 +143,8 @@ export async function cmdFleetInboxAcks(args: string[], deps: FleetInboxAcksDeps
   for (const r of rows) {
     const preview = scrubSecrets(r.text).replace(/\s+/g, ' ').trim().slice(0, 60);
     const state = r.state === 'skipped' && r.reason ? `skipped (${r.reason})` : r.state;
-    output(`${state}  ${r.channel ?? '-'}  ${r.entryId.slice(0, 12)}  ${preview}`);
+    const why = r.reason && r.state !== 'skipped' ? `  [${r.reason}]` : '';
+    output(`${state}  ${r.channel ?? '-'}  ${r.entryId.slice(0, 12)}  ${preview}${why}`);
   }
   output(`Totals: ${totals.acked} acked, ${totals.skipped} skipped, ${totals.pending} pending, ${totals.noChannel} no-channel`
     + (malformed ? `; ${malformed} malformed ledger row${malformed === 1 ? '' : 's'} ignored` : ''));
