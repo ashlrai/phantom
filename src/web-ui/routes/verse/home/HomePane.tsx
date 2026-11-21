@@ -24,6 +24,7 @@ import { PulseStrip } from './PulseStrip.js';
 import { FleetShippedCard } from './FleetShippedCard.js';
 import { ThisMacCard } from './ThisMacCard.js';
 import { WorkingNowCard } from './WorkingNowCard.js';
+import { WorklogCard } from './WorklogCard.js';
 import { MainRepos, RunningLanes } from './HomeReadings.js';
 import styles from './home.module.css';
 
@@ -82,11 +83,8 @@ export function HomePane({ visible }: PaneProps) {
     <Card title="Most at risk of going unused" action="Open Usage" onOpen={() => openPane('fleet-usage')}>
       <p><Value field={home.atRisk}>{risk => risk ? `${risk.resource}. ${risk.reason}` : 'Nothing is set to expire unused.'}</Value></p>
     </Card>
-    <Card title="Work log" action="Open Work log" onOpen={() => { window.location.hash = '#/work/log'; }}>
-      <Value field={home.worklog}>{rows => rows.length ? <ul>{rows.map(row => <li key={`${row.at} ${row.text}`}>
-        <time dateTime={row.at}>{new Date(row.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</time> {row.text}</li>)}</ul>
-        : <p>No work recorded in the last 24 hours.</p>}</Value>
-    </Card>
+    {/* The day drawn by kind of event, on the Work log view's own 24 hour read; the summary's rows stand in until it answers. */}
+    <WorklogCard summary={home.worklog} visible={visible} onOpen={() => { window.location.hash = '#/work/log'; }} onOpenJob={openPoolJob} />
     <Card title="Leader" action="Open Leader" onOpen={() => setHomeChoice('leader')}>
       <p><Value field={home.unreadLeaderReplies}>{n => n === 0 ? 'No unread replies.' : n === 1 ? '1 unread reply.' : `${n} unread replies.`}</Value></p>
     </Card>

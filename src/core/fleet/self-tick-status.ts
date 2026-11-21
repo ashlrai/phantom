@@ -21,7 +21,7 @@ export type SelfTickStatus =
   | { schema: typeof SELF_TICK_STATUS_SCHEMA; state: 'recorded'; at: string; ageSeconds: number; mode: 'apply' | 'dry-run'; failedSteps: string[]; hooks: SelfTickHook[]; line: string };
 
 const rec = (v: unknown): Record<string, unknown> | null => typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Record<string, unknown> : null;
-const missing = (hook: SelfTickHookName): SelfTickHook => ({ hook, state: 'not-recorded', items: null, note: null });
+const missing = (hook: SelfTickHookName): SelfTickHook => ({ hook, state: 'not-recorded', items: null, count: null, note: null });
 
 export function readSelfTickStatus(runsDir: string, now: number): SelfTickStatus {
   const view = readSelfTickLast(runsDir, now);
@@ -41,7 +41,17 @@ export function readSelfTickStatus(runsDir: string, now: number): SelfTickStatus
 }
 
 const ago = (s: number): string => s < 60 ? 'just now' : s < 3600 ? `${Math.floor(s / 60)} min ago` : s < 86400 ? `${Math.floor(s / 3600)} h ago` : `${Math.floor(s / 86400)} d ago`;
-const hookText = (h: SelfTickHook): string =>
+/** The gap hook's human line: a zero is said as zero candidates; a hook that did not run says why. */
+export function gapsHookLine(h: SelfTickHook): string {
+  if (h.state === 'not-recorded') return 'gaps: not recorded';
+  if (h.state === 'failed') return `gaps: failed (${h.note ?? 'unknown error'})`;
+  if (h.state === 'skipped') return `gaps: skipped (${h.note ?? 'no reason recorded'})`;
+  const unknown = h.note !== null ? ` (${h.note})` : '';
+  if (h.count === 0) return h.note === null ? 'gaps: 0 candidates (no Remaining gaps found)' : `gaps: 0 candidates${unknown}`;
+  return `gaps: ${h.count} ${h.count === 1 ? 'candidate' : 'candidates'}, ${h.items} queued${unknown}`;
+}
+
+const hookText = (h: SelfTickHook): string => h.hook === 'gaps' ? gapsHookLine(h) :
   `${h.hook} ${h.state === 'ran' ? `${h.items} ${h.items === 1 ? 'item' : 'items'}` : h.state === 'skipped' ? `skipped${h.note ? ` (${h.note})` : ''}` : h.state === 'failed' ? `failed (${h.note})` : 'not recorded'}`;
 
 function selfTickStatusLine(at: string, ageSeconds: number, mode: string, hooks: SelfTickHook[]): string {

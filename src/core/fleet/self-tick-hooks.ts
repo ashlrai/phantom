@@ -13,15 +13,16 @@ export interface SelfTickHook {
   hook: SelfTickHookName;
   state: 'ran' | 'skipped' | 'failed' | 'not-recorded';
   items: number | null;
+  count: number | null;
   note: string | null;
 }
 
 const rec = (v: unknown): Record<string, unknown> | null => typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Record<string, unknown> : null;
 const num = (v: unknown): number | null => typeof v === 'number' && Number.isFinite(v) ? v : null;
 const text = (v: unknown): string | null => typeof v === 'string' ? v.slice(0, 120) : null;
-const missing = (hook: SelfTickHookName): SelfTickHook => ({ hook, state: 'not-recorded', items: null, note: null });
-const skipped = (hook: SelfTickHookName, reason: unknown): SelfTickHook => ({ hook, state: 'skipped', items: null, note: text(reason) });
-const failed = (hook: SelfTickHookName, error: unknown): SelfTickHook => ({ hook, state: 'failed', items: null, note: text(error) ?? 'unknown error' });
+const missing = (hook: SelfTickHookName): SelfTickHook => ({ hook, state: 'not-recorded', items: null, count: null, note: null });
+const skipped = (hook: SelfTickHookName, reason: unknown): SelfTickHook => ({ hook, state: 'skipped', items: null, count: null, note: text(reason) });
+const failed = (hook: SelfTickHookName, error: unknown): SelfTickHook => ({ hook, state: 'failed', items: null, count: null, note: text(error) ?? 'unknown error' });
 
 /** The three hooks out of the planner-tick step's stored report, for a run in the given mode. */
 export function hooksFromPlannerReport(planner: unknown, mode: 'apply' | 'dry-run' = 'apply'): SelfTickHook[] {
@@ -43,13 +44,13 @@ export function hooksFromPlannerReport(planner: unknown, mode: 'apply' | 'dry-ru
         gaps = skipped('gaps', 'dry run: the gap harvest only runs with apply');
       } else {
         const applied = runs.reduce<number>((sum, r) => sum + (num(rec(r)?.['applied']) ?? 0), 0);
-        autofill = { hook: 'autofill', state: 'ran', items: applied, note: text(auto['reason']) };
+        autofill = { hook: 'autofill', state: 'ran', items: applied, count: null, note: text(auto['reason']) };
         const g = rec(auto['gaps']);
         gaps = g && num(g['queued']) !== null
-          ? { hook: 'gaps', state: 'ran', items: num(g['queued']), note: g['unknown'] === true ? 'some sources unknown' : null }
+          ? { hook: 'gaps', state: 'ran', items: num(g['queued']), count: num(g['candidates']), note: g['unknown'] === true ? 'some sources unknown' : null }
           : skipped('gaps', 'the gap hook did not run');
       }
-    } else autofill = skipped('autofill', auto['reason']);
+    } else { autofill = skipped('autofill', auto['reason']); gaps = skipped('gaps', text(auto['reason']) ?? 'autofill did not run'); }
   }
 
   const reapRow = rec(row['worktreeReap']);
@@ -58,7 +59,7 @@ export function hooksFromPlannerReport(planner: unknown, mode: 'apply' | 'dry-ru
     const state = reapRow['state'];
     const last = rec(reapRow['last']);
     if (typeof reapRow['error'] === 'string') reap = failed('reap', reapRow['error']);
-    else if (state === 'ran' && num(last?.['removed']) !== null) reap = { hook: 'reap', state: 'ran', items: num(last?.['removed']), note: null };
+    else if (state === 'ran' && num(last?.['removed']) !== null) reap = { hook: 'reap', state: 'ran', items: num(last?.['removed']), count: null, note: null };
     else if (state === 'dry-run') reap = skipped('reap', 'dry run: nothing removed');
     else if (state === 'skipped') reap = skipped('reap', reapRow['reason']);
   }

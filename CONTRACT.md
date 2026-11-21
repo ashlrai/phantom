@@ -1612,6 +1612,23 @@ a job. In `fleet.session-threads.v1` a thread's `output` message keeps its
 newest `THREADS_OUTPUT_LINES` lines; `SessionThreadsParts` gains optional
 `output` (a map by job id), `threadSessions` entries gain `running`, and
 `readSessionThreads` takes `readOutput`, asked only for running sessions.
+Control (additive): `src/core/fleet/job-control.ts` exports the read-only
+`readJobControlLedger({runsDir?})`, the control file as
+`JobControlLedgerRow[]` (oldest first, one row per `requestId`, the last
+status winning; a missing file is no rows), and
+`src/core/fleet/job-control-types.ts` exports that row type
+(`requestId`, `action`, `job`, `lane`, `status`, `reason`, `at`, `by`) and
+`jobControlRecordLabel(row)`. In the thread, `parts` gains optional
+`controls` (`readonly JobControlLedgerRow[] | null`), messages gain the kind
+`control` (key `control:<requestId>`, side `record`, the newest
+`THREAD_CONTROLS_SHOWN` requests for the session's job), `sources` gains a
+last key `controls`, the summary gains a line for the request that stands,
+and the document gains a last top-level key
+`control: SessionThreadControl | null` (`action`, `lane`, `status` of
+`requested` or `applied`, `at`): the newest request not refused.
+`readSessionThread` takes an injectable `readControls`, asked for a session
+with a job. `fleet.session-threads.v1` does not read the control file: its
+entries carry `sources.controls: 'none'` and no `control` key.
 `src/core/fleet/session-thread-read.ts` exports `readSessionThread(id,
 options)` with injectable `readMap`, `readSubagents`, `readActivity`,
 `readBus`, `readOwner` and `readReplies`; each read is guarded on its own and the result is

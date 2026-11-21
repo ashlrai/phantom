@@ -67,7 +67,7 @@ describe('self-tick survives a failed last-report write', () => {
       step: missing, state: 'failed', exitCode: 1, report: { reason: 'step-not-configured' },
     });
     expect(order).toEqual(SELF_TICK_STEP_ORDER.filter((step) => step !== missing));
-    expect(JSON.parse(readFileSync(join(runsDir, 'queue', 'self-tick-last.json'), 'utf8'))).toMatchObject({ ...first.report, schema: 'fleet.self-tick-record.v1', startedAt: first.report.at });
+    expect(JSON.parse(readFileSync(join(runsDir, 'queue', 'self-tick-last.json'), 'utf8'))).toEqual({ ...first.report, schema: 'fleet.self-tick-record.v1', startedAt: first.report.at });
     expect(existsSync(LOCK())).toBe(false);
     const next = await runSelfTick({ runsDir, steps: recordingSteps([]), now: () => NOW_MS });
     expect(next.lock).toBe('acquired');

@@ -15,6 +15,7 @@ function thread(over: Partial<SessionThread> = {}, session: Partial<SessionThrea
     messages: [],
     sources: { activity: 'available', bus: 'none', owner: 'none', replies: 'none', orders: 'none' },
     gaps: [],
+    control: null,
     reply: { to: 'job', job: 'RQ-A', hint: '' },
     ...over,
   };

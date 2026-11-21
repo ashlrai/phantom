@@ -41,6 +41,23 @@ Run the CLI from source with `npm run dev -- --help`.
 
 ## 3. Make one change
 
+Before your agent writes code, check that nobody is already on it. Fleet
+agents open pull requests around the clock, so search open pull requests and
+issues for the area you plan to touch:
+
+```sh
+gh pr list --repo ashlrai/phantom --state open --search "<keyword or path>"
+gh issue list --repo ashlrai/phantom --state open --search "<keyword>"
+```
+
+For a bug fix or a small docs change, go straight to a pull request. For a new
+feature or a larger change, open an issue first with the feature request or bug
+report template so the direction is agreed before the work. Report security
+problems privately as [SECURITY.md](https://github.com/ashlrai/phantom/blob/master/SECURITY.md)
+describes, never in a public issue or pull request. If the change lands on a
+protected path, it waits for the owner's review; see
+[Protected paths wait for the owner](#protected-paths-wait-for-the-owner).
+
 - One coherent outcome per pull request. Keep the diff reviewable.
 - `src/cli/` handlers stay thin; logic goes in `src/core/`. Relative imports end in `.js`.
 - Changing an exported signature means updating `CONTRACT.md` or the matching
@@ -60,7 +77,13 @@ npm run test:ci -- test/<file>.test.ts    # affected backend suites, isolated HO
 npm run test:web                          # only if src/web-ui/ changed
 npm run check:docs                        # if docs changed (verify-changed already ran it when the diff touched markdown or deleted files)
 npx vitest run test/doc-facts.test.ts     # if a documented command, flag or npm script changed
+npm run build                             # if build, packaging or CLI wiring changed
+npm run dev -- verify-safety              # if safety-relevant code changed; read-only, changes nothing
 ```
+
+These match the "How it was verified" checklist in the pull request template
+(`phm verify-safety` there is the installed form of the last line), so tick
+what you ran and say what you skipped.
 
 `verify-changed` records a pass for the current tree, so a repeat run on an
 unchanged tree prints `SKIP verify-changed`; pass `--force` to rerun.
