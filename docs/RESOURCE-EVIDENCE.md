@@ -46,6 +46,19 @@ it does not imply available allowance. Sign-in, recorded credits and historical
 readings alone do not count as current usage. Chat and Fleet readiness appear
 separately in each account card.
 
+The Usage section's account cards (and the detail that opens under a card)
+draw every window on the shared bar, `components/primitives/WindowBar.tsx`,
+from `GET /api/verse/accounts`. The fill is the share used and stays the accent
+colour; the percentage beside the label turns amber or red when the window is
+tight. A flagged limit is a full red bar labelled "limit reached" with no
+percentage. A reading kept from an account that is no longer observed keeps its
+figure, marked "prior", over a hatched track. A window with no reading has no
+bar, only a dashed rule and the reason. Where the window's start is known, a
+mark across the bar shows the share of its time gone and the line under it
+reads, for example, "71% of the window gone · use is 9 points behind an even
+spend · began about Sun 7:00 AM, seven days before its reset". A prior reading
+is never placed against time.
+
 Each usage window on an account card is drawn on the bar the resource boards
 share (`components/primitives/WindowBar.tsx`). The fill is the share used. A
 hatched band at the end of the binding window is the reserve kept for you, and

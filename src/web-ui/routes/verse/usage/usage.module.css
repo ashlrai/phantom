@@ -261,6 +261,33 @@
   color: var(--text-primary);
 }
 
+/* The fill is the accent whatever the reading; the figure carries how tight the window is. */
+.windowPct[data-tone='warn'] {
+  color: var(--status-warning-fg);
+}
+
+.windowPct[data-tone='danger'] {
+  color: var(--status-danger-fg);
+}
+
+/* Under a bar: how far the window's time has run, led by the mark it names. */
+.windowPace {
+  margin-top: 2px;
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.windowPace[data-pace='behind'] {
+  color: var(--text-secondary);
+}
+
+.windowPace i {
+  margin-inline-end: var(--space-1);
+}
+
 .windowReset {
   margin-top: var(--space-1);
   /* Prose, not a micro-label: tokens.css sets the body floor at 12px and
@@ -458,10 +485,6 @@
 .windowBlockLead .windowHead {
   font-size: var(--text-sm-size);
   color: var(--text-primary);
-}
-
-.windowBlockLead .track {
-  height: 6px;
 }
 
 .windowFlag {

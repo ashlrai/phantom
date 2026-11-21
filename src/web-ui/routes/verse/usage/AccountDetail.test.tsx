@@ -109,7 +109,12 @@ describe('AccountDetail', () => {
     expect(screen.getByText('Last reported windows (2)')).toBeInTheDocument();
     const meter = screen.getByRole('meter', { name: 'Codex A primary prior reading used' });
     expect(meter).toHaveAttribute('aria-valuetext', 'Prior reading: 86% used, prior report: resets tomorrow; current access unconfirmed');
-    expect(screen.getByRole('img', { name: /Codex A secondary: prior reading; the provider flagged/ })).toBeInTheDocument();
+    // A prior reading is a hatched track with no value, whatever it once measured.
+    expect(meter).toHaveAttribute('data-unread', 'true');
+    expect(meter).not.toHaveAttribute('aria-valuenow');
+    const flagged = screen.getByRole('meter', { name: 'Codex A secondary' });
+    expect(flagged).toHaveAttribute('aria-valuetext', 'prior reading; the provider flagged this window as rate-limited, so no percentage is shown; current access unconfirmed');
+    expect(flagged).not.toHaveAttribute('aria-valuenow');
     expect(screen.getByText('Last reported credits')).toBeInTheDocument();
     expect(screen.getByText(/Prior balance for context only; current access and spendability are unconfirmed/)).toBeInTheDocument();
   });

@@ -36,7 +36,7 @@ import { describeResetAt } from '../../../../core/verse/seat-readiness.js';
 import { percentText } from '../autonomy/format.js';
 import type { ControlSnapshot, VerseBootstrap, VerseEngine } from '../../../data/api-types.js';
 import type { FrontierUsage } from '../../../../core/usage/frontier-usage.js';
-import type { Account, AccountWindow, LocalModelsSnapshot } from './usage-contract.js';
+import type { Account, AccountWindow, LocalModelsSnapshot, WindowPeriod } from './usage-contract.js';
 import { ENGINE_COLOR, resolveWindowSignal, WINDOW_SOURCE_LABEL, windowTone, type WindowTone } from './usage-model.js';
 
 // ---------------------------------------------------------------------------
@@ -68,6 +68,8 @@ export interface WindowView {
   limitReached: boolean;
   /** False when the percent behind this window is a sentinel, not a reading. */
   measured: boolean;
+  /** When this window began, where the server's reset provenance says. Absent = not known: nothing is drawn against time. */
+  period?: WindowPeriod;
 }
 
 /** Human names for the window ids the probes actually emit. */
@@ -118,6 +120,8 @@ export function toWindowView(w: AccountWindow, now: number = Date.now()): Window
     resetsAt: w.resetsAt,
     limitReached: w.limitReached,
     measured: w.measured,
+    // Only when known, so a window without provenance is the object it has always been.
+    ...(w.period ? { period: w.period } : {}),
   };
 }
 
