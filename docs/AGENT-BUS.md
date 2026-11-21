@@ -22,9 +22,15 @@ kind, `--limit <n>`) or GET `/api/verse/agent-bus/messages` with the same
 `since`, `agent`, `with`, `kind` and `limit` params. Both return `agent-messages.v1`: newest
 first, each with `id`, `ts`, `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line
-`summary`, `conversation`, `job` and `pr`. Damaged records are skipped and
-counted in `skipped`, never fatal. It reads the same store; it is not a
-second bus. The `work.*` operation bodies keep their terse field formats —
+`summary`, `conversation`, `job` and `pr`. A body that declares a work-feed
+`jobId` (`work.post`, `work.status`, `work.result` or `wake`) also carries
+`jobState` — the same live feed state `agents bus inbox`, `agents bus show`
+and `agents bus work mine` resolve (the job's status and claim coverage, the
+feed's own refusal with its receipt, or its unreadable state), read once per
+call and never guessed; `work.claim`/`work.release` stay excluded because
+their `jobId` is an operation parameter, not a citation. Damaged records are
+skipped and counted in `skipped`, never fatal. It reads the same store; it is
+not a second bus. The `work.*` operation bodies keep their terse field formats —
 `work.status` as `status: detail`, `work.result` and `work.release` as
 `outcome: reason`, `work.claim` as `op claimKey` — while `work.post` and
 every other body kind the bus knows (`note`, `context`, `worker-handoff`,

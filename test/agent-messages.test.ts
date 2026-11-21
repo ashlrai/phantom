@@ -157,6 +157,52 @@ describe('phm messages projection', () => {
     expect(out).not.toContain('pw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
   });
 
+  it('annotates feed-citing bodies with the live job state agents bus resolves', () => {
+    const root = store();
+    post(root, T0, { id: 'j1', from: 'agent:planner', to: 'leaders',
+      body: { kind: 'work.post', jobId: 'RQ-FEED1', title: 'Fix the feed', repo: 'a/b',
+        claimKeys: ['repo:a/b'], provider: 'devin' } });
+    post(root, T0 + 1_000, { id: 'j2', from: 'agent:planner', to: 'agent:worker',
+      body: { kind: 'work.status', jobId: 'RQ-FEED1', status: 'running', detail: 'halfway' } });
+    post(root, T0 + 2_000, { id: 'j3', from: 'agent:worker', to: 'agent:planner',
+      body: { kind: 'work.result', jobId: 'RQ-FEED1', claimKey: 'repo:a/b',
+        queueId: 'peer-work-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', receiptId: 'pw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        outcome: 'admitted' } });
+    post(root, T0 + 3_000, { id: 'j4', from: 'agent:worker', to: 'agent:planner',
+      body: { kind: 'work.claim', op: 'acquire', jobId: 'RQ-FEED1', claimKey: 'repo:a/b', owner: 'agent:worker', leaseMs: 60_000 } });
+    post(root, T0 + 4_000, { id: 'j5', from: 'agent:worker', to: 'agent:planner',
+      body: { kind: 'wake', target: 'agent:planner', jobId: 'RQ-FEED1', reason: 'the feed has work' } });
+    post(root, T0 + 5_000, { id: 'j6', from: 'agent:worker', to: 'agent:planner',
+      body: { kind: 'work.status', jobId: 'RQ-GONE9', status: 'running' } });
+    const byId = new Map(read(root).messages.map(m => [m.id, m]));
+    // post, status, result and wake cite the feed; the job's live state and its
+    // retained post/status receipts ride along, the same read `agents bus show` gives.
+    for (const id of ['j1', 'j2', 'j3', 'j5']) {
+      expect(byId.get(id)!.jobState).toMatchObject({ jobId: 'RQ-FEED1', feed: 'ok',
+        job: { id: 'RQ-FEED1', status: 'running', postId: 'j1', statusId: 'j2' } });
+    }
+    // An orphaned citation resolves feed-ok with no live job — never a guess.
+    expect(byId.get('j6')!.jobState).toEqual({ jobId: 'RQ-GONE9', feed: 'ok', job: null });
+    // work.claim executes as an operation: its jobId is a parameter, not a citation.
+    expect(byId.get('j4')).not.toHaveProperty('jobState');
+    // The human line prints the same job marker the inbox frame uses.
+    expect(formatAgentMessagesText(read(root))).toContain('job=RQ-FEED1:running');
+  });
+
+  it('reports a poisoned feed as refused on every citation, never a guessed state', () => {
+    const root = store();
+    post(root, T0, { id: 'p1', from: 'agent:planner', to: 'leaders',
+      body: { kind: 'work.post', jobId: 'RQ-OK1', title: 'ok', repo: 'a/b',
+        claimKeys: ['repo:a/b'], provider: 'devin' } });
+    // A post with no resolvable provider refuses the whole feed projection.
+    post(root, T0 + 1_000, { id: 'p2', from: 'agent:ghost', to: 'leaders',
+      body: { kind: 'work.post', jobId: 'RQ-BAD', title: 'x', repo: 'a/b', claimKeys: [] } });
+    const byId = new Map(read(root).messages.map(m => [m.id, m]));
+    expect(byId.get('p1')!.jobState).toMatchObject({ jobId: 'RQ-OK1', feed: 'refused', reason: 'missing-provider' });
+    expect(byId.get('p2')!.jobState).toMatchObject({ jobId: 'RQ-BAD', feed: 'refused',
+      reason: 'missing-provider', receipt: { id: 'p2' } });
+  });
+
   it('reads job and pr links from declared note refs ahead of prose mentions', () => {
     const root = store();
     post(root, T0, { id: 'r1', from: 'a', to: 'b',

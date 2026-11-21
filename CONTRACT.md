@@ -2353,7 +2353,13 @@ transport bodies summarize their `protocol` kind/topic/ref), null when the
 body has no typed content; `busBodyFallbackSummary(body)` is the shared
 bounded fallback for bodies it does not know — string bodies as their
 scrubbed single-line text, anything else as a secret-scrubbed raw JSON
-render clipped to 512 characters. Claim tokens and `work.result`
+render clipped to 512 characters. `workFeedJobId(body)` returns the
+`jobId` a feed-citing body (`work.post`, `work.status`, `work.result` or
+`wake`) declares, undefined for every other kind, and
+`jobAnnotationFromFeed(feed, jobId)` maps one already-read
+`BusWorkFeedReadResult` to the `BusEnvelopeLookupJob` every citing read
+shares — the inbox page, `readBusEnvelopeById`, wake referents and the
+`agent-messages.v1` `jobState` field. Claim tokens and `work.result`
 queueId/receiptId never appear in a summary.
 Every send is one `appendBusInbox` post; wakes go through `createBusWakeHook`.
 `announceWork(WorkAnnouncementInput)` posts a schema-checked v2 `work.post` to

@@ -1698,7 +1698,7 @@ const WORK_FEED_JOB_ID_KINDS: ReadonlySet<string> = new Set(['work.post', 'work.
  * projection keys on, read verbatim. The `jobId` must be a printable label
  * like the schema requires; a malformed one cites nothing.
  */
-function workFeedJobId(body: unknown): string | undefined {
+export function workFeedJobId(body: unknown): string | undefined {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return undefined;
   const record = body as Record<string, unknown>;
   if (typeof record['kind'] !== 'string' || !WORK_FEED_JOB_ID_KINDS.has(record['kind'])) return undefined;
@@ -1716,7 +1716,7 @@ function workFeedJobId(body: unknown): string | undefined {
  * the remaining states mean the feed could not be read, so the job's state
  * is unknown, never empty.
  */
-function jobAnnotationFromFeed(feed: BusWorkFeedReadResult, jobId: string): BusEnvelopeLookupJob {
+export function jobAnnotationFromFeed(feed: BusWorkFeedReadResult, jobId: string): BusEnvelopeLookupJob {
   if (feed.status === 'ok') {
     return { jobId, feed: 'ok', job: feed.jobs.find(candidate => candidate.id === jobId) ?? null };
   }
