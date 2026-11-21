@@ -112,6 +112,21 @@ describe('phm friction miners', () => {
     expect(item(mineFriction({ now: NOW }), 'deferred-requests').signals.deferred_jobs).toBeNull();
     expect(item(fixture({ jobs: '' }), 'deferred-requests').signals).toMatchObject({ deferred_jobs: 0, deferrals: 0 });
   });
+  it('counts adaptive-concurrency cap sheds and the danger zones behind them', () => {
+    const rows = [
+      J({ event: 'concurrency', from: 18, to: 13, reason: 'backoff fork,mem_free', zones: { fork: 'danger', mem_free: 'danger', load: 'ok' }, ts: iso(2) }),
+      J({ event: 'concurrency', from: 13, to: 11, reason: 'backoff rate_limit', zones: { rate_limit: 'danger', swap: 'warn' }, ts: iso(1) }),
+      J({ event: 'concurrency', from: 11, to: 13, reason: 'raise headroom', zones: { load: 'ok' }, ts: iso(0.5) }),
+      J({ event: 'concurrency', from: 18, to: 18, reason: 'bounds', zones: {}, ts: iso(0.4) }),
+      J({ event: 'concurrency', reason: 'backoff fork', ts: iso(0.3) }),
+      J({ event: 'concurrency', from: 9, to: 7, reason: 'backoff swap', zones: { swap: 'danger' }, ts: iso(200) }),
+    ].join('\n');
+    const c = item(mineFriction({ jobs: rows, now: NOW }), 'concurrency-throttle');
+    expect(c.signals).toMatchObject({ backoffs: 2, raises: 1, danger_fork: 1, danger_mem_free: 1, danger_rate_limit: 1, danger_swap: 0 });
+    expect(c.evidence.join(' ')).toContain('jobs.jsonl concurrency 18->13 backoff fork,mem_free');
+    expect(item(mineFriction({ now: NOW }), 'concurrency-throttle').signals.backoffs).toBeNull();
+    expect(item(fixture({ jobs: '' }), 'concurrency-throttle').signals).toMatchObject({ backoffs: 0, raises: 0 });
+  });
   it('scrubs secret-shaped text out of evidence', () => {
     const token = 'sk-ant-' + 'a1'.repeat(30);
     const r = fixture({ events: `${local(1)} AUTH_FAILURE_SEEN claude RQ-3 ${token}: refused` });
