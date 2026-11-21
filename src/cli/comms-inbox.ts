@@ -1,13 +1,14 @@
 import { dirname, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
-import { readUnifiedInbox, type UnifiedInbox } from '../core/comms/unified-inbox.js';
+import { readUnifiedInbox, isUnifiedInboxSeverity, isUnifiedInboxSource,
+  type UnifiedInbox, type UnifiedInboxFilter, type UnifiedInboxSeverity, type UnifiedInboxSource } from '../core/comms/unified-inbox.js';
 import { createChannelReceiver } from '../core/fleet/channel-envelope.js';
 import { INBOX_MAX_CHARS, readInboxEntries } from '../core/fleet/mason-inbox.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
-const HELP = `phm comms inbox [--json]
+const HELP = `phm comms inbox [--source <name>] [--severity <info|warn|high>] [--blocking] [--json]
 phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 With no verb, lists every pending comms item — unresolved needs-you lines, needs-you
@@ -21,7 +22,11 @@ questions/approvals awaiting an answer, .reply.eml artifacts stuck in the
 email outbox, pending team approvals, inbox proposals awaiting review and
 Slack requests whose bus append failed —
 one prioritized list whose
-items carry the deep-link commands that act on them. --json prints the same view as JSON.
+items carry the deep-link commands that act on them. The bare view's --source keeps
+one source's items, --severity one severity band and --blocking only items that
+block; the dimensions AND together, and the per-source counts still report every
+store's real pending total, so a filtered view never hides a busy or degraded
+source. --json prints the same view as JSON.
 read and post read and write Mason's local inbox file. Output is JSON; post returns the receiver acknowledgement.
 --receipt-only on post returns only the acknowledgement status, channel and durable deduplication key, or a failure reason; it excludes message text and private paths.
 Read options select the newest matching entries (default limit 50), returned oldest first; source is metadata, not identity.
@@ -125,6 +130,15 @@ type CommandOptions = {
   wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
 };
 
+/** Human one-line description of an applied view filter, e.g. `source=bus severity=warn`. */
+function describeUnifiedFilter(filter: UnifiedInboxFilter): string {
+  return [
+    ...(filter.source === undefined ? [] : [`source=${filter.source}`]),
+    ...(filter.severity === undefined ? [] : [`severity=${filter.severity}`]),
+    ...(filter.blocking === undefined ? [] : ['blocking']),
+  ].join(' ');
+}
+
 /** Human view of the unified report: priority-ordered items and their deep links. */
 function printUnified(report: UnifiedInbox): void {
   const degraded = Object.entries(report.sources).filter(([, s]) => s.state === 'degraded' || s.state === 'unavailable');
@@ -135,9 +149,14 @@ function printUnified(report: UnifiedInbox): void {
   }
   for (const [name, s] of degraded) console.log(`note: ${name} source ${s.state}`);
   const counts = Object.entries(report.sources).map(([name, s]) => `${name} ${s.pending}`).join(' · ');
+  const filter = report.filter;
+  const match = filter === undefined ? '' : ` matching ${describeUnifiedFilter(filter)}`;
+  // Per-source counts are the unfiltered store reports; under a filter they
+  // are labelled so a narrowed total is never read against them directly.
+  const scope = filter === undefined ? '' : 'unfiltered: ';
   console.log(report.total === 0
-    ? 'Nothing pending.'
-    : `${report.total} pending (${counts})${report.omitted > 0 ? ` · ${report.omitted} omitted` : ''}`);
+    ? filter === undefined ? 'Nothing pending.' : `Nothing pending${match}.`
+    : `${report.total} pending${match} (${scope}${counts})${report.omitted > 0 ? ` · ${report.omitted} omitted` : ''}`);
 }
 
 export function createCommsInboxCommand(options: CommandOptions = {}): (args: string[]) => Promise<number> {
@@ -147,13 +166,38 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
       args.length === 2 && ['read', 'post'].includes(args[0]!) && ['--help', '-h'].includes(args[1]!)) {
       console.log(HELP); return 0;
     }
-    // Bare `inbox` (optionally --json) is the unified pending view.
-    if (args.length === 0 || args.length === 1 && args[0] === '--json') {
-      const report = await readUnifiedInbox({ runsDir: options.runsDir, busRoot: options.busRoot });
-      if (args.length === 1) console.log(JSON.stringify(report)); else printUnified(report);
+    const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };
+    // Bare `inbox` — optionally --json plus view filters — is the unified pending view.
+    if (args.length === 0 || args[0] !== 'read' && args[0] !== 'post') {
+      let json = false, blocking = false;
+      let source: UnifiedInboxSource | undefined, severity: UnifiedInboxSeverity | undefined;
+      const seen = new Set<string>();
+      for (let i = 0; i < args.length; i++) {
+        const arg = args[i]!;
+        if (arg === '--json' && !seen.has(arg)) { seen.add(arg); json = true; continue; }
+        if (arg === '--blocking' && !seen.has(arg)) { seen.add(arg); blocking = true; continue; }
+        if (arg === '--source' && !seen.has(arg)) {
+          const value = args[++i];
+          if (value === undefined || !isUnifiedInboxSource(value)) return invalid();
+          seen.add(arg); source = value; continue;
+        }
+        if (arg === '--severity' && !seen.has(arg)) {
+          const value = args[++i];
+          if (value === undefined || !isUnifiedInboxSeverity(value)) return invalid();
+          seen.add(arg); severity = value; continue;
+        }
+        return invalid();
+      }
+      const filter: UnifiedInboxFilter | undefined =
+        source === undefined && severity === undefined && !blocking ? undefined
+          : { ...(source === undefined ? {} : { source }),
+              ...(severity === undefined ? {} : { severity }),
+              ...(blocking ? { blocking: true } : {}) };
+      const report = await readUnifiedInbox({ runsDir: options.runsDir, busRoot: options.busRoot,
+        ...(filter === undefined ? {} : { filter }) });
+      if (json) console.log(JSON.stringify(report)); else printUnified(report);
       return 0;
     }
-    const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };
     const [verb, ...rest] = args;
     if (verb !== 'read' && verb !== 'post') return invalid();
     let file: string | undefined, after: Instant | undefined, before: Instant | undefined, priority: string | undefined, contains: string | undefined, json = false, watch = false, newOnly = false, receiptOnly = false;

@@ -215,7 +215,7 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 
 ## Unified inbox
 
-`phm comms inbox [--json]`
+`phm comms inbox [--source <name>] [--severity <info|warn|high>] [--blocking] [--json]`
 ([`unified-inbox.ts`](../src/core/comms/unified-inbox.ts)) is the read-only
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
@@ -367,7 +367,13 @@ ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
 `phm fleet slack-trace`, `phm channels slack status`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
-items with the remainder counted in `omitted`. `phm comms inbox read` and
+items with the remainder counted in `omitted`. The bare view also narrows:
+`--source <name>` keeps one source's items, `--severity <info|warn|high>` one
+severity band and `--blocking` only items that block; the dimensions AND
+together. `total`, `omitted` and `items` then describe the matched view and
+the report echoes the applied `filter`, while `sources` keeps every store's
+real unfiltered pending count — a filtered view never reports a busy or
+degraded source as empty. `phm comms inbox read` and
 `post` keep their original meaning for Mason's local inbox file.
 
 ## Gmail triage building block

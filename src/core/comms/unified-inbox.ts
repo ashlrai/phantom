@@ -203,7 +203,9 @@
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
- * heuristic, then expiry, then newest. Never a model call, never throws, and
+ * heuristic, then expiry, then newest. `options.filter` narrows the returned
+ * items by stored source, severity or blocking while every per-source report
+ * stays unfiltered. Never a model call, never throws, and
  * never mutates: a degraded store reports its source state and the remaining
  * sources still list. Bus work bodies are untrusted data — titles are scrubbed
  * and single-lined, never dispatched. Deep links are command text only;
@@ -256,8 +258,20 @@ const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
 
-export type UnifiedInboxSource = 'needs-you' | 'needs-you-delivery' | 'imessage' | 'teammate-tasks' | 'owner-thread' | 'owner-delivery' | 'drafts' | 'bus' | 'mailbox' | 'board' | 'conversations' | 'seats' | 'gmail' | 'linkedin' | 'requests' | 'email-outbox' | 'team-approvals' | 'proposals' | 'slack';
+/** Every pending-work source the unified view can report, in display order. */
+export const UNIFIED_INBOX_SOURCES = [
+  'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
+  'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'seats',
+  'gmail', 'linkedin', 'requests', 'email-outbox', 'team-approvals', 'proposals', 'slack',
+] as const;
+export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
+export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
+  (UNIFIED_INBOX_SOURCES as readonly string[]).includes(value);
 export type UnifiedInboxSourceState = 'healthy' | 'missing' | 'degraded' | 'unavailable';
+export type UnifiedInboxSeverity = 'info' | 'warn' | 'high';
+const UNIFIED_INBOX_SEVERITIES: readonly UnifiedInboxSeverity[] = ['info', 'warn', 'high'];
+export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeverity =>
+  (UNIFIED_INBOX_SEVERITIES as readonly string[]).includes(value);
 export type UnifiedInboxKind = 'needs-you' | 'needs-you-delivery' | 'teammate-text' | 'teammate-task' | 'owner-message' | 'owner-reply-undelivered' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'mailbox-message' | 'board-delivery' | 'board-task' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-stuck' | 'team-approval' | 'inbox-proposal' | 'slack-request';
 
 export interface UnifiedInboxItem extends AttentionItem {
@@ -265,7 +279,7 @@ export interface UnifiedInboxItem extends AttentionItem {
   readonly id: string;
   readonly source: UnifiedInboxSource;
   readonly kind: UnifiedInboxKind;
-  readonly severity: 'info' | 'warn' | 'high';
+  readonly severity: UnifiedInboxSeverity;
   readonly priority: NeedsYouPriority;
   readonly blocking: boolean;
   readonly title: string;
@@ -280,18 +294,38 @@ export interface UnifiedInboxItem extends AttentionItem {
 
 export interface UnifiedInboxSourceReport {
   state: UnifiedInboxSourceState;
-  /** Pending items contributed by this source (before the global cap). */
+  /** Pending items contributed by this source (before the global cap). Never
+   * narrowed by a view `filter`: it is the store-health report, so a filtered
+   * read cannot hide a busy or degraded source behind an empty match set. */
   pending: number;
+}
+
+/**
+ * Optional narrowing of the returned item list. Every dimension is a stored
+ * item field — never a derived guess — and the dimensions AND together. An
+ * empty or absent filter is an unfiltered read.
+ */
+export interface UnifiedInboxFilter {
+  /** Keep only items this source contributed. */
+  source?: UnifiedInboxSource;
+  /** Keep only items at this severity band. */
+  severity?: UnifiedInboxSeverity;
+  /** Keep only blocking items when true, only non-blocking when false. */
+  blocking?: boolean;
 }
 
 export interface UnifiedInbox {
   v: 1;
   generatedAt: string;
   sources: Record<UnifiedInboxSource, UnifiedInboxSourceReport>;
-  /** Pending items across every source, before the display cap. */
+  /** Pending items across every source, before the display cap — the items
+   * matching `filter` when one is applied. */
   total: number;
-  /** Pending items left off `items` by UNIFIED_INBOX_MAX_ITEMS. */
+  /** Pending items left off `items` by UNIFIED_INBOX_MAX_ITEMS (matching
+   * `filter` when one is applied). */
   omitted: number;
+  /** The applied view filter; absent on an unfiltered read. */
+  filter?: UnifiedInboxFilter;
   items: UnifiedInboxItem[];
 }
 
@@ -363,6 +397,10 @@ export interface UnifiedInboxOptions {
   readInboxProposals?: typeof readPendingProposals;
   /** Slack journal seam; default reads the same bounded journal `phm fleet slack-trace` and `phm channels slack status` project. */
   readSlackJournal?: typeof readSlackJournal;
+  /** Optional narrowing of the returned item list by stored source, severity
+   * or blocking. `total`/`omitted`/`items` then describe the matched view and
+   * the applied filter echoes on the report; `sources` stays unfiltered. */
+  filter?: UnifiedInboxFilter;
 }
 
 const cap = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
@@ -1731,13 +1769,22 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     return { item, priority: item.priority, path: 'fallback', confidence: 1 };
   });
   ranked.sort(compareRanked);
-  const total = ranked.length;
+  const requested = options.filter;
+  const filter = requested !== undefined &&
+    (requested.source !== undefined || requested.severity !== undefined || requested.blocking !== undefined)
+    ? requested : undefined;
+  const matched = filter === undefined ? ranked : ranked.filter(({ item }) =>
+    (filter.source === undefined || item.source === filter.source) &&
+    (filter.severity === undefined || item.severity === filter.severity) &&
+    (filter.blocking === undefined || item.blocking === filter.blocking));
+  const total = matched.length;
   return {
     v: 1,
     generatedAt: iso(nowMs),
     sources,
     total,
     omitted: Math.max(0, total - UNIFIED_INBOX_MAX_ITEMS),
-    items: ranked.slice(0, UNIFIED_INBOX_MAX_ITEMS).map(({ item }) => item),
+    ...(filter === undefined ? {} : { filter }),
+    items: matched.slice(0, UNIFIED_INBOX_MAX_ITEMS).map(({ item }) => item),
   };
 }
