@@ -407,9 +407,17 @@ then its jobs. `--json` is `fleet.org-groups.v1` and `GET
 /api/verse/fleet/control/org-groups` serves the same tree to a current read
 session. It groups the live map below and reads nothing else.
 
-- `nodes[]`: `id`, `role` (`leader`, `group`, `lane`, `job`), `label`, `parent`
+- `nodes[]`: `id`, `role` (`leader`, `group`, `lane`, `job`, `planner`), `label`, `parent`
   (null for the root), `children` (ids) and `counts` (`running`, `queued`,
   `idle`, `unknown`, summed over the leaves below). Parents come before children.
+- Branches under the leader: one per lane, `Guardian` (`group:guardian`, the main
+  guardian planner), `Loops` (`group:loops`: executor, Core orchestrator and comms)
+  and `unassigned` for anything with no known parent. The guardian and loops
+  branches come from the live map's `planners` and appear only when it has them;
+  their counts stay out of the leader's and the headline, which count jobs.
+  `phm org --json` adds this tree as `groups` (null when the live map could not be
+  read) next to the `fleet.org.v1` fields; the Map's "Group: by lane | by org"
+  toggle draws it, with the newest agent message on each parent link.
 - `headline`: the one line a phone shows first: `running`, `queued`, `stuck` (running
   jobs with no activity in 5 minutes), `mergedLastHour` (null when no lane reported)
   and `text` ("6 running, 2 stuck, 14 merged in the last hour", or "Nothing running.").
@@ -419,7 +427,7 @@ session. It groups the live map below and reads nothing else.
 - A node with no known parent sits under the group `group:unassigned`. A repeated
   id keeps its first row and is listed in `duplicates`. Computers and pools are not
   part of the org.
-- The Map pane's "By org" layout draws this tree and remembers the choice.
+- The Map pane's "Group: by lane | by org" toggle switches to this tree and remembers the choice.
 
 #### Live map
 

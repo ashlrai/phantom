@@ -8,8 +8,9 @@ import { readFleetRunsDirState, type FleetRunsDirState } from '../src/core/fleet
 import type { ResourceLedgerV1 } from '../src/core/fleet/runs-resource-ledger.js';
 import type { FleetSessionsV1 } from '../src/core/fleet/runs-sessions.js';
 
-const mocks = vi.hoisted(() => ({ read: vi.fn() }));
+const mocks = vi.hoisted(() => ({ read: vi.fn(), groups: vi.fn() }));
 vi.mock('../src/core/verse/fleet-org-map-api.js', () => ({ readFleetOrgMap: mocks.read }));
+vi.mock('../src/core/verse/fleet-org-groups-api.js', () => ({ readFleetOrgGroups: mocks.groups }));
 import { cmdOrg } from '../src/cli/org.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00Z'), AT = '2026-11-17T12:00:00Z';
@@ -120,11 +121,17 @@ describe('phm org', () => {
   it('prints the tree as JSON by default and as text with --text, and rejects stray input', async () => {
     const tree = fleetOrgTree(map([session('RQ-A', 'claude')]), { runs: runs([lane('claude', 1, 8, 0)]) });
     mocks.read.mockResolvedValue({ tree });
+    const groups = { schema: 'fleet.org-groups.v1', root: 'leader', nodes: [{ id: 'leader' }] };
+    mocks.groups.mockResolvedValue(groups);
     const out: string[] = [], log = vi.spyOn(console, 'log').mockImplementation(line => { out.push(String(line)); });
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       expect(await cmdOrg([])).toBe(0);
-      expect(JSON.parse(out.pop()!)).toEqual(JSON.parse(JSON.stringify(tree)));
+      expect(JSON.parse(out.pop()!)).toEqual({ ...JSON.parse(JSON.stringify(tree)), groups });
+      // An unreadable live map is null, and the rest of the tree still prints.
+      mocks.groups.mockRejectedValueOnce(new Error('fixture failure'));
+      expect(await cmdOrg(['--json'])).toBe(0);
+      expect(JSON.parse(out.pop()!)).toEqual({ ...JSON.parse(JSON.stringify(tree)), groups: null });
       expect(mocks.read).toHaveBeenLastCalledWith(60);
       expect(await cmdOrg(['--text', '--minutes', '15'])).toBe(0);
       expect(out.pop()).toContain('claude (Anthropic, claude-fable-5-2): running. 1 running of 8, 0 queued, usage unknown');
