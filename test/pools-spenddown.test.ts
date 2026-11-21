@@ -23,14 +23,14 @@ describe('buildSpendDown', () => {
     // 50% used, 84 h left of 168 h (even pace 50%), burning 0.6 %/h: 50 + 50.4 lands at 100%.
     expect(only(lane('claude', { usedPct: 50, burnPctPerHour: 0.6 }))).toMatchObject({
       id: 'claude', label: 'Claude', state: 'on-pace', used_frac: 0.5, even_pace_frac: 0.5, projected_at_reset: 1,
-      reset_at: at(84), verdict: 'on pace', reason: null,
+      reset_at: at(84), verdict: 'spending on pace', reason: null,
     });
   });
 
   it('under-spending: says how much will be left and to add work', () => {
     // 72% used with 31 h left, burning 0.3 %/h: ends near 81%, 19% unused.
     const row = only(lane('claude', { usedPct: 72, resetAt: at(31), burnPctPerHour: 0.3 }));
-    expect(row).toMatchObject({ state: 'under', used_frac: 0.72, even_pace_frac: 0.815, projected_at_reset: 0.813, verdict: 'will leave 19% unused: add work' });
+    expect(row).toMatchObject({ state: 'under', used_frac: 0.72, even_pace_frac: 0.815, projected_at_reset: 0.813, verdict: 'behind: will waste ~19%' });
   });
 
   it('over-spending: names the day and hour it runs dry', () => {
@@ -43,16 +43,16 @@ describe('buildSpendDown', () => {
   it('drained: fully used reads empty until the reset', () => {
     const row = only(lane('claude', { usedPct: 100, resetAt: at(20) }));
     expect(row).toMatchObject({ state: 'drained', used_frac: 1, projected_at_reset: 1, reset_at: at(20) });
-    expect(row.verdict).toMatch(/^drained until \w{3} \d{1,2} [AP]M$/);
+    expect(row.verdict).toMatch(/^exhausted until \w{3} \d{1,2} [AP]M$/);
   });
 
   it('unknown: no reading is "no reading", never zero', () => {
     expect(only(lane('zai', { usedPct: null }))).toMatchObject({
-      state: 'unknown', used_frac: null, even_pace_frac: null, projected_at_reset: null, verdict: 'no reading', reason: 'no reading',
+      state: 'unknown', used_frac: null, even_pace_frac: null, projected_at_reset: null, verdict: 'unknown: no reading', reason: 'no reading',
     });
     // A reading with no burn to project from keeps the used share and says why there is no marker.
     expect(only(lane('grok', { usedPct: 40 }))).toMatchObject({
-      state: 'unknown', used_frac: 0.4, projected_at_reset: null, verdict: 'no pace yet: not enough readings',
+      state: 'unknown', used_frac: 0.4, projected_at_reset: null, verdict: 'unknown: not enough readings for a pace',
     });
   });
 
@@ -70,7 +70,7 @@ describe('buildSpendDown', () => {
     const data = chart(lane('claude', { usedPct: 50, burnPctPerHour: 0.6 }), lane('zai', { usedPct: null }));
     expect(data.schema).toBe(SPENDDOWN_SCHEMA);
     expect(data.generated_at).toBe(at(0));
-    expect(formatSpendDownText(data).split('\n')).toEqual(['Claude: 50% used, even pace 50%, ends near 100%: on pace; queued: unknown', 'Zai: no reading; queued: unknown']);
+    expect(formatSpendDownText(data).split('\n')).toEqual(['Claude: 50% used, even pace 50%, ends near 100%: spending on pace; 1 running of 2 slots, queue unknown; queued: unknown', 'Zai: unknown: no reading; 1 running of 2 slots, queue unknown; queued: unknown']);
     expect(formatSpendDownText({ ...data, pools: [] })).toBe('No plans reported.');
   });
 });
@@ -108,6 +108,38 @@ describe('blocked: sign-in', () => {
   it('a lane held for another reason, or an unheld lane, is not blocked', () => {
     expect(withExtras({ heldReasons: { gemini: 'paused by hand' } }, held).pools[0]).toMatchObject({ blocked: null, blocked_fix: null });
     expect(withExtras({ heldReasons: { gemini: 'logged out' } }, lane('gemini', { usedPct: 20 })).pools[0]!.blocked).toBeNull();
+  });
+});
+
+describe('refilled, lane idle', () => {
+  const ready = (n: number | null) => ({ supply: supply('claude', n) });
+  // 5% used, 160 h left of 168 h (4.8% elapsed): the pool just refilled.
+  const fresh = (patch: Partial<ResourceLaneRow> = {}) => lane('claude', { usedPct: 5, resetAt: at(160), burnPctPerHour: 0.5, running: 0, target: 2, ...patch });
+
+  it('a pool at 5% with 0 running and 5 queued is refilled, lane idle', () => {
+    const row = withExtras(ready(5), fresh()).pools[0]!;
+    expect(row).toMatchObject({ state: 'idle', verdict: 'refilled, lane idle', used_frac: 0.05, running: 0, target: 2, queued_rows: 5 });
+    expect(formatSpendDownText({ schema: SPENDDOWN_SCHEMA, generated_at: at(0), pools: [row] })).toContain('0 running of 2 slots, 5 queued');
+  });
+
+  it('is not idle when something runs, nothing is queued, the lane is held, or a figure is unreported', () => {
+    expect(withExtras(ready(5), fresh({ running: 1 })).pools[0]!.state).not.toBe('idle');
+    expect(withExtras(ready(0), fresh()).pools[0]!.state).not.toBe('idle');
+    expect(withExtras(ready(5), fresh({ held: true })).pools[0]!.state).not.toBe('idle');
+    expect(withExtras(ready(null), fresh()).pools[0]!.state).not.toBe('idle');
+    expect(withExtras(ready(5), fresh({ running: null })).pools[0]!.state).not.toBe('idle');
+    expect(withExtras({}, fresh()).pools[0]!.queued_rows).toBeNull();
+  });
+
+  it('an idle lane deep into the window is behind, not refilled', () => {
+    // 40% used with 20 h left, nothing running, rows waiting.
+    const row = withExtras(ready(5), lane('claude', { usedPct: 40, resetAt: at(20), burnPctPerHour: 0.2, running: 0 })).pools[0]!;
+    expect(row.state).toBe('under');
+    expect(row.verdict).toMatch(/^behind: will waste ~\d+%$/);
+  });
+
+  it('a drained pool stays exhausted even with rows queued and nothing running', () => {
+    expect(withExtras(ready(5), lane('claude', { usedPct: 100, resetAt: at(20), running: 0 })).pools[0]!.state).toBe('drained');
   });
 });
 

@@ -4,12 +4,12 @@
 .head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-2); align-items: baseline; overflow-wrap: anywhere; font-size: var(--text-xs-size); }
 .label { color: var(--text-primary); }
 .verdict { color: var(--text-secondary); text-align: right; }
-.row[data-state='under'] .verdict, .row[data-state='over'] .verdict, .row[data-state='drained'] .verdict { color: var(--status-warning-fg); }
+.row[data-state='under'] .verdict, .row[data-state='idle'] .verdict, .row[data-state='over'] .verdict, .row[data-state='drained'] .verdict { color: var(--status-warning-fg); }
 .row[data-state='on-pace'] .verdict { color: var(--status-success-fg); }
 .row[data-state='unknown'] .verdict { color: var(--status-unknown-fg); }
 .track { position: relative; height: 8px; border-radius: var(--radius-xs); background: var(--bg-hover); }
 .used { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background: var(--status-info-solid); }
-.row[data-state='under'] .used, .row[data-state='over'] .used, .row[data-state='drained'] .used { background: var(--status-warning-solid); }
+.row[data-state='under'] .used, .row[data-state='idle'] .used, .row[data-state='over'] .used, .row[data-state='drained'] .used { background: var(--status-warning-solid); }
 .pace { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; background: var(--text-primary); }
 .projected { position: absolute; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px; transform: rotate(45deg); background: var(--text-secondary); }
 .key { margin: 0; font-size: var(--text-xs-size); color: var(--text-secondary); }
