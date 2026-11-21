@@ -306,3 +306,16 @@ as it is. The launch precheck and stop list only see a job through that line.
 `withTaskLine(prompt, line, id)`, `eligibleRecutPrs(prs, area, now)` and
 `planRecutArea(area, family, gate, list, now)`; `recut-gate.ts` exports `AREA_PATHS` and `RECUT_AREAS`.
 Hermetic coverage: `test/recut-plan.test.ts`.
+
+## Lane yield (`fleet.lane-yield.v1`)
+
+RQ-YIELDBOARDN22UQ8. `phm fleet yield --by lane [--since 24h | --hours N] [--metrics <jobs.jsonl>] [--json]`
+prints one row per lane that launched in the window: launches, finished, PRs opened, merged PRs,
+`empty_rate` (empty finishes over finished runs; null when nothing finished), `merged_per_launch` and
+`median_minutes_to_merge` (launch to the newest recorded row of merged runs; null when nothing merged).
+A job merged twice counts once (the `yieldTally` model). A lane with no merge and 3 or more launches has
+`not_paying_off: true`. Lanes with no launches are omitted; an unreadable file is `known: false`.
+The first line is `Last 24 h: 79 merged PRs. Best lane: claude (0.69 merged per launch). Weakest: zai (0.03).`,
+or `No jobs in this window (last 24 h).`. `src/core/fleet/lane-yield-board.ts` owns the report
+(`readLaneYield`, `laneYieldFromRuns`); `GET /api/fleet/lane-yield[?hours=]` serves it and the Home and
+phone Yield card draws it without recounting. Tests: `test/fleet-lane-yield-board.test.ts`.

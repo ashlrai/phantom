@@ -23,6 +23,7 @@ import { LeaderRepliesCard, leaderRepliesQuery } from '../../home/LeaderRepliesC
 import { LiveBuildLine } from '../../home/LiveBuildLine.js';
 import { ReleasesLine } from '../../home/ReleasesLine.js';
 import { MachinesCard } from '../../home/MachinesCard.js';
+import { LaneYieldCard } from '../../home/LaneYieldCard.js';
 import { PoolsCard, poolsQuery } from '../../home/PoolsCard.js';
 import { PulseCard, pulseQuery } from '../../home/PulseCard.js';
 import { PulseStrip, pulseLanesQuery } from '../../home/PulseStrip.js';
@@ -100,6 +101,7 @@ export function HomeGlance() {
       <LeaderRepliesCard limit={1} />
       <SupplyCardPhone />
       <PoolsCard onOpenJob={job => navigate({ screen: 'worker', job })} />
+      <LaneYieldCard compact />
       <MachinesCard className={ui.card} />
       <MobileInterject compact title="Message the leader" placeholder="Say it in plain words." />
       <ShippedCard days={1} />
