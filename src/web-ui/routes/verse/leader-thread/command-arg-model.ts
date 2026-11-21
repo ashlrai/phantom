@@ -2,7 +2,8 @@
  * routes/verse/leader-thread/command-arg-model.ts: the pure half of the
  * picker that fills in a typed command's argument in the Leader reply box.
  * After `/release ` it offers the lanes that are held, after `/hold ` every
- * lane, after `/stop ` the jobs running now, after `/log `, `/thread ` and
+ * lane and then a few lengths of hold, after `/lane ` every lane, after
+ * `/stop ` the jobs running now, after `/log `, `/thread ` and
  * `/summary ` the sessions in the session list, after `/app ` the Mac apps
  * Phantom can open, and after `/open ` the panes.
  *
@@ -21,16 +22,17 @@ import type { LaneTargetsV1 } from '../ops/lane-targets-model.js';
 import { appWords } from './composer-app-commands.js';
 import { sessionArg, type ComposerCommandName } from './composer-commands.js';
 
-export type ArgSource = 'lanes' | 'sessions' | 'apps' | 'panes';
-export type ArgCommand = Extract<ComposerCommandName, 'release' | 'hold' | 'stop' | 'log' | 'thread' | 'summary' | 'app' | 'open'>;
+/** `minutes` is the second argument of `/hold`: a fixed list, read from nowhere. */
+export type ArgSource = 'lanes' | 'sessions' | 'apps' | 'panes' | 'minutes';
+export type ArgCommand = Extract<ComposerCommandName, 'release' | 'hold' | 'lane' | 'stop' | 'log' | 'thread' | 'summary' | 'app' | 'open'>;
 
 const SOURCE: Readonly<Record<ArgCommand, ArgSource>> = {
-  release: 'lanes', hold: 'lanes', stop: 'sessions', log: 'sessions', thread: 'sessions', summary: 'sessions', app: 'apps', open: 'panes',
+  release: 'lanes', hold: 'lanes', lane: 'lanes', stop: 'sessions', log: 'sessions', thread: 'sessions', summary: 'sessions', app: 'apps', open: 'panes',
 };
 
 /** What the list is called, by command. */
 export const ARG_LIST_NAME: Readonly<Record<ArgCommand, string>> = {
-  release: 'Held lanes', hold: 'Lanes', stop: 'Running jobs', log: 'Jobs', thread: 'Sessions', summary: 'Sessions', app: 'Mac apps', open: 'Panes',
+  release: 'Held lanes', hold: 'Lanes', lane: 'Lanes', stop: 'Running jobs', log: 'Jobs', thread: 'Sessions', summary: 'Sessions', app: 'Mac apps', open: 'Panes',
 };
 
 export interface ArgQuery {
@@ -44,8 +46,9 @@ export interface ArgQuery {
 
 /**
  * The argument being typed, or null when the draft is not a command waiting
- * for its first argument with the caret at the end. A space ends the argument
- * (`/hold claude 30` is past the lane), except in an app's name.
+ * for an argument with the caret at the end. A space ends the argument,
+ * except in an app's name; after `/hold <lane> ` the argument is the minutes,
+ * for as long as only digits are typed.
  */
 export function argQuery(draft: string, caret: number): ArgQuery | null {
   if (caret !== draft.length) return null;
@@ -54,6 +57,8 @@ export function argQuery(draft: string, caret: number): ArgQuery | null {
   if (!match || name === undefined || !Object.hasOwn(SOURCE, name)) return null;
   const source = SOURCE[name as ArgCommand];
   const query = match[3]!;
+  const minutes = name === 'hold' ? /^(\S+[ \t]+)(\d*)$/.exec(query) : null;
+  if (minutes) return { name: 'hold', source: 'minutes', query: minutes[2]!, start: match[1]!.length + minutes[1]!.length };
   if (source !== 'apps' && /\s/.test(query)) return null;
   return { name: name as ArgCommand, source, query, start: match[1]!.length };
 }
@@ -98,9 +103,10 @@ function pick(all: readonly ArgOption[], query: string, words: { none: string; n
   return { shown, more: ranked.length - shown.length, empty, caveat };
 }
 
-/** `/release`: the held lanes with why and until when. `/hold`: every lane, the ones not yet held first. */
-export function laneOptions(targets: LaneTargetsV1, name: 'release' | 'hold', query: string): ArgOptions {
-  const rows = name === 'release' ? targets.lanes.filter(row => row.held) : [...targets.lanes].sort((a, b) => Number(a.held) - Number(b.held));
+/** `/release`: the held lanes with why and until when. `/hold`: every lane, the ones not yet held first. `/lane`: every lane as listed. */
+export function laneOptions(targets: LaneTargetsV1, name: 'release' | 'hold' | 'lane', query: string): ArgOptions {
+  const rows = name === 'release' ? targets.lanes.filter(row => row.held)
+    : name === 'lane' ? targets.lanes : [...targets.lanes].sort((a, b) => Number(a.held) - Number(b.held));
   const options = rows.map((row): ArgOption => {
     const until = row.heldUntil ? clockTime(row.heldUntil) : '';
     return {
@@ -169,9 +175,49 @@ export function paneOptions(panes: readonly { id: string; title: string }[], que
   return pick(options, query, { none: 'No pane is registered.', noun: 'pane' });
 }
 
+/** The lengths of hold `/hold <lane> ` offers, in minutes. Any whole number from 1 to 1440 can still be typed. */
+export const HOLD_PRESETS: readonly number[] = [15, 30, 60, 120, 240, 1440];
+export const HOLD_MINUTES_LIST_NAME = 'Minutes to hold';
+
+/** What the list is called: the command's own, or the minutes list once `/hold` has its lane. */
+export const argListName = (at: ArgQuery): string => (at.source === 'minutes' ? HOLD_MINUTES_LIST_NAME : ARG_LIST_NAME[at.name]);
+
+const span = (minutes: number): string =>
+  minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h${minutes % 60 ? ` ${minutes % 60} min` : ''}`;
+
+/** When a hold of that length, started now, would end: "2:35 PM", with "tomorrow" when it crosses midnight. */
+export function holdEnd(minutes: number, nowMs: number): string {
+  const end = new Date(nowMs + minutes * 60_000);
+  return `${clockTime(end.toISOString())}${end.toDateString() === new Date(nowMs).toDateString() ? '' : ' tomorrow'}`;
+}
+
+/**
+ * `/hold <lane> `: a few lengths of hold, each with the time it would end.
+ * A number typed by hand that is none of them is listed first with its own
+ * end time, so the row Enter runs is always on screen; one the command would
+ * refuse gets the command's own sentence instead of a list.
+ */
+export function minuteOptions(query: string, nowMs: number): ArgOptions {
+  const typed = /^\d+$/.test(query) ? Number(query) : null;
+  if (typed !== null && (typed < 1 || typed > 1440)) return { shown: [], more: 0, empty: 'Minutes must be a whole number from 1 to 1440.', caveat: null };
+  const listed = [
+    ...(typed !== null && !HOLD_PRESETS.includes(typed) ? [typed] : []),
+    ...HOLD_PRESETS.filter(preset => typed === null || String(preset).startsWith(String(typed))),
+  ];
+  const shown = listed.map((minutes): ArgOption => ({
+    value: String(minutes), label: span(minutes), facts: `until ${holdEnd(minutes, nowMs)}`, note: null, tone: 'none', lane: null,
+  }));
+  return { shown, more: 0, empty: null, caveat: null };
+}
+
 /** The draft with the argument filled in. `/hold` keeps a space after the lane, ready for the minutes. */
 export function insertArg(draft: string, at: ArgQuery, value: string): string {
-  return `${draft.slice(0, at.start)}${value}${at.name === 'hold' ? ' ' : ''}`;
+  return `${draft.slice(0, at.start)}${value}${moreFollows(at) ? ' ' : ''}`;
+}
+
+/** Whether filling this argument in leads to another list (`/hold`'s lane, then its minutes), so the picker stays open. */
+export function moreFollows(at: ArgQuery): boolean {
+  return at.name === 'hold' && at.source === 'lanes';
 }
 
 /**
