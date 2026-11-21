@@ -29,13 +29,13 @@ describe('self-tick run record', () => {
     const last = readJson(SELF_TICK_LAST);
     expect(last).toMatchObject({ schema: 'fleet.self-tick-record.v1', mode: 'apply', state: 'ran', startedAt: '2026-11-20T10:00:00.000Z', finishedAt: '2026-11-20T10:00:00.000Z', failedSteps: [] });
     expect(last.hooks).toEqual([
-      { hook: 'autofill', state: 'ran', items: 2, note: null },
-      { hook: 'gaps', state: 'ran', items: 1, note: null },
-      { hook: 'reap', state: 'ran', items: 5, note: null },
+      { hook: 'autofill', state: 'ran', items: 2, count: null, note: null },
+      { hook: 'gaps', state: 'ran', items: 1, count: 4, note: null },
+      { hook: 'reap', state: 'ran', items: 5, count: null, note: null },
     ]);
     expect(lines()).toHaveLength(1);
     expect(lines()[0]).toMatchObject({ schema: 'fleet.self-tick-record.v1', mode: 'apply' });
-    expect(readSelfTickStatus(runs, NOW).line).toContain('autofill 2 items, gaps 1 item, reap 5 items');
+    expect(readSelfTickStatus(runs, NOW).line).toContain('autofill 2 items, gaps: 4 candidates, 1 queued, reap 5 items');
   });
 
   it('a dry run is marked dry-run and its hooks read skipped, never zero', async () => {
