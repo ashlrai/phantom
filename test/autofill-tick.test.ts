@@ -142,9 +142,15 @@ describe('autofill picks starved lanes from the status facts', () => {
   });
 
   it('feeds no more than the free slots', async () => {
-    const report = await tick({}, { readLanes: async () => ({ lanes: [{ lane: 'claude', running: 5, target: 7, queued: 0, held: false, remainingPct: null }] }) });
+    const report = await tick({}, { readLanes: async () => ({ lanes: [{ lane: 'claude', running: 5, target: 7, queued: 0, held: false, remainingPct: 40 }] }) });
     expect(report.runs[0]).toMatchObject({ lane: 'claude', drafted: 2, applied: 2 });
-    expect(report.lanes![0]).toMatchObject({ starved: true, fed: 2, why: 'running 5 of 7, 0 queued' });
+    expect(report.lanes![0]).toMatchObject({ starved: true, fed: 2, why: 'running 5 of 7, 0 queued, pool 60% used' });
+  });
+
+  it('does not feed a lane with no pool budget reading', async () => {
+    const report = await tick({}, { readLanes: async () => ({ lanes: [{ lane: 'claude', running: 0, target: 7, queued: 0, held: false, remainingPct: null }] }) });
+    expect(report.runs).toEqual([]);
+    expect(report.lanes).toEqual([{ lane: 'claude', starved: false, fed: 0, why: 'no budget reading, so usage left is unknown' }]);
   });
 
   it('skips a held lane with the reason in the report', async () => {
