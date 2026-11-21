@@ -16,7 +16,7 @@ import { promisify } from 'node:util';
 import { scrubSecrets } from '../util/scrub.js';
 import { stem, words } from './bets-check.js';
 import {
-  countQueuedDropJobPrompts, DROP_JOB_DEFAULT_REPO, DROP_JOB_QUEUE_LIMIT, DROP_JOB_REPOS, dropJobExists, DropJobExistsError, DropJobValidationError,
+  DROP_JOB_DEFAULT_REPO, DROP_JOB_QUEUE_LIMIT, DROP_JOB_REPOS, dropJobExists, DropJobExistsError, DropJobValidationError,
   explainDropJobReasons, listDropJobs, resolveDropJobRoot, validateDropJob, writeDropJob, type DropJobInput,
 } from './drop-job-writer.js';
 import { ledgerFinishes } from './empties.js';
@@ -28,6 +28,7 @@ import { readGapProposals, recordGapProposal } from './gap-proposal-record.js';
 import type { LaneFacts } from './autofill-lanes.js';
 import { gapLaneRoom, GAP_LANE_ORDER, pickPacedLane, type GapLaneRoom } from './gap-lane-room.js';
 import { aheadWords, type PaceVerdict } from './pace-verdict.js';
+import { readFleetQueue } from './runs-parked-queue.js';
 
 export const JOB_GAPS_SCHEMA = 'jobs.gaps.v1';
 export const MAX_GAPS_PER_JOB = 12;
@@ -54,7 +55,31 @@ export interface GapCandidate { title: string; repo: string | null; sourceJob: s
 export interface DroppedGap extends GapCandidate { reason: GapDropReason; matched: string | null }
 export interface ProposedGap extends GapCandidate { /** Lane the job was written for; null when not queued. */ lane?: string | null; jobId: string | null; queued: boolean; skipped: string | null; /** Absolute path of the written drop file, or null when nothing was written. */ path: string | null; /** Plain-words reason when the contract refused the job, else null. */ refused: string | null }
 /** `known` is false when the job metrics file cannot be read; `unknownSources` names dedupe sources that could not be read. */
+/** The numbers the queue-full check used, so a reader can see why gaps did or did not queue. */
+export interface GapQueueInputs {
+  /** READY rows in queue/ready.tsv (never prompt files); null when the file could not be read. */
+  readyRows: number | null;
+  /** Ready rows that cannot launch now (lane held, pool spent or every slot busy); 0 without lane readings. */
+  parkedRows: number;
+  /** Ready rows that can launch: readyRows - parkedRows. */
+  launchableRows: number | null;
+  limit: number;
+  lanesSource: 'lane readings' | 'unavailable';
+  full: boolean;
+}
+
+/** Reads queue/ready.tsv once. Prompt files are never counted: queue/prompts keeps every old prompt. */
+export async function readGapQueueInputs(runsDir: string, room: GapLaneRoom | null): Promise<GapQueueInputs> {
+  const q = await readFleetQueue({ runsDir }).catch(() => null);
+  const readyRows = q && q.sources.ready !== 'degraded' ? q.ready : null;
+  const parkedRows = room?.stuck ?? 0;
+  const launchableRows = readyRows === null ? null : Math.max(0, readyRows - parkedRows);
+  return { readyRows, parkedRows, launchableRows, limit: DROP_JOB_QUEUE_LIMIT, lanesSource: room ? 'lane readings' : 'unavailable', full: launchableRows !== null && launchableRows >= DROP_JOB_QUEUE_LIMIT };
+}
+
 export interface JobGapsReport {
+  /** Count inputs for the queue-full check; set with `propose`. */
+  queue?: GapQueueInputs;
   /** Ready rows that cannot launch now (lane held, pool spent or every slot busy); set with `propose` and lane readings. They do not make the queue full. */
   parked?: number;
   schema: typeof JOB_GAPS_SCHEMA;
@@ -356,7 +381,8 @@ export async function readJobGaps(hours: number, opts: { propose?: boolean } & J
   if (opts.propose) {
     const room = opts.lanes ? gapLaneRoom(opts.lanes, now) : opts.pace?.size ? unboundedRoom() : null;
     const paceNotes: string[] = [];
-    report.proposed = await proposeGaps(report.candidates, runsDir, opts.write, opts.maxNew ?? maxNewFromEnv(), now, room, opts.pace, paceNotes);
+    report.queue = await readGapQueueInputs(runsDir, room);
+    report.proposed = await proposeGaps(report.candidates, runsDir, opts.write, opts.maxNew ?? maxNewFromEnv(), now, room, opts.pace, paceNotes, report.queue);
     if (paceNotes.length) report.paceNotes = paceNotes;
     if (room) report.parked = room.stuck;
   }
@@ -376,7 +402,8 @@ export function maxNewFromEnv(env: NodeJS.ProcessEnv = process.env): number {
   return Number.isInteger(n) && n >= 0 && n <= 40 && env.ASHLR_GAPS_MAX?.trim() ? n : DEFAULT_MAX_NEW_DROPS;
 }
 
-async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: JobGapsDeps['write'], maxNew: number, now: number, room: GapLaneRoom | null, pace?: ReadonlyMap<string, PaceVerdict>, paceNotes: string[] = []): Promise<ProposedGap[]> {
+async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: JobGapsDeps['write'], maxNew: number, now: number, room: GapLaneRoom | null, pace: ReadonlyMap<string, PaceVerdict> | undefined, paceNotes: string[], queue: GapQueueInputs): Promise<ProposedGap[]> {
+  let launchable = queue.launchableRows;
   const moved = new Map<string, number>();
   const held = new Map<string, number>();
   const root = resolveDropJobRoot(runsDir);
@@ -399,11 +426,12 @@ async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: J
     if (!verdict.ok) { row.refused = explainDropJobReasons(verdict.reasons); row.skipped = row.refused; continue; }
     try {
       if (await dropJobExists(root, job.id)) { row.skipped = 'already queued'; continue; }
-      // Rows on a held or used-up lane cannot launch, so they do not make the queue full.
-      if (!write && await countQueuedDropJobPrompts(root) - (room?.stuck ?? 0) >= DROP_JOB_QUEUE_LIMIT) { row.skipped = 'the job queue is full'; continue; }
+      // Counts ready.tsv rows only. Rows on a held or used-up lane cannot launch, so they do not make the queue full.
+      if (!write && launchable !== null && launchable >= queue.limit) { row.skipped = `the job queue is full (${launchable} launchable rows, limit ${queue.limit})`; continue; }
       const written = await (write ?? writeDropJob)(root, job);
       row.path = (written as { file?: string } | undefined)?.file ?? null;
       row.queued = true;
+      if (launchable !== null) launchable++;
       row.lane = lane;
       if (pick.from) moved.set(`${pick.from}\t${lane}`, (moved.get(`${pick.from}\t${lane}`) ?? 0) + 1);
       const open = room?.open.find(o => o.lane === lane);
