@@ -1,11 +1,11 @@
 /**
- * `phm leader thread --since <hours|time> [--limit <n>] [--json]`: the whole Leader conversation
+ * `phm leader thread [--since <hours|time>] [--limit <n>] [--json|--text]`: the whole Leader conversation
  * (MASON-INBOX, MASON-OUTBOX and PLAN-LOG "Reply for Mason") as one list, oldest
  * first. Read-only. Logic lives in core/fleet/leader-thread-merge.ts.
  */
 import { parseThreadWindow, type LeaderThreadEntry } from '../core/fleet/leader-thread-merge.js';
 
-export const LEADER_THREAD_USAGE = 'Usage: phm leader thread --since <hours|time> [--limit <n>] [--json]';
+export const LEADER_THREAD_USAGE = 'Usage: phm leader thread [--since <hours|time>] [--limit <n>] [--json|--text]';
 
 /** A plain line per message: time, who, channel, then the text. */
 export function leaderThreadLine(entry: LeaderThreadEntry): string {
@@ -20,6 +20,7 @@ export async function runLeaderThreadCli(args: string[]): Promise<number> {
   const rest = [...args];
   const take = (name: string): boolean => { const i = rest.indexOf(name); if (i < 0) return false; rest.splice(i, 1); return true; };
   const json = take('--json');
+  const text = take('--text');
   const value = (name: string): string | undefined => {
     const i = rest.indexOf(name);
     if (i < 0) return undefined;
@@ -30,7 +31,7 @@ export async function runLeaderThreadCli(args: string[]): Promise<number> {
   const raw = value('--since');
   const limitRaw = value('--limit');
   const opts = parseThreadWindow(raw, limitRaw);
-  if (rest.length > 0 || opts === null) { console.error(LEADER_THREAD_USAGE); return 2; }
+  if (rest.length > 0 || opts === null || (json && text)) { console.error(LEADER_THREAD_USAGE); return 2; }
   const { readLeaderThread } = await import('../core/fleet/leader-thread-merge.js');
   const read = await readLeaderThread(opts);
   if (json) { console.log(JSON.stringify(read, null, 2)); return 0; }

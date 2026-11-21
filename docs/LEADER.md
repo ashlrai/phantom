@@ -549,7 +549,8 @@ reads it.
 
 ## From the CLI
 
-`phm leader thread` shows one chat: your `leader/MASON-INBOX.md` entries and the
+`phm leader thread --legacy` preserves the earlier chat format: your
+`leader/MASON-INBOX.md` entries and the
 leader's replies (`leader/MASON-OUTBOX.md` and the latest “Reply for Mason”
 block in each `leader/PLAN-LOG.md` entry), oldest first. It prints JSON by
 default (`id`, `ts`, `direction`, `channel`, `text`, `state`); add `--text` for
@@ -562,12 +563,14 @@ its text says `re: <id>`. Unreadable inbox blocks are skipped and counted in
 `phm leader say "<text>"` sends through the verified local-owner inbox writer
 (the same path as `phm leader inbox --text`) and prints the new message id.
 The desktop inbox box and the phone box show the same chat above their Send.
-For the whole conversation with the channel of each message, run
-`phm leader thread --since <hours|date> [--limit <n>] [--json]` (or GET
-`/api/verse/leader/thread/merged?since=…&limit=…`): each entry has `at`, `from` (`mason`,
+The default `phm leader thread` shows the whole conversation as plain lines.
+Add `--json` for the `leader.thread.v1` shape or `--text` for explicit plain
+lines. Optionally filter with `--since <hours|date>` or keep the newest n with
+`--limit <n>`. The same view is available at GET
+`/api/verse/leader/thread/merged?since=…&limit=…`. Each entry has `at`, `from` (`mason`,
 `leader`, `teammate` or `unknown`), `channel`, `text`, `source` and `refs` (PR
-numbers named in the text). `--limit` keeps the newest n. A reply in
-both the outbox and the PLAN-LOG shows once, and an entry with no readable date
+numbers named in the text). Without `--since`, no time filter is applied.
+A reply in both the outbox and the PLAN-LOG shows once, and an entry with no readable date
 keeps `at: null` ("time unknown") and sorts last.
 These journals are read only. `--follow` still streams the in-process Leader
 conversation. For dated PLAN-LOG replies alone, newest first, use
@@ -576,7 +579,8 @@ journal; older entries may be omitted.
 
 ```sh
 ashlr leader say "focus: the flaky retry test in binshield"
-ashlr leader thread [--limit 20] [--text]
+ashlr leader thread [--since 24] [--limit 20] [--json]
+ashlr leader thread --legacy [--limit 20] [--text]
 ashlr leader answer <questionId> "yes, but only on ashlrcode"
 ashlr leader approve <actionId>
 ashlr leader veto <actionId> [--note "why"]      # or: veto --memo <memoId>
