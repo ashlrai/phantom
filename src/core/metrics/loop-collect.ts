@@ -37,8 +37,11 @@ export function runsRoot(env: NodeJS.ProcessEnv = process.env): string {
   return env.ASHLR_RUNS_DIR && env.ASHLR_RUNS_DIR.startsWith('/') ? env.ASHLR_RUNS_DIR : join(homedir(), '.ashlr-runs');
 }
 
+/** A bounded tail read: the retained text and whether older bytes were cut at the cap. */
+export interface TailRead { text: string; truncated: boolean }
+
 /** Bounded tail read of a regular file (no symlink follow). Drops a leading partial line. Null when unreadable. */
-export async function readTail(path: string, maxBytes: number): Promise<string | null> {
+export async function readTail(path: string, maxBytes: number): Promise<TailRead | null> {
   try {
     const info = await lstat(path);
     if (!info.isFile()) return null;
@@ -49,7 +52,7 @@ export async function readTail(path: string, maxBytes: number): Promise<string |
       const buf = Buffer.alloc(size - start);
       await handle.read(buf, 0, buf.length, start);
       const text = buf.toString('utf8');
-      return start > 0 ? text.slice(text.indexOf('\n') + 1) : text;
+      return { text: start > 0 ? text.slice(text.indexOf('\n') + 1) : text, truncated: start > 0 };
     } finally { await handle.close(); }
   } catch { return null; }
 }
@@ -59,7 +62,7 @@ export interface PeerTask { peer: string; state: string; result?: { status: stri
 export interface LoopReaders {
   runsDir: string;
   now: () => number;
-  readText: (path: string, maxBytes: number) => Promise<string | null>;
+  readText: (path: string, maxBytes: number) => Promise<TailRead | null>;
   /** `gh` stdout, or null on any failure. */
   gh: (args: string[]) => Promise<string | null>;
   installed: () => Promise<InstalledBundle | null>;
@@ -165,7 +168,7 @@ export async function collectLoop(readers: LoopReaders, shareConfig: BetsShareCo
   const root = readers.runsDir;
   const path = (...p: string[]) => join(root, ...p);
   const sources: Record<string, string> = {};
-  const [jobsText, slotsText, statusText, readyText, concurrencyText, costText, betsText] = await Promise.all([
+  const [jobsRead, slotsRead, statusRead, readyRead, concurrencyRead, costRead, betsRead] = await Promise.all([
     readers.readText(path('metrics', 'jobs.jsonl'), JOBS_TAIL_BYTES),
     readers.readText(path('queue', 'slots.json'), SMALL_BYTES),
     readers.readText(path('queue', 'status.json'), SMALL_BYTES),
@@ -174,9 +177,18 @@ export async function collectLoop(readers: LoopReaders, shareConfig: BetsShareCo
     readers.readText(path('metrics', 'growth-cost-hourly.jsonl'), SMALL_BYTES),
     readers.readText(path('metrics', 'bets.jsonl'), SMALL_BYTES),
   ]);
+  const jobsText = jobsRead?.text ?? null, slotsText = slotsRead?.text ?? null, statusText = statusRead?.text ?? null;
+  const readyText = readyRead?.text ?? null, concurrencyText = concurrencyRead?.text ?? null;
+  const costText = costRead?.text ?? null, betsText = betsRead?.text ?? null;
   const mark = (name: string, ok: boolean) => { sources[name] = ok ? 'read' : 'missing'; };
   mark('metrics/jobs.jsonl', jobsText !== null); mark('queue/slots.json', slotsText !== null); mark('queue/status.json', statusText !== null);
   mark('queue/ready.tsv', readyText !== null); mark('metrics/growth-cost-hourly.jsonl', costText !== null); mark('metrics/bets.jsonl', betsText !== null);
+  // A bounded tail that hit its cap folds only the newest bytes: name each cut source so counts read as lower bounds, never silent.
+  const truncatedSources = ([
+    ['metrics/jobs.jsonl', jobsRead], ['queue/slots.json', slotsRead], ['queue/status.json', statusRead],
+    ['queue/ready.tsv', readyRead], ['queue/concurrency.json', concurrencyRead],
+    ['metrics/growth-cost-hourly.jsonl', costRead], ['metrics/bets.jsonl', betsRead],
+  ] as const).filter(([, read]) => read?.truncated === true).map(([name]) => name);
 
   const jobs = jobTimelines(jobsText, now);
   const rawSlots = json(slotsText);
@@ -233,7 +245,7 @@ export async function collectLoop(readers: LoopReaders, shareConfig: BetsShareCo
 
   const folded = betsText === null ? null : foldBets(betsText);
   const report: LoopReport = {
-    schema: LOOP_SCHEMA, at: new Date(now).toISOString(), sources,
+    schema: LOOP_SCHEMA, at: new Date(now).toISOString(), sources, truncated_sources: truncatedSources,
     throughput: jobsText === null ? missing('metrics/jobs.jsonl unreadable') : throughput(jobs, now),
     idea_to_merged_minutes: jobsText === null ? missing('metrics/jobs.jsonl unreadable') : ideaToMerged(jobs, now),
     merged_to_installed_minutes: m2i,
@@ -246,7 +258,7 @@ export async function collectLoop(readers: LoopReaders, shareConfig: BetsShareCo
   const readyBetRows = readyText === null ? null : parseReadyRows(readyText).filter(isBetRow).length;
   const free = localCap !== null && localRunning !== null ? Math.max(0, localCap - localRunning) : null;
   const share = betsShare({ freeSlots: free, readyBetRows }, shareConfig);
-  return { report, share, hints: selectionHints(report, share), jobsText, stages: buildLoopStages(jobsText, releases, now, sinceMs, releasesReason) };
+  return { report, share, hints: selectionHints(report, share), jobsText, stages: buildLoopStages(jobsText, releases, now, sinceMs, releasesReason, jobsRead?.truncated) };
 }
 
 export interface LoopWrites { loop: string; hints: string; share: string; morning: string | Missing }
