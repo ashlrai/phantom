@@ -1,8 +1,16 @@
 # Agent toolchain: Phantom's own dev tools for agents working on Phantom
 
-Phantom is built alongside Phantom Secrets, Locus, Lexicon, Stack, Cortex and
-ashlr-md. An agent changing this repository (or a sibling) should use them the
-way a user would. This page says what is wired, how, and where each tool stops.
+Phantom is built alongside Phantom Secrets, the Ashlr.AI Plugin (ashlr-plugin),
+Locus, Lexicon, Stack, Cortex and ashlr-md (see the
+[ecosystem map](ECOSYSTEM-MAP.md)). An agent changing this repository (or a
+sibling) should use them the way a user would. This page says what is wired,
+how, and where each tool stops.
+
+**Outside contributors:** every server below is optional. None is needed to
+install, build or run the tests, and Merge Gate does not check which tools you
+used. You can decline the approval prompt for any of them, or skip the file
+with `--strict-mcp-config` and your own config. The path from clone to
+auto-merge is in [Contribute with an agent](CONTRIBUTE-WITH-AN-AGENT.md).
 
 ## What is wired
 
@@ -203,7 +211,9 @@ phm tools requires --needs github-read,browser
 
 `requires` lists the lanes that declare every need (`can`), lanes that declare
 none of them missing (`unproven`), and lanes declared to lack one (`cannot`).
-Send a job only to `can` or `unproven`. Needs are `github-read`,
+Send a job only to `can` or `unproven`. It prints JSON by default (`--text` for
+a plain list) and exits 0 when some lane is not declared to lack a need, 1 when
+every lane is, and 2 on bad usage. Needs are `github-read`,
 `github-write`, `web-search`, `browser`, `computer-use`, `shell`,
 `package-install`, `mcp:<server>`, `cli:<name>`, `skill:<name>` and
 `plugin:<name>`. Declare a lane's tools in `lane-tools.json`, which wins over
