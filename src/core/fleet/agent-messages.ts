@@ -34,8 +34,8 @@ export interface AgentMessages {
   /** Damaged bus rows skipped while reading. */
   skipped: number;
 }
-/** `with` narrows `agent` to the two-way talk between that agent and one other. */
-export interface AgentMessagesQuery { since?: number; agent?: string; with?: string; limit?: number }
+/** `with` narrows `agent` to the two-way talk between that agent and one other; `kind` keeps one classified kind. */
+export interface AgentMessagesQuery { since?: number; agent?: string; with?: string; kind?: AgentMessageKind; limit?: number }
 
 type Body = Record<string, unknown>;
 const record = (value: unknown): Body | null =>
@@ -205,6 +205,7 @@ export function filterAgentMessages(messages: readonly AgentMessage[], query: Ag
   const is = (ref: AgentRef, name: string, key: string | undefined) =>
     ref.name.toLowerCase() === name || ref.lane === name || (key !== undefined && identityOf?.(ref.name) === key);
   return messages.filter(m => (query.since === undefined || Date.parse(m.ts) >= query.since)
+    && (query.kind === undefined || m.kind === query.kind)
     && (!agent || (peer ? (is(m.from, agent, agentKey) && is(m.to, peer, peerKey)) || (is(m.from, peer, peerKey) && is(m.to, agent, agentKey)) : is(m.from, agent, agentKey) || is(m.to, agent, agentKey))));
 }
 
@@ -228,9 +229,16 @@ export function parseSince(value: string, now = Date.now()): number | null {
 }
 
 /** Shared validation for CLI flags and API query params. */
-export function parseAgentMessagesQuery(input: { since?: string; agent?: string; with?: string; limit?: string }, now = Date.now()):
+export function parseAgentMessagesQuery(input: { since?: string; agent?: string; with?: string; kind?: string; limit?: string }, now = Date.now()):
   { ok: true; query: AgentMessagesQuery } | { ok: false; error: string } {
   const query: AgentMessagesQuery = {};
+  if (input.kind !== undefined) {
+    const kind = input.kind.toLowerCase();
+    if (!(AGENT_MESSAGE_KINDS as readonly string[]).includes(kind)) {
+      return { ok: false, error: `--kind takes one of ${AGENT_MESSAGE_KINDS.join(', ')}.` };
+    }
+    query.kind = kind as AgentMessageKind;
+  }
   if (input.since !== undefined) {
     const since = parseSince(input.since, now);
     if (since === null) return { ok: false, error: '--since takes 15m, 2h, 1d, epoch ms or an ISO time.' };
