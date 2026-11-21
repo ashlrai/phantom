@@ -6,7 +6,7 @@ import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { readUnifiedBusStatus, type UnifiedBusStatusOptions } from '../src/core/agents/bus-status.js';
 import { announceWork, sendDirectMessage, sendWakeRequest, type UnifiedBusOptions } from '../src/core/agents/bus-unified.js';
 import { writeOwnerChatReceipts, type OwnerChatReceipt } from '../src/core/agents/chat-owner-receipts.js';
-import { acquireCoordination } from '../src/core/agents/claim-store.js';
+import { acquireCoordination, releaseLiveClaimByOwner } from '../src/core/agents/claim-store.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { BusBoard } from '../src/core/fleet/bus-board.js';
 import { createBusMailbox } from '../src/core/fleet/bus-mailbox.js';
@@ -38,6 +38,9 @@ describe('readUnifiedBusStatus', () => {
     expect(status.wakes).toEqual({ state: 'missing', hints: 0, truncated: false });
     expect(status.coordination).toEqual({ source: 'missing', liveClaims: null, statuses: null });
     expect(status.workClaims).toEqual({ source: 'missing', claims: null });
+    // Two verified-empty stores agree trivially: VERIFIED with real zeros.
+    expect(status.claimDrift).toEqual({ state: 'VERIFIED', matched: 0, busOnly: 0,
+      coordOnly: 0, ownerMismatch: 0 });
     // A missing store is an empty feed, matching `work feed` semantics.
     expect(status.feed).toEqual({ status: 'ok', jobs: 0 });
     // A verifiably absent mailbox holds no pending mail: 0 is proven.
@@ -139,6 +142,10 @@ describe('readUnifiedBusStatus', () => {
     expect(degraded.store.source).toBe('available');
     expect(degraded.coordination.source).toBe('available');
     expect(degraded.feed.status).toBe('ok');
+    // The journal the verdict joins is unreadable, so the comparison cannot
+    // run: UNKNOWN with every count null — never a fabricated zero.
+    expect(degraded.claimDrift).toEqual({ state: 'UNKNOWN', matched: null,
+      busOnly: null, coordOnly: null, ownerMismatch: null });
   });
 
   it('counts pending legacy mailbox mail and degrades only that section when unreadable', () => {
@@ -194,6 +201,75 @@ describe('readUnifiedBusStatus', () => {
     expect(degraded.ownerChat).toEqual({ source: 'unavailable', receipts: null });
     expect(degraded.store.source).toBe('missing');
     expect(degraded.feed.status).toBe('ok');
+  });
+});
+
+describe('claimDrift section', () => {
+  const claimEnvelope = (id: string): BusEnvelope => ({ id, from: 'agent:nova', to: 'agent:atlas',
+    priority: 'P2', ttl: 120_000, body: { kind: 'work', text: 'fake work' } });
+
+  it('verifies a matched claim pair, then reports bus-only drift when the coordination row is gone', () => {
+    // mutateBusWorkClaim reads the wall clock, so this probe needs real time.
+    const options = setup(Date.now());
+    expect(appendBusInbox(claimEnvelope('w-drift-1'), { root: options.root, now: options.now }).status).toBe('posted');
+    expect(mutateBusWorkClaim({ action: 'acquire', id: 'w-drift-1', owner: 'agent:atlas',
+      leaseMs: 60_000, root: options.root }).status).toBe('acquired');
+
+    // The acquire dual-wrote both stores: one joined pair, owners agree.
+    const verified = readUnifiedBusStatus(options);
+    expect(verified.claimDrift).toEqual({ state: 'VERIFIED', matched: 1, busOnly: 0,
+      coordOnly: 0, ownerMismatch: 0 });
+
+    // Settle only the coordination side. The bus journal still shows a live
+    // lease the coordination table no longer holds — DRIFT, never verified.
+    expect(releaseLiveClaimByOwner({ root: options.root, key: 'queue:w-drift-1',
+      owner: 'agent:atlas' }).status).toBe('released');
+    expect(readUnifiedBusStatus(options).claimDrift)
+      .toEqual({ state: 'DRIFT', matched: 0, busOnly: 1, coordOnly: 0, ownerMismatch: 0 });
+  });
+
+  it('reports coordination-only and owner-mismatch drift kinds', () => {
+    // mutateBusWorkClaim reads the wall clock, so this probe needs real time.
+    const options = setup(Date.now());
+    const at = options.now();
+    // A live message claim with no bus partner is coordination-only drift.
+    expect(acquireCoordination({ root: options.root, origin: 'message', key: 'queue:ghost-1',
+      owner: 'agent:nova', leaseMs: 60_000, leaseUntil: at + 60_000,
+      sourceId: 'ghost-1:9:9', now: at }).status).toBe('acquired');
+    expect(readUnifiedBusStatus(options).claimDrift)
+      .toEqual({ state: 'DRIFT', matched: 0, busOnly: 0, coordOnly: 1, ownerMismatch: 0 });
+
+    // A joined pair whose owners disagree is owner-mismatch drift: the bus
+    // journal names atlas while the coordination row names nova. The bus
+    // row's sourceId triple is <id>:<cursor>:<receivedAt> — cursor 1 for the
+    // first retained message, receivedAt the frozen probe clock.
+    expect(appendBusInbox(claimEnvelope('w-drift-2'), { root: options.root, now: options.now }).status).toBe('posted');
+    expect(mutateBusWorkClaim({ action: 'acquire', id: 'w-drift-2', owner: 'agent:atlas',
+      leaseMs: 60_000, root: options.root }).status).toBe('acquired');
+    expect(releaseLiveClaimByOwner({ root: options.root, key: 'queue:w-drift-2',
+      owner: 'agent:atlas' }).status).toBe('released');
+    expect(acquireCoordination({ root: options.root, origin: 'message', key: 'queue:w-drift-2',
+      owner: 'agent:nova', leaseMs: 60_000, leaseUntil: at + 60_000,
+      sourceId: `w-drift-2:1:${at}`, now: at }).status).toBe('acquired');
+    expect(readUnifiedBusStatus(options).claimDrift)
+      .toEqual({ state: 'DRIFT', matched: 0, busOnly: 0, coordOnly: 1, ownerMismatch: 1 });
+  });
+
+  it('nulls every count when the coordination side cannot be read', () => {
+    const options = setup(Date.now());
+    expect(appendBusInbox(claimEnvelope('w-drift-3'), { root: options.root, now: options.now }).status).toBe('posted');
+    expect(mutateBusWorkClaim({ action: 'acquire', id: 'w-drift-3', owner: 'agent:atlas',
+      leaseMs: 60_000, root: options.root }).status).toBe('acquired');
+
+    const file = join(options.root!, 'coordination', 'claims.json');
+    writeFileSync(file, '{not json');
+    chmodSync(file, 0o600);
+    const degraded = readUnifiedBusStatus(options);
+    expect(degraded.coordination.source).toBe('unavailable');
+    expect(degraded.claimDrift).toEqual({ state: 'UNKNOWN', matched: null,
+      busOnly: null, coordOnly: null, ownerMismatch: null });
+    // The bus journal itself still reads and counts.
+    expect(degraded.workClaims).toEqual({ source: 'available', claims: 1 });
   });
 });
 
@@ -300,6 +376,8 @@ describe('phm agents bus status', () => {
     expect(json.registry.identities).toBe(0);
     expect(json.wakes.state).toBe('missing');
     expect(json.workClaims).toEqual({ source: 'missing', claims: null });
+    expect(json.claimDrift).toEqual({ state: 'VERIFIED', matched: 0, busOnly: 0,
+      coordOnly: 0, ownerMismatch: 0 });
     expect(json.feed.status).toBe('ok');
     expect(json.mailbox).toEqual({ source: 'missing', pending: 0 });
     expect(json.ownerChat).toEqual({ source: 'missing', receipts: 0 });
@@ -311,6 +389,7 @@ describe('phm agents bus status', () => {
     const lines = text.join('\n').split('\n');
     expect(lines[0]).toMatch(/^store missing /);
     expect(lines.join('\n')).toContain('workClaims missing claims=unknown');
+    expect(lines.join('\n')).toContain('claimDrift VERIFIED matched=0 busOnly=0 coordOnly=0 ownerMismatch=0');
     expect(lines.join('\n')).toContain('feed ok jobs=0');
     expect(lines.join('\n')).toContain('mailbox missing pending=0');
     expect(lines.join('\n')).toContain('ownerChat missing receipts=0');

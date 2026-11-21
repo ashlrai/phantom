@@ -3,7 +3,9 @@
  * coordination table, the message-id claim journal, the v2 work feed, the
  * shared task board and fleet queue `work mine`'s board section reads, the
  * owner-chat share receipts ledger `inbox` consults for `agent-chat-owner`
- * envelopes and the legacy `phm bus` mailbox `work mine` still reads. Each
+ * envelopes, the legacy `phm bus` mailbox `work mine` still reads and the
+ * claim-store drift verdict comparing the claim journal with the
+ * coordination table it is dual-written to. Each
  * section reports its own real state; a section that cannot be read reports
  * unavailable or null, never zero, and the whole read never throws. Read-only:
  * takes no writer lock, writes nothing, makes no network calls and grants
@@ -11,13 +13,14 @@
 import { dirname, isAbsolute, join } from 'node:path';
 import { inspectBusInbox, busPathMissing, type BusInboxInspection } from '../fleet/bus-inbox.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
+import { readClaimStoreDrift } from '../fleet/claim-store-drift.js';
 import { createBusMailbox } from '../fleet/bus-mailbox.js';
 import { BusBoard, busBoardStoragePaths, type BusBoardStateSummary } from '../fleet/bus-board.js';
 import { SharedStore } from '../fleet/shared-store.js';
 import { ashlrHome } from '../cloud/store.js';
 import { loadConfigReadOnlyStrict } from '../config.js';
 import type { AshlrConfig } from '../types.js';
-import { coordinationSummary } from './claim-store.js';
+import { listCoordination } from './claim-store.js';
 import { readBusWakes } from '../fleet/bus-wake-queue.js';
 import { readAgentRegistry } from './bus-identity.js';
 import { readBusWorkFeed, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
@@ -72,6 +75,27 @@ export interface UnifiedBusStatus {
     /** Claim records retained in the journal; null unless it was read, the
      * same convention the coordination section uses for an unprobed store. */
     claims: number | null;
+  };
+  /** Cross-store consistency verdict between the message-id claim journal
+   * (`workClaims`) and the coordination table (`coordination`) — the two
+   * stores `mutateBusWorkClaim` dual-writes, compared by the same
+   * `fleet.claim-drift.v1` read `ashlr fleet claim-drift` serves, run over
+   * the probe's own two reads so the verdict describes the same snapshots
+   * the adjacent sections report. VERIFIED: every live bus claim has its
+   * coordination partner under the same owner. DRIFT: live claims the two
+   * stores disagree about — the counts name bus-only, coordination-only and
+   * owner-mismatch rows. UNKNOWN: a side could not be read, so every count
+   * is null — never zero. */
+  claimDrift: {
+    state: 'VERIFIED' | 'DRIFT' | 'UNKNOWN';
+    /** Joined live pairs whose owners agree; null when the comparison could not run. */
+    matched: number | null;
+    /** Live bus claims with no coordination partner; same null rule. */
+    busOnly: number | null;
+    /** Live message-origin coordination claims with no bus partner; same null rule. */
+    coordOnly: number | null;
+    /** Joined pairs whose owners disagree; same null rule. */
+    ownerMismatch: number | null;
   };
   /** v2 work-feed projection behind `work post|status|feed`. */
   feed: {
@@ -197,19 +221,46 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     wakes = { state: 'unreadable', hints: null, truncated: null };
   }
 
+  let coordinationRead: ReturnType<typeof listCoordination> | undefined;
   let coordination: UnifiedBusStatus['coordination'];
   try {
-    coordination = coordinationSummary(options.root, now());
+    coordinationRead = listCoordination(options.root, now());
+    coordination = coordinationRead.source === 'available'
+      ? { source: 'available',
+          liveClaims: coordinationRead.claims.filter(row => row.live).length,
+          statuses: coordinationRead.statuses.length }
+      : { source: coordinationRead.source, liveClaims: null, statuses: null };
   } catch {
     coordination = { source: 'unavailable', liveClaims: null, statuses: null };
   }
 
+  let busClaimsRead: ReturnType<typeof inspectBusWorkClaims> | undefined;
   let workClaims: UnifiedBusStatus['workClaims'];
   try {
-    const read = inspectBusWorkClaims(options.root);
-    workClaims = { source: read.source, claims: read.source === 'available' ? read.claims.length : null };
+    busClaimsRead = inspectBusWorkClaims(options.root);
+    workClaims = { source: busClaimsRead.source,
+      claims: busClaimsRead.source === 'available' ? busClaimsRead.claims.length : null };
   } catch {
     workClaims = { source: 'unavailable', claims: null };
+  }
+
+  // The drift verdict joins the same two snapshots the sections above
+  // report: injected readers keep it on the probe's reads instead of
+  // re-reading either store. UNKNOWN nulls every count — the comparison
+  // could not run, so reporting zero drift rows would be a lie.
+  let claimDrift: UnifiedBusStatus['claimDrift'];
+  try {
+    const drift = readClaimStoreDrift({ root: options.root, now: now(),
+      inspectBus: () => busClaimsRead ?? { source: 'unavailable', claims: [] },
+      listCoord: () => coordinationRead ?? { source: 'unavailable', claims: [], statuses: [] } });
+    const known = drift.state !== 'UNKNOWN';
+    claimDrift = { state: drift.state,
+      matched: known ? drift.matched : null,
+      busOnly: known ? drift.busOnly.length : null,
+      coordOnly: known ? drift.coordOnly.length : null,
+      ownerMismatch: known ? drift.ownerMismatch.length : null };
+  } catch {
+    claimDrift = { state: 'UNKNOWN', matched: null, busOnly: null, coordOnly: null, ownerMismatch: null };
   }
 
   let feed: UnifiedBusStatus['feed'];
@@ -256,5 +307,5 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     board = { source: 'unavailable', threads: null, tasks: null, pendingDeliveries: null, claims: null };
   }
 
-  return { asOf, store, registry, wakes, coordination, workClaims, feed, mailbox, ownerChat, board };
+  return { asOf, store, registry, wakes, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board };
 }
