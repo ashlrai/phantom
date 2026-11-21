@@ -113,7 +113,7 @@ exit code is non-zero if any of them failed.
 | File selection | Always | `origin/master` must exist and share history with your branch: `git fetch origin master`, or `git fetch --unshallow origin` in a shallow clone. |
 | Empty test check | Always | Every new test file needs at least one test. |
 | Fleet registry | A `src/cli/fleet-*.ts` file changed | Run `node scripts/gen-fleet-registry.mjs` and commit the result. |
-| Authority drift | The diff touches `src/`, `test/`, `scripts/` or `.github/CODEOWNERS` | Review the drift, run `npm run authority:regen` and list each new Tier-1 root in the pull request body. If `origin/master` moved since you branched, rebase first. |
+| Authority drift | The diff touches `src/`, `test/`, `scripts/` or `.github/CODEOWNERS` | Review the drift, run `npm run authority:regen` and list each new Tier-1 root in the pull request body. When `origin/master` changed drift-relevant paths since you branched, the step reruns as `authority drift on current master` on your changed files laid over `origin/master`; if that fails, rebase onto `origin/master`, then regenerate. |
 | Docs check | A markdown file changed or a path was deleted | Fix the link or anchor it reports. |
 | ESLint | A JavaScript or TypeScript file changed | Fix the reported lines. |
 | Python syntax check | A `.py` file or an extensionless script with a python shebang changed | Fix the reported `SyntaxError`. The files are compiled with `python3` without writing bytecode; with no working `python3` the step prints `SKIP`. |
@@ -250,8 +250,24 @@ The repository merges through GitHub's merge queue with auto-merge. Agents with
 write access arm it with `gh pr merge --auto`; from a fork you cannot, so a
 maintainer or fleet agent arms it for you. Once armed, the pull request merges
 as soon as `Merge Gate` passes in the queue, with no separate manual merge
-step. If `master` moves and your branch conflicts, rebase onto `origin/master`,
-rerun the checks in step 4, and push again.
+step. Being behind `master` is fine: the queue tests your change merged onto
+the current base. If `master` moves and your branch conflicts, rebase onto
+`origin/master`, rerun the checks in step 4, and push again.
+
+### When a check fails for a reason outside your change
+
+If `Merge Gate` or the fast gate fails and `master`'s own run of that check
+is red too, the failure is probably not yours. For pull requests whose branch
+lives in `ashlrai/phantom` itself, the scheduled `Unrelated PR recovery`
+workflow (`.github/scripts/ci-unrelated-recover.mjs`) reruns the failed jobs
+once per head commit when auto-merge is armed. It skips pull requests from
+forks, drafts, and failures in the secret scans or `Check generated files`.
+From a fork, wait until `master` is green again, then rebase onto
+`origin/master` and push, or ask a maintainer to rerun the failed jobs.
+
+Two other workflows you may see around your pull request are not required:
+`PR topology observation (non-authoritative)` is telemetry, and the
+`Merge Queue Reaper` only cancels queue runs whose queue entry is gone.
 
 ### Protected paths wait for the owner
 
