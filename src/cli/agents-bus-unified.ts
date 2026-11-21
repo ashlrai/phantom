@@ -7,10 +7,10 @@ import {
 import {
   agentWakeClaimHolderSuffix, announceWork, busBodyFallbackSummary, listBusChannels, postChannelMessage, postLabelMessage,
   readAgentChannel, readAgentInbox, readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
-  updateWorkStatus, type UnifiedBusOptions, type WorkStatusInput,
+  updateWorkStatus, type BusEnvelopeLookupJob, type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { WORK_STATUSES, parseClaimKey, type WorkJob } from '../core/agents/bus-v2-schema.js';
-import { busWorkFeedOwnerMatcher, busWorkFeedToMatcher, formatBusWorkFeed, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
+import { busWorkFeedOwnerMatcher, busWorkFeedToMatcher, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope } from '../core/agents/bus-claims.js';
@@ -72,7 +72,11 @@ an unshown match.
 show
 resolves one retained envelope by the wire id wake hints, work mine items
 and claim operations cite; an expired id reports not-found, and the read
-needs no identity. A claim-holder wh-… hint id resolves through the wake
+needs no identity. A work.post or work.status body additionally reports
+job — the live work-feed state of the jobId it cites, with claim
+coverage, or the feed's own refused/unavailable state when the projection
+cannot answer — so the citation resolves to where the job stands in one
+read. A claim-holder wh-… hint id resolves through the wake
 queue to the live terminal work.status receipt that cites it, returned
 with its wakeHint citation; a hint no live receipt reproduces reports
 not-found.
@@ -196,6 +200,18 @@ function workJobClaimHuman(result: BusWorkJobClaimResult): string {
 /** work claim exit codes mirror claim acquire: acquired 0, invalid 2, every other refusal 1. */
 function workJobClaimExitCode(result: BusWorkJobClaimResult): number {
   return result.status === 'acquired' ? 0 : result.status === 'invalid' ? 2 : 1;
+}
+
+/** One human line for the live feed state `show` resolved beside a work envelope. */
+function showJobLine(job: BusEnvelopeLookupJob): string {
+  if (job.feed === 'ok') {
+    return job.job === null ? `  job ${job.jobId} feed=ok job=absent` : `  job ${formatBusWorkFeedJob(job.job)}`;
+  }
+  if (job.feed === 'refused') {
+    return `  job ${job.jobId} feed=refused:${job.reason}` +
+      `${job.receipt === undefined ? '' : ` receipt=${job.receipt.id}`}`;
+  }
+  return `  job ${job.jobId} feed=${job.feed}`;
 }
 
 export async function runAgentsBusUnified(argv: string[], out: (text: string) => void, err: (text: string) => void,
@@ -415,6 +431,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           (result.holder ? ` holder=${result.holder}` : '')]),
         ...(result.wakeHint === undefined ? [] : [`  via claim-holder wake hint ${result.id}` +
           ` to=${result.wakeHint.to} job=${result.wakeHint.jobId} status=${result.wakeHint.status}`]),
+        ...(result.job === undefined ? [] : [showJobLine(result.job)]),
       ].join('\n'));
       return 0;
     }

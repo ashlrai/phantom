@@ -532,6 +532,59 @@ describe('envelope lookup by id', () => {
     chmodSync(claimsFile, 0o600);
     expect(readBusEnvelopeById('lk-unk', options)).toMatchObject({ status: 'ok', held: null, holder: null });
   });
+
+  it('annotates work.post and work.status ids with the live feed job and its claim coverage', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    const announce = { jobId: 'RQ-SHOW-1', title: 'Show coverage', repo: 'ashlrai/phantom',
+      claimKeys: ['repo:ashlrai/phantom'] };
+    expect(await announceWork({ from: 'atlas', ...announce, id: 'show-post' }, options)).toMatchObject({ status: 'posted' });
+    // A live coordination hold on the declared key leaves the open job unclaimable.
+    expect(acquireCoordination({ root: options.root, origin: 'resource', key: 'repo:ashlrai/phantom',
+      owner: 'nova', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000, sourceId: 'show-hold',
+      now: options.clock.now, started: new Date(options.clock.now).toISOString() }).status).toBe('acquired');
+    // The post citation resolves to the job's live state in one read.
+    expect(readBusEnvelopeById('show-post', options)).toMatchObject({ status: 'ok',
+      job: { jobId: 'RQ-SHOW-1', feed: 'ok',
+        job: { id: 'RQ-SHOW-1', status: 'queued', owner: 'agent:atlas', postId: 'show-post', statusId: null,
+          heldKeys: ['repo:ashlrai/phantom'], freeKeys: [], claimable: false } } });
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-SHOW-1', status: 'running', id: 'show-st' }, options))
+      .toMatchObject({ status: 'posted' });
+    // The status citation resolves to the same job, now running.
+    expect(readBusEnvelopeById('show-st', options)).toMatchObject({ status: 'ok',
+      job: { jobId: 'RQ-SHOW-1', feed: 'ok',
+        job: { id: 'RQ-SHOW-1', status: 'running', postId: 'show-post', statusId: 'show-st' } } });
+    // Non-work bodies carry no job annotation at all.
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'plain', id: 'show-dm' }, options);
+    const dm = readBusEnvelopeById('show-dm', options);
+    if (dm.status !== 'ok') throw new Error('missing dm');
+    expect(dm).not.toHaveProperty('job');
+  });
+
+  it('reports an orphaned status as feed-ok with no live job and a poisoned feed as refused', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    const announce = { jobId: 'RQ-SHOW-2', title: 'Orphaned', repo: 'ashlrai/phantom',
+      claimKeys: ['repo:ashlrai/phantom'] };
+    // A short-lived announcement and a long-lived status: once the post
+    // expires the retained status is an orphan the feed no longer projects.
+    expect(await announceWork({ from: 'atlas', ...announce, id: 'show-post-x', ttl: 1_000 }, options))
+      .toMatchObject({ status: 'posted' });
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-SHOW-2', status: 'running', id: 'show-st-x', ttl: 100_000 }, options))
+      .toMatchObject({ status: 'posted' });
+    options.clock.now = 5_000;
+    // feed ok, job absent — the honest answer for a dropped status, not a guess.
+    expect(readBusEnvelopeById('show-st-x', options))
+      .toMatchObject({ status: 'ok', job: { jobId: 'RQ-SHOW-2', feed: 'ok', job: null } });
+    // A receipt that poisons the projection refuses the whole feed read; show
+    // reports the refusal and its receipt, never a guessed job state.
+    expect(appendBusInbox({ id: 'show-poison', from: 'agent:ghost', to: 'leaders', priority: 'P2', ttl: 60_000,
+      body: { kind: 'work.post', jobId: 'RQ-POISON', title: 'x', repo: 'a/b', claimKeys: [] } }, options).status).toBe('posted');
+    expect(readBusEnvelopeById('show-st-x', options)).toMatchObject({ status: 'ok',
+      job: { jobId: 'RQ-SHOW-2', feed: 'refused', reason: 'missing-provider', receipt: { id: 'show-poison' } } });
+  });
 });
 
 describe('inbox hold evidence', () => {

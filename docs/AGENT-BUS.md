@@ -329,6 +329,16 @@ message-id claim or a live coordination hold already covers that exact
 receipt, the same evidence `work mine` next/handoffs and the unified comms
 inbox show. `held` is `true`/`false` only when both hold stores were read —
 a store that cannot be read reports `held: null` (unknown), never free.
+A `work.post` or `work.status` body additionally reports `job`: the live
+work-feed state of the `jobId` the body cites — the same projection
+`work feed` serves, joined with claim coverage — so the `post=`/`status=`
+citation resolves to where the job stands without a second read. `feed` is
+`ok` with the projected `job` (`null` when the feed is healthy but projects
+no live job with the id — an orphaned status whose announcement expired),
+`refused` with the feed's reason and receipt when the projection refuses,
+or `unavailable`/`retryable`/`invalid` when it cannot be read; the envelope
+lookup itself still succeeds either way, and an open job's `claimable`
+degrades to `null` — never free — when hold coverage is unknown.
 A claim-holder `wh-…` hint id — the id `wakes` and `work mine` print for
 those rows — resolves the same way `wakes` annotates it: through the wake
 queue's retained row and the live terminal `work.status` receipts that

@@ -33,7 +33,7 @@ import { localWriteGate } from './send-gate.js';
 import { coordinationRowBlocks, listCoordination } from './claim-store.js';
 import { BUS_V2_TEXT_MAX, busBodyThread, contextBodySchema, noteBodySchema, wakeBodySchema, workPostBodySchema,
   workStatusBodySchema, type Participant, type WorkJob } from './bus-v2-schema.js';
-import { readBusWorkFeed, runtimeProvider, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
+import { readBusWorkFeed, runtimeProvider, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import {
   AGENT_ADDRESS_PREFIX, agentAddressMatcher, agentChannelNameSchema, agentLabels, findAgentChannel, readAgentRegistry,
   RESERVED_PREFIXES, resolveAgent, type AgentIdentity, type AgentIdentityKeyFor, type AgentRegistry,
@@ -1400,8 +1400,32 @@ export interface BusEnvelopeLookupMessage {
   /** Live receipt: `ttl` here is the remaining TTL at read time. */
   envelope: BusEnvelope;
 }
+/**
+ * The live work-feed state behind a `work.post`/`work.status` body's own
+ * `jobId` citation — the same projection `work feed` serves, joined with
+ * live claim coverage. `feed:'ok'` with `job:null` means the feed is
+ * healthy but projects no live job with the id — an orphaned status whose
+ * announcement expired, never a guessed state. `refused` names the feed
+ * refusal and its receipt when one caused it; the remaining states mean
+ * the feed could not be read, so the job's state is unknown, never empty.
+ */
+export type BusEnvelopeLookupJob =
+  | { jobId: string; feed: 'ok'; job: BusWorkFeedJob | null }
+  | { jobId: string; feed: 'refused';
+      reason: Extract<BusWorkFeedReadResult, { status: 'refused' }>['reason'];
+      receipt?: Extract<BusWorkFeedReadResult, { status: 'refused' }>['receipt'] }
+  | { jobId: string; feed: 'unavailable' | 'retryable' | 'invalid' };
+
 export type BusEnvelopeLookup =
   | { status: 'ok'; id: string; message: BusEnvelopeLookupMessage;
+      /**
+       * Present only when the resolved body is a `work.post` or
+       * `work.status`: the live feed state of the `jobId` it cites, so the
+       * citation `work feed` and `work mine` print resolves to where the
+       * job stands — status, claim coverage and the receipts behind it —
+       * without a second read.
+       */
+      job?: BusEnvelopeLookupJob;
       /**
        * Present only when the body is claimable work or a worker handoff:
        * whether a taken message-id claim or a live coordination hold provably
@@ -1474,6 +1498,35 @@ function envelopeHold(receipt: { id: string; cursor: number; receivedAt: number;
 }
 
 /**
+ * The work-feed state a `work.post`/`work.status` body cites through its
+ * `jobId` — the same field the feed projection keys on, read verbatim, so
+ * every other body kind returns undefined and no job state is ever guessed
+ * from text. The `jobId` must be a printable label like the schema requires;
+ * a malformed one cites nothing and annotates nothing. The feed read joins
+ * live claim coverage, so an open job also answers `claimable` — degraded
+ * to null, never free, when a hold store cannot be read. A feed that cannot
+ * be read reports its own state; the envelope lookup itself still succeeds.
+ */
+function envelopeWorkJob(body: unknown, options: UnifiedBusOptions): BusEnvelopeLookupJob | undefined {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return undefined;
+  const record = body as Record<string, unknown>;
+  if (record['kind'] !== 'work.post' && record['kind'] !== 'work.status') return undefined;
+  const jobId = record['jobId'];
+  if (typeof jobId !== 'string' || !THREAD.test(jobId)) return undefined;
+  let feed: BusWorkFeedReadResult;
+  try { feed = readBusWorkFeed({ root: options.root, now: options.now, claims: true }); }
+  catch { return { jobId, feed: 'unavailable' }; }
+  if (feed.status === 'ok') {
+    return { jobId, feed: 'ok', job: feed.jobs.find(candidate => candidate.id === jobId) ?? null };
+  }
+  if (feed.status === 'refused') {
+    return { jobId, feed: 'refused', reason: feed.reason,
+      ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
+  }
+  return { jobId, feed: feed.status };
+}
+
+/**
  * The bounded page walk behind `readBusEnvelopeById`: one live envelope by
  * wire id, or the honest miss. It never interprets `wh-…` hint ids — the
  * caller decides whether a miss falls through to wake-queue resolution.
@@ -1494,7 +1547,8 @@ function findBusEnvelopeById(id: string, options: UnifiedBusOptions): BusEnvelop
           envelope: row.envelope };
         const hold = envelopeHold({ id: row.envelope.id, cursor: row.cursor, receivedAt: row.receivedAt,
           envelope: row.envelope }, options);
-        return { status: 'ok', id, message, ...(hold ?? {}) };
+        const job = envelopeWorkJob(row.envelope.body, options);
+        return { status: 'ok', id, message, ...(hold ?? {}), ...(job === undefined ? {} : { job }) };
       }
     }
     if (result.messages.length < BUS_INBOX_MAX_READ || result.nextCursor <= cursor) break;
@@ -1541,7 +1595,11 @@ function findClaimHolderWakeHint(id: string, options: UnifiedBusOptions): BusEnv
  * never hides the envelope itself. Claimable work and worker-handoff bodies
  * additionally report `held`/`holder` — whether a taken claim or live
  * coordination hold already covers the envelope, the same evidence `work
- * mine` next/handoffs and the unified comms inbox show. Envelope ids are
+ * mine` next/handoffs and the unified comms inbox show. A `work.post` or
+ * `work.status` body additionally reports `job` — the live work-feed state
+ * of the `jobId` it cites, with claim coverage, or the feed's own refusal /
+ * unavailable state when the projection cannot answer; the lookup still
+ * succeeds either way. Envelope ids are
  * caller-chosen printable tokens, so a real receipt always wins over hint
  * interpretation; only a proven miss on a `wh-…` shape falls through.
  */
