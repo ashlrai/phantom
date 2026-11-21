@@ -10,6 +10,8 @@ export type ConversationState = typeof CONVERSATION_STATES[number];
 /** A line on the map shows for talk this recent. */
 export const CONVERSATION_LINE_WINDOW_MS = 10 * 60_000;
 export const UNKNOWN_AGENT = 'unknown agent';
+/** The job bucket prefix a declared or derived conversation key carries (`job:<id>`); agent-messages owns the wire constant. */
+const JOB_BUCKET_PREFIX = 'job:';
 /** What a person reads for each state. */
 export const CONVERSATION_STATE_WORDS: Readonly<Record<ConversationState, string>> = {
   waiting: 'waiting for reply', answered: 'answered', blocked: 'blocked', done: 'done',
@@ -28,6 +30,8 @@ export interface ConversationMessage {
   replyTo: string | null;
   /** Explicit thread bucket: the declared conversation key (a thread label or `job:<id>`), never the synthesized `pair:` fallback; overrides reply-chain rooting. */
   thread?: string | null;
+  /** Job ids this message names — a body job citation, its reported job link or its `job:<id>` bucket; absent when it names none. */
+  jobIds?: readonly string[];
   /** What the sender said about the work itself, when it said. */
   state: 'blocked' | 'done' | null;
   /** Provider lane when a label proves it (the bus knows it), else null. */
@@ -50,6 +54,8 @@ export interface Conversation {
   stateText: string;
   /** Present only while waiting: who has to answer, since when, for how long. */
   waiting: { on: string; since: string; ms: number } | null;
+  /** Every job id a member message names — a body citation, a reported job link or the `job:<id>` bucket itself; sorted, empty when the thread names none. */
+  jobs: readonly string[];
   links: ConversationLink[];
   /** Oldest first. */
   messages: ConversationItem[];
@@ -64,7 +70,7 @@ export interface AgentConversations {
   waiting: number | null;
   skipped: number;
 }
-export interface ConversationQuery { agent?: string; waitingOnly?: boolean }
+export interface ConversationQuery { agent?: string; waitingOnly?: boolean; job?: string }
 
 /** Whether a routing label is a known agent (the leader, a lane, a job, a lane's numbered agent; a topic is not) and its map node. */
 export type PlaceAgent = (name: string, lane: string | null) => { known: boolean; node: string | null };
@@ -99,6 +105,9 @@ export function groupConversations(messages: readonly ConversationMessage[], now
     const state: ConversationState = last.kind === 'blocker' || last.state === 'blocked' ? 'blocked'
       : last.state === 'done' ? 'done' : wantsReply ? 'waiting'
       : last.kind === 'reply' || items.some(m => m.kind === 'ask' || m.kind === 'handoff') ? 'answered' : 'done';
+    const jobs = new Set<string>();
+    if (id.startsWith(JOB_BUCKET_PREFIX) && id.length > JOB_BUCKET_PREFIX.length) jobs.add(id.slice(JOB_BUCKET_PREFIX.length));
+    for (const m of items) for (const job of m.jobIds ?? []) jobs.add(job);
     const links = new Map<string, ConversationLink>();
     for (const m of items) {
       const [a, b] = [m.from, m.to].sort() as [string, string], key = `${a}\u0000${b}`, link = links.get(key);
@@ -108,6 +117,7 @@ export function groupConversations(messages: readonly ConversationMessage[], now
       id, participants: names.map(who), subject: last.subject, messageCount: items.length, lastAt: new Date(last.at).toISOString(),
       state, stateText: CONVERSATION_STATE_WORDS[state],
       waiting: state === 'waiting' ? { on: last.to, since: new Date(last.at).toISOString(), ms: Math.max(0, now - last.at) } : null,
+      jobs: [...jobs].sort(),
       links: [...links.values()],
       messages: items.map(m => ({ id: m.id, at: new Date(m.at).toISOString(), from: m.from, to: m.to, kind: m.kind, subject: m.subject })),
     });
@@ -116,16 +126,19 @@ export function groupConversations(messages: readonly ConversationMessage[], now
 }
 
 /**
- * One agent (by name) and/or waiting threads only. With `identityOf`, a
- * participant also matches when its label and the query resolve to the same
- * registered identity, so one agent's handle, alias and address never split
- * the filter; an unresolvable side changes nothing.
+ * One agent (by name), waiting threads only and/or one job: `job` keeps the
+ * threads the projection ties to that id — the `job:<id>` bucket itself or a
+ * member message naming it — whole threads, never partial message lists. With
+ * `identityOf`, a participant also matches when its label and the query
+ * resolve to the same registered identity, so one agent's handle, alias and
+ * address never split the filter; an unresolvable side changes nothing.
  */
 export function filterConversations(list: readonly Conversation[], query: ConversationQuery,
   identityOf?: AgentIdentityKeyFor): Conversation[] {
   const agent = query.agent?.toLowerCase();
   const key = agent !== undefined && identityOf ? identityOf(query.agent!) : undefined;
-  return list.filter(c => (!agent || c.participants.some(p => p.name.toLowerCase() === agent
+  return list.filter(c => (query.job === undefined || c.jobs.includes(query.job))
+    && (!agent || c.participants.some(p => p.name.toLowerCase() === agent
       || (key !== undefined && identityOf?.(p.name) === key)))
     && (!query.waitingOnly || c.state === 'waiting'));
 }

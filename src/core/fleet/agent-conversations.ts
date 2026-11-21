@@ -10,7 +10,8 @@
  * is kept and read "unknown agent"; a reply to a message that is not on the
  * bus starts its own thread. Names are routing labels, not proven identities.
  */
-import { projectAgentMessages } from './agent-messages.js';
+import { JOB_THREAD_PREFIX, projectAgentMessages } from './agent-messages.js';
+import { busBodyJobId } from '../agents/bus-unified.js';
 import { agentIdentityKeys, type AgentIdentityKeyFor } from '../agents/bus-identity.js';
 import { scanBusInbox, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
 import { agentToAgent } from './fleet-edges.js';
@@ -34,9 +35,20 @@ export function conversationMessages(rows: readonly BusInboxReceipt[]): Conversa
   return projectAgentMessages(rows).map(m => {
     const body = raw.get(m.id) ?? null, status = (text(body?.status) ?? '').toLowerCase();
     const outcome = (text(body?.outcome) ?? '').toLowerCase();
+    // The same job channels `phm messages --job` honors, carried to the thread
+    // level: the canonical body citation (`jobId` on work bodies, `taskId` on
+    // a worker-handoff), the message's reported job link, and the
+    // `job:<id>` conversation bucket it sits in.
+    const jobIds = new Set<string>();
+    const cited = busBodyJobId(body);
+    if (cited !== undefined) jobIds.add(cited);
+    if (m.job !== null) jobIds.add(m.job);
+    if (m.conversation.startsWith(JOB_THREAD_PREFIX) && m.conversation.length > JOB_THREAD_PREFIX.length)
+      jobIds.add(m.conversation.slice(JOB_THREAD_PREFIX.length));
     return {
       id: m.id, from: m.from.name, to: m.to.name, kind: m.kind, subject: m.summary, at: Date.parse(m.ts),
       replyTo: text(body?.replyTo) ?? text(body?.inReplyTo),
+      ...(jobIds.size === 0 ? {} : { jobIds: [...jobIds].sort() }),
       // The message projection's conversation key is the declared thread bucket —
       // a v2 `thread` label, `threadId`, `job:<id>` or origin — the same key
       // `phm agents messages` reports as `threadId`. Only the synthesized

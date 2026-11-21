@@ -566,12 +566,18 @@ compute scene draws its message lines at the same thickness.
 
 #### Agent conversations
 
-`phm agents conversations [--agent <name>] [--waiting] [--json]` groups the
-same bus read into threads by reply chain and by the declared conversation
-label a body carries, longest-waiting first and then newest first. `--agent` matches a participant's routing label and, through
+`phm agents conversations [--agent <name>] [--waiting] [--job <id>] [--json]`
+groups the same bus read into threads by reply chain and by the declared
+conversation label a body carries, longest-waiting first and then newest
+first. `--agent` matches a participant's routing label and, through
 the agent identity registry, every other label of the same registered
 identity (handle, alias or `agent:` address); with no readable registry the
-match stays on the literal label. Messages about one v2 job — a `work.post`, its `work.status`,
+match stays on the literal label. `--job <id>` keeps the whole threads that
+name that job — the `job:<id>` bucket itself or a member message citing it
+through the same channels `phm messages --job` honors (a `jobId`/`taskId`
+body citation or the message's reported job link) — never a partial message
+list, and it composes with `--agent` and `--waiting`. Messages about one
+v2 job — a `work.post`, its `work.status`,
 `work.result`, `work.claim` and `work.release` bodies sharing a `jobId`, or a
 claim-key-only body the post lists — form one `job:<id>` thread even without
 replies, and a `failed` or `complete` outcome marks it blocked or done. Any
@@ -583,14 +589,16 @@ conversation; only the synthesized per-pair fallback stays reply-chain
 rooted. `group.presence` heartbeats are expiring observations with their own
 read (`phm comms bus group presence`), never messages: they form no thread
 and cannot answer a waiting one. `--json` prints `agents.conversations.v1` (`version` 1), and
-`GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1]`
+`GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&job=RQ-1]`
 serves the same read with a current read session.
 
 - `conversations[]`: `id`, `participants[]` (`name`, `label`, `known`, `node`;
   an agent no label proves has `label` "unknown agent"), `subject` (the latest,
   scrubbed), `messageCount`, `lastAt`, `state` (`waiting`, `answered`,
   `blocked` or `done`), `stateText`, `waiting` (`on`, `since`, `ms`; only while
-  waiting for a reply), `links[]` (the pairs that talked) and `messages[]`.
+  waiting for a reply), `jobs[]` (every job id a member message names — body
+  citations, reported job links and the `job:<id>` bucket; sorted, empty when
+  the thread names none), `links[]` (the pairs that talked) and `messages[]`.
 - A reply to a message that is not on the bus starts its own thread. `null`
   conversations mean the bus could not be read, not that nothing was said.
 - The Map pane draws a thicker line over each pair that talked in the last 10

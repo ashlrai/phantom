@@ -83,6 +83,21 @@ describe('conversations from messages', () => {
     // A resolver that proves nothing for the query changes nothing.
     expect(filterConversations(list, { agent: 'one' }, () => undefined).map(c => c.id)).toEqual(['a']);
   });
+
+  it('a thread reports every job its messages name and --job keeps whole threads', () => {
+    const list = buildConversations([
+      say('a', 'peer-a', 'peer-b', 0, { kind: 'ask', thread: 'job:RQ-J1' }),
+      say('b', 'peer-b', 'peer-a', 1, { kind: 'reply', replyTo: 'a' }),
+      say('c', 'peer-a', 'peer-c', 2, { kind: 'status', thread: 't-x', jobIds: ['RQ-J2', 'RQ-J1'] }),
+      say('d', 'peer-c', 'peer-a', 3, { kind: 'status' }),
+    ], NOW);
+    // The job:<id> bucket seeds its own id even without per-message jobIds;
+    // member citations union in and sort; a thread naming none reports [].
+    expect(Object.fromEntries(list.map(c => [c.id, c.jobs]))).toEqual({ 'job:RQ-J1': ['RQ-J1'], 't-x': ['RQ-J1', 'RQ-J2'], d: [] });
+    expect(filterConversations(list, { job: 'RQ-J1' }).map(c => c.id).sort()).toEqual(['job:RQ-J1', 't-x']);
+    expect(filterConversations(list, { job: 'RQ-J2' }).map(c => c.id)).toEqual(['t-x']);
+    expect(filterConversations(list, { job: 'RQ-J3' })).toEqual([]);
+  });
 });
 
 const roots: string[] = [];
@@ -121,14 +136,56 @@ describe('v2 work threads', () => {
     const result = readAgentConversations({}, { root: bus(WORK), now: () => NOW });
     const threads = Object.fromEntries(result.conversations!.map(c => [c.id, c]));
     expect(threads['job:RQ-PEER9']).toMatchObject({ messageCount: 3, state: 'blocked', stateText: 'blocked',
-      subject: 'failed: tier-ceiling' });
+      subject: 'failed: tier-ceiling', jobs: ['RQ-PEER9'] });
     expect(threads['job:RQ-PEER9']!.messages.map(m => m.id)).toEqual(['p1', 'p2', 'p3']);
     // work.release carries no jobId; the claimKey resolves through the post.
-    expect(threads['job:RQ-PEER10']).toMatchObject({ messageCount: 3, state: 'done' });
+    expect(threads['job:RQ-PEER10']).toMatchObject({ messageCount: 3, state: 'done', jobs: ['RQ-PEER10'] });
     expect(threads['job:RQ-PEER10']!.messages.map(m => m.id)).toEqual(['p4', 'p5', 'p6']);
     expect(result.waiting).toBe(0);
     // Claim tokens never reach the projection.
     expect(JSON.stringify(result)).not.toContain('a'.repeat(64));
+  });
+
+  it('a --job read keeps only the whole threads that name the job', () => {
+    const root = bus(WORK);
+    const nine = readAgentConversations({ job: 'RQ-PEER9' }, { root, now: () => NOW });
+    expect(nine.conversations!.map(c => c.id)).toEqual(['job:RQ-PEER9']);
+    // The filter drops threads, never messages inside one.
+    expect(nine.conversations![0]!.messageCount).toBe(3);
+    expect(nine.conversations![0]!.jobs).toEqual(['RQ-PEER9']);
+    expect(readAgentConversations({ job: 'RQ-PEER10' }, { root, now: () => NOW }).conversations!.map(c => c.id))
+      .toEqual(['job:RQ-PEER10']);
+    // A job nothing names is an honest empty list, not an error.
+    expect(readAgentConversations({ job: 'RQ-NOPE' }, { root, now: () => NOW }).conversations).toEqual([]);
+    // --job composes with --agent and --waiting.
+    expect(readAgentConversations({ job: 'RQ-PEER9', agent: 'peer-b' }, { root, now: () => NOW }).conversations!.map(c => c.id))
+      .toEqual(['job:RQ-PEER9']);
+    expect(readAgentConversations({ job: 'RQ-PEER9', agent: 'peer-c' }, { root, now: () => NOW }).conversations).toEqual([]);
+  });
+
+  it('a custom-labeled thread reports and filters the job its handoff cites', () => {
+    const root = bus([
+      // The receivable handoff shape: kind, taskId and prompt only — the bus
+      // citation channel, no declared thread, so it roots at its own id.
+      [T0, 'w1', 'agent:peer-a', 'agent:peer-b', { kind: 'worker-handoff', taskId: 'RQ-PEER7', prompt: 'Take over' }],
+      [T0 + MIN, 'w2', 'agent:peer-b', 'agent:peer-a', { kind: 'note', text: 'on it', replyTo: 'w1' }],
+      // A declared custom label carrying a taskId the read-side projection
+      // reports as the message's job link.
+      [T0 + 2 * MIN, 'h1', 'agent:peer-a', 'agent:peer-b', { kind: 'worker-handoff', taskId: 'RQ-CHAIN9', prompt: 'Take over', thread: 't-chain' }],
+      [T0 + 3 * MIN, 'h2', 'agent:peer-b', 'agent:peer-a', { kind: 'note', text: 'ack', replyTo: 'h1' }],
+      // A note declaring the job:<id> bucket with no citation at all.
+      [T0 + 4 * MIN, 'j1', 'agent:peer-c', 'agent:peer-d', { kind: 'note', text: 'ping', thread: 'job:RQ-BUCKET1' }],
+    ]);
+    const all = readAgentConversations({}, { root, now: () => NOW });
+    const threads = Object.fromEntries(all.conversations!.map(c => [c.id, c]));
+    expect(threads['w1']).toMatchObject({ jobs: ['RQ-PEER7'], messageCount: 2 });
+    expect(threads['t-chain']).toMatchObject({ jobs: ['RQ-CHAIN9'], messageCount: 2 });
+    expect(threads['job:RQ-BUCKET1']).toMatchObject({ jobs: ['RQ-BUCKET1'], messageCount: 1 });
+    // Each citation channel alone is enough for the --job read.
+    for (const [job, id] of [['RQ-PEER7', 'w1'], ['RQ-CHAIN9', 't-chain'], ['RQ-BUCKET1', 'job:RQ-BUCKET1']] as const) {
+      const scoped = readAgentConversations({ job }, { root, now: () => NOW });
+      expect(scoped.conversations!.map(c => c.id)).toEqual([id]);
+    }
   });
 
   it('the pure model buckets an explicit thread key over reply chains', () => {
@@ -139,6 +196,16 @@ describe('v2 work threads', () => {
     ], NOW);
     expect(list.map(x => [x.id, x.messageCount]).sort()).toEqual([['job:RQ-X1', 2], ['job:RQ-X2', 1]]);
   });
+
+  it('the CLI --job prints only that job\'s threads and refuses a bad id', async () => {
+    const root = bus(WORK), lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    expect(await run(['--job', 'RQ-PEER9', '--json'])).toBe(0);
+    const printed = JSON.parse(lines.pop()!);
+    expect(printed.conversations.map((c: { id: string }) => c.id)).toEqual(['job:RQ-PEER9']);
+    expect(await run(['--job', 'has space'])).toBe(2);
+    expect(errors.pop()).toContain('--job takes a job id');
+  });
 });
 
 describe('phm agents conversations --json', () => {
@@ -146,7 +213,7 @@ describe('phm agents conversations --json', () => {
     const result = readAgentConversations({}, { root: bus(CHAT), now: () => NOW });
     expect(Object.keys(result)).toEqual(['schema', 'version', 'generatedAt', 'source', 'conversations', 'waiting', 'skipped']);
     expect(result).toMatchObject({ schema: 'agents.conversations.v1', version: 1, source: 'available', waiting: 1, skipped: 0 });
-    expect(Object.keys(result.conversations![0]!)).toEqual(['id', 'participants', 'subject', 'messageCount', 'lastAt', 'state', 'stateText', 'waiting', 'links', 'messages']);
+    expect(Object.keys(result.conversations![0]!)).toEqual(['id', 'participants', 'subject', 'messageCount', 'lastAt', 'state', 'stateText', 'waiting', 'jobs', 'links', 'messages']);
     expect(result.conversations!.map(c => [c.id, c.state])).toEqual([['m3', 'waiting'], ['m1', 'answered']]);
     expect(Object.keys(result.conversations![0]!.messages[0]!)).toEqual(['id', 'at', 'from', 'to', 'kind', 'subject']);
   });
@@ -273,6 +340,11 @@ describe('phm agents conversations --json', () => {
     const ok = await call(`${AGENT_CONVERSATIONS_PATH}?waiting=1`);
     expect(ok.status).toBe(200);
     expect(ok.body.conversations).toHaveLength(1);
+    const scoped = await call(`${AGENT_CONVERSATIONS_PATH}?job=RQ-1`);
+    expect(scoped.status).toBe(200);
+    expect(scoped.body.conversations).toEqual([]);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?job=`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?job=a&job=b`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?extra=1`)).status).toBe(400);
     expect((await call(AGENT_CONVERSATIONS_PATH, null)).status).toBe(401);
   });
