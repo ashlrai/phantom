@@ -69,6 +69,48 @@ Merged after v3.30.40 (#7245 to #7384). Bridge and recovery bookkeeping is left 
 - Document empty jobs in `docs/FLEET-EMPTIES.md` and reply states in `docs/WORK-ORDERS.md`.
 - Update the CLI reference and agent operations guide for every new verb above.
 
+### Since #7384
+
+Merged after #7384 (#7385 to #7604). Bridge, recovery and release bookkeeping is left out.
+
+**CLI**
+
+- Add `phm jobs gaps` to turn gaps listed by no-change jobs into new work; `--propose` queues the new ones (#7506). The gap finder also reads jobs that opened a PR (#7581).
+- Add `phm jobs cost` for tokens per merged PR by lane or model, with unknown where no usage was printed (#7469).
+- Add `phm jobs empty --by-family` and act on it with `--apply` or `--undo <family>` (#7408, #7422).
+- Add `phm queue supply` and the `supply_low` signal (#7464), and run queue autofill inside the self-tick (#7406). Autofill takes Ideas first (#7426).
+- Add `phm host disk` to show how fast free disk is falling and when the lanes freeze (#7444).
+- Add `phm nodes plan` to show how many more jobs each computer could take and which queued job fits which (#7388).
+- Add `phm leader brief` to read the last bets' results, lanes, pools and open gaps in one read (#7541).
+- Add `phm release cadence` to show how stale each repo's latest release is (#7410).
+- Add `phm doctor supply` to check whether self-supply is landing jobs (#7570), and `phm doctor worktree` to check that a checkout can typecheck and lint (#7557).
+- Add `phm team join` and the owner-side `phm team add` to bring co-founders on (#7513).
+- Add bounded fetch retries to `phm publish` (#7449), and recut conflicting agent PRs so they return to auto-merge (#7451).
+- Make the digest open with the blocker (#7450) and add sleep gaps, a keep-awake hint and a digest line (#7436).
+
+**Desktop and mobile**
+
+- Replay the fleet on the map, with past frames using the pool and lane numbers of that time (#7531, #7548).
+- Show agent message lines on the map (#7389) and a Slack bridge line in the desktop (#7455).
+- Add pulse alerts (#7387), one thread with Mason (#7390), release cards (#7511) and a Leader card (#7562).
+- Add a Supply card on the desktop Command view and the phone Home view (#7582).
+- Give asks an expiry on the phone (#7507) and add a Claude API gift credit ask (#7543).
+- Show where the loop waits in the loop stages card (#7529) and read releases there (#7546).
+
+**Fleet**
+
+- Add merge leverage classes (#7510) and a lane yield weight (#7479).
+- Add capability-aware lane routing (#7590).
+- Show spend-down queue hours and sign-in blockers (#7508).
+- Heal a bridge worktree's dependencies on its own (#7537).
+
+**Fixes**
+
+- Confirm group absence before recording SIGKILL completion in dispatchd (#7434).
+- Make the leader cloud test hermetic against the host memory-fit gate (#7523).
+- Require live account evidence for Devin previews and use unique shim temp paths (#7532).
+- Regenerate the CLI reference, quickstart version pins and the site LLM digest so they match master.
+
 ### Added
 
 - Add `phm devin autoland` with capped dry-run/apply passes, principal filtering, bundle deduplication, retry backoff, superseding PRs, pause/resume and a single-flight resident timer. Successful landings terminate and archive their Devin sessions.
