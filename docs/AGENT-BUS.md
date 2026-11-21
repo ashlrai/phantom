@@ -256,7 +256,11 @@ posts in the agent's channels (minus its own and minus `group.presence`
 heartbeats, which are observations with their own read, never mail) and
 traffic still addressed to
 its bare handle, stable id or aliases — every ref `resolveAgent` accepts —
-highest priority first; `--thread` keeps only `note`/`context` bodies
+highest priority first. A handoff is the `channel:'handoff'` stamp or the
+receivable `worker-handoff` body `fleet handoff-send` posts on a legacy
+envelope, under any of those labels or a member channel's `group:` address —
+the same coverage `work mine` handoffs and `handoff-receive` apply;
+`--thread` keeps only `note`/`context` bodies
 carrying that v2 thread label, and `--from` narrows by sender through the
 same identity-label matching `channel read` uses (a handle, `agent:<handle>`,
 stable id or alias; an unresolvable ref keeps exact-label matching). Persist
