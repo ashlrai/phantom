@@ -65,7 +65,20 @@ conversation covers the chat, and Esc or **← Leader** returns to it, where an
 unsent draft is still in the reply box. Above the open conversation, **‹** and
 **›** (or `[` and `]` outside a text field) step to the previous and next
 working session and say where it stands, for example "2 of 5 working"; a
-session that has stopped working reads "Not working now". **Log** opens the job in the
+session that has stopped working reads "Not working now".
+
+Beside the chat, drag the line between the two conversations to give either
+one more room, or focus it and press ← or → (Shift for a larger step, Home and
+End for the limits, Enter or a double-click for the default; Esc during a drag
+puts it back). Neither side goes below a readable column. The pane keeps where
+you left the line and which conversation was open: after a reload, a pane wide
+enough for both opens that conversation again once the sessions list confirms
+it still holds the session, and leaves the reply box you are typing in alone. A
+session the list no longer holds is not reopened, the conversation stays closed
+for as long as the list does not answer, and a narrow pane always starts on the
+Leader chat. Only the session id and the line's position are stored in the browser.
+
+**Log** opens the job in the
 Worker log, **PR** opens its pull request and **All sessions** opens the
 Sessions pane. With a line focused, ↑/↓ or J/K move, Enter aims, T opens the
 conversation and L opens the log. The strip folds to its count line and stays
