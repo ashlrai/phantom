@@ -291,7 +291,8 @@ describe('v2 work-feed jobs in the bus source', () => {
   it('lists open feed jobs with real titles, priorities and claim acts', async () => {
     postJob('RQ-OPEN', { title: 'fake open job', priority: 'P1', claimKeys: ['queue:RQ-OPEN', 'path:ashlrai/phantom:docs/**'] });
     postJob('RQ-DONE'); postStatus('RQ-DONE', 'done');
-    postJob('RQ-RUN'); postStatus('RQ-RUN', 'running');
+    // A live hold keeps the running job in progress, not stalled.
+    postJob('RQ-RUN'); postStatus('RQ-RUN', 'running'); holdKey('queue:RQ-RUN');
     postJob('RQ-RESCHED'); postStatus('RQ-RESCHED', 'rescheduled');
     const emptyPost = postJob('RQ-EMPTY', { claimKeys: [] });
     postV2Body({ kind: 'work.post', jobId: 'RQ-OLD', title: 'fake old job', provider: 'codex-cmp',
@@ -451,8 +452,9 @@ describe('stuck work-feed jobs in the bus source', () => {
   it('hides jobs whose newest status is not stuck and still lists claimable work beside them', async () => {
     postJob('RQ-QUEUED');
     postJob('RQ-DONE2'); postStatus('RQ-DONE2', 'done');
-    postJob('RQ-RUN2'); postStatus('RQ-RUN2', 'running');
-    postJob('RQ-IDLE'); postStatus('RQ-IDLE', 'idle');
+    // Live holds keep the in-progress jobs off the stalled list too.
+    postJob('RQ-RUN2'); postStatus('RQ-RUN2', 'running'); holdKey('queue:RQ-RUN2');
+    postJob('RQ-IDLE'); postStatus('RQ-IDLE', 'idle'); holdKey('queue:RQ-IDLE');
     postJob('RQ-TERM'); postStatus('RQ-TERM', 'terminated');
     postJob('RQ-REVIVED'); postV2Body({ kind: 'work.status', jobId: 'RQ-REVIVED', status: 'blocked' });
     postStatus('RQ-REVIVED', 'done');
@@ -519,6 +521,91 @@ describe('unclaimable work-feed jobs in the bus source', () => {
     postStatus('RQ-IDLEMPTY', 'idle');
     const inbox = await read();
     expect(inbox.items.filter(i => i.id.startsWith('bus-feed:'))).toHaveLength(0);
+  });
+});
+
+describe('stalled work-feed jobs in the bus source', () => {
+  it('lists a running job whose declared keys provably lost every live hold', async () => {
+    postJob('RQ-STALL', { title: 'fake stalled job' });
+    const statusId = postV2Body({ kind: 'work.status', jobId: 'RQ-STALL', status: 'running',
+      detail: 'fake worker went quiet' });
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'bus');
+    expect(items.map(i => i.id)).toEqual(['bus-feed:RQ-STALL']);
+    expect(items[0]).toMatchObject({
+      kind: 'bus-work', severity: 'warn', blocking: false,
+      title: 'fake stalled job',
+      detail: 'owner agent:peer · codex-cmp · ashlrai/phantom · running — fake worker went quiet · no live claim on its declared keys; only the announcer can move it',
+      since: new Date(now).toISOString(),
+      expiresAt: new Date(now + 7 * 24 * 3_600_000).toISOString(),
+      act: [`phm agents bus show ${statusId}`, 'phm agents bus work feed --job RQ-STALL --claims'],
+    });
+    // A stalled job is not claimable work: no claim act is offered.
+    expect(items[0]!.act.join(' ')).not.toContain('claim acquire');
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('ranks a P0 stalled announcement high and keeps an idle one warn beside claimable work', async () => {
+    postJob('RQ-IDLEP0', { priority: 'P0' });
+    postStatus('RQ-IDLEP0', 'idle');
+    postJob('RQ-RUNP2');
+    postStatus('RQ-RUNP2', 'running');
+    postJob('RQ-OPEN2');
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'bus');
+    expect(items.map(i => i.id).sort()).toEqual(['bus-feed:RQ-IDLEP0', 'bus-feed:RQ-OPEN2', 'bus-feed:RQ-RUNP2']);
+    expect(items.find(i => i.id === 'bus-feed:RQ-IDLEP0')!.severity).toBe('high');
+    expect(items.find(i => i.id === 'bus-feed:RQ-RUNP2')!.severity).toBe('warn');
+    expect(items.find(i => i.id === 'bus-feed:RQ-RUNP2')!.detail).toContain('running');
+    expect(items.find(i => i.id === 'bus-feed:RQ-OPEN2')!.act[0]).toContain('claim acquire');
+  });
+
+  it('hides in-progress jobs while any declared key keeps a live hold', async () => {
+    postJob('RQ-HELDSTUDY'); postStatus('RQ-HELDSTUDY', 'running'); holdKey('queue:RQ-HELDSTUDY');
+    postJob('RQ-PARTSTUDY', { claimKeys: ['queue:RQ-PARTSTUDY', 'path:ashlrai/phantom:src/**'] });
+    postStatus('RQ-PARTSTUDY', 'idle'); holdKey('queue:RQ-PARTSTUDY');
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.id.startsWith('bus-feed:'))).toHaveLength(0);
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('lists a job as stalled only once its last hold lapses', async () => {
+    postJob('RQ-LAPSE'); postStatus('RQ-LAPSE', 'running');
+    holdKey('queue:RQ-LAPSE');
+    expect((await read()).items.filter(i => i.id.startsWith('bus-feed:'))).toHaveLength(0);
+    now += 700_000;
+    const items = (await read()).items.filter(i => i.id.startsWith('bus-feed:'));
+    expect(items.map(i => i.id)).toEqual(['bus-feed:RQ-LAPSE']);
+    expect(items[0]!.detail).toContain('no live claim on its declared keys');
+  });
+
+  it('keeps unproven stalls hidden when the coordination table is unreadable', async () => {
+    postJob('RQ-BLINDSTALL'); postStatus('RQ-BLINDSTALL', 'running');
+    mkdirSync(join(busRoot, 'coordination'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(busRoot, 'coordination', 'claims.json'), '{"version":1,"claims":{},"statuses":[]}', { mode: 0o600 });
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.id.startsWith('bus-feed:'))).toHaveLength(0);
+    expect(inbox.sources.bus.state).toBe('degraded');
+  });
+
+  it('keeps stalls hidden under truncated hold coverage', async () => {
+    // The bus store must be readable for the feed section to run at all.
+    postJob('RQ-TRUNC'); postStatus('RQ-TRUNC', 'running');
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now,
+      readRequests: () => ({ status: 'missing', requests: [] }),
+      readFeed: () => ({
+        status: 'ok', receipts: 2, asOf: new Date(now).toISOString(),
+        jobs: [{
+          id: 'RQ-TRUNC', owner: 'agent:peer', to: 'leaders', provider: 'codex-cmp',
+          repo: 'ashlrai/phantom', title: 'fake stalled job', claimKeys: ['queue:RQ-TRUNC'],
+          status: 'running', updatedAt: now, postId: 'v2-1', statusId: 'v2-2',
+        }],
+        claims: { source: 'available', holds: [], truncated: true },
+      }),
+    });
+    expect(inbox.items.filter(i => i.id.startsWith('bus-feed:'))).toHaveLength(0);
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 0 });
   });
 });
 
