@@ -19,13 +19,13 @@ import { join } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
 import { diskForecast, type DiskForecast } from './disk-forecast.js';
 import {
-  countQueuedDropJobPrompts, DROP_JOB_QUEUE_LIMIT, dropJobExists, DropJobExistsError, DropJobValidationError,
+  DROP_JOB_QUEUE_LIMIT, dropJobExists, DropJobExistsError, DropJobValidationError,
   resolveDropJobRoot, validateDropJob, writeDropJob, type DropJobInput,
 } from './drop-job-writer.js';
 import { parseIdleLanes, type IdleLane } from './idle-lanes.js';
 import { defaultUsageLogPaths, parseUsageJournals, type UsageJournalRow } from './lane-console.js';
 import { readFleetMainHealth, type FleetMainHealthRepo } from './main-health.js';
-import { readSource } from './runs-parked-queue.js';
+import { readFleetQueue, readSource } from './runs-parked-queue.js';
 import { fleetYield } from './slot-yield.js';
 import { enrichIdeas, validJobEvents } from './idea-context.js';
 
@@ -306,7 +306,8 @@ export async function queueIdea(ideaId: unknown, deps: QueueIdeaDeps = {}): Prom
   const root = resolveDropJobRoot(deps.runsDir);
   const existing = { ideaId, jobId: job.id, queued: false, existing: true };
   if (await dropJobExists(root, job.id)) return existing;
-  if (!deps.write && await countQueuedDropJobPrompts(root) >= DROP_JOB_QUEUE_LIMIT) throw new QueueIdeaError(507, 'the job queue is full');
+  // Prompt files are retained after launch; only READY rows represent waiting work.
+  if (!deps.write && (await readFleetQueue({ runsDir: root })).ready >= DROP_JOB_QUEUE_LIMIT) throw new QueueIdeaError(507, 'the job queue is full');
   try {
     await (deps.write ?? writeDropJob)(root, job);
   } catch (e) {
