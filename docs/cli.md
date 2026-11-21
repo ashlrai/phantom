@@ -35,7 +35,7 @@ Topic summary and discovery hints.
     memory          Memory - shared genome (memory, recall, learn, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, radar, knowledge, …)
     autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (bots, subagent, metrics, …)
-    observability   Observability - cost, telemetry, audit (mobile, shipped, empties, …)
+    observability   Observability - cost, telemetry, audit (jobs, mobile, shipped, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
     web             Surfaces - TUI + web dashboard (top, tui, dash, …)
@@ -369,6 +369,7 @@ Every command, grouped by topic.
     sessions create|show|resume|terminate [sesn_id] [--json]                                                                                                      Resumable agent sessions: agent profile id and version, environment id and an append-only event log; each turn is one phm queue job. Statuses idle, running, rescheduling, terminated.
 
   Observability - cost, telemetry, audit
+    jobs redfix-candidates [--json]                                                                                                    Read open bridge PRs and latest CI; show eligible test/type failures and merged successors. Read only.
     mobile check [--json]                                                                                                              Check every desktop view at 390 px: content wider than the screen, tap targets under 44 px, text under 12 px.
     shipped [--since 7d] [--repo <name>] [--from <file>] [--json|--md|--site]                                                          What shipped, in plain words: one top line, then merged changes by product area. --md writes docs/SHIPPED.md; --site writes the website page.
     empties [--since 24h] [--text]                                                                                                     Why jobs finished with no change: reasons, share of finishes, tokens and one next step each. JSON by default.
