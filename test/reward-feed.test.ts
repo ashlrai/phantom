@@ -127,6 +127,18 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs).toHaveLength(1);
     expect(inputs[0]).toMatchObject({ pool: null, repo: null, merged: false });
   });
+
+  it('reads alias timestamp fields on dispatch and outcome rows', () => {
+    const text = [
+      line({ event: 'launch', job: 'RQ-ALIAS', repo: 'ashlrai/phantom', lane: 'codex-cmp', tier: 'work', recordedAt: '2026-10-28T10:00:00-0400' }),
+      line({ event: 'outcome', job: 'RQ-ALIAS', state: 'MERGED', url: 'https://github.com/ashlrai/phantom/pull/88', updatedAt: '2026-10-28T15:31:00.000Z' }),
+    ].join('\n');
+    const inputs = foldJobsLedgerRewards(text, NOW_MS);
+    expect(inputs).toEqual([{
+      jobId: 'RQ-ALIAS', pool: 'codex-cmp', repo: 'ashlrai/phantom',
+      merged: true, dispatchedAt: DISPATCH_ISO, mergedAt: '2026-10-28T15:31:00.000Z', costUsd: null,
+    }]);
+  });
 });
 
 describe('writeRewardSignals', () => {

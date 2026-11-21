@@ -157,6 +157,17 @@ describe('foldFleetJobs', () => {
       { v: 1, id: 'RQ-TEST-1', repo: 'ashlrai/phantom', arm: 'model:swe-2', playbook: null, status: 'succeeded', updatedAt: '2026-10-25T23:00:00.000Z' },
     ]);
   });
+
+  it('reads alias timestamp fields on terminal rows', () => {
+    const jobs = foldFleetJobs([
+      fleetRow({ ts: undefined, recordedAt: '2026-10-25T23:00:00.000Z' }),
+      fleetRow({ job: 'RQ-TEST-2', state: 'FAILED', failed: true, ts: undefined, updatedAt: '2026-10-25T22:30:00.000Z' }),
+    ].map((row) => JSON.stringify(row)).join('\n'), NOW);
+    expect(jobs).toEqual([
+      { v: 1, id: 'RQ-TEST-1', repo: 'ashlrai/phantom', arm: 'work', playbook: null, status: 'succeeded', updatedAt: '2026-10-25T23:00:00.000Z' },
+      { v: 1, id: 'RQ-TEST-2', repo: 'ashlrai/phantom', arm: 'work', playbook: null, status: 'failed', updatedAt: '2026-10-25T22:30:00.000Z' },
+    ]);
+  });
 });
 
 describe('foldCloudTasks', () => {

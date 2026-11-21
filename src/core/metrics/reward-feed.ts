@@ -52,7 +52,13 @@ import {
 
 const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const STATE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const;
-const TS_KEYS = ['ts', 'timestamp', 'at', 'mergedAt', 'closedAt'] as const;
+/**
+ * jobs.jsonl timestamp dialect: ts|timestamp|at|time|mergedAt|closedAt|
+ * recordedAt|updatedAt — the same field set and order dispatchd `_vc_pick`
+ * and metrics/loop accept. `at` stays the row's own stamp; the GitHub merge
+ * time is read separately through MERGED_AT_KEYS.
+ */
+const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 const MERGED_AT_KEYS = ['mergedAt', 'merged_at', 'closedAt', 'closed_at'] as const;
 const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
 const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr'] as const;

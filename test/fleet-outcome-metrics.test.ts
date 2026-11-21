@@ -116,6 +116,21 @@ describe('fleet outcome measurement', () => {
       samples: { pr: 1, published: 1 } });
     expect(m.sourceState).toBe('healthy');
   });
+  it('reads the jobs-ledger field dialect: kind/type events, alias stamps and id-keyed jobs', () => {
+    const m = build([
+      { kind: 'launch', recordedAt: stamp(3), job_id: 'RQ-D1', lane: 'codex', model: 'model-a', tier: 'work' },
+      { type: 'finish', updatedAt: stamp(2), jobId: 'RQ-D1', wall_s: 60, cost: 1, empty: false },
+      { event: 'publish', at: stamp(1), id: 'RQ-D1', url: pr(1) },
+      // A MERGED outcome prefers mergedAt for its event time over the row stamp.
+      { event: 'outcome', time: stamp(50), job: 'RQ-D1', url: pr(1), state: 'MERGED', mergedAt: stamp(20), ttm_s: 100 },
+    ]);
+    expect(m.sourceState).toBe('healthy');
+    expect(m.ignoredRows).toBe(0);
+    expect(m.totals).toMatchObject({ jobs: 1, finished: 1, finishRate: 1, prRate: 1, emptyRate: 0,
+      medianDuration: 60, estCost: 1 });
+    expect(m.byRepo).toEqual([expect.objectContaining({ repo: 'ashlrai/phantom', merged: 1, mergesPerDay: 1 })]);
+    expect(m.byRepo[0]!.timeToMerge).toMatchObject({ samples: 1, p50: 100 });
+  });
 });
 
 function measuredFleet(n = 20): unknown[] {

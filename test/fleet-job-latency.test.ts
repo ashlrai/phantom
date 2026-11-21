@@ -97,6 +97,22 @@ it('uses actual merge time, aliases and shuffled events without counting duplica
   expect(mergeQueueLatency([event('ci_start', start), event('ci_complete', start)].map(row => JSON.stringify(row)).join('\n')).phases[1]?.total_seconds).toBe(0);
 });
 
+it('reads the remaining timestamp aliases and the kind event key', () => {
+  const rows = [
+    { job: 'attempt-1', kind: 'enqueue', time: '2026-01-01T00:00:00Z' },
+    { job: 'attempt-1', type: 'launch', at: '2026-01-01T00:00:10Z' },
+    { job: 'attempt-1', event: 'finish', recordedAt: '2026-01-01T00:01:00Z' },
+    { job: 'attempt-1', outcome: 'PUBLISHED', updatedAt: '2026-01-01T00:01:30Z' },
+  ];
+  const text = rows.map(row => JSON.stringify(row)).join('\n');
+  const report = jobLatency(text);
+  const phase = (name: string) => report.phases.find(p => p.phase === name)!;
+  expect(report).toMatchObject({ jobs: 1, ignored_events: 0 });
+  expect(phase('queue_wait')).toMatchObject({ total_seconds: 10, measured_jobs: 1 });
+  expect(phase('worker')).toMatchObject({ total_seconds: 50, measured_jobs: 1 });
+  expect(phase('publish_wait')).toMatchObject({ total_seconds: 30, measured_jobs: 1 });
+});
+
 it('exposes versioned pulse JSON and plain text, including unreadable ledgers and usage errors', async () => {
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
