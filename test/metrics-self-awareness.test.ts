@@ -47,6 +47,34 @@ describe('ledger parsing', () => {
     expect(jobLaneHours(jobs.get('RQ-B')!)).toBe(1);
     expect(jobLaneHours({ ...a, wallSeconds: null, finishedAt: null })).toBeNull();
   });
+  it('reads the production ledger dialect: jobId/prUrl fields, type/kind events, inferred phases', () => {
+    const dialect = [
+      // metrics-outcomes-reconciler row copied from a publish row that used jobId/prUrl.
+      J({ event: 'publish', jobId: 'RQ-REC', prUrl: 'https://github.com/ashlrai/phantom/pull/55/', outcome: 'MERGED', mergedAt: iso(90), ts: iso(90), source: 'metrics-outcomes-reconciler' }),
+      // Eventless phase row: outcome inferred, mergedAt preferred over timestamp.
+      J({ job_id: 'RQ-EV', status: 'MERGED', pr: 'https://github.com/ashlrai/phantom/pull/56', timestamp: iso(85), mergedAt: iso(80) }),
+      // type/kind event fields, alternate timestamp and arrival spellings, pool lane alias.
+      J({ type: 'enqueued', id: 'RQ-T', pool: 'claude', at: iso(200) }),
+      J({ kind: 'launch', id: 'RQ-T', lane: 'claude', time: iso(190) }),
+      J({ kind: 'finish', id: 'RQ-T', wallS: 600, recordedAt: iso(150) }),
+      J({ type: 'published', id: 'RQ-T', url: 'https://github.com/ashlrai/phantom/pull/57', ts: iso(140) }),
+      // CLOSED reconciler row: resolved evidence, never an open claim or a merge.
+      J({ event: 'publish', job: 'RQ-C', outcome: 'CLOSED', url: 'https://github.com/ashlrai/phantom/pull/58', closedAt: iso(70), ts: iso(70), source: 'metrics-outcomes-reconciler' }),
+      // 'merged' event spelling.
+      J({ event: 'merged', job: 'RQ-M', ts: iso(60) }),
+    ].join('\n');
+    const jobs = jobTimelines(dialect, T0);
+    expect(jobs.get('RQ-REC')).toMatchObject({ mergedAt: T0 - 90 * 60_000, openedAt: null, prUrl: 'https://github.com/ashlrai/phantom/pull/55' });
+    expect(jobs.get('RQ-EV')).toMatchObject({ mergedAt: T0 - 80 * 60_000, openedAt: null, prUrl: 'https://github.com/ashlrai/phantom/pull/56' });
+    expect(jobs.get('RQ-T')).toMatchObject({
+      lane: 'claude', enqueuedAt: T0 - 200 * 60_000, launchedAt: T0 - 190 * 60_000,
+      finishedAt: T0 - 150 * 60_000, wallSeconds: 600, openedAt: T0 - 140 * 60_000,
+      mergedAt: null, prUrl: 'https://github.com/ashlrai/phantom/pull/57',
+    });
+    expect(jobs.get('RQ-C')).toMatchObject({ openedAt: null, mergedAt: null });
+    expect(jobs.get('RQ-M')).toMatchObject({ mergedAt: T0 - 60 * 60_000 });
+    expect(throughput(jobs, T0)).toMatchObject({ merged_6h: 3, opened_6h: 1 });
+  });
   it('percentile interpolates', () => {
     expect(percentile([], 0.5)).toBeNull();
     expect(percentile([3, 1, 2], 0.5)).toBe(2);
