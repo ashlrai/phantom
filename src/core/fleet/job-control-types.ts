@@ -41,6 +41,20 @@ export interface JobControlReceiptV1 {
   duplicate: boolean;
 }
 
+/** One request from the control file, folded with the acknowledgement lines that share its requestId (the last status wins). */
+export interface JobControlLedgerRow {
+  requestId: string;
+  action: JobControlAction;
+  job: string;
+  lane: string | null;
+  status: JobControlStatus;
+  reason: string | null;
+  /** When the request was recorded. */
+  at: string;
+  /** The surface that asked (cli, desktop, mobile), or null when the row names none. */
+  by: string | null;
+}
+
 export function isJobControlAction(value: unknown): value is JobControlAction {
   return (JOB_CONTROL_ACTIONS as readonly unknown[]).includes(value);
 }
@@ -62,6 +76,12 @@ export function jobControlAvailability(status: 'unknown' | 'finished' | 'no-log'
 
 const DONE: Record<JobControlAction, string> = { pause: 'Paused', resume: 'Resumed', stop: 'Stopped', move: 'Moved' };
 const ASKED: Record<JobControlAction, string> = { pause: 'Pause', resume: 'Resume', stop: 'Stop', move: 'Move' };
+
+/** A recorded request in a few words: "Pause requested", "Moved to codex", "Stop refused". */
+export function jobControlRecordLabel(row: Pick<JobControlLedgerRow, 'action' | 'lane' | 'status'>): string {
+  const to = row.lane === null ? '' : ` to ${row.lane}`;
+  return row.status === 'applied' ? `${DONE[row.action]}${to}` : `${ASKED[row.action]}${to} ${row.status === 'refused' ? 'refused' : 'requested'}`;
+}
 
 /** One plain sentence for a receipt: the CLI's text output and the inline desktop line. */
 export function jobControlText(receipt: JobControlReceiptV1): string {

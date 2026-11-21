@@ -9,7 +9,9 @@
  * While it is open the conversation is followed (thread-follow.ts): messages that
  * arrive with the end on screen scroll into view, the rest wait under a "New" mark.
  * A conversation read to its end before (thread-read-store.ts) opens at the first
- * message that arrived since, under the same mark.
+ * message that arrived since, under the same mark. A running worker's job is paused,
+ * resumed, stopped or moved from the row under the header (ThreadControls.tsx), and
+ * each such request reads in the conversation as a record line.
  */
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { sessionAge } from '../../../../core/fleet/live-sessions.js';
@@ -25,6 +27,7 @@ import { MessageMarkdown } from '../MessageMarkdown.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { onRecord, replyText, routedRow, sessionThreadQuery, sourcesLine, STATE_WORD, threadFailure, THREAD_POLL_MS, THREAD_REPLY_MAX,
   type SessionThread as Thread, type ThreadMessage } from './session-thread-model.js';
+import { ThreadControls } from './ThreadControls.js';
 import { dayBreaks, NEW_MARK_ATTR, newCountLabel, useThreadFollow } from './thread-follow.js';
 import { noteThreadRead, unreadSince } from './thread-read-store.js';
 import styles from './session-thread.module.css';
@@ -43,7 +46,7 @@ function Bubble({ message }: { message: ThreadMessage }) {
     </li>;
   }
   if (message.side === 'record') {
-    return <li className={styles.record} data-side="record">
+    return <li className={styles.record} data-side="record" data-kind={message.kind}>
       <span className={styles.recordLabel}>{message.label}</span>{message.text && <span>{message.text}</span>}{at && <time dateTime={message.at!}>{at}</time>}
     </li>;
   }
@@ -218,6 +221,7 @@ export function SessionThread({ id, visible, onBack, onOpenLog, backTo = BACK_TO
     {failure && thread && <p className={styles.notice} role="status">
       {failure.kind === 'gone' ? 'This session has left the list. Showing the last read.' : 'Refresh failed. Showing the last read, which may be stale.'}
     </p>}
+    {thread && <ThreadControls thread={thread} onDone={refetch} />}
     {thread ? <SessionThreadView thread={thread} sent={sent} markKey={follow.markKey} onSent={line => setSent(lines => [...lines, line])} />
       : failure ? <div className={styles.fault} role="alert" data-kind={failure.kind}>
         <p className={styles.plain}>{failure.text}</p>
