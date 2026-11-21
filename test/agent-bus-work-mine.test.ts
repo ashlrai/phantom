@@ -182,9 +182,13 @@ describe('readBusWorkMine', () => {
     expect(result.inbox.messages.map(m => m.id)).toEqual(['post-RQ-M-3', 'wk-mine-1']);
     expect(result.inbox.messages[0]).toMatchObject({ kind: 'dm', from: 'agent:nova', fromAgent: 'nova' });
     expect(result.inbox.messages[0]!.summary).toContain('RQ-M-3');
+    // The work.post citation resolves the same live feed job `bus show` reports.
+    expect(result.inbox.messages[0]).toMatchObject({ job: { jobId: 'RQ-M-3', feed: 'ok',
+      job: { id: 'RQ-M-3', status: 'queued', claimable: true } } });
     expect(result.inbox.messages[1]).toMatchObject({ id: 'wk-mine-1', kind: 'dm',
       from: 'agent:nova', fromAgent: 'nova', channel: null });
     expect(result.inbox.messages[1]!.summary).toContain('feed moved');
+    expect(result.inbox.messages[1]).not.toHaveProperty('job');
     expect(result.inbox.nextCursor).toBeGreaterThan(0);
   });
 

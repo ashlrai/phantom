@@ -1102,6 +1102,7 @@
 /test/outcome-watcher-budget.test.ts @masonwyatt23
 /test/outcomes-api.test.ts @masonwyatt23
 /test/overnight-api-310b.test.ts @masonwyatt23
+/test/pace-gate.test.ts @masonwyatt23
 /test/peer-channel-revocation-inflight-407s.test.ts @masonwyatt23
 /test/perf-budget-workflow.test.ts @masonwyatt23
 /test/perf-budget.test.ts @masonwyatt23
