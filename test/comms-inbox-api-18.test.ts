@@ -92,6 +92,6 @@ describe('GET /api/verse/comms/inbox', () => {
     const r = await call({});
     expect(r.status).toBe(200);
     expect(r.body).toMatchObject({ schema: 'comms.unified-inbox.v1', total: 0, omitted: 0, items: [] });
-    expect(Object.keys(r.body.sources).sort()).toEqual(['bus', 'drafts', 'gmail', 'imessage', 'linkedin', 'needs-you']);
+    expect(Object.keys(r.body.sources).sort()).toEqual(['bus', 'conversations', 'drafts', 'email-outbox', 'gmail', 'imessage', 'linkedin', 'needs-you', 'owner-delivery', 'owner-thread', 'proposals', 'requests', 'seats', 'team-approvals']);
   });
 });

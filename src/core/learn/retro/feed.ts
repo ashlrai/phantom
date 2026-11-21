@@ -31,8 +31,11 @@
  *     still fails closed.
  *   - TERMINAL EVIDENCE ONLY. Only explicit terminal outcomes become jobs:
  *     MERGED/succeeded states count as `succeeded`; FAILED/CLOSED-unmerged/
- *     reverted evidence counts as `failed`; CANCELLED states count as
- *     `cancelled`. Non-terminal rows (launch, publish, running) contribute
+ *     reverted evidence counts as `failed` (revert evidence is the shared
+ *     `hasRevertEvidence` vocabulary — a reverted flag, a revert event or
+ *     state name, or a parseable reverted_at/revertedAt stamp — and it wins
+ *     over merge or success fields on the same row); CANCELLED states count
+ *     as `cancelled`. Non-terminal rows (launch, publish, running) contribute
  *     identity fields but never a status. DONE-NOOP/EMPTY and unknown states
  *     stay unknown — they are not emitted. Cloud/devin tasks follow the same
  *     rule, and a merged-then-reverted task is `failed` like a reverted fleet
@@ -56,6 +59,7 @@ import { listCloudTasks } from '../../cloud/store.js';
 import type { CloudTaskOutcome, CloudTaskV1 } from '../../cloud/types.js';
 import { listDevinTasks } from '../../devin/store.js';
 import type { DevinTaskV1 } from '../../devin/types.js';
+import { hasRevertEvidence } from '../../fleet/slot-yield.js';
 import { parseLedgerTs } from '../../metrics/loop.js';
 import { readLedgerTail, ROUTER_OUTCOME_LEDGER_RELATIVE } from '../../router/outcomes.js';
 import { writePrivateFileAtomicallyAsync } from '../../util/private-file-write.js';
@@ -104,12 +108,16 @@ function stateOf(row: Record<string, unknown>): string {
 /**
  * The job's terminal outcome as one nightly status, or null while the job is
  * still in flight or its end state is not explicit evidence. A recorded revert
- * is a failure: the merge did not hold.
+ * is a failure: the merge did not hold, so revert evidence wins over any merge
+ * or success state on the same row — the shared sticky rule the router outcome
+ * fold and the yield readers apply (`hasRevertEvidence`: a reverted flag, a
+ * revert event/state name, or a parseable reverted_at/revertedAt stamp).
  */
 function terminalStatus(row: Record<string, unknown>): NightlyJob['status'] | null {
   const state = stateOf(row);
+  if (hasRevertEvidence(row)) return 'failed';
   if (row['merged'] === true || SUCCEEDED_STATES.has(state)) return 'succeeded';
-  if (row['reverted'] === true || FAILED_STATES.has(state) || row['merged'] === false || row['failed'] === true) return 'failed';
+  if (FAILED_STATES.has(state) || row['merged'] === false || row['failed'] === true) return 'failed';
   if (CANCELLED_STATES.has(state)) return 'cancelled';
   return null;
 }

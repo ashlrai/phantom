@@ -13,7 +13,7 @@ import { WORK_STATUSES, parseClaimKey, type WorkJob } from '../core/agents/bus-v
 import { busWorkFeedOwnerMatcher, busWorkFeedToMatcher, formatBusWorkFeed, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
-  type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult } from '../core/agents/bus-claims.js';
+  type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope } from '../core/agents/bus-claims.js';
 import { formatBusWorkMine, readBusWorkMine } from '../core/agents/bus-work-mine.js';
 import { readUnifiedBusStatus } from '../core/agents/bus-status.js';
 import { scrubSecrets } from '../core/util/scrub.js';
@@ -72,13 +72,21 @@ routing label and --owner keeps jobs announced by that agent, each under
 every label of one agent identity, while --job keeps one job id. work claim
 takes one of
 a shown job's declared claim keys — queue:<jobId> preferred, --key picks
-another declared key — into the shared coordination table; claims coordinate,
+another declared key — into the shared coordination table, reporting live
+holds on the job's other declared keys; claims coordinate,
 never authenticate. work mine is a read-only per-agent digest — the live
 claims it holds under any of its labels, the open feed jobs still claimable
-for it, the claimable work envelopes addressed to it or a channel it belongs
+for it, the feed jobs it announced that have not finished (done and
+terminated drop off; failed stays listed because only the announcer may
+move it), the claimable work envelopes addressed to it or a channel it
+belongs
 to in bus-next order with their hold state, the worker-handoff assignments
 addressed the same way (each item carries the to label handoff-receive and
-handoff-reply take verbatim), its
+handoff-reply take verbatim), the conversation threads waiting on its
+answer — asks and handoffs whose latest message it or a channel it belongs
+to still owes, each citing the envelope id show resolves — the
+conversation threads it is waiting on — its own asks and handoffs nobody
+has answered yet, each naming who owes the reply — its
 pending wake hints and the next page of mail addressed
 to it — where every section reports its own read state and unknown stays
 unknown.
@@ -128,12 +136,19 @@ function integer(raw: string | undefined, name: string): number | undefined {
   return Number(raw);
 }
 
-/** `RQ-1(running) "Fix the feed"` — the blocked job named by its announcement title, display-clipped. */
+/** `RQ-1(running) "Fix the feed" detail="why"` — the blocked job named by its
+ * announcement title and newest status detail, display-clipped. */
 function claimJobLabel(job: BusClaimJobRef): string {
   // eslint-disable-next-line no-control-regex
-  const title = scrubSecrets(job.title).replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim();
-  const clipped = title.length > 80 ? `${title.slice(0, 79)}…` : title;
-  return `${job.id}(${job.status})${clipped === '' ? '' : ` "${clipped}"`}`;
+  const flat = (value: string): string => scrubSecrets(value).replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const clip = (value: string, max: number): string => {
+    const text = flat(value);
+    return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+  };
+  const title = clip(job.title, 80);
+  const detail = job.detail === undefined ? '' : clip(job.detail, 80);
+  return `${job.id}(${job.status})${title === '' ? '' : ` "${title}"`}` +
+    `${detail === '' ? '' : ` detail="${detail}"`}`;
 }
 
 function claimHuman(result: BusClaimResult): string {
@@ -147,14 +162,20 @@ function claimHuman(result: BusClaimResult): string {
 }
 
 /** `work claim` human lines: the job named by its announcement title, the fencing token only on acquire. */
+function claimScopeSuffix(scope: BusWorkJobClaimScope): string {
+  if (scope.source === 'unavailable') return ' scope=unknown';
+  if (scope.holds.length === 0) return '';
+  return ` scope-held=${scope.holds.map(hold => `${hold.claimKey}@${hold.owner}`).join(',')}`;
+}
+
 function workJobClaimHuman(result: BusWorkJobClaimResult): string {
   if (result.status === 'acquired') {
     return `acquired ${result.claim.claimKey} for ${claimJobLabel(result.job)} owner=${result.claim.owner} ` +
-      `leaseUntil=${new Date(result.claim.leaseUntil).toISOString()} token=${result.claim.token}`;
+      `leaseUntil=${new Date(result.claim.leaseUntil).toISOString()} token=${result.claim.token}${claimScopeSuffix(result.scope)}`;
   }
   if (result.status === 'conflict') {
     return `conflict ${result.holder.claimKey} for ${claimJobLabel(result.job)} held by ${result.holder.owner} ` +
-      `until ${new Date(result.holder.leaseUntil).toISOString()}`;
+      `until ${new Date(result.holder.leaseUntil).toISOString()}${claimScopeSuffix(result.scope)}`;
   }
   return `${result.status}: ${result.reason}${result.job === undefined ? '' : ` (${claimJobLabel(result.job)})`}`;
 }
@@ -329,7 +350,9 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (page.status !== 'ok') return finish(page, '');
       if (frame) { out(json ? JSON.stringify({ ...page, framed: frameBusInbox(frame as BusCli, page.messages) }) : frameBusInbox(frame as BusCli, page.messages)); return 0; }
       out(json ? JSON.stringify(page) : [
-        ...page.messages.map(m => `${m.cursor} ${m.priority} ${m.kind === 'channel' ? `#${m.channel}` : m.kind} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}`),
+        ...page.messages.map(m => `${m.cursor} ${m.priority} ${m.kind === 'channel' ? `#${m.channel}` : m.kind} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}` +
+          (m.held === undefined ? '' : ` held=${m.held === null ? 'unknown' : m.held ? 'yes' : 'no'}` +
+            (m.holder ? ` holder=${m.holder}` : ''))),
         `nextCursor ${page.nextCursor}`,
       ].join('\n'));
       return 0;

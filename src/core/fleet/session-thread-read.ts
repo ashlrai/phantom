@@ -1,12 +1,12 @@
-/** The session-thread reader (server only): the session list, then only the reads that session needs, joined by session-thread.ts. */
+/** The session-thread reader (server only): the session list, then only the reads that session needs (its log's last lines among them), joined by session-thread.ts. */
 import { AGENT_MESSAGES_MAX_LIMIT, readAgentMessages, type AgentMessages } from './agent-messages.js';
 import { readLiveSessions } from './live-sessions-read.js';
 import { readInboxEntries } from './mason-inbox.js';
 import { readLeaderReplies, type LeaderRepliesV1 } from './mason-outbox.js';
 import { readOrderTrace, type OrderTraceV1 } from './order-trace.js';
 import { getFleetJobActivity, type FleetJobActivityV1 } from './runs-job-activity.js';
-import { isFleetJobId } from './runs-job-detail.js';
-import { buildSessionThread, THREAD_OWNER_WINDOW, THREAD_REPLIES_SHOWN, type SessionThreadOwnerRead, type SessionThreadV1 } from './session-thread.js';
+import { isFleetJobId, scanJobLog } from './runs-job-detail.js';
+import { buildSessionThread, THREAD_OWNER_WINDOW, THREAD_REPLIES_SHOWN, type SessionThreadOutputRead, type SessionThreadOwnerRead, type SessionThreadV1 } from './session-thread.js';
 import type { FleetSessionMap } from './sessions-view.js';
 import type { SubagentRecord } from '../subagent/spawn.js';
 import { sanitizePublicJson } from '../util/public-json.js';
@@ -23,7 +23,14 @@ export interface SessionThreadReadOptions {
   readReplies?: () => Promise<LeaderRepliesV1>;
   /** Which jobs serve which of Mason's messages. Asked for the leader and for a worker with a job, never for a helper. */
   readOrders?: () => Promise<OrderTraceV1>;
+  /** The end of the session's job log. Asked for a session with a job. */
+  readOutput?: (job: string) => Promise<SessionThreadOutputRead>;
 }
+
+/** How much of the end of a job log a thread reads for the lines it shows: far less than the activity scan. */
+const OUTPUT_BYTES = 24 * 1024, OUTPUT_LINES = 120;
+/** The end of one job's log, through the same no-follow, scrubbed read the job detail uses. */
+export const readSessionOutput = (job: string): Promise<SessionThreadOutputRead> => scanJobLog(job, { maxBytes: OUTPUT_BYTES, maxLines: OUTPUT_LINES });
 
 const guarded = <T>(read: () => T | Promise<T>): Promise<T | null> => Promise.resolve().then(read).catch(() => null);
 
@@ -42,13 +49,14 @@ export async function readSessionThread(id: string, options: SessionThreadReadOp
   if (!found.session) return sanitizePublicJson(found) as SessionThreadV1;
   const { jobId, kind } = found.session;
   const job = jobId !== null && isFleetJobId(jobId) ? jobId : null;
-  const [activity, bus, owner, replies, orders] = await Promise.all([
+  const [activity, bus, owner, replies, orders, output] = await Promise.all([
     job === null ? undefined : guarded(() => (options.readActivity ?? (name => getFleetJobActivity(name)))(job)),
     guarded(options.readBus ?? (() => readAgentMessages({ limit: AGENT_MESSAGES_MAX_LIMIT }))),
     kind === 'subagent' ? undefined : guarded(options.readOwner ?? (() => readInboxEntries({ limit: THREAD_OWNER_WINDOW }))),
     kind !== 'leader' ? undefined : guarded(options.readReplies ?? (() => readLeaderReplies({ limit: THREAD_REPLIES_SHOWN }))),
     kind === 'leader' || (kind === 'worker' && jobId !== null) ? guarded(options.readOrders ?? (() => readOrderTrace({ now: () => now }))) : undefined,
+    job === null ? undefined : guarded(() => (options.readOutput ?? readSessionOutput)(job)),
   ]);
   // Sanitizing keeps the shape; it only rewrites home paths and secret-shaped strings.
-  return sanitizePublicJson(buildSessionThread(list, id, { sessionsRead, activity, bus, owner, replies, orders }, now)) as SessionThreadV1;
+  return sanitizePublicJson(buildSessionThread(list, id, { sessionsRead, activity, bus, owner, replies, orders, output }, now)) as SessionThreadV1;
 }

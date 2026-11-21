@@ -91,6 +91,7 @@ Metric keys: `merges_per_hour.1h`, `merges_per_hour.6h`, `opens_per_hour.1h`,
 
 - Throughput: `metrics/jobs.jsonl` MERGED outcomes and first PR publish per job over 1h and 6h.
 - Idea to merged: the `enqueue` row dispatchd writes when it first sees a `queue/ready.tsv` row, to the MERGED outcome. ready.tsv itself has no timestamp column.
+- Ledger rows are read in the fleet's canonical jobs.jsonl dialect — job ids `job|job_id|jobId|id`, event names `event|type|kind` (`published` normalizes to `publish`), phases `state|outcome|status` (an eventless PUBLISHED/MERGED/CLOSED/OPEN row infers its event), timestamps `ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt`, PR links `url|pr_url|prUrl|pr|html_url` and the `pool` lane alias — the same field sets `queue/visit-sync`, `queue/job-outcomes`, `fleet/agent-activity`, `fleet/job-latency`, `fleet/throughput` and `metrics/reward-feed` accept, so reconciler-resolved merges count once.
 - Merged to installed: `gh` merged PRs and releases for ashlrai/phantom plus `/Applications/Phantom.app/Contents/Info.plist` (version and file time). Only merges first shipped by the installed release are timed.
 - Feedback loop: enqueue to install, for jobs whose PR is in the installed release.
 - Cost per merged PR: the newest `costPerMergedPrUsd` in `metrics/growth-cost-hourly.jsonl` within 24h.

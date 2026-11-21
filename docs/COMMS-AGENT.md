@@ -23,7 +23,11 @@ The policy is code, not prompt text. A prompt cannot approve a recipient.
   read from the file handle opened with no-follow.
 - Everyone else, including a novel recipient, becomes a draft for the owner.
   Email drafts are also copied into `phm drafts` so the desktop drafts card
-  can show them. Every draft is recorded on the local owner thread.
+  can show them. Every draft is recorded once per unique reply on the local
+  owner thread; a delivered reply resolves its draft to `sent`, and pending
+  drafts list in `phm comms-agent drafts` and the `phm comms inbox` drafts
+  source (a Comms email draft already mirrored into `phm drafts` lists only
+  there, so one pending reply is one item).
 - KILL and the comms pause refuse every send. Both are read from the account
   home (`os.userInfo().homedir`), so a process with a relocated `$HOME` still
   sees `~/.ashlr/KILL` and `~/.ashlr/comms/pause.json`.

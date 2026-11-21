@@ -115,7 +115,8 @@ describe('buildFleetLiveMap', () => {
     const b = buildFleetLiveMap({ now: NOW, usage: { ...usage, lanes: [...usage.lanes].reverse() }, org: org([session('RQ-B', 'claude'), session('RQ-A', 'claude')], [...receipts].reverse()),
       computers: computers([computer('node-b', { jobsRunning: ['RQ-B'] }), computer('node-a', { isSelf: true })]) });
     expect(JSON.stringify(b)).toBe(JSON.stringify(a));
-    expect(Object.keys(a)).toEqual(['schema', 'generatedAt', 'windowMinutes', 'pulseSeconds', 'nodes', 'edges', 'counts', 'sources', 'unmappedMessages', 'gaps', 'orgLayout']);
+    expect(Object.keys(a)).toEqual(['schema', 'generatedAt', 'windowMinutes', 'pulseSeconds', 'nodes', 'edges', 'counts', 'sources', 'unmappedMessages', 'gaps', 'planners', 'orgLayout']);
+    expect(a.planners?.map(row => row.id)).toEqual(['executor', 'orchestrator', 'guardian', 'comms']);
     expect(a.nodes.every(node => Object.keys(node).join() === `id,kind,level,label,provider,status,detail,live${node.kind === 'resource' ? ',usedPct' : node.kind === 'job' ? ',lane,repo,state' : node.kind === 'computer' && node.id !== 'computer:node-a' ? ',remote' : ''}`)).toBe(true);
     expect(a.nodes.filter(node => node.kind === 'computer').map(node => [node.id, node.remote])).toEqual([['computer:node-a', undefined], ['computer:node-b', true]]);
     expect(a.nodes.filter(node => node.kind === 'resource').every(node => node.usedPct === null || typeof node.usedPct === 'number')).toBe(true);

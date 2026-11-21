@@ -5,7 +5,7 @@
  * and agents read one source. A number the server did not send reads "unknown", never zero.
  */
 import { useState } from 'react';
-import type { FleetOrgGroups, OrgGroupNode } from '../../../../core/fleet/org-groups.js';
+import { PLANNER_GROUPS, type FleetOrgGroups, type OrgGroupNode } from '../../../../core/fleet/org-groups.js';
 import type { MapEdge } from '../../../../core/fleet/map-edges.js';
 import { relativeAt } from '../fleet/bus-feed-model.js';
 import { LaneHealthBadge } from '../../../components/fleet/LaneHealthBadge.js';
@@ -72,7 +72,8 @@ export function PhoneOrg({ groups, asks = [], onOpenJob, onShowMap, messages, no
     const child = byId.get(id)!;
     return child.role === 'job' ? [child] : leaves(child);
   });
-  const rows = (byId.get(groups.root)?.children ?? []).map(id => byId.get(id)!);
+  // The phone lists lanes and their jobs; the guardian and loops branches are on the full map and `phm org`.
+  const rows = (byId.get(groups.root)?.children ?? []).filter(id => !PLANNER_GROUPS.has(id)).map(id => byId.get(id)!);
   return <section className={styles.root} aria-label="Fleet org">
     {asks.length > 0 && <section className={styles.asks} aria-label="Needs you">
       <h2>{asks.length === 1 ? 'Needs you' : `Needs you (${asks.length})`}</h2>

@@ -271,13 +271,14 @@ describe('phm agents bus (unified)', () => {
     expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-FEED', '--title', 'Read me',
       '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom', '--id', 'cli-feed'])).json)
       .toMatchObject({ status: 'posted' });
-    expect((await run(['work', 'status', '--from', 'atlas', '--job', 'RQ-FEED', '--status', 'running', '--id', 'cli-feed-s'])).json)
-      .toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'status', '--from', 'atlas', '--job', 'RQ-FEED', '--status', 'running',
+      '--detail', 'picked up the feed', '--id', 'cli-feed-s'])).json).toMatchObject({ status: 'posted' });
 
     const feed = await run(['work', 'feed']);
     expect(feed.code).toBe(0);
     expect(feed.json).toMatchObject({ status: 'ok', receipts: 2,
-      jobs: [{ id: 'RQ-FEED', status: 'running', owner: 'agent:atlas', to: 'leaders', provider: 'claude' }] });
+      jobs: [{ id: 'RQ-FEED', status: 'running', owner: 'agent:atlas', to: 'leaders', provider: 'claude',
+        detail: 'picked up the feed' }] });
     expect((await run(['work', 'feed', '--status', 'queued'])).json).toMatchObject({ status: 'ok', jobs: [] });
     expect((await run(['work', 'feed', '--status', 'running', '--claims'])).json)
       .toMatchObject({ status: 'ok', claims: { source: 'missing', holds: [] } });
@@ -302,7 +303,8 @@ describe('phm agents bus (unified)', () => {
     const withJobs = await run(['claim', 'list', '--jobs']);
     expect(withJobs.json).toMatchObject({ status: 'ok', source: 'available', feed: 'ok' });
     expect(withJobs.json.claims[0].jobs)
-      .toEqual([{ id: 'RQ-FEED', owner: 'agent:atlas', status: 'running', title: 'Read me' }]);
+      .toEqual([{ id: 'RQ-FEED', owner: 'agent:atlas', status: 'running', title: 'Read me',
+        detail: 'picked up the feed' }]);
     // Without --jobs no feed join or feed state is reported.
     expect(claims.json.feed).toBeUndefined();
     expect(claims.json.claims[0].jobs).toBeUndefined();
@@ -310,7 +312,7 @@ describe('phm agents bus (unified)', () => {
     // Human output shares the fleet feed lines; reads need no identity.
     const text: string[] = [];
     expect(await runAgentsBusUnified(['work', 'feed', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
-    expect(text.join('\n')).toContain('RQ-FEED running "Read me" owner=agent:atlas to=leaders provider=claude repo=ashlrai/phantom keys=repo:ashlrai/phantom');
+    expect(text.join('\n')).toContain('RQ-FEED running "Read me" detail="picked up the feed" owner=agent:atlas to=leaders provider=claude repo=ashlrai/phantom keys=repo:ashlrai/phantom');
     expect(text.join('\n')).toContain('jobs=1 receipts=2 feed=ok');
     const claimText: string[] = [];
     expect(await runAgentsBusUnified(['claim', 'list', '--root', root], t => claimText.push(t), () => {}, {})).toBe(0);
@@ -318,7 +320,7 @@ describe('phm agents bus (unified)', () => {
     expect(claimText.join('\n')).toContain('claims=1 source=available');
     const claimJobsText: string[] = [];
     expect(await runAgentsBusUnified(['claim', 'list', '--jobs', '--root', root], t => claimJobsText.push(t), () => {}, {})).toBe(0);
-    expect(claimJobsText.join('\n')).toContain('jobs=RQ-FEED(running) "Read me"');
+    expect(claimJobsText.join('\n')).toContain('jobs=RQ-FEED(running) "Read me" detail="picked up the feed"');
     expect(claimJobsText.join('\n')).toContain('feed=ok');
   });
 

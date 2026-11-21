@@ -7,7 +7,11 @@ read-only: it does not rerun jobs, change tests, merge PRs, or update branches.
 The version 1 JSON report contains failure groups, per-PR freshness, master
 evidence, unknown reasons, and proposed update-branch commands. Latest workflow
 runs are checked against the current head and full checkout SHA in job logs.
-Unreadable, incomplete, capped, or unverified logs are unknown, never clean.
+Jobs that never check out the workspace (aggregators such as Merge Gate)
+cannot emit that SHA; their logs are dropped from evidence only when they
+carry no recognizable failure or pass output, and any consumable evidence in
+an unverifiable log keeps the run unknown. Unreadable, incomplete, capped, or
+unverified logs are unknown, never clean.
 Vitest FAIL lines -- including named-project labels such as `|unit|` or `|console|` --
 identify tests under `test/` and `src/web-ui/`; AssertionError summaries are scrubbed
 and capped at 2,000 characters per failure, with at most 100 failures per log.
@@ -26,6 +30,210 @@ every diagnostic line for one file merges into a single failure excerpt. A
 `(typecheck)` identity can never be resolved by a vitest pass line, so these
 groups classify as `shared-baseline`, `pr-caused` or `unknown` -- never
 `probable-flake`.
+
+The `.github/tests/*.test.mjs` contract suites run under `node --test`, which
+prints TAP on the Node 22 CI image. `not ok N - name` results resolve their
+file from the diagnostic block's absolute `location:` path through the
+`/<work>/<repo>/<repo>/` Actions checkout marker, rebuild nested describe
+paths as `suite > test > leaf`, skip derivative `cancelledByParent` and
+`subtestsFailed` records, and group file-level load failures under the same
+`<file> > (suite)` identity as Vitest suite loads, capturing the runner's `#`
+comment diagnostic. Results with no resolvable checkout-scoped location, TAP
+`ok` results (which carry no location), and runners on nonstandard work
+directories stay unparsed. Because `ok` results carry no file attribution, a
+node:test failure classifies as `shared-baseline`, `pr-caused` or `unknown`
+only -- never `probable-flake` -- and `master` reads `fail` or `unknown`,
+never `pass`.
+
+`npm run check:docs` prints its verdict as one pretty-printed JSON document
+(`{` and `}` at column 0) and exits 1 when `ok` is false; each `errors` entry
+names the entrypoint file, the offending `href` (null for document-level
+problems) and a reason. Errors group per file under a `<file> > (docs-check)`
+identity with up to eight `href: reason` lines per excerpt. A broken doc link
+on master fails the `ci` and `docs` jobs on every open PR, so without this
+shape a red master marked every PR unknown; like `(typecheck)` it can never
+resolve through a vitest pass line and classifies `shared-baseline`,
+`pr-caused` or `unknown` -- never `probable-flake`. Passing reports
+(`ok: true`, empty `errors`), malformed JSON blocks, escaping or absolute
+paths, and unrelated JSON stay unparsed. Failure files that are not code
+(`.md`, `.json`, assets) have no import closure: their dependency set is the
+file itself, so import-looking prose in a document cannot fail the closure
+closed.
+
+The Merge Gate `clean-tree` job ("Check generated files") reruns the
+tracked-file generators and fails on any dirty `git status --porcelain`
+path, printing `generated files are stale; commit the regenerated tree:`
+followed by porcelain rows; its `canonical-launcher-digests.mjs --check`
+prints `current launcher digest <sha> is missing from the canonical
+launcher digest list`, `canonical launcher digest list is invalid`, or the
+`--check-history` differs line. Each stale path groups under a
+`<file> > (generated)` identity and the digest failures under
+`scripts/canonical-launcher-digests.json > (generated)`; rename rows resolve
+to the new path and C-quoted paths are unescaped, while unparseable rows
+stay unparsed. Generated artifacts have no import closure either, but their
+staleness has a known input set: `docs/llms.txt` depends on
+`docs/llms-source.txt`, `scripts/generate-docs-llms.mjs`,
+`scripts/lib/docs-pages.mjs` and every public docs page (`docs/**/*.md`
+minus `docs/internal/`, read once from the master tree listing -- an
+unreadable or truncated listing fails the closure closed), and the digest
+manifest depends on `bin/ashlr`. Like `(typecheck)` they can never resolve
+through a vitest pass line, so they classify `shared-baseline`,
+`pr-caused` or `unknown` -- never `probable-flake`.
+
+`npm run build` opens with `npm run check:version`
+(`scripts/sync-candidate-version.mjs --check`), the release-metadata gate:
+a version bump that reached only some of the tracked files prints one
+compact JSON drift report -- `{"version": ..., "changed": [...],
+"matches": false, "check": true}` naming the stale files -- and exits 1,
+while a structural break (missing file, renamed field, ambiguous URL)
+prints `sync-candidate-version: <message>` instead. Both group under
+`scripts/sync-candidate-version.mjs > (version-sync)`. The gate reads
+exactly the script and the ten metadata files it rewrites, so the
+dependency set is that closed input list (seeded as static inputs) and
+the vitest harness ambient set does not apply; like the other non-test
+identities it can never resolve through a vitest pass line and classifies
+`shared-baseline`, `pr-caused` or `unknown` -- never `probable-flake`.
+Passing reports (`matches: true`), write-mode results, empty or unknown
+`changed` entries, non-semver versions, malformed or multi-line JSON, and
+unrelated output stay unparsed.
+
+The advisory `perf-budget` workflow times the cold paths in
+`perf/budgets.json` and prints one pretty-printed
+`ashlr.perf-budget-report.v1` JSON document before exiting non-zero.
+Each `fail` result
+(median over baseline + tolerance) and each `error` result (preflight
+break, command timeout, measurement failure) groups per target under
+`<budgets file> > (perf-budget) <target id>` -- per-target identities keep
+unrelated targets from merging into one group, and `skip` (absent
+optional tools) and `pass` results carry no failure. The budgets file is
+the unit a master fix restores (re-baseline with `--update-baseline` or
+speed the path up); its dependency set is the budgets file plus the
+gate's direct inputs -- `bin/ashlr`, `scripts/perf-budget.mjs` and
+`scripts/perf-mcp-tools-list.mjs` -- while the measured CLI graph
+(`src/**` built to `dist/`) has no enumerable closure, so deeper source
+changes stay unattributed. Dependency manifests and toolchain configs
+still count through the harness ambient set. Like the other non-test
+identities it can never resolve through a vitest pass line and classifies
+`shared-baseline`, `pr-caused` or `unknown` -- never `probable-flake`.
+Passing reports (`ok: true` or only pass/skip results), other schemas,
+malformed or multi-line blocks, absolute or escaping `budgets` paths,
+unknown statuses and unrelated JSON stay unparsed.
+
+The `Dependency Audit` workflow audits four npm graphs through
+`scripts/npm-audit-with-osv-fallback.sh` -- root full, root production
+(`--omit=dev`), Raycast full and Raycast production (`working-directory:
+src/raycast`, invoked as `../../scripts/...`) -- and `cat`s npm's audit v2
+JSON report into the job log on every attempt. Each vulnerable package
+groups under `<lockfile> > (dependency-audit) <package>`: bumping the
+dependency or adding a reviewed exception is the unit a master fix
+restores. The step command echo before a report fixes its lockfile and
+exception graph: non-omit audits consult
+`.github/dependency-audit-exceptions.json` under graph `full`, the
+Raycast production audit under `raycast-production`, and the root
+production audit never consults exceptions at all. npm still lists
+excepted advisories inside a failing report, so the parser replays the
+gate script's exemption fixpoint -- a package stays exempt while every
+`via` entry is an excepted advisory id or a still-exempt package name --
+and emits only packages outside the exempt set; a report exempt end to
+end passed its step and emits nothing. The analyzer reads the exception
+file once from master: an absent file means no exceptions, while an
+unreadable or malformed file leaves audit reports unparsed (unknown)
+rather than risk a phantom group for an accepted advisory; exception
+expiry is not re-checked because a completed run was governed by the
+exceptions valid at run time. Each lockfile's dependency set is its
+manifest, shrinkwrap, `.npmrc`, the lockfile itself, the shared exception
+file and the audit script (seeded as static inputs), and the vitest
+harness ambient set does not apply. Like the other non-test identities
+these groups can never resolve through a vitest pass line and classify
+`shared-baseline`, `pr-caused` or `unknown` -- never `probable-flake`.
+OSV-Scanner table output (the transport fallback) and cargo-audit output
+carry no audit v2 document and stay unparsed, as do invalid reports
+(non-v2 schema, malformed severity counts), reports with no preceding
+step echo, clean reports (`total: 0`) and unrelated JSON.
+
+The `ci` job's pack-smoke steps on the ubuntu authority 1/3 shard verify
+the same-job build before the suites run and again in `Pack smoke
+(exports map)`: `Capture pack smoke build snapshot` runs
+`npm run check:pack-contracts` (node:test TAP, parsed above),
+`ci-pack-smoke.mjs capture`, `check:first-paint:built` and
+`ci-pack-smoke.mjs prepare`; the exports-map step reuses, verifies and
+captures the retained snapshot through the same script and
+`scripts/hosted-build-artifact.mjs` (also invoked by the
+`attest-ci-build` workflow's `qualify` verb). Both scripts funnel every
+refusal -- stale or mutated build output, a missing artifact, a drifted
+source tree, an unexpected tarball -- through one stderr prefix:
+`pack smoke refused: <assert message>` and
+`hosted artifact refused: <assert message>`. Each script groups under its
+own `<script> > (pack-smoke)` / `<script> > (hosted-artifact)` identity;
+the prefixed header line is the failure identity, so multiline assert
+continuations (a drift list under `source changed after build:`) stay
+excerpt-free rather than minting second groups. The gate script plus the
+repository inputs it reads directly is the unit a master fix restores:
+`package.json` for the pack smoke (it verifies the packed name/version
+against the manifest) and `package.json` plus `package-lock.json` for
+the artifact gate (it hashes the tracked lockfile set it admits), seeded
+as static inputs since the measured dist/ graph has no enumerable
+closure; the vitest harness ambient set does not apply. Like the other
+non-test identities these groups can never resolve through a vitest pass
+line and classify `shared-baseline`, `pr-caused` or `unknown` -- never
+`probable-flake`. Release-only refusals (`release smoke refused:`,
+`isolated release tree refused:`, `same-runner release input refused:`,
+`Offline partition comparison refused:`), empty messages, non-prefixed
+assert output and unrelated lines stay unparsed.
+
+The PR-visible trust gates fail with no vitest, typecheck or TAP line
+naming them, so each gets its own count-or-verdict identity. The
+`secret-shape` job pipes the candidate diff through the pinned
+`.github/tests/secret-shape/scrub.pl --check --allow-fixtures`, which
+prints only `<blocked> allowed=<n>` and never a matched value; a nonzero
+blocked count groups under `.github/tests/secret-shape/scrub.pl >
+(secret-shape)` and the count line is the whole excerpt. The
+`secret-scan` job runs the pinned gitleaks binary with `--redact` and no
+`-v`, so finding detail never reaches the log -- only the scanner's own
+`WRN leaks found: <n>` summary -- and a nonzero count groups under
+`.github/workflows/ci.yml > (secret-scan)`, the workflow that pins the
+version and owns the invocation. The `quick` job's pull-request-only
+`Require release-please provenance for version bumps` step fails a
+version bump outside a same-repository `release-please--*` branch with
+`::error::<changed carriers>. Only the release-please PR may change the
+release version; ...`, or reports a gate malfunction as `release
+version provenance check failed: <message>`; both group under
+`.github/scripts/release-version-provenance.mjs > (version-provenance)`.
+The diff and commit-range scans have no enumerable repo input -- any
+diff line or scanned commit can carry the shape -- so the scanner groups
+key on the gate definition itself and a shape carried inside a PR's own
+diff stays unattributed rather than guessed at a file; only a PR
+touching the scanner or workflow counts as `pr-caused`. The provenance
+check reads exactly its script plus `package.json` and
+`.release-please-manifest.json`, seeded as static inputs so a PR bumping
+either carrier is `pr-caused`. Like the other non-test identities these
+groups can never resolve through a vitest pass line and classify
+`shared-baseline`, `pr-caused` or `unknown` -- never `probable-flake`.
+Clean scans (`0 allowed=<n>`, `no leaks found`, `leaks found: 0`), the
+provenance pass lines, unrelated `::error::` annotations and unrelated
+lines stay unparsed.
+
+The ci.yml helper gates under `.github/scripts/` fail with only the
+script's `console.error` line plus the runner's
+`##[error]Process completed with exit code` step marker -- no vitest,
+TAP, typecheck or report shape names them. GitHub wraps each `run:`
+step in a `##[group]Run <script>` block, so the analyzer attributes the
+marker to the step's script when every script line is a `node --test`
+invocation or one whitelisted gate script, all gate lines naming the
+same file: `ci-fetch-range`, `ci-source-binding`, `ci-site-lane`,
+`ci-mac-rotation`, `ci-dep-graph`, `ci-fast-inputs`, `ci-green-reuse`
+and `ci-mcp-selection` group under
+`.github/scripts/<script> > (<gate>)`. Mixed bash, `uses:` actions,
+non-whitelisted scripts and ambiguous multi-script steps stay
+unattributed, and a `not ok` or vitest `FAIL` line in the step's own
+output means the companion test runner owns the failure -- the gate
+group is suppressed. Each gate's inputs are the script, its import
+closure and `.github/workflows/ci.yml` (the step definition), with no
+vitest harness ambient set; like the other non-test identities these
+groups classify `shared-baseline`, `pr-caused` or `unknown` -- never
+`probable-flake`. Scripts whose pure steps only appear in jobs the
+analyzer's evidence never sees (macOS/Windows lanes, release
+pipelines, merge-group-only attribution) are not listed.
 
 Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
 brief. Test/import changes produce `pr-caused`; a singleton unaffected failure

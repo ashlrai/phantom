@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; script?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -24,6 +24,10 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
       else value = Array.from({ length: options.count ?? 2 }, (_, i) => ({ number: i + 1, headRefOid: head, headRefName: 'feature', files: [{ path: options.touched ?? 'docs/README.md' }] }));
     } else if (endpoint.includes('/branches/')) value = { commit: { sha: master } };
     else if (endpoint.includes('/compare/')) value = { status: 'ahead' };
+    else if (endpoint.includes('/git/trees/')) {
+      if (options.treeError) return { ok: false, stdout: '', stderr: 'HTTP 500: Internal Server Error' };
+      value = { tree: options.tree ?? [], truncated: options.treeTruncated === true };
+    }
     else if (endpoint.includes('/contents/')) {
       const path = endpoint.split('/contents/')[1]!.split('?')[0]!;
       if (path === '') {
@@ -50,12 +54,24 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     }
     else if (endpoint.includes('/jobs/') && endpoint.endsWith('/logs')) {
       if (options.unreadable) return { ok: false, stdout: '', stderr: '403' };
+      if (endpoint.includes('/jobs/11/') || endpoint.includes('/jobs/21/')) {
+        // Merge Gate style aggregator: no checkout step, so no marker line.
+        const gatePass = endpoint.includes('/jobs/11/') && options.pass;
+        const gateLog = options.gateEvidence === 'fail' ? fixture('shared') : options.gateEvidence === 'pass' ? fixture('pass') : gatePass
+          ? '##[group]Run node <<\'NODE\'\nMerge Gate passed: fast full CI\n##[endgroup]\n'
+          : '##[group]Run node <<\'NODE\'\nError: Secret scan (diff) concluded failure\n##[error]Process completed with exit code 1.\n';
+        return success(gateLog);
+      }
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.script ? 'script-shared' : options.web ? 'web-shared' : 'shared';
       return success(`/usr/bin/git log -1 --format=%H\n${isMaster ? master : head}\n${fixture(name)}`);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
-      value = { total_count: 1, jobs: [{ id: isMaster ? 10 : 20, conclusion: isMaster && options.pass ? 'success' : 'failure', head_sha: isMaster ? master : head }] };
+      const conclusion = isMaster && options.pass ? 'success' : 'failure';
+      const head_sha = isMaster ? master : head;
+      const jobs: { id: number; name?: string; conclusion: string; head_sha: string }[] = [{ id: isMaster ? 10 : 20, conclusion, head_sha }];
+      if (options.gate) jobs.push({ id: isMaster ? 11 : 21, name: 'Merge Gate', conclusion, head_sha });
+      value = { total_count: jobs.length, jobs };
     } else if (endpoint.includes('/actions/runs?')) {
       const isMaster = endpoint.includes(master);
       value = { total_count: 1, workflow_runs: [{ id: isMaster ? 1 : 2, workflow_id: 1, status: 'completed', head_sha: isMaster ? master : options.stale ? master : head }] };
@@ -94,6 +110,23 @@ describe('CI baseline evidence', () => {
       const report = await analyzeCiBaseline('owner/repo', github(options).gh);
       expect(report.groups).toEqual([]);
       expect(report.freshness.every(p => p.state === (options.stale ? 'stale' : 'unknown'))).toBe(true);
+    }
+  });
+  it('tolerates inert no-checkout aggregator jobs but rejects unverifiable evidence', async () => {
+    // Merge Gate never checks out the workspace, so its log cannot carry the
+    // checkout SHA marker. An inert aggregator log is dropped from evidence
+    // and the run still verifies through the checkout jobs.
+    const report = await analyzeCiBaseline('owner/repo', github({ gate: true }).gh);
+    expect(report.groups[0]).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', prs: [1, 2], master: 'fail' });
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    const pass = await analyzeCiBaseline('owner/repo', github({ gate: true, pass: true }).gh);
+    expect(pass.groups[0]?.master).toBe('pass');
+    // Any recognizable failure or pass evidence in an unverifiable log keeps
+    // the whole run unknown rather than risking unattributed attribution.
+    for (const gateEvidence of ['fail', 'pass'] as const) {
+      const poisoned = await analyzeCiBaseline('owner/repo', github({ gate: true, gateEvidence }).gh);
+      expect(poisoned.groups).toEqual([]);
+      expect(poisoned.freshness.every(p => p.state === 'unknown')).toBe(true);
     }
   });
   it('does not infer independence with unresolved imports', async () => {
@@ -178,6 +211,793 @@ describe('CI baseline evidence', () => {
     const importedById = new Map(imported.groups.map(g => [g.testId, g]));
     expect(importedById.get('src/core/example.ts > (typecheck)')?.action).toBe('pr-caused');
     expect(importedById.get('src/core/other.ts > (typecheck)')?.action).toBe('queue-master-fix');
+  });
+  it('parses node:test TAP failures with hierarchy and file-level identities', () => {
+    const tap = (lines: string[]) => parseBaselineFailures(lines.join('\n'), 'owner/repo');
+    const block = (indent: string, file: string, line: number, type: string, failureType: string, extra: string[] = []) => [
+      `${indent}  ---`,
+      `${indent}  type: '${type}'`,
+      `${indent}  location: '/home/runner/work/repo/repo/${file}:${line}:1'`,
+      `${indent}  failureType: '${failureType}'`,
+      ...extra.map(e => `${indent}  ${e}`),
+      `${indent}  ...`,
+    ];
+    const failures = tap([
+      'TAP version 13',
+      '# Subtest: outer',
+      '    # Subtest: inner',
+      '        # Subtest: leaf',
+      '        not ok 1 - leaf',
+      ...block('        ', '.github/tests/nested.test.mjs', 9, 'test', 'testCodeFailure', ["error: |-", '          Expected 1 to be 2', '          ']),
+      '        1..1',
+      '    ok 1 - inner',
+      '      ---',
+      "      type: 'suite'",
+      '      ...',
+      '    1..1',
+      'ok 1 - outer',
+      '  ---',
+      "  type: 'suite'",
+      '  ...',
+      '# Subtest: hooked',
+      '    # Subtest: never runs',
+      '    not ok 2 - never runs',
+      ...block('    ', '.github/tests/hook.test.mjs', 5, 'test', 'cancelledByParent', ["error: 'cancelled'"]),
+      '    1..1',
+      'not ok 2 - hooked',
+      ...block('', '.github/tests/hook.test.mjs', 3, 'suite', 'hookFailed', ["error: 'before blew up'"]),
+      '# Subtest: suite',
+      '    # Subtest: child',
+      '    not ok 3 - child',
+      ...block('    ', '.github/tests/sub.test.mjs', 6, 'test', 'testCodeFailure'),
+      '    1..1',
+      'not ok 3 - suite',
+      ...block('', '.github/tests/sub.test.mjs', 2, 'suite', 'subtestsFailed', ["error: '1 subtest failed'"]),
+      '# file:///home/runner/work/repo/repo/.github/tests/loadfail.test.mjs:2',
+      "# throw new Error('boom at module load');",
+      '# Error: boom at module load',
+      '#     at file:///home/runner/work/repo/repo/.github/tests/loadfail.test.mjs:2:7',
+      '# Node.js v22.22.3',
+      '# Subtest: .github/tests/loadfail.test.mjs',
+      'not ok 4 - .github/tests/loadfail.test.mjs',
+      ...block('', '.github/tests/loadfail.test.mjs', 1, 'test', 'testCodeFailure', ["exitCode: 1", "error: 'test failed'"]),
+      '# Subtest: unresolvable',
+      'not ok 5 - unresolvable',
+      '  ---',
+      "  type: 'test'",
+      "  location: '/opt/custom-runner/checkout/.github/tests/elsewhere.test.mjs:3:1'",
+      "  failureType: 'testCodeFailure'",
+      '  ...',
+      '# Subtest: passing',
+      'ok 6 - passing',
+      '  ---',
+      "  type: 'test'",
+      '  ...',
+      '1..6',
+    ]);
+    expect(failures.map(f => f.testId)).toEqual([
+      '.github/tests/nested.test.mjs > outer > inner > leaf',
+      '.github/tests/hook.test.mjs > hooked',
+      '.github/tests/sub.test.mjs > suite > child',
+      '.github/tests/loadfail.test.mjs > (suite)',
+    ]);
+    expect(failures[0]?.excerpt).toContain('Expected 1 to be 2');
+    expect(failures[1]?.excerpt).toContain('before blew up');
+    expect(failures[3]?.excerpt).toContain('boom at module load');
+    expect(failures[3]?.excerpt).not.toContain('Node.js v');
+    // Without the repo name the absolute location cannot be scoped, so TAP
+    // evidence stays unparsed rather than guessed.
+    const located = [
+      '# Subtest: x',
+      'not ok 1 - x',
+      '  ---',
+      "  type: 'test'",
+      "  location: '/home/runner/work/repo/repo/test/x.test.mjs:3:1'",
+      '  ...',
+    ].join('\n');
+    expect(parseBaselineFailures(located)).toEqual([]);
+    expect(parseBaselineFailures(located, 'owner/repo')).toHaveLength(1);
+  });
+  it('groups node:test TAP failures and never resolves a master pass', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ tap: true }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(1);
+    expect(report.groups[0]).toMatchObject({
+      file: '.github/tests/example.test.mjs',
+      names: 'reports delivery',
+      testId: '.github/tests/example.test.mjs > reports delivery',
+      classification: 'shared-baseline',
+      action: 'queue-master-fix',
+      master: 'fail',
+    });
+    expect(report.groups[0]?.excerpt).toContain("'unknown' !== 'delivered'");
+    const caused = await analyzeCiBaseline('owner/repo', github({ tap: true, touched: '.github/tests/example.test.mjs' }).gh);
+    expect(caused.groups[0]?.action).toBe('pr-caused');
+    // TAP `ok` results carry no file attribution, so a singleton unaffected
+    // failure cannot claim a master pass: it stays unknown, never a flake.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ tap: true, count: 1, pass: true }).gh);
+    expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
+  });
+  it('parses check:docs JSON reports as per-file documentation failures', () => {
+    const failures = parseBaselineFailures(fixture('docs-shared'));
+    expect(failures.map(f => f.testId)).toEqual([
+      'docs/QUICKSTART.md > (docs-check)',
+      'docs/ARCHITECTURE.md > (docs-check)',
+    ]);
+    expect(failures[0]).toMatchObject({ file: 'docs/QUICKSTART.md', names: '(docs-check)' });
+    expect(failures[0]?.excerpt).toContain('docs/DELETED-GUIDE.md#install');
+    expect(failures[0]?.excerpt).toContain('ENOENT');
+    expect(failures[1]?.excerpt).toContain('#fleet does not exist');
+    // Timestamped job-log lines parse the same way.
+    const stamped = fixture('docs-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped).map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    // Passing reports, malformed blocks, escaping paths and unrelated JSON
+    // stay unparsed.
+    expect(parseBaselineFailures(JSON.stringify({ ok: true, mode: 'source', errors: [] }, null, 2))).toEqual([]);
+    expect(parseBaselineFailures('{\n  "ok": false,\n  "mode": "source",\n  "errors": [\n    {\n      "file": "src/../escape.md",\n      "href": null,\n      "reason": "x"\n    }\n  ]\n}')).toEqual([]);
+    expect(parseBaselineFailures('{\n  "unrelated": true,\n  "nested": {\n    "ok": "yes"\n  }\n}')).toEqual([]);
+  });
+  it('groups documentation-check failures and attributes them to the broken file', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ docs: true }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(2);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ names: '(docs-check)', classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+    }
+    const caused = await analyzeCiBaseline('owner/repo', github({ docs: true, touched: 'docs/QUICKSTART.md' }).gh);
+    const byId = new Map(caused.groups.map(g => [g.testId, g]));
+    expect(byId.get('docs/QUICKSTART.md > (docs-check)')?.action).toBe('pr-caused');
+    expect(byId.get('docs/ARCHITECTURE.md > (docs-check)')?.action).toBe('queue-master-fix');
+    // Markdown has no import closure: import-looking prose in a document must
+    // not fail the dependency check closed.
+    const prose = await analyzeCiBaseline('owner/repo', github({
+      docs: true,
+      contents: { 'docs/QUICKSTART.md': "import x from './gone.js';\nSamples show `from './also-gone'`." },
+    }).gh);
+    expect(prose.groups.find(g => g.testId === 'docs/QUICKSTART.md > (docs-check)')?.classification).toBe('shared-baseline');
+  });
+  it('parses generated-file staleness and launcher digest failures', () => {
+    const failures = parseBaselineFailures(fixture('generated-shared'));
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({ file: 'docs/llms.txt', names: '(generated)', testId: 'docs/llms.txt > (generated)' });
+    expect(failures[0]?.excerpt).toContain(' M docs/llms.txt');
+    const digest = parseBaselineFailures(fixture('digest-shared'));
+    expect(digest).toHaveLength(1);
+    expect(digest[0]).toMatchObject({ file: 'scripts/canonical-launcher-digests.json', names: '(generated)', testId: 'scripts/canonical-launcher-digests.json > (generated)' });
+    // Timestamped job-log lines keep the porcelain status column.
+    const stamped = fixture('generated-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped).map(f => f.testId)).toEqual(['docs/llms.txt > (generated)']);
+    // Porcelain variety: staged rows, untracked, renames, quoted paths; the
+    // block ends at the first non-porcelain line and bad paths stay unparsed.
+    const varied = parseBaselineFailures([
+      'generated files are stale; commit the regenerated tree:',
+      'M  src/staged.ts',
+      ' M docs/llms.txt',
+      '?? docs/new page.md',
+      'R  docs/old.md -> docs/new.md',
+      ' M "docs/quoted\\"name.md"',
+      ' M ../escape.md',
+      ' M /abs/path.md',
+      ' M docs/\\303\\251.md',
+      'not a porcelain row',
+      ' M docs/after-break.md',
+    ].join('\n'));
+    expect(varied.map(f => f.file)).toEqual(['src/staged.ts', 'docs/llms.txt', 'docs/new page.md', 'docs/new.md', 'docs/quoted"name.md']);
+    expect(parseBaselineFailures('generated files are stale; commit the regenerated tree:\n##[error]Process completed with exit code 1.')).toEqual([]);
+    // The passing digest line and unrelated text produce nothing; the other
+    // two failure shapes of the same check still parse.
+    expect(parseBaselineFailures(`canonical launcher digest check passed: ${'a'.repeat(64)}`)).toEqual([]);
+    expect(parseBaselineFailures('canonical launcher digest list is invalid').map(f => f.file)).toEqual(['scripts/canonical-launcher-digests.json']);
+    expect(parseBaselineFailures('canonical launcher digest list differs from bin/ashlr history; run npm run canonical-launcher-digests:regen').map(f => f.file)).toEqual(['scripts/canonical-launcher-digests.json']);
+  });
+  it('groups generated-file failures and attributes them to generator inputs', async () => {
+    const tree = [
+      { path: 'docs/README.md', type: 'blob', mode: '100644' },
+      { path: 'docs/guide/install.md', type: 'blob', mode: '100644' },
+      { path: 'docs/internal/scratch.md', type: 'blob', mode: '100644' },
+      { path: 'docs/llms-source.txt', type: 'blob', mode: '100644' },
+      { path: 'docs/llms.txt', type: 'blob', mode: '100644' },
+      { path: 'src/core/x.ts', type: 'blob', mode: '100644' },
+      { path: 'docs/symlinked.md', type: 'blob', mode: '120000' },
+      { path: 'docs/tree', type: 'tree' },
+    ];
+    // llms.txt renders from every public docs page plus the source and
+    // generator scripts: a PR touching any of them is the cause.
+    for (const touched of ['docs/guide/install.md', 'docs/README.md', 'docs/llms-source.txt', 'scripts/generate-docs-llms.mjs', 'scripts/lib/docs-pages.mjs']) {
+      const report = await analyzeCiBaseline('owner/repo', github({ generated: true, touched, tree }).gh);
+      expect(report.groups[0], touched).toMatchObject({ testId: 'docs/llms.txt > (generated)', classification: 'pr-caused', action: 'pr-caused', master: 'fail' });
+    }
+    // docs/internal is not a public page, symlinks and trees are not pages,
+    // and unrelated sources share the baseline. Runner-harness files cannot
+    // stale a generated artifact either: the clean-tree job never runs vitest.
+    for (const touched of ['docs/internal/scratch.md', 'docs/symlinked.md', 'docs/tree', 'src/core/x.ts', 'vitest.config.ts', 'tsconfig.json', 'package.json']) {
+      const report = await analyzeCiBaseline('owner/repo', github({ generated: true, touched, tree }).gh);
+      expect(report.groups[0], touched).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+    }
+  });
+  it('fails closed for generated files when the docs tree listing is unusable', async () => {
+    const tree = [{ path: 'docs/README.md', type: 'blob', mode: '100644' }];
+    for (const options of [{ treeError: true }, { treeTruncated: true }]) {
+      const report = await analyzeCiBaseline('owner/repo', github({ generated: true, touched: 'docs/README.md', tree, ...options }).gh);
+      expect(report.groups[0]?.classification).toBe('unknown');
+    }
+  });
+  it('groups launcher digest failures and attributes them to bin/ashlr', async () => {
+    const caused = await analyzeCiBaseline('owner/repo', github({ digest: true, touched: 'bin/ashlr' }).gh);
+    expect(caused.groups[0]).toMatchObject({ testId: 'scripts/canonical-launcher-digests.json > (generated)', classification: 'pr-caused', action: 'pr-caused', master: 'fail' });
+    const shared = await analyzeCiBaseline('owner/repo', github({ digest: true, touched: 'src/core/x.ts' }).gh);
+    expect(shared.groups[0]).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+  });
+  it('parses version-sync drift reports and gate errors', () => {
+    const drift = '{"version":"0.0.1","changed":["package-lock.json","desktop/src-tauri/Cargo.toml","README.md"],"matches":false,"check":true}';
+    const failures = parseBaselineFailures([
+      '> phantom@0.0.0 check:version',
+      '> node scripts/sync-candidate-version.mjs --check',
+      drift,
+      'sync-candidate-version: Candidate package identities do not match Phantom',
+    ].join('\n'));
+    expect(failures.map(f => f.testId)).toEqual([
+      'scripts/sync-candidate-version.mjs > (version-sync)',
+      'scripts/sync-candidate-version.mjs > (version-sync)',
+    ]);
+    expect(failures[0]).toMatchObject({ file: 'scripts/sync-candidate-version.mjs', names: '(version-sync)' });
+    expect(failures[0]?.excerpt).toContain('package-lock.json');
+    expect(failures[1]?.excerpt).toContain('Candidate package identities');
+    // Timestamped job-log lines parse identically.
+    const stamped = [drift, 'sync-candidate-version: Expected exactly one main desktop URL']
+      .map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped)).toHaveLength(2);
+    // Passing reports, write-mode results, empty or unknown changed entries,
+    // non-semver versions, malformed or multi-line JSON, and unrelated
+    // output stay unparsed.
+    for (const bad of [
+      '{"version":"0.0.1","changed":[],"matches":false,"check":true}',
+      '{"version":"0.0.1","changed":["src/core/x.ts"],"matches":false,"check":true}',
+      `{"version":"0.0.1","changed":[${Array.from({ length: 11 }, () => '"package.json"').join(',')}],"matches":false,"check":true}`,
+      '{"version":"v0.0.1","changed":["package.json"],"matches":false,"check":true}',
+      '{"version":"0.0.1","changed":["package.json"],"matches":true,"check":true}',
+      '{"version":"0.0.1","changed":["package.json"],"matches":false,"check":false}',
+      '{"version":"0.0.1","changed":"package.json","matches":false,"check":true}',
+      '{"unrelated":true}',
+      '{\n  "version": "0.0.1",\n  "changed": ["package.json"],\n  "matches": false,\n  "check": true\n}',
+      'sync-candidate-version:',
+      'prefix sync-candidate-version: not at line start',
+    ]) {
+      expect(parseBaselineFailures(bad), bad).toEqual([]);
+    }
+    const secret = 'ghp_' + 'a'.repeat(36);
+    expect(parseBaselineFailures(`sync-candidate-version: token ${secret} leaked`)[0]?.excerpt).not.toContain(secret);
+  });
+  it('groups version-sync failures and attributes them to release metadata', async () => {
+    const contents = {
+      'scripts/sync-candidate-version.mjs': "import { readFileSync, realpathSync, writeFileSync } from 'node:fs';\nimport { dirname, resolve } from 'node:path';\nimport { fileURLToPath } from 'node:url';\nexport const synced = 1;",
+    };
+    const report = await analyzeCiBaseline('owner/repo', github({ version: true, contents }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(1);
+    expect(report.groups[0]).toMatchObject({
+      file: 'scripts/sync-candidate-version.mjs',
+      names: '(version-sync)',
+      testId: 'scripts/sync-candidate-version.mjs > (version-sync)',
+      classification: 'shared-baseline',
+      action: 'queue-master-fix',
+      master: 'fail',
+      prs: [1, 2],
+    });
+    expect(report.groups[0]?.brief).toContain('scripts/sync-candidate-version.mjs > (version-sync)');
+    // Every file the gate reads is an input: touching any one -- or the gate
+    // script itself -- is PR-caused.
+    for (const touched of ['package.json', 'package-lock.json', 'server.json', 'desktop/src-tauri/Cargo.toml', 'docs/QUICKSTART.md', 'scripts/sync-candidate-version.mjs']) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ version: true, touched, contents }).gh);
+      expect(caused.groups[0]?.action, touched).toBe('pr-caused');
+    }
+    // The vitest harness ambient set cannot reach this gate: runner configs,
+    // setup files, toolchain configs and the pnpm lockfile are not inputs.
+    for (const touched of ['vitest.config.ts', 'tsconfig.json', 'pnpm-lock.yaml', 'test/setup/home.ts', 'docs/internal/x.md']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ version: true, touched, contents }).gh);
+      expect(shared.groups[0]?.classification, touched).toBe('shared-baseline');
+    }
+    // A singleton unaffected failure can never prove a master pass.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ version: true, count: 1, pass: true, contents }).gh);
+    expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('parses perf-budget reports as per-target failures', () => {
+    const failures = parseBaselineFailures(fixture('perf-shared'));
+    expect(failures.map(f => f.testId)).toEqual([
+      'perf/budgets.json > (perf-budget) phm-status',
+      'perf/budgets.json > (perf-budget) phm-doctor',
+    ]);
+    expect(failures[0]).toMatchObject({ file: 'perf/budgets.json', names: '(perf-budget) phm-status' });
+    expect(failures[0]?.excerpt).toContain('status=fail');
+    expect(failures[0]?.excerpt).toContain('median_ms=1042.6');
+    expect(failures[0]?.excerpt).toContain('budget_ms=960');
+    expect(failures[0]?.excerpt).toContain('delta_pct=8.6');
+    expect(failures[1]?.excerpt).toContain('status=error');
+    expect(failures[1]?.excerpt).toContain('command exceeded 60000 ms timeout');
+    // Timestamped job-log lines parse the same way.
+    const stamped = fixture('perf-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped).map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    // Passing reports, skipped-only results, other schemas, malformed or
+    // multi-line blocks, absolute or escaping budgets paths, unknown
+    // statuses, malformed results and unrelated JSON stay unparsed.
+    const report = (results: unknown, extra: Record<string, unknown> = {}) => JSON.stringify({
+      schema: 'ashlr.perf-budget-report.v1', ok: false, runner: 'hyperfine', budgets: 'perf/budgets.json', results, ...extra,
+    }, null, 2);
+    for (const bad of [
+      report([{ id: 'phm-status', status: 'pass', stats: { median_ms: 1 }, budget_ms: 2, delta_pct: 0 }], { ok: true }),
+      report([{ id: 'phantom-wrapper-warm', status: 'skip', why: 'requires_bin "phantom" is not on PATH' }]),
+      report([{ id: 'Bad_ID', status: 'fail' }]),
+      report([{ id: 'phm-status', status: 'unknown' }]),
+      report([{ status: 'fail' }]),
+      report(['not-an-object']),
+      report([{ id: 'phm-status', status: 'fail' }], { budgets: '/abs/path.json' }),
+      report([{ id: 'phm-status', status: 'fail' }], { budgets: '../escape.json' }),
+      report([{ id: 'phm-status', status: 'fail' }], { budgets: 42 }),
+      JSON.stringify({ schema: 'other.v1', ok: false, budgets: 'perf/budgets.json', results: [{ id: 'x', status: 'fail' }] }, null, 2),
+      '{\n  "schema": "ashlr.perf-budget-report.v1",\n  "ok": false,\n  "budgets": "perf/budgets.json",\n  "results": [\n    {\n      "id": "phm-status",\n      "status": "fail"\n    }\n  ]\n',
+      '{"schema":"ashlr.perf-budget-report.v1","ok":false,"budgets":"perf/budgets.json","results":[{"id":"phm-status","status":"fail"}]}',
+      '{\n  "unrelated": true\n}',
+    ]) {
+      expect(parseBaselineFailures(bad), bad.slice(0, 80)).toEqual([]);
+    }
+    const secret = 'ghp_' + 'a'.repeat(36);
+    const leaky = report([{ id: 'phm-status', status: 'error', why: `token ${secret} leaked` }]);
+    expect(parseBaselineFailures(leaky)[0]?.excerpt).not.toContain(secret);
+  });
+  it('groups perf-budget failures per target and attributes gate inputs', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ perf: true }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(2);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ file: 'perf/budgets.json', classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.testId).toMatch(/^perf\/budgets\.json > \(perf-budget\) phm-(status|doctor)$/);
+      expect(group.brief).toContain(group.testId);
+    }
+    // The budgets spec, the checker and harness scripts, the launcher and
+    // the dependency manifests are all direct inputs: touching any one is
+    // PR-caused.
+    for (const touched of ['perf/budgets.json', 'scripts/perf-budget.mjs', 'scripts/perf-mcp-tools-list.mjs', 'bin/ashlr', 'package.json', 'package-lock.json']) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ perf: true, touched }).gh);
+      for (const group of caused.groups) expect(group.action, `${touched} -> ${group.testId}`).toBe('pr-caused');
+    }
+    // The measured CLI graph has no enumerable closure: src/ changes stay
+    // unattributed and share the baseline rather than claiming causation.
+    for (const touched of ['src/core/status.ts', 'src/cli/index.ts', 'docs/README.md']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ perf: true, touched }).gh);
+      for (const group of shared.groups) expect(group.classification, `${touched} -> ${group.testId}`).toBe('shared-baseline');
+    }
+    // A singleton unaffected failure can never prove a master pass: the
+    // report format has no vitest pass line, so it stays unknown.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ perf: true, count: 1, pass: true }).gh);
+    for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('parses dependency-audit npm reports as per-package failures', () => {
+    const failures = parseBaselineFailures(fixture('audit-shared'));
+    expect(failures.map(f => f.testId)).toEqual([
+      'package-lock.json > (dependency-audit) lodash',
+      'package-lock.json > (dependency-audit) minimist',
+      'src/raycast/package-lock.json > (dependency-audit) tar',
+    ]);
+    expect(failures[0]).toMatchObject({ file: 'package-lock.json', names: '(dependency-audit) lodash' });
+    expect(failures[0]?.excerpt).toContain('lodash severity=high');
+    expect(failures[0]?.excerpt).toContain('GHSA-35JH-R3H4-6JHM');
+    expect(failures[0]?.excerpt).toContain('lodash vulnerable to Code Injection');
+    expect(failures[0]?.excerpt).toContain('fix=4.17.21');
+    expect(failures[1]?.excerpt).toContain('fix=available');
+    expect(failures[2]).toMatchObject({ file: 'src/raycast/package-lock.json', names: '(dependency-audit) tar' });
+    // Timestamped job-log lines parse identically.
+    const stamped = fixture('audit-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped).map(f => f.testId)).toEqual(failures.map(f => f.testId));
+  });
+  it('filters dependency-audit advisories through the exception fixpoint', () => {
+    const invoke = 'bash scripts/npm-audit-with-osv-fallback.sh "root full graph" package-lock.json';
+    const auditAdvisory = (id: string) => ({ source: 1, name: 'x', dependency: 'x', title: `advisory ${id}`, url: `https://github.com/advisories/${id}`, severity: 'high', range: '*' });
+    const auditVuln = (name: string, via: unknown[]) => ({ name, severity: 'high', isDirect: false, via, effects: [], range: '*', nodes: [`node_modules/${name}`], fixAvailable: true });
+    const auditReport = (vulnerabilities: unknown) => JSON.stringify({
+      auditReportVersion: 2, vulnerabilities,
+      metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 1, critical: 0, total: 1 }, dependencies: { prod: 1, dev: 0, optional: 0, peer: 0, peerOptional: 0, total: 1 } },
+    });
+    const lodash = { lodash: auditVuln('lodash', [auditAdvisory('GHSA-35jh-r3h4-6jhm')]) };
+    const lodashLog = [invoke, auditReport(lodash)].join('\n');
+    // Without exceptions the advisory emits; a matching full-graph
+    // exception exempts it end to end.
+    expect(parseBaselineFailures(lodashLog)).toHaveLength(1);
+    const exceptions = [{ id: 'GHSA-35JH-R3H4-6JHM', package: 'lodash', graph: 'full' as const }];
+    expect(parseBaselineFailures(lodashLog, undefined, exceptions)).toEqual([]);
+    expect(parseBaselineFailures(lodashLog, undefined, null)).toEqual([]);
+    // A package vulnerable only through an exempt package is exempt too
+    // (the script's cyclic via-string fixpoint).
+    const cyclic = {
+      'pkg-a': auditVuln('pkg-a', [auditAdvisory('GHSA-aaaa-bbbb-cccc')]),
+      'pkg-b': auditVuln('pkg-b', ['pkg-a']),
+    };
+    const cyclicExceptions = [{ id: 'GHSA-AAAA-BBBB-CCCC', package: 'pkg-a', graph: 'full' as const }];
+    expect(parseBaselineFailures([invoke, auditReport(cyclic)].join('\n'), undefined, cyclicExceptions)).toEqual([]);
+    // A second unexcepted advisory keeps the package a real failure.
+    const mixed = { lodash: auditVuln('lodash', [auditAdvisory('GHSA-35jh-r3h4-6jhm'), auditAdvisory('GHSA-9999-8888-7777')]) };
+    expect(parseBaselineFailures([invoke, auditReport(mixed)].join('\n'), undefined, exceptions)).toHaveLength(1);
+    // The root production audit never consults exceptions: the same
+    // advisory still emits under --omit=dev on the root lockfile.
+    const prodInvoke = 'bash scripts/npm-audit-with-osv-fallback.sh "root production graph" package-lock.json --omit=dev';
+    const prodFailures = parseBaselineFailures([prodInvoke, auditReport(lodash)].join('\n'), undefined, exceptions);
+    expect(prodFailures.map(f => f.testId)).toEqual(['package-lock.json > (dependency-audit) lodash']);
+    // The Raycast production audit consults only raycast-production
+    // exceptions and reports against the nested lockfile.
+    const raycastProdInvoke = 'bash ../../scripts/npm-audit-with-osv-fallback.sh "Raycast production graph" package-lock.json --omit=dev';
+    const tar = { tar: auditVuln('tar', [auditAdvisory('GHSA-34x7-hfp2-rc4v')]) };
+    const raycastLog = [raycastProdInvoke, auditReport(tar)].join('\n');
+    expect(parseBaselineFailures(raycastLog, undefined, [{ id: 'GHSA-34X7-HFP2-RC4V', package: 'tar', graph: 'full' as const }])).toHaveLength(1);
+    const raycastFailures = parseBaselineFailures(raycastLog, undefined, [{ id: 'GHSA-34X7-HFP2-RC4V', package: 'tar', graph: 'raycast-production' as const }]);
+    expect(raycastFailures).toEqual([]);
+    // Pretty-printed reports parse through the column-0 block scan.
+    const pretty = JSON.stringify(JSON.parse(auditReport(lodash)), null, 2);
+    expect(parseBaselineFailures([invoke, pretty].join('\n'))).toHaveLength(1);
+    // Invalid reports, clean reports and unrelated JSON stay unparsed
+    // even with a step echo; a valid report with no step echo does too.
+    for (const bad of [
+      JSON.stringify({ auditReportVersion: 1, vulnerabilities: lodash, metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 1, critical: 0, total: 1 } } }),
+      JSON.stringify({ auditReportVersion: 2, vulnerabilities: lodash, metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 'x', critical: 0, total: 1 } } }),
+      JSON.stringify({ auditReportVersion: 2, vulnerabilities: [], metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 } } }),
+      JSON.stringify({ auditReportVersion: 2, vulnerabilities: {}, metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 } } }),
+      // Inconsistent document: packages listed under an all-zero count
+      // would have passed the gate's clean check, so it emits nothing.
+      JSON.stringify({ auditReportVersion: 2, vulnerabilities: lodash, metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 } } }),
+      '{\n  "auditReportVersion": 2,\n  "vulnerabilities": {',
+      '{"unrelated":true}',
+    ]) {
+      expect(parseBaselineFailures([invoke, bad].join('\n')), bad.slice(0, 80)).toEqual([]);
+    }
+    expect(parseBaselineFailures(auditReport(lodash))).toEqual([]);
+  });
+  it('groups dependency-audit failures and attributes lockfile inputs', async () => {
+    const contents = { '.github/dependency-audit-exceptions.json': '[]' };
+    const report = await analyzeCiBaseline('owner/repo', github({ audit: true, contents }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(3);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    expect(report.groups.map(g => g.testId)).toEqual([
+      'package-lock.json > (dependency-audit) lodash',
+      'package-lock.json > (dependency-audit) minimist',
+      'src/raycast/package-lock.json > (dependency-audit) tar',
+    ]);
+    // Each lockfile's manifest, shrinkwrap, .npmrc, the shared exception
+    // file and the gate script are inputs: touching any one is
+    // PR-caused for that lockfile's groups only.
+    const caused = await analyzeCiBaseline('owner/repo', github({ audit: true, touched: 'package-lock.json', contents }).gh);
+    const causedById = new Map(caused.groups.map(g => [g.testId, g.action]));
+    expect(causedById.get('package-lock.json > (dependency-audit) lodash')).toBe('pr-caused');
+    expect(causedById.get('package-lock.json > (dependency-audit) minimist')).toBe('pr-caused');
+    expect(causedById.get('src/raycast/package-lock.json > (dependency-audit) tar')).toBe('queue-master-fix');
+    const excused = await analyzeCiBaseline('owner/repo', github({ audit: true, touched: '.github/dependency-audit-exceptions.json', contents }).gh);
+    for (const group of excused.groups) expect(group.action).toBe('pr-caused');
+    const raycast = await analyzeCiBaseline('owner/repo', github({ audit: true, touched: 'src/raycast/package-lock.json', contents }).gh);
+    const raycastById = new Map(raycast.groups.map(g => [g.testId, g.action]));
+    expect(raycastById.get('src/raycast/package-lock.json > (dependency-audit) tar')).toBe('pr-caused');
+    expect(raycastById.get('package-lock.json > (dependency-audit) lodash')).toBe('queue-master-fix');
+    // The vitest harness ambient set cannot reach this gate.
+    const ambient = await analyzeCiBaseline('owner/repo', github({ audit: true, touched: 'tsconfig.json', contents }).gh);
+    for (const group of ambient.groups) expect(group.classification).toBe('shared-baseline');
+    // Master's exception file filters the same reports end to end: a
+    // full-graph exception for lodash removes its group everywhere.
+    const exceptionFile = JSON.stringify([{ id: 'GHSA-35jh-r3h4-6jhm', package: 'lodash', graph: 'full', expires: '2099-01-01T00:00:00Z', reason: 'accepted risk' }]);
+    const filtered = await analyzeCiBaseline('owner/repo', github({ audit: true, contents: { '.github/dependency-audit-exceptions.json': exceptionFile } }).gh);
+    expect(filtered.groups.map(g => g.testId)).toEqual([
+      'package-lock.json > (dependency-audit) minimist',
+      'src/raycast/package-lock.json > (dependency-audit) tar',
+    ]);
+    // An unreadable or malformed exception file disables audit parsing:
+    // the failures stay unknown rather than fabricate coverage.
+    for (const badContents of [{ '.github/dependency-audit-exceptions.json': 'not json' }, { '.github/dependency-audit-exceptions.json': '{"not":"an array"}' }]) {
+      const broken = await analyzeCiBaseline('owner/repo', github({ audit: true, contents: badContents }).gh);
+      expect(broken.groups).toEqual([]);
+      expect(broken.freshness.every(p => p.state === 'unknown')).toBe(true);
+    }
+  });
+  it('parses pack-smoke and hosted-artifact refusals as gate failures', () => {
+    const failures = parseBaselineFailures(fixture('pack-shared'));
+    expect(failures.map(f => f.testId)).toEqual([
+      '.github/scripts/ci-pack-smoke.mjs > (pack-smoke)',
+      'scripts/hosted-build-artifact.mjs > (hosted-artifact)',
+    ]);
+    expect(failures[0]).toMatchObject({ file: '.github/scripts/ci-pack-smoke.mjs', names: '(pack-smoke)' });
+    expect(failures[0]?.excerpt).toContain('pack smoke refused: source changed after build:');
+    expect(failures[1]).toMatchObject({ file: 'scripts/hosted-build-artifact.mjs', names: '(hosted-artifact)' });
+    expect(failures[1]?.excerpt).toContain('hosted artifact refused: missing built artifact');
+    // The drift list continuing under the refusal header is not a second
+    // identity and stays out of the excerpt.
+    expect(failures[0]?.excerpt).not.toContain('ci-baseline.ts');
+    // Timestamped job-log lines parse identically.
+    const stamped = fixture('pack-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped).map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    // Release-only refusals, empty messages, non-prefixed assert output and
+    // unrelated lines stay unparsed.
+    for (const bad of [
+      'release smoke refused: tarball missing',
+      'isolated release tree refused: source drift',
+      'Offline partition comparison refused: corpus unreadable',
+      'pack smoke refused:',
+      'pack smoke refused:   ',
+      'AssertionError [ERR_ASSERTION]: expected one npm pack result',
+      'same-runner release input refused: verification_failed',
+    ]) {
+      expect(parseBaselineFailures(bad), bad).toEqual([]);
+    }
+    const secret = 'ghp_' + 'a'.repeat(36);
+    expect(parseBaselineFailures(`pack smoke refused: token ${secret} leaked`)[0]?.excerpt).not.toContain(secret);
+  });
+  it('groups pack-smoke and artifact failures and attributes gate inputs', async () => {
+    const contents = {
+      '.github/scripts/ci-pack-smoke.mjs': "import assert from 'node:assert/strict';\nimport { createBuildIdentity } from '../../scripts/build-identity.mjs';\nimport { sourceDrift } from '../../scripts/release-isolated-tree.mjs';",
+      'scripts/build-identity.mjs': "import { spawnSync } from 'node:child_process';",
+      'scripts/release-isolated-tree.mjs': "import { undeclaredBuildOutputs } from './build-outputs.mjs';",
+      'scripts/build-outputs.mjs': "import { existsSync } from 'node:fs';",
+      'scripts/hosted-build-artifact.mjs': "import assert from 'node:assert/strict';\nimport { observeBuild } from '../.github/scripts/ci-pack-smoke.mjs';",
+    };
+    const report = await analyzeCiBaseline('owner/repo', github({ pack: true, contents }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(2);
+    expect(report.groups.map(g => g.testId)).toEqual([
+      '.github/scripts/ci-pack-smoke.mjs > (pack-smoke)',
+      'scripts/hosted-build-artifact.mjs > (hosted-artifact)',
+    ]);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    // The gate scripts and their direct manifest inputs are PR-caused; the
+    // measured dist/ graph and the vitest harness ambient set cannot reach
+    // these plain-script gates, so unrelated changes share the baseline.
+    const packInputs = ['package.json', '.github/scripts/ci-pack-smoke.mjs', 'scripts/build-identity.mjs', 'scripts/release-isolated-tree.mjs', 'scripts/build-outputs.mjs'];
+    for (const touched of packInputs) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ pack: true, touched, contents }).gh);
+      const packGroup = caused.groups.find(g => g.testId === '.github/scripts/ci-pack-smoke.mjs > (pack-smoke)');
+      expect(packGroup?.action, touched).toBe('pr-caused');
+    }
+    const artifactInputs = ['package.json', 'package-lock.json', 'scripts/hosted-build-artifact.mjs', '.github/scripts/ci-pack-smoke.mjs'];
+    for (const touched of artifactInputs) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ pack: true, touched, contents }).gh);
+      const artifactGroup = caused.groups.find(g => g.testId === 'scripts/hosted-build-artifact.mjs > (hosted-artifact)');
+      expect(artifactGroup?.action, touched).toBe('pr-caused');
+    }
+    for (const touched of ['src/core/status.ts', 'tsconfig.json', 'vitest.config.ts', 'test/setup/home.ts', 'docs/README.md']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ pack: true, touched, contents }).gh);
+      for (const group of shared.groups) expect(group.classification, `${touched} -> ${group.testId}`).toBe('shared-baseline');
+    }
+    // A singleton unaffected failure can never prove a master pass.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ pack: true, count: 1, pass: true, contents }).gh);
+    for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('parses secret-shape, secret-scan and version-provenance gate failures', () => {
+    const failures = parseBaselineFailures(fixture('trust-shared'));
+    expect(failures.map(f => f.testId)).toEqual([
+      '.github/tests/secret-shape/scrub.pl > (secret-shape)',
+      '.github/workflows/ci.yml > (secret-scan)',
+      '.github/scripts/release-version-provenance.mjs > (version-provenance)',
+    ]);
+    expect(failures[0]).toMatchObject({ file: '.github/tests/secret-shape/scrub.pl', names: '(secret-shape)' });
+    expect(failures[0]?.excerpt).toBe('3 allowed=1');
+    expect(failures[1]).toMatchObject({ file: '.github/workflows/ci.yml', names: '(secret-scan)' });
+    expect(failures[1]?.excerpt).toContain('leaks found: 2');
+    expect(failures[2]).toMatchObject({ file: '.github/scripts/release-version-provenance.mjs', names: '(version-provenance)' });
+    expect(failures[2]?.excerpt).toContain('Only the release-please PR may change the release version');
+    // Timestamped job-log lines parse identically.
+    const stamped = fixture('trust-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped).map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    // The gate-malfunction line groups under the same provenance identity.
+    const malfunction = parseBaselineFailures('release version provenance check failed: merge base unavailable');
+    expect(malfunction.map(f => f.testId)).toEqual(['.github/scripts/release-version-provenance.mjs > (version-provenance)']);
+    // Clean scans, zero counts, the provenance pass line and unrelated
+    // error annotations stay unparsed.
+    for (const bad of [
+      '0 allowed=0',
+      '0 allowed=3',
+      '2',
+      'allowed=2',
+      'no leaks found',
+      'leaks found: 0',
+      'release version provenance: version-unchanged',
+      'release version provenance: release-please-pr',
+      'release version provenance check failed:',
+      '::error::unrelated workflow command failure',
+      '::error::package.json version 1 -> 2',
+      'Error: Secret scan (diff) concluded failure',
+    ]) {
+      expect(parseBaselineFailures(bad), bad).toEqual([]);
+    }
+  });
+  it('groups trust-gate failures and attributes each gate its own inputs', async () => {
+    const contents = {
+      '.github/scripts/release-version-provenance.mjs': "import { execFileSync } from 'node:child_process';\nimport { resolve } from 'node:path';\nimport { fileURLToPath } from 'node:url';",
+      'package.json': '{"version":"3.30.49"}',
+      '.release-please-manifest.json': '{".":"3.30.49"}',
+    };
+    const report = await analyzeCiBaseline('owner/repo', github({ trust: true, contents }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(3);
+    expect(report.groups.map(g => g.testId)).toEqual([
+      '.github/scripts/release-version-provenance.mjs > (version-provenance)',
+      '.github/tests/secret-shape/scrub.pl > (secret-shape)',
+      '.github/workflows/ci.yml > (secret-scan)',
+    ]);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    // Each gate's own definition file is PR-caused for that group only.
+    for (const [touched, id] of [
+      ['.github/tests/secret-shape/scrub.pl', '.github/tests/secret-shape/scrub.pl > (secret-shape)'],
+      ['.github/workflows/ci.yml', '.github/workflows/ci.yml > (secret-scan)'],
+      ['package.json', '.github/scripts/release-version-provenance.mjs > (version-provenance)'],
+      ['.release-please-manifest.json', '.github/scripts/release-version-provenance.mjs > (version-provenance)'],
+      ['.github/scripts/release-version-provenance.mjs', '.github/scripts/release-version-provenance.mjs > (version-provenance)'],
+    ] as const) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ trust: true, touched, contents }).gh);
+      const byId = new Map(caused.groups.map(g => [g.testId, g.action]));
+      expect(byId.get(id), touched).toBe('pr-caused');
+    }
+    // The vitest harness ambient set cannot reach any of these gates, and an
+    // unrelated PR touching only toolchain config stays shared-baseline.
+    for (const touched of ['tsconfig.json', 'vitest.config.ts', 'src/core/status.ts', 'docs/README.md']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ trust: true, touched, contents }).gh);
+      for (const group of shared.groups) expect(group.classification, `${touched} -> ${group.testId}`).toBe('shared-baseline');
+    }
+    // Without the gate script's contents its dependency closure cannot be
+    // proved, so the provenance group stays unknown while the two scanner
+    // gates (whose inputs need no fetch) still classify.
+    const partial = await analyzeCiBaseline('owner/repo', github({ trust: true, contents: { 'package.json': '{}', '.release-please-manifest.json': '{}' } }).gh);
+    const partialById = new Map(partial.groups.map(g => [g.testId, g.classification]));
+    expect(partialById.get('.github/scripts/release-version-provenance.mjs > (version-provenance)')).toBe('unknown');
+    expect(partialById.get('.github/tests/secret-shape/scrub.pl > (secret-shape)')).toBe('shared-baseline');
+    expect(partialById.get('.github/workflows/ci.yml > (secret-scan)')).toBe('shared-baseline');
+    // A singleton unaffected failure can never prove a master pass.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ trust: true, count: 1, pass: true, contents }).gh);
+    for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('parses ci.yml helper-gate step failures', () => {
+    const failures = parseBaselineFailures(fixture('script-shared'), 'owner/repo');
+    expect(failures.map(f => f.testId)).toEqual([
+      '.github/tests/ci-fast-select.test.mjs > warm sparse checkout',
+      '.github/scripts/ci-fetch-range.mjs > (fetch-range)',
+      '.github/scripts/ci-fast-inputs.mjs > (fast-inputs)',
+      '.github/scripts/ci-mcp-selection.mjs > (mcp-selection)',
+    ]);
+    expect(failures[1]).toMatchObject({ file: '.github/scripts/ci-fetch-range.mjs', names: '(fetch-range)' });
+    expect(failures[1]?.excerpt).toContain('pull request base is missing');
+    expect(failures[2]).toMatchObject({ file: '.github/scripts/ci-fast-inputs.mjs', names: '(fast-inputs)' });
+    expect(failures[2]?.excerpt).toContain('tests needs the plan file');
+    expect(failures[3]).toMatchObject({ file: '.github/scripts/ci-mcp-selection.mjs', names: '(mcp-selection)' });
+    expect(failures[3]?.excerpt).toContain('MCP test selection failed: merge base unavailable');
+    // The non-whitelisted ci-fast-select step produced no gate group; its
+    // companion TAP failure is the only evidence and stays TAP-owned.
+    expect(failures.some(f => f.file === '.github/scripts/ci-fast-select.mjs')).toBe(false);
+    // Timestamped job-log lines parse identically.
+    const stamped = fixture('script-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped, 'owner/repo').map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    const secret = 'ghp_' + 'a'.repeat(36);
+    const leaky = [
+      '##[group]Run node .github/scripts/ci-fetch-range.mjs',
+      'node .github/scripts/ci-fetch-range.mjs',
+      'shell: /usr/bin/bash -e {0}',
+      '##[endgroup]',
+      `fatal: token ${secret} rejected`,
+      '##[error]Process completed with exit code 1.',
+    ].join('\n');
+    expect(parseBaselineFailures(leaky)[0]?.excerpt).not.toContain(secret);
+  });
+  it('keeps unattributable ci.yml step failures unparsed', () => {
+    const step = (script: string[], output: string[], error = '##[error]Process completed with exit code 1.') =>
+      ['##[group]Run ' + script[0], ...script.slice(1), 'shell: /usr/bin/bash -e {0}', '##[endgroup]', ...output, error].join('\n');
+    // Mixed bash, uses: actions, non-whitelisted scripts, ambiguous
+    // multi-script steps, cancelled steps and passing steps stay unparsed.
+    for (const bad of [
+      step(['set -euo pipefail', 'npm run build'], ['build failed']),
+      step(['actions/setup-node@820762786026740c76f36085b0efc47a31fe5020'], ['with:', '  node-version: \'22\'']),
+      step(['node .github/scripts/ci-fast-run.mjs'], ['spawn failed']),
+      step(['node .github/scripts/ci-pack-smoke.mjs capture "$RUNNER_TEMP"'], ['Error: Cannot find module']),
+      step(['node .github/scripts/ci-fetch-range.mjs', 'node .github/scripts/ci-dep-graph.mjs update'], ['boom']),
+      step(['node ./.github/scripts/ci-fetch-range.mjs'], ['boom']),
+      step(['node .github/scripts/ci-fetch-range.mjs'], ['ok'], '##[error]The operation was canceled.'),
+      step(['node .github/scripts/ci-fetch-range.mjs'], ['range fetched'], ''),
+    ]) {
+      expect(parseBaselineFailures(bad), bad.slice(0, 60)).toEqual([]);
+    }
+    // A blank line inside the script block does not disqualify the step.
+    const blank = [
+      '##[group]Run node .github/scripts/ci-fetch-range.mjs',
+      'node .github/scripts/ci-fetch-range.mjs',
+      '',
+      'shell: /usr/bin/bash -e {0}',
+      '##[endgroup]',
+      'commit range unavailable after unshallow',
+      '##[error]Process completed with exit code 1.',
+    ].join('\n');
+    expect(parseBaselineFailures(blank).map(f => f.testId)).toEqual(['.github/scripts/ci-fetch-range.mjs > (fetch-range)']);
+    // A companion test failure owns the step: the gate group is suppressed
+    // and the TAP `not ok` without a resolvable location emits nothing.
+    const suppressed = step(
+      ['node --test .github/tests/ci-mcp-selection.test.mjs', 'node --test .github/tests/ci-mcp-selection.test.mjs', 'node .github/scripts/ci-mcp-selection.mjs'],
+      ['TAP version 13', 'not ok 1 - selection'],
+    );
+    expect(parseBaselineFailures(suppressed)).toEqual([]);
+    // A vitest FAIL line in a gate step's output suppresses the gate group;
+    // the vitest failure itself still parses.
+    const vitest = step(
+      ['node .github/scripts/ci-mac-rotation.mjs run general'],
+      ['FAIL  |unit| test/example.test.ts > suite > case'],
+    );
+    expect(parseBaselineFailures(vitest).map(f => f.testId)).toEqual(['test/example.test.ts > suite > case']);
+  });
+  it('groups ci.yml helper-gate failures and attributes workflow and import inputs', async () => {
+    const contents = {
+      '.github/scripts/ci-fetch-range.mjs': "import { execFileSync } from 'node:child_process';\nimport { fileURLToPath } from 'node:url';",
+      '.github/scripts/ci-fast-inputs.mjs': "import { hashParts } from './ci-green-reuse.mjs';\nimport { changedPaths } from './ci-changed-paths.mjs';\nimport { SCHEMA } from './ci-dep-graph.mjs';",
+      '.github/scripts/ci-green-reuse.mjs': "import { createHash } from 'node:crypto';",
+      '.github/scripts/ci-changed-paths.mjs': "import { execFileSync } from 'node:child_process';",
+      '.github/scripts/ci-dep-graph.mjs': "import { execFileSync } from 'node:child_process';",
+      '.github/scripts/ci-mcp-selection.mjs': "import { execFileSync } from 'node:child_process';",
+    };
+    const report = await analyzeCiBaseline('owner/repo', github({ script: true, contents }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(4);
+    expect(report.groups.map(g => g.testId)).toEqual([
+      '.github/scripts/ci-fast-inputs.mjs > (fast-inputs)',
+      '.github/scripts/ci-fetch-range.mjs > (fetch-range)',
+      '.github/scripts/ci-mcp-selection.mjs > (mcp-selection)',
+      '.github/tests/ci-fast-select.test.mjs > warm sparse checkout',
+    ]);
+    for (const group of report.groups.slice(0, 3)) {
+      expect(group).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    // The workflow step definition, the gate script itself and its import
+    // closure are inputs: ci-fast-inputs imports ci-dep-graph, so touching
+    // the graph script is PR-caused for the fast-inputs group only.
+    for (const [touched, id] of [
+      ['.github/workflows/ci.yml', '.github/scripts/ci-fetch-range.mjs > (fetch-range)'],
+      ['.github/scripts/ci-fetch-range.mjs', '.github/scripts/ci-fetch-range.mjs > (fetch-range)'],
+      ['.github/scripts/ci-dep-graph.mjs', '.github/scripts/ci-fast-inputs.mjs > (fast-inputs)'],
+      ['.github/scripts/ci-mcp-selection.mjs', '.github/scripts/ci-mcp-selection.mjs > (mcp-selection)'],
+    ] as const) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ script: true, touched, contents }).gh);
+      const byId = new Map(caused.groups.map(g => [g.testId, g.action]));
+      expect(byId.get(id), touched).toBe('pr-caused');
+    }
+    const depGraph = await analyzeCiBaseline('owner/repo', github({ script: true, touched: '.github/scripts/ci-dep-graph.mjs', contents }).gh);
+    const depById = new Map(depGraph.groups.map(g => [g.testId, g.action]));
+    expect(depById.get('.github/scripts/ci-fetch-range.mjs > (fetch-range)')).toBe('queue-master-fix');
+    expect(depById.get('.github/scripts/ci-mcp-selection.mjs > (mcp-selection)')).toBe('queue-master-fix');
+    // The vitest harness ambient set cannot reach these gates, and unrelated
+    // changes share the baseline.
+    for (const touched of ['tsconfig.json', 'vitest.config.ts', 'src/core/status.ts', 'docs/README.md']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ script: true, touched, contents }).gh);
+      for (const group of shared.groups.slice(0, 3)) expect(group.classification, `${touched} -> ${group.testId}`).toBe('shared-baseline');
+    }
+    // A singleton unaffected failure can never prove a master pass.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ script: true, count: 1, pass: true, contents }).gh);
+    for (const group of singleton.groups.slice(0, 3)) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('keeps TAP indentation on timestamped job-log lines', () => {
+    const block = [
+      'TAP version 13',
+      '# Subtest: outer',
+      '    # Subtest: inner',
+      '        not ok 1 - leaf',
+      '          ---',
+      "          type: 'test'",
+      "          location: '/home/runner/work/repo/repo/.github/tests/nested.test.mjs:9:1'",
+      "          failureType: 'testCodeFailure'",
+      '          ...',
+      '        1..1',
+      '    1..1',
+      '1..1',
+    ];
+    const stamped = block.map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    const failures = parseBaselineFailures(stamped, 'owner/repo');
+    expect(failures.map(f => f.testId)).toEqual(['.github/tests/nested.test.mjs > outer > inner > leaf']);
+    expect(parseBaselineFailures(block.join('\n'), 'owner/repo').map(f => f.testId)).toEqual(failures.map(f => f.testId));
   });
   it('resolves bundler-style imports across the dependency closure', async () => {
     const contents = {

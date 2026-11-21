@@ -34,7 +34,8 @@ describe('retained v2 work projection', () => {
     const rows = [receipt(post), ...WORK_STATUSES.map((status, n) => receipt({ kind: 'work.status', jobId: 'job', status }, n + 2))];
     const result = projectBusWorkFeed(rows);
     expect(result).toEqual({ status: 'ok', feed: { v: 2, jobs: [{ id: 'job', owner: 'agent', to: 'leaders', provider: 'devin',
-      repo: 'a/b', title: 'Review', claimKeys: ['repo:a/b'], status: 'terminated', updatedAt: 900 }] } });
+      repo: 'a/b', title: 'Review', claimKeys: ['repo:a/b'], status: 'terminated', updatedAt: 900 }] },
+      citations: new Map([['job', { post: 'm-1', status: 'm-9' }]]) });
     if (result.status !== 'ok') throw new Error('fixture refused');
     expect(workFeedSchema.parse(JSON.parse(JSON.stringify(result.feed)))).toEqual(result.feed);
     expect(rows[0]!.envelope.body).toEqual(post);
@@ -59,15 +60,56 @@ describe('retained v2 work projection', () => {
     expect(plain.feed.jobs[0]?.title).toBe('Review');
     expect(workFeedSchema.parse(JSON.parse(JSON.stringify(result.feed)))).toEqual(result.feed);
   });
+  it('carries the newest status detail onto the job and clears it when a newer status omits one', () => {
+    const status = (cursor: number, body: Record<string, unknown>) =>
+      receipt({ kind: 'work.status', jobId: 'job', ...body }, cursor);
+    const detailOf = (rows: ReturnType<typeof receipt>[]) => {
+      const result = projectBusWorkFeed(rows);
+      if (result.status !== 'ok') throw new Error('fixture refused');
+      return result.feed.jobs[0]?.detail;
+    };
+    // A status detail rides the job so a blocked job says why.
+    expect(detailOf([receipt(post), status(2, { status: 'blocked', detail: 'waiting on review' })]))
+      .toBe('waiting on review');
+    // A newer status without detail clears it — never a stale reason on a newer state.
+    expect(detailOf([receipt(post), status(2, { status: 'blocked', detail: 'waiting on review' }),
+      status(3, { status: 'running' })])).toBeUndefined();
+    // The newest detail wins when consecutive statuses both carry one.
+    expect(detailOf([receipt(post), status(2, { status: 'blocked', detail: 'old reason' }),
+      status(3, { status: 'blocked', detail: 'new reason' })])).toBe('new reason');
+    // With no detail ever posted the job keeps no detail key at all.
+    const result = projectBusWorkFeed([receipt(post), status(2, { status: 'done' })]);
+    if (result.status !== 'ok') throw new Error('fixture refused');
+    expect(result.feed.jobs[0]).not.toHaveProperty('detail');
+    expect(workFeedSchema.parse(JSON.parse(JSON.stringify(result.feed)))).toEqual(result.feed);
+  });
   it('preserves v1 and peer bodies as opaque data and ignores orphan statuses', () => {
     expect(projectBusWorkFeed([
       receipt({ arbitrary: 'legacy' }), receipt('legacy string', 2), receipt({ kind: 'peer.message', peer: {} }, 3),
       receipt({ kind: 'work.status', jobId: 'evicted', status: 'done' }, 4), receipt({ kind: 'note', legacy: true }, 5),
-    ])).toEqual({ status: 'ok', feed: { v: 2, jobs: [] } });
+    ])).toEqual({ status: 'ok', feed: { v: 2, jobs: [] }, citations: new Map() });
+  });
+  it('cites the post and newest accepted status envelopes behind each job', () => {
+    const status = (cursor: number, jobId: string, s: string) =>
+      receipt({ kind: 'work.status', jobId, status: s }, cursor);
+    const result = projectBusWorkFeed([
+      status(1, 'job', 'running'),                     // orphan before the post — ignored
+      receipt(post, 2),                                 // m-2 announces 'job'
+      status(3, 'job', 'blocked'),                      // m-3
+      status(4, 'job', 'running'),                      // m-4 — the newest status wins the citation
+      receipt({ ...post, jobId: 'other' }, 5, 'agent', 'agent:worker'), // m-5, no status yet
+      status(6, 'ghost', 'done'),                       // m-6 — orphan, no job behind it
+    ]);
+    if (result.status !== 'ok') throw new Error('fixture refused');
+    expect(result.citations).toEqual(new Map([
+      ['job', { post: 'm-2', status: 'm-4' }],
+      ['other', { post: 'm-5', status: null }],
+    ]));
   });
   it('resolves omitted providers only through explicit participant metadata', () => {
     const { provider: _provider, ...withoutProvider } = post;
-    expect(projectBusWorkFeed([receipt(withoutProvider)])).toEqual({ status: 'refused', reason: 'missing-provider' });
+    expect(projectBusWorkFeed([receipt(withoutProvider)])).toEqual({ status: 'refused', reason: 'missing-provider',
+      receipt: { id: 'm-1', receivedAt: 100, ttl: 1000 } });
     const result = projectBusWorkFeed([receipt(withoutProvider)], [participant]);
     expect(result.status === 'ok' && result.feed.jobs[0]?.provider).toBe('claude');
     expect(projectBusWorkFeed([], [participant, participant])).toEqual({ status: 'refused', reason: 'invalid-participants' });
@@ -86,20 +128,25 @@ describe('retained v2 work projection', () => {
       .toMatchObject({ status: 'ok', feed: { jobs: [{ provider: 'devin' }] } });
     // Unknown and invalid hints still refuse rather than guessing.
     expect(projectBusWorkFeed([receipt(withoutProvider, 1, 'other')], [], () => undefined))
-      .toEqual({ status: 'refused', reason: 'missing-provider' });
+      .toEqual({ status: 'refused', reason: 'missing-provider',
+        receipt: { id: 'm-1', receivedAt: 100, ttl: 1000 } });
     expect(projectBusWorkFeed([receipt(withoutProvider, 1, 'other')], [], () => 'not-a-provider' as never))
-      .toEqual({ status: 'refused', reason: 'missing-provider' });
+      .toEqual({ status: 'refused', reason: 'missing-provider',
+        receipt: { id: 'm-1', receivedAt: 100, ttl: 1000 } });
   });
   it.each([
     { ...post, claimKeys: ['path:a/b:../x'] }, { ...post, provider: 'unknown' }, { ...post, extra: true },
     { kind: 'work.status', jobId: 'job', status: 'unknown' },
   ])('refuses malformed v2 work data: %j', body => {
-    expect(projectBusWorkFeed([receipt(body)])).toEqual({ status: 'refused', reason: 'invalid-body' });
+    expect(projectBusWorkFeed([receipt(body)])).toEqual({ status: 'refused', reason: 'invalid-body',
+      receipt: { id: 'm-1', receivedAt: 100, ttl: 1000 } });
   });
   it('refuses duplicate posts and status updates from a different routing owner', () => {
-    expect(projectBusWorkFeed([receipt(post), receipt(post, 2)])).toEqual({ status: 'refused', reason: 'duplicate-job' });
+    expect(projectBusWorkFeed([receipt(post), receipt(post, 2)])).toEqual({ status: 'refused', reason: 'duplicate-job',
+      receipt: { id: 'm-2', receivedAt: 200, ttl: 1000 } });
     expect(projectBusWorkFeed([receipt(post), receipt({ kind: 'work.status', jobId: 'job', status: 'done' }, 2, 'other')]))
-      .toEqual({ status: 'refused', reason: 'owner-mismatch' });
+      .toEqual({ status: 'refused', reason: 'owner-mismatch',
+        receipt: { id: 'm-2', receivedAt: 200, ttl: 1000 } });
   });
   it.each([
     [null], [receipt(post), receipt(post)], [{ ...receipt(post), receivedAt: -1 }],
@@ -121,12 +168,34 @@ describe('retained v2 work projection', () => {
     // Different identities, and labels the resolver cannot place, still refuse.
     for (const from of ['agent:other', 'stranger']) {
       expect(projectBusWorkFeed([receipt(post, 1, 'agent:bot'), status(2, from)], [], undefined, ownerKeyFor))
-        .toEqual({ status: 'refused', reason: 'owner-mismatch' });
+        .toEqual({ status: 'refused', reason: 'owner-mismatch',
+          receipt: { id: 'm-2', receivedAt: 200, ttl: 1000 } });
     }
     // Empty keys never match, and without a resolver labels must be identical.
     expect(projectBusWorkFeed([receipt(post, 1, 'agent:bot'), status(2, 'bot-alias')], [], undefined, () => ''))
-      .toEqual({ status: 'refused', reason: 'owner-mismatch' });
+      .toEqual({ status: 'refused', reason: 'owner-mismatch',
+        receipt: { id: 'm-2', receivedAt: 200, ttl: 1000 } });
     expect(projectBusWorkFeed([receipt(post, 1, 'agent:bot'), status(2, 'bot-alias')]))
-      .toEqual({ status: 'refused', reason: 'owner-mismatch' });
+      .toEqual({ status: 'refused', reason: 'owner-mismatch',
+        receipt: { id: 'm-2', receivedAt: 200, ttl: 1000 } });
+  });
+  it('names the retained receipt behind each body-level refusal and none for shape refusals', () => {
+    const { provider: _provider, ...withoutProvider } = post;
+    const cases: Array<[unknown[], string, { id: string; receivedAt: number; ttl: number } | undefined]> = [
+      [[receipt(withoutProvider)], 'missing-provider', { id: 'm-1', receivedAt: 100, ttl: 1000 }],
+      [[receipt({ ...post, extra: true })], 'invalid-body', { id: 'm-1', receivedAt: 100, ttl: 1000 }],
+      [[receipt(post), receipt(post, 2)], 'duplicate-job', { id: 'm-2', receivedAt: 200, ttl: 1000 }],
+      [[receipt(post), receipt({ kind: 'work.status', jobId: 'job', status: 'done' }, 2, 'other')],
+        'owner-mismatch', { id: 'm-2', receivedAt: 200, ttl: 1000 }],
+      // Receipt-shape, participant-metadata and volume refusals blame no single receipt.
+      [[null], 'invalid-receipts', undefined],
+      [Array(1025).fill(null), 'invalid-receipts', undefined],
+      [[], 'invalid-participants', undefined],
+    ];
+    for (const [rows, reason, receiptSite] of cases) {
+      const participants = reason === 'invalid-participants' ? [participant, participant] : [];
+      expect(projectBusWorkFeed(rows, participants)).toEqual({ status: 'refused', reason,
+        ...(receiptSite === undefined ? {} : { receipt: receiptSite }) });
+    }
   });
 });

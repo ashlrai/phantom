@@ -27,6 +27,36 @@ never reported as delivered — and the human `phm comms thread` output appends
 `[channel:state ...]` to outbound lines that have receipts. The receipt journal
 is bounded, so older messages simply have no entry.
 
+The same read reports which live inbound messages still have no recorded
+reply: `awaitingReply` lists their message ids (`m<n>`), or `null` when the
+thread is unreadable — unknown stays unknown, never an empty list. `phm comms
+status` reports the count as `awaitingReply` (`null` when unreadable) and the
+human `phm comms thread` output appends `[awaiting reply]` to those inbound
+lines. Its `messages` count follows the same rule — the real total, or `null`,
+never `0`, when the thread cannot be read. A message counts as answered once
+any recorded outbound reply cites its idempotency key — including a reply
+whose channel deliveries all failed, since delivery state stays with the
+receipts — while proactive notices never clear the mark. `phm comms inbox`
+lists each awaiting inbound as an `owner-thread` item (kind `owner-message`)
+with `phm comms thread` and `phm comms send-owner --reply-to <key>` deep
+links, so the unified pending view and the Leader's comms brief see the same
+mark this status reports.
+
+The delivery side of that mark is a separate read: `readOwnerUndeliveredReplies`
+(and the additive `undeliveredReplies` count on `phm comms status`, `null` when
+the thread is unreadable) lists every recorded reply — `replyTo` set, `fanout`
+declared — with at least one destination the thread's sent-mark
+(`deliveries[<reply-key>:<channel>]`) and the latest receipt journal row cannot
+confirm delivered. A destination the evidence cannot confirm lists as `failed`,
+`pending` or `unknown` — never delivered — with the scrubbed receipt reason
+when one was recorded. Notices and hellos carry no `replyTo` and stay out.
+Resending the same text under the reply's own idempotency key and the answered
+inbound's key (`--reply-to <key> --idempotency-key <reply-key>`) reproduces the
+reply identity whether the key was explicit or derived, and retries only the
+unconfirmed destinations, so an item clears once every fanout destination is
+confirmed. `phm comms inbox` lists each as an `owner-delivery` item (kind
+`owner-reply-undelivered`) deep-linking `phm comms thread` and that resend.
+
 ## Rotation, history and pulling
 
 When the live thread passes its message or byte cap it archives the oldest

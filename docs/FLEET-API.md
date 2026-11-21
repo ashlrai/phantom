@@ -407,9 +407,17 @@ then its jobs. `--json` is `fleet.org-groups.v1` and `GET
 /api/verse/fleet/control/org-groups` serves the same tree to a current read
 session. It groups the live map below and reads nothing else.
 
-- `nodes[]`: `id`, `role` (`leader`, `group`, `lane`, `job`), `label`, `parent`
+- `nodes[]`: `id`, `role` (`leader`, `group`, `lane`, `job`, `planner`), `label`, `parent`
   (null for the root), `children` (ids) and `counts` (`running`, `queued`,
   `idle`, `unknown`, summed over the leaves below). Parents come before children.
+- Branches under the leader: one per lane, `Guardian` (`group:guardian`, the main
+  guardian planner), `Loops` (`group:loops`: executor, Core orchestrator and comms)
+  and `unassigned` for anything with no known parent. The guardian and loops
+  branches come from the live map's `planners` and appear only when it has them;
+  their counts stay out of the leader's and the headline, which count jobs.
+  `phm org --json` adds this tree as `groups` (null when the live map could not be
+  read) next to the `fleet.org.v1` fields; the Map's "Group: by lane | by org"
+  toggle draws it, with the newest agent message on each parent link.
 - `headline`: the one line a phone shows first: `running`, `queued`, `stuck` (running
   jobs with no activity in 5 minutes), `mergedLastHour` (null when no lane reported)
   and `text` ("6 running, 2 stuck, 14 merged in the last hour", or "Nothing running.").
@@ -419,7 +427,7 @@ session. It groups the live map below and reads nothing else.
 - A node with no known parent sits under the group `group:unassigned`. A repeated
   id keeps its first row and is listed in `duplicates`. Computers and pools are not
   part of the org.
-- The Map pane's "By org" layout draws this tree and remembers the choice.
+- The Map pane's "Group: by lane | by org" toggle switches to this tree and remembers the choice.
 
 #### Live map
 
@@ -571,7 +579,9 @@ filter on (the same key `phm agents messages` reports as `threadId`), a
 `threadId`, or a `job:<id>` key — buckets its conversation under that label
 even without `replyTo` links, so a threaded question and its answer are one
 conversation; only the synthesized per-pair fallback stays reply-chain
-rooted. `--json` prints `agents.conversations.v1` (`version` 1), and
+rooted. `group.presence` heartbeats are expiring observations with their own
+read (`phm comms bus group presence`), never messages: they form no thread
+and cannot answer a waiting one. `--json` prints `agents.conversations.v1` (`version` 1), and
 `GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1]`
 serves the same read with a current read session.
 
@@ -590,6 +600,7 @@ serves the same read with a current read session.
 
 `phm agents messages [--since 1h] [--limit N] [--json]` lists recent
 agent-to-agent messages from the same bus read (no new store), newest first.
+`group.presence` heartbeats are observations, not messages, and never list.
 `--json` prints `agents.messages.v1` (`version` 1), and
 `GET /api/verse/fleet/control/agent-messages[?since=1h&limit=50]` serves the
 same read with a current read session.
@@ -687,6 +698,11 @@ replies are read once, and the recorded activity once for each job shown.
   message in the leader's thread, and a worker with a job opens with the
   message it serves (kind `order`) and says so in its summary. Helpers get
   none. The trace is read once for the whole document.
+- What a running session wrote is part of its thread: an `output` message
+  with the last 3 lines of its log (the newest 400 characters of them when
+  they are longer, `truncated` true when anything was left out). Only running
+  sessions have their log read here; a finished one's thread ends with its
+  outcome, and its single thread still shows its output.
 - `sources`: `sessions` (`available` or `unavailable`), and `bus`, `owner`,
   `replies` and `orders` (`available`, `none` when the read answered and no
   shown session has any, or `unavailable`). `gaps[]` holds the session list's
@@ -725,13 +741,24 @@ messages Mason wrote in the Leader inbox and, for the leader,
 - `messages[]` in reading order: the brief it was given, each recorded step,
   the last 8 commands, up to 6 changed files, its notes, the newest 50 bus
   messages that name its job or were sent by or to it, the newest 10 messages
-  from Mason, the leader's last 5 replies (leader only), then its last
+  from Mason, the leader's last 5 replies (leader only), the last 12 lines
+  it wrote to its log, then its last
   message. Each has `key`, `kind`
   (`order`, `routing`, `brief`, `step`, `commands`, `files`, `notes`, `bus`,
-  `owner`, `reply`, `latest`),
+  `owner`, `reply`, `output`, `latest`),
   `side` (`session` when it speaks, `other` when someone speaks to it,
   `record` for a recorded step), `label`, `at` (null when the record has no
   time), `text` and `format` (`plain`, `mono` or `markdown`).
+- What the session wrote (`output`) is the end of its job log, read for a
+  session with a job through the same bounded, no-follow read as
+  `phm sessions tail`, every line redacted. Blank lines are dropped, the
+  newest 12 are kept and a line is cut at 240 characters. The log has no time
+  per line, so `at` is null, and the label says whether earlier lines exist
+  ("last 12 lines of its log") and whether the log is archived. When the
+  output already ends with the session's last message, `latest` is left out
+  instead of being said twice. `sources.output` is `none` for a session that
+  wrote nothing (or has no job) and `unavailable`, with a line in `gaps`,
+  when the log could not be read.
 - Messages from Mason (`owner`) come from the Leader inbox, the newest 200
   entries of it. The leader's thread holds every one. A worker's thread holds
   the ones that name it as `@<job id>`, which is what the desktop reply boxes

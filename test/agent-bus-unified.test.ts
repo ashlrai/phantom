@@ -190,6 +190,15 @@ describe('channel reads', () => {
     expect(first.messages.map(m => m.envelope.id)).toEqual(['ch-1']);
     const rest = readAgentChannel('release', { after: first.nextCursor }, options);
     expect(rest.status === 'ok' && rest.messages.map(m => m.envelope.id)).toEqual(['ch-2']);
+
+    // The same rule holds for mail: a heartbeat is an observation, so it never
+    // lands in any member's inbox while real channel posts still arrive.
+    const atlasInbox = readAgentInbox('atlas', {}, options);
+    if (atlasInbox.status !== 'ok') throw new Error('unreadable');
+    expect(atlasInbox.messages.map(m => m.envelope.id).sort()).toEqual(['ch-2']);
+    const novaInbox = readAgentInbox('nova', {}, options);
+    if (novaInbox.status !== 'ok') throw new Error('unreadable');
+    expect(novaInbox.messages.map(m => m.envelope.id).sort()).toEqual(['ch-1', 'dm-1']);
   });
 
   it('reports unknown channels and unreadable state instead of empty history', () => {
@@ -411,6 +420,65 @@ describe('envelope lookup by id', () => {
     writeFileSync(claimsFile, 'not json');
     chmodSync(claimsFile, 0o600);
     expect(readBusEnvelopeById('lk-unk', options)).toMatchObject({ status: 'ok', held: null, holder: null });
+  });
+});
+
+describe('inbox hold evidence', () => {
+  it('marks claimable work and handoffs with the same hold state bus show reports', async () => {
+    // Real time: mutateBusWorkClaim reads Date.now() for lease and expiry.
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    const claimable = (id: string): void => {
+      const envelope: BusEnvelope = { id, from: 'agent:nova', to: 'agent:atlas',
+        priority: 'P2', ttl: 120_000, body: { kind: 'work', text: `fake work ${id}` } };
+      expect(appendBusInbox(envelope, { root: options.root, now: options.now }).status).toBe('posted');
+    };
+    claimable('in-free');
+    claimable('in-taken');
+    claimable('in-coord');
+    expect(mutateBusWorkClaim({ action: 'acquire', id: 'in-taken', owner: 'nova', leaseMs: 60_000,
+      root: options.root }).status).toBe('acquired');
+    expect(acquireCoordination({ root: options.root, origin: 'resource', key: 'queue:in-coord',
+      owner: 'nova', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000, sourceId: 'in-coord-src',
+      now: options.clock.now, started: new Date(options.clock.now).toISOString() }).status).toBe('acquired');
+    await sendHandoff({ from: 'nova', to: 'atlas', taskId: 'RQ-IN-H1', prompt: 'take over', id: 'in-ho' }, options);
+    await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'just chat', id: 'in-dm' }, options);
+
+    const page = readAgentInbox('atlas', {}, options);
+    if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+    const byId = new Map(page.messages.map(m => [m.envelope.id, m]));
+    expect(byId.get('in-free')).toMatchObject({ held: false, holder: null });
+    expect(byId.get('in-taken')).toMatchObject({ held: true, holder: 'nova' });
+    expect(byId.get('in-coord')).toMatchObject({ held: true, holder: 'nova' });
+    expect(byId.get('in-ho')).toMatchObject({ held: false, holder: null });
+    expect(byId.get('in-dm')).not.toHaveProperty('held');
+    expect(byId.get('in-dm')).not.toHaveProperty('holder');
+
+    // The frame adapters inject carries the same marker on work items only.
+    const framed = frameBusInbox('claude', page.messages);
+    expect(framed).toContain('id=in-taken from agent:nova held=yes holder=nova');
+    expect(framed).toContain('id=in-free from agent:nova held=no');
+    expect(framed).toContain('id=in-dm from agent:nova]');
+    expect(framed).not.toContain('id=in-dm from agent:nova held');
+  });
+
+  it('reports held unknown on the page when a hold store cannot be read', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    const envelope: BusEnvelope = { id: 'in-unk', from: 'agent:nova', to: 'agent:atlas',
+      priority: 'P2', ttl: 120_000, body: { kind: 'work', text: 'fake work' } };
+    expect(appendBusInbox(envelope, { root: options.root, now: options.now }).status).toBe('posted');
+    await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'just chat', id: 'in-unk-dm' }, options);
+    const claimsDir = join(options.root!, 'bus-work-claims');
+    mkdirSync(claimsDir, { recursive: true });
+    const claimsFile = join(claimsDir, 'claims.json');
+    writeFileSync(claimsFile, 'not json');
+    chmodSync(claimsFile, 0o600);
+    const page = readAgentInbox('atlas', {}, options);
+    if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+    const byId = new Map(page.messages.map(m => [m.envelope.id, m]));
+    expect(byId.get('in-unk')).toMatchObject({ held: null, holder: null });
+    expect(byId.get('in-unk-dm')).not.toHaveProperty('held');
   });
 });
 
@@ -796,6 +864,9 @@ describe('v2 work announcements and statuses on the one bus store', () => {
       body: { kind: 'work.post', jobId: 'RQ-POISON', title: 'x', repo: 'a/b', claimKeys: [] } }, options).status).toBe('posted');
     expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-6' }, options))
       .toMatchObject({ status: 'refused', reason: expect.stringContaining('missing-provider') });
+    // The refusal names the retained receipt that poisoned the feed.
+    expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-6' }, options))
+      .toMatchObject({ status: 'refused', reason: expect.stringContaining('receipt poison-1') });
     expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-W-6', status: 'done' }, options))
       .toMatchObject({ status: 'refused' });
     const raw = listBusInboxAfter(0, 10, options);
@@ -959,7 +1030,7 @@ describe('CLI session adapters', () => {
     expect(framed.endsWith(BUS_INBOX_FRAME_END)).toBe(true);
     expect(framed.split(BUS_INBOX_FRAME_END)).toHaveLength(2);
     expect(framed).not.toContain('\u0007');
-    expect(framed).toContain('[P1 handoff id=ho from agent:atlas] handoff task RQ-X-1: do it');
+    expect(framed).toContain('[P1 handoff id=ho from agent:atlas held=no] handoff task RQ-X-1: do it');
     expect(frameBusInbox('grok', inbox.messages)).toBe(framed);
     const many = Array.from({ length: 200 }, () => inbox.messages[0]!);
     const bounded = frameBusInbox('codex', many.map(m => ({ ...m, envelope: { ...m.envelope, body: { kind: 'note', text: 'x'.repeat(1000) } } })));

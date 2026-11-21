@@ -197,6 +197,37 @@ describe('phm agents conversations --json', () => {
     expect(result.waiting).toBe(1);
   });
 
+  it('a presence heartbeat is an observation: it forms no thread and never answers a wait', () => {
+    const root = bus([
+      [T0, 'a1', 'agent:nova', 'group:release:general', { kind: 'note', text: 'deploy window?' }],
+      [T0 + MIN, 'p1', 'agent:nova', 'group:release:general', { kind: 'group.presence', state: 'online' }],
+      [T0 + 2 * MIN, 'p2', 'agent:atlas', 'group:release:general', { kind: 'group.presence', state: 'online' }],
+    ]);
+    const result = readAgentConversations({}, { root, now: () => NOW });
+    // Only the ask is mail: both heartbeats are excluded, so the ask still waits.
+    expect(result.conversations).toHaveLength(1);
+    expect(result.conversations![0]).toMatchObject({ id: 'a1', state: 'waiting',
+      messageCount: 1, waiting: { on: 'group:release:general' } });
+    expect(result.waiting).toBe(1);
+  });
+
+  it('a dead-letter notice is a delivery report: it forms no thread and never answers a wait', () => {
+    const deadLetter = (id: string, correlation: string) => ({ protocol: { version: 1, kind: 'status' }, correlation_id: correlation,
+      payload: { deadLetter: { id: 'lost-' + id, from: 'a', to: 'b', kind: 'note', reason: 'exhausted', deadLetteredAt: 1, attempts: [] },
+        payloadDropped: false, envelope: null } });
+    const root = bus([
+      [T0, 'a1', 'agent:nova', 'agent:atlas', { kind: 'note', text: 'deploy window?' }],
+      [T0 + MIN, 'd1', 'bus-router', 'bus.dead-letter', deadLetter('d1', 'c-1')],
+      [T0 + 2 * MIN, 'd2', 'bus-router', 'bus.dead-letter', deadLetter('d2', 'c-2')],
+    ]);
+    const result = readAgentConversations({}, { root, now: () => NOW });
+    // Only the note is mail: both notices are excluded, so it still waits.
+    expect(result.conversations).toHaveLength(1);
+    expect(result.conversations![0]).toMatchObject({ id: 'a1', state: 'waiting', messageCount: 1,
+      waiting: { on: 'atlas' } });
+    expect(result.waiting).toBe(1);
+  });
+
   it('declared thread labels bucket the conversation across pairs; unlabeled mail still splits', () => {
     const root = bus([
       [T0, 'h1', 'agent:peer-a', 'agent:peer-b', { kind: 'worker-handoff', taskId: 'RQ-CHAIN9', prompt: 'Take over', thread: 't-chain' }],

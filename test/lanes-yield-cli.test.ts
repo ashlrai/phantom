@@ -59,4 +59,21 @@ describe('phm lanes yield', () => {
     expect(await cmdLanes(['yield'])).toBe(0);
     expect(out.mock.calls.map(c => c[0])).toContain('claude / md: yield 50% (5 merged of 10 launches, 2 reverted), empty 30%; router weight 1.00');
   });
+
+  it('gives every lane a verdict and honours --since', async () => {
+    const zai = Array.from({ length: 20 }, (_, i) => [
+      JSON.stringify({ event: 'launch', job: `z${i}`, lane: 'zai', size: 'md', ts: '2026-11-19T10:00:00.000Z' }),
+      JSON.stringify({ event: 'finish', job: `z${i}`, empty: true, ts: '2026-11-19T10:05:00.000Z' }),
+    ].join('\n')).join('\n');
+    await home(zai);
+    const out = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await cmdLanes(['yield', '--json', '--since', '2000d'])).toBe(0);
+    const report = JSON.parse(out.mock.calls.at(-1)![0]);
+    expect(report.lanes.find((l: { lane: string }) => l.lane === 'zai')).toMatchObject({ jobs: 20, empty: 20, verdict: 'low-yield' });
+    expect(await cmdLanes(['yield', '--since', '2000d'])).toBe(0);
+    expect(out.mock.calls.map(c => c[0])).toContain('zai: low-yield (20 of 20 finished jobs ended empty, 0 merged in 2000d)');
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await cmdLanes(['yield', '--since', 'nonsense'])).toBe(2);
+    expect(err).toHaveBeenCalled();
+  });
 });

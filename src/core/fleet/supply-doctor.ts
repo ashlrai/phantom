@@ -17,6 +17,7 @@ import { constants } from 'node:fs';
 import { lstat, open, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import type { LostLaunch } from './lost-launches.js';
 import { readDispatchEventsLog } from './dispatch-events-read.js';
 import { computeLanesHeld, type LaneHeldRow } from './lane-held.js';
 import { parseDoneName, parseIngestedTsv } from './drop-job-fate.js';
@@ -47,6 +48,8 @@ export interface SupplyDoctorReport {
   selfSupply: { landed24h: number | null; lastLanded: string | null };
   /** Gap candidates the finder would queue now (24 h, after de-duplication), by source; unknown when the job metrics cannot be read. */
   candidates: { state: 'known'; noChange: number; published: number } | { state: 'unknown'; why: string };
+  /** Jobs that launched in 24 h and vanished (no finish or publish, or a failed launch); newest 5. Unknown when the job metrics cannot be read. */
+  lost_launches: { state: 'known'; count: number; newest: LostLaunch[] } | { state: 'unknown'; why: string };
   /** Lanes whose own wrapper held every launch in the last 60 min (3+ held, 0 finishes); unknown when the event log is unreadable. */
   selfHeld: { state: 'known'; windowMinutes: number; lanes: LaneHeldRow[] } | { state: 'unknown'; why: string };
   verdict: string;
@@ -61,6 +64,8 @@ export interface SupplyDoctorOptions {
   /** Dispatch event log text (null = unreadable). Defaults to the runs-dir log. */
   readEvents?: (runsDir: string) => Promise<string | null>;
   readCandidates?: (runsDir: string) => Promise<{ noChange: number; published: number } | null>;
+  /** Lost launches in 24 h, newest first. Defaults to the lost-launch finder; null when unreadable. */
+  readLost?: (runsDir: string, nowMs: number) => Promise<LostLaunch[] | null>;
 }
 
 const errText = (e: unknown): string => (e as NodeJS.ErrnoException)?.code === 'ENOENT' ? 'missing' : 'unreadable';
@@ -120,7 +125,13 @@ async function readRejected(dir: string, nowMs: number): Promise<SupplyDoctorRep
   return { state: 'known', path: dir, total24h, byReason: Object.fromEntries(Object.entries(byReason).sort(([a], [b]) => a.localeCompare(b))) };
 }
 
-function verdictOf(report: Pick<SupplyDoctorReport, 'ingested' | 'selfSupply' | 'hook'>): string {
+function verdictOf(report: Pick<SupplyDoctorReport, 'ingested' | 'selfSupply' | 'hook' | 'lost_launches'>): string {
+  const lost = report.lost_launches.state === 'known' && report.lost_launches.count > 0
+    ? `; ${report.lost_launches.count} ${report.lost_launches.count === 1 ? 'job' : 'jobs'} lost at launch in 24 h` : '';
+  return supplyVerdict(report) + lost;
+}
+
+function supplyVerdict(report: Pick<SupplyDoctorReport, 'ingested' | 'selfSupply' | 'hook'>): string {
   if (report.ingested.state === 'unknown') return `self-supply is unknown: cannot read ${report.ingested.path} (${report.ingested.why})`;
   const { landed24h, lastLanded } = report.selfSupply;
   if (landed24h) return `self-supply landed ${landed24h} ${landed24h === 1 ? 'job' : 'jobs'} in 24 h (last ${lastLanded})`;
@@ -137,12 +148,17 @@ export async function readSupplyDoctor(opts: SupplyDoctorOptions = {}): Promise<
     const gaps = await (await import('./job-gaps.js')).readJobGaps(24, { runsDir: dir });
     return gaps.known ? { noChange: gaps.bySource['no-change'], published: gaps.bySource.published } : null;
   });
+  const readLost = opts.readLost ?? (async (dir: string, at: number) => {
+    const r = await (await import('./lost-launches.js')).readLostLaunches(24, { runsDir: dir, now: () => at });
+    return r.known ? r.lost : null;
+  });
   const readEvents = opts.readEvents ?? readDispatchEventsLog;
-  const [ingested, rejected, off, found, events] = await Promise.all([
+  const [ingested, rejected, off, found, lost, events] = await Promise.all([
     readIngested(join(runsDir, 'leader', 'drop', 'ingested.tsv'), nowMs),
     readRejected(join(runsDir, 'leader', 'drop', 'done'), nowMs),
     readOff(runsDir).catch(() => null),
     readCandidates(runsDir).catch(() => null),
+    readLost(runsDir, nowMs).catch(() => null),
     readEvents(runsDir).catch(() => null),
   ]);
   const held = computeLanesHeld(events, nowMs);
@@ -160,7 +176,8 @@ export async function readSupplyDoctor(opts: SupplyDoctorOptions = {}): Promise<
     selfHeld: held.source === 'ok'
       ? { state: 'known', windowMinutes: held.windowMinutes, lanes: held.lanes.filter(r => r.selfHeld) }
       : { state: 'unknown', why: 'dispatch event log unreadable' },
-    candidates: found ? { state: 'known', ...found } : { state: 'unknown', why: 'job metrics unreadable' } } as SupplyDoctorReport;
+    candidates: found ? { state: 'known', ...found } : { state: 'unknown', why: 'job metrics unreadable' },
+    lost_launches: lost ? { state: 'known', count: lost.length, newest: lost.slice(0, 5) } : { state: 'unknown', why: 'job metrics unreadable' } } as SupplyDoctorReport;
   report.verdict = verdictOf(report);
   return report;
 }
@@ -180,6 +197,11 @@ export function supplyDoctorLines(report: SupplyDoctorReport): string[] {
   lines.push(report.candidates.state === 'known'
     ? `Gap candidates now: ${report.candidates.noChange} from no-change jobs, ${report.candidates.published} from published jobs.`
     : `Gap candidates now: unknown (${report.candidates.why}).`);
+  if (report.lost_launches.state === 'unknown') lines.push(`Lost launches: unknown (${report.lost_launches.why}).`);
+  else if (report.lost_launches.count) {
+    lines.push(`Lost launches in 24 h: ${report.lost_launches.count} (newest ${report.lost_launches.newest.length}; see "phm jobs lost").`);
+    for (const l of report.lost_launches.newest) lines.push(`  ${l.job} (${l.lane ?? 'unknown lane'}): ${l.reason}`);
+  } else lines.push('Lost launches in 24 h: 0.');
   if (report.selfHeld.state === 'unknown') lines.push(`Self-held lanes: unknown (${report.selfHeld.why}).`);
   else if (!report.selfHeld.lanes.length) lines.push('Self-held lanes: none.');
   else for (const r of report.selfHeld.lanes) lines.push(`Self-held lane: ${r.reason}; skipped until a launch there finishes.`);

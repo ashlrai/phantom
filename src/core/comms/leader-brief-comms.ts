@@ -1,7 +1,9 @@
 /**
  * The Comms line of the Leader's brief (RQ-PHX-BRIEFCOMMSLINE47): Dot texts
- * waiting, drafts awaiting Mason, Gmail inboxes over target, Needs-you items,
- * and a blocker when a Dot (Ashlr.) text has waited too long.
+ * waiting, owner-thread messages awaiting a recorded reply, recorded owner
+ * replies not fully delivered, drafts awaiting
+ * Mason, Gmail inboxes over target, Needs-you items, comms requests awaiting
+ * an answer, and a blocker when a Dot (Ashlr.) text has waited too long.
  *
  * Pure over a UnifiedInbox. Only counts and ages reach the output; text and
  * mail bodies are untrusted and never copied. Sources are iterated
@@ -64,6 +66,12 @@ export function commsBriefFacts(inbox: UnifiedInbox, opts: { overdueMinutes?: nu
       if (oldest !== null && oldest > overdue) {
         blocker = `Dot (Ashlr.) waiting ${formatAge(oldest)} on ${plural(report.pending, 'text')}`;
       }
+    } else if (name === 'owner-thread') {
+      const ages = items.map((i) => waitedMinutes(i, nowMs)).filter((a): a is number => a !== null);
+      const oldest = ages.length > 0 ? Math.max(...ages) : null;
+      parts.push(`${plural(report.pending, 'owner message')} awaiting reply${oldest !== null ? ` (oldest ${formatAge(oldest)})` : ''}`);
+    } else if (name === 'owner-delivery') {
+      parts.push(`${plural(report.pending, 'owner reply', 'owner replies')} undelivered`);
     } else if (name === 'drafts') {
       parts.push(`${plural(report.pending, 'draft')} to approve`);
     } else if (name === 'gmail') {
@@ -71,6 +79,12 @@ export function commsBriefFacts(inbox: UnifiedInbox, opts: { overdueMinutes?: nu
       parts.push(named.length > 0 ? named.join(', ') : `${plural(report.pending, 'inbox', 'inboxes')} over target`);
     } else if (name === 'needs-you') {
       parts.push(`${report.pending} Needs-you`);
+    } else if (name === 'requests') {
+      const ages = items.map((i) => waitedMinutes(i, nowMs)).filter((a): a is number => a !== null);
+      const oldest = ages.length > 0 ? Math.max(...ages) : null;
+      parts.push(`${plural(report.pending, 'comms request')} awaiting an answer${oldest !== null ? ` (oldest ${formatAge(oldest)})` : ''}`);
+    } else if (name === 'email-outbox') {
+      parts.push(plural(report.pending, 'stuck email reply', 'stuck email replies'));
     }
     // Other sources (bus, linkedin, …) are not part of Mason's comms line.
   }

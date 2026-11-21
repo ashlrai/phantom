@@ -9,6 +9,15 @@
 .filter:hover, .filter:focus-visible { background: var(--bg-hover); }
 .filter[aria-pressed='true'] { border-color: transparent; background: var(--bg-selected); color: var(--text-primary); }
 
+/* Find and narrow, above the wall. The note under the controls says what is and is not on screen. */
+.narrowed { display: flex; flex-direction: column; min-width: 0; }
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; padding: var(--space-3) var(--space-3) 0; color: var(--text-primary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); }
+.find { flex: 1 1 200px; max-width: 340px; }
+.pick { flex: 0 1 160px; min-width: 120px; }
+.bar .filter { align-self: stretch; }
+.barNote { flex: 1 1 100%; margin: 0; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.barNote[data-tone='warn'] { color: var(--status-warning-fg); }
+
 /* As many columns as fit, each wide enough to read a message in. */
 .wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: var(--space-2); align-items: start; margin: 0; padding: 0; list-style: none; }
 .card { min-width: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-surface-raised); animation: session-wall-in var(--duration-base) var(--ease-decelerate); }
@@ -57,9 +66,45 @@
 .fault { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); margin: 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--status-danger-solid); border-radius: var(--radius-sm); background: var(--status-danger-bg); color: var(--status-danger-fg); }
 .fault[data-kind='unsupported'] { border-color: var(--border-default); background: var(--bg-surface-raised); color: var(--text-primary); }
 
+/* An open conversation with every session listed beside it. The pane's own width, not the window's, decides whether two columns fit. */
+.split { container-type: inline-size; min-width: 0; }
+.columns { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); align-items: start; min-width: 0; }
+.rail { position: sticky; top: 0; display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; max-height: 100vh; padding: var(--space-3) var(--space-2); overflow-y: auto; border-right: 1px solid var(--border-subtle); color: var(--text-primary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); }
+.railHead, .railFoot { margin: 0; padding: 0 var(--space-2); color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); font-variant-numeric: tabular-nums; }
+.railList { display: flex; flex-direction: column; gap: 1px; margin: 0; padding: 0; list-style: none; }
+.row { display: flex; flex-direction: column; gap: 2px; width: 100%; min-width: 0; padding: var(--space-1) var(--space-2); border: 0; border-left: 2px solid transparent; border-radius: var(--radius-sm); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard); }
+.row:hover { background: var(--bg-hover); }
+.row:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
+/* The open conversation's row: the bar on its left edge moves as J and K step through the list. */
+.row[aria-current='true'] { border-left-color: var(--border-focus); background: var(--bg-selected); }
+.rowTop { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.rowTop .muted { flex: none; margin-left: auto; }
+.rowLine { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; color: var(--text-secondary); }
+.rowState { font-weight: 600; }
+.rowState::after { content: ' \00b7'; font-weight: 400; color: var(--text-secondary); }
+.rowState[data-state='running'] { color: var(--status-success-fg); }
+.rowState[data-state='quiet'] { color: var(--status-warning-fg); }
+.rowState[data-state='failed'] { color: var(--status-danger-fg); }
+/* Messages that arrived since the conversation was last looked at; on a card and on a row. */
+.fresh { flex: none; padding: 0 var(--space-1); border-radius: var(--radius-full); background: var(--status-info-bg); color: var(--status-info-fg); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); font-weight: 600; font-variant-numeric: tabular-nums; animation: session-wall-in var(--duration-base) var(--ease-decelerate); }
+/* Opens the next conversation with new messages (N); above the cards and above the rows. Shown only while something is new. */
+.next { align-self: flex-start; display: inline-flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-2); border: 1px solid transparent; border-radius: var(--radius-full); background: var(--status-info-bg); color: var(--status-info-fg); font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer; transition: border-color var(--duration-fast) var(--ease-standard); animation: session-wall-in var(--duration-base) var(--ease-decelerate); }
+.next:hover { border-color: currentColor; }
+.next:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+.next kbd { padding: 0 var(--space-1); border: 1px solid currentColor; border-radius: var(--radius-xs); font-family: var(--font-mono); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); font-weight: 400; opacity: 0.8; }
+.rail .next { margin: 0 var(--space-2); }
+/* The list is narrowed by the find words: how many rows are left, and the way back to all of them. */
+.railNarrow { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); margin: 0; padding: 0 var(--space-2); color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.railAll { flex: none; padding: 0; border: 0; background: none; color: var(--text-primary); font: inherit; text-decoration: underline; cursor: pointer; }
+.railAll:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+@container (max-width: 719px) {
+  .columns { grid-template-columns: minmax(0, 1fr); }
+  .rail { display: none; }
+}
+
 @keyframes session-wall-live { 50% { opacity: 0.3; } }
 @keyframes session-wall-in { from { opacity: 0; transform: translateY(4px); } }
 @media (prefers-reduced-motion: reduce) {
-  .card, .state[data-state='running']::before { animation: none; }
-  .filter { transition: none; }
+  .card, .fresh, .next, .state[data-state='running']::before { animation: none; }
+  .filter, .row, .next { transition: none; }
 }

@@ -1177,3 +1177,8 @@ the metrics slice. Projections are observations and grant no spending authority.
 - `phm metrics loop` (where the loop waits)
 - `phm map replay --since 6h` (what happened while you were away)
 - `phm asks sync` (the few things only Mason can answer)
+- `phm pools --text` (one line per pool: used, hours to reset, and whether it will leave usage unused)
+
+Reading `phm pools`: a `wasteRisk` of `high` means that pool will leave included usage unused, so queue more work for it. `unknown` means there is no current reading. It is never zero and never spare capacity.
+
+After a pool resets, its row shows as refilled but waiting for its first reading: `wasteRisk` is `unknown` with the reason `no reading for the new window`. This is expected. Nobody needs to read it by hand; the next automatic reading fills it in, so do not add a manual `phm budget add` reading.

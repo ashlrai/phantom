@@ -41,7 +41,921 @@ const PASS_LINE = /^[\u2713\u2714\u221a]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui
 const TSC_ERROR_LINE = /^([^\s()]+)\(\d+,\d+\):\s*error\s+TS\d{4}:/;
 const TSC_NAMES = '(typecheck)';
 
-export function parseBaselineFailures(log: string): Failure[] {
+// The .github/tests/*.test.mjs contract suites run under `node --test`, which
+// on the Node 22 CI image emits TAP: every result is an `ok|not ok N - name`
+// line at the subtest's indent followed by a YAML-ish diagnostic block with
+// `type` ('test'|'suite'), an absolute `location:` path, `failureType` and
+// `error`. `# Subtest:` comments re-announce each subtest at the same indent,
+// so nested describe paths rebuild as `suite > test > leaf`. Passing results
+// carry no location, so TAP evidence can fail a suite but never prove an
+// individual pass: these groups classify shared-baseline, pr-caused or
+// unknown only. The absolute location resolves against the Actions checkout
+// convention `/<work>/<repo>/<repo>/`; anything else stays unparsed.
+const TAP_RESULT = /^(\s*)(not ok|ok)\s+\d+\s+-\s+(.*?)\s*$/;
+const TAP_SUBTEST = /^\s*# Subtest:\s*(.+?)\s*$/;
+const TAP_STREAM = /^\s*TAP version \d+/;
+const TAP_COMMENT = /^\s*#(.*)$/;
+const TAP_SCALAR = /^\s*[A-Za-z_$][\w$]*:\s*[|>][-+]?\d?\s*$/;
+const TAP_FIELD = /^([A-Za-z_$][\w$]*):\s*(.*)$/;
+
+const tapIndent = (line: string) => line.length - line.trimStart().length;
+const unquote = (value: string | undefined) => {
+  if (value === undefined) return undefined;
+  const quoted = /^'(.*)'$/.exec(value) ?? /^"(.*)"$/.exec(value);
+  return quoted ? quoted[1] : value;
+};
+
+// Diagnostics for one result live in the block after its line: keys sit two
+// spaces deeper than the result, block-scalar bodies deeper still, and the
+// first non-blank line back at or above the result indent ends the block.
+function tapBlock(lines: string[], start: number, indent: number) {
+  const fields = new Map<string, string>();
+  let error = '';
+  let end = start;
+  for (; end < lines.length && end - start < 200; end++) {
+    const line = lines[end]!;
+    if (line.trim() !== '' && tapIndent(line) <= indent) break;
+  }
+  for (let k = start; k < end; k++) {
+    const line = lines[k]!;
+    if (tapIndent(line) !== indent + 2) continue;
+    const field = TAP_FIELD.exec(line.trim());
+    if (!field) continue;
+    const key = field[1]!, raw = field[2]!.trim();
+    if ((key === 'error' || key === 'stack') && /^[|>]/.test(raw)) {
+      if (key !== 'error') continue;
+      const body: string[] = [];
+      for (let x = k + 1; x < end; x++) {
+        const bodyLine = lines[x]!;
+        if (bodyLine.trim() !== '' && tapIndent(bodyLine) <= indent + 2) break;
+        body.push(bodyLine.trim());
+      }
+      error = body.join('\n').trim();
+      continue;
+    }
+    fields.set(key, raw);
+  }
+  return { fields, error };
+}
+
+// `location:` is an absolute runner path (`.../<repo>/<repo>/<path>:L:C` on
+// GitHub-hosted and default self-hosted Actions images). Only the doubled
+// repo-name checkout marker resolves to a repo-relative path; anything else
+// is left unparsed rather than guessed.
+function tapRepoFile(location: string | undefined, repo: string | undefined): string | null {
+  const raw = unquote(location);
+  if (!raw) return null;
+  let path = raw.replace(/\\/g, '/');
+  if (path.startsWith('file://')) path = path.slice('file://'.length);
+  const lineCol = /:\d+:\d+$/.exec(path);
+  if (lineCol) path = path.slice(0, lineCol.index);
+  const repoName = repo?.split('/')[1];
+  if (!repoName) return null;
+  const marker = `/${repoName}/${repoName}/`;
+  const at = path.indexOf(marker);
+  if (at < 0) return null;
+  const rel = path.slice(at + marker.length);
+  if (!rel || posix.normalize(rel) !== rel || rel.includes('..') || posix.isAbsolute(rel)) return null;
+  return rel;
+}
+
+// A file-level failure (the test file's own process died: syntax error, throw
+// at module load) is reported as a pseudo-test named by its invocation path at
+// `:1:1` with an `exitCode` and `error: 'test failed'`; it groups under the
+// same `(suite)` identity as a vitest suite-load failure.
+function isTapFileResult(file: string, title: string, fields: Map<string, string>): boolean {
+  const location = unquote(fields.get('location')) ?? '';
+  if (!/:1:1$/.test(location)) return false;
+  const name = posix.normalize(title);
+  const titleMatch = name === file || name === posix.basename(file) || file.endsWith(`/${name}`) || name.endsWith(`/${file}`);
+  const placeholder = fields.has('exitCode') && unquote(fields.get('error')) === 'test failed';
+  return titleMatch || placeholder;
+}
+
+function parseTapFailures(log: string, repo: string | undefined): Failure[] {
+  const out: Failure[] = [];
+  const rawLines = stripVTControlCharacters(log).split('\n')
+    // Timestamped job-log lines keep the result's own indentation: strip the
+    // stamp and its single separating space only, or every nested `not ok`
+    // collapses to column 0 and the suite hierarchy flattens away.
+    .map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+ /, ''));
+  const pending = new Map<number, string>();
+  const comments: string[] = [];
+  let scalarIndent = -1;
+  for (let i = 0; i < rawLines.length && out.length < 100; i++) {
+    const line = rawLines[i]!;
+    if (scalarIndent >= 0) {
+      if (line.trim() === '' || tapIndent(line) > scalarIndent) continue;
+      scalarIndent = -1;
+    }
+    if (TAP_STREAM.test(line)) { pending.clear(); comments.length = 0; continue; }
+    const subtest = TAP_SUBTEST.exec(line);
+    if (subtest !== null) {
+      const indent = tapIndent(line);
+      pending.set(indent, subtest[1]!.trim());
+      for (const key of [...pending.keys()]) if (key > indent) pending.delete(key);
+      continue;
+    }
+    const result = TAP_RESULT.exec(line);
+    if (result !== null) {
+      const indent = tapIndent(line);
+      const title = result[3]!.trim();
+      // A result closes its own level and every deeper open subtest.
+      for (const key of [...pending.keys()]) if (key >= indent) pending.delete(key);
+      const priorComments = comments.splice(0);
+      if (result[2] === 'ok' || title === '') continue;
+      const { fields, error } = tapBlock(rawLines, i + 1, indent);
+      const type = unquote(fields.get('type'));
+      const failureType = unquote(fields.get('failureType'));
+      // cancelledByParent marks tests skipped because an ancestor suite
+      // failed; subtestsFailed marks that ancestor. Both are derivative --
+      // the suite's own hookFailed/testCodeFailure result carries the cause.
+      if (failureType === 'cancelledByParent') continue;
+      if (type === 'suite' && (failureType === undefined || failureType === 'subtestsFailed')) continue;
+      if (type !== 'test' && type !== 'suite') continue;
+      const file = tapRepoFile(fields.get('location'), repo);
+      if (file === null) continue;
+      const fileLevel = isTapFileResult(file, title, fields);
+      const names = fileLevel ? SUITE_NAMES
+        : [...[...pending.entries()].filter(([key]) => key < indent).sort((a, b) => a[0] - b[0]).map(([, name]) => name), title].join(' > ');
+      const parts = [line.trim()];
+      if (error) parts.push(error);
+      else {
+        const inline = unquote(fields.get('error'));
+        if (inline && inline !== 'test failed') parts.push(inline);
+      }
+      if (fileLevel) {
+        // A module-load failure reports only `error: 'test failed'`; the real
+        // diagnostic is the runner's `#` comment block just above it.
+        const tail: string[] = [];
+        for (let x = priorComments.length - 1; x >= 0 && tail.length < 5; x--) {
+          const comment = priorComments[x]!;
+          if (!/^Node\.js v/.test(comment)) tail.unshift(comment);
+        }
+        if (tail.length) parts.push(tail.join('\n'));
+      }
+      out.push({ file, names, testId: `${file} > ${names}`, excerpt: clean(parts.join('\n')) });
+      continue;
+    }
+    if (TAP_SCALAR.test(line)) { scalarIndent = tapIndent(line); continue; }
+    const comment = TAP_COMMENT.exec(line);
+    if (comment !== null) {
+      comments.push(comment[1]!.trim());
+      if (comments.length > 12) comments.shift();
+    }
+  }
+  return out;
+}
+
+// `check:docs` (scripts/check-documentation.mjs) prints its whole verdict as
+// one pretty-printed JSON document -- `{` at column 0, `}` at column 0 -- and
+// exits 1 when `ok` is false. A broken documentation link on master fails the
+// ci and docs jobs on every open PR, but no vitest, typecheck or TAP line
+// names the file, so without this shape a red master marked every PR unknown
+// and queued no fix. Errors group per entrypoint under a `(docs-check)`
+// identity: the file is the unit a master fix restores, and like `(typecheck)`
+// it can never resolve through a vitest pass line, so these groups classify
+// shared-baseline, pr-caused or unknown -- never probable-flake. Passing
+// reports carry an empty errors array; malformed blocks and unrelated JSON
+// stay unparsed.
+const DOCS_CHECK_NAMES = '(docs-check)';
+const DOCS_CHECK_ERRORS_PER_FILE = 8;
+
+function parseDocsCheckFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  // Timestamped job-log lines keep the document's own indentation: the strip
+  // removes the stamp and its single separating space only, so a nested `}`
+  // can never collapse into the column-0 close that ends the report.
+  const raw = stripVTControlCharacters(log).split('\n')
+    .map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+ /, '').replace(/\r$/, ''));
+  const byFile = new Map<string, string[]>();
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] !== '{' || !/"ok"\s*:/.test(raw[i + 1] ?? '')) continue;
+    let end = i + 1;
+    while (end < raw.length && end - i < 20000 && raw[end] !== '}') end++;
+    if (end >= raw.length || raw[end] !== '}') continue;
+    const block = raw.slice(i, end + 1).join('\n');
+    i = end;
+    let doc: unknown;
+    try { doc = JSON.parse(block); } catch { continue; }
+    const report = doc as { ok?: unknown; mode?: unknown; errors?: unknown } | null;
+    if (typeof report?.ok !== 'boolean' || (report.mode !== 'source' && report.mode !== 'package') || !Array.isArray(report.errors)) continue;
+    for (const entry of report.errors as unknown[]) {
+      const e = entry as { file?: unknown; href?: unknown; reason?: unknown } | null;
+      if (typeof e?.file !== 'string' || typeof e.reason !== 'string' || (e.href !== null && typeof e.href !== 'string')) continue;
+      const file = e.file;
+      if (posix.normalize(file) !== file || file.includes('..') || posix.isAbsolute(file)) continue;
+      const parts = byFile.get(file) ?? [];
+      if (parts.length < DOCS_CHECK_ERRORS_PER_FILE) parts.push(typeof e.href === 'string' && e.href !== '' ? `${e.href}: ${e.reason}` : e.reason);
+      byFile.set(file, parts);
+    }
+  }
+  for (const [file, parts] of byFile) {
+    out.push({ file, names: DOCS_CHECK_NAMES, testId: `${file} > ${DOCS_CHECK_NAMES}`, excerpt: clean(parts.join('\n')) });
+  }
+  return out;
+}
+
+// The Merge Gate "Check generated files" job (clean-tree) reruns the
+// tracked-file generators -- canonical launcher digests, docs/llms.txt and
+// friends -- then fails on any dirty `git status --porcelain` path:
+//   generated files are stale; commit the regenerated tree:
+//    M docs/llms.txt
+// Porcelain v1 rows are `XY <path>`: staged/unstaged/unmerged status pairs,
+// `??` untracked, `R`/`C` renames printed as `XY <old> -> <new>`, and
+// C-quoted paths when names carry specials. Each stale path groups under a
+// `<file> > (generated)` identity: regenerating and committing the artifact
+// is the unit a master fix restores. The same step's
+// `canonical-launcher-digests.mjs --check` prints
+// `current launcher digest <sha> is missing from the canonical launcher
+// digest list` or `canonical launcher digest list is invalid`; the manifest
+// that must be regenerated is the failure file, and `bin/ashlr` is its only
+// content input. Like `(typecheck)` and `(docs-check)`, no vitest pass line
+// can name these identities, so they classify shared-baseline, pr-caused or
+// unknown -- never probable-flake.
+const GENERATED_NAMES = '(generated)';
+const GENERATED_DIGEST_FILE = 'scripts/canonical-launcher-digests.json';
+// Static generator inputs per generated artifact. docs/llms.txt additionally
+// depends on every public docs page, which dependencies() unions from the
+// master tree listing at analysis time.
+const GENERATED_FILE_INPUTS: Record<string, readonly string[]> = {
+  'docs/llms.txt': ['docs/llms-source.txt', 'scripts/generate-docs-llms.mjs', 'scripts/lib/docs-pages.mjs'],
+  [GENERATED_DIGEST_FILE]: ['bin/ashlr'],
+};
+const GENERATED_STALE_MARKER = /^\s*generated files are stale\b/;
+const GENERATED_PORCELAIN = /^([ MADRCU?!]{2}) (.+)$/;
+const GENERATED_DIGEST_LINE = /^(?:current launcher digest [a-f0-9]{64} is missing from the canonical launcher digest list|canonical launcher digest list is invalid|canonical launcher digest list differs from bin\/ashlr history)/;
+
+// Git C-quotes a path containing specials and escapes `"`, `\`, newline, tab
+// and return inside the quotes; octal byte escapes are left unparsed rather
+// than guessed at.
+function cUnquote(value: string): string | null {
+  let out = '';
+  for (let i = 1; i < value.length - 1; i++) {
+    const c = value[i]!;
+    if (c !== '\\') { out += c; continue; }
+    const n = value[++i];
+    if (n === 'n') out += '\n';
+    else if (n === 't') out += '\t';
+    else if (n === 'r') out += '\r';
+    else if (n === '"' || n === '\\') out += n;
+    else return null;
+  }
+  return out;
+}
+
+// Porcelain prints renames/copies as `<old> -> <new>` with each side
+// C-quoted independently; a plain `M `/`??` row never contains the separator,
+// so ` -> ` inside such a name stays part of the path. The separator itself
+// is only trusted outside quotes.
+function generatedPath(raw: string, rename: boolean): string | null {
+  let path = raw.trim();
+  if (rename) {
+    let inQuote = false, escaped = false, split = -1;
+    for (let i = 0; i + 3 < path.length; i++) {
+      const c = path[i]!;
+      if (escaped) { escaped = false; continue; }
+      if (inQuote && c === '\\') { escaped = true; continue; }
+      if (c === '"') { inQuote = !inQuote; continue; }
+      if (!inQuote && path.startsWith(' -> ', i)) split = i;
+    }
+    if (split < 0) return null;
+    path = path.slice(split + 4).trim();
+  }
+  if (path.length >= 2 && path.startsWith('"') && path.endsWith('"')) {
+    const unquoted = cUnquote(path);
+    if (unquoted === null) return null;
+    path = unquoted;
+  } else if (path.includes('"') || path.includes('\\')) return null;
+  if (!path || posix.normalize(path) !== path || path.includes('..') || posix.isAbsolute(path)) return null;
+  return path;
+}
+
+function parseGeneratedFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  // Timestamped job-log lines keep the porcelain row's own leading status
+  // column: strip the stamp and its single separating space only, the same
+  // convention as the check:docs report parser.
+  const raw = stripVTControlCharacters(log).split('\n')
+    .map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+ /, '').replace(/\r$/, ''));
+  for (let i = 0; i < raw.length && out.length < 100; i++) {
+    const line = raw[i]!;
+    if (GENERATED_DIGEST_LINE.test(line.trim())) {
+      out.push({ file: GENERATED_DIGEST_FILE, names: GENERATED_NAMES, testId: `${GENERATED_DIGEST_FILE} > ${GENERATED_NAMES}`, excerpt: clean(line.trim()) });
+      continue;
+    }
+    if (!GENERATED_STALE_MARKER.test(line)) continue;
+    for (let k = i + 1; k < raw.length && out.length < 100; k++) {
+      const row = GENERATED_PORCELAIN.exec(raw[k]!);
+      if (row === null) break;
+      const path = generatedPath(row[2]!, row[1]!.includes('R') || row[1]!.includes('C'));
+      if (path === null) continue;
+      out.push({ file: path, names: GENERATED_NAMES, testId: `${path} > ${GENERATED_NAMES}`, excerpt: clean(raw[k]!) });
+    }
+  }
+  return out;
+}
+
+// `npm run build` opens with `npm run check:version`
+// (scripts/sync-candidate-version.mjs --check), the release-metadata gate.
+// A version bump that reached only some of the tracked files prints one
+// compact JSON drift report on stdout and exits 1:
+//   {"version":"1.2.3","changed":["package-lock.json"],"matches":false,"check":true}
+// naming the stale files; a structural break (missing file, renamed field,
+// ambiguous URL) throws instead and prints `sync-candidate-version:
+// <message>` on stderr. Either way every job that builds goes red on
+// master, but no vitest, typecheck or TAP line names it. Both shapes group
+// under the gate script as `scripts/sync-candidate-version.mjs >
+// (version-sync)`: the check reads exactly the script and the metadata
+// files it rewrites -- VERSION_SYNC_INPUTS, mirrored from the script's
+// file list -- so that closed set, not the vitest harness ambient deps,
+// decides touched. Like the other non-test identities it can never
+// resolve through a vitest pass line: shared-baseline, pr-caused or
+// unknown, never probable-flake. Passing reports (`matches: true`),
+// write-mode results, empty or unknown `changed` entries, non-semver
+// versions, malformed or multi-line JSON and unrelated output stay
+// unparsed.
+const VERSION_SYNC_FILE = 'scripts/sync-candidate-version.mjs';
+const VERSION_SYNC_NAMES = '(version-sync)';
+const VERSION_SYNC_INPUTS = [
+  'package.json', 'package-lock.json', 'desktop/package.json',
+  'desktop/src-tauri/tauri.conf.json', 'desktop/src-tauri/Cargo.toml',
+  'desktop/src-tauri/Cargo.lock', 'server.json',
+  'desktop/README.md', 'README.md', 'docs/QUICKSTART.md',
+] as const;
+const VERSION_SYNC_KNOWN = new Set<string>(VERSION_SYNC_INPUTS);
+const VERSION_SYNC_SEMVER = /^\d+\.\d+\.\d+$/;
+const VERSION_SYNC_PREFIX = 'sync-candidate-version: ';
+const VERSION_SYNC_MAX = 4;
+
+// Failure files whose real inputs sit outside any import closure: a gate
+// script reads data files directly, so the closure walk alone would miss
+// every input a PR could break. dependencies() seeds these before walking.
+const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
+  [VERSION_SYNC_FILE]: VERSION_SYNC_INPUTS,
+  // The perf gate's direct repo inputs: the budgets spec, the checker
+  // itself, the MCP tools/list harness one target times, and the bin/ashlr
+  // launcher every `phm` target goes through. The measured CLI graph
+  // (src/** -> dist/) has no enumerable closure, so deeper changes stay
+  // unattributed rather than guessed.
+  'perf/budgets.json': ['bin/ashlr', 'scripts/perf-budget.mjs', 'scripts/perf-mcp-tools-list.mjs'],
+  // The dependency-audit gate reads each lockfile's installed graph plus
+  // the manifests, shrinkwraps and .npmrc files that shape it, the
+  // exception file its verdicts are filtered by, and the audit script
+  // itself. The desktop Cargo.lock is audited by cargo-audit, whose
+  // output this analyzer does not parse.
+  'package-lock.json': ['package.json', 'npm-shrinkwrap.json', '.npmrc', '.github/dependency-audit-exceptions.json', 'scripts/npm-audit-with-osv-fallback.sh'],
+  'src/raycast/package-lock.json': ['src/raycast/package.json', 'src/raycast/npm-shrinkwrap.json', 'src/raycast/.npmrc', '.github/dependency-audit-exceptions.json', 'scripts/npm-audit-with-osv-fallback.sh'],
+  // The pack-smoke gate verifies the packed name/version against
+  // package.json and the measured dist/ graph has no enumerable closure,
+  // so only the manifest is a direct repo input; the artifact gate also
+  // hashes the tracked lockfile set it admits.
+  '.github/scripts/ci-pack-smoke.mjs': ['package.json'],
+  'scripts/hosted-build-artifact.mjs': ['package.json', 'package-lock.json'],
+  // The release-version provenance gate compares exactly two carriers --
+  // package.json "version" and .release-please-manifest.json "." -- between
+  // merge-base and head, so a bump to either is the PR-caused shape the
+  // group must resolve. The scanner gates have no enumerable diff/commit
+  // inputs and get no static seeds.
+  '.github/scripts/release-version-provenance.mjs': ['package.json', '.release-please-manifest.json'],
+  // The ci.yml helper gates run as workflow steps: the workflow file that
+  // defines each command, env wiring and if: condition is a direct input
+  // alongside the script's own import closure.
+  '.github/scripts/ci-fetch-range.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-source-binding.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-site-lane.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-mac-rotation.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-dep-graph.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-fast-inputs.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-green-reuse.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-mcp-selection.mjs': ['.github/workflows/ci.yml'],
+};
+
+function parseVersionSyncFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  for (const line of lines(log)) {
+    if (out.length >= VERSION_SYNC_MAX) break;
+    if (line.startsWith('{')) {
+      let doc: unknown;
+      try { doc = JSON.parse(line); } catch { continue; }
+      const report = doc as { version?: unknown; changed?: unknown; matches?: unknown; check?: unknown } | null;
+      if (report === null || typeof report !== 'object') continue;
+      if (report.matches !== false || report.check !== true) continue;
+      if (typeof report.version !== 'string' || !VERSION_SYNC_SEMVER.test(report.version)) continue;
+      if (!Array.isArray(report.changed) || report.changed.length === 0 || report.changed.length > VERSION_SYNC_INPUTS.length) continue;
+      if (!report.changed.every(entry => typeof entry === 'string' && VERSION_SYNC_KNOWN.has(entry))) continue;
+      out.push({ file: VERSION_SYNC_FILE, names: VERSION_SYNC_NAMES, testId: `${VERSION_SYNC_FILE} > ${VERSION_SYNC_NAMES}`, excerpt: clean(line) });
+      continue;
+    }
+    if (line.startsWith(VERSION_SYNC_PREFIX)) {
+      out.push({ file: VERSION_SYNC_FILE, names: VERSION_SYNC_NAMES, testId: `${VERSION_SYNC_FILE} > ${VERSION_SYNC_NAMES}`, excerpt: clean(line) });
+    }
+  }
+  return out;
+}
+
+// The advisory perf-budget workflow (.github/workflows/perf-budget.yml)
+// times the committed cold paths in perf/budgets.json and prints one
+// pretty-printed `ashlr.perf-budget-report.v1` document -- `{` at column
+// 0, `}` at column 0 -- listing every target's status; any `fail` or
+// `error` result makes the run exit non-zero. The job is
+// deliberately not a required check, but its failed job log still feeds
+// this analyzer: a latency regression on master fails the workflow on
+// every freshly opened PR, and without this shape those PRs read unknown
+// and queue no fix. Each `fail` (median over baseline + tolerance) or
+// `error` (preflight break, command timeout, measurement failure) result
+// groups per target under `<budgets file> > (perf-budget) <target id>` --
+// per-target identities keep unrelated targets from merging into one
+// group, and the budgets file is the unit a master fix restores
+// (re-baseline with --update-baseline or speed the path up). `skip`
+// results (absent optional tools) and `pass` results carry no failure.
+// Like the other non-test identities it can never resolve through a
+// vitest pass line: shared-baseline, pr-caused or unknown -- never
+// probable-flake. Passing reports (`ok: true` or only pass/skip
+// results), other schemas, malformed or multi-line blocks, absolute or
+// escaping `budgets` paths, unknown statuses, malformed results and
+// unrelated JSON stay unparsed.
+const PERF_BUDGET_SCHEMA = 'ashlr.perf-budget-report.v1';
+const PERF_BUDGET_NAMES = '(perf-budget)';
+const PERF_BUDGET_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const PERF_BUDGET_MAX = 100;
+
+function parsePerfBudgetFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  // Timestamped job-log lines keep the document's own indentation: the
+  // strip removes the stamp and its single separating space only, the
+  // same convention as the check:docs report parser.
+  const raw = stripVTControlCharacters(log).split('\n')
+    .map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+ /, '').replace(/\r$/, ''));
+  for (let i = 0; i < raw.length && out.length < PERF_BUDGET_MAX; i++) {
+    if (raw[i] !== '{') continue;
+    let end = i + 1;
+    while (end < raw.length && end - i < 20000 && raw[end] !== '}') end++;
+    if (end >= raw.length || raw[end] !== '}') continue;
+    const block = raw.slice(i, end + 1).join('\n');
+    i = end;
+    let doc: unknown;
+    try { doc = JSON.parse(block); } catch { continue; }
+    const report = doc as { schema?: unknown; ok?: unknown; budgets?: unknown; results?: unknown } | null;
+    if (report === null || typeof report !== 'object') continue;
+    if (report.schema !== PERF_BUDGET_SCHEMA || typeof report.ok !== 'boolean' || !Array.isArray(report.results)) continue;
+    if (typeof report.budgets !== 'string') continue;
+    const file = report.budgets;
+    if (posix.normalize(file) !== file || file.includes('..') || posix.isAbsolute(file)) continue;
+    for (const entry of (report.results as unknown[]).slice(0, PERF_BUDGET_MAX)) {
+      if (out.length >= PERF_BUDGET_MAX) break;
+      const r = entry as { id?: unknown; status?: unknown; why?: unknown; stats?: unknown; budget_ms?: unknown; delta_pct?: unknown } | null;
+      if (r === null || typeof r !== 'object') continue;
+      if (typeof r.id !== 'string' || !PERF_BUDGET_ID.test(r.id)) continue;
+      if (r.status !== 'fail' && r.status !== 'error') continue;
+      const names = `${PERF_BUDGET_NAMES} ${r.id}`;
+      const parts = [`status=${r.status}`];
+      const stats = r.stats as { median_ms?: unknown } | null;
+      if (typeof stats?.median_ms === 'number' && Number.isFinite(stats.median_ms)) parts.push(`median_ms=${stats.median_ms}`);
+      if (typeof r.budget_ms === 'number' && Number.isFinite(r.budget_ms)) parts.push(`budget_ms=${r.budget_ms}`);
+      if (typeof r.delta_pct === 'number' && Number.isFinite(r.delta_pct)) parts.push(`delta_pct=${r.delta_pct}`);
+      if (typeof r.why === 'string' && r.why !== '') parts.push(`why=${r.why}`);
+      out.push({ file, names, testId: `${file} > ${names}`, excerpt: clean(parts.join(' ')) });
+    }
+  }
+  return out;
+}
+
+// The Dependency Audit workflow (.github/workflows/dependency-audit.yml)
+// audits four npm graphs through scripts/npm-audit-with-osv-fallback.sh --
+// root full, root production (`--omit=dev`), Raycast full and Raycast
+// production (`working-directory: src/raycast`, invoked as `../../scripts/...`)
+// -- and `cat`s npm's audit v2 JSON report into the job log on every
+// attempt. Each vulnerable package groups under
+// `<lockfile> > (dependency-audit) <package>`: bumping the dependency or
+// adding a reviewed exception is the unit a master fix restores, and the
+// lockfile plus its manifest, shrinkwrap, .npmrc, the exception file and
+// the gate script are its closed input set. The
+// step command echo before a report fixes its lockfile and exception
+// graph: non-omit audits consult .github/dependency-audit-exceptions.json
+// under graph `full`, the Raycast production audit under
+// `raycast-production`, and the root production audit never consults
+// exceptions at all. npm still lists excepted advisories inside a failing
+// report, so the parser replays the script's exemption fixpoint -- a
+// package stays exempt while every `via` entry is an excepted advisory id
+// or a still-exempt package name -- and emits only packages outside the
+// exempt set; a report exempt end to end passed its step and emits
+// nothing. `auditExceptions` carries master's exception list: `null`
+// means the file was unreadable or malformed, and audit reports then stay
+// unparsed rather than risk a phantom group for an accepted advisory.
+// Expiry is not re-checked: a report printed by a completed run was
+// governed by the exceptions valid at run time. OSV-Scanner table output
+// (the transport fallback) and cargo-audit output carry no audit v2
+// document and stay unparsed. Invalid reports (non-v2 schema, malformed
+// severity counts), reports with no preceding step echo, unrelated JSON
+// and clean reports (`total: 0`) stay unparsed. Like the other non-test
+// identities these groups can never resolve through a vitest pass line:
+// shared-baseline, pr-caused or unknown -- never probable-flake.
+export type DependencyAuditException = { id: string; package: string; graph: 'full' | 'raycast-production' };
+const DEPENDENCY_AUDIT_NAMES = '(dependency-audit)';
+const DEPENDENCY_AUDIT_MAX = 100;
+const DEPENDENCY_AUDIT_SEVERITIES = ['info', 'low', 'moderate', 'high', 'critical', 'total'] as const;
+const DEPENDENCY_AUDIT_INVOKE = /(?:^|[\s"'`(=])(\.\.\/\.\.\/)?scripts\/npm-audit-with-osv-fallback\.sh\s+"[^"]*"\s+(\S+?)(\s+--omit=dev)?\s*$/;
+const DEPENDENCY_AUDIT_GHSA = /GHSA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/i;
+const DEPENDENCY_AUDIT_GHSA_ALL = /GHSA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/gi;
+const DEPENDENCY_AUDIT_PACKAGE = /^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/i;
+
+// Master's exception file is small and hand-reviewed; any malformed entry
+// makes the whole file untrusted (the gate script itself fails closed on
+// the same shapes), so one bad row discards the list rather than silently
+// dropping coverage.
+function parseAuditExceptions(source: string): DependencyAuditException[] | null {
+  let doc: unknown;
+  try { doc = JSON.parse(source); } catch { return null; }
+  if (!Array.isArray(doc)) return null;
+  const entries: DependencyAuditException[] = [];
+  for (const item of doc) {
+    const e = item as { id?: unknown; package?: unknown; graph?: unknown } | null;
+    if (e === null || typeof e !== 'object' || typeof e.id !== 'string' || typeof e.package !== 'string' ||
+        (e.graph !== 'full' && e.graph !== 'raycast-production')) return null;
+    entries.push({ id: e.id.toUpperCase(), package: e.package, graph: e.graph });
+  }
+  return entries;
+}
+
+interface AuditStep { file: string; graph: 'full' | 'raycast-production' | null }
+
+// Port of the fallback script's is_fully_exempt_npm_report fixpoint: every
+// package starts assumed exempt, then a package drops out while any `via`
+// entry is neither an excepted advisory nor a package still assumed
+// exempt. The surviving set is exactly the coverage the gate script
+// credits; packages outside it carry real, unexcepted advisories.
+function exemptAuditPackages(vulnerabilities: Record<string, unknown>, exceptions: readonly DependencyAuditException[]): Set<string> {
+  const names = Object.keys(vulnerabilities);
+  const exempt = new Set(names);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const key of names) {
+      if (!exempt.has(key)) continue;
+      const vulnerability = vulnerabilities[key] as { name?: unknown; via?: unknown } | null;
+      let ok = vulnerability !== null && typeof vulnerability === 'object' &&
+        vulnerability.name === key && Array.isArray(vulnerability.via) && vulnerability.via.length > 0;
+      if (ok) {
+        const packageExceptions = exceptions.filter(exception => exception.package === vulnerability!.name);
+        ok = (vulnerability!.via as unknown[]).every(advisory => {
+          if (typeof advisory === 'string') return advisory !== key && exempt.has(advisory);
+          if (advisory === null || typeof advisory !== 'object' || typeof (advisory as { url?: unknown }).url !== 'string') return false;
+          const ids = ((advisory as { url: string }).url.match(DEPENDENCY_AUDIT_GHSA_ALL) ?? []);
+          const id = ids.length === 1 ? ids[0]!.toUpperCase() : '';
+          return packageExceptions.some(exception => exception.id.toUpperCase() === id);
+        });
+      }
+      if (!ok) {
+        exempt.delete(key);
+        changed = true;
+      }
+    }
+  }
+  return exempt;
+}
+
+function parseAuditFailures(log: string, auditExceptions: readonly DependencyAuditException[] | null): Failure[] {
+  const out: Failure[] = [];
+  if (auditExceptions === null) return out;
+  const seen = new Set<string>();
+  // Timestamped job-log lines keep the document's and table's own columns:
+  // the strip removes the stamp and its single separating space only, the
+  // same convention as the check:docs and perf-budget report parsers, so a
+  // nested `}` can never collapse into the column-0 close that ends a
+  // pretty-printed report.
+  const raw = stripVTControlCharacters(log).split('\n')
+    .map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+ /, '').replace(/\r$/, ''));
+  let context: AuditStep | null = null;
+  for (let i = 0; i < raw.length && out.length < DEPENDENCY_AUDIT_MAX; i++) {
+    const line = raw[i]!;
+    const invoke = DEPENDENCY_AUDIT_INVOKE.exec(line);
+    if (invoke !== null) {
+      const arg = invoke[2]!;
+      const raycast = invoke[1] !== undefined;
+      context = arg !== '' && !posix.isAbsolute(arg) && posix.normalize(arg) === arg && !arg.includes('..')
+        ? { file: raycast ? `src/raycast/${arg}` : arg, graph: invoke[3] === undefined ? 'full' : raycast ? 'raycast-production' : null }
+        : null;
+      continue;
+    }
+    if (!line.startsWith('{')) continue;
+    let doc: unknown;
+    let end = i;
+    try {
+      doc = JSON.parse(line);
+    } catch {
+      if (line !== '{') continue;
+      end = i + 1;
+      while (end < raw.length && end - i < 20000 && raw[end] !== '}') end++;
+      if (end >= raw.length || raw[end] !== '}') continue;
+      try { doc = JSON.parse(raw.slice(i, end + 1).join('\n')); } catch { continue; }
+    }
+    i = end;
+    const report = doc as { auditReportVersion?: unknown; vulnerabilities?: unknown; metadata?: { vulnerabilities?: unknown } | null } | null;
+    if (report === null || typeof report !== 'object' || report.auditReportVersion !== 2) continue;
+    const counts = report.metadata?.vulnerabilities;
+    if (counts === null || typeof counts !== 'object' || Array.isArray(counts)) continue;
+    const valid = DEPENDENCY_AUDIT_SEVERITIES.every(severity => {
+      const value = (counts as Record<string, unknown>)[severity];
+      return Number.isInteger(value) && (value as number) >= 0;
+    });
+    if (!valid) continue;
+    // The gate script passes a report only when every severity count is
+    // zero; an inconsistent document listing packages under an all-zero
+    // count would have passed its step, so it emits nothing here either.
+    if (DEPENDENCY_AUDIT_SEVERITIES.every(severity => (counts as Record<string, unknown>)[severity] === 0)) continue;
+    const vulnerabilities = report.vulnerabilities;
+    if (vulnerabilities === null || typeof vulnerabilities !== 'object' || Array.isArray(vulnerabilities)) continue;
+    if (context === null) continue;
+    const step = context;
+    const vulnMap = vulnerabilities as Record<string, unknown>;
+    const names = Object.keys(vulnMap);
+    if (names.length === 0) continue;
+    // The root production audit never consults the exception file, so its
+    // report emits every listed package; exception-governed graphs emit
+    // only the packages the fixpoint leaves outside the exempt set.
+    const exempt = step.graph === null ? null : exemptAuditPackages(vulnMap, auditExceptions.filter(exception => exception.graph === step.graph));
+    for (const pkg of names) {
+      if (out.length >= DEPENDENCY_AUDIT_MAX) break;
+      if (!DEPENDENCY_AUDIT_PACKAGE.test(pkg) || pkg.length > 214 || exempt?.has(pkg) === true) continue;
+      const entry = vulnMap[pkg] as { severity?: unknown; via?: unknown; fixAvailable?: unknown } | null;
+      const severity = typeof entry?.severity === 'string' ? entry.severity : 'unknown';
+      const advisories: string[] = [];
+      if (entry !== null && typeof entry === 'object' && Array.isArray(entry.via)) {
+        for (const advisory of entry.via as unknown[]) {
+          if (advisories.length >= 6) break;
+          if (advisory === null || typeof advisory !== 'object') continue;
+          const { url, title } = advisory as { url?: unknown; title?: unknown };
+          if (typeof url !== 'string') continue;
+          const id = DEPENDENCY_AUDIT_GHSA.exec(url)?.[0]?.toUpperCase() ?? url;
+          advisories.push(typeof title === 'string' && title !== '' ? `${id} ${title}` : id);
+        }
+      }
+      const fix = entry !== null && typeof entry === 'object' ? entry.fixAvailable : undefined;
+      const fixVersion = fix !== null && typeof fix === 'object' ? (fix as { version?: unknown }).version : undefined;
+      const fixText = typeof fixVersion === 'string' ? `fix=${fixVersion}` : fix === true ? 'fix=available' : '';
+      const namesField = `${DEPENDENCY_AUDIT_NAMES} ${pkg}`;
+      const testId = `${step.file} > ${namesField}`;
+      if (seen.has(testId)) continue;
+      seen.add(testId);
+      out.push({ file: step.file, names: namesField, testId, excerpt: clean([`${pkg} severity=${severity}`, ...advisories, ...(fixText === '' ? [] : [fixText])].join('\n')) });
+    }
+  }
+  return out;
+}
+
+// The `ci` job's pack-smoke steps on the ubuntu authority 1/3 shard verify
+// the same-job build before the suites run: `Capture pack smoke build
+// snapshot` runs `npm run check:pack-contracts` (node:test TAP, parsed
+// above), `ci-pack-smoke.mjs capture`, `check:first-paint:built` and
+// `ci-pack-smoke.mjs prepare`; `Pack smoke (exports map)` later reuses,
+// verifies and captures the retained snapshot through the same script and
+// `scripts/hosted-build-artifact.mjs`. Both scripts funnel every refusal --
+// stale or mutated build output, a missing artifact, a drifted source tree,
+// an unexpected tarball -- through one stderr prefix:
+//   pack smoke refused: <assert message>
+//   hosted artifact refused: <assert message>
+// Assert messages may continue onto following lines (a drift list under
+// `source changed after build:`); only the prefixed header line is a
+// failure identity, so continuations stay excerpt-free. Each script groups
+// under its own `<script> > (<gate>)` identity: the gate script plus the
+// repository inputs it reads directly (seeded as static inputs, since the
+// measured dist/ graph has no enumerable closure) is the unit a master fix
+// restores, and like the other non-test identities these groups can never
+// resolve through a vitest pass line -- shared-baseline, pr-caused or
+// unknown, never probable-flake. Other `* refused:` prefixes belong to
+// release-only workflows this analyzer's PR observations never see, and
+// stay unparsed, as do empty messages, unrelated refusals and non-prefixed
+// assert output.
+const PACK_SMOKE_FILE = '.github/scripts/ci-pack-smoke.mjs';
+const PACK_SMOKE_NAMES = '(pack-smoke)';
+const HOSTED_ARTIFACT_FILE = 'scripts/hosted-build-artifact.mjs';
+const HOSTED_ARTIFACT_NAMES = '(hosted-artifact)';
+const ARTIFACT_GATE_MAX = 16;
+const ARTIFACT_GATES = [
+  { prefix: 'pack smoke refused: ', file: PACK_SMOKE_FILE, names: PACK_SMOKE_NAMES },
+  { prefix: 'hosted artifact refused: ', file: HOSTED_ARTIFACT_FILE, names: HOSTED_ARTIFACT_NAMES },
+] as const;
+
+function parseArtifactGateFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  for (const line of lines(log)) {
+    if (out.length >= ARTIFACT_GATE_MAX) break;
+    for (const gate of ARTIFACT_GATES) {
+      if (!line.startsWith(gate.prefix)) continue;
+      if (line.slice(gate.prefix.length).trim() === '') break;
+      out.push({ file: gate.file, names: gate.names, testId: `${gate.file} > ${gate.names}`, excerpt: clean(line) });
+      break;
+    }
+  }
+  return out;
+}
+
+// The secret-shape job pipes the candidate diff through the pinned
+// `.github/tests/secret-shape/scrub.pl --check --allow-fixtures` and the
+// step fails when the blocked count is nonzero. The checker prints only
+// "<blocked> allowed=<n>" and never a matched value, so the count line is
+// the whole evidence; a clean scan prints "0 allowed=<n>" and passes, so
+// only a nonzero blocked count is a failure. The scan covers the entire
+// candidate diff -- no enumerable repo input -- so the group keys on the
+// scanner itself: only a PR touching scrub.pl counts as touched, and a
+// shape carried inside a PR's own diff stays unattributed rather than
+// guessed at which line carried it. Like the other non-test identities
+// it can never resolve through a vitest pass line: shared-baseline,
+// pr-caused or unknown -- never probable-flake.
+const SECRET_SHAPE_FILE = '.github/tests/secret-shape/scrub.pl';
+const SECRET_SHAPE_NAMES = '(secret-shape)';
+const SECRET_SHAPE_COUNT = /^(\d+) allowed=(\d+)$/;
+const SECRET_SHAPE_MAX = 8;
+
+function parseSecretShapeFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  for (const line of lines(log)) {
+    if (out.length >= SECRET_SHAPE_MAX) break;
+    const match = SECRET_SHAPE_COUNT.exec(line);
+    if (match === null || Number(match[1]) === 0) continue;
+    out.push({ file: SECRET_SHAPE_FILE, names: SECRET_SHAPE_NAMES, testId: `${SECRET_SHAPE_FILE} > ${SECRET_SHAPE_NAMES}`, excerpt: clean(line) });
+  }
+  return out;
+}
+
+// The secret-scan job runs the pinned gitleaks binary over the candidate
+// commit range with --redact and no -v, so the job log carries only the
+// scanner's own summary: `WRN leaks found: <n>` on stderr (a clean scan
+// prints `no leaks found` instead). Finding detail -- file, rule,
+// fingerprint -- is never emitted by this invocation, so the count line is
+// the whole evidence and the group keys on the workflow that defines the
+// gate: only a PR touching .github/workflows/ci.yml (the job, its pinned
+// version, the .gitleaksignore removal) counts as touched, and a leak
+// carried inside a PR's own commits stays unattributed rather than
+// guessed at which commit carried it. Like the other non-test identities
+// it can never resolve through a vitest pass line: shared-baseline,
+// pr-caused or unknown -- never probable-flake.
+const SECRET_SCAN_FILE = '.github/workflows/ci.yml';
+const SECRET_SCAN_NAMES = '(secret-scan)';
+const SECRET_SCAN_FOUND = /\bleaks found:\s*(\d+)\s*$/;
+const SECRET_SCAN_MAX = 8;
+
+function parseSecretScanFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  for (const line of lines(log)) {
+    if (out.length >= SECRET_SCAN_MAX) break;
+    const match = SECRET_SCAN_FOUND.exec(line);
+    if (match === null || Number(match[1]) === 0) continue;
+    out.push({ file: SECRET_SCAN_FILE, names: SECRET_SCAN_NAMES, testId: `${SECRET_SCAN_FILE} > ${SECRET_SCAN_NAMES}`, excerpt: clean(line) });
+  }
+  return out;
+}
+
+// The quick job's "Require release-please provenance for version bumps"
+// step (pull_request only) compares the merge-base and head carriers --
+// package.json version and .release-please-manifest.json "." -- and fails
+// any bump outside a same-repository release-please--* branch. A refused
+// bump prints `::error::<changed carriers>. Only the release-please PR
+// may change the release version; ...` and a gate malfunction prints
+// `release version provenance check failed: <message>`; either way the
+// job goes red with no vitest, typecheck or TAP line naming it. Both
+// shapes group under the gate script as
+// `.github/scripts/release-version-provenance.mjs > (version-provenance)`:
+// the check reads exactly the script and the two carrier files, which
+// STATIC_FAILURE_INPUTS seeds so a PR touching either carrier is
+// PR-caused. Like the other non-test identities it can never resolve
+// through a vitest pass line: shared-baseline, pr-caused or unknown --
+// never probable-flake.
+const VERSION_PROVENANCE_FILE = '.github/scripts/release-version-provenance.mjs';
+const VERSION_PROVENANCE_NAMES = '(version-provenance)';
+const VERSION_PROVENANCE_ERROR = /^::error::.+Only the release-please PR may change the release version/;
+const VERSION_PROVENANCE_FAILED = /^release version provenance check failed: \S/;
+const VERSION_PROVENANCE_MAX = 8;
+
+function parseVersionProvenanceFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  for (const line of lines(log)) {
+    if (out.length >= VERSION_PROVENANCE_MAX) break;
+    if (!VERSION_PROVENANCE_ERROR.test(line) && !VERSION_PROVENANCE_FAILED.test(line)) continue;
+    out.push({ file: VERSION_PROVENANCE_FILE, names: VERSION_PROVENANCE_NAMES, testId: `${VERSION_PROVENANCE_FILE} > ${VERSION_PROVENANCE_NAMES}`, excerpt: clean(line) });
+  }
+  return out;
+}
+
+// The ci.yml helper gates under .github/scripts/ are single-purpose node
+// invocations whose only failure output is the script's console.error
+// line plus the runner's `##[error]Process completed with exit code`
+// step marker: no vitest FAIL, TAP `not ok`, tsc diagnostic or report
+// shape names them, so without step attribution a broken gate leaves
+// every open PR unknown and queues no fix. GitHub wraps each `run:`
+// step in a `##[group]Run <script>` block -- the Run tail and the
+// echoed script lines, then `shell:`/`env:` metadata, then
+// `##[endgroup]` -- and a step qualifies only when every script line
+// is a `node --test` invocation or a whitelisted gate script, all gate
+// lines naming the same file. Mixed bash, heredocs, `uses:` actions,
+// non-whitelisted scripts (ci-pack-smoke and release-version-provenance
+// already have dedicated parsers; ci-fast-select never exits nonzero)
+// and other commands stay unattributed. When the step then fails, a
+// `not ok` or vitest FAIL line in its own output means the companion
+// test runner owns the failure and the gate group is suppressed;
+// otherwise the gate script is the identity -- the file, its import
+// closure and the workflow step that invokes it are the unit a master
+// fix restores. Like the other non-test identities these groups can
+// never resolve through a vitest pass line: shared-baseline, pr-caused
+// or unknown -- never probable-flake. Scripts whose pure steps only
+// appear in jobs the analyzer's evidence never sees (macOS/Windows
+// lanes, release pipelines, merge-group-only attribution) are
+// deliberately not listed.
+const CI_SCRIPT_GATE_MAX = 8;
+const CI_SCRIPT_GATES: Record<string, string> = {
+  'ci-fetch-range.mjs': '(fetch-range)',
+  'ci-source-binding.mjs': '(source-binding)',
+  'ci-site-lane.mjs': '(site-lane)',
+  'ci-mac-rotation.mjs': '(mac-rotation)',
+  'ci-dep-graph.mjs': '(dep-graph)',
+  'ci-fast-inputs.mjs': '(fast-inputs)',
+  'ci-green-reuse.mjs': '(green-reuse)',
+  'ci-mcp-selection.mjs': '(mcp-selection)',
+};
+const CI_SCRIPT_GATE_FILES = new Set(Object.keys(CI_SCRIPT_GATES).map(base => `.github/scripts/${base}`));
+const CI_STEP_GROUP = /^##\[group\]Run(?:\s+(.*))?$/;
+const CI_STEP_END = /^##\[endgroup\]$/;
+const CI_STEP_META = /^(?:shell|env)\s*:/;
+const CI_STEP_NODE_TEST = /^node\s+--test(?:\s|$)/;
+const CI_STEP_GATE = /^node\s+\.github\/scripts\/([A-Za-z0-9][A-Za-z0-9._-]*\.mjs)(?=\s|$)/;
+const CI_STEP_FAILED = /^##\[error\]Process completed with exit code \d+\.$/;
+
+function parseCiScriptGateFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  // idle: no step context. script: collecting a Run block's script lines.
+  // meta: past the shell:/env: marker inside the block. output: scanning a
+  // step's output for failure shapes an earlier parser already owns.
+  let phase: 'idle' | 'script' | 'meta' | 'output' = 'idle';
+  let disqualified = false;
+  const bases = new Set<string>();
+  let gate: { file: string; names: string } | null = null;
+  let suppressed = false;
+  let recent: string[] = [];
+  const noteScriptLine = (line: string) => {
+    if (line === '' || CI_STEP_NODE_TEST.test(line)) return;
+    const match = CI_STEP_GATE.exec(line);
+    const names = match === null ? undefined : CI_SCRIPT_GATES[match[1]!];
+    if (names === undefined) { disqualified = true; return; }
+    bases.add(match![1]!);
+  };
+  // A step attributes to a gate only when its script lines name exactly one
+  // whitelisted helper; node --test companions and blank lines are allowed.
+  const resolveGate = (): { file: string; names: string } | null => {
+    const base = !disqualified && bases.size === 1 ? [...bases][0]! : null;
+    return base === null ? null : { file: `.github/scripts/${base}`, names: CI_SCRIPT_GATES[base]! };
+  };
+  for (const line of lines(log)) {
+    if (out.length >= CI_SCRIPT_GATE_MAX) break;
+    if (line.startsWith('##[group]')) {
+      // Any group boundary ends the current step: a new Run block starts
+      // script collection, anything else leaves the step unattributed.
+      phase = 'idle'; gate = null; disqualified = false; bases.clear(); suppressed = false; recent = [];
+      const run = CI_STEP_GROUP.exec(line);
+      if (run !== null) {
+        phase = 'script';
+        if (run[1] !== undefined) noteScriptLine(run[1]);
+      }
+      continue;
+    }
+    if (phase === 'script') {
+      if (CI_STEP_END.test(line)) {
+        gate = resolveGate();
+        phase = 'output';
+        suppressed = false;
+        recent = [];
+        continue;
+      }
+      if (CI_STEP_META.test(line)) { phase = 'meta'; continue; }
+      noteScriptLine(line);
+      continue;
+    }
+    if (phase === 'meta') {
+      if (CI_STEP_END.test(line)) {
+        gate = resolveGate();
+        phase = 'output';
+        suppressed = false;
+        recent = [];
+      }
+      continue;
+    }
+    if (phase === 'output') {
+      if (CI_STEP_FAILED.test(line)) {
+        if (gate !== null && !suppressed) {
+          const excerpt = recent.length > 0 ? recent.join('\n') : line;
+          out.push({ file: gate.file, names: gate.names, testId: `${gate.file} > ${gate.names}`, excerpt: clean(excerpt) });
+        }
+        phase = 'idle'; gate = null; suppressed = false; recent = [];
+        continue;
+      }
+      if (FAIL_LINE.test(line) || SUITE_FAIL_LINE.test(line) || /^not ok\b/.test(line)) suppressed = true;
+      if (line !== '') { recent.push(line); if (recent.length > 4) recent.shift(); }
+    }
+  }
+  return out;
+}
+
+export function parseBaselineFailures(log: string, repo?: string, auditExceptions: readonly DependencyAuditException[] | null = []): Failure[] {
   const result: Failure[] = [];
   const typecheck = new Map<string, Failure>();
   let current: Failure | undefined;
@@ -74,6 +988,50 @@ export function parseBaselineFailures(log: string): Failure[] {
       current.excerpt = clean(`${current.excerpt}\n${line}`);
     }
   }
+  for (const failure of parseTapFailures(log, repo)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseDocsCheckFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseGeneratedFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseVersionSyncFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parsePerfBudgetFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseAuditFailures(log, auditExceptions)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseArtifactGateFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseSecretShapeFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseSecretScanFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseVersionProvenanceFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseCiScriptGateFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
   return result;
 }
 
@@ -100,10 +1058,21 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       if (job.conclusion === 'skipped') continue;
       let r;
       try { r = await gh(['api', `repos/${repo}/actions/jobs/${job.id}/logs`]); } catch { return null; }
+      if (!r.ok || job.head_sha !== head) return null;
       const output = lines(r.stdout);
       const checkout = output.findIndex(line => /(?:^|\/)git log -1 --format=%H$/.test(line));
-      if (!r.ok || job.head_sha !== head || checkout < 0 || output[checkout + 1] !== head) return null;
-      result.push({ conclusion: job.conclusion, text: r.stdout });
+      if (checkout >= 0) {
+        if (output[checkout + 1] !== head) return null;
+        result.push({ conclusion: job.conclusion, text: r.stdout });
+        continue;
+      }
+      // Aggregator jobs that never check out the workspace (Merge Gate,
+      // release autotag) cannot emit the checkout SHA this check requires.
+      // Their logs are dropped from evidence only when they carry nothing
+      // the analyzer consumes; any recognizable failure or pass output in
+      // an unverifiable log keeps the whole run unknown rather than letting
+      // unattributed evidence pass as head-verified.
+      if (parseBaselineFailures(r.stdout, repo).length > 0 || output.some(line => PASS_LINE.test(line))) return null;
     }
     return result;
   }
@@ -116,16 +1085,29 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     const evidence = await logs(run, run.head_sha);
     if (evidence) masterLogs.push(...evidence); else masterKnown = false;
   }
-  const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text));
+  const dependencyCache = new Map<string, Promise<Set<string> | null>>();
+  const contentsCache = new Map<string, Promise<{ ok: boolean; absent: boolean; source: string | null }>>();
+  const ref = branch?.commit?.sha ?? 'master';
+  // The Dependency Audit job prints npm's audit v2 JSON once per lockfile
+  // graph; advisories covered by .github/dependency-audit-exceptions.json
+  // are accepted rather than failures, so the parser replays the gate
+  // script's exemption fixpoint against master's exception list. An
+  // absent file means no exceptions; an unreadable or malformed one
+  // yields null and audit reports then stay unparsed (unknown) rather
+  // than risk a phantom group for an accepted advisory.
+  let auditExceptions: DependencyAuditException[] | null = null;
+  {
+    const fetched = await contents('.github/dependency-audit-exceptions.json');
+    if (fetched.absent) auditExceptions = [];
+    else if (fetched.ok && fetched.source !== null) auditExceptions = parseAuditExceptions(fetched.source);
+  }
+  const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text, repo, auditExceptions));
   // A suite failure has no per-test pass line to match: the file loading and
   // running at all (any verbose pass in it) is what resolves it.
   const passes = (f: Failure) => masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
     const m = PASS_LINE.exec(line);
     return m?.[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
   }));
-  const dependencyCache = new Map<string, Promise<Set<string> | null>>();
-  const contentsCache = new Map<string, Promise<{ ok: boolean; absent: boolean; source: string | null }>>();
-  const ref = branch?.commit?.sha ?? 'master';
   // Bundler-resolution candidates for one normalized repo-relative spec base.
   // Explicit extensions keep TypeScript precedence (.js -> .ts before .tsx,
   // the literal spec last so a real .js/.mjs file still resolves); extensionless
@@ -168,6 +1150,29 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     if (cached) return cached;
     const task = (async () => {
       const visited = new Set<string>();
+      // A gate script's inputs can be data files no import closure reaches
+      // (release metadata for sync-candidate-version); seed them so a PR
+      // touching any input counts as touched.
+      for (const input of STATIC_FAILURE_INPUTS[file] ?? []) visited.add(input);
+      // Only code has an import closure: a Markdown report, JSON or asset
+      // failure file depends on itself alone. Scanning prose for import
+      // syntax would let a doc's code sample fail the whole closure closed.
+      // Generated artifacts are the exception: they have no import closure
+      // either, but their staleness is caused by a known input set -- the
+      // generator scripts and sources in GENERATED_FILE_INPUTS, plus (for
+      // docs/llms.txt) every public docs page on master.
+      if (!isCode(file)) {
+        visited.add(file);
+        const inputs = GENERATED_FILE_INPUTS[file];
+        if (inputs === undefined) return visited;
+        for (const input of inputs) visited.add(input);
+        if (file === 'docs/llms.txt') {
+          const pages = await publicDocsPages();
+          if (pages === null) return null;
+          for (const page of pages) visited.add(page);
+        }
+        return visited;
+      }
       async function visit(path: string): Promise<boolean> {
         if (visited.has(path)) return true;
         if (visited.size >= 100 || path.startsWith('../')) return false;
@@ -302,6 +1307,32 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     return harnessDiscovery;
   }
 
+  // docs/llms.txt renders from every public docs page -- docs/**/*.md minus
+  // the top-level docs/internal/ directory, regular files only, matching
+  // scripts/lib/docs-pages.mjs. The page set comes from one recursive master
+  // tree listing per analysis; an unreadable or truncated tree fails the
+  // generated-file closure closed (unknown), never an empty page set.
+  let docsPagesListing: Promise<Set<string> | null> | null = null;
+  function publicDocsPages(): Promise<Set<string> | null> {
+    docsPagesListing ??= (async () => {
+      try {
+        const r = await gh(['api', `repos/${repo}/git/trees/${ref}?recursive=1`]);
+        if (!r.ok) return null;
+        const data = JSON.parse(r.stdout) as { tree?: unknown; truncated?: unknown } | null;
+        if (!Array.isArray(data?.tree) || data.truncated === true) return null;
+        const pages = new Set<string>();
+        for (const entry of data.tree as { path?: unknown; type?: unknown; mode?: unknown }[]) {
+          if (entry?.type !== 'blob' || (entry.mode !== '100644' && entry.mode !== '100755')) continue;
+          const path = entry.path;
+          if (typeof path !== 'string' || !path.startsWith('docs/') || !path.endsWith('.md') || path.startsWith('docs/internal/')) continue;
+          pages.add(path);
+        }
+        return pages;
+      } catch { return null; }
+    })();
+    return docsPagesListing;
+  }
+
   const harnessFileCache = new Map<string, Promise<Set<string> | null>>();
   function harnessAmbient(file: string): Promise<Set<string> | null> {
     let pending = harnessFileCache.get(file);
@@ -367,7 +1398,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       const evidence = await logs(run, pr.headRefOid);
       if (!evidence) { known = false; continue; }
       for (const log of evidence.filter(l => l.conclusion === 'failure')) {
-        const failures = parseBaselineFailures(log.text);
+        const failures = parseBaselineFailures(log.text, repo, auditExceptions);
         if (!failures.length) known = false;
         found.push(...failures.map(failure => ({ ...failure, runId: run.id })));
       }
@@ -376,7 +1407,15 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     if (!known) continue;
     for (const failure of found) {
       const deps = await dependencies(failure.file);
-      const ambient = await harnessAmbient(failure.file);
+      // Generated artifacts are produced by the clean-tree job, not the test
+      // runner: the vitest harness ambient set cannot stale them, so only
+      // the generator-input deps decide touched. The version-sync gate reads
+      // exactly its enumerated metadata inputs, the dependency-audit gate
+      // exactly its lockfile input set, the pack-smoke/artifact gates
+      // plain .mjs scripts plus their enumerated manifests, and the
+      // secret-shape/secret-scan/version-provenance trust gates have no
+      // vitest harness at all, so the ambient set cannot reach any of them.
+      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
       const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
       observations.push({ pr, failure, touched, runId: failure.runId });
     }

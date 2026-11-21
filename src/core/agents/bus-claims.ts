@@ -162,7 +162,9 @@ export interface BusClaimsOwnerMatch {
 }
 
 /** An announced work-feed job a claim's keys overlap; the job's own status and title, never a guess. */
-export interface BusClaimJobRef { id: string; owner: string; status: WorkJob['status']; title: string }
+export interface BusClaimJobRef { id: string; owner: string; status: WorkJob['status']; title: string;
+  /** The feed job's newest status detail, when it carries one. */
+  detail?: string }
 
 /** A live claim plus, when `jobs` was requested and the feed read ok, the jobs it blocks. */
 export type BusClaimsListClaim = CoordinationView & { jobs?: BusClaimJobRef[] };
@@ -231,7 +233,8 @@ export function listBusClaims(options: BusClaimsListOptions = {}): BusClaimsList
         ...row,
         jobs: result.jobs
           .filter(job => job.claimKeys.some(claimKey => coordinationRowBlocks(row, claimKey)))
-          .map(job => ({ id: job.id, owner: job.owner, status: job.status, title: job.title })),
+          .map(job => ({ id: job.id, owner: job.owner, status: job.status, title: job.title,
+            ...(job.detail === undefined ? {} : { detail: job.detail }) })),
       }));
     }
   }
@@ -249,6 +252,8 @@ export interface BusWorkJobClaimRef {
   repo: string;
   title: string;
   status: WorkJob['status'];
+  /** The feed job's newest status detail, when it carries one. */
+  detail?: string;
 }
 
 export interface BusWorkJobClaimOptions extends BusClaimOptions {
@@ -269,17 +274,39 @@ export interface BusWorkJobClaimOptions extends BusClaimOptions {
   id?: string;
 }
 
+/** A live coordination hold blocking one of a job's declared claim keys other than the one a claim targeted. */
+export interface BusWorkJobKeyHold {
+  claimKey: string;
+  owner: string;
+  leaseUntil: number;
+}
+
+/**
+ * The live holds across a claimed job's declared claim keys, minus the key the
+ * claim targeted — the scope conflicts a single-key acquire cannot see, so a
+ * worker learns at claim time that a sibling `repo:`/`path:`/`pr:` scope is
+ * already held instead of discovering it on a later feed or claim-list read.
+ * `source` keeps the coordination read honest: `unavailable` means sibling
+ * holds are unknown, never an empty free set; `missing` is a verified-empty
+ * table. Fencing tokens never leave the store.
+ */
+export interface BusWorkJobClaimScope {
+  source: 'missing' | 'available' | 'unavailable';
+  holds: BusWorkJobKeyHold[];
+}
+
 export type BusWorkJobClaimResult =
-  | { status: 'acquired'; job: BusWorkJobClaimRef;
+  | { status: 'acquired'; job: BusWorkJobClaimRef; scope: BusWorkJobClaimScope;
       claim: { claimKey: string; owner: string; leaseMs: number; token: string; leaseUntil: number } }
-  | { status: 'conflict'; job: BusWorkJobClaimRef;
+  | { status: 'conflict'; job: BusWorkJobClaimRef; scope: BusWorkJobClaimScope;
       holder: { owner: string; claimKey: string; leaseUntil: number } }
   | { status: 'invalid' | 'refused' | 'unavailable' | 'retryable' | 'full'; reason: string; job?: BusWorkJobClaimRef };
 
 const JOB_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 function jobClaimRef(job: WorkJob): BusWorkJobClaimRef {
-  return { id: job.id, owner: job.owner, repo: job.repo, title: job.title, status: job.status };
+  return { id: job.id, owner: job.owner, repo: job.repo, title: job.title, status: job.status,
+    ...(job.detail === undefined ? {} : { detail: job.detail }) };
 }
 
 /**
@@ -293,6 +320,10 @@ function jobClaimRef(job: WorkJob): BusWorkJobClaimRef {
  * refuses rather than claiming against a guessed job, and a non-open status,
  * empty or undeclared key set refuses before any lease is attempted. The
  * fencing token returns only inside the acquired claim, to its acquirer.
+ * `acquired` and `conflict` also carry `scope`: the live holds on the job's
+ * other declared claim keys, read through the same `coordinationRowBlocks`
+ * overlap the feed's `--claims` join applies, so a sibling scope already held
+ * by another participant is visible in the claim result itself.
  */
 export function claimBusWorkJob(options: BusWorkJobClaimOptions): BusWorkJobClaimResult {
   const now = options.now ?? Date.now();
@@ -318,12 +349,21 @@ export function claimBusWorkJob(options: BusWorkJobClaimOptions): BusWorkJobClai
   const queueKey = `queue:${job.id}`;
   const key = options.key ?? (job.claimKeys.includes(queueKey) ? queueKey : job.claimKeys[0]!);
   if (!job.claimKeys.includes(key)) return { status: 'refused', reason: 'undeclared-key', job: ref };
+  const listed = listCoordination(options.root, now);
+  const scope: BusWorkJobClaimScope = {
+    source: listed.source,
+    holds: listed.source === 'available'
+      ? job.claimKeys.filter(claimKey => claimKey !== key).flatMap(claimKey =>
+          listed.claims.filter(row => coordinationRowBlocks(row, claimKey))
+            .map(row => ({ claimKey, owner: row.owner, leaseUntil: row.leaseUntil })))
+      : [],
+  };
   const result = executeBusClaimBody(
     { kind: 'work.claim', op: 'acquire', jobId: job.id, claimKey: key, owner: options.owner, leaseMs: options.leaseMs },
     options.id ?? newBusClaimOpId(), { root: options.root, now });
   if (result === undefined) return { status: 'unavailable', reason: 'claim-unexpected', job: ref };
-  if (result.status === 'acquired') return { status: 'acquired', job: ref, claim: result.claim };
-  if (result.status === 'conflict') return { status: 'conflict', job: ref, holder: result.holder };
+  if (result.status === 'acquired') return { status: 'acquired', job: ref, scope, claim: result.claim };
+  if (result.status === 'conflict') return { status: 'conflict', job: ref, scope, holder: result.holder };
   if (result.status === 'invalid') return { status: 'invalid', reason: 'claim-invalid', job: ref };
   if (result.status === 'unavailable') return { status: 'unavailable', reason: 'claim-unavailable', job: ref };
   if (result.status === 'full') return { status: 'full', reason: 'claim-full', job: ref };

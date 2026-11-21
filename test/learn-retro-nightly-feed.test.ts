@@ -124,6 +124,30 @@ describe('foldFleetJobs', () => {
     expect(jobs[0]).toMatchObject({ id: 'RQ-TEST-1', status: 'failed', updatedAt: '2026-10-25T23:30:00.000Z' });
   });
 
+  it('counts the shared revert vocabulary — event names and reverted_at stamps — as failure', () => {
+    const rows = [
+      // A revert recorded by event name carries no terminal state field.
+      fleetRow({ job: 'RQ-REV-EVENT', state: 'MERGED', ts: '2026-10-25T22:00:00.000Z' }),
+      fleetRow({ job: 'RQ-REV-EVENT', event: 'revert', state: undefined, ts: '2026-10-25T23:00:00.000Z' }),
+      // A reverted_at stamp on an otherwise merged row is revert evidence.
+      fleetRow({ job: 'RQ-REV-STAMP', state: 'MERGED', reverted_at: '2026-10-25T22:00:00.000Z', ts: '2026-10-25T22:30:00.000Z' }),
+      // Merge and revert evidence on one row: the merge did not hold.
+      fleetRow({ job: 'RQ-REV-BOTH', state: 'MERGED', merged: true, reverted: true, ts: '2026-10-25T23:10:00.000Z' }),
+      // Explicit reverted:false is not evidence.
+      fleetRow({ job: 'RQ-NO-REV', state: 'MERGED', reverted: false, ts: '2026-10-25T23:20:00.000Z' }),
+      // A stale revert does not override a newer merge.
+      fleetRow({ job: 'RQ-REV-OLD', event: 'revert', state: undefined, ts: '2026-10-25T21:00:00.000Z' }),
+      fleetRow({ job: 'RQ-REV-OLD', state: 'MERGED', ts: '2026-10-25T22:00:00.000Z' }),
+    ];
+    const jobs = foldFleetJobs(rows.map((row) => JSON.stringify(row)).join('\n'), NOW);
+    const byId = new Map(jobs.map((job) => [job.id, job]));
+    expect(byId.get('RQ-REV-EVENT')).toMatchObject({ status: 'failed', updatedAt: '2026-10-25T23:00:00.000Z' });
+    expect(byId.get('RQ-REV-STAMP')).toMatchObject({ status: 'failed', updatedAt: '2026-10-25T22:30:00.000Z' });
+    expect(byId.get('RQ-REV-BOTH')).toMatchObject({ status: 'failed' });
+    expect(byId.get('RQ-NO-REV')).toMatchObject({ status: 'succeeded' });
+    expect(byId.get('RQ-REV-OLD')).toMatchObject({ status: 'succeeded', updatedAt: '2026-10-25T22:00:00.000Z' });
+  });
+
   it('derives repo from a GitHub PR URL and arm from model when no lane exists', () => {
     const jobs = foldFleetJobs(JSON.stringify(fleetRow({
       repo: undefined, lane: undefined, model: 'swe-2',

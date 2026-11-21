@@ -15,7 +15,8 @@ Creation requires `--dry-run` and never calls the writer.
 ## External bot seats
 
 `src/core/bots/seats.ts` exports `BotSeat`, `QuotaEvidence`, `SeatAdapter`,
-`SeatState`, `SeatHandoff` and `SeatOptions`. The strict on-disk roster schema is
+`SeatState`, `SeatHandoff`, `SeatHandoffPlanEntry`, `SeatHandoffsPlan` and
+`SeatOptions`. The strict on-disk roster schema is
 `phantom-bot-seats.v1` at `~/.phantom/bots/seats.json`; missing means empty.
 Kinds are devin-bot, grok-bot, openai-bot, local and other; other requires a bus
 provider, all others derive it. Secret handles are names only; secret-shaped
@@ -42,7 +43,14 @@ Exports:
   draining/idle map to idle. `phm agents bus id list` adds these as `participants`
   without modifying stored identities, channels or authority.
 - `planSeatHandoff(id: string, opts?)` is a dry-run projection; active seats are
-  refused. `applySeatHandoff(id, opts?)` uses a stale-safe lock, fsyncs one
+  refused. `planSeatHandoffs(opts?)` is the fleet-wide dry-run: one snapshot
+  returns `{schema:'phantom-bot-handoffs-plan.v1', apply:false, seats}` with one
+  `{seatId, state, eligible, handoffs}` entry per roster seat — ineligible seats
+  report `eligible:false` and no records rather than erroring, and pending
+  handoff ids are the same deterministic ids the single-seat plan and apply
+  journal. Both plans enforce the same eligibility rule (draining seats always;
+  idle seats only while holding work or carrying handoff history). Neither
+  writes state. `applySeatHandoff(id, opts?)` uses a stale-safe lock, fsyncs one
   `phantom-bot-handoff.v1` record per work/lease identity before releasing work,
   retries held releases on replay, declines node sessions and releases bus
   claims by source. Source releases require the current owner; seat handoffs also
@@ -55,12 +63,14 @@ Exports:
   value-free statuses, not post-release exceptions.
 - `sendSeatMessage({from, to, text}, opts?)` delegates configured participants to
   unified bus DMs under the seat's fleet root and clock, or owner notices;
-  unknown seats/secret-shaped text are refused.
+  `from`/`to` accept a seat id or participantId (`to: 'owner'` posts an
+  owner-thread notice). Unknown seats/secret-shaped text are refused.
 
 `SeatOptions` injects home, runs, clock, quota reader, node store, node-release
 port, owner-thread options, owner notice and bus post. Default coordination and
-node storage use canonical roots; owner defaults on apply use the same fixed
-settings/runs construction as the comms CLI and retain KILL/pause checks.
+node storage use canonical roots; owner defaults use the same fixed
+settings/runs construction as the comms CLI, mirror onto the seat fleet root
+and retain KILL/pause checks.
 Injected homes relocate storage for hermetic tests. Public handoff metadata
 uses unknown/null when evidence is unavailable; tokens are never serialized.
 
@@ -204,9 +214,68 @@ The CLI `ci reruns [--json]` reads recent journal entries, counts,
 recurringFlakes and verdicts without mutation.
 
 `src/core/fleet/ci-baseline.ts` exports `analyzeCiBaseline(repo, gh?)`, a
-read-only version 1 evidence report, and `parseBaselineFailures(log)` for capped,
-scrubbed Vitest failure identities (test-level `file > name` and suite-load
-`file > (suite)`) and summaries. `enqueueBaselineFixes(report,
+read-only version 1 evidence report, and `parseBaselineFailures(log, repo?,
+auditExceptions?)` for capped, scrubbed failure identities -- Vitest
+`file > name` and suite-load
+`file > (suite)`, TypeScript `<file> > (typecheck)`, check:docs
+`<file> > (docs-check)`, node:test TAP `file > suite > test` /
+`file > (suite)` resolved through the Actions checkout marker,
+clean-tree `<file> > (generated)` rows from the stale-files porcelain dump
+and launcher-digest check, the release-metadata gate
+`scripts/sync-candidate-version.mjs > (version-sync)` from the build's
+`check:version` drift JSON report or `sync-candidate-version: <message>`
+error, the advisory perf gate's
+`<budgets file> > (perf-budget) <target id>` rows from the
+`ashlr.perf-budget-report.v1` JSON document (`fail` and `error` results
+only), and the Dependency Audit job's
+`<lockfile> > (dependency-audit) <package>` rows from npm audit v2 JSON
+reports (advisories outside the exception fixpoint only), the
+pack-smoke/artifact gate's
+`.github/scripts/ci-pack-smoke.mjs > (pack-smoke)` /
+`scripts/hosted-build-artifact.mjs > (hosted-artifact)` rows from the
+scripts' `pack smoke refused:` / `hosted artifact refused:` stderr
+prefixes, and the PR-visible trust gates'
+`.github/tests/secret-shape/scrub.pl > (secret-shape)` /
+`.github/workflows/ci.yml > (secret-scan)` /
+`.github/scripts/release-version-provenance.mjs > (version-provenance)`
+rows from the scrub.pl `<blocked> allowed=<n>` count, the gitleaks
+`leaks found: <n>` summary and the provenance `::error::` /
+`check failed:` lines (nonzero counts and verdicts only) -- plus
+summaries. `auditExceptions` is the optional
+`DependencyAuditException[] | null` list (`{id, package, graph}` with
+graph `full` or `raycast-production`); `null` leaves audit reports
+unparsed. TAP `ok` results carry no
+location, so TAP failures never resolve a master pass or flake
+classification. Generated artifacts carry no import closure: `docs/llms.txt`
+depends on its generator inputs and every public docs page from the master
+tree listing (unreadable or truncated listings fail closed), and
+`scripts/canonical-launcher-digests.json` on `bin/ashlr`. The version-sync
+gate's dependency set is the script plus the ten metadata files it rewrites
+(seeded as static inputs), and the vitest harness ambient set does not apply
+to it. The perf gate's dependency set is the budgets file plus its direct
+inputs (`bin/ashlr`, `scripts/perf-budget.mjs`,
+`scripts/perf-mcp-tools-list.mjs`, seeded as static inputs); the measured
+CLI graph has no enumerable closure, so the harness ambient set alone
+decides manifest and toolchain touches. Each audited lockfile's dependency
+set is its manifest, shrinkwrap, .npmrc, the lockfile itself,
+`.github/dependency-audit-exceptions.json` and
+`scripts/npm-audit-with-osv-fallback.sh` (seeded as static inputs), and the
+harness ambient set does not apply to it either; the analyzer reads the
+exception file once from master and an unreadable or malformed file
+leaves audit reports unparsed rather than risk phantom groups for
+accepted advisories. The pack-smoke gate's dependency set is
+`package.json` and the artifact gate's `package.json` plus
+`package-lock.json` (seeded as static inputs, since the measured dist/
+graph has no enumerable closure), and the harness ambient set does not
+apply to either; refusal continuations stay excerpt-free, empty
+messages and release-only `* refused:` prefixes stay unparsed. The
+secret-shape and secret-scan groups key on the scanner definition alone
+(the diff and commit-range scans have no enumerable repo input, so a
+shape carried inside a PR's own diff stays unattributed) and the
+provenance group's dependency set adds `package.json` and
+`.release-please-manifest.json` as static inputs; the harness ambient
+set does not apply to any of the three.
+`enqueueBaselineFixes(report,
 absoluteQueuePath)` explicitly writes work-tier master-fix rows deduplicated
 by queue state via `nextFixGeneration`: a failure whose prior fix generations
 all reached DONE re-queues as the next `RQ-CIBASE-*-G<n>` id while the
@@ -1191,7 +1260,8 @@ measurements. `suggestOutcomePolicy` returns bounded, evidence-backed
 `generateWeeklySelfReport` produces Markdown for chief-of-staff attachment.
 
 `phm fleet metrics report --hours 24 --json`, `suggest --json` and `weekly`
-read the jobs ledger only. Weekly defaults to 168 hours. The
+read the jobs ledger only, keeping its newest bounded tail on oversized
+ledgers and marking cut evidence degraded. Weekly defaults to 168 hours. The
 [full contract](docs/contracts/CONTRACT-FLEET-OUTCOME-METRICS.md) defines
 cohorts, observation coverage, unknowns, thresholds and exit codes.
 
@@ -1524,6 +1594,19 @@ built by the pure `sessionReply(session | null)` that the new import-free
 `SessionReplySubject` and `AIMABLE_JOB_RE`; `session-thread.ts` re-exports
 `sessionReply` and `SessionThreadReply`, and `renderSessionThreadText` gains
 a "To write to it" line.
+Output (additive): `parts` gains optional `output`
+(`SessionThreadOutputRead | null`: `source`, `lines`, `truncated`, the shape
+`scanJobLog` returns), messages gain the kind `output` (key `output`, the
+newest `THREAD_OUTPUT_LINES` non-blank lines of the session's job log, each
+cut to `THREAD_OUTPUT_LINE_CHARS`), `sources` gains a last key `output`, and
+the `latest` message is left out when the output already ends with it. The
+module exports `sessionOutputLines(lines)` and both limits;
+`session-thread-read.ts` exports `readSessionOutput(job)` and
+`readSessionThread` takes an injectable `readOutput`, asked for a session with
+a job. In `fleet.session-threads.v1` a thread's `output` message keeps its
+newest `THREADS_OUTPUT_LINES` lines; `SessionThreadsParts` gains optional
+`output` (a map by job id), `threadSessions` entries gain `running`, and
+`readSessionThreads` takes `readOutput`, asked only for running sessions.
 `src/core/fleet/session-thread-read.ts` exports `readSessionThread(id,
 options)` with injectable `readMap`, `readSubagents`, `readActivity`,
 `readBus`, `readOwner` and `readReplies`; each read is guarded on its own and the result is
@@ -1590,7 +1673,17 @@ reject ASCII controls including DEL. Claims grant no execution authority.
 
 `projectBusWorkFeed(receipts: readonly unknown[], participants?: readonly Participant[], providerFor?: WorkFeedProviderFor, ownerKeyFor?: WorkFeedOwnerKeyFor)`
 in `src/core/agents/bus-work-feed.ts` returns `WorkFeedResult`: either
-`{status:'ok', feed:{v:2,jobs:WorkJob[]}}` or `{status:'refused',reason}`.
+`{status:'ok', feed:{v:2,jobs:WorkJob[]}, citations:ReadonlyMap<string,WorkFeedCitation>}`
+or `{status:'refused',reason, receipt?}`. `WorkFeedCitation` is `{post, status}` — the
+wire ids of the retained `work.post` receipt that announced the job and of
+the newest accepted `work.status` receipt (`status` is null while none has
+moved it), keyed by job id, so every job cites the envelopes its state came
+from; `agents bus show <id>` resolves them. `receipt` is a
+`WorkFeedRefusalReceipt` (`{id, receivedAt, ttl}` — the wire id, receipt time
+and TTL of the retained envelope whose processing refused the projection),
+present on the body-level refusals (`invalid-body`, `missing-provider`,
+`duplicate-job`, `owner-mismatch`) and absent when no single well-formed
+receipt is the cause (`invalid-receipts`, `invalid-participants`).
 It validates at most 1024 retained receipts in strictly increasing cursor order;
 legacy and unrelated bodies stay opaque. Posts start queued with `owner=from`,
 `to` set to the announcement envelope's routing label, and the announcement's
@@ -1602,7 +1695,7 @@ Statuses update only retained jobs from the same owner: exact sender-label
 equality, or — when the injected `ownerKeyFor` resolver maps both labels to one
 nonempty key — any labels of that identity; labels the resolver cannot place
 still require exact label equality. Orphan statuses are ignored. Duplicate job
-posts and malformed work bodies refuse the projection. Latest cursor wins; `updatedAt` is its receipt time. Jobs retain post order.
+posts and malformed work bodies refuse the projection. Latest cursor wins; `updatedAt` is its receipt time, and the job's optional `detail` is the newest status body's own `detail` text — a status that omits it clears the field so a stale reason never rides a newer state. Jobs retain post order.
 This is a pure retained-snapshot projection, not a historical ledger or
 authentication check. It performs no I/O, transport, claim mutation or execution. Existing v1
 journals/readers remain unchanged; feed output is explicitly versioned `v:2`.
@@ -1616,7 +1709,13 @@ answer 503.
 
 `readBusWorkFeed({root?, now?, claims?, participants?, providerFor?, ownerKeyFor?})` in `src/core/agents/bus-work-feed-read.ts`
 pages the bounded bus inbox without writes and returns ok/refused/unavailable/
-retryable/invalid with receipt count and `asOf`. `runtimeProvider(identity)` is the exported newest-runtime provider
+retryable/invalid with receipt count and `asOf`; a `refused` result carries
+the projection's `receipt` (`WorkFeedRefusalReceipt`) when it named one. On `ok` each job is a
+`BusWorkFeedJob` (`WorkJob` plus `postId` — the announcing `work.post`
+envelope's wire id — and `statusId` — the newest accepted `work.status`
+envelope's wire id, null while none has moved the job), so feed consumers can
+`agents bus show` the receipts behind a job without a second scan; filters
+keep the citation fields with their job. `runtimeProvider(identity)` is the exported newest-runtime provider
 lookup both the feed hints and `announceWork` share. Omitted post providers fall back
 to the sender identity's newest registered runtime in the agent registry beside
 the bus store (`resolveAgent` over handle, `agent:<handle>`, stable id and
@@ -1642,9 +1741,11 @@ newest-first order and per-job hold regrouping; `toMatch` is the predicate
 over its `owner` (announcer) label — each matching literally and under every
 label of one agent identity (an unresolvable ref or unreadable registry keeps
 exact-label matching). `formatBusWorkFeed(result)` renders the shared human
-lines — each job as `<id> <status> "<title>" owner=… keys=<claim keys>` with
-title and keys scrubbed, single-lined and display-clipped (JSON keeps the full
-values) — both feed CLIs use them, and both accept `--to <label>`, `--owner
+lines — each job as `<id> <status> "<title>" detail="<why>" owner=… keys=<claim keys> updated=… post=<postId> [status=<statusId>]`
+with title, detail and keys scrubbed, single-lined and display-clipped (JSON
+keeps the full values; `detail=` and `status=` appear only when present, `post=`
+always) — a refused read's footer adds `receipt=<id>` when the projection
+blamed a retained envelope — both feed CLIs use them, and both accept `--to <label>`, `--owner
 <agent>` and `--job <id>` beside `--status`. `phm fleet work-feed [--claims]
 [--to <label>] [--owner <agent>] [--job <id>]` and
 `phm agents bus work feed [--status] [--claims] [--to <label>] [--owner
@@ -1675,7 +1776,7 @@ label, and the result's `owner` field (`ref`, resolved `identity` or null,
 `registry` state) reports which mode applied so a label match is never
 mistaken for identity proof. With `jobs:true` each claim gains an optional
 `jobs` list of the announced work-feed jobs its keys block (`{id, owner,
-status, title}` per job, the reverse of the feed's `--claims` hold join) and the
+status, title, detail?}` per job, the reverse of the feed's `--claims` hold join) and the
 result's `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
 `phm agents bus claim list [--key] [--owner] [--jobs]`
@@ -1688,14 +1789,21 @@ declared claim keys (`queue:<jobId>` preferred, else the first declared; an
 explicit `key` must be declared) and acquires through the same
 `executeBusClaimBody` path, so overlap with every other claim origin still
 decides in one place. `BusWorkJobClaimResult` echoes the announced job
-(`{id, owner, repo, title, status}`) on every outcome that found it:
+(`{id, owner, repo, title, status, detail?}`) on every outcome that found it:
 `acquired` carries the claim with the fencing token for its acquirer only,
 `conflict` the holder without one, and
 `invalid`/`refused`/`unavailable`/`retryable`/`full` carry a slug `reason`
 (`invalid-job`/`invalid-owner`/`invalid-lease`/`invalid-key`, `unknown-job`,
 `job-not-open`, `no-claim-keys`, `undeclared-key`, `work-feed-*`,
-`claim-*`). A feed that cannot be read refuses rather than claiming against a
-guessed job. `phm agents bus work claim --job <id> --lease-ms <ms> [--key]
+`claim-*`). `acquired` and `conflict` also carry `scope`
+(`BusWorkJobClaimScope` `{source, holds}`): the live coordination holds on the
+job's other declared claim keys — the targeted key excluded — each
+`{claimKey, owner, leaseUntil}` found through the same `coordinationRowBlocks`
+overlap the feed's `--claims` join applies, so a sibling `repo:`/`path:`/`pr:`
+scope already held is visible in the claim result itself. `source` is
+`missing`, `available` or `unavailable`; an unavailable table means sibling
+holds are unknown, never an empty free set. A feed that cannot be read refuses
+rather than claiming against a guessed job. `phm agents bus work claim --job <id> --lease-ms <ms> [--key]
 [--owner] [--id]` prints it, exit 0 acquired, 2 invalid, 1 otherwise.
 `work.claim` acquire/renew run through `acquireCoordination`/`renewCoordination`
 and `work.release` through `settleCoordination` on the one coordination table
@@ -1708,7 +1816,7 @@ no execution authority; the token returns only to its acquirer.
 `phm agents bus work mine [<agent>]`. `readBusWorkMine(agent, options?)`
 (`BusWorkMineOptions`: `root?`, `runsRoot?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, claims, jobs, next, handoffs, wakes, inbox}` or `{status:'invalid',
+asOf, claims, jobs, announced, next, handoffs, threads, awaiting, wakes, inbox}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
@@ -1716,10 +1824,11 @@ ref outside the printable-label rule. `agent` echoes `ref`, resolved
 `listBusClaims({owner})` — identity-aware owner matching with exact-label
 fallback — as `{status:'ok', source, claims, owner}` or `{status:'unavailable'}`;
 each claim row is a `BusClaimsListClaim` that gains `jobs` (the announced jobs
-its keys block, `{id, owner, status, title}`) only when the feed read is `ok`,
+its keys block, `{id, owner, status, title, detail?}`) only when the feed read is `ok`,
 absent otherwise. `jobs` reports the open feed jobs
 (`BUS_FEED_OPEN_STATUSES`, at least one claim key, newest 50 of `open`) as
-`BusWorkMineJob` (`WorkJob` plus `addressed`, `announced`, `freeKeys`,
+`BusWorkMineJob` (`BusWorkFeedJob` — so it carries the feed's `postId`/`statusId`
+envelope citations — plus `addressed`, `announced`, `freeKeys`,
 `heldKeys`, `claimable`): `addressed` marks a `to` label resolving to the
 agent's identity and `announced` an `owner` label resolving to it (the agent
 posted the job and owns its status reports) — both through the same
@@ -1729,13 +1838,26 @@ claims join, and `claimable` is `true` only on a provably free key, `false`
 only when every declared key is provably held, `null` when coverage is
 `truncated` or `unknown` — `busWorkMineJobAnnotation(job, held, coverage,
 addressed, announced?)` is the exported pure rule. A non-ok feed collapses the section to
-its own status (`refused` keeps `reason`/`receipts`). `next` lists the
+its own status (`refused` keeps `reason`/`receipts` and the blamed `receipt`
+when the projection named one). `announced` is the
+outbound side of the same feed read: every job whose `owner` label resolves
+to the agent under the jobs section's owner matcher that has not reached
+`done` or `terminated`, newest update first, capped at the first 50 shown
+with `matched` the true total and `truncated` definitive — `failed` stays
+listed because only the announcer may move a job and a failed one can still
+be rescheduled or terminated. Each item is a `BusWorkFeedJob` verbatim, so
+it carries the feed's `postId`/`statusId` envelope citations; a job still
+open with claim keys appears in both `jobs` (the claimable view) and
+`announced` (the ownership view). A non-ok feed reports the section's own
+`refused`/`unavailable`/`retryable`/`invalid` state, never an empty list.
+`next` lists the
 claimable work envelopes addressed to the agent — every live receipt whose
-`isClaimableWork` body (`kind:'work'` or a protocol-v1 `task`) and whose `to`
-label resolves through the same identity matching `bus next` and the feed
-`--to` filter use, or names a `group:<channel>:<topic>` address of a
-registry channel the resolved identity belongs to (the same membership rule
-the inbox and wake reads apply, minus the agent's own channel posts; an
+`isClaimableWork` body (`kind:'work'` or a protocol-v1 `task`) and whose `to`/`from`
+pair satisfies the shared `agentPendingAddressMatcher` rule `bus next` claims
+by: the literal ref or any label of the resolved identity through the same
+matching the feed `--to` filter uses, or a `group:<channel>:<topic>` address
+of a registry channel the resolved identity belongs to (the same membership
+rule the inbox and wake reads apply, minus the agent's own channel posts; an
 unreadable or missing registry and an unresolvable ref contribute no
 channels, so matching never widens) — in `claimNextBusWork` claim order
 (priority band, then
@@ -1775,6 +1897,39 @@ never a gate, because receiving a handoff checks no claims. Section-level
 `holds` follows the same `complete`/`unknown` rule as `next`, and a failed
 walk reports the same `unavailable`/`retryable`/`invalid` status on both
 sections.
+`threads` lists the conversation threads whose latest message still wants
+the agent's answer — the same `state:'waiting'` threads
+`agents conversations --waiting-only` computes from the one shared
+conversations projection, narrowed to waits the agent owes: `waiting.on`
+names the agent under any of its identity labels or a
+`group:<channel>:<topic>` address of a registry channel it belongs to (the
+same membership rule the other sections apply, minus threads whose waiting
+message the agent itself sent — you cannot owe yourself a reply), with the
+literal-label fallback when no identity resolves. Each
+`BusWorkMineThread` carries the conversation key `id`, the waiting
+message's envelope `id` as `messageId` (the handle `agents bus show`
+takes), `kind` (`'ask'`|`'handoff'`), `waitingOn`, `waitingMs`, `lastAt`,
+`messageCount`, the sender's projection `from`/`fromAgent` and the
+scrubbed `subject`; the first 20 show longest-waiting first with `matched`
+the true total and `truncated` definitive. The section reports
+`{status:'ok', source, matched, items, truncated, skipped}` — `skipped`
+keeps the damaged-row count — or `{status:'unavailable'}` when the bus
+store cannot be read; a missing store is a verified-empty `ok`.
+`awaiting` is the outbound mirror of `threads` over the same shared
+conversations read: every `state:'waiting'` thread whose latest message
+the agent itself sent (`isSelf` on the last message's `from`) and whose
+`waiting.on` does not resolve back to the agent — the agent's own asks
+and handoffs nobody has answered yet, so "is my question still
+outstanding?" needs no second `agents conversations` read. The two
+sections are mutually exclusive on every thread. Each
+`BusWorkMineAwaitingItem` carries the same fields as `BusWorkMineThread`
+— conversation `id`, waiting `messageId`, `kind`, `waitingOn`,
+`waitingMs`, `lastAt`, `messageCount`, sender `from`/`fromAgent`,
+scrubbed `subject` — plus `waitingOnAgent`, the resolved handle of the
+party owing the reply (null for a topic or `group:` address, an
+unregistered label, or an unreadable registry). Same 20-item cap,
+longest-waiting order, `matched`/`truncated`/`skipped` semantics and
+`unavailable`-on-unreadable rule as `threads`.
 `wakes` reuses
 `readAgentWakes` capped at the newest 20 with `truncated`, or
 `unknown-agent`/`unavailable` with `reason`. `inbox` reuses `readAgentInbox`
@@ -1782,9 +1937,12 @@ for the next page of mail addressed to the agent — same matching, order and
 owner-share receipt checks as `agents bus inbox` — as `{status:'ok', agent,
 messages, nextCursor, truncated}`: each `BusWorkMineInboxMessage` carries
 `cursor`, envelope `id`, `ts`, `priority`, `kind`, `channel`, raw `from`,
-resolved `fromAgent` (null when unregistered) and a `summary` through
+resolved `fromAgent` (null when unregistered), a `summary` through
 `busBodySummary`/`busBodyFallbackSummary`, scrubbed, single-lined and clipped
-to 200 characters for both JSON and human output. The read asks
+to 200 characters for both JSON and human output, and — only on claimable
+work and worker-handoff mail — the same optional `held`/`holder` evidence
+`agents bus inbox` reports (`held` tri-state, `null` when a hold store cannot
+be read, never proven free; absent on other mail kinds). The read asks
 for one row past the 20-message cap so `truncated` is definitive — a full
 window proves mail remains beyond `nextCursor`, a short one proves the scan
 reached the store's end — and on overflow the newest scanned row is the one
@@ -1800,6 +1958,14 @@ an invalid agent.
 `src/core/agents/bus-identity.ts`: `stableAgentId(handle): string` (`agt_` + 20 hex),
 `agentAddress(handle)`, `resolveAgent(registry, ref)`, `agentLabels(identity)`,
 `agentIdentityKeys(options?)`, `agentAddressMatcher(identityOf, label)`,
+`agentPendingAddressMatcher(ref, registry)` (the shared addressed-to-agent
+predicate the `bus next` claim scan and the `work mine` next/handoffs
+sections apply: the literal ref or any label of its resolved identity, or a
+`group:<channel>:<topic>` address of a registry channel the identity belongs
+to — minus channel posts the identity sent itself; an unreadable registry
+passed as undefined or a ref resolving to no identity contributes no channels
+and no labels beyond the literal ref, so matching never widens on unknown
+state; the predicate takes the envelope's `to` and `from` labels),
 `RESERVED_PREFIXES` (the `agent:`/`group:`/`dm:`/`handoff:` label prefixes no
 alias and no label post may claim),
 `readAgentRegistry(options?)`, `registerAgentIdentity(input, options?)`,
@@ -1815,7 +1981,12 @@ with a `reason`); they never throw for bad input or storage faults.
 carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label and
 `from` filters by sender through identity-label matching, an unresolvable ref
-keeping exact-label matching),
+keeping exact-label matching; `group.presence` heartbeats are observations
+with their own read and never appear as mail of any kind; claimable work and
+worker-handoff items
+additionally carry `held`/`holder` — the same hold evidence
+`readBusEnvelopeById` reports, read once per page, `held` null when a hold
+store cannot be read),
 `readAgentWakes(ref, sinceAt, options?)`, `listBusChannels(agent, options?)`
 (the registry channels name-sorted with `createdBy`, `createdAt` and member
 handles in join order — all of them, or only those one resolved identity
@@ -1883,7 +2054,8 @@ legacy mail.
 `src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
 `detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,
 `frameBusInbox(cli, messages)` renders each body through `busBodySummary`,
-falling back to `busBodyFallbackSummary` for unrecognized bodies. Identities
+falling back to `busBodyFallbackSummary` for unrecognized bodies; items
+carrying `held` show it inside the line's bracket. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
@@ -1891,7 +2063,8 @@ read-only probe over the five dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
 null when unreadable), the wake queue (`state` plus the observed hint count,
 null unless `ok`), the shared coordination table (`coordinationSummary`) and
-the work-feed projection (job count, or the refusal `reason`). Each section
+the work-feed projection (job count, or the refusal `reason` plus the blamed
+receipt's wire id as `receipt` when the projection named one). Each section
 reports its own real state, a failed probe degrades only its own section, and
 the read never throws, writes or takes a lock; unknown stays null, never zero.
 See [Unified bus](docs/AGENT-BUS.md#unified-bus-identities-dms-channels-handoffs-and-wake).

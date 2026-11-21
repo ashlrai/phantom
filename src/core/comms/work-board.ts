@@ -9,6 +9,7 @@
  * claims inspection, so a board response is one internally consistent
  * evidence projection even while the fleet churns; nothing is cached across
  * calls. */
+import { isGroupPresenceBody } from '../fleet/bus-group.js';
 import { inspectBusWorkClaims, type BusWorkClaimView, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import type { BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { deriveBusWorkItemEvidence, readBusInboxEvidence } from './work-item-bus-evidence.js';
@@ -76,11 +77,14 @@ export interface WorkBoardResult {
 /** A request is any envelope that does not answer another message: replies
  * name their request through `inReplyTo` (bus-reply-post) or `in_reply_to`
  * (peer-protocol bodies). Both absent or null counts as a request; the body
- * is untrusted, so only these two keys are ever read. */
+ * is untrusted, so only these two keys are ever read. A `group.presence`
+ * heartbeat is an observation with its own read (`groupPresence`), never a
+ * request. */
 export function isRequest(row: BusInboxReceipt): boolean {
   const body = row.envelope.body;
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return true;
   const record = body as Record<string, unknown>;
+  if (isGroupPresenceBody(record)) return false;
   if (record.kind === 'leader-reply' && typeof record.requestId === 'string') return false;
   return (record['inReplyTo'] === undefined || record['inReplyTo'] === null)
     && (record['in_reply_to'] === undefined || record['in_reply_to'] === null);
