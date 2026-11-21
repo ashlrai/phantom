@@ -169,6 +169,20 @@ export interface RouterOutcome {
    */
   queue_wait_s: number | null;
   /**
+   * Recorded CI wall seconds — the jobs-ledger `ci_start`/`ci_complete`
+   * event pair the reward feed's ciWallMs, job-latency's `ci` phase and
+   * visit-sync's check boundaries already read. The fold derives it once
+   * per job under the same rule those readers apply: exactly one start
+   * and one complete stamp across the retained rows (identical repeated
+   * stamps dedupe, a re-run's second pair makes the job ambiguous), both
+   * read across the `ts`/`timestamp`/`at`/`time` dialect, and the
+   * complete stamp must not precede the start. Anything else — a missing
+   * boundary, reversed stamps or repeated pairs — leaves the job absent
+   * here so its outcome keeps null: unknown stays unknown, never a
+   * partial guess and never another phase's duration.
+   */
+  ci_wall_s: number | null;
+  /**
    * Recorded productivity verdicts, newest explicit row wins like cost_usd
    * and wall_s. `empty` is the boolean a finish row records for its diff
    * check (true = the run produced no diff); `exit_code` is the worker's
@@ -718,6 +732,33 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     if (waitMs >= 0) queueWaitS.set(j, waitMs / 1000);
   }
 
+  // CI-boundary evidence, derived once per job from the same ci_start/
+  // ci_complete event pair the reward feed's ciWallMs and job-latency's
+  // ci phase read: exactly one of each boundary yields the recorded CI
+  // wall seconds, identical repeated stamps dedupe so a replayed append
+  // cannot fake ambiguity, and a missing, reversed or repeated boundary
+  // set leaves the job absent so its outcome keeps null.
+  const ciMarks = new Map<string, { starts: Set<number>; completes: Set<number> }>();
+  for (const r of rows) {
+    const j = jobId(r);
+    if (!j || j.startsWith(BATCH_SESSION_PREFIX)) continue;
+    const event = str(r, ...EVENT_NAME_KEYS);
+    if (event === null) continue;
+    const name = event.toLowerCase();
+    if (name !== 'ci_start' && name !== 'ci_complete') continue;
+    const at = Date.parse(str(r, ...LEDGER_TS_KEYS) ?? '');
+    if (!Number.isFinite(at)) continue;
+    const marks = ciMarks.get(j) ?? { starts: new Set<number>(), completes: new Set<number>() };
+    (name === 'ci_start' ? marks.starts : marks.completes).add(at);
+    ciMarks.set(j, marks);
+  }
+  const ciWallS = new Map<string, number>();
+  for (const [j, marks] of ciMarks) {
+    if (marks.starts.size !== 1 || marks.completes.size !== 1) continue;
+    const wallMs = [...marks.completes][0]! - [...marks.starts][0]!;
+    if (wallMs >= 0) ciWallS.set(j, wallMs / 1000);
+  }
+
   const outcomes = new Map<string, RouterOutcome>();
   const mergedAt = new Map<string, number>();
   let unattached = 0;
@@ -734,7 +775,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
       tokens_cache_read: null, tokens_cache_write: null,
       usage_source: null, usage_missing: null,
-      ttm_s: null, queue_wait_s: queueWaitS.get(j) ?? null,
+      ttm_s: null, queue_wait_s: queueWaitS.get(j) ?? null, ci_wall_s: ciWallS.get(j) ?? null,
       empty: null, diff_files: null, diff_lines: null,
       exit_code: null, failure_class: null, empty_class: null,
       task_outcome: null, lane_hint_blocked_by: null, passk: null,
