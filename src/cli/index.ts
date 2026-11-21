@@ -3388,6 +3388,13 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'owner': {
+        // Pair Mason's iMessage handle with one YES reply (src/cli/owner-pair.ts).
+        const { cmdOwnerPair } = await import('./owner-pair.js');
+        process.exitCode = await cmdOwnerPair(rest);
+        break;
+      }
+
       case 'owner-live': {
         // Why each phone channel is on or off, and the one step that changes it (src/cli/fleet-owner-live.ts).
         const { cmdOwnerLiveStatus, cmdOwnerLiveSwitch } = await import('./fleet-owner-live.js');
