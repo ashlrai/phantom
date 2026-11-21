@@ -30,7 +30,7 @@ import { readSelfTickLast } from '../core/fleet/self-tick-last.js';
 import { gapsHookLine, hooksFromPlannerReport, readSelfTickStatus, selfTickStatusLines } from '../core/fleet/self-tick-status.js';
 import { capSelfTickLog, selfTickLogPath } from '../core/fleet/self-tick-log-cap.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
-import { cmdFleetStrayStop } from './fleet-stray-stop.js';
+import { cmdFleetStrayStop, type StuckStepDeps } from './fleet-stray-stop.js';
 import type { StrayStopDeps } from '../core/fleet/stray-stop.js';
 import { defaultMeterDropReaders } from '../core/fleet/meter-drop-readers.js';
 import type { LaneTruthReaders } from '../core/fleet/lane-truth.js';
@@ -69,7 +69,7 @@ when any step failed, 2 on usage.`;
 interface Dependencies {
   now?: () => number;
   /** Recovery evidence and signal seams; the guarded stop path owns all signals. */
-  stray?: Partial<Pick<StrayStopDeps, 'readStraySlots' | 'kill'>>;
+  stray?: Partial<Pick<StrayStopDeps, 'readStraySlots' | 'kill'>> & { stuck?: Partial<StuckStepDeps> };
   meterReaders?: LaneTruthReaders;
   /** Isolated bus store for fixtures or explicit configured intent. Never derived
    * from the runs dir; unset, the ordinary default bus is used on the canonical
@@ -370,6 +370,8 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       return bind(cmdFleetStrayStop, {
         ...deps.stray,
         ledgerFile: join(root, 'stray-stops.jsonl'),
+        // Ghost markers and stuck jobs ride the same apply step; the note reads "lane: N ghosts closed, M stuck stopped".
+        stuck: { runsDir: root, now, ...deps.stray?.stuck },
         now: () => new Date(now()),
       })(argv);
     },
