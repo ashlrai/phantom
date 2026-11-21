@@ -58,7 +58,7 @@ describe('conversations from messages', () => {
     expect(c!.participants).toEqual([{ name: 'someone', label: 'unknown agent', known: false, node: null },
       { name: 'claude', label: 'claude', known: true, node: 'lane:claude' }]);
     expect(c!.waiting?.on).toBe('claude');
-    expect(formatAgentConversationsText({ schema: 'agents.conversations.v1', version: 1, generatedAt: '', source: 'available', conversations: [c!], waiting: 1, skipped: 0 }))
+    expect(formatAgentConversationsText({ schema: 'agents.conversations.v1', version: 1, generatedAt: '', source: 'available', conversations: [c!], matched: 1, waiting: 1, skipped: 0 }))
       .toContain('unknown agent (someone)');
   });
 
@@ -87,6 +87,26 @@ describe('conversations from messages', () => {
     expect(filterConversations(list, { blockedOnly: true, agent: 'grok' })).toEqual([]);
     // A thread cannot be both waiting and blocked: the intersection is empty.
     expect(filterConversations(list, { blockedOnly: true, waitingOnly: true })).toEqual([]);
+  });
+
+  it('state keeps threads in one state and composes conjunctively with the shortcuts', () => {
+    const list = buildConversations([
+      say('a', 'leader', 'claude', 0, { kind: 'ask', subject: 'build ok?' }),
+      say('b', 'claude', 'leader', 1, { kind: 'reply', replyTo: 'a' }),
+      say('c', 'grok', 'zai', 2, { kind: 'blocker', subject: 'need access' }),
+      say('d', 'zai', 'grok', 3, { kind: 'status', state: 'done', subject: 'shipped' }),
+      say('e', 'peer', 'zai', 4, { kind: 'status', subject: 'fyi' }),
+    ], NOW);
+    // 'a'+'b' is answered, 'c' blocked, 'd' done, 'e' done — one state each.
+    expect(filterConversations(list, { state: 'answered' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { state: 'blocked' }).map(c => c.id)).toEqual(['c']);
+    expect(filterConversations(list, { state: 'done' }).map(c => c.id).sort()).toEqual(['d', 'e']);
+    expect(filterConversations(list, { state: 'waiting' })).toEqual([]);
+    // The shortcuts stay conjunctive: --state answered + --waiting is empty,
+    // --state blocked agrees with --blocked.
+    expect(filterConversations(list, { state: 'answered', waitingOnly: true })).toEqual([]);
+    expect(filterConversations(list, { state: 'blocked', blockedOnly: true }).map(c => c.id)).toEqual(['c']);
+    expect(filterConversations(list, { state: 'answered', agent: 'claude' }).map(c => c.id)).toEqual(['a']);
   });
 
   it('an identity resolver matches every label of one agent, an unresolvable side stays strict', () => {
@@ -323,16 +343,36 @@ describe('--waiting-on', () => {
 describe('phm agents conversations --json', () => {
   it('has a stable shape and reads the bus', () => {
     const result = readAgentConversations({}, { root: bus(CHAT), now: () => NOW });
-    expect(Object.keys(result)).toEqual(['schema', 'version', 'generatedAt', 'source', 'conversations', 'waiting', 'skipped']);
-    expect(result).toMatchObject({ schema: 'agents.conversations.v1', version: 1, source: 'available', waiting: 1, skipped: 0 });
+    expect(Object.keys(result)).toEqual(['schema', 'version', 'generatedAt', 'source', 'conversations', 'matched', 'waiting', 'skipped']);
+    expect(result).toMatchObject({ schema: 'agents.conversations.v1', version: 1, source: 'available', matched: 2, waiting: 1, skipped: 0 });
     expect(Object.keys(result.conversations![0]!)).toEqual(['id', 'participants', 'subject', 'messageCount', 'lastAt', 'state', 'stateText', 'waiting', 'jobs', 'links', 'messages']);
     expect(result.conversations!.map(c => [c.id, c.state])).toEqual([['m3', 'waiting'], ['m1', 'answered']]);
     expect(Object.keys(result.conversations![0]!.messages[0]!)).toEqual(['id', 'at', 'from', 'to', 'kind', 'subject']);
   });
 
+  it('matched reports the filtered total while limit caps the page', () => {
+    const root = bus(CHAT);
+    const all = readAgentConversations({}, { root, now: () => NOW });
+    expect(all.matched).toBe(2);
+    expect(all.conversations).toHaveLength(2);
+    const capped = readAgentConversations({ limit: 1 }, { root, now: () => NOW });
+    // Longest-waiting first is the kept order: the waiting thread shows.
+    expect(capped.conversations!.map(c => c.id)).toEqual(['m3']);
+    expect(capped.matched).toBe(2);
+    // The filter and the cap compose: --state narrows, then limit cuts.
+    const answered = readAgentConversations({ state: 'answered', limit: 5 }, { root, now: () => NOW });
+    expect(answered.matched).toBe(1);
+    expect(answered.conversations!.map(c => c.id)).toEqual(['m1']);
+    // An empty filtered page still reports matched 0, never null.
+    expect(readAgentConversations({ state: 'blocked' }, { root, now: () => NOW })).toMatchObject({ matched: 0, conversations: [] });
+    const text = formatAgentConversationsText(capped);
+    expect(text).toContain('1 of 2 conversations');
+    expect(formatAgentConversationsText(all)).toContain('2 conversations');
+  });
+
   it('an empty bus is source missing with no conversations', () => {
     expect(readAgentConversations({}, { root: bus(), now: () => NOW })).toEqual({ schema: 'agents.conversations.v1', version: 1,
-      generatedAt: '2026-11-18T12:30:00.000Z', source: 'missing', conversations: [], waiting: 0, skipped: 0 });
+      generatedAt: '2026-11-18T12:30:00.000Z', source: 'missing', conversations: [], matched: 0, waiting: 0, skipped: 0 });
   });
 
   it('matches --agent through the identity registry and stays strict without one', () => {
@@ -460,6 +500,31 @@ describe('phm agents conversations --json', () => {
     expect(text).not.toContain('need access');
   });
 
+  it('the CLI --state and --limit filter and cap, matched stays the total', async () => {
+    const root = bus(CHAT), lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    expect(await run(['--state', 'answered', '--json'])).toBe(0);
+    const answered = JSON.parse(lines.pop()!);
+    expect(answered.conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    expect(answered.matched).toBe(1);
+    expect(await run(['--state', 'done', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations).toEqual([]);
+    expect(await run(['--limit', '1', '--json'])).toBe(0);
+    const capped = JSON.parse(lines.pop()!);
+    expect(capped.conversations.map((c: { id: string }) => c.id)).toEqual(['m3']);
+    expect(capped.matched).toBe(2);
+    // Text mode names the truncated page honestly.
+    expect(await run(['--limit', '1'])).toBe(0);
+    expect(lines.pop()).toContain('1 of 2 conversations');
+    // Bad values are usage errors, never a silent default.
+    expect(await run(['--state', 'open'])).toBe(2);
+    expect(await run(['--state'])).toBe(2);
+    expect(await run(['--limit', '0'])).toBe(2);
+    expect(await run(['--limit', '2000'])).toBe(2);
+    expect(await run(['--limit'])).toBe(2);
+    expect(errors.length).toBeGreaterThanOrEqual(4);
+  });
+
   it('the API serves the same read behind a read session and checks its query', async () => {
     const root = bus(CHAT);
     const serve = (module: ReturnType<typeof createFleetLiveMapApi>) =>
@@ -480,6 +545,20 @@ describe('phm agents conversations --json', () => {
     const owed = await call(`${AGENT_CONVERSATIONS_PATH}?waitingOn=zai`);
     expect(owed.status).toBe(200);
     expect(owed.body.conversations.map((c: { id: string }) => c.id)).toEqual(['m3']);
+    // state and limit narrow and cap the same read, matched stays the total.
+    const answered = await call(`${AGENT_CONVERSATIONS_PATH}?state=answered`);
+    expect(answered.status).toBe(200);
+    expect(answered.body.conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    expect(answered.body.matched).toBe(1);
+    const capped = await call(`${AGENT_CONVERSATIONS_PATH}?limit=1`);
+    expect(capped.status).toBe(200);
+    expect(capped.body.conversations.map((c: { id: string }) => c.id)).toEqual(['m3']);
+    expect(capped.body.matched).toBe(2);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?state=open`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?state=`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?limit=0`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?limit=2000`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?limit=a`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?waitingOn=`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?waitingOn=a&waitingOn=b`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?job=`)).status).toBe(400);

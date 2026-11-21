@@ -566,7 +566,7 @@ compute scene draws its message lines at the same thickness.
 
 #### Agent conversations
 
-`phm agents conversations [--agent <name>] [--waiting] [--blocked] [--job <id>] [--waiting-on <name>] [--json]`
+`phm agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--limit <1..1024>] [--json]`
 groups the same bus read into threads by reply chain and by the declared
 conversation label a body carries, longest-waiting first and then newest
 first. `--agent` matches a participant's routing label and, through
@@ -580,14 +580,23 @@ list, and it composes with `--agent` and `--waiting`. `--blocked` keeps only
 the threads a blocker or failed report left unanswered — the same
 `state:'blocked'` the unified inbox and `work mine` report — and composes
 with every other filter (a thread cannot be both waiting and blocked, so
-`--waiting --blocked` is an honest empty list). `--waiting-on <name>`
+`--waiting --blocked` is an honest empty list). `--state <state>` keeps only
+the threads in one state — `waiting`, `answered`, `blocked` or `done` — the
+general form of `--waiting`/`--blocked`, which stay conjunctive with it (a
+thread cannot be two states, so contradictory filters are an honest empty
+list); `answered` and `done` are the states no flag reached before.
+`--waiting-on <name>`
 keeps the waiting threads that one agent owes a reply on — the same
 `work mine threads` rule over the shared conversations read: `waiting.on`
 names the agent under any of its identity labels or a
 `group:<channel>:<topic>` address of a registry channel it belongs to, and a
 thread whose waiting message the agent itself sent never counts (you cannot
 owe yourself a reply); an unresolvable ref or unreadable registry keeps the
-literal `waiting.on` label match, never a widened one. Messages about one
+literal `waiting.on` label match, never a widened one. `--limit <1..1024>`
+caps the threads returned, longest-waiting order kept, while `matched` still
+reports the full filtered count — the same matched-before-limit convention
+`phm agents messages` uses; absent, every matched thread returns. Messages
+about one
 v2 job — a `work.post`, its `work.status`,
 `work.result`, `work.claim` and `work.release` bodies sharing a `jobId`, or a
 claim-key-only body the post lists — form one `job:<id>` thread even without
@@ -600,7 +609,7 @@ conversation; only the synthesized per-pair fallback stays reply-chain
 rooted. `group.presence` heartbeats are expiring observations with their own
 read (`phm comms bus group presence`), never messages: they form no thread
 and cannot answer a waiting one. `--json` prints `agents.conversations.v1` (`version` 1), and
-`GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&blocked=1&job=RQ-1&waitingOn=claude]`
+`GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&limit=50]`
 serves the same read with a current read session.
 
 - `conversations[]`: `id`, `participants[]` (`name`, `label`, `known`, `node`;
@@ -610,6 +619,9 @@ serves the same read with a current read session.
   waiting for a reply), `jobs[]` (every job id a member message names — body
   citations, reported job links and the `job:<id>` bucket; sorted, empty when
   the thread names none), `links[]` (the pairs that talked) and `messages[]`.
+- `matched`: every thread the filters kept before `--limit`/`limit` cut the
+  page; `null` when the bus could not be read, the same unknown-stays-unknown
+  rule `conversations` follows.
 - A reply to a message that is not on the bus starts its own thread. `null`
   conversations mean the bus could not be read, not that nothing was said.
 - The Map pane draws a thicker line over each pair that talked in the last 10

@@ -65,12 +65,29 @@ export interface AgentConversations {
   version: 1;
   generatedAt: string;
   source: 'available' | 'missing' | 'unavailable';
-  /** Longest-waiting thread first, then newest first. Null when the bus could not be read (unknown, not zero). */
+  /** Threads passing every filter, capped at the query's `limit` — the
+   * same matched-before-limit convention `agent-messages.v1` reports;
+   * null when the bus could not be read (unknown, not zero). */
   conversations: Conversation[] | null;
+  /** Every thread the filters kept before `limit` cut the page; null when
+   * `conversations` is null, the same unknown-stays-unknown rule. */
+  matched: number | null;
   waiting: number | null;
   skipped: number;
 }
-export interface ConversationQuery { agent?: string; waitingOnly?: boolean; blockedOnly?: boolean; job?: string; waitingOn?: string }
+export interface ConversationQuery {
+  agent?: string; waitingOnly?: boolean; blockedOnly?: boolean; job?: string; waitingOn?: string;
+  /** Keep only threads in this one state — the general form of the
+   * `waitingOnly`/`blockedOnly` shortcuts, which stay conjunctive with it
+   * (a thread cannot be two states, so contradictory filters are an honest
+   * empty list). `answered` and `done` are the states no flag reached
+   * before. */
+  state?: ConversationState;
+  /** Cap the returned threads, newest order kept (longest-waiting first,
+   * then newest); absent means every matched thread. `matched` still
+   * reports the full filtered count. */
+  limit?: number;
+}
 
 /** Whether a routing label is a known agent (the leader, a lane, a job, a lane's numbered agent; a topic is not) and its map node. */
 export type PlaceAgent = (name: string, lane: string | null) => { known: boolean; node: string | null };
@@ -126,7 +143,8 @@ export function groupConversations(messages: readonly ConversationMessage[], now
 }
 
 /**
- * One agent (by name), waiting threads only, blocked threads only and/or one job:
+ * One agent (by name), waiting threads only, blocked threads only, one state
+ * (`state`), and/or one job:
  * `job` keeps the threads the projection ties to that id — the `job:<id>` bucket itself or a
  * member message naming it — whole threads, never partial message lists. With
  * `identityOf`, a participant also matches when its label and the query
@@ -152,6 +170,7 @@ export function filterConversations(list: readonly Conversation[], query: Conver
       || (key !== undefined && identityOf?.(p.name) === key)))
     && (!query.waitingOnly || c.state === 'waiting')
     && (!query.blockedOnly || c.state === 'blocked')
+    && (query.state === undefined || c.state === query.state)
     && (query.waitingOn === undefined || (c.waiting !== null && (
       waitingOnMatch !== undefined
         ? waitingOnMatch(c.waiting.on, c.messages[c.messages.length - 1]?.from ?? '')

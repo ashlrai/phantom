@@ -125,10 +125,12 @@ export function buildAgentConversations(scan: { source: AgentConversations['sour
   waitingOnMatch?: (on: string, from: string) => boolean): AgentConversations {
   const head = { schema: 'agents.conversations.v1' as const, version: 1 as const, generatedAt: new Date(now).toISOString(), source: scan.source };
   const skipped = scan.skipped ?? 0;
-  if (scan.source === 'unavailable') return { ...head, conversations: null, waiting: null, skipped };
+  if (scan.source === 'unavailable') return { ...head, conversations: null, matched: null, waiting: null, skipped };
   const rows = scan.rows.filter(row => agentToAgent(row.envelope) && row.receivedAt <= now);
   const all = buildConversations(conversationMessages(rows), now);
-  return { ...head, conversations: filterConversations(all, query, identityOf, waitingOnMatch), waiting: all.filter(c => c.state === 'waiting').length, skipped };
+  const matched = filterConversations(all, query, identityOf, waitingOnMatch);
+  return { ...head, conversations: query.limit === undefined ? matched : matched.slice(0, query.limit),
+    matched: matched.length, waiting: all.filter(c => c.state === 'waiting').length, skipped };
 }
 
 /** The one read behind the CLI, the API and the map. */
@@ -147,7 +149,11 @@ export function formatAgentConversationsText(result: AgentConversations): string
     const state = c.waiting ? `${c.stateText} from ${c.waiting.on} for ${plainAge(c.waiting.ms)}` : c.stateText;
     return `  ${state} · ${names} · "${c.subject}" · ${c.messageCount} message${c.messageCount === 1 ? '' : 's'}`;
   };
-  return [`${result.conversations.length} conversation${result.conversations.length === 1 ? '' : 's'}, ${result.waiting} waiting for a reply.`,
+  const shown = result.conversations.length, total = result.matched ?? shown;
+  const head = total > shown
+    ? `${shown} of ${total} conversations, ${result.waiting} waiting for a reply.`
+    : `${shown} conversation${shown === 1 ? '' : 's'}, ${result.waiting} waiting for a reply.`;
+  return [head,
     ...result.conversations.map(line),
     ...(result.skipped > 0 ? [`Skipped ${result.skipped} damaged bus record${result.skipped === 1 ? '' : 's'}.`] : [])].join('\n');
 }
