@@ -461,6 +461,12 @@ explicit row wins: `empty` (the recorded no-diff boolean), `exit_code`
 `failure_class` (only bounded identifier-shaped labels; anything else is
 skipped). All stay `null` when no jobs row recorded them — the fold
 never infers a finish verdict from merge state, PR URLs or event names.
+`merged` reads the jobs-ledger outcome dialect the sibling fleet readers
+share: a terminal phase across
+`phase`/`state`/`outcome`/`status`/`result`/`conclusion`, or a `merged` /
+`closed` event name when no phase field resolves (a resolved phase stays
+authoritative; `mergedAt`/`closedAt` stay the preferred terminal stamps),
+with the `merged` boolean as before; every other spelling stays `null`.
 The fold is read-only and advisory: it
 never routes, ranks, tunes or writes.
 

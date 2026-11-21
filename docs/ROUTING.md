@@ -341,7 +341,13 @@ ledger reports `state: "missing"` rather than failing, while an unreadable or
 non-file ledger exits 1. The ledger is append-only and unbounded, so when it
 exceeds the bound the read keeps the newest bytes, drops the cut first line,
 and reports `truncated: true` — every count covers the retained window only,
-a lower bound on the full history. Unknown fields stay `null` in JSON and
+a lower bound on the full history. Merge state reads the jobs-ledger
+outcome dialect the sibling fleet readers share: a terminal phase across
+`phase`/`state`/`outcome`/`status`/`result`/`conclusion`, or a `merged` /
+`closed` event name when no phase field resolves — a resolved phase stays
+authoritative over the event name, `mergedAt`/`closedAt` stay the preferred
+stamps on terminal rows, and every other spelling resolves nothing. Unknown
+fields stay `null` in JSON and
 `unknown` in text — the fold never infers a merge from a PR URL or VERIFIED
 marker, and a PR URL claimed by two jobs attaches to neither. This is the
 per-job evidence surface outcome-driven router analysis reads; it does not
