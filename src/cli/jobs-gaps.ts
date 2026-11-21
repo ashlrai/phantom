@@ -11,8 +11,8 @@ import { readLiveLaneFacts } from '../core/fleet/live-lane-facts.js';
 const usage = 'Usage: phm jobs gaps [--since 24h] [--propose] [--max N] [--why] [--json]';
 const help = `${usage}
 Turn the gaps that finished jobs list into new work. Two sources: no-change jobs (notes or final message) and jobs that opened a PR (a "Remaining gaps", "Not done" or "Follow-ups" list in the notes or the last 80 log lines). Gap headings, and sentences like "not done" or "left it"). Each gap is one candidate (title, repo, source job, why).
-Gaps already in an open idea, the queue or a recent merge are dropped. --propose queues the rest as drop jobs (at most --max N per run, default 3 or ASHLR_GAPS_MAX; a gap that names a gh command goes to codex-personal), the same queue as "phm ideas queue", for repos that have a drop queue; the others are listed as skipped. The fleet self-tick runs this once per tick.
---why writes nothing: it prints the numbers the queue-full check uses (ready rows in queue/ready.tsv, rows parked on held or spent lanes, the limit of 40, and whether lane readings were available) so you can see why gaps did or did not queue. Prompt files are never counted.
+Caveats, uncertain statements and gaps without a named file, command, function or test are skipped. Add/missing gaps whose named targets exist on master are likely done. At most 3 new gap jobs per rolling hour. Gaps already in an open idea, the queue or a recent merge are dropped. --propose queues the rest as drop jobs (at most --max N per run, default 3 or ASHLR_GAPS_MAX; a gap that names a gh command goes to codex-personal), the same queue as "phm ideas queue", for repos that have a drop queue; the others are listed as skipped. The fleet self-tick runs this once per tick.
+--why writes nothing: it lists kept and skipped gaps with reasons, then prints the numbers the queue-full check uses (ready rows in queue/ready.tsv, rows parked on held or spent lanes, the limit of 40, and whether lane readings were available) so you can see why gaps did or did not queue. Prompt files are never counted.
 Prints plain words; --json prints jobs.gaps.v1 (paceNotes lists pace decisions). A pool ahead of pace (empty more than 24 h before its reset, see phm fleet pace) gets no new rows; they go to a pool with room, or are held with the reason. Anything unreadable is unknown. Exit 0 report, 1 job metrics unreadable, 2 bad usage.`;
 
 /** What `--why` prints: the count inputs of the queue-full check, plus the lane rows that are parked. */
@@ -39,9 +39,10 @@ export async function cmdJobsGaps(args: string[], read: (hours: number, propose:
   try { ({ values } = parseArgs({ args, options: { since: { type: 'string' }, propose: { type: 'boolean' }, max: { type: 'string' }, why: { type: 'boolean' }, json: { type: 'boolean' } }, allowPositionals: false })); }
   catch { console.error(usage); return 2; }
   if (values.why) {
-    const w = await why();
+    const gaps = await read(24, false);
+    const w = { ...await why(), gaps };
     if (values.json) console.log(JSON.stringify(w));
-    else console.log([`Ready rows in queue/ready.tsv: ${w.readyRows ?? 'unknown'}; parked (cannot launch now): ${w.parkedRows}${w.parkedNote && w.parkedNote !== 'lane readings unavailable' ? ` (${w.parkedNote})` : ''}; launchable: ${w.launchableRows ?? 'unknown'}; limit ${w.limit}.`, `Lane readings: ${w.lanesSource}.`, `So: ${w.verdict}.`].join('\n'));
+    else console.log([...jobGapsLines(gaps), `Ready rows in queue/ready.tsv: ${w.readyRows ?? 'unknown'}; parked (cannot launch now): ${w.parkedRows}${w.parkedNote && w.parkedNote !== 'lane readings unavailable' ? ` (${w.parkedNote})` : ''}; launchable: ${w.launchableRows ?? 'unknown'}; limit ${w.limit}.`, `Lane readings: ${w.lanesSource}.`, `So: ${w.verdict}.`].join('\n'));
     return 0;
   }
   let hours = 24;

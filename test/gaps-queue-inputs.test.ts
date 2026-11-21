@@ -20,7 +20,7 @@ async function seedGaps(n: number): Promise<void> {
   await writeFile(join(root, 'metrics', 'jobs.jsonl'), `${jobs.map(job => JSON.stringify({ event: 'outcome', job, lane: 'claude', empty: true, repo: 'phantom', ts: new Date(NOW - 7_200_000).toISOString() })).join('\n')}\n`);
   for (const [i, job] of jobs.entries()) {
     await mkdir(join(wt, job), { recursive: true });
-    await writeFile(join(wt, job, 'BRIDGE_NOTES.md'), `## Remaining gaps\n- ${['Teach the walrus to count lanterns', 'Polish cobalt kettle handles', 'Wire velvet compass readings', 'Sort meadow beacons alphabetically', 'Rename quartz harbor docks'][i]}\n`);
+    await writeFile(join(wt, job, 'BRIDGE_NOTES.md'), `## Remaining gaps\n- ${['Teach the walrus to count lanterns', 'Polish cobalt kettle handles', 'Wire velvet compass readings', 'Sort meadow beacons alphabetically', 'Rename quartz harbor docks'][i]} in test/row${i}.test.ts\n`);
   }
 }
 async function readyRows(n: number, pool: string): Promise<void> {
@@ -73,7 +73,7 @@ describe('phm jobs gaps --why', () => {
     expect(why.parkedNote).toMatch(/9 rows parked on codex-personal \(pool spent until/);
     const out: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((l: string) => { out.push(l); });
-    expect(await cmdJobsGaps(['--why', '--json'], undefined, async () => why)).toBe(0);
+    expect(await cmdJobsGaps(['--why', '--json'], async () => readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, ...none }), async () => why)).toBe(0);
     expect(JSON.parse(out[0]!)).toMatchObject({ readyRows: 9, lanesSource: 'lane readings' });
     out.length = 0;
     const unread = await readGapsWhy(async () => { throw new Error('down'); }, NOW);
