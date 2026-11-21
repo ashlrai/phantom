@@ -7,7 +7,7 @@ import {
   registerAgentIdentity, resolveAgent, stableAgentId,
 } from '../src/core/agents/bus-identity.js';
 import {
-  agentWakeClaimHolderSuffix, announceWork, busBodySummary, listBusChannels, postChannelMessage, postLabelMessage,
+  agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodySummary, listBusChannels, postChannelMessage, postLabelMessage,
   readAgentChannel, readAgentInbox, readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff,
   sendWakeRequest, shouldWake, updateWorkStatus, type AgentWakeRow, type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
@@ -1513,6 +1513,107 @@ describe('terminal work.status wakes live claim holders', () => {
     expect(agentWakeClaimHolderSuffix({ ...row,
       claimHolder: { statusId: 'w-h-1', jobId: 'RQ-H-1', status: 'done' } }))
       .toBe(' claim-holder job=RQ-H-1 status=done receipt=w-h-1');
+  });
+});
+
+describe('wake hint message resolution', () => {
+  it('resolves an ordinary hint to the live message it refers to', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    // A wake request posts a wake body and records a hint under the same id.
+    expect(await sendWakeRequest({ from: 'atlas', to: 'nova', reason: 'check the feed',
+      jobId: 'RQ-W-9', id: 'wk-feed' }, options)).toMatchObject({ status: 'posted' });
+    const page = readAgentWakes('nova', undefined, options);
+    expect(page).toMatchObject({ status: 'ok' });
+    if (page.status !== 'ok') throw new Error('unreachable');
+    expect(page.wakes).toHaveLength(1);
+    expect(page.wakes[0]).toMatchObject({
+      id: 'wk-feed', from: 'agent:atlas', to: 'agent:nova',
+      message: { status: 'resolved', id: 'wk-feed', from: 'agent:atlas', to: 'agent:nova',
+        channel: 'bus', fromAgent: 'atlas', priority: 'P2',
+        // The wake body cites jobId RQ-W-9; no announcement is live, so the
+        // feed-ok annotation honestly reports job:null rather than a guess.
+        job: { jobId: 'RQ-W-9', feed: 'ok', job: null } },
+    });
+    const message = page.wakes[0]!.message;
+    if (message?.status !== 'resolved') throw new Error('unreachable');
+    expect(message.summary).toContain('check the feed');
+    expect(message).not.toHaveProperty('held');
+    // The same envelope id still resolves through agents bus show.
+    expect(readBusEnvelopeById('wk-feed', options)).toMatchObject({ status: 'ok', id: 'wk-feed' });
+  });
+
+  it('carries hold evidence when the referred message is claimable work', async () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    const envelope: BusEnvelope = { id: 'wk-work', from: 'agent:atlas', to: 'agent:nova',
+      priority: 'P1', ttl: 120_000, body: { kind: 'work', text: 'fake work wk-work' } };
+    expect(appendBusInbox(envelope, { root: options.root, now: options.now }).status).toBe('posted');
+    // The message-id claim journal holds the exact receipt, like bus next claims.
+    expect(mutateBusWorkClaim({ action: 'acquire', id: 'wk-work', owner: 'nova', leaseMs: 60_000,
+      root: options.root }).status).toBe('acquired');
+    enqueueBusWake({ kind: 'bus.send', id: 'wk-work', from: 'agent:atlas', to: 'agent:nova' },
+      { root: options.runsRoot });
+    const page = readAgentWakes('nova', undefined, options);
+    if (page.status !== 'ok') throw new Error('unreachable');
+    expect(page.wakes).toHaveLength(1);
+    expect(page.wakes[0]).toMatchObject({
+      id: 'wk-work',
+      message: { status: 'resolved', id: 'wk-work', priority: 'P1', held: true, holder: 'nova' },
+    });
+    const message = page.wakes[0]!.message;
+    if (message?.status !== 'resolved') throw new Error('unreachable');
+    expect(message.summary).toBe('work: fake work wk-work');
+  });
+
+  it('reports unresolved for a hint whose envelope is gone and unknown when the store is unreadable', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    // Hand-enqueued hints name ids no live envelope carries.
+    enqueueBusWake({ kind: 'bus.send', id: 'wk-ghost', from: 'agent:atlas', to: 'agent:nova' },
+      { root: options.runsRoot });
+    const page = readAgentWakes('nova', undefined, options);
+    if (page.status !== 'ok') throw new Error('unreachable');
+    expect(page.wakes[0]).toMatchObject({ id: 'wk-ghost', message: { status: 'unresolved' } });
+    // An unreadable bus store makes the referent unknown, never absent-by-guess.
+    mkdirSync(join(options.root!, 'bus-inbox'), { recursive: true });
+    writeFileSync(join(options.root!, 'bus-inbox', 'messages.json'), 'not json', { mode: 0o600 });
+    const degraded = readAgentWakes('nova', undefined, options);
+    if (degraded.status !== 'ok') throw new Error('unreachable');
+    expect(degraded.wakes[0]).toMatchObject({ id: 'wk-ghost', message: { status: 'unknown' } });
+  });
+
+  it('keeps claim-holder hints on claimHolder and annotates every ordinary hint', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-HO-1', title: 'ho', repo: 'ashlrai/phantom',
+      claimKeys: ['queue:RQ-HO-1'] }, options)).toMatchObject({ status: 'posted' });
+    expect(acquireCoordination({ root: options.root, origin: 'resource', key: 'queue:RQ-HO-1',
+      owner: 'agent:nova', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000, sourceId: 'ho-src',
+      now: options.clock.now, started: new Date(options.clock.now).toISOString() }).status).toBe('acquired');
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-HO-1', status: 'done', id: 'w-ho' }, options))
+      .toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    // The terminal status's own P2 wake also lands on the poster's labels only;
+    // nova's page holds just the claim-holder hint, which carries no message.
+    const page = readAgentWakes('nova', undefined, options);
+    if (page.status !== 'ok') throw new Error('unreachable');
+    expect(page.wakes).toHaveLength(1);
+    expect(page.wakes[0]!.id).toMatch(/^wh-[a-f0-9]{32}$/);
+    expect(page.wakes[0]).toMatchObject({ claimHolder: { statusId: 'w-ho', jobId: 'RQ-HO-1', status: 'done' } });
+    expect(page.wakes[0]).not.toHaveProperty('message');
+  });
+
+  it('spells the message suffix for human lines on every wake shape', () => {
+    const row: AgentWakeRow = { kind: 'bus.send', id: 'wk-1', from: 'agent:a', to: 'agent:b', at: 0 };
+    expect(agentWakeMessageSuffix(row)).toBe('');
+    expect(agentWakeMessageSuffix({ ...row, message: { status: 'unresolved' } })).toBe(' referent=unresolved');
+    expect(agentWakeMessageSuffix({ ...row, message: { status: 'unknown' } })).toBe(' referent=unknown');
+    expect(agentWakeMessageSuffix({ ...row, message: { status: 'resolved', id: 'wk-1', ts: 't',
+      priority: 'P2', from: 'agent:a', to: 'agent:b', channel: 'bus', fromAgent: 'a',
+      summary: 'do the thing', held: true, holder: 'agent:b',
+      job: { jobId: 'RQ-J-1', feed: 'ok', job: null } } }))
+      .toBe(' msg="do the thing" held=yes holder=agent:b job=RQ-J-1:absent');
   });
 });
 

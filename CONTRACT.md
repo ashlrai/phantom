@@ -2282,7 +2282,12 @@ never a proven total; claim-holder `wh-…` hints additionally carry
 `claimHolder` — the live terminal `work.status` receipt re-derived as the
 hint's citation as `{statusId, jobId, status, detail?}`, `'unresolved'`
 when no live receipt reproduces it, `'unknown'` when the bus store cannot
-be read), `listBusChannels(agent, options?)`
+be read; every other `bus.send` hint additionally carries `message` — the
+live envelope its id refers to, `resolved` with the receipt's summary,
+priority, sender handle, channel and the same `held`/`job` evidence an
+inbox row reports for claimable work or a `jobId` citation, `'unresolved'`
+when the store was read and holds no live envelope with that id, `'unknown'`
+when the store cannot be read), `listBusChannels(agent, options?)`
 (the registry channels name-sorted with `createdBy`, `createdAt` and member
 handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or

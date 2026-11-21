@@ -19,7 +19,7 @@ import { readOwnerChatReceipts, ownerChatRoot, ownerChatReceiptState, type Owner
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { appendBusInbox, listBusInboxAfter, scanBusInbox, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
-  type BusInboxOptions, type BusInboxPost } from '../fleet/bus-inbox.js';
+  type BusInboxOptions, type BusInboxPost, type BusInboxReceipt, type BusInboxScan } from '../fleet/bus-inbox.js';
 import { BUS_PRIORITIES, isClaimableWork, type BusEnvelope, type BusPriority } from '../fleet/bus-envelope.js';
 import { groupAddress, isGroupPresenceBody } from '../fleet/bus-group.js';
 import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
@@ -1175,8 +1175,31 @@ export type AgentWakeClaimHolder =
   | 'unresolved'
   | 'unknown';
 
-/** A wake-queue row plus, on claim-holder hints only, the status receipt the hint cites. */
-export type AgentWakeRow = BusWakeRow & { claimHolder?: AgentWakeClaimHolder };
+/**
+ * The live message a `bus.send` wake hint refers to. Every wake the bus
+ * records carries the triggering envelope's wire id as its own `id`, so one
+ * bounded store scan resolves the whole page: `resolved` reports the same
+ * evidence an inbox row or `bus show` carries — summary, priority, sender
+ * handle, and for claimable work or a `jobId` citation the `held`/`job`
+ * annotations — while `unresolved` means the store was read and holds no
+ * live envelope with that id (expired, reclaimed or never posted) and
+ * `unknown` means the store could not be read, so the referent is unknown,
+ * never absent-by-guess.
+ */
+export type AgentWakeMessage =
+  | { status: 'resolved'; id: string; ts: string; priority: BusPriority;
+      from: string; to: string; channel: string | null; fromAgent: string | null;
+      summary: string;
+      /** Live feed state of a `jobId` the message cites; absent when it cites none. */
+      job?: BusEnvelopeLookupJob;
+      /** Hold evidence for claimable work or worker handoffs; absent otherwise. */
+      held?: boolean | null; holder?: string | null }
+  | { status: 'unresolved' }
+  | { status: 'unknown' };
+
+/** A wake-queue row plus, on claim-holder hints only, the status receipt the hint cites,
+ * and on ordinary `bus.send` hints, the live message the hint's id refers to. */
+export type AgentWakeRow = BusWakeRow & { claimHolder?: AgentWakeClaimHolder; message?: AgentWakeMessage };
 
 /**
  * Re-derive which terminal `work.status` receipt generated each `wh-…` hint
@@ -1187,18 +1210,19 @@ export type AgentWakeRow = BusWakeRow & { claimHolder?: AgentWakeClaimHolder };
  * store marks them `'unknown'`; a readable one with no reproducing receipt
  * marks them `'unresolved'`.
  */
-function claimHolderWakeContexts(rows: readonly BusWakeRow[], options: UnifiedBusOptions): Map<string, AgentWakeClaimHolder> {
+function claimHolderWakeContexts(rows: readonly BusWakeRow[], options: UnifiedBusOptions,
+  scan?: BusInboxScan): Map<string, AgentWakeClaimHolder> {
   const hints = new Map<string, BusWakeRow>();
   for (const row of rows) if (CLAIM_HOLDER_WAKE_ID.test(row.id)) hints.set(row.id, row);
   const contexts = new Map<string, AgentWakeClaimHolder>();
   if (hints.size === 0) return contexts;
-  const scan = scanBusInbox({ root: options.root, now: options.now });
-  if (scan.source === 'unavailable') {
+  const inbox = scan ?? scanBusInbox({ root: options.root, now: options.now });
+  if (inbox.source === 'unavailable') {
     for (const id of hints.keys()) contexts.set(id, 'unknown');
     return contexts;
   }
   const owners = [...new Set([...hints.values()].map(row => row.to))];
-  for (const receipt of scan.rows) {
+  for (const receipt of inbox.rows) {
     if (contexts.size === hints.size) break;
     const body: unknown = receipt.envelope.body;
     if (body === null || typeof body !== 'object' || (body as { kind?: unknown }).kind !== 'work.status') continue;
@@ -1222,6 +1246,78 @@ export function agentWakeClaimHolderSuffix(wake: AgentWakeRow): string {
   if (holder === 'unknown') return ' claim-holder=unknown';
   if (holder === 'unresolved') return ' claim-holder=unresolved';
   return ` claim-holder job=${holder.jobId} status=${holder.status} receipt=${holder.statusId}`;
+}
+
+/**
+ * Resolve what each ordinary `bus.send` hint in the page refers to. The hint
+ * id is the triggering envelope's wire id, so the same bounded scan the
+ * claim-holder re-derivation uses indexes live receipts by id once; claimable
+ * work and `jobId` citations then get the page-level `held`/`job` evidence
+ * `readAgentInbox` computes — one hold-store read and one claims-joined feed
+ * read per page, never per hint. `wh-…` ids are claim-holder hints, not
+ * envelope ids, and pass through untouched.
+ */
+function wakeMessageContexts(rows: readonly BusWakeRow[], scan: BusInboxScan | undefined,
+  registry: AgentRegistry, options: UnifiedBusOptions): Map<string, AgentWakeMessage> {
+  const contexts = new Map<string, AgentWakeMessage>();
+  const ordinary = rows.filter(row => row.kind === 'bus.send' && !CLAIM_HOLDER_WAKE_ID.test(row.id));
+  if (ordinary.length === 0) return contexts;
+  if (scan === undefined || scan.source === 'unavailable') {
+    for (const row of ordinary) contexts.set(row.id, { status: 'unknown' });
+    return contexts;
+  }
+  const byId = new Map<string, BusInboxReceipt>();
+  for (const receipt of scan.rows) byId.set(receipt.envelope.id, receipt);
+  const resolved: { row: BusWakeRow; receipt: BusInboxReceipt }[] = [];
+  for (const row of ordinary) {
+    const receipt = byId.get(row.id);
+    if (receipt === undefined) contexts.set(row.id, { status: 'unresolved' });
+    else resolved.push({ row, receipt });
+  }
+  const jobIds = new Map<BusInboxReceipt, string>();
+  for (const { receipt } of resolved) {
+    const jobId = workFeedJobId(receipt.envelope.body);
+    if (jobId !== undefined) jobIds.set(receipt, jobId);
+  }
+  let feed: BusWorkFeedReadResult | undefined;
+  if (jobIds.size > 0) {
+    try { feed = readBusWorkFeed({ root: options.root, now: options.now, claims: true }); }
+    catch { feed = undefined; }
+  }
+  const holdable = new Set(resolved.filter(({ receipt }) =>
+    isClaimableWork(receipt.envelope.body) || isWorkerHandoffBody(receipt.envelope.body))
+    .map(({ receipt }) => receipt));
+  const stores = holdable.size > 0 ? readHoldStores(options) : undefined;
+  for (const { row, receipt } of resolved) {
+    const envelope = receipt.envelope;
+    const body = envelope.body;
+    const jobId = jobIds.get(receipt);
+    const hold = stores !== undefined && holdable.has(receipt)
+      ? holdForReceipt({ id: envelope.id, cursor: receipt.cursor, receivedAt: receipt.receivedAt, envelope }, stores)
+      : undefined;
+    contexts.set(row.id, { status: 'resolved', id: envelope.id,
+      ts: new Date(receipt.receivedAt).toISOString(), priority: envelope.priority,
+      from: envelope.from, to: envelope.to, channel: envelope.channel ?? null,
+      fromAgent: resolveAgent(registry, envelope.from)?.handle ?? null,
+      summary: busBodySummary(body) ?? busBodyFallbackSummary(body),
+      ...(jobId === undefined ? {} : { job: feed === undefined
+        ? { jobId, feed: 'unavailable' } : jobAnnotationFromFeed(feed, jobId) }),
+      ...(hold === undefined ? {} : { held: hold.held, holder: hold.holder }) });
+  }
+  return contexts;
+}
+
+/** Human suffix naming the message an ordinary wake hint refers to; '' on claim-holder hints. */
+export function agentWakeMessageSuffix(wake: AgentWakeRow): string {
+  const message = wake.message;
+  if (message === undefined) return '';
+  if (message.status === 'unknown') return ' referent=unknown';
+  if (message.status === 'unresolved') return ' referent=unresolved';
+  const held = message.held === undefined ? '' :
+    ` held=${message.held === null ? 'unknown' : message.held ? 'yes' : 'no'}${message.holder ? ` holder=${message.holder}` : ''}`;
+  const job = message.job === undefined ? '' : ` ${busInboxJobMarker(message.job)}`;
+  const summary = message.summary.length > 80 ? `${message.summary.slice(0, 79)}…` : message.summary;
+  return ` msg="${summary}"${held}${job}`;
 }
 
 /**
@@ -1273,7 +1369,13 @@ export type WakePage = { status: 'ok'; agent: string;
  * envelope id of their own, so each is re-resolved against the live
  * `work.status` receipts that could have generated it and annotated with the
  * citing status — `unresolved` when none reproduces it, `unknown` when the
- * bus store cannot be read. `matched` counts every hint the bounded
+ * bus store cannot be read. Every other `bus.send` hint carries the
+ * triggering envelope's wire id as its own `id`, so the same bounded scan
+ * resolves the live message it refers to: `message` reports the resolved
+ * receipt's summary, priority, sender handle and — for claimable work or a
+ * `jobId` citation — the same `held`/`job` evidence an inbox row carries,
+ * `unresolved` when no live envelope has that id, and `unknown` when the
+ * store cannot be read. `matched` counts every hint the bounded
  * queue tail matched before its row cap and `truncated` marks older bytes or
  * matched rows beyond the returned slice — an unreadable queue stays
  * `unavailable`, never an empty page passed off as "no wakes".
@@ -1290,12 +1392,20 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
       ? target.labels.has(wake.to) || (channelOf(wake.to, target.channels) !== null && !target.labels.has(wake.from))
       : wake.to === ref });
   if (wakes.state === 'unreadable') return { status: 'unavailable', reason: 'Wake queue is unreadable.' };
-  const contexts = claimHolderWakeContexts(wakes.wakes, options);
+  // One bounded store scan serves both per-row resolutions: the claim-holder
+  // citation re-derivation and the ordinary hint's referent lookup.
+  const scan = wakes.wakes.length === 0 ? undefined
+    : scanBusInbox({ root: options.root, now: options.now });
+  const contexts = claimHolderWakeContexts(wakes.wakes, options, scan);
+  const messages = wakeMessageContexts(wakes.wakes, scan, read.registry, options);
   return { status: 'ok', agent: target?.identity.handle ?? ref,
     scope: target === undefined ? 'label' : 'identity',
     wakes: wakes.wakes.map(row => {
       const claimHolder = contexts.get(row.id);
-      return claimHolder === undefined ? row : { ...row, claimHolder };
+      const message = messages.get(row.id);
+      return { ...row,
+        ...(claimHolder === undefined ? {} : { claimHolder }),
+        ...(message === undefined ? {} : { message }) };
     }),
     matched: wakes.matched ?? 0, truncated: wakes.truncated ?? false };
 }
