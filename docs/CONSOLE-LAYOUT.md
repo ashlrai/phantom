@@ -299,20 +299,33 @@ text field. The row stays in view while the board scrolls. It lists only the
 boards this build has, and it is not drawn while the dock is tiled as the agent
 workspace.
 
-Three names in the row carry a live reading, so the row says where to look
-before a board is opened. Pools shows how many pools will run empty before
+Every name in the row can carry a live reading, so the row is the status line
+of the whole surface and says where to look before a board is opened. Pools shows how many pools will run empty before
 their reset (`2 too fast`), else how many are behind their window, else how
 many have no current reading, counted from the `phm pools` view. Usage shows
 how many accounts their provider flags at a limit (`1 at limit`), else how
 many could not be read, counted from the Usage board's accounts read the way
 `phm usage limits` counts them; an account at 100% without the provider's flag is not
 counted. Lanes shows how many lanes are held, or slots running over slots
-asked for (`5/6`) when none is held, counted from `phm fleet runs`. Each is
-the same read its board draws from, refreshed while the row is on screen
-(every 30 seconds; accounts every 60, the Usage board's own interval), and the
-board's own headline is the name's tooltip. A read that has not answered or
-last failed shows no reading: the name stands alone, never a zero. The other
-boards have no reading in the row yet.
+asked for (`5/6`) when none is held, counted from `phm fleet runs`. Router
+shows how many kinds of fleet work no seat can take right now (`2 no seat`),
+else how many the router gave no answer for, counted from the Router board's
+route table. Models shows how many models the router refuses
+(`1 not routable`), else how many are stale or deprecated in their provider's
+docs (`2 to review`), counted from `phm models` and `phm models check`; a
+retired model is not counted. Capacity shows the share of target slots the
+lanes kept filled over the last 24 hours (`83.3% filled`), the board's own
+figure, and nothing for a window nobody sampled. Supply shows how many slots
+opening in the next 15 minutes have no job waiting (`3 short`), from the same
+snapshot Lanes reads; when the drop folder could not be read the figure is an
+upper bound and says so (`up to 3 short`).
+
+Each reading comes from the same read its board draws from, refreshed while
+the row is on screen (Pools, Lanes and Supply every 30 seconds; the others
+every 60), and the board's own headline is the name's tooltip. Amber marks a
+reading that asks to be looked at; a plain figure is only a figure. A board
+with nothing to flag, or whose read has not answered or last failed, shows no
+reading: the name stands alone, never a zero.
 
 The phone Home screen brings the fleet glance, links to active sessions,
 Needs you approvals and the comms inbox, the leader order box, and the recent
