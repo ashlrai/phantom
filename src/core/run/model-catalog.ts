@@ -729,9 +729,10 @@ export function fableEnabled(cfg?: Claude5Cfg): boolean {
  * claude5 off ⇒ optional Sonnet/Fable entries excluded;
  * fable off ⇒ current and historical Fable entries excluded; otherwise nothing excluded.
  */
-export function claude5ExcludeIds(cfg?: Claude5Cfg): ReadonlySet<string> {
+export function claude5ExcludeIds(cfg?: Claude5Cfg, cappedModels: readonly string[] = []): ReadonlySet<string> {
   if (!claude5Enabled(cfg)) return CLAUDE5_CATALOG_IDS;
-  if (!fableEnabled(cfg)) return FABLE_ONLY_EXCLUDES;
+  // A model that hit its own usage cap is skipped like a disabled one; the next model in the lane takes the work.
+  if (!fableEnabled(cfg) || cappedModels.includes('fable')) return FABLE_ONLY_EXCLUDES;
   return EMPTY_EXCLUDES;
 }
 

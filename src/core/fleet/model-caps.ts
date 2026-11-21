@@ -34,11 +34,39 @@ export function activeCaps(caps: readonly ModelCap[], now: number, lastSuccess: 
   });
 }
 
+export interface ModelCapDetection { model: string; capped: true; until?: string }
+
+/** Pure: does job output (claude -p stdout/stderr) say one model hit its own limit? Plan-wide and unrelated text give null. */
+export function detectModelCap(text: string | null): ModelCapDetection | null {
+  const hit = detectPoolCap(text);
+  if (hit?.kind !== 'model-limit' || !hit.model || !SAFE.test(hit.model)) return null;
+  const until = /\b(?:resets?|try again) (?:at|on|after) (\d{4}-\d{2}-\d{2}T[\d:.]+Z?)/i.exec(text ?? '')?.[1];
+  return until && Number.isFinite(Date.parse(until)) ? { model: hit.model, capped: true, until } : { model: hit.model, capped: true };
+}
+
 /** Pure: read one finished worker's log. Returns the new mark, or null when the log shows no cap or names no model. */
 export function capFromLog(log: string | null, lane: string, now: number, resetAt: string | null = null): ModelCap | null {
-  const hit = detectPoolCap(log);
-  if (!hit?.model || !SAFE.test(hit.model)) return null;
-  return { model: hit.model, capped_at: new Date(now).toISOString(), source: 'worker-log', lane, reset_at: resetAt };
+  const hit = detectModelCap(log);
+  if (!hit) return null;
+  return { model: hit.model, capped_at: new Date(now).toISOString(), source: 'worker-log', lane, reset_at: resetAt ?? hit.until ?? null };
+}
+
+const label = (model: string): string => model.charAt(0).toUpperCase() + model.slice(1);
+/** Local HH:MM, the way the operator reads a clock. */
+export const clockTime = (iso: string): string => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+
+/** Plain words for one mark: "Fable capped since 02:23 (plan at 63%)". */
+export function describeCap(cap: Pick<ModelCap, 'model' | 'capped_at'>, planUsedPct: number | null = null): string {
+  return `${label(cap.model)} capped since ${clockTime(cap.capped_at)}${planUsedPct === null ? '' : ` (plan at ${Math.round(planUsedPct)}%)`}`;
+}
+
+/** Claude models that are capped right now, for the router (`RoutingContext.cappedModels`). */
+export const cappedModelNames = (caps: readonly ModelCap[], lane = 'claude'): string[] => caps.filter(c => c.lane === lane).map(c => c.model);
+
+/** The one log line when frontier work is moved off a capped Fable; null when Fable is free. */
+export function capNotice(caps: readonly ModelCap[]): string | null {
+  const fable = caps.find(c => c.lane === 'claude' && c.model === 'fable');
+  return fable ? `Fable is capped since ${clockTime(fable.capped_at)}; sending frontier work to Opus` : null;
 }
 
 /** Pure: add a mark, replacing an older one for the same lane and model. */

@@ -65,3 +65,32 @@ it('falls frontier to Opus then Sonnet with the reason, and reports unknown for 
   expect(pickModel('claude', 'light', [{ ...fable, model: 'sonnet' }], now)).toMatchObject({ model: null, known: true });
   expect(pickModel('codex', 'work', [], now)).toMatchObject({ model: null, known: false });
 });
+it('detectModelCap names Fable from the exact message and ignores unrelated or plan-wide text', async () => {
+  const { detectModelCap } = await import('../src/core/fleet/model-caps.js');
+  expect(detectModelCap(FABLE)).toEqual({ model: 'fable', capped: true });
+  expect(detectModelCap(`${FABLE} Limit resets at 2026-11-21T12:00:00Z.`)).toEqual({ model: 'fable', capped: true, until: '2026-11-21T12:00:00Z' });
+  expect(detectModelCap('RESULT EMPTY\nno changes needed')).toBeNull();
+  expect(detectModelCap(CODEX)).toBeNull();
+  expect(detectModelCap(null)).toBeNull();
+});
+it('says the cap in plain words, with the plan percent, and one notice line for the router', async () => {
+  const { capNotice, clockTime, describeCap, cappedModelNames } = await import('../src/core/fleet/model-caps.js');
+  const cap = capFromLog(FABLE, 'claude', now)!;
+  const at = clockTime(cap.capped_at);
+  expect(describeCap(cap, 63)).toBe(`Fable capped since ${at} (plan at 63%)`);
+  expect(capNotice([cap])).toBe(`Fable is capped since ${at}; sending frontier work to Opus`);
+  expect(capNotice([])).toBeNull();
+  expect(cappedModelNames([cap, { ...cap, lane: 'codex' }])).toEqual(['fable']);
+});
+it('uses the reset time from the message as the end of the mark', () => {
+  const cap = capFromLog(`${FABLE} Limit resets at 2026-11-21T12:00:00Z.`, 'claude', now)!;
+  expect(cap.reset_at).toBe('2026-11-21T12:00:00Z');
+});
+it('the router sees Fable capped until a later success clears the mark', async () => {
+  const { cappedModelNames } = await import('../src/core/fleet/model-caps.js');
+  const dir = await scratch();
+  await recordCapFromLog(dir, FABLE, 'claude', now);
+  expect(cappedModelNames(await readLiveCaps(now, dir))).toEqual(['fable']);
+  await recordModelSuccess(dir, 'claude', 'fable');
+  expect(cappedModelNames(await readLiveCaps(now, dir))).toEqual([]);
+});

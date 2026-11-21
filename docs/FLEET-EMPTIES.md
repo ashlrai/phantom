@@ -159,5 +159,8 @@ from `auth_failed`. A named model is marked in `<runs>/metrics/model-caps.json` 
 `{model, capped_at, source:"worker-log", lane, reset_at}` (`src/core/fleet/model-caps.ts`) and ends at the reset time
 or the first later success on that model. `pickModel` falls a capped model to the next one in its lane (claude
 frontier: fable, opus, sonnet). `phm pools` and `GET /api/app/pools` list the capped models as `cappedModels`.
-Not wired yet: the dispatcher calling `recordCapFromLog` and `pickModel` at launch and finish (the dispatcher lives
-outside this repo), and a lane-wide hold for limits that name no model; those stay unknown.
+`detectModelCap(text)` is the one detector (`{model:"fable", capped:true, until?}` or null). The router reads
+`RoutingContext.cappedModels`: with `fable` in it, frontier claude work goes to Opus, never to the capped model.
+`phm pools --text` says "Fable capped since 02:23 (plan at 63%)" under the claude pool.
+Not wired yet: the dispatcher calling `recordCapFromLog`, `recordModelSuccess` and passing `cappedModelNames(await readLiveCaps(now))`
+to the router (the dispatcher lives outside this repo), and a lane-wide hold for limits that name no model.

@@ -210,6 +210,17 @@ describe('M321 quality fast-path (preferStrong)', () => {
     expect(result.reason).toContain('opus');
   });
 
+  it('a capped Fable sends frontier work to Opus on the same lane, and Fable returns once the cap is gone', () => {
+    const item = makeItem({ source: 'issue', effort: 3, score: 6 });
+    const cfg = withFoundry({ allowedBackends: ['claude', 'codex', 'builtin'] as never[], routingPolicy: 'quality' });
+    const capped = routeTask(item, cfg, { ...(ALL_ENGINES_CTX as object), cappedModels: ['fable'] } as never);
+    expect(capped.engine).toBe('claude');
+    expect(capped.model).toBe('claude-opus-5-5');
+    expect(capped.reason).toContain('Fable is capped; sending frontier work to Opus');
+    const cleared = routeTask(item, cfg, { ...(ALL_ENGINES_CTX as object), cappedModels: [] } as never);
+    expect(cleared.model).toBe('claude-fable-5-1');
+  });
+
   it('implementation-heavy substantive (feature) prefers the current Codex model', () => {
     const item = makeItem({ source: 'feature', effort: 4, score: 8 });
     const cfg = withFoundry({
