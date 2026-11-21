@@ -1,4 +1,4 @@
-/** One Leader thread from the inbox, outbox and plan log (core/fleet/leader-thread-merge.ts) and `phm leader thread --since`. */
+/** One Leader thread from the inbox, outbox and plan log, with or without --since. */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -92,7 +92,7 @@ describe('parseThreadWindow', () => {
   });
 });
 
-describe('phm leader thread --since', () => {
+describe('phm leader thread', () => {
   let runsDir: string;
   beforeEach(() => {
     runsDir = mkdtempSync(join(tmpdir(), 'leader-thread-'));
@@ -101,6 +101,57 @@ describe('phm leader thread --since', () => {
     vi.stubEnv('PHANTOM_PLAN_LOG', '');
   });
   afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); rmSync(runsDir, { recursive: true, force: true }); });
+
+  it('uses the merged shape without --since and includes old, undated and plan-only messages', async () => {
+    const old = '2020-01-01T00:00:00Z [src:phone] Old question\n';
+    writeFileSync(join(runsDir, 'leader', 'MASON-INBOX.md'), '## no date (Mason, desktop)\nUndated note\n' + old + LINE);
+    writeFileSync(join(runsDir, 'leader', 'MASON-OUTBOX.md'), OUTBOX);
+    writeFileSync(join(runsDir, 'leader', 'PLAN-LOG.md'), PLAN + '## 2026-11-17 11:05 ET plan\n**Reply for Mason**: "Shipped #7877"\n');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await runLeaderCli(['thread', '--json'])).toBe(0);
+    const read = JSON.parse(String(log.mock.calls.at(-1)![0])) as Awaited<ReturnType<typeof readLeaderThread>>;
+    expect(read.schema).toBe('leader.thread.v1');
+    expect(read.sources).toEqual({ inbox: 'healthy', outbox: 'healthy', planLog: 'healthy' });
+    expect(read.thread.map(e => e.text)).toEqual(['Old question', 'Is the release green?', 'Billing fix is merging now', 'Shipped #7877', 'Undated note']);
+    expect(read.thread[3]).toMatchObject({ source: 'plan-log', refs: [7877] });
+    expect(read.thread[4]!.at).toBeNull();
+    expect(await runLeaderCli(['thread', '--since', '2020-01-01', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)![0])).thread).toEqual(read.thread);
+  });
+
+  it('prints merged plain lines by default, supports --text and applies --limit without --since', async () => {
+    writeFileSync(join(runsDir, 'leader', 'MASON-INBOX.md'), LINE);
+    writeFileSync(join(runsDir, 'leader', 'PLAN-LOG.md'), PLAN.replace('merging now', 'merged in #7873'));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await runLeaderCli(['thread'])).toBe(0);
+    expect(log.mock.calls.map(([line]) => line).join('\n')).toContain('Mason (phone)');
+    expect(log.mock.calls.map(([line]) => line).join('\n')).toContain('Leader (plan-log)');
+    log.mockClear();
+    expect(await runLeaderCli(['thread', '--text', '--limit', '1'])).toBe(0);
+    expect(log).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('[#7873]'));
+    log.mockClear();
+    expect(await runLeaderCli(['thread', '--limit', '1', '--json'])).toBe(0);
+    const read = JSON.parse(String(log.mock.calls[0]![0]));
+    expect(read.thread).toHaveLength(1);
+    expect(read.thread[0].refs).toEqual([7873]);
+  });
+
+  it('prints the empty merged view without --since', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await runLeaderCli(['thread'])).toBe(0);
+    expect(log).toHaveBeenCalledExactlyOnceWith('No messages yet.');
+    expect(await runLeaderCli(['thread', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)![0]))).toMatchObject({ schema: 'leader.thread.v1', thread: [], sources: { inbox: 'missing', outbox: 'missing', planLog: 'missing' } });
+  });
+
+  it.each([
+    ['--limit'], ['--limit', '0'], ['--json', '--text'], ['--bogus'],
+    ['--legacy', '--since', '24'], ['--legacy', '--follow'],
+  ])('rejects invalid or incompatible options: %j', async (...args) => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await runLeaderCli(['thread', ...args])).toBe(2);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('Usage:'));
+  });
 
   it('prints the typed JSON shape and reads the fleet home from the environment', async () => {
     writeFileSync(join(runsDir, 'leader', 'MASON-INBOX.md'), LINE);
