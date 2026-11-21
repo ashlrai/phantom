@@ -46,6 +46,14 @@ const DOCS = [
   'docs/SUBAGENTS.md',
   // The first-pull-request guide README.md and AGENTS.md send contributors to.
   'docs/CONTRIBUTE-WITH-AN-AGENT.md',
+  // Community and policy pages the contributor path links to: where to get
+  // help and report bugs, how to report vulnerabilities, and the authority
+  // agents work under.
+  'SUPPORT.md',
+  'SECURITY.md',
+  'CONSTITUTION.md',
+  'docs/STANDING-AUTHORITY.md',
+  'docs/AGENTS-MD-AUDIT.md',
   // Operating guides AGENTS.md and README.md link to. Linked guides that are
   // missing here (QUEUE, FLEET-API, CHANNELS, AGENT-BUS, SESSIONS, VERSE and
   // others) name verbs that dispatch but that completions SUBCOMMANDS does
