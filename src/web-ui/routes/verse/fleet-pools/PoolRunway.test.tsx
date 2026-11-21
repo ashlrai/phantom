@@ -45,6 +45,7 @@ it('draws every plan pool on one line, soonest reset first, with the dry stretch
   expect(within(rows[2]!).getByText(/^in 2 d 12 h · /)).toBeInTheDocument();
   // Only the pool that runs out first carries a dry stretch, from where it empties to its reset.
   expect(rows.map(row => row.querySelector<HTMLElement>('[data-dry]')?.style.cssText ?? null)).toEqual([null, null, 'left: 16.7%; width: 83.3%;', null]);
+  expect(within(card('claude')).getByText(/Over pace, empty in about 10 h/)).toHaveAttribute('data-over', 'true');
   const region = screen.getByRole('region', { name: 'Runway ahead' });
   expect(within(region).getByText('1 of 3 plan pools runs empty before reset. 1 cannot be projected: no usage or burn reading.')).toBeInTheDocument();
   expect(within(region).getByText('Not on the line: devin (credit balance, no window).')).toBeInTheDocument();

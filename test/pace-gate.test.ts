@@ -124,7 +124,7 @@ describe('phm fleet pace', () => {
     const orig = console.log; console.log = spy;
     try { expect(await cmdFleetPace([], { read: async () => buildFleetPace(view, NOW) })).toBe(0); } finally { console.log = orig; }
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toContain('ahead of pace');
+    expect(lines[0]).toContain('Over pace');
     expect(lines[1]).toMatch(/unknown/);
   });
   it('--json carries a schema id', async () => {
