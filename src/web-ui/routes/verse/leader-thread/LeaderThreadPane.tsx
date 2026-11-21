@@ -66,7 +66,7 @@ import { commandGate, liveComposerDeps, runComposerCommand, type ComposerCommand
 import { steerTargetId, steerTargetOutcome, type SteerTargetJobFacts } from './steer-target-outcome.js';
 import { OrderRouting } from './OrderRouting.js';
 import { inboxAtForLine, lineRouting, routingInFlight, type LineRouting } from './thread-routing-model.js';
-import { requestWallSession } from '../session-wall/wall-selection.js';
+import { openConversationFromLeader } from './leader-reading.js';
 import { useComposerAssist } from './ComposerAssist.js';
 import { recallable } from './composer-assist-model.js';
 import { EarlierMessages, useEarlierMessages } from './LeaderEarlier.js';
@@ -483,7 +483,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
         <LineView line={item.line} match={findOpen && matches.includes(item.key)} current={findOpen && item.key === currentKey} />
         {target !== null ? <SteerTargetLine id={target} text={item.line.text} trace={trace} merges={merges} liveByJob={liveByJob} now={now} /> : null}
         {routing ? <OrderRouting routing={routing} onOpenJob={job => { requestWorkerLogJob(job); openDockPane('worker-log'); }}
-          onOpenConversation={job => { requestWallSession(job); openDockPane('session-wall'); }} /> : null}
+          onOpenConversation={openConversationFromLeader} /> : null}
       </Fragment>;
     });
   }
@@ -546,7 +546,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
         {merged.hiddenNoise > 0 ? <p className={styles.note}>{merged.hiddenNoise} stray command {merged.hiddenNoise === 1 ? 'line' : 'lines'} hidden</p> : null}
         {/* A command's answer; the jobs it names open as conversations. */}
         {commandLines.map(line => <ComposerResultLine key={line.id} text={line.text} at={line.at}
-          onOpenConversation={job => { requestWallSession(job); openDockPane('session-wall'); }} />)}
+          onOpenConversation={openConversationFromLeader} />)}
       </div>
     </div>
     {/* What the Leader is waiting on Mason for, answerable without scrolling back. */}

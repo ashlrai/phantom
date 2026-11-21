@@ -378,7 +378,10 @@ became work sits a routing trail: one row per job whose prompt cites the
 message, with the lane it was routed to, a four-step track (queued, launched,
 published, merged) and the recorded result. On a job that has launched, the
 id opens its Worker log and "Conversation" opens what that session was told,
-said and did in the Conversations pane; a published or merged job links its
+said and did without leaving the Leader pane: beside the chat when the pane
+is wide enough, over it otherwise. The row is lit and its button reads
+"Conversation open" while that session is the one open, and closing it (Esc)
+puts the keyboard back on the button. A published or merged job links its
 PR. A job that ended with nothing to publish says so. A message from the last
 six hours that no job cites reads "Not routed to a lane yet". If the job
 prompts could not be read it reads routing unknown instead, and a job with no
