@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates fifteen local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates sixteen local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), act: `phm fleet needs-resolve`.
@@ -20,6 +20,14 @@
  *   imessage    unanswered allowlisted teammate texts in teammates.jsonl
  *               (`phm fleet teammate-texts`), act: mark answered or claim the
  *               mirrored bus envelope `imessage-teammate-<rowid>`.
+ *   teammate-tasks  unsettled Dot/Instinct teammate tasks in the
+ *               `imessage.teammate-tasks.v1` ledger (`phm fleet
+ *               imessage-tasks list`) — queued, sending, pending, replied
+ *               and expired rows the drain still owes work on; cancelled
+ *               and settled rows never list. A replied task's RESULT text
+ *               stays under this source rather than listing twice, so one
+ *               pending thing is one item. Act: `phm fleet
+ *               imessage-tasks dispatch --apply`.
  *   owner-thread  live inbound owner-thread messages no recorded outbound
  *               reply cites (`phm comms thread`), the same awaiting-reply mark
  *               `comms status` counts, act: `phm comms send-owner --reply-to`.
@@ -174,15 +182,17 @@ import { planSeatHandoffs, type SeatHandoffsPlan } from '../bots/seats.js';
 import { DEFAULT_TEAM } from '../teams/tools.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { classifyTeammateIntent, readTeammateTexts, type TeammateText } from './imessage-teammate-inbox.js';
+import { listTeammateTasks } from './imessage-teammate-tasks.js';
+import { imessageStateDir } from '../integrations/imessage.js';
 
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
 const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
 
-export type UnifiedInboxSource = 'needs-you' | 'needs-you-delivery' | 'imessage' | 'owner-thread' | 'owner-delivery' | 'drafts' | 'bus' | 'conversations' | 'seats' | 'gmail' | 'linkedin' | 'requests' | 'email-outbox' | 'team-approvals' | 'proposals';
+export type UnifiedInboxSource = 'needs-you' | 'needs-you-delivery' | 'imessage' | 'teammate-tasks' | 'owner-thread' | 'owner-delivery' | 'drafts' | 'bus' | 'conversations' | 'seats' | 'gmail' | 'linkedin' | 'requests' | 'email-outbox' | 'team-approvals' | 'proposals';
 export type UnifiedInboxSourceState = 'healthy' | 'missing' | 'degraded' | 'unavailable';
-export type UnifiedInboxKind = 'needs-you' | 'needs-you-delivery' | 'teammate-text' | 'owner-message' | 'owner-reply-undelivered' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-stuck' | 'team-approval' | 'inbox-proposal';
+export type UnifiedInboxKind = 'needs-you' | 'needs-you-delivery' | 'teammate-text' | 'teammate-task' | 'owner-message' | 'owner-reply-undelivered' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-stuck' | 'team-approval' | 'inbox-proposal';
 
 export interface UnifiedInboxItem extends AttentionItem {
   /** Stable, namespaced: `<source>:<ref>` (e.g. `drafts:d-0123…`). */
@@ -229,7 +239,7 @@ export interface EmailOutboxSourceRead {
 }
 
 export interface UnifiedInboxOptions {
-  /** Shared runs context (`~/.ashlr-runs`): needs-you, teammate and draft stores. */
+  /** Shared runs context (`~/.ashlr-runs`): needs-you, teammate text/task and draft stores. */
   runsDir?: string;
   /** Private bus store root (`~/.ashlr/fleet` by default). */
   busRoot?: string;
@@ -239,6 +249,8 @@ export interface UnifiedInboxOptions {
   /** Reply-delivery seam; default reads the same receipts `phm fleet needs` reports. */
   readNeedsDeliveries?: typeof readNeedsMasonReplyDeliveries;
   readTexts?: typeof readTeammateTexts;
+  /** Teammate-task ledger seam; default reads `<imessageStateDir>/teammate-tasks.json` like `phm fleet imessage-tasks list`. */
+  readTeammateTasks?: (options: { runsDir?: string }) => TeammateTaskLedgerRead;
   listPendingDrafts?: typeof listDrafts;
   /** Comms-agent draft store seam; default reads `<runsDir>/comms-agent/drafts.jsonl`. */
   listCommsDrafts?: (runsDir: string) => Promise<CommsDraft[]>;
@@ -337,10 +349,14 @@ function needsYouDeliveryItems(read: NonNullable<UnifiedInboxOptions['readNeedsD
   return { report: { state: 'healthy', pending: items.length }, items };
 }
 
-function teammateItems(read: typeof readTeammateTexts, runsDir: string | undefined, now: () => number): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+function teammateItems(read: typeof readTeammateTexts, runsDir: string | undefined, now: () => number,
+  coveredResultRowids: ReadonlySet<number> = new Set()): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   let result: ReturnType<typeof readTeammateTexts>;
   try { result = read({ runsDir, now }); } catch { result = { sourceState: 'degraded', texts: [] }; }
-  const items = result.texts.map((text: TeammateText): Omit<UnifiedInboxItem, 'priority'> => ({
+  // A replied teammate task's RESULT text is that task's pending item, not a
+  // second one — the task source owns it until the drain settles both.
+  const texts = coveredResultRowids.size === 0 ? result.texts : result.texts.filter(text => !coveredResultRowids.has(text.rowid));
+  const items = texts.map((text: TeammateText): Omit<UnifiedInboxItem, 'priority'> => ({
     id: `imessage:teammate-${text.rowid}`,
     source: 'imessage',
     kind: 'teammate-text',
@@ -355,6 +371,89 @@ function teammateItems(read: typeof readTeammateTexts, runsDir: string | undefin
       `phm fleet bus-claim acquire --id imessage-teammate-${text.rowid} --owner <label> --lease-ms ${SUGGESTED_LEASE_MS}`],
   }));
   return { report: { state: result.sourceState, pending: items.length }, items };
+}
+
+type TeammateTaskView = ReturnType<typeof listTeammateTasks>['tasks'][number];
+
+/** The resolved teammate-task ledger read: a unified source state plus the `phm fleet imessage-tasks list` view rows (scope, format and result text already stripped). */
+export interface TeammateTaskLedgerRead {
+  state: UnifiedInboxSourceState;
+  tasks: readonly TeammateTaskView[];
+}
+
+/**
+ * The same read `phm fleet imessage-tasks list` serves, resolved at the shared
+ * runs dir. An absent ledger is 'missing' — `load()` returns a verified-empty
+ * store for it, so existence is checked first; a ledger that exists but fails
+ * the strict store schema or cannot be read is 'unavailable', never an empty
+ * list passed off as fact.
+ */
+function readTeammateTaskLedger(options: { runsDir?: string } = {}): TeammateTaskLedgerRead {
+  if (!existsSync(join(imessageStateDir(options.runsDir), 'teammate-tasks.json'))) return { state: 'missing', tasks: [] };
+  try {
+    const report = listTeammateTasks({ runsDir: options.runsDir });
+    return { state: 'healthy', tasks: report.tasks };
+  } catch { return { state: 'unavailable', tasks: [] }; }
+}
+
+/** Task states whose deadline is still the peer's live obligation; replied and expired rows are settle bookkeeping with no deadline of their own. */
+const TEAMMATE_TASK_OPEN: ReadonlySet<string> = new Set(['queued', 'sending', 'pending']);
+
+/**
+ * Unsettled, non-cancelled Dot/Instinct teammate tasks — the same
+ * `imessage.teammate-tasks.v1` ledger `phm fleet imessage-tasks list` serves.
+ * A queued, sending or pending row is work in flight (reserved, send
+ * ambiguous, or awaiting the peer's RESULT); a replied or expired row the
+ * drain has not settled still owes metrics, the answered marker and the
+ * queue finish, so its queue claim stays held — all pending, all agent work,
+ * never Mason-blocking. `sending`, `replied`, `expired` and any open row past
+ * its real deadline list as warn; routine in-flight rows are info. `since` is
+ * the state's own real timestamp (created, attempted, result or deadline —
+ * never invented); `expiresAt` is the task deadline while it is still the
+ * peer's obligation, null once replied or expired. A replied task's RESULT
+ * text rowid is returned in `coveredResultRowids` so the imessage source does
+ * not list the same pending thing twice. Scope, format, RESULT text and the
+ * correlation token never reach an item.
+ */
+function teammateTaskItems(read: NonNullable<UnifiedInboxOptions['readTeammateTasks']>,
+  runsDir: string | undefined, now: () => number,
+): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[]; coveredResultRowids: ReadonlySet<number> } {
+  let result: TeammateTaskLedgerRead;
+  try { result = read({ runsDir }); } catch { result = { state: 'unavailable', tasks: [] }; }
+  if (result.state === 'missing' || result.state === 'unavailable') {
+    return { report: { state: result.state, pending: 0 }, items: [], coveredResultRowids: new Set() };
+  }
+  const nowMs = now();
+  const coveredResultRowids = new Set<number>();
+  const items = result.tasks.filter(task => task.settled !== true && task.state !== 'cancelled').map((task): Omit<UnifiedInboxItem, 'priority'> => {
+    const deadlineMs = Date.parse(task.deadline);
+    const timed = Number.isFinite(deadlineMs);
+    const open = TEAMMATE_TASK_OPEN.has(task.state);
+    const overdue = open && timed && deadlineMs <= nowMs;
+    if (task.result) coveredResultRowids.add(task.result.rowid);
+    const phrase = task.state === 'queued' ? 'reserved, awaiting dispatch'
+      : task.state === 'sending' ? 'send in flight, awaiting reconcile'
+      : task.state === 'pending' ? 'awaiting peer result'
+      : task.state === 'replied' ? `peer reported ${task.result?.status ?? 'a result'}, settle owed · peer-reported, unverified`
+      : 'deadline elapsed, settle owed';
+    const sinceMs = task.state === 'replied' ? task.result?.at
+      : task.state === 'expired' ? deadlineMs
+      : task.attemptedAt ?? task.createdAt;
+    return {
+      id: `teammate-tasks:${task.jobId}`,
+      source: 'teammate-tasks',
+      kind: 'teammate-task',
+      severity: task.state === 'sending' || task.state === 'replied' || task.state === 'expired' || overdue ? 'warn' : 'info',
+      blocking: false,
+      title: oneLine(`teammate ${task.peer} ${task.kind} ${task.jobId}`, TITLE_MAX),
+      detail: oneLine(`${task.repo} · ${phrase}` +
+        (open && timed ? deadlineMs > nowMs ? ` · due in ${plainAge(deadlineMs - nowMs)}` : ` · overdue ${plainAge(nowMs - deadlineMs)}` : ''), DETAIL_MAX) || null,
+      since: typeof sinceMs === 'number' && Number.isFinite(sinceMs) ? iso(sinceMs) : null,
+      expiresAt: open && timed ? iso(deadlineMs) : null,
+      act: ['phm fleet imessage-tasks dispatch --apply', `phm fleet imessage-tasks list --job ${task.jobId}`],
+    };
+  });
+  return { report: { state: result.state, pending: items.length }, items, coveredResultRowids };
 }
 
 /**
@@ -1233,7 +1332,8 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const now = options.now ?? Date.now;
   const needs = needsYouItems(options.readNeeds ?? readNeedsMason, options.runsDir);
   const needsDelivery = needsYouDeliveryItems(options.readNeedsDeliveries ?? readNeedsMasonReplyDeliveries, options.runsDir);
-  const teammates = teammateItems(options.readTexts ?? readTeammateTexts, options.runsDir, now);
+  const teammateTasks = teammateTaskItems(options.readTeammateTasks ?? readTeammateTaskLedger, options.runsDir, now);
+  const teammates = teammateItems(options.readTexts ?? readTeammateTexts, options.runsDir, now, teammateTasks.coveredResultRowids);
   const ownerThread = ownerThreadItems(options.readOwnerAwaiting ?? readOwnerAwaitingReplies, options.runsDir);
   const ownerDelivery = ownerDeliveryItems(options.readOwnerUndelivered ?? readOwnerUndeliveredReplies, options.runsDir);
   const drafts = await draftItems(options.listPendingDrafts ?? listDrafts, options.listCommsDrafts ?? listCommsAgentDrafts, options.runsDir);
@@ -1253,6 +1353,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'needs-you': needs.report,
     'needs-you-delivery': needsDelivery.report,
     imessage: teammates.report,
+    'teammate-tasks': teammateTasks.report,
     'owner-thread': ownerThread.report,
     'owner-delivery': ownerDelivery.report,
     drafts: drafts.report,
@@ -1266,7 +1367,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'team-approvals': teamApprovals.report,
     proposals: proposals.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
