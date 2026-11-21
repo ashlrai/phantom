@@ -1390,7 +1390,17 @@ export type BusEnvelopeLookup =
        */
       held?: boolean | null;
       /** Owner label of the blocking claim when held and known; null otherwise. */
-      holder?: string | null }
+      holder?: string | null;
+      /**
+       * Present only when `id` named a claim-holder wake hint (`wh-…`)
+       * rather than an envelope id: `message` then carries the live
+       * terminal `work.status` receipt the hint cites
+       * (`message.envelope.id` equals `statusId`), `to` is the holder
+       * label the hint was addressed to, and the rest names the job and
+       * terminal status that holder was woken about.
+       */
+      wakeHint?: { to: string; statusId: string; jobId: string;
+        status: WorkJob['status']; detail?: string } }
   | { status: 'not-found'; id: string }
   | { status: 'invalid' | 'unavailable' | 'retryable'; reason: string };
 
@@ -1443,22 +1453,11 @@ function envelopeHold(receipt: { id: string; cursor: number; receivedAt: number;
 }
 
 /**
- * Resolve one retained envelope by its wire id — the key wake hints, claim
- * operations, `work mine` items and dedupe all cite. The scan is the same
- * bounded page walk the other reads use and sees only live (unexpired)
- * receipts: an expired or reclaimed-away id reports `not-found`, never a
- * stale row. Reading needs no identity and no addressing scope: like
- * `readAgentChannel`, the store is shared and ids are routing data, not
- * secrets. `fromAgent` decoration is best-effort; an unreadable registry
- * never hides the envelope itself. Claimable work and worker-handoff bodies
- * additionally report `held`/`holder` — whether a taken claim or live
- * coordination hold already covers the envelope, the same evidence `work
- * mine` next/handoffs and the unified comms inbox show.
+ * The bounded page walk behind `readBusEnvelopeById`: one live envelope by
+ * wire id, or the honest miss. It never interprets `wh-…` hint ids — the
+ * caller decides whether a miss falls through to wake-queue resolution.
  */
-export function readBusEnvelopeById(id: string, options: UnifiedBusOptions = {}): BusEnvelopeLookup {
-  if (typeof id !== 'string' || !THREAD.test(id)) {
-    return { status: 'invalid', reason: 'Invalid message id.' };
-  }
+function findBusEnvelopeById(id: string, options: UnifiedBusOptions): BusEnvelopeLookup {
   const registry = readAgentRegistry(options);
   let cursor = 0;
   for (let index = 0; index < MAX_PAGES; index += 1) {
@@ -1481,4 +1480,55 @@ export function readBusEnvelopeById(id: string, options: UnifiedBusOptions = {})
     cursor = result.nextCursor;
   }
   return { status: 'not-found', id };
+}
+
+/**
+ * Resolve a `wh-…` claim-holder wake-hint id to the terminal
+ * `work.status` receipt that generated it — the same re-derivation
+ * `agents bus wakes` annotates as `claimHolder`. The retained hint row
+ * names the holder label the id hashed, and `claimHolderWakeContexts`
+ * re-hashes every live terminal status receipt under that label. An
+ * unreadable wake queue or bus store is `unavailable`; a hint with no
+ * retained row, or whose citation no live receipt reproduces, is
+ * `not-found` — never a guessed receipt. The queue's bounded tail means a
+ * compacted hint reads the same as an expired one.
+ */
+function findClaimHolderWakeHint(id: string, options: UnifiedBusOptions): BusEnvelopeLookup {
+  const wakes = readBusWakes({ root: options.runsRoot, match: row => row.id === id });
+  if (wakes.state === 'unreadable') return { status: 'unavailable', reason: 'Wake queue is unreadable.' };
+  const row = wakes.wakes.find(wake => wake.id === id);
+  if (row === undefined) return { status: 'not-found', id };
+  const context = claimHolderWakeContexts([row], options).get(id);
+  if (context === 'unknown') return { status: 'unavailable', reason: 'Bus store is not readable.' };
+  if (context === undefined || context === 'unresolved') return { status: 'not-found', id };
+  const resolved = findBusEnvelopeById(context.statusId, options);
+  if (resolved.status !== 'ok') return resolved.status === 'not-found' ? { status: 'not-found', id } : resolved;
+  return { ...resolved, id, wakeHint: { to: row.to, statusId: context.statusId, jobId: context.jobId,
+    status: context.status, ...(context.detail === undefined ? {} : { detail: context.detail }) } };
+}
+
+/**
+ * Resolve one retained envelope by its wire id — the key wake hints, claim
+ * operations, `work mine` items and dedupe all cite — or one claim-holder
+ * wake-hint id (`wh-…`), which resolves through the wake queue to the
+ * terminal `work.status` receipt that cites it. The scan is the same
+ * bounded page walk the other reads use and sees only live (unexpired)
+ * receipts: an expired or reclaimed-away id reports `not-found`, never a
+ * stale row. Reading needs no identity and no addressing scope: like
+ * `readAgentChannel`, the store is shared and ids are routing data, not
+ * secrets. `fromAgent` decoration is best-effort; an unreadable registry
+ * never hides the envelope itself. Claimable work and worker-handoff bodies
+ * additionally report `held`/`holder` — whether a taken claim or live
+ * coordination hold already covers the envelope, the same evidence `work
+ * mine` next/handoffs and the unified comms inbox show. Envelope ids are
+ * caller-chosen printable tokens, so a real receipt always wins over hint
+ * interpretation; only a proven miss on a `wh-…` shape falls through.
+ */
+export function readBusEnvelopeById(id: string, options: UnifiedBusOptions = {}): BusEnvelopeLookup {
+  if (typeof id !== 'string' || !THREAD.test(id)) {
+    return { status: 'invalid', reason: 'Invalid message id.' };
+  }
+  const direct = findBusEnvelopeById(id, options);
+  if (direct.status !== 'not-found' || !CLAIM_HOLDER_WAKE_ID.test(id)) return direct;
+  return findClaimHolderWakeHint(id, options);
 }

@@ -1109,6 +1109,71 @@ describe('terminal work.status wakes live claim holders', () => {
     expect(plain).not.toHaveProperty('claimHolder');
   });
 
+  it('resolves a wh-… hint id through the lookup to its citing status receipt', async () => {
+    const options = ready();
+    expect(await announceWork({ from: 'atlas', ...announceFor('RQ-S-1') }, options)).toMatchObject({ status: 'posted' });
+    hold(options, 'queue:RQ-S-1', 'agent:nova');
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-S-1', status: 'done', detail: 'merged', id: 'w-s-ctx' }, options))
+      .toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    const page = readAgentWakes('nova', undefined, options);
+    if (page.status !== 'ok') throw new Error('unreachable');
+    const hint = page.wakes.find(row => row.id.startsWith('wh-'));
+    expect(hint).toBeDefined();
+    // The hint id itself resolves: the message is the live status receipt
+    // and wakeHint carries the citation the wakes read annotated.
+    expect(readBusEnvelopeById(hint!.id, options)).toMatchObject({ status: 'ok', id: hint!.id,
+      message: { envelope: { id: 'w-s-ctx' } },
+      wakeHint: { to: 'agent:nova', statusId: 'w-s-ctx', jobId: 'RQ-S-1', status: 'done', detail: 'merged' } });
+  });
+
+  it('keeps a real wh- shaped envelope ahead of hint resolution and misses honestly', async () => {
+    const options = ready();
+    // Envelope ids are caller-chosen printable tokens: a live receipt with a
+    // wh- shaped id wins over hint interpretation and carries no wakeHint.
+    const literal = `wh-${'b'.repeat(32)}`;
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'literal id', id: literal }, options))
+      .toMatchObject({ status: 'posted' });
+    const shown = readBusEnvelopeById(literal, options);
+    expect(shown).toMatchObject({ status: 'ok', id: literal, message: { envelope: { id: literal } } });
+    expect(shown.status === 'ok' && shown.wakeHint).toBeUndefined();
+    // No retained hint row and no envelope: honest not-found, never a guess.
+    const absent = `wh-${'0'.repeat(32)}`;
+    expect(readBusEnvelopeById(absent, options)).toEqual({ status: 'not-found', id: absent });
+  });
+
+  it('reports not-found once the citing receipt expires', async () => {
+    const options = ready();
+    expect(await announceWork({ from: 'atlas', ...announceFor('RQ-S-2') }, options)).toMatchObject({ status: 'posted' });
+    hold(options, 'queue:RQ-S-2', 'agent:nova');
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-S-2', status: 'failed', id: 'w-s-ttl', ttl: 1_000 }, options))
+      .toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    const page = readAgentWakes('nova', undefined, options);
+    if (page.status !== 'ok') throw new Error('unreachable');
+    const hint = page.wakes.find(row => row.id.startsWith('wh-'));
+    expect(hint).toBeDefined();
+    // The hint row outlives the receipt: with the status expired no live
+    // receipt reproduces it, so the lookup is honestly not-found.
+    options.clock.now += 2_000;
+    expect(readBusEnvelopeById(hint!.id, options)).toEqual({ status: 'not-found', id: hint!.id });
+  });
+
+  it('reports unavailable when the wake queue cannot be read', async () => {
+    const options = ready();
+    expect(await announceWork({ from: 'atlas', ...announceFor('RQ-S-3') }, options)).toMatchObject({ status: 'posted' });
+    hold(options, 'queue:RQ-S-3', 'agent:nova');
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-S-3', status: 'done', id: 'w-s-q' }, options))
+      .toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    const page = readAgentWakes('nova', undefined, options);
+    if (page.status !== 'ok') throw new Error('unreachable');
+    const hint = page.wakes.find(row => row.id.startsWith('wh-'));
+    expect(hint).toBeDefined();
+    // A directory where the queue file belongs makes the read fail closed.
+    const queueFile = join(options.runsRoot!, 'bus', 'wake-queue.jsonl');
+    rmSync(queueFile);
+    mkdirSync(queueFile);
+    expect(readBusEnvelopeById(hint!.id, options)).toMatchObject({ status: 'unavailable' });
+  });
+
   it('marks a claim-holder hint unresolved once its status receipt expires', async () => {
     const options = ready();
     expect(await announceWork({ from: 'atlas', ...announceFor('RQ-H-1') }, options)).toMatchObject({ status: 'posted' });

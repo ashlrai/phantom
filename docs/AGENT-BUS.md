@@ -323,6 +323,15 @@ message-id claim or a live coordination hold already covers that exact
 receipt, the same evidence `work mine` next/handoffs and the unified comms
 inbox show. `held` is `true`/`false` only when both hold stores were read —
 a store that cannot be read reports `held: null` (unknown), never free.
+A claim-holder `wh-…` hint id — the id `wakes` and `work mine` print for
+those rows — resolves the same way `wakes` annotates it: through the wake
+queue's retained row and the live terminal `work.status` receipts that
+could have generated it, returning the citing receipt with a `wakeHint`
+citation (`to` holder label, `statusId`, `jobId`, `status`, optional
+`detail`). A hint with no retained row or no reproducing receipt reports
+`not-found`, an unreadable wake queue `unavailable` — never a guessed
+receipt. Envelope ids are caller-chosen printable tokens, so a real
+receipt always wins over hint interpretation.
 
 **Work announcements.** `phm agents bus work post --job <id> --title <text>
 --repo <owner/name> [--claim <key>]... [--provider <p>] [--tier <fast|mid|work|frontier>
