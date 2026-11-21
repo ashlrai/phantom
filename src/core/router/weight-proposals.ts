@@ -29,7 +29,8 @@ export interface RouterWeightBaseline { work_class: string; lane: string; weight
  * no recorded evidence reports null, never zero. The weight math still moves
  * on held-merge rate alone — this block only reports the other signals the
  * ledger already records so an operator sees merge quality (CI retries,
- * review load, cost, wall time, eval pass^k) before applying anything.
+ * review load, cost, wall time, merge latency, eval pass^k) before applying
+ * anything.
  */
 export interface RouterWeightEvidence {
   /** Group outcomes carrying a recorded CI first-pass verdict. */
@@ -48,6 +49,10 @@ export interface RouterWeightEvidence {
   wall_known: number;
   /** Mean wall_s over wall_known; null when no outcome recorded wall time. */
   wall_s_mean: number | null;
+  /** Group outcomes whose standing merge verdict recorded opened-to-merged seconds. */
+  ttm_known: number;
+  /** Mean recorded ttm_s over ttm_known; null when no merge recorded one. */
+  ttm_s_mean: number | null;
   /** Group outcomes carrying an advisory passk score. */
   passk_known: number;
   /** Mean passk over passk_known; null when no outcome carried a score. */
@@ -111,12 +116,13 @@ interface WeightEvidenceTally {
   reviewFixed: number; reviewRejected: number; reviewIgnored: number; reviewKnown: number;
   costSum: number; costKnown: number;
   wallSum: number; wallKnown: number;
+  ttmSum: number; ttmKnown: number;
   passkSum: number; passkKnown: number;
 }
 
 const freshTally = (): WeightEvidenceTally => ({
   ciPass: 0, ciKnown: 0, reviewFixed: 0, reviewRejected: 0, reviewIgnored: 0, reviewKnown: 0,
-  costSum: 0, costKnown: 0, wallSum: 0, wallKnown: 0, passkSum: 0, passkKnown: 0,
+  costSum: 0, costKnown: 0, wallSum: 0, wallKnown: 0, ttmSum: 0, ttmKnown: 0, passkSum: 0, passkKnown: 0,
 });
 
 const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
@@ -129,6 +135,8 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   cost_usd_mean: t.costKnown === 0 ? null : round6(t.costSum / t.costKnown),
   wall_known: t.wallKnown,
   wall_s_mean: t.wallKnown === 0 ? null : round6(t.wallSum / t.wallKnown),
+  ttm_known: t.ttmKnown,
+  ttm_s_mean: t.ttmKnown === 0 ? null : round6(t.ttmSum / t.ttmKnown),
   passk_known: t.passkKnown,
   passk_mean: t.passkKnown === 0 ? null : round6(t.passkSum / t.passkKnown),
 });
@@ -139,7 +147,7 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
  * weight moves toward the observed held-merge rate — merged outcomes recorded as reverted count as
  * known evidence but never as held merges — capped at maxShift and clamped to [0, 1]. Each proposal
  * also reports the group's other recorded outcome signals (CI verdicts, review findings, cost, wall
- * time, pass^k) as advisory evidence over the same known cohort.
+ * time, merge latency, pass^k) as advisory evidence over the same known cohort.
  */
 export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: RouterWeightProposalOptions = {}): RouterWeightProposalSet {
   const minSamples = opts.minSamples ?? ROUTER_WEIGHT_DEFAULT_MIN_SAMPLES;
@@ -195,6 +203,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     }
     if (o.cost_usd !== null) { t.costKnown++; t.costSum += o.cost_usd; }
     if (o.wall_s !== null) { t.wallKnown++; t.wallSum += o.wall_s; }
+    if (o.ttm_s !== null) { t.ttmKnown++; t.ttmSum += o.ttm_s; }
     if (o.passk !== null) { t.passkKnown++; t.passkSum += o.passk; }
     groups.set(key, g);
     known++;

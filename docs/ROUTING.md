@@ -304,7 +304,10 @@ same bound of `<runs-dir>/metrics/api-spend.jsonl` and
 `<runs-dir>/metrics/work-market.jsonl`, and reports one
 `router.outcome.v1` record per job in that window, newest
 first: merge and revert state, CI first pass, review findings, cost, wall
-time, `work_class`, the finish-row productivity verdicts (`empty`,
+time, recorded merge latency (`ttm_s` — the jobs-ledger `ttm_s`/`ttmS`
+opened-to-merged seconds, taken only from the row that stands as the
+merge verdict and cleared when a later verdict is not a merge),
+`work_class`, the finish-row productivity verdicts (`empty`,
 `exit_code`, `failure_class` — explicit row fields only, `null` when
 unrecorded) and the advisory `passk` join from
 `eval.lane-scores.v1`. `work_class` is the class a jobs row recorded when
@@ -381,7 +384,8 @@ report carries `truncated: true` and every count covers the newest bytes
 only; `market_state`/`market_truncated` report the decision journal's
 health the same way. Each proposal also carries an `evidence` block folded
 from the same known cohort: the group's CI first-pass rate, summed review
-findings, mean `cost_usd`, mean `wall_s` and mean advisory `passk` — every
+findings, mean `cost_usd`, mean `wall_s`, mean recorded `ttm_s` (merge
+latency) and mean advisory `passk` — every
 figure with its own coverage count, and `null` (never zero) when the ledger
 recorded nothing for that signal. The weight math still moves on
 held-merge rate alone; the evidence is context for whoever applies a

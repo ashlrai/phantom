@@ -76,6 +76,18 @@ export interface RouterOutcome {
   cost_usd: number | null;
   wall_s: number | null;
   /**
+   * Recorded opened-to-merged seconds — the jobs-ledger `ttm_s`/`ttmS`
+   * dialect the fleet's merge-pace, merge-graph, throughput, eval-report and
+   * job-activity readers share. It belongs to the merge verdict, not to the
+   * job's rows in general: the fold takes it from the row that last won the
+   * merge verdict (the same newest-timestamp rule `merged` uses), only when
+   * that verdict is a merge, and a later winning verdict replaces it
+   * wholesale — a close clears it and a newer merge row without the field
+   * leaves it null rather than keeping a stale figure. Null when no
+   * standing merge recorded one; never derived from wall_s or timestamps.
+   */
+  ttm_s: number | null;
+  /**
    * Finish-row productivity verdicts, newest explicit row wins like cost_usd
    * and wall_s. `empty` is the boolean a finish row records for its diff
    * check (true = the run produced no diff); `exit_code` is the worker's
@@ -358,7 +370,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     const o: RouterOutcome = outcomes.get(j) ?? {
       schema: 'router.outcome.v1', job_id: j, lane: null, model: null, tier: null, work_class: null,
       merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
-      empty: null, exit_code: null, failure_class: null, passk: null,
+      ttm_s: null, empty: null, exit_code: null, failure_class: null, passk: null,
     };
     o.lane = str(r, 'lane', 'pool', 'arm') ?? o.lane;
     o.model = str(r, 'model') ?? o.model;
@@ -368,7 +380,15 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     const merged = state === 'MERGED' ? true : state === 'CLOSED' ? false : typeof r['merged'] === 'boolean' ? r['merged'] : null;
     if (merged !== null) {
       const ts = Date.parse(str(r, ...ledgerTsKeys(state)) ?? '') || 0;
-      if (ts >= (mergedAt.get(j) ?? -1)) { o.merged = merged; mergedAt.set(j, ts); }
+      if (ts >= (mergedAt.get(j) ?? -1)) {
+        o.merged = merged;
+        mergedAt.set(j, ts);
+        // ttm_s is merge evidence: only the row that stands as the merge
+        // verdict supplies it, so a close clears it and a non-merge row's
+        // figure is never attached (the sibling fleet readers gate the same
+        // way). The newest winning row replaces it wholesale.
+        o.ttm_s = merged === true ? num(r['ttm_s']) ?? num(r['ttmS']) : null;
+      }
     }
     // Sticky-true, matching metrics-ingest: any recorded revert evidence wins
     // and a later reverted:false cannot undo it; explicit false only stands

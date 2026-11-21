@@ -308,7 +308,7 @@ describe('outcome-quality evidence', () => {
   const signaled = (n: number, lane: string, workClass: string, phase: string, extra: Record<string, unknown>): object[] =>
     Array.from({ length: n }, (_, i) => event(`synthetic-evq-${lane}-${workClass}-${phase}-${i}`, lane, workClass, phase, extra));
 
-  it('folds recorded CI, review, cost, wall and passk signals per group with coverage counts', async () => {
+  it('folds recorded CI, review, cost, wall, merge-latency and passk signals per group with coverage counts', async () => {
     writeLaneScores(0.71);
     writeLedger([
       ...Array.from({ length: 10 }, (_, i) => event(`synthetic-evq-a-${i}`, 'alpha', 'code', 'MERGED', {
@@ -316,6 +316,7 @@ describe('outcome-quality evidence', () => {
         review_findings: { fixed: 2, rejected: 1, ignored: 0 },
         cost_usd: 1.5,
         wall_s: 100,
+        ttm_s: 200 + i * 10,
       })),
       ...merged(10),
     ]);
@@ -333,6 +334,8 @@ describe('outcome-quality evidence', () => {
       cost_usd_mean: 1.5,
       wall_known: 10,
       wall_s_mean: 100,
+      ttm_known: 10,
+      ttm_s_mean: 245,
       passk_known: 20,
       passk_mean: 0.71,
     });
@@ -341,6 +344,7 @@ describe('outcome-quality evidence', () => {
     expect(out).toContain('review_findings=30(10)');
     expect(out).toContain('cost_usd=1.5(10)');
     expect(out).toContain('wall_s=100(10)');
+    expect(out).toContain('ttm_s=245(10)');
     expect(out).toContain('passk=0.71(20)');
   });
 
@@ -352,10 +356,12 @@ describe('outcome-quality evidence', () => {
       review_findings_known: 0, review_findings: null,
       cost_known: 0, cost_usd_mean: null,
       wall_known: 0, wall_s_mean: null,
+      ttm_known: 0, ttm_s_mean: null,
       passk_known: 0, passk_mean: null,
     });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).not.toContain('ci_first_pass=');
+    expect(out).not.toContain('ttm_s=');
   });
 
   it('counts spend-derived costs and never folds signals from the unknown cohort', async () => {

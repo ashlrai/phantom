@@ -33,7 +33,7 @@ function outcome(job_id: string, over: Partial<RouterOutcome> = {}): RouterOutco
   return {
     schema: 'router.outcome.v1', job_id, lane: 'alpha', model: 'm1', tier: 'work', work_class: null,
     merged: true, reverted: null, ci_first_pass: true, review_findings: null, cost_usd: 1.5, wall_s: 600,
-    empty: null, exit_code: null, failure_class: null, passk: null,
+    ttm_s: null, empty: null, exit_code: null, failure_class: null, passk: null,
     ...over,
   };
 }
@@ -154,7 +154,7 @@ describe('phm router outcomes', () => {
     const lines = routerOutcomeLines(report);
     expect(lines[0]).toBe('router outcomes state=read eval=missing spend=missing market=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2');
     expect(lines[1]).toBe(`ledger ${report.path}`);
-    expect(lines[3]).toContain('A lane=alpha model=m1 tier=work work_class=unknown merged=unknown reverted=true ci_first_pass=true review=fixed:2,rejected:1,ignored:0 cost_usd=unknown wall_s=unknown passk=unknown');
+    expect(lines[3]).toContain('A lane=alpha model=m1 tier=work work_class=unknown merged=unknown reverted=true ci_first_pass=true review=fixed:2,rejected:1,ignored:0 cost_usd=unknown wall_s=unknown ttm_s=unknown passk=unknown');
     expect(lines[2]).toContain('B lane=unknown model=unknown tier=unknown work_class=docs merged=true reverted=unknown');
   });
 
@@ -200,7 +200,7 @@ describe('phm router outcomes', () => {
 
   it('folds a real ledger end-to-end through cmdRouter and cmdRouterOutcomes', async () => {
     const root = runsDir([
-      '{"job":"J1","lane":"alpha","model":"m1","tier":"work","phase":"MERGED","ts":"2026-11-01T00:00:00Z","cost_usd":1.25,"wall_s":900,"ci_first_pass":true}',
+      '{"job":"J1","lane":"alpha","model":"m1","tier":"work","phase":"MERGED","ts":"2026-11-01T00:00:00Z","mergedAt":"2026-11-01T01:00:00Z","cost_usd":1.25,"wall_s":900,"ttm_s":5400,"ci_first_pass":true}',
       '{"job":"J2","lane":"beta","model":"m2","phase":"CLOSED","ts":"2026-11-02T00:00:00Z"}',
       'not json',
     ].join('\n'));
@@ -214,7 +214,7 @@ describe('phm router outcomes', () => {
     });
     // Newest first: J2 (appended last) leads.
     expect(report.outcomes.map((o: RouterOutcome) => o.job_id)).toEqual(['J2', 'J1']);
-    expect(report.outcomes[1]).toMatchObject({ lane: 'alpha', model: 'm1', merged: true, cost_usd: 1.25, wall_s: 900, ci_first_pass: true, passk: null });
+    expect(report.outcomes[1]).toMatchObject({ lane: 'alpha', model: 'm1', merged: true, cost_usd: 1.25, wall_s: 900, ttm_s: 5400, ci_first_pass: true, passk: null });
     expect(report.outcomes[0]).toMatchObject({ lane: 'beta', merged: false, cost_usd: null });
 
     const laneFiltered = vi.spyOn(console, 'log').mockImplementation(() => {});

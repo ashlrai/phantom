@@ -41,6 +41,7 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
   }
   if (e.cost_usd_mean !== null) parts.push(`cost_usd=${e.cost_usd_mean}(${e.cost_known})`);
   if (e.wall_s_mean !== null) parts.push(`wall_s=${e.wall_s_mean}(${e.wall_known})`);
+  if (e.ttm_s_mean !== null) parts.push(`ttm_s=${e.ttm_s_mean}(${e.ttm_known})`);
   if (e.passk_mean !== null) parts.push(`passk=${e.passk_mean}(${e.passk_known})`);
   return parts.length === 0 ? '' : ` evidence ${parts.join(' ')}`;
 }

@@ -148,6 +148,36 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(byId.get('D10')?.merged).toBe(false);
   });
 
+  it('folds recorded opened-to-merged seconds only from the standing merge verdict', () => {
+    const fold = foldRouterOutcomes([
+      // The fleet's ttm dialect on the merge row that stands as the verdict.
+      '{"job":"M1","phase":"MERGED","mergedAt":"2026-11-01T02:00:00Z","ttm_s":3600,"ts":"2026-11-01T02:00:00Z"}',
+      // The camelCase alias spelling on an event-named merge.
+      '{"job":"M2","event":"merged","mergedAt":"2026-11-01T03:00:00Z","ttmS":7200}',
+      // A close verdict and an unresolved outcome never carry merge latency.
+      '{"job":"M3","phase":"CLOSED","ttm_s":100,"ts":"2026-11-01T01:00:00Z"}',
+      '{"job":"M4","phase":"VERIFIED","ttm_s":100}',
+      // A later close clears the earlier merge's recorded figure.
+      '{"job":"M5","phase":"MERGED","mergedAt":"2026-11-01T01:00:00Z","ttm_s":500,"ts":"2026-11-01T01:00:00Z"}',
+      '{"job":"M5","phase":"CLOSED","closedAt":"2026-11-01T04:00:00Z","ts":"2026-11-01T04:00:00Z"}',
+      // A newer merge row without the field replaces it wholesale: unknown, not stale.
+      '{"job":"M6","phase":"MERGED","mergedAt":"2026-11-01T01:00:00Z","ttm_s":500,"ts":"2026-11-01T01:00:00Z"}',
+      '{"job":"M6","phase":"MERGED","mergedAt":"2026-11-01T07:00:00Z","ts":"2026-11-01T07:00:00Z"}',
+      // Non-finite and negative figures stay unknown.
+      '{"job":"M7","phase":"MERGED","mergedAt":"2026-11-01T05:00:00Z","ttm_s":-5}',
+      '{"job":"M8","phase":"MERGED","mergedAt":"2026-11-01T06:00:00Z","ttm_s":"fast"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('M1')).toMatchObject({ merged: true, ttm_s: 3600 });
+    expect(byId.get('M2')).toMatchObject({ merged: true, ttm_s: 7200 });
+    expect(byId.get('M3')).toMatchObject({ merged: false, ttm_s: null });
+    expect(byId.get('M4')).toMatchObject({ merged: null, ttm_s: null });
+    expect(byId.get('M5')).toMatchObject({ merged: false, ttm_s: null });
+    expect(byId.get('M6')).toMatchObject({ merged: true, ttm_s: null });
+    expect(byId.get('M7')).toMatchObject({ merged: true, ttm_s: null });
+    expect(byId.get('M8')).toMatchObject({ merged: true, ttm_s: null });
+  });
+
   it('refuses to attach URL-only rows when two jobs claim the same PR', () => {
     const text = [
       '{"job":"A","pr_url":"https://github.com/o/r/pull/7"}',
@@ -168,7 +198,7 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(fold.outcomes).toEqual([{
       schema: 'router.outcome.v1', job_id: 'U1', lane: null, model: null, tier: null, work_class: null,
       merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
-      empty: null, exit_code: null, failure_class: null, passk: null,
+      ttm_s: null, empty: null, exit_code: null, failure_class: null, passk: null,
     }]);
   });
 
