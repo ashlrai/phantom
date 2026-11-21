@@ -40,7 +40,8 @@ it('claims legacy work and a protocol task through cmdCommsBus, fences the lease
   expect(await cmdCommsBus(['claim', 'acquire', '--id', 'legacy-1', '--owner', 'worker-b', '--lease-ms', '60000'], options)).toBe(1);
   expect(last().status).toBe('conflict');
   expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-b', '--lease-ms', '60000'], options)).toBe(0);
-  expect(last()).toEqual({ status: 'empty' });
+  // legacy-1 is the one claimable receipt on worker-a and worker-a's lease holds it.
+  expect(last()).toEqual({ status: 'empty', candidates: 1, held: 1 });
 
   // Only the fencing token completes the claim.
   expect(await cmdCommsBus(['claim', 'complete', '--id', 'legacy-1', '--token', 'f'.repeat(64)], options)).toBe(1);
@@ -53,7 +54,8 @@ it('claims legacy work and a protocol task through cmdCommsBus, fences the lease
   expect(last().status).toBe('completed');
   expect(last().token).toBeUndefined();
   expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-c', '--lease-ms', '60000'], options)).toBe(0);
-  expect(last()).toEqual({ status: 'empty' });
+  // legacy-1 is completed but still a live candidate; nothing answers conflict.
+  expect(last()).toEqual({ status: 'empty', candidates: 1, held: 0 });
 });
 
 it('claims a protocol task envelope addressed to a topic', async () => {

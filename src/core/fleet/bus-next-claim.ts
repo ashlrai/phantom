@@ -5,7 +5,17 @@ import { mutateBusWorkClaim, validBusClaimRequest } from './bus-work-claims.js';
 import { agentPendingAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
 
 export interface BusNextRequest { to: string; owner: string; leaseMs: number; root?: string }
+/** `empty` still means no receipt could be claimed, but now carries the honest
+ * scan totals so a caller can tell a dry well from held work without a second
+ * read: `candidates` is every live claimable envelope addressed to `--to` the
+ * bounded scan found, and `held` is how many of those answered `conflict` — a
+ * live claim on the message id or an overlapping coordination key, which may
+ * be the requester's own prior claim. `candidates - held` failed acquire for
+ * other reasons (completed, expired, lost, missing, or a receipt that changed
+ * mid-claim); expired envelopes never reach the scan, so they are not
+ * candidates. Both counts are observed, never estimated. */
 export type BusNextResult = { status: 'acquired'; receipt: BusInboxReceipt; token: string; leaseUntil: number }
+  | { status: 'empty'; candidates: number; held: number }
   | { status: string };
 
 /**
@@ -45,6 +55,7 @@ export function claimNextBusWork(request: BusNextRequest): BusNextResult {
   }
   if (!finished) return { status: 'retryable' };
   candidates.sort((a, b) => BUS_PRIORITIES.indexOf(a.envelope.priority) - BUS_PRIORITIES.indexOf(b.envelope.priority) || a.cursor - b.cursor);
+  let held = 0;
   for (const candidate of candidates) {
     const result = mutateBusWorkClaim({ ...claim, id: candidate.envelope.id });
     if (result.status === 'acquired' && result.token && result.leaseUntil !== undefined) {
@@ -63,8 +74,11 @@ export function claimNextBusWork(request: BusNextRequest): BusNextResult {
       if (!['released', 'lost', 'missing', 'expired', 'mismatched-token'].includes(released.status)) return { status: released.status };
       continue;
     }
-    if (['conflict', 'completed', 'expired', 'lost', 'missing'].includes(result.status)) continue;
+    if (['conflict', 'completed', 'expired', 'lost', 'missing'].includes(result.status)) {
+      if (result.status === 'conflict') held += 1;
+      continue;
+    }
     return { status: result.status === 'acquired' ? 'unavailable' : result.status };
   }
-  return { status: 'empty' };
+  return { status: 'empty', candidates: candidates.length, held };
 }

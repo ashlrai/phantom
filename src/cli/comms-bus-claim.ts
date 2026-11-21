@@ -10,7 +10,9 @@ addressed to --to. --to may be a topic name or any label of one agent identity â
 agent:<handle>, stable id or alias â€” or a group:<channel>:<topic> address of a channel the
 identity belongs to (minus its own channel posts), resolved through the identity registry;
 an unresolvable --to or unreadable registry keeps exact-label matching. Exit 0 acquired or empty, 1
-unavailable/retryable, 2 invalid. Claim output includes the token; never log it. Renew
+unavailable/retryable, 2 invalid. An empty result still reports {candidates, held}: the live
+claimable receipts the scan found addressed to --to and how many answered conflict, so a dry
+well (candidates 0) reads differently from held work. Claim output includes the token; never log it. Renew
 reuses the original lease length.
 Coordination only: a claim confers no authenticated identity and executes nothing.`;
 

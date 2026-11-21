@@ -821,7 +821,16 @@ address of a registry channel the identity belongs to, minus the identity's
 own channel posts: the same membership rule the inbox, wake and `work mine`
 reads apply, through the same identity registry the message filters use; a
 `--to` naming no identity, membership in no channel, or an unreadable registry
-keeps exact-label matching and never widens.
+keeps exact-label matching and never widens. When nothing is acquirable the
+result is `{status:'empty', candidates, held}` rather than a bare `empty`:
+`candidates` counts every live claimable receipt the bounded scan found
+addressed to `--to`, and `held` counts how many answered `conflict` — a live
+claim on the message id or an overlapping coordination key, possibly the
+requester's own prior claim — so `empty` distinguishes a dry well
+(`candidates: 0`) from work that exists but is held without a second
+`work mine` read. `candidates - held` failed acquire for other reasons
+(completed, expired, lost, missing, or a receipt that changed mid-claim);
+expired receipts never reach the scan, so they are never candidates.
 `fleet bus-request` and `fleet bus-scatter` correlate replies the same way: a
 reply counts when its `from` resolves to the request's `to` identity and its
 `to` resolves to the request's `from` identity, under any of their labels; a

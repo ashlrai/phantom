@@ -40,7 +40,10 @@ it('orders priority then cursor, fences live leases, and honors completion and r
   expect(again.receipt.envelope.id).toBe('second-high');
   expect(again.token).not.toBe(second.token);
   expect(acquired().receipt.envelope.id).toBe('low');
-  expect(claimNextBusWork({ ...request(), owner: 'worker-b' })).toEqual({ status: 'empty' });
+  // Three live claimable receipts still address worker-a: first-high is
+  // completed, second-high and low stay held under worker-a's leases.
+  expect(claimNextBusWork({ ...request(), owner: 'worker-b' }))
+    .toEqual({ status: 'empty', candidates: 3, held: 2 });
 });
 
 it('passes the first page, follows sparse high-water cursors and ignores expired work', () => {
@@ -61,7 +64,9 @@ it('passes the first page, follows sparse high-water cursors and ignores expired
   expect(result.receipt.envelope.id).toBe('beyond');
   expect(result.receipt.cursor).toBeGreaterThan(10_000 + BUS_INBOX_MAX_READ);
   now += 120_000;
-  expect(claimNextBusWork(request())).toEqual({ status: 'empty' });
+  // Every claimable receipt has lapsed past its TTL, so the live scan finds
+  // no candidates at all — a verified-empty well, not held work.
+  expect(claimNextBusWork(request())).toEqual({ status: 'empty', candidates: 0, held: 0 });
 }, 120_000);
 
 it('reports actual lock contention and claim storage errors without returning a body or token', () => {
@@ -77,7 +82,7 @@ it('reports actual lock contention and claim storage errors without returning a 
 });
 
 it('returns empty for missing inbox and unavailable for corrupt inbox', () => {
-  expect(claimNextBusWork(request())).toEqual({ status: 'empty' });
+  expect(claimNextBusWork(request())).toEqual({ status: 'empty', candidates: 0, held: 0 });
   post('work');
   writeFileSync(join(root, 'bus-inbox', 'messages.json'), '{invalid', { mode: 0o600 });
   expect(claimNextBusWork(request())).toEqual({ status: 'unavailable' });
@@ -107,7 +112,10 @@ it('claims work addressed under any label of the named agent identity', () => {
   expect(take('wa-alias')).toBe('a-bare');
   expect(take(stableAgentId('worker-a'))).toBe('a-again');
   expect(take('worker-a')).toBe('a-address');
-  expect(claimNextBusWork({ ...request(), to: 'agent:worker-a' })).toEqual({ status: 'empty' });
+  // All four worker-a-addressed receipts are completed but still live, so the
+  // scan counts them as candidates that answer 'completed', never 'held'.
+  expect(claimNextBusWork({ ...request(), to: 'agent:worker-a' }))
+    .toEqual({ status: 'empty', candidates: 4, held: 0 });
   // Non-identity addresses keep exact-label matching.
   expect(take('fleet.deploy')).toBe('topic');
   expect(take('agent:worker-b')).toBe('b-alias');
@@ -136,18 +144,27 @@ it('claims work addressed to a channel the --to identity belongs to, minus its o
   // mail; its own channel post and the ops channel stay out.
   expect(take('wa-alias', 'worker-a')).toBe('shared');
   expect(take('worker-a', 'worker-a')).toBe('direct-a');
-  expect(claimNextBusWork({ ...request(), to: 'worker-a' })).toEqual({ status: 'empty' });
+  // shared and direct-a are completed but still live candidates; self-post is
+  // the identity's own channel post and ops-post is not a member address.
+  expect(claimNextBusWork({ ...request(), to: 'worker-a' }))
+    .toEqual({ status: 'empty', candidates: 2, held: 0 });
   // worker-b claims the channel post worker-a sent — pending for every member
   // but its author — then its own direct mail; the completed shared work is fenced.
   expect(take('worker-b', 'worker-b')).toBe('self-post');
   expect(take('worker-b', 'worker-b')).toBe('direct-b');
-  expect(claimNextBusWork({ ...request(), to: 'worker-b' })).toEqual({ status: 'empty' });
+  // shared, self-post and direct-b are completed but still live candidates for
+  // worker-b; ops-post belongs to a channel worker-b is not a member of.
+  expect(claimNextBusWork({ ...request(), to: 'worker-b' }))
+    .toEqual({ status: 'empty', candidates: 3, held: 0 });
   // worker-c belongs to ops only: the eng channel work is not its to claim.
   expect(take('worker-c', 'worker-c')).toBe('ops-post');
-  expect(claimNextBusWork({ ...request(), to: 'worker-c' })).toEqual({ status: 'empty' });
+  expect(claimNextBusWork({ ...request(), to: 'worker-c' }))
+    .toEqual({ status: 'empty', candidates: 1, held: 0 });
   // An unresolvable ref and a bare channel name keep exact-label matching.
-  expect(claimNextBusWork({ ...request(), to: 'worker-d' })).toEqual({ status: 'empty' });
-  expect(claimNextBusWork({ ...request(), to: 'group:eng' })).toEqual({ status: 'empty' });
+  expect(claimNextBusWork({ ...request(), to: 'worker-d' }))
+    .toEqual({ status: 'empty', candidates: 0, held: 0 });
+  expect(claimNextBusWork({ ...request(), to: 'group:eng' }))
+    .toEqual({ status: 'empty', candidates: 0, held: 0 });
   // A literal group:<channel>:<topic> ref still exact-matches, sender aside.
   post('late', { to: 'group:eng:alerts', from: 'agent:worker-b', priority: 'P0' });
   expect(take('group:eng:alerts', 'worker-a')).toBe('late');
@@ -167,7 +184,9 @@ it('keeps channel work unmatched when the identity registry is unreadable', () =
   // unreadable registry narrows to the literal label, never widens.
   expect(result.receipt.envelope.id).toBe('direct');
   expect(mutateBusWorkClaim({ action: 'complete', id: 'direct', token: result.token, root }).status).toBe('completed');
-  expect(claimNextBusWork(request())).toEqual({ status: 'empty' });
+  // 'direct' is completed but still a live candidate; 'chan-work' stays
+  // unmatched under literal matching, so nothing is held.
+  expect(claimNextBusWork(request())).toEqual({ status: 'empty', candidates: 1, held: 0 });
 });
 
 it('keeps exact-label matching when the identity registry is unreadable', () => {
@@ -182,7 +201,26 @@ it('keeps exact-label matching when the identity registry is unreadable', () => 
   // unreadable registry narrows to the literal label, never widens.
   expect(result.receipt.envelope.id).toBe('exact');
   expect(mutateBusWorkClaim({ action: 'complete', id: 'exact', token: result.token, root }).status).toBe('completed');
-  expect(claimNextBusWork({ ...request(), to: 'agent:worker-a' })).toEqual({ status: 'empty' });
+  // 'exact' is completed but still a live candidate; 'alias-work' stays
+  // unmatched under literal matching, so nothing is held.
+  expect(claimNextBusWork({ ...request(), to: 'agent:worker-a' }))
+    .toEqual({ status: 'empty', candidates: 1, held: 0 });
+});
+
+it('reports held and completed candidates separately from a dry well', () => {
+  post('held-task', { priority: 'P0' });
+  post('done-task', { priority: 'P1' });
+  // A peer holds the high-priority task; the worker takes and completes the rest.
+  const held = claimNextBusWork({ ...request(), owner: 'peer' });
+  expect(held.status).toBe('acquired');
+  const done = acquired();
+  expect(done.receipt.envelope.id).toBe('done-task');
+  expect(mutateBusWorkClaim({ action: 'complete', id: 'done-task', token: done.token, root }).status).toBe('completed');
+  // Both addressed receipts are now unclaimable — one held by the peer's live
+  // lease, one completed — so empty reports candidates with only the held one.
+  expect(claimNextBusWork(request())).toEqual({ status: 'empty', candidates: 2, held: 1 });
+  // An address with nothing posted is a verified-empty well, not held work.
+  expect(claimNextBusWork({ ...request(), to: 'worker-b' })).toEqual({ status: 'empty', candidates: 0, held: 0 });
 });
 
 it('reports full claim storage rather than declaring the queue empty', () => {

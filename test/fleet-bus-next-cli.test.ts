@@ -32,7 +32,9 @@ it('returns priority-ordered real receipts and leases through JSON', async () =>
   expect(first.token).toMatch(/^[a-f0-9]{64}$/);
   expect(first.leaseUntil).toBeGreaterThan(Date.now());
   expect(second).toMatchObject({ code: 0, status: 'acquired', receipt: { envelope: { id: 'low' } } });
-  expect(await run()).toEqual({ code: 0, status: 'empty' });
+  // high and low are both still live claimable receipts on worker-a, each held
+  // by worker-a's own unreleased lease — held work, not a dry well.
+  expect(await run()).toEqual({ code: 0, status: 'empty', candidates: 2, held: 2 });
 }, 120_000);
 
 it('validates all flags without returning bodies or tokens', async () => {
