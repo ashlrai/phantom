@@ -46,6 +46,38 @@ const DOCS = [
   'docs/SUBAGENTS.md',
   // The first-pull-request guide README.md and AGENTS.md send contributors to.
   'docs/CONTRIBUTE-WITH-AN-AGENT.md',
+  // Operating guides AGENTS.md and README.md link to. Linked guides that are
+  // missing here (QUEUE, FLEET-API, CHANNELS, AGENT-BUS, SESSIONS, VERSE and
+  // others) name verbs that dispatch but that completions SUBCOMMANDS does
+  // not list yet; add each one once its verbs are in src/cli/completions.ts.
+  'docs/AGENT-APPS.md',
+  'docs/AGENT-NETWORK-CHANNELS.md',
+  'docs/AGENT-PROFILES.md',
+  'docs/APP-DRIVE.md',
+  'docs/APP-RESTART.md',
+  'docs/BOT-SEATS.md',
+  'docs/CI-BASELINE.md',
+  'docs/COMMS-AGENT.md',
+  'docs/CONNECTORS.md',
+  'docs/DESKTOP-OPERATOR.md',
+  'docs/DESKTOPCTL.md',
+  'docs/DRAFTS.md',
+  'docs/EVAL-PASSK.md',
+  'docs/FLEET-LANE-FRESHNESS.md',
+  'docs/LANE-HEALTH.md',
+  'docs/MEMORY.md',
+  'docs/NODES.md',
+  'docs/PAGES.md',
+  'docs/RADAR.md',
+  'docs/REPO-RANK.md',
+  'docs/RESEARCH-LOOP.md',
+  'docs/ROUTE-HYSTERESIS.md',
+  'docs/ROUTER-CATALOG.md',
+  'docs/ROUTER-GATEWAY.md',
+  'docs/SKILLS.md',
+  'docs/TEAM.md',
+  'docs/lanes.md',
+  'docs/strategy/spawn-fleet-model.md',
 ];
 
 /** Every `--flag` spelled anywhere in src/ (code, help text, comments). */
