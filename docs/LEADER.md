@@ -206,6 +206,21 @@ phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky
   red, with a button into the Journal, once a pass is more than 30 minutes
   overdue. When the fleet read holds no pass time the line says unknown and
   shows no count.
+- **Ask now:** in the desktop Leader pane, **Send** writes to the inbox, which
+  the Leader reads at its next pass. **Ask now** beside it (⌘⇧↩, or
+  Ctrl+Shift+Enter) posts the same words to this thread instead, where the
+  Leader answers in the same request. Your message shows at once, with the
+  Leader's typing dots under it and the seconds waited. The reply box stays
+  free meanwhile and Send still works; one question is out at a time. When the
+  answer arrives, both messages take their place in the conversation. A
+  message the server refuses stays on screen with the server's reason and
+  **Try again**, **Edit** (puts it back in the box) and **Discard**. If the
+  Leader records the message without answering, a line under the box says so.
+  Ask now needs the same mutation token as Send, keeps the thread's
+  4,000 character limit, and is off on a server without the Leader
+  conversation. A draft that is a `/` command runs as that command. The
+  routing trail under a message (jobs, lanes, PRs) is traced from the inbox,
+  so work for the fleet still goes through Send.
 - **Replies** use the same provider-neutral account/model routing as planning.
   Prepared Claude Code, Codex, Grok, included native Devin models and local
   resources can participate when their current capacity and signed Leader role
