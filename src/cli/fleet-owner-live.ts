@@ -13,7 +13,7 @@ import { isAbsolute } from 'node:path';
 import { loadConfigReadOnly } from '../core/config.js';
 import { isPaused } from '../core/comms/pause.js';
 import { killSwitchOn } from '../core/sandbox/policy.js';
-import { readLeaderReplies } from '../core/fleet/mason-outbox.js';
+import { sendOwnerPlanReply } from '../core/comms/owner-reply.js';
 import { readOwnerLiveStatus } from '../core/comms/owner-live-status.js';
 import { ensureOwnerAdaptersFile, setImessageBridge } from '../core/comms/owner-adapters-file.js';
 import { fixedOwnerConfigDir } from '../core/comms/owner-channel.js';
@@ -61,8 +61,6 @@ export async function cmdFleetOwnerLive(args: string[], deps: FleetOwnerLiveDeps
   // No config file yet: write the starter (iMessage on, no secrets) so no human step is needed.
   if (apply && deps.options === undefined) ensureOwnerAdaptersFile(deps.configDir ?? fixedOwnerConfigDir());
   const options = deps.options ?? { ...ownerThreadOptions(), ...(runsDir === undefined ? {} : { runsDir }) };
-  // The newest leader reply is what owner-live sends once a channel is on.
-  const replies = await readLeaderReplies({ limit: 1, planLog: loadConfigReadOnly().comms?.leaderPlanLogPath }).then(r => r.replies, () => []);
   // Apply mode: pair Mason's iMessage handle (one text, then wait for YES) before the hourly send looks for a binding.
   let pairing: PairTickReport | undefined;
   const held = options.halted === true || options.paused === true || killSwitchOn() || isPaused();
@@ -72,14 +70,16 @@ export async function cmdFleetOwnerLive(args: string[], deps: FleetOwnerLiveDeps
     // A fresh binding is on disk now; the hourly send in this same tick should see it.
     if (pairing.action === 'bound' && deps.options === undefined) options.settings = ownerThreadOptions().settings;
   }
-  const report = await sendOwnerLiveNotices(options, { apply, replies });
+  const notices = await sendOwnerLiveNotices(options, { apply });
+  const ownerReply = await sendOwnerPlanReply(options, { dryRun: !apply, planLog: loadConfigReadOnly().comms?.leaderPlanLogPath });
+  const report = { ...notices, ownerReply };
   if (json) {
     output(JSON.stringify(pairing ? { ...report, pair: pairing } : report));
   } else {
     output(`owner-live: sent=${report.sent.length} planned=${report.planned.length} failed=${report.failed.length} skipped=${report.skipped.length}${report.halted ? ' halted' : ''}`);
     for (const row of [...report.failed, ...report.skipped]) output(`  ${row.channel}: ${row.detail ?? row.reason}`);
     if (pairing && pairing.action !== 'none') output(`  imessage pairing: ${pairing.detail}`);
-    if (report.reply) output(`  leader reply: ${report.reply.reason}${report.reply.sent.length ? ` (${report.reply.sent.join(', ')})` : ''}`);
+    output(`  leader reply: ${ownerReply.reason}`);
   }
   return apply && report.failed.length > 0 ? 1 : 0;
 }
