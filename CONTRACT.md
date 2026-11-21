@@ -500,8 +500,15 @@ metrics-ingest, so a recorded revert is never contradicted by a later
 either way. Finish rows also fold three productivity verdicts, newest
 explicit row wins: `empty` (the recorded no-diff boolean), `exit_code`
 (the worker's recorded exit status, negative signal exits included) and
-`failure_class` (only bounded identifier-shaped labels; anything else is
-skipped). All stay `null` when no jobs row recorded them — the fold
+`failure_class` — the finish row's recorded failure classification,
+resolved `failure_class`, then `failure_reason`, then `pool_error`
+(snake_case before camelCase within each, the precedence the skill-nudge
+ledger reader shares) and accepted only as bounded identifier-shaped
+labels; anything else is skipped, never recorded raw. dispatchd writes
+`failure_class` only for the devin pool, so the fallbacks carry every
+other lane's classified cause (`launch_timeout`, `provider_*`,
+`agent_exit_nonzero`, `exit_status_missing`, pool errors like
+`rate_limit`). All stay `null` when no jobs row recorded them — the fold
 never infers a finish verdict from merge state, PR URLs or event names.
 `merged` reads the jobs-ledger outcome dialect the sibling fleet readers
 share: a terminal phase across

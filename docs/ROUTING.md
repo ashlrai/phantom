@@ -308,8 +308,10 @@ time, recorded merge latency (`ttm_s` — the jobs-ledger `ttm_s`/`ttmS`
 opened-to-merged seconds, taken only from the row that stands as the
 merge verdict and cleared when a later verdict is not a merge),
 `work_class`, the finish-row productivity verdicts (`empty`,
-`exit_code`, `failure_class` — explicit row fields only, `null` when
-unrecorded) and the advisory `passk` join from
+`exit_code`, `failure_class` — the row's recorded failure
+classification, resolved `failure_class` → `failure_reason` →
+`pool_error` so non-devin lanes' causes join too; explicit row fields
+only, `null` when unrecorded) and the advisory `passk` join from
 `eval.lane-scores.v1`. `work_class` is the class a jobs row recorded when
 one exists; otherwise it is the job's newest `work-market.v1`
 `route_decision` class — the market's own classification of the job,
@@ -375,8 +377,9 @@ merge verdict, from the same finish-row evidence: `unknown_empty` counts
 jobs whose newest finish recorded `empty: true` (the run produced no
 diff), `unknown_nonzero_exit` counts jobs whose newest `exit_code` was
 not 0 — the two overlap, since a crashed run usually diffs nothing —
-`unknown_failure_classes` tallies the recorded `failure_class` labels
-(top entries first), and `unknown_unresolved` is the remainder with no
+`unknown_failure_classes` tallies the recorded failure classifications
+(`failure_class`, else `failure_reason`, else `pool_error`; top entries
+first), and `unknown_unresolved` is the remainder with no
 finish failure signal (finished cleanly awaiting a verdict, or still in
 flight). These are counts over the retained window; when the ledger was
 not read they are `null`, never zero. When the ledger exceeds the retained tail the

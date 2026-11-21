@@ -282,6 +282,36 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(byId.get('F5')).toMatchObject({ exit_code: 3 });
   });
 
+  it('folds the finish row failure classification across failure_class, failure_reason and pool_error', () => {
+    const fold = foldRouterOutcomes([
+      // dispatchd writes failure_class only for the devin pool; other lanes
+      // record failure_reason or pool_error instead.
+      '{"job":"G1","event":"finish","empty":true,"exit_code":124,"failure_reason":"launch_timeout"}',
+      '{"job":"G2","event":"finish","exit_code":1,"pool_error":"rate_limit"}',
+      '{"job":"G3","event":"finish","exit_code":1,"pool_error":"usage_limit","failure_reason":"provider_usage_limit"}',
+      '{"job":"G4","event":"finish","exit_code":1,"failure_class":"quota","failure_reason":"agent_exit_nonzero","pool_error":"model_capacity"}',
+      '{"job":"G5","event":"finish","exit_code":1,"failureReason":"exit_status_missing","poolError":"credits_exhausted"}',
+      '{"job":"G6","event":"finish","exit_code":1,"pool_error":"Not A Label!"}',
+      // Newest explicit classification wins; a later row without one keeps it.
+      '{"job":"G7","event":"finish","exit_code":1,"pool_error":"rate_limit"}',
+      '{"job":"G7","event":"finish","exit_code":1,"failure_reason":"launch_timeout"}',
+      '{"job":"G7","event":"finish","exit_code":0}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('G1')?.failure_class).toBe('launch_timeout');
+    expect(byId.get('G2')?.failure_class).toBe('rate_limit');
+    // failure_reason outranks pool_error on the same row.
+    expect(byId.get('G3')?.failure_class).toBe('provider_usage_limit');
+    // failure_class outranks both fallbacks.
+    expect(byId.get('G4')?.failure_class).toBe('quota');
+    // camelCase spellings join in the same precedence.
+    expect(byId.get('G5')?.failure_class).toBe('exit_status_missing');
+    // Out-of-shape labels are skipped, never recorded raw.
+    expect(byId.get('G6')?.failure_class).toBeNull();
+    // The newest classified row wins; a later row with none keeps it.
+    expect(byId.get('G7')?.failure_class).toBe('launch_timeout');
+  });
+
   it('reads the real folder and filters by lane', async () => {
     const root = runsDir([
       '{"job":"A1","lane":"alpha","phase":"MERGED"}',
