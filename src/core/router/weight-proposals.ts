@@ -97,7 +97,8 @@ export interface RouterWeightProposalSet {
    * counts jobs whose newest finish recorded `empty: true` (the run produced
    * no diff); `unknown_nonzero_exit` counts jobs whose newest `exit_code`
    * was not 0 — the two overlap, since a crashed run usually diffs nothing.
-   * `unknown_failure_classes` tallies the recorded `failure_class` labels,
+   * `unknown_failure_classes` tallies the recorded failure classifications
+   * (failure_class, else failure_reason, else pool_error),
    * top entries first. `unknown_unresolved` is the remainder with no
    * finish failure signal — finished cleanly and awaiting a merge verdict,
    * or still in flight; the ledger simply records no terminal productivity
@@ -258,7 +259,7 @@ export interface RouterWeightProposalReport {
    */
   unknown_empty: number | null;
   unknown_nonzero_exit: number | null;
-  /** Top recorded failure_class labels inside the unknown cohort, by jobs; empty when none recorded. */
+  /** Top recorded failure classifications inside the unknown cohort, by jobs; empty when none recorded. */
   unknown_failure_classes: { failure_class: string; jobs: number }[] | null;
   unknown_unresolved: number | null;
   proposals: RouterWeightProposal[];

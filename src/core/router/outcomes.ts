@@ -92,10 +92,13 @@ export interface RouterOutcome {
    * and wall_s. `empty` is the boolean a finish row records for its diff
    * check (true = the run produced no diff); `exit_code` is the worker's
    * recorded exit status — negative values are signal exits and stay
-   * recorded; `failure_class` is the bounded identifier-shaped failure label
-   * a finish row classified (values outside that shape are skipped, never
-   * guessed). All stay null when no jobs row recorded them — unknown, never
-   * inferred from merged state, PR URLs or event names.
+   * recorded; `failure_class` is the finish row's recorded failure
+   * classification — `failure_class`, then `failure_reason`, then
+   * `pool_error`, the precedence the skill-nudge ledger reader shares —
+   * accepted only in the bounded identifier shape (values outside it are
+   * skipped, never guessed or recorded raw). All stay null when no jobs row
+   * recorded them — unknown, never inferred from merged state, PR URLs or
+   * event names.
    */
   empty: boolean | null;
   exit_code: number | null;
@@ -195,10 +198,19 @@ const num = (v: unknown): number | null => typeof v === 'number' && Number.isFin
 const count = (v: unknown): number | null => Number.isSafeInteger(v) && (v as number) >= 0 ? v as number : null;
 /** Exit statuses are safe integers of either sign — dispatchd records signal exits as negatives. */
 const exitStatus = (v: unknown): number | null => Number.isSafeInteger(v) ? v as number : null;
-/** failure_class joins only bounded identifier-shaped labels; anything else is skipped, never recorded raw. */
+/** Failure classifications join only bounded identifier-shaped labels; anything else is skipped, never recorded raw. */
 const FAILURE_CLASS = /^[a-z0-9][a-z0-9_.-]{0,127}$/;
+/**
+ * The finish row's recorded failure classification, in the skill-nudge
+ * precedence: `failure_class`, then `failure_reason`, then `pool_error`
+ * (snake_case before camelCase within each). dispatchd writes `failure_class`
+ * only for the devin pool, so without the fallbacks every other lane's
+ * classified cause — launch_timeout, provider_*, agent_exit_nonzero,
+ * exit_status_missing, or a pool error like rate_limit — folded to null.
+ */
+const FAILURE_CLASS_KEYS = ['failure_class', 'failureClass', 'failure_reason', 'failureReason', 'pool_error', 'poolError'] as const;
 const failureClass = (r: Row): string | null => {
-  const v = str(r, 'failure_class', 'failureClass');
+  const v = str(r, ...FAILURE_CLASS_KEYS);
   return v !== null && FAILURE_CLASS.test(v) ? v : null;
 };
 

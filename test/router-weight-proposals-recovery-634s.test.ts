@@ -399,8 +399,9 @@ describe('outcome-quality evidence', () => {
 });
 
 describe('unknown-outcome resolution', () => {
-  // Finish rows carry empty/exit_code/failure_class; the fold keeps them on
-  // the outcome and the report resolves the merged:null cohort with them.
+  // Finish rows carry empty/exit_code plus a failure classification
+  // (failure_class, else failure_reason, else pool_error); the fold keeps
+  // them on the outcome and the report resolves the merged:null cohort.
   const finishRow = (job: string, extra: Record<string, unknown>): object =>
     ({ job, lane: 'alpha', work_class: 'code', event: 'finish', ...extra });
 
@@ -429,6 +430,31 @@ describe('unknown-outcome resolution', () => {
     const { out } = await run(['--runs-dir', runs]);
     expect(out).toContain('unknown resolution: empty=3 nonzero_exit=5 unresolved=4');
     expect(out).toContain('failure_classes=quota:3,authentication:1');
+  });
+
+  it('tallies failure_reason and pool_error labels the same way as failure_class', async () => {
+    // dispatchd writes failure_class only for the devin pool; other lanes
+    // record failure_reason or pool_error on the same finish rows.
+    writeLedger([
+      ...merged(20),
+      finishRow('synthetic-unq-timeout', { empty: true, exit_code: 124, failure_reason: 'launch_timeout' }),
+      finishRow('synthetic-unq-rate', { exit_code: 1, pool_error: 'rate_limit' }),
+      finishRow('synthetic-unq-quota', { exit_code: 1, pool_error: 'usage_limit', failure_reason: 'provider_usage_limit' }),
+      finishRow('synthetic-unq-clean', { empty: false, exit_code: 0 }),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 4,
+      unknown_empty: 1, unknown_nonzero_exit: 3, unknown_unresolved: 1,
+      unknown_failure_classes: [
+        { failure_class: 'launch_timeout', jobs: 1 },
+        { failure_class: 'provider_usage_limit', jobs: 1 },
+        { failure_class: 'rate_limit', jobs: 1 },
+      ],
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('failure_classes=launch_timeout:1,provider_usage_limit:1,rate_limit:1');
   });
 
   it('never counts finish signals from the known cohort as unknown resolution', async () => {
