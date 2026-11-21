@@ -32,9 +32,7 @@ import { readFleetQueue } from './runs-parked-queue.js';
 
 export const JOB_GAPS_SCHEMA = 'jobs.gaps.v1';
 export const MAX_GAPS_PER_JOB = 12;
-/** Most gaps one tick proposes for a single repo. */
-export const MAX_PROPOSED_PER_REPO = 3;
-/** Most new drop jobs one tick writes in all (env ASHLR_GAPS_MAX, or `--max`). */
+/** Fallback per-tick limit when lane readings are unavailable and no explicit max is set. */
 export const DEFAULT_MAX_NEW_DROPS = 3;
 /** Log lines read from the end of a published job's log. */
 export const PUBLISHED_LOG_TAIL_LINES = 80;
@@ -239,7 +237,7 @@ export interface JobGapsDeps {
   ingestedTitles?: (runsDir: string) => Promise<string[]>;
   /** Titles this proposer queued in the last 24 h (metrics/gap-proposed.jsonl). Unreadable = unknown, not empty. */
   proposedTitles?: (runsDir: string) => Promise<string[]>;
-  /** Most new drop jobs this call writes. Defaults to ASHLR_GAPS_MAX, then 3. */
+  /** Most new drop jobs this call writes. Overrides ASHLR_GAPS_MAX; otherwise fills known lane room (up to 40), or defaults to 3 without lane readings. */
   maxNew?: number;
   /** Lane readings. With them a gap goes to a lane with room, and rows that cannot launch do not count as a full queue. Without them: claude, or codex-personal for gh work. */
   lanes?: readonly LaneFacts[];
@@ -382,7 +380,8 @@ export async function readJobGaps(hours: number, opts: { propose?: boolean } & J
     const room = opts.lanes ? gapLaneRoom(opts.lanes, now) : opts.pace?.size ? unboundedRoom() : null;
     const paceNotes: string[] = [];
     report.queue = await readGapQueueInputs(runsDir, room);
-    report.proposed = await proposeGaps(report.candidates, runsDir, opts.write, opts.maxNew ?? maxNewFromEnv(), now, room, opts.pace, paceNotes, report.queue);
+    const maxNew = opts.maxNew ?? maxNewFromEnv(process.env, opts.lanes ? DROP_JOB_QUEUE_LIMIT : DEFAULT_MAX_NEW_DROPS);
+    report.proposed = await proposeGaps(report.candidates, runsDir, opts.write, maxNew, now, room, opts.pace, paceNotes, report.queue);
     if (paceNotes.length) report.paceNotes = paceNotes;
     if (room) report.parked = room.stuck;
   }
@@ -392,30 +391,29 @@ export async function readJobGaps(hours: number, opts: { propose?: boolean } & J
 /** Repos that have a drop queue: every repo key the drop job header allows. */
 export const DROP_QUEUE_REPOS: readonly string[] = DROP_JOB_REPOS;
 
-/**
- * Writes each survivor as a drop job (the queue `phm ideas queue` writes to) with its own repo in the header.
- * Unknown repos are listed as skipped with the reason; each repo gets at most MAX_PROPOSED_PER_REPO per tick.
- * A gap with no known repo goes to phantom, as before.
- */
-export function maxNewFromEnv(env: NodeJS.ProcessEnv = process.env): number {
+/** An explicit, valid environment limit wins over the capacity-based or unavailable-readings fallback. */
+export function maxNewFromEnv(env: NodeJS.ProcessEnv = process.env, fallback = DEFAULT_MAX_NEW_DROPS): number {
   const n = Number(env.ASHLR_GAPS_MAX);
-  return Number.isInteger(n) && n >= 0 && n <= 40 && env.ASHLR_GAPS_MAX?.trim() ? n : DEFAULT_MAX_NEW_DROPS;
+  return Number.isInteger(n) && n >= 0 && n <= 40 && env.ASHLR_GAPS_MAX?.trim() ? n : fallback;
 }
 
+/**
+ * Writes each survivor as a drop job (the queue `phm ideas queue` writes to) with its own repo in the header.
+ * Unknown repos are listed as skipped with the reason; known lanes receive work until their free slots are filled.
+ * A gap with no known repo goes to phantom, as before.
+ */
 async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: JobGapsDeps['write'], maxNew: number, now: number, room: GapLaneRoom | null, pace: ReadonlyMap<string, PaceVerdict> | undefined, paceNotes: string[], queue: GapQueueInputs): Promise<ProposedGap[]> {
   let launchable = queue.launchableRows;
   const moved = new Map<string, number>();
   const held = new Map<string, number>();
   const root = resolveDropJobRoot(runsDir);
   const out: ProposedGap[] = [];
-  const perRepo = new Map<string, number>();
   let newDrops = 0;
   for (const gap of candidates) {
     const row: ProposedGap = { ...gap, jobId: null, queued: false, skipped: null, path: null, refused: null };
     out.push(row);
     const repo = gap.repo ?? DROP_JOB_DEFAULT_REPO;
     if (!DROP_QUEUE_REPOS.includes(repo)) { row.skipped = `repo ${repo} is not a known repo`; continue; }
-    if ((perRepo.get(repo) ?? 0) >= MAX_PROPOSED_PER_REPO) { row.skipped = `already ${MAX_PROPOSED_PER_REPO} proposed for ${repo} this tick`; continue; }
     if (newDrops >= maxNew) { row.skipped = `already ${maxNew} new ${maxNew === 1 ? 'job' : 'jobs'} this tick`; continue; }
     const pick = room ? pickPacedLane(room, needsGh(gap), pace) : { lane: needsGh(gap) ? 'codex-personal' : 'claude', heldWhy: null, from: null };
     const lane = pick.lane;
@@ -439,7 +437,6 @@ async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: J
       // The proposer's own record: feeds the 24 h dedupe and the doctor's Self-supply line. Losing it must not undo the queued job.
       await recordGapProposal(runsDir, { at: new Date(now).toISOString(), id: job.id, title: gap.title, repo }).catch(() => undefined);
       newDrops++;
-      perRepo.set(repo, (perRepo.get(repo) ?? 0) + 1);
     } catch (e) {
       row.skipped = e instanceof DropJobExistsError ? 'already queued' : e instanceof DropJobValidationError ? (row.refused = explainDropJobReasons(e.reasons)) : 'could not write the job';
     }

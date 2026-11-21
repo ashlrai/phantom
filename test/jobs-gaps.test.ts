@@ -8,8 +8,8 @@ import { cmdJobsGaps } from '../src/cli/jobs-gaps.js';
 const NOW = Date.parse('2026-11-19T12:00:00Z');
 const iso = (hoursAgo: number) => new Date(NOW - hoursAgo * 3_600_000).toISOString();
 let root: string, wt: string;
-beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'gaps-')); wt = join(root, 'wt'); });
-afterEach(async () => { await rm(root, { recursive: true, force: true }); vi.restoreAllMocks(); });
+beforeEach(async () => { vi.stubEnv('ASHLR_GAPS_MAX', ''); root = await mkdtemp(join(tmpdir(), 'gaps-')); wt = join(root, 'wt'); });
+afterEach(async () => { await rm(root, { recursive: true, force: true }); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 async function seed(jobs: Record<string, string | null>): Promise<void> {
   await mkdir(join(root, 'metrics'), { recursive: true });
@@ -174,13 +174,13 @@ describe('prose gaps and the drop queue', () => {
     expect(report.proposed).toMatchObject([{ queued: false, skipped: 'repo elsewhere is not a known repo' }]);
     expect(await dropFiles()).toHaveLength(0);
   });
-  it('proposes at most 3 gaps per repo per tick and still holds the duplicate check on the next tick', async () => {
+  it('falls back to 3 gaps without lane readings and still deduplicates on the next tick', async () => {
     const titles = ['Wire the digest into the weekly report', 'Cover the stale lock case in tests', 'Print queue depth in the status line', 'Rename the legacy sweep flag', 'Show unknown sizes as unknown'];
     await seed({ JOBP: `## Remaining gaps\n${titles.map(t => `- ${t}`).join('\n')}\n` });
     await seedRepos({ JOBP: 'lexicon' });
     const first = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, ...none });
     expect(first.proposed!.filter(p => p.queued)).toHaveLength(3);
-    expect(first.proposed!.filter(p => p.skipped?.startsWith('already 3 proposed for lexicon'))).toHaveLength(2);
+    expect(first.proposed!.filter(p => p.skipped === 'already 3 new jobs this tick')).toHaveLength(2);
     expect(await dropFiles()).toHaveLength(3);
     const second = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, ...none, queuedWork: undefined });
     // The three already written are caught as queued work; the other two go through now.
@@ -270,6 +270,8 @@ describe('gaps from published jobs', () => {
 describe('gaps and lanes that can run them', () => {
   const dropDir = join('leader', 'drop', 'claude');
   const lane = (name: string, over: Record<string, unknown> = {}) => ({ lane: name, running: 0, target: 8, queued: 0, held: false, remainingPct: 68, resetAt: null, ...over });
+  const titles = ['Wire the digest into the weekly report', 'Cover the stale lock case in tests', 'Print queue depth in the status line', 'Rename the legacy sweep flag', 'Show unknown sizes as unknown'];
+  const seedFive = () => seed({ 'RQ-A': `## Gaps\n${titles.map(t => `- ${t}`).join('\n')}\n` });
   const stuckLanes = [lane('codex-personal', { queued: 10, remainingPct: 0, resetAt: '2026-11-21T20:30:00Z' }), lane('claude', { remainingPct: 68 })];
   const dropFiles = async () => (await readdir(join(root, dropDir)).catch(() => [])).filter(f => f.endsWith('.md'));
   const fillPrompts = async (n: number) => {
@@ -277,6 +279,64 @@ describe('gaps and lanes that can run them', () => {
     for (let i = 0; i < n; i++) await writeFile(join(root, 'queue', 'prompts', `RQ-PHX-FULL${String(i).padStart(3, '0')}.md`), 'waiting\n');
   };
   const run = (lanes: readonly unknown[] | undefined) => readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, ...none, ...(lanes ? { lanes: lanes as never } : {}) });
+
+  it('fills more than three free slots from one repo and deduplicates on the next tick', async () => {
+    await seedFive();
+    const first = await run([lane('claude')]);
+    expect(first.proposed!.filter(p => p.queued)).toHaveLength(5);
+    expect(await dropFiles()).toHaveLength(5);
+    const second = await run([lane('claude')]);
+    expect(second.proposed).toEqual([]);
+    expect(second.dropped).toHaveLength(5);
+    expect(await dropFiles()).toHaveLength(5);
+  });
+
+  it('subtracts running and queued work and fills multiple eligible lanes without exceeding their slots', async () => {
+    await seedFive();
+    const lanes = [lane('claude', { target: 4, running: 1, queued: 2 }), lane('codex-local', { target: 2 }), lane('codex-personal', { target: 1 })];
+    const report = await run(lanes);
+    expect(report.proposed!.filter(p => p.queued).map(p => p.lane)).toEqual(['claude', 'codex-local', 'codex-local', 'codex-personal']);
+    expect(report.proposed!.find(p => !p.queued)!.skipped).toBe('no lane has free slots and usage left');
+    expect(lanes[0]!.queued).toBe(2);
+  });
+
+  it.each([
+    { env: '', maxNew: undefined, expected: 5 },
+    { env: 'lots', maxNew: undefined, expected: 5 },
+    { env: '2', maxNew: undefined, expected: 2 },
+    { env: '0', maxNew: undefined, expected: 0 },
+    { env: '4', maxNew: 2, expected: 2 },
+    { env: '4', maxNew: 0, expected: 0 },
+  ])('honors explicit caps with known capacity: $env / $maxNew -> $expected', async ({ env, maxNew, expected }) => {
+    vi.stubEnv('ASHLR_GAPS_MAX', env);
+    await seedFive();
+    const report = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, lanes: [lane('claude')], ...none, maxNew });
+    expect(report.proposed!.filter(p => p.queued)).toHaveLength(expected);
+    expect(await dropFiles()).toHaveLength(expected);
+  });
+
+  it('allows an explicit max above three for one repo without lane readings', async () => {
+    await seedFive();
+    const report = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, maxNew: 5, ...none });
+    expect(report.proposed!.filter(p => p.queued)).toHaveLength(5);
+  });
+
+  it('keeps the three-job fallback with pace alone and no lane readings', async () => {
+    await seedFive();
+    const pace = new Map([['claude', { pool: 'claude', state: 'unknown' as const, usedPct: null, hoursToReset: null, emptyAt: null, evenPacePerHour: null, recentPerHour: null, resetAt: null }]]);
+    const report = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, pace, ...none });
+    expect(report.proposed!.filter(p => p.queued)).toHaveLength(3);
+  });
+
+  it('stops at the remaining ready-queue headroom even when more slots are free', async () => {
+    await seedFive();
+    await mkdir(join(root, 'queue'), { recursive: true });
+    await writeFile(join(root, 'queue', 'ready.tsv'), Array.from({ length: 39 }, (_, i) => `RQ-RDY${i}\tphantom\tclaude\twork\tplain row ${i}`).join('\n') + '\n');
+    const report = await run([lane('claude')]);
+    expect(report.proposed!.filter(p => p.queued)).toHaveLength(1);
+    expect(report.proposed!.filter(p => !p.queued).every(p => p.skipped === 'the job queue is full (40 launchable rows, limit 40)')).toBe(true);
+    expect(await dropFiles()).toHaveLength(1);
+  });
 
   it('queues gaps for the idle lane when only rows on a used-up pool fill the queue', async () => {
     await seed({ 'RQ-A': '## Gaps\n- Wire the digest into the weekly report\n' });

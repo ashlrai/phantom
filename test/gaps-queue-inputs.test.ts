@@ -10,8 +10,8 @@ import { runAutofillTick } from '../src/core/fleet/autofill-run.js';
 const NOW = Date.parse('2026-11-21T14:00:00Z');
 const BACK = '2026-11-22T20:30:00Z';
 let root: string, wt: string;
-beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'gapq-')); wt = join(root, 'wt'); await mkdir(join(root, 'queue', 'prompts'), { recursive: true }); });
-afterEach(async () => { await rm(root, { recursive: true, force: true }); vi.restoreAllMocks(); });
+beforeEach(async () => { vi.stubEnv('ASHLR_GAPS_MAX', ''); root = await mkdtemp(join(tmpdir(), 'gapq-')); wt = join(root, 'wt'); await mkdir(join(root, 'queue', 'prompts'), { recursive: true }); });
+afterEach(async () => { await rm(root, { recursive: true, force: true }); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 const none = { openIdeas: async () => [], queuedWork: async () => [], mergedTitles: async () => [] };
 async function seedGaps(n: number): Promise<void> {
@@ -37,10 +37,10 @@ describe('gap queue count', () => {
   it('ignores 2,000 old prompt files and 9 ready rows parked on a spent pool', async () => {
     await seedGaps(4); await oldPrompts(2000); await readyRows(9, 'codex-personal');
     const report = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, lanes, ...none });
-    expect(report.proposed!.filter(p => p.queued)).toHaveLength(3); // capped as today
+    expect(report.proposed!.filter(p => p.queued)).toHaveLength(4);
     expect(report.parked).toBe(9);
     expect(report.queue).toMatchObject({ readyRows: 9, parkedRows: 9, launchableRows: 9 - 9, lanesSource: 'lane readings', full: false });
-    expect(await dropped()).toHaveLength(3);
+    expect(await dropped()).toHaveLength(4);
   });
   it('without lane readings, 9 ready rows are not "full"', async () => {
     await seedGaps(2); await oldPrompts(2000); await readyRows(9, 'codex-personal');
@@ -91,8 +91,8 @@ describe('self-tick gaps note', () => {
     const readLanes = vi.fn(async () => ({ lanes }));
     const report = await tick(readLanes);
     expect(readLanes).toHaveBeenCalledTimes(1);
-    expect(report.gaps).toMatchObject({ candidates: 4, queued: 3, parked: 9, unknown: false });
-    expect(report.gapsNote).toMatch(/^4 gaps found, queued 3 for claude \(0 of 8 busy\); 9 rows parked on codex-personal \(pool spent until/);
+    expect(report.gaps).toMatchObject({ candidates: 4, queued: 4, parked: 9, unknown: false });
+    expect(report.gapsNote).toMatch(/^4 gaps found, queued 4 for claude \(0 of 8 busy\); 9 rows parked on codex-personal \(pool spent until/);
   });
   it('says lane readings unavailable instead of full', async () => {
     await seedGaps(2); await oldPrompts(2000); await readyRows(9, 'codex-personal');
