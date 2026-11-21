@@ -54,7 +54,7 @@ const activity = (job = 'RQ-A', brief = 'Fix the reply box.'): FleetJobActivityV
   ] as FleetJobActivityV1['entries'],
 });
 const message = (id: string, from: string, to: string, over: Partial<AgentMessage> = {}): AgentMessage => ({
-  id, ts: ago(5), from: { name: from, lane: null }, to: { name: to, lane: null }, kind: 'status', summary: `${from} says ${id}`, conversation: 'c', job: null, pr: null, ...over,
+  id, ts: ago(5), priority: 'P2', from: { name: from, lane: null }, to: { name: to, lane: null }, kind: 'status', summary: `${from} says ${id}`, conversation: 'c', job: null, pr: null, ...over,
 });
 const bus = (messages: AgentMessage[], source: AgentMessages['source'] = 'available'): AgentMessages => ({ schema: 'agent-messages.v1', source, messages, matched: messages.length, skipped: 0 });
 const replies = (texts: string[], sourceState: LeaderRepliesV1['sourceState'] = 'healthy'): LeaderRepliesV1 => ({

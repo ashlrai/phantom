@@ -11,6 +11,7 @@ import { busBodyJobId, busBodySummary, busInboxJobMarker, jobAnnotationFromFeed,
   type BusEnvelopeLookupJob } from '../agents/bus-unified.js';
 import { readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
 import { agentIdentityKeys, BUS_CLIS, type AgentIdentityKeyFor } from '../agents/bus-identity.js';
+import { BUS_PRIORITIES, type BusPriority } from './bus-envelope.js';
 import { scanBusInbox, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
 
 export const AGENT_MESSAGE_KINDS = ['ask', 'reply', 'handoff', 'status', 'blocker'] as const;
@@ -24,7 +25,7 @@ const SUMMARY_MAX = 160;
 export interface AgentRef { name: string; lane: string | null }
 /** Key order is the JSON contract: keep it stable. */
 export interface AgentMessage {
-  id: string; ts: string; from: AgentRef; to: AgentRef; kind: AgentMessageKind;
+  id: string; ts: string; priority: BusPriority; from: AgentRef; to: AgentRef; kind: AgentMessageKind;
   summary: string; conversation: string; job: string | null; pr: string | null;
   /**
    * Present only when the body names a job — a `jobId` citation
@@ -47,8 +48,8 @@ export interface AgentMessages {
   /** Damaged bus rows skipped while reading. */
   skipped: number;
 }
-/** `with` narrows `agent` to the two-way talk between that agent and one other; `kind` keeps one classified kind. */
-export interface AgentMessagesQuery { since?: number; agent?: string; with?: string; kind?: AgentMessageKind; limit?: number }
+/** `with` narrows `agent` to the two-way talk between that agent and one other; `kind` keeps one classified kind; `priority` keeps one envelope band. */
+export interface AgentMessagesQuery { since?: number; agent?: string; with?: string; kind?: AgentMessageKind; priority?: BusPriority; limit?: number }
 
 type Body = Record<string, unknown>;
 const record = (value: unknown): Body | null =>
@@ -204,7 +205,7 @@ export function projectAgentMessages(rows: readonly BusInboxReceipt[],
     const summary = raw ? clip(oneLine(raw)) : '';
     const from = agentName(envelope.from), to = agentName(envelope.to);
     return {
-      id: oneLine(envelope.id), ts: new Date(row.receivedAt).toISOString(),
+      id: oneLine(envelope.id), ts: new Date(row.receivedAt).toISOString(), priority: envelope.priority,
       from: { name: from, lane: laneOf(from, vendors.get(envelope.from) ?? null) },
       to: { name: to, lane: laneOf(to, vendors.get(envelope.to) ?? null) },
       kind: classify(envelope, body), summary: summary || 'No text.', conversation: oneLine(conversationOf(row)),
@@ -230,6 +231,7 @@ export function filterAgentMessages(messages: readonly AgentMessage[], query: Ag
     ref.name.toLowerCase() === name || ref.lane === name || (key !== undefined && identityOf?.(ref.name) === key);
   return messages.filter(m => (query.since === undefined || Date.parse(m.ts) >= query.since)
     && (query.kind === undefined || m.kind === query.kind)
+    && (query.priority === undefined || m.priority === query.priority)
     && (!agent || (peer ? (is(m.from, agent, agentKey) && is(m.to, peer, peerKey)) || (is(m.from, peer, peerKey) && is(m.to, agent, agentKey)) : is(m.from, agent, agentKey) || is(m.to, agent, agentKey))));
 }
 
@@ -280,7 +282,7 @@ export function parseSince(value: string, now = Date.now()): number | null {
 }
 
 /** Shared validation for CLI flags and API query params. */
-export function parseAgentMessagesQuery(input: { since?: string; agent?: string; with?: string; kind?: string; limit?: string }, now = Date.now()):
+export function parseAgentMessagesQuery(input: { since?: string; agent?: string; with?: string; kind?: string; priority?: string; limit?: string }, now = Date.now()):
   { ok: true; query: AgentMessagesQuery } | { ok: false; error: string } {
   const query: AgentMessagesQuery = {};
   if (input.kind !== undefined) {
@@ -289,6 +291,12 @@ export function parseAgentMessagesQuery(input: { since?: string; agent?: string;
       return { ok: false, error: `--kind takes one of ${AGENT_MESSAGE_KINDS.join(', ')}.` };
     }
     query.kind = kind as AgentMessageKind;
+  }
+  if (input.priority !== undefined) {
+    if (!(BUS_PRIORITIES as readonly string[]).includes(input.priority)) {
+      return { ok: false, error: '--priority takes P0, P1, P2 or P3.' };
+    }
+    query.priority = input.priority as BusPriority;
   }
   if (input.since !== undefined) {
     const since = parseSince(input.since, now);
@@ -317,7 +325,7 @@ export function formatAgentMessagesText(result: AgentMessages): string {
     const who = (a: AgentRef) => `${a.name} (${a.lane ?? 'lane unknown'})`;
     const link = [m.job, m.pr].filter(Boolean).join(' ');
     const job = m.jobState === undefined ? '' : ` ${busInboxJobMarker(m.jobState)}`;
-    return `${m.ts.slice(0, 19).replace('T', ' ')}  ${m.kind.padEnd(7)} ${who(m.from)} → ${who(m.to)}: ${m.summary}${link ? `  [${link}]` : ''}${job}`;
+    return `${m.ts.slice(0, 19).replace('T', ' ')}  ${m.priority} ${m.kind.padEnd(7)} ${who(m.from)} → ${who(m.to)}: ${m.summary}${link ? `  [${link}]` : ''}${job}`;
   });
   const head = result.messages.length === 0 ? 'No agent messages.' : `${result.messages.length} of ${result.matched} messages, newest first.`;
   const tail = result.skipped > 0 ? [`Skipped ${result.skipped} damaged bus record${result.skipped === 1 ? '' : 's'}.`] : [];

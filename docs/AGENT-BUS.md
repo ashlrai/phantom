@@ -18,9 +18,11 @@ To see what agents are saying to each other, run `phm messages` (JSON by
 default, `--text` for people, `--since 15m`, `--agent <name|lane>`,
 `--with <name|lane>` for only what that agent and one other said to each
 other, `--kind <ask|reply|handoff|status|blocker>` for only one classified
-kind, `--limit <n>`) or GET `/api/verse/agent-bus/messages` with the same
-`since`, `agent`, `with`, `kind` and `limit` params. Both return `agent-messages.v1`: newest
-first, each with `id`, `ts`, `from` and `to` (name and lane, lane `null` when
+kind, `--priority <P0|P1|P2|P3>` for only one envelope band, `--limit <n>`)
+or GET `/api/verse/agent-bus/messages` with the same
+`since`, `agent`, `with`, `kind`, `priority` and `limit` params. Both return `agent-messages.v1`: newest
+first, each with `id`, `ts`, `priority` (the envelope's P0–P3 band, the
+same band `comms bus read --priority` filters on), `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line
 `summary`, `conversation`, `job` and `pr`. A body that names a job — a
 work-feed `jobId` (`work.post`, `work.status`, `work.result` or `wake`) or
@@ -59,7 +61,11 @@ Claim tokens and
 dispatch ids never appear in a summary. `--kind` keeps only one classified
 kind — the same `kind` each row prints — so an agent can read just the asks
 or just the blockers in one filtered read; it composes with every other
-filter and `matched` counts only the rows it accepts. `--agent` and `--with` match through
+filter and `matched` counts only the rows it accepts. `--priority` keeps
+only mail stamped with that exact P0..P3 band — the same match `comms bus
+read --priority` and `agents bus inbox --priority` apply — so urgent
+agent-to-agent traffic is one filtered read, and `--text` prints the band
+on every line. `--agent` and `--with` match through
 the agent identity registry beside the store: a handle, alias or `agent:`
 address of one registered identity counts as that agent, so its labels never
 split the filter. With no readable registry the match stays on the literal

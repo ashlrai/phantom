@@ -112,7 +112,7 @@ describe('phm messages projection', () => {
     expect(first).toBe(second);
     const parsed = JSON.parse(first) as { messages: Record<string, unknown>[] };
     expect(Object.keys(parsed)).toEqual(['schema', 'source', 'messages', 'matched', 'skipped']);
-    expect(Object.keys(parsed.messages[0]!)).toEqual(['id', 'ts', 'from', 'to', 'kind', 'summary', 'conversation', 'job', 'pr']);
+    expect(Object.keys(parsed.messages[0]!)).toEqual(['id', 'ts', 'priority', 'from', 'to', 'kind', 'summary', 'conversation', 'job', 'pr']);
     // Same timestamp: cursor order breaks the tie, newest cursor first.
     expect(parsed.messages.map(m => [m.id, m.kind])).toEqual([['k2', 'status'], ['k1', 'blocker']]);
   });
@@ -327,6 +327,34 @@ describe('phm messages projection', () => {
     expect(parseAgentMessagesQuery({ kind: '' }).ok).toBe(false);
   });
 
+  it('carries the envelope priority band on every row and filters reads by it', () => {
+    const root = store();
+    post(root, T0, { id: 'p0', from: 'a', to: 'b', priority: 'P0', body: { kind: 'note', text: 'page the on-call now' } });
+    post(root, T0 + 1_000, { id: 'p2', from: 'b', to: 'a', body: { kind: 'note', text: 'status update' } });
+    post(root, T0 + 2_000, { id: 'p3', from: 'a', to: 'b', priority: 'P3', body: { kind: 'note', text: 'fyi whenever' } });
+    const byId = new Map(read(root).messages.map(m => [m.id, m]));
+    expect(byId.get('p0')).toMatchObject({ priority: 'P0' });
+    expect(byId.get('p2')).toMatchObject({ priority: 'P2' });
+    expect(byId.get('p3')).toMatchObject({ priority: 'P3' });
+    // --priority keeps only one band — the same exact match comms bus read
+    // --priority applies — composes with the other filters, and matched
+    // counts only the rows it accepts.
+    expect(read(root, { priority: 'P0' })).toMatchObject({ matched: 1, messages: [{ id: 'p0', priority: 'P0' }] });
+    expect(read(root, { priority: 'P2' }).messages.map(m => m.id)).toEqual(['p2']);
+    expect(read(root, { priority: 'P3', agent: 'a' }).messages.map(m => m.id)).toEqual(['p3']);
+    expect(read(root, { priority: 'P1' })).toMatchObject({ matched: 0, messages: [] });
+    // The human line prints the band so urgent traffic stands out in --text.
+    expect(formatAgentMessagesText(read(root))).toContain('P0 status');
+  });
+
+  it('parses --priority as an exact band and refuses anything else', () => {
+    expect(parseAgentMessagesQuery({ priority: 'P0' })).toEqual({ ok: true, query: { priority: 'P0' } });
+    expect(parseAgentMessagesQuery({ priority: 'P3', kind: 'ask', limit: '5' })).toEqual({ ok: true, query: { kind: 'ask', priority: 'P3', limit: 5 } });
+    expect(parseAgentMessagesQuery({ priority: 'p0' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ priority: 'P9' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ priority: '' }).ok).toBe(false);
+  });
+
   it('serves the same read at GET /api/verse/agent-bus/messages', async () => {
     const calls: unknown[] = [];
     const api = createAgentBusApi({ messages: query => { calls.push(query); return { schema: 'agent-messages.v1', source: 'missing', messages: [], matched: 0, skipped: 0 }; } });
@@ -337,13 +365,14 @@ describe('phm messages projection', () => {
       const handled = await api(ctx, { url, headers: {} } as never, res, url.split('?')[0]!, 'GET');
       return { handled, status: status || (res as { statusCode: number }).statusCode, body };
     };
-    const ok = await send('/api/verse/agent-bus/messages?agent=claude&kind=ask&limit=5');
+    const ok = await send('/api/verse/agent-bus/messages?agent=claude&kind=ask&priority=P0&limit=5');
     expect(ok.handled).toBe(true);
     expect(ok.status).toBe(200);
     expect(JSON.parse(ok.body)).toMatchObject({ schema: 'agent-messages.v1' });
-    expect(calls).toEqual([{ kind: 'ask', agent: 'claude', limit: 5 }]);
+    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', agent: 'claude', limit: 5 }]);
     expect((await send('/api/verse/agent-bus/messages?limit=0')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?kind=chatter')).status).toBe(400);
+    expect((await send('/api/verse/agent-bus/messages?priority=urgent')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?after=1')).status).toBe(400);
   });
 });
