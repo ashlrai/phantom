@@ -73,14 +73,20 @@ To install the CLI while developing:
 | `npm run test:engineering-responsiveness` | Run the explicit macOS real-CLI two-second control-room latency gate; not implied by default test success |
 | `npm run eval:routing` | Score the offline routing corpus: local share, escalation reasons, accuracy, and a labeled frontier dollar estimate. Not part of CI. |
 | `npm run dev:web` | Run the Vite development server; it does not commission providers or enable dispatch |
-| `npm run lint` | ESLint plus real-I/O membership and Phantom console synchronous-I/O guards |
+| `npm run lint` | ESLint plus the real-I/O lane membership guard and the Verse route synchronous-I/O guard (`src/core/verse/**/*-api.ts`) |
 | `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master, run one type check, run the documentation link check when the diff touches markdown or deletes files, run the quarantine-ledger check when test files or `queue/quarantine.tsv` change, and syntax-check changed `.py` files with `python3`, changed `.sh` files with `bash -n`, changed `.json` files with `JSON.parse`, and changed `.xml`/`.plist`/`.svg` files with `python3`'s ElementTree parser, changed `.rs` files with `rustfmt`, changed `.swift` files with `swiftc -parse`, changed `.yaml`/`.yml` files with the bundled `yaml` package, changed `.toml` files with `smol-toml`, and changed `.css` files with the `lightningcss` parser Vite bundles; the fast local gate before pushing. Repeats on an unchanged tree are skipped (`--force` reruns). Merge Gate still runs the full check. |
 | `npm run check:docs` | Validate operator documentation file links and anchors locally, without network requests |
 | `npm run check:perf` | Time the committed CLI cold-path budgets in `perf/budgets.json` (hyperfine when installed); advisory in CI, never a required check |
 | `npm run docs:sync` | Regenerate every generated docs surface (freshness blocks, site pages, CODEMAP inventory, llms indexes); `-- --check` reports drift without writing |
 | `node scripts/check-test-names.mjs` | Flag duplicate test names across `test/` that collide in name-keyed reports |
 | `node scripts/generate-cli-docs.mjs` | Regenerate `docs/cli.md` from `phm --help` output; `--check` compares without writing |
-| `npm run typecheck` | Strict backend and web type checks, without emitting files |
+| `npm run typecheck` | Strict backend and web type checks with `tsgo`, without emitting files |
+| `npm run typecheck:fast` | The same two projects through the locally installed `tsgo` only; what `npm run gate` runs in its first phase |
+| `npm run gate` | Build, type check, lint, lane guards, quarantine and docs checks, then the backend and web tests related to your diff plus a smoke set; `-- --base <ref>` diffs against another ref, `-- --json` prints a machine-readable result |
+| `npm run gate:full` | The same static checks followed by the complete backend and web suites |
+| `npm run check:quarantine` | Verify that every test skip marker the diff adds has a live row in `queue/quarantine.tsv`; pass `-- --base origin/master` |
+| `npm run authority:regen` | Regenerate the Tier-1 closure snapshot and `.github/CODEOWNERS` after authority drift, and print what changed |
+| `npm run install:worktree` | Frozen pnpm install that shares one dependency store across trusted local worktrees; use instead of `npm ci` in each worktree |
 | `npm run build` | Check candidate version sync, compile the backend, generate the authority surface, copy assets, build the built-in preparation evaluator and the web console, then generate dependency inventory and Git build identity in `dist/` |
 
 For explicit Bun-compatible test inventories, see the standalone
