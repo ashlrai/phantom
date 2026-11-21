@@ -263,7 +263,13 @@ the same coverage `work mine` handoffs and `handoff-receive` apply;
 `--thread` keeps only `note`/`context` bodies
 carrying that v2 thread label, and `--from` narrows by sender through the
 same identity-label matching `channel read` uses (a handle, `agent:<handle>`,
-stable id or alias; an unresolvable ref keeps exact-label matching). Persist
+stable id or alias; an unresolvable ref keeps exact-label matching).
+`--matched` additionally reports `matched`, the true pending total — every
+row the same filters accept across the whole retained store, the same count
+`work mine`'s inbox section reports — while `messages` still caps at
+`--limit`; because that read scans to the store's end, `nextCursor` then
+resumes at the newest shown row's cursor, so paging never skips an unshown
+match. Persist
 `nextCursor` only after handling the
 page. `--frame <cli>` prints the page as one bounded block marked untrusted
 data, the same for every CLI: each line summarizes the body — `note`,
