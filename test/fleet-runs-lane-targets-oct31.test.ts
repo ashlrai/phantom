@@ -43,11 +43,22 @@ it('rejects unknown lanes and targets outside either bound without rewriting', a
     expect(await readFile(path, 'utf8')).toBe(original);
   }
 });
+it('skips a lane row that lacks a floor instead of failing the file', async () => {
+  await writeFile(path, '{"sol":{"target":1}}');
+  expect(await readLaneTargets({ runsDir })).toMatchObject({ sourceState: 'healthy', lanes: [], skipped: [{ lane: 'sol', reason: 'floor is not a whole number' }] });
+});
+it('skips a non-lane metadata entry with a reason and keeps the other lanes', async () => {
+  await writeFile(path, JSON.stringify({ ...fixture().lanes, unknown_metadata: 'not a lane' }));
+  const state = await readLaneTargets({ runsDir });
+  expect(state.sourceState).toBe('healthy');
+  expect(state.lanes.map(l => l.lane)).toEqual(['sol', 'claude']);
+  expect(state.skipped).toEqual([{ lane: 'unknown_metadata', reason: 'the lane name is not valid' }]);
+});
 it('reports missing, malformed, oversized and unsafe sources without throwing', async () => {
   await rm(path);
   expect((await readLaneTargets({ runsDir })).sourceState).toBe('missing');
   await expect(setLaneTarget('sol', 1, { runsDir })).rejects.toMatchObject({ code: 'unavailable', status: 503 });
-  for (const text of ['{', 'x'.repeat(65537), '{"sol":{"target":1}}']) {
+  for (const text of ['{', 'x'.repeat(65537)]) {
     await writeFile(path, text);
     expect(await readLaneTargets({ runsDir })).toMatchObject({ sourceState: 'degraded', lanes: [] });
   }
@@ -107,7 +118,7 @@ it.each([null, 0, 1, 'false', {}, []])('refuses an explicitly malformed hold fla
   await expect(setLaneTarget('sol', 3, { runsDir })).rejects.toMatchObject({ code: 'unavailable', status: 503 });
   expect(await readFile(path, 'utf8')).toBe(original);
 });
-it.each([{ last_change_by: {} }, { unknown_metadata: 'not a lane' }])('refuses malformed or unknown global metadata (%j)', async extra => {
+it.each([{ last_change_by: {} }])('refuses malformed global metadata (%j)', async extra => {
   const original = JSON.stringify({ ...fixture().lanes, ...extra });
   await writeFile(path, original);
   expect(await readLaneTargets({ runsDir })).toMatchObject({ sourceState: 'degraded', lanes: [] });
