@@ -1582,29 +1582,6 @@ function renderTopic(topic: HelpTopic): void {
   console.log('');
 }
 
-function renderSummary(): void {
-  const c = makeColors(isTty());
-  console.log('');
-  console.log(c.bold('  Phantom') + c.dim(' — phm, the CLI for agentic engineers (ashlr remains compatible)'));
-  console.log('');
-  for (const topic of TOPICS) {
-    const entries = entriesForTopic(topic);
-    const headliners = entries.slice(0, 3).map((e) => e.cmd.split(' ')[0]);
-    const unique = [...new Set(headliners)].join(', ');
-    console.log(`    ${c.cyan(pad(topic, 14))}  ${TOPIC_LABELS[topic]} ${c.dim(`(${unique}, …)`)}`);
-  }
-  console.log('');
-  console.log('  ' + c.dim('phm init') + ' · ' + c.dim('phm doctor') + ' · ' + c.dim('phm verse') + '  start here: onboard, health check, console');
-  console.log('  ' + c.dim('phm help <topic>') + '      full table for one topic');
-  console.log('  ' + c.dim('phm help --search <t>') + ' find a command by keyword');
-  console.log('  ' + c.dim('phm help --all') + '        every command (the legacy full table)');
-  console.log('  ' + c.dim('phm docs --agent') + '      the agent contract cheat sheet');
-  console.log('');
-}
-
-function renderAll(): void {
-  const c = makeColors(isTty());
-  console.log('');
   console.log(c.bold('  Phantom') + c.dim(' — every command (phm or ashlr)'));
   for (const topic of TOPICS) {
     console.log('');
