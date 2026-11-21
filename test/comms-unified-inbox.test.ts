@@ -827,6 +827,94 @@ describe('owner-thread awaiting replies in the unified inbox', () => {
   });
 });
 
+describe('owner-delivery undelivered replies in the unified inbox', () => {
+  const ownerSettings: OwnerThreadSettings = {
+    ...emptyOwnerSettings(),
+    owners: { desktop: 'local-owner' },
+    confirmed: true,
+    team: [{ channel: 'bus', id: 'local-owner' }],
+  };
+  const ownerOptions = (over: Partial<OwnerThreadOptions> = {}): OwnerThreadOptions => ({
+    runsDir, busRoot, now: () => now, settings: ownerSettings, halted: false, paused: false,
+    mailbox: { async accept() { return { status: 'accepted' as const }; } },
+    ...over,
+  });
+  const acceptOwner = (text: string, key: string, at = now) => acceptOwnerInbound(
+    { channel: 'desktop', senderId: 'local-owner', text, idempotencyKey: key, at }, ownerOptions());
+
+  it('lists a recorded reply no channel confirmed as a warn item with a resend deep link', async () => {
+    await acceptOwner('ping the leader', 'desktop-msg-0001');
+    // No transports attached: the reply records as refused on every fanout
+    // destination yet still answers the inbound — the delivery gap this lists.
+    const reply = await sendOwnerReply({ text: 'leader answer', replyTo: 'desktop-msg-0001', idempotencyKey: 'reply-owner-01' }, ownerOptions());
+    expect(reply.status).toBe('refused');
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'owner-delivery');
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: 'owner-delivery:m2', kind: 'owner-reply-undelivered', severity: 'warn', blocking: false,
+      title: 'Leader reply undelivered on desktop',
+      detail: 'desktop: failed (No transport is attached for this channel.) · "leader answer"',
+      since: new Date(now).toISOString(),
+      expiresAt: null,
+      act: ['phm comms thread', 'phm comms send-owner --reply-to desktop-msg-0001 --idempotency-key reply-owner-01 --text "<same reply text>"'],
+    });
+    expect(inbox.sources['owner-delivery']).toEqual({ state: 'healthy', pending: 1 });
+    // The answered inbound itself stays cleared — the two marks are independent.
+    expect(inbox.items.filter(i => i.source === 'owner-thread')).toHaveLength(0);
+  });
+
+  it('clears the item once a resend confirms the destination', async () => {
+    await acceptOwner('ping the leader', 'desktop-msg-0001');
+    await sendOwnerReply({ text: 'leader answer', replyTo: 'desktop-msg-0001', idempotencyKey: 'reply-owner-01' }, ownerOptions());
+    expect((await read()).items.filter(i => i.source === 'owner-delivery')).toHaveLength(1);
+    const retry = await sendOwnerReply({ text: 'leader answer', replyTo: 'desktop-msg-0001', idempotencyKey: 'reply-owner-01' }, ownerOptions({
+      transports: { desktop: { async pull() { return []; }, async deliver() { return { status: 'sent' as const, reason: 'ok' }; } } },
+    }));
+    expect(retry.status).toBe('sent');
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'owner-delivery')).toHaveLength(0);
+    expect(inbox.sources['owner-delivery']).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('reports an unreadable thread as unavailable and still lists the other sources', async () => {
+    mkdirSync(join(runsDir, 'leader'), { recursive: true });
+    writeFileSync(join(runsDir, 'leader', 'owner-thread.json'), 'not json', { mode: 0o600 });
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const inbox = await read();
+    expect(inbox.sources['owner-delivery']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'owner-delivery')).toHaveLength(0);
+    expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+
+  it('degrades on a throwing seam and builds items from a stubbed read', async () => {
+    const throwing = await readUnifiedInbox({ runsDir, busRoot, now: () => now, readOwnerUndelivered: () => { throw new Error('boom'); } });
+    expect(throwing.sources['owner-delivery']).toEqual({ state: 'unavailable', pending: 0 });
+    const stubbed = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now,
+      readOwnerUndelivered: () => ({ status: 'ok', items: [
+        { id: 'm7', idempotencyKey: 'reply-owner-07', replyTo: 'desktop-msg-0007',
+          at: new Date(now - 60_000).toISOString(), text: 'stubbed answer',
+          destinations: [{ channel: 'telegram' as const, state: 'unknown' as const, reason: null }] },
+        { id: 'm8', idempotencyKey: 'reply-owner-08', replyTo: 'not a valid key!',
+          at: new Date(now - 30_000).toISOString(), text: 'stubbed answer two',
+          destinations: [{ channel: 'slack' as const, state: 'failed' as const, reason: 'stub reason' }] },
+      ] }),
+    });
+    const good = stubbed.items.find(i => i.id === 'owner-delivery:m7')!;
+    expect(good).toMatchObject({
+      kind: 'owner-reply-undelivered', severity: 'warn', blocking: false,
+      title: 'Leader reply undelivered on telegram',
+      detail: 'telegram: unknown · "stubbed answer"',
+      act: ['phm comms thread', 'phm comms send-owner --reply-to desktop-msg-0007 --idempotency-key reply-owner-07 --text "<same reply text>"'],
+    });
+    // A replyTo that fails the send-owner shape guard keeps the inspect link only.
+    const guarded = stubbed.items.find(i => i.id === 'owner-delivery:m8')!;
+    expect(guarded.act).toEqual(['phm comms thread']);
+    expect(stubbed.sources['owner-delivery']).toEqual({ state: 'healthy', pending: 2 });
+  });
+});
+
 describe('readUnifiedInbox comms requests', () => {
   const TTL = 48 * 3_600_000;
   const req = (over: Partial<CommsRequest> = {}): CommsRequest => ({

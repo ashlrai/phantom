@@ -222,7 +222,11 @@ band, then priority, then expiry, then newest. It aggregates local sources
 — unresolved `NEEDS-MASON.md` items, unanswered allowlisted teammate texts,
 live owner-thread inbound messages no recorded outbound reply cites (the same
 awaiting-reply mark `phm comms status` counts, each item deep-linking
-`phm comms thread` and `phm comms send-owner --reply-to`),
+`phm comms thread` and `phm comms send-owner --reply-to`), recorded owner
+replies whose channel fanout is not fully delivered — the delivery side of the
+same mark, which counts a reply answered even when every channel refused it
+(each `owner-delivery` item names the unconfirmed destinations as failed,
+pending or unknown and deep-links the resend that retries only them),
 outbound drafts awaiting approval — `phm drafts` items plus pending
 Comms-agent reply drafts that have no cos mirror (every non-email transport,
 or an email mirror that failed to write; a mirrored copy lists through its
