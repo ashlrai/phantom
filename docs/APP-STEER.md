@@ -139,6 +139,16 @@ Choose a line to put `@RQ-<job>` in the reply box. Nothing is sent until you
 send the message. Helpers without an `RQ-` id are listed but cannot be aimed
 at.
 
+Between when a session last spoke and what it said, the line gives what its
+job was asked to do: the title of its brief, or the task its router queue row
+held. A brief with neither gives its first line, set quieter, and the tooltip
+names it "Brief opens". The line is the `task` the Conversations pane shows
+(see [sessions](SESSIONS.md)), quoted from the record and cut to fit, with the
+whole of it in the tooltip. The strip asks for it every 30 seconds, so a
+session that has just started shows its task a little after it appears. A
+session whose task is not known, a helper, and a server that does not send
+tasks show the line as before, with nothing put in its place.
+
 **Thread** reads that session as a conversation without leaving the pane: a
 summary assembled from its records, what it was told, what it said and did,
 and a reply box aimed at it (the same view as a Sessions pane row; see
