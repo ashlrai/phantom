@@ -1594,6 +1594,19 @@ built by the pure `sessionReply(session | null)` that the new import-free
 `SessionReplySubject` and `AIMABLE_JOB_RE`; `session-thread.ts` re-exports
 `sessionReply` and `SessionThreadReply`, and `renderSessionThreadText` gains
 a "To write to it" line.
+Output (additive): `parts` gains optional `output`
+(`SessionThreadOutputRead | null`: `source`, `lines`, `truncated`, the shape
+`scanJobLog` returns), messages gain the kind `output` (key `output`, the
+newest `THREAD_OUTPUT_LINES` non-blank lines of the session's job log, each
+cut to `THREAD_OUTPUT_LINE_CHARS`), `sources` gains a last key `output`, and
+the `latest` message is left out when the output already ends with it. The
+module exports `sessionOutputLines(lines)` and both limits;
+`session-thread-read.ts` exports `readSessionOutput(job)` and
+`readSessionThread` takes an injectable `readOutput`, asked for a session with
+a job. In `fleet.session-threads.v1` a thread's `output` message keeps its
+newest `THREADS_OUTPUT_LINES` lines; `SessionThreadsParts` gains optional
+`output` (a map by job id), `threadSessions` entries gain `running`, and
+`readSessionThreads` takes `readOutput`, asked only for running sessions.
 `src/core/fleet/session-thread-read.ts` exports `readSessionThread(id,
 options)` with injectable `readMap`, `readSubagents`, `readActivity`,
 `readBus`, `readOwner` and `readReplies`; each read is guarded on its own and the result is

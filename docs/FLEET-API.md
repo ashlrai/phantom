@@ -690,6 +690,11 @@ replies are read once, and the recorded activity once for each job shown.
   message in the leader's thread, and a worker with a job opens with the
   message it serves (kind `order`) and says so in its summary. Helpers get
   none. The trace is read once for the whole document.
+- What a running session wrote is part of its thread: an `output` message
+  with the last 3 lines of its log (the newest 400 characters of them when
+  they are longer, `truncated` true when anything was left out). Only running
+  sessions have their log read here; a finished one's thread ends with its
+  outcome, and its single thread still shows its output.
 - `sources`: `sessions` (`available` or `unavailable`), and `bus`, `owner`,
   `replies` and `orders` (`available`, `none` when the read answered and no
   shown session has any, or `unavailable`). `gaps[]` holds the session list's
@@ -728,13 +733,24 @@ messages Mason wrote in the Leader inbox and, for the leader,
 - `messages[]` in reading order: the brief it was given, each recorded step,
   the last 8 commands, up to 6 changed files, its notes, the newest 50 bus
   messages that name its job or were sent by or to it, the newest 10 messages
-  from Mason, the leader's last 5 replies (leader only), then its last
+  from Mason, the leader's last 5 replies (leader only), the last 12 lines
+  it wrote to its log, then its last
   message. Each has `key`, `kind`
   (`order`, `routing`, `brief`, `step`, `commands`, `files`, `notes`, `bus`,
-  `owner`, `reply`, `latest`),
+  `owner`, `reply`, `output`, `latest`),
   `side` (`session` when it speaks, `other` when someone speaks to it,
   `record` for a recorded step), `label`, `at` (null when the record has no
   time), `text` and `format` (`plain`, `mono` or `markdown`).
+- What the session wrote (`output`) is the end of its job log, read for a
+  session with a job through the same bounded, no-follow read as
+  `phm sessions tail`, every line redacted. Blank lines are dropped, the
+  newest 12 are kept and a line is cut at 240 characters. The log has no time
+  per line, so `at` is null, and the label says whether earlier lines exist
+  ("last 12 lines of its log") and whether the log is archived. When the
+  output already ends with the session's last message, `latest` is left out
+  instead of being said twice. `sources.output` is `none` for a session that
+  wrote nothing (or has no job) and `unavailable`, with a line in `gaps`,
+  when the log could not be read.
 - Messages from Mason (`owner`) come from the Leader inbox, the newest 200
   entries of it. The leader's thread holds every one. A worker's thread holds
   the ones that name it as `@<job id>`, which is what the desktop reply boxes

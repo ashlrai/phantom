@@ -14,7 +14,7 @@ import type { OrderTraceJob, OrderTraceV1 } from '../src/core/fleet/order-trace.
 import type { FleetJobActivityV1 } from '../src/core/fleet/runs-job-activity.js';
 import type { FleetSessionV1, FleetSessionsV1 } from '../src/core/fleet/runs-sessions.js';
 import { buildLiveSessions } from '../src/core/fleet/live-sessions.js';
-import { buildSessionThread, type SessionThreadOwnerRead } from '../src/core/fleet/session-thread.js';
+import { buildSessionThread, type SessionThreadOutputRead, type SessionThreadOwnerRead } from '../src/core/fleet/session-thread.js';
 import {
   buildSessionThreads, renderSessionThreadsText, threadSessions, THREADS_MAX, THREADS_MESSAGES_SHOWN, THREADS_TEXT_CHARS, type SessionThreadsV1,
 } from '../src/core/fleet/session-threads.js';
@@ -387,5 +387,37 @@ describe('phm sessions threads', () => {
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     expect(await cmdSessions(['threads', '--help'])).toBe(0);
     expect(String(out.mock.calls[0]![0])).toContain('phm sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json]');
+  });
+});
+
+describe('what a running session wrote, in the short threads', () => {
+  const log = (lines: string[]): SessionThreadOutputRead => ({ source: 'live', truncated: false, lines });
+  const entryOf = (read: SessionThreadsV1, id: string) => read.threads.find(entry => entry.session.id === id)!;
+
+  it('carries the newest lines of the output, cut from the front', async () => {
+    const output = new Map<string, SessionThreadOutputRead | null>([['RQ-A', log(Array.from({ length: 6 }, (_, index) => `step ${index + 1}`))], ['RQ-QUIET', null]]);
+    const read = buildSessionThreads(await liveList(), { sessionsRead: true, bus: bus([]), activity: none, output }, NOW);
+    const worker = entryOf(read, 'RQ-A'), quiet = entryOf(read, 'RQ-QUIET');
+    expect(worker.messages.at(-1)).toMatchObject({ key: 'output', kind: 'output', side: 'session', text: 'step 4\nstep 5\nstep 6', truncated: true });
+    expect([worker.sources.output, worker.messageCount]).toEqual(['available', 1]);
+    expect([quiet.sources.output, quiet.gaps]).toEqual(['unavailable', ['Output unknown: this session\'s log could not be read.']]);
+    expect(entryOf(read, 'leader').sources.output).toBe('none');
+    const whole = buildSessionThreads(await liveList(), { sessionsRead: true, bus: bus([]), activity: none, output: new Map([['RQ-A', log(['only line'])]]) }, NOW);
+    expect(entryOf(whole, 'RQ-A').messages.at(-1)).toMatchObject({ text: 'only line', truncated: false });
+    const wide = buildSessionThreads(await liveList(), { sessionsRead: true, bus: bus([]), activity: none, output: new Map([['RQ-A', log(['a'.repeat(230), 'b'.repeat(230), 'the end'])]]) }, NOW);
+    const cut = entryOf(wide, 'RQ-A').messages.at(-1)!;
+    expect([cut.truncated, cut.text.length <= THREADS_TEXT_CHARS, cut.text.startsWith('…'), cut.text.endsWith('the end')]).toEqual([true, true, true, true]);
+    expect(renderSessionThreadsText(read)).toContain('  < Output, last 3 lines of its log: step 4 step 5 step 6');
+    expect(entryOf(whole, 'RQ-A').messages.at(-1)!.label).toBe('Output, 1 line');
+  });
+
+  it('reads the log of each running session shown once, and one failed read leaves the others', async () => {
+    const readOutput = vi.fn(async (job: string) => { if (job === 'RQ-QUIET') throw new Error('log unreadable'); return log([`${job} is compiling`]); });
+    const read = await readSessionThreads({ now: NOW, readMap: () => fleetMap(), readSubagents: async () => [], readLeader: async () => null, readActivity: async job => activity(job),
+      readBus: () => bus([]), readReplies: async () => replies([]), readOwner: async () => inbox([]), readOrders: async () => trace([]), readOutput });
+    expect(readOutput.mock.calls.map(call => call[0]).sort()).toEqual(['RQ-A', 'RQ-QUIET']);
+    expect(entryOf(read, 'RQ-A').messages.at(-1)).toMatchObject({ kind: 'output', text: 'RQ-A is compiling' });
+    expect([entryOf(read, 'RQ-QUIET').sources.output, entryOf(read, 'RQ-QUIET').sources.activity]).toEqual(['unavailable', 'available']);
+    expect(threadSessions(await liveList()).shown.map(entry => [entry.id, entry.running])).toEqual([['leader', false], ['RQ-A', true], ['RQ-QUIET', true]]);
   });
 });
