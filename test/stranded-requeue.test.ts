@@ -83,7 +83,46 @@ it('caps rows per run and defers the rest', async () => {
   const dir = await setup({ 'RQ-A': 'result-abort', 'RQ-B': 'result-abort', 'RQ-C': 'result-abort' });
   const plan = await planStrandedRequeue(dir, { apply: true, limit: 2, ready: fast });
   expect(plan.requeued).toHaveLength(2);
-  expect(plan.deferred).toEqual(['RQ-C']);
+  expect(plan.deferred.map(d => d.job)).toEqual(['RQ-C']);
+});
+
+it('reports a branch already recovered under another id, with the recovering job', async () => {
+  const dir = await setup({ 'RQ-BURNPACEN22QQ8': 'result-abort' }, 'RQ-BURNPACER2N22SQ8\tphantom\tclaude\twork\t/x/none.md\n');
+  const plan = await planStrandedRequeue(dir, { apply: true, ready: fast });
+  expect(plan.requeued).toEqual([]);
+  expect(plan.already).toEqual([{ job: 'RQ-BURNPACEN22QQ8', why: 'RQ-BURNPACER2N22SQ8 already recovers this branch', by: 'RQ-BURNPACER2N22SQ8' }]);
+  expect(await readyOf(dir)).toBe('RQ-BURNPACER2N22SQ8\tphantom\tclaude\twork\t/x/none.md\n');
+});
+
+it('reports a recovery found by its prompt text or the branch name', async () => {
+  const dir = await setup({ 'RQ-ONE': 'result-abort', 'RQ-TWO': 'result-abort' });
+  await writeFile(join(dir, 'queue', 'prompts', 'p.md'), '# RQ-NEWX: recover finished job RQ-ONE\n');
+  await writeFile(join(dir, 'queue', 'ready.tsv'), `RQ-NEWX\tphantom\tclaude\twork\t${join(dir, 'queue', 'prompts', 'p.md')}\n`);
+  await writeFile(join(dir, 'queue', 'router-queue.md'), '- RQ-NEWY: finish codex-bridge/RQ-TWO please\n');
+  const plan = await planStrandedRequeue(dir, { ready: fast });
+  expect(plan.requeued).toEqual([]);
+  expect(plan.already.map(a => [a.job, a.by])).toEqual([['RQ-ONE', 'RQ-NEWX'], ['RQ-TWO', 'RQ-NEWY']]);
+});
+
+it('never puts gh work on a lane without gh', async () => {
+  const dir = await setup({ 'FIXUP-CI-ONE': 'result-abort', 'RQ-PLAIN': 'result-abort' });
+  const none = await planStrandedRequeue(dir, { apply: true, ready: fast, ghSlots: async () => 0 });
+  expect(none.requeued.map(r => [r.id, r.lane])).toEqual([['RQ-PLAINR2', 'claude']]);
+  expect(none.deferred).toEqual([{ job: 'FIXUP-CI-ONE', why: 'needs gh; no gh lane free' }]);
+  expect((await readyOf(dir)).split('\n').filter(l => l.startsWith('FIXUP'))).toEqual([]);
+  const unknown = await planStrandedRequeue(dir, { ready: fast });
+  expect(unknown.deferred.map(d => d.job)).toEqual(['FIXUP-CI-ONE']);
+  const room = await planStrandedRequeue(dir, { apply: true, ready: fast, ghSlots: async () => 1 });
+  expect(room.requeued.find(r => r.job === 'FIXUP-CI-ONE')).toMatchObject({ lane: 'codex-personal' });
+  expect(await readyOf(dir)).toContain('FIXUP-CI-ONER2\tphantom\tcodex-personal\twork\t');
+});
+
+it('sends a job whose prompt calls gh to the gh lane only, and caps at three', async () => {
+  const dir = await setup({ 'RQ-A': 'result-abort', 'RQ-B': 'result-abort', 'RQ-C': 'result-abort', 'RQ-D': 'result-abort' });
+  await writeFile(join(dir, 'queue', 'prompts', 'RQ-A.md'), 'Run gh pr list and fix it.\n');
+  const plan = await planStrandedRequeue(dir, { limit: 9, ready: fast, ghSlots: async () => 0 });
+  expect(plan.requeued.map(r => r.job)).toEqual(['RQ-B', 'RQ-C', 'RQ-D']);
+  expect(plan.deferred).toEqual([{ job: 'RQ-A', why: 'needs gh; no gh lane free' }]);
 });
 
 it('the CLI prints json with a schema id, plain text, and rejects --apply alone', async () => {
