@@ -1,14 +1,15 @@
 /**
  * One pool on the Pools board: who it is, the plain-words line, a bar (used so far, what the current burn adds by
  * reset, what is left unused, and how far the window has run), its window so far when the board passes the stored readings, its labelled
- * readings and any per-model windows. Draws only what pools.v1 and the stored readings hold for the row.
+ * readings and any per-model windows (the same bar: used so far and, for a weekly window, how far it has run).
+ * Draws only what pools.v1 and the stored readings hold for the row.
  */
 import type { PoolRow, PoolsViewV1 } from '../../../../core/fleet/pools-view.js';
 import type { PoolUsageSeries } from '../../../../core/fleet/usage-history.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 import { PoolWindow, type WindowRead } from './PoolWindow.js';
 import { WindowBar } from '../../../components/primitives/WindowBar.js';
-import { KIND_WORD, poolBar, poolFacts, poolGroup, scopeLine, scopeName } from './pools-board-model.js';
+import { KIND_WORD, poolBar, poolFacts, poolGroup, scopeDetail, scopeName, scopePace, scopeWords, tightestScope } from './pools-board-model.js';
 import styles from './fleet-pools.module.css';
 
 export const localTime = (iso: string | null): string => {
@@ -48,15 +49,29 @@ export function PoolItem({ row, view, windows }: { row: PoolRow; view: Pick<Pool
       <dd data-unknown={fact.value === null || undefined}>{fact.value ?? 'unknown'}</dd>
       {fact.note ? <dd className={styles.note}>{fact.note}</dd> : null}
     </div>)}</dl> : null}
-    {row.scopes.length > 0 ? <ul className={styles.scopes} aria-label={`${row.id} windows by model`}>{row.scopes.map(scope => {
-      const name = scopeName(scope.id);
-      return <li key={scope.id}>
-        <span>{name}</span>
-        <div className={styles.track} data-unknown={scope.usedPct === null || undefined} role="img" aria-label={`${name}: ${scope.usedPct === null ? 'usage unknown' : `${scope.usedPct}% used`}`}>
-          {scope.usedPct === null ? null : <span className={styles.scopeFill} style={{ width: `${scope.usedPct}%` }} />}
-        </div>
-        <span className={styles.scopeLine}>{scopeLine(scope)}</span>
-      </li>;
-    })}</ul> : null}
+    {row.scopes.length > 0 ? <PoolScopes row={row} /> : null}
   </li>;
+}
+
+/**
+ * The pool's per-model windows, each on the card's own kind of bar: the share used, and the time mark where the
+ * window's length is stated. Not tinted by the pool's risk, which is about the whole pool; a model nearer its
+ * limit than the pool is said in words above the rows.
+ */
+function PoolScopes({ row }: { row: PoolRow }) {
+  const tightest = tightestScope(row);
+  return <div className={styles.scopes}>
+    <p className={styles.scopesHead}><span>Windows by model</span>{tightest ? <span data-scope-tightest>{tightest}</span> : null}</p>
+    <ul className={styles.scopeList} aria-label={`${row.id} windows by model`}>{row.scopes.map(scope => {
+      const name = scopeName(scope.id);
+      const pace = scopePace(scope);
+      return <li key={scope.id} data-scope={scope.id} data-pace={pace === null || pace.lead === null ? undefined : pace.lead < 0 ? 'behind' : pace.lead > 0 ? 'ahead' : 'level'}>
+        <span className={styles.scopeName}>{name}</span>
+        <WindowBar label={`${row.id} ${name} used`} valueText={scopeWords(scope)} valueNow={scope.usedPct} used={scope.usedPct} elapsed={pace?.elapsedPct ?? null} />
+        {scope.usedPct === null ? <span className={styles.scopeFigure} data-unknown>unknown</span>
+          : <span className={styles.scopeFigure}>{scope.usedPct}%<span className={styles.scopeUnit}>used</span></span>}
+        <span className={styles.scopeLine}>{scopeDetail(scope, localTime).join(' · ')}</span>
+      </li>;
+    })}</ul>
+  </div>;
 }

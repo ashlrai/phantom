@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildPoolsView } from '../../../../core/fleet/pools-view.js';
 import type { ResourceLaneRow, ResourceLedgerV1 } from '../../../../core/fleet/runs-resource-ledger.js';
-import { hoursUntil, nextReset, poolBar, poolCounts, poolFacts, poolGroup, poolsHeadline, projectedEndPct, scopeLine, scopeName, span } from './pools-board-model.js';
+import { hoursUntil, nextReset, poolBar, poolCounts, poolFacts, poolGroup, poolsHeadline, projectedEndPct, scopeDetail, scopeLine, scopeName, scopePace, scopeWords, span, tightestScope } from './pools-board-model.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00.000Z');
 const at = (hours: number) => new Date(NOW + hours * 3_600_000).toISOString();
@@ -88,6 +88,26 @@ describe('pools board model', () => {
     expect(scopeLine({ id: 'a', usedPct: 41.3, resetAt: at(30), hoursLeft: 30 })).toBe('41.3% used, resets in 1 d 6 h');
     expect(scopeLine({ id: 'a', usedPct: 100, resetAt: null, hoursLeft: null })).toBe('100% used, reset unknown');
     expect(scopeLine({ id: 'a', usedPct: null, resetAt: at(-1), hoursLeft: null })).toBe('unknown: its window reset and there is no new reading');
+  });
+
+  it('places a per-model window in time only when its id states seven days and its reset is ahead', () => {
+    const fable = { id: 'seven_day_fable', usedPct: 41.3, resetAt: at(42), hoursLeft: 42 };
+    expect(scopePace(fable)).toEqual({ elapsedPct: 75, startsAt: at(42 - 168), basis: 'weekly', lead: -34 });
+    expect(scopeWords(fable)).toBe('41.3% used, resets in 1 d 18 h, 75% of the window gone');
+    expect(scopeDetail(fable, iso => `local ${iso}`)).toEqual(['75% of the window gone', 'use is 34 points behind an even spend', `resets in 1 d 18 h (local ${at(42)})`]);
+    // No stated length, no reset, a passed reset, or a reset further off than seven days: no pace, never a zero.
+    expect([{ ...fable, id: 'opus' }, { ...fable, resetAt: null, hoursLeft: null }, { ...fable, usedPct: null, resetAt: at(-1), hoursLeft: null }, { ...fable, resetAt: at(200), hoursLeft: 200 }, { ...fable, hoursLeft: 0 }]
+      .map(scopePace)).toEqual([null, null, null, null, null]);
+    expect(scopeDetail({ ...fable, id: 'opus' }, iso => `local ${iso}`)).toEqual([`resets in 1 d 18 h (local ${at(42)})`]);
+    expect(scopeDetail({ ...fable, resetAt: null, hoursLeft: null }, String)).toEqual(['reset unknown']);
+    expect(scopeDetail({ ...fable, usedPct: null, hoursLeft: null }, String)).toEqual(['its window reset and there is no new reading']);
+    expect(scopeWords({ ...fable, usedPct: null, hoursLeft: null })).toBe('usage unknown');
+  });
+
+  it('names the model nearest its limit only when it is above the pool', () => {
+    const scopes = [{ id: 'seven_day_sonnet', usedPct: 50, resetAt: at(84), hoursLeft: 84 }, { id: 'seven_day_opus', usedPct: 90, resetAt: at(84), hoursLeft: 84 }, { id: 'seven_day_fable', usedPct: null, resetAt: at(-1), hoursLeft: null }];
+    expect(tightestScope({ usedPct: 60, scopes })).toBe('Opus is nearest its limit: 90% used, against 60% for the pool.');
+    expect([tightestScope({ usedPct: 90, scopes }), tightestScope({ usedPct: null, scopes }), tightestScope({ usedPct: 10, scopes: [scopes[2]!] }), tightestScope({ usedPct: 10, scopes: [] })]).toEqual([null, null, null, null]);
   });
 
   it('splits a card\'s bar into the shares the row holds, and projects nothing the row does not', () => {

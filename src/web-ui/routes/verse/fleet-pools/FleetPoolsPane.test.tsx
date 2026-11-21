@@ -7,6 +7,7 @@ import { evictAll } from '../../../data/cache.js';
 import { listPanes, type PaneProps } from '../panes/pane-registry.js';
 import { REGISTERED_DOCK_PANE_GROUPS } from '../shell/dock-pane-catalog.js';
 import { FleetPoolsPane } from './FleetPoolsPane.js';
+import { localTime } from './PoolItem.js';
 import './fleet-pools.pane.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00.000Z');
@@ -107,8 +108,19 @@ it('shows per-model windows, a credit balance without a bar, a held lane and an 
   const [claude, local, devin] = await pools();
   expect(names()).toEqual(['claude pool', 'codex-local pool', 'devin pool']);
   const windows = within(claude!).getByRole('list', { name: 'claude windows by model' });
-  expect(within(windows).getAllByRole('listitem').map(item => item.textContent)).toEqual(['Fable41.3% used, resets in 1 d 6 h', 'Opusunknown: its window reset and there is no new reading']);
-  expect(within(windows).getAllByRole('img').map(bar => bar.getAttribute('aria-label'))).toEqual(['Fable: 41.3% used', 'Opus: usage unknown']);
+  // 30 h from a seven-day window's reset is 82% of it gone; 41.3% used is 41 points short of an even spend.
+  expect(within(windows).getAllByRole('listitem').map(item => item.textContent)).toEqual([
+    `Fable41.3%used82% of the window gone · use is 41 points behind an even spend · resets in 1 d 6 h (${localTime(at(30))})`,
+    'Opusunknownits window reset and there is no new reading']);
+  const scopeBars = within(windows).getAllByRole('meter');
+  expect(scopeBars.map(bar => `${bar.getAttribute('aria-label')}: ${bar.getAttribute('aria-valuetext')}`)).toEqual([
+    'claude Fable used: 41.3% used, resets in 1 d 6 h, 82% of the window gone', 'claude Opus used: usage unknown']);
+  expect([...scopeBars[0]!.children].map(part => [part.getAttribute('data-part'), (part as HTMLElement).style.width || (part as HTMLElement).style.left])).toEqual([['used', '41.3%'], ['elapsed', '82.1%']]);
+  // A window whose reset has passed is hatched with nothing drawn in it: never an empty bar, never a time mark.
+  expect([scopeBars[1]!.hasAttribute('data-unread'), scopeBars[1]!.children.length, scopeBars[1]!.hasAttribute('aria-valuenow')]).toEqual([true, 0, false]);
+  expect(within(windows).getAllByRole('listitem').map(item => item.getAttribute('data-pace'))).toEqual(['behind', null]);
+  // No model is nearer its limit than the pool (60%), so nothing is called out.
+  expect(claude!.querySelector('[data-scope-tightest]')).toBeNull();
   expect(bars(devin!)).toEqual([]);
   expect([fact(devin!, 'Balance'), fact(devin!, 'Jobs')]).toEqual(['120 credits', '0 of 0 running']);
   expect(within(devin!).getByText('credit balance')).toBeInTheDocument();
@@ -118,6 +130,26 @@ it('shows per-model windows, a credit balance without a bar, a held lane and an 
   expect(fact(local!, 'Jobs')).toBe('1 of 2 running');
   expect(within(local!).queryByText('Used')).toBeNull();
   expect(screen.getByText(/^Next reset: claude in 2 d 12 h\./)).toBeInTheDocument();
+});
+
+it('names the model nearest its limit when it is nearer than the pool, and marks time only on a window of stated length', async () => {
+  serve(view(lane('claude', { usedPct: 60, resetAt: at(60), burnPctPerHour: 0.7, quotaScopes: [
+    { id: 'seven_day_opus', usedPct: 90, resetAt: at(84) }, { id: 'seven_day_sonnet', usedPct: 50, resetAt: at(84) },
+    { id: 'five_hour_haiku', usedPct: 12, resetAt: at(2) }, { id: 'seven_day_fable', usedPct: 70, resetAt: null }] })));
+  render(<FleetPoolsPane {...props} />);
+  const [claude] = await pools();
+  expect(claude!.querySelector('[data-scope-tightest]')?.textContent).toBe('Opus is nearest its limit: 90% used, against 60% for the pool.');
+  const windows = within(claude!).getByRole('list', { name: 'claude windows by model' });
+  const rows = within(windows).getAllByRole('listitem');
+  expect(rows.map(item => item.getAttribute('data-pace'))).toEqual(['ahead', 'level', null, null]);
+  expect(rows.map(item => item.lastElementChild?.textContent)).toEqual([
+    `50% of the window gone · use is 40 points ahead of an even spend · resets in 3 d 12 h (${localTime(at(84))})`,
+    `50% of the window gone · use is level with an even spend · resets in 3 d 12 h (${localTime(at(84))})`,
+    `resets in 2 h (${localTime(at(2))})`, 'reset unknown']);
+  // The id does not say how long a five-hour window is, and a window with no reset has no start: neither gets a time mark.
+  expect(within(windows).getAllByRole('meter').map(bar => [...bar.children].map(part => part.getAttribute('data-part')))).toEqual([['used', 'elapsed'], ['used', 'elapsed'], ['used'], ['used']]);
+  // The card's own bar is still the first meter on the card and still reads the pool, not a model.
+  expect(bars(claude!)[0]).toMatch(/^claude used: 60% used/);
 });
 
 it('says so when every reading is unknown, and never draws a zero bar or a zero reading', async () => {
