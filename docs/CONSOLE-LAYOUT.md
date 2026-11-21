@@ -121,6 +121,29 @@ visible. The same report for agents:
 phm nodes pool --json
 ```
 
+Home's **Shipped today** card lists every pull request the fleet merged in
+the last 24 hours, newest first. Two sentences lead: how many merged, across
+how many repositories and at what rate, then the median time from open to
+merge and the pull request that stayed open longest. When more than one
+repository merged, a row of buttons (each with its count, underlined by its
+share of the list) narrows the list to one; choose it again, or **All**, to
+go back. Each row gives the merge time, the lane's provider mark, a link to
+the pull request, the lane and the time it was open. Under the row a line
+runs across the feed's own 24 hours: it starts where the pull request was
+opened and ends in a dot at its merge, and fades in from the left edge when
+it was opened before the window. When the feed names the job that made the
+pull request, the job id opens that job in the Worker log. Nothing is filled
+in: a row with no time open says "open time unknown" and gets a hollow dot
+and no line, a missing lane reads "lane unknown", an incomplete feed counts
+what it lists and says the totals are unknown, and no line is drawn when the
+feed does not give its window. The card reads the feed again every 10
+minutes while visible and says when a refresh failed. The same feed for
+agents:
+
+```sh
+phm shipped --since 24h --json
+```
+
 The Metrics pane is one board of the last 24 hours. It leads with the merged
 PR counts and the busiest hour, then four numbers (the first with a line of
 the merges in each hour), the two hourly charts side by side and a ranked bar
