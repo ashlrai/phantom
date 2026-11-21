@@ -1362,6 +1362,95 @@ function parseFirstPaintFailures(log: string): Failure[] {
   return out;
 }
 
+// Every `npm run test:ci` invocation -- the fast-gate affected-test
+// shards through ci-fast-run.mjs, the quick job's selected contract
+// test and the full lanes' hermetic steps -- runs inside
+// scripts/test-ci.mjs, which isolates HOME, pipes Vitest through a
+// private progress reporter and enforces an inactivity watchdog plus a
+// hard runtime cap; the complete partitions run under
+// scripts/test-ci-sharded.mjs, which plans shards from the measured
+// duration table and spawns the same wrapper per shard. When the
+// WRAPPER fails -- Vitest hangs past the idle window or the hard cap,
+// dies by signal, cannot spawn, the Node floor is unmet, or the shard
+// plan cannot be built -- the step goes red with no vitest FAIL, TAP
+// `not ok`, tsc diagnostic or report shape naming it, so every open PR
+// reads unknown and queues no fix. Each verdict groups under the
+// wrapper script as `scripts/test-ci.mjs > (test-ci)` or
+// `scripts/test-ci-sharded.mjs > (test-ci-sharded)`: a hang or crash
+// is usually caused by test content the runner cannot name, so the
+// dependency set is a closed input list -- the runner scripts, the
+// type-stripped memory-policy module test-ci reads as text, the
+// reporter and vitest config surface the spawned run executes under,
+// the shard plan's duration table and the runner the orchestrator
+// spawns, plus the toolchain manifests -- rather than the import
+// closure walk, which test-ci's computed data: import cannot survive;
+// the vitest harness ambient set does not apply. Like the other
+// non-test identities these can never resolve through a vitest pass
+// line: shared-baseline, pr-caused or unknown -- never
+// probable-flake. The heartbeat, capacity-observer, job-memory,
+// lifecycle (`started` / `exited`), aggregate (`FAIL (...)` /
+// `PASS (...)`), usage and report-summary lines are progress, cascade
+// or companion-runner evidence and stay unparsed: `exited <code>`
+// and `exited via <signal>` fire on ordinary test failures and on the
+// stopOthers SIGTERM cascade, so they can never be runner identities.
+const TEST_CI_FILE = 'scripts/test-ci.mjs';
+const TEST_CI_NAMES = '(test-ci)';
+const TEST_CI_SHARDED_FILE = 'scripts/test-ci-sharded.mjs';
+const TEST_CI_SHARDED_NAMES = '(test-ci-sharded)';
+const TEST_RUNNER_MAX = 8;
+
+// [test-ci] verdicts are the wrapper's own stderr lines; the bracketed
+// prefix belongs to it alone -- [test-ci-capacity], [test-ci:sharded]
+// and [job-memory] carry different prefixes, and heartbeat lines are
+// periodic progress, never verdicts.
+const TEST_CI_VERDICT = /^\[test-ci\] (?:Node >=22\.15\.0 is required\.|idle-timeout after \d+ms without output\.|hard-runtime-cap reached after \d+ms \(last output \d+ms ago\)|received SIG(?:INT|TERM); terminating the Vitest process tree\.|failed to start Vitest: \S|Vitest exited via signal \S)/;
+// [test-ci:sharded] verdicts are the balanced plan's refusal and the
+// per-shard spawn errors; every other bracketed line is lifecycle,
+// aggregate or usage output owned elsewhere or unparseable on purpose.
+const TEST_CI_SHARDED_VERDICT = /^\[test-ci:sharded\] (?:cannot plan balanced shards: \S|\S.* failed to start: \S)/;
+
+function parseTestRunnerFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  let ci = 0;
+  let sharded = 0;
+  for (const line of lines(log)) {
+    if (TEST_CI_VERDICT.test(line)) {
+      if (ci >= TEST_RUNNER_MAX) continue;
+      ci++;
+      out.push({ file: TEST_CI_FILE, names: TEST_CI_NAMES, testId: `${TEST_CI_FILE} > ${TEST_CI_NAMES}`, excerpt: clean(line) });
+      continue;
+    }
+    if (TEST_CI_SHARDED_VERDICT.test(line)) {
+      if (sharded >= TEST_RUNNER_MAX) continue;
+      sharded++;
+      out.push({ file: TEST_CI_SHARDED_FILE, names: TEST_CI_SHARDED_NAMES, testId: `${TEST_CI_SHARDED_FILE} > ${TEST_CI_SHARDED_NAMES}`, excerpt: clean(line) });
+    }
+  }
+  return out;
+}
+
+// The spawned Vitest run's direct repo inputs, shared by both runner
+// identities: the config that collects and times the suites, the
+// mock-compat config and setup files it loads, the lane-membership and
+// sequencer modules the config imports, and the toolchain manifests
+// pinning the runner and compiler.
+const TEST_RUNNER_COMMON_INPUTS = [
+  'vitest.config.ts',
+  'vitest.config.mock-compat.ts',
+  'test/setup/home.ts',
+  'test/setup/home-isolation-guard.ts',
+  'test/config/realio-lane-membership.mjs',
+  'test/config/serial-cpu-lane-membership.mjs',
+  'test/config/weighted-sequencer.mjs',
+  'package.json',
+  'package-lock.json',
+  'tsconfig.json',
+] as const;
+const TEST_RUNNER_INPUTS: Record<string, readonly string[]> = {
+  [TEST_CI_NAMES]: [TEST_CI_FILE, 'src/core/run/tool-path.ts', 'scripts/vitest-progress-reporter.mjs', ...TEST_RUNNER_COMMON_INPUTS],
+  [TEST_CI_SHARDED_NAMES]: [TEST_CI_SHARDED_FILE, 'scripts/test-shard-plan.mjs', 'scripts/test-ci.mjs', 'test/helpers/test-durations.json', ...TEST_RUNNER_COMMON_INPUTS],
+};
+
 export function parseBaselineFailures(log: string, repo?: string, auditExceptions: readonly DependencyAuditException[] | null = []): Failure[] {
   const result: Failure[] = [];
   const typecheck = new Map<string, Failure>();
@@ -1460,6 +1549,10 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     result.push(failure);
   }
   for (const failure of parseFirstPaintFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseTestRunnerFailures(log)) {
     if (result.length >= 100) break;
     result.push(failure);
   }
@@ -1855,11 +1948,12 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     freshness.push({ pr: pr.number, head: pr.headRefOid, state: known ? 'fresh' : 'unknown', ...(!known ? { reason: 'unreadable-log-or-unverified-checkout' } : {}) });
     if (!known) continue;
     for (const failure of found) {
-      // Lint-guard and first-paint failures are per-file/per-arm like
-      // eslint: the checkers grep source text or measure bundle bytes and
-      // never read a file's imports, so the dependency set is each gate's
-      // closed input list rather than the import closure walk.
-      const flatInputs = LINT_GUARD_INPUTS[failure.names] ?? FIRST_PAINT_INPUTS[failure.names];
+      // Lint-guard, first-paint and test-runner failures are per-file/
+      // per-arm/per-runner like eslint: the checkers grep source text,
+      // measure bundle bytes or wrap the suite run, and never read a
+      // file's imports, so the dependency set is each gate's closed
+      // input list rather than the import closure walk.
+      const flatInputs = LINT_GUARD_INPUTS[failure.names] ?? FIRST_PAINT_INPUTS[failure.names] ?? TEST_RUNNER_INPUTS[failure.names];
       const deps = flatInputs !== undefined ? new Set<string>(flatInputs) : await dependencies(failure.file);
       // Generated artifacts are produced by the clean-tree job, not the test
       // runner: the vitest harness ambient set cannot stale them, so only
