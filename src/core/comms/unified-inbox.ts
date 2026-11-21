@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates seventeen local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates eighteen local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), act: `phm fleet needs-resolve`.
@@ -158,6 +158,29 @@
  *               `approve`. A truncated or incomplete read reports 'degraded'
  *               with the items it did find — never an empty list passed off
  *               as fact.
+ *   slack      Slack requests whose local bus append failed — the one
+ *               pending-comms class no other source can see. The same
+ *               `readSlackJournal` the `phm fleet slack-trace` and
+ *               `phm channels slack status` projections read: a journaled
+ *               `ingested` row with `bus: 'failed'` is an authenticated,
+ *               validated Slack event whose bus append never landed (the
+ *               exact condition the trace calls `bus-failed` — send
+ *               receipts only bind replies for the other outcomes), so it
+ *               has no bus envelope (the bus and conversations sources),
+ *               no owner-thread record (`noteUnifiedOwner` runs only on
+ *               durable ingest) and no claim — the journal is the only
+ *               durable evidence. Posted, duplicate, legacy (`bus` absent)
+ *               and ignored rows either have a durable envelope another
+ *               source already lists or cannot be proven pending, so only
+ *               failed appends list here. Rows carry ids and timestamps
+ *               only — channel, thread and message ts, never text — with
+ *               `since` the journal receive time and `expiresAt` null: the
+ *               request is lost until re-ingested, never a guessed
+ *               deadline. Repeated failed ingests of one message collapse
+ *               to the newest row — one pending thing, one item. Source
+ *               state is the journal read's own: `ok`, `missing` or
+ *               `degraded`, never fabricated. Act: `phm fleet slack-trace`,
+ *               `phm channels slack status`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -194,6 +217,8 @@ import { readLinkedInDrop, type LinkedInMessage } from './linkedin-drop.js';
 import { readOwnerAwaitingReplies, readOwnerUndeliveredReplies, type OwnerAwaitingReplies, type OwnerUndeliveredReplies } from './owner-thread.js';
 import { commsRequestAgeStartMs, commsRequestTtlMs, DEFAULT_REQUEST_TTL_HOURS, readCommsRequests, type CommsRequestsRead } from './requests.js';
 import { readAgentConversations, plainAge, type AgentConversations } from '../fleet/agent-conversations.js';
+import { readSlackJournal, type SlackJournalRead, type SlackObservation } from '../agents/slack-journal.js';
+import { isSlackChannelId, isSlackTs } from '../agents/slack-network.js';
 import { JOB_THREAD_PREFIX } from '../fleet/agent-messages.js';
 import { planSeatHandoffs, type SeatHandoffsPlan } from '../bots/seats.js';
 import { DEFAULT_TEAM } from '../teams/tools.js';
@@ -207,9 +232,9 @@ const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
 
-export type UnifiedInboxSource = 'needs-you' | 'needs-you-delivery' | 'imessage' | 'teammate-tasks' | 'owner-thread' | 'owner-delivery' | 'drafts' | 'bus' | 'mailbox' | 'conversations' | 'seats' | 'gmail' | 'linkedin' | 'requests' | 'email-outbox' | 'team-approvals' | 'proposals';
+export type UnifiedInboxSource = 'needs-you' | 'needs-you-delivery' | 'imessage' | 'teammate-tasks' | 'owner-thread' | 'owner-delivery' | 'drafts' | 'bus' | 'mailbox' | 'conversations' | 'seats' | 'gmail' | 'linkedin' | 'requests' | 'email-outbox' | 'team-approvals' | 'proposals' | 'slack';
 export type UnifiedInboxSourceState = 'healthy' | 'missing' | 'degraded' | 'unavailable';
-export type UnifiedInboxKind = 'needs-you' | 'needs-you-delivery' | 'teammate-text' | 'teammate-task' | 'owner-message' | 'owner-reply-undelivered' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'mailbox-message' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-stuck' | 'team-approval' | 'inbox-proposal';
+export type UnifiedInboxKind = 'needs-you' | 'needs-you-delivery' | 'teammate-text' | 'teammate-task' | 'owner-message' | 'owner-reply-undelivered' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'mailbox-message' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-stuck' | 'team-approval' | 'inbox-proposal' | 'slack-request';
 
 export interface UnifiedInboxItem extends AttentionItem {
   /** Stable, namespaced: `<source>:<ref>` (e.g. `drafts:d-0123…`). */
@@ -301,6 +326,8 @@ export interface UnifiedInboxOptions {
   readTeamApprovals?: typeof readTeamApprovals;
   /** Pending-proposals seam; default reads the inbox store like `phm approvals`. */
   readInboxProposals?: typeof readPendingProposals;
+  /** Slack journal seam; default reads the same bounded journal `phm fleet slack-trace` and `phm channels slack status` project. */
+  readSlackJournal?: typeof readSlackJournal;
 }
 
 const cap = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
@@ -1351,6 +1378,81 @@ function proposalItems(read: NonNullable<UnifiedInboxOptions['readInboxProposals
 }
 
 /**
+ * Slack requests whose local bus append failed — the one pending-comms class
+ * no other source can see. `readSlackJournal` is the same bounded journal
+ * read `phm fleet slack-trace` and `phm channels slack status` project, so
+ * this source can never disagree with them: the trace's `bus-failed` outcome
+ * is exactly an `ingested` row whose `bus` field is `'failed'` — send
+ * receipts only bind reply evidence for the other outcomes, which this
+ * source never lists. Such a row is an authenticated, validated Slack event
+ * whose bus append never landed: there is no bus envelope for the bus or
+ * conversations sources to list, no owner-thread record (`noteUnifiedOwner`
+ * runs only on durable ingest) and no claim — the journal is the only
+ * durable evidence, so each row lists as a warn with the per-request trace
+ * and bridge-status deep links. Posted, duplicate, legacy (`bus` absent)
+ * and ignored rows either have a durable envelope another source already
+ * covers or cannot be proven pending. Rows carry ids and timestamps only
+ * (channel, thread and message ts — the same fields the trace requires
+ * before it will emit a row), never text; `since` is the journal receive
+ * time and `expiresAt` stays null — the request is lost until re-ingested,
+ * never a guessed deadline. Repeated failed ingests of the same Slack
+ * message (an outage retrying) collapse to the newest row — one pending
+ * thing, one item. Source state is the journal read's own (`ok`, `missing`,
+ * `degraded`), never fabricated; a throwing read reports 'unavailable',
+ * never an empty list passed off as fact.
+ */
+function slackItems(read: NonNullable<UnifiedInboxOptions['readSlackJournal']>,
+  options: UnifiedInboxOptions, now: () => number): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let journal: SlackJournalRead;
+  try {
+    journal = read({ ...(options.runsDir !== undefined ? { runsDir: options.runsDir } : {}), limit: 4096 });
+  } catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
+  const state: UnifiedInboxSourceState = journal.state === 'ok' ? 'healthy'
+    : journal.state === 'missing' ? 'missing' : 'degraded';
+  const nowMs = now();
+  const latest = new Map<string, SlackObservation>();
+  for (const entry of journal.entries) {
+    // The same row filter traceSlackRequests applies before it will emit a
+    // row: ingested events carrying all three Slack ids, then the failed
+    // bus outcome the trace reports as 'bus-failed'.
+    if (entry.decision !== 'ingested' || entry.bus !== 'failed') continue;
+    if (!entry.channelId || !entry.messageTs || !entry.threadTs) continue;
+    const key = `${entry.channelId}:${entry.messageTs}`;
+    const prev = latest.get(key);
+    if (prev === undefined || entry.at > prev.at) latest.set(key, entry);
+  }
+  const items = [...latest.values()].map((entry): Omit<UnifiedInboxItem, 'priority'> => {
+    const atMs = Date.parse(entry.at);
+    const timed = Number.isFinite(atMs);
+    return {
+      id: `slack:${entry.channelId}:${entry.messageTs}`,
+      source: 'slack',
+      kind: 'slack-request',
+      // A received request that never reached any agent surface is a
+      // recorded delivery failure — agent work to investigate, never
+      // Mason-blocking.
+      severity: 'warn',
+      blocking: false,
+      title: 'Slack request failed bus ingress',
+      detail: oneLine(`channel ${entry.channelId} · thread ${entry.threadTs} · message ${entry.messageTs}` +
+        (timed ? ` · waiting ${plainAge(nowMs - atMs)}` : ''), DETAIL_MAX) || null,
+      since: timed ? new Date(atMs).toISOString() : null,
+      expiresAt: null,
+      // The journal already shape-checks these ids on read; re-check before
+      // embedding them in a command so a seam or future row shape can never
+      // widen the act into something unsafe — fall back to the bare reads.
+      act: isSlackChannelId(entry.channelId) && isSlackTs(entry.threadTs) && isSlackTs(entry.messageTs)
+        ? [
+          `phm fleet slack-trace --channel ${entry.channelId} --thread ${entry.threadTs} --message ${entry.messageTs} --json`,
+          'phm channels slack status --json',
+        ]
+        : ['phm fleet slack-trace --json', 'phm channels slack status --json'],
+    };
+  });
+  return { report: { state, pending: items.length }, items };
+}
+
+/**
  * The same read `phm fleet email-outbox` serves, resolved at the shared runs
  * dir: saved email-drop config → outbox dir (`outboxDir`, else the sibling of
  * `inboxDir`, the rule every consumer applies) → availability probe →
@@ -1437,6 +1539,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     options.runsDir);
   const teamApprovals = teamApprovalItems(options.readTeamApprovals ?? readTeamApprovals);
   const proposals = proposalItems(options.readInboxProposals ?? readPendingProposals);
+  const slack = slackItems(options.readSlackJournal ?? readSlackJournal, options, now);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -1456,8 +1559,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'email-outbox': emailOutbox.report,
     'team-approvals': teamApprovals.report,
     proposals: proposals.report,
+    slack: slack.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

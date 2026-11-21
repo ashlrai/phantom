@@ -27,6 +27,7 @@ import { EMAIL_OUTBOX_MAX_BYTES } from '../src/core/comms/email-outbox.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { createBusMailbox, type BusMailboxPendingMessage } from '../src/core/fleet/bus-mailbox.js';
 import type { AgentConversations } from '../src/core/fleet/agent-conversations.js';
+import type { SlackJournalRead, SlackObservation } from '../src/core/agents/slack-journal.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { listNeedsMason } from '../src/core/fleet/needs-mason-resolve.js';
@@ -1495,6 +1496,102 @@ describe('readUnifiedInbox inbox proposals', () => {
     });
     expect(throwing.sources.proposals).toEqual({ state: 'unavailable', pending: 0 });
     expect(throwing.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+});
+
+describe('readUnifiedInbox slack requests', () => {
+  const journalRow = (over: Partial<SlackObservation> = {}): SlackObservation => ({
+    at: new Date(now - 30 * 60_000).toISOString(),
+    decision: 'ingested',
+    channelId: 'C0123ABCD',
+    threadTs: '1762000000.000100',
+    messageTs: '1762000000.000200',
+    bus: 'failed',
+    ...over,
+  });
+  const journal = (entries: SlackObservation[], state: 'ok' | 'missing' | 'degraded' = 'ok'): SlackJournalRead => ({ state, entries });
+  const pinned = {
+    readRequests: () => ({ status: 'missing' as const, requests: [] }),
+  };
+  const readWith = (readSlackJournal: () => SlackJournalRead) =>
+    readUnifiedInbox({ runsDir, busRoot, now: () => now, ...pinned, readSlackJournal });
+
+  it('lists failed bus appends as warn items with per-request trace links; every other row stays out', async () => {
+    const inbox = await readWith(() => journal([
+      journalRow(),
+      // A posted append has a durable envelope — the bus source owns it.
+      journalRow({ bus: 'posted' }),
+      // A duplicate append proves the envelope already exists.
+      journalRow({ bus: 'duplicate', messageTs: '1762000000.000300' }),
+      // A legacy ingested row carries no bus outcome — ingress unknown, never proven pending here.
+      journalRow({ bus: undefined, messageTs: '1762000000.000400' }),
+      // Ignored events never reached the bus append path at all.
+      journalRow({ decision: 'ignored', reason: 'foreign-team', messageTs: '1762000000.000500' }),
+      // An ingested row missing the ids the trace requires emits no row.
+      journalRow({ channelId: undefined, messageTs: '1762000000.000600' }),
+    ]));
+    expect(inbox.sources.slack).toEqual({ state: 'healthy', pending: 1 });
+    const items = inbox.items.filter(i => i.source === 'slack');
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: 'slack:C0123ABCD:1762000000.000200',
+      kind: 'slack-request', severity: 'warn', blocking: false,
+      title: 'Slack request failed bus ingress',
+      detail: 'channel C0123ABCD · thread 1762000000.000100 · message 1762000000.000200 · waiting 30m',
+      since: new Date(now - 30 * 60_000).toISOString(), expiresAt: null,
+      act: [
+        'phm fleet slack-trace --channel C0123ABCD --thread 1762000000.000100 --message 1762000000.000200 --json',
+        'phm channels slack status --json',
+      ],
+    });
+    // Journal rows carry author/request ids and never message text; the item
+    // must not either.
+    expect(JSON.stringify(items[0])).not.toContain('authorId');
+    expect(JSON.stringify(items[0])).not.toContain('requestId');
+  });
+
+  it('collapses repeated failed ingests of the same message to the newest row', async () => {
+    const inbox = await readWith(() => journal([
+      journalRow({ at: new Date(now - 90 * 60_000).toISOString() }),
+      journalRow({ at: new Date(now - 10 * 60_000).toISOString() }),
+      journalRow({ messageTs: '1762000000.000900', threadTs: '1762000000.000800' }),
+    ]));
+    const items = inbox.items.filter(i => i.source === 'slack');
+    expect(items.map(i => i.id).sort()).toEqual([
+      'slack:C0123ABCD:1762000000.000200',
+      'slack:C0123ABCD:1762000000.000900',
+    ]);
+    expect(items.find(i => i.id === 'slack:C0123ABCD:1762000000.000200')).toMatchObject({
+      since: new Date(now - 10 * 60_000).toISOString(),
+      detail: 'channel C0123ABCD · thread 1762000000.000100 · message 1762000000.000200 · waiting 10m',
+    });
+  });
+
+  it('keeps only the bare trace links when row ids fail the shape guard', async () => {
+    const inbox = await readWith(() => journal([
+      journalRow({ channelId: 'bad id; touch /tmp/x', threadTs: 'also bad', messageTs: 'worse; rm -rf /' }),
+    ]));
+    const item = inbox.items.find(i => i.source === 'slack')!;
+    expect(item.act).toEqual(['phm fleet slack-trace --json', 'phm channels slack status --json']);
+  });
+
+  it('reports the journal state as the source state, never a fabricated healthy', async () => {
+    const missing = await readWith(() => journal([], 'missing'));
+    expect(missing.sources.slack).toEqual({ state: 'missing', pending: 0 });
+    const degraded = await readWith(() => journal([journalRow()], 'degraded'));
+    expect(degraded.sources.slack).toEqual({ state: 'degraded', pending: 1 });
+    expect(degraded.items.filter(i => i.source === 'slack')).toHaveLength(1);
+  });
+
+  it('reports unavailable on a throwing seam while other sources still list', async () => {
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readSlackJournal: () => { throw new Error('boom'); },
+    });
+    expect(inbox.sources.slack).toEqual({ state: 'unavailable', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'slack')).toHaveLength(0);
+    expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
   });
 });
 
