@@ -3,6 +3,7 @@
  * row's labelled facts. Pure. A value the view does not hold reads "unknown" with the view's own reason, never zero.
  */
 import type { PoolRow, PoolScope, PoolsViewV1 } from '../../../../core/fleet/pools-view.js';
+import { elapsedWords, leadWords, type WindowPace } from '../fleet-usage/window-pace-model.js';
 
 export type PoolFilter = 'all' | 'fast' | 'behind' | 'pace' | 'unknown';
 export type PoolGroup = Exclude<PoolFilter, 'all'>;
@@ -115,4 +116,43 @@ export function scopeName(id: string): string {
 export function scopeLine(scope: PoolScope): string {
   if (scope.usedPct === null) return 'unknown: its window reset and there is no new reading';
   return `${scope.usedPct}% used, ${scope.hoursLeft === null ? 'reset unknown' : `resets in ${span(scope.hoursLeft)}`}`;
+}
+
+const WEEK_HOURS = 168;
+/**
+ * Where a per-model window stands in time. Only a window the provider names `seven_day_<model>` has a stated
+ * length, so only that one gets a start (seven days before its reset); any other id, a missing or passed reset,
+ * or a reset further off than the window is long has no pace at all (null), never a zero.
+ */
+export function scopePace(scope: PoolScope): WindowPace | null {
+  const reset = ms(scope.resetAt);
+  if (!scope.id.startsWith('seven_day_') || scope.hoursLeft === null || !(scope.hoursLeft > 0) || scope.hoursLeft > WEEK_HOURS || !Number.isFinite(reset)) return null;
+  const elapsed = (WEEK_HOURS - scope.hoursLeft) / WEEK_HOURS * 100;
+  return { elapsedPct: Math.round(elapsed * 10) / 10, startsAt: new Date(reset - WEEK_HOURS * HOUR_MS).toISOString(), basis: 'weekly',
+    lead: scope.usedPct === null ? null : Math.round(scope.usedPct - elapsed) };
+}
+
+/** The clauses under a per-model bar: time gone and use against an even spend where the window has a start, then its reset. */
+export function scopeDetail(scope: PoolScope, localTime: (iso: string) => string): string[] {
+  if (scope.usedPct === null) return ['its window reset and there is no new reading'];
+  const pace = scopePace(scope);
+  const reset = scope.hoursLeft === null || scope.resetAt === null ? 'reset unknown' : `resets in ${span(scope.hoursLeft)} (${localTime(scope.resetAt)})`;
+  return [...(pace ? [elapsedWords(pace), leadWords(pace)].filter((words): words is string => words !== null) : []), reset];
+}
+
+/** The per-model bar read aloud: the reading, then how far the window has run when that is known. */
+export function scopeWords(scope: PoolScope): string {
+  const pace = scopePace(scope);
+  return scope.usedPct === null ? 'usage unknown' : `${scopeLine(scope)}${pace ? `, ${elapsedWords(pace)}` : ''}`;
+}
+
+/**
+ * The per-model window nearest its limit, said only when it is nearer than the pool as a whole: the pool's own
+ * bar would otherwise hide a model that is about to stop. Null when no model window is measured above the pool.
+ */
+export function tightestScope(row: Pick<PoolRow, 'usedPct' | 'scopes'>): string | null {
+  let top: PoolScope | null = null;
+  for (const scope of row.scopes) if (scope.usedPct !== null && (top === null || scope.usedPct > top.usedPct!)) top = scope;
+  if (top === null || row.usedPct === null || top.usedPct! <= row.usedPct) return null;
+  return `${scopeName(top.id)} is nearest its limit: ${top.usedPct}% used, against ${row.usedPct}% for the pool.`;
 }

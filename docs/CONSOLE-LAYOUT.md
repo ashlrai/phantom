@@ -288,7 +288,16 @@ the plot and press Left or Right to step through them (Home and End jump to
 the oldest and newest, Esc lets go). A rule and a ring mark the reading, and
 the sentence below becomes its time, its used share and where the even line
 stood then.
-Claude's per-model weekly windows sit under its card. A credits pool shows its
+Claude's per-model windows sit under its card as **Windows by model**, one
+row each on the same bar: the share used as the figure, then the window in
+words with its reset as a countdown and a local time. A window the provider
+names `seven_day_<model>` has a stated length, so its bar also carries the
+time mark and the line says how much of the window has gone and how many
+points the use sits ahead of or behind an even spend; any other window, or
+one with no reset reported, gets no mark. A window whose reset has passed is
+hatched and reads unknown. When a model is nearer its limit than the pool as
+a whole, the heading says which one and by how much ("Opus is nearest its
+limit: 90% used, against 60% for the pool."). A credits pool shows its
 balance and no bar. The line under the headline names the next reset, and the
 switch narrows the list to Behind, On pace or Unknown (arrow keys move it).
 Above the switch, **Runway ahead** puts every plan pool on one line of time

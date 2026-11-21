@@ -20,9 +20,6 @@
 .row[data-risk='high'] .summary::before { border-color: var(--status-danger-solid); background: var(--status-danger-solid); }
 .row[data-risk='medium'] .summary { color: var(--status-warning-fg); }
 .row[data-risk='high'] .summary { color: var(--status-danger-fg); }
-/* The card's own bar is the design system's WindowBar; this track is the thin per-model one below. */
-.track { position: relative; height: 4px; border-radius: var(--radius-full); background: var(--border-subtle); overflow: hidden; }
-.track[data-unknown] { background: repeating-linear-gradient(135deg, var(--status-unknown-solid) 0 2px, transparent 2px 6px); }
 /* The key to a card's bar: a swatch before each part's words. */
 .key { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); }
 .key > span { display: inline-flex; align-items: center; gap: var(--space-1); }
@@ -33,8 +30,15 @@
 .fact dd { margin: 0; color: var(--text-primary); font-weight: var(--font-weight-medium); font-variant-numeric: tabular-nums; }
 .fact dd[data-unknown] { color: var(--text-secondary); font-style: italic; font-weight: var(--font-weight-regular); }
 .fact dd.note { color: var(--text-secondary); font-size: var(--text-2xs-size); font-weight: var(--font-weight-regular); line-height: var(--text-xs-line); }
-/* Per-model windows inside the pool: name, a thin bar, then the same reading in words. Not tinted by the pool's risk, which is about the whole pool. */
-.scopes { display: grid; gap: var(--space-2); margin: 0; padding: var(--space-2) 0 0; border-top: 1px solid var(--border-subtle); list-style: none; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
-.scopes li { display: grid; grid-template-columns: 5rem minmax(0, 1fr); align-items: center; gap: 0 var(--space-2); }
-.scopeFill { position: absolute; inset-block: 0; inset-inline-start: 0; background: var(--accent-500); }
-.scopeLine { grid-column: 2; }
+/* Per-model windows inside the pool: name, the same bar as the card's, the share used as the figure, then the window in words.
+   Not tinted by the pool's risk, which is about the whole pool. */
+.scopes { display: grid; gap: var(--space-2); padding: var(--space-2) 0 0; border-top: 1px solid var(--border-subtle); color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.scopesHead { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-1) var(--space-3); margin: 0; font-size: var(--text-2xs-size); line-height: var(--text-xs-line); }
+.scopesHead [data-scope-tightest] { color: var(--text-primary); }
+.scopeList { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.scopeList li { display: grid; grid-template-columns: 5rem minmax(0, 1fr) auto; align-items: center; gap: 0 var(--space-2); }
+.scopeName { color: var(--text-primary); }
+.scopeFigure { min-width: 4rem; color: var(--text-primary); font-weight: var(--font-weight-medium); text-align: end; }
+.scopeFigure[data-unknown] { color: var(--text-secondary); font-style: italic; font-weight: var(--font-weight-regular); }
+.scopeUnit { margin-inline-start: var(--space-1); color: var(--text-secondary); font-size: var(--text-2xs-size); font-weight: var(--font-weight-regular); }
+.scopeLine { grid-column: 2 / -1; }
