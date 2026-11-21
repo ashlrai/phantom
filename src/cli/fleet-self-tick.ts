@@ -330,7 +330,8 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     if (!deps.strandedRequeue && root !== join(home, '.ashlr-runs')) return { reason: 'custom-runs-dir-no-stranded-requeue' };
     try {
       const { planStrandedRequeue, readGhLaneSlots } = await import('../core/fleet/stranded-requeue.js');
-      return await (deps.strandedRequeue ?? planStrandedRequeue)(root, { apply, limit: 3, now: now(), ghSlots: readGhLaneSlots });
+      const { landedReposFromEnv, readLandedFromGit } = await import('../core/fleet/landed-from-git.js');
+      return await (deps.strandedRequeue ?? planStrandedRequeue)(root, { apply, limit: 3, now: now(), ghSlots: readGhLaneSlots, landed: () => readLandedFromGit({ sinceHours: 168, repos: landedReposFromEnv() }) });
     } catch (error) { return { error: error instanceof Error ? error.message.slice(0, 120) : 'unknown error' }; }
   };
   const defaults: SelfTickSteps = {
