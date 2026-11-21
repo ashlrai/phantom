@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { claimBusWorkJob, executeBusClaimBody, listBusClaims, type BusClaimResult } from '../src/core/agents/bus-claims.js';
-import { listCoordination } from '../src/core/agents/claim-store.js';
+import { acquireCoordination, listCoordination, teamClaimKey } from '../src/core/agents/claim-store.js';
 import { registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
@@ -102,6 +102,37 @@ describe('executeBusClaimBody', () => {
     expect(second).toMatchObject({ status: 'conflict', holder: { owner: 'dot-main', claimKey: 'path:ashlrai/phantom:**/*.ts' } });
     // Provably disjoint globs still coordinate independently.
     expect(acquire('path:ashlrai/phantom:docs/*.md', 'third-seat', 600_000, 'op-3', root)).toMatchObject({ status: 'acquired' });
+  });
+
+  it('conflicts with a live team claim whose concrete path covers the glob subtree', () => {
+    const root = tempDir('v2claim-');
+    // A team lease on path 'src' is a prefix claim — it covers 'src' and
+    // everything beneath it — so a bus glob matching any of those paths must
+    // conflict even though 'src/**' cannot match the bare 'src' string.
+    const team = acquireCoordination({ root, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/phantom', path: 'src' }), owner: 'agent:team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-1',
+      teamTarget: { repo: 'ashlrai/phantom', path: 'src' }, now: NOW });
+    expect(team.status).toBe('acquired');
+    expect(acquire('path:ashlrai/phantom:src/**', 'bus-lane', 600_000, 'op-1', root))
+      .toMatchObject({ status: 'conflict', holder: { owner: 'agent:team-lane' } });
+    expect(acquire('path:ashlrai/phantom:**/*.ts', 'bus-lane', 600_000, 'op-2', root))
+      .toMatchObject({ status: 'conflict' });
+    // The reverse order conflicts the same way: the bus glob blocks the team claim.
+    const root2 = tempDir('v2claim-');
+    expect(acquire('path:ashlrai/phantom:src/**', 'bus-lane', 600_000, 'op-1', root2)).toMatchObject({ status: 'acquired' });
+    expect(acquireCoordination({ root: root2, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/phantom', path: 'src' }), owner: 'agent:team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-2',
+      teamTarget: { repo: 'ashlrai/phantom', path: 'src' }, now: NOW }).status).toBe('conflict');
+    // Provably disjoint scopes still coordinate independently.
+    const root3 = tempDir('v2claim-');
+    expect(acquireCoordination({ root: root3, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/phantom', path: 'src' }), owner: 'agent:team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-3',
+      teamTarget: { repo: 'ashlrai/phantom', path: 'src' }, now: NOW }).status).toBe('acquired');
+    expect(acquire('path:ashlrai/phantom:docs/**', 'bus-lane', 600_000, 'op-1', root3)).toMatchObject({ status: 'acquired' });
+    expect(acquire('path:ashlrai/phantom:src2/**', 'bus-lane', 600_000, 'op-2', root3)).toMatchObject({ status: 'acquired' });
   });
 
   it('lets non-overlapping keys coexist across claim forms', () => {

@@ -130,7 +130,14 @@ function pathsOverlap(teamPath: string, glob: string): boolean {
   const wild = (value: string) => /[*?[{]/.test(value);
   if (!wild(left) && !wild(right)) return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
   const sampleRepo = 'o/n';
-  return claimKeysOverlap(`path:${sampleRepo}:${left}`, `path:${sampleRepo}:${right}`);
+  const leftKey = `path:${sampleRepo}:${left}`;
+  const rightKey = `path:${sampleRepo}:${right}`;
+  // A concrete team path is a prefix claim — `claimsOverlap` covers the path
+  // itself and everything beneath it — while a bus `path:` glob names one
+  // glob language. The pair overlaps when the glob matches the bare path or
+  // any path under it, so the subtree joins the intersection as `left/**`.
+  if (!wild(left)) return claimKeysOverlap(leftKey, rightKey) || claimKeysOverlap(`${leftKey}/**`, rightKey);
+  return claimKeysOverlap(leftKey, rightKey);
 }
 
 function teamHitsKey(target: ClaimTarget, key: string): boolean {

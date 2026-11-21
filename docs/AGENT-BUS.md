@@ -1189,7 +1189,10 @@ Outside implementers (Dot included) call only the HTTP contract above.
 
 Message-id claims, team leases, and bus-board task claims write their leases
 through `src/core/agents/claim-store.ts`, so overlap is decided in one table.
-A second live claim on an overlapping key is rejected. Queued path claims stay
+A second live claim on an overlapping key is rejected. A team lease's `path`
+is a prefix claim — it covers the path and everything beneath it — so it
+overlaps a bus `path:` glob that matches any path in that subtree, in either
+acquire order. Queued path claims stay
 a read-only view of queue prompt files and can be merged onto that board with
 `claimBoard()`. `phm agents roster` reads this table through `readRosterClaims`.
 A message-id lease is shown under its bus message id, so a roster session and
