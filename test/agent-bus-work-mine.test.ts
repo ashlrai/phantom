@@ -809,6 +809,54 @@ describe('readBusWorkMine', () => {
     expect(aliased.handoffs.items[0]).toMatchObject({ id: 'ho-alias' });
   });
 
+  it('drops a worker-handoff the addressee already answered with a routed reply', async () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    expect(await sendHandoff({ from: 'nova', to: 'atlas', taskId: 'RQ-H-A',
+      prompt: 'take the answered task', id: 'ho-ans' }, options)).toMatchObject({ status: 'posted' });
+    const before = readBusWorkMine('atlas', options);
+    if (before.status !== 'ok' || before.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(before.handoffs.matched).toBe(1);
+    // The worker-exit reply the handoff verbs publish routes recipient ->
+    // sender (atlas -> nova) and cites the handoff id — the same evidence the
+    // conversation projection credits when it marks the thread answered.
+    const reply = appendBusInbox({ id: 'ho-ans-reply', from: 'agent:atlas', to: 'agent:nova',
+      priority: 'P2', ttl: 120_000,
+      body: { kind: 'worker-exit', inReplyTo: 'ho-ans', exitCode: 0, succeeded: true } },
+      { root: options.root, now: options.now });
+    expect(reply.status).toBe('posted');
+    const after = readBusWorkMine('atlas', options);
+    if (after.status !== 'ok' || after.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(after.handoffs).toMatchObject({ status: 'ok', matched: 0, items: [], truncated: false });
+    // The assigner still sees nothing pending either — the handoff was theirs.
+    const assigner = readBusWorkMine('nova', options);
+    if (assigner.status !== 'ok' || assigner.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(assigner.handoffs.matched).toBe(0);
+  });
+
+  it('keeps a worker-handoff pending when the citation is not the assignee answering back', async () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova', 'bystander');
+    expect(await sendHandoff({ from: 'nova', to: 'atlas', taskId: 'RQ-H-B',
+      prompt: 'take the unanswered task', id: 'ho-unans' }, options)).toMatchObject({ status: 'posted' });
+    // A bystander citing the id and the assigner replying onward are not the
+    // assignee's routed answer, so the assignment stays pending.
+    for (const env of [
+      { id: 'ho-unans-bye', from: 'agent:bystander', to: 'leaders',
+        body: { kind: 'note', inReplyTo: 'ho-unans', text: 'fyi' } },
+      { id: 'ho-unans-fwd', from: 'agent:nova', to: 'agent:atlas',
+        body: { kind: 'worker-exit', inReplyTo: 'ho-unans', exitCode: 0, succeeded: true } },
+    ]) {
+      const posted = appendBusInbox({ ...env, priority: 'P2', ttl: 120_000 } as BusEnvelope,
+        { root: options.root, now: options.now });
+      expect(posted.status).toBe('posted');
+    }
+    const result = readBusWorkMine('atlas', options);
+    if (result.status !== 'ok' || result.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(result.handoffs.matched).toBe(1);
+    expect(result.handoffs.items.map(item => item.id)).toEqual(['ho-unans']);
+  });
+
   it('includes claimable work and handoffs posted to channels the agent belongs to, minus its own posts', async () => {
     const options = setup(Date.now());
     register(options, 'atlas', 'nova', 'ghost');

@@ -667,6 +667,30 @@ describe('worker-handoff assignments in the bus source', () => {
     expect(items.find(i => i.id === `bus-handoff:${id}`)).toMatchObject({ kind: 'bus-handoff', severity: 'info' });
     expect(items.find(i => i.id === 'bus:still-work')).toMatchObject({ kind: 'bus-work' });
   });
+
+  it('drops a handoff the addressee already answered with a routed reply', async () => {
+    const id = postV2Body(handoff('RQ-HANDOFF-7', 'fake answered handoff'), { to: 'agent:worker-9', priority: 'P1' });
+    // Pending until the assignee's routed answer cites it.
+    expect((await read()).items.map(i => i.id)).toContain(`bus-handoff:${id}`);
+    // The worker-exit reply the handoff verbs publish routes recipient ->
+    // sender and cites the handoff id — the same evidence conversations credit.
+    postV2Body({ kind: 'worker-exit', inReplyTo: id, exitCode: 0, succeeded: true },
+      { from: 'agent:worker-9', to: 'agent:peer' });
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'bus')).toHaveLength(0);
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('keeps a handoff pending when the citation is not the assignee answering back', async () => {
+    const id = postV2Body(handoff('RQ-HANDOFF-8', 'fake unanswered handoff'), { to: 'agent:worker-9' });
+    // The assigner replying to the assignee is the handoff's own direction,
+    // not the assignee's answer; a bystander's citation is no answer at all.
+    postV2Body({ kind: 'worker-exit', inReplyTo: id, exitCode: 0, succeeded: true },
+      { from: 'agent:peer', to: 'agent:worker-9' });
+    postV2Body({ kind: 'note', inReplyTo: id, text: 'fyi' }, { from: 'agent:bystander', to: 'leaders' });
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual([`bus-handoff:${id}`]);
+  });
 });
 
 describe('agent conversation threads in the unified inbox', () => {

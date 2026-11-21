@@ -22,3 +22,45 @@ export function isWorkerHandoffBody(body: unknown): body is WorkerHandoffBody {
     typeof record['taskId'] === 'string' && isFleetJobId(record['taskId']) &&
     typeof record['prompt'] === 'string' && record['prompt'].trim().length > 0;
 }
+
+/** One live envelope's citation of a prior envelope it answers. */
+export interface BusReplyCitation {
+  /** The `inReplyTo`/`replyTo` value — the id of the envelope being answered. */
+  readonly citedId: string;
+  /** The citing envelope's own `from`/`to` routing labels. */
+  readonly from: string;
+  readonly to: string;
+}
+
+/**
+ * The prior-envelope citations one bus body makes through `inReplyTo`/`replyTo`
+ * — the fields the reply paths (`postBusReply`, the `worker-exit` reply
+ * `fleet handoff-reply` publishes) stamp and the conversation projection
+ * threads on. Non-object bodies and non-string or empty values cite nothing.
+ */
+export function busReplyCitations(envelope: { from: string; to: string; body: unknown }): BusReplyCitation[] {
+  if (envelope.body === null || typeof envelope.body !== 'object' || Array.isArray(envelope.body)) return [];
+  const record = envelope.body as Record<string, unknown>;
+  const out: BusReplyCitation[] = [];
+  for (const key of ['inReplyTo', 'replyTo'] as const) {
+    const cited = record[key];
+    if (typeof cited === 'string' && cited !== '') out.push({ citedId: cited, from: envelope.from, to: envelope.to });
+  }
+  return out;
+}
+
+/**
+ * Whether a live `worker-handoff` envelope has been answered: a live reply
+ * routed recipient -> sender — the exact direction the handoff verbs publish —
+ * cites the handoff id through `inReplyTo`/`replyTo`. This is the same durable
+ * evidence the conversation projection credits when it marks the handoff's
+ * thread answered, so the pending-work surfaces and the thread view agree; a
+ * citation routed any other way is not the assignee's answer. `cites` is every
+ * citation the same bounded scan collected, live envelopes only.
+ */
+export function workerHandoffAnswered(
+  handoff: { id: string; from: string; to: string },
+  cites: readonly BusReplyCitation[],
+): boolean {
+  return cites.some(c => c.citedId === handoff.id && c.from === handoff.to && c.to === handoff.from);
+}

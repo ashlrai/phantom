@@ -205,7 +205,7 @@ import { compareRanked, needsYouPriorityHeuristic, type AttentionItem, type Need
 import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxInspection, type BusInboxOptions, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { createBusMailbox, type BusMailboxPendingMessage } from '../fleet/bus-mailbox.js';
 import { BUS_PROTOCOL_KEY, isClaimableWork, type BusPriority } from '../fleet/bus-envelope.js';
-import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
+import { busReplyCitations, isWorkerHandoffBody, workerHandoffAnswered, type BusReplyCitation } from '../fleet/handoff-body.js';
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
 import { readNeedsMasonReplyDeliveries, type NeedsMasonReplyDeliveryReport } from '../fleet/needs-mason-relay.js';
@@ -915,6 +915,10 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
   const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
   const feedPosts = new Map<string, BusFeedPost>();
   const feedStatuses = new Map<string, BusFeedStatus>();
+  // Live reply citations collected across the same scan, and the handoff items
+  // deferred until the walk ends so an answered assignment never lists.
+  const replyCites: BusReplyCitation[] = [];
+  const pendingHandoffs: { id: string; from: string; to: string; item: Omit<UnifiedInboxItem, 'priority'> }[] = [];
   let state: UnifiedInboxSourceState = claims.source === 'unavailable' || coordination.source === 'unavailable' ? 'degraded' : 'healthy';
   let after = 0;
   // Same paging bound the work loop accepts: the store retains at most
@@ -926,6 +930,10 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
     for (const receipt of result.messages) {
       const { envelope } = receipt;
       const body = envelope.body;
+      // Every live envelope's reply citations feed the answered-handoff check
+      // below — a handoff's answer is routed back to its assigner, so it is
+      // collected here regardless of the item's own kind.
+      replyCites.push(...busReplyCitations(envelope));
       if (body !== null && typeof body === 'object' && !Array.isArray(body)) {
         const record = body as Record<string, unknown>;
         if (record.kind === 'work.post' && typeof record.jobId === 'string' && !feedPosts.has(record.jobId)) {
@@ -949,23 +957,27 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
       }
       // A live worker-handoff is a pending assignment, not claimable work:
       // receiving it runs `fleet handoff-receive`/`handoff-reply`, which check
-      // no claims, so it lists regardless of hold state until its TTL ends.
+      // no claims. It is deferred until the walk ends so an assignment the
+      // addressee already answered drops out rather than listing as pending.
       // The title matches the shared bus composer (`handoff task <id>: <prompt>`).
       if (isWorkerHandoffBody(envelope.body)) {
-        items.push({
-          id: `bus-handoff:${envelope.id}`,
-          source: 'bus',
-          kind: 'bus-handoff',
-          severity: envelope.priority === 'P0' ? 'high' : envelope.priority === 'P1' ? 'warn' : 'info',
-          blocking: false,
-          title: oneLine(`handoff task ${envelope.body.taskId}: ${envelope.body.prompt}`, TITLE_MAX),
-          detail: cap(`from ${envelope.from} to ${envelope.to} · ${envelope.priority} · cursor ${receipt.cursor}`, DETAIL_MAX),
-          since: iso(receipt.receivedAt),
-          expiresAt: iso(now + envelope.ttl),
-          act: [
-            `phm fleet handoff-receive --id ${envelope.id} --to ${envelope.to} --snapshot <abs-json> -- <program> [args...]`,
-            `phm agents bus show ${envelope.id}`,
-          ],
+        pendingHandoffs.push({
+          id: envelope.id, from: envelope.from, to: envelope.to,
+          item: {
+            id: `bus-handoff:${envelope.id}`,
+            source: 'bus',
+            kind: 'bus-handoff',
+            severity: envelope.priority === 'P0' ? 'high' : envelope.priority === 'P1' ? 'warn' : 'info',
+            blocking: false,
+            title: oneLine(`handoff task ${envelope.body.taskId}: ${envelope.body.prompt}`, TITLE_MAX),
+            detail: cap(`from ${envelope.from} to ${envelope.to} · ${envelope.priority} · cursor ${receipt.cursor}`, DETAIL_MAX),
+            since: iso(receipt.receivedAt),
+            expiresAt: iso(now + envelope.ttl),
+            act: [
+              `phm fleet handoff-receive --id ${envelope.id} --to ${envelope.to} --snapshot <abs-json> -- <program> [args...]`,
+              `phm agents bus show ${envelope.id}`,
+            ],
+          },
         });
         continue;
       }
@@ -991,6 +1003,14 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
     if (result.messages.length < BUS_INBOX_MAX_READ) break;
     if (result.nextCursor <= after) { state = 'degraded'; break; }
     after = result.nextCursor;
+  }
+  // A handoff the addressee already answered is not pending work: a live reply
+  // routed recipient -> sender and citing the handoff id is the same durable
+  // evidence the conversation projection credits when it marks the thread
+  // answered, so this view and `agents conversations` agree. Only live
+  // envelopes were scanned, matching that projection's own window.
+  for (const pending of pendingHandoffs) {
+    if (!workerHandoffAnswered(pending, replyCites)) items.push(pending.item);
   }
   const feed = busFeedJobItems(options, now, feedPosts, feedStatuses);
   items.push(...feed.items);
