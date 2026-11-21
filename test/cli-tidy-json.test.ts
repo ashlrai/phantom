@@ -12,6 +12,11 @@
  * unit lane spawn or hash it, which made those files fail and then pass on a
  * re-run. It points HOME at a temp dir so it never touches the real
  * ~/.ashlr or the real Desktop.
+ *
+ * Importing require-built-dist.js marks the file as dist-bound, so the pull
+ * request fast gate (which never builds dist/) leaves it to the scheduled full
+ * suites. Without the marker, any pull request touching CONTRIBUTING.md (named
+ * above) selected this file and failed the fast gate.
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
@@ -19,6 +24,7 @@ import { spawnSync } from 'node:child_process';
 import {
   mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync,
 } from 'node:fs';
+import { requireBuiltDist } from './helpers/require-built-dist.js';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -52,9 +58,7 @@ describe('CLI: ashlr tidy --json', () => {
   beforeAll(() => {
     // Fail fast instead of building: see the header for why tests must not
     // write the shared dist/ concurrently with the files that read it.
-    if (!existsSync(cliEntry)) {
-      throw new Error(`${cliEntry} is missing; run \`npm run build\` before this suite`);
-    }
+    requireBuiltDist(['dist/cli/index.js'], repoRoot);
   });
 
   beforeEach(() => {

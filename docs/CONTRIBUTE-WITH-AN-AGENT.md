@@ -231,8 +231,14 @@ and the fast gate never skips tests silently:
   `test/package-files-allowlist.test.ts`.
 
 Tests that need the built `dist/`, and the slow real-I/O and serial suites
-picked up indirectly, are left to the scheduled `master` run. `npm run check:docs` is not part of the pull request
-gate, so run it yourself whenever you touch markdown.
+picked up indirectly, are left to the scheduled `master` run. The selector
+knows a test needs `dist/` only when the file imports
+`test/helpers/require-built-dist.js`, because the fast gate never builds.
+A test that runs the compiled CLI or reads `dist/` must call
+`requireBuiltDist()` from that helper. Without it, the test fails the fast gate
+for every pull request that changes a file the test names, even in a comment.
+`npm run check:docs` is not part of the pull request gate, so run it yourself
+whenever you touch markdown.
 
 To see the plan for your branch, commit and run:
 
