@@ -49,3 +49,6 @@
 .tile[data-tone='bad'] .value {
   color: var(--status-danger-fg);
 }
+
+/* "Last hour: 5 shipped (...)", one plain line above the tiles. */
+.hour { grid-column: 1 / -1; margin: 0; color: var(--text-primary); font-weight: var(--font-weight-semibold); }

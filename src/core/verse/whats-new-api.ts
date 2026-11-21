@@ -4,6 +4,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFleetShipped } from '../fleet/shipped.js';
+import { readHourShipped } from '../fleet/shipped-hour.js';
 import { sendJson } from '../web/api.js';
 import { packageRoot, readInstalledChangelog, WHATS_NEW_VERSION } from './changelog-read.js';
 import { buildShipped, gitShippedSource, type ShippedReport, type ShippedSource } from '../release/shipped.js';
@@ -42,14 +43,16 @@ export async function handleShippedApi(
   req: IncomingMessage,
   res: ServerResponse,
   method: string,
-  deps: { source?: ShippedSource; now?: () => number; fleet?: typeof readFleetShipped } = {},
+  deps: { source?: ShippedSource; now?: () => number; fleet?: typeof readFleetShipped; hour?: typeof readHourShipped } = {},
 ): Promise<boolean> {
   if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
   const params = new URL(req.url ?? VERSE_SHIPPED_PATH, 'http://localhost').searchParams;
   if (params.has('since')) {
-    if (params.get('since') !== '24h' || [...params.keys()].some(key => key !== 'since')) {
-      sendJson(res, 400, { error: 'use since=24h for the fleet feed' }); return true;
+    const since = params.get('since');
+    if ((since !== '24h' && since !== '1h') || [...params.keys()].some(key => key !== 'since')) {
+      sendJson(res, 400, { error: 'use since=24h or since=1h for the fleet feed' }); return true;
     }
+    if (since === '1h') { sendJson(res, 200, await (deps.hour ?? readHourShipped)({ now: (deps.now ?? Date.now)() })); return true; }
     sendJson(res, 200, await (deps.fleet ?? readFleetShipped)({ now: (deps.now ?? Date.now)() }));
     return true;
   }

@@ -23,6 +23,7 @@ import { PoolsCard } from './PoolsCard.js';
 import { PulseCard } from './PulseCard.js';
 import { PulseStrip } from './PulseStrip.js';
 import { FleetShippedCard } from './FleetShippedCard.js';
+import { HourShippedLine } from './HourShippedLine.js';
 import { ThisMacCard } from './ThisMacCard.js';
 import { WorkingNowCard } from './WorkingNowCard.js';
 import { WorklogCard } from './WorklogCard.js';
@@ -65,7 +66,7 @@ export function HomePane({ visible }: PaneProps) {
   // Any other payload (an older server, an error body) is not a summary.
   const home = read.data?.schema === 'home.v1' ? read.data : null;
   // Approvals come first and stand on their own API: what only Mason can do should not wait on the health summary.
-  if (!home) return <section className={styles.root} aria-label="Home"><PulseStrip visible={visible} /><PulseCard visible={visible} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p>
+  if (!home) return <section className={styles.root} aria-label="Home"><PulseStrip visible={visible} /><PulseCard visible={visible} /><HourShippedLine visible={visible} className={styles.hour} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p>
     <div key="board" className={styles.board}>
       <Column key="agents" title={AGENTS}><ApprovalsCard key="approvals" visible={visible} /><LeaderRepliesCard key="leader-replies" visible={visible} />{working(visible)}<MachinesCard key="machines" visible={visible} className={styles.card} onOpenJob={openPoolJob} /></Column>
       <Column key="resources" title={RESOURCES}><PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} onOpenPools={openPools} /></Column>
@@ -74,7 +75,7 @@ export function HomePane({ visible }: PaneProps) {
   const stale = read.status === 'error';
   const at = readAt(home.asOf);
   return <section className={styles.root} aria-label="Home">
-    <PulseStrip visible={visible} /><PulseCard visible={visible} />
+    <PulseStrip visible={visible} /><PulseCard visible={visible} /><HourShippedLine visible={visible} className={styles.hour} />
     <p className={styles.headline} data-health={home.health}>{home.headline}</p>
     <p className={styles.asOf} data-stale={stale || undefined} role={stale ? 'status' : undefined}>
       {stale ? 'Could not refresh. Showing the reading from ' : 'As of '}{at ? <time dateTime={home.asOf}>{at}</time> : 'an unknown time'}.</p>

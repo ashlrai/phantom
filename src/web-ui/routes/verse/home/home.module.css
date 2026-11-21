@@ -61,3 +61,4 @@
   .board { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
   .root .pulse { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: var(--space-3) var(--space-4); align-items: start; }
 }
+.hour { margin: 0; color: var(--text-primary); font-size: var(--text-md-size, 1rem); font-weight: var(--font-weight-semibold); }
