@@ -318,6 +318,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'owner-history': () => import('./fleet-owner-history.js'),
   'owner-live': () => import('./fleet-owner-live.js'),
   'owner-pull': () => import('./fleet-owner-pull.js'),
+  'pace': () => import('./fleet-pace.js'),
   'park-audit': () => import('./fleet-park-audit.js'),
   'path-batch': () => import('./fleet-path-batch.js'),
   'path-cochanges': () => import('./fleet-path-cochanges.js'),

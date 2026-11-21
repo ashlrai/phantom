@@ -8,6 +8,7 @@
  */
 import type { LaneFacts } from './autofill-lanes.js';
 import { POOL_USED_UP_PCT } from './lane-pool-wait.js';
+import { aheadWords, type PaceVerdict } from './pace-verdict.js';
 
 /** A lane that can take new gap work now. */
 export interface GapLaneOpen { lane: string; free: number; running: number; target: number }
@@ -60,4 +61,27 @@ export function waitingWords(waiting: readonly GapLaneWaiting[]): string {
 export function pickGapLane(room: GapLaneRoom, needsGh: boolean): string | null {
   const order = needsGh ? ['codex-personal'] : GAP_LANE_ORDER;
   return order.find(lane => room.open.some(o => o.lane === lane && o.free > 0)) ?? null;
+}
+
+/** What pace did to one pick: the lane to use (null = hold), the lane pace moved it off (or preferred over), and why pace held it. */
+export interface PacedPick { lane: string | null; heldWhy: string | null; from: string | null }
+
+/**
+ * Pick the lane for one gap with pace: an "ahead" pool gets no new rows, a "behind" pool goes first,
+ * "unknown" or missing pace changes nothing. Eligibility is unchanged (gh work only on codex-personal).
+ * `heldWhy` is set when pace is the reason no lane was picked.
+ */
+export function pickPacedLane(room: GapLaneRoom, needsGh: boolean, pace: ReadonlyMap<string, PaceVerdict> | undefined): PacedPick {
+  const plain = pickGapLane(room, needsGh);
+  if (!pace || pace.size === 0) return { lane: plain, heldWhy: null, from: null };
+  const order = needsGh ? ['codex-personal'] : [...GAP_LANE_ORDER];
+  const open = order.filter(lane => room.open.some(o => o.lane === lane && o.free > 0));
+  const ahead = open.filter(lane => pace.get(lane)?.state === 'ahead');
+  const usable = open.filter(lane => !ahead.includes(lane));
+  const rank = (lane: string): number => (pace.get(lane)?.state === 'behind' ? 0 : 1);
+  usable.sort((a, b) => rank(a) - rank(b));
+  const lane = usable[0] ?? null;
+  const skipped = plain !== null && ahead.includes(plain) ? plain : null;
+  if (lane === null && ahead.length) return { lane, heldWhy: `${aheadWords(pace.get(ahead[0]!)!)}, and no other pool with room can take it`, from: ahead[0]! };
+  return { lane, heldWhy: null, from: skipped ?? (lane !== null && lane !== plain && pace.get(lane)?.state === 'behind' ? plain : null) };
 }

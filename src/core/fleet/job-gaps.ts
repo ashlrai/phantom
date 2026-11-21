@@ -26,7 +26,8 @@ import { parseIngestedTsv } from './drop-job-fate.js';
 import { parsePublishResult } from './job-state.js';
 import { readGapProposals, recordGapProposal } from './gap-proposal-record.js';
 import type { LaneFacts } from './autofill-lanes.js';
-import { gapLaneRoom, pickGapLane, type GapLaneRoom } from './gap-lane-room.js';
+import { gapLaneRoom, GAP_LANE_ORDER, pickPacedLane, type GapLaneRoom } from './gap-lane-room.js';
+import { aheadWords, type PaceVerdict } from './pace-verdict.js';
 
 export const JOB_GAPS_SCHEMA = 'jobs.gaps.v1';
 export const MAX_GAPS_PER_JOB = 12;
@@ -67,6 +68,8 @@ export interface JobGapsReport {
   candidates: GapCandidate[];
   dropped: DroppedGap[];
   proposed: ProposedGap[] | null;
+  /** One plain line per pace decision ("claude ahead of pace (...): sent 2 rows to codex-personal instead"). Absent when pace changed nothing. */
+  paceNotes?: string[];
 }
 
 const HEADING = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
@@ -213,6 +216,8 @@ export interface JobGapsDeps {
   maxNew?: number;
   /** Lane readings. With them a gap goes to a lane with room, and rows that cannot launch do not count as a full queue. Without them: claude, or codex-personal for gh work. */
   lanes?: readonly LaneFacts[];
+  /** Pace per pool, from readPaceByPool. An ahead pool gets no new rows; a behind pool goes first; unknown changes nothing. */
+  pace?: ReadonlyMap<string, PaceVerdict>;
   write?: (root: string, input: DropJobInput) => Promise<unknown>;
 }
 
@@ -346,7 +351,12 @@ export async function readJobGaps(hours: number, opts: { propose?: boolean } & J
     else report.candidates.push(gap);
   }
   for (const c of report.candidates) report.bySource[c.source ?? 'no-change']++;
-  if (opts.propose) report.proposed = await proposeGaps(report.candidates, runsDir, opts.write, opts.maxNew ?? maxNewFromEnv(), now, opts.lanes ? gapLaneRoom(opts.lanes, now) : null);
+  if (opts.propose) {
+    const room = opts.lanes ? gapLaneRoom(opts.lanes, now) : opts.pace?.size ? unboundedRoom() : null;
+    const paceNotes: string[] = [];
+    report.proposed = await proposeGaps(report.candidates, runsDir, opts.write, opts.maxNew ?? maxNewFromEnv(), now, room, opts.pace, paceNotes);
+    if (paceNotes.length) report.paceNotes = paceNotes;
+  }
   return report;
 }
 
@@ -363,7 +373,9 @@ export function maxNewFromEnv(env: NodeJS.ProcessEnv = process.env): number {
   return Number.isInteger(n) && n >= 0 && n <= 40 && env.ASHLR_GAPS_MAX?.trim() ? n : DEFAULT_MAX_NEW_DROPS;
 }
 
-async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: JobGapsDeps['write'], maxNew: number, now: number, room: GapLaneRoom | null): Promise<ProposedGap[]> {
+async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: JobGapsDeps['write'], maxNew: number, now: number, room: GapLaneRoom | null, pace?: ReadonlyMap<string, PaceVerdict>, paceNotes: string[] = []): Promise<ProposedGap[]> {
+  const moved = new Map<string, number>();
+  const held = new Map<string, number>();
   const root = resolveDropJobRoot(runsDir);
   const out: ProposedGap[] = [];
   const perRepo = new Map<string, number>();
@@ -375,8 +387,9 @@ async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: J
     if (!DROP_QUEUE_REPOS.includes(repo)) { row.skipped = `repo ${repo} is not a known repo`; continue; }
     if ((perRepo.get(repo) ?? 0) >= MAX_PROPOSED_PER_REPO) { row.skipped = `already ${MAX_PROPOSED_PER_REPO} proposed for ${repo} this tick`; continue; }
     if (newDrops >= maxNew) { row.skipped = `already ${maxNew} new ${maxNew === 1 ? 'job' : 'jobs'} this tick`; continue; }
-    const lane = room ? pickGapLane(room, needsGh(gap)) : needsGh(gap) ? 'codex-personal' : 'claude';
-    if (lane === null) { row.skipped = needsGh(gap) ? 'codex-personal has no room for gh work' : 'no lane has free slots and usage left'; continue; }
+    const pick = room ? pickPacedLane(room, needsGh(gap), pace) : { lane: needsGh(gap) ? 'codex-personal' : 'claude', heldWhy: null, from: null };
+    const lane = pick.lane;
+    if (lane === null) { row.skipped = pick.heldWhy ? `held: ${pick.heldWhy}` : needsGh(gap) ? 'codex-personal has no room for gh work' : 'no lane has free slots and usage left'; if (pick.heldWhy) held.set(pick.heldWhy, (held.get(pick.heldWhy) ?? 0) + 1); continue; }
     const job: DropJobInput = { id: gapJobId(gap.title), repo, lane, tier: 'work', body: gapJobBody(gap) };
     row.jobId = job.id;
     const verdict = validateDropJob(job);
@@ -389,6 +402,7 @@ async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: J
       row.path = (written as { file?: string } | undefined)?.file ?? null;
       row.queued = true;
       row.lane = lane;
+      if (pick.from) moved.set(`${pick.from}\t${lane}`, (moved.get(`${pick.from}\t${lane}`) ?? 0) + 1);
       const open = room?.open.find(o => o.lane === lane);
       if (open) open.free--;
       // The proposer's own record: feeds the 24 h dedupe and the doctor's Self-supply line. Losing it must not undo the queued job.
@@ -399,6 +413,13 @@ async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: J
       row.skipped = e instanceof DropJobExistsError ? 'already queued' : e instanceof DropJobValidationError ? (row.refused = explainDropJobReasons(e.reasons)) : 'could not write the job';
     }
   }
+  for (const [key, n] of moved) {
+    const [from, to] = key.split('\t') as [string, string];
+    const v = pace?.get(from);
+    const rows = `${n} ${n === 1 ? 'row' : 'rows'}`;
+    paceNotes.push(v?.state === 'ahead' ? `${aheadWords(v)}: sent ${rows} to ${to} instead` : `${to} is behind pace, so it got ${rows} first`);
+  }
+  for (const [why, n] of held) paceNotes.push(`${why}: ${n} ${n === 1 ? 'row' : 'rows'} held`);
   return out;
 }
 
@@ -409,8 +430,14 @@ export function jobGapsLines(report: JobGapsReport): string[] {
   report.candidates.forEach((gap, i) => {
     lines.push(`${i + 1}. ${gap.title} (${gap.repo ?? 'repo unknown'}, from ${gap.sourceJob})`, `   Why: ${gap.why}`);
   });
+  for (const note of report.paceNotes ?? []) lines.push(note);
   for (const row of report.proposed ?? []) lines.push(row.queued ? `Queued ${row.title} as RQ-PHX-${row.jobId}.` : `Not queued: ${row.title} (${row.skipped}).`);
   if (report.candidates.length && !report.proposed) lines.push('Queue them: phm jobs gaps --propose');
   if (report.unknownSources.length) lines.push(`Not checked for duplicates: ${report.unknownSources.join(', ')} (unknown).`);
   return lines;
+}
+
+/** With pace but no lane readings, every lane in the usual order counts as open (held lanes cannot be seen here). */
+function unboundedRoom(): GapLaneRoom {
+  return { open: GAP_LANE_ORDER.map(lane => ({ lane, free: Number.MAX_SAFE_INTEGER, running: 0, target: Number.MAX_SAFE_INTEGER })), waiting: [], stuck: 0 };
 }
