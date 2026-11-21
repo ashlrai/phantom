@@ -55,6 +55,19 @@ has no reply box and a line saying why. **Live log** opens the worker log. Escap
 conversation is read from `GET /api/verse/fleet/control/session-thread` every
 10 seconds; a server without that read says so and shows no conversation.
 
+A conversation opens at the newest entries of each record: 50 bus messages,
+10 of your messages, the Leader's last 5 replies, 12 log lines. When the
+records hold more, a row under the conversation says so and offers **Show
+earlier** (or press E anywhere in the conversation but a text field). The
+entries on screen stay while the deeper read is made, then the row says how
+many earlier entries joined them, with **Go to the first** and **Show fewer**
+beside it. The conversation stays whole while you follow it, and goes back to
+the newest entries after a reload. It is the read `phm sessions thread <id>
+--all` makes: more of the same records, never another source, and still
+bounded (400 bus messages, the newest 200 inbox entries, 120 log lines), with
+anything beyond that listed as left out. A server that names no depth shows
+the list of what was left out and no button.
+
 A worker that is running, quiet or of unknown state has a row under the
 header to steer its job without leaving the conversation: **Pause** (or
 **Resume** while a pause stands), **Stop**, which asks first, and **Move…**,
@@ -255,6 +268,14 @@ resume, stop or move asked of its job with what became of it. The summary is ass
 records, not written by a model. A "To write to it" line near the end says
 where a message to that session goes, or why none can be sent. `--json` prints `fleet.session-thread.v1`;
 an unknown id exits 2. See [session thread](FLEET-API.md#session-thread).
+
+The thread shows the newest few of each record. When earlier ones exist it
+ends with a note naming the command that shows them:
+`phm sessions thread <id> --all`. That prints up to 400 bus messages, every
+message of yours in the newest 200 inbox entries, 40 Leader replies, 60
+commands and changed files, 40 control requests and the last 120 lines of the
+log. In the JSON, `depth` is `recent` or `full`, and `deeper` is true when
+a `recent` read left out something `--all` would show.
 
 For old heartbeats or quiet jobs, run `phm sessions reconcile --json` (omit
 `--json` for plain text). The typed `reconcileSessions` API returns

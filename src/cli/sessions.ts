@@ -16,7 +16,7 @@ import {
 import { renderLiveSessionsText, SESSION_FILTER_RE } from '../core/fleet/live-sessions.js';
 import { readLiveSessions } from '../core/fleet/live-sessions-read.js';
 import { getFleetSessions } from '../core/fleet/runs-sessions.js';
-import { renderSessionThreadText, SESSION_ID_RE, type SessionThreadV1 } from '../core/fleet/session-thread.js';
+import { renderSessionThreadText, SESSION_ID_RE, type SessionThreadDepth, type SessionThreadV1 } from '../core/fleet/session-thread.js';
 import { readSessionThread } from '../core/fleet/session-thread-read.js';
 import { renderSessionThreadsText, type SessionThreadsV1 } from '../core/fleet/session-threads.js';
 import { readSessionThreads } from '../core/fleet/session-threads-read.js';
@@ -33,11 +33,13 @@ const USAGE = `Usage:
                                       What one session is doing now: its last 200 log lines,
                                       redacted; --follow streams new ones (one JSON object
                                       per line with --json). Exit 2 for an unknown id.
-  phm sessions thread <id> [--json]   One session as a conversation: a summary, then its brief,
+  phm sessions thread <id> [--all] [--json]
+                                      One session as a conversation: a summary, then its brief,
                                       recorded steps, commands, changed files, notes, the bus
                                       messages about it and its last message. The id is
-                                      leader, a job id or a subagent id. Read only; exit 2
-                                      for an unknown id.
+                                      leader, a job id or a subagent id. It shows the newest
+                                      few of each; --all shows the earlier ones the same
+                                      records hold. Read only; exit 2 for an unknown id.
   phm sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json]
                                       Every session as a short conversation on one screen:
                                       its summary and its newest 3 messages, yours included,
@@ -151,21 +153,25 @@ export async function cmdLiveSessions(args: string[], read: typeof readLiveSessi
   return 0;
 }
 
-/** `phm sessions thread <id> [--json]`: one session as a conversation. Exit 0 read, 1 sessions unreadable, 2 usage or unknown id. */
-export async function cmdSessionThread(args: string[], read: (id: string) => Promise<SessionThreadV1> = id => readSessionThread(id)): Promise<number> {
-  let values: { json?: boolean }, positionals: string[];
+/**
+ * `phm sessions thread <id> [--all] [--json]`: one session as a conversation. `--all` asks for depth `full` (the read is
+ * given a second argument only then). Exit 0 read, 1 sessions unreadable, 2 usage or unknown id.
+ */
+export async function cmdSessionThread(args: string[],
+  read: (id: string, depth?: SessionThreadDepth) => Promise<SessionThreadV1> = (id, depth) => readSessionThread(id, { depth })): Promise<number> {
+  let values: { json?: boolean; all?: boolean }, positionals: string[];
   try {
-    ({ values, positionals } = parseArgs({ args, strict: true, allowPositionals: true, options: { json: { type: 'boolean' } } }));
+    ({ values, positionals } = parseArgs({ args, strict: true, allowPositionals: true, options: { json: { type: 'boolean' }, all: { type: 'boolean' } } }));
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : 'Invalid arguments'}\n${USAGE}`);
     return 2;
   }
   const id = positionals[0];
   if (positionals.length !== 1 || id === undefined || !SESSION_ID_RE.test(id)) {
-    process.stderr.write('Usage: phm sessions thread <id> [--json]. The id is leader, a job id or a subagent id from `phm sessions`.\n');
+    process.stderr.write('Usage: phm sessions thread <id> [--all] [--json]. The id is leader, a job id or a subagent id from `phm sessions`.\n');
     return 2;
   }
-  const thread = await read(id);
+  const thread = values.all ? await read(id, 'full') : await read(id);
   if (thread.session) { console.log(values.json ? JSON.stringify(thread, null, 2) : renderSessionThreadText(thread)); return 0; }
   const unreadable = thread.sources.sessions === 'unavailable';
   if (values.json) console.log(JSON.stringify(thread, null, 2));

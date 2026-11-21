@@ -1647,6 +1647,21 @@ whole document when a shown session has a job (`readSessionThreads` takes an
 injectable `readControls`): each such entry carries the same `control`,
 control messages and `sources.controls` as its single thread, and a failed
 read is `sources.controls: 'unavailable'` with one line in `gaps`.
+Depth (additive): `session-thread.ts` exports `SessionThreadDepth`
+(`'recent' | 'full'`), `SESSION_THREAD_DEPTHS`, `SessionThreadLimits` and
+`THREAD_LIMITS` (the limits for each depth; `recent` is the constants above).
+`buildSessionThread(list, id, parts, now, depth = 'recent')` takes the depth
+as an optional fifth argument and `sessionOutputLines(lines, shown =
+THREAD_OUTPUT_LINES)` the number of lines to keep. The document gains two
+last top-level keys: `depth` and `deeper: boolean` (true only for a
+`recent` thread in which a limit left out something `full` would show).
+`SessionThreadReadOptions` gains `depth`, and the default reply read asks
+for one reply more than the depth shows. `cmdSessionThread(args, read)`
+accepts `--all` and calls `read(id, 'full')` for it, `read(id)` otherwise;
+`SessionThreadRead` is `(id, depth?) => Promise<SessionThreadV1>`, and the
+route accepts `depth=recent|full` at most once, passing `'full'` on only
+when asked. `renderSessionThreadText` adds a note naming `--all` when
+`deeper` is true.
 `src/core/fleet/session-thread-read.ts` exports `readSessionThread(id,
 options)` with injectable `readMap`, `readSubagents`, `readActivity`,
 `readBus`, `readOwner` and `readReplies`; each read is guarded on its own and the result is
