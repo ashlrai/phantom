@@ -7,7 +7,7 @@ import { parseSinceHours, readStrandedBranches } from '../core/fleet/stranded-br
 const usage = 'Usage: phm jobs stranded [--since 24h] [--runs-dir <dir>] [--requeue [--apply]] [--json]';
 export async function cmdJobsStranded(args: string[], reader = readStrandedBranches): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(`${usage}\nFinished jobs that pushed their branch but never got a PR because publishing aborted afterwards (e.g. ABORT default-fetch). One row per job: job, repo, branch, age, files changed and one next step; unknown stays unknown. Jobs whose PR was created later are listed as recovered. Reads <runs dir>/*.publish only; never pushes, opens PRs or deletes. --requeue plans one recovery row per fetch-race job (id <job>R2, then R3, then gave up) and prints it; --apply writes the prompt file and the ready.tsv row (claude lane, work tier) and skips ids already queued. Other abort reasons are listed, never requeued. JSON: jobs.stranded.v1 (jobs.stranded.requeue.v1 with --requeue). Exit 1 when a log is unreadable.`);
+    console.log(`${usage}\nFinished jobs that pushed their branch but never got a PR because publishing aborted afterwards (e.g. ABORT default-fetch). One row per job: job, repo, branch, age, files changed and one next step; unknown stays unknown. Jobs whose PR was created later are listed as recovered. Reads <runs dir>/*.publish only; never pushes, opens PRs or deletes. --requeue plans one recovery row per fetch-race job (id <job>R2, then R3, then gave up) and prints it; --apply writes the prompt file and the ready.tsv row (claude lane, work tier; gh work only on the gh lane, or listed as deferred) and skips ids already queued. Other abort reasons are listed, never requeued. JSON: jobs.stranded.v1 (jobs.stranded.requeue.v1 with --requeue). Exit 1 when a log is unreadable.`);
     return 0;
   }
   let values;
@@ -18,8 +18,8 @@ export async function cmdJobsStranded(args: string[], reader = readStrandedBranc
   if (values.apply && !values.requeue) { console.error(`${usage}\n--apply goes with --requeue.`); return 2; }
   if (values.requeue) {
     try {
-      const { planStrandedRequeue, requeueText } = await import('../core/fleet/stranded-requeue.js');
-      const plan = await planStrandedRequeue(values['runs-dir'] ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), { apply: values.apply === true, sinceHours });
+      const { planStrandedRequeue, requeueText, readGhLaneSlots } = await import('../core/fleet/stranded-requeue.js');
+      const plan = await planStrandedRequeue(values['runs-dir'] ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), { apply: values.apply === true, sinceHours, ghSlots: readGhLaneSlots });
       console.log(values.json ? JSON.stringify(plan) : requeueText(plan).join('\n'));
       return plan.status === 'unknown' ? 1 : 0;
     } catch {
