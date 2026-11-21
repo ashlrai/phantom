@@ -509,7 +509,13 @@ share: a terminal phase across
 `closed` event name when no phase field resolves (a resolved phase stays
 authoritative; `mergedAt`/`closedAt` stay the preferred terminal stamps),
 with the `merged` boolean as before; every other spelling stays `null`.
-The fold is read-only and advisory: it
+`ttm_s` is the recorded opened-to-merged seconds (`ttm_s`/`ttmS`, the same
+jobs-ledger dialect merge-pace, merge-graph, throughput, eval-report and
+job-activity read): the fold takes it only from the row that last won the
+merge verdict, only when that verdict is a merge, and the newest winning
+row replaces it wholesale — a later close clears it and a merge row
+without the field leaves it `null`. It is never derived from `wall_s` or
+timestamps. The fold is read-only and advisory: it
 never routes, ranks, tunes or writes.
 
 `explainRoutes(root, nowSeconds)` returns nullable `posture` from the bounded
