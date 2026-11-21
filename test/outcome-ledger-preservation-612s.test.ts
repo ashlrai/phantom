@@ -202,7 +202,7 @@ describe('router outcome ledger (612S preservation)', () => {
       tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
       tokens_cache_read: null, tokens_cache_write: null,
       usage_source: null, usage_missing: null,
-      ttm_s: null, queue_wait_s: null, ci_wall_s: null, empty: null, diff_files: null, diff_lines: null,
+      ttm_s: null, queue_wait_s: null, ci_wall_s: null, publish_wait_s: null, empty: null, diff_files: null, diff_lines: null,
       exit_code: null, failure_class: null, empty_class: null,
       task_outcome: null, lane_hint_blocked_by: null, passk: null,
     }]);
@@ -283,6 +283,60 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(byId.get('C6')).toMatchObject({ ci_wall_s: 1800 });
     for (const id of ['C3', 'C4', 'C5', 'C8']) expect(byId.get(id)?.ci_wall_s).toBeNull();
     expect(byId.has('RQ-BATCH-c7')).toBe(false);
+  });
+
+  it('folds publish-station wait from the recorded finish/publish pair, unknown when ambiguous', () => {
+    const fold = foldRouterOutcomes([
+      // P1: finished 10:00, published 10:20 -> 1200s of publish wait.
+      '{"job":"P1","event":"finish","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"P1","event":"publish","ts":"2026-11-01T10:20:00Z"}',
+      '{"job":"P1","phase":"MERGED","ts":"2026-11-01T11:00:00Z"}',
+      // P2: timestamp and event dialect aliases join like the phase reads —
+      // 'published' is the publish spelling visit-sync normalizes.
+      '{"job":"P2","kind":"finish","at":"2026-11-01T09:00:00Z"}',
+      '{"job":"P2","type":"published","time":"2026-11-01T09:05:00Z"}',
+      '{"job":"P2","phase":"CLOSED"}',
+      // P3: a finish with no recorded publish stays unknown, never zero.
+      '{"job":"P3","event":"finish","ts":"2026-11-01T10:00:00Z"}',
+      // P4: reversed stamps cannot pair — unknown, not a negative duration.
+      '{"job":"P4","event":"publish","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"P4","event":"finish","ts":"2026-11-01T10:20:00Z"}',
+      // P5: a retried attempt records a second finish — ambiguous, stays unknown.
+      '{"job":"P5","event":"finish","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"P5","event":"finish","ts":"2026-11-01T10:30:00Z"}',
+      '{"job":"P5","event":"publish","ts":"2026-11-01T10:40:00Z"}',
+      // P6: a republish records a second publish — ambiguous, stays unknown.
+      '{"job":"P6","event":"finish","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"P6","event":"publish","ts":"2026-11-01T10:10:00Z"}',
+      '{"job":"P6","event":"publish","ts":"2026-11-01T11:10:00Z"}',
+      // P7: identical repeated stamps dedupe — a replayed append is not a republish.
+      '{"job":"P7","event":"finish","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"P7","event":"finish","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"P7","event":"publish","ts":"2026-11-01T10:30:00Z"}',
+      // P8: the reconciler's copied publish row re-stamped MERGED is verdict
+      // evidence at merge time, never a second publish — the original
+      // PUBLISHED row still pairs with the finish.
+      '{"job":"P8","event":"finish","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"P8","event":"publish","outcome":"PUBLISHED","ts":"2026-11-01T10:20:00Z"}',
+      '{"job":"P8","event":"publish","outcome":"MERGED","ts":"2026-11-01T12:00:00Z","mergedAt":"2026-11-01T12:00:00Z"}',
+      // P9: batch-session infrastructure rows never mint publish evidence.
+      '{"job":"RQ-BATCH-p9","event":"finish","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"RQ-BATCH-p9","event":"publish","ts":"2026-11-01T10:10:00Z"}',
+      // P10: an eventless PUBLISHED phase row is the publish claim itself.
+      '{"job":"P10","event":"finish","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"P10","outcome":"PUBLISHED","ts":"2026-11-01T10:15:00Z"}',
+      // P11: boundary rows without a readable stamp cannot pair.
+      '{"job":"P11","event":"finish"}',
+      '{"job":"P11","event":"publish","ts":"not a date"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('P1')).toMatchObject({ merged: true, publish_wait_s: 1200 });
+    expect(byId.get('P2')).toMatchObject({ merged: false, publish_wait_s: 300 });
+    expect(byId.get('P7')).toMatchObject({ publish_wait_s: 1800 });
+    expect(byId.get('P8')).toMatchObject({ merged: true, publish_wait_s: 1200 });
+    expect(byId.get('P10')).toMatchObject({ publish_wait_s: 900 });
+    for (const id of ['P3', 'P4', 'P5', 'P6', 'P11']) expect(byId.get(id)?.publish_wait_s).toBeNull();
+    expect(byId.has('RQ-BATCH-p9')).toBe(false);
   });
 
   it('folds the dispatch claim lane override, newest claim stands', () => {

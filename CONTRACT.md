@@ -642,6 +642,23 @@ same `ts`/`timestamp`/`at`/`time` dialect, with the complete stamp not
 preceding the start. A missing boundary, reversed stamps or a repeated
 pair — a CI re-run — leaves the job absent so its outcome keeps `null`,
 unknown, never a partial guess and never another phase's duration.
+`publish_wait_s` is the recorded publish-station wait derived once per
+job from the same `finish`/`publish` boundary pair job-latency's
+`publish_wait` phase and visit-sync's publish station already read:
+exactly one finish stamp and one publish stamp across the retained
+rows — identical repeated stamps dedupe so a replayed append cannot
+fake ambiguity, a retried attempt's second finish or a republish's
+second publish makes the job ambiguous — across the same
+`ts`/`timestamp`/`at`/`time` dialect, with the publish stamp not
+preceding the finish. A resolved terminal phase stays authoritative
+over the event name, so the outcomes reconciler's copied publish row
+re-stamped `MERGED`/`CLOSED` is verdict evidence at verdict time and
+never a second publish, while a `PUBLISHED` phase on any row — the
+publish claim the reconciler consumes — counts with or without a
+publish event name. A missing or repeated boundary, reversed stamps
+or publish-before-finish ordering leaves the job absent so its
+outcome keeps `null`, unknown, never a partial guess and never
+another phase's duration.
 `lane_hint`/`lane_override` are the
 dispatch claim's recorded lane override: a `claim` or `batch_claim` row
 writes the pair when the launch left its hinted lane — `lane_hint` the

@@ -456,6 +456,11 @@ recorded `ci_wall_s` (the job's CI wall seconds from its single
 recorded `ci_start`/`ci_complete` boundary pair — the same pair the
 reward feed's ciWallMs and job-latency's `ci` phase read; a missing,
 reversed or repeated pair stays unrecorded, never estimated), mean
+recorded `publish_wait_s` (the job's publish-station wait from its
+single recorded `finish`/`publish` boundary pair — the same pair
+job-latency's publish_wait phase and visit-sync's publish station
+read; a missing, repeated or reversed pair stays unrecorded, never
+estimated), mean
 recorded
 `tokens_total` (token
 usage), mean recorded `diff_files`/`diff_lines` (change size), the count

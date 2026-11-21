@@ -183,6 +183,25 @@ export interface RouterOutcome {
    */
   ci_wall_s: number | null;
   /**
+   * Recorded publish-station wait seconds — the jobs-ledger finish →
+   * publish boundary pair job-latency's publish_wait phase and
+   * visit-sync's publish station already read: how long finished work
+   * sat waiting for the publisher. The fold derives it once per job
+   * under the same rule those readers apply: exactly one finish stamp
+   * and one publish stamp across the retained rows (identical repeated
+   * stamps dedupe, a retried attempt's second finish or a republish's
+   * second publish makes the job ambiguous), both read across the
+   * `ts`/`timestamp`/`at`/`time` dialect, the publish stamp not
+   * preceding the finish, and terminal lifecycle phases authoritative
+   * over event names — the outcomes reconciler copies the publish row
+   * and only swaps the outcome, so its `{event:'publish',
+   * outcome:'MERGED'}` row is merge evidence stamped at verdict time,
+   * never a second publish. Anything else leaves the job absent so its
+   * outcome keeps null: unknown stays unknown, never a partial guess
+   * and never another phase's duration.
+   */
+  publish_wait_s: number | null;
+  /**
    * Recorded productivity verdicts, newest explicit row wins like cost_usd
    * and wall_s. `empty` is the boolean a finish row records for its diff
    * check (true = the run produced no diff); `exit_code` is the worker's
@@ -759,6 +778,42 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     if (wallMs >= 0) ciWallS.set(j, wallMs / 1000);
   }
 
+  // Publish-station evidence, derived once per job from the same
+  // finish -> publish boundary pair job-latency's publish_wait phase
+  // and visit-sync's publish station read: exactly one finish stamp
+  // and one publish stamp across the retained rows yields the recorded
+  // publish wait — identical repeated stamps dedupe so a replayed
+  // append cannot fake ambiguity, and a retried attempt's second
+  // finish or a republish's second publish leaves the job absent so
+  // its outcome keeps null. Terminal lifecycle phases stay
+  // authoritative over the event name: the outcomes reconciler copies
+  // the publish row and only swaps the outcome, so its
+  // {event:'publish', outcome:'MERGED'} row is merge evidence stamped
+  // at verdict time, never a second publish — while a PUBLISHED phase
+  // on any row is the publish claim itself, event name or not.
+  const publishMarks = new Map<string, { finishes: Set<number>; publishes: Set<number> }>();
+  for (const r of rows) {
+    const j = jobId(r);
+    if (!j || j.startsWith(BATCH_SESSION_PREFIX)) continue;
+    const event = str(r, ...EVENT_NAME_KEYS)?.toLowerCase() ?? null;
+    const phase = mergePhase(r);
+    const terminal = phase === 'MERGED' || phase === 'CLOSED';
+    const finish = event === 'finish' && !terminal && phase !== 'PUBLISHED';
+    const publish = phase === 'PUBLISHED' || ((event === 'publish' || event === 'published') && !terminal);
+    if (!finish && !publish) continue;
+    const at = Date.parse(str(r, ...LEDGER_TS_KEYS) ?? '');
+    if (!Number.isFinite(at)) continue;
+    const marks = publishMarks.get(j) ?? { finishes: new Set<number>(), publishes: new Set<number>() };
+    (finish ? marks.finishes : marks.publishes).add(at);
+    publishMarks.set(j, marks);
+  }
+  const publishWaitS = new Map<string, number>();
+  for (const [j, marks] of publishMarks) {
+    if (marks.finishes.size !== 1 || marks.publishes.size !== 1) continue;
+    const waitMs = [...marks.publishes][0]! - [...marks.finishes][0]!;
+    if (waitMs >= 0) publishWaitS.set(j, waitMs / 1000);
+  }
+
   const outcomes = new Map<string, RouterOutcome>();
   const mergedAt = new Map<string, number>();
   let unattached = 0;
@@ -776,6 +831,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       tokens_cache_read: null, tokens_cache_write: null,
       usage_source: null, usage_missing: null,
       ttm_s: null, queue_wait_s: queueWaitS.get(j) ?? null, ci_wall_s: ciWallS.get(j) ?? null,
+      publish_wait_s: publishWaitS.get(j) ?? null,
       empty: null, diff_files: null, diff_lines: null,
       exit_code: null, failure_class: null, empty_class: null,
       task_outcome: null, lane_hint_blocked_by: null, passk: null,
