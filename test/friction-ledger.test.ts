@@ -151,6 +151,27 @@ describe('phm friction miners', () => {
     expect(item(mineFriction({ now: NOW }), 'concurrency-throttle').signals.backoffs).toBeNull();
     expect(item(fixture({ jobs: '' }), 'concurrency-throttle').signals).toMatchObject({ backoffs: 0, raises: 0 });
   });
+  it('folds launch_failed receipts: retries counted, terminal give-ups open requeues', () => {
+    const rows = [
+      J({ event: 'launch_failed', job: 'RQ-L1', lane: 'devin', ts: iso(3), reason: 'launch_timeout', class: 'retryable', attempt: 1, max_attempts: 3, action: 'retry' }),
+      J({ event: 'launch_failed', job: 'RQ-L2', lane: 'devin', ts: iso(2), reason: 'launch_script_error', class: 'permanent', attempt: 1, max_attempts: 3, action: 'give_up' }),
+      J({ event: 'launch_failed', job: 'RQ-L3', ts: iso(1), reason: 'launch_interrupted', action: 'give_up', attempt: 1 }),
+      J({ event: 'launch_failed', job: 'RQ-L4', ts: iso(1) }),                          // no action: total only
+      J({ event: 'launch_failed', job: 'RQ-OLD', ts: iso(200), action: 'give_up' }),    // outside the 7d window
+      J({ event: 'launch_terminal', job: 'RQ-L5', ts: iso(1), reason: 'launcher-exited' }), // not a failure verdict
+    ].join('\n');
+    const r = mineFriction({ jobs: rows, now: NOW });
+    const rq = item(r, 'requeues');
+    expect(rq.signals).toMatchObject({ launch_failures: 4, launch_retries: 1, launch_giveups: 2, requeued: null });
+    expect(rq.status).toBe('open'); // give-ups open the item even with no requeue lines
+    expect(rq.evidence.join(' ')).toContain('launch_failed job=RQ-L2 give_up reason=launch_script_error class=permanent');
+    expect(rq.evidence.join(' ')).not.toContain('RQ-OLD');
+    const quiet = item(mineFriction({ now: NOW }), 'requeues');
+    expect(quiet.signals).toMatchObject({ launch_failures: null, launch_retries: null, launch_giveups: null });
+    expect(quiet.status).toBe('quiet');
+    const empty = item(fixture({ jobs: '' }), 'requeues');
+    expect(empty.signals).toMatchObject({ launch_failures: 0, launch_giveups: 0 });
+  });
   it('scrubs secret-shaped text out of evidence', () => {
     const token = 'sk-ant-' + 'a1'.repeat(30);
     const r = fixture({ events: `${local(1)} AUTH_FAILURE_SEEN claude RQ-3 ${token}: refused` });

@@ -1,7 +1,8 @@
 /**
  * core/fleet/friction.ts — the dispatch→merge friction ledger (RQ-FRICTION-2).
- * `phm friction` mines ~/.ashlr-runs read-only — jobs.jsonl finishes, backoff
- * holds and adaptive-concurrency cap sheds, the dispatch event log, ready.tsv
+ * `phm friction` mines ~/.ashlr-runs read-only — jobs.jsonl finishes,
+ * launch-failure receipts, backoff holds and adaptive-concurrency cap sheds,
+ * the dispatch event log, ready.tsv
  * rows, guardian red-main state, lane slots and the manual-override files —
  * folds operator annotations kept in friction/ledger.jsonl, and scores each
  * recurring drag as delegation unlocked × 7d frequency × blast radius / cost.
@@ -61,10 +62,10 @@ export interface FrictionReport {
 }
 
 interface Knobs { owner: string; unlock: number; blast: number; cost: number; primary: string }
-const CATALOG: Record<string, { title: string } & Knobs> = {
+const CATALOG: Record<string, { title: string; openOn?: readonly string[] } & Knobs> = {
   'empty-finishes': { title: 'Worker runs that finish with no diff, a refusal or a nonzero exit', owner: 'fleet', unlock: 3, blast: 3, cost: 2, primary: 'bad' },
   'anomalous-diffs': { title: 'Finish metrics with unusually large or inconsistent diffs', owner: 'fleet', unlock: 2, blast: 2, cost: 2, primary: 'finishes' },
-  'requeues': { title: 'Launches deferred and jobs requeued instead of running', owner: 'dispatchd', unlock: 3, blast: 2, cost: 2, primary: 'requeued' },
+  'requeues': { title: 'Launches deferred, failed or requeued instead of running', owner: 'dispatchd', unlock: 3, blast: 2, cost: 2, primary: 'requeued', openOn: ['launch_giveups'] },
   'lane-auth': { title: 'Lane auth expiries, autobackoff holds and re-logins', owner: 'security', unlock: 3, blast: 2, cost: 3, primary: 'auth_failures' },
   'quota-exhaustion': { title: 'Usage limits, credit exhaustion and model-capacity stalls', owner: 'fleet', unlock: 2, blast: 3, cost: 3, primary: 'usage_limits' },
   'invalid-tier': { title: 'Queue rows and enqueues carrying a tier dispatchd skips', owner: 'queuegen', unlock: 2, blast: 2, cost: 1, primary: 'ready_rows' },
@@ -217,6 +218,7 @@ export function mineFriction(input: FrictionInput): FrictionReport {
   let anomalousDiffs = zero;
   let badTierEnqueue = zero, precheckParks = zero, quotaHoldJobs = zero, quotaFinish = zero;
   let deferredEvents = zero, concBackoffs = zero, concRaises = zero, recutDeferrals = zero;
+  let launchFailures = zero, launchRetries = zero, launchGiveUps = zero;
   const concDanger: Record<string, number | null> = Object.fromEntries(CONC_DANGER_ZONES.map(z => [z, zero]));
   const deferredJobs = new Set<string>();
   const recutDeferredJobs = new Set<string>();
@@ -278,6 +280,22 @@ export function mineFriction(input: FrictionInput): FrictionReport {
       if (r.job) { deferredJobs.add(r.job); recutDeferredJobs.add(r.job); }
       const owner = typeof r.raw.repeatOf === 'string' && JID.test(r.raw.repeatOf) ? r.raw.repeatOf : null;
       ev('deferred-requests', `jobs.jsonl recut_admission job=${r.job ?? 'unknown'}${owner ? ` repeatOf=${owner}` : ''}`);
+    }
+    // launch_failed is the bounded launch-retry ledger's own verdict. action
+    // 'retry' requeues — the events log's requeue lines already count those —
+    // while 'give_up' is terminal: LAUNCH_GAVE_UP never matches the requeue
+    // text pattern, so this receipt is the only count of a job whose launch
+    // permanently failed. Rows without a recognized action still count in
+    // launch_failures; the retry/give-up split stays honest, never guessed.
+    if (r.event === 'launch_failed') {
+      launchFailures = (launchFailures ?? 0) + 1;
+      const action = strField(r.raw, ['action'])?.toLowerCase();
+      if (action === 'give_up') {
+        launchGiveUps = (launchGiveUps ?? 0) + 1;
+        const reason = strField(r.raw, ['reason']);
+        const failureClass = strField(r.raw, ['class']);
+        ev('requeues', `jobs.jsonl launch_failed job=${r.job ?? 'unknown'} give_up${reason ? ` reason=${cut(reason, 40)}` : ''}${failureClass ? ` class=${cut(failureClass, 24)}` : ''}`);
+      } else if (action === 'retry') launchRetries = (launchRetries ?? 0) + 1;
     }
     if (r.event === 'concurrency') {
       const from = r.raw.from, to = r.raw.to;
@@ -416,7 +434,8 @@ export function mineFriction(input: FrictionInput): FrictionReport {
   const signals: Record<string, Record<string, number | null>> = {
     'empty-finishes': { bad, empty, refused, failed },
     'anomalous-diffs': { finishes: anomalousDiffs },
-    'requeues': { requeued: events === null ? null : counts.requeued ?? 0 },
+    'requeues': { requeued: events === null ? null : counts.requeued ?? 0,
+      launch_failures: launchFailures, launch_retries: launchRetries, launch_giveups: launchGiveUps },
     'lane-auth': { auth_failures: authFailures, auth_holds: authHolds, relogins },
     'quota-exhaustion': { usage_limits: usageLimits, finish_errors: quotaFinish, credit_holds: counts.credit, model_capacity: counts.capacity, backoff_holds: quotaHoldJobs },
     'invalid-tier': { ready_rows: badTierRows, enqueued: badTierEnqueue },
@@ -443,7 +462,9 @@ export function mineFriction(input: FrictionInput): FrictionReport {
     const primary = signals[id]![spec.primary];
     const scan = ledger.scans.get(id);
     const note = ledger.notes.get(id);
-    const open = primary !== null && primary > 0;
+    // openOn names supplementary signals that open the item on their own —
+    // a terminal launch give-up is friction even when no requeue line exists.
+    const open = (primary !== null && primary > 0) || (spec.openOn ?? []).some(s => (signals[id]![s] ?? 0) > 0);
     let status: FrictionStatus = open ? 'open' : 'quiet';
     if (note) status = note.status === 'fixed' && open ? 'regressed' : note.status;
     return {
