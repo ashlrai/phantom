@@ -1,0 +1,10 @@
+/* Above the Lanes board's cards: a label and the window switch on one row, then the work summary and its key. Wraps the same at 390 px. */
+.head { display: grid; gap: var(--space-2); min-width: 0; }
+.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); min-width: 0; }
+.label { color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-xs-line); }
+.note { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.note[data-stale] { color: var(--status-warning-fg); }
+/* Lanes the report names that the board has no card for: counted in the fleet's sentence, so said here. */
+.strangers { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.strangers li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0; }
+.strangers strong { color: var(--text-primary); font-weight: var(--font-weight-medium); }

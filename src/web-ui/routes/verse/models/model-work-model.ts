@@ -26,8 +26,11 @@ export interface ModelWork {
   /** The bars read aloud. */
   spoken: string;
 }
+/** What the report is grouped by, so what a row stands for. The Lanes board draws the same line from the per-lane report. */
+export type WorkBy = 'model' | 'lane';
 export interface WorkBoard {
   state: 'ok' | 'unread' | 'reading';
+  by: WorkBy;
   /** "24 hours", "7 days". */
   span: string;
   /** Hours one bar covers. */
@@ -76,19 +79,21 @@ export interface WorkInputs {
   failed: boolean;
   /** The window asked for, in hours. */
   hours: number;
-  /** Every model id the board draws. */
+  /** Every model id (or lane name) the board draws. */
   ids: readonly string[];
+  /** The report's grouping; `model` when left out. */
+  by?: WorkBy;
 }
 
-export function workBoard({ report, failed, hours, ids }: WorkInputs): WorkBoard {
+export function workBoard({ report, failed, hours, ids, by = 'model' }: WorkInputs): WorkBoard {
   const span = spanWords(report?.hours ?? hours);
   const columnHours = Math.max(1, Math.ceil((report?.hours ?? hours) / WORK_COLUMNS));
   const blank = (kind: 'unread' | 'reading', words: string, line: string): WorkBoard => ({
-    state: kind, span, columnHours, peak: 1, line, unnamed: null, strangers: [], fleet: [],
+    state: kind, by, span, columnHours, peak: 1, line, unnamed: null, strangers: [], fleet: [],
     works: new Map(ids.map(id => [id, { kind, ...NO_READING, words, spoken: `${id}: ${words}` }])),
   });
   if (report === null) {
-    return failed ? blank('unread', 'work unknown', `Work in the last ${span} is unknown: the per-model throughput report could not be read.`)
+    return failed ? blank('unread', 'work unknown', `Work in the last ${span} is unknown: the per-${by} throughput report could not be read.`)
       : blank('reading', 'reading work', `Reading the last ${span} of work.`);
   }
   if (report.metrics !== 'ok') return blank('unread', 'work unknown', `Work in the last ${span} is unknown: the job metrics file could not be read.`);
@@ -113,10 +118,10 @@ export function workBoard({ report, failed, hours, ids }: WorkInputs): WorkBoard
     lost?.merged ? `${lost.merged} of ${plural(report.totals.merged ?? lost.merged, 'merged PR', 'merged PRs')}` : '',
   ].filter(Boolean);
   return {
-    state: 'ok', span, columnHours, peak, works, fleet: workColumns(report),
+    state: 'ok', by, span, columnHours, peak, works, fleet: workColumns(report),
     line: report.groups.length === 0 ? `No job or PR was recorded in the last ${span}.`
-      : `Last ${span}: ${workWords(report.totals)}, under ${plural(named.length, 'model name', 'model names')}.`,
-    unnamed: pieces.length > 0 ? `No model is named for ${pieces.join(' and ')}, so no row counts them.` : null,
+      : `Last ${span}: ${workWords(report.totals)}, under ${plural(named.length, `${by} name`, `${by} names`)}.`,
+    unnamed: pieces.length > 0 ? `No ${by} is named for ${pieces.join(' and ')}, so no row counts them.` : null,
     strangers: named.filter(group => !ids.includes(group.name)).map(group => ({ name: group.name, words: workWords(group.totals) })),
   };
 }
