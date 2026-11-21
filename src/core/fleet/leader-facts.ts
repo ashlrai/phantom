@@ -3,13 +3,14 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { defaultCloudGh } from '../cloud/tracker.js';
 import type { CloudGh } from '../cloud/pr-actions.js';
+import { landedOnMaster, type LandedResult } from './landed-on-master.js';
 import { ledgerAtMs, ledgerEventName, ledgerJobId, ledgerPrUrl } from './empty-cause.js';
 
 type Row = Record<string, unknown>;
 export interface LeaderFacts {
   schema: 'leader.facts.v1'; generated_at: string;
   sources: { queue: 'ok' | 'unknown'; jobs: 'ok' | 'unknown' | 'partial'; github: 'ok' | 'partial' };
-  jobs: { id: string; repo: string | null; publish_result: string | null; pr_url: string | null; pr_state: 'open' | 'merged' | 'closed' | null; merged_at: string | null }[];
+  jobs: { id: string; repo: string | null; publish_result: string | null; pr_url: string | null; pr_state: 'open' | 'merged' | 'closed' | null; merged_at: string | null; source?: 'git' }[];
   repos: { repo: string; merged_24h: number | null; latest_release_tag: string | null }[];
 }
 const object = (v: unknown): v is Row => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -30,7 +31,7 @@ async function api(gh: CloudGh, args: string[]): Promise<unknown> {
 }
 
 /** Refresh the snapshot from local evidence and read-only GitHub queries. Null means unobserved. */
-export async function writeLeaderFacts(root: string, gh: CloudGh = defaultCloudGh, now = Date.now()): Promise<LeaderFacts> {
+export async function writeLeaderFacts(root: string, gh: CloudGh = defaultCloudGh, now = Date.now(), landed: (ids: string[]) => LandedResult[] = ids => landedOnMaster(ids, { since: '3 days ago' })): Promise<LeaderFacts> {
   const read = async (path: string) => { try { return await readFile(join(root, path), 'utf8'); } catch { return null; } };
   const [queue, ledger] = await Promise.all([read('queue/router-queue.md'), read('metrics/jobs.jsonl')]);
   const candidates = new Map<string, string | null>();
@@ -93,6 +94,15 @@ export async function writeLeaderFacts(root: string, gh: CloudGh = defaultCloudG
     }
     if (result.items.length < 100) break;
     if (page === 10) github = 'partial';
+  }
+  // gh could not say (launchd ticks): fall back to plain git. Only a found commit sets merged;
+  // "not-landed" and "unknown" leave pr_state alone, since the window or a fetch may be the gap.
+  const undecided = jobs.filter(job => job.pr_state === null && job.pr_url !== null);
+  if (undecided.length) {
+    for (const hit of landed(undecided.map(job => job.id))) {
+      const job = undecided.find(j => j.id === hit.id);
+      if (job && hit.state === 'landed' && hit.landedAt) { job.pr_state = 'merged'; job.merged_at = hit.landedAt; job.source = 'git'; }
+    }
   }
   const repos: LeaderFacts['repos'] = [];
   for (const repo of [...new Set(jobs.map(j => j.repo).filter((r): r is string => r !== null))].sort()) {

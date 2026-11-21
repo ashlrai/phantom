@@ -11,6 +11,9 @@
  */
 import { isAbsolute } from 'node:path';
 import type { CloudGh } from '../core/cloud/pr-actions.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { landedOnMaster, readPublishedJobs, type LandedResult } from '../core/fleet/landed-on-master.js';
 import { cmdFleetDirtyLanded } from './fleet-dirty-landed.js';
 import { MAX_LIMIT, cmdFleetLandedClose, type LandedCloseRunner } from './fleet-landed-close.js';
 
@@ -24,6 +27,8 @@ export interface FleetLandedSweepDeps {
   remote?: string;
   /** gh runner for landed-close's re-read and close. */
   runner?: LandedCloseRunner;
+  /** git-only landed check used when gh cannot answer (tests inject). */
+  landed?: (ids: string[]) => LandedResult[];
   now?: () => number;
   output?: (text: string) => void;
   error?: (text: string) => void;
@@ -34,6 +39,8 @@ interface SweepResult {
   closed: number; skipped: number; failed: number; error?: string;
   /** Plain reason the sweep did nothing because its input was not there (exit 0). */
   skippedReason?: string;
+  /** When gh was out: published jobs of the last 24 h that git shows on master (`source: git`). */
+  gitLanded?: { checked: number; landed: number; unknown: number };
 }
 
 const num = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -90,6 +97,14 @@ export async function cmdFleetLandedSweep(args: string[], deps: FleetLandedSweep
   // offline) there is nothing to sweep: say so and let the tick go on. Bad data still fails.
   if (inputGap !== undefined) {
     result.skippedReason = `no landed report yet: it is built from gh pr list, which could not be read (${inputGap})`;
+    // gh is out: plain git still says which recently published jobs reached master.
+    const nowMs = (deps.now ?? Date.now)();
+    const jobs = await readPublishedJobs(runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), nowMs - 24 * 3_600_000);
+    if (jobs.length) {
+      const found = (deps.landed ?? (ids => landedOnMaster(ids, { since: '24 hours ago' })))(jobs.map(j => j.id));
+      result.gitLanded = { checked: found.length, landed: found.filter(r => r.state === 'landed').length, unknown: found.filter(r => r.state === 'unknown').length };
+      result.skippedReason += `; by git, ${result.gitLanded.landed} of ${result.gitLanded.checked} jobs published in the last 24 h are on master`;
+    }
     return finish(0);
   }
   const report = inspectCode === 0 ? parseJson(reportText) : null;
