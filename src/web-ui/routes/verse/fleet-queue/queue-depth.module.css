@@ -1,0 +1,25 @@
+/* Depth by lane: lane, bar, words. One line per lane where there is room; in a narrow dock the words wrap under the bar. */
+.root { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3) var(--space-3) 0; min-width: 0; font-size: var(--text-xs-size); }
+.heading { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }
+.key, .stale { margin: 0; color: var(--text-secondary); }
+.stale { color: var(--status-warning-fg); }
+.rows { display: flex; flex-direction: column; list-style: none; margin: 0; padding: 0; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); width: 100%; min-width: 0; padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius-sm); background: none; color: var(--text-primary); font: inherit; text-align: start; }
+button.row { cursor: pointer; }
+button.row:hover { background: var(--bg-hover); }
+/* The whole queue leads, ruled off from the lanes it sums. */
+.whole { padding-block-end: var(--space-2); border-block-end: 1px solid var(--border-subtle); border-radius: 0; font-weight: var(--font-weight-semibold); }
+.lane { flex: 0 0 9rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono, monospace); }
+.whole .lane { font-family: inherit; }
+.caption { flex: 1 1 14rem; min-width: 0; color: var(--text-secondary); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+/* The bar: a thin track with the two bound ticks standing a little taller than it. */
+.bar { position: relative; flex: 1 1 8rem; min-width: 6rem; max-width: 20rem; height: 10px; }
+.track { position: absolute; inset-inline: 0; inset-block-start: 3px; height: 4px; border-radius: var(--radius-full); background: var(--meter-track); overflow: hidden; }
+.fill { display: block; height: 100%; background: var(--accent-500); transition: width var(--duration-base) var(--ease-standard); }
+/* Outside the bounds is amber, never red or green: depth is a supply reading, not health. The words say which side. */
+[data-bounds='under'] .fill, [data-bounds='over'] .fill { background: var(--status-warning-solid); }
+[data-bounds='under'] .caption, [data-bounds='over'] .caption { color: var(--status-warning-fg); }
+.tick { position: absolute; inset-block: 0; width: 1px; background: var(--text-secondary); }
+/* No slot reading: hatched, so it cannot pass for an empty queue. */
+[data-state='unknown'] .track { background: repeating-linear-gradient(135deg, var(--status-unknown-solid) 0 2px, transparent 2px 6px); }
+[data-state='unknown'] .caption, [data-state='held'] .caption, [data-state='no-slots'] .caption { font-style: italic; }

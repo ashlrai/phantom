@@ -522,6 +522,17 @@ a local seat says it has no usage window, an unreadable decision log reads
 unknown rather than empty, and a failed refresh labels the reading as an old
 one.
 
+The Queue pane opens with **Depth by lane**: one bar per lane of its ready jobs
+against its live slots, deepest first, under one bar for the whole queue. Each
+track runs from 0x to 4x the slots, with ticks at the 1x and 3x bounds the
+pane's depth line judges by, and the words beside it give the exact count and
+ratio. A lane with no slot reading gets a hatched track and reads unknown; a
+held lane or one whose target is 0 gets no bar and says why, so a missing
+number never looks like an empty queue. Select a lane to open it in Lanes. The
+chart reads what the pane already reads (the live queue, the fleet snapshot and
+lane holds) and refreshes with it every 15 seconds; `phm fleet lanes --json`
+prints the same lane targets, live jobs and queue depth.
+
 Feed puts what the fleet did in one newest-first stream: merged PRs (title and
 repo), published releases, failures (main going red, a job failing or ending
 empty with its reason when known), lanes (a lane hitting its plan limit, being
