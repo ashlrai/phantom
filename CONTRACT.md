@@ -2203,12 +2203,13 @@ with a `reason`); they never throw for bad input or storage faults.
 `postLabelMessage`, `sendHandoff`, `sendWakeRequest`, `announceWork`,
 `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
-carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?, priority?, matched?}, options?)`
+carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?, priority?, kind?, matched?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
-keeping exact-label matching, and `priority` keeps only envelopes stamped
+keeping exact-label matching, `priority` keeps only envelopes stamped
 with that exact P0..P3 band — the same match `comms bus read --priority`
-applies; `matched: true` scans the whole retained store
+applies, and `kind` keeps only one delivery kind — `dm`, `channel`,
+`handoff` or `legacy`, the same kind each inbox row reports; `matched: true` scans the whole retained store
 and returns `matched`, the count of every filter-matched row, while
 `messages` still caps at `limit`; `group.presence` heartbeats are observations
 with their own read and never appear as mail of any kind; claimable work and

@@ -511,6 +511,7 @@ export async function updateWorkStatus(input: WorkStatusInput, options: UnifiedB
 }
 
 export type InboxKind = 'dm' | 'channel' | 'handoff' | 'legacy';
+export const INBOX_KINDS: readonly InboxKind[] = ['dm', 'channel', 'handoff', 'legacy'];
 export interface InboxMessage {
   cursor: number;
   receivedAt: number;
@@ -1028,10 +1029,11 @@ function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
  * `messages` still returns only the first `limit` of them.
  */
 export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string;
-    matched?: boolean; priority?: BusPriority } = {},
+    matched?: boolean; priority?: BusPriority; kind?: InboxKind } = {},
   options: UnifiedBusOptions = {}): InboxPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
   const countMatched = page.matched === true;
+  const kindFilter = page.kind;
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
     return { status: 'invalid', reason: 'after must be >= 0 and limit 1-100.' };
   }
@@ -1043,6 +1045,9 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   }
   if (priority !== undefined && !BUS_PRIORITIES.includes(priority)) {
     return { status: 'invalid', reason: 'Invalid priority.' };
+  }
+  if (kindFilter !== undefined && !INBOX_KINDS.includes(kindFilter)) {
+    return { status: 'invalid', reason: 'Invalid kind.' };
   }
   const read = readAgentRegistry(options);
   if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
@@ -1080,6 +1085,7 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
       else if (toLabel) kind = 'legacy';
       else if (toChannel) kind = 'channel';
       const matchedKind = kind !== null &&
+        (kindFilter === undefined || kind === kindFilter) &&
         (thread === undefined || busBodyThread(envelope.body) === thread) &&
         (fromMatch === undefined || fromMatch(envelope.from)) &&
         (priority === undefined || envelope.priority === priority) ? kind : null;

@@ -226,6 +226,40 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['channel', 'read', 'release', '--priority', 'high'])).toMatchObject({ code: 2 });
   });
 
+  it('filters inbox reads by --kind', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'dm', '--id', 'k-dm'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'post', '--id', 'k-ch'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['handoff', '--from', 'atlas', '--to', 'nova', '--task', 'RQ-K-1', '--prompt', 'take over', '--id', 'k-ho'])).json)
+      .toMatchObject({ status: 'posted' });
+    // A post to the bare handle is legacy traffic in the agent's inbox.
+    expect((await run(['post', '--from', 'atlas', '--to', 'nova', '--text', 'legacy', '--id', 'k-leg'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    const dms = await run(['inbox', 'nova', '--kind', 'dm']);
+    expect(dms.code).toBe(0);
+    expect(dms.json.messages.map((m: { envelope: { id: string }; kind: string }) => `${m.envelope.id}:${m.kind}`))
+      .toEqual(['k-dm:dm']);
+    expect((await run(['inbox', 'nova', '--kind', 'channel'])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['k-ch']);
+    expect((await run(['inbox', 'nova', '--kind', 'handoff'])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['k-ho']);
+    expect((await run(['inbox', 'nova', '--kind', 'legacy'])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['k-leg']);
+    // --kind composes with --matched: the count honors the same filter.
+    const counted = await run(['inbox', 'nova', '--kind', 'dm', '--matched']);
+    expect(counted.json.matched).toBe(1);
+    // A kind outside the delivery enum is a usage error; a v2 body kind is not
+    // an inbox kind.
+    expect(await run(['inbox', 'nova', '--kind', 'bogus'])).toMatchObject({ code: 2 });
+    expect(await run(['inbox', 'nova', '--kind', 'note'])).toMatchObject({ code: 2 });
+  });
+
   it('reports the true pending total with --matched and resumes before unshown mail', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

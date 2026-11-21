@@ -258,7 +258,7 @@ no announced job and reads no feed before posting. Like every send it is
 untrusted data: a wake is a hint to read the inbox and grants no authority.
 
 **Inbox.** `phm agents bus inbox <agent> [--thread <t>] [--from <agent>]
-[--priority P0..P3]`
+[--priority P0..P3] [--kind dm|channel|handoff|legacy]`
 returns one page of
 DMs, handoffs,
 posts in the agent's channels (minus its own and minus `group.presence`
@@ -275,7 +275,11 @@ same identity-label matching `channel read` uses (a handle, `agent:<handle>`,
 stable id or alias; an unresolvable ref keeps exact-label matching).
 `--priority` keeps only mail stamped with that exact P0..P3 band — the same
 match `comms bus read --priority` applies — so urgent mail is one filtered
-read, not a page through the backlog.
+read, not a page through the backlog. `--kind` keeps only one delivery kind —
+`dm`, `channel`, `handoff` or `legacy`, the same `kind` each inbox row
+reports — so an agent can read just its handoffs or just its direct mail in
+one filtered read; it is the row's delivery class, not a v2 body kind, and it
+composes with every other inbox filter.
 `--matched` additionally reports `matched`, the true pending total — every
 row the same filters accept across the whole retained store, the same count
 `work mine`'s inbox section reports — while `messages` still caps at
