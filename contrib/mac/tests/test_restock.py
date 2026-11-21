@@ -1171,3 +1171,100 @@ class QueueQualityTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(skips(result.stdout).get('acceptance-already-merged'), 1)
         self.assertIn('RQ-NEW2A123456Q8', dry_ids(result.stdout))
+
+
+class MergedRequestTests(unittest.TestCase):
+    task = 'Fix src/cache.ts. Acceptance: preserve "A  B" on retry.'
+
+    def fixture(self, candidate=None, history=None, outcomes=None):
+        old = line('RQ-SHIPPED', P=2, pool='devin', tier='work', repo='phantom', text=self.task)
+        history = [old.replace('- READY', '- CLAIMED 12:00 dispatchd devin')] if history is None else history
+        candidate = candidate or line('RQ-COPY', P=1, pool='any', tier='work', repo='ashlrai/phantom', enq=123, text=self.task)
+        tmp = build('\n'.join([*history, candidate]) + '\n', repos=('phantom', 'locus'))
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        rows = [dict(event='outcome', state='MERGED', job='RQ-SHIPPED', repo='phantom')] if outcomes is None else outcomes
+        (home / '.ashlr-runs/metrics/jobs.jsonl').write_text('{torn\n' + '\n'.join(map(json.dumps, rows)) + '\n')
+        return home
+
+    def report(self, home, *args):
+        result = restock(home, '--json', *args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def test_covered_copy_reported_and_retired_without_blocking_changed_acceptance(self):
+        home = self.fixture()
+        runs = home / '.ashlr-runs'; q = runs / 'queue'
+        fix = line('RQ-FIX', pool='devin', tier='work', repo='phantom', text=self.task + ' Also reject null.')
+        with (q / 'router-queue.md').open('a') as f: f.write(fix + '\n')
+        snapshot = lambda: {str(p): p.read_bytes() for p in runs.rglob('*') if p.is_file()}
+        before = snapshot()
+        dry = self.report(home, '--dry-run')
+        self.assertEqual(snapshot(), before)
+        self.assertEqual(dry['done_noop'], ['RQ-COPY'])
+        self.assertEqual(dry['skips'], {'acceptance-already-merged': 1})
+        self.assertEqual(dry['dedupe']['repeats'], [dict(id='RQ-COPY', repeatOf='RQ-SHIPPED', repo='phantom',
+                                                       match='merged-request', reason='acceptance-already-merged')])
+        self.assertEqual([r['job'] for r in dry['jobs']], ['RQ-FIX'])
+        self.assertEqual(self.report(home)['done_noop'], ['RQ-COPY'])
+        self.assertEqual([r.split('\t')[0] for r in (q / 'ready.tsv').read_text().splitlines()], ['RQ-FIX'])
+        self.assertFalse((q / 'prompts/RQ-COPY.md').exists())
+        receipt = json.loads((runs / 'metrics/jobs.jsonl').read_text().splitlines()[-1])
+        self.assertEqual((receipt['job'], receipt['state'], receipt['launched']), ('RQ-COPY', 'DONE-NOOP', False))
+
+    def assert_multiline_request_stays_eligible(self, continuation):
+        old = line('RQ-SHIPPED', P=2, pool='devin', tier='work', repo='phantom', text=self.task)
+        old = old.replace('- READY', '- CLAIMED 12:00 dispatchd devin')
+        for dry_run in (True, False):
+            with self.subTest(dry_run=dry_run):
+                home = self.fixture(history=[old, continuation])
+                result = self.report(home, *(['--dry-run'] if dry_run else []))
+                self.assertEqual(result['done_noop'], [])
+                self.assertNotIn('acceptance-already-merged', result['skips'])
+                self.assertEqual(result['dedupe']['repeats'], [])
+                q = home / '.ashlr-runs' / 'queue'
+                if dry_run:
+                    self.assertEqual([row['job'] for row in result['jobs']], ['RQ-COPY'])
+                else:
+                    self.assertIn('RQ-COPY\tphantom\t', (q / 'ready.tsv').read_text())
+                    outcomes = [json.loads(row) for row in (home / '.ashlr-runs' / 'metrics' / 'jobs.jsonl').read_text().splitlines()
+                                if row.startswith('{') and row.endswith('}')]
+                    self.assertFalse(any(row.get('job') == 'RQ-COPY' and row.get('state') == 'DONE-NOOP' for row in outcomes))
+
+    def test_extra_bullet_keeps_merged_request_ambiguous_in_preview_and_apply(self):
+        self.assert_multiline_request_stays_eligible('- Extra scope: reject null.')
+
+    def test_indented_continuation_keeps_merged_request_ambiguous_in_preview_and_apply(self):
+        self.assert_multiline_request_stays_eligible('  Extra scope: reject null.')
+
+    def test_distinct_work_and_unknown_history_remain_eligible(self):
+        base = line('RQ-COPY', pool='devin', tier='work', repo='phantom', text=self.task)
+        old = base.replace('RQ-COPY', 'RQ-SHIPPED').replace('- READY', '- DONE')
+        claimed = old.replace('- DONE', '- CLAIMED 12:00 dispatchd devin')
+        cases = [(base.replace('preserve', 'do not preserve'), [old]), (base.replace('A  B', 'A B'), [old]),
+                 (base.replace('repo=phantom', 'repo=locus'), [old]), (base.replace('src/cache.ts', 'src/other.ts'), [old]),
+                 (base.replace('tier=work', 'tier=work, size<=80'), [old]),
+                 (base.replace('tier=work', 'tier=work, after none'), [old]),
+                 (base, []), (base, [old, old.replace('preserve', 'reject')]),
+                 (base, [old, '  Extra scope: reject null.']), (base + '\n  Extra scope: reject null.', [old]),
+                 (base, [claimed.replace('Acceptance: ', '')]), (base, [claimed, old.replace('preserve', 'reject')])]
+        for candidate, history in cases:
+            with self.subTest(candidate=candidate, history=history):
+                report = self.report(self.fixture(candidate, history), '--dry-run')
+                self.assertEqual([r['job'] for r in report['jobs']], ['RQ-COPY'])
+                self.assertEqual(report['done_noop'], [])
+
+    def test_only_merged_matching_outcomes_prove_coverage(self):
+        old = line('RQ-SHIPPED', pool='devin', tier='work', repo='phantom', text=self.task).replace('- READY', '- DONE')
+        merged = dict(event='outcome', state='MERGED', job='RQ-SHIPPED', repo='phantom')
+        for row in [None, [], {**merged, 'state': 'OPEN'}, {**merged, 'state': 'EMPTY'},
+                    {**merged, 'state': 'DONE-NOOP'}, {**merged, 'state': 'FAILED'},
+                    {**merged, 'event': 'finish'}, {**merged, 'launched': False},
+                    {**merged, 'repo': 'locus'}, {**merged, 'repo': ''}, {**merged, 'job': 'RQ-OTHER'}]:
+            with self.subTest(row=row):
+                report = self.report(self.fixture(history=[old], outcomes=[row]), '--dry-run')
+                self.assertEqual([r['job'] for r in report['jobs']], ['RQ-COPY'])
+        legacy = {k: v for k, v in merged.items() if k != 'repo'}
+        self.assertEqual(self.report(self.fixture(history=[old], outcomes=[legacy]), '--dry-run')['done_noop'], ['RQ-COPY'])
+        ambiguous = [old, old.replace('repo=phantom', 'repo=locus')]
+        self.assertEqual(self.report(self.fixture(history=ambiguous, outcomes=[legacy]), '--dry-run')['queued'], 1)
