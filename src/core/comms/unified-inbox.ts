@@ -54,15 +54,18 @@
  *               cannot be read the section reports 'degraded' and still lists
  *               candidates rather than hiding possibly unclaimed work; a
  *               refused or unreadable feed degrades it the same way.
- *   conversations  agent-to-agent conversation threads still waiting on a
- *               reply — the same `state:'waiting'` threads
- *               `agents conversations --waiting` computes from the one shared
- *               conversations projection, fleet-wide. A thread whose waiting
- *               message is already a pending bus item (an unclaimed work
- *               envelope or a live worker-handoff) or whose `job:` thread the
- *               feed already lists stays under the bus source: one pending
- *               thing, one item. Act: `phm agents conversations`,
- *               `phm agents bus show`, `phm agents bus post --thread`.
+ *   conversations  agent-to-agent conversation threads still needing a
+ *               person — the same `state:'waiting'` and `state:'blocked'`
+ *               threads the one shared conversations projection computes,
+ *               fleet-wide: a waiting thread names who must answer and how
+ *               long it has waited, a blocked thread names who reported the
+ *               block, who was told and how long it has stood. A thread
+ *               whose latest message is already a pending bus item (an
+ *               unclaimed work envelope or a live worker-handoff) or whose
+ *               `job:` thread the feed already lists stays under the bus
+ *               source: one pending thing, one item. Act: `phm agents
+ *               conversations`, `phm agents bus show`, `phm agents bus
+ *               post --thread`.
  *   seats       bot seats whose projected handoff plan still has work to
  *               move — the same `planSeatHandoffs` read `phm bots handoffs`
  *               serves, so the inbox and that surface can never disagree.
@@ -788,25 +791,29 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
 const THREAD_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 /**
- * Agent-to-agent conversation threads still waiting on a reply — the same
- * `state:'waiting'` threads `agents conversations --waiting` computes, read
- * through the one shared conversations projection so thread state, subjects
- * and wait ages can never disagree with that surface. A thread whose waiting
- * message is already a pending bus item — an unclaimed work envelope or a
- * live worker-handoff — or whose `job:` thread the feed already lists stays
- * under the bus source: one pending thing, one item. The source state follows
- * the projection honestly: 'missing' is a verified-empty store, 'unavailable'
- * an unreadable one (never an empty list passed off as fact), and damaged
- * rows the tolerant scan skipped degrade the read rather than let partial
- * coverage pass as complete. `since` is the wait's start; the retained
- * envelope TTL is not part of the projection, so `expiresAt` stays null —
- * unknown, never invented.
+ * Agent-to-agent conversation threads still needing a person — the same
+ * `state:'waiting'` and `state:'blocked'` threads the one shared
+ * conversations projection computes, read unfiltered and narrowed here so
+ * thread state, subjects and ages can never disagree with that surface. A
+ * waiting thread names who must answer and how long it has waited; a blocked
+ * thread names who reported the block, who was told and how long it has
+ * stood — a reported block nothing has answered is pending work like an
+ * unanswered ask. A thread whose latest message is already a pending bus
+ * item — an unclaimed work envelope or a live worker-handoff — or whose
+ * `job:` thread the feed already lists stays under the bus source: one
+ * pending thing, one item. The source state follows the projection honestly:
+ * 'missing' is a verified-empty store, 'unavailable' an unreadable one
+ * (never an empty list passed off as fact), and damaged rows the tolerant
+ * scan skipped degrade the read rather than let partial coverage pass as
+ * complete. `since` is the state change's start; the retained envelope TTL
+ * is not part of the projection, so `expiresAt` stays null — unknown, never
+ * invented.
  */
 function conversationItems(read: NonNullable<UnifiedInboxOptions['readConversations']>,
   options: UnifiedInboxOptions, now: () => number,
   covered: BusItemCoverage): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   let result: AgentConversations;
-  try { result = read({ waitingOnly: true }, { root: options.busRoot, now }); }
+  try { result = read({}, { root: options.busRoot, now }); }
   catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
   if (result.source === 'unavailable' || result.conversations === null) {
     return { report: { state: 'unavailable', pending: 0 }, items: [] };
@@ -814,8 +821,10 @@ function conversationItems(read: NonNullable<UnifiedInboxOptions['readConversati
   if (result.source === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
   const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
   for (const thread of result.conversations) {
+    // Answered and done threads are history, not pending work.
+    if (thread.state !== 'waiting' && thread.state !== 'blocked') continue;
     const last = thread.messages[thread.messages.length - 1];
-    if (thread.waiting === null || last === undefined) continue;
+    if (last === undefined) continue;
     if (covered.envelopes.has(last.id)) continue;
     if (thread.id.startsWith(JOB_THREAD_PREFIX) && covered.feedJobs.has(thread.id.slice(JOB_THREAD_PREFIX.length))) continue;
     const act = ['phm agents conversations', `phm agents bus show ${last.id}`];
@@ -825,20 +834,39 @@ function conversationItems(read: NonNullable<UnifiedInboxOptions['readConversati
     if (THREAD_LABEL.test(thread.id)) {
       act.push(`phm agents bus post --to <sender-label> --text "<reply>" --thread ${thread.id}`);
     }
-    items.push({
-      id: `conversations:${thread.id}`,
-      source: 'conversations',
-      kind: 'agent-thread',
-      // A handoff waiting on a recipient is delegated work nobody picked up;
-      // an ask is ordinary coordination. Neither blocks Mason, so never `blocking`.
-      severity: last.kind === 'handoff' ? 'warn' : 'info',
-      blocking: false,
-      title: oneLine(thread.subject, TITLE_MAX) || `agent thread ${thread.id}`,
-      detail: cap(`from ${last.from} · waiting on ${thread.waiting.on} · ${thread.messageCount} message${thread.messageCount === 1 ? '' : 's'} · waiting ${plainAge(thread.waiting.ms)}`, DETAIL_MAX),
-      since: thread.waiting.since,
-      expiresAt: null,
-      act,
-    });
+    const title = oneLine(thread.subject, TITLE_MAX) || `agent thread ${thread.id}`;
+    const count = `${thread.messageCount} message${thread.messageCount === 1 ? '' : 's'}`;
+    if (thread.state === 'waiting' && thread.waiting !== null) {
+      items.push({
+        id: `conversations:${thread.id}`,
+        source: 'conversations',
+        kind: 'agent-thread',
+        // A handoff waiting on a recipient is delegated work nobody picked up;
+        // an ask is ordinary coordination. Neither blocks Mason, so never `blocking`.
+        severity: last.kind === 'handoff' ? 'warn' : 'info',
+        blocking: false,
+        title,
+        detail: cap(`from ${last.from} · waiting on ${thread.waiting.on} · ${count} · waiting ${plainAge(thread.waiting.ms)}`, DETAIL_MAX),
+        since: thread.waiting.since,
+        expiresAt: null,
+        act,
+      });
+    } else if (thread.state === 'blocked') {
+      items.push({
+        id: `conversations:${thread.id}`,
+        source: 'conversations',
+        kind: 'agent-thread',
+        // Unblocking a reported block is agent work, never Mason-blocking —
+        // warn like a handoff wait, non-blocking like every thread item.
+        severity: 'warn',
+        blocking: false,
+        title,
+        detail: cap(`from ${last.from} · to ${last.to} · ${thread.stateText} for ${plainAge(now() - Date.parse(thread.lastAt))} · ${count}`, DETAIL_MAX),
+        since: thread.lastAt,
+        expiresAt: null,
+        act,
+      });
+    }
   }
   return { report: { state: result.skipped > 0 ? 'degraded' : 'healthy', pending: items.length }, items };
 }

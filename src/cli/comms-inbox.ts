@@ -14,7 +14,7 @@ With no verb, lists every pending comms item — unresolved needs-you lines, una
 teammate texts, owner-thread messages awaiting a recorded reply, recorded owner
 replies whose channel fanout is not fully delivered, drafts awaiting approval,
 pending bus work (unclaimed envelopes, open, unclaimable or stalled feed jobs and worker handoffs), agent
-conversation threads waiting on a reply, bot seats with pending handoffs, comms
+conversation threads waiting on a reply or blocked, bot seats with pending handoffs, comms
 questions/approvals awaiting an answer, .reply.eml artifacts stuck in the
 email outbox, pending team approvals and inbox proposals awaiting review —
 one prioritized list whose

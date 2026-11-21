@@ -256,14 +256,15 @@ blamed (`agents bus show <id>` / `work feed` links, `expiresAt` that
 receipt's TTL deadline; a refusal that names no receipt keeps unknown
 times), since the refusal hides every announced job and refuses the work
 verbs until the receipt expires — plus agent
-conversation threads still waiting on a reply — the same `waiting` threads
-`phm agents conversations --waiting` computes from the one shared
-conversations projection, fleet-wide, each item naming who must answer, how
-long it has waited and deep-linking `phm agents conversations`,
-`phm agents bus show` and a `phm agents bus post --thread` reply template;
-a thread whose waiting message is already a pending bus item or whose `job:`
-thread the feed already lists stays under the bus source, one pending thing
-one item — plus bot seats whose projected handoff plan still has work to
+conversation threads still needing a person — the same `waiting` and
+`blocked` threads the one shared conversations projection computes,
+fleet-wide: a waiting item names who must answer, how long it has waited
+and deep-links `phm agents conversations`, `phm agents bus show` and a
+`phm agents bus post --thread` reply template; a blocked item names who
+reported the block, who was told and how long it has stood, with the same
+deep links. A thread whose latest message is already a pending bus item or
+whose `job:` thread the feed already lists stays under the bus source, one
+pending thing one item — plus bot seats whose projected handoff plan still has work to
 move (the same `planSeatHandoffs` read `phm bots handoffs` serves; only
 eligible seats with pending, not yet journaled, handoff records list, each
 item deep-linking `phm bots handoff --seat` and `phm bots handoffs`) — plus

@@ -746,6 +746,54 @@ describe('agent conversation threads in the unified inbox', () => {
     expect(inbox.sources.conversations).toEqual({ state: 'healthy', pending: 1 });
   });
 
+  it('lists blocked threads as warn items naming who reported and who was told', async () => {
+    const id = postV2Body({ kind: 'work.status', status: 'blocked', detail: 'waiting on creds', thread: 'ops-4' },
+      { from: 'agent:worker-9', to: 'agent:lead', at: now - 7_200_000 });
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'conversations');
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: 'conversations:ops-4', kind: 'agent-thread', severity: 'warn', blocking: false,
+      title: 'blocked: waiting on creds',
+      detail: 'from worker-9 · to lead · blocked for 2h 0m · 1 message',
+      since: new Date(now - 7_200_000).toISOString(),
+      expiresAt: null,
+      act: ['phm agents conversations', `phm agents bus show ${id}`,
+        'phm agents bus post --to <sender-label> --text "<reply>" --thread ops-4'],
+    });
+    expect(inbox.sources.conversations).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('lists waiting and blocked threads side by side', async () => {
+    ask('can you review the diff?', 'review-9');
+    postV2Body({ kind: 'work.status', status: 'failed', detail: 'tests red', thread: 'deploy-2' },
+      { from: 'agent:worker', to: 'agent:lead' });
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'conversations').map(i => i.id).sort())
+      .toEqual(['conversations:deploy-2', 'conversations:review-9']);
+    expect(inbox.sources.conversations).toEqual({ state: 'healthy', pending: 2 });
+  });
+
+  it('clears the blocked item once a later message moves the thread', async () => {
+    postV2Body({ kind: 'work.status', jobId: 'RQ-BLK-3', status: 'blocked' },
+      { from: 'agent:worker', to: 'agent:lead', at: now - 2_000 });
+    postV2Body({ kind: 'work.status', jobId: 'RQ-BLK-3', status: 'done' },
+      { from: 'agent:worker', to: 'agent:lead', at: now - 1_000 });
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'conversations')).toHaveLength(0);
+    expect(inbox.sources.conversations).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('keeps one item when the feed already lists the blocked job thread', async () => {
+    postJob('RQ-BLK-2', { claimKeys: ['queue:RQ-BLK-2'], to: 'agent:worker' });
+    postV2Body({ kind: 'work.status', jobId: 'RQ-BLK-2', status: 'blocked', detail: 'waiting on creds' },
+      { from: 'agent:peer', to: 'agent:lead' });
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual(['bus-feed:RQ-BLK-2']);
+    expect(inbox.items.filter(i => i.source === 'conversations')).toHaveLength(0);
+    expect(inbox.sources.conversations).toEqual({ state: 'healthy', pending: 0 });
+  });
+
   it('reports unavailable and degraded reads honestly and uses the seam', async () => {
     const convStub = (over: Partial<AgentConversations>): AgentConversations => ({
       schema: 'agents.conversations.v1', version: 1, generatedAt: new Date(now).toISOString(),
@@ -754,7 +802,7 @@ describe('agent conversation threads in the unified inbox', () => {
     const seen: unknown[] = [];
     const degraded = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
       readConversations: (query) => { seen.push(query); return convStub({ skipped: 2 }); } });
-    expect(seen).toEqual([{ waitingOnly: true }]);
+    expect(seen).toEqual([{}]);
     expect(degraded.sources.conversations).toEqual({ state: 'degraded', pending: 0 });
     const unavailable = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
       readConversations: () => convStub({ source: 'unavailable', conversations: null, waiting: null }) });
