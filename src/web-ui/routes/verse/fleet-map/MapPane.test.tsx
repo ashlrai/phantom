@@ -185,7 +185,7 @@ it('draws lines without last words when the edges read is unknown, and caps thic
 
 it('a message line opens the Messages pane on that pair, read from the typed messages API', async () => {
   const { map, edges } = scene(CHAT);
-  const pairRead = { schema: 'agent-messages.v1', source: 'available', matched: 1, skipped: 0, messages: [{ id: 'm2', ts: AT, from: { name: 'leader', lane: 'leader' },
+  const pairRead = { schema: 'agent-messages.v1', source: 'available', matched: 1, skipped: 0, messages: [{ id: 'm2', ts: AT, priority: 'P2', from: { name: 'leader', lane: 'leader' },
     to: { name: 'claude', lane: 'claude' }, kind: 'status', summary: 'thanks, next the docs', conversation: 'pair:claude|leader', job: null, pr: null }] };
   const fetch = vi.fn(async (input: RequestInfo | URL) => Response.json(String(input).includes('/map-edges') ? { schema: 'fleet.map-edges.v1', version: 1, edges }
     : String(input).includes('/agent-bus/messages') ? pairRead : map));

@@ -49,7 +49,7 @@ const activity = (job: string, early: string): FleetJobActivityV1 => ({
   ] as FleetJobActivityV1['entries'],
 });
 const message = (id: string, to: string, summary: string): AgentMessage => ({
-  id, ts: ago(5), from: { name: 'reviewer', lane: null }, to: { name: to, lane: null }, kind: 'status', summary, conversation: 'c', job: to, pr: null,
+  id, ts: ago(5), priority: 'P2', from: { name: 'reviewer', lane: null }, to: { name: to, lane: null }, kind: 'status', summary, conversation: 'c', job: to, pr: null,
 });
 const bus = (messages: AgentMessage[]): AgentMessages => ({ schema: 'agent-messages.v1', source: 'available', messages, matched: messages.length, skipped: 0 });
 const LONG = `${'alpha '.repeat(80)}the Keychain prompt blocked the signing step ${'omega '.repeat(80)}`;
