@@ -1127,7 +1127,9 @@ and [GitHub release assets](https://docs.github.com/en/rest/releases/assets).
 ### Lessons: retros and approved knowledge (3.15)
 
 Every way a task ends now produces a short **retro**: a merge, a gate refusal,
-an owner-lane PR, a failed verify, a revert, a closed PR, a cloud task that
+an owner-lane PR, a failed verify, a revert — including a red merge whose
+revert failed or was refused and so stays on the default branch under owner
+hold — a closed PR, a cloud task that
 merged, blocked, failed or expired, the same for Devin tasks, and a Leader
 action you vetoed or that was refused. A Devin chat that ends without a PR is
 not a failed task end. Retros come from a sweep over the last 30 days of what

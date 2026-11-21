@@ -42,6 +42,9 @@ export type RetroSource = 'fleet' | 'cloud' | 'leader';
  * How it ended.
  *  - merged         landed on the default branch (fleet merge / cloud land).
  *  - reverted       landed, went red after merge, and was reverted.
+ *  - revert-failed  landed, went red after merge, and the revert failed or was
+ *                   refused — the red change stays on the default branch under
+ *                   owner hold (authority ledger `revert:failed`).
  *  - closed         PR closed without landing (with the recorded reason).
  *  - gate-refused   a merge gate (G0–G7) refused it.
  *  - owner-laned    a gate sent it to Mason's owner lane (never auto-merged).
@@ -53,6 +56,7 @@ export type RetroSource = 'fleet' | 'cloud' | 'leader';
 export type RetroEndKind =
   | 'merged'
   | 'reverted'
+  | 'revert-failed'
   | 'closed'
   | 'gate-refused'
   | 'owner-laned'
@@ -62,12 +66,12 @@ export type RetroEndKind =
   | 'vetoed';
 
 export const RETRO_END_KINDS: readonly RetroEndKind[] = [
-  'merged', 'reverted', 'closed', 'gate-refused', 'owner-laned', 'verify-failed', 'failed', 'expired', 'vetoed',
+  'merged', 'reverted', 'revert-failed', 'closed', 'gate-refused', 'owner-laned', 'verify-failed', 'failed', 'expired', 'vetoed',
 ];
 
 /** End kinds that are a failure worth a lesson (merged is a success). */
 export const RETRO_FAILURE_KINDS: ReadonlySet<RetroEndKind> = new Set<RetroEndKind>([
-  'reverted', 'closed', 'gate-refused', 'owner-laned', 'verify-failed', 'failed', 'expired', 'vetoed',
+  'reverted', 'revert-failed', 'closed', 'gate-refused', 'owner-laned', 'verify-failed', 'failed', 'expired', 'vetoed',
 ]);
 
 /**

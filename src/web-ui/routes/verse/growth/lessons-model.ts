@@ -13,6 +13,7 @@ import { TASK_KINDS } from '../../../../core/learn/retro/types.js';
 export const END_KIND_LABEL: Readonly<Record<RetroEndKind, string>> = {
   merged: 'Merged',
   reverted: 'Reverted',
+  'revert-failed': 'Revert failed',
   closed: 'Closed',
   'gate-refused': 'Refused',
   'owner-laned': 'Owner lane',
@@ -25,6 +26,7 @@ export const END_KIND_LABEL: Readonly<Record<RetroEndKind, string>> = {
 export const END_KIND_TONE: Readonly<Record<RetroEndKind, 'success' | 'danger' | 'warning' | 'neutral'>> = {
   merged: 'success',
   reverted: 'danger',
+  'revert-failed': 'danger',
   closed: 'neutral',
   'gate-refused': 'warning',
   'owner-laned': 'neutral',
