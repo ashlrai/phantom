@@ -32,7 +32,8 @@ import { capSelfTickLog, selfTickLogPath } from '../core/fleet/self-tick-log-cap
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import { cmdFleetStrayStop } from './fleet-stray-stop.js';
 import type { StrayStopDeps } from '../core/fleet/stray-stop.js';
-import { defaultLaneTruthReaders, type LaneTruthReaders } from '../core/fleet/lane-truth.js';
+import { defaultMeterDropReaders } from '../core/fleet/meter-drop-readers.js';
+import type { LaneTruthReaders } from '../core/fleet/lane-truth.js';
 import { readMeterDrop } from './fleet-meter-drop.js';
 import { postMeterIncidents } from '../core/fleet/meter-incident.js';
 import { awakeEnabled, holdKeepAwake, type AwakeDeps } from '../core/fleet/keep-awake.js';
@@ -356,7 +357,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       if (!deps.meterReaders && root !== join(home, '.ashlr-runs')) {
         return { exitCode: 0, output: JSON.stringify({ reason: 'custom-runs-dir-no-meter-reader' }) };
       }
-      const report = await readMeterDrop(deps.meterReaders ?? defaultLaneTruthReaders(home, now()), now());
+      const report = await readMeterDrop(deps.meterReaders ?? defaultMeterDropReaders(home, now()), now());
       // A custom runs root never reaches the ordinary production bus: posting
       // there needs an explicit bus root beside the injected meter readers.
       if (apply && !deps.busRoot && root !== join(home, '.ashlr-runs')) {
