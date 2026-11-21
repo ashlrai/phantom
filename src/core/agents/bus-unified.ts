@@ -533,8 +533,9 @@ export interface InboxMessage {
   /** Owner label of the blocking claim when held and known; null otherwise. */
   holder?: string | null;
   /**
-   * Bodies that declare a `jobId` — `work.post`, `work.status`,
-   * `work.result` and `wake`: the live work-feed state of the job the body
+   * Bodies that name a job — `work.post`, `work.status`, `work.result` and
+   * `wake` declaring a `jobId`, or a `worker-handoff` assigning its fleet
+   * job id through `taskId`: the live work-feed state of the job the body
    * cites — the same `BusEnvelopeLookupJob` `bus show` resolves, computed
    * with one feed read per page so an agent paging mail sees where each
    * announced job stands without a lookup per message. Absent on every
@@ -1014,14 +1015,15 @@ function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
 /**
  * The job-scoped inbox filter: mail that names one job — a feed-citing body
  * (`work.post`, `work.status`, `work.result` or `wake`) declaring that
- * `jobId` through the same field the feed projection keys on, or a
+ * `jobId` through the same field the feed projection keys on, a
+ * `worker-handoff` assigning that fleet job id through `taskId`, or a
  * `note`/`context` body carrying the `job:<id>` v2 thread label, the same
  * bucket the messages and conversations projections group under `job:<id>`.
  * Every other body kind cites no job and never matches; a bare `<id>` thread
  * label is a different conversation bucket and does not match either.
  */
 function inboxJobMatch(body: unknown, job: string): boolean {
-  return workFeedJobId(body) === job || busBodyThread(body) === `job:${job}`;
+  return busBodyJobId(body) === job || busBodyThread(body) === `job:${job}`;
 }
 
 /**
@@ -1042,15 +1044,17 @@ function inboxJobMatch(body: unknown, job: string): boolean {
  * `comms bus read --priority` applies — so urgent mail is one filtered read,
  * not a page through the backlog. `job` keeps only mail that names one job:
  * a feed-citing body (`work.post`, `work.status`, `work.result` or `wake`)
- * declaring that `jobId`, or a `note`/`context` body carrying the
+ * declaring that `jobId`, a `worker-handoff` assigning that fleet job id
+ * through `taskId`, or a `note`/`context` body carrying the
  * `job:<id>` v2 thread label — the same bucket the messages and
  * conversations projections group under `job:<id>`. Returned highest
  * priority first; `nextCursor` covers every scanned row, so callers persist
  * it only after handling the page. Claimable work and worker-handoff items
  * additionally carry `held`/`holder` — the same hold evidence `bus show`
  * reports — so an agent paging mail sees whether pending work is already
- * taken without a lookup per message. Items whose body declares a `jobId`
- * (`work.post`, `work.status`, `work.result` or `wake`) additionally carry
+ * taken without a lookup per message. Items whose body names a job
+ * (`work.post`, `work.status`, `work.result` or `wake` declaring a `jobId`,
+ * or a `worker-handoff` assigning its `taskId`) additionally carry
  * `job` — the live feed state of the job they cite,
  * the same `BusEnvelopeLookupJob` `bus show` resolves — read once per page,
  * so a work announcement or status report answers where its job stands
@@ -1173,7 +1177,7 @@ export type AgentWakeClaimHolder =
  * records carries the triggering envelope's wire id as its own `id`, so one
  * bounded store scan resolves the whole page: `resolved` reports the same
  * evidence an inbox row or `bus show` carries — summary, priority, sender
- * handle, and for claimable work or a `jobId` citation the `held`/`job`
+ * handle, and for claimable work or a job citation the `held`/`job`
  * annotations — while `unresolved` means the store was read and holds no
  * live envelope with that id (expired, reclaimed or never posted) and
  * `unknown` means the store could not be read, so the referent is unknown,
@@ -1183,7 +1187,7 @@ export type AgentWakeMessage =
   | { status: 'resolved'; id: string; ts: string; priority: BusPriority;
       from: string; to: string; channel: string | null; fromAgent: string | null;
       summary: string;
-      /** Live feed state of a `jobId` the message cites; absent when it cites none. */
+      /** Live feed state of a job the message cites (`jobId` on a feed-citing body, `taskId` on a worker-handoff); absent when it cites none. */
       job?: BusEnvelopeLookupJob;
       /** Hold evidence for claimable work or worker handoffs; absent otherwise. */
       held?: boolean | null; holder?: string | null }
@@ -1245,7 +1249,7 @@ export function agentWakeClaimHolderSuffix(wake: AgentWakeRow): string {
  * Resolve what each ordinary `bus.send` hint in the page refers to. The hint
  * id is the triggering envelope's wire id, so the same bounded scan the
  * claim-holder re-derivation uses indexes live receipts by id once; claimable
- * work and `jobId` citations then get the page-level `held`/`job` evidence
+ * work and job citations then get the page-level `held`/`job` evidence
  * `readAgentInbox` computes — one hold-store read and one claims-joined feed
  * read per page, never per hint. `wh-…` ids are claim-holder hints, not
  * envelope ids, and pass through untouched.
@@ -1269,7 +1273,7 @@ function wakeMessageContexts(rows: readonly BusWakeRow[], scan: BusInboxScan | u
   }
   const jobIds = new Map<BusInboxReceipt, string>();
   for (const { receipt } of resolved) {
-    const jobId = workFeedJobId(receipt.envelope.body);
+    const jobId = busBodyJobId(receipt.envelope.body);
     if (jobId !== undefined) jobIds.set(receipt, jobId);
   }
   let feed: BusWorkFeedReadResult | undefined;
@@ -1315,7 +1319,7 @@ export function agentWakeMessageSuffix(wake: AgentWakeRow): string {
 
 /**
  * Compact `job=<id>:<state>` marker naming the live feed state a body
- * kind's `jobId` citation resolves to — shared by the inbox
+ * kind's job citation resolves to — shared by the inbox
  * human line, the `--frame` adapter block and `work mine`'s inbox lines so
  * every surface renders it identically. An open job's `claimable` tri-state
  * rides along when the claims-joined feed read computed it; a refused feed
@@ -1366,7 +1370,7 @@ export type WakePage = { status: 'ok'; agent: string;
  * triggering envelope's wire id as its own `id`, so the same bounded scan
  * resolves the live message it refers to: `message` reports the resolved
  * receipt's summary, priority, sender handle and — for claimable work or a
- * `jobId` citation — the same `held`/`job` evidence an inbox row carries,
+ * job citation — the same `held`/`job` evidence an inbox row carries,
  * `unresolved` when no live envelope has that id, and `unknown` when the
  * store cannot be read. `matched` counts every hint the bounded
  * queue tail matched before its row cap and `truncated` marks older bytes or
@@ -1458,11 +1462,13 @@ export interface ChannelReadMessage {
   /** Owner label of the blocking claim when held and known; null otherwise. */
   holder?: string | null;
   /**
-   * Bodies that declare a `jobId` (`work.post`, `work.status`, `work.result`
-   * or `wake`): the live work-feed state of the job the body cites — the
-   * same `BusEnvelopeLookupJob` `bus show` resolves, computed with one feed
-   * read per page so a channel transcript answers where each announced job
-   * stands without a lookup per message. Absent on every other body kind.
+   * Bodies that name a job (`work.post`, `work.status`, `work.result` or
+   * `wake` declaring a `jobId`, or a `worker-handoff` assigning its fleet
+   * job id through `taskId`): the live work-feed state of the job the body
+   * cites — the same `BusEnvelopeLookupJob` `bus show` resolves, computed
+   * with one feed read per page so a channel transcript answers where each
+   * announced job stands without a lookup per message. Absent on every
+   * other body kind.
    */
   job?: BusEnvelopeLookupJob;
 }
@@ -1621,11 +1627,11 @@ export type BusEnvelopeLookupJob =
 export type BusEnvelopeLookup =
   | { status: 'ok'; id: string; message: BusEnvelopeLookupMessage;
       /**
-       * Present only when the resolved body declares a `jobId` (`work.post`,
-       * `work.status`, `work.result` or `wake`): the live feed state of the
-       * job it cites, so the citation `work feed` and `work mine` print
-       * resolves to where the job stands — status, claim coverage and the
-       * receipts behind it — without a second read.
+       * Present only when the resolved body names a job (`jobId` on a
+       * feed-citing body, `taskId` on a `worker-handoff`): the live feed
+       * state of the job it cites, so the citation `work feed` and
+       * `work mine` print resolves to where the job stands — status, claim
+       * coverage and the receipts behind it — without a second read.
        */
       job?: BusEnvelopeLookupJob;
       /**
@@ -1724,6 +1730,28 @@ export function workFeedJobId(body: unknown): string | undefined {
 }
 
 /**
+ * The fleet job id a `worker-handoff` body assigns through `taskId` — the
+ * same job-id namespace the feed's `jobId` uses: peer dispatch announces a
+ * fleet job on `work.post` and can hand it off under the same id. Only the
+ * receivable exact shape cites a job; every other body returns undefined.
+ */
+function workerHandoffJobId(body: unknown): string | undefined {
+  return isWorkerHandoffBody(body) ? body.taskId : undefined;
+}
+
+/**
+ * The job a retained body names: the `jobId` a feed-citing body declares,
+ * or the fleet job id a `worker-handoff` assigns through `taskId`. The
+ * `--job` inbox filter and every `job`/`jobState` annotation key on this
+ * one citation, so a handoff for job X reads as mail about job X on every
+ * surface — inbox and channel reads, `agents bus show`, wake referents,
+ * `phm messages` and `work mine` claim messages alike.
+ */
+export function busBodyJobId(body: unknown): string | undefined {
+  return workFeedJobId(body) ?? workerHandoffJobId(body);
+}
+
+/**
  * The `BusEnvelopeLookupJob` one already-read feed result produces for a
  * cited `jobId` — shared by the per-envelope `show` lookup and the inbox
  * page annotation so both resolve a citation identically. An `ok` feed
@@ -1749,8 +1777,10 @@ export function jobAnnotationFromFeed(feed: BusWorkFeedReadResult, jobId: string
  * identically: claimable work and worker-handoff bodies get `held`/`holder`
  * — whether a taken message-id claim or a live coordination hold provably
  * covers the exact receipt, the same evidence `bus show` reports — and
- * bodies that declare a `jobId` (`work.post`, `work.status`, `work.result`
- * or `wake`) get `job`, the live feed state of the job they cite. Each
+ * bodies that name a job (`work.post`, `work.status`, `work.result` or
+ * `wake` declaring a `jobId`, or a `worker-handoff` assigning its fleet
+ * job id through `taskId`) get `job`, the live feed state of the job they
+ * cite. Each
  * store is read at most once per page and only when a candidate is
  * present; a store that cannot be read degrades the annotation to
  * unknown, never to free or empty. Mutates the page rows in place.
@@ -1770,7 +1800,7 @@ function annotateLiveEvidence<T extends { cursor: number; receivedAt: number; en
   }
   const jobCitations = new Map<T, string>();
   for (const message of messages) {
-    const jobId = workFeedJobId(message.envelope.body);
+    const jobId = busBodyJobId(message.envelope.body);
     if (jobId !== undefined) jobCitations.set(message, jobId);
   }
   if (jobCitations.size === 0) return;
@@ -1783,9 +1813,10 @@ function annotateLiveEvidence<T extends { cursor: number; receivedAt: number; en
 }
 
 /**
- * The work-feed state a feed-citing body (`work.post`, `work.status`,
- * `work.result` or `wake`) cites through its `jobId` — the same field the
- * feed projection keys on, read verbatim, so every other body kind returns
+ * The work-feed state a job-citing body names — the `jobId` a feed-citing
+ * body (`work.post`, `work.status`, `work.result` or `wake`) declares, or
+ * the fleet job id a `worker-handoff` assigns through `taskId`, read
+ * verbatim through `busBodyJobId`, so every other body kind returns
  * undefined and no job state is ever guessed from text. The feed read joins
  * live claim coverage, so an open job also
  * answers `claimable` — degraded to null, never free, when a hold store
@@ -1793,7 +1824,7 @@ function annotateLiveEvidence<T extends { cursor: number; receivedAt: number; en
  * envelope lookup itself still succeeds.
  */
 function envelopeWorkJob(body: unknown, options: UnifiedBusOptions): BusEnvelopeLookupJob | undefined {
-  const jobId = workFeedJobId(body);
+  const jobId = busBodyJobId(body);
   if (jobId === undefined) return undefined;
   let feed: BusWorkFeedReadResult;
   try { feed = readBusWorkFeed({ root: options.root, now: options.now, claims: true }); }
@@ -1871,8 +1902,9 @@ function findClaimHolderWakeHint(id: string, options: UnifiedBusOptions): BusEnv
  * additionally report `held`/`holder` — whether a taken claim or live
  * coordination hold already covers the envelope, the same evidence `work
  * mine` next/handoffs and the unified comms inbox show. A body that
- * declares a `jobId` (`work.post`, `work.status`, `work.result` or `wake`)
- * additionally reports `job` — the live work-feed state
+ * names a job (`work.post`, `work.status`, `work.result` or `wake`
+ * declaring a `jobId`, or a `worker-handoff` assigning its fleet job id
+ * through `taskId`) additionally reports `job` — the live work-feed state
  * of the job it cites, with claim coverage, or the feed's own refusal /
  * unavailable state when the projection cannot answer; the lookup still
  * succeeds either way. Envelope ids are

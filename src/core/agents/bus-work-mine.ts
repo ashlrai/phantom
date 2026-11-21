@@ -32,8 +32,8 @@ import { readAgentConversations, type AgentConversations } from '../fleet/agent-
 import { plainAge } from '../fleet/agent-conversation-model.js';
 import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobHold, busWorkFeedOwnerMatcher, busWorkFeedToMatcher,
   busWorkJobDispatch, readBusWorkFeed, type BusWorkFeedHoldCoverage, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
-import { agentWakeClaimHolderSuffix, agentWakeMessageSuffix, busBodyFallbackSummary, busBodySummary, busInboxJobMarker,
-  jobAnnotationFromFeed, readAgentInbox, readAgentWakes, workFeedJobId,
+import { agentWakeClaimHolderSuffix, agentWakeMessageSuffix, busBodyFallbackSummary, busBodyJobId, busBodySummary, busInboxJobMarker,
+  jobAnnotationFromFeed, readAgentInbox, readAgentWakes,
   type AgentWakeRow, type BusEnvelopeLookupJob, type InboxKind } from './bus-unified.js';
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { BUS_PROTOCOL_KEY, BUS_PRIORITIES, isClaimableWork,
@@ -129,7 +129,7 @@ export type BusWorkMineClaimMessage =
       bodyKind: string | null;
       /** Scrubbed, single-line body summary, clipped to the digest bound. */
       summary: string;
-      /** Same live feed citation the inbox section resolves, present only on jobId-bearing bodies. */
+      /** Same live feed citation the inbox section resolves, present only on job-citing bodies. */
       job?: BusEnvelopeLookupJob;
       /** Journal pin state: `true` when a claims-journal row backs this exact
        * receipt triple, `false` when the journal read cleanly but holds no row
@@ -1001,7 +1001,7 @@ function claimMessageBodyKind(body: unknown): string | null {
  * matches a live receipt triple, the pinned message is gone and the claim
  * reports `not-found` — a same-id receipt that replaced it is a different
  * generation the claim does not cover. `feed` is the same read the jobs
- * section annotates, so a `jobId` citation resolves identically; `registry`
+ * section annotates, so a job citation resolves identically; `registry`
  * decorates `fromAgent` best-effort.
  */
 function resolveClaimMessage(id: string, owner: string, journal: BusWorkClaimView[] | null,
@@ -1038,7 +1038,7 @@ function resolveClaimMessage(id: string, owner: string, journal: BusWorkClaimVie
   }
   if (receipt === undefined) return { status: 'not-found', id };
   const body = receipt.envelope.body;
-  const jobId = workFeedJobId(body);
+  const jobId = busBodyJobId(body);
   // The page receipt's ttl is elapsed-adjusted; the original envelope keeps
   // the wire ttl, so expiry is receipt time plus the ttl the sender set.
   const ttl = receipt.originalEnvelope?.ttl ?? receipt.envelope.ttl;

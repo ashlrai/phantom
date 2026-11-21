@@ -189,6 +189,24 @@ describe('phm messages projection', () => {
     expect(formatAgentMessagesText(read(root))).toContain('job=RQ-FEED1:running');
   });
 
+  it('annotates worker-handoff taskIds with the same live job state', () => {
+    const root = store();
+    post(root, T0, { id: 'h1', from: 'agent:planner', to: 'leaders',
+      body: { kind: 'work.post', jobId: 'RQ-HOFEED', title: 'Hand off', repo: 'a/b',
+        claimKeys: ['repo:a/b'], provider: 'devin' } });
+    post(root, T0 + 1_000, { id: 'h2', from: 'agent:planner', to: 'agent:worker',
+      body: { kind: 'worker-handoff', taskId: 'RQ-HOFEED', prompt: 'take it over' } });
+    // A handoff-shaped body handoff-receive would refuse cites no job state.
+    post(root, T0 + 2_000, { id: 'h3', from: 'agent:planner', to: 'agent:worker',
+      body: { kind: 'worker-handoff', taskId: 'RQ-HOFEED' } });
+    const byId = new Map(read(root).messages.map(m => [m.id, m]));
+    // The receivable handoff's taskId resolves the same feed job the post announced.
+    expect(byId.get('h2')).toMatchObject({ kind: 'handoff', job: 'RQ-HOFEED',
+      jobState: { jobId: 'RQ-HOFEED', feed: 'ok', job: { id: 'RQ-HOFEED', status: 'queued' } } });
+    expect(byId.get('h3')).not.toHaveProperty('jobState');
+    expect(formatAgentMessagesText(read(root))).toContain('job=RQ-HOFEED:queued');
+  });
+
   it('reports a poisoned feed as refused on every citation, never a guessed state', () => {
     const root = store();
     post(root, T0, { id: 'p1', from: 'agent:planner', to: 'leaders',
