@@ -97,8 +97,9 @@ answer — asks and handoffs whose latest message it or a channel it belongs
 to still owes, each citing the envelope id show resolves — the
 conversation threads it is waiting on — its own asks and handoffs nobody
 has answered yet, each naming who owes the reply — its
-pending wake hints and the next page of mail addressed
-to it — capped sections carry matched (or open for jobs) as their true
+pending wake hints, the next page of mail addressed
+to it and pending legacy phm bus mailbox mail addressed to any of its
+labels — capped sections carry matched (or open for jobs) as their true
 pending total — where every section reports its own read state and unknown
 stays unknown.
 status is a read-only probe of the store, registry, wake queue, coordination
