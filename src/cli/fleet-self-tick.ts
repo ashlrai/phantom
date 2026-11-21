@@ -63,7 +63,7 @@ throws never stops the later ones. Each completed pass records itself to
 queue/self-tick-last.json while the lock is still held; --last prints that
 recorded run (or 'no recorded run') without running a step or taking the
 lock, combines only with --json and --runs-dir, and exits 0 even when
-nothing is recorded. --status is the plain-words twin of --last: when the self-tick last ran and how many items each hook produced (autofill, gaps, reap, stranded-requeue), or 'no self-tick run recorded'; it reads the same file, takes no lock, combines only with --json and --runs-dir (schema fleet.self-tick-status.v1). Exit 0 when every step is ok or the run is busy, 1
+nothing is recorded. --status is the plain-words twin of --last: when the self-tick last ran and how many items each hook produced (autofill, gaps, reap, stranded-requeue), or 'no self-tick run recorded'; it reads the same file, takes no lock, combines only with --json and --runs-dir (schema fleet.self-tick-status.v1). Exit 0 when every step is ok/skipped or the run is busy, 1
 when any step failed, 2 on usage.`;
 
 interface Dependencies {
@@ -126,7 +126,6 @@ interface Dependencies {
 const safe = (value: unknown): string => JSON.stringify(sanitizePublicJson(value))
   .replace(/[\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 
-/** A short per-step summary for human output, read defensively. */
 /** Why a failed step failed, in plain words: the step's own `reason`, else the thrown error, else a note that nothing was reported. */
 function failureReason(report: unknown, error: string | undefined): string {
   const reason = typeof report === 'object' && report !== null ? (report as Record<string, unknown>)['reason'] : undefined;
@@ -134,9 +133,11 @@ function failureReason(report: unknown, error: string | undefined): string {
   return error ? `error: ${error}` : 'no reason reported';
 }
 
+/** A short per-step summary for human output, read defensively. */
 function summary(step: string, report: unknown): string {
   if (typeof report !== 'object' || report === null) return '';
   const row = report as Record<string, unknown>;
+  if (typeof row['skippedReason'] === 'string' && row['skippedReason'].trim()) return `skipped: ${row['skippedReason']}`;
   const count = (value: unknown): number => Array.isArray(value) ? value.length : 0;
   if (step === 'cos-work') {
     return row['mode'] === 'dry-run' ? `pending=${row['pending']}` : `outcome=${row['outcome']}`;
@@ -495,7 +496,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   } else {
     const lines = [`fleet self-tick: ${apply ? 'APPLIED' : 'DRY-RUN — no changes made'}`];
     for (const step of report.steps) {
-      const detail = step.state === 'ok' ? summary(step.step, step.report) : failureReason(step.report, step.error);
+      const detail = step.state === 'failed' ? failureReason(step.report, step.error) : summary(step.step, step.report);
       lines.push(`  ${step.step}  ${step.state}  exit=${step.exitCode}${detail ? `  ${safe(detail)}` : ''}`);
     }
     output(lines.join('\n'));

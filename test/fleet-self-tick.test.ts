@@ -309,7 +309,7 @@ describe('fleet self-tick', () => {
 
   it('the lock is released even when a step throws', async () => {
     const { code } = await run(['--json', '--runs-dir', runsDir], {
-      steps: { 'reset-release': async () => { throw new Error('boom'); } },
+      steps: { ...quietSweep.steps, 'reset-release': async () => { throw new Error('boom'); } },
     });
     expect(code).toBe(1);
     expect(existsSync(LOCK())).toBe(false);

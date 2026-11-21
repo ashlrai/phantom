@@ -24,6 +24,7 @@
  *  14. landed-sweep   — close DIRTY PRs whose work already landed on master.
  *  15. cos-work       — draft at most one pending chief-of-staff reply.
  *
+ * A successful step reporting a nonempty skippedReason is recorded 'skipped'.
  * A step that exits nonzero or throws is recorded 'failed'; later steps still
  * run. A hold a person placed is never released — that rule stays inside the
  * verbs' guarded write paths.
@@ -78,7 +79,7 @@ export type SelfTickSteps = Record<Exclude<SelfTickStepName, 'teammate-overdue' 
 
 export interface SelfTickStepResult {
   step: SelfTickStepName;
-  state: 'ok' | 'failed';
+  state: 'ok' | 'skipped' | 'failed';
   exitCode: number;
   /** The step's parsed --json output, or null when nothing parseable printed. */
   report: unknown;
@@ -101,7 +102,7 @@ export interface SelfTickReport {
 
 export interface SelfTickOutcome {
   report: SelfTickReport;
-  /** 0 when every step is ok or the run was busy; 1 when any step failed. */
+  /** 0 when every step is ok/skipped or the run was busy; 1 when any step failed. */
   exitCode: number;
   /** How the single-runner lock resolved; 'acquired' iff the steps ran. */
   lock: 'acquired' | 'contended' | 'unavailable';
@@ -178,11 +179,15 @@ export async function runSelfTick(options: RunSelfTickOptions): Promise<SelfTick
           continue;
         }
         const { exitCode, output } = await run(argv);
+        const parsed = parseReport(output);
+        const skippedReason = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)['skippedReason'] : undefined;
         report.steps.push({
           step,
-          state: exitCode === 0 ? 'ok' : 'failed',
+          state: exitCode !== 0 ? 'failed'
+            : typeof skippedReason === 'string' && skippedReason.trim() ? 'skipped' : 'ok',
           exitCode,
-          report: parseReport(output),
+          report: parsed,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
