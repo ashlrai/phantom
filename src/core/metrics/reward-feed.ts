@@ -28,6 +28,13 @@
  *     batch_claim and launch rows are dispatch evidence; the latest at or
  *     before the terminal row produced it (earliest is the fallback). No
  *     dispatch row in the window means the dispatch time is unknown: skip.
+ *   - ciWallMs IS THE LEDGER'S CI BOUNDARIES. jobs.jsonl's optional
+ *     ci_start/ci_complete event dialect — the same boundaries
+ *     queue/visit-sync and fleet/job-latency pair — supplies the reward
+ *     row's CI wall time when a job carries exactly one of each and the
+ *     complete stamp does not precede the start. Ambiguous or missing
+ *     boundaries leave ciWallMs unset: unknown stays unknown, never a
+ *     partial guess and never another phase's duration.
  *   - FIRST WRITE WINS. JobIds already in the reward ledger are never
  *     reconsidered, so a sliding tail cannot rewrite history; the batch
  *     writer still fails closed on any conflicting outcome.
@@ -148,15 +155,38 @@ interface RewardJobAccum {
   closedMs: number | null;
   /** Latest positive revert-evidence row time. */
   revertMs: number | null;
+  /** ci_start/ci_complete boundary stamps, deduped like job-latency's boundary lists. */
+  ciStartAts: number[];
+  ciCompleteAts: number[];
 }
 
 function newAccum(): RewardJobAccum {
-  return { repo: null, firstDispatch: null, lastDispatch: null, merge: null, closedMs: null, revertMs: null };
+  return {
+    repo: null, firstDispatch: null, lastDispatch: null,
+    merge: null, closedMs: null, revertMs: null, ciStartAts: [], ciCompleteAts: [],
+  };
 }
 
 function noteDispatch(acc: RewardJobAccum, mark: DispatchMark): void {
   if (acc.firstDispatch === null || mark.ms < acc.firstDispatch.ms) acc.firstDispatch = mark;
   if (acc.lastDispatch === null || mark.ms > acc.lastDispatch.ms) acc.lastDispatch = mark;
+}
+
+/** One CI boundary stamp per distinct row time — a repeated append cannot fake ambiguity. */
+function noteCiBoundary(acc: RewardJobAccum, kind: 'start' | 'complete', at: number): void {
+  const list = kind === 'start' ? acc.ciStartAts : acc.ciCompleteAts;
+  if (!list.includes(at)) list.push(at);
+}
+
+/**
+ * CI wall time from the ledger's ci_start/ci_complete boundaries — the same
+ * pairing rule job-latency applies to its phases: exactly one of each, and
+ * the complete stamp must not precede the start. Anything else is unknown.
+ */
+function ciWallMsOf(acc: RewardJobAccum): number | null {
+  if (acc.ciStartAts.length !== 1 || acc.ciCompleteAts.length !== 1) return null;
+  const ms = acc.ciCompleteAts[0]! - acc.ciStartAts[0]!;
+  return ms >= 0 ? ms : null;
 }
 
 /**
@@ -187,8 +217,13 @@ export function foldJobsLedgerRewards(
     }
     acc.repo ??= repoOf(row);
     const event = firstString(row, EVENT_KEYS);
-    if (event !== null && DISPATCH_EVENTS.has(event.toLowerCase())) {
-      noteDispatch(acc, { ms: at, lane: firstString(row, LANE_KEYS) });
+    if (event !== null) {
+      const name = event.toLowerCase();
+      if (DISPATCH_EVENTS.has(name)) {
+        noteDispatch(acc, { ms: at, lane: firstString(row, LANE_KEYS) });
+      } else if (name === 'ci_start' || name === 'ci_complete') {
+        noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at);
+      }
     }
     if (hasRevertEvidence(row)) acc.revertMs = Math.max(acc.revertMs ?? 0, at);
     const state = outcomeStateOf(row);
@@ -224,6 +259,8 @@ const iso = (ms: number): string => new Date(ms).toISOString();
 function rewardInput(
   id: string, acc: RewardJobAccum, costUsd: number | undefined,
 ): RewardSignalInput | null {
+  const ciWallMs = ciWallMsOf(acc);
+  const cost = costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0 ? costUsd : null;
   const heldMerge = acc.merge !== null && (acc.revertMs === null || acc.merge.atMs > acc.revertMs);
   if (heldMerge) {
     const merge = acc.merge!;
@@ -233,7 +270,8 @@ function rewardInput(
       jobId: id, pool: dispatch.lane !== null && POOL_PATTERN.test(dispatch.lane) ? dispatch.lane : null,
       repo: acc.repo !== null && REPO_PATTERN.test(acc.repo) ? acc.repo : null,
       merged: true, dispatchedAt: iso(dispatch.ms), mergedAt: iso(merge.mergedAtMs),
-      costUsd: costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0 ? costUsd : null,
+      costUsd: cost,
+      ...(ciWallMs !== null ? { ciWallMs } : {}),
     };
   }
   const closedMs = Math.max(acc.closedMs ?? 0, acc.revertMs ?? 0);
@@ -244,7 +282,8 @@ function rewardInput(
       jobId: id, pool: dispatch.lane !== null && POOL_PATTERN.test(dispatch.lane) ? dispatch.lane : null,
       repo: acc.repo !== null && REPO_PATTERN.test(acc.repo) ? acc.repo : null,
       merged: false, dispatchedAt: iso(dispatch.ms), mergedAt: null,
-      costUsd: costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0 ? costUsd : null,
+      costUsd: cost,
+      ...(ciWallMs !== null ? { ciWallMs } : {}),
     };
   }
   return null;
