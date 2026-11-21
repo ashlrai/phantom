@@ -408,10 +408,14 @@ registry), the same 20-item cap and `matched`/`truncated`/`skipped`
 semantics; the two thread sections are mutually exclusive on every thread —
 the wake
 hints addressed to it, capped at the
-newest 20, and
+newest 20 with `matched` the count of every hint the bounded queue read
+matched, and
 the next page of mail in its inbox: the same matching, order and owner-share
 receipt checks `agents bus inbox` applies, capped at the oldest 20 pending
-messages with each body summarized by the shared one-line composer — and
+messages with each body summarized by the shared one-line composer and
+`matched` the true pending total — every row the same filters accept across
+the whole retained store, counted by the full scan `readAgentInbox` performs
+when asked — and
 claimable work or worker-handoff mail keeps the same tri-state `held`/`holder`
 evidence `agents bus inbox` reports, `null` whenever a hold store cannot be
 read, never a guess, so pending work shows its claim state without a second
