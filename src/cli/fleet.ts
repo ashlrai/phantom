@@ -54,6 +54,7 @@ import { formatFleetDiskAttribution } from '../core/fleet/disk-attribution.js';
 import type { ResourceStrategyReport } from '../core/autonomy/resource-strategy.js';
 import { makeColors, isTty } from './ui.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
+import { pauseLine } from '../core/fleet/pause-state.js';
 import { resolveFleetSubcommand, isModuleNotFound } from './fleet-subcommand-resolve.js';
 
 const { bold, dim, green, red, yellow, cyan } = makeColors(isTty());
@@ -119,6 +120,8 @@ export function formatFleetStatus(s: FleetStatus): string {
   if (s.metrics) lines.push(...formatFleetMetrics(s.metrics));
   if (s.memory) {
     const memory = s.memory;
+    const paused = pauseLine(memory.pauseState);
+    if (paused) lines.push(paused);
     lines.push(`Memory: PAUSE ${memory.pause.state}${memory.pause.reason ? ` (${memory.pause.reason})` : ''}`);
     lines.push(`  free: ${memory.freeMemoryPercent === null ? 'unknown' : `${memory.freeMemoryPercent}%`}; swap used: ${memory.swapUsedBytes === null ? 'unknown' : `${memory.swapUsedBytes} bytes`}`);
     lines.push(`  admission waits: ${memory.admissionWaitsByPool === null ? 'unknown' : JSON.stringify(memory.admissionWaitsByPool)}`);
