@@ -426,7 +426,10 @@ health the same way. Each proposal also carries an `evidence` block folded
 from the same known cohort: the group's CI first-pass rate, summed review
 findings, mean `cost_usd`, mean recorded `acus` (the Devin lane's billed
 spend — a different unit, never mixed with USD), mean `wall_s`, mean
-recorded `ttm_s` (merge latency), mean recorded `tokens_total` (token
+recorded `ttm_s` (merge latency), mean recorded `queue_wait_s` (the
+job's queue-admission wait from its arrival stamp to first dispatch —
+the same boundaries job-latency's queue_wait phase pairs), mean recorded
+`tokens_total` (token
 usage), mean recorded `diff_files`/`diff_lines` (change size), the count
 of outcomes carrying a `usage_missing` capture-gap label, and mean
 advisory `passk` — every

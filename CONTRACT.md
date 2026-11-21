@@ -560,7 +560,16 @@ job-activity read): the fold takes it only from the row that last won the
 merge verdict, only when that verdict is a merge, and the newest winning
 row replaces it wholesale — a later close clears it and a merge row
 without the field leaves it `null`. It is never derived from `wall_s` or
-timestamps. `tokens_total` is the finish row's recorded usage total
+timestamps. `queue_wait_s` is the recorded queue-admission wait derived
+once per job from the retained rows' boundary stamps — the latest
+`enqueue`/`enqueued`/`queued` arrival at or before the job's earliest
+`claim`/`batch_claim`/`launch` dispatch, in seconds across the
+`ts`/`timestamp`/`at`/`time` dialect (the same boundaries job-latency's
+queue_wait phase and reward-feed's dispatch set pair). A requeued job's
+later arrivals never move its first-dispatch wait; a job with no recorded
+arrival before its first dispatch — a direct dispatch or a batch member
+claimed only through its session — stays `null`, unknown, never zero and
+never another phase's duration. `tokens_total` is the finish row's recorded usage total
 (`tokens_total`/`tokensTotal`): newest explicit row wins like `cost_usd`
 and `wall_s`, and it
 stays `null` when no jobs row recorded one — never derived from cost or

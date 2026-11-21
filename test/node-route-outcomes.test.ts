@@ -14,7 +14,7 @@ const outcome = (job: string, lane: string | null, merged: boolean | null, rever
   tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
   tokens_cache_read: null, tokens_cache_write: null,
   usage_source: null, usage_missing: null,
-  ttm_s: null, empty: null, diff_files: null, diff_lines: null,
+  ttm_s: null, queue_wait_s: null, empty: null, diff_files: null, diff_lines: null,
   exit_code: null, failure_class: null, empty_class: null,
   task_outcome: null, passk: null,
 });

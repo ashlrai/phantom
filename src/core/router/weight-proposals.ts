@@ -29,8 +29,8 @@ export interface RouterWeightBaseline { work_class: string; lane: string; weight
  * no recorded evidence reports null, never zero. The weight math still moves
  * on held-merge rate alone — this block only reports the other signals the
  * ledger already records so an operator sees merge quality (CI retries,
- * review load, cost, wall time, merge latency, token usage, eval pass^k) before applying
- * anything.
+ * review load, cost, wall time, merge latency, queue-admission wait, token
+ * usage, eval pass^k) before applying anything.
  */
 export interface RouterWeightEvidence {
   /** Group outcomes carrying a recorded CI first-pass verdict. */
@@ -53,6 +53,10 @@ export interface RouterWeightEvidence {
   ttm_known: number;
   /** Mean recorded ttm_s over ttm_known; null when no merge recorded one. */
   ttm_s_mean: number | null;
+  /** Group outcomes with a recorded queue-admission wait (arrival stamp to first dispatch). */
+  queue_wait_known: number;
+  /** Mean recorded queue_wait_s over queue_wait_known; null when none recorded. */
+  queue_wait_s_mean: number | null;
   /** Group outcomes with a recorded finish-row tokens_total. */
   tokens_known: number;
   /** Mean recorded tokens_total over tokens_known; null when no outcome recorded usage. */
@@ -178,6 +182,7 @@ interface WeightEvidenceTally {
   costSum: number; costKnown: number;
   wallSum: number; wallKnown: number;
   ttmSum: number; ttmKnown: number;
+  queueWaitSum: number; queueWaitKnown: number;
   tokensSum: number; tokensKnown: number;
   passkSum: number; passkKnown: number;
   acusSum: number; acusKnown: number;
@@ -189,6 +194,7 @@ interface WeightEvidenceTally {
 const freshTally = (): WeightEvidenceTally => ({
   ciPass: 0, ciKnown: 0, reviewFixed: 0, reviewRejected: 0, reviewIgnored: 0, reviewKnown: 0,
   costSum: 0, costKnown: 0, wallSum: 0, wallKnown: 0, ttmSum: 0, ttmKnown: 0,
+  queueWaitSum: 0, queueWaitKnown: 0,
   tokensSum: 0, tokensKnown: 0, passkSum: 0, passkKnown: 0,
   acusSum: 0, acusKnown: 0, diffFilesSum: 0, diffFilesKnown: 0,
   diffLinesSum: 0, diffLinesKnown: 0, usageMissingKnown: 0,
@@ -214,6 +220,8 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   wall_s_mean: t.wallKnown === 0 ? null : round6(t.wallSum / t.wallKnown),
   ttm_known: t.ttmKnown,
   ttm_s_mean: t.ttmKnown === 0 ? null : round6(t.ttmSum / t.ttmKnown),
+  queue_wait_known: t.queueWaitKnown,
+  queue_wait_s_mean: t.queueWaitKnown === 0 ? null : round6(t.queueWaitSum / t.queueWaitKnown),
   tokens_known: t.tokensKnown,
   tokens_total_mean: t.tokensKnown === 0 ? null : round6(t.tokensSum / t.tokensKnown),
   passk_known: t.passkKnown,
@@ -233,7 +241,7 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
  * weight moves toward the observed held-merge rate — merged outcomes recorded as reverted count as
  * known evidence but never as held merges — capped at maxShift and clamped to [0, 1]. Each proposal
  * also reports the group's other recorded outcome signals (CI verdicts, review findings, cost, wall
- * time, merge latency, pass^k) as advisory evidence over the same known cohort.
+ * time, merge latency, queue-admission wait, pass^k) as advisory evidence over the same known cohort.
  */
 export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: RouterWeightProposalOptions = {}): RouterWeightProposalSet {
   const minSamples = opts.minSamples ?? ROUTER_WEIGHT_DEFAULT_MIN_SAMPLES;
@@ -305,6 +313,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     if (o.cost_usd !== null) { t.costKnown++; t.costSum += o.cost_usd; }
     if (o.wall_s !== null) { t.wallKnown++; t.wallSum += o.wall_s; }
     if (o.ttm_s !== null) { t.ttmKnown++; t.ttmSum += o.ttm_s; }
+    if (o.queue_wait_s !== null) { t.queueWaitKnown++; t.queueWaitSum += o.queue_wait_s; }
     if (o.tokens_total !== null) { t.tokensKnown++; t.tokensSum += o.tokens_total; }
     if (o.passk !== null) { t.passkKnown++; t.passkSum += o.passk; }
     if (o.acus !== null) { t.acusKnown++; t.acusSum += o.acus; }

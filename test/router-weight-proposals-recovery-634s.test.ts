@@ -337,6 +337,8 @@ describe('outcome-quality evidence', () => {
       wall_s_mean: 100,
       ttm_known: 10,
       ttm_s_mean: 245,
+      queue_wait_known: 0,
+      queue_wait_s_mean: null,
       tokens_known: 10,
       tokens_total_mean: 1450,
       passk_known: 20,
@@ -359,6 +361,34 @@ describe('outcome-quality evidence', () => {
     expect(out).toContain('passk=0.71(20)');
   });
 
+  it('folds queue-admission wait into group evidence with coverage counts', async () => {
+    // Each job: enqueue at T0, launch at T0+wait, then a MERGED verdict row
+    // carrying the group classification. queue_wait_s joins only the known
+    // cohort, like wall_s and ttm_s — a job with no recorded arrival stays
+    // out of the coverage count rather than counting as zero.
+    const jobs = Array.from({ length: 20 }, (_, i) => `synthetic-qw-${i}`);
+    const t0 = Date.parse('2026-11-20T00:00:00Z');
+    writeLedger([
+      ...jobs.flatMap((job, i) => [
+        { job, event: 'enqueue', ts: new Date(t0).toISOString() },
+        { job, event: 'launch', lane: 'alpha', ts: new Date(t0 + (i + 1) * 10_000).toISOString() },
+        event(job, 'alpha', 'code', 'MERGED'),
+      ]),
+      // An unrecorded-arrival outcome in the same group keeps coverage at 20,
+      // never inflating it with a fabricated zero wait.
+      event('synthetic-qw-noarr', 'alpha', 'code', 'MERGED'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    const p = report.proposals[0];
+    expect(p).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 21 });
+    // waits are 10s..200s over the 20 boundary-carrying jobs -> mean 105s.
+    expect(p.evidence.queue_wait_known).toBe(20);
+    expect(p.evidence.queue_wait_s_mean).toBe(105);
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('queue_wait_s=105(20)');
+  });
+
   it('keeps unrecorded signals null with zero coverage, never zero', async () => {
     writeLedger(merged(20));
     const { report } = await runJson();
@@ -368,6 +398,7 @@ describe('outcome-quality evidence', () => {
       cost_known: 0, cost_usd_mean: null,
       wall_known: 0, wall_s_mean: null,
       ttm_known: 0, ttm_s_mean: null,
+      queue_wait_known: 0, queue_wait_s_mean: null,
       tokens_known: 0, tokens_total_mean: null,
       passk_known: 0, passk_mean: null,
       acus_known: 0, acus_mean: null,

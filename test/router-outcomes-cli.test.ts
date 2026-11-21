@@ -36,7 +36,7 @@ function outcome(job_id: string, over: Partial<RouterOutcome> = {}): RouterOutco
     tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
     tokens_cache_read: null, tokens_cache_write: null,
     usage_source: null, usage_missing: null,
-    ttm_s: null, empty: null, diff_files: null, diff_lines: null,
+    ttm_s: null, queue_wait_s: null, empty: null, diff_files: null, diff_lines: null,
     exit_code: null, failure_class: null, empty_class: null,
     task_outcome: null, passk: null,
     ...over,
@@ -159,7 +159,7 @@ describe('phm router outcomes', () => {
     const lines = routerOutcomeLines(report);
     expect(lines[0]).toBe('router outcomes state=read eval=missing spend=missing market=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2 session_rows=4');
     expect(lines[1]).toBe(`ledger ${report.path}`);
-    expect(lines[3]).toContain('A lane=alpha model=m1 tier=work work_class=unknown merged=unknown reverted=true ci_first_pass=true review=fixed:2,rejected:1,ignored:0 cost_usd=unknown acus=unknown wall_s=unknown ttm_s=unknown tokens_total=unknown passk=unknown empty=unknown exit_code=unknown failure_class=unknown empty_class=unknown task_outcome=done');
+    expect(lines[3]).toContain('A lane=alpha model=m1 tier=work work_class=unknown merged=unknown reverted=true ci_first_pass=true review=fixed:2,rejected:1,ignored:0 cost_usd=unknown acus=unknown wall_s=unknown ttm_s=unknown queue_wait_s=unknown tokens_total=unknown passk=unknown empty=unknown exit_code=unknown failure_class=unknown empty_class=unknown task_outcome=done');
     expect(lines[2]).toContain('B lane=unknown model=unknown tier=unknown work_class=docs merged=true reverted=unknown');
   });
 
@@ -205,6 +205,8 @@ describe('phm router outcomes', () => {
 
   it('folds a real ledger end-to-end through cmdRouter and cmdRouterOutcomes', async () => {
     const root = runsDir([
+      '{"job":"J1","event":"enqueue","ts":"2026-10-31T23:00:00Z"}',
+      '{"job":"J1","event":"launch","lane":"alpha","ts":"2026-10-31T23:30:00Z"}',
       '{"job":"J1","lane":"alpha","model":"m1","tier":"work","phase":"MERGED","ts":"2026-11-01T00:00:00Z","mergedAt":"2026-11-01T01:00:00Z","cost_usd":1.25,"wall_s":900,"tokens_total":123456,"ttm_s":5400,"ci_first_pass":true}',
       '{"job":"J2","lane":"beta","model":"m2","phase":"CLOSED","ts":"2026-11-02T00:00:00Z"}',
       // A batch session: infrastructure rows never mint outcomes, while the
@@ -226,7 +228,7 @@ describe('phm router outcomes', () => {
     // Newest first: M1 (appended last) leads, then J2, then J1.
     expect(report.outcomes.map((o: RouterOutcome) => o.job_id)).toEqual(['M1', 'J2', 'J1']);
     expect(report.outcomes[0]).toMatchObject({ lane: 'alpha', merged: null, task_outcome: 'failed', wall_s: null, tokens_total: null });
-    expect(report.outcomes[2]).toMatchObject({ lane: 'alpha', model: 'm1', merged: true, cost_usd: 1.25, wall_s: 900, tokens_total: 123456, ttm_s: 5400, ci_first_pass: true, passk: null, task_outcome: null });
+    expect(report.outcomes[2]).toMatchObject({ lane: 'alpha', model: 'm1', merged: true, cost_usd: 1.25, wall_s: 900, tokens_total: 123456, ttm_s: 5400, queue_wait_s: 1800, ci_first_pass: true, passk: null, task_outcome: null });
     expect(report.outcomes[1]).toMatchObject({ lane: 'beta', merged: false, cost_usd: null });
 
     const laneFiltered = vi.spyOn(console, 'log').mockImplementation(() => {});

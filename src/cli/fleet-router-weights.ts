@@ -43,6 +43,7 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
   if (e.acus_mean !== null) parts.push(`acus=${e.acus_mean}(${e.acus_known})`);
   if (e.wall_s_mean !== null) parts.push(`wall_s=${e.wall_s_mean}(${e.wall_known})`);
   if (e.ttm_s_mean !== null) parts.push(`ttm_s=${e.ttm_s_mean}(${e.ttm_known})`);
+  if (e.queue_wait_s_mean !== null) parts.push(`queue_wait_s=${e.queue_wait_s_mean}(${e.queue_wait_known})`);
   if (e.tokens_total_mean !== null) parts.push(`tokens_total=${e.tokens_total_mean}(${e.tokens_known})`);
   if (e.diff_files_mean !== null) parts.push(`diff_files=${e.diff_files_mean}(${e.diff_files_known})`);
   if (e.diff_lines_mean !== null) parts.push(`diff_lines=${e.diff_lines_mean}(${e.diff_lines_known})`);

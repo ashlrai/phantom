@@ -201,10 +201,48 @@ describe('router outcome ledger (612S preservation)', () => {
       tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
       tokens_cache_read: null, tokens_cache_write: null,
       usage_source: null, usage_missing: null,
-      ttm_s: null, empty: null, diff_files: null, diff_lines: null,
+      ttm_s: null, queue_wait_s: null, empty: null, diff_files: null, diff_lines: null,
       exit_code: null, failure_class: null, empty_class: null,
       task_outcome: null, passk: null,
     }]);
+  });
+
+  it('folds queue-admission wait from arrival to first dispatch, unknown when a boundary is missing', () => {
+    const fold = foldRouterOutcomes([
+      // Q1: enqueued 10:00, launched 10:05 -> 300s of queue wait.
+      '{"job":"Q1","event":"enqueue","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"Q1","event":"launch","lane":"alpha","ts":"2026-11-01T10:05:00Z"}',
+      '{"job":"Q1","phase":"MERGED","ts":"2026-11-01T11:00:00Z"}',
+      // Q2: requeued after a failed attempt — the later arrival never moves
+      // the first-dispatch wait (still 10:00 -> 10:02 = 120s).
+      '{"job":"Q2","event":"enqueue","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"Q2","event":"launch","lane":"alpha","ts":"2026-11-01T10:02:00Z"}',
+      '{"job":"Q2","event":"enqueue","ts":"2026-11-01T12:00:00Z"}',
+      '{"job":"Q2","event":"launch","lane":"alpha","ts":"2026-11-01T12:30:00Z"}',
+      '{"job":"Q2","phase":"MERGED","ts":"2026-11-01T13:00:00Z"}',
+      // Q3: dispatched with no recorded arrival — unknown, never zero.
+      '{"job":"Q3","event":"launch","lane":"alpha","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"Q3","phase":"MERGED"}',
+      // Q4: arrival recorded but never dispatched — still in flight, unknown.
+      '{"job":"Q4","event":"queued","ts":"2026-11-01T10:00:00Z"}',
+      // Q5: arrival stamped after the first dispatch cannot pair — unknown.
+      '{"job":"Q5","event":"launch","lane":"alpha","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"Q5","event":"enqueue","ts":"2026-11-01T11:00:00Z"}',
+      '{"job":"Q5","phase":"MERGED"}',
+      // Q6: batch-session infrastructure rows never mint queue evidence.
+      '{"job":"RQ-BATCH-q6","event":"enqueue","ts":"2026-11-01T10:00:00Z"}',
+      '{"job":"RQ-BATCH-q6","event":"launch","ts":"2026-11-01T10:05:00Z"}',
+      // Q7: timestamp aliases and dispatch dialects join like the phase reads.
+      '{"job":"Q7","kind":"enqueued","at":"2026-11-01T09:00:00Z"}',
+      '{"job":"Q7","type":"batch_claim","lane":"alpha","time":"2026-11-01T09:00:30Z"}',
+      '{"job":"Q7","phase":"CLOSED"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('Q1')).toMatchObject({ merged: true, queue_wait_s: 300 });
+    expect(byId.get('Q2')).toMatchObject({ merged: true, queue_wait_s: 120 });
+    for (const id of ['Q3', 'Q4', 'Q5']) expect(byId.get(id)?.queue_wait_s).toBeNull();
+    expect(byId.has('RQ-BATCH-q6')).toBe(false);
+    expect(byId.get('Q7')).toMatchObject({ merged: false, queue_wait_s: 30 });
   });
 
   it('folds revert evidence from every recorded dialect, sticky-true', () => {
