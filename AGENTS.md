@@ -104,9 +104,9 @@ a three-minute prep deadline. See [lane freshness](docs/FLEET-LANE-FRESHNESS.md)
 Leader board: every Leader tick records a `fleet.leader-board.v1` state at
 `~/.ashlr-runs/coordination/leader-board.json`: lanes, queue depth by tier,
 merges in the last hour, the conflicting-PR count trend (RQ-REBASE rows in
-ready.tsv are the local proxy for GitHub-conflicting PRs) and open
-needs-Mason items. Read that JSON file directly; all inputs are local files,
-never gh or a model.
+ready.tsv — singles and batch rows' member PRs — are the local proxy for
+GitHub-conflicting PRs) and open needs-Mason items. Read that JSON file
+directly; all inputs are local files, never gh or a model.
 
 Disk maintenance: `phm disk-maint` is a dry run that reports reclaimable bytes
 per class; `--apply` rotates, compresses and deletes rebuildable leftovers and
