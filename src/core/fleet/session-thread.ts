@@ -25,9 +25,11 @@ import type { OrderTraceJob, OrderTraceV1 } from './order-trace.js';
 import type { FleetJobActivityV1 } from './runs-job-activity.js';
 import type { JobLogScan } from './runs-job-detail.js';
 import { sessionReply, type SessionThreadReply } from './session-reply.js';
+import { sessionTask, taskWords, type SessionThreadTask } from './session-task.js';
 import type { SessionKind, SessionNode, SessionState } from './session-tree.js';
 
 export { sessionReply, type SessionThreadReply } from './session-reply.js';
+export { sessionTask, type SessionThreadTask } from './session-task.js';
 
 export const SESSION_THREAD_SCHEMA = 'fleet.session-thread.v1';
 /** Session ids: `leader`, a job id such as `RQ-FIX-1`, or a subagent id such as `sa-0123abcd`. */
@@ -113,6 +115,11 @@ export interface SessionThreadV1 {
   session: SessionThreadSession | null;
   /** Short sentences assembled from the records. Empty when `session` is null. */
   summary: string[];
+  /**
+   * What the session's job was asked to do, as one line quoted from its brief (session-task.ts). Null for a session with no job,
+   * a job whose activity was not read, and a brief that holds no line past its fleet view: unknown, never a guess.
+   */
+  task: SessionThreadTask | null;
   /**
    * The conversation in reading order: for a worker the message of Mason's it serves and that message's routing, then brief,
    * recorded steps, commands, changed files, notes, bus messages, Mason's messages, leader replies, control requests, the newest lines of its log, the
@@ -308,7 +315,7 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   const node = flatTree(list.tree.roots).map(entry => entry.node).find(entry => entry.id === id && entry.kind !== 'unknown-parent');
   const base = { schema: SESSION_THREAD_SCHEMA, generatedAt: new Date(now).toISOString(), id } as const;
   if (!node) {
-    return { ...base, session: null, summary: [], messages: [],
+    return { ...base, session: null, summary: [], task: null, messages: [],
       sources: { sessions: parts.sessionsRead ? 'available' : 'unavailable', activity: 'none', bus: 'none', owner: 'none', replies: 'none', orders: 'none', output: 'none', controls: 'none' },
       gaps: [parts.sessionsRead ? `No session ${id} in the list. Finished sessions stay for an hour.` : 'Sessions unknown: the session list could not be read.'], work: null, reply: sessionReply(null), control: null, depth, deeper: false };
   }
@@ -459,7 +466,8 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   const repeated = node.lastMessage !== null && wrote.length > 0 && wrote.at(-1)!.startsWith(node.lastMessage.replace(/…$/, ''));
   if (node.lastMessage !== null && !repeated) messages.push({ key: 'latest', kind: 'latest', side: 'session', label: 'Latest', at: when(node.lastMessageAt), text: node.lastMessage, format: 'plain' });
   if (session.jobId === null && !leader) gaps.push('This session has no job record: its steps, commands and changed files are not recorded.');
-  return { ...base, session, summary: [...summaryOf(session, node, row, parts.activity, aimed, routed), ...steered], messages,
+  return { ...base, session, summary: [...summaryOf(session, node, row, parts.activity, aimed, routed), ...steered],
+    task: session.jobId !== null ? sessionTask(parts.activity, session.jobId) : null, messages,
     sources: { sessions: 'available', activity, bus, owner, replies, orders, output, controls }, gaps,
     work: session.jobId !== null ? sessionWork(parts.activity) : null, reply: sessionReply(session), control, depth, deeper: depth === 'recent' && cut };
 }
@@ -471,7 +479,8 @@ const SIDE_MARK: Readonly<Record<SessionThreadMessage['side'], string>> = { sess
 export function renderSessionThreadText(thread: SessionThreadV1): string {
   if (!thread.session) return thread.gaps.join('\n');
   const { session } = thread;
-  const lines = [`${session.id} | ${session.kind} | ${session.state === 'unknown' ? 'state unknown' : session.state}`, ...thread.summary.map(line => `  ${line}`), ''];
+  const lines = [`${session.id} | ${session.kind} | ${session.state === 'unknown' ? 'state unknown' : session.state}`,
+    ...(thread.task ? [`  ${taskWords(thread.task)}`] : []), ...thread.summary.map(line => `  ${line}`), ''];
   if (thread.messages.length === 0) lines.push('Nothing is recorded for this session yet.');
   for (const message of thread.messages) {
     lines.push(`${SIDE_MARK[message.side]} ${message.label}${message.at ? ` [${message.at}]` : ''}`);

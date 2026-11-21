@@ -29,6 +29,8 @@
  * When the list holds more sessions than the read carries, a line under the
  * headline says which kind is off screen; the read gives up ended sessions
  * before running ones (wall-unshown.ts, WallUnshown.tsx).
+ * Under a card's first line is what its job was asked to do, quoted from its
+ * brief (WallTask.tsx); the find box looks in it too.
  */
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { sessionAge } from '../../../../core/fleet/live-sessions.js';
@@ -53,6 +55,7 @@ import { findEntries, isScoped, NO_SCOPE, replyLine, scopeChoices, scopeWords, s
   type SessionWallRead, type WallEntry, type WallFailure, type WallScope, type WallSession, type WallState } from './session-wall-model.js';
 import { WallBar } from './WallBar.js';
 import { WallRequests } from './WallRequests.js';
+import { TaskLine } from './WallTask.js';
 import { WallUnshown } from './WallUnshown.js';
 import { isUnshownGap, unshownNotice } from './wall-unshown.js';
 import { servedEntries } from './wall-requests-model.js';
@@ -67,12 +70,12 @@ const spoke = (session: WallSession) => (session.lastMessageAgeSeconds === null 
 
 /** One session on the wall. The card is a single button, so its text stays plain; the opened conversation renders markdown. */
 function Card({ entry, fresh, at, onOpen }: { entry: WallEntry; fresh: number; at: string; onOpen: (id: string) => void }) {
-  const { session } = entry, summaryId = useId(), freshId = useId(), markId = useId(), vitalsId = useId();
+  const { session } = entry, summaryId = useId(), freshId = useId(), markId = useId(), vitalsId = useId(), taskId = useId();
   // Measured against the read's own time, so the step's age and the read agree.
   const vitals = cardVitals(entry, at), drawn = hasVitals(vitals), left = summaryLeft(entry.summary, vitals);
   const earlier = entry.messageCount - entry.messages.length;
   const mark = steerMark(entry);
-  const described = [mark && markId, fresh > 0 && freshId, drawn && vitalsId, summaryId].filter(Boolean).join(' ');
+  const described = [mark && markId, fresh > 0 && freshId, entry.task !== undefined && taskId, drawn && vitalsId, summaryId].filter(Boolean).join(' ');
   return <li className={styles.card} data-state={session.state} data-steer={mark?.tone} data-pr={vitals.pr ? '' : undefined}>
     <button type="button" className={styles.open} data-card={session.id} onClick={() => onOpen(session.id)}
       aria-label={`${session.id}, ${STATE_WORD[session.state]}`} aria-describedby={described}>
@@ -84,6 +87,7 @@ function Card({ entry, fresh, at, onOpen }: { entry: WallEntry; fresh: number; a
         {fresh > 0 && <span id={freshId} className={styles.fresh}>{fresh} new</span>}
         <span className={styles.muted}>{spoke(session)}</span>
       </span>
+      <TaskLine task={entry.task} place="card" id={taskId} />
       <span className={styles.facts}>
         <span>{session.kind}</span><span>{session.model === 'unknown' ? 'model unknown' : session.model}</span>
         <span>{session.repo === 'unknown' ? 'repo unknown' : session.repo}</span>
@@ -193,7 +197,7 @@ export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_S
         : isScoped(scope) ? `No sessions in ${scopeWords(scope)} right now. This keeps asking; "Every session" shows the rest.`
         : 'No agent sessions right now. Each one appears here as the fleet starts it.'}</p>
       : found.length === 0
-      ? <p className={styles.empty} role="status">No conversation on screen holds “{find.trim()}”. It looks in each session's id, lane, model, repo, summary and newest messages{unshown > 0 ? `; ${unshown} more session${unshown === 1 ? ' is' : 's are'} not on screen` : ''}.</p>
+      ? <p className={styles.empty} role="status">No conversation on screen holds “{find.trim()}”. It looks in each session's id, lane, model, repo, task, summary and newest messages{unshown > 0 ? `; ${unshown} more session${unshown === 1 ? ' is' : 's are'} not on screen` : ''}.</p>
       : <ul ref={list} className={styles.wall} aria-label="Conversations" onKeyDown={onKeyDown}>
         {shown.map(entry => {
           const head = heads.get(entry.session.id);

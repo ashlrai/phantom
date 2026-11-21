@@ -22,6 +22,7 @@ import type { LeaderRepliesV1 } from './mason-outbox.js';
 import type { OrderTraceV1 } from './order-trace.js';
 import type { FleetJobActivityV1 } from './runs-job-activity.js';
 import type { SessionThreadReply } from './session-reply.js';
+import { briefPastContext, taskWords, type SessionThreadTask } from './session-task.js';
 import {
   buildSessionThread, sessionWork, type SessionThreadControl, type SessionThreadMessage, type SessionThreadOutputRead, type SessionThreadOwnerRead, type SessionThreadSession, type SessionThreadSource,
   type SessionThreadState, type SessionThreadV1, type SessionThreadWork,
@@ -63,7 +64,9 @@ export interface SessionThreadsEntry {
   session: SessionThreadSession;
   /** The same sentences `phm sessions thread <id>` prints. */
   summary: string[];
-  /** The newest THREADS_MESSAGES_SHOWN messages of the thread, oldest of them first. */
+  /** What the session's job was asked to do, the answer its single thread gives (session-task.ts). Null when no brief line is known. */
+  task: SessionThreadTask | null;
+  /** The newest THREADS_MESSAGES_SHOWN messages of the thread, oldest of them first. A `brief` message starts past its fleet view, and its label says so. */
   messages: SessionThreadsMessage[];
   /** How many messages the whole thread holds. */
   messageCount: number;
@@ -168,6 +171,14 @@ function clipped(message: SessionThreadMessage): SessionThreadsMessage {
     return { ...message, label: fewer ? `${message.label.slice(0, message.label.lastIndexOf(','))}, last ${THREADS_OUTPUT_LINES} lines of its log` : message.label,
       text: long ? `…${newest.slice(1 - THREADS_TEXT_CHARS).trimStart()}` : newest, truncated: long || fewer };
   }
+  if (message.kind === 'brief') {
+    // The fleet view in front of a brief is the same roster on every card; the room goes to what was asked.
+    const past = briefPastContext(message.text)?.trim();
+    if (past !== undefined && past !== '' && past.length < message.text.trim().length) {
+      const long = past.length > THREADS_TEXT_CHARS;
+      return { ...message, label: `${message.label}, after its fleet view`, text: long ? `${past.slice(0, THREADS_TEXT_CHARS - 1).trimEnd()}…` : past, truncated: true };
+    }
+  }
   const cut = message.text.length > THREADS_TEXT_CHARS;
   return { ...message, text: cut ? `${message.text.slice(0, THREADS_TEXT_CHARS - 1).trimEnd()}…` : message.text, truncated: cut };
 }
@@ -208,7 +219,7 @@ export function buildSessionThreads(list: LiveSessionsV1, parts: SessionThreadsP
       ...((kind === 'leader' || (kind === 'worker' && jobId !== null)) && parts.orders !== undefined ? { orders: parts.orders } : {}) }, now);
     if (!thread.session) continue;
     states[thread.session.state] += 1;
-    threads.push({ session: thread.session, summary: thread.summary, messages: thread.messages.slice(-THREADS_MESSAGES_SHOWN).map(clipped),
+    threads.push({ session: thread.session, summary: thread.summary, task: thread.task, messages: thread.messages.slice(-THREADS_MESSAGES_SHOWN).map(clipped),
       messageCount: thread.messages.length, sources: thread.sources, gaps: thread.gaps, control: thread.control, reply: thread.reply,
       serves: kind === 'worker' ? servedBy(thread.messages, jobId, parts.orders) : null,
       work: jobId !== null ? workOf(parts.activity.get(jobId)) : null });
@@ -246,7 +257,8 @@ export function renderSessionThreadsText(read: SessionThreadsV1): string {
     : `${read.counts.sessions} session${read.counts.sessions === 1 ? '' : 's'}${scope ? ` (${scope})` : ''}${by ? `: ${by}` : ''}.`];
   for (const entry of read.threads) {
     const { session } = entry;
-    lines.push('', `${session.id} | ${session.kind} | ${session.state === 'unknown' ? 'state unknown' : session.state}`, `  ${entry.summary.join(' ')}`);
+    lines.push('', `${session.id} | ${session.kind} | ${session.state === 'unknown' ? 'state unknown' : session.state}`,
+      ...(entry.task ? [`  ${taskWords(entry.task)}`] : []), `  ${entry.summary.join(' ')}`);
     if (entry.messageCount > entry.messages.length) lines.push(`  (${entry.messageCount - entry.messages.length} earlier)`);
     for (const message of entry.messages) lines.push(`  ${SIDE_MARK[message.side]} ${message.label}${message.at ? ` [${message.at}]` : ''}: ${oneLine(message.text, 160)}`);
     if (entry.messageCount === 0) lines.push('  Nothing is recorded for this session yet.');

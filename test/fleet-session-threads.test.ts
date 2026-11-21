@@ -327,7 +327,7 @@ describe('buildSessionThreads', () => {
       bus: bus([message('m1', 'leader', 'RQ-A', { summary: 'please\nrebase' })]) }, NOW));
     const lines = text.split('\n');
     expect(lines[0]).toBe('3 sessions: 1 running, 1 quiet, 1 state unknown.');
-    expect(text).toContain('\nRQ-A | worker | running\n  Worker on claude, fixture-model, in phantom. Running for 30m; spoke 2m ago.');
+    expect(text).toContain('\nRQ-A | worker | running\n  Brief opens: Fix the reply box.\n  Worker on claude, fixture-model, in phantom. Running for 30m; spoke 2m ago.');
     expect(text).toContain('  (2 earlier)\n');
     expect(text).toContain(`  > leader to RQ-A, status [${ago(5)}]: please rebase`);
     expect(text).toContain('\nRQ-QUIET | worker | quiet\n  Worker on codex, fixture-model, in phantom. Quiet: no output for 25m.\n  Nothing is recorded for this session yet.');

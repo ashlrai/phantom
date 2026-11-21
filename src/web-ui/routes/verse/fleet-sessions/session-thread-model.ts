@@ -9,6 +9,7 @@
  */
 import { isJobControlAction, type JobControlAction } from '../../../../core/fleet/job-control-types.js';
 import { sessionReply, type SessionThreadReply } from '../../../../core/fleet/session-reply.js';
+import { SESSION_TASK_FROM, type SessionTaskFrom } from '../../../../core/fleet/session-task.js';
 import { ApiError, apiGet, readFailureReason } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 import { wantsEarlier } from './thread-depth.js';
@@ -45,6 +46,11 @@ export interface ThreadWork {
   /** The newest recorded step; `at` is null when it carried no time that parses. */
   step: { event: string; summary: string; at: string | null } | null;
 }
+/**
+ * What a session's job was asked to do, as the read's `task` key gives it: one line quoted from its brief. `from` says whether
+ * that line is the brief's title, the router queue row it quotes, or only its opening line (which a reader must not take for a title).
+ */
+export interface ThreadTask { line: string; from: SessionTaskFrom; truncated: boolean }
 /** Who a reply written in the thread reaches, or why it cannot be sent from here. */
 export type ReplyRoute =
   | { to: 'leader'; hint: string }
@@ -56,6 +62,8 @@ export interface SessionThread {
   generatedAt: string;
   session: ThreadSession;
   summary: string[];
+  /** Null when the read knows no line of the brief; absent for a session with no job and from a server that does not say. */
+  task?: ThreadTask | null;
   messages: ThreadMessage[];
   /** `output` (the session's own log lines) is absent when the server that answered does not read it. */
   sources: { activity: ThreadSource; bus: ThreadSource; owner: ThreadSource; replies: ThreadSource; orders: ThreadSource; output?: ThreadSource; controls?: ThreadSource };
@@ -113,6 +121,17 @@ export function narrowWork(raw: unknown): ThreadWork | null {
   };
 }
 
+/**
+ * The read's `task` for a session with a job, as a key to spread into the narrowed read: no key when the server sent
+ * none (it predates the reading) or the session has no job, null when it sent one that holds no line.
+ */
+export function narrowTask(session: Pick<ThreadSession, 'jobId'>, raw: unknown): { task?: ThreadTask | null } {
+  if (raw === undefined || session.jobId === null) return {};
+  const line = object(raw) ? text(raw.line)?.replace(/\s+/g, ' ').trim() : undefined;
+  // A source this build does not know is read as the least claim: an opening line.
+  return { task: line ? { line, from: oneOf((raw as Obj).from, SESSION_TASK_FROM, 'opening'), truncated: (raw as Obj).truncated === true } : null };
+}
+
 const route = (reply: SessionThreadReply): ReplyRoute => {
   const job = reply.to === 'job' ? MENTION.exec(reply.mention ?? '')?.[1] : undefined;
   if (job) return { to: 'job', job, hint: reply.hint };
@@ -153,7 +172,7 @@ export function narrowSessionThread(raw: unknown): SessionThread | null {
   const source = (name: string) => oneOf(sources[name], SOURCES, 'unavailable');
   return {
     generatedAt: time(raw.generatedAt) ?? new Date(0).toISOString(), session,
-    summary: lines(raw.summary), messages,
+    summary: lines(raw.summary), ...narrowTask(session, raw.task), messages,
     sources: { activity: source('activity'), bus: source('bus'), owner: source('owner'), replies: source('replies'), orders: source('orders'),
       ...(sources.output === undefined ? {} : { output: source('output') }), ...(sources.controls === undefined ? {} : { controls: source('controls') }) },
     // Work is a job's, so it is believed only on a session that has one.

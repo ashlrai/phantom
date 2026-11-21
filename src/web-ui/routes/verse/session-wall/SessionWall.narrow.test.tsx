@@ -94,7 +94,7 @@ describe('finding among the sessions on screen', () => {
   it('says nothing matched, where it looked, and how many sessions are not on screen', () => {
     render(<WallView read={read({ counts: { sessions: 52 } })} onOpen={() => {}} find=" zzz " />);
     expect(screen.queryByRole('list', { name: 'Conversations' })).toBeNull();
-    expect(screen.getByRole('status').textContent).toBe('No conversation on screen holds “zzz”. It looks in each session\'s id, lane, model, repo, summary and newest messages; 48 more sessions are not on screen.');
+    expect(screen.getByRole('status').textContent).toBe('No conversation on screen holds “zzz”. It looks in each session\'s id, lane, model, repo, task, summary and newest messages; 48 more sessions are not on screen.');
   });
 
   it('names the scope when the server holds no session in it', () => {
