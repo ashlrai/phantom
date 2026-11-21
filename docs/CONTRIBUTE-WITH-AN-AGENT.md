@@ -256,3 +256,28 @@ Never edit `CODEOWNERS` by hand: `npm run authority:regen` regenerates it, and
 Nothing in this flow weakens a test, bypasses a ruleset or uses an admin
 override; changes that try are refused. See the
 [safety invariants](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md#safety-invariants-contributors-must-never-weaken).
+
+## 8. The other ecosystem repositories
+
+Phantom is one of seven repositories the fleet works on. Each of the other six
+is a separate repository with its own `CONTRIBUTING.md` (setup, tests, checks)
+and `AGENTS.md` (agent rules). Point your agent at those two files first, the
+same way as step 1. The default branch of each is `main`, not `master`, so open
+pull requests with `--base main`.
+
+| Repository | What it is | Read first |
+| --- | --- | --- |
+| [phantom-secrets](https://github.com/ashlrai/phantom-secrets) | Local vault, placeholders and a proxy for supported API credential use. | [CONTRIBUTING.md](https://github.com/ashlrai/phantom-secrets/blob/main/CONTRIBUTING.md), [AGENTS.md](https://github.com/ashlrai/phantom-secrets/blob/main/AGENTS.md) |
+| [locus](https://github.com/ashlrai/locus) | Account and tenant bindings for agent tools. | [CONTRIBUTING.md](https://github.com/ashlrai/locus/blob/main/CONTRIBUTING.md), [AGENTS.md](https://github.com/ashlrai/locus/blob/main/AGENTS.md) |
+| [ashlr-plugin](https://github.com/ashlrai/ashlr-plugin) | Compact tool results and a local usage ledger. | [CONTRIBUTING.md](https://github.com/ashlrai/ashlr-plugin/blob/main/CONTRIBUTING.md), [AGENTS.md](https://github.com/ashlrai/ashlr-plugin/blob/main/AGENTS.md) |
+| [lexicon](https://github.com/ashlrai/lexicon) | Correct recurring speech-to-text errors before agents read them. | [CONTRIBUTING.md](https://github.com/ashlrai/lexicon/blob/main/CONTRIBUTING.md), [AGENTS.md](https://github.com/ashlrai/lexicon/blob/main/AGENTS.md) |
+| [ashlr-md](https://github.com/ashlrai/ashlr-md) | Markdown editing with CLI and MCP interfaces. | [CONTRIBUTING.md](https://github.com/ashlrai/ashlr-md/blob/main/CONTRIBUTING.md), [AGENTS.md](https://github.com/ashlrai/ashlr-md/blob/main/AGENTS.md) |
+| [ashlr-stack](https://github.com/ashlrai/ashlr-stack) | Configure supported development services through CLI and MCP. | [CONTRIBUTING.md](https://github.com/ashlrai/ashlr-stack/blob/main/CONTRIBUTING.md), [AGENTS.md](https://github.com/ashlrai/ashlr-stack/blob/main/AGENTS.md) |
+
+The shape of the work carries over: one focused branch pushed to your fork, the
+repository's own checks run once, a pull request with a conventional title.
+The specifics on this page do not: `scripts/verify-changed.mjs`, `npm run test:ci`,
+the `Merge Gate` job list, the fast-gate selection and the protected-path list
+belong to Phantom. Take each repository's commands, required checks and
+`CODEOWNERS` from its own files. The fleet publisher and
+`phm publish orphans`/`phm publish resume` cover all seven repositories.
