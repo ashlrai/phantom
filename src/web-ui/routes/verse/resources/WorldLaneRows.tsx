@@ -5,11 +5,16 @@
  * at the snapshot's own cache window while it is visible — a warm read, not
  * a new network service. Rows are memoized and keep their identity until a
  * displayed field changes, so a quiet refresh does not repaint every lane.
+ *
+ * Each row draws its window on the design system's WindowBar: the share used so
+ * far, what the measured burn adds by the reset, and what is left unused then.
+ * A lane with no share to draw is hatched; the bar never fills from a verdict alone.
  */
-import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { WORLD_CACHE_TTL_MS } from '../../../../core/world/types.js';
 import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { Tooltip } from '../../../components/primitives/Tooltip.js';
+import { WindowBar, WindowBarSwatch } from '../../../components/primitives/WindowBar.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { openResources } from './resources-store.js';
@@ -39,23 +44,6 @@ function useLiveNow(enabled: boolean, stamps: string, fixedNow: number | undefin
   return fixedNow ?? now;
 }
 
-function fillPercent(row: WorldLaneRow): number | null {
-  if (row.forecast === 'unknown') return null;
-  if (row.exhaustFraction !== null) return Math.max(0, Math.min(100, row.exhaustFraction * 100));
-  switch (row.forecast) {
-    case 'early':
-      return 62;
-    case 'on-pace':
-      return 100;
-    case 'underuse':
-      return 100;
-    default: {
-      const never: never = row.forecast;
-      return never;
-    }
-  }
-}
-
 function Mark({ engine }: { engine: LaneEngine }) {
   switch (engine) {
     case 'claude':
@@ -77,26 +65,11 @@ function Mark({ engine }: { engine: LaneEngine }) {
   }
 }
 
-function Gauge({ row, expanded }: { row: WorldLaneRow; expanded: boolean }) {
-  const timed = row.exhaustFraction !== null;
-  const fill = fillPercent(row);
-  const mark = timed ? Math.max(0, Math.min(100, row.exhaustFraction! * 100)) : null;
-  return (
-    <span
-      className={styles.gauge}
-      data-forecast={row.forecast}
-      data-gauge={row.forecast === 'unknown' && !timed ? 'unknown' : timed ? 'timed' : 'qualitative'}
-      style={{ '--fill': fill === null ? '0%' : `${fill}%` } as CSSProperties}
-      role="img"
-      aria-label={`Exhaustion versus reset: ${row.forecastText}`}
-    >
-      <span className={styles.track}>
-        {fill === null ? null : <span className={styles.fill} />}
-        {mark === null ? null : <span className={styles.mark} style={expanded ? { left: `${mark}%` } : { bottom: `${mark}%` }} />}
-        {row.resetAt ? <span className={styles.resetMark} /> : null}
-      </span>
-    </span>
-  );
+/** The lane's window on the shared bar. The collapsed rail has room for the edge size only, which draws used and more. */
+function Bar({ row, expanded }: { row: WorldLaneRow; expanded: boolean }) {
+  const { bar } = row;
+  return <WindowBar className={styles.bar} size={expanded ? 'bar' : 'edge'} label={`${row.label} used`} valueText={bar.text}
+    valueNow={bar.used} used={bar.used} more={bar.more} unused={bar.unused} ending={bar.ending} />;
 }
 
 const LaneButton = memo(function LaneButton({ row, expanded }: { row: WorldLaneRow; expanded: boolean }) {
@@ -108,6 +81,7 @@ const LaneButton = memo(function LaneButton({ row, expanded }: { row: WorldLaneR
       <div className={styles.tip}>
         <div className={styles.tipHead}><Mark engine={row.engine} /><strong>{row.label}</strong></div>
         <div className={styles.tipLine}>Usage {row.usage}</div>
+        <div className={styles.tipLine}>Window {row.bar.text}</div>
         <div className={styles.tipLine}>Remaining {row.remaining}</div>
         <div className={styles.tipLine}>Reset {row.reset}</div>
         <div className={styles.tipLine}>Burn {row.burn}</div>
@@ -127,12 +101,11 @@ const LaneButton = memo(function LaneButton({ row, expanded }: { row: WorldLaneR
         <span className={styles.line}>
           <Mark engine={row.engine} />
           {expanded ? <span className={styles.name}>{row.label}</span> : null}
+          {expanded && row.bar.figure ? <span className={styles.figure} data-figure>{row.bar.figure}</span> : null}
           {expanded ? null : <time className={styles.badge} data-freshness={row.freshness} dateTime={row.observedAt ?? undefined}>{badge}</time>}
         </span>
-        <span className={styles.line}>
-          <Gauge row={row} expanded={expanded} />
-          {expanded ? <span className={styles.forecast}>{row.forecastText}</span> : null}
-        </span>
+        <Bar row={row} expanded={expanded} />
+        {expanded ? <span className={styles.note} data-ending={row.bar.ending}>{row.bar.note}</span> : null}
         {expanded ? <span className={styles.meta}>Used {row.usage} · left {row.remaining}</span> : null}
         {expanded ? <BurnSparkline history={row.history} /> : null}
         {expanded ? <span className={styles.meta}>Burn {row.burn} · reset {row.reset}</span> : null}
@@ -176,6 +149,11 @@ export function WorldLaneRows({ expanded, enabled = true, now: fixedNow, onLive,
   return (
     <div className={styles.group} data-expanded={expanded || undefined} data-world-lanes role="group" aria-label="Lane resources">
       {rows.map((row) => <LaneButton key={row.key} row={row} expanded={expanded} />)}
+      {expanded && rows.some((row) => row.bar.more !== null) ? <p className={styles.key} data-lane-key>
+        <span><WindowBarSwatch part="used" />used</span>
+        <span><WindowBarSwatch part="more" />more by the reset</span>
+        <span><WindowBarSwatch part="unused" />unused then</span>
+      </p> : null}
     </div>
   );
 }

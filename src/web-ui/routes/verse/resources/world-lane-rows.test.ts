@@ -55,7 +55,7 @@ describe('world lane rows', () => {
       burn: '1.25%/h',
       forecast: 'early',
       forecastText: 'exhausts before reset',
-      exhaustFraction: 0.4,
+      bar: { used: 42, more: 58, unused: 0, ending: 'dry', figure: '42%', note: 'runs out before the reset' },
       source: 'claude-usage',
       observedAt: RECENT,
       freshness: 'fresh',
@@ -63,6 +63,7 @@ describe('world lane rows', () => {
     });
     expect(rows[0]!.summary).toContain('Source claude-usage');
     expect(rows[1]).toMatchObject({ lane: 'claude-api', usage: 'unknown', remaining: 'unknown', reset: 'unknown', burn: 'unknown', forecast: 'unknown', freshness: 'unknown', source: 'unknown' });
+    expect(rows[1]!.bar).toEqual({ used: null, more: null, unused: null, ending: 'unread', figure: null, note: 'no usage reading', text: 'no usage reading' });
   });
 
   it('keeps a measured zero and does not turn a null into zero', () => {
@@ -72,8 +73,8 @@ describe('world lane rows', () => {
     ]), NOW);
     const codex = rows.find((row) => row.lane === 'codex-personal')!;
     const dot = rows.find((row) => row.lane === 'dot')!;
-    expect(codex).toMatchObject({ usage: '0%', remaining: '0%', burn: '0%/h', freshness: 'fresh' });
-    expect(dot).toMatchObject({ usage: 'unknown', remaining: 'unknown', burn: 'unknown', freshness: 'unknown' });
+    expect(codex).toMatchObject({ usage: '0%', remaining: '0%', burn: '0%/h', freshness: 'fresh', bar: { used: 0, figure: '0%', ending: 'open' } });
+    expect(dot).toMatchObject({ usage: 'unknown', remaining: 'unknown', burn: 'unknown', freshness: 'unknown', bar: { used: null, figure: null, ending: 'unread' } });
   });
 
   it('shows unknown for fields the snapshot does not carry', () => {
@@ -88,7 +89,7 @@ describe('world lane rows', () => {
       burn: 'unknown',
       forecast: 'unknown',
       forecastText: 'unknown',
-      exhaustFraction: null,
+      bar: { used: 30, more: null, unused: null, ending: 'open', figure: '30%', note: 'not projected' },
       source: 'claude-usage',
     });
   });
@@ -112,7 +113,7 @@ describe('world lane rows', () => {
       reset: 'unknown',
       burn: 'unknown',
       forecast: 'unknown',
-      exhaustFraction: null,
+      bar: { used: null, more: null, unused: null, ending: 'unread', figure: null },
       source: 'grok-status',
       observedAt,
       freshness: 'stale',
@@ -134,7 +135,7 @@ describe('world lane rows', () => {
     const exhaustAt = new Date(NOW + 5 * 3_600_000).toISOString();
     const staleAfter = new Date(NOW + 10 * 60_000).toISOString();
     const rows = worldLaneRows(model(
-      [{ lane: 'claude-max', used: field(20), remaining: field(80), burnRate: field(2), unit: field('percent') }],
+      [{ lane: 'claude-max', used: field(20), remaining: field(80), burnRate: field(16), unit: field('percent') }],
       [{
         lane: 'claude-max', status: 'fresh', source: 'claude-usage', observedAt: RECENT, staleAfter, unit: 'percent',
         resetAt, forecastExhaustAt: exhaustAt, forecastVsReset: 'on-pace', burnRate: 99,
@@ -145,8 +146,8 @@ describe('world lane rows', () => {
       resetAt,
       forecast: 'on-pace',
       forecastText: 'meets reset',
-      exhaustFraction: 1,
-      burn: '2%/h',
+      bar: { used: 20, more: 80, unused: 0, ending: 'meets' },
+      burn: '16%/h',
     });
   });
 
@@ -169,7 +170,7 @@ describe('world lane rows', () => {
     expect(rows.find((row) => row.lane === 'grok-ultra')!.label).toBe('Grok');
     expect(rows.find((row) => row.lane === 'grok-bot')).toMatchObject({ label: 'Grok Bot', engine: 'grok', usage: '4%' });
     expect(rows.find((row) => row.lane === 'terra')).toMatchObject({ label: 'Terra', engine: 'other', usage: '1 used', remaining: '2' });
-    expect(rows.find((row) => row.lane === 'local')).toMatchObject({ label: 'Local / oMLX', usage: '8 used' });
+    expect(rows.find((row) => row.lane === 'local')).toMatchObject({ label: 'Local / oMLX', usage: '8 used', bar: { used: null, ending: 'unread', note: 'no limit recorded, so no share' } });
     expect(rows.filter((row) => row.lane === 'omlx')).toEqual([expect.objectContaining({ label: 'oMLX', usage: '7 used' })]);
     expect(rows.map((row) => row.lane).filter((lane) => !CANONICAL.includes(lane))).toEqual(['grok-bot', 'terra', 'omlx']);
   });
