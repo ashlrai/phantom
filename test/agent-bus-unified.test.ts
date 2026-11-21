@@ -420,6 +420,60 @@ describe('priority-filtered reads', () => {
   });
 });
 
+describe('kind-filtered inbox reads', () => {
+  it('narrows an inbox page to one delivery kind and composes with the other filters', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'dm one', id: 'kd-dm1' }, options);
+    await sendDirectMessage({ from: 'orion', to: 'nova', text: 'dm two', id: 'kd-dm2' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'channel post', id: 'kd-ch' }, options);
+    await sendHandoff({ from: 'atlas', to: 'nova', taskId: 'RQ-KD-1', prompt: 'take over', id: 'kd-ho' }, options);
+    // Mail addressed to the bare handle is legacy traffic.
+    expect(appendBusInbox({ id: 'kd-leg', from: 'atlas', to: 'nova', priority: 'P3', ttl: 60_000,
+      body: { kind: 'note', text: 'legacy' } }, options).status).toBe('posted');
+
+    const dms = readAgentInbox('nova', { kind: 'dm' }, options);
+    if (dms.status !== 'ok') throw new Error(`unexpected ${dms.status}`);
+    expect(dms.messages.map(m => m.envelope.id).sort()).toEqual(['kd-dm1', 'kd-dm2']);
+    expect(dms.messages.every(m => m.kind === 'dm')).toBe(true);
+
+    expect(readAgentInbox('nova', { kind: 'channel' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'kd-ch' } }] });
+    expect(readAgentInbox('nova', { kind: 'handoff' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'handoff', envelope: { id: 'kd-ho' } }] });
+    expect(readAgentInbox('nova', { kind: 'legacy' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'legacy', envelope: { id: 'kd-leg' } }] });
+
+    // The band composes with --from and --priority, and --matched counts only
+    // the rows the kind accepts.
+    const narrowed = readAgentInbox('nova', { kind: 'dm', from: 'atlas', matched: true }, options);
+    if (narrowed.status !== 'ok') throw new Error(`unexpected ${narrowed.status}`);
+    expect(narrowed.matched).toBe(1);
+    expect(narrowed.messages.map(m => m.envelope.id)).toEqual(['kd-dm1']);
+    const counted = readAgentInbox('nova', { kind: 'dm', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(2);
+    // A kind that matches nothing still scans the whole store for nextCursor.
+    const empty = readAgentInbox('nova', { kind: 'handoff', from: 'ghost' }, options);
+    expect(empty).toMatchObject({ status: 'ok', messages: [] });
+    if (empty.status !== 'ok') throw new Error(`unexpected ${empty.status}`);
+    expect(empty.nextCursor).toBeGreaterThan(0);
+    // The unfiltered page still sees everything the filter skipped.
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages).toHaveLength(5);
+  });
+
+  it('refuses a kind outside the delivery enum', () => {
+    const options = setup();
+    register(options, 'nova');
+    // 'note' is a v2 body kind, not an inbox delivery kind — the filter stays
+    // on the kind each inbox row prints.
+    expect(readAgentInbox('nova', { kind: 'note' as never }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentInbox('nova', { kind: 'work' as never }, options)).toMatchObject({ status: 'invalid' });
+  });
+});
+
 describe('envelope lookup by id', () => {
   it('resolves a retained envelope of any kind by its wire id', async () => {
     const options = setup();

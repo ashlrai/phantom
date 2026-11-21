@@ -7,7 +7,7 @@ import {
 import {
   agentWakeClaimHolderSuffix, announceWork, busBodyFallbackSummary, listBusChannels, postChannelMessage, postLabelMessage,
   readAgentChannel, readAgentInbox, readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
-  updateWorkStatus, type BusEnvelopeLookupJob, type UnifiedBusOptions, type WorkStatusInput,
+  updateWorkStatus, INBOX_KINDS, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { WORK_STATUSES, parseClaimKey, type WorkJob } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedOwnerMatcher, busWorkFeedToMatcher, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
@@ -33,7 +33,7 @@ ashlr agents bus channel list [--agent <agent>]
 ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--thread <t>] [--priority P0..P3] [--matched] [--after <cursor>] [--limit <1..100>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
-ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--priority P0..P3] [--matched] [--frame <cli>]
+ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--matched] [--frame <cli>]
 ashlr agents bus wakes [<agent>] [--since <epoch ms>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
@@ -64,7 +64,11 @@ inbox and channel read narrows to one sender — a handle, agent:<handle>,
 stable id or alias; an unresolvable ref keeps exact-label matching. --priority
 on inbox and channel read keeps only one exact P0..P3 band — the same match
 comms bus read --priority applies — so urgent mail is one filtered read, not
-a page through the backlog. --matched
+a page through the backlog. --kind on inbox keeps only one delivery kind —
+dm, channel, handoff or legacy, the same kind each inbox row prints — so an
+agent can read just its handoffs or just its direct mail in one filtered
+read; it composes with every other inbox filter and --matched counts only
+the rows it accepts. --matched
 on inbox and channel read reports matched, the true pending total across the
 whole retained store the same filters accept; messages still caps at --limit
 and nextCursor then resumes at the newest shown row, so paging never skips
@@ -251,6 +255,15 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       return value as BusPriority | undefined;
     };
+    // Read-side --kind on inbox is the delivery-kind enum: a bad value is a
+    // usage error here and an 'invalid' result inside the core read.
+    const kindArg = (): InboxKind | undefined => {
+      const value = one('--kind');
+      if (value !== undefined && !(INBOX_KINDS as readonly string[]).includes(value)) {
+        throw new UsageError('--kind must be dm, channel, handoff or legacy.');
+      }
+      return value as InboxKind | undefined;
+    };
     const [verb, sub, arg, ...extra] = p.positionals;
     const finish = (result: { status: string; reason?: string }, human: string): number => {
       const ok = !('reason' in result) || result.reason === undefined;
@@ -396,7 +409,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const agent = sub ?? self;
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
       const page = readAgentInbox(agent, { after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit'),
-        thread: one('--thread'), from: one('--from'), priority: priorityArg(), matched: p.bools.has('--matched') }, options);
+        thread: one('--thread'), from: one('--from'), priority: priorityArg(), kind: kindArg(), matched: p.bools.has('--matched') }, options);
       if (page.status !== 'ok') return finish(page, '');
       // --matched scans the whole store, so the core nextCursor is the store's
       // end — resuming there would skip unshown matches. The honest resume
