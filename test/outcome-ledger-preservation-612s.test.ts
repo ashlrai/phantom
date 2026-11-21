@@ -197,6 +197,7 @@ describe('router outcome ledger (612S preservation)', () => {
     const fold = foldRouterOutcomes('{"job":"U1","phase":"VERIFIED","pr_url":"https://github.com/o/r/pull/3","ci_first_pass":"yes","cost_usd":-1}\n');
     expect(fold.outcomes).toEqual([{
       schema: 'router.outcome.v1', job_id: 'U1', lane: null, model: null, tier: null, work_class: null,
+      lane_hint: null, lane_override: null,
       merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
       tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
       tokens_cache_read: null, tokens_cache_write: null,
@@ -243,6 +244,53 @@ describe('router outcome ledger (612S preservation)', () => {
     for (const id of ['Q3', 'Q4', 'Q5']) expect(byId.get(id)?.queue_wait_s).toBeNull();
     expect(byId.has('RQ-BATCH-q6')).toBe(false);
     expect(byId.get('Q7')).toMatchObject({ merged: false, queue_wait_s: 30 });
+  });
+
+  it('folds the dispatch claim lane override, newest claim stands', () => {
+    const fold = foldRouterOutcomes([
+      // O1: solo claim that left its hinted lane — the market's recorded pair.
+      '{"job":"O1","event":"claim","lane":"claude","lane_hint":"codex-personal","lane_override":"preferred_lane_fallback","lane_hint_blocked_by":["saturated"]}',
+      '{"job":"O1","phase":"MERGED"}',
+      // O2: override on a first claim, then a re-claim that ran on its hint
+      // clears it — the outcome describes the final dispatch.
+      '{"job":"O2","event":"claim","lane":"devin","lane_hint":"claude","lane_override":"resource_fit"}',
+      '{"job":"O2","event":"claim","lane":"claude"}',
+      '{"job":"O2","phase":"MERGED"}',
+      // O3: batch member whose session lane differed from its own.
+      '{"job":"O3","event":"batch_claim","batch":"RQ-BATCH-o3","lane":"claude","lane_hint":"devin","lane_override":"batch_session"}',
+      '{"job":"O3","event":"task_outcome","outcome":"done"}',
+      // O4: a claim row carrying a hint but no override reason records no
+      // usable pair — the fields stay null like any on-hint claim.
+      '{"job":"O4","event":"batch_claim","batch":"RQ-BATCH-o4","lane":"devin","lane_hint":"devin"}',
+      // O5: override reason without a recorded hint still joins, hint stays null.
+      '{"job":"O5","event":"claim","lane":"alpha","lane_override":"unknown_preference"}',
+      // O6: malformed reason or hint is skipped, never recorded raw — and a
+      // malformed newest claim preserves the earlier well-formed pair.
+      '{"job":"O6","event":"claim","lane":"alpha","lane_hint":"beta","lane_override":"resource_fit"}',
+      '{"job":"O6","event":"claim","lane":"gamma","lane_hint":"beta","lane_override":"NOT_A_CODE"}',
+      '{"job":"O6","event":"claim","lane":"delta","lane_hint":"bad lane!","lane_override":"resource_fit"}',
+      // O7: advisory failover receipts carry the same field names under a
+      // different vocabulary and never join.
+      '{"job":"O7","event":"failover","lane":"beta","lane_hint":"alpha","lane_override":"failover_quota","failure":"quota"}',
+      '{"job":"O7","phase":"MERGED"}',
+      // O8: non-claim rows carrying the fields never mint or clear the pair.
+      '{"job":"O8","event":"launch","lane":"alpha","lane_hint":"beta","lane_override":"resource_fit"}',
+      '{"job":"O8","event":"finish","lane_hint":"beta","lane_override":"resource_fit"}',
+      '{"job":"O8","phase":"MERGED"}',
+      // O9: claim rows under the type/kind dialect join like the phase reads.
+      '{"job":"O9","type":"claim","lane":"alpha","lane_hint":"beta","lane_override":"resource_fit"}',
+      '{"job":"O9","phase":"CLOSED"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('O1')).toMatchObject({ lane: 'claude', lane_hint: 'codex-personal', lane_override: 'preferred_lane_fallback', merged: true });
+    expect(byId.get('O2')).toMatchObject({ lane: 'claude', lane_hint: null, lane_override: null });
+    expect(byId.get('O3')).toMatchObject({ lane: 'claude', lane_hint: 'devin', lane_override: 'batch_session', task_outcome: 'done' });
+    expect(byId.get('O4')).toMatchObject({ lane: 'devin', lane_hint: null, lane_override: null });
+    expect(byId.get('O5')).toMatchObject({ lane_hint: null, lane_override: 'unknown_preference' });
+    expect(byId.get('O6')).toMatchObject({ lane: 'delta', lane_hint: 'beta', lane_override: 'resource_fit' });
+    expect(byId.get('O7')).toMatchObject({ lane: 'beta', lane_hint: null, lane_override: null });
+    expect(byId.get('O8')).toMatchObject({ lane_hint: null, lane_override: null });
+    expect(byId.get('O9')).toMatchObject({ lane_hint: 'beta', lane_override: 'resource_fit', merged: false });
   });
 
   it('folds revert evidence from every recorded dialect, sticky-true', () => {

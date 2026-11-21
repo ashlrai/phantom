@@ -59,6 +59,31 @@ export interface RouterOutcome {
    */
   work_class: string | null;
   /**
+   * The dispatch claim's recorded lane override — the pair a `claim` or
+   * `batch_claim` row writes when the launch left its hinted lane.
+   * `lane_hint` is the preferred lane the claim left (the market's
+   * `preferred_lane` on solo claims, the member's own lane on
+   * `batch_claim` rows) and `lane_override` the recorded reason code —
+   * dispatchd writes the work market's closed `resource_fit` /
+   * `unknown_preference` / `preferred_lane_fallback` vocabulary on solo
+   * claims and the literal `batch_session` when a batch member moved
+   * lanes with its session (contrib/mac/dispatchd.py, docs/QUEUE.md).
+   * The newest claim row stands: a later claim that ran on its hint —
+   * or a batch member whose session lane matched its own — clears an
+   * earlier override, and rows of every other event never touch the
+   * pair. `lane_override` joins only in the bounded lowercase code
+   * shape the fleet unfed claims fold accepts and `lane_hint` only in
+   * the bounded lane shape; a malformed hint or reason is skipped,
+   * never recorded raw, and an override reason without a recorded hint
+   * still joins with `lane_hint` null. Advisory `failover` receipts
+   * carry the same field names under a different vocabulary
+   * (`failover_*`, hint = the failed lane) and never join — they are
+   * not claim routing decisions. Both stay null when no claim row
+   * recorded an override.
+   */
+  lane_hint: string | null;
+  lane_override: string | null;
+  /**
    * true on explicit MERGED merge evidence — a MERGED terminal phase across
    * phase|state|outcome|status|result|conclusion, or a 'merged' event name
    * when no phase field resolves — or merged:true; false on CLOSED evidence
@@ -402,6 +427,27 @@ const taskOutcome = (r: Row): string | null => {
 const QUEUE_ARRIVAL_EVENTS: ReadonlySet<string> = new Set(['enqueue', 'enqueued', 'queued']);
 const QUEUE_DISPATCH_EVENTS: ReadonlySet<string> = new Set(['claim', 'batch_claim', 'launch']);
 
+/**
+ * The claim events that carry the dispatch routing decision — `claim`
+ * for solo launches, `batch_claim` for batch members. `launch` rows
+ * re-state the lane but record no override pair, and advisory `failover`
+ * receipts write the same field names under a different vocabulary
+ * (`failover_*` codes, hint = the failed lane) — neither is a claim
+ * routing decision, so both stay out.
+ */
+const CLAIM_EVENTS: ReadonlySet<string> = new Set(['claim', 'batch_claim']);
+/**
+ * The recorded lane-override shapes, the same bounds the fleet unfed
+ * claims fold applies to this field pair: the reason joins only as a
+ * lowercase bounded code (the market's resource_fit /
+ * unknown_preference / preferred_lane_fallback codes and the literal
+ * batch_session all fit; foreign bounded codes join as written) and the
+ * hint only as a bounded lane id. Anything else is skipped, never
+ * recorded raw.
+ */
+const LANE_OVERRIDE_CODE = /^[a-z][a-z0-9_]{0,63}$/;
+const LANE_OVERRIDE_HINT = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
+
 // Revert evidence uses the same field vocabulary the fleet ledger readers
 // already honor: event names (event/type/kind), terminal state fields
 // (phase/state/outcome/status/result/conclusion) and the reverted_at /
@@ -611,6 +657,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     if (j.startsWith(BATCH_SESSION_PREFIX)) { sessionRows++; continue; }
     const o: RouterOutcome = outcomes.get(j) ?? {
       schema: 'router.outcome.v1', job_id: j, lane: null, model: null, tier: null, work_class: null,
+      lane_hint: null, lane_override: null,
       merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
       tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
       tokens_cache_read: null, tokens_cache_write: null,
@@ -624,6 +671,27 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     o.model = str(r, 'model') ?? o.model;
     o.tier = str(r, 'tier') ?? o.tier;
     o.work_class = str(r, 'work_class') ?? o.work_class;
+    // The claim rows are the job's routing decisions: the newest one
+    // stands, so a later claim that ran on its hint clears an earlier
+    // override, and every non-claim row leaves the pair alone. A
+    // malformed reason or hint is skipped — the pair cannot be named
+    // honestly — while an override reason without a recorded hint still
+    // joins with lane_hint null, the same tolerance the unfed claims
+    // fold applies.
+    const claimEvent = str(r, ...EVENT_NAME_KEYS)?.toLowerCase();
+    if (claimEvent !== undefined && CLAIM_EVENTS.has(claimEvent)) {
+      const reason = str(r, 'lane_override');
+      if (reason === null) {
+        o.lane_hint = null;
+        o.lane_override = null;
+      } else if (LANE_OVERRIDE_CODE.test(reason)) {
+        const hint = str(r, 'lane_hint');
+        if (hint === null || LANE_OVERRIDE_HINT.test(hint)) {
+          o.lane_override = reason;
+          o.lane_hint = hint;
+        }
+      }
+    }
     const state = mergePhase(r);
     const merged = state === 'MERGED' ? true : state === 'CLOSED' ? false : typeof r['merged'] === 'boolean' ? r['merged'] : null;
     if (merged !== null) {

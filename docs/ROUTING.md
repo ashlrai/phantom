@@ -330,7 +330,14 @@ fields only, `null` when unrecorded), the batch member's recorded
 `task_outcome` word (a `task_outcome` event row's `outcome` in
 dispatchd's closed `batcher.OUTCOMES` vocabulary
 `done`/`skipped`/`failed`/`deferred`/`unreported` — the member's finish
-boundary, since batch members get no per-member finish row) and the
+boundary, since batch members get no per-member finish row), the
+dispatch claim's recorded lane override (`lane_hint`/`lane_override` —
+the pair a `claim`/`batch_claim` row writes when the launch left its
+hinted lane: the preferred lane left and the recorded reason, the work
+market's `resource_fit`/`unknown_preference`/`preferred_lane_fallback`
+codes or `batch_session` for a member that moved lanes with its
+session; the newest claim stands, so a later on-hint claim clears an
+earlier override, and advisory `failover` receipts never join) and the
 advisory `passk` join from
 `eval.lane-scores.v1`. Batch sessions fold per member like the sibling
 fleet readers: `RQ-BATCH-*` session rows — the bundle's launch, finish
@@ -431,8 +438,14 @@ job's queue-admission wait from its arrival stamp to first dispatch —
 the same boundaries job-latency's queue_wait phase pairs), mean recorded
 `tokens_total` (token
 usage), mean recorded `diff_files`/`diff_lines` (change size), the count
-of outcomes carrying a `usage_missing` capture-gap label, and mean
-advisory `passk` — every
+of outcomes carrying a `usage_missing` capture-gap label, mean
+advisory `passk`, and the dispatch lane-override tally —
+`lane_overrides_known` counts the known-cohort outcomes whose newest
+claim left its recorded lane hint and `lane_override_reasons` breaks
+the count down by recorded reason (`resource_fit`,
+`preferred_lane_fallback`, `unknown_preference`, `batch_session`), so a
+lane whose merge rate rests partly on rerouted fallback work shows it —
+every
 figure with its own coverage count, and `null` (never zero) when the ledger
 recorded nothing for that signal. The report also tallies usage
 provenance across every folded outcome — known, unknown and

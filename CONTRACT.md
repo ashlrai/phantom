@@ -569,7 +569,24 @@ queue_wait phase and reward-feed's dispatch set pair). A requeued job's
 later arrivals never move its first-dispatch wait; a job with no recorded
 arrival before its first dispatch — a direct dispatch or a batch member
 claimed only through its session — stays `null`, unknown, never zero and
-never another phase's duration. `tokens_total` is the finish row's recorded usage total
+never another phase's duration. `lane_hint`/`lane_override` are the
+dispatch claim's recorded lane override: a `claim` or `batch_claim` row
+writes the pair when the launch left its hinted lane — `lane_hint` the
+preferred lane left (the market's `preferred_lane` on solo claims, the
+member's own lane on `batch_claim` rows) and `lane_override` the
+recorded reason in the work market's `resource_fit` /
+`unknown_preference` / `preferred_lane_fallback` vocabulary or the
+literal `batch_session` for a member that moved lanes with its session.
+The newest claim row stands — a later claim that ran on its hint clears
+an earlier override — and rows of every other event never touch the
+pair. `lane_override` joins only in the bounded lowercase code shape and
+`lane_hint` only in the bounded lane shape the fleet unfed claims fold
+accepts; a malformed value is skipped, never recorded raw, and an
+override reason without a recorded hint joins with `lane_hint` null.
+Advisory `failover` receipts carry the same field names under a
+different vocabulary (`failover_*` codes, hint = the failed lane) and
+never join. Both stay `null` when no claim row recorded an override.
+`tokens_total` is the finish row's recorded usage total
 (`tokens_total`/`tokensTotal`): newest explicit row wins like `cost_usd`
 and `wall_s`, and it
 stays `null` when no jobs row recorded one — never derived from cost or

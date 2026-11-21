@@ -350,6 +350,8 @@ describe('outcome-quality evidence', () => {
       diff_lines_known: 0,
       diff_lines_mean: null,
       usage_missing_known: 0,
+      lane_overrides_known: 0,
+      lane_override_reasons: null,
     });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).toContain('evidence ci_first_pass=0.8(10)');
@@ -389,6 +391,36 @@ describe('outcome-quality evidence', () => {
     expect(out).toContain('queue_wait_s=105(20)');
   });
 
+  it('folds dispatch lane overrides into group evidence with reason tallies', async () => {
+    // Each overridden job claims off its hint before its merge verdict; the
+    // tally counts known-cohort outcomes only, like every other signal.
+    const claim = (job: string, lane: string, hint: string, reason: string): object =>
+      ({ job, event: 'claim', lane, lane_hint: hint, lane_override: reason });
+    const jobs = Array.from({ length: 20 }, (_, i) => `synthetic-ov-${i}`);
+    writeLedger([
+      ...jobs.flatMap((job, i) => [
+        ...(i < 6 ? [claim(job, 'alpha', i < 4 ? 'codex-personal' : 'devin', i < 4 ? 'resource_fit' : 'batch_session')] : []),
+        event(job, 'alpha', 'code', 'MERGED'),
+      ]),
+      // An unknown-cohort override stays out of the known group's tally.
+      claim('synthetic-ov-unq', 'alpha', 'devin', 'batch_session'),
+      event('synthetic-ov-unq', 'alpha', 'code', 'VERIFIED'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    const p = report.proposals[0];
+    expect(p).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 20 });
+    expect(p.evidence.lane_overrides_known).toBe(6);
+    expect(p.evidence.lane_override_reasons).toEqual([
+      { reason: 'resource_fit', jobs: 4 },
+      { reason: 'batch_session', jobs: 2 },
+    ]);
+    // Advisory context only: the held-merge weight math never reads it.
+    expect(p.proposed_weight).toBe(0.6);
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('lane_overrides=6(resource_fit:4,batch_session:2)');
+  });
+
   it('keeps unrecorded signals null with zero coverage, never zero', async () => {
     writeLedger(merged(20));
     const { report } = await runJson();
@@ -405,6 +437,7 @@ describe('outcome-quality evidence', () => {
       diff_files_known: 0, diff_files_mean: null,
       diff_lines_known: 0, diff_lines_mean: null,
       usage_missing_known: 0,
+      lane_overrides_known: 0, lane_override_reasons: null,
     });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).not.toContain('ci_first_pass=');
