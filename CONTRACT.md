@@ -2172,13 +2172,15 @@ handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or
 `available`, `agent` the resolved handle or null, and an unknown ref or
 unreadable registry answers `unknown-agent`/`unavailable`, never an empty
-list), `readAgentChannel(name, {topic, from, thread, priority, after, limit}, options?)`
+list), `readAgentChannel(name, {topic, from, thread, priority, matched, after, limit}, options?)`
 (one oldest-first page of a registry channel's live posts addressed to
 `group:<name>:*` — or one topic — with `group.presence` heartbeats
 excluded; `from` filters by sender through identity-label matching,
 `thread` keeps only `note`/`context` bodies carrying that v2 thread label,
-and `priority` keeps only posts stamped with that exact P0..P3 band,
-`nextCursor` covers every scanned row, a missing registry answers
+and `priority` keeps only posts stamped with that exact P0..P3 band;
+`matched: true` scans the whole retained store and returns `matched`, the
+count of every filter-matched post, while `messages` still caps at
+`limit`; `nextCursor` covers every scanned row, a missing registry answers
 `unknown-channel`, and an unreadable registry or store answers
 `unavailable`/`retryable`, never an empty page passed off as history),
 `readBusEnvelopeById(id, options?)` (one retained envelope by its wire id —

@@ -1288,11 +1288,21 @@ export interface ChannelReadOptions {
    * same match `comms bus read --priority` applies.
    */
   priority?: BusPriority;
+  /**
+   * Ask for the true pending total: the scan then covers the whole retained
+   * store instead of stopping at `limit`, counting every post the same
+   * filters accept while `messages` still returns only the first `limit`.
+   */
+  matched?: boolean;
   after?: number;
   limit?: number;
 }
 export type ChannelReadPage =
-  | { status: 'ok'; channel: string; messages: ChannelReadMessage[]; nextCursor: number }
+  | { status: 'ok'; channel: string; messages: ChannelReadMessage[]; nextCursor: number;
+      /** Every filter-matched post across the whole scan, present only when
+       * the read asked for it (`page.matched`); `messages` still caps at
+       * `limit`. */
+      matched?: number }
   | { status: 'invalid' | 'unknown-channel' | 'unavailable' | 'retryable'; reason: string };
 
 /**
@@ -1306,11 +1316,16 @@ export type ChannelReadPage =
  * `note`/`context` bodies carrying that v2 thread label, and `priority`
  * narrows to posts stamped with that exact P0..P3 band. `nextCursor`
  * covers every scanned row, so callers persist it only after handling the
- * page; a missing registry means no channel exists, an unreadable one or an
- * unreadable store is reported, never an empty page passed off as history.
+ * page; `page.matched` asks for the true pending total the way
+ * `readAgentInbox` does — the scan then covers the whole retained store,
+ * counting every post the same filters accept while `messages` still caps
+ * at `limit`. A missing registry means no channel exists, an unreadable
+ * one or an unreadable store is reported, never an empty page passed off
+ * as history.
  */
 export function readAgentChannel(name: string, page: ChannelReadOptions = {}, options: UnifiedBusOptions = {}): ChannelReadPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
+  const countMatched = page.matched === true;
   if (typeof name !== 'string' || !agentChannelNameSchema.safeParse(name).success) {
     return { status: 'invalid', reason: 'Invalid channel name.' };
   }
@@ -1341,6 +1356,7 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
     fromMatch = agentAddressMatcher(labelIdentityOf(read.registry), page.from);
   }
   const messages: ChannelReadMessage[] = [];
+  let matched = 0;
   let cursor = after;
   scan: for (let index = 0; index < MAX_PAGES; index += 1) {
     const result = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ, { root: options.root, now: options.now });
@@ -1350,21 +1366,26 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
     }
     for (const row of result.messages) {
       const envelope = row.envelope, body = envelope.body;
-      const presence = isGroupPresenceBody(body);
-      if (!presence && envelope.to.startsWith(prefix) && (exact === undefined || envelope.to === exact) &&
-          (fromMatch === undefined || fromMatch(envelope.from)) &&
-          (thread === undefined || busBodyThread(body) === thread) &&
-          (priority === undefined || envelope.priority === priority)) {
-        messages.push({ cursor: row.cursor, receivedAt: row.receivedAt, priority: envelope.priority,
-          topic: envelope.to.slice(prefix.length),
-          fromAgent: resolveAgent(read.registry, envelope.from)?.handle ?? null, envelope });
+      const accepted = !isGroupPresenceBody(body) && envelope.to.startsWith(prefix) &&
+        (exact === undefined || envelope.to === exact) &&
+        (fromMatch === undefined || fromMatch(envelope.from)) &&
+        (thread === undefined || busBodyThread(body) === thread) &&
+        (priority === undefined || envelope.priority === priority);
+      if (accepted) {
+        matched += 1;
+        if (!countMatched || messages.length < limit) {
+          messages.push({ cursor: row.cursor, receivedAt: row.receivedAt, priority: envelope.priority,
+            topic: envelope.to.slice(prefix.length),
+            fromAgent: resolveAgent(read.registry, envelope.from)?.handle ?? null, envelope });
+        }
       }
-      if (messages.length === limit) { cursor = row.cursor; break scan; }
+      if (!countMatched && messages.length === limit) { cursor = row.cursor; break scan; }
     }
     if (result.nextCursor <= cursor) break;
     cursor = result.nextCursor;
   }
-  return { status: 'ok', channel: name, messages, nextCursor: cursor };
+  return { status: 'ok', channel: name, messages, nextCursor: cursor,
+    ...(countMatched ? { matched } : {}) };
 }
 
 export interface BusEnvelopeLookupMessage {

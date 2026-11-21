@@ -198,16 +198,22 @@ resolved identity belongs to. A missing registry is a verified-empty list
 (`source: missing`), an unreadable one is `unavailable` — never an empty
 list — and membership is a routing label set (who may post), not proof of
 presence or authority. `phm agents bus channel read <name> [--topic <t>]
-[--from <agent>] [--thread <t>] [--priority P0..P3] [--after <cursor>] [--limit <n>]` pages the room's posts
+[--from <agent>] [--thread <t>] [--priority P0..P3] [--matched]
+[--after <cursor>] [--limit <n>]` pages the room's posts
 oldest-first — every live envelope addressed to `group:<name>:*` (or one
 `--topic`), minus `group.presence` heartbeats, which are observations with
 their own read, not messages; `--from` narrows by sender through the same
 identity-label matching `comms bus read` uses, `--thread` narrows to
 `note`/`context` bodies carrying that v2 thread label, and `--priority`
 keeps only posts stamped with that exact band — the same match
-`comms bus read --priority` applies. Reading needs no identity
-and no membership; an unknown channel is `unknown-channel`, an unreadable
-registry or store is reported — never an empty page passed off as history.
+`comms bus read --priority` applies. `--matched` reports `matched`, the
+true pending total — every post the same filters accept across the whole
+retained store — while `messages` still caps at `--limit`; because that
+read scans to the store's end, `nextCursor` then resumes at the newest
+shown row's cursor, the same rule `inbox --matched` applies. Reading needs
+no identity and no membership; an unknown channel is `unknown-channel`, an
+unreadable registry or store is reported — never an empty page passed off
+as history.
 Because channel addresses are bus-group addresses, existing `subscribeGroup`
 readers see the same posts.
 

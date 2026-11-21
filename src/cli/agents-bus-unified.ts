@@ -30,7 +30,7 @@ ashlr agents bus channel create <name> [--from <agent>] [--member <agent>]...
 ashlr agents bus channel join|leave <name> [--agent <agent>]
 ashlr agents bus channel post <name> --text <text> [--from <agent>] [--topic <t>] [--ref <ref>]... [--priority ..] [--wake|--no-wake]
 ashlr agents bus channel list [--agent <agent>]
-ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--thread <t>] [--priority P0..P3] [--after <cursor>] [--limit <1..100>]
+ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--thread <t>] [--priority P0..P3] [--matched] [--after <cursor>] [--limit <1..100>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--priority P0..P3] [--matched] [--frame <cli>]
@@ -65,9 +65,10 @@ stable id or alias; an unresolvable ref keeps exact-label matching. --priority
 on inbox and channel read keeps only one exact P0..P3 band — the same match
 comms bus read --priority applies — so urgent mail is one filtered read, not
 a page through the backlog. --matched
-on inbox reports matched, the true pending total across the whole retained
-store the same filters accept; messages still caps at --limit and nextCursor
-then resumes at the newest shown row, so paging never skips an unshown match.
+on inbox and channel read reports matched, the true pending total across the
+whole retained store the same filters accept; messages still caps at --limit
+and nextCursor then resumes at the newest shown row, so paging never skips
+an unshown match.
 show
 resolves one retained envelope by the wire id wake hints, work mine items
 and claim operations cite; an expired id reports not-found, and the read
@@ -336,11 +337,19 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       if (sub === 'read') {
         const result = readAgentChannel(arg, { topic: one('--topic'), from: one('--from'), thread: one('--thread'),
-          priority: priorityArg(), after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit') }, options);
+          priority: priorityArg(), matched: p.bools.has('--matched'),
+          after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit') }, options);
         if (result.status !== 'ok') return finish(result, '');
-        out(json ? JSON.stringify(result) : [
-          ...result.messages.map(m => `${m.cursor} ${m.priority} #${result.channel}:${m.topic} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}`),
-          `nextCursor ${result.nextCursor}`,
+        // --matched scans the whole store, so the core nextCursor is the store's
+        // end — resuming there would skip unshown matches. The honest resume
+        // point is the newest shown row's cursor (the same rule inbox applies).
+        const nextCursor = result.matched !== undefined && result.matched > result.messages.length
+          ? Math.max(...result.messages.map(m => m.cursor)) : result.nextCursor;
+        const shown = { ...result, nextCursor };
+        out(json ? JSON.stringify(shown) : [
+          ...shown.messages.map(m => `${m.cursor} ${m.priority} #${shown.channel}:${m.topic} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}`),
+          ...(result.matched === undefined ? [] : [`matched ${result.matched}`]),
+          `nextCursor ${nextCursor}`,
         ].join('\n'));
         return 0;
       }
