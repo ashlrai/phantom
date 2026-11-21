@@ -229,6 +229,19 @@ stood then.
 Claude's per-model weekly windows sit under its card. A credits pool shows its
 balance and no bar. The line under the headline names the next reset, and the
 switch narrows the list to Behind, On pace or Unknown (arrow keys move it).
+Above the switch, **Runway ahead** puts every plan pool on one line of time
+from the reading to the furthest reset, soonest reset first: a line to the
+pool's reset with a ring at it, the countdown and local time, and what the
+view projects in words. A pool that runs empty first stops where
+`projectedEmptyAt` says and the wait from there to its reset is hatched
+("empty in 10 h, then dry 2 d 2 h until reset"), amber only where the pool's
+own verdict is slow down or fully used. A pool with no usage or burn reading
+is dashed and says so, a held lane says held, and neither is projected.
+Claude's per-model windows follow their pool with their reset and usage only.
+Credit balances, lanes without a window and resets that have passed are named
+under the line with the reason. A pool's name is a button: it brings that
+pool's card into view and puts the keyboard on it, showing it again if the
+switch had hidden it. With no reset ahead the section is not drawn.
 Every value is read from `pools.v1`; one it does not hold reads unknown, never
 zero. The same rows and the same stored readings for agents:
 
