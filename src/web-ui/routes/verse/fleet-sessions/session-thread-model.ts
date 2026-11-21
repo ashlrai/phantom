@@ -7,6 +7,7 @@
  * core/fleet/session-reply.ts); a body without one is read
  * with the same rule, so an older server still gets a reply box.
  */
+import { isJobControlAction, type JobControlAction } from '../../../../core/fleet/job-control-types.js';
 import { sessionReply, type SessionThreadReply } from '../../../../core/fleet/session-reply.js';
 import { ApiError, apiGet, readFailureReason } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
@@ -38,15 +39,19 @@ export type ReplyRoute =
   | { to: 'leader'; hint: string }
   | { to: 'job'; job: string; hint: string }
   | { to: 'none'; hint: string };
+/** The pause, resume, stop or move that stands for the session's job, as the control file records it. */
+export interface StandingControl { action: JobControlAction; lane: string | null; status: 'requested' | 'applied' }
 export interface SessionThread {
   generatedAt: string;
   session: ThreadSession;
   summary: string[];
   messages: ThreadMessage[];
   /** `output` (the session's own log lines) is absent when the server that answered does not read it. */
-  sources: { activity: ThreadSource; bus: ThreadSource; owner: ThreadSource; replies: ThreadSource; orders: ThreadSource; output?: ThreadSource };
+  sources: { activity: ThreadSource; bus: ThreadSource; owner: ThreadSource; replies: ThreadSource; orders: ThreadSource; output?: ThreadSource; controls?: ThreadSource };
   gaps: string[];
   reply: ReplyRoute;
+  /** Null when no request stands, and for a server that does not read the control file. */
+  control: StandingControl | null;
 }
 
 type Obj = Record<string, unknown>;
@@ -112,9 +117,23 @@ export function narrowSessionThread(raw: unknown): SessionThread | null {
     generatedAt: time(raw.generatedAt) ?? new Date(0).toISOString(), session,
     summary: lines(raw.summary), messages,
     sources: { activity: source('activity'), bus: source('bus'), owner: source('owner'), replies: source('replies'), orders: source('orders'),
-      ...(sources.output === undefined ? {} : { output: source('output') }) },
-    gaps: lines(raw.gaps), reply: replyRoute(session, raw.reply),
+      ...(sources.output === undefined ? {} : { output: source('output') }), ...(sources.controls === undefined ? {} : { controls: source('controls') }) },
+    gaps: lines(raw.gaps), reply: replyRoute(session, raw.reply), control: standing(raw.control),
   };
+}
+
+function standing(raw: unknown): StandingControl | null {
+  if (!object(raw) || !isJobControlAction(raw.action) || (raw.status !== 'requested' && raw.status !== 'applied')) return null;
+  return { action: raw.action, lane: text(raw.lane, 40), status: raw.status };
+}
+
+/**
+ * The job Pause, Stop and Move can reach from this conversation, or null: a worker with a job that is running,
+ * quiet or of unknown state (the server refuses what it cannot do). A finished session has nothing to steer.
+ */
+export function steerable(thread: SessionThread): string | null {
+  const { kind, jobId, state } = thread.session;
+  return kind === 'worker' && jobId !== null && (state === 'running' || state === 'quiet' || state === 'unknown') ? jobId : null;
 }
 
 /** Why no thread can be shown. `gone` is the server saying the list no longer holds the session. */
@@ -165,5 +184,6 @@ export function sourcesLine(thread: SessionThread): string {
   // Only a session with a job has a log to write to, and only a server that reads it says so.
   return [word('Activity', sources.activity), ...(sources.output !== undefined && session.jobId !== null ? [word('output', sources.output)] : []), word('bus messages', sources.bus),
     ...(session.kind === 'subagent' ? [] : [word('your messages', sources.owner)]),
-    ...(leader ? [word('replies to you', sources.replies)] : []), word('routing', sources.orders)].join(' · ');
+    ...(leader ? [word('replies to you', sources.replies)] : []), word('routing', sources.orders),
+    ...(sources.controls !== undefined && session.jobId !== null ? [word('control requests', sources.controls)] : [])].join(' · ');
 }

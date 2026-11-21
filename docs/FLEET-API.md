@@ -745,7 +745,7 @@ messages Mason wrote in the Leader inbox and, for the leader,
   it wrote to its log, then its last
   message. Each has `key`, `kind`
   (`order`, `routing`, `brief`, `step`, `commands`, `files`, `notes`, `bus`,
-  `owner`, `reply`, `output`, `latest`),
+  `owner`, `reply`, `control`, `output`, `latest`),
   `side` (`session` when it speaks, `other` when someone speaks to it,
   `record` for a recorded step), `label`, `at` (null when the record has no
   time), `text` and `format` (`plain`, `mono` or `markdown`).
@@ -782,8 +782,20 @@ messages Mason wrote in the Leader inbox and, for the leader,
   the served message is outside the inbox entries read, the `order` names
   its time and says its text was not read. The server reads the trace at
   most once every 15 seconds.
+- Control requests (`control`) come from the job control file that
+  `phm job pause|resume|stop|move` and
+  `POST /api/verse/fleet/runs/control` write. A thread for a session with a
+  job shows the newest 5 requests for that job, before its output, each as a
+  record: the label says what was asked and what became of it ("Pause
+  requested", "Paused", "Move to codex refused"), `at` is when it was
+  recorded, and the text names the surface that asked (`cli`, `desktop`,
+  `mobile`) and either that the dispatcher has not applied it yet, that it
+  is done, or the refusal's reason. A request reads as applied only when
+  the file holds that answer. `sources.controls` is `none` when the file
+  holds nothing for the job and `unavailable`, with a line in `gaps`, when
+  it could not be read.
 - `sources`: `sessions` (`available` or `unavailable`) and `activity`, `bus`,
-  `owner`, `replies`, `orders` (`available`, `none` when the read answered with nothing for this
+  `owner`, `replies`, `orders`, `output`, `controls` (`available`, `none` when the read answered with nothing for this
   session, or `unavailable`). `gaps[]` says in plain words what is missing.
 - `reply`: where a message written to this session goes, so every client
   aims it the same way. `to` is `leader` (the Leader inbox as it is), `job`
@@ -794,6 +806,12 @@ messages Mason wrote in the Leader inbox and, for the leader,
   finished session, a helper without a job and an unknown id get `none`. No
   route writes to a worker directly: the inbox belongs to the leader, and
   the write is `POST /api/verse/leader/inbox`.
+- `control`: the request that stands for the session's job, which is the
+  newest one not refused: `action` (`pause`, `resume`, `stop`, `move`),
+  `lane` (the target of a move, otherwise null), `status` (`requested` or
+  `applied`) and `at`. Null when none stands or the file was not read. The
+  summary says the same in one line. A client uses it to offer Resume in
+  place of Pause.
 
 Each read fails on its own, so a thread with an unreadable bus still shows the
 rest. The route answers 404 for an id the list does not hold (finished

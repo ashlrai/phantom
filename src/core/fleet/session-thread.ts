@@ -9,12 +9,15 @@
  * bus (`agent-messages.v1`), what Mason wrote from the Leader inbox
  * (`MASON-INBOX.md`), the leader's replies from `leader.replies.v1`, which
  * jobs serve which of Mason's messages from the order trace (`readOrderTrace`),
- * and what the session itself wrote from the end of its job log (`scanJobLog`).
+ * what the session itself wrote from the end of its job log (`scanJobLog`),
+ * and the pause, resume, stop and move requests made of its job from the
+ * control file (`readJobControlLedger`).
  * The summary is assembled from those records, never written by a model, and a
  * fact no record holds reads "unknown". The reader lives in
  * session-thread-read.ts.
  */
 import type { AgentMessage, AgentMessages } from './agent-messages.js';
+import { jobControlRecordLabel, type JobControlAction, type JobControlLedgerRow } from './job-control-types.js';
 import { flatTree, sessionAge, spoke, type LiveSessionRow, type LiveSessionsV1 } from './live-sessions.js';
 import type { InboxEntry } from './mason-inbox.js';
 import { replyTime, type LeaderRepliesV1 } from './mason-outbox.js';
@@ -37,6 +40,8 @@ export const THREAD_OWNER_SHOWN = 10, THREAD_OWNER_WINDOW = 200;
 export const THREAD_ORDERS_SHOWN = 3, THREAD_ROUTED_SHOWN = 8;
 /** The newest lines of its own log a thread shows, and the longest one of them. */
 export const THREAD_OUTPUT_LINES = 12, THREAD_OUTPUT_LINE_CHARS = 240;
+/** The newest pause, resume, stop and move requests a thread shows. */
+export const THREAD_CONTROLS_SHOWN = 5;
 
 /** `quiet` is a running session with no output for the list's quiet window. */
 export type SessionThreadState = 'quiet' | SessionState;
@@ -44,14 +49,15 @@ export type SessionThreadSource = 'available' | 'none' | 'unavailable';
 
 /** Key order is the JSON contract. */
 export interface SessionThreadMessage {
-  /** Stable inside one thread: `order:<id>`, `routing:<id>`, `brief`, `step:<n>`, `commands`, `files`, `notes`, `bus:<id>`, `owner:<id>`, `reply:<n>`, `output`, `latest`. */
+  /** Stable inside one thread: `order:<id>`, `routing:<id>`, `brief`, `step:<n>`, `commands`, `files`, `notes`, `bus:<id>`, `owner:<id>`, `reply:<n>`, `control:<requestId>`, `output`, `latest`. */
   key: string;
   /**
    * `owner` is a message Mason wrote in the Leader inbox: any of them for the leader, the ones aimed `@<job>` for a worker.
    * `order` is the message of Mason's a worker serves, and `routing` lists the jobs serving one message with each job's lane and state.
    * `output` is what the session wrote: the newest lines of its job log, one per line, already redacted.
+   * `control` is a pause, resume, stop or move asked of the session's job, with what became of it.
    */
-  kind: 'order' | 'routing' | 'brief' | 'step' | 'commands' | 'files' | 'notes' | 'bus' | 'owner' | 'reply' | 'output' | 'latest';
+  kind: 'order' | 'routing' | 'brief' | 'step' | 'commands' | 'files' | 'notes' | 'bus' | 'owner' | 'reply' | 'control' | 'output' | 'latest';
   /** `session` is this session speaking, `other` is someone speaking to it, `record` is a recorded step. */
   side: 'session' | 'other' | 'record';
   label: string;
@@ -77,6 +83,8 @@ export interface SessionThreadSession {
   computer: string;
   helpers: { below: number; running: number; failed: number };
 }
+/** The request that stands for a session's job: the newest one the dispatcher did not turn down. */
+export interface SessionThreadControl { action: JobControlAction; lane: string | null; status: 'requested' | 'applied'; at: string }
 export interface SessionThreadV1 {
   schema: typeof SESSION_THREAD_SCHEMA;
   generatedAt: string;
@@ -87,17 +95,19 @@ export interface SessionThreadV1 {
   summary: string[];
   /**
    * The conversation in reading order: for a worker the message of Mason's it serves and that message's routing, then brief,
-   * recorded steps, commands, changed files, notes, bus messages, Mason's messages, leader replies, the newest lines of its log, the
+   * recorded steps, commands, changed files, notes, bus messages, Mason's messages, leader replies, control requests, the newest lines of its log, the
    * latest line (left out when the log lines already end with it). For the leader,
    * Mason's messages and the replies are interleaved by time when every one is dated, and a routing line follows each routed message.
    */
   messages: SessionThreadMessage[];
   /** `none` means the read answered and holds nothing for this session; `unavailable` means it could not be read. */
-  sources: { sessions: 'available' | 'unavailable'; activity: SessionThreadSource; bus: SessionThreadSource; owner: SessionThreadSource; replies: SessionThreadSource; orders: SessionThreadSource; output: SessionThreadSource };
+  sources: { sessions: 'available' | 'unavailable'; activity: SessionThreadSource; bus: SessionThreadSource; owner: SessionThreadSource; replies: SessionThreadSource; orders: SessionThreadSource; output: SessionThreadSource; controls: SessionThreadSource };
   /** Plain words for every part the thread could not show. */
   gaps: string[];
   /** How to write to this session (session-reply.ts), so every client aims a message the same way. */
   reply: SessionThreadReply;
+  /** Null when no request stands (none was made, every one was refused, or the control file was not read). */
+  control: SessionThreadControl | null;
 }
 
 /** What the reader hands the builder. `undefined` means "not asked for" (the session has no job, or is not the leader). */
@@ -116,6 +126,8 @@ export interface SessionThreadParts {
   orders?: OrderTraceV1 | null;
   /** The end of the session's job log (`scanJobLog`). Null when the read failed; `degraded` reads the same way. */
   output?: SessionThreadOutputRead | null;
+  /** The job control file, oldest first (`readJobControlLedger`). Null when the read failed. */
+  controls?: readonly JobControlLedgerRow[] | null;
 }
 /** A bounded read of the end of a job log: scrubbed lines, oldest first. */
 export type SessionThreadOutputRead = Pick<JobLogScan, 'source' | 'truncated'> & { lines: readonly string[] };
@@ -249,8 +261,8 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   const base = { schema: SESSION_THREAD_SCHEMA, generatedAt: new Date(now).toISOString(), id } as const;
   if (!node) {
     return { ...base, session: null, summary: [], messages: [],
-      sources: { sessions: parts.sessionsRead ? 'available' : 'unavailable', activity: 'none', bus: 'none', owner: 'none', replies: 'none', orders: 'none', output: 'none' },
-      gaps: [parts.sessionsRead ? `No session ${id} in the list. Finished sessions stay for an hour.` : 'Sessions unknown: the session list could not be read.'], reply: sessionReply(null) };
+      sources: { sessions: parts.sessionsRead ? 'available' : 'unavailable', activity: 'none', bus: 'none', owner: 'none', replies: 'none', orders: 'none', output: 'none', controls: 'none' },
+      gaps: [parts.sessionsRead ? `No session ${id} in the list. Finished sessions stay for an hour.` : 'Sessions unknown: the session list could not be read.'], reply: sessionReply(null), control: null };
   }
   const row = node.jobId === null ? undefined : list.sessions.find(entry => entry.job === node.jobId);
   const session = sessionOf(node, row), leader = session.kind === 'leader';
@@ -355,6 +367,26 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
     : spoken;
   for (const m of ordered) { messages.push(m); const routing = routedAfter.get(m); if (routing) messages.push(routing); }
 
+  // What was asked of the job itself. A request is on record once it is written; only the dispatcher's line says it was applied.
+  let controls: SessionThreadSource = 'none', control: SessionThreadControl | null = null;
+  const steered: string[] = [];
+  if (parts.controls === null) { controls = 'unavailable'; gaps.push('Controls unknown: the job control record could not be read.'); }
+  else if (parts.controls && session.jobId !== null) {
+    const asked = parts.controls.filter(row => row.job === session.jobId);
+    if (asked.length > THREAD_CONTROLS_SHOWN) gaps.push(`${plural(asked.length - THREAD_CONTROLS_SHOWN, 'earlier control request')} not shown.`);
+    for (const row of asked.slice(-THREAD_CONTROLS_SHOWN)) messages.push({
+      key: `control:${row.requestId}`, kind: 'control', side: 'record', label: jobControlRecordLabel(row), at: when(row.at), format: 'plain',
+      text: `${row.by ? `Asked from ${row.by}. ` : ''}${row.status === 'applied' ? 'Done.' : row.status === 'refused' ? row.reason ?? 'Refused.' : PENDING_CONTROL}`,
+    });
+    const stands = asked.filter(row => row.status === 'requested' || row.status === 'applied').at(-1);
+    if (stands) {
+      control = { action: stands.action, lane: stands.lane, status: stands.status === 'applied' ? 'applied' : 'requested', at: stands.at };
+      steered.push(control.status === 'applied' ? `${jobControlRecordLabel(stands)} by request${when(stands.at) ? ` at ${stands.at}` : ''}.`
+        : `${jobControlRecordLabel(stands)}${when(stands.at) ? ` at ${stands.at}` : ''}. ${PENDING_CONTROL}`);
+    }
+    if (asked.length > 0) controls = 'available';
+  }
+
   // What the session itself wrote: the end of its log. The log has no clock per line, so the message carries no time.
   let output: SessionThreadSource = 'none', wrote: string[] = [];
   if (parts.output === null || parts.output?.source === 'degraded') { output = 'unavailable'; gaps.push('Output unknown: this session\'s log could not be read.'); }
@@ -372,9 +404,11 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   const repeated = node.lastMessage !== null && wrote.length > 0 && wrote.at(-1)!.startsWith(node.lastMessage.replace(/…$/, ''));
   if (node.lastMessage !== null && !repeated) messages.push({ key: 'latest', kind: 'latest', side: 'session', label: 'Latest', at: when(node.lastMessageAt), text: node.lastMessage, format: 'plain' });
   if (session.jobId === null && !leader) gaps.push('This session has no job record: its steps, commands and changed files are not recorded.');
-  return { ...base, session, summary: summaryOf(session, node, row, parts.activity, aimed, routed), messages, sources: { sessions: 'available', activity, bus, owner, replies, orders, output }, gaps, reply: sessionReply(session) };
+  return { ...base, session, summary: [...summaryOf(session, node, row, parts.activity, aimed, routed), ...steered], messages,
+    sources: { sessions: 'available', activity, bus, owner, replies, orders, output, controls }, gaps, reply: sessionReply(session), control };
 }
 
+const PENDING_CONTROL = 'The dispatcher has not applied it yet.';
 const SIDE_MARK: Readonly<Record<SessionThreadMessage['side'], string>> = { session: '<', other: '>', record: '-' };
 
 /** `phm sessions thread <id>` for people: the summary, then one block per message. `>` is said to the session, `<` is the session, `-` is a recorded step. */

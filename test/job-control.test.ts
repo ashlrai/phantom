@@ -6,8 +6,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cmdJob } from '../src/cli/job.js';
 import { cmdJobs } from '../src/cli/jobs-empty.js';
-import { requestJobControl, type JobControlOptions } from '../src/core/fleet/job-control.js';
-import { JOB_CONTROL_FILE, VERSE_FLEET_RUNS_CONTROL_PATH as PATH } from '../src/core/fleet/job-control-types.js';
+import { readJobControlLedger, requestJobControl, type JobControlOptions } from '../src/core/fleet/job-control.js';
+import { JOB_CONTROL_FILE, jobControlRecordLabel, VERSE_FLEET_RUNS_CONTROL_PATH as PATH } from '../src/core/fleet/job-control-types.js';
 import { createFleetRunsApi } from '../src/core/verse/fleet-runs-api.js';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 
@@ -46,6 +46,22 @@ const ledger = async (): Promise<Array<Record<string, unknown>>> => {
   const text = await readFile(join(dir, JOB_CONTROL_FILE), 'utf8').catch(() => '');
   return text.split('\n').filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
 };
+
+it('reads the control file back as one row per request, folded with the dispatcher\'s answer', async () => {
+  expect(await readJobControlLedger({ runsDir: dir })).toEqual([]);
+  const pause = await requestJobControl({ action: 'pause', job: LIVE }, opts);
+  const move = await requestJobControl({ action: 'move', job: LIVE, lane: 'claude' }, { ...opts, by: 'desktop' });
+  await appendFile(join(dir, JOB_CONTROL_FILE), `${JSON.stringify({ schema: 'fleet.job.control.v1', requestId: move.requestId, status: 'refused', reason: 'Lane claude filled up.', at: 'later' })}\nnot json\n`);
+  const rows = await readJobControlLedger({ runsDir: dir });
+  expect(rows).toEqual([
+    // `by` names a surface in lower case; anything else on the row is not passed on.
+    { requestId: pause.requestId, action: 'pause', job: LIVE, lane: null, status: 'requested', reason: null, at: pause.at, by: 'test' },
+    { requestId: move.requestId, action: 'move', job: LIVE, lane: 'claude', status: 'refused', reason: 'Lane claude filled up.', at: move.at, by: 'desktop' },
+  ]);
+  expect(rows.map(jobControlRecordLabel)).toEqual(['Pause requested', 'Move to claude refused']);
+  expect(jobControlRecordLabel({ action: 'move', lane: 'claude', status: 'applied' })).toBe('Moved to claude');
+  await expect(readJobControlLedger({ runsDir: 'relative/runs' })).rejects.toThrow(TypeError);
+});
 
 it('records pause and resume as requests for the dispatcher, in stable JSON', async () => {
   const pause = await requestJobControl({ action: 'pause', job: LIVE }, opts);

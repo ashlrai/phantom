@@ -51,10 +51,21 @@ the server's answer, the `reply` field of the read, so the pane and
 asks for the dispatch token when none is held, and a refused send keeps your
 words and shows the reason. What you sent shows as "You, from here" until the
 next read carries the inbox's own record of it. A session that is not running
-has no reply box and a line saying why. **Live log** opens the worker log,
-where pause and stop live. Escape or **Sessions** returns to the tree. The
+has no reply box and a line saying why. **Live log** opens the worker log. Escape or **Sessions** returns to the tree. The
 conversation is read from `GET /api/verse/fleet/control/session-thread` every
 10 seconds; a server without that read says so and shows no conversation.
+
+A worker that is running, quiet or of unknown state has a row under the
+header to steer its job without leaving the conversation: **Pause** (or
+**Resume** while a pause stands), **Stop**, which asks first, and **Move…**,
+which reads the lanes when you open it and lists a held or full lane without
+letting you choose it. Each makes the same request as `phm job <action>`,
+asks for the mutation token when none is held, and says the receipt in the
+row: done, requested and waiting for the dispatcher, or refused with the
+reason. The conversation is then read again, and every request recorded for
+the job shows in it as a line with what became of it. A pause or any request
+the dispatcher has not applied yet is also named beside the buttons. A
+finished session, the leader and a helper have no such row.
 
 An open conversation is followed while it grows. A message that arrives while
 the end of the conversation is on screen scrolls into view. Once you have
@@ -177,7 +188,8 @@ followed by a "Routed to" line listing its jobs with lane, state and pull
 request. A job counts only when its prompt cites your message's time. A message aimed at a worker goes to the leader, and nothing
 records the worker reading it, so its label says "Mason to the Leader, aimed
 at" the job. Lines starting `>` were said to the session, `<` is the
-session speaking and `-` is a recorded step. The summary is assembled from the
+session speaking and `-` is a recorded step, which includes each pause,
+resume, stop or move asked of its job with what became of it. The summary is assembled from the
 records, not written by a model. A "To write to it" line near the end says
 where a message to that session goes, or why none can be sent. `--json` prints `fleet.session-thread.v1`;
 an unknown id exits 2. See [session thread](FLEET-API.md#session-thread).
