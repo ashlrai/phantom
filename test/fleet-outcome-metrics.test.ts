@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildOutcomeMetrics, outcomePercentile } from '../src/core/fleet/outcome-metrics.js';
 import { suggestOutcomePolicy } from '../src/core/fleet/policy-suggest.js';
@@ -79,6 +82,40 @@ describe('fleet outcome measurement', () => {
     expect(m.unknownMergeTimes).toBe(1);
     expect(m.byRepo[0]).toMatchObject({ merged: 1, revertRate: null, timeToMerge: { p50: 3600 } });
   });
+  it('counts batch members as attempts and never the RQ-BATCH session id as a job', () => {
+    const claim = (job: string, hours = 3, extra = {}) => event('batch_claim', hours,
+      { job, batch: 'RQ-BATCH-ABC123', lane: 'codex', model: 'model-a', tier: 'work', ...extra });
+    const member = (job: string, outcome: string, hours = 2) => event('task_outcome', hours,
+      { job, batch: 'RQ-BATCH-ABC123', lane: 'codex', outcome });
+    const m = build([
+      // The session's own launch/finish are infrastructure rows, not an attempt.
+      launch('RQ-BATCH-ABC123', 3.5, { batch_size: 3 }),
+      finish('RQ-BATCH-ABC123', 1.5, { wall_s: 7200, batch_size: 3 }),
+      claim('MEMBER-A'), member('MEMBER-A', 'done'),
+      event('publish', 1, { job: 'MEMBER-A', url: pr(7) }),
+      claim('MEMBER-B'), member('MEMBER-B', 'failed'),
+      claim('MEMBER-C'), // claimed but not yet reaped: unfinished
+      event('task_outcome', 1, { job: 'ORPHAN', outcome: 'done' }), // no claim: ignored
+      { event: 'batch_claim', ts: stamp(1) }, // missing job: ignored row
+    ]);
+    expect(m.sourceState).toBe('degraded');
+    expect(m.ignoredRows).toBe(1);
+    expect(m.totals).toMatchObject({ jobs: 3, finished: 2, finishRate: 2 / 3,
+      medianDuration: 3600, estCost: null, samples: { pr: 1, published: 1, duration: 2, cost: 0 } });
+    expect(m.byLane).toEqual([expect.objectContaining({ name: 'codex', jobs: 3, finished: 2 })]);
+    expect(m.byModelTier).toEqual([expect.objectContaining({ model: 'model-a', tier: 'work', jobs: 3 })]);
+  });
+  it('counts a requeued batch member\'s next claim as a new attempt', () => {
+    const claim = (hours: number) => event('batch_claim', hours,
+      { job: 'MEMBER-A', batch: 'RQ-BATCH-ABC123', lane: 'codex' });
+    const member = (outcome: string, hours: number) => event('task_outcome', hours,
+      { job: 'MEMBER-A', batch: 'RQ-BATCH-ABC123', outcome });
+    const m = build([claim(5), member('failed', 4), claim(3), member('done', 2),
+      event('publish', 1, { job: 'MEMBER-A', url: pr(8) })]);
+    expect(m.totals).toMatchObject({ jobs: 2, finished: 2, finishRate: 1,
+      samples: { pr: 1, published: 1 } });
+    expect(m.sourceState).toBe('healthy');
+  });
 });
 
 function measuredFleet(n = 20): unknown[] {
@@ -157,6 +194,33 @@ describe('fleet metrics CLI', () => {
     }
     expect(read).toHaveBeenCalledWith('/fixture/jobs.jsonl');
     expect(await cmdFleetMetrics(['report'], { read: async () => 'broken', now: () => nowMs })).toBe(1);
+  });
+  it('marks a cut ledger tail degraded instead of claiming complete coverage', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const read = vi.fn(async () => ({ text: measuredFleet().map(e => JSON.stringify(e)).join('\n'), truncated: true }));
+    expect(await cmdFleetMetrics(['report', '--json'], { read, now: () => nowMs })).toBe(1);
+    expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ sourceState: 'degraded' });
+    expect(await cmdFleetMetrics(['suggest', '--json'], { read, now: () => nowMs })).toBe(1);
+    const suggestion = JSON.parse(log.mock.calls.at(-1)![0] as string);
+    expect(suggestion).toMatchObject({ sourceState: 'degraded', laneTargetDeltas: [], tierRoutingHints: [] });
+  });
+  it('reads the newest tail of an oversized ledger through the default reader', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fleet-metrics-'));
+    try {
+      const path = join(dir, 'jobs.jsonl');
+      // Whitespace-only lines are filtered before parsing, so the padding keeps
+      // ignoredRows at zero and the degraded verdict can only come from the cut.
+      const pad = `${' '.repeat(100)}\n`.repeat(168_000);
+      const tail = [launch('TAIL', 3, { lane: 'tail-lane' }), finish('TAIL', 2, { cost: 1, empty: false })]
+        .map(e => JSON.stringify(e)).join('\n') + '\n';
+      writeFileSync(path, pad + tail);
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      expect(await cmdFleetMetrics(['report', '--jobs', path, '--json'], { now: () => nowMs })).toBe(1);
+      const report = JSON.parse(log.mock.calls.at(-1)![0] as string);
+      expect(report).toMatchObject({ sourceState: 'degraded', ignoredRows: 0,
+        totals: { jobs: 1, finished: 1, estCost: 1 } });
+      expect(report.byLane).toEqual([expect.objectContaining({ name: 'tail-lane', jobs: 1 })]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
   it('refuses unknown, repeated or out-of-range options before reading inputs', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});

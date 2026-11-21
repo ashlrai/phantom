@@ -55,7 +55,7 @@ Run the CLI from source with `npm run dev -- --help`.
 Run these in the foreground and wait for each to finish:
 
 ```sh
-node scripts/verify-changed.mjs           # lint of changed files, one type check, docs check when docs/deletions changed, quarantine check when tests/ledger changed
+node scripts/verify-changed.mjs           # lint of changed files, one type check, docs check when docs/deletions changed, quarantine check when tests/ledger changed, syntax check of changed .py/.sh files
 npm run test:ci -- test/<file>.test.ts    # affected backend suites, isolated HOME
 npm run test:web                          # only if src/web-ui/ changed
 npm run check:docs                        # if docs changed (verify-changed already ran it when the diff touched markdown or deleted files)
@@ -85,6 +85,15 @@ exit code is non-zero if any of them failed.
 | Authority drift | The diff touches `src/`, `test/`, `scripts/` or `.github/CODEOWNERS` | Review the drift, run `npm run authority:regen` and list each new Tier-1 root in the pull request body. If `origin/master` moved since you branched, rebase first. |
 | Docs check | A markdown file changed or a path was deleted | Fix the link or anchor it reports. |
 | ESLint | A JavaScript or TypeScript file changed | Fix the reported lines. |
+| Python syntax check | A `.py` file or an extensionless script with a python shebang changed | Fix the reported `SyntaxError`. The files are compiled with `python3` without writing bytecode; with no working `python3` the step prints `SKIP`. |
+| Shell syntax check | A `.sh` file or an extensionless script with a `sh`/`bash`/`dash` shebang changed | Fix the parse error `bash -n` reports. With no working `bash` the step prints `SKIP`. |
+| Node syntax check | An extensionless script with a `node` shebang changed | Fix the parse error `node --check` reports; launchers like `bin/ashlr` carry no extension, so the shebang decides. The check runs under the same node runtime, so it never prints `SKIP`. |
+| JSON syntax check | A `.json` file changed | Fix the parse error `JSON.parse` reports; every failing file is named. The check needs no external tool, so it never prints `SKIP` for a changed `.json` file. |
+| XML syntax check | A `.xml`, `.plist` or `.svg` file changed | Fix the parse error `xml.etree.ElementTree` reports. Binary and ASCII `.plist` encodings skip the parser; with no working `python3` the step prints `SKIP`. |
+| Rust syntax check | A `.rs` file changed | Fix the parse error `rustfmt` reports; with no working `rustfmt` the step prints `SKIP`. |
+| Swift syntax check | A `.swift` file changed | Fix the parse error `swiftc -parse` reports; with no working `swiftc` the step prints `SKIP`. |
+| YAML syntax check | A `.yml` or `.yaml` file changed | Fix the parse error the bundled `yaml` package reports; every document of a multi-document file is checked and duplicate keys are errors. With no installed `yaml` package the step prints `SKIP`. |
+| TOML syntax check | A `.toml` file changed | Fix the parse error the bundled `smol-toml` package reports. With no installed `smol-toml` package the step prints `SKIP`. |
 | Quarantine ledger | A `*.test.*` or `*.spec.*` file or `queue/quarantine.tsv` changed | An added skip marker or `.only`, or a stale or expired ledger row; see [Skipping a flaky test](#skipping-a-flaky-test). |
 | Type check | Always (`tsgo`, falling back to `tsc`); the web project too when `src/web-ui/` changed | Fix the reported errors. With many parallel worktrees, `FAIL tsc slot wait` means no type-check slot freed in time (`PHANTOM_TSC_TIMEOUT_SECONDS`, default 900). |
 | Real-I/O lane lint | Always | A changed test that spawns processes or does real I/O must be listed in `test/config/realio-lane-membership.mjs` (a protected path), or carry a comment near the match saying why it is safe in the fast lane. Files you did not change only print a `WARN`. |
@@ -164,16 +173,28 @@ and the fast gate never skips tests silently:
 - **Docs-only diff** (every path is under `docs/` or ends in `.md`):
   `test/docs-repo-links.test.ts` plus each test whose source names a changed
   file, up to 25. If none names one, it runs the fallback set.
-- **Code diff**: changed test files, tests whose name matches a changed file,
-  and tests that import a changed module directly, up to 25. Touching
-  `.github/CODEOWNERS` or `src/core/authority/` always adds the two
-  `test/authority-*-310b.test.ts` suites, and a changed
-  `.github/scripts/<name>.mjs` adds its `.github/tests/<name>.test.mjs`.
-- **Fallback**: a change to `package.json`, a `tsconfig*.json`, a Vite or
-  Vitest config, `test/setup/`, `test/config/` or `scripts/test-ci*.mjs`, a
-  diff that maps to no test (a `src/web-ui/`-only change, for example), or a
-  selection error runs an even spread of up to 120 backend tests across the
-  repository that always includes the two authority suites.
+- **Code diff**: changed test files and a few tests named by path (below)
+  always run; tests whose name matches a changed file and tests that import a
+  changed module directly fill the rest, up to 25 files in total. Named tests:
+  - `.github/CODEOWNERS`, `src/core/authority/`, a `test/authority-*310b*`
+    suite or `.github/tests/secret-shape/` adds the two
+    `test/authority-*-310b.test.ts` suites.
+  - A file in the recorded Tier-1 import closure
+    (`test/fixtures/authority/tier1-closure.json`), that snapshot itself, or a
+    new file under a closure root such as `src/core/memory/` or
+    `src/core/routing/` adds `test/authority-tier1-closure-310b.test.ts`.
+  - `src/cli/index.ts`, `src/cli/help.ts` or `src/cli/completions.ts` adds
+    `test/cli-registry-drift.test.ts`.
+  - `.github/workflows/ci.yml` adds `test/m30.ci.test.ts`.
+  - A changed `.github/scripts/<name>.mjs` adds its
+    `.github/tests/<name>.test.mjs`.
+- **Fallback**: a change to `package.json` or `package-lock.json`, a
+  `tsconfig*.json`, a Vite or Vitest config, `test/setup/`, `test/config/` or
+  `scripts/test-ci*.mjs`, a diff that maps to no test (a `src/web-ui/`-only
+  change, for example), or a selection error runs an even spread of up to 120
+  backend tests across the repository (three shards of 40) that always
+  includes the two authority suites. A `package.json` change also adds
+  `test/package-files-allowlist.test.ts`.
 
 Tests that need the built `dist/`, and the slow real-I/O and serial suites
 picked up indirectly, are left to the scheduled `master` run. `npm run check:docs` is not part of the pull request

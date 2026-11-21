@@ -1,8 +1,19 @@
-/** Deterministic shadow learning from structured, chronological job metadata. */
+/**
+ * Deterministic shadow learning from structured, chronological job metadata:
+ * the draft rules above plus the jobs.jsonl fold and daemon sync that feed
+ * them real fleet evidence. Candidates stay shadow records; nothing here
+ * attests, promotes, or routes on them.
+ */
 import { createHash } from 'node:crypto';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { SkillCard } from '../types.js';
 import type { MetricsJob } from './metrics-ingest.js';
 import { readSkillCardCorpus, recordSkillCard, sanitizeSkillCard } from './skill-records.js';
+import { hasRevertEvidence } from './slot-yield.js';
+import {
+  readLedgerTail, ROUTER_OUTCOME_LEDGER_RELATIVE, type LedgerReadState,
+} from '../router/outcomes.js';
 
 export type SkillNudgeJob = Pick<MetricsJob,
   'id' | 'lane' | 'outcome' | 'reverted' | 'retries' | 'recuts' | 'failureClass'>;
@@ -69,4 +80,207 @@ export function nudgeSkillsFromJobs(jobs: readonly SkillNudgeJob[], ts = new Dat
   // The writer is best-effort: report only candidates actually persisted.
   const persisted = new Set(readSkillCardCorpus().cards.map(card => card.skillId));
   return drafts.filter(card => persisted.has(card.skillId));
+}
+
+// ---------------------------------------------------------------------------
+// jobs.jsonl fold
+// ---------------------------------------------------------------------------
+//
+// The fleet jobs ledger is append-only and chronological, so file order is the
+// evidence order. One SkillNudgeJob is emitted per job id, sorted by the file
+// position of its last row — the closest honest stand-in for "oldest outcome
+// first" that the ledger supports (rows carry no per-job resolution stamp in
+// the fields this fold consumes).
+//
+// Field provenance, all real ledger evidence:
+//   - id/lane: job plus the last execution-side lane (enqueue/queued rows are
+//     queue hints and never set the lane).
+//   - outcome: the latest terminal lifecycle phase on any row — outcome/state/
+//     status fields are the producer convention (dispatchd _vc_phase,
+//     metrics-outcomes reconciler rows inherit the published row's event name,
+//     so the phase field decides, not the event). MERGED->merged,
+//     CLOSED/FAILED/ERROR->failed, DONE-NOOP and empty-family->empty,
+//     CANCELLED->cancelled, REVERT/REVERTED->merged with reverted evidence.
+//     PUBLISHED/OPEN and task-level words (done/skipped/deferred) never
+//     resolve a job outcome.
+//   - reverted: sticky hasRevertEvidence, the same rule slot-yield and the
+//     router outcome fold apply.
+//   - retries: dispatch attempts beyond the first (launch, batch_claim, and
+//     claim rows not flagged launch_dedupe — dedupe claims pair with their
+//     launch and are one attempt) plus launch_failed rows whose action is
+//     'retry' (bounded launch-retry receipts for attempts that never spawned).
+//   - recuts: recut_admission rows whose action is defer or ready — skip only
+//     records an already-merged prior, not an attempt.
+//   - failureClass: the last identifier-safe classification a finish row
+//     carries (failure_class, then failure_reason, then pool_error) or a
+//     launch_failed/launch_terminal reason. Prose reasons never qualify.
+// Anything unresolved stays absent: no outcome means draftSkillNudges skips
+// the row, exactly like an MetricsJob without a terminal outcome.
+
+const LEDGER_JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const LEDGER_LANE_KEYS = ['lane', 'pool', 'arm'] as const;
+const LEDGER_PHASE_KEYS = ['outcome', 'state', 'status'] as const;
+const LEDGER_EVENT_KEYS = ['event', 'type', 'kind'] as const;
+const LEDGER_ACTION_KEYS = ['action'] as const;
+/** Same identifier alphabet draftSkillNudges accepts for id, lane and failureClass. */
+const LEDGER_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
+
+const QUEUE_HINT_EVENTS: ReadonlySet<string> = new Set(['enqueue', 'queued']);
+const ATTEMPT_EVENTS: ReadonlySet<string> = new Set(['launch', 'batch_claim']);
+const MERGED_PHASES: ReadonlySet<string> = new Set(['MERGED']);
+const FAILED_PHASES: ReadonlySet<string> = new Set(['CLOSED', 'FAILED', 'ERROR']);
+const EMPTY_PHASES: ReadonlySet<string> = new Set(['DONE-NOOP', 'EMPTY', 'EMPTY_DONE', 'SKIPPED-EMPTY', 'NOOP']);
+const CANCELLED_PHASES: ReadonlySet<string> = new Set(['CANCELLED', 'CANCELED']);
+const REVERT_PHASES: ReadonlySet<string> = new Set(['REVERT', 'REVERTED']);
+
+/** The resolved outcomes draftSkillNudges consumes; queued/running stay unresolved. */
+type NudgeOutcome = 'merged' | 'failed' | 'empty' | 'cancelled';
+
+interface NudgeJobAccum {
+  lane: string | null;
+  outcome: NudgeOutcome | undefined;
+  reverted: boolean;
+  attempts: number;
+  retryReceipts: number;
+  recuts: number;
+  failureClass: string | null;
+  lastLine: number;
+}
+
+function firstString(row: Record<string, unknown>, keys: readonly string[]): string | null {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function phaseOf(row: Record<string, unknown>): NudgeOutcome | undefined {
+  const phase = firstString(row, LEDGER_PHASE_KEYS)?.toUpperCase();
+  if (phase === undefined) return undefined;
+  if (MERGED_PHASES.has(phase) || REVERT_PHASES.has(phase)) return 'merged';
+  if (FAILED_PHASES.has(phase)) return 'failed';
+  if (EMPTY_PHASES.has(phase)) return 'empty';
+  if (CANCELLED_PHASES.has(phase)) return 'cancelled';
+  return undefined;
+}
+
+/** Fixed-label failure classifications only; anything else stays unknown. */
+function failureClassOf(row: Record<string, unknown>, event: string | null): string | null {
+  let raw: string | null = null;
+  if (event === 'finish') {
+    raw = firstString(row, ['failure_class', 'failureClass', 'failure_reason', 'failureReason', 'pool_error', 'poolError']);
+  } else if (event === 'launch_failed' || event === 'launch_terminal') {
+    raw = firstString(row, ['reason', 'class']);
+  }
+  return raw !== null && LEDGER_ID_PATTERN.test(raw) ? raw : null;
+}
+
+/**
+ * Fold jobs.jsonl text into one SkillNudgeJob per job id, ordered by each
+ * job's last ledger position. Pure; never throws; malformed lines and rows
+ * without a usable job id are ignored.
+ */
+export function skillNudgeJobsFromLedger(text: string): SkillNudgeJob[] {
+  const jobs = new Map<string, NudgeJobAccum>();
+  let lineNo = 0;
+  for (const line of text.split('\n')) {
+    lineNo += 1;
+    if (!line.trim()) continue;
+    let row: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(line);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+      row = parsed as Record<string, unknown>;
+    } catch { continue; }
+    const id = firstString(row, LEDGER_JOB_KEYS);
+    if (id === null || !LEDGER_ID_PATTERN.test(id)) continue;
+    let acc = jobs.get(id);
+    if (acc === undefined) {
+      acc = { lane: null, outcome: undefined, reverted: false, attempts: 0,
+        retryReceipts: 0, recuts: 0, failureClass: null, lastLine: lineNo };
+      jobs.set(id, acc);
+    }
+    acc.lastLine = lineNo;
+    const event = firstString(row, LEDGER_EVENT_KEYS)?.toLowerCase() ?? null;
+    if (event !== null && !QUEUE_HINT_EVENTS.has(event)) {
+      const lane = firstString(row, LEDGER_LANE_KEYS);
+      if (lane !== null && LEDGER_ID_PATTERN.test(lane)) acc.lane = lane;
+    }
+    if (event !== null && ATTEMPT_EVENTS.has(event)) acc.attempts += 1;
+    else if (event === 'claim' && row['launch_dedupe'] !== true) acc.attempts += 1;
+    if (event === 'launch_failed' && firstString(row, LEDGER_ACTION_KEYS)?.toLowerCase() === 'retry') {
+      acc.retryReceipts += 1;
+    }
+    if (event === 'recut_admission') {
+      const action = firstString(row, LEDGER_ACTION_KEYS)?.toLowerCase();
+      if (action === 'defer' || action === 'ready') acc.recuts += 1;
+    }
+    const failureClass = failureClassOf(row, event);
+    if (failureClass !== null) acc.failureClass = failureClass;
+    if (hasRevertEvidence(row)) acc.reverted = true;
+    const outcome = phaseOf(row);
+    if (outcome !== undefined) acc.outcome = outcome;
+  }
+  return [...jobs.entries()]
+    .sort((a, b) => a[1].lastLine - b[1].lastLine)
+    .map(([id, acc]) => {
+      const retries = Math.max(0, acc.attempts - 1) + acc.retryReceipts;
+      return {
+        id,
+        lane: acc.lane ?? 'unknown',
+        ...(acc.outcome !== undefined ? { outcome: acc.outcome } : {}),
+        ...(acc.reverted ? { reverted: true } : {}),
+        ...(retries > 0 ? { retries } : {}),
+        ...(acc.recuts > 0 ? { recuts: acc.recuts } : {}),
+        ...(acc.failureClass !== null ? { failureClass: acc.failureClass } : {}),
+      };
+    });
+}
+
+export interface SkillNudgeSyncOptions {
+  /** Fleet runs dir; defaults to ASHLR_RUNS_DIR then ~/.ashlr-runs (same as reward-feed). */
+  runsDir?: string;
+  /** Injected jobs-ledger tail text; skips the jobs.jsonl read when set. */
+  jobsText?: string;
+  now?: () => Date;
+  signal?: AbortSignal;
+}
+
+export interface SkillNudgeSyncResult {
+  /** Health of the jobs-ledger tail; only 'read' can fold rows. */
+  state: LedgerReadState | 'error';
+  jobsPath: string;
+  /** True when the tail dropped older bytes — early job evidence may be out of window. */
+  truncated: boolean;
+  /** SkillNudgeJob rows the ledger fold produced. */
+  folded: number;
+  /** Candidate cards nudgeSkillsFromJobs actually persisted this pass. */
+  candidates: number;
+}
+
+/**
+ * Refresh shadow skill-nudge candidates from the fleet jobs ledger. Runs
+ * inside the daemon's skill-nudge off-tick job on the self-improvement
+ * cadence; safe to call any time. Never throws: ledger problems come back as
+ * `state`, write problems as `state: 'error'`.
+ */
+export async function syncSkillNudgesFromJobsLedger(
+  opts: SkillNudgeSyncOptions = {},
+): Promise<SkillNudgeSyncResult> {
+  const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  const jobsPath = join(runsDir, ROUTER_OUTCOME_LEDGER_RELATIVE);
+  const empty = { jobsPath, truncated: false, folded: 0, candidates: 0 };
+  try {
+    const jobs = opts.jobsText !== undefined
+      ? { state: 'read' as const, text: opts.jobsText, truncated: false }
+      : await readLedgerTail(jobsPath);
+    if (jobs.state !== 'read') return { state: jobs.state, ...empty };
+    if (opts.signal?.aborted) return { state: 'read', ...empty, truncated: jobs.truncated };
+    const folded = skillNudgeJobsFromLedger(jobs.text);
+    const candidates = nudgeSkillsFromJobs(folded, (opts.now ?? (() => new Date()))().toISOString());
+    return { state: 'read', jobsPath, truncated: jobs.truncated, folded: folded.length, candidates: candidates.length };
+  } catch {
+    return { state: 'error', ...empty };
+  }
 }

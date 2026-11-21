@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -7,19 +7,21 @@ import {
   registerAgentIdentity, resolveAgent, stableAgentId,
 } from '../src/core/agents/bus-identity.js';
 import {
-  announceWork, busBodySummary, listBusChannels, postChannelMessage, readAgentInbox, readAgentWakes, sendDirectMessage,
-  sendHandoff, sendWakeRequest, shouldWake, updateWorkStatus, type UnifiedBusOptions,
+  announceWork, busBodySummary, listBusChannels, postChannelMessage, postLabelMessage, readAgentChannel, readAgentInbox,
+  readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest, shouldWake, updateWorkStatus,
+  type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
+import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import {
   attachBusCliSession, busSelfFromEnv, detectBusCli, frameBusInbox, getBusCliAdapter, listBusCliAdapters,
   BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END,
 } from '../src/core/agents/bus-cli-adapters.js';
-import type { BusJsonValue } from '../src/core/fleet/bus-envelope.js';
+import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import { enqueueBusWake } from '../src/core/fleet/bus-wake-queue.js';
-import { subscribeGroup } from '../src/core/fleet/bus-group.js';
+import { publishGroupPresence, subscribeGroup } from '../src/core/fleet/bus-group.js';
 import { busV2ContractSummary } from '../src/core/agents/bus-v2-schema.js';
 
 const dirs: string[] = [];
@@ -144,6 +146,371 @@ describe('channel listing', () => {
     // An unreadable registry is unavailable, never an empty list.
     writeFileSync(join(options.root!, 'agent-identities', 'registry.json'), '{broken');
     expect(listBusChannels(undefined, options).status).toBe('unavailable');
+  });
+});
+
+describe('channel reads', () => {
+  it('pages channel posts oldest-first across topics, resolving senders and filtering', async () => {
+    const options = setup();
+    register(options, 'atlas', 'orion');
+    registerAgentIdentity({ handle: 'nova', aliases: ['lane-nova'] }, options);
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    createAgentChannel({ name: 'other', createdBy: 'atlas' }, options);
+    // Noise that must never leak into a channel transcript.
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'dm noise', id: 'dm-1' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'first', id: 'ch-1' }, options);
+    await postChannelMessage({ from: 'nova', channel: 'release', topic: 'deploy', text: 'second', id: 'ch-2' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'other', text: 'elsewhere', id: 'ch-3' }, options);
+    // A presence heartbeat on the channel address is an observation, not a message.
+    expect(publishGroupPresence({ room: 'release', topic: 'general', id: 'pres-1', member: 'agent:nova', state: 'online' }, options).status)
+      .toBe('posted');
+
+    const page = readAgentChannel('release', {}, options);
+    if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+    expect(page.channel).toBe('release');
+    expect(page.messages.map(m => `${m.envelope.id}:${m.topic}`)).toEqual(['ch-1:general', 'ch-2:deploy']);
+    expect(page.messages.map(m => m.fromAgent)).toEqual(['atlas', 'nova']);
+    expect(page.messages.every(m => m.cursor > 0)).toBe(true);
+
+    // --topic narrows to one topic of the channel.
+    const deploy = readAgentChannel('release', { topic: 'deploy' }, options);
+    expect(deploy.status === 'ok' && deploy.messages.map(m => m.envelope.id)).toEqual(['ch-2']);
+    // --from resolves every label of one identity: alias, handle, agent: ref and stable id.
+    for (const ref of ['nova', 'lane-nova', 'agent:nova', stableAgentId('nova')]) {
+      const mine = readAgentChannel('release', { from: ref }, options);
+      expect(mine.status === 'ok' && mine.messages.map(m => m.envelope.id)).toEqual(['ch-2']);
+    }
+    // An unresolvable ref keeps exact-label matching and finds nothing.
+    const ghost = readAgentChannel('release', { from: 'ghost' }, options);
+    expect(ghost.status === 'ok' && ghost.messages).toEqual([]);
+
+    // Paging resumes at nextCursor, which covers every scanned row.
+    const first = readAgentChannel('release', { limit: 1 }, options);
+    if (first.status !== 'ok') throw new Error('unreadable');
+    expect(first.messages.map(m => m.envelope.id)).toEqual(['ch-1']);
+    const rest = readAgentChannel('release', { after: first.nextCursor }, options);
+    expect(rest.status === 'ok' && rest.messages.map(m => m.envelope.id)).toEqual(['ch-2']);
+
+    // The same rule holds for mail: a heartbeat is an observation, so it never
+    // lands in any member's inbox while real channel posts still arrive.
+    const atlasInbox = readAgentInbox('atlas', {}, options);
+    if (atlasInbox.status !== 'ok') throw new Error('unreadable');
+    expect(atlasInbox.messages.map(m => m.envelope.id).sort()).toEqual(['ch-2']);
+    const novaInbox = readAgentInbox('nova', {}, options);
+    if (novaInbox.status !== 'ok') throw new Error('unreadable');
+    expect(novaInbox.messages.map(m => m.envelope.id).sort()).toEqual(['ch-1', 'dm-1']);
+  });
+
+  it('reports unknown channels and unreadable state instead of empty history', () => {
+    const options = setup();
+    // A missing registry means no channel exists — verified empty is not a page.
+    expect(readAgentChannel('release', {}, options)).toMatchObject({ status: 'unknown-channel' });
+    register(options, 'atlas');
+    createAgentChannel({ name: 'release', createdBy: 'atlas' }, options);
+    expect(readAgentChannel('release', {}, options)).toMatchObject({ status: 'ok', messages: [] });
+    expect(readAgentChannel('missing', {}, options)).toMatchObject({ status: 'unknown-channel' });
+    expect(readAgentChannel('Bad Name', {}, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { topic: 'Bad Topic' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { limit: 0 }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { after: -1 }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { from: '' }, options)).toMatchObject({ status: 'invalid' });
+    // An unreadable registry is unavailable, never an empty transcript.
+    writeFileSync(join(options.root!, 'agent-identities', 'registry.json'), '{broken');
+    expect(readAgentChannel('release', {}, options)).toMatchObject({ status: 'unavailable' });
+  });
+});
+
+describe('thread-filtered reads', () => {
+  it('narrows inbox and channel pages to one v2 thread label', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'question', thread: 'rq-1', id: 'dm-t1' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'aside', thread: 'rq-2', id: 'dm-t2' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'plain', id: 'dm-t3' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'channel note', thread: 'rq-1', id: 'ch-t1' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'channel aside', thread: 'rq-9', id: 'ch-t2' }, options);
+    // An opaque body carrying a thread-looking field is not a v2 note/context.
+    expect(appendBusInbox({ id: 'raw-t1', from: 'atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
+      body: { kind: 'custom.kind', thread: 'rq-1', text: 'opaque' } }, options).status).toBe('posted');
+
+    const inbox = readAgentInbox('nova', { thread: 'rq-1' }, options);
+    if (inbox.status !== 'ok') throw new Error(`unexpected ${inbox.status}`);
+    expect(inbox.messages.map(m => `${m.kind}:${m.envelope.id}`)).toEqual(['dm:dm-t1', 'channel:ch-t1']);
+    expect(readAgentInbox('nova', { thread: 'rq-9' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'ch-t2' } }] });
+    expect(readAgentInbox('nova', { thread: 'rq-absent' }, options)).toMatchObject({ status: 'ok', messages: [] });
+    // The unfiltered page still sees everything the thread page skipped.
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages.length).toBe(6);
+
+    const channel = readAgentChannel('release', { thread: 'rq-1' }, options);
+    if (channel.status !== 'ok') throw new Error(`unexpected ${channel.status}`);
+    expect(channel.messages.map(m => m.envelope.id)).toEqual(['ch-t1']);
+    expect(readAgentChannel('release', { thread: 'rq-9' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'ch-t2' } }] });
+    // Thread composes with the sender filter.
+    expect(readAgentChannel('release', { thread: 'rq-1', from: 'ghost' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+
+    // Labels must be printable v2 thread labels; anything else refuses closed.
+    expect(readAgentInbox('nova', { thread: 'has space' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { thread: '' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { thread: 'x'.repeat(129) }, options)).toMatchObject({ status: 'invalid' });
+  });
+});
+
+describe('sender-filtered inbox reads', () => {
+  it('narrows an inbox page to one sender under every label of its identity', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    registerAgentIdentity({ handle: 'relay', aliases: ['lane-relay'] }, options);
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova', 'relay'] }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'atlas dm', id: 'dm-a1' }, options);
+    await sendDirectMessage({ from: 'relay', to: 'nova', text: 'relay dm', id: 'dm-r1' }, options);
+    await sendDirectMessage({ from: 'relay', to: 'nova', text: 'threaded', thread: 'rq-7', id: 'dm-r2' }, options);
+    // A post addressed to the bare handle is legacy traffic, still the sender's mail.
+    expect(appendBusInbox({ id: 'leg-r1', from: 'relay', to: 'nova', priority: 'P3', ttl: 60_000,
+      body: { kind: 'note', text: 'legacy' } }, options).status).toBe('posted');
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'atlas post', id: 'ch-a1' }, options);
+    await postChannelMessage({ from: 'relay', channel: 'release', text: 'relay post', id: 'ch-r1' }, options);
+
+    // Every ref of one identity finds its DMs, legacy traffic and channel posts.
+    for (const ref of ['relay', 'lane-relay', 'agent:relay', stableAgentId('relay')]) {
+      const page = readAgentInbox('nova', { from: ref }, options);
+      if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+      expect(page.messages.map(m => m.envelope.id).sort()).toEqual(['ch-r1', 'dm-r1', 'dm-r2', 'leg-r1']);
+    }
+    const atlas = readAgentInbox('nova', { from: 'atlas' }, options);
+    expect(atlas.status === 'ok' && atlas.messages.map(m => m.envelope.id).sort()).toEqual(['ch-a1', 'dm-a1']);
+
+    // An unresolvable ref keeps exact-label matching and finds nothing.
+    expect(readAgentInbox('nova', { from: 'ghost' }, options)).toMatchObject({ status: 'ok', messages: [] });
+    // --from composes with --thread.
+    const threaded = readAgentInbox('nova', { from: 'relay', thread: 'rq-7' }, options);
+    expect(threaded.status === 'ok' && threaded.messages.map(m => m.envelope.id)).toEqual(['dm-r2']);
+    // The unfiltered page still sees everything the filter skipped.
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages.length).toBe(6);
+  });
+
+  it('validates the sender filter and still scans the whole store for nextCursor', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    expect(readAgentInbox('nova', { from: '' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentInbox('nova', { from: 'x'.repeat(129) }, options)).toMatchObject({ status: 'invalid' });
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'one', id: 'dm-v1' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'two', id: 'dm-v2' }, options);
+    // A filter that drops every row still reports a cursor covering the scan.
+    const filtered = readAgentInbox('nova', { from: 'ghost' }, options);
+    if (filtered.status !== 'ok') throw new Error(`unexpected ${filtered.status}`);
+    expect(filtered.messages).toEqual([]);
+    expect(filtered.nextCursor).toBeGreaterThan(0);
+  });
+
+  it('counts every filter-matched row across the store only when asked', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'a1', id: 'dm-m1' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'a2', id: 'dm-m2' }, options);
+    await sendDirectMessage({ from: 'orion', to: 'nova', text: 'o1', id: 'dm-m3' }, options);
+    // Mail addressed to someone else never enters the count.
+    await sendDirectMessage({ from: 'atlas', to: 'orion', text: 'not nova', id: 'dm-m4' }, options);
+
+    // Without the flag the page shape is unchanged: no matched field at all.
+    const plain = readAgentInbox('nova', { limit: 2 }, options);
+    if (plain.status !== 'ok') throw new Error(`unexpected ${plain.status}`);
+    expect(plain.messages).toHaveLength(2);
+    expect(plain.matched).toBeUndefined();
+
+    // With it, messages still caps at limit while matched counts every row
+    // the same filters accept — and nextCursor already covers the whole scan.
+    const counted = readAgentInbox('nova', { limit: 2, matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.messages).toHaveLength(2);
+    expect(counted.matched).toBe(3);
+
+    // The count honors the same sender filter and the same after cursor.
+    const filtered = readAgentInbox('nova', { limit: 2, matched: true, from: 'atlas' }, options);
+    if (filtered.status !== 'ok') throw new Error(`unexpected ${filtered.status}`);
+    expect(filtered.matched).toBe(2);
+    const resumed = readAgentInbox('nova', { after: counted.nextCursor, matched: true }, options);
+    if (resumed.status !== 'ok') throw new Error(`unexpected ${resumed.status}`);
+    expect(resumed.matched).toBe(0);
+    expect(resumed.messages).toEqual([]);
+  });
+});
+
+describe('envelope lookup by id', () => {
+  it('resolves a retained envelope of any kind by its wire id', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'rebase please', id: 'lk-dm', priority: 'P1' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'ship it', id: 'lk-ch' }, options);
+    await sendHandoff({ from: 'atlas', to: 'nova', taskId: 'RQ-LK-1', prompt: 'take over', id: 'lk-ho' }, options);
+
+    const dm = readBusEnvelopeById('lk-dm', options);
+    if (dm.status !== 'ok') throw new Error(`unexpected ${dm.status}`);
+    expect(dm.message.cursor).toBeGreaterThan(0);
+    expect(dm.message.receivedAt).toBe(1_000);
+    expect(dm.message.fromAgent).toBe('atlas');
+    expect(dm.message.envelope).toMatchObject({ id: 'lk-dm', from: 'agent:atlas', to: 'agent:nova',
+      priority: 'P1', channel: 'bus' });
+    // Channel and handoff envelopes resolve by the same id, no addressing scope needed.
+    for (const id of ['lk-ch', 'lk-ho']) {
+      const found = readBusEnvelopeById(id, options);
+      expect(found.status).toBe('ok');
+      if (found.status === 'ok') expect(found.message.envelope.id).toBe(id);
+    }
+    const ho = readBusEnvelopeById('lk-ho', options);
+    if (ho.status !== 'ok') throw new Error('missing handoff');
+    expect(ho.message.envelope.channel).toBe('handoff');
+  });
+
+  it('reports not-found for unknown and expired ids, invalid for malformed ones', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    // A never-posted store is a verified miss, not an error.
+    expect(readBusEnvelopeById('lk-none', options)).toEqual({ status: 'not-found', id: 'lk-none' });
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'short lived', id: 'lk-ttl', ttl: 1_000 }, options);
+    expect(readBusEnvelopeById('lk-ttl', options).status).toBe('ok');
+    options.clock.now = 3_000;
+    // The expired receipt no longer resolves: live rows only, never a stale body.
+    expect(readBusEnvelopeById('lk-ttl', options)).toEqual({ status: 'not-found', id: 'lk-ttl' });
+    expect(readBusEnvelopeById('', options).status).toBe('invalid');
+    expect(readBusEnvelopeById('has space', options).status).toBe('invalid');
+    expect(readBusEnvelopeById('x'.repeat(129), options).status).toBe('invalid');
+  });
+
+  it('keeps the envelope when the registry is unreadable and reports an unreadable store', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'still here', id: 'lk-reg' }, options);
+    const registryFile = join(options.root!, 'agent-identities', 'registry.json');
+    writeFileSync(registryFile, 'not json');
+    chmodSync(registryFile, 0o600);
+    const found = readBusEnvelopeById('lk-reg', options);
+    if (found.status !== 'ok') throw new Error(`unexpected ${found.status}`);
+    expect(found.message.fromAgent).toBeNull();
+    expect(found.message.envelope.from).toBe('agent:atlas');
+
+    const storeFile = join(options.root!, 'bus-inbox', 'messages.json');
+    writeFileSync(storeFile, 'not json');
+    chmodSync(storeFile, 0o600);
+    expect(readBusEnvelopeById('lk-reg', options)).toMatchObject({ status: 'unavailable' });
+  });
+
+  it('reports hold state for claimable work and handoffs, never for other bodies', async () => {
+    // Real time: mutateBusWorkClaim reads Date.now() for lease and expiry.
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    const claimable = (id: string): void => {
+      const envelope: BusEnvelope = { id, from: 'agent:nova', to: 'agent:atlas',
+        priority: 'P2', ttl: 120_000, body: { kind: 'work', text: `fake work ${id}` } };
+      expect(appendBusInbox(envelope, { root: options.root, now: options.now }).status).toBe('posted');
+    };
+    // Free claimable work: both hold stores read and nothing covers the receipt.
+    claimable('lk-free');
+    // Taken through the message-id claim journal (the bus-next claim path).
+    claimable('lk-taken');
+    expect(mutateBusWorkClaim({ action: 'acquire', id: 'lk-taken', owner: 'nova', leaseMs: 60_000,
+      root: options.root }).status).toBe('acquired');
+    // Held only by a live coordination row on the envelope's queue:<id> key.
+    claimable('lk-coord');
+    expect(acquireCoordination({ root: options.root, origin: 'resource', key: 'queue:lk-coord',
+      owner: 'atlas', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000, sourceId: 'lk-coord-src',
+      now: options.clock.now, started: new Date(options.clock.now).toISOString() }).status).toBe('acquired');
+    // A worker handoff is claimable too; a plain DM is not.
+    await sendHandoff({ from: 'atlas', to: 'nova', taskId: 'RQ-LK-H1', prompt: 'take over', id: 'lk-ho' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'just chat', id: 'lk-dm' }, options);
+
+    const free = readBusEnvelopeById('lk-free', options);
+    expect(free).toMatchObject({ status: 'ok', held: false, holder: null });
+    const taken = readBusEnvelopeById('lk-taken', options);
+    expect(taken).toMatchObject({ status: 'ok', held: true, holder: 'nova' });
+    const coord = readBusEnvelopeById('lk-coord', options);
+    expect(coord).toMatchObject({ status: 'ok', held: true, holder: 'atlas' });
+    const ho = readBusEnvelopeById('lk-ho', options);
+    expect(ho).toMatchObject({ status: 'ok', held: false, holder: null });
+    const dm = readBusEnvelopeById('lk-dm', options);
+    if (dm.status !== 'ok') throw new Error('missing dm');
+    expect(dm).not.toHaveProperty('held');
+    expect(dm).not.toHaveProperty('holder');
+  });
+
+  it('reports held unknown when a hold store cannot be read', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    const envelope: BusEnvelope = { id: 'lk-unk', from: 'agent:nova', to: 'agent:atlas',
+      priority: 'P2', ttl: 120_000, body: { kind: 'work', text: 'fake work' } };
+    expect(appendBusInbox(envelope, { root: options.root, now: options.now }).status).toBe('posted');
+    // An unreadable claims journal makes coverage unknown, never proven free.
+    const claimsDir = join(options.root!, 'bus-work-claims');
+    mkdirSync(claimsDir, { recursive: true });
+    const claimsFile = join(claimsDir, 'claims.json');
+    writeFileSync(claimsFile, 'not json');
+    chmodSync(claimsFile, 0o600);
+    expect(readBusEnvelopeById('lk-unk', options)).toMatchObject({ status: 'ok', held: null, holder: null });
+  });
+});
+
+describe('inbox hold evidence', () => {
+  it('marks claimable work and handoffs with the same hold state bus show reports', async () => {
+    // Real time: mutateBusWorkClaim reads Date.now() for lease and expiry.
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    const claimable = (id: string): void => {
+      const envelope: BusEnvelope = { id, from: 'agent:nova', to: 'agent:atlas',
+        priority: 'P2', ttl: 120_000, body: { kind: 'work', text: `fake work ${id}` } };
+      expect(appendBusInbox(envelope, { root: options.root, now: options.now }).status).toBe('posted');
+    };
+    claimable('in-free');
+    claimable('in-taken');
+    claimable('in-coord');
+    expect(mutateBusWorkClaim({ action: 'acquire', id: 'in-taken', owner: 'nova', leaseMs: 60_000,
+      root: options.root }).status).toBe('acquired');
+    expect(acquireCoordination({ root: options.root, origin: 'resource', key: 'queue:in-coord',
+      owner: 'nova', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000, sourceId: 'in-coord-src',
+      now: options.clock.now, started: new Date(options.clock.now).toISOString() }).status).toBe('acquired');
+    await sendHandoff({ from: 'nova', to: 'atlas', taskId: 'RQ-IN-H1', prompt: 'take over', id: 'in-ho' }, options);
+    await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'just chat', id: 'in-dm' }, options);
+
+    const page = readAgentInbox('atlas', {}, options);
+    if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+    const byId = new Map(page.messages.map(m => [m.envelope.id, m]));
+    expect(byId.get('in-free')).toMatchObject({ held: false, holder: null });
+    expect(byId.get('in-taken')).toMatchObject({ held: true, holder: 'nova' });
+    expect(byId.get('in-coord')).toMatchObject({ held: true, holder: 'nova' });
+    expect(byId.get('in-ho')).toMatchObject({ held: false, holder: null });
+    expect(byId.get('in-dm')).not.toHaveProperty('held');
+    expect(byId.get('in-dm')).not.toHaveProperty('holder');
+
+    // The frame adapters inject carries the same marker on work items only.
+    const framed = frameBusInbox('claude', page.messages);
+    expect(framed).toContain('id=in-taken from agent:nova held=yes holder=nova');
+    expect(framed).toContain('id=in-free from agent:nova held=no');
+    expect(framed).toContain('id=in-dm from agent:nova]');
+    expect(framed).not.toContain('id=in-dm from agent:nova held');
+  });
+
+  it('reports held unknown on the page when a hold store cannot be read', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    const envelope: BusEnvelope = { id: 'in-unk', from: 'agent:nova', to: 'agent:atlas',
+      priority: 'P2', ttl: 120_000, body: { kind: 'work', text: 'fake work' } };
+    expect(appendBusInbox(envelope, { root: options.root, now: options.now }).status).toBe('posted');
+    await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'just chat', id: 'in-unk-dm' }, options);
+    const claimsDir = join(options.root!, 'bus-work-claims');
+    mkdirSync(claimsDir, { recursive: true });
+    const claimsFile = join(claimsDir, 'claims.json');
+    writeFileSync(claimsFile, 'not json');
+    chmodSync(claimsFile, 0o600);
+    const page = readAgentInbox('atlas', {}, options);
+    if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+    const byId = new Map(page.messages.map(m => [m.envelope.id, m]));
+    expect(byId.get('in-unk')).toMatchObject({ held: null, holder: null });
+    expect(byId.get('in-unk-dm')).not.toHaveProperty('held');
   });
 });
 
@@ -300,6 +667,74 @@ describe('DM, channel, handoff and priority wake on the one bus store', () => {
     expect(enqueueBusWake({ kind: 'bus.send', id: 'wake-id', from: 'agent:atlas', to: novaId }, { root: options.runsRoot })).toBe('queued');
     expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok',
       wakes: [{ id: 'wake-bare', to: 'nova' }, { id: 'wake-id', to: novaId }] });
+    expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ status: 'ok', wakes: [] });
+  });
+});
+
+describe('label posts on the one bus store', () => {
+  it('posts a note or context to a plain routing label with identity metadata', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    const sent = await postLabelMessage({ from: 'atlas', to: 'fleet.mesh', text: 'observed drift',
+      thread: 'mesh', refs: ['RQ-X'], id: 'lp-1' }, options);
+    expect(sent).toMatchObject({ status: 'posted', to: 'fleet.mesh', wake: 'not-requested' });
+    const raw = listBusInboxAfter(0, 10, options);
+    if (raw.status !== 'ok') throw new Error('unreadable');
+    expect(raw.messages[0]!.envelope).toMatchObject({
+      from: 'agent:atlas', to: 'fleet.mesh', priority: 'P2', channel: 'bus', channel_ref: 'fleet.mesh',
+      sender: { agent_id: stableAgentId('atlas') }, external: false, origin_bridge: 'agent-bus',
+      body: { kind: 'note', text: 'observed drift', thread: 'mesh', refs: ['RQ-X'] },
+    });
+    // --kind context posts the v2 context body shape on the same label.
+    expect(await postLabelMessage({ from: 'atlas', to: 'fleet.mesh', kind: 'context', text: '{"a":1}', id: 'lp-2' }, options))
+      .toMatchObject({ status: 'posted' });
+    const context = listBusInboxAfter(0, 10, options);
+    if (context.status !== 'ok') throw new Error('unreadable');
+    expect(context.messages.find(row => row.envelope.id === 'lp-2')!.envelope.body).toEqual({ kind: 'context', text: '{"a":1}' });
+    // Same-id retry dedupes; a changed body conflicts, like every other send.
+    expect(await postLabelMessage({ from: 'atlas', to: 'fleet.mesh', text: 'observed drift',
+      thread: 'mesh', refs: ['RQ-X'], id: 'lp-1' }, options)).toMatchObject({ status: 'duplicate' });
+    expect(await postLabelMessage({ from: 'atlas', to: 'fleet.mesh', text: 'changed', id: 'lp-1' }, options))
+      .toMatchObject({ status: 'conflict' });
+  });
+
+  it('refuses reserved prefixes, bad labels, unknown senders and bad kinds', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    for (const to of ['agent:nova', 'group:release:general', 'dm:atlas:nova', 'handoff:RQ-1', 'Agent:nova']) {
+      expect(await postLabelMessage({ from: 'atlas', to, text: 'x' }, options)).toMatchObject({ status: 'invalid' });
+    }
+    for (const to of ['', 'has space', 'x'.repeat(129), 'ghp_' + 'a'.repeat(36)]) {
+      expect(await postLabelMessage({ from: 'atlas', to, text: 'x' }, options)).toMatchObject({ status: 'invalid' });
+    }
+    expect(await postLabelMessage({ from: 'ghost', to: 'fleet.mesh', text: 'x' }, options))
+      .toMatchObject({ status: 'unknown-sender' });
+    expect(await postLabelMessage({ from: 'atlas', to: 'fleet.mesh', text: 'x', kind: 'work.post' as never }, options))
+      .toMatchObject({ status: 'invalid' });
+    expect(await postLabelMessage({ from: 'atlas', to: 'fleet.mesh', text: '' }, options)).toMatchObject({ status: 'invalid' });
+    expect(await postLabelMessage({ from: 'atlas', to: 'fleet.mesh', text: 'token ghp_' + 'b'.repeat(36) }, options))
+      .toMatchObject({ status: 'refused' });
+    // None of the refused sends reached the store.
+    const raw = listBusInboxAfter(0, 10, options);
+    expect(raw).toMatchObject({ status: 'ok', messages: [] });
+  });
+
+  it('reaches an identity inbox and wake queue when the label is one of its labels', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    registerAgentIdentity({ handle: 'nova', aliases: ['fleet-watch'] }, options);
+    // A post to a label that resolves to an identity lands like legacy label mail.
+    const sent = await postLabelMessage({ from: 'atlas', to: 'fleet-watch', text: 'status?', priority: 'P1', id: 'lp-inbox' }, options);
+    expect(sent).toMatchObject({ status: 'posted', wake: 'queued' });
+    expect(readAgentInbox('nova', {}, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'legacy', fromAgent: 'atlas', envelope: { id: 'lp-inbox' } }] });
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok', wakes: [{ id: 'lp-inbox', to: 'fleet-watch' }] });
+    // A sink label reaches no identity inbox and records no agent wake.
+    await postLabelMessage({ from: 'atlas', to: 'leaders', text: 'fyi', id: 'lp-leaders' }, options);
+    const inbox = readAgentInbox('nova', {}, options);
+    if (inbox.status !== 'ok') throw new Error('unreadable');
+    expect(inbox.messages.map(m => m.envelope.id)).toEqual(['lp-inbox']);
+    expect(readAgentInbox('atlas', {}, options)).toMatchObject({ status: 'ok', messages: [] });
     expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ status: 'ok', wakes: [] });
   });
 });
@@ -461,6 +896,9 @@ describe('v2 work announcements and statuses on the one bus store', () => {
       body: { kind: 'work.post', jobId: 'RQ-POISON', title: 'x', repo: 'a/b', claimKeys: [] } }, options).status).toBe('posted');
     expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-6' }, options))
       .toMatchObject({ status: 'refused', reason: expect.stringContaining('missing-provider') });
+    // The refusal names the retained receipt that poisoned the feed.
+    expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-6' }, options))
+      .toMatchObject({ status: 'refused', reason: expect.stringContaining('receipt poison-1') });
     expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-W-6', status: 'done' }, options))
       .toMatchObject({ status: 'refused' });
     const raw = listBusInboxAfter(0, 10, options);
@@ -624,7 +1062,7 @@ describe('CLI session adapters', () => {
     expect(framed.endsWith(BUS_INBOX_FRAME_END)).toBe(true);
     expect(framed.split(BUS_INBOX_FRAME_END)).toHaveLength(2);
     expect(framed).not.toContain('\u0007');
-    expect(framed).toContain('[P1 handoff id=ho from agent:atlas] handoff task RQ-X-1: do it');
+    expect(framed).toContain('[P1 handoff id=ho from agent:atlas held=no] handoff task RQ-X-1: do it');
     expect(frameBusInbox('grok', inbox.messages)).toBe(framed);
     const many = Array.from({ length: 200 }, () => inbox.messages[0]!);
     const bounded = frameBusInbox('codex', many.map(m => ({ ...m, envelope: { ...m.envelope, body: { kind: 'note', text: 'x'.repeat(1000) } } })));

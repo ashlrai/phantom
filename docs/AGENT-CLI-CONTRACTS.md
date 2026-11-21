@@ -170,10 +170,17 @@ countdown, time marker, and freshness checks still use the request time.
 /api/app/pools/spenddown`, schema `pools.spenddown.v1`). Each pool has `used_frac`,
 `reset_at`, `even_pace_frac` (where a straight line from the last reset would be
 now), `projected_at_reset` (used share at reset at the current burn), a `state`
-(`on-pace`, `under`, `over`, `drained`, `unknown`) and a plain `verdict` ("on
-pace", "will leave 12% unused: add work", "drained until Fri 6 PM", "no reading").
+(`on-pace`, `under`, `idle`, `over`, `drained`, `unknown`) and a plain `verdict`
+("spending on pace", "refilled, lane idle", "behind: will waste ~12%", "exhausted until
+Fri 6 PM", "unknown: no reading", "unknown: no fresh reading (3 h old)"). `idle` is a
+pool at 10% used or less, in the first quarter of its window, whose lane is open with
+nothing running and rows queued. `resets_in_h` is hours to the reset, `as_of`
+and `reading_age_min` say when the last reading was taken and how old it is.
+Optional fields: `running`, `target` (slots) and `queued_rows` (rows waiting for the lane; `null` is unknown, never 0), `queued_hours` (ready jobs times the pool's median job time over
+the last 72 h; `0` for an empty queue, `null` when unknown) and `blocked: "sign-in"`
+with `blocked_fix` when the lane is held for a sign-in (verdict "blocked: sign-in").
 Fractions are 0 to 1; a pool with no current reading has `null` fractions and
-`state: "unknown"`, never zero. The desktop Spend down panel and the phone Home card
+`state: "unknown"`, never zero. The desktop Spend down panel and the phone Home Pools card
 draw only this JSON.
 
 ```sh

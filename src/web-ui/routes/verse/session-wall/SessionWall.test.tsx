@@ -9,6 +9,7 @@ import { mockViewport, type ViewportMock } from '../shell/viewport.test-support.
 import { SessionWallPane, WallView } from './SessionWall.js';
 import { narrowSessionWall, replyLine, wallHeadline } from './session-wall-model.js';
 import './session-wall.pane.js';
+import { forgetWallSeen } from './wall-seen.js';
 import { requestWallSession, takeRequestedWallSession } from './wall-selection.js';
 
 const AT = '2026-11-18T12:00:00.000Z';
@@ -59,7 +60,7 @@ const host = () => ({ openPane: vi.fn() });
 const card = (id: string) => screen.getByRole('button', { name: new RegExp(`^${id}, `) });
 
 let viewport: ViewportMock | null = null;
-beforeEach(() => { evictAll(); setMutationToken('a'.repeat(64)); takeRequestedWorkerLogJob(); takeRequestedWallSession(); });
+beforeEach(() => { evictAll(); forgetWallSeen(); setMutationToken('a'.repeat(64)); takeRequestedWorkerLogJob(); takeRequestedWallSession(); });
 afterEach(() => { cleanup(); viewport?.restore(); viewport = null; vi.unstubAllGlobals(); vi.restoreAllMocks(); clearMutationToken(); });
 
 it('registers a session-independent Conversations pane beside the Leader chat', () => {

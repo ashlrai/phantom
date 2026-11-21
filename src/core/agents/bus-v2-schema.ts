@@ -250,11 +250,17 @@ export const noteBodySchema = z.object({
 export const contextBodySchema = z.object({
   kind: z.literal('context'), text, thread: label.optional(), refs: refs.optional(),
 }).strict();
+/** The optional dispatch spec a work.post may carry; the feed job keeps it verbatim. */
+export const workDispatchSchema = z.object({
+  tier: z.enum(['fast', 'mid', 'work', 'frontier']),
+  scope: text.max(4000), acceptance: text.max(2000),
+}).strict();
+export type WorkDispatch = z.infer<typeof workDispatchSchema>;
+
 export const workPostBodySchema = z.object({
   kind: z.literal('work.post'), jobId, title: z.string().min(1).max(256), provider: providerSchema.optional(),
   repo: repoSlug, claimKeys: z.array(claimKeySchema).max(16),
-  dispatch: z.object({ tier: z.enum(['fast', 'mid', 'work', 'frontier']),
-    scope: text.max(4000), acceptance: text.max(2000) }).strict().optional(),
+  dispatch: workDispatchSchema.optional(),
 }).strict();
 export const workResultBodySchema = z.object({
   kind: z.literal('work.result'), jobId, claimKey: claimKeySchema,
@@ -287,6 +293,19 @@ export const busBodySchema = z.union([
 ]);
 export type BusBody = z.infer<typeof busBodySchema>;
 
+/**
+ * The conversation label a `note`/`context` body carries in `thread`, or null
+ * for every other body kind and shape. Thread reads match this field only: it
+ * is the one v2 body field that ties a question and its answer together.
+ */
+export function busBodyThread(body: unknown): string | null {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
+  const record = body as Record<string, unknown>;
+  if (record['kind'] !== 'note' && record['kind'] !== 'context') return null;
+  const thread = record['thread'];
+  return typeof thread === 'string' && thread.length > 0 ? thread : null;
+}
+
 // ─── Work feed ──────────────────────────────────────────────────────
 
 export const workJobSchema = z.object({
@@ -296,8 +315,14 @@ export const workJobSchema = z.object({
   to: label,
   provider: providerSchema,
   repo: repoSlug,
+  /** The announcement's own title and optional dispatch spec, carried so the feed names the work. */
+  title: z.string().min(1).max(256),
+  dispatch: workDispatchSchema.optional(),
   claimKeys: z.array(claimKeySchema).max(16),
   status: z.enum(WORK_STATUSES),
+  /** The newest status's optional detail — why the job sits in its current
+   * state. A newer status without one clears it; it is never accumulated. */
+  detail: text.max(1024).optional(),
   updatedAt: epochMs,
 }).strict();
 export type WorkJob = z.infer<typeof workJobSchema>;

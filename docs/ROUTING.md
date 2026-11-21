@@ -300,10 +300,21 @@ Positive allowance with a future reset is `reset-pressure` even when burn pace i
 `phm router outcomes [--json] [--runs-dir <dir>] [--lane <lane>] [--limit <1..1000>]`
 reads the newest bounded tail of `<runs-dir>/metrics/jobs.jsonl` (default
 `ASHLR_RUNS_DIR`, then `~/.ashlr-runs`; 16 MiB retained) joined with the
-same bound of `<runs-dir>/metrics/api-spend.jsonl`, and reports one
+same bound of `<runs-dir>/metrics/api-spend.jsonl` and
+`<runs-dir>/metrics/work-market.jsonl`, and reports one
 `router.outcome.v1` record per job in that window, newest
 first: merge and revert state, CI first pass, review findings, cost, wall
-time and the advisory `passk` join from `eval.lane-scores.v1`. `cost_usd`
+time, `work_class`, the finish-row productivity verdicts (`empty`,
+`exit_code`, `failure_class` — explicit row fields only, `null` when
+unrecorded) and the advisory `passk` join from
+`eval.lane-scores.v1`. `work_class` is the class a jobs row recorded when
+one exists; otherwise it is the job's newest `work-market.v1`
+`route_decision` class — the market's own classification of the job,
+written for every evaluated job — and stays `null` when neither ledger
+recorded one. The market read degrades independently: the report's
+`market_state` mirrors the jobs `state` vocabulary and `market_truncated`
+marks a cut decision tail, in which case joined classes cover only the
+newest bytes. `cost_usd`
 is an explicit `cost_usd`/`usd`/`cost` field on a jobs row when one is
 recorded; otherwise it is the sum of api-spend call costs naming the job
 (same `job`/`job_id`/`id` attribution and `cost_usd`/`usd`/`cost`
@@ -316,9 +327,16 @@ USD figure. The spend read degrades independently: the report's
 marks a cut spend tail, in which case joined costs are lower bounds. `reverted`
 folds explicit revert evidence — a `reverted` boolean, a revert event name
 or terminal REVERT/REVERTED state, or a parseable `reverted_at`/`revertedAt`
-stamp — sticky-true like metrics-ingest, so a recorded revert is never
-contradicted by a later `reverted:false`; it stays `null` when the ledger
-records nothing either way. It is read-only; a missing
+stamp — plus the authority ledger's verified evidence index: a
+`revert:landed` row undoing a `merge:landed` landing marks the merged PR's
+outcome reverted when the job's own canonical github.com pull URL claim is
+unambiguous (ambiguous, foreign or non-canonical claims never mark). The
+index join reads `ledgerSnapshot('cached')` lazily, contributes only
+hash-verified rows — a broken chain still marks only its verified prefix —
+and degrades to no join on any read failure. Evidence is sticky-true like
+metrics-ingest, so a recorded revert is never
+contradicted by a later `reverted:false`; it stays `null` when neither
+source records anything either way. It is read-only; a missing
 ledger reports `state: "missing"` rather than failing, while an unreadable or
 non-file ledger exits 1. The ledger is append-only and unbounded, so when it
 exceeds the bound the read keeps the newest bytes, drops the cut first line,
@@ -335,16 +353,37 @@ feed weights, ranking or dispatch by itself.
 `metrics/jobs.jsonl` outcomes into `router.weight-proposals.v1`: per
 `(work_class, lane)` group it compares the observed held-merge rate against a
 0.5 baseline and proposes a bounded shift — at least 20 known outcomes per
-group, shifts capped at 0.1 and clamped to [0, 1]. A merged outcome recorded
-as reverted counts as known evidence (`reverted_n` reports the count) but
-never as a held merge. Groups below the evidence
+group, shifts capped at 0.1 and clamped to [0, 1]. Production jobs rows
+never carry `work_class`, so groups classify through the work-market join:
+each job's newest `route_decision` row supplies the market's recorded class,
+while the lane stays the one the job actually ran on in jobs.jsonl. A merged
+outcome recorded as reverted counts as known evidence (`reverted_n` reports
+the count) but never as a held merge. Groups below the evidence
 floor are refused and keep their baseline; `merged: null` outcomes count as
-unknown, never as failures. When the ledger exceeds the retained tail the
+unknown, never as failures, and jobs with no recorded class count as
+unclassified. The report also resolves *why* the unknown cohort has no
+merge verdict, from the same finish-row evidence: `unknown_empty` counts
+jobs whose newest finish recorded `empty: true` (the run produced no
+diff), `unknown_nonzero_exit` counts jobs whose newest `exit_code` was
+not 0 — the two overlap, since a crashed run usually diffs nothing —
+`unknown_failure_classes` tallies the recorded `failure_class` labels
+(top entries first), and `unknown_unresolved` is the remainder with no
+finish failure signal (finished cleanly awaiting a verdict, or still in
+flight). These are counts over the retained window; when the ledger was
+not read they are `null`, never zero. When the ledger exceeds the retained tail the
 report carries `truncated: true` and every count covers the newest bytes
-only. The report is advisory-only: it writes nothing, never touches
-`weights.json`, and changes no live routing, rank or admission. A missing or
-unreadable ledger reports `status: "unavailable"` with null counts rather
-than an empty success.
+only; `market_state`/`market_truncated` report the decision journal's
+health the same way. Each proposal also carries an `evidence` block folded
+from the same known cohort: the group's CI first-pass rate, summed review
+findings, mean `cost_usd`, mean `wall_s` and mean advisory `passk` — every
+figure with its own coverage count, and `null` (never zero) when the ledger
+recorded nothing for that signal. The weight math still moves on
+held-merge rate alone; the evidence is context for whoever applies a
+proposal, and text output renders it as `name=value(known)` suffixes only
+for signals with coverage. The report is advisory-only: it writes nothing, never
+touches `weights.json`, and changes no live routing, rank or admission. A
+missing or unreadable ledger reports `status: "unavailable"` with null
+counts rather than an empty success.
 
 ## Revert outcome scan
 

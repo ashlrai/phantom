@@ -7,8 +7,9 @@
  * `fleet.live-sessions.v1`, its brief, recorded steps, commands, changed files
  * and notes from `fleet.job.activity.v1`, the messages about it from the agent
  * bus (`agent-messages.v1`), what Mason wrote from the Leader inbox
- * (`MASON-INBOX.md`), the leader's replies from `leader.replies.v1`, and which
- * jobs serve which of Mason's messages from the order trace (`readOrderTrace`).
+ * (`MASON-INBOX.md`), the leader's replies from `leader.replies.v1`, which
+ * jobs serve which of Mason's messages from the order trace (`readOrderTrace`),
+ * and what the session itself wrote from the end of its job log (`scanJobLog`).
  * The summary is assembled from those records, never written by a model, and a
  * fact no record holds reads "unknown". The reader lives in
  * session-thread-read.ts.
@@ -19,6 +20,7 @@ import type { InboxEntry } from './mason-inbox.js';
 import { replyTime, type LeaderRepliesV1 } from './mason-outbox.js';
 import type { OrderTraceJob, OrderTraceV1 } from './order-trace.js';
 import type { FleetJobActivityV1 } from './runs-job-activity.js';
+import type { JobLogScan } from './runs-job-detail.js';
 import { sessionReply, type SessionThreadReply } from './session-reply.js';
 import type { SessionKind, SessionNode, SessionState } from './session-tree.js';
 
@@ -33,6 +35,8 @@ export const THREAD_BUS_SHOWN = 50, THREAD_COMMANDS_SHOWN = 8, THREAD_FILES_SHOW
 export const THREAD_OWNER_SHOWN = 10, THREAD_OWNER_WINDOW = 200;
 /** The newest of Mason's messages a worker's thread names as the ones it serves, and the jobs one routing line lists. */
 export const THREAD_ORDERS_SHOWN = 3, THREAD_ROUTED_SHOWN = 8;
+/** The newest lines of its own log a thread shows, and the longest one of them. */
+export const THREAD_OUTPUT_LINES = 12, THREAD_OUTPUT_LINE_CHARS = 240;
 
 /** `quiet` is a running session with no output for the list's quiet window. */
 export type SessionThreadState = 'quiet' | SessionState;
@@ -40,13 +44,14 @@ export type SessionThreadSource = 'available' | 'none' | 'unavailable';
 
 /** Key order is the JSON contract. */
 export interface SessionThreadMessage {
-  /** Stable inside one thread: `order:<id>`, `routing:<id>`, `brief`, `step:<n>`, `commands`, `files`, `notes`, `bus:<id>`, `owner:<id>`, `reply:<n>`, `latest`. */
+  /** Stable inside one thread: `order:<id>`, `routing:<id>`, `brief`, `step:<n>`, `commands`, `files`, `notes`, `bus:<id>`, `owner:<id>`, `reply:<n>`, `output`, `latest`. */
   key: string;
   /**
    * `owner` is a message Mason wrote in the Leader inbox: any of them for the leader, the ones aimed `@<job>` for a worker.
    * `order` is the message of Mason's a worker serves, and `routing` lists the jobs serving one message with each job's lane and state.
+   * `output` is what the session wrote: the newest lines of its job log, one per line, already redacted.
    */
-  kind: 'order' | 'routing' | 'brief' | 'step' | 'commands' | 'files' | 'notes' | 'bus' | 'owner' | 'reply' | 'latest';
+  kind: 'order' | 'routing' | 'brief' | 'step' | 'commands' | 'files' | 'notes' | 'bus' | 'owner' | 'reply' | 'output' | 'latest';
   /** `session` is this session speaking, `other` is someone speaking to it, `record` is a recorded step. */
   side: 'session' | 'other' | 'record';
   label: string;
@@ -82,12 +87,13 @@ export interface SessionThreadV1 {
   summary: string[];
   /**
    * The conversation in reading order: for a worker the message of Mason's it serves and that message's routing, then brief,
-   * recorded steps, commands, changed files, notes, bus messages, Mason's messages, leader replies, the latest line. For the leader,
+   * recorded steps, commands, changed files, notes, bus messages, Mason's messages, leader replies, the newest lines of its log, the
+   * latest line (left out when the log lines already end with it). For the leader,
    * Mason's messages and the replies are interleaved by time when every one is dated, and a routing line follows each routed message.
    */
   messages: SessionThreadMessage[];
   /** `none` means the read answered and holds nothing for this session; `unavailable` means it could not be read. */
-  sources: { sessions: 'available' | 'unavailable'; activity: SessionThreadSource; bus: SessionThreadSource; owner: SessionThreadSource; replies: SessionThreadSource; orders: SessionThreadSource };
+  sources: { sessions: 'available' | 'unavailable'; activity: SessionThreadSource; bus: SessionThreadSource; owner: SessionThreadSource; replies: SessionThreadSource; orders: SessionThreadSource; output: SessionThreadSource };
   /** Plain words for every part the thread could not show. */
   gaps: string[];
   /** How to write to this session (session-reply.ts), so every client aims a message the same way. */
@@ -108,7 +114,11 @@ export interface SessionThreadParts {
   replies?: LeaderRepliesV1 | null;
   /** The order trace: which jobs cite which of Mason's messages. Null when the read failed. */
   orders?: OrderTraceV1 | null;
+  /** The end of the session's job log (`scanJobLog`). Null when the read failed; `degraded` reads the same way. */
+  output?: SessionThreadOutputRead | null;
 }
+/** A bounded read of the end of a job log: scrubbed lines, oldest first. */
+export type SessionThreadOutputRead = Pick<JobLogScan, 'source' | 'truncated'> & { lines: readonly string[] };
 export interface SessionThreadOwnerRead { sourceState: 'healthy' | 'missing' | 'degraded'; entries: readonly InboxEntry[] }
 
 const named = (word: string, value: string) => (value === 'unknown' ? `${word} unknown` : value);
@@ -190,6 +200,13 @@ function routingMessage(key: string, order: TracedOrder, self: string | null): S
   };
 }
 
+/** The lines of a job log worth showing: blank ones dropped, the newest THREAD_OUTPUT_LINES kept, each cut to THREAD_OUTPUT_LINE_CHARS. */
+export function sessionOutputLines(lines: readonly string[]): { lines: string[]; earlier: number } {
+  const written = lines.map(line => line.trimEnd()).filter(line => line.trim() !== '');
+  return { earlier: Math.max(0, written.length - THREAD_OUTPUT_LINES),
+    lines: written.slice(-THREAD_OUTPUT_LINES).map(line => (line.length > THREAD_OUTPUT_LINE_CHARS ? `${line.slice(0, THREAD_OUTPUT_LINE_CHARS - 1)}…` : line)) };
+}
+
 /** The bus messages about one session, oldest first: the ones naming its job, or sent by or to it. */
 export function sessionBusMessages(session: Pick<SessionThreadSession, 'id' | 'jobId'>, messages: readonly AgentMessage[]): AgentMessage[] {
   const id = session.id.toLowerCase();
@@ -232,7 +249,7 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   const base = { schema: SESSION_THREAD_SCHEMA, generatedAt: new Date(now).toISOString(), id } as const;
   if (!node) {
     return { ...base, session: null, summary: [], messages: [],
-      sources: { sessions: parts.sessionsRead ? 'available' : 'unavailable', activity: 'none', bus: 'none', owner: 'none', replies: 'none', orders: 'none' },
+      sources: { sessions: parts.sessionsRead ? 'available' : 'unavailable', activity: 'none', bus: 'none', owner: 'none', replies: 'none', orders: 'none', output: 'none' },
       gaps: [parts.sessionsRead ? `No session ${id} in the list. Finished sessions stay for an hour.` : 'Sessions unknown: the session list could not be read.'], reply: sessionReply(null) };
   }
   const row = node.jobId === null ? undefined : list.sessions.find(entry => entry.job === node.jobId);
@@ -338,9 +355,24 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
     : spoken;
   for (const m of ordered) { messages.push(m); const routing = routedAfter.get(m); if (routing) messages.push(routing); }
 
-  if (node.lastMessage !== null) messages.push({ key: 'latest', kind: 'latest', side: 'session', label: 'Latest', at: when(node.lastMessageAt), text: node.lastMessage, format: 'plain' });
+  // What the session itself wrote: the end of its log. The log has no clock per line, so the message carries no time.
+  let output: SessionThreadSource = 'none', wrote: string[] = [];
+  if (parts.output === null || parts.output?.source === 'degraded') { output = 'unavailable'; gaps.push('Output unknown: this session\'s log could not be read.'); }
+  else if (parts.output && parts.output.source !== 'missing') {
+    const { lines, earlier } = sessionOutputLines(parts.output.lines);
+    wrote = lines;
+    if (lines.length > 0) {
+      output = 'available';
+      messages.push({ key: 'output', kind: 'output', side: 'session', at: null, text: lines.join('\n'), format: 'mono',
+        label: `Output${parts.output.source === 'archived' ? ', from its archived log' : ''}, ${earlier > 0 || parts.output.truncated ? `last ${plural(lines.length, 'line')} of its log` : plural(lines.length, 'line')}` });
+    } else if (parts.output.source === 'archived' && parts.output.truncated) { output = 'unavailable'; gaps.push('Output not shown: the archived log is too large to read here.'); }
+  }
+
+  // The latest line is the last line of the log; when the output above already ends with it, it is not said twice.
+  const repeated = node.lastMessage !== null && wrote.length > 0 && wrote.at(-1)!.startsWith(node.lastMessage.replace(/…$/, ''));
+  if (node.lastMessage !== null && !repeated) messages.push({ key: 'latest', kind: 'latest', side: 'session', label: 'Latest', at: when(node.lastMessageAt), text: node.lastMessage, format: 'plain' });
   if (session.jobId === null && !leader) gaps.push('This session has no job record: its steps, commands and changed files are not recorded.');
-  return { ...base, session, summary: summaryOf(session, node, row, parts.activity, aimed, routed), messages, sources: { sessions: 'available', activity, bus, owner, replies, orders }, gaps, reply: sessionReply(session) };
+  return { ...base, session, summary: summaryOf(session, node, row, parts.activity, aimed, routed), messages, sources: { sessions: 'available', activity, bus, owner, replies, orders, output }, gaps, reply: sessionReply(session) };
 }
 
 const SIDE_MARK: Readonly<Record<SessionThreadMessage['side'], string>> = { session: '<', other: '>', record: '-' };

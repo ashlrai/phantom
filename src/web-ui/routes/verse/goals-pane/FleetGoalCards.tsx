@@ -89,6 +89,21 @@ function GoalCard({ goal, onEvidence }: { goal: FleetGoal; onEvidence?: (() => v
   );
 }
 
+/** The leader's current bets; a missing vision file says so in plain words instead of showing nothing. */
+function FleetBets({ card }: { card: GoalScorecard }) {
+  const bets = Array.isArray(card.bets) ? card.bets : [];
+  if (!bets.length) return card.bets_reason ? <p className={styles.meta}>Current bets: none. {card.bets_reason}</p> : null;
+  return (
+    <section aria-label="Current bets">
+      <h4 className={styles.headline}>Current bets</h4>
+      <ul>
+        {bets.map(b => <li key={b.id} className={styles.meta}>{b.id}{b.pool ? ` (${b.pool}${b.repo ? `, ${b.repo}` : ''})` : ''}: {b.goal}</li>)}
+      </ul>
+      <p className={styles.meta}>{asOfText(card.as_of ?? null)} · {card.bets_source ?? 'unknown'}</p>
+    </section>
+  );
+}
+
 export function FleetGoalCards({ visible = true, host }: Pick<Partial<PaneProps>, 'visible' | 'host'>) {
   const read = useQuery(goalScorecardQuery, { enabled: visible });
   const data = read.data;
@@ -102,9 +117,11 @@ export function FleetGoalCards({ visible = true, host }: Pick<Partial<PaneProps>
       {goals.length === 0
         ? <CardNote>No fleet goals yet. They appear once Phantom has recorded jobs, usage pools or releases.</CardNote>
         : <>
+          {data.end_state_text ? <p className={styles.mission}>{data.end_state_text}</p> : null}
           {data.endState ? <p className={styles.mission}>{data.endState}</p> : null}
           <p className={styles.meta}>{goalsSummary(goals)}</p>
           {goals.map(goal => <GoalCard key={goal.id} goal={goal} onEvidence={host ? () => host.openPane(goal.evidencePane) : undefined} />)}
+          <FleetBets card={data} />
         </>}
     </section>
   );

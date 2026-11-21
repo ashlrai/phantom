@@ -12,8 +12,8 @@ import type { LeaderRepliesV1 } from '../src/core/fleet/mason-outbox.js';
 import type { OrderTraceJob, OrderTraceV1 } from '../src/core/fleet/order-trace.js';
 import type { FleetJobActivityV1 } from '../src/core/fleet/runs-job-activity.js';
 import type { FleetSessionV1, FleetSessionsV1 } from '../src/core/fleet/runs-sessions.js';
-import { buildLiveSessions } from '../src/core/fleet/live-sessions.js';
-import { buildSessionThread, renderSessionThreadText, sessionBusMessages, sessionOwnerMessages, sessionReply, THREAD_BUS_SHOWN, THREAD_ORDERS_SHOWN, THREAD_OWNER_SHOWN, THREAD_ROUTED_SHOWN, type SessionThreadOwnerRead } from '../src/core/fleet/session-thread.js';
+import { buildLiveSessions, flatTree } from '../src/core/fleet/live-sessions.js';
+import { buildSessionThread, renderSessionThreadText, sessionBusMessages, sessionOutputLines, sessionOwnerMessages, sessionReply, THREAD_BUS_SHOWN, THREAD_ORDERS_SHOWN, THREAD_OUTPUT_LINES, THREAD_OUTPUT_LINE_CHARS, THREAD_OWNER_SHOWN, THREAD_ROUTED_SHOWN, type SessionThreadOutputRead, type SessionThreadOwnerRead } from '../src/core/fleet/session-thread.js';
 import { readSessionThread } from '../src/core/fleet/session-thread-read.js';
 import { readFleetSessionMap } from '../src/core/fleet/sessions-view.js';
 import { createFleetSessionThreadApi } from '../src/core/verse/fleet-session-thread-api.js';
@@ -107,7 +107,7 @@ describe('buildSessionThread', () => {
     expect(thread.session!.state).toBe('quiet');
     expect(thread.summary).toEqual(['Worker on claude, fixture-model, in phantom.', 'Quiet: no output for 25m.']);
     expect(thread.messages).toEqual([]);
-    expect(thread.sources).toEqual({ sessions: 'available', activity: 'unavailable', bus: 'unavailable', owner: 'none', replies: 'none', orders: 'none' });
+    expect(thread.sources).toEqual({ sessions: 'available', activity: 'unavailable', bus: 'unavailable', owner: 'none', replies: 'none', orders: 'none', output: 'none' });
     expect(thread.gaps).toEqual(['Activity unknown: this session\'s recorded activity could not be read.', 'Bus messages unknown: the agent bus could not be read.']);
     const partial = buildSessionThread(await liveList(), 'RQ-QUIET', { sessionsRead: true, bus: bus([], 'missing'),
       activity: activity({ truncated: true, sources: { events: 'missing', commands: 'missing', files: 'missing', reports: 'missing' }, counts: { events: 0, commands: 0, files: 0, reports: 0 }, entries: [] }) }, NOW);
@@ -458,5 +458,71 @@ describe('phm sessions thread', () => {
     expect(/sources:\{([^}]*)\}/.exec(shape)?.[1]?.split(',')).toEqual(Object.keys(thread.sources));
     for (const key of Object.keys(thread)) expect([key, shape.includes(key)]).toEqual([key, true]);
     expect(doc?.description).toContain('routed');
+  });
+});
+
+describe('what the session wrote (output)', () => {
+  const log = (lines: string[], over: Partial<SessionThreadOutputRead> = {}): SessionThreadOutputRead => ({ source: 'live', truncated: false, lines, ...over });
+  const build = async (output?: SessionThreadOutputRead | null) => buildSessionThread(await liveList(), 'RQ-A',
+    { sessionsRead: true, activity: activity(), bus: bus([message('m1', 'leader', 'RQ-A')]), ...(output === undefined ? {} : { output }) }, NOW);
+
+  it('ends the conversation with the newest lines of the log, blank ones dropped and long ones cut', async () => {
+    const lines = ['', ...Array.from({ length: 14 }, (_, index) => `line ${index + 1}  `), '   ', 'x'.repeat(THREAD_OUTPUT_LINE_CHARS + 20)];
+    const thread = await build(log(lines));
+    const said = thread.messages.at(-1)!;
+    expect(said).toMatchObject({ key: 'output', kind: 'output', side: 'session', at: null, format: 'mono', label: 'Output, last 12 lines of its log' });
+    const shown = said.text.split('\n');
+    expect(shown).toHaveLength(THREAD_OUTPUT_LINES);
+    expect([shown[0], shown.at(-2)]).toEqual(['line 4', 'line 14']);
+    expect([shown.at(-1)!.length, shown.at(-1)!.endsWith('…')]).toEqual([THREAD_OUTPUT_LINE_CHARS, true]);
+    expect(sessionOutputLines(lines).earlier).toBe(3);
+    expect([thread.sources.output, thread.gaps]).toEqual(['available', []]);
+    expect(Object.keys(thread.sources).at(-1)).toBe('output');
+    expect((await build(log(['one', 'two']))).messages.at(-1)).toMatchObject({ label: 'Output, 2 lines', text: 'one\ntwo' });
+    // A window that clipped the log has earlier lines even when few are shown.
+    expect((await build(log(['bye'], { source: 'archived', truncated: true }))).messages.at(-1)!.label).toBe('Output, from its archived log, last 1 line of its log');
+    expect(renderSessionThreadText(await build(log(['one', 'two'])))).toContain('< Output, 2 lines\n    one\n    two');
+  });
+
+  it('says the output is unknown when the log could not be read, and nothing when nothing was written', async () => {
+    for (const unread of [null, log([], { source: 'degraded' })]) {
+      const thread = await build(unread);
+      expect([thread.sources.output, thread.messages.some(m => m.kind === 'output')]).toEqual(['unavailable', false]);
+      expect(thread.gaps).toEqual(['Output unknown: this session\'s log could not be read.']);
+    }
+    for (const empty of [undefined, log([], { source: 'missing' }), log(['', '   ']), log([], { truncated: true })]) {
+      const thread = await build(empty);
+      expect([thread.sources.output, thread.messages.some(m => m.kind === 'output'), thread.gaps]).toEqual(['none', false, []]);
+    }
+    const tooLarge = await build(log([], { source: 'archived', truncated: true }));
+    expect([tooLarge.sources.output, tooLarge.gaps]).toEqual(['unavailable', ['Output not shown: the archived log is too large to read here.']]);
+    expect(buildSessionThread(await liveList(), 'RQ-NOPE', { sessionsRead: true, bus: null }, NOW).sources.output).toBe('none');
+  });
+
+  it('does not say the latest line twice when the output already ends with it', async () => {
+    const list = await liveList();
+    flatTree(list.tree.roots).map(entry => entry.node).find(node => node.id === 'RQ-A')!.lastMessage = 'Running the tests';
+    const keys = (output?: SessionThreadOutputRead) => buildSessionThread(list, 'RQ-A', { sessionsRead: true, bus: bus([]), ...(output ? { output } : {}) }, NOW).messages.map(m => m.key);
+    expect(keys()).toEqual(['latest']);
+    expect(keys(log(['npm test', 'Running the tests']))).toEqual(['output']);
+    expect(keys(log(['npm test', 'Running the tests, 40 of 90 files']))).toEqual(['output']);
+    expect(keys(log(['npm test', 'All green']))).toEqual(['output', 'latest']);
+  });
+
+  it('is read for a session with a job only, and a failed read leaves the rest of the thread', async () => {
+    const reads = () => ({ readMap: vi.fn(fleetMap), readSubagents: vi.fn(async () => []), readActivity: vi.fn(async () => activity()), readBus: vi.fn(() => bus([message('m1', 'leader', 'RQ-A')])),
+      readReplies: vi.fn(async () => replies(['hello'])), readOwner: vi.fn(async () => inbox([])), readOrders: vi.fn(async () => trace([])),
+      readOutput: vi.fn(async () => log(['compiling', `key ghp_${'a'.repeat(36)}`, 'done'])) });
+    const worker = reads(), thread = await readSessionThread('RQ-A', { now: NOW, ...worker });
+    expect(worker.readOutput.mock.calls).toEqual([['RQ-A']]);
+    expect(thread.messages.at(-1)).toMatchObject({ kind: 'output', label: 'Output, 3 lines' });
+    expect(thread.messages.at(-1)!.text.split('\n').filter(line => line === 'compiling' || line === 'done')).toEqual(['compiling', 'done']);
+    expect(JSON.stringify(thread)).not.toContain('ghp_');
+    const leader = reads();
+    expect((await readSessionThread('leader', { now: NOW, ...leader })).sources.output).toBe('none');
+    expect(leader.readOutput).not.toHaveBeenCalled();
+    const down = await readSessionThread('RQ-A', { now: NOW, ...reads(), readOutput: async () => { throw new Error('log unreadable'); } });
+    expect(down.sources).toMatchObject({ activity: 'available', bus: 'available', output: 'unavailable' });
+    expect(down.messages.map(m => m.kind)).toEqual(['brief', 'step', 'step', 'commands', 'files', 'notes', 'bus']);
   });
 });

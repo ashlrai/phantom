@@ -408,6 +408,7 @@
 /test/fable-orchestrator.test.ts @masonwyatt23
 /test/fable-world.test.ts @masonwyatt23
 /test/fixture-custody.test.ts @masonwyatt23
+/test/fixtures/ci-baseline/trust-shared.log @masonwyatt23
 /test/fixtures/eval/routing.ts @masonwyatt23
 /test/fixtures/fleet-graph/router-queue.md @masonwyatt23
 /test/fixtures/m454/agent-skills-ff2df4c.provenance.json @masonwyatt23
@@ -681,6 +682,8 @@
 /test/locus-readiness.test.ts @masonwyatt23
 /test/locus-session-authority.test.ts @masonwyatt23
 /test/locus.probe.test.ts @masonwyatt23
+/test/loop-stages-api.test.ts @masonwyatt23
+/test/loop-stages.test.ts @masonwyatt23
 /test/m100.web-open.test.ts @masonwyatt23
 /test/m102.goal-conductor.test.ts @masonwyatt23
 /test/m103.desktop-action.test.ts @masonwyatt23
@@ -1058,6 +1061,7 @@
 /test/merge-identity-owner-preservation-297s.test.ts @masonwyatt23
 /test/merge-identity-recut.test.ts @masonwyatt23
 /test/merge-identity-registry.test.ts @masonwyatt23
+/test/merge-latency.test.ts @masonwyatt23
 /test/merge-path-readonly.test.ts @masonwyatt23
 /test/merge-path.test.ts @masonwyatt23
 /test/merge-plan-original-preservation-202s.test.ts @masonwyatt23
@@ -1133,8 +1137,10 @@
 /test/projection-authority-architecture-contract.test.ts @masonwyatt23
 /test/proposal-spans.test.ts @masonwyatt23
 /test/protected-paths-310b.test.ts @masonwyatt23
+/test/publish-fetch-retry.test.ts @masonwyatt23
 /test/publish-resume.test.ts @masonwyatt23
 /test/quarantine-ledger.test.ts @masonwyatt23
+/test/queue-dupcheck-gate.test.ts @masonwyatt23
 /test/receipt-key.test.ts @masonwyatt23
 /test/receipt-later-hooks.test.ts @masonwyatt23
 /test/recut-comms-61.test.ts @masonwyatt23

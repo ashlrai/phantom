@@ -12,6 +12,7 @@ import { readOwnerChatReceipts, ownerChatRoot, ownerChatReceiptState, type Owner
  * Addresses (all flat routing labels; the wire envelope is unchanged):
  *   DM       to `agent:<handle>`                channel `bus`
  *   channel  to `group:<channel>:<topic>`       channel `bus`   (bus-group address)
+ *   label    to `<routing label>`               channel `bus`   (note or context)
  *   handoff  to `agent:<handle>`                channel `handoff`, body `worker-handoff`
  *   wake     to `agent:<handle>`                channel `bus`,   body `wake`
  */
@@ -19,8 +20,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { appendBusInbox, listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
   type BusInboxOptions, type BusInboxPost } from '../fleet/bus-inbox.js';
-import { BUS_PRIORITIES, type BusEnvelope, type BusPriority } from '../fleet/bus-envelope.js';
-import { groupAddress } from '../fleet/bus-group.js';
+import { BUS_PRIORITIES, isClaimableWork, type BusEnvelope, type BusPriority } from '../fleet/bus-envelope.js';
+import { groupAddress, isGroupPresenceBody } from '../fleet/bus-group.js';
+import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
+import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { createBusWakeHook, type BusWakeResult } from '../fleet/bus-wake.js';
 import { busWakeQueueEnqueue, enqueueBusWake, readBusWakes, type BusWakeRow } from '../fleet/bus-wake-queue.js';
 import { isFleetJobId } from '../fleet/runs-job-detail.js';
@@ -28,12 +31,13 @@ import { LEADERS_ADDRESS } from '../fleet/bus-leader-inbox.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { localWriteGate } from './send-gate.js';
 import { coordinationRowBlocks, listCoordination } from './claim-store.js';
-import { BUS_V2_TEXT_MAX, wakeBodySchema, workPostBodySchema, workStatusBodySchema,
-  type Participant, type WorkJob } from './bus-v2-schema.js';
+import { BUS_V2_TEXT_MAX, busBodyThread, contextBodySchema, noteBodySchema, wakeBodySchema, workPostBodySchema,
+  workStatusBodySchema, type Participant, type WorkJob } from './bus-v2-schema.js';
 import { readBusWorkFeed, runtimeProvider, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import {
-  AGENT_ADDRESS_PREFIX, agentChannelNameSchema, agentLabels, findAgentChannel, readAgentRegistry, resolveAgent,
-  type AgentIdentity, type AgentRegistry, type AgentRegistryOptions,
+  AGENT_ADDRESS_PREFIX, agentAddressMatcher, agentChannelNameSchema, agentLabels, findAgentChannel, readAgentRegistry,
+  RESERVED_PREFIXES, resolveAgent, type AgentIdentity, type AgentIdentityKeyFor, type AgentRegistry,
+  type AgentRegistryOptions,
 } from './bus-identity.js';
 
 export const UNIFIED_BUS_ORIGIN = 'agent-bus';
@@ -83,6 +87,15 @@ interface SendCommon {
 }
 export interface DirectMessageInput extends SendCommon { to: string; text: string; thread?: string; refs?: string[] }
 export interface ChannelPostInput extends SendCommon { channel: string; topic?: string; text: string; thread?: string; refs?: string[] }
+export interface LabelPostInput extends SendCommon {
+  /** Plain routing label the message addresses; the reserved prefixes are refused. */
+  to: string;
+  text: string;
+  /** v2 conversational body kind; default `note`. */
+  kind?: 'note' | 'context';
+  thread?: string;
+  refs?: string[];
+}
 export interface HandoffInput extends SendCommon { to: string; taskId: string; prompt: string }
 
 const refuse = (status: Exclude<UnifiedSendResult['status'], 'posted' | 'duplicate'>, reason: string): UnifiedSendResult =>
@@ -152,9 +165,9 @@ function metadata(sender: AgentIdentity, channel: 'bus' | 'handoff', channelRef:
   } as const;
 }
 
-function noteBody(input: { text: string; thread?: string; refs?: string[] }) {
+function noteBody(input: { kind?: 'note' | 'context'; text: string; thread?: string; refs?: string[] }) {
   return {
-    kind: 'note', text: input.text,
+    kind: input.kind ?? 'note', text: input.text,
     ...(input.thread === undefined ? {} : { thread: input.thread }),
     ...(input.refs === undefined ? {} : { refs: input.refs }),
   };
@@ -207,6 +220,45 @@ export async function postChannelMessage(input: ChannelPostInput, options: Unifi
   return post({
     id: base.id, from: `${AGENT_ADDRESS_PREFIX}${sender.handle}`, to, priority: base.priority, ttl: base.ttl,
     body: noteBody(input), ...metadata(sender, 'bus', to),
+  }, shouldWake(base.priority, input.wake), options);
+}
+
+/**
+ * Post a v2 `note` (or `context`) to a plain routing label — the address every
+ * other send verb refuses by design: `dm` needs two registered identities,
+ * `channel post` needs membership, `work post`/`status` need a job, and the
+ * reserved prefixes (`agent:`, `group:`, `dm:`, `handoff:`) keep their
+ * dedicated verbs. The label can be a sink (`leaders`), a shared topic
+ * (`fleet.mesh`) or any label a subscriber reads through `comms bus read`,
+ * `bus-follow` or an identity's alias matching; the sender is still a
+ * registered identity and the mail carries the same sender metadata, scrub,
+ * wake and append path as a DM. It is untrusted data: addressing a label
+ * grants no authority, reaches no inbox unless the label is one of the
+ * target's identity labels, and wakes only by the priority rules.
+ */
+export async function postLabelMessage(input: LabelPostInput, options: UnifiedBusOptions = {}): Promise<UnifiedSendResult> {
+  const base = common(input, { priority: 'P2', ttl: DEFAULT_DM_TTL_MS });
+  if ('status' in base) return base;
+  const problem = noteFields(input);
+  if (problem) return refuse('invalid', problem);
+  const kind = input.kind ?? 'note';
+  if (kind !== 'note' && kind !== 'context') return refuse('invalid', 'Kind must be note or context.');
+  const to = input.to;
+  if (typeof to !== 'string' || !THREAD.test(to) || scrubSecrets(to) !== to) {
+    return refuse('invalid', 'Address must be a printable routing label.');
+  }
+  if (RESERVED_PREFIXES.some(prefix => to.toLowerCase().startsWith(prefix))) {
+    return refuse('invalid', 'Address prefix is reserved for the dedicated verbs.');
+  }
+  const reg = registry(options);
+  if ('status' in reg) return reg;
+  const sender = resolveAgent(reg, input.from);
+  if (!sender) return refuse('unknown-sender', 'Sender is not a registered identity.');
+  const body = (kind === 'context' ? contextBodySchema : noteBodySchema).safeParse(noteBody({ ...input, kind }));
+  if (!body.success) return refuse('invalid', 'Message is outside the v2 contract.');
+  return post({
+    id: base.id, from: `${AGENT_ADDRESS_PREFIX}${sender.handle}`, to, priority: base.priority, ttl: base.ttl,
+    body: body.data, ...metadata(sender, 'bus', to),
   }, shouldWake(base.priority, input.wake), options);
 }
 
@@ -311,7 +363,10 @@ function workRoute(to: string | undefined): string | UnifiedSendResult {
  * an unreadable feed refuses the send rather than posting unchecked.
  */
 function workFeedBlocked(feed: BusWorkFeedReadResult): UnifiedSendResult {
-  if (feed.status === 'refused') return refuse('refused', `Work feed is refused (${feed.reason}).`);
+  if (feed.status === 'refused') {
+    return refuse('refused', `Work feed is refused (${feed.reason})` +
+      `${feed.receipt === undefined ? '' : ` at receipt ${feed.receipt.id}`}.`);
+  }
   if (feed.status === 'retryable') return refuse('retryable', 'Work feed read is retryable.');
   if (feed.status === 'invalid') return refuse('invalid', 'Work feed read is invalid.');
   return refuse('unavailable', 'Work feed is unavailable.');
@@ -466,8 +521,21 @@ export interface InboxMessage {
   /** Channel name for channel posts. */
   channel: string | null;
   envelope: BusEnvelope;
+  /**
+   * Claimable work and worker-handoff bodies only: whether a taken
+   * message-id claim or a live coordination hold provably covers the exact
+   * receipt — the same evidence `bus show` reports. `held` false is proof
+   * of free; null means a hold store could not be read (unknown, never
+   * proven free). Absent on every other body kind.
+   */
+  held?: boolean | null;
+  /** Owner label of the blocking claim when held and known; null otherwise. */
+  holder?: string | null;
 }
-export type InboxPage = { status: 'ok'; agent: string; messages: InboxMessage[]; nextCursor: number } |
+export type InboxPage = { status: 'ok'; agent: string; messages: InboxMessage[]; nextCursor: number;
+    /** Every filter-matched row across the whole scan, present only when the
+     * read asked for it (`page.matched`); `messages` still caps at `limit`. */
+    matched?: number } |
   { status: 'invalid' | 'unknown-agent' | 'unavailable' | 'retryable'; reason: string };
 
 const BUS_BODY_SUMMARY_MAX = 200;
@@ -886,6 +954,23 @@ function summarizeBusBody(body: unknown, depth: number): string | null {
   }
 }
 
+/** Raw renders stay bounded so one large unknown body cannot fill a frame or digest. */
+const BUS_BODY_FALLBACK_MAX = 512;
+
+const busFallbackClip = (text: string): string =>
+  text.length > BUS_BODY_FALLBACK_MAX ? `${text.slice(0, BUS_BODY_FALLBACK_MAX - 1)}…` : text;
+
+/**
+ * Secret-scrubbed, bounded read of a body `busBodySummary` does not know:
+ * string bodies render as their text, anything else as raw JSON — both
+ * single-line and clipped to 512 characters. The one fallback the inbox
+ * frame and the per-agent work digest share.
+ */
+export function busBodyFallbackSummary(body: unknown): string {
+  if (typeof body === 'string') return busFallbackClip(busSummaryField(body));
+  return busFallbackClip(scrubSecrets(JSON.stringify(body) ?? 'null'));
+}
+
 interface Addressing { identity: AgentIdentity; labels: Set<string>; channels: Map<string, string> }
 
 function addressing(reg: AgentRegistry, ref: string): Addressing | undefined {
@@ -902,24 +987,61 @@ function channelOf(to: string, channels: Map<string, string>): string | null {
 }
 
 /**
+ * One already-read registry bound into the label→identity-key lookup the
+ * sender filters share: a label resolves to its identity's stable id through
+ * handle, `agent:` address, id or alias (exact match first, then lowercase).
+ */
+function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
+  const resolved = new Map<string, string | undefined>();
+  return (label) => {
+    if (!resolved.has(label)) {
+      resolved.set(label, (resolveAgent(registry, label) ?? resolveAgent(registry, label.toLowerCase()))?.id);
+    }
+    return resolved.get(label);
+  };
+}
+
+/**
  * One page of an identity's inbox: DMs and handoffs to `agent:<handle>`,
  * traffic still addressed to its bare handle, stable id or legacy aliases,
- * and posts in its channels (minus its own). Returned highest priority
- * first; `nextCursor` covers every scanned row, so callers persist it only
- * after handling the page.
+ * and posts in its channels (minus its own and minus `group.presence`
+ * heartbeats, which are observations with their own read, never mail).
+ * `thread` narrows the page to
+ * `note`/`context` bodies carrying that v2 thread label; `from` narrows by
+ * sender through the same identity-label matching `channel read` uses — a
+ * ref that resolves through the registry matches every label of that
+ * identity, an unresolvable ref keeps exact-label matching. Returned highest
+ * priority first; `nextCursor` covers every scanned row, so callers persist
+ * it only after handling the page. Claimable work and worker-handoff items
+ * additionally carry `held`/`holder` — the same hold evidence `bus show`
+ * reports — so an agent paging mail sees whether pending work is already
+ * taken without a lookup per message. `page.matched` asks for the true
+ * pending total: the scan then covers the whole retained store instead of
+ * stopping at `limit`, counting every row the same filters accept while
+ * `messages` still returns only the first `limit` of them.
  */
-export function readAgentInbox(ref: string, page: { after?: number; limit?: number } = {},
+export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string;
+    matched?: boolean } = {},
   options: UnifiedBusOptions = {}): InboxPage {
-  const after = page.after ?? 0, limit = page.limit ?? 50;
+  const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread;
+  const countMatched = page.matched === true;
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
     return { status: 'invalid', reason: 'after must be >= 0 and limit 1-100.' };
+  }
+  if (thread !== undefined && (typeof thread !== 'string' || !THREAD.test(thread))) {
+    return { status: 'invalid', reason: 'Invalid thread label.' };
+  }
+  if (page.from !== undefined && (typeof page.from !== 'string' || page.from.length === 0 || page.from.length > 128)) {
+    return { status: 'invalid', reason: 'Invalid sender filter.' };
   }
   const read = readAgentRegistry(options);
   if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
   const target = addressing(read.registry, ref);
   if (!target) return { status: 'unknown-agent', reason: 'Agent is not a registered identity.' };
   const self = `${AGENT_ADDRESS_PREFIX}${target.identity.handle}`;
+  const fromMatch = page.from === undefined ? undefined : agentAddressMatcher(labelIdentityOf(read.registry), page.from);
   const messages: InboxMessage[] = [];
+  let matched = 0;
   let cursor = after;
   scan: for (let index = 0; index < MAX_PAGES; index += 1) {
     const result = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ, { root: options.root, now: options.now, includeOriginalEnvelope: true });
@@ -930,31 +1052,53 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
     let ownerReceipts: OwnerChatReceipt[] | undefined;
     for (const row of result.messages) {
       const envelope = row.envelope;
+      // A presence heartbeat is an observation, not mail of any kind.
+      if (isGroupPresenceBody(envelope.body)) continue;
       let kind: InboxKind | null = null;
       const channel = channelOf(envelope.to, target.channels);
       if (envelope.channel === 'handoff' && target.labels.has(envelope.to)) kind = 'handoff';
       else if (envelope.to === self) kind = 'dm';
       else if (target.labels.has(envelope.to)) kind = 'legacy';
       else if (channel && !target.labels.has(envelope.from)) kind = 'channel';
-      if (kind && envelope.origin_bridge === 'agent-chat-owner') {
+      const matchedKind = kind !== null &&
+        (thread === undefined || busBodyThread(envelope.body) === thread) &&
+        (fromMatch === undefined || fromMatch(envelope.from)) ? kind : null;
+      if (matchedKind !== null && envelope.origin_bridge === 'agent-chat-owner') {
         try { ownerReceipts ??= readOwnerChatReceipts(ownerChatRoot(options.root)); }
         catch { return { status: 'unavailable', reason: 'Owner share receipts unavailable.' }; }
         const receiptState = ownerChatReceiptState(row.originalEnvelope ?? envelope, row.cursor, ownerReceipts, target.identity.id);
         if (receiptState === 'pending') return { status: 'retryable', reason: 'Owner share receipt pending.' };
         if (receiptState !== 'accepted') continue;
       }
-      if (kind) {
-        messages.push({ cursor: row.cursor, receivedAt: row.receivedAt, kind, priority: envelope.priority,
-          fromAgent: resolveAgent(read.registry, envelope.from)?.handle ?? null,
-          channel: kind === 'channel' ? channel : null, envelope });
+      if (matchedKind !== null) {
+        matched += 1;
+        if (!countMatched || messages.length < limit) {
+          messages.push({ cursor: row.cursor, receivedAt: row.receivedAt, kind: matchedKind, priority: envelope.priority,
+            fromAgent: resolveAgent(read.registry, envelope.from)?.handle ?? null,
+            channel: matchedKind === 'channel' ? channel : null, envelope });
+        }
       }
-      if (messages.length === limit) { cursor = row.cursor; break scan; }
+      if (!countMatched && messages.length === limit) { cursor = row.cursor; break scan; }
     }
     if (result.nextCursor <= cursor) break;
     cursor = result.nextCursor;
   }
   messages.sort((a, b) => a.priority.localeCompare(b.priority) || a.cursor - b.cursor);
-  return { status: 'ok', agent: target.identity.handle, messages, nextCursor: cursor };
+  // Claimable work and worker handoffs carry the same hold evidence `bus
+  // show` reports; the hold stores are read once for the page, and only
+  // when a candidate is present.
+  const heldCandidates = messages.filter(m => isClaimableWork(m.envelope.body) || isWorkerHandoffBody(m.envelope.body));
+  if (heldCandidates.length > 0) {
+    const stores = readHoldStores(options);
+    for (const message of heldCandidates) {
+      const hold = holdForReceipt({ id: message.envelope.id, cursor: message.cursor,
+        receivedAt: message.receivedAt, envelope: message.envelope }, stores);
+      message.held = hold.held;
+      message.holder = hold.holder;
+    }
+  }
+  return { status: 'ok', agent: target.identity.handle, messages, nextCursor: cursor,
+    ...(countMatched ? { matched } : {}) };
 }
 
 export type WakePage = { status: 'ok'; agent: string; wakes: BusWakeRow[] } |
@@ -1010,4 +1154,218 @@ export function listBusChannels(agent: string | undefined, options: UnifiedBusOp
       members: [...channel.members] }))
     .sort((a, b) => a.name.localeCompare(b.name));
   return { status: 'ok', source: read.source, agent: handle, channels };
+}
+
+export interface ChannelReadMessage {
+  cursor: number;
+  receivedAt: number;
+  priority: BusPriority;
+  /** Topic component of the `group:<channel>:<topic>` address the post was sent to. */
+  topic: string;
+  /** Registered handle of the sender label, or null. A label is never authentication. */
+  fromAgent: string | null;
+  envelope: BusEnvelope;
+}
+export interface ChannelReadOptions {
+  /** Restrict the page to one topic; default every topic of the channel. */
+  topic?: string;
+  /**
+   * Sender filter: a handle, `agent:<handle>`, stable id or alias. A ref that
+   * resolves through the identity registry matches every label of that
+   * identity; an unresolvable ref keeps exact-label matching.
+   */
+  from?: string;
+  /**
+   * Thread filter: the v2 `thread` label a `note`/`context` body carries.
+   * Every other body kind — and a note without the field — never matches.
+   */
+  thread?: string;
+  after?: number;
+  limit?: number;
+}
+export type ChannelReadPage =
+  | { status: 'ok'; channel: string; messages: ChannelReadMessage[]; nextCursor: number }
+  | { status: 'invalid' | 'unknown-channel' | 'unavailable' | 'retryable'; reason: string };
+
+/**
+ * One page of a channel's posts, oldest first: every live envelope addressed
+ * to `group:<name>:*` — or to one `topic` — except `group.presence`
+ * heartbeats, which are expiring observations with their own read
+ * (`groupPresence`), not messages. Reading needs no identity and no
+ * membership: membership gates posting only, and the rows are the same
+ * shared store `comms bus group read` sees. `from` narrows by sender through
+ * the same identity-label matching `comms bus read` uses; `thread` narrows to
+ * `note`/`context` bodies carrying that v2 thread label. `nextCursor`
+ * covers every scanned row, so callers persist it only after handling the
+ * page; a missing registry means no channel exists, an unreadable one or an
+ * unreadable store is reported, never an empty page passed off as history.
+ */
+export function readAgentChannel(name: string, page: ChannelReadOptions = {}, options: UnifiedBusOptions = {}): ChannelReadPage {
+  const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread;
+  if (typeof name !== 'string' || !agentChannelNameSchema.safeParse(name).success) {
+    return { status: 'invalid', reason: 'Invalid channel name.' };
+  }
+  if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
+    return { status: 'invalid', reason: 'after must be >= 0 and limit 1-100.' };
+  }
+  if (thread !== undefined && (typeof thread !== 'string' || !THREAD.test(thread))) {
+    return { status: 'invalid', reason: 'Invalid thread label.' };
+  }
+  let exact: string | undefined;
+  if (page.topic !== undefined) {
+    if (typeof page.topic !== 'string') return { status: 'invalid', reason: 'Invalid channel topic.' };
+    try { exact = groupAddress(name, page.topic); }
+    catch { return { status: 'invalid', reason: 'Invalid channel topic.' }; }
+  }
+  const read = readAgentRegistry(options);
+  if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
+  if (!findAgentChannel(read.registry, name)) return { status: 'unknown-channel', reason: 'Channel does not exist.' };
+  const prefix = `group:${name}:`;
+  let fromMatch: ((value: string) => boolean) | undefined;
+  if (page.from !== undefined) {
+    if (typeof page.from !== 'string' || page.from.length === 0 || page.from.length > 128) {
+      return { status: 'invalid', reason: 'Invalid sender filter.' };
+    }
+    fromMatch = agentAddressMatcher(labelIdentityOf(read.registry), page.from);
+  }
+  const messages: ChannelReadMessage[] = [];
+  let cursor = after;
+  scan: for (let index = 0; index < MAX_PAGES; index += 1) {
+    const result = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ, { root: options.root, now: options.now });
+    if (result.status !== 'ok') {
+      return { status: result.status === 'retryable' ? 'retryable' : result.status === 'invalid' ? 'invalid' : 'unavailable',
+        reason: 'Bus store is not readable.' };
+    }
+    for (const row of result.messages) {
+      const envelope = row.envelope, body = envelope.body;
+      const presence = isGroupPresenceBody(body);
+      if (!presence && envelope.to.startsWith(prefix) && (exact === undefined || envelope.to === exact) &&
+          (fromMatch === undefined || fromMatch(envelope.from)) &&
+          (thread === undefined || busBodyThread(body) === thread)) {
+        messages.push({ cursor: row.cursor, receivedAt: row.receivedAt, priority: envelope.priority,
+          topic: envelope.to.slice(prefix.length),
+          fromAgent: resolveAgent(read.registry, envelope.from)?.handle ?? null, envelope });
+      }
+      if (messages.length === limit) { cursor = row.cursor; break scan; }
+    }
+    if (result.nextCursor <= cursor) break;
+    cursor = result.nextCursor;
+  }
+  return { status: 'ok', channel: name, messages, nextCursor: cursor };
+}
+
+export interface BusEnvelopeLookupMessage {
+  cursor: number;
+  receivedAt: number;
+  /**
+   * Registered handle of the sender label, or null. A label is never
+   * authentication; null also covers an unreadable registry — the raw
+   * `envelope.from` label is always present either way.
+   */
+  fromAgent: string | null;
+  /** Live receipt: `ttl` here is the remaining TTL at read time. */
+  envelope: BusEnvelope;
+}
+export type BusEnvelopeLookup =
+  | { status: 'ok'; id: string; message: BusEnvelopeLookupMessage;
+      /**
+       * Present only when the body is claimable work or a worker handoff:
+       * whether a taken message-id claim or a live coordination hold provably
+       * covers the envelope — the same rule `work mine` next/handoffs and the
+       * unified comms inbox apply. `held` false is proof of free; null means
+       * a hold store could not be read (unknown, never proven free).
+       */
+      held?: boolean | null;
+      /** Owner label of the blocking claim when held and known; null otherwise. */
+      holder?: string | null }
+  | { status: 'not-found'; id: string }
+  | { status: 'invalid' | 'unavailable' | 'retryable'; reason: string };
+
+/**
+ * The two hold stores read once per lookup or inbox page. 'unavailable'
+ * marks a store that cannot be read — coverage is then unknown, never
+ * proven free.
+ */
+type HoldStores = 'unavailable' | {
+  claims: ReturnType<typeof inspectBusWorkClaims>['claims'];
+  coordination: ReturnType<typeof listCoordination>['claims'];
+  now: number;
+};
+
+function readHoldStores(options: UnifiedBusOptions): HoldStores {
+  const now = (options.now ?? Date.now)();
+  const claimsRead = inspectBusWorkClaims(options.root);
+  const coordination = listCoordination(options.root, now);
+  if (claimsRead.source === 'unavailable' || coordination.source === 'unavailable') return 'unavailable';
+  return { claims: claimsRead.claims, coordination: coordination.claims, now };
+}
+
+/**
+ * Hold state for one resolved receipt against already-read stores: a
+ * message-id claim row matching the exact `(id, cursor, receivedAt)` receipt
+ * triple (a completed row stays taken, an expired lease does not) or a live
+ * coordination row blocking `queue:<id>`.
+ */
+function holdForReceipt(receipt: { id: string; cursor: number; receivedAt: number; envelope: BusEnvelope },
+  stores: HoldStores): { held: boolean | null; holder: string | null } {
+  if (stores === 'unavailable') return { held: null, holder: null };
+  const messageOwner = stores.claims.find(row =>
+    row.id === receipt.envelope.id && row.cursor === receipt.cursor && row.receivedAt === receipt.receivedAt &&
+    (row.completedAt !== null || row.leaseUntil > stores.now))?.owner;
+  const coordinationBlocker = stores.coordination.find(row => row.live &&
+    coordinationRowBlocks(row, `queue:${receipt.envelope.id}`));
+  const held = messageOwner !== undefined || coordinationBlocker !== undefined;
+  return { held, holder: held ? messageOwner ?? coordinationBlocker?.owner ?? null : null };
+}
+
+/**
+ * Hold state for one resolved envelope, for the claimable kinds only. A
+ * store that cannot be read makes the answer unknown — never reported free.
+ */
+function envelopeHold(receipt: { id: string; cursor: number; receivedAt: number; envelope: BusEnvelope },
+  options: UnifiedBusOptions): { held: boolean | null; holder: string | null } | undefined {
+  const body = receipt.envelope.body;
+  if (!isClaimableWork(body) && !isWorkerHandoffBody(body)) return undefined;
+  return holdForReceipt(receipt, readHoldStores(options));
+}
+
+/**
+ * Resolve one retained envelope by its wire id — the key wake hints, claim
+ * operations, `work mine` items and dedupe all cite. The scan is the same
+ * bounded page walk the other reads use and sees only live (unexpired)
+ * receipts: an expired or reclaimed-away id reports `not-found`, never a
+ * stale row. Reading needs no identity and no addressing scope: like
+ * `readAgentChannel`, the store is shared and ids are routing data, not
+ * secrets. `fromAgent` decoration is best-effort; an unreadable registry
+ * never hides the envelope itself. Claimable work and worker-handoff bodies
+ * additionally report `held`/`holder` — whether a taken claim or live
+ * coordination hold already covers the envelope, the same evidence `work
+ * mine` next/handoffs and the unified comms inbox show.
+ */
+export function readBusEnvelopeById(id: string, options: UnifiedBusOptions = {}): BusEnvelopeLookup {
+  if (typeof id !== 'string' || !THREAD.test(id)) {
+    return { status: 'invalid', reason: 'Invalid message id.' };
+  }
+  const registry = readAgentRegistry(options);
+  let cursor = 0;
+  for (let index = 0; index < MAX_PAGES; index += 1) {
+    const result = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ, { root: options.root, now: options.now });
+    if (result.status !== 'ok') {
+      return { status: result.status === 'retryable' ? 'retryable' : result.status === 'invalid' ? 'invalid' : 'unavailable',
+        reason: 'Bus store is not readable.' };
+    }
+    for (const row of result.messages) {
+      if (row.envelope.id === id) {
+        const message: BusEnvelopeLookupMessage = { cursor: row.cursor, receivedAt: row.receivedAt,
+          fromAgent: registry.status === 'ok' ? resolveAgent(registry.registry, row.envelope.from)?.handle ?? null : null,
+          envelope: row.envelope };
+        const hold = envelopeHold({ id: row.envelope.id, cursor: row.cursor, receivedAt: row.receivedAt,
+          envelope: row.envelope }, options);
+        return { status: 'ok', id, message, ...(hold ?? {}) };
+      }
+    }
+    if (result.messages.length < BUS_INBOX_MAX_READ || result.nextCursor <= cursor) break;
+    cursor = result.nextCursor;
+  }
+  return { status: 'not-found', id };
 }

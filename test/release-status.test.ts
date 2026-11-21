@@ -115,7 +115,7 @@ describe('release cadence', () => {
     releaseCadence([{ repo: 'ashlrai/locus', latestTag, taggedAt: days === null ? null : daysAgo(days), mergedPrsSinceTag, readable }], now).repos[0]!;
 
   it('is fresh inside both limits, and at exactly 7 days and 50 PRs', () => {
-    expect(one('v1.0.0', 2, 3)).toEqual({ repo: 'ashlrai/locus', latestTag: 'v1.0.0', taggedAt: daysAgo(2), ageDays: 2, mergedPrsSince: 3, verdict: 'fresh', suggestion: 'locus: 3 PRs since v1.0.0 2 days ago; fresh' });
+    expect(one('v1.0.0', 2, 3)).toEqual({ repo: 'ashlrai/locus', latestTag: 'v1.0.0', taggedAt: daysAgo(2), ageDays: 2, mergedPrsSince: 3, recentPrs: null, verdict: 'fresh', suggestion: 'locus: 3 PRs since v1.0.0 2 days ago; fresh' });
     expect(one('v1.0.0', 7, 50)).toMatchObject({ ageDays: 7, verdict: 'fresh' });
     expect(one('v1.0.0', 1, 1).suggestion).toBe('locus: 1 PR since v1.0.0 1 day ago; fresh');
   });

@@ -43,6 +43,9 @@ status.
   but not `fleetx.deploy`. Patterns must be a valid name or a namespace
   prefix. Anything else exits 2.
 - `--kind <task|result|review|status|question>` matches `protocol.kind`.
+- `--thread <label>` matches the v2 `thread` field on `note`/`context`
+  bodies only; every other body kind never matches. The label is printable
+  ASCII, 1 to 128 characters; anything else exits 2.
 - `--to`, `--from` and `--exclude-from` match the literal routing label or
   any other label of the same registered agent identity (handle, `agent:`
   address, stable id or alias), resolved once when the read starts; an
@@ -61,8 +64,10 @@ new state:
 - `next --to <address|topic> --owner <label> --lease-ms <1..3600000>` claims
   the oldest highest-priority live task addressed to `--to`. When `--to`
   resolves to a registered agent identity, work addressed under any routing
-  label of that identity (handle, `agent:` address, stable id or alias) is
-  eligible; a `--to` that names no identity, or an unreadable registry,
+  label of that identity (handle, `agent:` address, stable id or alias) — or
+  to a `group:<channel>:<topic>` address of a registry channel the identity
+  belongs to, minus the identity's own channel posts — is eligible; a `--to`
+  that names no identity, membership in no channel, or an unreadable registry,
   keeps exact-label matching. It returns
   `{status:'acquired', receipt, token, leaseUntil}` or `{status:'empty'}`.
 - `claim acquire --id <message-id> --owner <label> --lease-ms <n>` claims one

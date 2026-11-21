@@ -23,6 +23,37 @@ const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.m
 
 export interface RouterWeightBaseline { work_class: string; lane: string; weight: number }
 
+/**
+ * Per-group outcome quality folded from the same known cohort the weight
+ * decision uses. Every figure carries its own coverage count; a signal with
+ * no recorded evidence reports null, never zero. The weight math still moves
+ * on held-merge rate alone — this block only reports the other signals the
+ * ledger already records so an operator sees merge quality (CI retries,
+ * review load, cost, wall time, eval pass^k) before applying anything.
+ */
+export interface RouterWeightEvidence {
+  /** Group outcomes carrying a recorded CI first-pass verdict. */
+  ci_first_pass_known: number;
+  /** ci_first_pass===true over ci_first_pass_known; null when no verdict was recorded. */
+  ci_first_pass_rate: number | null;
+  /** Group outcomes carrying review_findings counts. */
+  review_findings_known: number;
+  /** Summed fixed/rejected/ignored across those outcomes; null when none recorded. */
+  review_findings: { fixed: number; rejected: number; ignored: number } | null;
+  /** Group outcomes with a recorded cost_usd. */
+  cost_known: number;
+  /** Mean cost_usd over cost_known; null when no outcome recorded a cost. */
+  cost_usd_mean: number | null;
+  /** Group outcomes with a recorded wall_s. */
+  wall_known: number;
+  /** Mean wall_s over wall_known; null when no outcome recorded wall time. */
+  wall_s_mean: number | null;
+  /** Group outcomes carrying an advisory passk score. */
+  passk_known: number;
+  /** Mean passk over passk_known; null when no outcome carried a score. */
+  passk_mean: number | null;
+}
+
 export interface RouterWeightProposalOptions {
   /** Known (merged true/false) outcomes required before a shift is proposed. Default 20. */
   minSamples?: number;
@@ -45,6 +76,8 @@ export interface RouterWeightProposal {
   /** Equals baseline_weight when refused. Always within [0, 1]. */
   proposed_weight: number;
   shift: number;
+  /** Outcome-quality signals over the same known_n cohort; advisory context, never weight input. */
+  evidence: RouterWeightEvidence;
 }
 
 export interface RouterWeightProposalSet {
@@ -52,13 +85,61 @@ export interface RouterWeightProposalSet {
   known_outcomes: number;
   unknown_outcomes: number;
   unclassified_outcomes: number;
+  /**
+   * Finish productivity signals inside the merged:null cohort — the same
+   * classified outcomes `unknown_outcomes` counts, so these explain why the
+   * merge verdict is missing rather than adding new jobs. `unknown_empty`
+   * counts jobs whose newest finish recorded `empty: true` (the run produced
+   * no diff); `unknown_nonzero_exit` counts jobs whose newest `exit_code`
+   * was not 0 — the two overlap, since a crashed run usually diffs nothing.
+   * `unknown_failure_classes` tallies the recorded `failure_class` labels,
+   * top entries first. `unknown_unresolved` is the remainder with no
+   * finish failure signal — finished cleanly and awaiting a merge verdict,
+   * or still in flight; the ledger simply records no terminal productivity
+   * outcome for it. All are counts of recorded evidence over the retained
+   * window, so 0 is a real measurement.
+   */
+  unknown_empty: number;
+  unknown_nonzero_exit: number;
+  unknown_failure_classes: { failure_class: string; jobs: number }[];
+  unknown_unresolved: number;
 }
+
+/** Running tallies for the outcome-quality signals; every count starts at zero and means stay sums until emitted. */
+interface WeightEvidenceTally {
+  ciPass: number; ciKnown: number;
+  reviewFixed: number; reviewRejected: number; reviewIgnored: number; reviewKnown: number;
+  costSum: number; costKnown: number;
+  wallSum: number; wallKnown: number;
+  passkSum: number; passkKnown: number;
+}
+
+const freshTally = (): WeightEvidenceTally => ({
+  ciPass: 0, ciKnown: 0, reviewFixed: 0, reviewRejected: 0, reviewIgnored: 0, reviewKnown: 0,
+  costSum: 0, costKnown: 0, wallSum: 0, wallKnown: 0, passkSum: 0, passkKnown: 0,
+});
+
+const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
+  ci_first_pass_known: t.ciKnown,
+  ci_first_pass_rate: t.ciKnown === 0 ? null : round6(t.ciPass / t.ciKnown),
+  review_findings_known: t.reviewKnown,
+  review_findings: t.reviewKnown === 0 ? null
+    : { fixed: t.reviewFixed, rejected: t.reviewRejected, ignored: t.reviewIgnored },
+  cost_known: t.costKnown,
+  cost_usd_mean: t.costKnown === 0 ? null : round6(t.costSum / t.costKnown),
+  wall_known: t.wallKnown,
+  wall_s_mean: t.wallKnown === 0 ? null : round6(t.wallSum / t.wallKnown),
+  passk_known: t.passkKnown,
+  passk_mean: t.passkKnown === 0 ? null : round6(t.passkSum / t.passkKnown),
+});
 
 /**
  * Groups by (work_class, lane). Non-ID work_class or lane is unclassified; merged:null is unknown and
  * excluded from evidence. A group below minSamples is refused and keeps its baseline. Otherwise the
  * weight moves toward the observed held-merge rate — merged outcomes recorded as reverted count as
- * known evidence but never as held merges — capped at maxShift and clamped to [0, 1].
+ * known evidence but never as held merges — capped at maxShift and clamped to [0, 1]. Each proposal
+ * also reports the group's other recorded outcome signals (CI verdicts, review findings, cost, wall
+ * time, pass^k) as advisory evidence over the same known cohort.
  */
 export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: RouterWeightProposalOptions = {}): RouterWeightProposalSet {
   const minSamples = opts.minSamples ?? ROUTER_WEIGHT_DEFAULT_MIN_SAMPLES;
@@ -76,32 +157,66 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     baselines.set(key, b.weight);
   }
 
-  const groups = new Map<string, { work_class: string; lane: string; known: number; merged: number; reverted: number }>();
+  const groups = new Map<string, { work_class: string; lane: string; known: number; merged: number; reverted: number; tally: WeightEvidenceTally }>();
   let known = 0, unknown = 0, unclassified = 0;
+  let unknownEmpty = 0, unknownNonzeroExit = 0, unknownUnresolved = 0;
+  const failureClasses = new Map<string, number>();
   for (const o of outcomes) {
     if (!isRouteId(o.work_class) || !isRouteId(o.lane)) { unclassified++; continue; }
-    if (o.merged === null) { unknown++; continue; }
+    if (o.merged === null) {
+      unknown++;
+      // Finish productivity evidence explains the missing merge verdict:
+      // empty:true means the run produced no diff, a nonzero exit_code means
+      // the worker failed, and failure_class names the classified cause. A
+      // job carrying none of them has no recorded finish failure — it
+      // finished cleanly awaiting a verdict or is still in flight.
+      const empty = o.empty === true;
+      const nonzeroExit = o.exit_code !== null && o.exit_code !== 0;
+      if (empty) unknownEmpty++;
+      if (nonzeroExit) unknownNonzeroExit++;
+      if (o.failure_class !== null) failureClasses.set(o.failure_class, (failureClasses.get(o.failure_class) ?? 0) + 1);
+      if (!empty && !nonzeroExit && o.failure_class === null) unknownUnresolved++;
+      continue;
+    }
     const key = JSON.stringify([o.work_class, o.lane]);
-    const g = groups.get(key) ?? { work_class: o.work_class, lane: o.lane, known: 0, merged: 0, reverted: 0 };
+    const g = groups.get(key) ?? { work_class: o.work_class, lane: o.lane, known: 0, merged: 0, reverted: 0, tally: freshTally() };
     g.known++;
     if (o.merged) {
       if (o.reverted === true) g.reverted++;
       else g.merged++;
     }
+    const t = g.tally;
+    if (o.ci_first_pass !== null) { t.ciKnown++; if (o.ci_first_pass) t.ciPass++; }
+    if (o.review_findings !== null) {
+      t.reviewKnown++;
+      t.reviewFixed += o.review_findings.fixed;
+      t.reviewRejected += o.review_findings.rejected;
+      t.reviewIgnored += o.review_findings.ignored;
+    }
+    if (o.cost_usd !== null) { t.costKnown++; t.costSum += o.cost_usd; }
+    if (o.wall_s !== null) { t.wallKnown++; t.wallSum += o.wall_s; }
+    if (o.passk !== null) { t.passkKnown++; t.passkSum += o.passk; }
     groups.set(key, g);
     known++;
   }
 
   const proposals = [...groups.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([key, g]): RouterWeightProposal => {
     const baseline = baselines.get(key) ?? ROUTER_WEIGHT_BASELINE;
-    const base = { work_class: g.work_class, lane: g.lane, known_n: g.known, reverted_n: g.reverted, baseline_weight: baseline };
+    const base = { work_class: g.work_class, lane: g.lane, known_n: g.known, reverted_n: g.reverted,
+      baseline_weight: baseline, evidence: evidenceOf(g.tally) };
     if (g.known < minSamples) {
       return { ...base, status: 'refused', reason: 'insufficient-evidence', proposed_weight: baseline, shift: 0 };
     }
     const proposed = clamp(baseline + clamp(g.merged / g.known - baseline, -maxShift, maxShift), 0, 1);
     return { ...base, status: 'proposed', reason: null, proposed_weight: round6(proposed), shift: round6(proposed - baseline) };
   });
-  return { proposals, known_outcomes: known, unknown_outcomes: unknown, unclassified_outcomes: unclassified };
+  const topFailureClasses = [...failureClasses.entries()]
+    .map(([failure_class, jobs]) => ({ failure_class, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.failure_class.localeCompare(b.failure_class))
+    .slice(0, 10);
+  return { proposals, known_outcomes: known, unknown_outcomes: unknown, unclassified_outcomes: unclassified,
+    unknown_empty: unknownEmpty, unknown_nonzero_exit: unknownNonzeroExit,
+    unknown_failure_classes: topFailureClasses, unknown_unresolved: unknownUnresolved };
 }
 
 export interface RouterWeightProposalReport {
@@ -113,12 +228,30 @@ export interface RouterWeightProposalReport {
   ledger: { state: RouterOutcomeRead['state']; path: string };
   /** True when the ledger exceeded the retained tail; outcome counts cover only the newest bytes. */
   truncated: boolean;
+  /**
+   * Health of the work-market.jsonl tail behind work_class joins. Anything
+   * but 'read' means no market classes joined; groups reflect only
+   * jobs-ledger-recorded classes (production ledgers record none).
+   */
+  market_state: RouterOutcomeRead['market_state'];
+  /** True when the market tail was cut; joined classes cover only the newest bytes. */
+  market_truncated: boolean;
   /** 'unavailable' when the ledger was not read; counts are then null, never zero. */
   status: 'proposed' | 'insufficient-evidence' | 'unavailable';
   bounds: { min_samples: number; max_shift: number };
   known_outcomes: number | null;
   unknown_outcomes: number | null;
   unclassified_outcomes: number | null;
+  /**
+   * Why the merged:null cohort has no merge verdict, from finish-row
+   * evidence — see RouterWeightProposalSet. Null when the ledger was not
+   * read; counts are then unknown, never zero.
+   */
+  unknown_empty: number | null;
+  unknown_nonzero_exit: number | null;
+  /** Top recorded failure_class labels inside the unknown cohort, by jobs; empty when none recorded. */
+  unknown_failure_classes: { failure_class: string; jobs: number }[] | null;
+  unknown_unresolved: number | null;
   proposals: RouterWeightProposal[];
 }
 
@@ -127,12 +260,17 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
   if (!z.iso.datetime().safeParse(asOf).success) throw new RangeError('as_of must be an ISO-8601 UTC timestamp');
   const bounds = { min_samples: opts.minSamples ?? ROUTER_WEIGHT_DEFAULT_MIN_SAMPLES, max_shift: opts.maxShift ?? ROUTER_WEIGHT_DEFAULT_MAX_SHIFT };
   const head = { schema: 'router.weight-proposals.v1' as const, advisory_only: true as const, as_of: asOf,
-    source: ROUTER_WEIGHT_PROPOSAL_SOURCE, ledger: { state: read.state, path: read.path }, truncated: read.truncated, bounds };
+    source: ROUTER_WEIGHT_PROPOSAL_SOURCE, ledger: { state: read.state, path: read.path }, truncated: read.truncated,
+    market_state: read.market_state, market_truncated: read.market_truncated, bounds };
   if (read.state !== 'read') {
-    return { ...head, status: 'unavailable', known_outcomes: null, unknown_outcomes: null, unclassified_outcomes: null, proposals: [] };
+    return { ...head, status: 'unavailable', known_outcomes: null, unknown_outcomes: null, unclassified_outcomes: null,
+      unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null, unknown_unresolved: null, proposals: [] };
   }
   const set = proposeRouterWeights(read.outcomes, { ...opts, minSamples: bounds.min_samples, maxShift: bounds.max_shift });
   const status = set.proposals.some(p => p.status === 'proposed') ? 'proposed' : 'insufficient-evidence';
   return { ...head, status, known_outcomes: set.known_outcomes, unknown_outcomes: set.unknown_outcomes,
-    unclassified_outcomes: set.unclassified_outcomes, proposals: set.proposals };
+    unclassified_outcomes: set.unclassified_outcomes,
+    unknown_empty: set.unknown_empty, unknown_nonzero_exit: set.unknown_nonzero_exit,
+    unknown_failure_classes: set.unknown_failure_classes, unknown_unresolved: set.unknown_unresolved,
+    proposals: set.proposals };
 }

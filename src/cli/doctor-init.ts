@@ -102,6 +102,8 @@ function printDoctorReport(report: DoctorReport): void {
 const DOCTOR_USAGE = [
   'Usage: phm doctor [--json] [--fix]',
   '       phm doctor merge-path --repo owner/name [--branch branch] [--json]',
+  '       phm doctor worktree [--repair] [--json]',
+  '       phm doctor supply [--json]',
   '',
   'One-glance health check: config, Phantom, providers, ecosystem.',
   'Exits 1 when any check fails; warnings (optional pieces) exit 0.',
@@ -129,6 +131,14 @@ export async function cmdDoctor(args: string[]): Promise<number> {
   if (args[0] === 'merge-path') {
     const { cmdDoctorMergePath } = await import('./doctor-merge-path.js');
     return cmdDoctorMergePath(args.slice(1));
+  }
+  if (args[0] === 'supply') {
+    const { cmdDoctorSupply } = await import('./doctor-supply.js');
+    return cmdDoctorSupply(args.slice(1));
+  }
+  if (args[0] === 'worktree') {
+    const { cmdDoctorWorktree } = await import('./doctor-worktree.js');
+    return cmdDoctorWorktree(args.slice(1));
   }
   // Answer --help before loadConfig(), which creates config on a fresh HOME.
   if (wantsHelp(args)) {
@@ -207,6 +217,12 @@ export async function cmdDoctor(args: string[]): Promise<number> {
     process.stdout.write(JSON.stringify(report, null, 2) + '\n');
   } else {
     printDoctorReport(report);
+    // One plain line; never changes the exit code. Detail: phm doctor supply.
+    try {
+      const { readSupplyDoctor } = await import('../core/fleet/supply-doctor.js');
+      console.log(`  Self-supply: ${(await readSupplyDoctor()).verdict} (phm doctor supply)`);
+      console.log('');
+    } catch { /* the line is a courtesy */ }
   }
 
   return report.summary.fail > 0 ? 1 : 0;

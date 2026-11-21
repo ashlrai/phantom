@@ -11,7 +11,13 @@ const HELP = `phm comms inbox [--json]
 phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 With no verb, lists every pending comms item — unresolved needs-you lines, unanswered iMessage
-teammate texts, drafts awaiting approval and unclaimed bus work — one prioritized list whose
+teammate texts, owner-thread messages awaiting a recorded reply, recorded owner
+replies whose channel fanout is not fully delivered, drafts awaiting approval,
+pending bus work (unclaimed envelopes, open or unclaimable feed jobs and worker handoffs), agent
+conversation threads waiting on a reply, bot seats with pending handoffs, comms
+questions/approvals awaiting an answer, .reply.eml artifacts stuck in the
+email outbox, pending team approvals and inbox proposals awaiting review —
+one prioritized list whose
 items carry the deep-link commands that act on them. --json prints the same view as JSON.
 read and post read and write Mason's local inbox file. Output is JSON; post returns the receiver acknowledgement.
 --receipt-only on post returns only the acknowledgement status, channel and durable deduplication key, or a failure reason; it excludes message text and private paths.

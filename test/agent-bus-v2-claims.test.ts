@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { executeBusClaimBody, listBusClaims, type BusClaimResult } from '../src/core/agents/bus-claims.js';
+import { claimBusWorkJob, executeBusClaimBody, listBusClaims, type BusClaimResult } from '../src/core/agents/bus-claims.js';
 import { listCoordination } from '../src/core/agents/claim-store.js';
 import { registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
@@ -234,7 +234,7 @@ describe('listBusClaims', () => {
     if (listed.status !== 'ok') throw new Error('expected ok');
     const byKey = new Map(listed.claims.map(row => [row.key, row]));
     // The queue claim overlaps the job's queue key; the unrelated repo claim blocks nothing.
-    expect(byKey.get('queue:RQ-JOB')?.jobs).toEqual([{ id: 'RQ-JOB', owner: 'agent-1', status: 'queued' }]);
+    expect(byKey.get('queue:RQ-JOB')?.jobs).toEqual([{ id: 'RQ-JOB', owner: 'agent-1', status: 'queued', title: 'T' }]);
     expect(byKey.get('repo:other/repo')?.jobs).toEqual([]);
     // Without jobs the same claims carry no feed join and no feed state.
     const plain = listBusClaims({ root, now: NOW });
@@ -257,6 +257,143 @@ describe('listBusClaims', () => {
     // Claims still list; blocked work stays unknown rather than an empty list.
     expect(listed.claims).toHaveLength(1);
     expect(listed.claims[0]?.jobs).toBeUndefined();
+  });
+});
+
+describe('claimBusWorkJob', () => {
+  const postWork = (root: string, jobId: string, claimKeys: string[], repo = 'a/b') => {
+    const body = { kind: 'work.post', jobId, title: `Job ${jobId}`, repo, claimKeys, provider: 'devin' };
+    const posted = appendBusInbox({ id: `w-post-${jobId}`, from: 'agent-1', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body }, { root, now: () => NOW });
+    expect(posted.status).toBe('posted');
+  };
+  const postStatus = (root: string, jobId: string, status: string) => {
+    const body = { kind: 'work.status', jobId, status };
+    const posted = appendBusInbox({ id: `w-status-${jobId}-${status}`, from: 'agent-1', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body }, { root, now: () => NOW });
+    expect(posted.status).toBe('posted');
+  };
+
+  it('claims the declared queue key by default and lands it in the coordination table', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-J1', ['queue:RQ-J1', 'repo:a/b']);
+    const result = claimBusWorkJob({ root, now: NOW, job: 'RQ-J1', owner: 'worker-1', leaseMs: 600_000, id: 'op-j1' });
+    expect(result).toMatchObject({ status: 'acquired',
+      job: { id: 'RQ-J1', owner: 'agent-1', repo: 'a/b', title: 'Job RQ-J1', status: 'queued' },
+      scope: { source: 'missing', holds: [] },
+      claim: { claimKey: 'queue:RQ-J1', owner: 'worker-1', leaseMs: 600_000, leaseUntil: NOW + 600_000 } });
+    if (result.status !== 'acquired') throw new Error('expected acquired');
+    expect(result.claim.token).toMatch(TOKEN_RE);
+    const listed = listCoordination(root, NOW);
+    expect(listed.claims).toEqual([expect.objectContaining({ origin: 'resource', key: 'queue:RQ-J1',
+      owner: 'worker-1', live: true })]);
+  });
+
+  it('falls back to the first declared key and honors an explicit declared key', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-NQ', ['repo:a/b', 'path:a/b:src/**']);
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-NQ', owner: 'w1', leaseMs: 1_000, id: 'op-nq' }))
+      .toMatchObject({ status: 'acquired', claim: { claimKey: 'repo:a/b' } });
+    postWork(root, 'RQ-QK', ['queue:RQ-QK', 'repo:c/d'], 'c/d');
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-QK', owner: 'w2', leaseMs: 1_000, key: 'repo:c/d', id: 'op-qk' }))
+      .toMatchObject({ status: 'acquired', claim: { claimKey: 'repo:c/d' } });
+    // The default still prefers the declared queue key over the first entry.
+    postWork(root, 'RQ-DEF', ['repo:e/f', 'queue:RQ-DEF'], 'e/f');
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-DEF', owner: 'w3', leaseMs: 1_000, id: 'op-def' }))
+      .toMatchObject({ status: 'acquired', claim: { claimKey: 'queue:RQ-DEF' } });
+  });
+
+  it('refuses undeclared keys, unknown jobs, non-open jobs and keyless jobs before any lease', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-K', ['queue:RQ-K']);
+    postWork(root, 'RQ-DONE', ['queue:RQ-DONE']);
+    postStatus(root, 'RQ-DONE', 'done');
+    postWork(root, 'RQ-RUN', ['queue:RQ-RUN']);
+    postStatus(root, 'RQ-RUN', 'running');
+    postWork(root, 'RQ-EMPTY', []);
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-K', owner: 'w', leaseMs: 1_000, key: 'queue:OTHER' }))
+      .toMatchObject({ status: 'refused', reason: 'undeclared-key', job: { id: 'RQ-K' } });
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-GONE', owner: 'w', leaseMs: 1_000 }))
+      .toMatchObject({ status: 'invalid', reason: 'unknown-job' });
+    for (const [job, status] of [['RQ-DONE', 'done'], ['RQ-RUN', 'running']] as const) {
+      expect(claimBusWorkJob({ root, now: NOW, job, owner: 'w', leaseMs: 1_000 }))
+        .toMatchObject({ status: 'refused', reason: 'job-not-open', job: { id: job, status } });
+    }
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-EMPTY', owner: 'w', leaseMs: 1_000 }))
+      .toMatchObject({ status: 'refused', reason: 'no-claim-keys', job: { id: 'RQ-EMPTY' } });
+    expect(listCoordination(root, NOW).claims).toHaveLength(0);
+  });
+
+  it('reports a live conflict with the holder and never the token', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-C', ['queue:RQ-C']);
+    const first = claimBusWorkJob({ root, now: NOW, job: 'RQ-C', owner: 'worker-1', leaseMs: 600_000, id: 'op-c1' });
+    if (first.status !== 'acquired') throw new Error('expected acquired');
+    const second = claimBusWorkJob({ root, now: NOW, job: 'RQ-C', owner: 'worker-2', leaseMs: 600_000, id: 'op-c2' });
+    expect(second).toEqual({ status: 'conflict',
+      job: { id: 'RQ-C', owner: 'agent-1', repo: 'a/b', title: 'Job RQ-C', status: 'queued' },
+      scope: { source: 'available', holds: [] },
+      holder: { owner: 'worker-1', claimKey: 'queue:RQ-C', leaseUntil: NOW + 600_000 } });
+    expect(JSON.stringify(second)).not.toContain(first.claim.token);
+  });
+
+  it('reports live holds on the job\'s other declared keys in the claim scope', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-S', ['queue:RQ-S', 'repo:a/b', 'pr:c/d#7'], 'a/b');
+    // Another participant already holds the repo scope; the queue key is free.
+    acquire('repo:a/b', 'other-owner', 600_000, 'op-hold', root);
+    const result = claimBusWorkJob({ root, now: NOW, job: 'RQ-S', owner: 'worker-1', leaseMs: 600_000, id: 'op-s' });
+    expect(result).toMatchObject({ status: 'acquired', claim: { claimKey: 'queue:RQ-S' },
+      scope: { source: 'available',
+        holds: [{ claimKey: 'repo:a/b', owner: 'other-owner', leaseUntil: NOW + 600_000 }] } });
+    // The targeted queue key never appears among its own sibling holds.
+    if (result.status !== 'acquired') throw new Error('expected acquired');
+    expect(result.scope.holds.some(hold => hold.claimKey === 'queue:RQ-S')).toBe(false);
+  });
+
+  it('carries sibling scope holds on a conflict and drops expired holds', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-Y', ['queue:RQ-Y', 'repo:a/b', 'repo:e/f']);
+    acquire('queue:RQ-Y', 'worker-1', 600_000, 'op-yq', root);
+    acquire('repo:a/b', 'worker-1', 600_000, 'op-yr', root);
+    // repo:e/f is held but already expired at the claim instant: not a live hold.
+    acquire('repo:e/f', 'worker-9', 1_000, 'op-ye', root);
+    const conflict = claimBusWorkJob({ root, now: NOW + 2_000, job: 'RQ-Y', owner: 'worker-2', leaseMs: 600_000, id: 'op-y2' });
+    expect(conflict).toMatchObject({ status: 'conflict',
+      holder: { owner: 'worker-1', claimKey: 'queue:RQ-Y' },
+      scope: { source: 'available',
+        holds: [{ claimKey: 'repo:a/b', owner: 'worker-1', leaseUntil: NOW + 600_000 }] } });
+  });
+
+  it('refuses malformed input before touching the feed', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-I', ['queue:RQ-I']);
+    for (const bad of [
+      { job: 'bad job', owner: 'w', leaseMs: 1 },
+      { job: 'RQ-I', owner: 'bad owner', leaseMs: 1 },
+      { job: 'RQ-I', owner: 'w', leaseMs: 0 },
+      { job: 'RQ-I', owner: 'w', leaseMs: 3_600_001 },
+      { job: 'RQ-I', owner: 'w', leaseMs: 1.5 },
+      { job: 'RQ-I', owner: 'w', leaseMs: 1, key: 'bogus' },
+    ]) {
+      expect(claimBusWorkJob({ root, now: NOW, ...bad })).toMatchObject({ status: 'invalid' });
+    }
+    expect(listCoordination(root, NOW).claims).toHaveLength(0);
+  });
+
+  it('maps a refused or unreadable feed honestly instead of claiming blind', () => {
+    const root = tempDir('v2jobclaim-');
+    // A work.post with no provider and no registry hint refuses the whole feed.
+    const post = { kind: 'work.post', jobId: 'RQ-NP', title: 'T', repo: 'a/b', claimKeys: ['queue:RQ-NP'] };
+    expect(appendBusInbox({ id: 'w-noprovider', from: 'agent-1', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body: post }, { root, now: () => NOW }).status).toBe('posted');
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-NP', owner: 'w', leaseMs: 1_000 }))
+      .toEqual({ status: 'refused', reason: 'work-feed-missing-provider' });
+    // A damaged inbox snapshot makes the feed unavailable, never a guessed claim.
+    writeFileSync(join(root, 'bus-inbox', 'messages.json'), 'corrupt');
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-NP', owner: 'w', leaseMs: 1_000 }))
+      .toEqual({ status: 'unavailable', reason: 'work-feed-unavailable' });
+    expect(listCoordination(root, NOW).claims).toHaveLength(0);
   });
 });
 

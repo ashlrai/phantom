@@ -7,7 +7,7 @@ const shown = (value: number | string | null): string => value === null ? 'unkno
 /** `report` is undefined while loading, on a read error, or when the server predates the report. */
 export function ReleasesCard({ report }: { report: ReleasesReport | undefined }) {
   const known = report?.schema === 'phantom.releases.v1' && Array.isArray(report.repos) ? report : undefined;
-  return <section className={styles.root} aria-label="Releases">
+  return <section className={styles.card} aria-label="Releases">
     <h3 className={styles.heading}>Releases</h3>
     {!known ? <p className={styles.note}>Releases: unknown</p>
       : !known.repos.length ? <p className={styles.note}>No repos to check.</p> : <>
@@ -20,6 +20,11 @@ export function ReleasesCard({ report }: { report: ReleasesReport | undefined })
               <td>{row.verdict === 'no release yet' ? 'none' : shown(row.latestTag)}</td><td>{row.latestTag === null ? '' : shown(row.ageDays)}</td>
               <td>{shown(row.mergedPrsSince)}</td><td>{row.verdict}</td></tr>)}</tbody></table>
         </div>
+        {known.repos.filter(row => row.recentPrs?.length).map(row => <div key={row.repo} className={styles.note}>
+          <strong>{row.repo.replace(/^ashlrai\//, '')}</strong> merged since {row.latestTag}:
+          <ul>{row.recentPrs!.map(pr => <li key={pr.number}>#{pr.number} {pr.title}</li>)}</ul>
+          {row.mergedPrsSince !== null && row.mergedPrsSince > row.recentPrs!.length ? `and ${row.mergedPrsSince - row.recentPrs!.length} more` : null}
+        </div>)}
       </>}
   </section>;
 }

@@ -12,7 +12,7 @@ All files live under `$ASHLR_RUNS_DIR` or `~/.ashlr-runs`.
 
 | Command | Effect |
 | --- | --- |
-| `phm metrics loop [--dry-run] [--json]` | Collect the loop report and write the loop, hint and share files; merge morning fields. `--dry-run` writes nothing. |
+| `phm metrics loop [--since 24h] [--dry-run] [--json]` | Print where the loop waits (`stages`, schema `metrics.loop-stages.v1`), then collect the loop report and write the loop, hint and share files; merge morning fields. `--dry-run` writes nothing. The desktop Metrics card serves the same report from `GET /api/verse/fleet/runs/metrics?since=24h|7d` (`loopStages`), reading releases through the same reader and keeping them for 10 minutes; when releases cannot be read, `releases` is `unavailable` and `releases_reason` says why. |
 | `phm bets list [--json]` | Current state of every bet (fold of the ledger). |
 | `phm bets launch --id RQ-BET-<slug> --hypothesis <text> --metric <key> --max-lane-hours <n> --max-cycles <n>` | Append a launch. Baseline defaults to the metric's value in today's loop file, or unknown. |
 | `phm bets score [--dry-run] [--json]` | One kill-fast cycle over every launched bet; appends each decision with its numbers and refreshes `bets-share.json`. |
@@ -91,6 +91,7 @@ Metric keys: `merges_per_hour.1h`, `merges_per_hour.6h`, `opens_per_hour.1h`,
 
 - Throughput: `metrics/jobs.jsonl` MERGED outcomes and first PR publish per job over 1h and 6h.
 - Idea to merged: the `enqueue` row dispatchd writes when it first sees a `queue/ready.tsv` row, to the MERGED outcome. ready.tsv itself has no timestamp column.
+- Ledger rows are read in the fleet's canonical jobs.jsonl dialect — job ids `job|job_id|jobId|id`, event names `event|type|kind` (`published` normalizes to `publish`), phases `state|outcome|status` (an eventless PUBLISHED/MERGED/CLOSED/OPEN row infers its event), timestamps `ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt`, PR links `url|pr_url|prUrl|pr|html_url` and the `pool` lane alias — the same field sets `queue/visit-sync`, `queue/job-outcomes`, `fleet/agent-activity`, `fleet/job-latency`, `fleet/throughput` and `metrics/reward-feed` accept, so reconciler-resolved merges count once.
 - Merged to installed: `gh` merged PRs and releases for ashlrai/phantom plus `/Applications/Phantom.app/Contents/Info.plist` (version and file time). Only merges first shipped by the installed release are timed.
 - Feedback loop: enqueue to install, for jobs whose PR is in the installed release.
 - Cost per merged PR: the newest `costPerMergedPrUsd` in `metrics/growth-cost-hourly.jsonl` within 24h.

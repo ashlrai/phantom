@@ -220,19 +220,81 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
 — unresolved `NEEDS-MASON.md` items, unanswered allowlisted teammate texts,
-outbound drafts awaiting approval, live bus envelopes whose body the claim
+live owner-thread inbound messages no recorded outbound reply cites (the same
+awaiting-reply mark `phm comms status` counts, each item deep-linking
+`phm comms thread` and `phm comms send-owner --reply-to`), recorded owner
+replies whose channel fanout is not fully delivered — the delivery side of the
+same mark, which counts a reply answered even when every channel refused it
+(each `owner-delivery` item names the unconfirmed destinations as failed,
+pending or unknown and deep-links the resend that retries only them),
+outbound drafts awaiting approval — `phm drafts` items plus pending
+Comms-agent reply drafts that have no cos mirror (every non-email transport,
+or an email mirror that failed to write; a mirrored copy lists through its
+`phm drafts` item while pending and still suppresses the Comms record once
+decided, so one pending reply is one item, and items never carry the
+recipient, which can be a handle) — live bus envelopes whose body the claim
 contract accepts (`isClaimableWork`: a `kind:"work"` body or a protocol-v1
 transport `task` body) with no
 live claim (a live coordination-table row on the envelope's `queue:<id>` key
-counts as held, since the message-id claim consults that same table), and
+counts as held, since the message-id claim consults that same table),
+live `worker-handoff` envelopes (`isWorkerHandoffBody`, the exact contract
+`fleet handoff-receive`/`handoff-reply` accept — a pending assignment lists
+until its TTL ends, claims are evidence only, never a gate), and
 open agent-bus v2 work-feed jobs (queued or rescheduled
-`work.post` announcements with at least one claim key not fully held, read
-through the same projection as `phm agents bus work feed`) — plus Gmail
-archive-plan overages and LinkedIn messages saved as
+`work.post` announcements with at least one claim key not fully held, plus
+jobs the feed shows `blocked` or `failed` — stuck work needs a decision — or
+open announcements that declare no claim keys, which `work claim` refuses
+`no-claim-keys`; those list with `bus show` / `work feed --job` links and the
+status detail when one exists instead of a claim act — read
+through the same projection as `phm agents bus work feed`), plus a refused
+work feed itself — one high item naming the retained receipt the projection
+blamed (`agents bus show <id>` / `work feed` links, `expiresAt` that
+receipt's TTL deadline; a refusal that names no receipt keeps unknown
+times), since the refusal hides every announced job and refuses the work
+verbs until the receipt expires — plus agent
+conversation threads still waiting on a reply — the same `waiting` threads
+`phm agents conversations --waiting` computes from the one shared
+conversations projection, fleet-wide, each item naming who must answer, how
+long it has waited and deep-linking `phm agents conversations`,
+`phm agents bus show` and a `phm agents bus post --thread` reply template;
+a thread whose waiting message is already a pending bus item or whose `job:`
+thread the feed already lists stays under the bus source, one pending thing
+one item — plus bot seats whose projected handoff plan still has work to
+move (the same `planSeatHandoffs` read `phm bots handoffs` serves; only
+eligible seats with pending, not yet journaled, handoff records list, each
+item deep-linking `phm bots handoff --seat` and `phm bots handoffs`) — plus
+Gmail archive-plan overages, LinkedIn messages saved as
 JSON files under `<runsDir>/comms/linkedin/inbox/` (answered when a file of the
-same id exists in `.../linkedin/answered/`; replies stay drafts) — and each item carries `act` deep-link commands (`phm fleet
-needs-resolve`, `phm fleet teammate-texts --answered`, `phm drafts approve`,
-`phm fleet bus-claim acquire`, `phm agents bus claim acquire`). It never claims, replies, or mutates; a source
+same id exists in `.../linkedin/answered/`; replies stay drafts) and live
+comms questions/approvals from the request queue (`~/.ashlr/comms/requests.jsonl`,
+the same store `phm comms status` counts — a sent one is the single
+outstanding slot Mason's numbered reply or button tap resolves and lists as a
+blocking warn, a pending one is queued behind it; informational reports never
+await a reply and never list, and `expiresAt` is the real TTL deadline
+`expireStaleRequests` applies) — plus `.reply.eml` artifacts the email send
+pass marked `stuck` in the reply outbox (the same read `phm fleet
+email-outbox` serves: saved email-drop config → `outboxDir`, else the sibling
+of `inboxDir` → `readEmailOutbox`; interrupted send claims, oversized or
+unreadable files and malformed drafted rows each list as a warn with the
+fixed reason — a stuck reply is never auto-resent, so items carry no
+timestamp and deep-link `phm fleet email-outbox` and `phm comms diagnose
+--json`; missing or invalid config, a missing outbox and an unreadable one
+keep their own source state) — plus pending team approvals (access requests
+and consequential handoffs only an owner/admin can decide, the same
+`readTeamApprovals` section `phm approvals` and the desktop Approvals panel
+project for the default team; each lists as a blocking warn deep-linking
+`phm team approve|deny` and `phm approvals`) and pending inbox proposals
+(the same `readPendingProposals` section — proposed actions that never
+auto-apply; info items deep-link `phm inbox show|approve|reject`, a partial
+capture drops `approve`, and a truncated or incomplete read reports
+`degraded` with the items it did find) — and each item carries `act` deep-link commands (`phm fleet
+needs-resolve`, `phm fleet teammate-texts --answered`, `phm comms thread`,
+`phm comms send-owner`, `phm comms status`, `phm inbox show`,
+`phm drafts approve`, `phm comms-agent drafts`,
+`phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
+`phm fleet handoff-receive`, `phm agents conversations`,
+`phm bots handoff`, `phm agents bus post`, `phm fleet email-outbox`,
+`phm team approve|deny`, `phm inbox approve|reject`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. `phm comms inbox read` and

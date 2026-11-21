@@ -10,7 +10,8 @@ const GIB = 1024 ** 3, MIB = 1024 ** 2;
 
 const outcome = (job: string, lane: string | null, merged: boolean | null, reverted: boolean | null = null): RouterOutcome => ({
   schema: 'router.outcome.v1', job_id: job, lane, model: null, tier: null, work_class: null,
-  merged, reverted, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null, passk: null,
+  merged, reverted, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
+  empty: null, exit_code: null, failure_class: null, passk: null,
 });
 
 describe('foldRouteLaneOutcomes', () => {

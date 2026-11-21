@@ -36,3 +36,15 @@ it('reads unknown while loading and for a reply that is not the releases report'
   rerender(<ReleasesCard report={{ error: 'not found' } as unknown as ReleasesReport} />);
   expect(screen.getByText('Releases: unknown')).toBeTruthy();
 });
+
+it('lists up to five merged PR titles per repo as plain text, with the number left over', () => {
+  const titles = Array.from({ length: 7 }, (_, i) => ({ number: 70 - i, title: `change ${7 - i}` }));
+  render(<ReleasesCard report={releaseCadence([
+    { repo: 'ashlrai/locus', latestTag: 'v0.9.1', taggedAt: '2026-11-07T12:00:00Z', mergedPrsSinceTag: 7, mergedPrs: titles },
+    { repo: 'ashlrai/phantom', latestTag: 'v3.1.0', taggedAt: '2026-11-17T12:00:00Z', mergedPrsSinceTag: 0, mergedPrs: [] },
+    { repo: 'ashlrai/lexicon', latestTag: 'v1.0.0', taggedAt: '2026-11-17T12:00:00Z', mergedPrsSinceTag: null, mergedPrs: null },
+  ], now)} />);
+  expect(screen.getAllByRole('listitem').map(item => item.textContent)).toEqual(['#70 change 7', '#69 change 6', '#68 change 5', '#67 change 4', '#66 change 3']);
+  expect(screen.getByText(/and 2 more/)).toBeTruthy();
+  expect(screen.queryByText(/^phantom merged since/)).toBeNull();
+});

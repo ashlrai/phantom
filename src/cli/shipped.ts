@@ -35,7 +35,9 @@ export async function cmdShipped(args: string[], deps: ShippedDeps = {}): Promis
   const err = deps.err ?? console.error;
   if (args.includes('--help') || args.includes('-h')) { out(usage); return 0; }
   if (args.includes('24h')) {
-    if (!(['--since 24h', '--since 24h --json', '--json --since 24h'].includes(args.join(' ')))) { err(usage); return 2; }
+    const allArgs = args.join(" ");
+    const valid24hArgs = ["--since 24h", "--since 24h --json", "--json --since 24h", "--since 24h --repo", "--since 24h --repo --json", "--json --since 24h --repo"];
+    if (!valid24hArgs.includes(allArgs)) { err(usage); return 2; }
     const report = await (deps.fleet ?? readFleetShipped)({ now: (deps.now ?? Date.now)() });
     out(args.includes('--json') ? JSON.stringify(report) : [
       report.complete ? `${report.totals.merged} merged in the last 24 hours · ${report.totals.mergedPerHour} per hour · median open to merge: ${report.totals.medianOpenToMergeSeconds ?? 'unknown'} seconds` : 'Shipped is incomplete; totals are unknown.',

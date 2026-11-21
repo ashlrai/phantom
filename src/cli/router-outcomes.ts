@@ -70,6 +70,10 @@ export interface RouterOutcomesReport {
   spend_state: RouterOutcomeRead['spend_state'];
   /** True when the spend tail was cut; joined per-job costs are lower bounds. */
   spend_truncated: boolean;
+  /** Health of the work-market.jsonl tail behind work_class joins. */
+  market_state: RouterOutcomeRead['market_state'];
+  /** True when the market tail was cut; joined classes cover only the newest bytes. */
+  market_truncated: boolean;
   /** Jobs with at least one folded outcome row, after --lane filtering. */
   total: number;
   /** Rows actually returned (newest first, capped by --limit). */
@@ -93,6 +97,8 @@ export function buildRouterOutcomesReport(read: RouterOutcomeRead, limit: number
     eval_state: read.eval_state,
     spend_state: read.spend_state,
     spend_truncated: read.spend_truncated,
+    market_state: read.market_state,
+    market_truncated: read.market_truncated,
     total: read.outcomes.length,
     returned: page.length,
     limit,
@@ -114,15 +120,17 @@ function outcomeLine(o: RouterOutcome): string {
     `lane=${text(o.lane)}`, `model=${text(o.model)}`, `tier=${text(o.tier)}`, `work_class=${text(o.work_class)}`,
     `merged=${text(o.merged)}`, `reverted=${text(o.reverted)}`, `ci_first_pass=${text(o.ci_first_pass)}`, `review=${review}`,
     `cost_usd=${text(o.cost_usd)}`, `wall_s=${text(o.wall_s)}`, `passk=${text(o.passk)}`,
+    `empty=${text(o.empty)}`, `exit_code=${text(o.exit_code)}`, `failure_class=${text(o.failure_class)}`,
   ].join(' ');
 }
 
 export function routerOutcomeLines(report: RouterOutcomesReport): string[] {
   return [
-    `router outcomes state=${report.state} eval=${report.eval_state} spend=${report.spend_state} jobs=${report.total} shown=${report.returned} truncated=${report.truncated} malformed=${report.malformed_rows} unattached=${report.unattached_rows} ambiguous_urls=${report.ambiguous_urls}`,
+    `router outcomes state=${report.state} eval=${report.eval_state} spend=${report.spend_state} market=${report.market_state} jobs=${report.total} shown=${report.returned} truncated=${report.truncated} malformed=${report.malformed_rows} unattached=${report.unattached_rows} ambiguous_urls=${report.ambiguous_urls}`,
     `ledger ${report.path}`,
     ...(report.truncated ? ['coverage: retained tail only; older ledger rows were not read'] : []),
     ...(report.spend_truncated ? ['spend coverage: retained tail only; per-job costs are lower bounds'] : []),
+    ...(report.market_truncated ? ['market coverage: retained tail only; work_class joins cover the newest bytes'] : []),
     ...report.outcomes.map(outcomeLine),
   ];
 }

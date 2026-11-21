@@ -17,8 +17,7 @@ import {
   BUS_CLIS, registerAgentIdentity, readAgentRegistry, resolveAgent,
   type AgentIdentity, type AgentRegistryOptions, type BusCli, type BusProvider, type RegisterAgentResult,
 } from './bus-identity.js';
-import { busBodySummary, type InboxMessage } from './bus-unified.js';
-import { scrubSecrets } from '../util/scrub.js';
+import { busBodyFallbackSummary, busBodySummary, type InboxMessage } from './bus-unified.js';
 
 export interface BusCliAdapter {
   readonly cli: BusCli;
@@ -140,26 +139,9 @@ function clean(value: string): string {
     .replaceAll(BUS_INBOX_FRAME_BEGIN, '[frame marker removed]').replaceAll(BUS_INBOX_FRAME_END, '[frame marker removed]');
 }
 
-/** Raw renders stay bounded so one large unknown body cannot fill the frame. */
-const BUS_INBOX_BODY_FALLBACK_MAX = 512;
-
-const clipFallback = (text: string): string =>
-  text.length > BUS_INBOX_BODY_FALLBACK_MAX ? `${text.slice(0, BUS_INBOX_BODY_FALLBACK_MAX - 1)}…` : text;
-
-/**
- * Secret-scrubbed, bounded read of a body with no typed summary: string bodies
- * render as their text, anything else as raw JSON. Both are single-line.
- */
-function fallbackSummary(body: unknown): string {
-  if (typeof body === 'string') {
-    return clipFallback(scrubSecrets(body).replace(/\s+/g, ' ').trim());
-  }
-  return clipFallback(scrubSecrets(JSON.stringify(body) ?? 'null'));
-}
-
 function summary(message: InboxMessage): string {
   const body = message.envelope.body;
-  return busBodySummary(body) ?? fallbackSummary(body);
+  return busBodySummary(body) ?? busBodyFallbackSummary(body);
 }
 
 /**
@@ -175,7 +157,9 @@ export function frameBusInbox(cli: BusCli, messages: readonly InboxMessage[]): s
   for (const message of messages) {
     const where = message.kind === 'channel' ? `#${message.channel}` : message.kind;
     const from = message.fromAgent ? `agent:${message.fromAgent}` : `label ${message.envelope.from}`;
-    const line = clean(`[${message.priority} ${where} id=${message.envelope.id} from ${from}] ${summary(message)}`);
+    const held = message.held === undefined ? '' :
+      ` held=${message.held === null ? 'unknown' : message.held ? 'yes' : 'no'}${message.holder ? ` holder=${message.holder}` : ''}`;
+    const line = clean(`[${message.priority} ${where} id=${message.envelope.id} from ${from}${held}] ${summary(message)}`);
     if (used + line.length + 1 > BUS_INBOX_FRAME_MAX) break;
     lines.push(line);
     used += line.length + 1;

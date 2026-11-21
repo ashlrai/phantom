@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import type { MapEdge } from '../../../../core/fleet/map-edges.js';
 import type { FleetLiveMap, LiveMapEdge, LiveMapNode } from '../../../../core/fleet/live-map.js';
 import { mockViewport, type ViewportMock } from '../shell/viewport.test-support.js';
 import { MapView } from './MapPane.js';
@@ -34,12 +35,35 @@ describe('layoutByOrg', () => {
   });
 });
 
+const agent = (name: string, node: string | null) => ({ name, role: 'unknown' as const, lane: null, node });
+const said = (from: string, to: string, summary: string): MapEdge => ({ id: `${from}->${to}`, from: agent(from, from), to: agent(to, to), count: 1, lastAt: '2026-11-18T00:00:00Z', lastSummary: summary });
+
+describe('guardian and loops in "By org"', () => {
+  it('shows each planner as a line in its own box, and the latest message on a parent link only in org mode', () => {
+    viewport = mockViewport(1440);
+    const map = { ...fleet(), planners: [{ id: 'guardian', label: 'Main guardian', state: 'idle', doing: 'Quiet' }, { id: 'executor', label: 'Executor', state: 'running', doing: 'Active' }] };
+    const { container } = render(<MapView map={map} now={Date.parse('2026-11-18T00:00:30Z')} onOpen={() => {}} edges={[said('lane:claude', 'job:one', 'ship it'), said('leader', 'lane:claude', 'go')]} />);
+    expect(container.querySelector('[data-org-group]')).toBeNull();
+    expect(container.querySelector('[data-link-note]')).toBeNull();
+    fireEvent.click(screen.getByRole('radio', { name: 'By org' }));
+    expect([...container.querySelectorAll('[data-org-group]')].map(el => el.querySelector('span')!.textContent)).toEqual(
+      ['claude: 2 running', 'grok: 0 running', 'Guardian: 0 running', 'Loops: 1 running', 'unassigned: 0 running, 1 unknown']);
+    expect([...container.querySelectorAll('[data-planner]')].map(el => el.textContent)).toEqual(['Main guardian: idle', 'Executor: running']);
+    // Parent links carry the newest message either way round; a link with no message has no note.
+    expect([...container.querySelectorAll('[data-link-note]')].map(el => [el.getAttribute('data-link-note'), el.textContent])).toEqual([
+      ['reports-to:lane:claude->leader', '“go”'], ['reports-to:job:one->lane:claude', '“ship it”']]);
+    // Messages off hides the notes.
+    fireEvent.click(screen.getByRole('button', { name: 'Messages' }));
+    expect(container.querySelector('[data-link-note]')).toBeNull();
+  });
+});
+
 describe('the "By org" toggle', () => {
   it('starts on rows, switches to boxes with a running count, keeps lines and logos, and is remembered', () => {
     viewport = mockViewport(1440);
     const first = render(<MapView map={fleet()} now={Date.parse('2026-11-18T00:00:30Z')} onOpen={() => {}} />);
-    const toggle = screen.getByRole('radiogroup', { name: 'Map layout' });
-    expect(within(toggle).getByRole('radio', { name: 'Rows' }).getAttribute('aria-checked')).toBe('true');
+    const toggle = screen.getByRole('radiogroup', { name: 'Group' });
+    expect(within(toggle).getByRole('radio', { name: 'By lane' }).getAttribute('aria-checked')).toBe('true');
     expect(first.container.querySelector('[data-org-group]')).toBeNull();
     fireEvent.click(within(toggle).getByRole('radio', { name: 'By org' }));
     const boxes = [...first.container.querySelectorAll('[data-org-group]')].map(el => el.textContent);
@@ -53,7 +77,7 @@ describe('the "By org" toggle', () => {
     const again = render(<MapView map={fleet()} now={0} onOpen={() => {}} />);
     expect(screen.getByRole('radio', { name: 'By org' }).getAttribute('aria-checked')).toBe('true');
     expect(again.container.querySelectorAll('[data-org-group]')).toHaveLength(3);
-    fireEvent.click(screen.getByRole('radio', { name: 'Rows' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'By lane' }));
     expect(again.container.querySelector('[data-org-group]')).toBeNull();
   });
 });

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { BOT_ID_PATTERN } from '../agents/bot-templates.js';
 import { participantSchema, providerSchema, type Participant } from '../agents/bus-v2-schema.js';
+import { agentIdentityKeys, type AgentIdentityKeyFor } from '../agents/bus-identity.js';
 import { coordinationRoot, listCoordination, releaseCoordinationBySource, type CoordinationView } from '../agents/claim-store.js';
 import { sendDirectMessage } from '../agents/bus-unified.js';
 import { localWriteGate } from '../agents/send-gate.js';
@@ -77,7 +78,7 @@ function ownerOptions(o: SeatOptions): OwnerThreadOptions {
   if (o.ownerOptions) return o.ownerOptions;
   const settings = loadOwnerThreadSettings(o.home ? join(o.home, '.ashlr') : fixedOwnerConfigDir());
   const runsDir = o.runs ?? (o.home ? runs(o) : fixedOwnerRunsDir());
-  return { runsDir, settings, transports: liveOwnerTransports(settings, runsDir) };
+  return { runsDir, settings, transports: liveOwnerTransports(settings, runsDir), busRoot: fleet(o) };
 }
 async function safe(o: SeatOptions, file: string) {
   for (const path of [join(o.home ?? homedir(), '.phantom'), root(o)]) {
@@ -129,10 +130,17 @@ export function advisorySeatAdapter(s: BotSeat, usage: () => Promise<QuotaEviden
 function nodes(o: SeatOptions): NodesStore {
   return o.nodesStore ?? { transaction: fn => new LocalNodesStore(privateDirectory(join(o.home ? join(o.home, '.ashlr') : ashlrHome(), 'nodes'))).transaction(fn) };
 }
-async function openWork(s: BotSeat, o: SeatOptions) {
+async function openWork(s: BotSeat, o: SeatOptions, identityOf?: AgentIdentityKeyFor) {
   const coordination = listCoordination(fleet(o), (o.now ?? Date.now)());
   if (coordination.source === 'unavailable') throw new Error('Coordination store unavailable.');
-  const claims = coordination.claims.filter(c => c.live && c.owner === s.participantId);
+  // A seat's open claims are the live rows its participantId owns — or any
+  // other label of the same registered bus identity, the same owner matching
+  // `claim list --owner` applies. An unresolvable participantId or unreadable
+  // registry keeps exact-label matching: unknown identity state never widens
+  // what a draining seat must hand off.
+  const ownerKey = identityOf?.(s.participantId);
+  const claims = coordination.claims.filter(c => c.live &&
+    (c.owner === s.participantId || (ownerKey !== undefined && identityOf?.(c.owner) === ownerKey)));
   let jobs: QueueJobV1[] = [];
   if (s.nodeId) {
     const path = join(o.home ? join(o.home, '.ashlr') : ashlrHome(), 'nodes', 'nodes.json');
@@ -150,8 +158,9 @@ async function snapshot(o: SeatOptions) {
   const states = JSON.parse(await read(o, 'seat-state.json') ?? '{}') as Record<string, SeatState>;
   const history = (await read(o, 'handoffs.jsonl') ?? '').split('\n').filter(Boolean).map(line => JSON.parse(line) as SeatHandoff);
   const now = new Date((o.now ?? Date.now)()).toISOString();
+  const identityOf = agentIdentityKeys({ root: fleet(o), now: o.now });
   const seats = await Promise.all((await roster(o)).map(async seat => {
-    const evidence = await quota(seat, o), work = await openWork(seat, o);
+    const evidence = await quota(seat, o), work = await openWork(seat, o, identityOf);
     const state = nextSeatState(states[seat.id] ?? { state: 'active', since: now, exhaustedReset: null }, { quota: evidence, openWork: work.claims.length + work.jobs.length, now });
     return { seat, quota: evidence, work, state };
   }));
@@ -193,18 +202,71 @@ function handoff(seatId: string, kind: SeatHandoff['work']['kind'], ref: string,
   return { schema: 'phantom-bot-handoff.v1', handoffId: createHash('sha256').update(JSON.stringify([seatId, kind, ref, identity])).digest('hex'), seatId,
     work: { kind, ref }, done: 'unknown', left: 'unknown', branch: claim?.branch ?? null, pr: claim?.key.startsWith('pr:') ? claim.key.slice(3) : null, createdAt: now };
 }
+type SeatOpenWork = Awaited<ReturnType<typeof openWork>>;
+/** The eligibility rule plan and apply share: draining seats always qualify;
+ * idle seats qualify while they still hold work or carry handoff history —
+ * apply retries their unfinished notice receipts even with nothing left to
+ * release. Active seats and idle seats with neither are refused. */
+function seatHandoffEligible(state: SeatState['state'], work: SeatOpenWork, history: readonly SeatHandoff[], seatId: string): boolean {
+  return state === 'draining' ||
+    (state === 'idle' && (work.claims.length > 0 || work.jobs.length > 0 || history.some(h => h.seatId === seatId)));
+}
+/** Every live claim and fenced node job as a deterministic handoff record. */
+function seatHandoffRecords(seatId: string, work: SeatOpenWork, now: string): SeatHandoff[] {
+  return [...work.claims.map(c => handoff(seatId, 'bus-claim', c.key, `${c.origin}:${c.sourceId}:${c.leaseUntil}`, now, c)),
+    ...work.jobs.map(j => handoff(seatId, 'node-job', j.id, `${j.claim!.session}:${j.claim!.token}`, now))];
+}
 async function plan(id: string, o: SeatOptions) {
   const data = await snapshot(o), row = data.seats.find(s => s.seat.id === id);
   if (!row) throw new Error('Unknown seat.');
-  if (row.state.state === 'active' || (row.state.state === 'idle' && !row.work.claims.length && !row.work.jobs.length && !data.history.some(h => h.seatId === id))) throw new Error('Seat must be draining or idle with open work.');
-  const records = [...row.work.claims.map(c => handoff(id, 'bus-claim', c.key, `${c.origin}:${c.sourceId}:${c.leaseUntil}`, data.now, c)),
-    ...row.work.jobs.map(j => handoff(id, 'node-job', j.id, `${j.claim!.session}:${j.claim!.token}`, data.now))];
+  if (!seatHandoffEligible(row.state.state, row.work, data.history, id)) throw new Error('Seat must be draining or idle with open work.');
+  const records = seatHandoffRecords(id, row.work, data.now);
   assertMetadata(JSON.stringify(records.map(({ handoffId: _id, ...h }) => h)));
   return { data, row, records };
 }
 export async function planSeatHandoff(id: string, o: SeatOptions = {}) {
   const { data, row, records } = await plan(id, o);
   return { schema: 'phantom-bot-handoff-plan.v1', seatId: id, state: row.state.state, apply: false, handoffs: records.filter(h => !data.history.some(old => old.handoffId === h.handoffId)) };
+}
+
+/** One roster seat's slice of the fleet handoff plan. */
+export interface SeatHandoffPlanEntry {
+  seatId: string;
+  /** Projected lifecycle state at the read instant — the same state listSeats reports. */
+  state: SeatState['state'];
+  /** Same eligibility rule planSeatHandoff/applySeatHandoff enforce; false means apply would refuse this seat. */
+  eligible: boolean;
+  /** Pending work records — live claims and fenced node jobs not yet journaled — for eligible seats only; empty for ineligible ones, whose work is not handoff candidates. */
+  handoffs: SeatHandoff[];
+}
+export interface SeatHandoffsPlan {
+  schema: 'phantom-bot-handoffs-plan.v1';
+  apply: false;
+  seats: SeatHandoffPlanEntry[];
+}
+
+/**
+ * Fleet-wide dry-run of every seat handoff: one snapshot answers "which seats
+ * need draining and what work would move" instead of one planSeatHandoff call
+ * per seat. Every roster seat is listed — ineligible ones report
+ * `eligible: false` with no records rather than erroring — so the whole
+ * roster's handoff posture reads in one call. Eligibility and pending records
+ * follow the same rules the single-seat plan enforces; handoff ids are the
+ * same deterministic ids apply journals, so a later per-seat apply dedupes.
+ * Read-only: no locks, no writes, no releases, no notices.
+ */
+export async function planSeatHandoffs(o: SeatOptions = {}): Promise<SeatHandoffsPlan> {
+  const data = await snapshot(o);
+  const seats = data.seats.map(({ seat, state, work }) => {
+    const eligible = seatHandoffEligible(state.state, work, data.history, seat.id);
+    const handoffs = eligible
+      ? seatHandoffRecords(seat.id, work, data.now).filter(h => !data.history.some(old => old.handoffId === h.handoffId))
+      : [];
+    return { seatId: seat.id, state: state.state, eligible, handoffs };
+  });
+  assertMetadata(JSON.stringify({ schema: 'phantom-bot-handoffs-plan.v1', apply: false,
+    seats: seats.map(({ handoffs, ...rest }) => ({ ...rest, handoffs: handoffs.map(({ handoffId: _id, ...h }) => h) })) }));
+  return { schema: 'phantom-bot-handoffs-plan.v1', apply: false, seats };
 }
 type NoticeStatus = 'posted' | 'accepted' | 'sent' | 'duplicate' | 'halted' | 'refused' | 'unavailable' | 'failed' | 'unknown';
 type NoticeReceipt = { bus?: NoticeStatus; owner?: NoticeStatus };
@@ -256,6 +318,7 @@ export async function applySeatHandoff(id: string, o: SeatOptions = {}) {
   if (!lock) throw new Error('Seat handoff store unavailable or contended.');
   try {
     const { data, row, records } = await plan(id, o);
+    const identityOf = agentIdentityKeys({ root: fleet(o), now: o.now });
     const receipts = JSON.parse(await read(o, 'handoff-notices.json') ?? '{}') as Record<string, NoticeReceipt>;
     const pending = [...records];
     for (const old of data.history.filter(h => h.seatId === id)) {
@@ -275,7 +338,7 @@ export async function applySeatHandoff(id: string, o: SeatOptions = {}) {
       if (held && record.work.kind === 'node-job') {
         const claim = row.work.jobs.find(j => j.id === record.work.ref)!.claim!;
         const released = o.releaseNode ? o.releaseNode(claim) : new DriveNodes(nodes(o), { now: o.now }).release(claim, true);
-        if (!released && (await openWork(row.seat, o)).jobs.some(j => j.claim?.token === claim.token && j.id === claim.jobId)) throw new Error('Node claim release refused.');
+        if (!released && (await openWork(row.seat, o, identityOf)).jobs.some(j => j.claim?.token === claim.token && j.id === claim.jobId)) throw new Error('Node claim release refused.');
       } else if (held) {
         const claim = row.work.claims.find(c => c.key === record.work.ref)!;
         if (claim.origin === 'queue') throw new Error('Bus claim release refused.');
@@ -298,7 +361,7 @@ export async function applySeatHandoff(id: string, o: SeatOptions = {}) {
       }
       applied.push({ ...record, notifications });
     }
-    const remaining = await openWork(row.seat, o);
+    const remaining = await openWork(row.seat, o, identityOf);
     data.states[id] = nextSeatState(row.state, { quota: row.quota, openWork: remaining.claims.length + remaining.jobs.length, now: data.now });
     await persist(data.states, o);
     return { schema: 'phantom-bot-handoff-plan.v1', seatId: id, state: data.states[id]!.state, apply: true, handoffs: applied };
@@ -306,16 +369,21 @@ export async function applySeatHandoff(id: string, o: SeatOptions = {}) {
 }
 export async function sendSeatMessage(input: { from: string; to: string; text: string }, o: SeatOptions = {}) {
   assertMetadata(input.text);
-  const seats = await roster(o), sender = seats.find(s => s.id === input.from || s.participantId === input.from);
-  if (!sender || (input.to !== 'owner' && !seats.some(s => s.participantId === input.to))) throw new Error('Unknown seat.');
+  const seats = await roster(o);
+  const sender = seats.find(s => s.id === input.from || s.participantId === input.from);
+  // `to` resolves like `from`: a participantId wins over a seat id, so both
+  // roster spellings reach the same seat and 'owner' stays the thread target.
+  const target = input.to === 'owner' ? undefined
+    : seats.find(s => s.participantId === input.to) ?? seats.find(s => s.id === input.to);
+  if (!sender || (input.to !== 'owner' && !target)) throw new Error('Unknown seat.');
   if (input.to === 'owner') {
     const notice = { text: input.text, idempotencyKey: `seat-message:${randomUUID()}` };
     if (o.ownerNotice) return o.ownerNotice(notice);
-    if (o.ownerOptions) return postOwnerNotice(notice, o.ownerOptions);
-    return { status: 'refused', reason: 'owner-thread-not-configured' };
+    return postOwnerNotice(notice, ownerOptions(o));
   }
   // The DM resolves identities and appends through the same fleet root and
   // clock the seat's claims and handoff notices use; runsRoot only places the
   // wake hint queue.
-  return sendDirectMessage({ ...input, from: sender.participantId }, { root: fleet(o), runsRoot: runs(o), now: o.now });
+  return sendDirectMessage({ from: sender.participantId, to: target!.participantId, text: input.text },
+    { root: fleet(o), runsRoot: runs(o), now: o.now });
 }

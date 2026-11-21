@@ -215,6 +215,8 @@ import {
   TICK_PHASE_MAINTENANCE_MS,
   TICK_PHASE_REFLECTION_MS,
   TICK_PHASE_CI_RERUN_MS,
+  TICK_PHASE_REWARD_SYNC_MS,
+  TICK_PHASE_SKILL_NUDGE_MS,
   TICK_BUDGET_MS,
 } from './tick-phases.js';
 import { launchOffTickJob, cancelOffTickJobs, offTickJobsSnapshot } from './off-tick-jobs.js';
@@ -4799,6 +4801,20 @@ export async function tick(
         parentSignal: opts.signal,
         log: phaseLog,
       });
+      // Reward substrate producer: fold the jobs-ledger tail into
+      // reward-signals.jsonl on the same self-improvement cadence. The sync is
+      // best-effort and append-only; launchOffTickJob keeps it single-flight.
+      launchOffTickJob('reward-sync', async signal => {
+        const { syncRewardSignalsFromJobsLedger } = await import('../metrics/reward-feed.js');
+        await syncRewardSignalsFromJobsLedger({ signal });
+      }, { deadlineMs: TICK_PHASE_REWARD_SYNC_MS, parentSignal: opts.signal, log: phaseLog });
+      // Shadow skill learning: fold the same jobs-ledger tail into candidate
+      // recovery skill cards. Best-effort and deduplicated by skill id;
+      // launchOffTickJob keeps it single-flight.
+      launchOffTickJob('skill-nudge', async signal => {
+        const { syncSkillNudgesFromJobsLedger } = await import('../fleet/skill-nudge.js');
+        await syncSkillNudgesFromJobsLedger({ signal });
+      }, { deadlineMs: TICK_PHASE_SKILL_NUDGE_MS, parentSignal: opts.signal, log: phaseLog });
     } else {
       await runPhase('reflection', TICK_PHASE_REFLECTION_MS, run);
     }

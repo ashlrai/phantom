@@ -40,6 +40,15 @@ afterEach(() => {
 
 const ledgerPath = (): string => join(runs, 'metrics', 'jobs.jsonl');
 const writeLedger = (rows: object[]): void => writeFileSync(ledgerPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+const marketPath = (): string => join(runs, 'metrics', 'work-market.jsonl');
+const writeMarket = (rows: object[]): void => writeFileSync(marketPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+
+/** A work-market.v1 route_decision row in the dispatcher's own shape. */
+const marketDecision = (job: string, workClass: string, ts: number): object => ({
+  schema: 'work-market.v1', event: 'route_decision', job,
+  chosen_lane: 'alpha', preferred_lane: 'alpha', work_class: workClass,
+  override: null, rejected_lanes: [], reason_codes: [], ts,
+});
 
 /** Current ledger event shape: state in `phase` (MERGED, CLOSED, or a non-terminal phase), route fields alongside. */
 function event(job: string, lane: string, workClass: string, phase: string | null, extra: Record<string, unknown> = {}): object {
@@ -188,6 +197,63 @@ describe('pure proposal semantics', () => {
   });
 });
 
+describe('work_class join from the work market', () => {
+  // Production jobs.jsonl rows never carry work_class; the market's
+  // route_decision journal is the only per-job class evidence. Without the
+  // join every outcome reads unclassified and no proposal can ever form.
+  const marketRows = (jobs: string[], workClass: string): object[] =>
+    jobs.map((job, i) => marketDecision(job, workClass, 1_000 + i));
+
+  it('classifies outcomes from route_decision rows and proposes per (work_class, lane)', async () => {
+    const jobs = Array.from({ length: 20 }, (_, i) => `synthetic-market-${i}`);
+    // Lane and merge state come from jobs.jsonl; the class comes only from work-market.jsonl.
+    writeLedger(jobs.map((job, i) => ({ job, lane: 'alpha', phase: 'MERGED', ts: `2026-11-0${(i % 9) + 1}T00:00:00Z` })));
+    writeMarket(marketRows(jobs, 'bulk'));
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      status: 'proposed', market_state: 'read', market_truncated: false,
+      known_outcomes: 20, unclassified_outcomes: 0,
+    });
+    expect(report.proposals).toEqual([expect.objectContaining({
+      work_class: 'bulk', lane: 'alpha', status: 'proposed', known_n: 20, proposed_weight: 0.6,
+    })]);
+  });
+
+  it('keeps groups separate per market class and reports unclassified jobs without decisions', async () => {
+    const bulk = Array.from({ length: 20 }, (_, i) => `synthetic-bulk-${i}`);
+    const judgment = Array.from({ length: 20 }, (_, i) => `synthetic-judgment-${i}`);
+    const undecided = 'synthetic-no-decision';
+    writeLedger([
+      ...bulk.map(job => ({ job, lane: 'alpha', phase: 'MERGED' })),
+      ...judgment.map(job => ({ job, lane: 'beta', phase: 'CLOSED' })),
+      { job: undecided, lane: 'alpha', phase: 'MERGED' },
+    ]);
+    writeMarket([
+      ...marketRows(bulk, 'bulk'),
+      ...marketRows(judgment, 'judgment'),
+    ]);
+    const { report } = await runJson();
+    expect(report.unclassified_outcomes).toBe(1);
+    const byKey = Object.fromEntries(report.proposals.map((p: { work_class: string; lane: string }) => [`${p.work_class}/${p.lane}`, p]));
+    expect(byKey['bulk/alpha']).toMatchObject({ status: 'proposed', proposed_weight: 0.6 });
+    expect(byKey['judgment/beta']).toMatchObject({ status: 'proposed', proposed_weight: 0.4 });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('market=read');
+  });
+
+  it('reports market_state so a missing decision journal explains unclassified outcomes', async () => {
+    // Production-shaped rows: no work_class on jobs.jsonl and no market file.
+    writeLedger(Array.from({ length: 20 }, (_, i) => ({ job: `synthetic-nomarket-${i}`, lane: 'alpha', phase: 'MERGED' })));
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({ status: 'insufficient-evidence', market_state: 'missing', unclassified_outcomes: 20 });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('market=missing');
+    expect(out).toContain('market coverage: work-market.jsonl missing');
+  });
+});
+
 describe('reverted merges', () => {
   const revertedRows = (n: number, lane = 'alpha', workClass = 'code'): object[] =>
     Array.from({ length: n }, (_, i) => event(`synthetic-rev-${lane}-${workClass}-${i}`, lane, workClass, 'MERGED', { reverted: true }));
@@ -225,6 +291,163 @@ describe('reverted merges', () => {
     writeLedger([...merged(19), event('synthetic-held', 'alpha', 'code', 'MERGED', { reverted: false })]);
     const { report } = await runJson();
     expect(report.proposals[0]).toMatchObject({ known_n: 20, reverted_n: 0, proposed_weight: 0.6 });
+  });
+});
+
+describe('outcome-quality evidence', () => {
+  const spendPath = (): string => join(runs, 'metrics', 'api-spend.jsonl');
+  const writeSpend = (rows: object[]): void => writeFileSync(spendPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+  const writeLaneScores = (passPowK: number): void => {
+    const dir = join(root, 'ashlr', 'eval', 'passk');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'lane-scores.json'), `${JSON.stringify({
+      schema: 'eval.lane-scores.v1', generatedAt: '2026-11-19T00:00:00.000Z', reportId: 'synthetic-report', k: 3, trials: 60,
+      lanes: [{ lane: 'alpha', model: 'synthetic-model', tasks: 20, trials: 60, passes: 45, pass1: 0.75, passPowK }],
+    })}\n`);
+  };
+  const signaled = (n: number, lane: string, workClass: string, phase: string, extra: Record<string, unknown>): object[] =>
+    Array.from({ length: n }, (_, i) => event(`synthetic-evq-${lane}-${workClass}-${phase}-${i}`, lane, workClass, phase, extra));
+
+  it('folds recorded CI, review, cost, wall and passk signals per group with coverage counts', async () => {
+    writeLaneScores(0.71);
+    writeLedger([
+      ...Array.from({ length: 10 }, (_, i) => event(`synthetic-evq-a-${i}`, 'alpha', 'code', 'MERGED', {
+        ci_first_pass: i < 8,
+        review_findings: { fixed: 2, rejected: 1, ignored: 0 },
+        cost_usd: 1.5,
+        wall_s: 100,
+      })),
+      ...merged(10),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report.proposals).toHaveLength(1);
+    // Evidence is advisory context: the held-merge weight is unchanged by it.
+    expect(report.proposals[0]).toMatchObject({ status: 'proposed', proposed_weight: 0.6 });
+    expect(report.proposals[0].evidence).toEqual({
+      ci_first_pass_known: 10,
+      ci_first_pass_rate: 0.8,
+      review_findings_known: 10,
+      review_findings: { fixed: 20, rejected: 10, ignored: 0 },
+      cost_known: 10,
+      cost_usd_mean: 1.5,
+      wall_known: 10,
+      wall_s_mean: 100,
+      passk_known: 20,
+      passk_mean: 0.71,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('evidence ci_first_pass=0.8(10)');
+    expect(out).toContain('review_findings=30(10)');
+    expect(out).toContain('cost_usd=1.5(10)');
+    expect(out).toContain('wall_s=100(10)');
+    expect(out).toContain('passk=0.71(20)');
+  });
+
+  it('keeps unrecorded signals null with zero coverage, never zero', async () => {
+    writeLedger(merged(20));
+    const { report } = await runJson();
+    expect(report.proposals[0].evidence).toEqual({
+      ci_first_pass_known: 0, ci_first_pass_rate: null,
+      review_findings_known: 0, review_findings: null,
+      cost_known: 0, cost_usd_mean: null,
+      wall_known: 0, wall_s_mean: null,
+      passk_known: 0, passk_mean: null,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).not.toContain('ci_first_pass=');
+  });
+
+  it('counts spend-derived costs and never folds signals from the unknown cohort', async () => {
+    const mergedJobs = Array.from({ length: 20 }, (_, i) => `synthetic-spend-${i}`);
+    writeLedger([
+      ...mergedJobs.map(job => ({ job, lane: 'alpha', model: 'synthetic-model', work_class: 'code', phase: 'MERGED' })),
+      ...signaled(5, 'alpha', 'code', 'VERIFIED', { ci_first_pass: true, cost_usd: 9 }),
+    ]);
+    writeSpend(mergedJobs.slice(0, 4).map((job, i) => ({ job, cost_usd: 2 + i })));
+    const { report } = await runJson();
+    expect(report.unknown_outcomes).toBe(5);
+    const p = report.proposals[0];
+    expect(p.known_n).toBe(20);
+    expect(p.evidence.cost_known).toBe(4);
+    expect(p.evidence.cost_usd_mean).toBe(3.5);
+    // The VERIFIED rows carried ci_first_pass/cost signals but merged:null keeps them out of every group.
+    expect(p.evidence.ci_first_pass_known).toBe(0);
+    expect(p.evidence.ci_first_pass_rate).toBeNull();
+  });
+
+  it('keeps evidence per group and reports it on refused groups too', async () => {
+    writeLedger([
+      ...signaled(20, 'alpha', 'code', 'MERGED', { ci_first_pass: true }),
+      ...signaled(19, 'beta', 'docs', 'MERGED', {}),
+    ]);
+    const { report } = await runJson();
+    const byKey = Object.fromEntries(report.proposals.map((p: { work_class: string; lane: string }) => [`${p.work_class}/${p.lane}`, p]));
+    expect(byKey['code/alpha'].evidence.ci_first_pass_rate).toBe(1);
+    expect(byKey['code/alpha'].evidence.ci_first_pass_known).toBe(20);
+    expect(byKey['docs/beta'].status).toBe('refused');
+    expect(byKey['docs/beta'].evidence).toMatchObject({
+      ci_first_pass_known: 0, ci_first_pass_rate: null, cost_known: 0, cost_usd_mean: null,
+    });
+  });
+});
+
+describe('unknown-outcome resolution', () => {
+  // Finish rows carry empty/exit_code/failure_class; the fold keeps them on
+  // the outcome and the report resolves the merged:null cohort with them.
+  const finishRow = (job: string, extra: Record<string, unknown>): object =>
+    ({ job, lane: 'alpha', work_class: 'code', event: 'finish', ...extra });
+
+  it('counts empty finishes, nonzero exits and failure classes inside the unknown cohort', async () => {
+    writeLedger([
+      ...merged(20),
+      // Three crashed-empty runs: every signal overlaps on the same jobs.
+      ...[0, 1, 2].map(i => finishRow(`synthetic-unq-crash-${i}`, { empty: true, exit_code: 1, failure_class: 'quota' })),
+      // Two nonzero exits without an empty verdict or class.
+      ...[0, 1].map(i => finishRow(`synthetic-unq-exit-${i}`, { exit_code: 2 })),
+      // One classified failure without a usable exit code.
+      finishRow('synthetic-unq-class', { failure_class: 'authentication' }),
+      // Four jobs with no finish signal at all — in flight or awaiting a verdict.
+      ...[0, 1, 2, 3].map(i => event(`synthetic-unq-open-${i}`, 'alpha', 'code', 'VERIFIED')),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 10, unclassified_outcomes: 0,
+      unknown_empty: 3, unknown_nonzero_exit: 5, unknown_unresolved: 4,
+      unknown_failure_classes: [
+        { failure_class: 'quota', jobs: 3 },
+        { failure_class: 'authentication', jobs: 1 },
+      ],
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('unknown resolution: empty=3 nonzero_exit=5 unresolved=4');
+    expect(out).toContain('failure_classes=quota:3,authentication:1');
+  });
+
+  it('never counts finish signals from the known cohort as unknown resolution', async () => {
+    writeLedger([
+      // A merged job can still carry a nonzero exit (the PR landed anyway)
+      // and an empty verdict on an earlier attempt — neither is unknown.
+      ...Array.from({ length: 20 }, (_, i) => event(`synthetic-known-${i}`, 'alpha', 'code', 'MERGED',
+        i === 0 ? { empty: true, exit_code: 1, failure_class: 'quota' } : { empty: false, exit_code: 0 })),
+      event('synthetic-unq-clean', 'alpha', 'code', 'VERIFIED', { empty: false, exit_code: 0 }),
+    ]);
+    const { report } = await runJson();
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 1,
+      unknown_empty: 0, unknown_nonzero_exit: 0, unknown_unresolved: 1,
+      unknown_failure_classes: [],
+    });
+  });
+
+  it('reports null resolution counts when the ledger was not read', async () => {
+    const { code, report } = await runJson();
+    expect(code).toBe(1);
+    expect(report).toMatchObject({
+      status: 'unavailable',
+      unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null, unknown_unresolved: null,
+    });
   });
 });
 

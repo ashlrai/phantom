@@ -34,12 +34,67 @@ In an empty reply box, ↑ brings back the messages you already sent in this
 conversation, newest first; ↓ steps forward again and Esc clears the box.
 Editing a recalled message makes it an ordinary draft.
 
+### Reach a session by typing
+
+A reply that starts with `/` and names a command runs on Enter instead of
+being sent; `/help` lists them all. Four of them are about sessions. They
+only read, so they need no unlock and leave no note in the Leader inbox:
+
+| Type | What happens |
+| --- | --- |
+| `/who` | One line in the conversation naming the sessions working now (quiet ones first, eight at most, the rest counted), each with its lane and when it last spoke. |
+| `/thread <session>` | Opens that session as a conversation in the Conversations pane and says its state and lane. |
+| `/summary <session>` | Prints the session's state, lane, model, when it last spoke and its recorded summary, without leaving the chat. |
+| `/log <job-id>` | Opens the job's live log. |
+
+Type `@` after the command to pick the session from the list above; the `@`
+is dropped. A job id in a command's answer is a button that opens that session
+as a conversation, so `/who` is also a way into any of them. `/thread` on a
+name the session list does not hold opens nothing and says so. When the list
+does not answer, `/who` reads "Working sessions are unknown" with the reason,
+and `/thread` opens the name unchecked and says that. The reads are the ones
+behind `phm sessions --json` and `phm sessions thread <id> --json`.
+
 Every fleet graph node offers Steer and Hand off. Both open the existing
 message dialog for review before sending. Steer asks for a routing decision
 when a node is exhausted, held or stale, and a neutral question otherwise.
 Hand off asks which leader or engine should take the work. Readings are
 quoted as displayed, including `unknown`. Long details are shortened while
 preserving the requested action.
+
+## See who is working from the Leader pane
+
+The Leader pane (⌘⌥L) opens with a **Working now** strip above the
+conversation: one line per running agent session, with its lane, when it last
+spoke and the last thing it said. Quiet sessions come first. A last message the
+sessions list does not hold reads "Last message unknown", and a list that does
+not answer reads "Sessions unavailable", never "nobody is working". Sessions
+whose state is unknown are counted beside the running ones.
+
+Choose a line to put `@RQ-<job>` in the reply box. Nothing is sent until you
+send the message. Helpers without an `RQ-` id are listed but cannot be aimed
+at.
+
+**Thread** reads that session as a conversation without leaving the pane: a
+summary assembled from its records, what it was told, what it said and did,
+and a reply box aimed at it (the same view as a Sessions pane row; see
+[sessions](SESSIONS.md)). In a pane at least 900 px wide the conversation
+opens beside the Leader chat: the chat, its reply box and the strip stay on
+screen, the open line is marked, and **Thread** on another line swaps the
+conversation in place. Esc or **Close** closes it. In a narrower pane the
+conversation covers the chat, and Esc or **← Leader** returns to it, where an
+unsent draft is still in the reply box. Above the open conversation, **‹** and
+**›** (or `[` and `]` outside a text field) step to the previous and next
+working session and say where it stands, for example "2 of 5 working"; a
+session that has stopped working reads "Not working now". **Log** opens the job in the
+Worker log, **PR** opens its pull request and **All sessions** opens the
+Sessions pane. With a line focused, ↑/↓ or J/K move, Enter aims, T opens the
+conversation and L opens the log. The strip folds to its count line and stays
+folded until you open it again. It reads the same list as:
+
+```sh
+phm sessions --json
+```
 
 Desktop update inspection remains available with `phm app update status --json`;
 see [desktop updates](../DESKTOP.md#background-update-discovery-and-local-status).

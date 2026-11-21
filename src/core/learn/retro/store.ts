@@ -90,7 +90,7 @@ async function inspectNightlyDirectory(input: boolean, create = false): Promise<
 }
 
 /** Bounded stable read. Missing, torn, replaced and oversized sources are not empty evidence. */
-async function readNightlyFile(path: string, input: boolean): Promise<string> {
+export async function readNightlyFile(path: string, input: boolean): Promise<string> {
   await inspectNightlyDirectory(input);
   const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
   try {

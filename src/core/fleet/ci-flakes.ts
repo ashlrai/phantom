@@ -45,6 +45,7 @@ export interface FlakeJournalRow {
   head: string;
   outcome: string;
   test?: string | null;
+  verdict?: string | null;
 }
 
 export interface RecurringFlake {
@@ -54,6 +55,8 @@ export interface RecurringFlake {
   heads: string[];
   /** Attempt rows counted inside the window; always >= heads.length. */
   attempts: number;
+  /** Rerun verdict rows counted inside the window; zeros mean none recorded yet. */
+  verdicts: { pass: number; fail: number; inconclusive: number };
 }
 
 const REPO_SHAPE = /^[\w.-]+\/[\w.-]+$/;
@@ -90,9 +93,28 @@ export function recurringFlakes(
     group.attempts += 1;
     groups.set(key, group);
   }
+  const verdicts = new Map<string, { pass: number; fail: number; inconclusive: number }>();
+  for (const row of rows) {
+    if (row.outcome !== 'verdict') continue;
+    if (row.verdict !== 'pass' && row.verdict !== 'fail' && row.verdict !== 'inconclusive') continue;
+    if (typeof row.test !== 'string' || row.test === '') continue;
+    if (typeof row.repo !== 'string' || !REPO_SHAPE.test(row.repo)) continue;
+    const at = typeof row.at === 'string' ? Date.parse(row.at) : NaN;
+    if (!Number.isFinite(at) || at < nowMs - windowMs) continue;
+    const key = JSON.stringify([row.repo, row.test]);
+    const tally = verdicts.get(key) ?? { pass: 0, fail: 0, inconclusive: 0 };
+    tally[row.verdict] += 1;
+    verdicts.set(key, tally);
+  }
   return [...groups.values()]
     .filter((group) => group.heads.size >= minHeads)
-    .map((group) => ({ repo: group.repo, test: group.test, heads: [...group.heads].sort(), attempts: group.attempts }))
+    .map((group) => ({
+      repo: group.repo,
+      test: group.test,
+      heads: [...group.heads].sort(),
+      attempts: group.attempts,
+      verdicts: verdicts.get(JSON.stringify([group.repo, group.test])) ?? { pass: 0, fail: 0, inconclusive: 0 },
+    }))
     .sort((a, b) => b.heads.length - a.heads.length
       || a.repo.localeCompare(b.repo) || a.test.localeCompare(b.test));
 }
@@ -109,9 +131,14 @@ function flakeFixBrief(flake: RecurringFlake, jobId: string, generation: number)
   const retry = generation > 1
     ? ` This is stabilization attempt ${generation}: earlier attempts for this test reached DONE and the flake still recurs on the heads above.`
     : '';
+  const v = flake.verdicts;
+  const verdictNote = v.pass + v.fail + v.inconclusive > 0
+    ? ` Recorded rerun verdicts for this test: ${v.pass} passed, ${v.fail} failed, ${v.inconclusive} inconclusive. `
+    : '';
   return scrubSecrets(
     `Stabilize flaky test ${test} in ${flake.repo}: the CI baseline analyzer classified it probable-flake ` +
     `and the rerun loop attempted it on ${flake.heads.length} distinct heads (${headList}). ` +
+    verdictNote +
     `Reproduce the flake locally, find the nondeterminism (test ordering, timing, shared state, ports or temp paths, unawaited work), ` +
     `and make the test deterministic; if it cannot be made reliable, quarantine it behind an explicit skip that names ${jobId}. ` +
     `Never weaken the assertion, delete coverage, or edit Security GATES v3 files. Run the affected suite.` +

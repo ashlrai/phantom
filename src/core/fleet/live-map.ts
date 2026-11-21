@@ -22,6 +22,7 @@ import { orgLayoutOf, type FleetOrgLayout3D } from './org-layout-3d.js';
 import type { NodesView } from './nodes-view.js';
 import { providerFor, type ProviderName } from './provider.js';
 import type { LaneHealth } from './lane-badge.js';
+import { describeMapFilter, jobMapState, MAP_FILTER_EMPTY, type MapFilterResult, type MapState } from './map-filter.js';
 import type { FleetLaneSnapshot } from './lane-console.js';
 import type { ResourceLedgerV1 } from './runs-resource-ledger.js';
 
@@ -55,9 +56,17 @@ export interface LiveMapNode {
   health?: LaneHealth;
   /** Lanes: merged PRs per hour from the lanes read; null when that read had no number. Absent from older servers. */
   mergedPerHour?: number | null;
+  /** Computers: true when it is another Mac, not this one. Absent for this Mac, other kinds and older servers. */
+  remote?: boolean;
   /** Pools: percent of the plan used (0..100); null when no reading. Absent from older servers. */
   usedPct?: number | null;
+  /** Jobs: the lane and repo the job reports (null = unknown), and its state in the filter's words. Absent from older servers. */
+  lane?: string | null;
+  repo?: string | null;
+  state?: MapState;
 }
+/** A standing planner (executor, Core orchestrator, main guardian, comms) from `phm org`; the org view groups them as the guardian and loops branches. */
+export interface LiveMapPlanner { id: string; label: string; state: string; doing: string }
 export interface LiveMapEdge {
   id: string;
   kind: LiveMapEdgeKind;
@@ -84,8 +93,12 @@ export interface FleetLiveMap {
   unmappedMessages: number | null;
   /** Plain words for every fact the map could not show. */
   gaps: string[];
+  /** Planners with their one-word state. Absent from older servers, and when the org read failed. */
+  planners?: LiveMapPlanner[];
   /** Where each org node sits in 3D, grouped by who it reports to: the positions the 3D map draws. Absent from older servers. */
   orgLayout?: FleetOrgLayout3D;
+  /** Set only when the map was narrowed (`phm map --lane/--repo/--state`): the filters and how many of the jobs matched. */
+  filter?: MapFilterResult;
 }
 export interface LiveMapInputs {
   /** `readFleetOrgSources(15)`: the org map with its tree; null when it could not be read. */
@@ -132,6 +145,7 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
   const localJobs: string[] = [];
   const addJob = (job: OrgTreeJob, lane: string | null) => {
     const id = node('job', `job:${job.id}`, job.id, job.status, `${job.model ?? 'model unknown'} · ${job.repo ?? 'repo unknown'}`, job.provider, orgLive(job.lastActivityAt, now));
+    Object.assign(nodes.get(id)!, { lane: lane && lane !== 'unknown' ? lane : null, repo: job.repo, state: jobMapState(job.status, job.state) });
     if (lane) edge('reports-to', id, laneId(lane));
     if (processLive.get(job.id) === 'yes') localJobs.push(id);
   };
@@ -148,9 +162,11 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
   const rows = [...computers?.nodes ?? []].sort((a, b) => Number(b.isSelf) - Number(a.isSelf) || cmp(a.name, b.name));
   for (const row of rows) {
     const id = node('computer', `computer:${row.name}`, row.name, row.stateCode, row.isSelf ? `${row.state} (this computer)` : row.state);
+    if (!row.isSelf) nodes.get(id)!.remote = true;
     for (const job of row.jobsRunning === 'unknown' ? [] : row.jobsRunning) {
       // A job only the node pool knows about: shown, with its lane unknown.
       const jobId = node('job', `job:${job}`, job, 'running', 'lane unknown', 'unknown');
+      if (!nodes.get(jobId)!.state) Object.assign(nodes.get(jobId)!, { lane: null, repo: null, state: 'running' });
       edge('runs-on', jobId, id);
     }
     if (row.isSelf) for (const job of localJobs) edge('runs-on', job, id);
@@ -196,6 +212,7 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
   const sortedNodes = [...nodes.values()].sort((a, b) => order(a.kind) - order(b.kind)
     // Lanes and computers keep their source order (fixed lane order, this computer first); jobs and resources sort by id.
     || (a.kind === 'job' || a.kind === 'resource' ? cmp(a.id, b.id) : insertion.indexOf(a.id) - insertion.indexOf(b.id)));
+  const planners = tree?.planners?.map(({ id, label, state, doing }): LiveMapPlanner => ({ id, label, state, doing }));
   const sortedEdges = [...edges.values()].sort((a, b) => EDGE_ORDER.indexOf(a.kind) - EDGE_ORDER.indexOf(b.kind) || cmp(a.id, b.id));
   const count = (kind: LiveMapNodeKind) => sortedNodes.filter(row => row.kind === kind).length;
   return {
@@ -208,7 +225,8 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
       computers: computers ? 'available' : 'unknown', resources: usage ? 'available' : 'unknown', messages: messageSource,
     },
     unmappedMessages: unmapped, gaps,
-    orgLayout: orgLayoutOf({ generatedAt: new Date(now).toISOString(), nodes: sortedNodes, edges: sortedEdges }),
+    ...(planners ? { planners } : {}),
+    orgLayout: orgLayoutOf({ generatedAt: new Date(now).toISOString(), nodes: sortedNodes, edges: sortedEdges, planners }),
   };
 }
 
@@ -219,6 +237,8 @@ export function renderFleetLiveMapText(map: FleetLiveMap): string {
   const where = new Map(map.edges.filter(row => row.kind === 'runs-on').map(row => [row.from, label.get(row.to)!]));
   const leader = byKind('leader')[0]!;
   const lines = [`${leader.label}: ${leader.status}, ${leader.detail}.`];
+  if (map.filter) lines.push(map.filter.matched === 0 ? MAP_FILTER_EMPTY
+    : `Showing ${map.filter.matched} of ${map.filter.total} agents (${describeMapFilter(map.filter)}).`);
   const block = <T>(title: string, rows: T[], line: (row: T) => string, empty: string) => {
     lines.push(`${title}:`, ...(rows.length ? rows.map(row => `  ${line(row)}`) : [`  ${empty}`]));
   };

@@ -44,7 +44,7 @@ export interface NodesPlan {
   reasons: string[];
 }
 
-function planNode(node: NodeRow): PlanNode {
+export function planNode(node: NodeRow): PlanNode {
   const down = node.reachable === false || node.stateCode === 'offline';
   // An unconfirmed state (stateCode 'unknown': e.g. a live registry heartbeat
   // whose reachability the tailnet cannot vouch for) cannot promise slots —

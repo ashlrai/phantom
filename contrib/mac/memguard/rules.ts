@@ -7,6 +7,9 @@ export const DEFAULT_CONFIG = Object.freeze({ pressureRuleEnabled: false });
 export const SWAP_WINDOW_MS = 10 * 60 * 1000;
 // GB means decimal bytes. Do not silently substitute GiB.
 export const SWAP_GROWTH_BYTES = 2_000_000_000;
+/** Swap growth alone is not pressure: it cuts slots only with free memory under this percent or swapouts above 0.
+ *  Mirrors REAL_PRESSURE_FREE_PCT in src/core/fleet/host-memory.ts (`phm host memory`). */
+export const REAL_PRESSURE_FREE_PCT = 35;
 
 export interface Sample {
   /** Monotonic milliseconds, from the same clock for this evaluator's lifetime. */
@@ -17,6 +20,8 @@ export interface Sample {
   /** Raw kern.memorystatus_vm_pressure_level, not XNU's internal enum. */
   pressureLevel?: number | null;
   swapUsedBytes?: number | null;
+  /** Pages swapped out per minute; null/absent is unknown and never counts as real pressure. */
+  swapoutsPerMin?: number | null;
 }
 
 export type PauseReason = 'free-hard' | 'disk' | 'free-interim' |
@@ -72,7 +77,10 @@ export class MemguardRules {
         this.history = this.history.filter(point => sample.nowMs - point.nowMs <= SWAP_WINDOW_MS);
         const minimum = this.history[0];
         if (minimum) swapGrowthBytes = Math.max(0, sample.swapUsedBytes! - minimum.bytes);
-        if (swapGrowthBytes > SWAP_GROWTH_BYTES) reasons.push('swap-growth');
+        // Growth is still reported; it only cuts when memory is actually short (free under 35% or swapouts above 0).
+        const realPressure = (freeValid && sample.freePercent < REAL_PRESSURE_FREE_PCT) ||
+          (nonnegative(sample.swapoutsPerMin) && sample.swapoutsPerMin > 0);
+        if (swapGrowthBytes > SWAP_GROWTH_BYTES && realPressure) reasons.push('swap-growth');
         // Keep only minima that can matter to a later comparison. This also
         // coalesces unchanged swap readings while retaining their latest time.
         while (this.history.length && this.history[this.history.length - 1]!.bytes >= sample.swapUsedBytes!) {

@@ -2,17 +2,42 @@
 import { validCap } from '../core/drive/nodes/state.js';
 import { readQueueOrder } from '../core/queue/order.js';
 import { readNodesPlan, type NodesPlan } from '../core/fleet/nodes-plan.js';
+import { defaultNodeProbe, doctorText, readNodesDoctor, type NodeProbe } from '../core/fleet/nodes-doctor.js';
+import { offloadText, readNodesOffload, writeOffloadEnabled, readOffloadEnabled, type NodesOffloadDeps } from '../core/fleet/nodes-offload.js';
+import { poolText, readNodesPool } from '../core/fleet/nodes-pool.js';
+import { readHostLoad } from '../core/fleet/host-load.js';
+import { parseAdmissionCtl } from '../core/fleet/load-owners.js';
+import { readEngineAdmission } from '../core/fleet/engine-admission-view.js';
+import { readStableRegularFile } from '../core/util/stable-file-read.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { chooseNodeForLane, defaultNodesViewDeps, nodesThatCanTake, readNodesView, type NodeRow, type NodesViewDeps } from '../core/fleet/nodes-view.js';
 
 const USAGE = `Usage: phm nodes [--json] [--can-take <lane>]
+       phm nodes pool [--json]
        phm nodes plan [--json]
+       phm nodes doctor [--node <name>] [--json]
+       phm nodes offload [--dry-run] [--json]
+       phm nodes offload on|off
 
 One row per known computer: reachable or not, whether Phantom is running there,
 free memory, CPU headroom, lanes, running jobs and a plain-words state.
 --can-take <lane> lists only the computers that can take a job for that lane now.
 It recommends a ready remote computer, then this computer if no remote is ready.
+pool: your Macs as one pool (this Mac first): online, offline or unknown, free slots,
+running jobs, load, free memory and disk, whether offload is on, when it was last seen,
+and one total line such as "2 Macs, 11 free slots". Offload is known only for this Mac.
 plan: how many more jobs each computer could take now, and which queued job fits
 which computer. It only plans; it launches, moves and stops nothing.
+doctor: what each joined computer is missing before it can take jobs: reachable,
+which lane CLIs (claude, codex, devin, gemini, local model) are installed and
+signed in, which ashlrai repo clones exist and free disk, with one fix line per gap.
+Other computers show unknown where they cannot be checked yet.
+offload: opt-in, off by default. When this computer would hold a launch (over load
+or memory held) and another computer passes doctor with a free slot, a ready job is
+chosen for that computer and one event records why. Running jobs never move, a
+computer never gets more jobs than its free slots, and with no ready computer the
+job keeps waiting here. --dry-run only shows what would move. on|off flips the setting.
 Read only: it changes no network, security or pool setting.`;
 
 const unknownOr = <T>(value: T | 'unknown', show: (known: T) => string): string => (value === 'unknown' ? 'unknown' : show(value));
@@ -43,7 +68,61 @@ async function cmdNodesPlan(args: string[], deps: NodesViewDeps, readQueue: type
   return 0;
 }
 
-export async function cmdNodes(args: string[], deps: NodesViewDeps = defaultNodesViewDeps(), readQueue: typeof readQueueOrder = readQueueOrder): Promise<number> {
+/** `phm nodes doctor [--node <name>] [--json]`: read only readiness check per joined computer. */
+async function cmdNodesDoctor(args: string[], deps: NodesViewDeps, probe: NodeProbe): Promise<number> {
+  let json = false, node: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === '--help' || arg === '-h') { console.log(USAGE); return 0; }
+    if (arg === '--json' && !json) json = true;
+    else if (arg === '--node' && node === undefined && args[i + 1] && !args[i + 1]!.startsWith('-')) node = args[++i]!;
+    else { console.error(USAGE); return 2; }
+  }
+  const report = await readNodesDoctor({ view: deps, probe }, node);
+  if (node !== undefined && !report.nodes.length) { console.error(`No computer named ${node}. Run \`phm nodes\` to list them.`); return 1; }
+  console.log(json ? JSON.stringify(report, null, 2) : doctorText(report));
+  return 0;
+}
+
+/** `phm nodes pool [--json]`: read only; the joined Macs as one pool. */
+function cmdNodesPool(args: string[], deps: NodesViewDeps): number {
+  if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
+  if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) { console.error(USAGE); return 2; }
+  const pool = readNodesPool({ view: deps });
+  console.log(args.length ? JSON.stringify(pool, null, 2) : poolText(pool));
+  return 0;
+}
+
+/** The real host guard reading: load average, the launch guard's file and the memory gate. */
+function defaultReadHost(): ReturnType<NodesOffloadDeps['readHost']> {
+  const runs = process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  const file = readStableRegularFile(join(runs, 'queue', 'admission-ctl.json'), { anchorPath: runs, maxFileBytes: 64 * 1024, remainingBytes: 64 * 1024 });
+  return { load: readHostLoad(), admission: parseAdmissionCtl(file.ok ? file.text : null), memory: readEngineAdmission() };
+}
+
+/** `phm nodes offload [--dry-run] [--json]` and `phm nodes offload on|off`. */
+async function cmdNodesOffload(args: string[], deps: NodesViewDeps, readQueue: typeof readQueueOrder, probe: NodeProbe, offload: Partial<NodesOffloadDeps>): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
+  if (args.length === 1 && (args[0] === 'on' || args[0] === 'off')) {
+    writeOffloadEnabled(args[0] === 'on');
+    console.log(args[0] === 'on' ? 'Offload is on. Run `phm nodes offload --dry-run` to see what would move.' : 'Offload is off.');
+    return 0;
+  }
+  let json = false, dryRun = false;
+  for (const arg of args) {
+    if (arg === '--json' && !json) json = true;
+    else if (arg === '--dry-run' && !dryRun) dryRun = true;
+    else { console.error(USAGE); return 2; }
+  }
+  const report = await readNodesOffload({ view: deps, probe, readQueue: () => readQueue(), readHost: defaultReadHost, readEnabled: readOffloadEnabled, ...offload }, { dryRun });
+  console.log(json ? JSON.stringify(report, null, 2) : offloadText(report));
+  return 0;
+}
+
+export async function cmdNodes(args: string[], deps: NodesViewDeps = defaultNodesViewDeps(), readQueue: typeof readQueueOrder = readQueueOrder, probe: NodeProbe = defaultNodeProbe, offload: Partial<NodesOffloadDeps> = {}): Promise<number> {
+  if (args[0] === 'offload') return cmdNodesOffload(args.slice(1), deps, readQueue, probe, offload);
+  if (args[0] === 'pool') return cmdNodesPool(args.slice(1), deps);
+  if (args[0] === 'doctor') return cmdNodesDoctor(args.slice(1), deps, probe);
   if (args[0] === 'plan') return args.slice(1).includes('--help') ? (console.log(USAGE), 0) : cmdNodesPlan(args.slice(1), deps, readQueue);
   let json = false;
   let lane: string | null = null;

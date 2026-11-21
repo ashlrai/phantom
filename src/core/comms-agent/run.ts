@@ -130,10 +130,16 @@ async function rememberDraft(runsDir: string, attempt: SendAttempt, at: string, 
     messageId,
     createdAt: at,
   };
-  await appendDraft(runsDir, draft);
-  await appendOwnerNotice(runsDir, {
-    at, kind: 'draft', draftId: draft.id, transport: draft.transport, recipient: draft.recipient,
-  });
+  // One pending record per unique reply: a repeated pass over the same kept
+  // message must not append a second draft or owner notice. A 'sent' record
+  // does not block a fresh pending draft for the same reply.
+  const recorded = await listDrafts(runsDir);
+  if (!recorded.some(row => row.id === draft.id && row.status === 'pending')) {
+    await appendDraft(runsDir, draft);
+    await appendOwnerNotice(runsDir, {
+      at, kind: 'draft', draftId: draft.id, transport: draft.transport, recipient: draft.recipient,
+    });
+  }
   if (draft.transport === 'email' && EMAIL.test(draft.recipient)) {
     try {
       await createDraft({
@@ -144,6 +150,19 @@ async function rememberDraft(runsDir: string, attempt: SendAttempt, at: string, 
       }, runsDir);
     } catch { /* The Comms draft and owner-thread notice still stand. */ }
   }
+}
+
+/**
+ * A delivered reply resolves its pending draft record. Bookkeeping never
+ * rewrites a completed send: a store failure leaves the pending record
+ * visible rather than reporting a sent reply as failed.
+ */
+async function resolveSentDraft(runsDir: string, attempt: SendAttempt, at: string): Promise<void> {
+  try {
+    const id = draftId(attempt);
+    const pending = (await listDrafts(runsDir)).find(row => row.id === id && row.status === 'pending');
+    if (pending) await appendDraft(runsDir, { ...pending, status: 'sent', resolvedAt: at });
+  } catch { /* See above: the send already happened. */ }
 }
 
 function gate(options: CommsRunOptions): { kill: KillState; paused: boolean } {
@@ -213,6 +232,7 @@ export async function executeSend(
     credentialHandle: attempt.credentialHandle ?? null,
     result: 'sent',
   });
+  await resolveSentDraft(options.runsDir, attempt, at);
   return outcome;
 }
 
@@ -288,14 +308,14 @@ export async function commsStatus(runsDir: string): Promise<{
     role: COMMS_AGENT_ROLE,
     kill: readKillState(),
     paused: readPauseState(),
-    drafts: drafts.length,
+    drafts: drafts.filter(draft => draft.status === 'pending').length,
     sendsLogged: sends.length,
     adapters,
   };
 }
 
 export async function commsDrafts(runsDir: string): Promise<{ ok: true; drafts: CommsDraft[] }> {
-  return { ok: true, drafts: await listDrafts(runsDir) };
+  return { ok: true, drafts: (await listDrafts(runsDir)).filter(draft => draft.status === 'pending') };
 }
 
 export function preservedIds(before: readonly InboxMessage[], kept: readonly InboxMessage[], archived: readonly InboxMessage[]): boolean {

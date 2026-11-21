@@ -39,7 +39,7 @@ it.each([
   }
   const before = readFileSync(path);
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-  const gh = vi.fn(async (_args: string[]) => JSON.stringify({ merged: true, head: { sha: 'abc1234abcdef' } }));
+  const gh = vi.fn(async (_args: string[]) => JSON.stringify({ merged: true, head: { sha: 'abc1234567890000000000000000000000000000' } }));
   for (const args of [['--json'], []]) {
     log.mockClear();
     gh.mockClear();

@@ -1,6 +1,7 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildFleetEvalReport,
@@ -209,6 +210,22 @@ describe('buildFleetEvalReport', () => {
     const report = await build({ prsTexts: [await prsFixture(), '{broken'] });
     expect(report.sources.pullRequests).toMatchObject({ files: 2, rows: 8, ignored: 1, state: 'degraded' });
   });
+
+  it('carries a bounded jobs tail through sources.jobs.truncated', async () => {
+    const clean = `${JSON.stringify({
+      state: 'MERGED', mergedAt: '2026-11-06T00:00:00Z',
+      url: 'https://github.com/ashlrai/phantom/pull/900', job: 'RQ-TAIL',
+    })}\n`;
+    const report = await build({ jobsText: { text: clean, truncated: true }, prsTexts: [] });
+    expect(report.sources.jobs).toMatchObject({ state: 'healthy', truncated: true, rows: 1 });
+    expect(report.merges.total).toBe(1);
+    expect(report.merges.attributed).toBe(1);
+    expect(formatFleetEvalReport(report)).toContain('jobs healthy (truncated)');
+    // A bare string stays a complete, untruncated read.
+    const full = await build({ jobsText: clean, prsTexts: [] });
+    expect(full.sources.jobs.truncated).toBe(false);
+    expect(formatFleetEvalReport(full)).not.toContain('(truncated)');
+  });
 });
 
 describe('formatFleetEvalReport', () => {
@@ -262,5 +279,32 @@ describe('cmdFleetEvalReport', () => {
     expect(await cmdFleetEvalReport(['--prs', 'missing.json'], deps)).toBe(0);
     expect(String(err.mock.lastCall![0])).toContain('1 --prs file(s) unreadable');
     expect(out).toHaveBeenCalled();
+  });
+
+  it('reads the newest bounded tail of an oversized jobs ledger', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'eval-report-tail-'));
+    const file = join(dir, 'jobs.jsonl');
+    // Append-only ledger larger than the 16 MiB tail window: the head sentinel
+    // must fall outside the window and the newest outcome row must still fold.
+    const limit = 16 * 1024 * 1024;
+    const recent = JSON.stringify({
+      state: 'MERGED', mergedAt: '2026-11-06T00:00:00Z',
+      url: 'https://github.com/ashlrai/phantom/pull/901', job: 'RQ-TAIL',
+    });
+    writeFileSync(file, 'HEAD-SENTINEL\n' + 'A'.repeat(limit) + '\n' + recent + '\n');
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const deps = {
+      observations: () => ({ sourceState: 'healthy', observations: [] }) as unknown as PostMergeObservationReadResult,
+      now: () => NOW,
+    };
+    expect(await cmdFleetEvalReport(['--jobs', file, '--json'], deps)).toBe(0);
+    const report = JSON.parse(String(out.mock.calls[0]![0])) as FleetEvalReport;
+    expect(report.sources.jobs).toMatchObject({ state: 'healthy', truncated: true, rows: 1 });
+    expect(report.merges.total).toBe(1);
+    expect(report.merges.attributed).toBe(1);
+    // Human output names the bounded window.
+    expect(await cmdFleetEvalReport(['--jobs', file], deps)).toBe(0);
+    expect(String(out.mock.lastCall![0])).toContain('jobs healthy (truncated)');
   });
 });

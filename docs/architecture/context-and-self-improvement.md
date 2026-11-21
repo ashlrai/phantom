@@ -148,7 +148,35 @@ missed night catches up on the next eligible tick while Verse is running.
 The local producer supplies two newline-terminated JSONL files under
 `~/.ashlr/learn/retro-input/`. Both must exist; an empty review file is valid.
 This is a versioned adapter contract because the router queue format is not
-part of this repository:
+part of this repository. Phantom's own nightly feed (`learn/retro/feed.ts`)
+produces both halves once per due night, inside the state lock, merging by
+latest `updatedAt` per (repo,id) — externally supplied rows are kept, never
+clobbered, conflicting same-version rows abort the feed, and a file whose
+merged rows are unchanged is left byte-for-byte intact.
+
+The jobs half folds the tail of the fleet jobs ledger
+(`<runs>/metrics/jobs.jsonl`, bounded to the input byte cap) plus terminal
+cloud and Devin task records into `retro-input/jobs.jsonl`. Only explicit
+terminal outcomes become jobs (MERGED counts as `succeeded`;
+FAILED/CLOSED-unmerged/reverted evidence as `failed`; CANCELLED as
+`cancelled`), a job is emitted only with a proven `owner/repo` and routing arm
+(fleet lane/pool/arm, else `model:<model>`; task lanes use `cloud:<seat>` and
+`devin:<mode>`), and rows that cannot prove attribution are skipped — unknown
+stays unknown. A merged-then-reverted task counts as `failed`, matching the
+fleet revert rule, and tasks superseded by a fleet PR are skipped because the
+carrying PR reports its own outcome.
+
+The review half produces `retro-input/review-blocks.jsonl` from the GitHub
+verdict the cloud tracker records on each task at its terminal transition
+(`reviewDecision` / `changesRequested` — never review prose). Each recorded
+changes-requested verdict becomes one row whose `body` is a bounded factual
+summary of those fields, so it classifies as the `review` cause; the row's
+`jobId` is the task ID, so it joins the task's own job row. When no local
+source recorded a review block the feed writes an empty file — the file's
+existence means the producer looked. An unreadable task store counts as
+unknown: it suppresses task-derived rows and the review file for that attempt
+rather than asserting "none", and a missing review input still keeps the run
+`unavailable` until a feed attempt succeeds.
 
 * `jobs.jsonl`: `v: 1`, `id`, `repo` (`owner/repo`), `arm` (a producer-assigned,
   provider-agnostic routing arm), `status`, `updatedAt` (canonical ISO UTC),

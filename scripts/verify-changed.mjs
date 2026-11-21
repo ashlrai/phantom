@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,12 +39,79 @@ export function selectChangedFiles(changedPaths, existingPaths) {
   const existing = new Set(existingPaths);
   return {
     lintFiles: changed.filter((path) => existing.has(path) && /\.(?:[cm]?js|[cm]?ts|tsx|jsx)$/.test(path)),
+    pythonFiles: changed.filter((path) => existing.has(path) && /\.py$/.test(path)),
+    shellFiles: changed.filter((path) => existing.has(path) && /\.sh$/.test(path)),
+    jsonFiles: changed.filter((path) => existing.has(path) && /\.json$/.test(path)),
+    xmlFiles: changed.filter((path) => existing.has(path) && /\.(?:xml|plist|svg)$/.test(path)),
     webTypecheck: changed.some((path) => path.startsWith('src/web-ui/')),
     authorityDrift: changed.some(affectsAuthorityDrift),
     fleetRegistry: changed.some((path) => /^src\/cli\/fleet-[^/]*\.ts$/.test(path)),
     docsCheck: changed.some((path) => DOC_MARKDOWN.test(path) || !existing.has(path)),
     quarantineCheck: changed.some((path) => QUARANTINE_TEST_FILE.test(path) || path === QUARANTINE_LEDGER),
+    rustFiles: changed.filter((path) => existing.has(path) && /\.rs$/.test(path)),
+    swiftFiles: changed.filter((path) => existing.has(path) && /\.swift$/.test(path)),
+    yamlFiles: changed.filter((path) => existing.has(path) && /\.ya?ml$/.test(path)),
+    tomlFiles: changed.filter((path) => existing.has(path) && /\.toml$/.test(path)),
   };
+}
+
+/**
+ * Extensionless executables carry their language in the shebang, not the
+ * filename, so the extension rules above never see them: `bin/ashlr` (node),
+ * `contrib/mac/metrics-outcomes` (python3) and `contrib/router/ashlr-router`
+ * (bash) all escaped every syntax check. Classify the interpreter from the
+ * first line; `env` forwards its own options (`-S`, `VAR=value`) before the
+ * real command. Only interpreters with a matching grammar step classify —
+ * python, node, and the POSIX shells `bash -n` parses (sh/bash/dash). zsh,
+ * ksh, perl and friends return null and stay unchecked, exactly as before.
+ */
+export function shebangInterpreter(firstLine) {
+  if (typeof firstLine !== 'string' || !firstLine.startsWith('#!')) return null;
+  const tokens = firstLine.slice(2).trim().split(/\s+/).filter(Boolean);
+  let index = 0;
+  let command = tokens[index] ?? '';
+  if (/(^|\/)env$/.test(command)) {
+    index += 1;
+    while (index < tokens.length && (tokens[index].startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index]))) index += 1;
+    command = tokens[index] ?? '';
+  }
+  const base = command.split('/').pop() ?? '';
+  if (/^python(?:\d+(?:\.\d+)*)?$/.test(base)) return 'python';
+  if (/^node(?:js)?(?:\d+(?:\.\d+)*)?$/.test(base)) return 'node';
+  if (['sh', 'bash', 'dash'].includes(base)) return 'shell';
+  return null;
+}
+
+/** First line of a repo file, capped at 4 KiB so binary blobs never load whole. */
+export function readFirstLine(root, path) {
+  const fd = openSync(resolve(root, path), 'r');
+  try {
+    const buffer = Buffer.alloc(4096);
+    return buffer.subarray(0, readSync(fd, buffer, 0, buffer.length, 0)).toString('utf8').split('\n', 1)[0] ?? '';
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Bucket changed, existing files whose basename carries no dot by shebang
+ * interpreter. Dotted names are already covered by the extension rules (or
+ * are documents, data and dotfiles this check must not misread), deleted
+ * paths never reach the reader, and an unreadable first line classifies to
+ * nothing rather than failing the run.
+ */
+export function selectShebangScripts(changedPaths, existingPaths, readLine) {
+  const existing = new Set(existingPaths);
+  const buckets = { python: [], shell: [], node: [] };
+  for (const path of [...new Set(changedPaths)].filter(Boolean).sort()) {
+    if (!existing.has(path) || path.split('/').pop().includes('.')) continue;
+    let kind = null;
+    try {
+      kind = shebangInterpreter(readLine(path));
+    } catch { /* unreadable file: nothing to classify */ }
+    if (kind) buckets[kind].push(path);
+  }
+  return buckets;
 }
 
 /**
@@ -136,6 +203,317 @@ export function docsCheckPreflight(root, exists = existsSync) {
     return { ok: true };
   }
   return { ok: false, reason: 'node_modules/marked/package.json is absent; run npm ci to restore it' };
+}
+
+/** Probe for a working python3; the fleet's dispatcher and bridge tooling are Python. */
+export function pythonPreflight(spawn = spawnSync, subject = 'changed .py files') {
+  const probe = spawn('python3', ['--version'], { encoding: 'utf8', timeout: 15000 });
+  if (probe.error || probe.signal || probe.status !== 0) {
+    return { ok: false, reason: `python3 is unavailable or did not run; ${subject} cannot be syntax-checked locally` };
+  }
+  return { ok: true };
+}
+
+// compile() applies the same grammar step py_compile performs, without writing
+// __pycache__ bytecode into the tree. One interpreter run covers the batch and
+// the first SyntaxError fails the check.
+const PYTHON_SYNTAX_CHECK = 'import sys\nfor path in sys.argv[1:]:\n    compile(open(path, "rb").read(), path, "exec")\n';
+
+/** Syntax-check changed .py files; returns false on any interpreter or compile failure. */
+export function runPythonSyntaxCheck(root, files, spawn = spawnSync) {
+  const result = spawn('python3', ['-c', PYTHON_SYNTAX_CHECK, ...files], {
+    cwd: root, encoding: 'utf8', timeout: 120000,
+  });
+  if (result.status !== 0) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL python syntax check');
+    return false;
+  }
+  console.log('PASS python syntax check');
+  return true;
+}
+
+/** Probe for a working bash; the fleet's shell tooling is bash/sh and queuegen gates jobs on `bash -n`. */
+export function shellPreflight(spawn = spawnSync) {
+  const probe = spawn('bash', ['--version'], { encoding: 'utf8', timeout: 15000 });
+  if (probe.error || probe.signal || probe.status !== 0) {
+    return { ok: false, reason: 'bash is unavailable or did not run; changed .sh files cannot be syntax-checked locally' };
+  }
+  return { ok: true };
+}
+
+// bash -n parses one script per invocation, so a single wrapper run walks the
+// batch and the first parse failure fails the check, matching the Python
+// compile loop. `#!/bin/sh` scripts parse under bash's grammar — the same
+// `bash -n` acceptance command queuegen assigns to shell jobs.
+const SHELL_SYNTAX_CHECK = 'for f in "$@"; do bash -n "$f" || exit 1; done';
+
+/** Syntax-check changed .sh files with bash -n; returns false on any parse failure. */
+export function runShellSyntaxCheck(root, files, spawn = spawnSync) {
+  const result = spawn('bash', ['-c', SHELL_SYNTAX_CHECK, 'bash', ...files], {
+    cwd: root, encoding: 'utf8', timeout: 120000,
+  });
+  if (result.status !== 0) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL shell syntax check');
+    return false;
+  }
+  console.log('PASS shell syntax check');
+  return true;
+}
+
+/**
+ * `node --check` is the grammar step for extensionless node launchers like
+ * bin/ashlr: it parses the shebang and module syntax without executing. One
+ * spawn per file keeps the diagnostic pointed at the failing path; the check
+ * runs under node itself, so no interpreter preflight or SKIP path exists.
+ */
+export function runNodeSyntaxCheck(root, files, spawn = spawnSync) {
+  for (const path of files) {
+    const result = spawn(process.execPath, ['--check', path], {
+      cwd: root, encoding: 'utf8', timeout: 120000,
+    });
+    if (result.error || result.signal || result.status !== 0) {
+      if (result.stdout) console.log(result.stdout.trimEnd());
+      if (result.stderr) console.error(result.stderr.trimEnd());
+      if (result.error) console.error(result.error.message);
+      console.log(`FAIL node syntax check: ${path}`);
+      return false;
+    }
+  }
+  console.log('PASS node syntax check');
+  return true;
+}
+
+/**
+ * Strict-parse changed .json files with JSON.parse — the same grammar
+ * tscCachePaths already applies to tsconfig.json and sync-plan's checkSyntax
+ * applies to fleet machinery — so a failure is a real break for package.json,
+ * manifests, schemas and registries. No external interpreter is needed, so
+ * unlike the Python and shell checks there is no preflight or SKIP path; every
+ * failing path is named with its parse error.
+ */
+export function runJsonSyntaxCheck(root, files, read = readFileSync) {
+  const failures = [];
+  for (const path of files) {
+    try {
+      JSON.parse(read(resolve(root, path), 'utf8'));
+    } catch (error) {
+      failures.push(`${path}: ${error.message}`);
+    }
+  }
+  if (failures.length) {
+    for (const failure of failures) console.error(`FAIL json syntax check: ${failure}`);
+    return false;
+  }
+  console.log('PASS json syntax check');
+  return true;
+}
+
+// ElementTree is the well-formedness grammar plutil, site generators and
+// SVG renderers all enforce on XML-family files: one interpreter run covers
+// the batch and the first parse error fails the check. A .plist has three
+// encodings and only the XML one starts with "<" (after an optional BOM or
+// whitespace), so binary and OpenStep ASCII plists — comments and all —
+// skip the parser instead of failing it; a .xml or .svg that is not XML at
+// all must parse. Named HTML entities like &nbsp; are undefined in XML and
+// fail; that strictness is deliberate — the file is malformed XML even
+// where browsers render it leniently.
+const XML_SYNTAX_CHECK = `import sys
+import xml.etree.ElementTree as ET
+
+for path in sys.argv[1:]:
+    if path.lower().endswith(".plist"):
+        with open(path, "rb") as fh:
+            head = fh.read(512).lstrip()
+        if head.startswith(b"\\xef\\xbb\\xbf"):
+            head = head[3:].lstrip()
+        if head and not head.startswith(b"<"):
+            continue
+    try:
+        ET.parse(path)
+    except Exception as exc:
+        print(f"{path}: {exc}", file=sys.stderr)
+        sys.exit(1)
+`;
+
+/** Syntax-check changed XML-family files (.xml, .plist, .svg); false on any interpreter or parse failure. */
+export function runXmlSyntaxCheck(root, files, spawn = spawnSync) {
+  const result = spawn('python3', ['-c', XML_SYNTAX_CHECK, ...files], {
+    cwd: root, encoding: 'utf8', timeout: 120000,
+  });
+  if (result.status !== 0) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL xml syntax check');
+    return false;
+  }
+  console.log('PASS xml syntax check');
+  return true;
+}
+
+/** Probe for a working rustfmt; the Tauri desktop broker under desktop/src-tauri is Rust. */
+export function rustPreflight(spawn = spawnSync) {
+  const probe = spawn('rustfmt', ['--version'], { encoding: 'utf8', timeout: 15000 });
+  if (probe.error || probe.signal || probe.status !== 0) {
+    return { ok: false, reason: 'rustfmt is unavailable or did not run; changed .rs files cannot be syntax-checked locally' };
+  }
+  return { ok: true };
+}
+
+// rustfmt parses the whole file before it emits anything, so --emit stdout is
+// a pure syntax check: it writes nothing back, enforces no formatting, and
+// fails only on parse errors. skip_children keeps a crate-root file from
+// descending into its out-of-line modules. Edition 2021 matches
+// desktop/src-tauri/Cargo.toml and the CI rustfmt invocation. Stdout is
+// discarded — the formatted text can be large and is never a diagnostic.
+const RUSTFMT_SYNTAX_ARGS = ['--edition', '2021', '--config', 'skip_children=true', '--emit', 'stdout'];
+
+/** Syntax-check changed .rs files with rustfmt's parser; returns false on any parse failure. */
+export function runRustSyntaxCheck(root, files, spawn = spawnSync) {
+  for (const path of files) {
+    const result = spawn('rustfmt', [...RUSTFMT_SYNTAX_ARGS, path], {
+      cwd: root, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'], timeout: 120000,
+    });
+    if (result.error || result.signal || result.status !== 0) {
+      if (result.stderr) console.error(String(result.stderr).trimEnd());
+      if (result.error) console.error(result.error.message);
+      console.log(`FAIL rust syntax check: ${path}`);
+      return false;
+    }
+  }
+  console.log('PASS rust syntax check');
+  return true;
+}
+
+/** Probe for a working swiftc; tools/custody and tools/desktop-operator are Swift. */
+export function swiftPreflight(spawn = spawnSync) {
+  const probe = spawn('swiftc', ['--version'], { encoding: 'utf8', timeout: 15000 });
+  if (probe.error || probe.signal || probe.status !== 0) {
+    return { ok: false, reason: 'swiftc is unavailable or did not run; changed .swift files cannot be syntax-checked locally' };
+  }
+  return { ok: true };
+}
+
+// `swiftc -parse` runs only the parser stage: no type checking, no module
+// resolution, no output files — the same grammar step `swift build` applies
+// first, so a failure here is a failure there. One spawn per file keeps the
+// diagnostic pointed at the failing path, matching the node check.
+export function runSwiftSyntaxCheck(root, files, spawn = spawnSync) {
+  for (const path of files) {
+    const result = spawn('swiftc', ['-parse', path], {
+      cwd: root, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'], timeout: 120000,
+    });
+    if (result.error || result.signal || result.status !== 0) {
+      if (result.stderr) console.error(String(result.stderr).trimEnd());
+      if (result.error) console.error(result.error.message);
+      console.log(`FAIL swift syntax check: ${path}`);
+      return false;
+    }
+  }
+  console.log('PASS swift syntax check');
+  return true;
+}
+
+/**
+ * .yaml/.yml and .toml files — GitHub workflows, dependabot, codecov,
+ * socket, the pnpm workspace and lock manifests, agent-network, lexicon
+ * and cliff configs, Cargo.toml — are consumed by parsers a text diff can
+ * never prove. `yaml` and `smol-toml` are already bundled dependencies, so
+ * the grammar steps use the same parsers the codebase itself ships, but
+ * they run in a child node process: a top-level import here would keep
+ * this script from loading at all when node_modules is absent, while the
+ * preflight reports that case as SKIP like the ESLint and docs checks.
+ * Bare specifiers resolve against the spawned cwd (the repo root), which
+ * is where npm ci and install:worktree place the packages.
+ */
+export function parserPackagePreflight(root, pkg, exists = existsSync) {
+  if (exists(resolve(root, 'node_modules', pkg, 'package.json'))) {
+    return { ok: true };
+  }
+  return { ok: false, reason: `node_modules/${pkg}/package.json is absent; run npm ci to restore it` };
+}
+
+// Both child scripts walk argv files, parse each with the bundled parser,
+// print `path: <first diagnostic line>` per failure and exit 1 on any.
+// yaml's parseAllDocuments checks every document of a multi-document file
+// and treats duplicate keys as errors — the same rejections GitHub's
+// workflow parser and pnpm apply; its diagnostics already carry
+// "at line L, column C". Default-import + destructure keeps the import
+// working whether the package resolves to its ESM or CJS build. smol-toml
+// errors expose line/column fields its message omits, so the toml script
+// appends them. Each file reports at most 8 yaml errors.
+const YAML_SYNTAX_CHECK = `import { readFileSync } from 'node:fs';
+import pkg from 'yaml';
+const { parseAllDocuments } = pkg;
+const firstLine = (error) => String(error && error.message ? error.message : error).split('\\n')[0];
+let failed = false;
+for (const path of process.argv.slice(1)) {
+  const errors = [];
+  try {
+    for (const doc of parseAllDocuments(readFileSync(path, 'utf8'))) errors.push(...doc.errors);
+  } catch (error) {
+    errors.push(error);
+  }
+  for (const error of errors.slice(0, 8)) console.error(path + ': ' + firstLine(error));
+  if (errors.length > 8) console.error(path + ': ' + (errors.length - 8) + ' more errors');
+  if (errors.length) failed = true;
+}
+process.exit(failed ? 1 : 0);
+`;
+
+/** Syntax-check changed .yaml/.yml files with the bundled yaml parser; false on any parse failure. */
+export function runYamlSyntaxCheck(root, files, spawn = spawnSync) {
+  const result = spawn(process.execPath, ['--input-type=module', '-e', YAML_SYNTAX_CHECK, ...files], {
+    cwd: root, encoding: 'utf8', timeout: 120000,
+  });
+  if (result.status !== 0) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL yaml syntax check');
+    return false;
+  }
+  console.log('PASS yaml syntax check');
+  return true;
+}
+
+const TOML_SYNTAX_CHECK = `import { readFileSync } from 'node:fs';
+import pkg from 'smol-toml';
+const { parse } = pkg;
+let failed = false;
+for (const path of process.argv.slice(1)) {
+  try {
+    parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error).split('\\n')[0];
+    const pos = error && Number.isInteger(error.line) ? ' at line ' + error.line + ', column ' + error.column : '';
+    console.error(path + ': ' + message + pos);
+    failed = true;
+  }
+}
+process.exit(failed ? 1 : 0);
+`;
+
+/** Syntax-check changed .toml files with the bundled smol-toml parser; false on any parse failure. */
+export function runTomlSyntaxCheck(root, files, spawn = spawnSync) {
+  const result = spawn(process.execPath, ['--input-type=module', '-e', TOML_SYNTAX_CHECK, ...files], {
+    cwd: root, encoding: 'utf8', timeout: 120000,
+  });
+  if (result.status !== 0) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL toml syntax check');
+    return false;
+  }
+  console.log('PASS toml syntax check');
+  return true;
 }
 
 /** Shared root for the typecheck cache and slots; worktrees resolve to the git common dir. */
@@ -527,6 +905,9 @@ function main() {
   }
   let selection;
   let changed;
+  let pythonFiles = [];
+  let shellFiles = [];
+  let nodeFiles = [];
   try {
     changed = collectChangedPaths(root);
     const existing = changed.filter((path) => {
@@ -538,6 +919,10 @@ function main() {
       }
     });
     selection = selectChangedFiles(changed, existing);
+    const shebangScripts = selectShebangScripts(changed, existing, (path) => readFirstLine(root, path));
+    pythonFiles = [...new Set([...selection.pythonFiles, ...shebangScripts.python])];
+    shellFiles = [...new Set([...selection.shellFiles, ...shebangScripts.shell])];
+    nodeFiles = shebangScripts.node;
     console.log('PASS file selection');
     const emptyTests = emptyChangedTests(existing.map((path) => resolve(root, path)));
     if (emptyTests.length) {
@@ -609,6 +994,86 @@ function main() {
     run('eslint changed files', 'node_modules/eslint/bin/eslint.js', ['--no-warn-ignored', '--', ...selection.lintFiles.map((path) => `./${path}`)]);
   } else {
     console.log('PASS eslint skipped: no lintable file changed');
+  }
+  if (pythonFiles.length === 0) {
+    console.log('PASS python syntax check skipped: no python change');
+  } else {
+    const python = pythonPreflight();
+    if (!python.ok) {
+      console.log(`SKIP python syntax check: ${python.reason}`);
+    } else if (!runPythonSyntaxCheck(root, pythonFiles)) {
+      process.exitCode = 1;
+    }
+  }
+  if (shellFiles.length === 0) {
+    console.log('PASS shell syntax check skipped: no shell change');
+  } else {
+    const shell = shellPreflight();
+    if (!shell.ok) {
+      console.log(`SKIP shell syntax check: ${shell.reason}`);
+    } else if (!runShellSyntaxCheck(root, shellFiles)) {
+      process.exitCode = 1;
+    }
+  }
+  if (nodeFiles.length === 0) {
+    console.log('PASS node syntax check skipped: no node-shebang script changed');
+  } else if (!runNodeSyntaxCheck(root, nodeFiles)) {
+    process.exitCode = 1;
+  }
+  if (selection.jsonFiles.length === 0) {
+    console.log('PASS json syntax check skipped: no json change');
+  } else if (!runJsonSyntaxCheck(root, selection.jsonFiles)) {
+    process.exitCode = 1;
+  }
+  if (selection.xmlFiles.length === 0) {
+    console.log('PASS xml syntax check skipped: no xml, plist or svg change');
+  } else {
+    const python = pythonPreflight(spawnSync, 'changed XML files');
+    if (!python.ok) {
+      console.log(`SKIP xml syntax check: ${python.reason}`);
+    } else if (!runXmlSyntaxCheck(root, selection.xmlFiles)) {
+      process.exitCode = 1;
+    }
+  }
+  if (selection.rustFiles.length === 0) {
+    console.log('PASS rust syntax check skipped: no rust change');
+  } else {
+    const rust = rustPreflight();
+    if (!rust.ok) {
+      console.log(`SKIP rust syntax check: ${rust.reason}`);
+    } else if (!runRustSyntaxCheck(root, selection.rustFiles)) {
+      process.exitCode = 1;
+    }
+  }
+  if (selection.swiftFiles.length === 0) {
+    console.log('PASS swift syntax check skipped: no swift change');
+  } else {
+    const swift = swiftPreflight();
+    if (!swift.ok) {
+      console.log(`SKIP swift syntax check: ${swift.reason}`);
+    } else if (!runSwiftSyntaxCheck(root, selection.swiftFiles)) {
+      process.exitCode = 1;
+    }
+  }
+  if (selection.yamlFiles.length === 0) {
+    console.log('PASS yaml syntax check skipped: no yaml change');
+  } else {
+    const yaml = parserPackagePreflight(root, 'yaml');
+    if (!yaml.ok) {
+      console.log(`SKIP yaml syntax check: ${yaml.reason}`);
+    } else if (!runYamlSyntaxCheck(root, selection.yamlFiles)) {
+      process.exitCode = 1;
+    }
+  }
+  if (selection.tomlFiles.length === 0) {
+    console.log('PASS toml syntax check skipped: no toml change');
+  } else {
+    const toml = parserPackagePreflight(root, 'smol-toml');
+    if (!toml.ok) {
+      console.log(`SKIP toml syntax check: ${toml.reason}`);
+    } else if (!runTomlSyntaxCheck(root, selection.tomlFiles)) {
+      process.exitCode = 1;
+    }
   }
   if (selection.quarantineCheck) {
     try {

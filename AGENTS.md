@@ -32,7 +32,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 
 - Cross-provider subagents: `phm subagent spawn --parent session-id --tier fast --task "Review a bounded change" --json` plans a scope-limited child through the provider-neutral router. Dry-run writes nothing; `--apply` stores held records only, never dispatches. No metered fallback. See [subagents](docs/SUBAGENTS.md).
 
-- CI baseline analysis: `phm ci baseline --json` groups fresh Vitest failures and plans narrow master fixes. Queueing and post-merge updates are opt-in; see [CI baseline analyzer](docs/CI-BASELINE.md).
+- CI baseline analysis: `phm ci baseline --json` groups fresh Vitest, node:test TAP, TypeScript typecheck, check:docs, generated-file, version-sync, perf-budget, dependency-audit, pack-smoke/artifact gate, ci.yml helper-gate step and trust-boundary (secret-shape, secret-scan, version-provenance) failures and plans narrow master fixes. Queueing and post-merge updates are opt-in; see [CI baseline analyzer](docs/CI-BASELINE.md).
 
 - Ecosystem onboarding: `phm onboard --ecosystem --json` previews names/state only.
   Grant a reviewed selection with `phm onboard --ecosystem --grant --plan <planId> --select lexicon,stack --json`.
@@ -64,7 +64,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 ## Working in this repository
 - Node `>=22.15.0`. Install a single clone with `npm ci` (also what CI and releases use); several trusted local worktrees on one machine can share one store with `npm run install:worktree` (pnpm 10.28.2, same volume). Build with `npm run build`, run the CLI from source with `npm run dev -- <command>`.
 - Backend tests: `npm test` for all backend suites, or `npm run test:ci -- test/<file>.test.ts` for affected suites with the hermetic runner. Run tests with a temporary HOME, for example `HOME=$(mktemp -d) npm run test:ci -- test/agents-md-audit.test.ts`.
-- Before a PR: automated workers run `node scripts/verify-changed.mjs` once, in the foreground; do not poll it. Repeat runs on an unchanged tree exit early (`SKIP verify-changed`); pass `--force` to rerun. This replaces worker runs of full `npm run typecheck` and `npm run lint`, runs the `check:docs` link/anchor check itself when the diff touches markdown or deletes files, and runs the quarantine-ledger check when the diff touches test files or `queue/quarantine.tsv`. Humans may still use `npm run lint` and `npm run typecheck`. Also run `npm run check:docs` (when verify-changed skipped it) and the affected tests (`npm run test:ci -- test/<file>.test.ts`, `npm run test:web` for `src/web-ui`). `npm run gate` runs build, static checks and related tests together. Its import graph plus a grep for text-reading tests covers docs, configs and data files; run any reader it still misses explicitly. Merge Gate stays the full check; local checks do not replace required hosted CI.
+- Before a PR: automated workers run `node scripts/verify-changed.mjs` once, in the foreground; do not poll it. Repeat runs on an unchanged tree exit early (`SKIP verify-changed`); pass `--force` to rerun. This replaces worker runs of full `npm run typecheck` and `npm run lint`, runs the `check:docs` link/anchor check itself when the diff touches markdown or deletes files, and runs the quarantine-ledger check when the diff touches test files or `queue/quarantine.tsv`, and syntax-checks changed `.py` files when `python3` is available, changed `.sh` files with `bash -n` when `bash` is available, extensionless executable scripts by their shebang interpreter (`python3` compile, `bash -n`, or `node --check`), and changed `.json` files with `JSON.parse`, and changed `.xml`, `.plist` and `.svg` files with `python3`'s ElementTree parser when `python3` is available (non-XML plist encodings skip the parser). Changed `.rs` files are parsed with `rustfmt` and changed `.swift` files with `swiftc -parse` when available. Changed `.yaml`/`.yml` files are parsed with the bundled `yaml` package and changed `.toml` files with `smol-toml`; each prints `SKIP` when its package is not installed. Humans may still use `npm run lint` and `npm run typecheck`. Also run `npm run check:docs` (when verify-changed skipped it) and the affected tests (`npm run test:ci -- test/<file>.test.ts`, `npm run test:web` for `src/web-ui`). `npm run gate` runs build, static checks and related tests together. Its import graph plus a grep for text-reading tests covers docs, configs and data files; run any reader it still misses explicitly. Merge Gate stays the full check; local checks do not replace required hosted CI.
 - When authority drift fails, run `npm run authority:regen` and list each new Tier-1 root in the PR body for CODEOWNERS review.
 - Outside contributors and their agents: clone `ashlrai/phantom` as `origin` (verify-changed diffs against `origin/master`), push the topic branch to your fork, and open the PR against `master`. `Merge Gate` is the one required check; a PR touching a path in `.github/CODEOWNERS` also waits for the owner's review. Step by step: [Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md).
 - Shared work market (RQ-SHARED-QUEUE-1): jobs carry `needs`, `min_tier`, `max_tier`, `max_cost_class`, `data_class`, `work_class`, `exclusive`, priority and impact; `pool`/`lane` are `preferred_lane` hints. Dispatch selects a capable, healthy executor with quota and capacity, ranking resource posture (burn, balanced, preserve) ahead of the hint; a claim that leaves its hint records `lane_override` in `metrics/jobs.jsonl`. `phm fleet unfed --json` reports per-resource utilization and lanes left with free slots while rows waited elsewhere. An unknown hint is open; explicit local execution stays local. Inspect `metrics/work-market.jsonl` for `work-market.v1` reason codes and `phm route explain --json` for hysteresis receipts. Source changes require Security review and re-pin before `contrib/mac/install.sh`; never install over the live pinned dispatcher. See [queue market](docs/QUEUE.md).
@@ -74,10 +74,10 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - Mac dispatcher: `contrib/mac/dispatchd.py` is the single source for the live `~/.ashlr-runs/bin/dispatchd.py`. Change it here, never on the host. `contrib/mac/install.sh` diffs and installs it (plus `install-gate.py` and `launch-gate.sh`) with timestamped backups, but only after Security has reviewed and re-pinned the files; agents preview with `contrib/mac/install.sh --dry-run --json` and never run it against the live directory. Copy-paste install, once pinned: `contrib/mac/install.sh --json`. See [contrib/mac/README.md](contrib/mac/README.md#installing-the-dispatcher).
 - Fleet machinery: `fleet/manifest.json` (`fleet.machinery.v1`) inventories every `~/.ashlr-runs/bin` file by class. `managed` installs via `python3 fleet/sync.py`, `manual`/`pinned` are report-only (pinned GATES v3 files stay ops-side). Agents preview with `fleet/sync.py --json` or `--bin <scratch>` and never `--apply` live. Migration plan: [docs/MACHINERY-MIGRATION.md](docs/MACHINERY-MIGRATION.md).
 - Agent Bus v2: the provider contract (participants, body kinds, claim keys and overlap rules, work feed) is in [docs/AGENT-BUS.md](docs/AGENT-BUS.md#v2); `ashlr agents bus contract --json` prints its schema version and kinds. Claims coordinate and grant no execution authority. Schemas: `src/core/agents/bus-v2-schema.ts`.
-- External bot seats: `phm bots seats --json` reads quota evidence and participant metadata; `phm bots handoff --seat <id> --json` plans draining handoffs (only `--apply` releases work). Devin Bot messaging stays advisory; no on-demand spend. See [bot seats](docs/BOT-SEATS.md).
+- External bot seats: `phm bots seats --json` reads quota evidence and participant metadata; `phm bots handoff --seat <id> --json` plans draining handoffs (only `--apply` releases work); `phm bots message --from <seat> --to <seat|owner> --text <text>` sends seat-to-seat bus DMs or owner-thread notices. Devin Bot messaging stays advisory; no on-demand spend. See [bot seats](docs/BOT-SEATS.md).
 - Learned skills: `phm skills list --json` shows skills written from merged PR outcomes (metadata only, scrubbed, capped; counts real or `"unknown"`). See [docs/SKILLS.md](docs/SKILLS.md).
 - Channels: `phm channels add <kind>` writes config only (credentials stay in existing custody, never printed); `phm channels status --json` reports real counts or `"unknown"`. See [docs/CHANNELS.md](docs/CHANNELS.md).
-- Owner thread (RQ-COMMS-UNIFIED-1): `phm comms status --json`, `phm comms thread --json` and `phm comms send-owner --text "<reply>" --json` are one ordered thread for desktop, Telegram, email, iMessage and Slack. Replies go only to the configured owner, on the channel they used and on the desktop thread. Adapters stay disabled until configured; credentials are Phantom Secrets handle names. KILL halts them. See [docs/OWNER-THREAD.md](docs/OWNER-THREAD.md).
+- Owner thread (RQ-COMMS-UNIFIED-1): `phm comms status --json`, `phm comms thread --json` and `phm comms send-owner --text "<reply>" --json` are one ordered thread for desktop, Telegram, email, iMessage and Slack. Replies go only to the configured owner, on the channel they used and on the desktop thread. Thread reads join per-channel delivery receipts; an unrecorded channel stays unknown, never delivered. Adapters stay disabled until configured; credentials are Phantom Secrets handle names. KILL halts them. See [docs/OWNER-THREAD.md](docs/OWNER-THREAD.md).
 - Slack bridge: `phm channels slack status --json` reads the `[slack]` section of `~/.ashlr/agent-network.toml`, token `phm_` reference names (never values) and journal counts; `phm channels slack map --json` dry-runs the topic/channel mapping and, with `--snapshot <file>`, the team-only audience gates. Read-only; the socket, token injection and post path are the separately reviewed `-sec` change. See [docs/AGENT-NETWORK.md](docs/AGENT-NETWORK.md#slack-bridge).
 - iMessage intake: `phm imessage doctor --json` reports permission and config state (no handles printed); `phm imessage poll --json` is a counts-only dry run and `--apply` receipts allowlisted messages as channel `imessage`. RQ-IMSG-REPLY-1 (#3534) landed: nonduplicate verified-owner acknowledgements are attempted through the outbox to the original owner handle. The ack journal is pre-attempt evidence, not delivery proof; its legacy `recorded-not-sent` label does not establish non-delivery. Never read or print message text or handles. See [docs/IMESSAGE.md](docs/IMESSAGE.md).
 - Briefs: the fleet brief-send verb (dry run by default, `--json` for the plan) plans the morning (7:30 ET) or overnight (22:30 ET) brief with a needs-you list of at most 5 items; `--apply` sends to your own channels, one per slot per local day. See [docs/BRIEF-SEND.md](docs/BRIEF-SEND.md).
@@ -148,26 +148,41 @@ phm pool admission --json
 ```
 
 Job latency: `phm fleet job-latency --jobs jobs.jsonl --json` ranks measured
-queue wait, checkout, model, CI and merge time and supplies a proposed fix line
-for each measured phase. It is read-only; fix lines are proposals, not queued
-jobs. Records use `job` (or `job_id`/`jobId`), `event` and `ts` (or
-`timestamp`/`at`). Boundaries are `queued`, `launch`, `checkout_complete`,
-`finish`, `ci_start`, `ci_complete`, and `merged` (also an `outcome` with
-`MERGED`). IDs must identify individual attempts. Missing, reversed or
-ambiguous repeated boundaries are reported as unmeasured, not estimated;
-phase totals need not cover the whole wall time. Existing ledgers may not yet
-contain all boundaries.
+queue wait, checkout, model, worker, publish wait, CI and merge time and
+supplies a proposed fix line for each measured phase. It is read-only; fix
+lines are proposals, not queued jobs. Records use `job` (or
+`job_id`/`jobId`/`id`), `event` (or `type`) and `ts` (or
+`timestamp`/`at`). Queue arrival is `enqueue`, `enqueued` or `queued`; other
+boundaries are `launch`, `checkout_complete`, `finish`, `ci_start`,
+`ci_complete`, `publish`/`published` and `merged`. Terminal PR state
+(`outcome`/`state`/`status` `MERGED` or `PUBLISHED`, `mergedAt` preferred for
+`MERGED`) outranks the event name, so an eventless reconciler row still
+counts and a publish row swapped to `MERGED` is never a second publish.
+`phm pulse merge-latency` adds the `open_to_merge` publish→merged total.
+IDs must identify individual attempts. Missing, reversed or ambiguous
+repeated boundaries are reported as unmeasured, not estimated; phase totals
+need not cover the whole wall time. Existing ledgers may not yet contain all
+boundaries.
 
 Fleet IQ: `phm fleet eval-report [--days 7] [--prs prs.json] --json` scores
 merged PRs post-merge: revert, regression and follow-up rates, CI-failure
 correlation, and time-to-merge, rolled up by lane, tier, lane+tier and repo
-(`fleet.eval-report.v1`). Evidence comes from `~/.ashlr-runs/metrics/jobs.jsonl`,
+(`fleet.eval-report.v1`). Evidence comes from `~/.ashlr-runs/metrics/jobs.jsonl`
+(newest bounded tail; `sources.jobs.truncated` marks a cut window),
 repeatable `--prs` files of `gh pr list --state merged --json url,number,title,
 mergedAt,mergeCommit,files,statusCheckRollup,commits,body` output, and the
 signed post-merge observation ledger. A merge counts `stable` only when the
 72 h window elapsed under a covering evidence channel; uncovered merges are
 `unobserved`, and `ranked` sorts groups on the Wilson lower bound. Read-only;
 nothing merges, routes or releases credit.
+
+Reward signals: on self-improvement ticks the resident daemon's `reward-sync`
+off-tick job folds the jobs-ledger tail into `~/.ashlr/metrics/reward-signals.jsonl`:
+one scrubbed row per job whose PR lifecycle resolved (MERGED, or
+CLOSED-unmerged; a merge later reverted counts as not held). The ledger feeds
+`phm router-calibration` and the eval harness; first write wins, jobs without
+dispatch or resolution evidence stay unwritten, and unknown fields stay null.
+See `src/core/metrics/reward-feed.ts`.
 
 Research loop (RQ-SWE5-RESEARCH-LOOP): `phm fleet research-digest --file
 <digest.md> --json` scores a digest's `## Proposals` bullets (impact x
