@@ -6,6 +6,21 @@ The Resources drawer reads `GET /api/usage/lanes` to show each lane's recorded
 allowance, remaining amount, reset countdown and observation age alongside the
 router's burn, balanced or preserve posture. Missing readings remain unknown;
 stale readings keep their last values with a stale label, not fresh headroom.
+
+Each card names its lane beside the provider mark and draws the shared
+usage-window bar. The solid share is measured use. When the router's posture
+receipt for the same window projects allowance left over, that share is
+outlined in amber and the stretch between is drawn lighter: on course to be
+used. When the measured burn reaches the limit before the reset, the bar turns
+amber and the card gives the time it runs out. A reading that reports where
+its window began (`windowStart` on the row) adds a mark for the time gone and
+a line comparing use with an even spend. A stale reading, an unknown reset or
+a reset that has passed draws the last measured share and projects nothing. A
+lane with no usable reading keeps its card with a hatched bar and the reason,
+never 0%. The reset shows as a countdown and a local time. The heading counts
+the lanes measured. A refresh keeps the cards on screen; if it fails they stay,
+under a line giving the time of the read they came from.
+
 History sparklines use recorded samples. Devin cards separate weekly ACUs and
 in-flight reservations from the Lightning/Flash preview expiry; absent preview
 pricing evidence is unknown, never assumed free. API USD credit pools are
