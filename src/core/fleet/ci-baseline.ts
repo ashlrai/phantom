@@ -1108,6 +1108,146 @@ function parseLintFailures(log: string, repo: string | undefined): Failure[] {
   return out;
 }
 
+// The lint step's per-file dependency sets: each guard greps source text
+// and never reads a file's imports, so -- like eslint -- the unit a master
+// fix restores is the failing file itself plus the guard's closed input
+// list, never the import closure walk.
+const LINT_GUARD_INPUTS: Record<string, readonly string[]> = {
+  [LINT_NAMES]: LINT_INPUTS,
+  // check-realio-lane-membership.mjs classifies every collected
+  // test/**/*.test.ts by text markers against the two lane manifests and
+  // the measured-fast allowlist, all imported by the checker itself.
+  '(realio-lane)': [
+    'scripts/check-realio-lane-membership.mjs',
+    'scripts/realio-lane-known-fast-spawns.mjs',
+    'scripts/realio-lane-inventory.mjs',
+    'test/config/realio-lane-membership.mjs',
+    'test/config/serial-cpu-lane-membership.mjs',
+  ],
+  // check-verse-sync-io.mjs scans src/core/verse/*-api.ts for synchronous
+  // fs/child-process calls; its only repo input is its own source.
+  '(verse-sync-io)': ['scripts/check-verse-sync-io.mjs'],
+};
+
+// `npm run lint:realio-lane` (scripts/check-realio-lane-membership.mjs)
+// runs after eslint in the same Lint step. With eslint green a red step
+// and no stylish block comes from one of the two trailing guards; this
+// one prints `[check-realio-lane-membership]` section headers followed by
+// bare repo-relative test paths -- the missing-members section adds one
+// indented reason line per file, the stale-entries and lane-overlap
+// sections list paths only. Gate-failing sections group per named path
+// under a `<file> > (realio-lane)` identity; the soft-signal advisory
+// section prints the same path shape but never fails the step, and the
+// ok line closes the report, so both stay unparsed. Section state ends
+// at a blank line once files were seen or at any `##[` step boundary, so
+// later steps' output cannot leak paths into a group. Like the other
+// parenthesized gate identities these can never resolve through a vitest
+// pass line: shared-baseline, pr-caused or unknown -- never
+// probable-flake.
+const REALIO_LANE_NAMES = '(realio-lane)';
+const REALIO_LANE_MAX = 64;
+const REALIO_LANE_PATH = /^(?:test|src\/web-ui)\/\S+\.test\.[cm]?[jt]sx?$/;
+const realioLanePath = (line: string) => REALIO_LANE_PATH.test(line)
+  && posix.normalize(line) === line && !line.includes('..') && !posix.isAbsolute(line);
+
+function parseRealioLaneFailures(log: string): Failure[] {
+  const byFile = new Map<string, { header: string[]; reason: string | null }>();
+  let section: 'missing' | 'stale' | 'overlap' | null = null;
+  let header: string[] = [];
+  let seenFile = false;
+  let pendingFile: string | null = null;
+  const close = () => { section = null; header = []; seenFile = false; pendingFile = null; };
+  for (const line of lines(log)) {
+    if (byFile.size >= REALIO_LANE_MAX) break;
+    if (line.startsWith('##[')) { close(); continue; }
+    if (line.startsWith('[check-realio-lane-membership]')) {
+      close();
+      if (line.includes('use a real-io marker')) { section = 'missing'; header = [line]; }
+      else if (line.includes('stale KNOWN_FAST_SPAWN_FILES entries') || line.includes('stale real-I/O or serial-CPU entries')) { section = 'stale'; header = [line]; }
+      else if (line.includes('cannot belong to both real-I/O and serial-CPU lanes')) { section = 'overlap'; header = [line]; }
+      continue;
+    }
+    if (section === null) continue;
+    if (realioLanePath(line)) {
+      if (!byFile.has(line)) {
+        if (byFile.size >= REALIO_LANE_MAX) { close(); break; }
+        byFile.set(line, { header: [...header], reason: null });
+      }
+      seenFile = true;
+      pendingFile = section === 'missing' ? line : null;
+      continue;
+    }
+    if (!seenFile) {
+      // Header zone: blanks and the wrapped second half of a section
+      // header precede the section's first file.
+      if (line !== '') header.push(line);
+      continue;
+    }
+    if (line === '') { close(); continue; }
+    // In the missing-members section the line after a file is its
+    // reason; everywhere else a non-path line carries no identity.
+    if (pendingFile !== null) {
+      const entry = byFile.get(pendingFile);
+      if (entry !== undefined) entry.reason = line;
+      pendingFile = null;
+    }
+  }
+  const out: Failure[] = [];
+  for (const [file, entry] of byFile) {
+    const parts = [...entry.header, file];
+    if (entry.reason !== null) parts.push(entry.reason);
+    out.push({ file, names: REALIO_LANE_NAMES, testId: `${file} > ${REALIO_LANE_NAMES}`, excerpt: clean(parts.join('\n')) });
+  }
+  return out;
+}
+
+// `npm run lint:verse-sync-io` (scripts/check-verse-sync-io.mjs) is the
+// last command in the Lint step chain. It refuses synchronous
+// fs/child-process calls in src/core/verse/*-api.ts route files and
+// prints a count header then one
+// `<file>:<line>  <call>(…)  → <hint>` row per violation. Violations
+// group per route file under a `<file> > (verse-sync-io)` identity like
+// `(lint)`: the guard greps source text and never follows imports, so
+// the dependency set is the checker script alone and the vitest harness
+// ambient set does not apply. Rows are accepted only between the count
+// header and the next `##[` step boundary; the success line, the
+// allow-marker trailer and near-miss wording stay unparsed. Like the
+// other parenthesized gate identities these can never resolve through a
+// vitest pass line: shared-baseline, pr-caused or unknown -- never
+// probable-flake.
+const VERSE_SYNC_IO_NAMES = '(verse-sync-io)';
+const VERSE_SYNC_IO_MAX = 64;
+const VERSE_SYNC_IO_PER_FILE = 8;
+const VERSE_SYNC_IO_HEADER = /^verse-sync-io: \d+ synchronous call\(s\) in Phantom console route files/;
+const VERSE_SYNC_IO_VIOLATION = /^(src\/core\/verse\/\S+-api\.ts):\d+\s+\S+\(…\)\s+→\s+\S/;
+
+function parseVerseSyncIoFailures(log: string): Failure[] {
+  const byFile = new Map<string, string[]>();
+  let open = false;
+  for (const line of lines(log)) {
+    if (byFile.size >= VERSE_SYNC_IO_MAX) break;
+    if (line.startsWith('##[')) { open = false; continue; }
+    if (VERSE_SYNC_IO_HEADER.test(line)) { open = true; continue; }
+    if (!open) continue;
+    const match = VERSE_SYNC_IO_VIOLATION.exec(line);
+    if (match === null) continue;
+    const file = match[1]!;
+    if (posix.normalize(file) !== file || file.includes('..') || posix.isAbsolute(file)) continue;
+    let parts = byFile.get(file);
+    if (parts === undefined) {
+      parts = [];
+      byFile.set(file, parts);
+    }
+    if (parts.length < VERSE_SYNC_IO_PER_FILE) parts.push(line);
+  }
+  const out: Failure[] = [];
+  for (const [file, parts] of byFile) {
+    if (parts.length === 0) continue;
+    out.push({ file, names: VERSE_SYNC_IO_NAMES, testId: `${file} > ${VERSE_SYNC_IO_NAMES}`, excerpt: clean(parts.join('\n')) });
+  }
+  return out;
+}
+
 // The `ci` job's qualification lanes wrap the suite runs in
 // .github/scripts/ci-qualification-lane.mjs, which re-reads each Vitest
 // JSON report and refuses a case that passed only after a retry -- the
@@ -1223,6 +1363,14 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     result.push(failure);
   }
   for (const failure of parseLintFailures(log, repo)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseRealioLaneFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseVerseSyncIoFailures(log)) {
     if (result.length >= 100) break;
     result.push(failure);
   }
@@ -1622,10 +1770,12 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     freshness.push({ pr: pr.number, head: pr.headRefOid, state: known ? 'fresh' : 'unknown', ...(!known ? { reason: 'unreadable-log-or-unverified-checkout' } : {}) });
     if (!known) continue;
     for (const failure of found) {
-      // Lint failures are per-file: eslint's rules never read a file's
-      // imports, so the dependency set is the closed config/manifest input
-      // list rather than the import closure walk.
-      const deps = failure.names === LINT_NAMES ? new Set<string>(LINT_INPUTS) : await dependencies(failure.file);
+      // Lint-guard failures are per-file like eslint: the checkers grep
+      // source text and never read a file's imports, so the dependency
+      // set is each guard's closed input list rather than the import
+      // closure walk.
+      const flatInputs = LINT_GUARD_INPUTS[failure.names];
+      const deps = flatInputs !== undefined ? new Set<string>(flatInputs) : await dependencies(failure.file);
       // Generated artifacts are produced by the clean-tree job, not the test
       // runner: the vitest harness ambient set cannot stale them, so only
       // the generator-input deps decide touched. The version-sync gate reads
@@ -1633,10 +1783,11 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // exactly its lockfile input set, the pack-smoke/artifact gates
       // plain .mjs scripts plus their enumerated manifests, the memory
       // benchmark gate a tsx script plus its import closure and seeded
-      // toolchain inputs, and the secret-shape/secret-scan/
-      // version-provenance trust gates have no vitest harness at all, so
-      // the ambient set cannot reach any of them.
-      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || failure.names === LINT_NAMES || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
+      // toolchain inputs, the eslint/realio-lane/verse-sync-io lint guards
+      // grep source text outside the harness, and the secret-shape/
+      // secret-scan/version-provenance trust gates have no vitest harness
+      // at all, so the ambient set cannot reach any of them.
+      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || flatInputs !== undefined || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
       const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
       observations.push({ pr, failure, touched, runId: failure.runId });
     }
