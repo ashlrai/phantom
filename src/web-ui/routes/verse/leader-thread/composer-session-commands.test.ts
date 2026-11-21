@@ -138,6 +138,13 @@ describe('/thread', () => {
       expect(d.openConversation).toHaveBeenCalledExactlyOnceWith('RQ-A');
     }
   });
+
+  it('says so when the conversation opened in the Leader pane itself', async () => {
+    const here = deps({ openConversation: vi.fn(() => 'leader' as const) });
+    expect(await runSessionCommand({ name: 'thread', arg: 'RQ-A' }, here)).toBe('Opened the conversation with RQ-A (running, claude). Esc in it comes back here.');
+    const unchecked = deps({ openConversation: vi.fn(() => 'leader' as const), sessions: vi.fn(async () => null) });
+    expect(await runSessionCommand({ name: 'thread', arg: 'RQ-A' }, unchecked)).toBe('Opened RQ-A here. The session list did not answer, so the name is unchecked.');
+  });
 });
 
 describe('/summary', () => {

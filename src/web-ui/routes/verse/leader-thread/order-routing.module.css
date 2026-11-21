@@ -125,6 +125,11 @@ button.id:hover { color: var(--text-primary); }
 .talk { color: var(--text-tertiary); font-family: inherit; text-decoration: underline; text-decoration-color: var(--border-default); text-underline-offset: 2px; }
 .talk:hover { color: var(--text-primary); }
 
+/* The session open in this pane: its row is lit and its door reads as open. */
+.job { border-radius: var(--radius-xs); transition: background var(--duration-base) var(--ease-standard); }
+.job[data-reading] { background: var(--bg-hover); }
+.talk[aria-current] { color: var(--text-primary); text-decoration-color: var(--accent-500); }
+
 button.id:focus-visible,
 .talk:focus-visible,
 .more:focus-visible,
@@ -140,4 +145,5 @@ button.id:focus-visible,
 
 @media (prefers-reduced-motion: reduce) {
   .track span { transition: none; animation: none; }
+  .job { transition: none; }
 }

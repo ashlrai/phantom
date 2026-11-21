@@ -29,6 +29,9 @@
 
 .session:hover { text-decoration: underline; }
 
+/* The session open in this pane. */
+.session[aria-current] { color: var(--text-primary); text-decoration: underline; text-decoration-color: var(--accent-500); text-underline-offset: 2px; }
+
 .session:focus-visible {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
