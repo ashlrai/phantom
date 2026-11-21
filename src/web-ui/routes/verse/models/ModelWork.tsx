@@ -8,6 +8,8 @@
  * row, holds that stretch of time on every card at once, and each card's words become that bar's own counts. Esc,
  * leaving the bars with the pointer, or moving focus off the rows lets go. The cursor is the bar's start time and
  * lives in the pane, so every row follows it.
+ *
+ * The Lanes board draws the same line on its lane cards from the per-lane report (fleet-lanes/LaneWork.tsx).
  */
 import type { KeyboardEvent } from 'react';
 import { barHeight, columnWhen, columnWords, cursorAt, cursorLine, cursorMove, type ModelWork, type WorkBoard } from './model-work-model.js';
@@ -54,18 +56,22 @@ export function ModelWorkLine({ work, board, cursor = null, onCursor }: {
 }
 
 /** Above the cards: the fleet's sentence for the window (or for the held bar), what no row counts, and how to read a card's bars. */
-export function WorkSummary({ board, cursor = null }: { board: WorkBoard; cursor?: string | null }) {
+export function WorkSummary({ board, cursor = null, announce = true }: {
+  board: WorkBoard; cursor?: string | null;
+  /** False where the work line is a second reading of a pane that already announces its own (Lanes): no live region of its own. */
+  announce?: boolean;
+}) {
   const bar = board.columnHours === 1 ? 'one hour' : `${board.columnHours} hours`;
   const reading = board.state === 'ok' ? cursorLine(board, cursor) : null;
   return <div className={styles.summary} data-work-state={board.state}>
     {reading ? <p className={styles.line} data-cursor-line>{reading}</p>
-      : <p className={styles.line} data-unknown={board.state === 'unread' || undefined} role={board.state === 'unread' ? 'status' : undefined}>{board.line}</p>}
+      : <p className={styles.line} data-unknown={board.state === 'unread' || undefined} role={announce && board.state === 'unread' ? 'status' : undefined}>{board.line}</p>}
     {board.unnamed ? <p className={styles.line}>{board.unnamed}</p> : null}
     {board.state === 'ok' ? <p className={styles.line}>
       <span className={styles.key}><i data-part="bar" />jobs launched, a bar per {bar} (tallest: {board.peak})</span>
       <span className={styles.key}><i data-part="mark" />a PR merged</span>
       <span>Point at a bar, or press Left and Right on a row, to read that time on every card</span>
-      <span>Same data: <code>phm throughput --by model</code></span>
+      <span>Same data: <code>phm throughput --by {board.by}</code></span>
     </p> : null}
   </div>;
 }
