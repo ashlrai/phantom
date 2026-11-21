@@ -69,7 +69,7 @@ export function readOwnerLiveStatus(settings: OwnerThreadSettings, hold: { halte
     }
     if (channel === 'imessage' && settings.imessageBridge === 'loopback' && !idSet) {
       // The bridge is on; only Mason's own handle is missing. Nothing is sent until it is paired.
-      if (pair?.state === 'waiting') return { ...base, state: 'not-set-up', reason: 'iMessage waiting for your YES', nextStep: 'Reply YES to the text on your phone' };
+      if (pair?.state === 'waiting') return { ...base, state: 'not-set-up', reason: `waiting for your YES (sent to ${pair.sent ?? 1})`, nextStep: 'Reply YES to the text on your phone' };
       return { ...base, state: 'not-set-up', reason: 'iMessage on, but no verified Mason handle: run phm owner pair imessage', nextStep: 'phm owner pair imessage' };
     }
     if (!gate.configured) {
@@ -86,9 +86,10 @@ export function readOwnerLiveStatus(settings: OwnerThreadSettings, hold: { halte
   const anyOn = channels.some(c => c.state === 'on');
   // iMessage is the route Mason reads first, so it names the row when it is off.
   const worst = channels.find(c => c.channel === 'imessage' && c.state !== 'on') ?? channels.find(c => c.state === 'not-set-up') ?? channels.find(c => c.state !== 'on');
-  const waiting = worst?.channel === 'imessage' && worst.reason === 'iMessage waiting for your YES';
+  const waiting = worst?.channel === 'imessage' && worst.reason.startsWith('waiting for your YES');
   const line = anyOn
     ? `Phone updates: on (${channels.filter(c => c.state === 'on').map(c => NAME[c.channel]).join(', ')})`
-    : `Phone updates: off (${waiting ? 'iMessage waiting for your YES' : worst ? `${NAME[worst.channel]} ${worst.state === 'not-set-up' ? 'not set up' : 'held'}` : 'no channels'})`;
+    : waiting ? `Phone updates: ${worst.reason}`
+    : `Phone updates: off (${worst ? `${NAME[worst.channel]} ${worst.state === 'not-set-up' ? 'not set up' : 'held'}` : 'no channels'})`;
   return { schema: 'owner-live.status.v1', anyOn, line, channels, ...(pair ? { pair } : {}) };
 }

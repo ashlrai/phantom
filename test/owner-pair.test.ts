@@ -2,7 +2,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cmdOwnerPair } from '../src/cli/owner-pair.js';
 import { cmdFleetOwnerLive } from '../src/cli/fleet-owner-live.js';
 import { parseCommsConfirmation } from '../src/core/agents/channel-policy.js';
@@ -13,6 +13,9 @@ import {
   PAIR_TEXT, PAIR_TTL_MS, checkOwnerPair, pairTick, readOwnerPairStatus, startOwnerPair, unpairOwner,
   type PairBridge, type PairDeps, type PairInbound,
 } from '../src/core/comms/owner-pair.js';
+
+// The first YES loads the owner-gated confirm route (the web layer) on demand; a cold transform is slow.
+vi.setConfig({ testTimeout: 30_000 });
 
 const roots: string[] = [];
 afterEach(() => { roots.splice(0).forEach(r => rmSync(r, { recursive: true, force: true })); });
@@ -32,13 +35,13 @@ function setup(opts: { handles?: string[]; network?: string | null; comms?: stri
     async ownHandles() { return opts.handles ?? ['mason-test']; },
     async baseline() { return 10; },
     async send(handle, text) { sent.push({ handle, text }); return true; },
-    async replies(after) { return readable ? inbound.filter(m => m.rowid > after) : null; },
+    async replies(after, handles) { return readable ? inbound.filter(m => m.rowid > after && handles.some(h => h.toLowerCase() === m.handle.toLowerCase())) : null; },
   };
   let t = Date.UTC(2026, 10, 21, 14, 0);
   const deps: PairDeps = { configDir: dir, bridge, now: () => t };
   return {
     dir, deps, sent,
-    reply: (text: string, handle = 'mason-test') => { inbound = [...inbound, { rowid: 11 + inbound.length, text, handle }]; },
+    reply: (text: string, handle = 'mason-test', fromMe = false) => { inbound = [...inbound, { rowid: 11 + inbound.length, text, handle, fromMe }]; },
     advance: (ms: number) => { t += ms; },
     unreadable: () => { readable = false; },
     file: (name: string) => readFileSync(join(dir, name), 'utf8'),
@@ -58,10 +61,7 @@ describe('start', () => {
     expect(s.sent).toHaveLength(1);
   });
 
-  it('several handles are listed and nothing is sent; none found sends nothing', async () => {
-    const many = setup({ handles: ['mason-test', 'other-test'] });
-    expect(await startOwnerPair(many.deps)).toEqual({ status: 'several', handles: ['mason-test', 'other-test'] });
-    expect(many.sent).toHaveLength(0);
+  it('none found sends nothing', async () => {
     const none = setup({ handles: [] });
     expect((await startOwnerPair(none.deps)).status).toBe('none-found');
     expect(none.sent).toHaveLength(0);
@@ -131,17 +131,17 @@ describe('YES', () => {
     expect(s.file('agent-network.toml')).toBe(network);
   });
 
-  it('unconfirmed comms.toml: bound, says one click is left, and comms.toml is untouched', async () => {
+  it('unconfirmed comms.toml: the YES is an owner proof and confirms through the route function', async () => {
     const s = setup();
     await startOwnerPair(s.deps);
     s.reply('YES');
-    expect(await checkOwnerPair(s.deps)).toMatchObject({ status: 'bound', confirmed: false, reason: expect.stringContaining('one click left') });
-    expect(s.file('comms.toml')).toBe('confirmedByMason = false\n');
-    expect(readOwnerPairStatus(s.dir)).toMatchObject({ state: 'paired', confirmed: false });
+    expect(await checkOwnerPair(s.deps)).toEqual({ status: 'bound', confirmed: true });
+    expect(parseCommsConfirmation(s.file('comms.toml'))).toBe(true);
+    expect(readOwnerPairStatus(s.dir)).toMatchObject({ state: 'paired', confirmed: true });
     const missing = setup({ comms: null });
     await startOwnerPair(missing.deps);
     missing.reply('YES');
-    expect(await checkOwnerPair(missing.deps)).toMatchObject({ status: 'bound', confirmed: false });
+    expect(await checkOwnerPair(missing.deps)).toMatchObject({ status: 'bound', confirmed: false, reason: expect.stringContaining('missing') });
     expect(() => missing.file('comms.toml')).toThrow();
   });
 
@@ -212,7 +212,7 @@ describe('self-tick', () => {
     expect(s2.sent).toHaveLength(0);
 
     const status = readOwnerLiveStatus(loadOwnerThreadSettings(s.dir), { halted: false, paused: false }, readOwnerPairStatus(s.dir));
-    expect(status.line).toBe('Phone updates: off (iMessage waiting for your YES)');
+    expect(status.line).toBe('Phone updates: waiting for your YES (sent to 1)');
     expect(status.pair?.state).toBe('waiting');
   });
 });
@@ -237,7 +237,7 @@ describe('unpair and status', () => {
     const s = setup();
     expect(readOwnerPairStatus(s.dir).line).toBe('not paired');
     await startOwnerPair(s.deps);
-    expect(readOwnerPairStatus(s.dir).line).toMatch(/^waiting for YES since 2026-11-2\d \d\d:\d\d$/);
+    expect(readOwnerPairStatus(s.dir).line).toBe('waiting for YES (sent to 1)');
     s.reply('YES');
     await checkOwnerPair(s.deps);
     expect(readOwnerPairStatus(s.dir).line).toBe('paired (**st)');
@@ -258,7 +258,7 @@ describe('cli', () => {
     expect(out[0]).toBe('not paired');
     expect(out[1]).toContain('Reply YES');
     expect(out[1]).not.toContain('mason-test');             // masked
-    expect(out[2]).toMatch(/^waiting for YES since /);
+    expect(out[2]).toBe('waiting for YES (sent to 1)');
     expect(out[3]).toContain('Paired.');
     expect(JSON.parse(out[4]!)).toMatchObject({ state: 'paired', line: 'paired (**st)' });
     expect(await run(['unpair', 'imessage'])).toBe(0);
@@ -267,10 +267,87 @@ describe('cli', () => {
     const many = setup({ handles: ['mason-test', 'other-test'] });
     const out2: string[] = [];
     const code = await cmdOwnerPair(['pair', 'imessage'], { pair: many.deps, output: t => out2.push(t) });
-    expect(code).toBe(1);
-    expect(out2[0]).toContain('--handle <handle>');
+    expect(code).toBe(0);
+    expect(out2[0]).toContain('Sent a text to 2 handles (**st, **st)');
+    expect(many.sent).toHaveLength(2);
     const none = setup({ handles: [] });
     await cmdOwnerPair(['pair', 'imessage', '--json'], { pair: none.deps, output: t => out2.push(t) });
     expect(JSON.parse(out2[1]!).status).toBe('none-found');
+  });
+});
+
+describe('several own handles (RQ-PAIRMULTIN22ZQ8)', () => {
+  const two = ['mason-a', 'mason-b'];
+
+  it('2 own handles: exactly 2 planned sends and one pending record; the tick says so', async () => {
+    const s = setup({ handles: two });
+    const r = await pairTick(s.deps);
+    expect(r).toEqual({ action: 'started', detail: 'sent to 2 handles, waiting for YES' });
+    expect(s.sent).toEqual(two.map(handle => ({ handle, text: PAIR_TEXT })));
+    expect(JSON.parse(s.file('comms/owner-pair.json')).pending.handles).toEqual(two);
+    expect(readOwnerPairStatus(s.dir)).toMatchObject({ state: 'waiting', line: 'waiting for YES (sent to 2)', sent: 2 });
+    expect(await pairTick(s.deps)).toEqual({ action: 'waiting', detail: 'sent to 2 handles, waiting for YES' });
+    expect(s.sent).toHaveLength(2);
+  });
+
+  it('the first handle to say YES binds and confirms; a later YES from the other binds nothing new', async () => {
+    const s = setup({ handles: two });
+    await startOwnerPair(s.deps);
+    s.reply('yes', 'mason-b');
+    s.reply('YES', 'mason-a');
+    expect(await checkOwnerPair(s.deps)).toEqual({ status: 'bound', confirmed: true });
+    expect(loadOwnerThreadSettings(s.dir).owners.imessage).toBe('mason-b');
+    const network = s.file('agent-network.toml');
+    expect(await checkOwnerPair(s.deps)).toEqual({ status: 'none' });
+    expect(s.file('agent-network.toml')).toBe(network);
+    expect(readOwnerPairStatus(s.dir).line).toBe('paired (**-b)');
+  });
+
+  it('a sent-by-me YES in the self-chat after the send binds', async () => {
+    const s = setup({ handles: two });
+    await startOwnerPair(s.deps);
+    s.reply(' Yes ', 'mason-a', true);
+    expect(await checkOwnerPair(s.deps)).toMatchObject({ status: 'bound', confirmed: true });
+    expect(loadOwnerThreadSettings(s.dir).owners.imessage).toBe('mason-a');
+  });
+
+  it('a sent-by-me YES older than the send, or the pairing text echoed back, binds nothing', async () => {
+    const s = setup({ handles: two });
+    await startOwnerPair(s.deps);
+    // The fake bridge baseline is 10: row 5 is older than the send and is never returned for this pair.
+    (s.deps.bridge as { replies: PairBridge['replies'] }).replies = async () => [
+      { rowid: 5, text: 'YES', handle: 'mason-a', fromMe: true },
+      { rowid: 11, text: PAIR_TEXT, handle: 'mason-a', fromMe: true },
+      { rowid: 12, text: PAIR_TEXT, handle: 'mason-b', fromMe: false },
+    ];
+    expect(await checkOwnerPair(s.deps)).toEqual({ status: 'waiting' });
+    expect(loadOwnerThreadSettings(s.dir).owners.imessage).toBeUndefined();
+  });
+
+  it('a non-own handle YES binds nothing', async () => {
+    const s = setup({ handles: two });
+    await startOwnerPair(s.deps);
+    s.reply('YES', 'stranger');
+    s.reply('YES', 'stranger', true);
+    expect(await checkOwnerPair(s.deps)).toEqual({ status: 'waiting' });
+    expect(loadOwnerThreadSettings(s.dir).owners.imessage).toBeUndefined();
+  });
+
+  it('caps at 4 handles; --handle narrows to one', async () => {
+    const s = setup({ handles: ['a-1', 'b-2', 'c-3', 'd-4', 'e-5', 'f-6'] });
+    await startOwnerPair(s.deps);
+    expect(s.sent.map(x => x.handle)).toEqual(['a-1', 'b-2', 'c-3', 'd-4']);
+    const one = setup({ handles: two });
+    await startOwnerPair(one.deps, { handle: 'mason-b' });
+    expect(one.sent.map(x => x.handle)).toEqual(['mason-b']);
+  });
+
+  it('only the handles that sent are recorded; all failing is send-failed', async () => {
+    const s = setup({ handles: two });
+    s.deps.bridge.send = async handle => handle === 'mason-b';
+    expect(await startOwnerPair(s.deps)).toMatchObject({ status: 'pending', handles: ['mason-b'] });
+    const f = setup({ handles: two });
+    f.deps.bridge.send = async () => false;
+    expect((await startOwnerPair(f.deps)).status).toBe('send-failed');
   });
 });
