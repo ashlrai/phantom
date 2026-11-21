@@ -342,7 +342,7 @@ never contacts providers.
 ### Local message bus mailbox
 
 `phm bus send|inbox|ack` manages durable local mailboxes. It does not dispatch
-remote work, execute agents or grant authority. `phm bus thread|task` remains
+remote work, execute agents or grant authority. `phm bus thread|task|board` remains
 the separate shared task board (`phm fleet bus ...`). Addresses are routing
 labels accessible to processes running as the same OS user, not authenticated
 principals.
@@ -449,7 +449,7 @@ Runtime state uses several roots. The paths below are relative to
 | `logs/` | supervised local-runtime stdout and stderr |
 | `daemon.launchd.out.log`, `daemon.launchd.err.log` (macOS), `daemon.systemd.log` (Linux) | daemon service output |
 | `fleet/mirrors/` | the fleet's own mirror clones (`phm mirror`) |
-| `bus/` | shared task board state (`phm bus thread|task`, `phm fleet bus`) |
+| `bus/` | shared task board state (`phm bus thread|task|board`, `phm fleet bus`) |
 | `bus-mailbox/` | durable local message mailboxes (`phm bus send|inbox|ack`) |
 | `fleet/bus-inbox/` | cursor-based Agent Bus (`phm comms bus`, HTTP and fleet MCP) |
 

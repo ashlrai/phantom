@@ -45,6 +45,44 @@ export interface BusThreadView {
   content: { trust: 'untrusted'; text: string };
 }
 
+/**
+ * Observed hold state of a board task's fleet item at digest read time.
+ * 'open' means the queue shows no live claim — a claim attempt still passes
+ * through `claimTask`'s own fences (worked cooldown, executing-phase
+ * ambiguity). 'ambiguous' means an expired claim record the claim path
+ * never auto-reclaims. 'unknown' means the queue could not be read.
+ */
+export type BusBoardTaskHold = 'open' | 'held' | 'ambiguous' | 'unknown';
+
+/** One board task in a pending digest: routing metadata plus observed hold state. */
+export interface BusBoardPendingTask {
+  id: string;
+  threadId: string;
+  itemId: string;
+  content: { trust: 'untrusted'; text: string };
+  /** Board state still records a claim ref; it may be live, expired, or superseded. */
+  claimed: boolean;
+  hold: BusBoardTaskHold;
+  /** Live queue holder when `hold` is 'held': peer label and lease expiry only, never capability material. */
+  owner: { peerId: string; leaseUntil: number } | null;
+}
+
+/** A joined thread's pending rollup inside a digest. */
+export interface BusBoardPendingThread extends BusThreadView {
+  pendingDeliveries: number;
+  tasks: Record<BusBoardTaskHold, number>;
+}
+
+/** Everything pending for one peer across every joined thread, in one read. */
+export interface BusBoardPending {
+  peer: string;
+  /** 'unreadable' means the shared queue could not be inspected; every task `hold` is then 'unknown', never 'open'. */
+  claims: 'readable' | 'unreadable';
+  threads: BusBoardPendingThread[];
+  deliveries: { matched: number; items: BusBoardDelivery[]; truncated: boolean };
+  tasks: { matched: number; items: BusBoardPendingTask[]; truncated: boolean };
+}
+
 export interface BusBoardOptions {
   root: string;
   fleet: SharedStore;
@@ -58,6 +96,8 @@ export interface BusBoardOptions {
 
 const MAX_BYTES = 16 * 1024 * 1024;
 const MAX_RECORDS = 10_000;
+/** Item rows one pending digest section shows; `matched` keeps the true totals. */
+const BUS_BOARD_PENDING_MAX = 50;
 const WRITE_RESERVE_BYTES = 4_096;
 const LOCK_WAIT_MS = 2_000;
 
@@ -355,6 +395,82 @@ export class BusBoard {
 
   hops(actor: string, threadId: string): BusBoardHop[] {
     return this.readThread(actor, threadId).map(busBoardHop);
+  }
+
+  /**
+   * One locked board snapshot plus one queue read: every unacknowledged
+   * delivery addressed to `actor` and every task on a joined thread, each
+   * task annotated with the fleet queue's observed hold state. `open` means
+   * the queue shows no live claim — a claim attempt still passes through
+   * `claimTask`'s own fences. Deliveries and tasks cap their item lists;
+   * `matched` keeps the true totals. Reading never acknowledges anything.
+   */
+  pending(actor: string): BusBoardPending {
+    actor = this.peer(actor);
+    return this.transaction(false, (state) => {
+      const index = this.options.fleet.readClaimIndex();
+      const now = Date.now();
+      const acknowledged = new Set((state.receipts ?? []).map((receipt) => receipt.deliveryId));
+      const joined = state.threads.filter((thread) => thread.members.includes(actor));
+      const joinedIds = new Set(joined.map((thread) => thread.id));
+
+      const deliveries = state.deliveries.filter((delivery) =>
+        delivery.recipient === actor && joinedIds.has(delivery.threadId) && !acknowledged.has(delivery.id));
+
+      const tasks = state.tasks.filter((task) => joinedIds.has(task.threadId)).map((task): BusBoardPendingTask => {
+        const entry = index.claims[task.itemId];
+        let hold: BusBoardTaskHold = 'unknown';
+        let owner: BusBoardPendingTask['owner'] = null;
+        if (index.readable) {
+          if (!entry) hold = 'open';
+          else if (entry.leaseUntil > now) {
+            hold = 'held';
+            owner = { peerId: entry.machineId, leaseUntil: entry.leaseUntil };
+          } else hold = entry.phase === 'claimed' ? 'open' : 'ambiguous';
+        }
+        return {
+          id: task.id, threadId: task.threadId, itemId: task.itemId,
+          content: { trust: 'untrusted', text: presentBusBoardText(task.title) },
+          claimed: task.claim !== undefined, hold, owner,
+        };
+      });
+
+      const deliveryCounts = new Map<string, number>();
+      for (const delivery of deliveries) {
+        deliveryCounts.set(delivery.threadId, (deliveryCounts.get(delivery.threadId) ?? 0) + 1);
+      }
+      const holdCounts = new Map<string, Record<BusBoardTaskHold, number>>();
+      for (const task of tasks) {
+        const counts = holdCounts.get(task.threadId) ?? { open: 0, held: 0, ambiguous: 0, unknown: 0 };
+        counts[task.hold]++;
+        holdCounts.set(task.threadId, counts);
+      }
+      const threads: BusBoardPendingThread[] = joined.map((thread) => ({
+        id: thread.id, members: [...thread.members],
+        content: { trust: 'untrusted' as const, text: presentBusBoardText(thread.title) },
+        pendingDeliveries: deliveryCounts.get(thread.id) ?? 0,
+        tasks: holdCounts.get(thread.id) ?? { open: 0, held: 0, ambiguous: 0, unknown: 0 },
+      }));
+
+      return {
+        peer: actor,
+        claims: index.readable ? 'readable' : 'unreadable',
+        threads,
+        deliveries: {
+          matched: deliveries.length,
+          items: deliveries.slice(0, BUS_BOARD_PENDING_MAX).map((delivery) => ({
+            ...delivery,
+            content: { trust: 'untrusted' as const, text: presentBusBoardText(delivery.content.text) },
+          })),
+          truncated: deliveries.length > BUS_BOARD_PENDING_MAX,
+        },
+        tasks: {
+          matched: tasks.length,
+          items: tasks.slice(0, BUS_BOARD_PENDING_MAX),
+          truncated: tasks.length > BUS_BOARD_PENDING_MAX,
+        },
+      };
+    });
   }
 
   createTask(actor: string, threadId: string, itemId: string, title: string): BusTaskView {

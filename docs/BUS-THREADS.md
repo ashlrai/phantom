@@ -17,6 +17,7 @@ phm bus thread read THREAD --peer bob
 phm bus thread pending THREAD --peer bob
 phm bus thread hops THREAD --peer bob
 phm bus thread list --peer alice
+phm bus board pending --peer bob
 
 phm bus task create THREAD fleet-item-123 'Review test results' --peer alice
 # Use the returned task id as TASK.
@@ -124,3 +125,20 @@ polling never acknowledges a message, and an acknowledgement removes only that
 delivery from subsequent pending reads. Historical `thread read` is unchanged.
 The view and receipt check share one locked snapshot; labels remain cooperative
 and neither a pending read nor a receipt grants execution authority.
+
+`board pending` is the cross-thread digest of the same state: one locked board
+snapshot plus one shared-queue read returns every thread the peer has joined
+(with member list, pending-delivery count and per-state task counts), every
+unacknowledged delivery addressed to the peer (`matched` is the true total;
+`items` caps at 50 with `truncated`), and every task on those threads annotated
+with the fleet queue's observed hold state. A task `hold` is `held` when the
+queue shows a live claim (the `owner` peer label and lease expiry, never
+capability material), `open` when the queue shows no live claim — an expired
+modern `claimed` record counts as open because the claim path reclaims it —
+`ambiguous` when an expired claim record is one the claim path never
+auto-reclaims (executing phase or legacy/unparsable owner), and `unknown`
+when the queue could not be read at all; the top-level `claims` field reports
+`readable`/`unreadable` so `unknown` is never mistaken for `open`. `open` is
+observed state, not a promise: `task claim` still applies its own fences.
+Delivery `id` + `threadId` pairs feed `thread ack` directly; reading the
+digest acknowledges nothing and grants no authority.
