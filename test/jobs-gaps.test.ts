@@ -74,7 +74,10 @@ describe('readJobGaps', () => {
     expect(body.split('\n')[0]).toBe('#job repo=phantom lane=claude tier=work');
     expect(body).toContain('Goal: Wire the digest into the weekly report');
     const second = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, ...none });
-    expect(second.proposed).toMatchObject([{ queued: false, skipped: 'already queued' }]);
+    // The proposer's own 24 h record now catches the repeat before the writer's "already queued" check.
+    expect(second.candidates).toEqual([]);
+    expect(second.dropped).toMatchObject([{ reason: 'proposed-24h' }]);
+    expect(second.proposed).toEqual([]);
   });
 
   it('reports an unknown store as unknown and an unreadable source by name', async () => {

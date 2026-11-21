@@ -1173,6 +1173,21 @@ reset. Zero burn has no exhaustion date; missing observation duration gives
 unknown burn. Expired reset windows and invalid or duplicate evidence degrade
 the metrics slice. Projections are observations and grant no spending authority.
 
+## Gap jobs: drop format and proof
+
+`phm jobs gaps --propose` writes one file per gap into the drop queue the host ingest sweeps. The writer (`src/core/fleet/drop-job-writer.ts`) and the ingest patterns are tested against each other in `test/drop-job-ingest-contract.test.ts` and `test/gap-landing.test.ts`.
+
+| Part | Expected |
+| --- | --- |
+| Drop dir | `<runs dir>/leader/drop/claude/` (the only dir swept for RQ-PHX jobs) |
+| File name | `RQ-PHX-<id>.md`, id is 3 to 40 of A-Z and 0-9 (gap ids are `GAP` plus 10 hex digits, upper case) |
+| Line 1 | `#job repo=<repo> lane=<lane> tier=<tier>`, repo one of the known repos, gap jobs use `lane=claude` (`codex-personal` when the gap names a gh command) and `tier=work` |
+| Size and body | At most 8000 bytes; a body naming `.github/`, `/.codex`, `auth.json` or `CODEOWNERS` is refused |
+| After ingest | File moves to `queue/prompts/`; a row lands in `leader/drop/ingested.tsv`; a launch leaves `<runs dir>/RQ-PHX-<id>.prompt` |
+| Proposer record | `<runs dir>/metrics/gap-proposed.jsonl`, one line per queued gap; a gap proposed in the last 24 h is not proposed again |
+
+`phm doctor supply` prints `Self-supply today: 3 proposed, 2 ingested, 1 launched` (last 24 h; JSON field `selfSupplyToday`). Proposed comes from the record, ingested from gap rows in `ingested.tsv`, launched from the `.prompt` files of those rows. A file that is missing or unreadable reads `unknown` for that count.
+
 ## Daily checks
 - `phm metrics loop` (where the loop waits)
 - `phm map replay --since 6h` (what happened while you were away)
