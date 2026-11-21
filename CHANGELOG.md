@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.55 |
-| Latest dated changelog release (2026-11-21) | 3.30.55 |
+| Source package | 3.30.56 |
+| Latest dated changelog release (2026-11-21) | 3.30.56 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -15,20 +15,6 @@ Versions map to milestone series: **2.1.0** = v2.1 "Harden & Prove" (H1–H8),
 hub (M1–M20). Entries below detail each milestone; dates are merge dates into `master`.
 
 ---
-
-## [3.30.56](https://github.com/ashlrai/phantom/compare/v3.30.55...v3.30.56) (2026-11-21)
-
-
-### Changes
-
-* **RQ-CL-DESK-1795226742:** ([#7731](https://github.com/ashlrai/phantom/issues/7731)) ([9d3a4d0](https://github.com/ashlrai/phantom/commit/9d3a4d018de6c80e0978c5acc12a856f51d15f00))
-* **RQ-CL-DESK2-1795220151:** ([#7683](https://github.com/ashlrai/phantom/issues/7683)) ([4c2a91f](https://github.com/ashlrai/phantom/commit/4c2a91f808fa61ff20519a761caac1d890470e86))
-* RQ-CL-DESK2-1795222606 ([#7705](https://github.com/ashlrai/phantom/issues/7705)) ([680bc7f](https://github.com/ashlrai/phantom/commit/680bc7f4bd1b33dbe1ee130bbc24a3b65148400b))
-* **RQ-CL-DESK2-1795226114:** ([#7727](https://github.com/ashlrai/phantom/issues/7727)) ([a807d61](https://github.com/ashlrai/phantom/commit/a807d61cdfb0ce1f2ec3220c547bb05e691b8d7e))
-* **RQ-CL-DESK2-1795226782:** ([#7732](https://github.com/ashlrai/phantom/issues/7732)) ([2fe86b9](https://github.com/ashlrai/phantom/commit/2fe86b9da710d2f003d6c638e6efc54eb618e028))
-* **RQ-CL-DOCS-1795226916:** ([#7730](https://github.com/ashlrai/phantom/issues/7730)) ([f407c46](https://github.com/ashlrai/phantom/commit/f407c4696b3e462cd7e62d581325aa72d7581ba6))
-* **RQ-GAPCOUNTN22EQ8:** BRIDGE_NOTES: RQ-GAPCOUNTN22EQ8 ([#7728](https://github.com/ashlrai/phantom/issues/7728)) ([dfc7d67](https://github.com/ashlrai/phantom/commit/dfc7d6757953181f04715d3278d4fd203f8b88bc))
-* **RQ-GAPLANDN22EQ8:** BRIDGE_NOTES: RQ-GAPLANDN22EQ8 ([#7733](https://github.com/ashlrai/phantom/issues/7733)) ([ec88503](https://github.com/ashlrai/phantom/commit/ec885033bbf8e1bc4b538e07f706d7d2388c435e))
 
 ## [Unreleased]
 
@@ -182,6 +168,20 @@ Merged after #7384 (#7385 to #7604). Bridge, recovery and release bookkeeping is
 ### Removed
 
 - Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
+
+## [3.30.56] - 2026-11-21
+
+
+### Changes
+
+* **RQ-CL-DESK-1795226742:** ([#7731](https://github.com/ashlrai/phantom/issues/7731)) ([9d3a4d0](https://github.com/ashlrai/phantom/commit/9d3a4d018de6c80e0978c5acc12a856f51d15f00))
+* **RQ-CL-DESK2-1795220151:** ([#7683](https://github.com/ashlrai/phantom/issues/7683)) ([4c2a91f](https://github.com/ashlrai/phantom/commit/4c2a91f808fa61ff20519a761caac1d890470e86))
+* RQ-CL-DESK2-1795222606 ([#7705](https://github.com/ashlrai/phantom/issues/7705)) ([680bc7f](https://github.com/ashlrai/phantom/commit/680bc7f4bd1b33dbe1ee130bbc24a3b65148400b))
+* **RQ-CL-DESK2-1795226114:** ([#7727](https://github.com/ashlrai/phantom/issues/7727)) ([a807d61](https://github.com/ashlrai/phantom/commit/a807d61cdfb0ce1f2ec3220c547bb05e691b8d7e))
+* **RQ-CL-DESK2-1795226782:** ([#7732](https://github.com/ashlrai/phantom/issues/7732)) ([2fe86b9](https://github.com/ashlrai/phantom/commit/2fe86b9da710d2f003d6c638e6efc54eb618e028))
+* **RQ-CL-DOCS-1795226916:** ([#7730](https://github.com/ashlrai/phantom/issues/7730)) ([f407c46](https://github.com/ashlrai/phantom/commit/f407c4696b3e462cd7e62d581325aa72d7581ba6))
+* **RQ-GAPCOUNTN22EQ8:** BRIDGE_NOTES: RQ-GAPCOUNTN22EQ8 ([#7728](https://github.com/ashlrai/phantom/issues/7728)) ([dfc7d67](https://github.com/ashlrai/phantom/commit/dfc7d6757953181f04715d3278d4fd203f8b88bc))
+* **RQ-GAPLANDN22EQ8:** BRIDGE_NOTES: RQ-GAPLANDN22EQ8 ([#7733](https://github.com/ashlrai/phantom/issues/7733)) ([ec88503](https://github.com/ashlrai/phantom/commit/ec885033bbf8e1bc4b538e07f706d7d2388c435e))
 
 ## [3.30.55] - 2026-11-21
 
