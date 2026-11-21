@@ -88,6 +88,48 @@ returns 503 with a value-free error if unavailable, and disallows mutation
 methods. `/bots` consumes `botSeatsQuery` and renders accessible measured quota
 meters, unknown evidence, claims/jobs and handoffs; there is no web apply route.
 See [bot seats](docs/BOT-SEATS.md) for storage and API-gap boundaries.
+
+# Landed-sweep git-only fallback (pending)
+
+This contract describes the exports proposed in [PR #7764](https://github.com/ashlrai/phantom/pull/7764)
+(`RQ-LANDEDSWEEPN22GQ8`, head `706b61180db`). The module and fallback are
+not available on master until that implementation lands.
+
+`src/core/fleet/landed-git-only.ts` exports:
+
+- `GhFailureKind = 'missing' | 'signed-out' | 'offline' | 'error'` and
+  `GhFailure { kind: GhFailureKind; reason: string }`.
+- `describeGhFailure(run: { stderr: string; missing?: boolean; timedOut?: boolean }): GhFailure`
+  is pure. An explicit missing flag takes precedence, followed by recognized
+  authentication errors, then timeout/network errors. Reasons are respectively
+  `gh not installed`, `gh not signed in`, and `network unreachable`. Other
+  errors use `gh failed: <first nonblank stderr line>`, capped at 160 characters
+  for that line, or `gh failed: no output`.
+- `GitOnlyBranch { name: string; landed: boolean; ahead: number }` and
+  `GitOnlyResult`, a union of `{ state: 'ok'; base: string; branches: GitOnlyBranch[] }`,
+  `{ state: 'skipped'; reason: string }`, and `{ state: 'failed'; reason: string }`.
+- `GitOnlyOptions { repoDir?: string; base?: string; git?: GitRunner }` and
+  `gitOnlyLanded(options?: GitOnlyOptions): Promise<GitOnlyResult>`. Defaults
+  are the process working directory, `master`, and `defaultGitRunner`. Each
+  git invocation has a 60-second timeout. The function checks the clone, fetches
+  `origin <base>` without tags, then inspects local and origin branch refs,
+  excluding the base, `origin/<base>`, `origin`, and `origin/HEAD`. It returns
+  `base: 'origin/<base>'`; a branch is landed only when its ahead count is zero.
+  This tests commit reachability, not patch equivalence or PR closure. Missing
+  git or a non-clone returns `skipped`; fetch, ref-list or invalid ahead-count
+  results return `failed`. Fetch updates Git metadata; no branch or PR is
+  closed or deleted and no worktree file is changed.
+
+The same proposal adds `FleetDirtyLandedDeps.onGhFailure?: (failure: GhFailure) => void`
+and `FleetLandedSweepDeps.repoDir?: string` / `git?: GitRunner` to the CLI seams.
+The sweep falls back only for classified missing, signed-out or offline gh
+failures. Its JSON adds `state: 'ok' | 'skipped' | 'failed'`,
+`mode: 'gh' | 'git-only'`, optional `reason` and optional `landedBranches`.
+Git-only results report branch counts and names, with zero planned/closed PRs
+even under `--apply`. A skipped fallback exits 0; a failed fallback or other gh
+error exits 1. Invalid CLI arguments retain exit 2. This contract grants no
+execution, closure, merge or release authority.
+
 # Codex model defaults
 
 The source-owned Codex default is `gpt-6.2-sol` for work, mid, fast,
