@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Script } from 'node:vm';
 
 /**
  * Paths whose change can move the authority drift snapshots: src/ (Tier-1 roots and closure),
@@ -54,6 +55,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     yamlFiles: changed.filter((path) => existing.has(path) && /\.ya?ml$/.test(path)),
     tomlFiles: changed.filter((path) => existing.has(path) && /\.toml$/.test(path)),
     cssFiles: changed.filter((path) => existing.has(path) && /\.css$/i.test(path)),
+    snapFiles: changed.filter((path) => existing.has(path) && /\.snap$/i.test(path)),
   };
 }
 
@@ -580,6 +582,34 @@ export function runCssSyntaxCheck(root, files, spawn = spawnSync) {
     return false;
   }
   console.log('PASS css syntax check');
+  return true;
+}
+
+/**
+ * Vitest `.snap` snapshot modules are `exports[`name`] = <serialized>;`
+ * statement lists — JavaScript that eslint's lintFiles glob and the
+ * tsconfig include both skip, so a hand edit or a merge-conflict marker
+ * survives until vitest loads the suite. `node --check` refuses the unknown
+ * extension, but node's script parser is available in-process through
+ * `vm.Script`, so like the JSON check there is no preflight or SKIP path.
+ * The error stack's first line already carries `path:line`.
+ */
+export function runSnapSyntaxCheck(root, files, read = readFileSync) {
+  const failures = [];
+  for (const path of files) {
+    try {
+      new Script(read(resolve(root, path), 'utf8'), { filename: path });
+    } catch (error) {
+      const stack = typeof error?.stack === 'string' ? error.stack.split('\n') : [];
+      const where = stack[0]?.startsWith(`${path}:`) ? stack[0].slice(path.length) : '';
+      failures.push(`${path}${where}: ${error.message}`);
+    }
+  }
+  if (failures.length) {
+    for (const failure of failures) console.error(`FAIL snap syntax check: ${failure}`);
+    return false;
+  }
+  console.log('PASS snap syntax check');
   return true;
 }
 
@@ -1151,6 +1181,11 @@ function main() {
     } else if (!runCssSyntaxCheck(root, selection.cssFiles)) {
       process.exitCode = 1;
     }
+  }
+  if (selection.snapFiles.length === 0) {
+    console.log('PASS snap syntax check skipped: no snapshot change');
+  } else if (!runSnapSyntaxCheck(root, selection.snapFiles)) {
+    process.exitCode = 1;
   }
   if (selection.quarantineCheck) {
     try {
