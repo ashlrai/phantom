@@ -1099,6 +1099,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'models verify [--text]',       desc: 'Show model verification status and age (JSON by default).', topic: 'run' },
   { cmd: 'models pull <name> [--yes]',   desc: 'Explicitly pull an Ollama model (large download; confirm first).', topic: 'run' },
   { cmd: 'models start',                 desc: 'Best-effort start a locally-installed Ollama (never downloads).', topic: 'run' },
+  { cmd: 'local capacity [--json]', desc: 'Show how many local-model workers fit in free memory, retaining a safety margin and the local lane ceiling; unknown readings leave targets unchanged.', topic: 'run' },
   { cmd: 'local-runtime <status|start|stop|restart|reshape|logs|resolve-model>', desc: 'Supervise the loopback llama-server serving runtime (parallel local fleet engine); manual and attended.', topic: 'run' },
   { cmd: 'local-runtime install|uninstall', desc: 'Add or remove the opt-in launch agent that keeps llama-server up across logout/crashes; install is refused while the kill switch is engaged.', topic: 'run' },
 
