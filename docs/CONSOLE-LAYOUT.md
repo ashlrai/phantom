@@ -179,7 +179,12 @@ at now and a dotted line from the newest reading to where the card says this
 burn ends. The sentence below it counts the readings and gives the newest one
 against the even line in points. One reading is one dot, a pool without a
 reset time says its window cannot be drawn, and when the stored readings
-cannot be read the board says so once and draws no chart.
+cannot be read the board says so once and draws no chart. Each reading can
+be read on its own: point at the plot for the reading drawn nearest, or focus
+the plot and press Left or Right to step through them (Home and End jump to
+the oldest and newest, Esc lets go). A rule and a ring mark the reading, and
+the sentence below becomes its time, its used share and where the even line
+stood then.
 Claude's per-model weekly windows sit under its card. A credits pool shows its
 balance and no bar. The line under the headline names the next reset, and the
 switch narrows the list to Behind, On pace or Unknown (arrow keys move it).
