@@ -111,6 +111,7 @@ describe('readUnifiedInbox sources', () => {
       sources: {
         'needs-you': { state: 'missing', pending: 0 },
         imessage: { state: 'missing', pending: 0 },
+        'teammate-tasks': { state: 'missing', pending: 0 },
         drafts: { state: 'healthy', pending: 0 },
         bus: { state: 'missing', pending: 0 },
         conversations: { state: 'missing', pending: 0 },
@@ -1492,6 +1493,130 @@ describe('readUnifiedInbox inbox proposals', () => {
     });
     expect(throwing.sources.proposals).toEqual({ state: 'unavailable', pending: 0 });
     expect(throwing.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+});
+
+describe('readUnifiedInbox teammate tasks', () => {
+  const ledgerDir = () => join(runsDir, 'imessage');
+  let taskSeq = 0;
+  /** A schema-valid stored task row; `over` replaces fields (undefined drops the key). */
+  const task = (over: Record<string, unknown> = {}) => {
+    taskSeq += 1;
+    return {
+      jobId: `RQ-TT-${taskSeq}`, peer: 'dot', kind: 'research', scope: 'fake scope',
+      repo: 'ashlrai/phantom', prRefs: [], format: 'fake format',
+      deadline: new Date(now + 3_600_000).toISOString(),
+      token: taskSeq.toString(16).padStart(32, '0'),
+      createdAt: now - 600_000, state: 'pending', attemptedAt: now - 300_000,
+      receipt: { rowid: 1000 + taskSeq * 10, sent: true, delivered: true, error: 0 },
+      metrics: ['launch'], settled: false, ...over,
+    };
+  };
+  const writeLedger = (tasks: unknown[]) => {
+    mkdirSync(ledgerDir(), { recursive: true, mode: 0o700 });
+    writeFileSync(join(ledgerDir(), 'teammate-tasks.json'),
+      JSON.stringify({ v: 1, tasks, attempts: { dot: [], instinct: [] } }), { mode: 0o600 });
+  };
+  const pinned = {
+    readRequests: () => ({ status: 'missing' as const, requests: [] }),
+    readInboxProposals: () => ({ state: 'ok' as const, items: [], truncated: false }),
+    readTeamApprovals: (): Section<TeamApprovalItem> => ({ state: 'ok', items: [] }),
+  };
+
+  it('lists unsettled tasks by state with honest severity, times and acts', async () => {
+    writeLedger([
+      task({ jobId: 'RQ-TT-QUEUED', state: 'queued', attemptedAt: undefined, receipt: undefined }),
+      task({ jobId: 'RQ-TT-SENDING', state: 'sending', receipt: undefined }),
+      task({ jobId: 'RQ-TT-PENDING' }),
+      task({ jobId: 'RQ-TT-OVERDUE', deadline: new Date(now - 3_600_000).toISOString() }),
+      task({ jobId: 'RQ-TT-REPLIED', state: 'replied',
+        result: { rowid: 7777, status: 'DONE', summary: 'fake peer summary', at: now - 60_000 } }),
+      task({ jobId: 'RQ-TT-EXPIRED', state: 'expired', deadline: new Date(now - 60_000).toISOString() }),
+      task({ jobId: 'RQ-TT-DONE', state: 'replied', settled: true,
+        result: { rowid: 7778, status: 'DONE', summary: 'fake peer summary', at: now - 120_000 } }),
+      task({ jobId: 'RQ-TT-CANCEL', state: 'cancelled', attemptedAt: undefined, receipt: undefined, metrics: [] }),
+    ]);
+    const inbox = await read();
+    expect(inbox.sources['teammate-tasks']).toEqual({ state: 'healthy', pending: 6 });
+    const items = inbox.items.filter(i => i.source === 'teammate-tasks');
+    expect(items.map(i => i.id).sort()).toEqual([
+      'teammate-tasks:RQ-TT-EXPIRED', 'teammate-tasks:RQ-TT-OVERDUE', 'teammate-tasks:RQ-TT-PENDING',
+      'teammate-tasks:RQ-TT-QUEUED', 'teammate-tasks:RQ-TT-REPLIED', 'teammate-tasks:RQ-TT-SENDING',
+    ].sort());
+    const byId = (id: string) => items.find(i => i.id === `teammate-tasks:${id}`)!;
+    const acts = (id: string) => ['phm fleet imessage-tasks dispatch --apply', `phm fleet imessage-tasks list --job ${id}`];
+    expect(byId('RQ-TT-QUEUED')).toMatchObject({
+      kind: 'teammate-task', severity: 'info', blocking: false,
+      title: 'teammate dot research RQ-TT-QUEUED',
+      detail: 'ashlrai/phantom · reserved, awaiting dispatch · due in 1h 0m',
+      since: '2026-11-07T11:50:00.000Z', expiresAt: '2026-11-07T13:00:00.000Z', act: acts('RQ-TT-QUEUED'),
+    });
+    expect(byId('RQ-TT-SENDING')).toMatchObject({
+      severity: 'warn', detail: 'ashlrai/phantom · send in flight, awaiting reconcile · due in 1h 0m',
+      since: '2026-11-07T11:55:00.000Z', expiresAt: '2026-11-07T13:00:00.000Z',
+    });
+    expect(byId('RQ-TT-PENDING')).toMatchObject({
+      severity: 'info', detail: 'ashlrai/phantom · awaiting peer result · due in 1h 0m',
+      since: '2026-11-07T11:55:00.000Z', expiresAt: '2026-11-07T13:00:00.000Z',
+    });
+    expect(byId('RQ-TT-OVERDUE')).toMatchObject({
+      severity: 'warn', detail: 'ashlrai/phantom · awaiting peer result · overdue 1h 0m',
+      expiresAt: '2026-11-07T11:00:00.000Z',
+    });
+    expect(byId('RQ-TT-REPLIED')).toMatchObject({
+      severity: 'warn',
+      detail: 'ashlrai/phantom · peer reported DONE, settle owed · peer-reported, unverified',
+      since: '2026-11-07T11:59:00.000Z', expiresAt: null,
+    });
+    expect(byId('RQ-TT-EXPIRED')).toMatchObject({
+      severity: 'warn', detail: 'ashlrai/phantom · deadline elapsed, settle owed',
+      since: '2026-11-07T11:59:00.000Z', expiresAt: null,
+    });
+    // Scope, format, RESULT text and the correlation token never reach an item.
+    const serialized = JSON.stringify(items);
+    for (const secret of ['fake scope', 'fake format', 'fake peer summary']) expect(serialized).not.toContain(secret);
+    expect(serialized).not.toMatch(/[a-f0-9]{32}/);
+  });
+
+  it('reports missing, verified-empty and unreadable ledgers honestly', async () => {
+    expect((await read()).sources['teammate-tasks']).toEqual({ state: 'missing', pending: 0 });
+    writeLedger([]);
+    expect((await read()).sources['teammate-tasks']).toEqual({ state: 'healthy', pending: 0 });
+    writeFileSync(join(ledgerDir(), 'teammate-tasks.json'), '{oops', { mode: 0o600 });
+    const broken = await read();
+    expect(broken.sources['teammate-tasks']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(broken.items.filter(i => i.source === 'teammate-tasks')).toHaveLength(0);
+    writeLedger([{ jobId: 'bad' }]);
+    expect((await read()).sources['teammate-tasks']).toEqual({ state: 'unavailable', pending: 0 });
+  });
+
+  it('keeps a replied task RESULT text under the task item, not the texts source', async () => {
+    writeLedger([task({ jobId: 'RQ-TT-REPLY', state: 'replied',
+      result: { rowid: 7777, status: 'DONE', summary: 'fake peer summary', at: now - 60_000 } })]);
+    expect(recordTeammateText({ rowid: 7777, handle: '+1555fake', text: 'RESULT RQ-TT-REPLY deadbeef DONE fake' }, runsDir, new Date(now - 60_000))).toBe(true);
+    expect(recordTeammateText({ rowid: 8888, handle: '+1555fake', text: 'unrelated teammate note' }, runsDir, new Date(now - 30_000))).toBe(true);
+    const inbox = await read();
+    // One pending thing, one item: the covered RESULT rowid does not list twice.
+    expect(inbox.items.filter(i => i.source === 'imessage').map(i => i.id)).toEqual(['imessage:teammate-8888']);
+    expect(inbox.items.filter(i => i.source === 'teammate-tasks').map(i => i.id)).toEqual(['teammate-tasks:RQ-TT-REPLY']);
+    expect(inbox.sources['imessage']).toEqual({ state: 'healthy', pending: 1 });
+    expect(inbox.sources['teammate-tasks']).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('builds items from an injected read and reports seam states while other sources list', async () => {
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const throwing = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readTeammateTasks: () => { throw new Error('boom'); },
+    });
+    expect(throwing.sources['teammate-tasks']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(throwing.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+    const degraded = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readTeammateTasks: () => ({ state: 'degraded', tasks: [] }),
+    });
+    expect(degraded.sources['teammate-tasks']).toEqual({ state: 'degraded', pending: 0 });
+    expect(degraded.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
   });
 });
 

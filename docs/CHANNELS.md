@@ -225,7 +225,14 @@ relay is not confirmed — the same `readNeedsMasonReplyDeliveries` receipts
 disagree; each pending receipt lists as a warn whose retry resolves the same
 id again (the recorded reply is reused, never re-asked) and each receipt that
 failed validation lists as unreadable with its delivery state unknown —
-unanswered allowlisted teammate texts,
+unanswered allowlisted teammate texts, unsettled Dot/Instinct teammate
+tasks (the same `imessage.teammate-tasks.v1` ledger `phm fleet
+imessage-tasks list` serves: queued, sending, pending, replied and expired
+rows the drain still owes work on — cancelled and settled rows never list,
+a replied task's RESULT text stays under this source rather than listing
+twice, `expiresAt` is the task's real deadline while it is still the peer's
+obligation and null once replied or expired, and each item deep-links
+`phm fleet imessage-tasks dispatch --apply` and `list --job`),
 live owner-thread inbound messages no recorded outbound reply cites (the same
 awaiting-reply mark `phm comms status` counts, each item deep-linking
 `phm comms thread` and `phm comms send-owner --reply-to`), recorded owner
@@ -299,7 +306,8 @@ project for the default team; each lists as a blocking warn deep-linking
 auto-apply; info items deep-link `phm inbox show|approve|reject`, a partial
 capture drops `approve`, and a truncated or incomplete read reports
 `degraded` with the items it did find) — and each item carries `act` deep-link commands (`phm fleet
-needs-resolve`, `phm fleet teammate-texts --answered`, `phm comms thread`,
+needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
+imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
 `phm drafts approve`, `phm comms-agent drafts`,
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,

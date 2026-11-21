@@ -13,7 +13,7 @@ phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 With no verb, lists every pending comms item — unresolved needs-you lines, needs-you
 answers not confirmed in the planner inbox or with unreadable delivery receipts,
 unanswered iMessage
-teammate texts, owner-thread messages awaiting a recorded reply, recorded owner
+teammate texts, unsettled Dot/Instinct teammate tasks, owner-thread messages awaiting a recorded reply, recorded owner
 replies whose channel fanout is not fully delivered, drafts awaiting approval,
 pending bus work (unclaimed envelopes, open, unclaimable or stalled feed jobs and worker handoffs), agent
 conversation threads waiting on a reply or blocked, bot seats with pending handoffs, comms
