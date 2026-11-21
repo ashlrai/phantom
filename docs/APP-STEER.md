@@ -77,6 +77,39 @@ or restart from the reply box. When a read does not answer, that half of the
 they can be read only there. The reads are the ones behind `phm apps --json`
 and `phm apps log --json`.
 
+### Pick a command's argument from a list
+
+After a command that takes an argument, a space opens a list of what the
+command accepts, in the same place as the `@` list:
+
+| After | The list holds |
+| --- | --- |
+| `/release ` | The lanes that are held, each with the hold's reason and, when one is set, the time it ends. |
+| `/hold ` | Every lane, the ones not yet held first with their target. Choosing one leaves a space for the minutes. |
+| `/stop ` | The jobs running now, with lane, when each last spoke and its last words; a quiet one is marked. |
+| `/log ` | Every job in the session list, running ones first, then finished and failed ones. |
+| `/thread `, `/summary ` | Every session in the list, the Leader and helpers included. |
+| `/app ` | The apps `/app` can open or bring to the front, each with its state and which of the two it would do. |
+| `/open ` | The panes, by the id `/open` takes, each with its title. |
+
+Keep typing to narrow the list by name, or by lane, state or last words.
+↑/↓ move, Tab writes the highlighted row into the box, Esc closes the list
+and a click writes the row too. Enter writes the highlighted row only while
+nothing is typed after the command yet, or after the arrows moved; otherwise
+Enter runs the command exactly as typed, so a full id typed by hand is never
+replaced by a longer match; the same holds for a session typed in full
+after `@` in a command. Choosing a row only writes text: nothing runs
+until you press Enter on the finished command, with the same unlock and
+confirm as before.
+
+Each list is read only while it is open, through the read the matching pane
+makes (lane holds, `phm sessions --json`, `phm apps --json`, the pane
+menu). A list that does not answer reads "Lanes unavailable", "Sessions
+unavailable" or "Apps unavailable" with the reason, never "No lane is held
+right now", and the argument can still be typed by hand. A lane record that
+is degraded, or a session list that could not be read in full, says so under
+the rows.
+
 Every fleet graph node offers Steer and Hand off. Both open the existing
 message dialog for review before sending. Steer asks for a routing decision
 when a node is exhausted, held or stale, and a neutral question otherwise.
