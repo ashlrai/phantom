@@ -41,8 +41,10 @@ pnpm 10.28.2 and shares one dependency store (see
 [Shared installs for trusted local worktrees](#shared-installs-for-trusted-local-worktrees)).
 
 Run focused verification locally while developing. Pull requests and default-branch
-pushes run the repository's CI and Dependency Audit workflows. Check the actual
-run for your commit; workflow source alone is not evidence that it passed.
+pushes run the repository's CI workflow. The Dependency Audit workflow runs on
+them only when a manifest, lockfile or other dependency input changes, plus a
+daily schedule. Check the actual run for your commit; workflow source alone is
+not evidence that it passed.
 Dependency changes must keep the
 affected manifest and lockfile consistent, including separately packaged Raycast
 or desktop dependencies when those are in scope.
@@ -366,7 +368,7 @@ Comms transports live in `src/core/integrations/` (`telegram.ts`, `imessage.ts`)
 
 - Keep commits focused and atomic; one logical change per commit.
 - Use a concise, imperative subject with a conventional type prefix (e.g. `feat: add genome embedding rerank fallback`), with a body explaining the "why" when it is not obvious.
-- Pull requests land as squash commits, so the pull request title becomes the subject on `master`. release-please groups `master` subjects into `CHANGELOG.md` sections by type: `feat`, `fix`, `perf`, `refactor`, `chore`, `docs`, `test`, `ci` and `build` (see `release-please-config.json`). Fleet agents use the `bridge(<job>):` type.
+- Pull requests land as squash commits, so the pull request title becomes the subject on `master`. release-please groups `master` subjects into `CHANGELOG.md` sections by type (see `release-please-config.json`): `feat` (Features), `fix` (Fixes), `bridge` (Changes), `perf` (Performance), `refactor` and `chore` (Maintenance), `docs` (Documentation), `test` (Tests), `ci` (CI) and `build` (Build). Fleet agents use the `bridge(<job>):` type; outside contributors pick the type that fits the change.
 - A commit must preserve the [local verification gates](#definition-of-green), including web and documentation checks when those surfaces change.
 - Do not commit `dist/` (it is git-ignored) or machine-specific paths.
 - Milestone commits follow the pattern: `feat: M<N> <short description>` and update the milestone row in the relevant `docs/SPEC-V*.md`.
