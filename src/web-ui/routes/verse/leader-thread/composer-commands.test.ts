@@ -39,7 +39,8 @@ describe('commandArgError', () => {
 describe('hints and completion', () => {
   it('shows hints only while the draft starts with "/"', () => {
     expect(commandHints('hello')).toEqual([]);
-    expect(commandHints('/').map(hint => hint.name)).toEqual(['pause', 'resume', 'release', 'hold', 'stop', 'drop', 'status', 'open', 'who', 'thread', 'summary', 'log', 'apps', 'app', 'help']);
+    expect(commandHints('/').map(hint => hint.name)).toEqual(['pause', 'resume', 'release', 'hold', 'stop', 'drop', 'status', 'open', 'who', 'thread', 'summary', 'log', 'lanes', 'lane', 'apps', 'app', 'help']);
+    expect(commandHints('/lane cl').map(hint => hint.name)).toEqual(['lane']);
     expect(commandHints('/re').map(hint => hint.name)).toEqual(['resume', 'release']);
     expect(commandHints(' /REL').map(hint => hint.name)).toEqual(['release']);
     expect(commandHints('/release cod').map(hint => hint.name)).toEqual(['release']);
@@ -49,6 +50,14 @@ describe('hints and completion', () => {
   it('completes to the first match, with a space when an argument follows', () => {
     expect(completeCommand('/p')).toBe('/pause');
     expect(completeCommand('/rel')).toBe('/release ');
+    // /log keeps the bare /l; the lane commands start at /la.
+    expect(completeCommand('/l')).toBe('/log ');
+    expect(completeCommand('/la')).toBe('/lanes');
+    expect(parseComposerDraft('/lane cl')).toEqual({ kind: 'command', name: 'lane', arg: 'cl' });
+    expect(commandArgError({ name: 'lane', arg: '' })).toBe('/lane needs a lane: /lane <lane>');
+    expect(commandArgError({ name: 'lane', arg: 'two words' })).toBe('/lane takes one lane name: /lane <lane>');
+    expect(commandArgError({ name: 'lane', arg: 'c' })).toBeNull();
+    expect(commandArgError({ name: 'lanes', arg: '' })).toBeNull();
     expect(completeCommand('/pause')).toBeNull();
     expect(completeCommand('/release codex')).toBeNull();
     expect(completeCommand('/zzz')).toBeNull();
