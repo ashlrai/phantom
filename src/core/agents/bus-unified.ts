@@ -1492,6 +1492,15 @@ export interface ChannelReadOptions {
    */
   priority?: BusPriority;
   /**
+   * Job filter: only posts that name this one job — the same
+   * `inboxJobMatch` rule `agents bus inbox --job` applies: a feed-citing
+   * body (`work.post`, `work.status`, `work.result` or `wake`) declaring
+   * that `jobId`, a `worker-handoff` assigning that fleet job id through
+   * `taskId`, or a `note`/`context` body carrying the `job:<id>` v2 thread
+   * label. Every other body kind cites no job and never matches.
+   */
+  job?: string;
+  /**
    * Ask for the true pending total: the scan then covers the whole retained
    * store instead of stopping at `limit`, counting every post the same
    * filters accept while `messages` still returns only the first `limit`.
@@ -1516,8 +1525,11 @@ export type ChannelReadPage =
  * membership: membership gates posting only, and the rows are the same
  * shared store `comms bus group read` sees. `from` narrows by sender through
  * the same identity-label matching `comms bus read` uses; `thread` narrows to
- * `note`/`context` bodies carrying that v2 thread label, and `priority`
- * narrows to posts stamped with that exact P0..P3 band. `nextCursor`
+ * `note`/`context` bodies carrying that v2 thread label, `priority`
+ * narrows to posts stamped with that exact P0..P3 band, and `job` narrows
+ * to posts that name one job — the same `inboxJobMatch` rule `agents bus
+ * inbox --job` applies, so a channel transcript answers one job's posts
+ * without paging the whole room. `nextCursor`
  * covers every scanned row, so callers persist it only after handling the
  * page; `page.matched` asks for the true pending total the way
  * `readAgentInbox` does — the scan then covers the whole retained store,
@@ -1531,7 +1543,7 @@ export type ChannelReadPage =
  * empty page passed off as history.
  */
 export function readAgentChannel(name: string, page: ChannelReadOptions = {}, options: UnifiedBusOptions = {}): ChannelReadPage {
-  const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
+  const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority, job = page.job;
   const countMatched = page.matched === true;
   if (typeof name !== 'string' || !agentChannelNameSchema.safeParse(name).success) {
     return { status: 'invalid', reason: 'Invalid channel name.' };
@@ -1544,6 +1556,9 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
   }
   if (priority !== undefined && !BUS_PRIORITIES.includes(priority)) {
     return { status: 'invalid', reason: 'Invalid priority.' };
+  }
+  if (job !== undefined && (typeof job !== 'string' || !THREAD.test(job))) {
+    return { status: 'invalid', reason: 'Invalid job id.' };
   }
   let exact: string | undefined;
   if (page.topic !== undefined) {
@@ -1577,7 +1592,8 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
         (exact === undefined || envelope.to === exact) &&
         (fromMatch === undefined || fromMatch(envelope.from)) &&
         (thread === undefined || busBodyThread(body) === thread) &&
-        (priority === undefined || envelope.priority === priority);
+        (priority === undefined || envelope.priority === priority) &&
+        (job === undefined || inboxJobMatch(body, job));
       if (accepted) {
         matched += 1;
         if (!countMatched || messages.length < limit) {

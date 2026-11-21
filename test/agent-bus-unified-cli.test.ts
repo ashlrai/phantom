@@ -289,6 +289,37 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['inbox', 'nova', '--job', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
   });
 
+  it('filters channel reads by --job across feed citations and job-threaded posts', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-CLI-CJ', '--title', 'Channel job',
+      '--repo', 'a/b', '--claim', 'queue:RQ-CLI-CJ', '--to', 'group:release:general', '--id', 'cj-post'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'status', '--from', 'atlas', '--job', 'RQ-CLI-CJ', '--status', 'running',
+      '--to', 'group:release:general', '--id', 'cj-st'])).json).toMatchObject({ status: 'posted' });
+    // A post threaded job:<id> is the job's bucket; other threads and plain
+    // chatter name different conversations.
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'job note',
+      '--thread', 'job:RQ-CLI-CJ', '--id', 'cj-note'])).json).toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'other job',
+      '--thread', 'job:RQ-CLI-OTHER', '--id', 'cj-other'])).json).toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'plain', '--id', 'cj-plain'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    const page = await run(['channel', 'read', 'release', '--job', 'RQ-CLI-CJ']);
+    expect(page.code).toBe(0);
+    expect(page.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id).sort())
+      .toEqual(['cj-note', 'cj-post', 'cj-st']);
+    // --job composes with --matched: the count honors the same filter.
+    const counted = await run(['channel', 'read', 'release', '--job', 'RQ-CLI-CJ', '--matched']);
+    expect(counted.json.matched).toBe(3);
+    expect((await run(['channel', 'read', 'release', '--job', 'RQ-ABSENT'])).json.messages).toEqual([]);
+    // A job id must be a printable label; anything else fails closed.
+    expect(await run(['channel', 'read', 'release', '--job', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('reports the true pending total with --matched and resumes before unshown mail', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

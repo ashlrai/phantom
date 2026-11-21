@@ -2411,13 +2411,17 @@ handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or
 `available`, `agent` the resolved handle or null, and an unknown ref or
 unreadable registry answers `unknown-agent`/`unavailable`, never an empty
-list), `readAgentChannel(name, {topic, from, thread, priority, matched, after, limit}, options?)`
+list), `readAgentChannel(name, {topic, from, thread, priority, job, matched, after, limit}, options?)`
 (one oldest-first page of a registry channel's live posts addressed to
 `group:<name>:*` — or one topic — with `group.presence` heartbeats
 excluded; `from` filters by sender through identity-label matching,
 `thread` keeps only `note`/`context` bodies carrying that v2 thread label,
-and `priority` keeps only posts stamped with that exact P0..P3 band;
-`matched: true` scans the whole retained store and returns `matched`, the
+`priority` keeps only posts stamped with that exact P0..P3 band, and `job`
+keeps only posts that name one job — the same `inboxJobMatch` rule
+`readAgentInbox`'s `job` applies: a `work.post`/`work.status`/`work.result`/`wake`
+body declaring that `jobId`, a `worker-handoff` assigning that fleet job id
+through `taskId`, or a `note`/`context` body carrying the `job:<id>` v2
+thread label; `matched: true` scans the whole retained store and returns `matched`, the
 count of every filter-matched post, while `messages` still caps at
 `limit`; claimable work and worker-handoff posts additionally carry
 `held`/`holder` — the same hold evidence `readAgentInbox` and
