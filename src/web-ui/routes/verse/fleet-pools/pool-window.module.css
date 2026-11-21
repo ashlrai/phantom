@@ -1,0 +1,30 @@
+/* A pool's window so far: a short plot from window start to reset under the card's bar, its two scale words in a gutter, then one sentence. */
+.window { display: grid; gap: var(--space-1); margin: 0; min-width: 0; }
+.frame { display: grid; grid-template-columns: 2.25rem minmax(0, 1fr); grid-template-rows: 5rem auto; column-gap: var(--space-2); row-gap: var(--space-1); color: var(--text-tertiary); font-size: var(--text-2xs-size); line-height: var(--text-xs-line); font-variant-numeric: tabular-nums; }
+.top, .mid { grid-column: 1; grid-row: 1; justify-self: end; }
+.top { align-self: start; transform: translateY(-50%); }
+.mid { align-self: center; }
+.plot { position: relative; grid-column: 2; grid-row: 1; min-width: 0; border-block: 1px solid var(--border-subtle); }
+.svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.svg :is(line, polyline) { fill: none; vector-effect: non-scaling-stroke; }
+.grid, .day { stroke: var(--border-subtle); stroke-width: 1; }
+.day { stroke-dasharray: 1 3; }
+.even { stroke: var(--text-tertiary); stroke-width: 1; stroke-dasharray: 4 3; }
+.now { stroke: var(--text-primary); stroke-width: 1; opacity: 0.45; }
+.measured { stroke: var(--accent-500); stroke-width: 1.75; stroke-linejoin: round; stroke-linecap: round; }
+.wash { fill: var(--accent-500); opacity: 0.1; }
+/* Ahead of the newest reading nothing is measured, so the line is dotted and takes the card's state colour. */
+.ahead { stroke: var(--text-secondary); stroke-width: 1.5; stroke-dasharray: 1 4; stroke-linecap: round; }
+.window[data-risk='medium'] .ahead { stroke: var(--status-warning-solid); }
+.window[data-risk='high'] .ahead { stroke: var(--status-danger-solid); }
+.dot { position: absolute; width: 7px; height: 7px; margin: 0 0 -3.5px -3.5px; border: 1.5px solid var(--bg-surface); border-radius: var(--radius-full); background: var(--accent-500); }
+.axis { position: relative; grid-column: 2; grid-row: 2; display: flex; justify-content: space-between; gap: var(--space-2); }
+.nowWord { position: absolute; top: 0; transform: translateX(-50%); color: var(--text-secondary); }
+.caption, .none { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.none { font-style: italic; }
+/* Holds the plot's height while the readings are being read, so the card does not jump when they arrive. */
+.skeleton { height: 5rem; border-radius: var(--radius-sm); background: var(--bg-hover); animation: breathe 1.4s var(--ease-standard) infinite alternate; }
+.window { animation: arrive var(--duration-slow) var(--ease-standard); }
+@keyframes breathe { from { opacity: 0.45; } to { opacity: 1; } }
+@keyframes arrive { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .skeleton, .window { animation: none; } }
