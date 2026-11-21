@@ -9,6 +9,7 @@
  */
 import { burnRate, BURN_METHOD, BURN_MIN_SAMPLES, BURN_WINDOW_HOURS, type BurnSample } from '../usage/burn-rate.js';
 import { poolLabel } from '../usage/runway.js';
+import type { ModelCap } from './model-caps.js';
 import { effectivePoolReading, type PoolReadingState } from './pool-reading.js';
 import type { ResourceLaneRow, ResourceLedgerV1 } from './runs-resource-ledger.js';
 
@@ -84,6 +85,8 @@ export interface PoolRow {
   asOf: string | null;
   /** Why the row is unknown; null when the risk is known. */
   reason: string | null;
+  /** Models of this lane that hit their own usage cap, from worker logs. Absent when none are known. */
+  cappedModels?: Array<{ model: string; cappedAt: string; resetAt: string | null }>;
   /** The verdict in plain words: "Claude: empty about 3 PM Thu, 27 h before reset: slow down". */
   summary: string;
 }
@@ -250,8 +253,14 @@ const resetOrder = (row: PoolRow): number => {
  * `samples` are the stored usage readings (`readUsageSamples`); without them a pool falls back to the dispatcher's
  * reported burn, or says "not enough readings".
  */
-export function buildPoolsView(ledger: ResourceLedgerV1, now: number, samples: readonly PoolSample[] = []): PoolsViewV1 {
-  const pools = ledger.lanes.map(lane => poolRow(lane, now, samples)).sort((a, b) =>
+export function buildPoolsView(ledger: ResourceLedgerV1, now: number, samples: readonly PoolSample[] = [], caps: readonly ModelCap[] = []): PoolsViewV1 {
+  const pools = ledger.lanes.map(lane => {
+    const row = poolRow(lane, now, samples);
+    const capped = caps.filter(cap => cap.lane === lane.lane);
+    if (!capped.length) return row;
+    const list = capped.map(cap => ({ model: cap.model, cappedAt: cap.capped_at, resetAt: cap.reset_at }));
+    return { ...row, cappedModels: list, summary: `${row.summary}; ${list.map(c => c.model).join(', ')} at its own limit` };
+  }).sort((a, b) =>
     (a.verdict === 'slow down' ? -1 : RISK_RANK[a.wasteRisk]) - (b.verdict === 'slow down' ? -1 : RISK_RANK[b.wasteRisk])
     || (resetOrder(a) === resetOrder(b) ? 0 : resetOrder(a) < resetOrder(b) ? -1 : 1)
     || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -270,6 +279,7 @@ export function formatPoolsText(view: PoolsViewV1): string {
     lines.push(row.summary);
     lines.push(`  risk ${row.wasteRisk}; used ${cell(row.usedPct, '%')}; resets ${row.resetAt ?? 'unknown'} (${cell(row.hoursLeft, 'h')} left); `
       + `burn ${cell(row.burnPctPerHour, '%/h')}${row.burnBasis ? ` (${row.burnBasis === 'least-squares' ? `${row.burnBasis}, ${row.burn.samples} readings over ${row.burn.window_h} h` : row.burnBasis})` : ''}; unused at reset ${cell(row.projectedUnusedPct, '%')}; empty ${row.projectedEmptyAt ?? (row.burnPctPerHour === null ? 'unknown' : 'not before reset')}; as of ${row.asOf ?? 'unknown'}`);
+    for (const cap of row.cappedModels ?? []) lines.push(`  ${cap.model}: hit its usage limit at ${cap.cappedAt}; resets ${cap.resetAt ?? 'unknown'}; jobs use the next model`);
     for (const scope of row.scopes) lines.push(`  ${scope.id}: used ${cell(scope.usedPct, '%')}; resets ${scope.resetAt ?? 'unknown'} (${cell(scope.hoursLeft, 'h')} left)`);
   }
   for (const gap of view.gaps) lines.push(`Not covered: ${gap}`);

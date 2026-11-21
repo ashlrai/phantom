@@ -2836,7 +2836,8 @@ export async function handleApi(
         import('../fleet/runs-resource-ledger.js'), import('../fleet/pools-view.js'), import('../fleet/usage-history.js'),
       ]);
       const now = Date.now();
-      sendJson(res, 200, buildPoolsView(await readResourceLedger({ now: () => now }), now, await readUsageSamples({ nowMs: now })));
+      const { readLiveCaps } = await import('../fleet/model-caps.js');
+      sendJson(res, 200, buildPoolsView(await readResourceLedger({ now: () => now }), now, await readUsageSamples({ nowMs: now }), await readLiveCaps(now)));
       return true;
     }
 

@@ -150,3 +150,14 @@ Evidence comes from metrics `cause`/`reason` or an explicit `notes_path`/`notesP
 Finishes are selected by timestamp; launches before the window can supply duration and lane. Repeated launches stay separate; exact duplicates are ignored. Outcome-only EMPTY records are used when no finish exists. A successful publish URL in the same attempt conflicts with EMPTY cause evidence and yields `unknown`. `wall_s` supplies duration, otherwise a unique launch/finish pair. The under-60 label describes timing, not a proven root cause.
 
 `emptyRate` is EMPTY finishes divided by finishes with explicit empty/nonempty evidence (or a single finish with a recorded publish URL), also exposed as `measured`; no measurements means null. `launches` counts launches inside the window separately. `finished` includes unmeasured finishes. Malformed rows are counted and skipped, so counts cover observed valid evidence. Unreadable or oversized metrics (64 MiB maximum) return `known:false`, null totals and CLI exit 1; an empty readable window returns zero totals and exit 0. JSON keys and ranking ties have stable order. Invalid arguments exit 2.
+
+## Model usage caps (`pool_cap`)
+
+A worker log that says a model or plan limit was reached (for example "You've reached your Fable limit") is
+`pool_cap` in `phm jobs empty --by-family` and `pool-cap` in `phm jobs empty-why`, apart from an ordinary empty and
+from `auth_failed`. A named model is marked in `<runs>/metrics/model-caps.json` as
+`{model, capped_at, source:"worker-log", lane, reset_at}` (`src/core/fleet/model-caps.ts`) and ends at the reset time
+or the first later success on that model. `pickModel` falls a capped model to the next one in its lane (claude
+frontier: fable, opus, sonnet). `phm pools` and `GET /api/app/pools` list the capped models as `cappedModels`.
+Not wired yet: the dispatcher calling `recordCapFromLog` and `pickModel` at launch and finish (the dispatcher lives
+outside this repo), and a lane-wide hold for limits that name no model; those stay unknown.
