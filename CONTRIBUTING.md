@@ -81,7 +81,13 @@ To install the CLI while developing:
 | `node scripts/check-test-names.mjs` | Flag duplicate test names across `test/` that collide in name-keyed reports |
 | `node scripts/generate-cli-docs.mjs` | Regenerate `docs/cli.md` from `phm --help` output; `--check` compares without writing |
 | `npm run typecheck` | Strict backend and web type checks, without emitting files |
+| `npm run typecheck:fast` | The same two type checks through the native `tsgo` compiler; what `npm run gate` runs |
 | `npm run build` | Check candidate version sync, compile the backend, generate the authority surface, copy assets, build the built-in preparation evaluator and the web console, then generate dependency inventory and Git build identity in `dist/` |
+| `npm run gate` | Build, static checks, then the tests related to your diff plus a smoke set, against the merge-base with `origin/master`; `-- --base <ref>` picks another base and `-- --json` prints a machine-readable result. Local feedback only; it never pushes or contacts model providers |
+| `npm run gate:full` | The same static checks, then the complete backend and web suites |
+| `npm run check:quarantine` | Validate `queue/quarantine.tsv`; with `-- --base origin/master`, also require a live ledger row for every skip marker your diff adds and refuse an added `.only` |
+| `npm run authority:regen` | After authority drift, regenerate `.github/CODEOWNERS` and the Tier-1 closure snapshot (`test/fixtures/authority/tier1-closure.json`) and print what changed; list each new Tier-1 root in the pull request body |
+| `npm run install:worktree` | Install the frozen `pnpm-lock.yaml` into a trusted local worktree with one shared store (pnpm 10.28.2); see [Shared installs](#shared-installs-for-trusted-local-worktrees) |
 
 For explicit Bun-compatible test inventories, see the standalone
 [Bun shard planner and timings recorder](docs/BUN-SHARDS.md). Workflow adoption
