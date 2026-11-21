@@ -101,6 +101,9 @@ node scripts/companion-workflow-smoke.mjs     # cross-tool smoke (ashlrai/phanto
 
 ## Lane tool parity audit (RQ-DELEGATE-SCOPE-1)
 
+The full matrix across lanes, node workers, iMessage teammates and desktop
+sessions, with gaps and intentional limits, is in [PARITY.md](PARITY.md).
+
 This is a read-only source audit of the repository launcher candidate and
 engine adapters, not proof of installed lane health. A server declaration
 does not prove that the process started or that an account is authorized.

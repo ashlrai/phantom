@@ -1718,6 +1718,15 @@ describe('CLI session adapters', () => {
     expect(getBusCliAdapter('gemini')).toBeUndefined();
   });
 
+  it('lets the zai and codex-local lanes attach with their real provider (RQ-TOOLPARITY-1)', () => {
+    const options = setup();
+    expect(attachBusCliSession({ handle: 'zed', cli: 'claude', provider: 'glm' }, {}, options)).toMatchObject({ status: 'created' });
+    expect(attachBusCliSession({ handle: 'zed', cli: 'codex', provider: 'local' }, {}, options)).toMatchObject({ status: 'updated' });
+    // Widening stays within each CLI: a lane cannot claim another CLI's provider.
+    expect(attachBusCliSession({ handle: 'zed', cli: 'codex', provider: 'glm' }, {}, options)).toMatchObject({ status: 'invalid' });
+    expect(attachBusCliSession({ handle: 'zed', cli: 'claude', provider: 'local' }, {}, options)).toMatchObject({ status: 'invalid' });
+  });
+
   it('detects the CLI from an explicit setting or runtime markers, never guessing', () => {
     expect(detectBusCli({ PHM_AGENT_CLI: 'devin', CLAUDECODE: '1' })).toEqual({ cli: 'devin', source: 'explicit', marker: 'PHM_AGENT_CLI' });
     expect(detectBusCli({ PHM_AGENT_CLI: 'gemini', CLAUDECODE: '1' })).toBeNull();

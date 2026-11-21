@@ -306,6 +306,7 @@ canonical release guide for required hosted qualification and publication.
 - [Agent OS Doctrine](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-OS-DOCTRINE.md)
 - [Agent OS Observation Sandbox V1](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-OS-OBSERVATION-SANDBOX-V1.md)
 - [Agent toolchain: Phantom's own dev tools for agents working on Phantom](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-TOOLCHAIN.md)
+- [Agent class parity: tools, context and fleet visibility per lane, worker, teammate and desktop session](https://github.com/ashlrai/phantom/blob/master/docs/PARITY.md)
 - [Agent-native Phantom quickstart](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-NATIVE-QUICKSTART.md)
 - [Ambitious Fleet OS V1](https://github.com/ashlrai/phantom/blob/master/docs/ambitious-fleet-os-v1.md)
 - [Ashlr Ecosystem Improvement Backlog](https://github.com/ashlrai/phantom/blob/master/docs/IMPROVEMENT-BACKLOG.md)
