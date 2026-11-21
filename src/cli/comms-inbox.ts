@@ -18,7 +18,8 @@ replies whose channel fanout is not fully delivered, drafts awaiting approval,
 pending bus work (unclaimed envelopes, open, unclaimable or stalled feed jobs and worker handoffs), pending legacy phm bus mailbox mail across every recipient label, agent
 conversation threads waiting on a reply or blocked, bot seats with pending handoffs, comms
 questions/approvals awaiting an answer, .reply.eml artifacts stuck in the
-email outbox, pending team approvals and inbox proposals awaiting review —
+email outbox, pending team approvals, inbox proposals awaiting review and
+Slack requests whose bus append failed —
 one prioritized list whose
 items carry the deep-link commands that act on them. --json prints the same view as JSON.
 read and post read and write Mason's local inbox file. Output is JSON; post returns the receiver acknowledgement.

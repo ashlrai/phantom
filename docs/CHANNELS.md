@@ -316,7 +316,22 @@ project for the default team; each lists as a blocking warn deep-linking
 (the same `readPendingProposals` section — proposed actions that never
 auto-apply; info items deep-link `phm inbox show|approve|reject`, a partial
 capture drops `approve`, and a truncated or incomplete read reports
-`degraded` with the items it did find) — and each item carries `act` deep-link commands (`phm fleet
+`degraded` with the items it did find) — and Slack requests whose local bus
+append failed (the same `readSlackJournal` the `phm fleet slack-trace` and
+`phm channels slack status` projections read: a journaled `ingested` row
+with `bus: 'failed'` is an authenticated, validated Slack event whose bus
+append never landed — the exact condition the trace calls `bus-failed`,
+since send receipts only bind replies for the other outcomes — and it has
+no bus envelope, no owner-thread record and no claim, so the journal is
+the only durable evidence; posted, duplicate, legacy and ignored rows
+either have a durable envelope another source already lists or cannot be
+proven pending, so only failed appends list — each a warn naming channel,
+thread and message ts only, never text, with `since` the journal receive
+time, `expiresAt` null since the request is lost until re-ingested,
+repeated failed ingests of one message collapsing to the newest row, deep
+links `phm fleet slack-trace --channel … --thread … --message …` and `phm
+channels slack status`, and source state the journal read's own — `ok`,
+`missing` or `degraded`, never fabricated) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
@@ -325,7 +340,8 @@ imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms th
 `phm fleet handoff-receive`, `phm agents conversations`,
 `phm bots handoff`, `phm agents bus post`, `phm fleet email-outbox`,
 `phm bus inbox`, `phm bus ack`,
-`phm team approve|deny`, `phm inbox approve|reject`). It never claims, replies, or mutates; a source
+`phm team approve|deny`, `phm inbox approve|reject`,
+`phm fleet slack-trace`, `phm channels slack status`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. `phm comms inbox read` and
