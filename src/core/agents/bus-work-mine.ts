@@ -1,7 +1,8 @@
 /**
  * `agents bus work mine`: one read answering "what is pending for this agent" —
  * the live claims it holds under any of its labels, the open work-feed jobs it
- * could still claim, the work-feed jobs it announced that have not finished,
+ * could still claim, the work-feed jobs it announced that have not finished —
+ * each with the live claim coverage of its declared keys —
  * the claimable work envelopes and worker-handoff
  * assignments addressed to it — under any of its labels or to a channel it
  * belongs to — in `bus next` order, the conversation threads waiting on its
@@ -81,9 +82,19 @@ export type BusWorkMineJobs =
       receipts: number; receipt?: Extract<BusWorkFeedReadResult, { status: 'refused' }>['receipt'] }
   | { status: 'unavailable' | 'retryable' | 'invalid' };
 
+/** An announced feed job plus the live claim coverage of its declared keys. */
+export interface BusWorkMineAnnouncedJob extends BusWorkFeedJob {
+  /** true: a declared key has a shown live hold; false: complete coverage proves none is held, or the job declares no keys a hold could cover; null: coverage cannot prove either way. */
+  held: boolean | null;
+  /** Declared keys with at least one shown live hold — a lower bound under truncated coverage; null when the hold set itself is unknown. */
+  heldKeys: string[] | null;
+  /** Declared keys with no shown live hold — proven only under complete coverage; null otherwise. */
+  freeKeys: string[] | null;
+}
+
 /** The feed jobs the agent announced that have not reached a terminal state. */
 export type BusWorkMineAnnounced =
-  | { status: 'ok'; matched: number; items: BusWorkFeedJob[];
+  | { status: 'ok'; matched: number; items: BusWorkMineAnnouncedJob[];
       /** True only when live announced jobs remain beyond the shown page. */
       truncated: boolean }
   | { status: 'refused'; reason: Extract<BusWorkFeedReadResult, { status: 'refused' }>['reason'];
@@ -308,10 +319,39 @@ export function busWorkMineJobAnnotation(
   return { ...job, addressed, announced, freeKeys, heldKeys, claimable };
 }
 
-function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined): BusWorkMineJobs {
-  if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
-    ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
-  if (feed.status !== 'ok') return { status: feed.status };
+/**
+ * The announced-side annotation: the same per-key hold evidence the jobs
+ * section reports, summarized as `held` — whether any declared key has a
+ * shown live hold. A shown hold is real under any coverage; `false` takes a
+ * complete hold list or a job with no declared keys (nothing a hold could
+ * cover, provable without reading the table); `null` is everything coverage
+ * cannot prove, including a truncated list with no shown holds. A
+ * non-terminal job reporting `running`/`idle` with `held:false` has no live
+ * claim on its declared scope — the digest shows that evidence; only the
+ * announcer may move the job.
+ */
+export function busWorkMineAnnouncedAnnotation(
+  job: BusWorkFeedJob, held: ReadonlySet<string> | undefined, coverage: BusWorkMineHoldCoverage,
+): BusWorkMineAnnouncedJob {
+  const heldKeys = coverage === 'unknown' ? null : job.claimKeys.filter(key => held?.has(key));
+  const freeKeys = coverage === 'complete' ? job.claimKeys.filter(key => !held?.has(key)) : null;
+  const heldState = job.claimKeys.length === 0 ? false
+    : heldKeys !== null && heldKeys.length > 0 ? true
+    : coverage === 'unknown' || coverage === 'truncated' ? null
+    : false;
+  return { ...job, held: heldState, heldKeys, freeKeys };
+}
+
+/**
+ * The hold evidence behind one ok feed read, shared by the jobs and
+ * announced sections: the coverage state plus the shown holds grouped by
+ * job id. `unknown` means the coordination table could not be read; `truncated`
+ * means shown holds are real but later ones are unseen.
+ */
+function feedHoldIndex(feed: Extract<BusWorkFeedReadResult, { status: 'ok' }>): {
+  coverage: BusWorkMineHoldCoverage;
+  heldByJob: ReadonlyMap<string, ReadonlySet<string>>;
+} {
   const claims = feed.claims;
   const coverage: BusWorkMineHoldCoverage =
     claims === undefined || claims.source === 'unavailable' ? 'unknown'
@@ -322,6 +362,14 @@ function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | 
     set.add(hold.claimKey);
     heldByJob.set(hold.jobId, set);
   }
+  return { coverage, heldByJob };
+}
+
+function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined): BusWorkMineJobs {
+  if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
+    ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
+  if (feed.status !== 'ok') return { status: feed.status };
+  const { coverage, heldByJob } = feedHoldIndex(feed);
   const open = feed.jobs
     .filter(job => BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length > 0)
     .sort((a, b) => b.updatedAt - a.updatedAt);
@@ -350,20 +398,25 @@ const ANNOUNCED_DONE: ReadonlySet<BusWorkFeedJob['status']> = new Set(['done', '
  * does it stand" — an announced job leaves the open set the moment a worker
  * claims it or its status moves past `queued`/`rescheduled`, yet only the
  * announcer may post its next status, so a live announcement is work the
- * agent still drives. Matching reuses the jobs section's owner matcher, so
- * an unresolvable ref or unreadable registry keeps exact-label matching and
- * never widens; a non-ok feed reports its own state, never an empty list.
+ * agent still drives. Each item carries the same per-key hold coverage the
+ * jobs section computes, so a job whose status says in progress but whose
+ * declared keys have no live hold reads as such without a second read.
+ * Matching reuses the jobs section's owner matcher, so an unresolvable ref
+ * or unreadable registry keeps exact-label matching and never widens; a
+ * non-ok feed reports its own state, never an empty list.
  */
 function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined): BusWorkMineAnnounced {
   if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
     ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
   if (feed.status !== 'ok') return { status: feed.status };
   const ownerMatch = busWorkFeedOwnerMatcher(agent, { root });
+  const { coverage, heldByJob } = feedHoldIndex(feed);
   const live = feed.jobs
     .filter(job => !ANNOUNCED_DONE.has(job.status) && ownerMatch(job.owner))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   return { status: 'ok', matched: live.length,
-    items: live.slice(0, WORK_MINE_ANNOUNCED_MAX),
+    items: live.slice(0, WORK_MINE_ANNOUNCED_MAX)
+      .map(job => busWorkMineAnnouncedAnnotation(job, heldByJob.get(job.id), coverage)),
     truncated: live.length > WORK_MINE_ANNOUNCED_MAX };
 }
 
@@ -813,9 +866,12 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
       const title = mineField(job.title, 80);
       const detail = job.detail === undefined ? '' : mineField(job.detail, 120);
       const keys = job.claimKeys.length === 0 ? 'none' : mineField(job.claimKeys.join(','), 400);
+      const held = job.held === null ? 'unknown' : job.held ? 'yes' : 'no';
+      const keyList = (list: string[] | null): string => list === null ? '-' : mineField(list.join(','), 400);
       lines.push(`  ${job.id} ${job.status}${title === '' ? '' : ` "${title}"`}` +
         `${detail === '' ? '' : ` detail="${detail}"`} ` +
         `owner=${job.owner} to=${job.to} provider=${job.provider} repo=${job.repo} keys=${keys} ` +
+        `held=${held} free=${keyList(job.freeKeys)} heldkeys=${keyList(job.heldKeys)} ` +
         `updated=${new Date(job.updatedAt).toISOString()} post=${job.postId}` +
         `${job.statusId === null ? '' : ` status=${job.statusId}`}`);
     }

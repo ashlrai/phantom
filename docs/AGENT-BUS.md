@@ -437,11 +437,16 @@ matcher that has not reached `done` or `terminated`, newest update first
 (the first 50 shown, `matched` the true total, `truncated` definitive).
 `failed` stays listed because only the announcer may move a job and a
 failed one can still be rescheduled or terminated; each item is the feed
-job verbatim with its `postId`/`statusId` citations, so a job still open
+job plus the same per-key hold coverage the `jobs` section computes —
+`held`/`heldKeys`/`freeKeys` under the shared complete/truncated/unknown
+rule — with its `postId`/`statusId` citations, so a job still open
 with claim keys appears in both `jobs` (the claimable view) and `announced`
 (the ownership view), while a `running`/`idle`/`blocked`/`failed` or
 claim-key-less announcement the agent posted no longer leaves the digest
-invisible. A non-ok feed reports the section's own
+invisible. The hold fields let the announcer see that a job reporting
+`running`/`idle` has `held:false` — no live claim on its declared scope —
+without a second `claim list` or `work feed --claims` read; only the
+announcer may reschedule or terminate it. A non-ok feed reports the section's own
 `refused`/`unavailable`/`retryable`/`invalid` state, never an empty list.
 For the
 `next`/`handoffs` sections "addressed to it" means any label of the resolved

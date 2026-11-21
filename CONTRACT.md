@@ -1845,8 +1845,16 @@ to the agent under the jobs section's owner matcher that has not reached
 `done` or `terminated`, newest update first, capped at the first 50 shown
 with `matched` the true total and `truncated` definitive — `failed` stays
 listed because only the announcer may move a job and a failed one can still
-be rescheduled or terminated. Each item is a `BusWorkFeedJob` verbatim, so
-it carries the feed's `postId`/`statusId` envelope citations; a job still
+be rescheduled or terminated. Each item is a `BusWorkMineAnnouncedJob` —
+`BusWorkFeedJob` plus the same per-key hold coverage the jobs section
+computes, so it carries the feed's `postId`/`statusId` envelope citations
+and `held`/`heldKeys`/`freeKeys`: `held` is `true` when a declared key has a
+shown live hold, `false` when complete coverage proves none is held or the
+job declares no keys, `null` when coverage cannot prove either way (a
+`running`/`idle` announcement with `held:false` has no live claim on its
+declared scope — the announcer is the only one who can move it);
+`busWorkMineAnnouncedAnnotation(job, held, coverage)` is the exported pure
+rule over the same coverage/`heldByJob` index the jobs section uses. A job still
 open with claim keys appears in both `jobs` (the claimable view) and
 `announced` (the ownership view). A non-ok feed reports the section's own
 `refused`/`unavailable`/`retryable`/`invalid` state, never an empty list.
