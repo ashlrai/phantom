@@ -2,7 +2,7 @@ import { listBusInboxAfter } from '../core/fleet/bus-inbox.js';
 import { followBusStream, validBusFollowRequest, type BusFollowRecord, type BusFollowRequest } from '../core/fleet/bus-follow-stream.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const usage = 'Usage: ashlr fleet bus-follow --after <nonnegative-safe-cursor> --duration-ms <1..3600000> [--to <agent-or-topic>] [--interval-ms <100..60000>] [--root <absolute>] --json';
+const usage = 'Usage: ashlr fleet bus-follow --after <nonnegative-safe-cursor> --duration-ms <1..3600000> [--to <agent-or-topic>] [--job <id>] [--interval-ms <100..60000>] [--root <absolute>] --json';
 
 interface Dependencies {
   /** Receives one scrubbed JSON line per record; resolves when the line is accepted. */
@@ -53,6 +53,7 @@ export async function cmdFleetBusFollow(args: string[], deps: Dependencies = {})
       'then a final checkpoint at the deadline. --to matches mail addressed to one registered agent identity under ' +
       'every routing label or to a channel it belongs to, minus its own channel posts — the same pending-work rule ' +
       'bus next claims by; an unresolvable --to or unreadable registry keeps exact-label matching. ' +
+      '--job keeps only envelopes naming that job — the same citation rule agents bus inbox --job applies. ' +
       'Local observation only; routing labels are not authenticated identities and bodies are never executed.');
     return 0;
   }
@@ -60,7 +61,7 @@ export async function cmdFleetBusFollow(args: string[], deps: Dependencies = {})
   let json = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--json' && !json) { json = true; continue; }
-    const match = /^(--after|--duration-ms|--to|--interval-ms|--root)(?:=(.*))?$/.exec(args[i]!);
+    const match = /^(--after|--duration-ms|--to|--job|--interval-ms|--root)(?:=(.*))?$/.exec(args[i]!);
     if (!match || Object.hasOwn(values, match[1]!)) return invalid();
     const value = match[2] ?? args[++i];
     if (value === undefined || value === '' || value.startsWith('--')) return invalid();
@@ -73,7 +74,7 @@ export async function cmdFleetBusFollow(args: string[], deps: Dependencies = {})
   const request: BusFollowRequest = {
     after: number('--after'), durationMs: number('--duration-ms'),
     intervalMs: values['--interval-ms'] === undefined ? undefined : number('--interval-ms'),
-    to: values['--to'], root: values['--root'],
+    to: values['--to'], job: values['--job'], root: values['--root'],
   };
   if (!json || !validBusFollowRequest(request)) return invalid();
   const controller = new AbortController(), stop = (): void => controller.abort();
