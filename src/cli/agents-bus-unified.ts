@@ -102,7 +102,11 @@ a shown job's declared claim keys — queue:<jobId> preferred, --key picks
 another declared key — into the shared coordination table, reporting live
 holds on the job's other declared keys; claims coordinate,
 never authenticate. work mine is a read-only per-agent digest — the live
-claims it holds under any of its labels, the open feed jobs still claimable
+claims it holds under any of its labels, where a message-id claim also
+names the retained envelope it leases (id, cursor, kind, sender,
+recipient, scrubbed summary and any live job citation; the claims
+journal's receipt pin decides resolved vs not-found and reports
+pinned=false/unknown on drift), the open feed jobs still claimable
 for it, the feed jobs it announced that have not finished (done and
 terminated drop off; failed stays listed because only the announcer may
 move it), the claimable work envelopes addressed to it or a channel it
