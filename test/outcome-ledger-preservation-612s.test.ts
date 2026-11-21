@@ -198,7 +198,7 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(fold.outcomes).toEqual([{
       schema: 'router.outcome.v1', job_id: 'U1', lane: null, model: null, tier: null, work_class: null,
       merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
-      ttm_s: null, empty: null, exit_code: null, failure_class: null, empty_class: null, passk: null,
+      tokens_total: null, ttm_s: null, empty: null, exit_code: null, failure_class: null, empty_class: null, passk: null,
     }]);
   });
 
@@ -264,20 +264,20 @@ describe('router outcome ledger (612S preservation)', () => {
 
   it('folds finish-row productivity verdicts, newest explicit value wins', () => {
     const fold = foldRouterOutcomes([
-      '{"job":"F1","event":"finish","empty":true,"exit_code":1,"failure_class":"quota","wall_s":10}',
-      '{"job":"F1","event":"finish","empty":false,"exit_code":0,"wall_s":20}',
-      '{"job":"F2","event":"finish","empty":false,"exit_code":-9,"failureClass":"authentication"}',
-      '{"job":"F3","event":"finish","empty":"yes","exit_code":"1","failure_class":"Not A Label!"}',
+      '{"job":"F1","event":"finish","empty":true,"exit_code":1,"failure_class":"quota","wall_s":10,"tokens_total":1000}',
+      '{"job":"F1","event":"finish","empty":false,"exit_code":0,"wall_s":20,"tokens_total":2000}',
+      '{"job":"F2","event":"finish","empty":false,"exit_code":-9,"failureClass":"authentication","tokensTotal":500}',
+      '{"job":"F3","event":"finish","empty":"yes","exit_code":"1","failure_class":"Not A Label!","tokens_total":"many"}',
       '{"job":"F4","event":"claim"}',
       '{"job":"F5","exitCode":3}',
     ].join('\n'));
     const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
     // The newest finish row wins per field; an explicit empty:false and exit 0 are measured values.
-    expect(byId.get('F1')).toMatchObject({ empty: false, exit_code: 0, failure_class: 'quota', wall_s: 20 });
-    // Negative signal exits stay recorded; the camelCase alias joins too.
-    expect(byId.get('F2')).toMatchObject({ empty: false, exit_code: -9, failure_class: 'authentication' });
+    expect(byId.get('F1')).toMatchObject({ empty: false, exit_code: 0, failure_class: 'quota', wall_s: 20, tokens_total: 2000 });
+    // Negative signal exits stay recorded; the camelCase aliases join too.
+    expect(byId.get('F2')).toMatchObject({ empty: false, exit_code: -9, failure_class: 'authentication', tokens_total: 500 });
     // Wrong types and out-of-shape labels are skipped, never coerced or recorded raw.
-    expect(byId.get('F3')).toMatchObject({ empty: null, exit_code: null, failure_class: null });
+    expect(byId.get('F3')).toMatchObject({ empty: null, exit_code: null, failure_class: null, tokens_total: null });
     expect(byId.get('F4')).toMatchObject({ empty: null, exit_code: null, failure_class: null });
     expect(byId.get('F5')).toMatchObject({ exit_code: 3 });
   });
