@@ -25,6 +25,10 @@ export interface SlackStatusReply {
   compose(runsDir: string, now: Date, text?: string): Promise<string>;
   /** Posted when compose throws or misses its deadline. */
   readonly fallback: string;
+  /** Optional read-only evidence block appended to the long live-evidence ask's
+   * recheck reply (runtime identity, claims, Dot bridge owner). A throw keeps
+   * the recheck text alone. */
+  evidence?(runsDir: string, now: Date): Promise<string>;
 }
 
 /** Outcome of the in-thread status answer; on `answered: false` the ask was
@@ -173,8 +177,13 @@ export function isLiveEvidenceAsk(text: string): boolean {
  * gets (the injected composer never falls through to the digest), headed by a
  * line saying the full message was also recorded. Never fabricates state. */
 function recheckOnly(statusReply: SlackStatusReply): SlackStatusReply {
+  const { evidence } = statusReply;
   return { ask: statusReply.ask, fallback: statusReply.fallback,
-    compose: async (runsDir, now) => `Phantom recheck (full message recorded for the Leader):\n${await statusReply.compose(runsDir, now, 'recheck')}` };
+    compose: async (runsDir, now) => {
+      const recheck = `Phantom recheck (full message recorded for the Leader):\n${await statusReply.compose(runsDir, now, 'recheck')}`;
+      if (!evidence) return recheck;
+      try { return `${recheck}\n\n${await evidence.call(statusReply, runsDir, now)}`; } catch { return recheck; }
+    } };
 }
 
 /** Compose with the existing status builder and send through the journaled
