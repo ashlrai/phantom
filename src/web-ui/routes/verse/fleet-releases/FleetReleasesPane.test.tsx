@@ -17,6 +17,7 @@ const fixture = () => ({
 });
 beforeEach(() => evictAll());
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+const station = (repo: string, label: string) => within(screen.getByRole('group', { name: `${repo} release path` })).getByText(label).closest('div')!;
 
 it('renders release data for each repo, with Phantom first', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(fixture())));
@@ -26,8 +27,19 @@ it('renders release data for each repo, with Phantom first', async () => {
   expect(rows).toHaveLength(2);
   expect(rows[0]).toHaveTextContent('ashlrai/phantom');
   expect(rows[0]).toHaveTextContent('Version: 1.2.3 · Tag: v1.2.3');
-  expect(rows[0]).toHaveTextContent('Release: v1.2.3 · New release prerelease');
-  expect(rows[0]).toHaveTextContent('Run: Release · completed/success ·');
+  const published = station('ashlrai/phantom', 'Published');
+  expect(rows[0]).toContainElement(published);
+  expect(within(published).getByText('v1.2.3 prerelease')).toBeInTheDocument();
+  expect(within(published).getByText(/^New release · .+ ago$/)).toBeInTheDocument();
+  expect(published).toHaveAttribute('data-tone', 'warn');
+  const run = station('ashlrai/phantom', 'Release run');
+  expect(within(run).getByText('success')).toBeInTheDocument();
+  expect(within(run).getByText(/^Release · .+ ago$/)).toBeInTheDocument();
+  expect(run).toHaveAttribute('data-tone', 'ok');
+  expect(station('ashlrai/other', 'Published')).toHaveTextContent('Publishednone');
+  expect(station('ashlrai/other', 'Release run')).toHaveTextContent('Release runnone recorded');
+  expect(station('ashlrai/other', 'Release run')).toHaveAttribute('data-tone', 'idle');
+  expect(screen.getByText('Unreleased commits are unknown for every repo.')).toBeInTheDocument();
   expect(within(rows[0]).getByRole('link')).toHaveAttribute('href', 'https://github.com/ashlrai/phantom/releases');
   expect(within(rows[0]).getByRole('link')).toHaveAttribute('target', '_blank');
   expect(within(rows[0]).getByRole('link')).toHaveAttribute('rel', 'noopener noreferrer');
@@ -107,6 +119,12 @@ it('shows the blocked release PR and links its failing check', async () => {
   expect(headline).toHaveTextContent('3.30.0 blocked by Dependency audit (root + Raycast) · open since 3d ago');
   expect(headline).toHaveAttribute('href', 'https://github.com/ashlrai/phantom/pull/1479');
   expect(screen.getByRole('link', { name: 'Dependency audit (root + Raycast) · fail' })).toHaveAttribute('href', 'https://github.com/ashlrai/phantom/actions/runs/1');
+  const pr = station('ashlrai/phantom', 'Release PR');
+  expect(pr).toHaveTextContent('Release PR#1479 blockedopen since 3d ago');
+  expect(pr).toHaveAttribute('data-tone', 'danger');
+  // The PR read holds nothing for the other repo: unknown, not "none open".
+  expect(station('ashlrai/other', 'Release PR')).toHaveTextContent('Release PRunknown');
+  expect(station('ashlrai/other', 'Release PR')).toHaveAttribute('data-tone', 'unknown');
   expect(screen.getByText('Fixture note')).toBeInTheDocument();
 });
 
@@ -117,12 +135,16 @@ it('reports a missing PR and preserves its notes', async () => {
   render(<FleetReleasesPane {...props} />);
   expect(await screen.findByText('No release PR open')).toBeInTheDocument();
   expect(screen.getByText('Fixture note')).toBeInTheDocument();
+  expect(station('ashlrai/phantom', 'Release PR')).toHaveTextContent('Release PRnone open');
+  expect(station('ashlrai/phantom', 'Release PR')).toHaveAttribute('data-tone', 'idle');
 });
 
 it('keeps tags visible when the release PR read fails or is unsupported', async () => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => url.includes('/release-pr') ? Response.json({}, { status: 500 }) : Response.json(fixture())));
   const view = render(<FleetReleasesPane {...props} />);
   expect(await screen.findByText('Release PR state is unavailable.')).toBeInTheDocument();
+  expect(station('ashlrai/phantom', 'Release PR')).toHaveTextContent('Release PRunknown');
+  expect(station('ashlrai/phantom', 'Release PR')).toHaveAttribute('data-tone', 'unknown');
   expect(screen.getByText('Version: 1.2.3 · Tag: v1.2.3')).toBeInTheDocument();
   view.unmount();
   evictAll();

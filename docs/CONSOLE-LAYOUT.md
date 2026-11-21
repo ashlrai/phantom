@@ -522,6 +522,20 @@ a local seat says it has no usage window, an unreadable decision log reads
 unknown rather than empty, and a failed refresh labels the reading as an old
 one.
 
+The Releases pane leads with one sentence: how many commits are waiting for a
+release and in how many repos. Under each repo it draws the release path as
+four stations, left to right: Unreleased (commits since the newest tag),
+Release PR (its number and whether checks are green, running or blocking, a
+merge conflict or a version downgrade), Release run (the latest release
+workflow's result and age) and Published (the newest published tag, marked
+when it is a draft or prerelease). Each station's mark repeats its words:
+green done, amber waiting, red blocked, grey for a recorded nothing such as no
+PR open. A station the reads do not hold (GitHub offline, the release PR read
+failing, an older server without commit counts) is a hollow ring that says
+unknown, never zero or none. The path reads `GET /api/verse/ops/releases` and
+`GET /api/verse/release-pr`; the release PR's checks, notes and merge button
+stay underneath.
+
 Feed puts what the fleet did in one newest-first stream: merged PRs (title and
 repo), published releases, failures (main going red, a job failing or ending
 empty with its reason when known), lanes (a lane hitting its plan limit, being

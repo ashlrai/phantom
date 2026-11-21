@@ -1,7 +1,8 @@
 .root { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); min-width: 0; }
 .header, .message, .notice, .muted { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }
 .notice { color: var(--text-primary); }
-.list { display: flex; flex-direction: column; gap: var(--space-2); list-style: none; margin: 0; padding: 0; }
+.lead { margin: 0; color: var(--text-primary); font-size: var(--text-sm-size); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; }
+.list { display: flex; flex-direction: column; gap: var(--space-4); list-style: none; margin: 0; padding: 0; }
 .row { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; font-size: var(--text-xs-size); }
 .row a { color: var(--accent-500); }
 .prBlock { display: flex; flex-direction: column; gap: var(--space-1); }
@@ -14,4 +15,22 @@
 .row .fail { color: var(--status-danger-fg); background: var(--status-danger-bg); }
 .row .pending { color: var(--status-warning-fg); background: var(--status-warning-bg); }
 .row .skipped { color: var(--status-neutral-fg); background: var(--status-neutral-bg); }
+/* The release path: four stations left to right, joined by a rule. Each station's mark repeats what its words say; unknown is a hollow ring, never a filled dot. Narrow panes wrap to fewer columns. */
+.path { display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: var(--space-2) 0; margin: var(--space-1) 0; }
+.station { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; padding-inline-end: var(--space-2); }
+.station dt { display: flex; align-items: center; gap: var(--space-1); color: var(--text-secondary); white-space: nowrap; }
+.station dt::before { content: ''; flex: none; box-sizing: border-box; width: 0.5rem; height: 0.5rem; border: 1px solid var(--status-unknown-solid); border-radius: var(--radius-full); }
+.station dt::after { content: ''; flex: 1; height: 1px; margin-inline-end: calc(var(--space-2) * -1); background: var(--border-subtle); }
+.station:last-child dt::after { visibility: hidden; }
+.station dd { display: flex; flex-direction: column; margin: 0; font-variant-numeric: tabular-nums; }
+.stationValue { color: var(--text-primary); font-weight: var(--font-weight-semibold); }
+.stationDetail { color: var(--text-secondary); }
+.station[data-tone='idle'] dt::before { border-color: var(--status-neutral-solid); background: var(--status-neutral-solid); }
+.station[data-tone='active'] dt::before { border-color: var(--accent-500); background: var(--accent-500); }
+.station[data-tone='ok'] dt::before { border-color: var(--status-success-solid); background: var(--status-success-solid); }
+.station[data-tone='warn'] dt::before { border-color: var(--status-warning-solid); background: var(--status-warning-solid); }
+.station[data-tone='danger'] dt::before { border-color: var(--status-danger-solid); background: var(--status-danger-solid); }
+.station[data-tone='warn'] .stationValue { color: var(--status-warning-fg); }
+.station[data-tone='danger'] .stationValue { color: var(--status-danger-fg); }
+.station[data-tone='idle'] .stationValue, .station[data-tone='unknown'] .stationValue { color: var(--text-secondary); font-weight: inherit; }
 .notes { margin: 0; padding-left: var(--space-4); color: var(--text-secondary); }

@@ -25,7 +25,10 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it.each([620, 0])('shows %s commits since the tag', async count => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(payload([{ ...repo, commitsSinceTag: count }]))));
   render(createElement(FleetReleasesPane, { visible: true } as PaneProps));
-  expect(await screen.findByText(`${count} commits since v3.29.15`)).toBeInTheDocument();
+  const station = (await screen.findByText('Unreleased')).closest('div')!;
+  expect(station).toHaveTextContent(`Unreleased${count} commitssince v3.29.15`);
+  expect(station).toHaveAttribute('data-tone', count > 0 ? 'active' : 'idle');
+  expect(screen.getByText(count > 0 ? '620 commits waiting for a release in 1 of 1 repo.' : 'Nothing is waiting for a release.')).toBeInTheDocument();
 });
 
 it.each([null, undefined])('shows an unknown count for %s, including older payloads', async count => {
@@ -33,7 +36,10 @@ it.each([null, undefined])('shows an unknown count for %s, including older paylo
   expect(isOpsReleases(payload([row]))).toBe(true);
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(payload([row]))));
   render(createElement(FleetReleasesPane, { visible: true } as PaneProps));
-  expect(await screen.findByText('Commits since tag: unknown')).toBeInTheDocument();
+  const station = (await screen.findByText('Unreleased')).closest('div')!;
+  expect(station).toHaveTextContent(/^Unreleasedunknown$/);
+  expect(station).toHaveAttribute('data-tone', 'unknown');
+  expect(screen.getByText('Unreleased commits are unknown for every repo.')).toBeInTheDocument();
 });
 
 it('orders largest gaps first and unknowns last without mutating input', () => {
@@ -65,7 +71,7 @@ it('shows the real count probed from a fixture checkout', async () => {
     const row = await probeRepoRelease(dir, { identity: () => null });
     vi.stubGlobal('fetch', vi.fn(async () => Response.json(payload([row]))));
     render(createElement(FleetReleasesPane, { visible: true } as PaneProps));
-    expect(await screen.findByText('2 commits since v1.0.0')).toBeInTheDocument();
+    expect((await screen.findByText('Unreleased')).closest('div')).toHaveTextContent('Unreleased2 commitssince v1.0.0');
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
