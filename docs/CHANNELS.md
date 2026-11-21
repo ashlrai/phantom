@@ -219,7 +219,13 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 ([`unified-inbox.ts`](../src/core/comms/unified-inbox.ts)) is the read-only
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
-— unresolved `NEEDS-MASON.md` items, unanswered allowlisted teammate texts,
+— unresolved `NEEDS-MASON.md` items, needs-you answers whose planner-inbox
+relay is not confirmed — the same `readNeedsMasonReplyDeliveries` receipts
+`phm fleet needs` reports as `replyDeliveries`, so the two surfaces can never
+disagree; each pending receipt lists as a warn whose retry resolves the same
+id again (the recorded reply is reused, never re-asked) and each receipt that
+failed validation lists as unreadable with its delivery state unknown —
+unanswered allowlisted teammate texts,
 live owner-thread inbound messages no recorded outbound reply cites (the same
 awaiting-reply mark `phm comms status` counts, each item deep-linking
 `phm comms thread` and `phm comms send-owner --reply-to`), recorded owner

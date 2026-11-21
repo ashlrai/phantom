@@ -29,6 +29,8 @@ import type { AgentConversations } from '../src/core/fleet/agent-conversations.j
 import type { BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { listNeedsMason } from '../src/core/fleet/needs-mason-resolve.js';
+import { writeDelivery } from '../src/core/fleet/needs-mason-reply-delivery.js';
+import { resolveNeedsMasonWithInbox } from '../src/core/fleet/needs-mason-relay.js';
 import { createCommsInboxCommand } from '../src/cli/comms-inbox.js';
 
 let root: string, runsDir: string, busRoot: string, now: number;
@@ -1047,6 +1049,98 @@ describe('owner-delivery undelivered replies in the unified inbox', () => {
     const guarded = stubbed.items.find(i => i.id === 'owner-delivery:m8')!;
     expect(guarded.act).toEqual(['phm comms thread']);
     expect(stubbed.sources['owner-delivery']).toEqual({ state: 'healthy', pending: 2 });
+  });
+});
+
+describe('needs-you reply deliveries in the unified inbox', () => {
+  const failingInbox = async () => ({ ok: false as const, reason: 'write-failed' as const });
+  const deliveryOptions = () => ({ runsDir, bus: { root: busRoot, now: () => now }, now: () => now });
+
+  it('lists a recorded answer not confirmed in the planner inbox with a retry deep link', async () => {
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- Pick a fake color\n');
+    const itemId = listNeedsMason({ runsDir })[0]!.id;
+    // The durable resolution succeeds but the planner-inbox append fails, so
+    // the receipt stays pending — the resolved item itself leaves needs-you.
+    const resolved = await resolveNeedsMasonWithInbox(
+      { itemId, reply: 'Use fake blue' }, { ...deliveryOptions(), appendInbox: failingInbox });
+    expect(resolved).toMatchObject({ ok: true, inbox: 'failed' });
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'needs-you-delivery');
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: `needs-you-delivery:${itemId}`, kind: 'needs-you-delivery', severity: 'warn', blocking: false,
+      title: `Needs-you answer ${itemId} not confirmed in the planner inbox`,
+      detail: 'via Phantom desktop · "Pick a fake color"',
+      since: null, expiresAt: null,
+      act: [`phm fleet needs-resolve ${itemId}`, 'phm fleet needs'],
+    });
+    expect(inbox.sources['needs-you-delivery']).toEqual({ state: 'healthy', pending: 1 });
+    // The resolved ledger line is gone from needs-you: one pending thing, one item.
+    expect(inbox.sources['needs-you']).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(0);
+  });
+
+  it('keeps delivered receipts and a missing directory out of the list', async () => {
+    // No needs-mason-delivery directory at all: a verified-empty read.
+    expect((await read()).sources['needs-you-delivery']).toEqual({ state: 'healthy', pending: 0 });
+    writeDelivery(runsDir, 'nm-aaaaaaaaaaaa', { status: 'delivered', message: '', source: 'CLI', cursor: 0, duplicate: false });
+    writeDelivery(runsDir, 'nm-bbbbbbbbbbbb', { status: 'pending', message: 'Re needs-you nm-bbbbbbbbbbbb: hi', source: 'CLI', cursor: 0, duplicate: false });
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'needs-you-delivery');
+    expect(items.map(i => i.id)).toEqual(['needs-you-delivery:nm-bbbbbbbbbbbb']);
+    expect(items[0]).toMatchObject({ detail: 'via CLI · ledger text unknown' });
+    expect(inbox.sources['needs-you-delivery']).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('lists an unsafe receipt as unreadable with its delivery state unknown', async () => {
+    mkdirSync(join(runsDir, 'needs-mason-delivery'), { recursive: true });
+    writeFileSync(join(runsDir, 'needs-mason-delivery', 'nm-eeeeeeeeeeee.json'), '{not json');
+    const inbox = await read();
+    const item = inbox.items.find(i => i.id === 'needs-you-delivery:nm-eeeeeeeeeeee')!;
+    expect(item).toMatchObject({
+      kind: 'needs-you-delivery', severity: 'warn', blocking: false,
+      title: 'Needs-you delivery receipt nm-eeeeeeeeeeee unreadable',
+      act: ['phm fleet needs'],
+    });
+    expect(inbox.sources['needs-you-delivery']).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('reports an unreadable delivery store as unavailable and still lists the other sources', async () => {
+    writeFileSync(join(runsDir, 'needs-mason-delivery'), 'not a dir');
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const inbox = await read();
+    expect(inbox.sources['needs-you-delivery']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'needs-you-delivery')).toHaveLength(0);
+    expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+
+  it('degrades on a throwing seam and builds items from a stubbed read', async () => {
+    const throwing = await readUnifiedInbox({ runsDir, busRoot, now: () => now, readNeedsDeliveries: () => { throw new Error('boom'); } });
+    expect(throwing.sources['needs-you-delivery']).toEqual({ state: 'unavailable', pending: 0 });
+    const stubbed = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now,
+      readNeedsDeliveries: () => ({ status: 'ok',
+        pending: [
+          { itemId: 'nm-0123456789ab', source: 'CLI', text: 'fake question' },
+          { itemId: 'nm-111111111111', source: 'Telegram', text: null },
+        ],
+        unsafe: ['nm-ffffffffffff'], delivered: 2 }),
+    });
+    const pending = stubbed.items.find(i => i.id === 'needs-you-delivery:nm-0123456789ab')!;
+    expect(pending).toMatchObject({
+      kind: 'needs-you-delivery', severity: 'warn', blocking: false,
+      title: 'Needs-you answer nm-0123456789ab not confirmed in the planner inbox',
+      detail: 'via CLI · "fake question"',
+      act: ['phm fleet needs-resolve nm-0123456789ab', 'phm fleet needs'],
+    });
+    // A ledger line the read could not join stays unknown, never guessed.
+    const unknown = stubbed.items.find(i => i.id === 'needs-you-delivery:nm-111111111111')!;
+    expect(unknown.detail).toBe('via Telegram · ledger text unknown');
+    const unsafe = stubbed.items.find(i => i.id === 'needs-you-delivery:nm-ffffffffffff')!;
+    expect(unsafe).toMatchObject({
+      title: 'Needs-you delivery receipt nm-ffffffffffff unreadable', act: ['phm fleet needs'],
+    });
+    expect(stubbed.sources['needs-you-delivery']).toEqual({ state: 'healthy', pending: 3 });
   });
 });
 
