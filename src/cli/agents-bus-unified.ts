@@ -165,8 +165,9 @@ function integer(raw: string | undefined, name: string): number | undefined {
   return Number(raw);
 }
 
-/** `RQ-1(running) "Fix the feed" detail="why"` — the blocked job named by its
- * announcement title and newest status detail, display-clipped. */
+/** `RQ-1(running) "Fix the feed" detail="why" post=<id> [status=<id>]` — the
+ * blocked job named by its announcement title, newest status detail and the
+ * retained receipts behind it, display-clipped. */
 function claimJobLabel(job: BusClaimJobRef): string {
   // eslint-disable-next-line no-control-regex
   const flat = (value: string): string => scrubSecrets(value).replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -177,7 +178,8 @@ function claimJobLabel(job: BusClaimJobRef): string {
   const title = clip(job.title, 80);
   const detail = job.detail === undefined ? '' : clip(job.detail, 80);
   return `${job.id}(${job.status})${title === '' ? '' : ` "${title}"`}` +
-    `${detail === '' ? '' : ` detail="${detail}"`}`;
+    `${detail === '' ? '' : ` detail="${detail}"`}` +
+    ` post=${job.postId}${job.statusId === null ? '' : ` status=${job.statusId}`}`;
 }
 
 function claimHuman(result: BusClaimResult): string {
