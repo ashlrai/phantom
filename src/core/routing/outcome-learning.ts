@@ -551,7 +551,14 @@ export function learnOutcomes(text: string, censor?: CensorOptions): OutcomeLear
  * is the resource and `tier` keys job type, the only work-shape field the
  * ledger records — `finish` rows carry the token reading (`tokens_total`) an
  * outcome joins by job id, and the metrics-outcomes reconciler's terminal
- * rows are the merge verdicts. Operational rows (concurrency, posture, route
+ * rows are the merge verdicts. `launch_failed`/`launch_terminal` rows are the
+ * recorded death of an attempt: each resolves its open assign as a closed
+ * non-merge so a requeued relaunch counts as a second attempt instead of
+ * silently overwriting the first in the fold's open map. Only rows naming a
+ * job whose `launch` assign is still open in this window resolve — spawn
+ * failures that never wrote a `launch` row, sibling terminal rows for the
+ * same dead attempt, and tails truncated before the assign all skip without
+ * counting as malformed. Operational rows (concurrency, posture, route
  * decisions, claims that never launched) are not outcome evidence and are
  * skipped without counting as malformed.
  */
@@ -573,6 +580,7 @@ function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed
   const usageByJob = new Map<string, number>();
   const launchAtByJob = new Map<string, number>();
   const resolvedJobs = new Set<string>();
+  const openJobs = new Set<string>();
   for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (trimmed === '') continue;
@@ -589,12 +597,21 @@ function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed
       events.push(assign);
       launchAtByJob.set(assign.job, assign.atMs);
       resolvedJobs.delete(assign.job);
+      openJobs.add(assign.job);
       continue;
     }
     if (eventName === 'finish') {
       const job = ledgerJobId(row);
       const usage = finiteNumber(row['tokens_total']);
       if (job !== null && ident(job) && usage !== null) usageByJob.set(job, usage);
+      continue;
+    }
+    if (eventName === 'launch_failed' || eventName === 'launch_terminal') {
+      const job = ledgerJobId(row);
+      if (job !== null && ident(job) && openJobs.has(job)) {
+        openJobs.delete(job);
+        events.push({ kind: 'outcome', job, state: 'closed', usage: null, minutes: null, breakage: 0 });
+      }
       continue;
     }
     const phase = ledgerPhase(row);
@@ -604,6 +621,7 @@ function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed
     const job = ledgerJobId(row);
     if (job === null || !ident(job) || resolvedJobs.has(job)) continue;
     resolvedJobs.add(job);
+    openJobs.delete(job);
     const atMs = ledgerEventTs(row, phase);
     const launchAt = launchAtByJob.get(job);
     const minutes = atMs !== null && launchAt !== undefined && atMs > launchAt ? (atMs - launchAt) / 60_000 : null;

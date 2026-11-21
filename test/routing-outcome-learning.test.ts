@@ -234,6 +234,35 @@ describe('outcome learning', () => {
       expect(cell?.meanMinutesToMerge).toBeCloseTo(45);
     });
 
+    it('counts each recorded dead launch as a failed attempt a relaunch cannot erase', () => {
+      const ledger = [
+        JSON.stringify({ event: 'launch', job: 'J-9', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T00:00:00+00:00' }),
+        JSON.stringify({ event: 'launch_failed', job: 'J-9', lane: 'devin', reason: 'launcher_exited', action: 'retry', attempt: 1, ts: '2026-11-01T00:05:00+00:00' }),
+        // The sweep emits launch_terminal beside every dead launch; the second
+        // row for the same attempt must not count a second failure.
+        JSON.stringify({ event: 'launch_terminal', job: 'J-9', reason: 'launcher-exited', ts: '2026-11-01T00:05:01+00:00' }),
+        // Requeued relaunch of the same job id: a fresh assign, not an overwrite.
+        JSON.stringify({ event: 'launch', job: 'J-9', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T01:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-9', lane: 'devin', tokens_total: 700, wall_s: 300 }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-9', prUrl: 'https://github.com/ashlrai/phantom/pull/9', outcome: 'MERGED', mergedAt: '2026-11-01T02:00:00+00:00', ts: '2026-11-01T02:01:00+00:00' }),
+        // A spawn failure never wrote a launch row: no assign to resolve, and
+        // the row is operational evidence, not malformed input.
+        JSON.stringify({ event: 'launch_terminal', job: 'J-ORPHAN', reason: 'spawn-failed', ts: '2026-11-01T03:00:00+00:00' }),
+        // A give_up verdict resolves the same way; no relaunch follows.
+        JSON.stringify({ event: 'launch', job: 'J-10', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T04:00:00+00:00' }),
+        JSON.stringify({ event: 'launch_failed', job: 'J-10', lane: 'devin', reason: 'provider_credits', action: 'give_up', attempt: 3, ts: '2026-11-01T04:10:00+00:00' }),
+      ].join('\n');
+      const view = outcomeLearningView(learnFleetOutcomes(null, ledger));
+      expect(view.finished).toBe(3);
+      expect(view.malformed).toBe(0);
+      const cell = view.cells.find((c) => c.resource === 'devin' && c.jobType === 'work');
+      // Two attempts on J-9 (dead launch + merged relaunch) plus J-10's
+      // give_up: three attempts, one merge — the dead launches are counted,
+      // not erased by the relaunch's assign.
+      expect(cell).toMatchObject({ attempts: 3, merges: 1, goodMerges: 1, censored: 0 });
+      expect(cell?.mergeRate).toBeCloseTo(1 / 3);
+    });
+
     it('keeps dispatch-log learning identical when the ledger is absent', () => {
       const viaFleet = learnFleetOutcomes(LOG, null);
       const viaPlain = learnOutcomes(LOG);
