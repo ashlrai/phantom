@@ -714,6 +714,21 @@ replies are read once, and the recorded activity once for each job shown.
   without a job, a job whose prompt cites no message, and when the trace was
   not read; `sources.orders` tells an unread trace from no citation. A screen
   can group the sessions by `serves.key` to show who is working on what.
+- `task` follows `summary`: what the session's job was asked to do, the
+  answer the session thread gives. `{line, from, truncated}`, or null.
+  `line` is quoted from the job's brief: the first line written after the
+  fleet view the dispatcher puts in front of a prompt (`## CONTEXT` to
+  `## END CONTEXT`), cut at 160 characters (`truncated`). `from` says what
+  that line is: `title` when the brief wrote it as a markdown heading (the
+  marks, and the job's own id in brackets at its end, are dropped); `queue`
+  when the brief opens with the router's line ("Job … Task from the Ashlr
+  router queue, verbatim:") and `line` is the words of the queue row after
+  it; `opening` for any other first line, which is only how the brief opens
+  and should be labelled so. It is null for a session with no job, when the
+  job's activity was not read, and when the brief holds no line after the
+  fleet view or was cut off inside it. A `brief` message in `messages[]`
+  starts after the fleet view too, with the label "Brief, after its fleet
+  view" and `truncated` true.
 - `work` is each entry's last key: what the session's job has done, as the
   values behind the summary's own sentences, so a screen can draw them
   without reading prose. `{commands, files, step}`: `commands` is the count
@@ -783,6 +798,11 @@ messages Mason wrote in the Leader inbox and, for the leader,
   where, its state and when it last spoke, its helpers, its pull request,
   commands seen and files changed, and its latest recorded step. No model
   writes it, and a fact no record holds reads "unknown".
+- `task`, after `summary`: what the session's job was asked to do, one line
+  quoted from its brief, in the shape each
+  [session threads](#session-threads) entry carries: `{line, from,
+  truncated}`, or null when no line is known. The `brief` message itself is
+  whole here, fleet view included.
 - `work`, between `gaps` and `reply`: what the session's job has done, as
   the values behind those summary sentences, in the shape each
   [session threads](#session-threads) entry carries: `{commands, files,

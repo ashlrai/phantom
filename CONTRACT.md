@@ -1701,6 +1701,29 @@ the pure `sessionWork(activity)` that builds it; in `session-threads.ts`,
 `SessionThreadsWork` is now an alias of that type and `workOf` of that
 function, so an entry and its single thread give the same answer. The last
 four top-level keys stay `reply`, `control`, `depth`, `deeper`.
+Task (additive): the document gains a top-level key between `summary` and
+`messages`, `task: SessionThreadTask | null`, and each entry of
+`fleet.session-threads.v1` gains the same key in the same place.
+`src/core/fleet/session-task.ts` exports the type (`{line, from,
+truncated}`), `SessionTaskFrom` (`'title' | 'queue' | 'opening'`),
+`SESSION_TASK_FROM`, `TASK_LINE_CHARS` (160) and the pure
+`sessionTask(activity, jobId?)`, `briefPastContext(text)` and
+`taskWords(task)`; `session-thread.ts` re-exports `sessionTask` and the type. `sessionTask` quotes the first
+non-blank line of the job's brief after the dispatcher's fleet view
+(`briefPastContext` removes a leading `## CONTEXT` … `## END CONTEXT` block
+and returns null when it never closes): a markdown heading gives
+`from: 'title'` with its marks, and the job's own id in brackets at its end,
+removed; a router envelope line ("Job <id> (…). Task from the Ashlr router
+queue, verbatim:") followed by that job's queue row `<id> (<attrs>): <task>`
+gives `from: 'queue'` and the row's task (a `DEPENDENCY GATE:` line between
+them is skipped); any other line is carried as written with
+`from: 'opening'`. It
+returns null without an `ok` brief or a line to quote, and the builders give
+null for a session with no job. `renderSessionThreadText` and
+`renderSessionThreadsText` print `taskWords` ("Task: …" or "Brief opens: …")
+under the session's line. In `fleet.session-threads.v1` a `brief` message
+whose text opened with a closed fleet view starts after it, labelled
+"Brief, after its fleet view" with `truncated` true.
 `src/core/fleet/session-thread-read.ts` exports `readSessionThread(id,
 options)` with injectable `readMap`, `readSubagents`, `readActivity`,
 `readBus`, `readOwner` and `readReplies`; each read is guarded on its own and the result is

@@ -328,7 +328,9 @@ describe('buildSessionThread', () => {
     const text = renderSessionThreadText(buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, activity: activity(), bus: bus([message('m1', 'leader', 'RQ-A')]) }, NOW));
     const lines = text.split('\n');
     expect(lines[0]).toBe('RQ-A | worker | running');
-    expect(lines[1]).toBe('  Worker on claude, fixture-model, in phantom.');
+    // The fixture's brief has no heading, so its first line is quoted as how the brief opens, above the summary.
+    expect(lines[1]).toBe('  Brief opens: Fix the reply box.');
+    expect(lines[2]).toBe('  Worker on claude, fixture-model, in phantom.');
     expect(text).toContain('> Brief\n    Fix the reply box.');
     expect(text).toContain(`- launch [${ago(30)}]\n    lane=claude`);
     expect(text).toContain(`> leader to RQ-A, status [${ago(5)}]\n    leader says m1`);

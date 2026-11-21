@@ -70,6 +70,28 @@ notice to the chat. Every copy shares one kept reading of
 and refreshes it once a minute while it is on screen; a healthy Leader, an
 unknown reading and a server without that read show nothing.
 
+Every session with a job says what the job was asked to do, as one line
+quoted from its brief. The dispatcher puts a view of the fleet in front of
+each prompt (`## CONTEXT` to `## END CONTEXT`: the roster, live claims, open
+pull requests), so the line is the first one written after it. A brief that
+opens with a heading has a title, shown as **Task**, with the job's own id
+dropped from its end. A job the router queued opens with the router's own
+line ("Job … Task from the Ashlr router queue, verbatim:") and then its queue
+row; the words of that row are shown as **Task** too. Any other brief gives
+its first line, shown as **Brief opens**, because an opening sentence is not
+a title. Nothing is reworded or summarised, and a line over 160 characters is
+cut. The line is under the
+first row of the session's Conversations card, on its row beside an open
+conversation, and at the top of the conversation's Summary; the find box
+above the cards looks in it. `phm sessions threads` and `phm sessions thread`
+print it under the session's own line, and both reads carry it as `task`.
+When no line can be read (no brief on record, or one cut off inside the fleet
+view) a card and the Summary say "Task unknown" rather than quote the roster;
+the leader, a helper and a server that sends no `task` show no line. On a
+card, a brief among the newest messages also starts after the fleet view,
+labelled "Brief, after its fleet view"; the opened conversation keeps the
+brief whole.
+
 For a session with a job, the summary opens with what the job has done, as a
 row of named readings: the latest recorded step and how long ago it was, the
 lines added and removed with the number of files changed, the commands seen
