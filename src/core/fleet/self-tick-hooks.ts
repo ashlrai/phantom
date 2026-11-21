@@ -47,8 +47,8 @@ export function hooksFromPlannerReport(planner: unknown, mode: 'apply' | 'dry-ru
         autofill = { hook: 'autofill', state: 'ran', items: applied, count: null, note: text(auto['reason']) };
         const g = rec(auto['gaps']);
         gaps = g && num(g['queued']) !== null && num(g['candidates']) !== null
-          ? { hook: 'gaps', state: 'ran', items: num(g['queued']), count: num(g['candidates']), note: g['unknown'] === true ? 'some sources unknown' : null }
-          : skipped('gaps', 'the gap hook did not run');
+          ? { hook: 'gaps', state: 'ran', items: num(g['queued']), count: num(g['candidates']), note: text(auto['gapsNote']) ?? (g['unknown'] === true ? 'some sources unknown' : null) }
+          : skipped('gaps', text(auto['gapsNote']) ?? 'no gap note in this report (older build)');
       }
     } else { autofill = skipped('autofill', auto['reason']); gaps = skipped('gaps', text(auto['reason']) ?? 'autofill did not run'); }
   }
