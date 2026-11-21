@@ -1877,7 +1877,7 @@ no execution authority; the token returns only to its acquirer.
 `phm agents bus work mine [<agent>]`. `readBusWorkMine(agent, options?)`
 (`BusWorkMineOptions`: `root?`, `runsRoot?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, claims, jobs, announced, next, handoffs, threads, awaiting, wakes, inbox}` or `{status:'invalid',
+asOf, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
@@ -1999,6 +1999,21 @@ party owing the reply (null for a topic or `group:` address, an
 unregistered label, or an unreadable registry). Same 20-item cap,
 longest-waiting order, `matched`/`truncated`/`skipped` semantics and
 `unavailable`-on-unreadable rule as `threads`.
+`blocked` is the third view over the same shared conversations read — now
+unfiltered, so all three sections narrow one projection at the frozen
+instant: every `state:'blocked'` thread (a blocker or failed report nothing
+has answered) the agent is a party to, where participation is any
+participant name the section's denotes rule matches — the agent's own
+labels, a name resolving to its identity, or a `group:<channel>:<topic>`
+address of a registry channel it belongs to. A block the agent reported
+itself still lists: the thread stays pending until a newer message moves it
+out of the state. Each `BusWorkMineBlockedItem` carries the conversation
+`id`, the latest message's envelope `id` as `messageId`, its `kind`, the
+sender's `from`/`fromAgent`, the recipient `to`, `lastAt`, `blockedMs`
+(ms the thread has stood blocked at the frozen instant), `messageCount` and
+the scrubbed `subject`; the first 20 show longest-standing first with
+`matched` the true total and `truncated` definitive, same
+`matched`/`truncated`/`skipped`/`unavailable` semantics as `threads`.
 `wakes` reuses
 `readAgentWakes` capped at the newest 20 with `matched` the count of every
 hint the bounded queue tail matched for the agent before its row cap —

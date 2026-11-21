@@ -419,7 +419,16 @@ handoffs, each naming `waitingOn` plus the resolved `waitingOnAgent` (null
 for a topic, a `group:` address, an unregistered label or an unreadable
 registry), the same 20-item cap and `matched`/`truncated`/`skipped`
 semantics; the two thread sections are mutually exclusive on every thread —
-the wake
+and the blocked conversation threads it is a party to: every
+`state:'blocked'` thread the one shared conversations read reports (a
+blocker or failed report nothing has answered), narrowed to threads with a
+participant naming the agent under any of its labels or a
+`group:<channel>:<topic>` address of a channel it belongs to — a block the
+agent reported itself still lists, since the thread stays pending until a
+newer message moves it — longest-standing first, the same 20-item cap and
+`matched`/`truncated`/`skipped` semantics, each item citing the latest
+message's envelope `id`, `kind`, sender, recipient `to`, `blockedMs`,
+`messageCount` and scrubbed subject — the wake
 hints addressed to it, capped at the
 newest 20 with `matched` the count of every hint the bounded queue tail
 matched for the agent before its row cap and `truncated` marking queue-tail
