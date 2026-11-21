@@ -1,0 +1,11 @@
+/* The row that narrows one session's conversation. Tokens only; wraps down to 390 px wide. */
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0; padding-left: var(--space-2); border-left: 2px solid transparent; transition: border-color var(--duration-base) var(--ease-standard); }
+/* Something is hidden: the row carries the accent edge the summary has, so a short conversation never reads as a whole one. */
+.bar[data-narrowed] { border-left-color: var(--accent-500); }
+.find { flex: 1 1 160px; max-width: 280px; }
+.n { color: var(--text-secondary); font-weight: 400; font-variant-numeric: tabular-nums; }
+.count { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.clear { flex: none; padding: 0; border: 0; background: none; color: var(--accent-500); font: inherit; cursor: pointer; }
+.clear:hover { text-decoration: underline; }
+.clear:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; border-radius: var(--radius-xs); }
+@media (prefers-reduced-motion: reduce) { .bar { transition: none; } }
