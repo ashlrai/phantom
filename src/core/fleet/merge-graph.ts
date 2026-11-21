@@ -12,7 +12,8 @@ const HOUR = 3_600_000;
  * jobs.jsonl field dialects, the same sets dispatchd's _vc_* helpers,
  * metrics/loop.ts jobTimelines and fleet/eval-report.ts foldJobsLedger
  * accept: job ids take job|job_id|jobId|id; the event name event|type|kind;
- * the phase outcome|state|status (outcome first, so a reconciler-swapped
+ * the phase outcome|state|status plus the producer aliases
+ * phase|result|conclusion (outcome first, so a reconciler-swapped
  * outcome beats a stale copied state); timestamps prefer mergedAt on MERGED
  * rows then ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt
  * (dispatchd's %z stamps need parseLedgerTs); the lane alias pool|arm; the
@@ -20,7 +21,7 @@ const HOUR = 3_600_000;
  */
 const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
-const PHASE_KEYS = ['outcome', 'state', 'status'] as const;
+const PHASE_KEYS = ['outcome', 'state', 'status', 'phase', 'result', 'conclusion'] as const;
 const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
 const TTM_KEYS = ['ttm_s', 'ttmS'] as const;

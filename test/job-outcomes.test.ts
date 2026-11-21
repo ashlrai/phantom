@@ -51,6 +51,22 @@ describe('parseJobOutcomeRows', () => {
     ]);
   });
 
+  it('reads phase, result and conclusion outcome spellings', () => {
+    const rows = parseJobOutcomeRows([
+      JSON.stringify({ event: 'outcome', job: 'RQ-P1', phase: 'MERGED', ts: '2026-11-09T10:00:00Z' }),
+      JSON.stringify({ event: 'outcome', job: 'RQ-P2', result: 'CLOSED', ts: '2026-11-09T10:00:00Z' }),
+      JSON.stringify({ event: 'outcome', job: 'RQ-P3', conclusion: 'MERGED', ts: '2026-11-09T10:00:00Z' }),
+      // An explicit state still wins over a producer alias on the same row.
+      JSON.stringify({ event: 'outcome', job: 'RQ-P4', state: 'CLOSED', phase: 'MERGED', ts: '2026-11-09T10:00:00Z' }),
+    ].join('\n'), NOW, DAY);
+    expect(rows.map((r) => [r.job, r.empty, r.merged])).toEqual([
+      ['RQ-P1', false, true],
+      ['RQ-P2', null, false],
+      ['RQ-P3', false, true],
+      ['RQ-P4', null, false],
+    ]);
+  });
+
   it('counts pre-launch skip verdicts as empty and honours the applied guard', () => {
     const rows = parseJobOutcomeRows([
       JSON.stringify({ ts: '2026-11-09T10:00:00Z', job: 'RQ-S1', event: 'skipped_empty', reason: 'already-merged' }),

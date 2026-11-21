@@ -11,8 +11,10 @@ import { readSource } from './runs-parked-queue.js';
 const clean = (text: string) => scrubSecrets(text).replace(/\p{Cc}/gu, ' ').replace(/\s+/g, ' ').trim();
 const hash = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16);
 const jobId = (row: Record<string, unknown>) => row.job ?? row.job_id ?? row.jobId ?? row.id;
+const PHASE_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
+const phaseOf = (row: Record<string, unknown>) => PHASE_KEYS.map(key => row[key]).find(value => typeof value === 'string');
 const eventTime = (row: Record<string, unknown>) => {
-  const at = row.ts ?? row.timestamp ?? row.at ?? row.mergedAt ?? row.merged_at;
+  const at = row.ts ?? row.timestamp ?? row.at ?? row.time ?? row.mergedAt ?? row.merged_at ?? row.closedAt ?? row.recordedAt ?? row.updatedAt;
   return typeof at === 'number' ? at * (at < 1e12 ? 1000 : 1) : Date.parse(String(at ?? ''));
 };
 function events(text: string, now = Infinity): { rows: Record<string, unknown>[]; dropped: number } {
@@ -23,12 +25,12 @@ function events(text: string, now = Infinity): { rows: Record<string, unknown>[]
       const row: unknown = JSON.parse(line);
       if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error('invalid event');
       const record = row as Record<string, unknown>;
-      if (![record.event, record.state, record.outcome, record.status].some(value => typeof value === 'string')) throw new Error('missing event');
-      const event = String(record.event ?? '').toLowerCase();
+      if (![record.event, record.type, record.kind, record.state, record.outcome, record.status, record.phase, record.result, record.conclusion].some(value => typeof value === 'string')) throw new Error('missing event');
+      const event = String(record.event ?? record.type ?? record.kind ?? '').toLowerCase();
       const at = eventTime(record);
       const timed = ['launch', 'enqueue', 'queued'].includes(event);
-      const lifecycle = timed || ['finish', 'outcome', 'publish', 'merged'].includes(event) || ['state', 'outcome', 'status'].some(key => typeof record[key] === 'string');
-      const invalidTime = ['ts', 'timestamp', 'at', 'mergedAt', 'merged_at'].some(key => {
+      const lifecycle = timed || ['finish', 'outcome', 'publish', 'merged'].includes(event) || PHASE_KEYS.some(key => typeof record[key] === 'string');
+      const invalidTime = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'merged_at', 'closedAt', 'recordedAt', 'updatedAt'].some(key => {
         const value = eventTime({ at: record[key] });
         return record[key] !== undefined && (!Number.isFinite(value) || value > now);
       });
@@ -74,8 +76,8 @@ export async function enrichIdeas(report: IdeaListReport, root: string, dropId: 
   for (const row of events(ledger, Date.parse(report.generatedAt)).rows.sort((a, b) => (eventTime(a) || 0) - (eventTime(b) || 0))) {
     if (typeof jobId(row) !== 'string') continue; // concurrency telemetry is not a job.
     const id = String(jobId(row));
-    const phase = String(row.state ?? row.outcome ?? row.status ?? '').toUpperCase();
-    const event = String(row.event).toLowerCase();
+    const phase = String(phaseOf(row) ?? '').toUpperCase();
+    const event = String(row.event ?? row.type ?? row.kind ?? '').toLowerCase();
     const merged = phase === 'MERGED' || event === 'merged' || [row.merged_at, row.mergedAt].some(at => typeof at === 'string' && Number.isFinite(Date.parse(at)));
     if (merged) lifecycle.set(id, 'shipped');
     else if (lifecycle.get(id) !== 'shipped') {

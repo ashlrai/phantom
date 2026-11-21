@@ -87,7 +87,7 @@ const tsMs = (v: unknown): number => {
 /**
  * jobs.jsonl field dialects the dispatchd `_vc_*` readers and the fleet
  * metrics readers accept: job|job_id|jobId|id, event|type|kind,
- * lane|pool and ts|at|timestamp|time|mergedAt|closedAt|recordedAt|updatedAt.
+ * lane|pool|arm and ts|at|timestamp|time|mergedAt|closedAt|recordedAt|updatedAt.
  */
 const strField = (r: Record<string, unknown>, keys: readonly string[]): string | null => {
   for (const key of keys) {
@@ -105,7 +105,7 @@ const tsField = (r: Record<string, unknown>): number => {
 };
 const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
-const LANE_KEYS = ['lane', 'pool'] as const;
+const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
 const z = (text: string | null | undefined): number | null => text == null ? null : 0;
 
 interface JobRow { event: string; job: string | null; lane: string | null; at: number; raw: Record<string, unknown> }

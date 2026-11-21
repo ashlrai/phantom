@@ -93,7 +93,7 @@ function classifyRow(row: Record<string, unknown>, order: number, now: number): 
   return {
     kind, at, order,
     url: urlOf(row),
-    lane: str(row.lane ?? row.pool),
+    lane: str(row.lane ?? row.pool ?? row.arm),
     action: str(row.action),
     launchedFalse: row.launched === false,
   };

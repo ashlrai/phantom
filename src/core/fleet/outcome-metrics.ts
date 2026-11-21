@@ -75,7 +75,7 @@ const time = (value: unknown): number | null => {
 const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 /** Ledger row time; MERGED prefers mergedAt, CLOSED closedAt. */
 function eventTs(row: Row): number | null {
-  const raw = row.state ?? row.outcome ?? row.status;
+  const raw = row.state ?? row.outcome ?? row.status ?? row.phase ?? row.result ?? row.conclusion;
   const phase = typeof raw === 'string' ? raw.trim().toUpperCase() : '';
   const preferred = phase === 'MERGED' ? 'mergedAt' : phase === 'CLOSED' ? 'closedAt' : null;
   const fields = preferred === null ? TS_KEYS : [preferred, ...TS_KEYS.filter(f => f !== preferred)];
@@ -130,7 +130,7 @@ export function buildOutcomeMetrics(input: OutcomeMetricsInput): OutcomeMetrics 
     if (!kind || !KINDS.has(kind)) continue;
     const at = eventTs(row);
     const job = label(row.job ?? row.job_id ?? row.jobId ?? row.id);
-    const prUrl = url(row.url ?? row.prUrl ?? row.pr_url ?? row.pr);
+    const prUrl = url(row.url ?? row.prUrl ?? row.pr_url ?? row.pr ?? row.html_url);
     if (at === null || (JOB_REQUIRED_KINDS.has(kind) && !job)) { ignoredRows++; continue; }
     if (at <= until) events.push({ row, kind, at, ref: `events:${i}`, job, url: prUrl });
   }
@@ -170,7 +170,8 @@ export function buildOutcomeMetrics(input: OutcomeMetricsInput): OutcomeMetrics 
     for (const a of cohort) { const k = key(a), list = groups.get(k) ?? []; list.push(a); groups.set(k, list); }
     return [...groups].sort(([a], [b]) => a.localeCompare(b));
   };
-  const byLane = grouped(a => label(a.launch.row.lane) ?? 'unknown').map(([k, a]) => group(k, a));
+  const laneLabel = (row: Row): string | null => label(row.lane) ?? label(row.pool) ?? label(row.arm);
+  const byLane = grouped(a => laneLabel(a.launch.row) ?? 'unknown').map(([k, a]) => group(k, a));
   const byModelTier = grouped(a => JSON.stringify([label(a.launch.row.model), label(a.launch.row.tier)]))
     .map(([k, a]) => { const [model, tier] = JSON.parse(k) as [string | null, string | null]; return group(k, a, model, tier); });
   // PRs have their own merge-time cohort, independent of launch time or lane attribution.
@@ -180,7 +181,8 @@ export function buildOutcomeMetrics(input: OutcomeMetricsInput): OutcomeMetrics 
   const coverageEvents = events.filter(e => e.kind === 'revert_coverage');
   let unknownMergeTimes = 0;
   for (const [prUrl, rows] of prs) {
-    const merges = rows.filter(e => e.kind === 'merged' || (e.kind === 'outcome' && (e.row.state ?? e.row.outcome ?? e.row.status) === 'MERGED'));
+    const merges = rows.filter(e => e.kind === 'merged' || (e.kind === 'outcome' &&
+      (e.row.state ?? e.row.outcome ?? e.row.status ?? e.row.phase ?? e.row.result ?? e.row.conclusion) === 'MERGED'));
     if (!merges.length) continue;
     const stamps = [...new Set(merges.map(e => time(e.row.mergedAt) ?? (e.kind === 'merged' ? e.at : null)).filter((t): t is number => t !== null))];
     if (stamps.length !== 1) { unknownMergeTimes++; continue; }

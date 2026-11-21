@@ -52,7 +52,7 @@ const pick = (row: Record<string, unknown>, keys: readonly string[]): string | n
 const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
 const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
-const LANE_KEYS = ['lane', 'pool'] as const;
+const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
 const tsOf = (row: Record<string, unknown>): number => {
   for (const key of TS_KEYS) {
     const v = row[key];

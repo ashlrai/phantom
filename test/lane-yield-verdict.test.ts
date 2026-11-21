@@ -68,6 +68,25 @@ describe('parseLaneJobs', () => {
     ]);
     expect(out.find(j => j.job === 'a')!.at).toBe(Date.parse('2026-11-20T12:00:00Z'));
   });
+
+  it('reads arm lanes and phase/result/conclusion outcome spellings', () => {
+    const lines = [
+      // arm is the lane alias; phase carries a merge verdict.
+      JSON.stringify({ kind: 'launch', job: 'a', arm: 'zai', ts: '2026-11-20T10:00:00Z' }),
+      JSON.stringify({ event: 'finish', job: 'a', empty: false, ts: '2026-11-20T10:05:00Z' }),
+      JSON.stringify({ event: 'outcome', job: 'a', phase: 'MERGED' }),
+      // result carries an empty verdict; conclusion resolves closed.
+      JSON.stringify({ kind: 'launch', job: 'b', arm: 'zai', ts: '2026-11-20T10:00:00Z' }),
+      JSON.stringify({ event: 'outcome', job: 'b', result: 'DONE-NOOP' }),
+      JSON.stringify({ kind: 'launch', job: 'c', arm: 'zai', ts: '2026-11-20T10:00:00Z' }),
+      JSON.stringify({ event: 'outcome', job: 'c', conclusion: 'CLOSED' }),
+    ].join('\n');
+    const out = parseLaneJobs(lines);
+    expect(out.map(j => [j.job, j.lane, j.empty, j.merged])).toEqual([
+      ['a', 'zai', false, true],
+      ['b', 'zai', true, false],
+    ]);
+  });
 });
 
 describe('routing skips low-yield lanes', () => {
