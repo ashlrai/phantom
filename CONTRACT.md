@@ -611,6 +611,31 @@ non-array value or a list whose entries are all unrecognizable reads
 as unrecorded (`null`), while a recorded empty list stays `[]` — the
 market's own "nothing blocked it" verdict, distinct from missing
 evidence.
+`skipped`/`skip_reason`/`skip_code` are the skip gate's recorded launch
+decline: dispatchd's `empty_gate` and precheck skip paths write
+`skipped_empty` rows (with `precheck_skip` the spelling the sibling
+fleet readers — job-outcomes, empties, slot-yield, leader-batches —
+honor for the same receipts), and a row whose `applied` is not `false`
+marks the standing decline — the fleet chose not to launch the job.
+A dry-run receipt (`applied:false`) records the job still launched, so
+it never mints a decline and supersedes a standing one to `false`; a
+later `claim`/`batch_claim`/`launch` dispatch row supersedes it the
+same way, while `finish`/`publish`/`outcome` rows belong to attempts
+already decided and never touch the verdict. The newest skip row
+replaces the standing record wholesale: `skip_reason` is its recorded
+label — `reason`, then `empty_reason`, then `skip_reason`, with a
+bounded-string `code` as the last resort, accepted only in the bounded
+identifier-label shape and skipped rather than replaced by a fallback
+when malformed — and `skip_code` its recorded gate code
+(`code`/`precheck_code` as a non-negative safe integer; a string `code`
+joins `skip_reason` instead). `dupcheck_skip` never joins — it is the
+detailed dupcheck receipt whose paired `skipped_empty` row already
+carries the canonical decline. All three stay `null`/`false` when no
+skip receipt stands: `skipped` is `null` before any skip or dispatch
+row, `false` once superseded, and `skip_reason`/`skip_code` are `null`
+whenever `skipped` is not `true` — a decline distinct from the finish
+row's measured `empty` no-diff verdict, the batch member's
+`task_outcome` word, and terminal no-op phases like `DONE-NOOP`.
 `merged` reads the jobs-ledger outcome dialect the sibling fleet readers
 share: a terminal phase across
 `phase`/`state`/`outcome`/`status`/`result`/`conclusion`, or a `merged` /

@@ -178,7 +178,14 @@ export interface RouterWeightProposalSet {
    * per-member finish row — so a requeued member (`failed`/`deferred`/
    * `unreported`, batcher.RETRY) reads as an explained attempt instead of
    * an unresolved one, while `done`/`skipped` members still awaiting their
-   * own publish verdict count in `unknown_unresolved`. `unknown_unresolved`
+   * own publish verdict count in `unknown_unresolved`. `unknown_skipped`
+   * counts jobs whose standing launch decision is a recorded skip-gate
+   * decline — a `skipped_empty`/`precheck_skip` receipt no later dispatch
+   * superseded — and `unknown_skip_reasons` tallies their recorded reason
+   * labels (the empty-gate vocabulary, bounded `code` strings, and
+   * `code:<n>` for gate-code-only declines, top entries first), so a job
+   * the fleet chose not to launch reads as explained rather than
+   * unresolved. `unknown_unresolved`
    * is the remainder with no recorded failure signal — finished cleanly and
    * awaiting a merge verdict, still in flight, or only transient launch
    * receipts; the ledger simply records no terminal productivity outcome
@@ -190,6 +197,8 @@ export interface RouterWeightProposalSet {
   unknown_failure_classes: { failure_class: string; jobs: number }[];
   unknown_empty_classes: { empty_class: string; jobs: number }[];
   unknown_task_outcomes: { task_outcome: string; jobs: number }[];
+  unknown_skipped: number;
+  unknown_skip_reasons: { reason: string; jobs: number }[];
   unknown_unresolved: number;
   /**
    * Top recorded `usage_missing` labels across every folded outcome —
@@ -338,8 +347,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   const failureClasses = new Map<string, number>();
   const emptyClasses = new Map<string, number>();
   const taskOutcomes = new Map<string, number>();
+  const skipReasons = new Map<string, number>();
   const usageMissing = new Map<string, number>();
   const usageSources = new Map<string, number>();
+  let unknownSkipped = 0;
   for (const o of outcomes) {
     // Usage provenance is capture evidence, not merge evidence: every folded
     // outcome tallies its recorded labels — classified or not.
@@ -355,17 +366,26 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
       // A batch member's task_outcome is its finish boundary: the requeue
       // words (failed/deferred/unreported) are the recorded failure signal,
       // while done/skipped members still await their own publish verdict.
-      // A job carrying none of them has no recorded finish failure — it
-      // finished cleanly awaiting a verdict or is still in flight.
+      // A standing skip-gate decline (skipped_empty/precheck_skip with no
+      // later dispatch) is the recorded launch decision — the fleet chose
+      // not to run the job — so it explains the missing verdict the same
+      // way. A job carrying none of them has no recorded finish failure —
+      // it finished cleanly awaiting a verdict or is still in flight.
       const empty = o.empty === true;
       const nonzeroExit = o.exit_code !== null && o.exit_code !== 0;
       const requeued = o.task_outcome !== null && TASK_OUTCOME_RETRY.has(o.task_outcome);
+      const declined = o.skipped === true;
       if (empty) unknownEmpty++;
       if (nonzeroExit) unknownNonzeroExit++;
       if (o.failure_class !== null) failureClasses.set(o.failure_class, (failureClasses.get(o.failure_class) ?? 0) + 1);
       if (o.empty_class !== null) emptyClasses.set(o.empty_class, (emptyClasses.get(o.empty_class) ?? 0) + 1);
       if (o.task_outcome !== null) taskOutcomes.set(o.task_outcome, (taskOutcomes.get(o.task_outcome) ?? 0) + 1);
-      if (!empty && !nonzeroExit && o.failure_class === null && !requeued) unknownUnresolved++;
+      if (declined) {
+        unknownSkipped++;
+        const key = o.skip_reason ?? (o.skip_code !== null ? `code:${o.skip_code}` : 'unlabeled');
+        skipReasons.set(key, (skipReasons.get(key) ?? 0) + 1);
+      }
+      if (!empty && !nonzeroExit && o.failure_class === null && !requeued && !declined) unknownUnresolved++;
       continue;
     }
     const key = JSON.stringify([o.work_class, o.lane]);
@@ -431,6 +451,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     .map(([task_outcome, jobs]) => ({ task_outcome, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.task_outcome.localeCompare(b.task_outcome))
     .slice(0, 10);
+  const topSkipReasons = [...skipReasons.entries()]
+    .map(([reason, jobs]) => ({ reason, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
+    .slice(0, 10);
   const topUsageMissing = [...usageMissing.entries()]
     .map(([usage_missing, jobs]) => ({ usage_missing, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.usage_missing.localeCompare(b.usage_missing))
@@ -442,7 +466,8 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   return { proposals, known_outcomes: known, unknown_outcomes: unknown, unclassified_outcomes: unclassified,
     unknown_empty: unknownEmpty, unknown_nonzero_exit: unknownNonzeroExit,
     unknown_failure_classes: topFailureClasses, unknown_empty_classes: topEmptyClasses,
-    unknown_task_outcomes: topTaskOutcomes, unknown_unresolved: unknownUnresolved,
+    unknown_task_outcomes: topTaskOutcomes, unknown_skipped: unknownSkipped,
+    unknown_skip_reasons: topSkipReasons, unknown_unresolved: unknownUnresolved,
     usage_missing: topUsageMissing, usage_sources: topUsageSources };
 }
 
@@ -492,6 +517,19 @@ export interface RouterWeightProposalReport {
    * ledger was not read; empty when none recorded.
    */
   unknown_task_outcomes: { task_outcome: string; jobs: number }[] | null;
+  /**
+   * Jobs inside the unknown cohort whose standing launch decision is a
+   * recorded skip-gate decline — see RouterWeightProposalSet. Null when
+   * the ledger was not read; 0 is a real measurement.
+   */
+  unknown_skipped: number | null;
+  /**
+   * Top recorded skip reasons inside the unknown cohort, by jobs — the
+   * empty-gate labels, bounded `code` strings and `code:<n>` gate-code
+   * compositions. Null when the ledger was not read; empty when none
+   * recorded.
+   */
+  unknown_skip_reasons: { reason: string; jobs: number }[] | null;
   unknown_unresolved: number | null;
   /**
    * Top recorded `usage_missing` labels across every folded outcome —
@@ -518,7 +556,7 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
   if (read.state !== 'read') {
     return { ...head, status: 'unavailable', known_outcomes: null, unknown_outcomes: null, unclassified_outcomes: null,
       unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null, unknown_empty_classes: null,
-      unknown_task_outcomes: null, unknown_unresolved: null,
+      unknown_task_outcomes: null, unknown_skipped: null, unknown_skip_reasons: null, unknown_unresolved: null,
       usage_missing: null, usage_sources: null, proposals: [] };
   }
   const set = proposeRouterWeights(read.outcomes, { ...opts, minSamples: bounds.min_samples, maxShift: bounds.max_shift });
@@ -527,7 +565,8 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     unclassified_outcomes: set.unclassified_outcomes,
     unknown_empty: set.unknown_empty, unknown_nonzero_exit: set.unknown_nonzero_exit,
     unknown_failure_classes: set.unknown_failure_classes, unknown_empty_classes: set.unknown_empty_classes,
-    unknown_task_outcomes: set.unknown_task_outcomes, unknown_unresolved: set.unknown_unresolved,
+    unknown_task_outcomes: set.unknown_task_outcomes, unknown_skipped: set.unknown_skipped,
+    unknown_skip_reasons: set.unknown_skip_reasons, unknown_unresolved: set.unknown_unresolved,
     usage_missing: set.usage_missing, usage_sources: set.usage_sources,
     proposals: set.proposals };
 }

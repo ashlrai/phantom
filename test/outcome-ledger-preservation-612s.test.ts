@@ -204,7 +204,8 @@ describe('router outcome ledger (612S preservation)', () => {
       usage_source: null, usage_missing: null,
       ttm_s: null, queue_wait_s: null, ci_wall_s: null, publish_wait_s: null, empty: null, diff_files: null, diff_lines: null,
       exit_code: null, failure_class: null, empty_class: null,
-      task_outcome: null, lane_hint_blocked_by: null, passk: null,
+      task_outcome: null, lane_hint_blocked_by: null,
+      skipped: null, skip_reason: null, skip_code: null, passk: null,
     }]);
   });
 
@@ -712,6 +713,64 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(byId.get('B8')).toMatchObject({ lane_hint_blocked_by: null, merged: true });
     expect(byId.get('B9')).toMatchObject({ lane_hint_blocked_by: ['hysteresis_move_cap'], merged: false });
     expect(byId.get('B10')).toMatchObject({ lane_hint_blocked_by: [] });
+  });
+
+  it('folds the skip gate\'s launch declines, newest dispatch supersedes', () => {
+    const fold = foldRouterOutcomes([
+      // K1: empty-gate decline — the recorded reason label joins.
+      '{"job":"K1","event":"skipped_empty","lane":"alpha","reason":"prompt_empty_same_base_24h","repo":"phantom","task_hash":"abc"}',
+      // K2: precheck decline — the gate's integer exit code joins skip_code,
+      // never a guessed reason.
+      '{"job":"K2","event":"skipped_empty","lane":"beta","repo":"phantom","code":13}',
+      // K3: the precheck_skip spelling sibling readers honor joins alike.
+      '{"job":"K3","type":"precheck_skip","lane":"alpha","code":14}',
+      // K4: a bounded string code is the skip's label when no reason exists.
+      '{"job":"K4","event":"skipped_empty","lane":"alpha","code":"dup"}',
+      // K5: declined, then dispatched — the claim supersedes to false and
+      // clears the recorded label wholesale.
+      '{"job":"K5","event":"skipped_empty","lane":"alpha","reason":"task_empty_repeat_24h"}',
+      '{"job":"K5","event":"claim","lane":"alpha"}',
+      // K6: declined, then a batch member's session claim supersedes too.
+      '{"job":"K6","event":"skipped_empty","lane":"alpha","reason":"upkeep_empty_same_base"}',
+      '{"job":"K6","event":"batch_claim","batch":"RQ-BATCH-k6","lane":"alpha"}',
+      // K7: the dry-run receipt records the job still launched — it clears
+      // a standing decline but never mints one of its own.
+      '{"job":"K7","event":"skipped_empty","lane":"alpha","reason":"prompt_empty_same_base_24h"}',
+      '{"job":"K7","event":"skipped_empty","lane":"alpha","reason":"task_empty_repeat_24h","applied":false}',
+      // K8: a later real decline after the dry run stands again, and the
+      // newest skip row replaces reason/code wholesale.
+      '{"job":"K8","event":"skipped_empty","lane":"alpha","reason":"prompt_empty_same_base_24h","code":11}',
+      '{"job":"K8","event":"skipped_empty","lane":"alpha","code":12}',
+      // K9: finish/publish/outcome rows belong to attempts already decided
+      // and never touch the standing decline.
+      '{"job":"K9","event":"skipped_empty","lane":"alpha","reason":"prompt_empty_same_base_24h"}',
+      '{"job":"K9","event":"finish","lane":"alpha","empty":true,"exit_code":0}',
+      '{"job":"K9","event":"publish","pr_url":"https://github.com/o/r/pull/21"}',
+      // K10: the detailed dupcheck receipt never joins — its paired
+      // skipped_empty row already carries the canonical decline.
+      '{"job":"K10","event":"dupcheck_skip","lane":"alpha","reason":"already_on_master","evidence":"https://github.com/o/r/pull/22"}',
+      // K11: unbounded reason text and non-skip events mint nothing.
+      '{"job":"K11","event":"skipped_empty","lane":"alpha","reason":"not a bounded label!"}',
+      '{"job":"K11","event":"enqueue","lane":"alpha"}',
+      // K12: a launch row supersedes like claim does.
+      '{"job":"K12","event":"skipped_empty","lane":"alpha","code":13}',
+      '{"job":"K12","event":"launch","lane":"alpha"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('K1')).toMatchObject({ skipped: true, skip_reason: 'prompt_empty_same_base_24h', skip_code: null });
+    expect(byId.get('K2')).toMatchObject({ skipped: true, skip_reason: null, skip_code: 13 });
+    expect(byId.get('K3')).toMatchObject({ skipped: true, skip_reason: null, skip_code: 14 });
+    expect(byId.get('K4')).toMatchObject({ skipped: true, skip_reason: 'dup', skip_code: null });
+    expect(byId.get('K5')).toMatchObject({ skipped: false, skip_reason: null, skip_code: null });
+    expect(byId.get('K6')).toMatchObject({ skipped: false, skip_reason: null, skip_code: null });
+    expect(byId.get('K7')).toMatchObject({ skipped: false, skip_reason: null, skip_code: null });
+    // The newest skip row replaced reason and code wholesale: the earlier
+    // reason is gone and the later integer code is the standing record.
+    expect(byId.get('K8')).toMatchObject({ skipped: true, skip_reason: null, skip_code: 12 });
+    expect(byId.get('K9')).toMatchObject({ skipped: true, skip_reason: 'prompt_empty_same_base_24h', empty: true });
+    expect(byId.get('K10')).toMatchObject({ skipped: null, skip_reason: null, skip_code: null });
+    expect(byId.get('K11')).toMatchObject({ skipped: true, skip_reason: null, skip_code: null });
+    expect(byId.get('K12')).toMatchObject({ skipped: false, skip_reason: null, skip_code: null });
   });
 
   it('never lets a session row claim a PR URL or resolve an outcome', () => {

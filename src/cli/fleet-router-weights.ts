@@ -68,7 +68,7 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
   const counts = `known=${report.known_outcomes} unknown=${report.unknown_outcomes} unclassified=${report.unclassified_outcomes} ` +
     `min_samples=${report.bounds.min_samples} max_shift=${report.bounds.max_shift}`;
   const resolution = report.unknown_unresolved === null ? [] : [
-    `unknown resolution: empty=${report.unknown_empty} nonzero_exit=${report.unknown_nonzero_exit} unresolved=${report.unknown_unresolved}` +
+    `unknown resolution: empty=${report.unknown_empty} nonzero_exit=${report.unknown_nonzero_exit} skipped=${report.unknown_skipped} unresolved=${report.unknown_unresolved}` +
       (report.unknown_failure_classes !== null && report.unknown_failure_classes.length > 0
         ? ` failure_classes=${report.unknown_failure_classes.map(c => `${c.failure_class}:${c.jobs}`).join(',')}`
         : '') +
@@ -77,6 +77,9 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
         : '') +
       (report.unknown_task_outcomes !== null && report.unknown_task_outcomes.length > 0
         ? ` task_outcomes=${report.unknown_task_outcomes.map(c => `${c.task_outcome}:${c.jobs}`).join(',')}`
+        : '') +
+      (report.unknown_skip_reasons !== null && report.unknown_skip_reasons.length > 0
+        ? ` skip_reasons=${report.unknown_skip_reasons.map(c => `${c.reason}:${c.jobs}`).join(',')}`
         : ''),
   ];
   const rows = report.proposals.map(p => {

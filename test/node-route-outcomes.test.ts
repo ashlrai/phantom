@@ -17,7 +17,8 @@ const outcome = (job: string, lane: string | null, merged: boolean | null, rever
   usage_source: null, usage_missing: null,
   ttm_s: null, queue_wait_s: null, ci_wall_s: null, publish_wait_s: null, empty: null, diff_files: null, diff_lines: null,
   exit_code: null, failure_class: null, empty_class: null,
-  task_outcome: null, lane_hint_blocked_by: null, passk: null,
+  task_outcome: null, lane_hint_blocked_by: null,
+  skipped: null, skip_reason: null, skip_code: null, passk: null,
 });
 
 describe('foldRouteLaneOutcomes', () => {

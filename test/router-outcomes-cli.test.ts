@@ -39,7 +39,8 @@ function outcome(job_id: string, over: Partial<RouterOutcome> = {}): RouterOutco
     usage_source: null, usage_missing: null,
     ttm_s: null, queue_wait_s: null, ci_wall_s: null, publish_wait_s: null, empty: null, diff_files: null, diff_lines: null,
     exit_code: null, failure_class: null, empty_class: null,
-    task_outcome: null, lane_hint_blocked_by: null, passk: null,
+    task_outcome: null, lane_hint_blocked_by: null,
+    skipped: null, skip_reason: null, skip_code: null, passk: null,
     ...over,
   };
 }
@@ -160,9 +161,9 @@ describe('phm router outcomes', () => {
     const lines = routerOutcomeLines(report);
     expect(lines[0]).toBe('router outcomes state=read eval=missing spend=missing market=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2 session_rows=4');
     expect(lines[1]).toBe(`ledger ${report.path}`);
-    expect(lines[3]).toContain('A lane=alpha model=m1 tier=work work_class=unknown lane_hint=unknown lane_override=unknown merged=unknown reverted=true ci_first_pass=true review=fixed:2,rejected:1,ignored:0 cost_usd=unknown acus=unknown wall_s=unknown ttm_s=unknown queue_wait_s=unknown ci_wall_s=unknown publish_wait_s=unknown tokens_total=unknown passk=unknown empty=unknown exit_code=unknown failure_class=unknown empty_class=unknown task_outcome=done lane_hint_blocked_by=[quota_exhausted,saturated]');
+    expect(lines[3]).toContain('A lane=alpha model=m1 tier=work work_class=unknown lane_hint=unknown lane_override=unknown merged=unknown reverted=true ci_first_pass=true review=fixed:2,rejected:1,ignored:0 cost_usd=unknown acus=unknown wall_s=unknown ttm_s=unknown queue_wait_s=unknown ci_wall_s=unknown publish_wait_s=unknown tokens_total=unknown passk=unknown empty=unknown exit_code=unknown failure_class=unknown empty_class=unknown task_outcome=done skipped=unknown skip_reason=unknown skip_code=unknown lane_hint_blocked_by=[quota_exhausted,saturated]');
     expect(lines[2]).toContain('B lane=unknown model=unknown tier=unknown work_class=docs lane_hint=unknown lane_override=unknown merged=true reverted=unknown');
-    expect(lines[2]).toContain('task_outcome=unknown lane_hint_blocked_by=unknown');
+    expect(lines[2]).toContain('task_outcome=unknown skipped=unknown skip_reason=unknown skip_code=unknown lane_hint_blocked_by=unknown');
   });
 
   it('surfaces truncated coverage in JSON and text without changing exit 0', async () => {
