@@ -2729,7 +2729,15 @@ render clipped to 512 characters. `workFeedJobId(body)` returns the
 feed-citing `jobId`, a `worker-handoff` `taskId`, or the `job:<id>` thread
 label — that `readAgentInbox`, `readAgentChannel`, `comms bus
 read`/`watch --job` and `followBusStream` (`fleet bus-follow --job`) all
-apply, and
+apply;
+`busBodyJobIds(body)` is its set form — every job id the body names under
+the same rule, sorted and deduplicated, so a body matches `--job` exactly
+when the id is in the set — and the unified comms inbox carries it on each
+item's `jobIds` (feed jobs by their id, bus/mailbox bodies by their
+citations, board tasks by `itemId` with deliveries riding their thread's
+citations, conversations by `thread.jobs`, teammate tasks by `jobId`, seat
+handoffs by `node-job` refs) for `comms inbox --job` to match against,
+absent when no job relation is provable; and
 `jobAnnotationFromFeed(feed, jobId)` maps one already-read
 `BusWorkFeedReadResult` to the `BusEnvelopeLookupJob` every citing read
 shares — the inbox page, `readBusEnvelopeById`, wake referents and the

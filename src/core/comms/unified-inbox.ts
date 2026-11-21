@@ -204,8 +204,8 @@
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
  * heuristic, then expiry, then newest. `options.filter` narrows the returned
- * items by stored source, severity or blocking while every per-source report
- * stays unfiltered. Never a model call, never throws, and
+ * items by stored source, severity, blocking or job citation while every
+ * per-source report stays unfiltered. Never a model call, never throws, and
  * never mutates: a degraded store reports its source state and the remaining
  * sources still list. Bus work bodies are untrusted data — titles are scrubbed
  * and single-lined, never dispatched. Deep links are command text only;
@@ -217,7 +217,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
-import { busBodyFallbackSummary, busBodySummary } from '../agents/bus-unified.js';
+import { busBodyFallbackSummary, busBodyJobIds, busBodySummary } from '../agents/bus-unified.js';
 import { coordinationRowBlocks, listCoordination } from '../agents/claim-store.js';
 import { readPendingProposals, readTeamApprovals, type ProposalApprovalItem, type TeamApprovalItem } from '../approvals/surface.js';
 import { listDrafts, type Draft } from '../cos/drafts.js';
@@ -288,6 +288,18 @@ export interface UnifiedInboxItem extends AttentionItem {
   readonly since: string | null;
   /** ISO time it stops being actionable (a bus TTL); null when none. */
   readonly expiresAt: string | null;
+  /**
+   * Every job id the item provably names, sorted — the citation set each
+   * source's own `--job` rule keys on: a bus or mailbox envelope's
+   * `busBodyJobIds` body citation, a feed job's own id, a board task's
+   * `itemId` (a delivery carries the itemIds of the tasks on its thread,
+   * the job-carrying-thread rule `BusBoard.pendingFor` applies), a
+   * conversation thread's `jobs`, a teammate task's `jobId`, or the node-job
+   * refs a seat handoff drains (`bus-claim` refs are claim keys, not job
+   * ids). Absent when the item names no job — unknown stays out of a
+   * `--job` match rather than being guessed in.
+   */
+  readonly jobIds?: readonly string[];
   /** Deep-link commands that act on this item, most direct first. */
   readonly act: readonly string[];
 }
@@ -312,6 +324,11 @@ export interface UnifiedInboxFilter {
   severity?: UnifiedInboxSeverity;
   /** Keep only blocking items when true, only non-blocking when false. */
   blocking?: boolean;
+  /** Keep only items that provably name this job id — the same citation
+   * rule every `--job` bus read shares, joined with the feed-id, board
+   * `itemId`, conversation-thread, teammate-task and seat node-job
+   * citations each source already records in `jobIds`. */
+  job?: string;
 }
 
 export interface UnifiedInbox {
@@ -397,15 +414,21 @@ export interface UnifiedInboxOptions {
   readInboxProposals?: typeof readPendingProposals;
   /** Slack journal seam; default reads the same bounded journal `phm fleet slack-trace` and `phm channels slack status` project. */
   readSlackJournal?: typeof readSlackJournal;
-  /** Optional narrowing of the returned item list by stored source, severity
-   * or blocking. `total`/`omitted`/`items` then describe the matched view and
-   * the applied filter echoes on the report; `sources` stays unfiltered. */
+  /** Optional narrowing of the returned item list by stored source, severity,
+   * blocking or job citation. `total`/`omitted`/`items` then describe the
+   * matched view and the applied filter echoes on the report; `sources` stays
+   * unfiltered. */
   filter?: UnifiedInboxFilter;
 }
 
 const cap = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 const oneLine = (text: string, max: number): string => cap(scrubSecrets(text).replace(/\s+/g, ' ').trim(), max);
 const iso = (ms: number): string => new Date(ms).toISOString();
+/** `jobIds` only when the citation set is non-empty — absent means the item names no job, never a guess. */
+const jobIdsField = (ids: Iterable<string>): { jobIds?: readonly string[] } => {
+  const sorted = [...new Set(ids)].sort();
+  return sorted.length === 0 ? {} : { jobIds: sorted };
+};
 
 function needsYouItems(read: NonNullable<UnifiedInboxOptions['readNeeds']>, runsDir: string | undefined): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   let result: NeedsMasonReadResult;
@@ -577,6 +600,7 @@ function teammateTaskItems(read: NonNullable<UnifiedInboxOptions['readTeammateTa
         (open && timed ? deadlineMs > nowMs ? ` · due in ${plainAge(deadlineMs - nowMs)}` : ` · overdue ${plainAge(nowMs - deadlineMs)}` : ''), DETAIL_MAX) || null,
       since: typeof sinceMs === 'number' && Number.isFinite(sinceMs) ? iso(sinceMs) : null,
       expiresAt: open && timed ? iso(deadlineMs) : null,
+      jobIds: [task.jobId],
       act: ['phm fleet imessage-tasks dispatch --apply', `phm fleet imessage-tasks list --job ${task.jobId}`],
     };
   });
@@ -867,6 +891,7 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
           (report?.detail ? ` — ${report.detail}` : ''), DETAIL_MAX),
         since: iso(job.updatedAt),
         expiresAt: post ? iso(post.expiresAt) : null,
+        jobIds: [job.id],
         act: [
           ...(report === undefined ? [] : [`phm agents bus show ${report.id}`]),
           `phm agents bus work feed --job ${job.id} --claims`,
@@ -897,6 +922,7 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
             ' · no live claim on its declared keys; only the announcer can move it', DETAIL_MAX),
           since: iso(job.updatedAt),
           expiresAt: post ? iso(post.expiresAt) : null,
+          jobIds: [job.id],
           act: [
             ...(report === undefined ? [] : [`phm agents bus show ${report.id}`]),
             `phm agents bus work feed --job ${job.id} --claims`,
@@ -922,6 +948,7 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
           ' · declares no claim keys; nothing can claim it', DETAIL_MAX),
         since: iso(post?.receivedAt ?? job.updatedAt),
         expiresAt: post ? iso(post.expiresAt) : null,
+        jobIds: [job.id],
         act: [`phm agents bus show ${job.postId}`, `phm agents bus work feed --job ${job.id} --claims`],
       });
       continue;
@@ -947,6 +974,7 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
         (holdsKnown ? ` · ${heldCount}/${job.claimKeys.length} claim keys held` : ' · claim holds unknown'), DETAIL_MAX),
       since: iso(post?.receivedAt ?? job.updatedAt),
       expiresAt: post ? iso(post.expiresAt) : null,
+      jobIds: [job.id],
       act: [
         `phm agents bus claim acquire --key ${claimKey} --owner <label> --lease-ms ${SUGGESTED_LEASE_MS}`,
         'phm agents bus work feed --claims',
@@ -1046,6 +1074,7 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
             detail: cap(`from ${envelope.from} to ${envelope.to} · ${envelope.priority} · cursor ${receipt.cursor}`, DETAIL_MAX),
             since: iso(receipt.receivedAt),
             expiresAt: iso(now + envelope.ttl),
+            ...jobIdsField(busBodyJobIds(envelope.body)),
             act: [
               `phm fleet handoff-receive --id ${envelope.id} --to ${envelope.to} --snapshot <abs-json> -- <program> [args...]`,
               `phm agents bus show ${envelope.id}`,
@@ -1070,6 +1099,7 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
         since: iso(receipt.receivedAt),
         // The reader decrements ttl to what remains; expiry is a real deadline.
         expiresAt: iso(now + envelope.ttl),
+        ...jobIdsField(busBodyJobIds(body)),
         act: [`phm fleet bus-claim acquire --id ${envelope.id} --owner <label> --lease-ms ${SUGGESTED_LEASE_MS}`],
       });
     }
@@ -1151,6 +1181,7 @@ function mailboxItems(read: NonNullable<UnifiedInboxOptions['readMailbox']>, opt
       detail: oneLine(`from ${envelope.from} to ${envelope.to} · ${envelope.priority}`, DETAIL_MAX) || null,
       since: isoOrNull(message.acceptedAt),
       expiresAt: isoOrNull(message.acceptedAt + envelope.ttl),
+      ...jobIdsField(busBodyJobIds(envelope.body)),
       act: [`phm bus inbox --to ${envelope.to}`, `phm bus ack ${envelope.id} --to ${envelope.to}`],
     };
   });
@@ -1213,6 +1244,20 @@ function boardItems(read: NonNullable<UnifiedInboxOptions['readBoard']>, options
   if (result.source === 'unavailable') return { report: { state: 'unavailable', pending: 0 }, items: [] };
   if (result.source === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
   const { pending } = result;
+  // The board's own `--job` citation: a thread stays in scope when it carries
+  // a task whose `itemId` equals the job — the fleet item and bus job share
+  // the id namespace — and that thread's deliveries ride along. The map keys
+  // on `pending.tasks.items`, the same capped set the task items come from
+  // (held tasks included, so thread membership never depends on hold state);
+  // a truncated list already degrades the source, and a delivery whose
+  // citing task fell beyond the cap keeps no `jobIds` — unproven, never
+  // guessed.
+  const threadJobs = new Map<string, Set<string>>();
+  for (const task of pending.tasks.items) {
+    const set = threadJobs.get(task.threadId) ?? new Set<string>();
+    set.add(task.itemId);
+    threadJobs.set(task.threadId, set);
+  }
   const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
   for (const delivery of pending.deliveries.items) {
     const text = oneLine(busBoardDeliveryText(delivery), TITLE_MAX);
@@ -1232,6 +1277,7 @@ function boardItems(read: NonNullable<UnifiedInboxOptions['readBoard']>, options
       detail: oneLine(`thread ${delivery.threadId} · ${delivery.sender} → ${delivery.recipient} · awaiting receipt`, DETAIL_MAX) || null,
       since: Number.isFinite(created) ? delivery.createdAt : null,
       expiresAt: null,
+      ...jobIdsField(threadJobs.get(delivery.threadId) ?? []),
       act,
     });
   }
@@ -1257,6 +1303,7 @@ function boardItems(read: NonNullable<UnifiedInboxOptions['readBoard']>, options
         (task.claimed ? ' · claim record on file' : ''), DETAIL_MAX) || null,
       since: null,
       expiresAt: null,
+      jobIds: [task.itemId],
       act,
     });
   }
@@ -1326,6 +1373,7 @@ function conversationItems(read: NonNullable<UnifiedInboxOptions['readConversati
         detail: cap(`from ${last.from} · waiting on ${thread.waiting.on} · ${count} · waiting ${plainAge(thread.waiting.ms)}`, DETAIL_MAX),
         since: thread.waiting.since,
         expiresAt: null,
+        ...jobIdsField(thread.jobs),
         act,
       });
     } else if (thread.state === 'blocked') {
@@ -1341,6 +1389,7 @@ function conversationItems(read: NonNullable<UnifiedInboxOptions['readConversati
         detail: cap(`from ${last.from} · to ${last.to} · ${thread.stateText} for ${plainAge(now() - Date.parse(thread.lastAt))} · ${count}`, DETAIL_MAX),
         since: thread.lastAt,
         expiresAt: null,
+        ...jobIdsField(thread.jobs),
         act,
       });
     }
@@ -1376,6 +1425,10 @@ async function seatItems(read: NonNullable<UnifiedInboxOptions['readSeatHandoffs
       const refs = seat.handoffs.slice(0, SEAT_DETAIL_REFS)
         .map(handoff => `${handoff.work.kind} ${handoff.work.ref}`).join(', ');
       const overflow = count > SEAT_DETAIL_REFS ? ` +${count - SEAT_DETAIL_REFS} more` : '';
+      // A `node-job` ref is the queue job id the seat must drain; a `bus-claim`
+      // ref is a coordination claim key, not a job id.
+      const jobIds = seat.handoffs.filter(handoff => handoff.work.kind === 'node-job')
+        .map(handoff => handoff.work.ref);
       return {
         id: `seats:${seat.seatId}`,
         source: 'seats',
@@ -1386,6 +1439,7 @@ async function seatItems(read: NonNullable<UnifiedInboxOptions['readSeatHandoffs
         detail: oneLine(`${seat.state} · ${refs}${overflow}`, DETAIL_MAX),
         since: null,
         expiresAt: null,
+        ...jobIdsField(jobIds),
         act: [
           `phm bots handoff --seat ${seat.seatId}`,
           `phm bots handoff --seat ${seat.seatId} --apply`,
@@ -1771,12 +1825,16 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   ranked.sort(compareRanked);
   const requested = options.filter;
   const filter = requested !== undefined &&
-    (requested.source !== undefined || requested.severity !== undefined || requested.blocking !== undefined)
+    (requested.source !== undefined || requested.severity !== undefined ||
+      requested.blocking !== undefined || requested.job !== undefined)
     ? requested : undefined;
   const matched = filter === undefined ? ranked : ranked.filter(({ item }) =>
     (filter.source === undefined || item.source === filter.source) &&
     (filter.severity === undefined || item.severity === filter.severity) &&
-    (filter.blocking === undefined || item.blocking === filter.blocking));
+    (filter.blocking === undefined || item.blocking === filter.blocking) &&
+    // A job filter keeps only items whose own citation set names the job —
+    // an item with no provable job relation stays out of the match.
+    (filter.job === undefined || item.jobIds?.includes(filter.job) === true));
   const total = matched.length;
   return {
     v: 1,

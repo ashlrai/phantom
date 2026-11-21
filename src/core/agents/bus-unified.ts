@@ -1807,6 +1807,28 @@ export function busBodyJobId(body: unknown): string | undefined {
 }
 
 /**
+ * Every job id a retained body names under the `busBodyJobMatch` citation
+ * rule — the feed `jobId`/`taskId` citation `busBodyJobId` reads plus the
+ * `job:<id>` v2 thread bucket `busBodyThread` reads — sorted and deduplicated.
+ * `busBodyJobMatch(body, job)` is true exactly when `job` is in this set (for
+ * every non-empty job id), so item-level annotations that carry `jobIds` and
+ * the per-body `--job` filters key on the same citations and can never
+ * disagree. Today a body cites at most one job — the citation kinds are
+ * disjoint — but the set form keeps multi-citation bodies honest if the rule
+ * ever widens.
+ */
+export function busBodyJobIds(body: unknown): string[] {
+  const ids = new Set<string>();
+  const jobId = busBodyJobId(body);
+  if (jobId !== undefined) ids.add(jobId);
+  const thread = busBodyThread(body);
+  if (thread !== null && thread.startsWith('job:') && thread.length > 'job:'.length) {
+    ids.add(thread.slice('job:'.length));
+  }
+  return [...ids].sort();
+}
+
+/**
  * The `BusEnvelopeLookupJob` one already-read feed result produces for a
  * cited `jobId` — shared by the per-envelope `show` lookup and the inbox
  * page annotation so both resolve a citation identically. An `ok` feed

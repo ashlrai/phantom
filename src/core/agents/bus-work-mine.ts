@@ -26,13 +26,13 @@ import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { busClaimJobRef, listBusClaims, type BusClaimsListClaim, type BusClaimsOwnerMatch } from './bus-claims.js';
 import { agentLabels, agentPendingAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity, type AgentRegistry } from './bus-identity.js';
-import { busBodyThread, parseClaimKey } from './bus-v2-schema.js';
-import { JOB_THREAD_PREFIX, type AgentMessageKind } from '../fleet/agent-messages.js';
+import { parseClaimKey } from './bus-v2-schema.js';
+import type { AgentMessageKind } from '../fleet/agent-messages.js';
 import { conversationScope, readAgentConversations, type AgentConversations, type ConversationScope } from '../fleet/agent-conversations.js';
 import { plainAge } from '../fleet/agent-conversation-model.js';
 import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobHold, busWorkFeedOwnerMatcher, busWorkFeedToMatcher,
   busWorkJobDispatch, readBusWorkFeed, type BusWorkFeedHoldCoverage, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
-import { agentWakeClaimHolderSuffix, agentWakeMessageSuffix, busBodyFallbackSummary, busBodyJobId, busBodyJobMatch,
+import { agentWakeClaimHolderSuffix, agentWakeMessageSuffix, busBodyFallbackSummary, busBodyJobIds, busBodyJobId, busBodyJobMatch,
   busBodySummary, busInboxJobMarker, jobAnnotationFromFeed, readAgentInbox, readAgentWakes,
   type AgentWakeRow, type BusEnvelopeLookupJob, type InboxKind } from './bus-unified.js';
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxReceipt } from '../fleet/bus-inbox.js';
@@ -1058,12 +1058,7 @@ function resolveClaimMessage(id: string, owner: string, journal: BusWorkClaimVie
   // Every job the body names under the `busBodyJobMatch` citation rule —
   // the feed `jobId`/`taskId` citation plus the `job:<id>` thread bucket —
   // so a `--job` claims filter keys on the same set the inbox filter does.
-  const jobIds = new Set<string>();
-  if (jobId !== undefined) jobIds.add(jobId);
-  const thread = busBodyThread(body);
-  if (thread !== null && thread.startsWith(JOB_THREAD_PREFIX) && thread.length > JOB_THREAD_PREFIX.length) {
-    jobIds.add(thread.slice(JOB_THREAD_PREFIX.length));
-  }
+  const jobIds = busBodyJobIds(body);
   // The page receipt's ttl is elapsed-adjusted; the original envelope keeps
   // the wire ttl, so expiry is receipt time plus the ttl the sender set.
   const ttl = receipt.originalEnvelope?.ttl ?? receipt.envelope.ttl;
@@ -1075,7 +1070,7 @@ function resolveClaimMessage(id: string, owner: string, journal: BusWorkClaimVie
     bodyKind: claimMessageBodyKind(body),
     summary: mineField(busBodySummary(body) ?? busBodyFallbackSummary(body), WORK_MINE_SUMMARY_MAX),
     ...(jobId === undefined ? {} : { job: jobAnnotationFromFeed(feed, jobId) }),
-    ...(jobIds.size === 0 ? {} : { jobIds: [...jobIds].sort() }),
+    ...(jobIds.length === 0 ? {} : { jobIds }),
     pinned };
 }
 
