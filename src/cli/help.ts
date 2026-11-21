@@ -1412,6 +1412,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'steward disk [--apply] [--json]', desc: 'Measure Codex/Claude/Phantom log roots against retention + quota; dry run unless --apply (deletes oldest eligible files only).', topic: 'integrations' },
   { cmd: 'lanes fit --lane <lane> [--json]', desc: 'Show job kinds to send or avoid from measured PR rates.', topic: 'observability' },
   { cmd: 'lanes caps [--check <prompt-file>] [--json]', desc: 'Show which lanes can use gh, network or a browser, or which can run a job.', topic: 'observability' },
+  { cmd: 'lanes pressure [--json]', desc: 'Say per lane whether this Mac memory is throttling it: local-model lanes step down first, cloud lanes only at critical.', topic: 'observability' },
   { cmd: 'lanes yield [--json] [--since 24h]', desc: 'A verdict per lane over --since (low-yield = 80% or more of 20+ finished jobs empty, which the router will not remap onto; unknown under 10 jobs), then merged PRs per launch over each lane\'s last 50 jobs, by size, with empty rate and the weight the router uses (unknown below 10 jobs = neutral 1).', topic: 'observability' },
   { cmd: 'lanes held [--json]', desc: 'Lanes whose own wrapper held launches in the last 60 min. 3 or more held and no finished job = self-held: the router skips the lane until a launch there finishes or 60 min pass. JSON: lanes.held.v1.', topic: 'observability' },
   { cmd: 'lanes --json', desc: 'Read dispatcher pools, slot caps and local endpoint health.', topic: 'observability' },
