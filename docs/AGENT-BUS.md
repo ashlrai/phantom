@@ -474,8 +474,8 @@ free set. Exit 0 acquired,
 never permits a merge, a push, or spending.
 
 **Per-agent work view.** `phm agents bus work mine [<agent>]` is the read-only
-digest that answers "what is pending for this agent" in one call instead of
-five: the live coordination claims it holds under any of its labels (with the
+digest that answers "what is pending for this agent" in one call: the live
+coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block — the reverse of `work feed --claims`,
 each carrying the feed's `postId`/`statusId` receipt citations like `claim
 list --jobs`),
@@ -550,7 +550,22 @@ envelope `id` `phm bus ack` takes, the `to` label to pass verbatim as
 `--to`, raw `from`, `priority`, `ts`, `expiresAt` and the same scrubbed
 one-line `summary`; an absent store is a verified-empty `ok` and an
 unreadable one reports `unavailable`, never an empty list passed off as
-fact. `addressed` marks jobs whose announcement
+fact. The `board` section is the digest's window into the shared task
+board — the store `phm bus board pending` reads — under every label the
+agent answers to in one locked snapshot, so board work no longer needs a
+separate `--peer` read per label: `peers` names the queried labels the
+board actually knows (each a member of at least one thread), `threads`
+keeps the board's joined-thread rollups, and `deliveries`/`tasks` carry
+the board's pending items — each delivery's `id`+`threadId` feeding
+`phm bus thread ack` directly, each task annotated with the fleet queue's
+observed hold state (`open`/`held`/`ambiguous`/`unknown`, `unknown` for
+every task when the queue cannot be read, never `open` by default) and,
+when held, the owner peer label and lease expiry — never capability
+material. Board paths derive exactly like the board CLI, an absent board
+is a verified-empty `ok` (the read never creates its store), and an
+unreadable board reports `unavailable`, never an empty list passed off as
+fact; board content stays untrusted shared data and grants no authority.
+`addressed` marks jobs whose announcement
 `to` label resolves to the agent's
 identity, and `announced` marks jobs whose `owner` (announcer) label resolves
 to it — the agent posted them and owns their status reports, so the digest

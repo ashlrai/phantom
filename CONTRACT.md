@@ -2047,9 +2047,9 @@ no execution authority; the token returns only to its acquirer.
 
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
 `phm agents bus work mine [<agent>]`. `readBusWorkMine(agent, options?)`
-(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `now?: () => number` frozen once
+(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox}` or `{status:'invalid',
+asOf, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
@@ -2233,6 +2233,40 @@ handle `phm bus ack` takes), the `to` label to pass verbatim as `--to`, raw
 `ashlrHome()`; an absent store is a verified-empty `ok` (`matched: 0` is
 proven, not fabricated) and an unreadable one reports
 `{status:'unavailable', reason}`.
+`board` is the digest's window into the shared task board
+(`src/core/fleet/bus-board.ts`, the store `phm bus board pending` reads)
+that the unified bus never carried: `BusBoard.pendingFor(labels, now)` runs
+the board's own locked snapshot plus one shared-queue claim-index read under
+the union of every label the agent answers to, so an agent on the board no
+longer needs a separate `--peer` read per label. `peers` names the queried
+labels the board actually knows — each a member of at least one thread,
+sorted — so an agent that never joined reads verified-empty rather than
+mistaking "not a peer" for "nothing pending"; `threads` keeps the board's
+joined-thread rollups (member list, pending-delivery count, per-hold task
+counts) and `deliveries`/`tasks` keep the board's 50-item caps with `matched`
+the true totals and `truncated` definitive. Each
+`BusWorkMineBoardDelivery` carries the delivery `id`+`threadId` pair
+`phm bus thread ack` takes, raw `sender`/`recipient` labels, `createdAt`
+and the post text scrubbed, single-lined and clipped; each
+`BusWorkMineBoardTask` carries `id`, `threadId`, the fleet `itemId`, the
+scrubbed single-line `title`, the board's `claimed` flag, the observed
+queue `hold` (`open`/`held`/`ambiguous`/`unknown` — `unknown` for every
+task, with section `claims:'unreadable'`, when the queue cannot be read,
+never `open` by default) and the live `owner` peer label plus lease expiry
+when `held` — never capability material. Labels are the resolved identity's
+`agentLabels` set, or the literal ref alone when no identity resolves —
+the same narrowing the mailbox section applies. Board paths derive exactly
+like the board CLI — `<dirname(root)>/bus` and `<root>/bus-queue`, or the
+configured `fleet.sharedQueue` filesystem `path` and `path/bus` under
+`trustedCoherentStorage`, with `board.root`/`board.queueRoot`/`board.leaseMs`/
+`board.config` as absolute-path and config overrides (`board.config`
+defaults to `loadConfigReadOnlyStrict`, a malformed shared-queue config or a
+relative override reports `unavailable`). A board never used — no
+`state.json` — is a verified-empty `ok` and the read never creates its
+directory or lock file; an unreadable board, a disabled event bus or a read
+fault reports `{status:'unavailable', reason:'board-unreadable'}`. Board
+content stays `trust:'untrusted'` shared data: it coordinates attention,
+never grants execution authority.
 `formatBusWorkMine(result)`
 renders the shared human lines — titles and key lists scrubbed, single-lined
 and display-clipped; JSON keeps full values. Exit 0 on a completed read, 2 on
