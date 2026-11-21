@@ -12,6 +12,23 @@ export interface GeneratorYieldReport {
 type Job = { generator: string | null; explicit: boolean; empty: boolean | null; pr: boolean; merged: boolean; diff: number | null; tokens: number | null };
 const string = (v: unknown): string | null => typeof v === 'string' && v.trim() ? v.trim() : null;
 const count = (v: unknown): number | null => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
+/** jobs.jsonl field dialects, the same sets dispatchd `_vc_pick` accepts:
+ * ids job|job_id|jobId|id, events event|type|kind, phases
+ * state|outcome|status plus producer aliases, timestamps
+ * ts|timestamp|at|startedAt|time|mergedAt|closedAt|recordedAt|updatedAt, and
+ * PR links pr|pr_url|prUrl|url|html_url. */
+const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const EVENT_KEYS = ['event', 'type', 'kind'] as const;
+const PHASE_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
+const TS_KEYS = ['ts', 'timestamp', 'at', 'startedAt', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+const PR_KEYS = ['pr', 'pr_url', 'prUrl', 'url', 'html_url'] as const;
+const pickString = (r: Record<string, unknown>, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const value = string(r[key]);
+    if (value !== null) return value;
+  }
+  return null;
+};
 function generator(id: string): string {
   if (/^FIXUP-/i.test(id)) return 'fixup';
   if (/^RQ-DRAIN-/i.test(id)) return 'drain';
@@ -28,8 +45,8 @@ export function generatorYield(raw: string, hours = 24, now = Date.now()): Gener
     try { value = JSON.parse(line); } catch { malformedLines++; continue; }
     if (!value || typeof value !== 'object' || Array.isArray(value)) { malformedLines++; continue; }
     const r = value as Record<string, unknown>;
-    const id = string(r.job ?? r.job_id ?? r.jobId ?? r.id);
-    const timestamp = string(r.ts ?? r.timestamp ?? r.at ?? r.startedAt);
+    const id = pickString(r, JOB_ID_KEYS);
+    const timestamp = pickString(r, TS_KEYS);
     const at = timestamp ? Date.parse(timestamp) : NaN;
     if (!id || !Number.isFinite(at)) { malformedLines++; continue; }
     if (at < now - hours * 3600000 || at > now) continue;
@@ -37,10 +54,12 @@ export function generatorYield(raw: string, hours = 24, now = Date.now()): Gener
     const src = string(r.src);
     if (src) { job.generator = src; job.explicit = true; }
     else if (!job.explicit) job.generator = generator(id);
+    const phase = pickString(r, PHASE_KEYS);
+    const event = pickString(r, EVENT_KEYS);
     if (typeof r.empty === 'boolean') job.empty = r.empty;
-    if (r.outcome === 'empty') job.empty = true;
-    if (string(r.pr ?? r.pr_url ?? r.prUrl) || (r.event === 'publish' && string(r.url))) job.pr = true;
-    if (String(r.state ?? r.outcome ?? '').toUpperCase() === 'MERGED' || r.event === 'merged') { job.merged = true; job.pr = true; }
+    if (phase?.toLowerCase() === 'empty') job.empty = true;
+    if (pickString(r, PR_KEYS) !== null) job.pr = true;
+    if (phase?.toUpperCase() === 'MERGED' || event?.toLowerCase() === 'merged') { job.merged = true; job.pr = true; }
     job.diff = count(r.diff_lines) ?? job.diff;
     job.tokens = count(r.tokens_total ?? r.tokens) ?? job.tokens;
     jobs.set(id, job);

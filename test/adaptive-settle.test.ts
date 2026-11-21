@@ -66,6 +66,14 @@ describe('adaptive launch settle', () => {
     expect(recentLaunches(reconciled, false, now)).toBe(1); expect(recentLaunches(reconciled, true, now)).toBeNull();
     expect(adaptiveSettle({ ...idle, load1: 100 }, { legacySeconds: 225.5 }).settleSeconds).toBe(225.5);
   });
+  it('reads launch rows across the jobs-ledger field dialect', () => {
+    const dialect = [
+      JSON.stringify({ type: 'launch', job_id: 'A', timestamp: new Date(now - 1000).toISOString() }),
+      JSON.stringify({ kind: 'launch', jobId: 'B', at: new Date(now - 2000).toISOString() }),
+      JSON.stringify({ outcome: 'MERGED', job: 'C', recordedAt: new Date(now - 3000).toISOString() }),
+    ].join('\n');
+    expect(recentLaunches(dialect, false, now)).toBe(2);
+  });
 });
 
 describe('admission explain integration', () => {

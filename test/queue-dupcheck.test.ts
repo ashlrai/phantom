@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { cmdQueueDupcheck } from '../src/cli/queue-dupcheck.js';
 import {
-  DUPCHECK_SCHEMA, commandNouns, dupcheckGoalText, dupcheckJob, panelNouns, referenceCommands, type DupcheckSources,
+  DUPCHECK_SCHEMA, commandNouns, dupcheckGoalText, dupcheckJob, panelNouns, readMergedJobs, referenceCommands, type DupcheckSources,
 } from '../src/core/queue/dupcheck.js';
 
 const help = [
@@ -93,6 +93,19 @@ describe('queue dupcheck', () => {
     await writeFile(join(dir, 'queue/ready.tsv'), `RQ-TEST1\tphantom\tclaude\twork\t${prompt}\n`);
     expect((await dupcheckJob('RQ-TEST1', { root: dir, runsDir: dir, now, help })).source).toEqual({ kind: 'job', id: 'RQ-TEST1' });
     await expect(dupcheckJob('RQ-MISSING', { root: dir, runsDir: dir, help })).rejects.toThrow('not in the queue');
+  });
+
+  it('reads merged job records across the jobs-ledger field dialect', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dupcheck-dialect-'));
+    await mkdir(join(dir, 'metrics'), { recursive: true });
+    const now = Date.parse('2026-11-19T12:00:00Z');
+    await writeFile(join(dir, 'metrics/jobs.jsonl'), [
+      JSON.stringify({ event: 'publish', outcome: 'MERGED', source: 'metrics-outcomes-reconciler', jobId: 'RQ-REC', mergedAt: '2026-11-18T10:00:00Z', pr: 11, title: 'phm queue dupcheck' }),
+      JSON.stringify({ type: 'outcome', status: 'MERGED', id: 'RQ-TYPE', timestamp: '2026-11-18T11:00:00Z', pr: 12, title: 'phm queue dupcheck' }),
+      JSON.stringify({ outcome: 'CLOSED', job: 'RQ-CLOSED', closedAt: '2026-11-18T12:00:00Z', pr: 13, title: 'phm queue dupcheck' }),
+    ].join('\n'));
+    const merged = await readMergedJobs(dir, now);
+    expect(merged?.map(m => m.jobId).sort()).toEqual(['RQ-REC', 'RQ-TYPE']);
   });
 
   it('prints plain words or JSON and rejects bad usage', async () => {
