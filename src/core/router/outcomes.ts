@@ -76,6 +76,13 @@ export interface RouterOutcome {
   cost_usd: number | null;
   wall_s: number | null;
   /**
+   * Recorded usage total in tokens — the finish row's `tokens_total`/
+   * `tokensTotal` spelling. Newest explicit row wins like cost_usd and
+   * wall_s. Null when no jobs row recorded one; never derived from cost
+   * or event names.
+   */
+  tokens_total: number | null;
+  /**
    * Recorded opened-to-merged seconds — the jobs-ledger `ttm_s`/`ttmS`
    * dialect the fleet's merge-pace, merge-graph, throughput, eval-report and
    * job-activity readers share. It belongs to the merge verdict, not to the
@@ -413,7 +420,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     const o: RouterOutcome = outcomes.get(j) ?? {
       schema: 'router.outcome.v1', job_id: j, lane: null, model: null, tier: null, work_class: null,
       merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
-      ttm_s: null, empty: null, exit_code: null, failure_class: null, empty_class: null, passk: null,
+      tokens_total: null, ttm_s: null, empty: null, exit_code: null, failure_class: null, empty_class: null, passk: null,
     };
     o.lane = str(r, 'lane', 'pool', 'arm') ?? o.lane;
     o.model = str(r, 'model') ?? o.model;
@@ -453,6 +460,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     if (typeof r['ci_first_pass'] === 'boolean') o.ci_first_pass = r['ci_first_pass'];
     o.cost_usd = num(r['cost_usd']) ?? num(r['usd']) ?? num(r['cost']) ?? o.cost_usd;
     o.wall_s = num(r['wall_s']) ?? o.wall_s;
+    o.tokens_total = num(r['tokens_total']) ?? num(r['tokensTotal']) ?? o.tokens_total;
     if (typeof r['empty'] === 'boolean') o.empty = r['empty'];
     o.exit_code = exitStatus(r['exit_code']) ?? exitStatus(r['exitCode']) ?? o.exit_code;
     o.failure_class = failureClass(r) ?? o.failure_class;

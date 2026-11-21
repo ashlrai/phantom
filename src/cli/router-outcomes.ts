@@ -3,7 +3,7 @@
  * host metrics ledgers (metrics/jobs.jsonl joined with metrics/api-spend.jsonl
  * for cost_usd) by src/core/router/outcomes.ts: merge and revert state, CI
  * first pass, review findings, cost, wall time, recorded merge latency
- * (ttm_s) and the advisory pass^k join
+ * (ttm_s), recorded token usage (tokens_total) and the advisory pass^k join
  * from eval.lane-scores.v1. Never writes; a missing ledger reports
  * `missing`, an unreadable or non-file one exits 1. Each read retains the
  * newest bounded tail of its ledger, so an oversized ledger reports
@@ -120,7 +120,7 @@ function outcomeLine(o: RouterOutcome): string {
     o.job_id,
     `lane=${text(o.lane)}`, `model=${text(o.model)}`, `tier=${text(o.tier)}`, `work_class=${text(o.work_class)}`,
     `merged=${text(o.merged)}`, `reverted=${text(o.reverted)}`, `ci_first_pass=${text(o.ci_first_pass)}`, `review=${review}`,
-    `cost_usd=${text(o.cost_usd)}`, `wall_s=${text(o.wall_s)}`, `ttm_s=${text(o.ttm_s)}`, `passk=${text(o.passk)}`,
+    `cost_usd=${text(o.cost_usd)}`, `wall_s=${text(o.wall_s)}`, `ttm_s=${text(o.ttm_s)}`, `tokens_total=${text(o.tokens_total)}`, `passk=${text(o.passk)}`,
     `empty=${text(o.empty)}`, `exit_code=${text(o.exit_code)}`, `failure_class=${text(o.failure_class)}`,
     `empty_class=${text(o.empty_class)}`,
   ].join(' ');

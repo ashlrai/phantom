@@ -306,7 +306,9 @@ same bound of `<runs-dir>/metrics/api-spend.jsonl` and
 first: merge and revert state, CI first pass, review findings, cost, wall
 time, recorded merge latency (`ttm_s` — the jobs-ledger `ttm_s`/`ttmS`
 opened-to-merged seconds, taken only from the row that stands as the
-merge verdict and cleared when a later verdict is not a merge),
+merge verdict and cleared when a later verdict is not a merge), recorded
+token usage (`tokens_total` — the finish row's `tokens_total`/`tokensTotal`
+usage total, newest explicit row wins like `cost_usd` and `wall_s`),
 `work_class`, the finish-row productivity verdicts (`empty`,
 `exit_code`, `failure_class` — the row's recorded failure
 classification, resolved `failure_class` → `failure_reason` →
@@ -395,7 +397,8 @@ only; `market_state`/`market_truncated` report the decision journal's
 health the same way. Each proposal also carries an `evidence` block folded
 from the same known cohort: the group's CI first-pass rate, summed review
 findings, mean `cost_usd`, mean `wall_s`, mean recorded `ttm_s` (merge
-latency) and mean advisory `passk` — every
+latency), mean recorded `tokens_total` (token usage) and mean advisory
+`passk` — every
 figure with its own coverage count, and `null` (never zero) when the ledger
 recorded nothing for that signal. The weight math still moves on
 held-merge rate alone; the evidence is context for whoever applies a

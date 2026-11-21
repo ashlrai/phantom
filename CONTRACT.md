@@ -526,7 +526,11 @@ job-activity read): the fold takes it only from the row that last won the
 merge verdict, only when that verdict is a merge, and the newest winning
 row replaces it wholesale — a later close clears it and a merge row
 without the field leaves it `null`. It is never derived from `wall_s` or
-timestamps. The fold is read-only and advisory: it
+timestamps. `tokens_total` is the finish row's recorded usage total
+(`tokens_total`/`tokensTotal`): newest explicit row wins like `cost_usd`
+and `wall_s`, and it
+stays `null` when no jobs row recorded one — never derived from cost or
+event names. The fold is read-only and advisory: it
 never routes, ranks, tunes or writes.
 
 `explainRoutes(root, nowSeconds)` returns nullable `posture` from the bounded
