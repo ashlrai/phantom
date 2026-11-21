@@ -1,0 +1,17 @@
+/* Share bar: one bar for the window's merged PRs, a part per lane, repo or tier, each named under it. Wraps the same at 390 px. */
+.share { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; margin-bottom: var(--space-3); font-size: var(--text-sm-size); }
+.lead { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.lead strong { color: var(--text-primary); font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); }
+/* Parts are split by a gap of the surface, never by a border, so a thin part is still its own colour. */
+.bar { display: flex; gap: 2px; height: 0.625rem; border-radius: var(--radius-full); overflow: hidden; }
+.part { flex-basis: 0; min-width: 3px; background: var(--chart-neutral); transition: flex-grow var(--duration-slow) var(--ease-standard); }
+/* No name in the job record: hatched, so it never reads as a lane of its own. */
+.part[data-kind='unnamed'], .swatch[data-kind='unnamed'] { background: var(--chart-unknown-hatch); }
+.legend { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); margin: 0; padding: 0; list-style: none; }
+.legend li { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.legend li[data-kind='unnamed'] .name, .legend li[data-kind='others'] .name { color: var(--text-secondary); font-style: italic; }
+.swatch { flex: none; width: 0.625rem; height: 0.625rem; border-radius: 2px; background: var(--chart-neutral); }
+.name { min-width: 0; overflow-wrap: anywhere; }
+.count { font-weight: var(--font-weight-semibold); }
+.percent { color: var(--text-secondary); font-size: var(--text-xs-size); }
+@media (prefers-reduced-motion: reduce) { .part { transition: none; } }

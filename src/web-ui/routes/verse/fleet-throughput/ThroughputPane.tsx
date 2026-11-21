@@ -3,7 +3,7 @@
  * (ThroughputBoard.tsx). The window switch asks the same route for 6 hours, 24 hours or 7 days, so no window total is
  * summed in the browser. The rows of bars are one reading cursor (HourBars.tsx): the bar held is kept here, by its start. */
 import { useMemo, useState } from 'react';
-import type { ThroughputCounts, ThroughputReport } from '../../../../core/fleet/throughput.js';
+import type { ThroughputBy, ThroughputCounts, ThroughputReport } from '../../../../core/fleet/throughput.js';
 import { ChartContainer } from '../../../components/charts/ChartContainer.js';
 import type { ChartStatus } from '../../../components/charts/ChartFrame.js';
 import { Funnel } from '../../../components/charts/Funnel.js';
@@ -17,11 +17,13 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { ThroughputHours } from './HourBars.js';
 import { cursorBars } from './throughput-cursor-model.js';
 import { ThroughputFigures, ThroughputFiguresSkeleton, ThroughputLanes } from './ThroughputBoard.js';
+import { ThroughputShare } from './ThroughputShare.js';
+import { groupWords } from './throughput-share-model.js';
 import styles from './fleet-throughput.module.css';
-import { THROUGHPUT_QUERIES, THROUGHPUT_WINDOWS, type ThroughputWindow } from './throughput-query.js';
+import { THROUGHPUT_GROUP_QUERIES, THROUGHPUT_GROUPS, THROUGHPUT_WINDOWS, type ThroughputWindow } from './throughput-query.js';
 
 // The window reads live in throughput-query.ts: Home's Merged PRs card shares the 24 hour one.
-const WINDOWS = THROUGHPUT_WINDOWS, QUERIES = THROUGHPUT_QUERIES;
+const WINDOWS = THROUGHPUT_WINDOWS, GROUPS = THROUGHPUT_GROUPS, QUERIES = THROUGHPUT_GROUP_QUERIES;
 type Window = ThroughputWindow;
 const shown = (value: number | null): string => value === null ? 'unknown' : String(value);
 const minutes = (seconds: number | null): number | null => seconds === null ? null : Math.round(seconds / 6) / 10;
@@ -39,6 +41,7 @@ function Report({ report }: { report: ThroughputReport }) {
   const [cursor, setCursor] = useState<string | null>(null);
   const fleet = useMemo(() => known ? cursorBars(hours) : [], [known, hours]);
   const held = fleet[cursorAt(fleet, cursor) ?? -1] ?? null;
+  const group = groupWords(report.by);
   const unknown = 'Unknown: the job metrics file could not be read.';
   // Stated outright: a window with merges but no launches is still a flow, and an unreadable file is unknown, never an empty one.
   const flow: ChartStatus = !known ? { kind: 'unknown', reason: 'the job metrics file could not be read.' }
@@ -67,18 +70,20 @@ function Report({ report }: { report: ThroughputReport }) {
         height={120} formatY={value => `${value} min`} ariaLabel="Median minutes from publish to merge per hour" />
     </ChartContainer>
     </div>
-    <ChartContainer title="Lanes" description="Most PRs merged first. The bar compares a lane with the one that merged most; the row of bars is its jobs launched across the window, against the busiest bar on any lane."
-      empty={!report.groups.length} emptyMessage={known ? 'No lane activity in this window.' : unknown}
-      table={report.groups.length ? <table><caption>Throughput by lane</caption><thead><tr><th>Lane</th>{HEAD}</tr></thead>
+    <ChartContainer title={group.title} description={`Most PRs merged first. The bar compares a ${group.one} with the one that merged most; the row of bars is its jobs launched across the window, against the busiest bar on any ${group.one}.`}
+      empty={!report.groups.length} emptyMessage={known ? `No ${group.one} activity in this window.` : unknown}
+      table={report.groups.length ? <table><caption>Throughput by {group.one}</caption><thead><tr><th>{group.column}</th>{HEAD}</tr></thead>
         <tbody>{report.groups.map(group => <tr key={group.name}><td>{group.name}</td>{cells(group.totals)}</tr>)}</tbody></table> : undefined}>
-      <ThroughputLanes groups={report.groups} cursor={cursor} onCursor={setCursor} />
+      <ThroughputShare groups={report.groups} by={report.by} />
+      <ThroughputLanes groups={report.groups} by={report.by} cursor={cursor} onCursor={setCursor} />
     </ChartContainer>
   </>;
 }
 
 export function ThroughputPane({ visible }: PaneProps) {
   const [hours, setHours] = useState<Window>('24');
-  const query = QUERIES[hours];
+  const [by, setBy] = useState<ThroughputBy>('lane');
+  const query = QUERIES[by][hours];
   const read = useQuery(query, { enabled: visible, freshMs: 0 });
   const refresh = useRefetch(query);
   usePollWhileVisible(refresh, 60_000, { enabled: visible });
@@ -86,10 +91,10 @@ export function ThroughputPane({ visible }: PaneProps) {
   const report = read.data?.schema === 'throughput.v1' ? read.data : null;
   // The switch stays put while a window is read, so a slow or failed read never takes the way back with it.
   return <section className={styles.root} aria-label="Throughput">
-    <div className={styles.head}><h2>Throughput</h2><Segmented size="sm" aria-label="Window" options={WINDOWS} value={hours} onChange={setHours} /></div>
+    <div className={styles.head}><h2>Throughput</h2><div className={styles.switches}><Segmented size="sm" aria-label="Group by" options={GROUPS} value={by} onChange={setBy} /><Segmented size="sm" aria-label="Window" options={WINDOWS} value={hours} onChange={setHours} /></div></div>
     {/* A failed refresh keeps the last report on screen; it must not read as current. */}
     {report && read.status === 'error' ? <p className={styles.note} data-stale role="status">Could not refresh. Showing the last reading.</p> : null}
-    {report ? <Report key={report.hours} report={report} />
+    {report ? <Report key={`${report.hours}:${report.by}`} report={report} />
       : read.status === 'error' || read.data
         ? <div className={styles.unread}><p className={styles.meta} role="status">Throughput: unknown (the report could not be read).</p><Button size="sm" onClick={refresh}>Try again</Button></div>
         : <><p className={styles.meta} role="status">Reading throughput…</p><ThroughputFiguresSkeleton /></>}

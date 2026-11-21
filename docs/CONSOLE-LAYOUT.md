@@ -253,6 +253,13 @@ kept per hour only, so on a 7 hour bar that figure stays the window's and says
 so. Esc, moving the pointer off the bars or moving focus off the rows lets go.
 While no bar is held each row names its busiest bar. An hour the report holds
 no count for is hatched, and a lane with no hours read gets no bars.
+A second switch groups those cards by lane (the default), repo or tier, the
+same grouping `phm throughput --by repo --json` gives. Above the cards one bar
+splits the window's merged PRs between the groups, with each part's count and
+share named under it: up to six groups get a colour, the rest are folded into
+one part that says how many it holds, and merges whose job record names no
+lane, repo or tier are a hatched part labelled unknown. The bar is left out
+when nothing merged or a count is unknown. Only lanes carry a provider mark.
 Pick 6 hours, 24 hours (the default) or 7 days; each choice
 asks the same route `phm throughput --hours 168 --json` reads, so nothing is
 summed in the browser. An unreadable metrics file shows unknown, a quiet window
