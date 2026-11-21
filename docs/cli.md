@@ -504,7 +504,7 @@ Every command, grouped by topic.
   Safety - sandboxes, invariants, activation
     daemon activation-preflight --request <path> [--json]                                 Read-only verification of operator-custodied signed candidate and rollback artifacts; grants no service authority.
     daemon activate --request <path> --authorize <digest> --confirm <digest> [--json]     Dormant permit-gated 3.2.7 selection; preserves loaded=false and the exact disabled bit, and never starts a service.
-    worktrees [--json] [--reap [--dry-run | --apply]]                                     List job worktrees by state and remove the ones safe to remove.
+    worktrees [--json] [--reap [--dry-run | --apply | --plan]]                            List job worktrees by state and remove the ones safe to remove.
     worktrees prune [--dry-run | --apply] [--json]                                        Preview or remove clean, inactive worktrees for finished jobs.
     worktrees report [--dir <path>] [--json]                                              Report worktree age, size, last log time and job state.
     host top [--json] [--groups] [--floor GB]                                             Show what is using this Mac in plain buckets (fleet workers, local model server, Docker, each desktop app, Phantom, indexing, other) with load, memory pressure, swap used, the free-disk trend (GB per hour, hours to the floor; under 12 hours is a warning) and one suggestion. Read-only: never quits anything; JSON is host.top.v1.

@@ -1429,7 +1429,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'ecosystem doctor [--json] [--deep]', desc: 'Read-only sibling-repository health scan across the ecosystem.', topic: 'integrations' },
   { cmd: 'ecosystem changelog [--json] [--since <window>] [--as-of <instant>] [--root <path>] [--max-pages <n>] [--write]', desc: 'Render the ecosystem changelog from public sources.', topic: 'integrations' },
 
-  { cmd: 'worktrees [--json] [--reap [--dry-run | --apply]]', desc: 'List job worktrees by state and remove the ones safe to remove.', topic: 'safety' },
+  { cmd: 'worktrees [--json] [--reap [--dry-run | --apply | --plan]]', desc: 'List job worktrees by state and remove the ones safe to remove.', topic: 'safety' },
   { cmd: 'worktrees prune [--dry-run | --apply] [--json]', desc: 'Preview or remove clean, inactive worktrees for finished jobs.', topic: 'safety' },
   { cmd: 'worktrees report [--dir <path>] [--json]', desc: 'Report worktree age, size, last log time and job state.', topic: 'safety' },
   { cmd: 'host top [--json] [--groups] [--floor GB]', desc: 'Show what is using this Mac in plain buckets (fleet workers, local model server, Docker, each desktop app, Phantom, indexing, other) with load, memory pressure, swap used, the free-disk trend (GB per hour, hours to the floor; under 12 hours is a warning) and one suggestion. Read-only: never quits anything; JSON is host.top.v1.', topic: 'safety' },
