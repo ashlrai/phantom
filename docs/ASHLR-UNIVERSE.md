@@ -13,8 +13,9 @@ this guide documents the implemented interfaces and their operational boundaries
 
 The useful unit of progress is an improvement demonstrated in a working environment. A universe should be able to propose alternatives, build them, evaluate their effects, retain useful variants, and use the result to choose its next experiment. As models improve, the same loop can explore more ambitious work.
 
-The current repository is `ashlrai/phantom`. The published canonical 3.26.0 release
-uses `@ashlr/phantom` and `@ashlr/phantom/universe`.
+The current repository is `ashlrai/phantom`. Since the canonical 3.26.0 release,
+the published package is `@ashlr/phantom` with the `@ashlr/phantom/universe`
+export; the newest dated release is in [the changelog](../CHANGELOG.md).
 The available 3.25.3 compatibility release uses `@ashlr/hub`. This guide's
 `@ashlr/hub/universe` SDK examples explicitly target that published compatibility
 package. Use `phm universe` or the compatible `ashlr universe` command.
