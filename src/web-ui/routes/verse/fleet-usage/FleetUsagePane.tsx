@@ -4,7 +4,8 @@
  * A board of provider accounts (Claude, Codex, Grok): a headline counting
  * where they stand, the next reset, then one card per account with its brand
  * mark, plan and exactly the windows the provider reported, each reset as a
- * countdown and a local time — minus Claude's retired 5-hour window,
+ * countdown and a local time (and, above the cards, every dated reset on one
+ * line of time) — minus Claude's retired 5-hour window,
  * which Anthropic lifted; the row carries one note saying the weekly window
  * is the whole story — plus the fleet snapshot's own Codex personal figure
  * and a tokens-per-lane table. Accounts and the zero-waste meter audit poll
@@ -47,6 +48,8 @@ import {
 import { ObserveSlice } from '../fleet-observe/ObserveFacts.js';
 import { spendDown, type SpendDownItem } from './spend-down-model.js';
 import { accountStanding, laneSharePct, laneTotals, nextAccountReset, resetLocalTime, usageHeadline } from './usage-board-model.js';
+import { ResetTimeline } from './ResetTimeline.js';
+import { resetTimeline } from './reset-timeline-model.js';
 import styles from './fleet-usage.module.css';
 import compact from '../../../components/layout/compact-view.module.css';
 
@@ -263,6 +266,7 @@ export function FleetUsagePane({ visible }: PaneProps) {
   const next = nextAccountReset(rows, nowMs);
   const sampled = sampledTime(snapshot?.sampledAt ?? null);
   const totals = laneTotals(lanes);
+  const resets = useMemo(() => resetTimeline(rows, personal, nowMs), [rows, personal, nowMs]);
 
   const hasContent = rows.length > 0 || personal !== null || lanes.length > 0;
   const waiting = read === undefined || (runsRead.data === undefined && runsRead.error === undefined);
@@ -295,6 +299,7 @@ export function FleetUsagePane({ visible }: PaneProps) {
 
       <ObserveSlice visible={visible} part="usage" />
       <SpendDownStrip items={spend} nowMs={nowMs} />
+      {resets !== null && <ResetTimeline timeline={resets} />}
 
       {(rows.length > 0 || personal !== null) && (
         <ul className={styles.rows} aria-label="Provider usage">
