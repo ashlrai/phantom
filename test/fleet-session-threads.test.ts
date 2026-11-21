@@ -110,11 +110,12 @@ describe('buildSessionThreads', () => {
     }
   });
 
-  it('says where a reply to each session goes, as the entry\'s last key', async () => {
+  it('says where a reply to each session goes, just before the entry\'s last key', async () => {
     const read = buildSessionThreads(await liveList(), { sessionsRead: true, bus: bus([]), activity: new Map() }, NOW);
     expect(read.threads.map(entry => [entry.session.id, entry.reply.to, entry.reply.mention])).toEqual([['leader', 'leader', null], ['RQ-A', 'job', '@RQ-A'], ['RQ-QUIET', 'job', '@RQ-QUIET']]);
     for (const entry of read.threads) {
-      expect(Object.keys(entry).at(-1)).toBe('reply');
+      expect(Object.keys(entry).slice(-2)).toEqual(['reply', 'serves']);
+      expect(entry.serves).toBeNull();
       expect(entry.reply.hint).not.toBe('');
     }
   });
@@ -194,6 +195,16 @@ describe('buildSessionThreads', () => {
     expect(worker.messages.map(m => m.key)).toEqual(['order:desk-0', 'routing:desk-0']);
     expect(worker.summary.join(' ')).toContain('Serves Mason\'s message of 2026-11-17 06:20 ET');
     expect([read.sources.orders, leader.sources.orders, worker.sources.orders, quiet.sources.orders]).toEqual(['available', 'available', 'available', 'none']);
+    // The worker's entry names the message it serves, with every job the trace ties to it; nobody else's does.
+    expect(worker.serves).toEqual({ key: 'desk-0', at: '2026-11-17 06:20', source: 'desktop', text: 'Fix the reply box.', truncated: false, jobs: 2 });
+    expect([leader.serves, quiet.serves]).toEqual([null, null]);
+    // A served message the inbox read does not hold keeps its time and job count, with no words, under the trace's own key.
+    const unread = buildSessionThreads(list, { ...parts, owner: inbox([]), orders: trace([[ask, jobs]]) }, NOW).threads[1]!;
+    expect(unread.serves).toEqual({ key: '2026-11-17 06:20#desktop', at: '2026-11-17 06:20', source: 'desktop', text: null, truncated: false, jobs: 2 });
+    // The newest of several messages a job serves is the one named; long words are cut and marked.
+    const later = wrote('06:50', 'x'.repeat(900), { id: 'desk-9' });
+    const two = buildSessionThreads(list, { ...parts, owner: inbox([later, ask]), orders: trace([[later, [jobs[0]!]], [ask, jobs]]) }, NOW).threads[1]!;
+    expect([two.serves?.key, two.serves?.jobs, two.serves?.truncated, two.serves?.text?.length]).toEqual(['desk-9', 1, true, 400]);
     // Each entry is the single thread built from the same trace, so the two reads cannot disagree about routing.
     for (const entry of [leader, worker]) {
       expect(entry.sources).toEqual(buildSessionThread(list, entry.session.id, { sessionsRead: true, bus: parts.bus, owner: parts.owner, orders: trace([[ask, jobs]]) }, NOW).sources);
@@ -205,6 +216,7 @@ describe('buildSessionThreads', () => {
       expect(blind.gaps).toContain('Routing unknown: the order trace could not be read.');
       expect(blind.threads.map(entry => entry.messages.filter(m => m.kind === 'routing' || m.kind === 'order').length)).toEqual([0, 0, 0]);
       expect(blind.threads[0]!.messages.map(m => m.key)).toEqual(['owner:desk-0']);
+      expect(blind.threads.map(entry => entry.serves)).toEqual([null, null, null]);
     }
     // Not asked for, or nothing routed: none, and no gap.
     for (const orders of [undefined, trace([[ask, []]])]) {

@@ -6,7 +6,8 @@
  * Pure, and no source of its own. Each entry is the same thread
  * `phm sessions thread <id>` builds (session-thread.ts), cut down to its
  * summary and newest messages (what Mason wrote to it, where the Leader
- * routed it and the last lines a running session wrote included), so a screen
+ * routed it and the last lines a running session wrote included), plus the
+ * message of Mason's its job serves (`serves`), so a screen
  * that shows every session at once makes one request instead of one per
  * session. Sessions come in the order of the session tree: the leader, then
  * each worker followed by its helpers. The reader lives in
@@ -36,6 +37,19 @@ export const THREAD_STATES: readonly SessionThreadState[] = ['running', 'quiet',
  * An `output` message keeps its newest THREADS_OUTPUT_LINES lines, cut from the front, since the end of a log is the news.
  */
 export interface SessionThreadsMessage extends SessionThreadMessage { truncated: boolean }
+/** The message of Mason's a session's job serves: a job serves a message when its prompt cites it (the order trace). */
+export interface SessionThreadsServes {
+  /** The same for every session serving the same message, so a screen of every session can put them together. */
+  key: string;
+  /** The message's time as the inbox wrote it: Eastern wall time to the minute. */
+  at: string;
+  source: string;
+  /** Mason's words, cut to THREADS_TEXT_CHARS (`truncated`); null when the message is not among the inbox entries this read holds. */
+  text: string | null;
+  truncated: boolean;
+  /** Every job the trace ties to the message, whether or not this read shows its session. */
+  jobs: number;
+}
 export interface SessionThreadsEntry {
   session: SessionThreadSession;
   /** The same sentences `phm sessions thread <id>` prints. */
@@ -48,6 +62,11 @@ export interface SessionThreadsEntry {
   gaps: string[];
   /** Where words written to this session go, the answer its single thread gives, so a screen of every session can offer a reply without a second read. */
   reply: SessionThreadReply;
+  /**
+   * The newest message of Mason's this session's job serves; the entry's last key. Null for the leader, a helper and a worker
+   * without a job, when no prompt of the job cites a message, and when the trace was not read: `sources.orders` tells those apart.
+   */
+  serves: SessionThreadsServes | null;
 }
 export interface SessionThreadsV1 {
   schema: typeof SESSION_THREADS_SCHEMA;
@@ -98,6 +117,16 @@ function clipped(message: SessionThreadMessage): SessionThreadsMessage {
   return { ...message, text: cut ? `${message.text.slice(0, THREADS_TEXT_CHARS - 1).trimEnd()}…` : message.text, truncated: cut };
 }
 
+/** The thread's last `order` message is the newest message its job serves; the trace, newest first, names that message's time and jobs. */
+function servedBy(messages: readonly SessionThreadMessage[], jobId: string | null, trace: OrderTraceV1 | null | undefined): SessionThreadsServes | null {
+  const cited = messages.filter(message => message.kind === 'order').at(-1);
+  const order = jobId === null ? undefined : trace?.orders.find(candidate => candidate.jobs.some(job => job.id === jobId));
+  if (!cited || !order) return null;
+  // A `record` order is the thread saying it does not hold the words, so there are none to carry.
+  const said = cited.side === 'other' ? clipped(cited) : null;
+  return { key: cited.key.slice('order:'.length), at: order.at, source: order.source, text: said?.text ?? null, truncated: said?.truncated ?? false, jobs: order.jobs.length };
+}
+
 /** Every session in `list` as a short thread. An unreadable list gives no threads and says so; it never reads as an empty fleet. */
 export function buildSessionThreads(list: LiveSessionsV1, parts: SessionThreadsParts, now: number): SessionThreadsV1 {
   const states = Object.fromEntries(THREAD_STATES.map(state => [state, 0])) as Record<SessionThreadState, number>;
@@ -121,7 +150,8 @@ export function buildSessionThreads(list: LiveSessionsV1, parts: SessionThreadsP
     if (!thread.session) continue;
     states[thread.session.state] += 1;
     threads.push({ session: thread.session, summary: thread.summary, messages: thread.messages.slice(-THREADS_MESSAGES_SHOWN).map(clipped),
-      messageCount: thread.messages.length, sources: thread.sources, gaps: thread.gaps, reply: thread.reply });
+      messageCount: thread.messages.length, sources: thread.sources, gaps: thread.gaps, reply: thread.reply,
+      serves: kind === 'worker' ? servedBy(thread.messages, jobId, parts.orders) : null });
   }
   const gaps = [...list.gaps];
   if (total > shown.length) gaps.push(`${total - shown.length} more session${total - shown.length === 1 ? '' : 's'} not shown: the read holds ${THREADS_MAX}. Narrow it with a lane or repo, or ask for running ones only.`);
