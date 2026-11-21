@@ -382,7 +382,13 @@ same projection back — jobs newest-first, optionally filtered by status,
 exact job id, announcement address or announcing agent and joined with the
 live coordination holds — so the
 whole post/status/feed loop stays on this surface without dropping to
-`phm fleet work-feed`. Every job cites the retained envelopes its state came
+`phm fleet work-feed`. With `--claims`, every open job (`queued`/`rescheduled`)
+also carries the same per-key hold coverage `work mine` reports —
+`freeKeys`/`heldKeys` plus a tri-state `claimable` that is `null` whenever hold
+coverage is `truncated` or `unknown`, never a guess — and the human lines mark
+it `claimable=yes|no|unknown`; non-open jobs and claimless reads carry none of
+the fields, so "which of these can I claim" answers in one read instead of a
+second join. Every job cites the retained envelopes its state came
 from: `postId` is the wire id of the `work.post` receipt that announced it
 and `statusId` the wire id of the newest accepted `work.status` receipt
 (`null` while none has moved it), so `phm agents bus show <id>` resolves the
@@ -863,7 +869,8 @@ authority.
 `{v:1, status, jobs?, receipts, asOf}`; the two CLIs share one status filter,
 one announcement-address filter, newest-first order, hold regrouping and
 human rendering — each job line names the announcement's title, the newest
-status detail when the job carries one, and claim keys,
+status detail when the job carries one, claim keys and, on claim-annotated
+open jobs, `claimable=yes|no|unknown`,
 scrubbed, single-lined and display-clipped while JSON keeps the full values.
 `--to <label>` keeps only jobs whose post was addressed to
 that routing label; like `bus next`, `bus-follow`, handoff receive and claim

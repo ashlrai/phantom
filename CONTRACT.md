@@ -1848,7 +1848,15 @@ adds `claims:{source,holds,truncated}`: holds list each live coordination lease
 blocking a job's declared claim keys (`jobId`, `claimKey`, `owner`,
 `leaseUntil`, `origin`, `sourceId` — tokens never leave the store); `source` is
 `missing`, `available` or `unavailable`, and holds are unknown, not empty, when
-the table is unavailable. Holds cap at 1024 with `truncated` set.
+the table is unavailable. Holds cap at 1024 with `truncated` set. Open jobs
+(`BUS_FEED_OPEN_STATUSES`) additionally carry `freeKeys`, `heldKeys` and
+`claimable` — the same per-key hold coverage `work mine` reports, computed by
+the shared `busWorkFeedJobHold`/`busWorkFeedHoldIndex` helpers in the same
+module: `freeKeys`/`heldKeys` are null unless the coverage proves them and
+`claimable` is true only on a provably free key, false only when every declared
+key is provably held, and null whenever coverage is `truncated` or `unknown`.
+Non-open jobs and reads without `claims` carry none of the fields, and the
+human feed line prints `claimable=yes|no|unknown` on annotated jobs.
 `BUS_FEED_OPEN_STATUSES` is the exported set of feed statuses that still mean
 open for a worker (`queued`, `rescheduled`); the comms inbox pending-work view
 and `claimBusWorkJob` share it so "claimable" means one thing.
