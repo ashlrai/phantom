@@ -698,6 +698,16 @@ replies are read once, and the recorded activity once for each job shown.
   message in the leader's thread, and a worker with a job opens with the
   message it serves (kind `order`) and says so in its summary. Helpers get
   none. The trace is read once for the whole document.
+- `serves` is each entry's last key. For a worker whose job serves a message
+  of Mason's it is `{key, at, source, text, truncated, jobs}`: the newest such
+  message, with a `key` every entry serving it shares, the inbox's own time
+  (`at`, Eastern, to the minute), Mason's words cut at 400 characters (`text`,
+  null when the message is not among the inbox entries read) and `jobs`, a
+  count of every job the trace ties to the message, including ones this
+  document does not show. It is null for the leader, a helper, a worker
+  without a job, a job whose prompt cites no message, and when the trace was
+  not read; `sources.orders` tells an unread trace from no citation. A screen
+  can group the sessions by `serves.key` to show who is working on what.
 - What a running session wrote is part of its thread: an `output` message
   with the last 3 lines of its log (the newest 400 characters of them when
   they are longer, `truncated` true when anything was left out). Only running

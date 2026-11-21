@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; script?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; script?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -63,8 +63,12 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.script ? 'script-shared' : options.web ? 'web-shared' : 'shared';
-      return success(`/usr/bin/git log -1 --format=%H\n${isMaster ? master : head}\n${fixture(name)}`);
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.script ? 'script-shared' : options.web ? 'web-shared' : 'shared';
+      const sha = isMaster ? master : head;
+      const receipt = options.bound
+        ? `Bound candidate ${options.boundHead ?? sha} to event tree ${'e'.repeat(40)}\n`
+        : `/usr/bin/git log -1 --format=%H\n${sha}\n`;
+      return success(`${receipt}${fixture(name)}`);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
       const conclusion = isMaster && options.pass ? 'success' : 'failure';
@@ -105,6 +109,16 @@ describe('CI baseline evidence', () => {
     const fail = await analyzeCiBaseline('owner/repo', github({ count: 1 }).gh);
     expect(fail.groups[0]?.action).toBe('unknown');
   });
+  it('reads default-reporter file-pass lines as master pass evidence', async () => {
+    // The default reporter prints `✓ file (N tests)` for a green module and
+    // no per-test pass lines; a green module means every test in it passed.
+    const flake = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true, filePass: true }).gh);
+    expect(flake.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed', master: 'pass' });
+    const web = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true, filePass: true, web: true }).gh);
+    expect(web.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed', master: 'pass' });
+    const suite = await analyzeCiBaseline('owner/repo', github({ suite: true, pass: true, filePass: true, count: 1 }).gh);
+    expect(suite.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed', master: 'pass' });
+  });
   it('excludes stale and unreadable or unrecognized logs', async () => {
     for (const options of [{ stale: true }, { unknown: true }, { unreadable: true }]) {
       const report = await analyzeCiBaseline('owner/repo', github(options).gh);
@@ -128,6 +142,16 @@ describe('CI baseline evidence', () => {
       expect(poisoned.groups).toEqual([]);
       expect(poisoned.freshness.every(p => p.state === 'unknown')).toBe(true);
     }
+  });
+  it('accepts the source-binding receipt as checkout proof', async () => {
+    // Bound CI jobs print `Bound candidate <sha> to event tree|merge ...`
+    // instead of a `git log -1` echo; the bound revision must equal head.
+    const report = await analyzeCiBaseline('owner/repo', github({ bound: true }).gh);
+    expect(report.groups[0]).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', prs: [1, 2], master: 'fail' });
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    const mismatch = await analyzeCiBaseline('owner/repo', github({ bound: true, boundHead: 'f'.repeat(40) }).gh);
+    expect(mismatch.groups).toEqual([]);
+    expect(mismatch.freshness.every(p => p.state === 'unknown')).toBe(true);
   });
   it('does not infer independence with unresolved imports', async () => {
     const report = await analyzeCiBaseline('owner/repo', github({ imports: "import helper from '#helper';" }).gh);

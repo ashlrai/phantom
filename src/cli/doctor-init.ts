@@ -104,6 +104,7 @@ const DOCTOR_USAGE = [
   '       phm doctor merge-path --repo owner/name [--branch branch] [--json]',
   '       phm doctor worktree [--repair] [--json]',
   '       phm doctor supply [--json]',
+  '       phm doctor build [--json]',
   '',
   'One-glance health check: config, Phantom, providers, ecosystem.',
   'Exits 1 when any check fails; warnings (optional pieces) exit 0.',
@@ -135,6 +136,10 @@ export async function cmdDoctor(args: string[]): Promise<number> {
   if (args[0] === 'supply') {
     const { cmdDoctorSupply } = await import('./doctor-supply.js');
     return cmdDoctorSupply(args.slice(1));
+  }
+  if (args[0] === 'build') {
+    const { cmdDoctorBuild } = await import('./doctor-build.js');
+    return cmdDoctorBuild(args.slice(1));
   }
   if (args[0] === 'worktree') {
     const { cmdDoctorWorktree } = await import('./doctor-worktree.js');

@@ -24,6 +24,10 @@ export interface SupplyCardModel {
   rejects: string;
   /** Age of the last job the gap hook landed, or a plain sentence. */
   lastLanded: string;
+  /** The live-build verdict (`phm doctor build`), or unknown for a Mac whose build predates it. */
+  buildLine: string;
+  /** When the self-tick last ran and what its hooks produced, or "no self-tick run recorded". */
+  selfTickLine: string;
   /** The exact command that prints every number. */
   command: 'phm doctor supply --json';
 }
@@ -68,6 +72,9 @@ export function supplyCardModel(report: SupplyDoctorReport): SupplyCardModel {
     rejects,
     lastLanded: report.selfSupply.lastLanded ? ageText(report.selfSupply.lastLanded, report.generatedAt)
       : known ? 'No self-supplied job has landed yet.' : `Last landed job: unknown (${report.ingested.path} is ${report.ingested.state === 'unknown' ? report.ingested.why : 'unreadable'}).`,
+    // An older Mac's report has neither field; say so instead of showing nothing.
+    buildLine: `Live build: ${(report as Partial<SupplyDoctorReport>).build?.verdict ?? 'unknown (this Mac’s build does not report it yet)'}.`,
+    selfTickLine: `Self-tick: ${(report as Partial<SupplyDoctorReport>).selfTick?.line ?? 'unknown (this Mac’s build does not report it yet)'}.`,
     command: 'phm doctor supply --json',
   };
 }

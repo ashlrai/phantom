@@ -2888,6 +2888,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'work': {
+        const { cmdWork } = await import('./work.js');
+        process.exitCode = await cmdWork(rest);
+        break;
+      }
+
       case 'worklog': {
         const { cmdWorklog } = await import('./worklog.js');
         process.exitCode = await cmdWorklog(rest);

@@ -1,7 +1,7 @@
 /** Hermetic tests for `phm worktrees`: the real audit runs over an in-memory host; Git is never called. */
 import { describe, expect, it, vi } from 'vitest';
 import { cmdWorktrees } from '../src/cli/worktrees.js';
-import { formatWorktrees, readWorktrees, type WorktreesDeps, type WorktreesReport } from '../src/core/fleet/worktrees.js';
+import { WORKTREES_SAFE_AGE_HOURS, formatWorktrees, readWorktrees, worktreeRemoveCommands, type WorktreesDeps, type WorktreesReport } from '../src/core/fleet/worktrees.js';
 import type { WtAuditFs } from '../src/core/fleet/wt-audit.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00Z');
@@ -21,7 +21,7 @@ const JOBS: Record<string, { rows: unknown[]; mtimeHours?: number }> = {
   'RQ-KEPT': { rows: merged('RQ-KEPT') },
   'RQ-UNKNOWN': { rows: [] },
   'RQ-DIRTY': { rows: merged('RQ-DIRTY') },
-  'RQ-NEW': { rows: merged('RQ-NEW', 2), mtimeHours: 2 },
+  'RQ-NEW': { rows: merged('RQ-NEW', 1), mtimeHours: 1 },
   'RQ-LIVEMERGED': { rows: merged('RQ-LIVEMERGED') },
 };
 
@@ -224,4 +224,87 @@ it('apply re-reads the records first: a job relaunched since the read is refused
   });
   expect(report.removals).toEqual([{ job: 'RQ-EMPTY', status: 'removed' }, { job: 'RQ-MERGED', status: 'refused', reason: 'state-changed' }]);
   expect(deps.remove.mock.calls.map(([path]) => path)).toEqual(['/wt/RQ-EMPTY']);
+});
+
+describe('age rule per class', () => {
+  const aged = (hours: number, rows: (job: string, h: number) => unknown[]) =>
+    ({ 'RQ-AGED': { rows: rows('RQ-AGED', hours), mtimeHours: hours } });
+  const emptyRows = (job: string, h: number) => [launch(job, h + 1), { event: 'finish', job, empty: true, ts: iso(h) }];
+  const verdict = async (jobs: typeof JOBS) => row(await readWorktrees('list', host({ jobs, dirty: new Set() })), 'RQ-AGED');
+
+  it('names two hours for merged and empty', () => {
+    expect(WORKTREES_SAFE_AGE_HOURS).toEqual({ merged: 2, empty: 2 });
+  });
+
+  it.each([['merged', merged], ['empty', emptyRows]] as const)('a %s worktree is safe at 2 h and held just under', async (_state, rows) => {
+    expect(await verdict(aged(2, rows))).toMatchObject({ safe: true, hold: null });
+    expect(await verdict(aged(1.9, rows))).toMatchObject({ safe: false, hold: 'too-new' });
+    // The old 6 h rule no longer applies.
+    expect(await verdict(aged(5, rows))).toMatchObject({ safe: true });
+  });
+
+  it('says how young a held row is in plain words', async () => {
+    const report = await readWorktrees('list', host({ jobs: aged(1.5, merged), dirty: new Set() }));
+    expect(formatWorktrees(report)).toContain('RQ-AGED\tashlrai/phantom\tmerged PR\t2 h\t-\tno, under 2 hours old');
+  });
+
+  it('live and open-PR worktrees stay held however old they are', async () => {
+    const jobs = {
+      'RQ-LIVE': { rows: [launch('RQ-LIVE', 40)], mtimeHours: 40 },
+      'RQ-OPEN': { rows: [launch('RQ-OPEN', 40), { event: 'outcome', job: 'RQ-OPEN', state: 'OPEN', ts: iso(39) }], mtimeHours: 40 },
+    };
+    const report = await readWorktrees('list', host({ jobs, dirty: new Set() }));
+    expect(report.rows.map(r => [r.job, r.safe])).toEqual([['RQ-LIVE', false], ['RQ-OPEN', false]]);
+  });
+});
+
+describe('phm worktrees --reap --plan', () => {
+  const run = async (args: string[], deps: WorktreesDeps = host()) => {
+    const output = { log: vi.fn(), error: vi.fn() };
+    const code = await cmdWorktrees(args, { ...deps, output });
+    return { code, out: output.log.mock.calls.map(([line]) => String(line)), err: output.error.mock.calls.map(([line]) => String(line)) };
+  };
+
+  it('prints only the removal commands for a mixed set and removes nothing', async () => {
+    const deps = host();
+    const { code, out } = await run(['--reap', '--plan'], deps);
+    expect(code).toBe(0);
+    expect(out).toEqual(['git -C /wt/RQ-EMPTY worktree remove /wt/RQ-EMPTY', 'git -C /wt/RQ-MERGED worktree remove /wt/RQ-MERGED']);
+    expect(out.join('\n')).not.toContain('--force');
+    expect(deps.remove).not.toHaveBeenCalled();
+    expect(deps.logRemoval).not.toHaveBeenCalled();
+  });
+
+  it('never lists a live, open-PR, kept, dirty or too-new worktree', async () => {
+    const { out } = await run(['--reap', '--plan']);
+    for (const job of ['RQ-LIVE', 'RQ-LIVEMERGED', 'RQ-OPEN', 'RQ-KEPT', 'RQ-DIRTY', 'RQ-NEW', 'RQ-UNKNOWN']) {
+      expect(out.join('\n')).not.toContain(job);
+    }
+  });
+
+  it('JSON lists the same commands', async () => {
+    const text = await run(['--reap', '--plan']);
+    const json = await run(['--reap', '--plan', '--json']);
+    expect(JSON.parse(json.out[0]!)).toEqual({ schema: 'worktrees.plan.v1', commands: text.out });
+  });
+
+  it('prints nothing when nothing is safe, and quotes odd paths', async () => {
+    expect((await run(['--reap', '--plan'], { ...host(), ps: () => null })).out).toEqual([]);
+    const report = await readWorktrees('list', host());
+    expect(worktreeRemoveCommands(report, "/my wt/it's")[0]).toBe(`git -C '/my wt/it'\\''s/RQ-EMPTY' worktree remove '/my wt/it'\\''s/RQ-EMPTY'`);
+  });
+
+  it('needs --reap and excludes the other modes', async () => {
+    for (const args of [['--plan'], ['--reap', '--plan', '--apply'], ['--reap', '--plan', '--status'], ['--reap', '--plan', '--dry-run']]) {
+      expect((await run(args)).code).toBe(2);
+    }
+  });
+
+  it('the list summary names the plan command when over the warning level', async () => {
+    const jobs: typeof JOBS = {};
+    for (let i = 0; i < 41; i++) jobs[`RQ-J${i}`] = { rows: merged(`RQ-J${i}`) };
+    const report = await readWorktrees('list', host({ jobs, dirty: new Set() }));
+    expect(formatWorktrees(report)).toContain('Over the warning level. Run phm worktrees --reap --plan for the removal commands.');
+    expect(formatWorktrees(await readWorktrees('list', host()))).not.toContain('Over the warning level.');
+  });
 });

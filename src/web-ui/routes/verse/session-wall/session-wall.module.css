@@ -20,6 +20,10 @@
 
 /* As many columns as fit, each wide enough to read a message in. */
 .wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: var(--space-2); align-items: start; margin: 0; padding: 0; list-style: none; }
+/* The heading of one lane or repo on a wall arranged by it: a full row, its name and how many sessions stand under it. */
+.group { grid-column: 1 / -1; display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; padding-top: var(--space-2); border-bottom: 1px solid var(--border-subtle); color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); font-variant-numeric: tabular-nums; animation: session-wall-in var(--duration-base) var(--ease-decelerate); }
+.group:first-child { padding-top: 0; }
+.group > strong { color: var(--text-primary); font-family: var(--font-display); font-size: var(--text-xs-size); line-height: var(--text-xs-line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card { min-width: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-surface-raised); animation: session-wall-in var(--duration-base) var(--ease-decelerate); }
 .card[data-state='quiet'] { border-color: var(--status-warning-solid); }
 .card[data-state='failed'] { border-color: var(--status-danger-solid); }
@@ -105,6 +109,6 @@
 @keyframes session-wall-live { 50% { opacity: 0.3; } }
 @keyframes session-wall-in { from { opacity: 0; transform: translateY(4px); } }
 @media (prefers-reduced-motion: reduce) {
-  .card, .fresh, .next, .state[data-state='running']::before { animation: none; }
+  .card, .group, .fresh, .next, .state[data-state='running']::before { animation: none; }
   .filter, .row, .next { transition: none; }
 }

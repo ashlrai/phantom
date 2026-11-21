@@ -34,7 +34,8 @@ export interface PoolWindows { read: WindowRead; now: number; pools: readonly Po
 
 export function PoolItem({ row, view, windows }: { row: PoolRow; view: Pick<PoolsViewV1, 'generatedAt'>; windows?: PoolWindows }) {
   const facts = poolFacts(row, view, localTime);
-  return <li className={styles.row} data-risk={row.wasteRisk} data-group={poolGroup(row)} aria-label={`${row.id} pool`}>
+  // Focusable from code only: the Runway line above the cards puts the keyboard here when a pool's name is chosen.
+  return <li className={styles.row} data-pool={row.id} tabIndex={-1} data-risk={row.wasteRisk} data-group={poolGroup(row)} aria-label={`${row.id} pool`}>
     <div className={styles.head}>
       <span className={styles.name}>
         <ProviderBadge of={row.id} iconOnly size={14} />

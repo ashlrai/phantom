@@ -1543,7 +1543,7 @@ times are null, and `unknown` names the reason for each. `quiet` is true after
 `threadSessions(list)`, the limits `THREADS_MAX` (40 sessions),
 `THREADS_MESSAGES_SHOWN` (3) and `THREADS_TEXT_CHARS` (400), `THREAD_STATES`
 and the types `SessionThreadsV1`, `SessionThreadsEntry`,
-`SessionThreadsMessage` and `SessionThreadsParts`. `parts` is
+`SessionThreadsMessage`, `SessionThreadsServes` and `SessionThreadsParts`. `parts` is
 `{sessionsRead, bus, activity, replies?, owner?, orders?}`, where `activity`
 maps a job id to its activity read (null when that read failed, no key when it
 was not asked for), `owner` is the Leader inbox, handed to the leader's and
@@ -1551,8 +1551,13 @@ every worker's thread and to no helper's, and `orders` is the order trace
 (`OrderTraceV1`), handed to the leader's thread and to every worker's that has
 a job. `SessionThreadsV1.sources` is `{sessions, bus, owner, replies, orders}`. Each entry is built by
 `buildSessionThread`, so its session, summary, sources, gaps and `reply`
-(its last key, the `SessionThreadReply` of `session-reply.ts`) equal the
-single-session thread for the same records.
+(the `SessionThreadReply` of `session-reply.ts`) equal the
+single-session thread for the same records. An entry's last key is `serves`:
+`{key, at, source, text, truncated, jobs}` for a worker whose job the order
+trace ties to a message of Mason's (the newest such message; `key` is shared
+by every entry serving it, `at` is the inbox's Eastern minute, `text` is null
+when the message is not among the inbox entries read, `jobs` counts every job
+the trace ties to the message), otherwise null.
 `src/core/fleet/session-threads-read.ts` exports `readSessionThreads(options)`
 with `lane`, `repo`, `live` and injectable `readMap`, `readSubagents`,
 `readLeader`, `readActivity`, `readBus`, `readOwner`, `readReplies` and
@@ -1862,8 +1867,16 @@ to the agent under the jobs section's owner matcher that has not reached
 `done` or `terminated`, newest update first, capped at the first 50 shown
 with `matched` the true total and `truncated` definitive — `failed` stays
 listed because only the announcer may move a job and a failed one can still
-be rescheduled or terminated. Each item is a `BusWorkFeedJob` verbatim, so
-it carries the feed's `postId`/`statusId` envelope citations; a job still
+be rescheduled or terminated. Each item is a `BusWorkMineAnnouncedJob` —
+`BusWorkFeedJob` plus the same per-key hold coverage the jobs section
+computes, so it carries the feed's `postId`/`statusId` envelope citations
+and `held`/`heldKeys`/`freeKeys`: `held` is `true` when a declared key has a
+shown live hold, `false` when complete coverage proves none is held or the
+job declares no keys, `null` when coverage cannot prove either way (a
+`running`/`idle` announcement with `held:false` has no live claim on its
+declared scope — the announcer is the only one who can move it);
+`busWorkMineAnnouncedAnnotation(job, held, coverage)` is the exported pure
+rule over the same coverage/`heldByJob` index the jobs section uses. A job still
 open with claim keys appears in both `jobs` (the claimable view) and
 `announced` (the ownership view). A non-ok feed reports the section's own
 `refused`/`unavailable`/`retryable`/`invalid` state, never an empty list.

@@ -90,7 +90,7 @@ export function HomePane({ visible }: PaneProps) {
     <Card title="Leader" action="Open Leader" onOpen={() => setHomeChoice('leader')}>
       <p><Value field={home.unreadLeaderReplies}>{n => n === 0 ? 'No unread replies.' : n === 1 ? '1 unread reply.' : `${n} unread replies.`}</Value></p>
     </Card>
-    <FleetShippedCard visible={visible} />
+    <FleetShippedCard visible={visible} onOpenJob={openPoolJob} />
     <DiskCard visible={visible} />
   </section>;
 }

@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { createConfigReader, PINNED_DEFAULTS } from './dynconfig.js';
 import { parseDiskHistory, readLiveDiskSample } from './host-top.js';
 import type { HostDiskSample } from './host-top-view.js';
-import { WORKTREES_SAFE_AGE_HOURS, defaultRunsRoot } from './worktrees.js';
+import { WORKTREES_PLAN_COMMAND, WORKTREES_SAFE_AGE_HOURS, defaultRunsRoot } from './worktrees.js';
 import { readWtAudit, type WtAuditDeps, type WtAuditEntry, type WtAuditReport } from './wt-audit.js';
 
 export const HOST_DISK_SCHEMA = 'host.disk.v1';
@@ -175,7 +175,7 @@ export function summarizeWorktrees(audit: WtAuditReport | null): HostDiskWorktre
   const folders = audit.worktrees.filter((w: WtAuditEntry) => w.state !== 'excluded');
   // The reaper takes merged or empty folders over the safe age; its own clean check can only lower this.
   const take = folders.filter(w => w.reapable && (w.state === 'merged' || w.state === 'empty')
-    && w.ageHours !== null && w.ageHours >= WORKTREES_SAFE_AGE_HOURS);
+    && w.ageHours !== null && w.ageHours >= WORKTREES_SAFE_AGE_HOURS[w.state]);
   const largest = folders.filter(w => w.bytes !== null && w.bytes > 0).sort((a, b) => b.bytes! - a.bytes!).slice(0, LARGEST)
     .map(w => ({ job: w.name, gb: gb(w.bytes!), ageHours: w.ageHours === null ? null : round1(w.ageHours), finished: finishedOf(w.state) }));
   return {
@@ -193,7 +193,7 @@ export function fixLine(worktrees: HostDiskWorktrees, status: HostDiskStatus): s
   const lead = `${worktrees.folders} job folders, ${worktrees.finished ?? 0} of them finished.`;
   if (!worktrees.reapable) return `${lead} None are ready to reap yet.${status === 'falling' || status === 'below-threshold' ? ' Free disk is falling for another reason; check `phm host top`.' : ''}`;
   const size = `${worktrees.sizesComplete ? 'about' : 'at least'} ${worktrees.reapableGb} GB`;
-  return `${lead} \`phm worktrees --reap --apply\` removes ${worktrees.reapable} and frees ${size}.`;
+  return `${lead} \`${WORKTREES_PLAN_COMMAND}\` lists the ${worktrees.reapable} ready to remove, freeing ${size}.`;
 }
 
 // ── the report ───────────────────────────────────────────────────────────────────────────────────────────

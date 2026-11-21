@@ -6,7 +6,9 @@
  */
 import { normalizePaneId } from '../shell/dock-catalog.js';
 
-export type ComposerCommandName = 'pause' | 'resume' | 'release' | 'hold' | 'stop' | 'drop' | 'status' | 'help' | 'open';
+import { validJob } from '../fleet/workers-card-model.js';
+
+export type ComposerCommandName = 'pause' | 'resume' | 'release' | 'hold' | 'stop' | 'drop' | 'status' | 'help' | 'open' | 'who' | 'thread' | 'summary' | 'log';
 
 export interface ComposerCommandSpec {
   name: ComposerCommandName;
@@ -25,8 +27,22 @@ export const COMPOSER_COMMANDS: readonly ComposerCommandSpec[] = [
   { name: 'drop', usage: '/drop <text>', summary: 'Open the drop-job sheet with this text', arg: 'text' },
   { name: 'status', usage: '/status', summary: 'Print the live status line', arg: null },
   { name: 'open', usage: '/open <pane>', summary: 'Open a pane (lanes, queue, releases, feed…)', arg: 'pane' },
+  // Sessions, read from the lists the Sessions and Conversations panes read (composer-session-commands.ts).
+  { name: 'who', usage: '/who', summary: 'List the agents working right now', arg: null },
+  { name: 'thread', usage: '/thread <session>', summary: 'Open a session as a conversation (type @ to pick one)', arg: 'session' },
+  { name: 'summary', usage: '/summary <session>', summary: 'Print what a session is doing, here', arg: 'session' },
+  { name: 'log', usage: '/log <job-id>', summary: 'Open a job’s live log', arg: 'job-id' },
   { name: 'help', usage: '/help', summary: 'List these commands', arg: null },
 ];
+
+/** Session ids are job ids, `leader`, or helper ids: one short token (the Conversations pane's own rule). */
+const SESSION_ARG_RE = /^[\w.:@-]{1,160}$/;
+
+/** The session a `/thread`, `/summary` or `/log` argument names; the `@` the picker writes is dropped. Null when it is not one id. */
+export function sessionArg(arg: string): string | null {
+  const id = arg.trim().replace(/^@/, '');
+  return SESSION_ARG_RE.test(id) ? id : null;
+}
 
 export type ParsedDraft = { kind: 'command'; name: ComposerCommandName; arg: string } | { kind: 'message' };
 
@@ -70,6 +86,8 @@ export function commandArgError(command: { name: ComposerCommandName; arg: strin
     return LANE_ARG_RE.test(command.arg.split(/\s+/)[0]!) ? HOLD_MINUTES_ERROR : LANE_ARG_ERROR;
   }
   if (spec.name === 'stop' && /\s/.test(command.arg)) return `/stop takes one job id: ${spec.usage}`;
+  if ((spec.name === 'thread' || spec.name === 'summary') && sessionArg(command.arg) === null) return `/${spec.name} takes one session id: ${spec.usage}`;
+  if (spec.name === 'log' && !validJob(sessionArg(command.arg))) return `/log takes one job id: ${spec.usage}`;
   return null;
 }
 

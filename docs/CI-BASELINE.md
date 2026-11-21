@@ -7,18 +7,25 @@ read-only: it does not rerun jobs, change tests, merge PRs, or update branches.
 The version 1 JSON report contains failure groups, per-PR freshness, master
 evidence, unknown reasons, and proposed update-branch commands. Latest workflow
 runs are checked against the current head and full checkout SHA in job logs.
-Jobs that never check out the workspace (aggregators such as Merge Gate)
-cannot emit that SHA; their logs are dropped from evidence only when they
-carry no recognizable failure or pass output, and any consumable evidence in
-an unverifiable log keeps the run unknown. Unreadable, incomplete, capped, or
-unverified logs are unknown, never clean.
+A job proves its checkout either by echoing `git log -1 --format=%H` followed
+by the head SHA, or by the `Bound candidate <sha> to event tree|merge ...`
+receipt `.github/scripts/ci-source-binding.mjs` prints after verifying
+`git rev-parse HEAD` equals the candidate revision; the bound revision must
+equal the analyzed head exactly. Jobs that never check out the workspace
+(aggregators such as Merge Gate) cannot emit either receipt; their logs are
+dropped from evidence only when they carry no parseable failure or per-test
+pass output. The default reporter's green-module pass lines are expected
+from checkout jobs that never bound a receipt, so they neither verify nor
+poison a run; any other consumable evidence in an unverifiable log keeps the
+run unknown. Unreadable, incomplete, capped, or unverified logs are unknown,
+never clean.
 Vitest FAIL lines -- including named-project labels such as `|unit|` or `|console|` --
 identify tests under `test/` and `src/web-ui/`; AssertionError summaries are scrubbed
 and capped at 2,000 characters per failure, with at most 100 failures per log.
 A suite that fails to load (transform, parse, or collection error) prints
 `FAIL <file> [ <file> ]` with no test name; these group under the
 `<file> > (suite)` identity, capture the suite's error line, and count as
-passing on master when the file shows any verbose pass -- the file loading
+passing on master when the file shows any pass evidence -- the file loading
 and running is what resolves a suite failure.
 TypeScript diagnostics from `tsc`/`tsgo` non-pretty output
 (`src/core/foo.ts(41,9): error TS2322: ...`) group per file under a
@@ -237,7 +244,7 @@ pipelines, merge-group-only attribution) are not listed.
 
 Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
 brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
-with an explicit verbose test pass on master's current run produces
+with an explicit test pass on master's current run produces
 `rerun-failed`. Other evidence stays `unknown`. Relative imports are followed
 transitively from master (100-file cap) with bundler resolution: `.js`/`.jsx`
 specifiers map to `.ts`/`.tsx` sources, extensionless specifiers try file then
@@ -253,8 +260,12 @@ suites running without bare imports). An unreadable governing config, an
 unresolvable or globbed setup entry, or a failed harness probe yields
 `unknown`, never independence. A candidate that 404s tries the next
 resolution; any other fetch failure, unresolvable spec, alias, or computed
-import prevents independence claims. Nonverbose pass output does not
-establish an individual test pass. The scan caps open PRs, runs, and jobs
+import prevents independence claims. Pass evidence comes in two shapes: a
+verbose per-test line (`✓ file > suite > test`) resolves only the named
+test, while the default reporter's green-module line (`✓ file (N tests)`)
+resolves any failure identity in that file because every test the module
+contains passed on that run. Other pass output does not establish a test
+pass. The scan caps open PRs, runs, and jobs
 at 100 each and reports unknown rather than drawing conclusions from truncated
 run/job listings. Master reproduction remains an explicit step in the fix brief.
 

@@ -13,7 +13,7 @@ export const EMPTY_RATE_ALERT = 0.15;
 
 const TAG: Record<FinalEmptyReason, EmptyTag> = {
   'already-shipped': 'already_done', 'usage-out': 'pool_cap', 'no-change-needed': 'no_change_needed',
-  'repo-rule': 'blocked', 'blocked-dependency': 'blocked', 'tool-missing': 'blocked',
+  'repo-rule': 'blocked', 'sign-in-failed': 'blocked', 'lane-held': 'pool_cap', 'blocked-dependency': 'blocked', 'tool-missing': 'blocked',
   // A timeout is not a statement about the work; leave it unknown rather than guess.
   timeout: 'unknown', unknown: 'unknown',
 };

@@ -20,7 +20,7 @@ import { join } from 'node:path';
 
 export const ASKS_LEDGER_FILE = 'asks-ledger.jsonl';
 
-export type AskLedgerType = 'answer' | 'usage-reading' | 'approval' | 'credit-decision';
+export type AskLedgerType = 'answer' | 'usage-reading' | 'approval' | 'credit-decision' | 'fleet-action';
 export interface AskLedgerRecord {
   schema: 'asks.ledger.v1';
   type: AskLedgerType;
@@ -30,8 +30,12 @@ export interface AskLedgerRecord {
   subject: string | null;
   /** The surface the answer came through: cli, phone, desktop, telegram, ... */
   channel: string;
-  /** Always mason: only a verified-Mason source reaches the ledger. */
-  source: 'mason';
+  /** mason for every answer (only a verified-Mason source reaches the ledger); fleet for a fleet-action. */
+  source: 'mason' | 'fleet';
+  /** fleet-action: plain words for what the fleet did instead of asking, e.g. "read from sensor X at T". */
+  action?: string;
+  /** fleet-action: the ask that was not raised, one plain line. */
+  question?: string;
   /** ISO time of the answer. */
   at: string;
   reply: string;
@@ -85,13 +89,19 @@ export function readAskLedger(runsDir?: string): AskLedgerRecord[] {
       if (!line) continue;
       try {
         const row = JSON.parse(line) as Partial<AskLedgerRecord> | null;
-        if (row && row.schema === 'asks.ledger.v1' && row.source === 'mason' && typeof row.at === 'string' && Number.isFinite(Date.parse(row.at))) {
+        if (row && row.schema === 'asks.ledger.v1' && (row.source === 'mason' || (row.source === 'fleet' && row.type === 'fleet-action' && typeof row.action === 'string')) && typeof row.at === 'string' && Number.isFinite(Date.parse(row.at))) {
           records.push(row as AskLedgerRecord);
         }
       } catch { /* one bad line must not hide the rest */ }
     }
     return records;
   } catch { return []; }
+}
+
+/** Newest first, at most `limit`: what the fleet did instead of asking Mason. */
+export function readFleetActions(options: { runsDir?: string; limit?: number } = {}): AskLedgerRecord[] {
+  return readAskLedger(options.runsDir).filter(row => row.type === 'fleet-action')
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, options.limit ?? 10);
 }
 
 export interface MasonUsageReading {

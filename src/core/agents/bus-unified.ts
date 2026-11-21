@@ -1006,6 +1006,10 @@ function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
  * traffic still addressed to its bare handle, stable id or legacy aliases,
  * and posts in its channels (minus its own and minus `group.presence`
  * heartbeats, which are observations with their own read, never mail).
+ * A handoff is the `channel:'handoff'` stamp or the receivable
+ * `worker-handoff` body — `fleet handoff-send` posts the body on a legacy
+ * envelope — under any of those addresses, so an unstamped or
+ * channel-addressed assignment never reads as plain mail.
  * `thread` narrows the page to
  * `note`/`context` bodies carrying that v2 thread label; `from` narrows by
  * sender through the same identity-label matching `channel read` uses — a
@@ -1056,10 +1060,19 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
       if (isGroupPresenceBody(envelope.body)) continue;
       let kind: InboxKind | null = null;
       const channel = channelOf(envelope.to, target.channels);
-      if (envelope.channel === 'handoff' && target.labels.has(envelope.to)) kind = 'handoff';
+      // A handoff reaches the wire two ways: `agents bus handoff` stamps
+      // `channel:'handoff'`, while `fleet handoff-send` posts the same
+      // receivable `worker-handoff` body on a legacy envelope. Either signal
+      // marks the kind, addressed to any of the agent's labels or to a member
+      // channel's group address from anyone else — the same coverage
+      // `work mine` handoffs and `handoff-receive` apply.
+      const isHandoff = envelope.channel === 'handoff' || isWorkerHandoffBody(envelope.body);
+      const toLabel = target.labels.has(envelope.to);
+      const toChannel = channel !== null && !target.labels.has(envelope.from);
+      if (isHandoff && (toLabel || toChannel)) kind = 'handoff';
       else if (envelope.to === self) kind = 'dm';
-      else if (target.labels.has(envelope.to)) kind = 'legacy';
-      else if (channel && !target.labels.has(envelope.from)) kind = 'channel';
+      else if (toLabel) kind = 'legacy';
+      else if (toChannel) kind = 'channel';
       const matchedKind = kind !== null &&
         (thread === undefined || busBodyThread(envelope.body) === thread) &&
         (fromMatch === undefined || fromMatch(envelope.from)) ? kind : null;

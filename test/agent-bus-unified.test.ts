@@ -669,6 +669,41 @@ describe('DM, channel, handoff and priority wake on the one bus store', () => {
       wakes: [{ id: 'wake-bare', to: 'nova' }, { id: 'wake-id', to: novaId }] });
     expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ status: 'ok', wakes: [] });
   });
+
+  it('marks unstamped worker-handoff bodies as handoffs under every addressed label', () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    const novaId = stableAgentId('nova');
+    // `fleet handoff-send --apply` posts exactly this: the receivable
+    // worker-handoff body on a legacy envelope with no channel metadata.
+    const handoff = (id: string, to: string, from = 'agent:atlas') =>
+      appendBusInbox({ id, from, to, priority: 'P1', ttl: 60_000,
+        body: { kind: 'worker-handoff', taskId: 'RQ-FLEET-HO-1', prompt: 'take over' } }, options).status;
+    expect(handoff('ho-canon', 'agent:nova')).toBe('posted');
+    expect(handoff('ho-bare', 'nova')).toBe('posted');
+    expect(handoff('ho-id', novaId)).toBe('posted');
+    expect(handoff('ho-group', 'group:release:general')).toBe('posted');
+    // The sender's own channel-addressed handoff is its own post: hidden.
+    expect(handoff('ho-own', 'group:release:general', 'agent:nova')).toBe('posted');
+    // A handoff addressed elsewhere is not this agent's mail.
+    expect(handoff('ho-other', 'agent:atlas', 'agent:nova')).toBe('posted');
+
+    const inbox = readAgentInbox('nova', {}, options);
+    if (inbox.status !== 'ok') throw new Error('unreadable');
+    expect(inbox.messages.map(m => `${m.envelope.id}:${m.kind}`))
+      .toEqual(['ho-canon:handoff', 'ho-bare:handoff', 'ho-id:handoff', 'ho-group:handoff']);
+    // held evidence still attaches: every listed item is receivable work.
+    for (const message of inbox.messages) {
+      expect(message.held).toBe(false);
+    }
+    // Atlas sees nova's channel-addressed handoff as channel mail of kind
+    // handoff, plus the handoff addressed to his own label; his own channel
+    // post stays hidden.
+    const atlasInbox = readAgentInbox('atlas', {}, options);
+    expect(atlasInbox.status === 'ok' && atlasInbox.messages.map(m => `${m.envelope.id}:${m.kind}`))
+      .toEqual(['ho-own:handoff', 'ho-other:handoff']);
+  });
 });
 
 describe('label posts on the one bus store', () => {
