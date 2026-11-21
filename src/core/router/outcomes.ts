@@ -43,7 +43,14 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // event rows, `applied:false` dry runs excluded) fold as
 // skipped/skip_reason/skip_code: the newest decline stands until a later
 // claim/batch_claim/launch row supersedes it, so a job the fleet chose not
-// to launch stops reading as an unexplained unknown.
+// to launch stops reading as an unexplained unknown. The fleet's
+// keep-queued receipts — `dispatch_deferred` (a duplicate request an
+// earlier job already covers), `recut_admission` defer/ready/skip verdicts
+// and `precheck_parked` — fold the same way as
+// deferred/defer_reason/defer_repeat_of: the newest keep-queued verdict
+// stands until a later dispatch or skip-gate decline supersedes it, so a
+// job the fleet recorded keeping queued stops reading as unexplained
+// unknown too.
 // `empty_tag` joins a fourth bounded ledger, <runs>/metrics/empty-tags.jsonl:
 // the `job.empty-tag.v1` rows `phm jobs empty --record` appends beside the
 // job ledger — the fleet's own recorded WHY for a job that finished empty
@@ -360,6 +367,55 @@ export interface RouterOutcome {
    * by a superseding dispatch; `null` whenever `skipped` is not `true`.
    */
   skip_code: number | null;
+  /**
+   * The fleet's recorded keep-queued launch verdict — dispatchd evaluated
+   * this ready job and kept it queued instead of launching it, with a
+   * recorded reason: a `dispatch_deferred` row (another job's claim
+   * already covers the same request digest — `duplicate-request`), a
+   * `recut_admission` row whose `action` is `defer` (an in-flight recut
+   * attempt covers the job — `recut-in-flight`), or a `precheck_parked`
+   * row (the precheck park — the job retries at its recorded retry_at).
+   * `recut_admission` `ready`/`skip` actions are the recorded blocker
+   * resolving or the job ending, and supersede a standing deferral to
+   * `false` like a dispatch does. The verdict competes with the other
+   * launch-decision rows on row order: the newest keep-queued receipt
+   * stands until a later `claim`/`batch_claim`/`launch` dispatch row or
+   * a skip-gate decline — the fleet's newer recorded decision about the
+   * same queued job — supersedes it to `false` ("a deferral was recorded
+   * but the job dispatched or was declined after all").
+   * `finish`/`publish`/`outcome` rows belong to attempts already decided
+   * and never touch it. `null` means no keep-queued evidence — never
+   * deferred, only resolved verdicts, or rows that write no receipt
+   * (launch_hold waits, lane-admission rejects and market rejections
+   * keep the job queued silently) — distinct from `skipped` (the skip
+   * gate's decline, a different launch decision), `task_outcome`
+   * `deferred` (a batch member's requeue word) and `empty` (the finish
+   * row's measured no-diff).
+   */
+  deferred: boolean | null;
+  /**
+   * The standing keep-queued verdict's recorded reason — the newest
+   * defer-family row's `reason`/`defer_reason` in the bounded
+   * identifier-label shape `failure_class` uses (`duplicate-request`,
+   * `recut-in-flight`, the precheck park reasons like
+   * `files_and_tests_exist`/`unproven_completion`/
+   * `invalid_or_unknown_receipt`). A malformed label joins `null`,
+   * never recorded raw; the newest defer row replaces it wholesale and
+   * a superseding dispatch or decline clears it; `null` whenever
+   * `deferred` is not `true`.
+   */
+  defer_reason: string | null;
+  /**
+   * The standing keep-queued verdict's recorded covering job — the
+   * defer row's `repeatOf`/`repeat_of` in the bounded job-id shape:
+   * `dispatch_deferred`'s duplicate-request owner and
+   * `recut_admission`'s in-flight or merged prior attempt. A
+   * `precheck_parked` row parks the job itself and records no cover,
+   * so it stays `null` there; malformed values are skipped, never
+   * recorded raw. Replaced wholesale by the newest defer row and
+   * cleared with the verdict; `null` whenever `deferred` is not `true`.
+   */
+  defer_repeat_of: string | null;
   /** The lane+model's pass^k (passPowK) from the latest eval.lane-scores.v1 projection; null when unknown. */
   passk: number | null;
 }
@@ -666,6 +722,44 @@ const skipReason = (r: Row): string | null => {
  */
 const skipCode = (r: Row): number | null => count(r['code']) ?? count(r['precheck_code']);
 
+/**
+ * The keep-queued event names — dispatchd's launch loop writes
+ * `dispatch_deferred` when a ready line's request digest is already
+ * covered by an earlier job's claim, and `precheck_parked` when the
+ * precheck parks the job for a bounded retry (the row only exists for
+ * the park verdict — code 13 — so every receipt is a deferral).
+ * `recut_admission` rows carry the recut coverage verdict under an
+ * `action` field and fold separately: `defer` marks the standing
+ * deferral while `ready`/`skip` resolve it.
+ */
+const DEFER_EVENTS: ReadonlySet<string> = new Set(['dispatch_deferred', 'precheck_parked']);
+const RECUT_ADMISSION_EVENT = 'recut_admission';
+/**
+ * The standing keep-queued verdict's recorded reason label — the
+ * defer row's `reason`, then `defer_reason`, in the same bounded
+ * identifier-label shape `failure_class` uses. The writers' vocabulary
+ * is closed today (`duplicate-request`, `recut-in-flight`, the
+ * precheck park reasons), but the fold records whatever bounded label
+ * a producer wrote rather than second-guessing it; anything else is
+ * skipped, never recorded raw.
+ */
+const DEFER_REASON_KEYS = ['reason', 'defer_reason'] as const;
+const deferReason = (r: Row): string | null => {
+  const v = str(r, ...DEFER_REASON_KEYS);
+  return v !== null && LEDGER_LABEL.test(v) ? v : null;
+};
+/**
+ * The standing keep-queued verdict's recorded covering job — the defer
+ * row's `repeatOf`/`repeat_of` in the bounded job-id shape the reward
+ * ledger accepts. `precheck_parked` rows carry no cover field, so they
+ * join `null` here; a malformed value is skipped, never recorded raw.
+ */
+const DEFER_REPEAT_OF = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const deferRepeatOf = (r: Row): string | null => {
+  const v = str(r, 'repeatOf', 'repeat_of');
+  return v !== null && DEFER_REPEAT_OF.test(v) ? v : null;
+};
+
 // Revert evidence uses the same field vocabulary the fleet ledger readers
 // already honor: event names (event/type/kind), terminal state fields
 // (phase/state/outcome/status/result/conclusion) and the reverted_at /
@@ -948,7 +1042,8 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       empty: null, diff_files: null, diff_lines: null,
       exit_code: null, failure_class: null, empty_class: null, empty_tag: null,
       task_outcome: null, lane_hint_blocked_by: null,
-      skipped: null, skip_reason: null, skip_code: null, passk: null,
+      skipped: null, skip_reason: null, skip_code: null,
+      deferred: null, defer_reason: null, defer_repeat_of: null, passk: null,
     };
     o.lane = str(r, 'lane', 'pool', 'arm') ?? o.lane;
     o.model = str(r, 'model') ?? o.model;
@@ -1070,6 +1165,38 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       o.skipped = false;
       o.skip_reason = null;
       o.skip_code = null;
+    }
+    // The keep-queued receipts compete with the other launch-decision
+    // rows on row order like the skip decline: a
+    // dispatch_deferred/precheck_parked row or a recut_admission 'defer'
+    // marks the standing deferral with its recorded reason/cover, a
+    // recut_admission 'ready'/'skip' resolves the blocker, and a later
+    // claim/batch_claim/launch dispatch or skip-gate decline — the
+    // fleet's newer recorded decision about the same queued job —
+    // supersedes it to false. finish/publish/outcome rows belong to
+    // attempts already decided and never touch the verdict; an
+    // unrecognized recut action or non-defer event leaves it alone.
+    const deferEvent = str(r, ...EVENT_NAME_KEYS)?.toLowerCase();
+    if (deferEvent !== undefined && DEFER_EVENTS.has(deferEvent)) {
+      o.deferred = true;
+      o.defer_reason = deferReason(r);
+      o.defer_repeat_of = deferRepeatOf(r);
+    } else if (deferEvent === RECUT_ADMISSION_EVENT) {
+      const action = str(r, 'action')?.toLowerCase();
+      if (action === 'defer') {
+        o.deferred = true;
+        o.defer_reason = deferReason(r);
+        o.defer_repeat_of = deferRepeatOf(r);
+      } else if ((action === 'ready' || action === 'skip') && o.deferred === true) {
+        o.deferred = false;
+        o.defer_reason = null;
+        o.defer_repeat_of = null;
+      }
+    } else if (deferEvent !== undefined && o.deferred === true &&
+        (QUEUE_DISPATCH_EVENTS.has(deferEvent) || SKIP_GATE_EVENTS.has(deferEvent))) {
+      o.deferred = false;
+      o.defer_reason = null;
+      o.defer_repeat_of = null;
     }
     outcomes.set(j, o);
   }

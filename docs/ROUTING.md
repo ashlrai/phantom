@@ -389,7 +389,30 @@ integer; a string `code` joins `skip_reason` instead).
 carries the canonical decline — and all three stay `null`/`false` when
 no skip receipt stands, distinct from the finish row's measured
 `empty` no-diff verdict, the member's `task_outcome` word and terminal
-no-op phases. `empty_tag` is the fleet's recorded WHY for a job that
+no-op phases. `deferred`, `defer_reason` and `defer_repeat_of` carry
+the fleet's recorded keep-queued launch verdict: dispatchd's launch
+loop writes `dispatch_deferred` when a ready line's request digest is
+already covered by an earlier job's claim (`duplicate-request`, the
+covering job under `repeatOf`), `recut_admission` rows carry the recut
+coverage verdict under `action` — `defer` marks the standing deferral
+(`recut-in-flight`, the in-flight or merged prior under `repeatOf`)
+while `ready`/`skip` resolve the blocker — and `precheck_parked` marks
+the precheck park (the bounded park reason under `reason`, no cover).
+The verdict competes with the other launch-decision rows on row order
+like the skip decline: the newest keep-queued receipt stands until a
+later `claim`/`batch_claim`/`launch` dispatch row or a skip-gate
+decline — the fleet's newer recorded decision about the same queued
+job — supersedes it to `false`, while `finish`/`publish`/`outcome`
+rows never touch it and an unrecognized recut `action` leaves it
+alone. `defer_reason` is the newest defer row's recorded label
+(`reason`, then `defer_reason`, in the bounded identifier-label
+shape) and `defer_repeat_of` its recorded covering job
+(`repeatOf`/`repeat_of` in the bounded job-id shape); both join `null`
+when unrecorded or malformed and clear with the verdict — all three
+stay `null`/`false` when no keep-queued receipt stands, distinct from
+`skipped` (the skip gate's decline), `task_outcome` `deferred` (a
+batch member's requeue word) and queue waits that write no receipt.
+`empty_tag` is the fleet's recorded WHY for a job that
 ended empty — the `job.empty-tag.v1` rows `phm jobs empty --record`
 appends to `metrics/empty-tags.jsonl` from empty-final-reason's verdict
 (src/core/fleet/empty-tags.ts): the closed
@@ -487,10 +510,16 @@ tallies the fleet's recorded empty tags inside the same cohort (the
 metrics/empty-tags.jsonl, so an empty finish reads with its recorded
 cause — work already on master, quota exhausted, blocked on a missing
 tool, genuinely no change needed, or the fleet's own unknown — instead
-of only the finish row's bare empty flag) — and `unknown_unresolved` is
+of only the finish row's bare empty flag) — `unknown_deferred` counts
+jobs whose standing launch decision is a recorded keep-queued verdict
+(a `dispatch_deferred` duplicate-request receipt, a `recut_admission`
+defer, or a `precheck_parked` park no later dispatch or decline
+superseded) and `unknown_defer_reasons` tallies their recorded reason
+labels (top entries first), so a job the fleet recorded keeping queued
+reads as explained rather than unresolved — and `unknown_unresolved` is
 the remainder with no
 recorded failure signal, no requeue word and no standing skip
-decline (finished cleanly awaiting a
+decline or keep-queued verdict (finished cleanly awaiting a
 verdict, still in flight, or carrying only transient launch receipts). These are counts over the retained window; when the ledger was
 not read they are `null`, never zero — and `unknown_empty_tags` is
 `null` whenever the empty-tags ledger itself was not read, since an
