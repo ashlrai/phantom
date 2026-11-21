@@ -296,7 +296,13 @@ be read reports `held: null` (unknown), never free.
 channels. The page reports `matched` — every hint the bounded queue tail
 accepted for the agent before its row cap — and `truncated`, true when the
 256 KiB observation window or the row cap cut matches beyond the returned
-slice, so a capped list is never passed off as the whole queue.
+slice, so a capped list is never passed off as the whole queue. Claim-holder
+hints (`wh-…` ids) carry no envelope id of their own, so the read re-derives
+each one's citation against the live `work.status` receipts that could have
+generated it: a match annotates the row with `claimHolder` naming the status
+receipt (`statusId`, `jobId`, `status`, optional `detail` — `agents bus show
+<statusId>` resolves it), no reproducing receipt reports `unresolved`, and an
+unreadable bus store reports `unknown`, never a guessed citation.
 
 **Lookup.** `phm agents bus show <id>` resolves one retained envelope by the
 wire id wake hints, `work mine` items and claim operations cite — the third
@@ -337,7 +343,13 @@ holding `queue:`/`path:`/`repo:`/`pr:` scope learns the job ended instead of
 waiting out its lease. The poster's own identity is skipped, labels of one
 identity collapse to a single hint, and the fan-out is capped at 32 hints per
 status; hint ids are a deterministic hash of the status envelope and holder,
-so reposting the same status dedupes rather than re-waking. `--no-wake` opts
+so reposting the same status dedupes rather than re-waking. Because the hash
+is one-way, `agents bus wakes` and `work mine` re-derive each `wh-…` hint's
+citation on read — the hint's `to` label is the hashed holder, so scanning
+live `work.status` receipts and re-hashing names the exact status that woke
+the holder (`claimHolder` on the row: `statusId`/`jobId`/`status`/`detail`,
+`unresolved` when no live receipt reproduces it, `unknown` when the bus store
+cannot be read). `--no-wake` opts
 out of this fan-out as well as the message's own hint, and non-terminal
 statuses never fan out. The result's `claimHoldersWoken` counts the hints
 present after the call — absent when the fan-out did not run, `null` when the

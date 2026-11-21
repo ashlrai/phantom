@@ -5,8 +5,8 @@ import {
   type BusCli, type BusProvider,
 } from '../core/agents/bus-identity.js';
 import {
-  announceWork, busBodyFallbackSummary, listBusChannels, postChannelMessage, postLabelMessage, readAgentChannel,
-  readAgentInbox, readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
+  agentWakeClaimHolderSuffix, announceWork, busBodyFallbackSummary, listBusChannels, postChannelMessage, postLabelMessage,
+  readAgentChannel, readAgentInbox, readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
   updateWorkStatus, type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { WORK_STATUSES, parseClaimKey, type WorkJob } from '../core/agents/bus-v2-schema.js';
@@ -399,7 +399,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (page.status !== 'ok') return finish(page, '');
       out(json ? JSON.stringify(page) : [
         ...(page.truncated ? [`${page.matched} wake hint(s) matched; the bounded queue tail is truncated — showing the newest ${page.wakes.length}`] : []),
-        ...page.wakes.map(w => `${w.at} ${w.id} ${w.from} -> ${w.to}`),
+        ...page.wakes.map(w => `${w.at} ${w.id} ${w.from} -> ${w.to}` + agentWakeClaimHolderSuffix(w)),
       ].join('\n') || 'No wakes.');
       return 0;
     }

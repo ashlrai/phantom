@@ -2018,7 +2018,8 @@ the scrubbed `subject`; the first 20 show longest-standing first with
 `readAgentWakes` capped at the newest 20 with `matched` the count of every
 hint the bounded queue tail matched for the agent before its row cap —
 a lower bound, never a proven total, when `truncated` marks queue-tail or
-cap cuts beyond the shown slice — and
+cap cuts beyond the shown slice — claim-holder `wh-…` rows carrying the
+same `claimHolder` citation `readAgentWakes` resolves — and
 `unknown-agent`/`unavailable` with `reason`. `inbox` reuses `readAgentInbox`
 for the next page of mail addressed to the agent — same matching, order and
 owner-share receipt checks as `agents bus inbox` — as `{status:'ok', agent,
@@ -2083,7 +2084,11 @@ store cannot be read),
 every hint the bounded queue tail accepted for the agent before its row
 cap, and `truncated`, true when the 256 KiB observation window or the cap
 cut matches beyond the returned slice — `matched` is then a lower bound,
-never a proven total), `listBusChannels(agent, options?)`
+never a proven total; claim-holder `wh-…` hints additionally carry
+`claimHolder` — the live terminal `work.status` receipt re-derived as the
+hint's citation as `{statusId, jobId, status, detail?}`, `'unresolved'`
+when no live receipt reproduces it, `'unknown'` when the bus store cannot
+be read), `listBusChannels(agent, options?)`
 (the registry channels name-sorted with `createdBy`, `createdAt` and member
 handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or

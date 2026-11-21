@@ -18,7 +18,7 @@ import { readOwnerChatReceipts, ownerChatRoot, ownerChatReceiptState, type Owner
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { appendBusInbox, listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
+import { appendBusInbox, listBusInboxAfter, scanBusInbox, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
   type BusInboxOptions, type BusInboxPost } from '../fleet/bus-inbox.js';
 import { BUS_PRIORITIES, isClaimableWork, type BusEnvelope, type BusPriority } from '../fleet/bus-envelope.js';
 import { groupAddress, isGroupPresenceBody } from '../fleet/bus-group.js';
@@ -1114,7 +1114,73 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
     ...(countMatched ? { matched } : {}) };
 }
 
-export type WakePage = { status: 'ok'; agent: string; wakes: BusWakeRow[];
+/** `wh-…` ids are claim-holder hints: a hash of the status envelope and holder, never an envelope id of their own. */
+const CLAIM_HOLDER_WAKE_ID = /^wh-[a-f0-9]{32}$/;
+
+/**
+ * What a claim-holder hint resolves to on read. The object names the live
+ * terminal `work.status` receipt that generated the hint — `statusId` is its
+ * wire id, so `agents bus show <statusId>` reads the evidence behind the
+ * wake. `'unresolved'` means no live status receipt reproduces the hint (its
+ * envelope expired or the hint did not come from this fan-out);
+ * `'unknown'` means the bus store could not be read, so resolution was never
+ * possible — never reported as "no status".
+ */
+export type AgentWakeClaimHolder =
+  | { statusId: string; jobId: string; status: WorkJob['status']; detail?: string }
+  | 'unresolved'
+  | 'unknown';
+
+/** A wake-queue row plus, on claim-holder hints only, the status receipt the hint cites. */
+export type AgentWakeRow = BusWakeRow & { claimHolder?: AgentWakeClaimHolder };
+
+/**
+ * Re-derive which terminal `work.status` receipt generated each `wh-…` hint
+ * in the page. The fan-out hashes (status envelope id, holder label) and the
+ * hint's own `to` is that label, so re-hashing every live terminal status
+ * receipt reproduces the citation with no side journal. Only claim-holder-shaped ids
+ * are attempted; every other hint passes through untouched. An unreadable bus
+ * store marks them `'unknown'`; a readable one with no reproducing receipt
+ * marks them `'unresolved'`.
+ */
+function claimHolderWakeContexts(rows: readonly BusWakeRow[], options: UnifiedBusOptions): Map<string, AgentWakeClaimHolder> {
+  const hints = new Map<string, BusWakeRow>();
+  for (const row of rows) if (CLAIM_HOLDER_WAKE_ID.test(row.id)) hints.set(row.id, row);
+  const contexts = new Map<string, AgentWakeClaimHolder>();
+  if (hints.size === 0) return contexts;
+  const scan = scanBusInbox({ root: options.root, now: options.now });
+  if (scan.source === 'unavailable') {
+    for (const id of hints.keys()) contexts.set(id, 'unknown');
+    return contexts;
+  }
+  const owners = [...new Set([...hints.values()].map(row => row.to))];
+  for (const receipt of scan.rows) {
+    if (contexts.size === hints.size) break;
+    const body: unknown = receipt.envelope.body;
+    if (body === null || typeof body !== 'object' || (body as { kind?: unknown }).kind !== 'work.status') continue;
+    const parsed = workStatusBodySchema.safeParse(body);
+    if (!parsed.success || !WORK_TERMINAL_STATUSES.has(parsed.data.status)) continue;
+    for (const owner of owners) {
+      const id = claimHolderWakeId(receipt.envelope.id, owner);
+      if (!hints.has(id) || contexts.has(id)) continue;
+      contexts.set(id, { statusId: receipt.envelope.id, jobId: parsed.data.jobId,
+        status: parsed.data.status, ...(parsed.data.detail === undefined ? {} : { detail: parsed.data.detail }) });
+    }
+  }
+  for (const id of hints.keys()) if (!contexts.has(id)) contexts.set(id, 'unresolved');
+  return contexts;
+}
+
+/** Human suffix naming the status receipt behind a claim-holder hint; '' on ordinary wakes. */
+export function agentWakeClaimHolderSuffix(wake: AgentWakeRow): string {
+  const holder = wake.claimHolder;
+  if (holder === undefined) return '';
+  if (holder === 'unknown') return ' claim-holder=unknown';
+  if (holder === 'unresolved') return ' claim-holder=unresolved';
+  return ` claim-holder job=${holder.jobId} status=${holder.status} receipt=${holder.statusId}`;
+}
+
+export type WakePage = { status: 'ok'; agent: string; wakes: AgentWakeRow[];
   /** Every hint the bounded queue read matched for the agent, before its row cap; `wakes` shows only the newest slice. */
   matched: number;
   /** The queue tail or row cap cut matches beyond `wakes`; false only when the bounded read provably saw them all. */
@@ -1125,7 +1191,11 @@ export type WakePage = { status: 'ok'; agent: string; wakes: BusWakeRow[];
  * Wake hints addressed to this identity under any label it resolves through
  * (address, bare handle, stable id or alias) or to one of its channels after
  * `sinceAt`. A wake is only a hint to read the inbox: it carries routing ids,
- * never a body, and grants nothing. `matched` counts every hint the bounded
+ * never a body, and grants nothing. Claim-holder hints (`wh-…` ids) carry no
+ * envelope id of their own, so each is re-resolved against the live
+ * `work.status` receipts that could have generated it and annotated with the
+ * citing status — `unresolved` when none reproduces it, `unknown` when the
+ * bus store cannot be read. `matched` counts every hint the bounded
  * queue tail matched before its row cap and `truncated` marks older bytes or
  * matched rows beyond the returned slice — an unreadable queue stays
  * `unavailable`, never an empty page passed off as "no wakes".
@@ -1138,7 +1208,12 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
   const wakes = readBusWakes({ root: options.runsRoot, sinceAt, match: wake =>
     target.labels.has(wake.to) || (channelOf(wake.to, target.channels) !== null && !target.labels.has(wake.from)) });
   if (wakes.state === 'unreadable') return { status: 'unavailable', reason: 'Wake queue is unreadable.' };
-  return { status: 'ok', agent: target.identity.handle, wakes: wakes.wakes,
+  const contexts = claimHolderWakeContexts(wakes.wakes, options);
+  return { status: 'ok', agent: target.identity.handle,
+    wakes: wakes.wakes.map(row => {
+      const claimHolder = contexts.get(row.id);
+      return claimHolder === undefined ? row : { ...row, claimHolder };
+    }),
     matched: wakes.matched ?? 0, truncated: wakes.truncated ?? false };
 }
 
