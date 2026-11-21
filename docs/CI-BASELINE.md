@@ -27,6 +27,22 @@ A suite that fails to load (transform, parse, or collection error) prints
 `<file> > (suite)` identity, capture the suite's error line, and count as
 passing on master when the file shows any pass evidence -- the file loading
 and running is what resolves a suite failure.
+The `ci` job's qualification lanes wrap the suite runs in
+`.github/scripts/ci-qualification-lane.mjs`, which re-reads each Vitest
+JSON report and refuses a case that passed only after a retry -- the
+default reporter shows it green, so the step's only failure output is
+`Test case passed only after a failed attempt (flaky): <file> > <name>`
+on stderr. `<file>` is the report's repo-relative module path under
+`test/` or `src/web-ui/` and `<name>` is the JSON reporter's space-joined
+ancestor titles plus the case title, not the default reporter's ` > `
+chain, so the group keys on the identity the evidence itself printed.
+Because it names a real test, the usual dependency closure and pass
+evidence apply: a green master module resolves a one-off flake on an
+unaffected singleton to `probable-flake`/`rerun-failed`, while a flake
+repeated across unaffected PRs -- or printed by master itself -- groups
+`shared-baseline` for a stabilization fix. Verdicts naming paths outside
+the suite roots, missing case names and near-miss wording stay unparsed,
+so an unrecognized lane failure still reads unknown rather than guessed.
 TypeScript diagnostics from `tsc`/`tsgo` non-pretty output
 (`src/core/foo.ts(41,9): error TS2322: ...`) group per file under a
 `<file> > (typecheck)` identity: a typecheck or build break prints no vitest

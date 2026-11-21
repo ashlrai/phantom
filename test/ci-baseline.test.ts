@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; script?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; script?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -63,7 +63,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.flaky ? 'flaky-shared' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : head;
       const receipt = options.bound
         ? `Bound candidate ${options.boundHead ?? sha} to event tree ${'e'.repeat(40)}\n`
@@ -1159,6 +1159,66 @@ describe('CI baseline evidence', () => {
     // Two unaffected PRs still group shared-baseline on a test path.
     const shared = await analyzeCiBaseline('owner/repo', github({ lintTestFile: true }).gh);
     expect(shared.groups[0]).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail' });
+  });
+  it('parses qualification-lane flaky verdicts as test failures', () => {
+    // ci-qualification-lane.mjs fails the lane when a Vitest case passes
+    // only after a retry; the JSON reporter's fullName joins ancestor
+    // titles with spaces, so the identity is `file > names` verbatim.
+    const failures = parseBaselineFailures(fixture('flaky-shared'), 'owner/repo');
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({
+      file: 'test/example.test.ts',
+      names: 'owner status reports delivery',
+      testId: 'test/example.test.ts > owner status reports delivery',
+    });
+    expect(failures[0]?.excerpt).toContain('passed only after a failed attempt (flaky)');
+    const multi = parseBaselineFailures([
+      'Test case passed only after a failed attempt (flaky): test/example.test.ts > owner status reports delivery',
+      'Test case passed only after a failed attempt (flaky): src/web-ui/design/tokens.test.tsx > tokens exposes accent',
+      '##[error]Process completed with exit code 1.',
+    ].join('\n'), 'owner/repo');
+    expect(multi.map(f => f.testId)).toEqual([
+      'test/example.test.ts > owner status reports delivery',
+      'src/web-ui/design/tokens.test.tsx > tokens exposes accent',
+    ]);
+    // Timestamped job-log lines keep the verdict.
+    const stamped = fixture('flaky-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped, 'owner/repo').map(f => f.testId)).toEqual(failures.map(f => f.testId));
+  });
+  it('keeps unrecognized qualification output unparsed', () => {
+    for (const line of [
+      // Only the vitest suite paths the qualification lanes run.
+      'Test case passed only after a failed attempt (flaky): src/core/example.ts > suite case',
+      'Test case passed only after a failed attempt (flaky): test/../escape.test.ts > suite case',
+      'Test case passed only after a failed attempt (flaky): /abs/test/example.test.ts > suite case',
+      // The verdict requires both the file and the case name.
+      'Test case passed only after a failed attempt (flaky): test/example.test.ts',
+      'Test case passed only after a failed attempt (flaky): test/example.test.ts > ',
+      // Near-miss wording from other tooling stays unattributed.
+      'Test case passed only after failed attempt: test/example.test.ts > suite case',
+      'Test passed only after a failed attempt (flaky): test/example.test.ts > suite case',
+    ]) {
+      expect(parseBaselineFailures(line, 'owner/repo'), line).toEqual([]);
+    }
+  });
+  it('groups flaky verdicts and resolves a singleton through master pass evidence', async () => {
+    // The flaky verdict names a real test, so dependency attribution is
+    // the same as a vitest FAIL: repeated on unaffected PRs it is a
+    // shared baseline, and master printing it too marks master 'fail'.
+    const shared = await analyzeCiBaseline('owner/repo', github({ flaky: true }).gh);
+    expect(shared.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(shared.groups).toHaveLength(1);
+    expect(shared.groups[0]).toMatchObject({
+      testId: 'test/example.test.ts > owner status reports delivery',
+      classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2],
+    });
+    // A one-off flake on an unaffected singleton with a green master
+    // module is probable-flake: rerun evidence, never a fabricated pass.
+    const flake = await analyzeCiBaseline('owner/repo', github({ flaky: true, count: 1, pass: true, filePass: true }).gh);
+    expect(flake.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed', master: 'pass' });
+    // A PR that touches the flaky test (or its imports) owns the flake.
+    const caused = await analyzeCiBaseline('owner/repo', github({ flaky: true, touched: 'test/example.test.ts' }).gh);
+    expect(caused.groups[0]?.action).toBe('pr-caused');
   });
   it('keeps TAP indentation on timestamped job-log lines', () => {
     const block = [
