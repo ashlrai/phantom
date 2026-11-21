@@ -68,6 +68,7 @@ describe('phm agents bus (unified)', () => {
     const framed = await run(['inbox', '--frame', 'cursor'], { PHM_AGENT_ID: 'nova' });
     expect(framed.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS MESSAGES');
     const wakes = await run(['wakes', 'nova']);
+    expect(wakes.json).toMatchObject({ matched: 2, truncated: false });
     expect(wakes.json.wakes.map((w: { id: string }) => w.id)).toEqual(['cli-dm', 'cli-ho']);
     const adapters = await run(['adapters']);
     expect(adapters.json.adapters.map((a: { cli: string }) => a.cli)).toEqual(['claude', 'codex', 'devin', 'cursor', 'grok']);

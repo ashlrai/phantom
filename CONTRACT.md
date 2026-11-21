@@ -1980,7 +1980,9 @@ longest-waiting order, `matched`/`truncated`/`skipped` semantics and
 `unavailable`-on-unreadable rule as `threads`.
 `wakes` reuses
 `readAgentWakes` capped at the newest 20 with `matched` the count of every
-hint the bounded queue read matched and `truncated`, or
+hint the bounded queue tail matched for the agent before its row cap —
+a lower bound, never a proven total, when `truncated` marks queue-tail or
+cap cuts beyond the shown slice — and
 `unknown-agent`/`unavailable` with `reason`. `inbox` reuses `readAgentInbox`
 for the next page of mail addressed to the agent — same matching, order and
 owner-share receipt checks as `agents bus inbox` — as `{status:'ok', agent,
@@ -2041,7 +2043,11 @@ worker-handoff items
 additionally carry `held`/`holder` — the same hold evidence
 `readBusEnvelopeById` reports, read once per page, `held` null when a hold
 store cannot be read),
-`readAgentWakes(ref, sinceAt, options?)`, `listBusChannels(agent, options?)`
+`readAgentWakes(ref, sinceAt, options?)` (the ok page carries `matched`,
+every hint the bounded queue tail accepted for the agent before its row
+cap, and `truncated`, true when the 256 KiB observation window or the cap
+cut matches beyond the returned slice — `matched` is then a lower bound,
+never a proven total), `listBusChannels(agent, options?)`
 (the registry channels name-sorted with `createdBy`, `createdAt` and member
 handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or
@@ -2115,8 +2121,10 @@ are routing names and grant no authority.
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
 read-only probe over the five dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
-null when unreadable), the wake queue (`state` plus the observed hint count,
-null unless `ok`), the shared coordination table (`coordinationSummary`) and
+null when unreadable), the wake queue (`state`, the observed hint count
+before the row cap — 0 on a verified-missing queue, null when unreadable —
+plus `truncated` for queue-tail or cap cuts, null when the state is
+unknown), the shared coordination table (`coordinationSummary`) and
 the work-feed projection (job count, or the refusal `reason` plus the blamed
 receipt's wire id as `receipt` when the projection named one). Each section
 reports its own real state, a failed probe degrades only its own section, and

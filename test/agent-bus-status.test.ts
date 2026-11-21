@@ -28,7 +28,9 @@ describe('readUnifiedBusStatus', () => {
       liveCount: null, expiredCount: null, maxMessages: 1024, maxBytes: 1024 * 1024 });
     // A verifiably absent registry holds no identities: 0 is the real count.
     expect(status.registry).toEqual({ source: 'missing', identities: 0, channels: 0 });
-    expect(status.wakes).toEqual({ state: 'missing', hints: null });
+    // A verifiably absent queue holds no hints: 0 is the real count, and
+    // nothing can be truncated out of a queue that does not exist.
+    expect(status.wakes).toEqual({ state: 'missing', hints: 0, truncated: false });
     expect(status.coordination).toEqual({ source: 'missing', liveClaims: null, statuses: null });
     expect(status.workClaims).toEqual({ source: 'missing', claims: null });
     // A missing store is an empty feed, matching `work feed` semantics.
@@ -145,6 +147,6 @@ describe('phm agents bus status', () => {
     expect(lines[0]).toMatch(/^store missing /);
     expect(lines.join('\n')).toContain('workClaims missing claims=unknown');
     expect(lines.join('\n')).toContain('feed ok jobs=0');
-    expect(lines.join('\n')).toContain('wakes missing hints=unknown');
+    expect(lines.join('\n')).toContain('wakes missing hints=0 truncated=false');
   });
 });

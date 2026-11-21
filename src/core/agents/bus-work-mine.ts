@@ -103,8 +103,10 @@ export type BusWorkMineAnnounced =
 
 export type BusWorkMineWakes =
   | { status: 'ok'; agent: string; wakes: BusWakeRow[];
-      /** Every wake hint the bounded queue read matched for the agent; `wakes` shows only the newest cap. */
-      matched: number; truncated: boolean }
+      /** Every wake hint the bounded queue tail matched for the agent before its row cap; `wakes` shows only the newest digest cap. */
+      matched: number;
+      /** The queue tail or a row cap cut matches beyond `wakes` — matched is then a lower bound, never proven total. */
+      truncated: boolean }
   | { status: 'unknown-agent' | 'unavailable'; reason: string };
 
 /** One mail row addressed to the agent, summarized the way the inbox frame reads it. */
@@ -794,8 +796,8 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
   const page = readAgentWakes(agent, undefined,
     { root: options.root, runsRoot: options.runsRoot, now: () => nowMs });
   const wakes: BusWorkMineWakes = page.status === 'ok'
-    ? { status: 'ok', agent: page.agent, matched: page.wakes.length,
-        truncated: page.wakes.length > WORK_MINE_WAKES_MAX,
+    ? { status: 'ok', agent: page.agent, matched: page.matched,
+        truncated: page.truncated || page.matched > WORK_MINE_WAKES_MAX,
         wakes: page.wakes.slice(-WORK_MINE_WAKES_MAX) }
     : { status: page.status, reason: page.reason };
 
