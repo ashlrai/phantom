@@ -327,7 +327,13 @@ for the model its launch row names. A model with nothing recorded shows an
 empty line and says so; when the report cannot be read every card is hatched
 and reads "work unknown", never zero. Launches whose record names no model are
 counted in a sentence above the cards and for no card, and names jobs launched
-under that the registry lacks are listed after the providers. The switch narrows the board to Needs attention or Routable
+under that the registry lacks are listed after the providers. The bars are also
+a reading cursor shared by the whole board: point at one bar, or focus a row
+and press Left or Right (Home and End jump to the oldest and newest bar), and
+that stretch of time is held on every card, each card's words become its own
+jobs launched and PRs merged in it, and the line above the cards gives the
+fleet's counts for it from the report's own hours. Esc, moving the pointer off
+the bars or moving focus off the rows lets go. The switch narrows the board to Needs attention or Routable
 (arrow keys move it), and models the provider docs name that the registry lacks
 are listed at the end. The registry, the check and the lane model table are
 read separately: when one cannot be read the board says which, and the facts it

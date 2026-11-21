@@ -5,6 +5,7 @@
  * (`phm models verify <id> --source <url>`; the server re-reads the doc page and its refusal is shown as written).
  * At the foot of each row: the jobs launched on that model across the last 24 hours or 7 days, the PRs merged and
  * the jobs that came back empty (`phm throughput --by model`, model-work-model.ts), read apart from the rest.
+ * Pointing at one bar, or moving along a focused row with Left and Right, holds that stretch of time on every card.
  *
  * Three reads, joined in models-board-model.ts: the registry (`phm models --json`), the check
  * (`phm models check --json`) and the lane model table (GET /api/verse/fleet/runs/lane-models). A read that fails
@@ -50,9 +51,9 @@ function lastLaunchText(model: BoardModel, launches: boolean, nowMs: number): st
   return launches ? 'not the latest on any lane' : null;
 }
 
-function ModelItem({ model, launches, nowMs, state, onVerify, did, board }: {
+function ModelItem({ model, launches, nowMs, state, onVerify, did, board, cursor, onCursor }: {
   model: BoardModel; launches: boolean; nowMs: number; state: RowState | undefined; onVerify: (source: string) => void;
-  did: ModelWork | undefined; board: WorkBoard;
+  did: ModelWork | undefined; board: WorkBoard; cursor: string | null; onCursor: (start: string | null) => void;
 }) {
   const [typed, setTyped] = useState('');
   const recorded = model.sourceUrl?.startsWith('https://') ? model.sourceUrl : null;
@@ -84,13 +85,15 @@ function ModelItem({ model, launches, nowMs, state, onVerify, did, board }: {
       {state && 'done' in state ? <span className={styles.note} role="status">Confirmed by the docs today.</span> : null}
       {state && 'error' in state ? <span className={styles.bad} role="alert">{state.error}</span> : null}
     </div>}
-    {did ? <ModelWorkLine work={did} board={board} /> : null}
+    {did ? <ModelWorkLine work={did} board={board} cursor={cursor} onCursor={onCursor} /> : null}
   </li>;
 }
 
 export function ModelsPane({ visible = true }: { visible?: boolean }) {
   const [filter, setFilter] = useState<ModelFilter>('all');
   const [workWindow, setWorkWindow] = useState<WorkWindow>('24');
+  // The reading cursor: the start of the one bar every card reads out. It belongs to a window, so switching lets go.
+  const [cursor, setCursor] = useState<string | null>(null);
   const [states, setStates] = useState<ReadonlyMap<string, RowState>>(new Map());
   const registryRead = useQuery(modelRegistryQuery, { enabled: visible, freshMs: 60_000 });
   const checkRead = useQuery(modelCheckQuery, { enabled: visible, freshMs: 60_000 });
@@ -141,9 +144,9 @@ export function ModelsPane({ visible = true }: { visible?: boolean }) {
       <div className={work.switches}>
         <Segmented size="sm" aria-label="Show models" value={filter} onChange={setFilter}
           options={FILTERS.map(({ value, word }) => ({ value, label: `${word} ${counts[value]}` }))} />
-        <Segmented size="sm" aria-label="Work window" value={workWindow} onChange={setWorkWindow} options={WORK_WINDOWS} />
+        <Segmented size="sm" aria-label="Work window" value={workWindow} onChange={next => { setWorkWindow(next); setCursor(null); }} options={WORK_WINDOWS} />
       </div>
-      <WorkSummary board={board} />
+      <WorkSummary board={board} cursor={cursor} />
       {groups.length === 0 ? <p className={styles.message} role="status">{FILTERS.find(item => item.value === filter)!.none}</p> : groups.map(group => {
         const name = providerLabel(group.provider);
         const launched = launchedBy(board, group.models.map(model => model.id));
@@ -151,7 +154,7 @@ export function ModelsPane({ visible = true }: { visible?: boolean }) {
           <div className={styles.groupHead}><ProviderMark provider={group.provider} /><h3>{name}</h3><span>{groupLine(group)}</span>
             {launched === null ? null : <span data-group-work>{launched === 1 ? '1 job' : `${launched} jobs`} launched in the last {board.span}</span>}</div>
           <ul className={styles.list}>{group.models.map(model => <ModelItem key={model.id} model={model} launches={launches} nowMs={nowMs}
-            state={states.get(model.id)} onVerify={source => verify(model.id, source)} did={board.works.get(model.id)} board={board} />)}</ul>
+            state={states.get(model.id)} onVerify={source => verify(model.id, source)} did={board.works.get(model.id)} board={board} cursor={cursor} onCursor={setCursor} />)}</ul>
         </section>;
       })}
     </>}

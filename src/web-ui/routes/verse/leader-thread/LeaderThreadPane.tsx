@@ -54,6 +54,7 @@ import { OwnerChannelsStrip } from './OwnerChannelsStrip.js';
 import { leaderOfficeQuery } from './leader-office-data.js';
 import { mergeOwnerLines, ownerThreadLines, type LabeledLine } from './owner-thread-lines.js';
 import { NO_OWNER_THREAD, ownerThreadQuery } from './owner-thread-queries.js';
+import { LeaderHealth } from './LeaderHealth.js';
 import { LeaderPresence } from './LeaderPresence.js';
 import { fetchLeaderStatusNow } from './leader-status-now.js';
 import { sendLeaderInboxMessage, sendLeaderThreadMessage } from './leader-inbox-data.js';
@@ -561,6 +562,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     </div>
     {/* What the Leader is waiting on Mason for, answerable without scrolling back. */}
     <LeaderAsks visible={visible} readOnly={actions.readOnly} />
+    {/* Said where Mason writes: the Leader's own passes are failing, so these words will wait. */}
+    <LeaderHealth visible={visible} />
     {note ? <p className={styles.note} role="note">{note}</p> : null}
     <form className={styles.reply} onSubmit={onSubmit}>
       {assist.panel}

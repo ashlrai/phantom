@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdQueueAutofill } from '../src/cli/queue-autofill.js';
 import {
-  AUTOFILL_EVENT_SCHEMA, AUTOFILL_STATUS_SCHEMA, readAutofillEvents, runAutofillTick, type AutofillTickOptions, type LaneSnapshotView,
+  AUTOFILL_EVENT_SCHEMA, AUTOFILL_STATUS_SCHEMA, autofillLaneLines, readAutofillEvents, runAutofillTick, type AutofillTickOptions, type LaneSnapshotView,
 } from '../src/core/fleet/autofill-run.js';
 import { QueueStore } from '../src/core/queue/store.js';
 
@@ -25,8 +25,7 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); rmSync(runsDir, { recursive: true, force: true }); rmSync(root, { recursive: true, force: true }); });
 
 const view = (lanes: Record<string, number>): LaneSnapshotView => ({
-  starved: Object.keys(lanes),
-  counts: Object.fromEntries(Object.entries(lanes).map(([lane, queued]) => [lane, { running: 0, target: 6, queued }])),
+  lanes: Object.entries(lanes).map(([lane, queued]) => ({ lane, running: 0, target: 6, queued, held: false, remainingPct: 68 })),
 });
 const tick = (lanes: Record<string, number>, extra: Partial<AutofillTickOptions> = {}, apply = true) =>
   runAutofillTick({ runsDir, apply, now: () => NOW, root, entries: [], readLanes: async () => view(lanes), readOff: async () => false, ...extra });
@@ -43,9 +42,10 @@ describe('autofill tick', () => {
     expect(readFileSync(join(runsDir, 'queue', 'dispatch-events.log'), 'utf8')).toMatch(/ AUTOFILL \{.*\} src=autofill\n$/);
   });
 
-  it('does nothing for a full lane', async () => {
+  it('does not call a lane with six rows already queued starved', async () => {
     const report = await tick({ claude: 6 });
-    expect(report.runs[0]).toMatchObject({ drafted: 0, applied: 0, reason: 'Lane is full.' });
+    expect(report.runs).toEqual([]);
+    expect(report.lanes).toEqual([{ lane: 'claude', starved: false, fed: 0, why: '6 ready rows are already queued for it' }]);
     expect(await queued()).toHaveLength(0);
   });
 
@@ -103,6 +103,60 @@ describe('autofill tick', () => {
     await tick({ claude: 0 }, { readOff: async () => true });
     await tick({ claude: 0 }, { readOff: async () => true, now: () => NOW + 300_000 });
     expect(readAutofillEvents(runsDir)).toHaveLength(1);
+  });
+});
+
+// Lane rows shaped like queue/status.json (lanes.<lane>.{running,target,queued,held}) joined with each pool's percent used.
+const STATUS_LANES = {
+  claude: { running: 2, target: 8, queued: 0, held: false },
+  'codex-personal': { running: 0, target: 1, queued: 10, held: false },
+  devin: { running: 1, target: 0, queued: 0, held: true },
+  'codex-local': { running: 7, target: 7, queued: 0, held: false },
+  zai: { running: 0, target: 1, queued: 0, held: false },
+};
+const POOL_PERCENT_USED: Record<string, number> = { claude: 32, 'codex-personal': 100, devin: 10, 'codex-local': 40, zai: 100 };
+const fromStatus = async (): Promise<LaneSnapshotView> => ({
+  lanes: Object.entries(STATUS_LANES).map(([lane, row]) => ({ lane, ...row, remainingPct: 100 - POOL_PERCENT_USED[lane]! })),
+});
+
+describe('autofill picks starved lanes from the status facts', () => {
+  it('feeds an idle lane with usage left, leaves the rest alone, and says why', async () => {
+    const report = await runAutofillTick({ runsDir, apply: true, now: () => NOW, root, entries: [], readLanes: fromStatus, readOff: async () => false });
+    expect(report.runs.map(r => r.lane)).toEqual(['claude']);
+    // Capped at the free slots (8 - 2 = 6) and the hourly lane cap (4).
+    expect(report.runs[0]).toMatchObject({ lane: 'claude', applied: 4 });
+    expect(report.lanes).toEqual([
+      { lane: 'claude', starved: true, fed: 4, why: 'running 2 of 8, 0 queued, pool 32% used' },
+      { lane: 'codex-local', starved: false, fed: 0, why: 'full: 7 of 7 running' },
+      { lane: 'codex-personal', starved: false, fed: 0, why: 'out of usage (pool 100% used)' },
+      { lane: 'devin', starved: false, fed: 0, why: 'held, so it is skipped' },
+      { lane: 'zai', starved: false, fed: 0, why: 'out of usage (pool 100% used)' },
+    ]);
+    expect((await queued()).every(j => j.pool === 'claude')).toBe(true);
+  });
+
+  it('does not feed a lane whose pool is fully used, even with free slots and nothing queued', async () => {
+    const report = await tick({}, { readLanes: async () => ({ lanes: [{ lane: 'codex-personal', running: 0, target: 1, queued: 0, held: false, remainingPct: 0 }] }) });
+    expect(report.runs).toEqual([]);
+    expect(report.reason).toBe('No lane is starved: codex-personal out of usage (pool 100% used).');
+  });
+
+  it('feeds no more than the free slots', async () => {
+    const report = await tick({}, { readLanes: async () => ({ lanes: [{ lane: 'claude', running: 5, target: 7, queued: 0, held: false, remainingPct: null }] }) });
+    expect(report.runs[0]).toMatchObject({ lane: 'claude', drafted: 2, applied: 2 });
+    expect(report.lanes![0]).toMatchObject({ starved: true, fed: 2, why: 'running 5 of 7, 0 queued' });
+  });
+
+  it('skips a held lane with the reason in the report', async () => {
+    const report = await tick({}, { readLanes: async () => ({ lanes: [{ lane: 'devin', running: 0, target: 3, queued: 0, held: true, remainingPct: 90 }] }) });
+    expect(report.runs).toEqual([]);
+    expect(report.lanes).toEqual([{ lane: 'devin', starved: false, fed: 0, why: 'held, so it is skipped' }]);
+  });
+
+  it('says why a starved lane was not fed when autofill is off', async () => {
+    const report = await runAutofillTick({ runsDir, apply: true, now: () => NOW, root, entries: [], readLanes: fromStatus, readOff: async () => true });
+    expect(report.lanes!.find(r => r.lane === 'claude')).toEqual({ lane: 'claude', starved: true, fed: 0, why: 'autofill off' });
+    expect(autofillLaneLines(report.lanes!)[0]).toBe('claude: starved, fed 0 (autofill off)');
   });
 });
 

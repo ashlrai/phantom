@@ -1,10 +1,11 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import type { ComputeNode } from '../../../../core/fleet/compute-view.js';
 import type { MapSession } from '../../../../core/fleet/sessions-view.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { Sheet } from '../../../components/primitives/Sheet.js';
-import { fleetComputeQuery, fleetMessageGraphQuery, fleetNodesPlanQuery, fleetSessionMapQuery } from './fleet-map-queries.js';
+import { fleetComputeQuery, fleetMapMessagesQuery, fleetMessageGraphQuery, fleetNodesPlanQuery, fleetSessionMapQuery } from './fleet-map-queries.js';
+import { MessageEdges } from './MessageEdges.js';
 import { age, bytes, cpuPercent, elapsed, fresh, number, prLink } from './fleet-map-model.js';
 import styles from './FleetMap.module.css';
 
@@ -43,6 +44,11 @@ export function FleetMap() {
   const compute = useQuery(fleetComputeQuery, { enabled: started, freshMs: 0 });
   const sessions = useQuery(fleetSessionMapQuery, { enabled: started, freshMs: 0 });
   const messages = useQuery(fleetMessageGraphQuery, { enabled: started, freshMs: 0 });
+  const [showMessages, setShowMessages] = useState(true);
+  const showMessagesRef = useRef(showMessages);
+  showMessagesRef.current = showMessages;
+  const liveMessages = useQuery(fleetMapMessagesQuery, { enabled: started && showMessages, freshMs: 0 });
+  const refreshLive = useRefetch(fleetMapMessagesQuery);
   // Badges are a plan, not a live reading: read once and again after 30 s, not on the 4 s tick (the read runs tailscale).
   const badges = useQuery(fleetNodesPlanQuery, { enabled: started, freshMs: 30_000 }).data ?? null;
   const refreshCompute = useRefetch(fleetComputeQuery), refreshSessions = useRefetch(fleetSessionMapQuery), refreshMessages = useRefetch(fleetMessageGraphQuery);
@@ -52,15 +58,15 @@ export function FleetMap() {
     const visibility = () => {
       const shown = document.visibilityState !== 'hidden';
       setVisible(shown); setNow(Date.now());
-      if (shown) { setStarted(true); refreshCompute(); refreshSessions(); refreshMessages(); }
+      if (shown) { setStarted(true); refreshCompute(); refreshSessions(); refreshMessages(); if (showMessagesRef.current) refreshLive(); }
     };
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
-      setNow(Date.now()); refreshCompute(); refreshSessions(); refreshMessages();
+      setNow(Date.now()); refreshCompute(); refreshSessions(); refreshMessages(); if (showMessagesRef.current) refreshLive();
     }, 4000);
     document.addEventListener('visibilitychange', visibility);
     return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', visibility); };
-  }, [refreshCompute, refreshSessions, refreshMessages]);
+  }, [refreshCompute, refreshSessions, refreshMessages, refreshLive]);
   useEffect(() => {
     if (!compute.data) return;
     const nodes = compute.data.nodes;
@@ -124,6 +130,12 @@ export function FleetMap() {
         <ul className={styles.caption}>{group.edges.map(edge => <li key={edge.id}>{edge.from} → {edge.to} · {edge.count}</li>)}</ul>
       </li>)}</ul>}
     </section> : null}
+    <section className={styles.messages} aria-label="Live message edges">
+      <h3>Live messages</h3>
+      <label><input type="checkbox" checked={showMessages} onChange={e => setShowMessages(e.target.checked)} /> Show messages</label>
+      {showMessages ? (liveMessages.data ? <MessageEdges messages={liveMessages.data.messages} now={now} />
+        : <p className={styles.caption}>{liveMessages.status === 'error' ? 'Live messages unavailable.' : 'Loading live messages…'}</p>) : null}
+    </section>
     <Sheet open={selectedJob !== null || selectedNode !== null} onClose={close} titleId="fleet-map-detail" title={selectedJob ?? selectedNode}>
       {session ? <>
         <p className={styles.detailActivity}>{session.activity ?? 'Activity unknown'}</p>

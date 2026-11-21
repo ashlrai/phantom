@@ -40,6 +40,8 @@ export interface WorkBoard {
   /** Names jobs launched under that no row on the board carries. */
   strangers: { name: string; words: string }[];
   works: ReadonlyMap<string, ModelWork>;
+  /** The whole fleet's hours (the report's own buckets) folded into the same bars; empty with no reading. */
+  fleet: readonly WorkColumn[];
 }
 
 const plural = (count: number, one: string, many: string): string => `${count} ${count === 1 ? one : many}`;
@@ -82,7 +84,7 @@ export function workBoard({ report, failed, hours, ids }: WorkInputs): WorkBoard
   const span = spanWords(report?.hours ?? hours);
   const columnHours = Math.max(1, Math.ceil((report?.hours ?? hours) / WORK_COLUMNS));
   const blank = (kind: 'unread' | 'reading', words: string, line: string): WorkBoard => ({
-    state: kind, span, columnHours, peak: 1, line, unnamed: null, strangers: [],
+    state: kind, span, columnHours, peak: 1, line, unnamed: null, strangers: [], fleet: [],
     works: new Map(ids.map(id => [id, { kind, ...NO_READING, words, spoken: `${id}: ${words}` }])),
   });
   if (report === null) {
@@ -111,7 +113,7 @@ export function workBoard({ report, failed, hours, ids }: WorkInputs): WorkBoard
     lost?.merged ? `${lost.merged} of ${plural(report.totals.merged ?? lost.merged, 'merged PR', 'merged PRs')}` : '',
   ].filter(Boolean);
   return {
-    state: 'ok', span, columnHours, peak, works,
+    state: 'ok', span, columnHours, peak, works, fleet: workColumns(report),
     line: report.groups.length === 0 ? `No job or PR was recorded in the last ${span}.`
       : `Last ${span}: ${workWords(report.totals)}, under ${plural(named.length, 'model name', 'model names')}.`,
     unnamed: pieces.length > 0 ? `No model is named for ${pieces.join(' and ')}, so no row counts them.` : null,
@@ -123,6 +125,38 @@ export function workBoard({ report, failed, hours, ids }: WorkInputs): WorkBoard
 export function launchedBy(board: WorkBoard, ids: readonly string[]): number | null {
   if (board.state !== 'ok') return null;
   return ids.reduce((sum, id) => sum + (board.works.get(id)?.totals?.launched ?? 0), 0);
+}
+
+const HOUR_MS = 3_600_000;
+/** "Wed 2:00 PM to 3:00 PM": the stretch one bar covers, in local time. The end names its day only when it is another one. */
+export function columnWhen(column: Pick<WorkColumn, 'start' | 'hours'>, timeZone?: string): string {
+  const from = new Date(column.start), to = new Date(from.getTime() + column.hours * HOUR_MS);
+  if (Number.isNaN(from.getTime())) return 'time unknown';
+  const clock = { hour: 'numeric', minute: '2-digit', timeZone } as const;
+  const day = (date: Date) => date.toLocaleDateString(undefined, { weekday: 'short', timeZone });
+  return `${day(from)} ${from.toLocaleTimeString(undefined, clock)} to ${day(to) === day(from) ? '' : `${day(to)} `}${to.toLocaleTimeString(undefined, clock)}`;
+}
+/** One bar in words. A bar holds only what the report's hours hold: launches and merges. */
+export const columnWords = (column: Pick<WorkColumn, 'launched' | 'merged'>): string =>
+  `${plural(column.launched, 'job', 'jobs')} launched, ${plural(column.merged, 'PR', 'PRs')} merged`;
+
+/** The bar the reading cursor is on, or null: no cursor, or a start this row does not hold (the window moved on). */
+export function cursorAt(columns: readonly WorkColumn[], cursor: string | null): number | null {
+  const index = cursor === null ? -1 : columns.findIndex(column => column.start === cursor);
+  return index < 0 ? null : index;
+}
+/** Where a key takes the cursor: a start, null to let go (Escape), undefined when the key is not the cursor's. It stops at the ends. */
+export function cursorMove(columns: readonly WorkColumn[], cursor: string | null, key: string): string | null | undefined {
+  if (columns.length === 0) return undefined;
+  if (key === 'Escape') return cursorAt(columns, cursor) === null ? undefined : null;
+  const last = columns.length - 1, at = cursorAt(columns, cursor) ?? last;
+  const to = key === 'ArrowLeft' ? Math.max(0, at - 1) : key === 'ArrowRight' ? Math.min(last, at + 1) : key === 'Home' ? 0 : key === 'End' ? last : null;
+  return to === null ? undefined : columns[to]!.start;
+}
+/** The fleet's sentence for the bar under the cursor, from the report's own hours; null when the cursor is on none of them. */
+export function cursorLine(board: Pick<WorkBoard, 'fleet'>, cursor: string | null, timeZone?: string): string | null {
+  const at = cursorAt(board.fleet, cursor);
+  return at === null ? null : `${columnWhen(board.fleet[at]!, timeZone)}: ${columnWords(board.fleet[at]!)} across the fleet.`;
 }
 
 /** A bar's height as a share of the row, with a floor so one job in a busy board is still a mark. */
