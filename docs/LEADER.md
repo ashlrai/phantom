@@ -562,9 +562,10 @@ its text says `re: <id>`. Unreadable inbox blocks are skipped and counted in
 (the same path as `phm leader inbox --text`) and prints the new message id.
 The desktop inbox box and the phone box show the same chat above their Send.
 For the whole conversation with the channel of each message, run
-`phm leader thread --since <hours> [--json]` (or GET
-`/api/verse/leader/thread/merged`): each entry has `at`, `from` (`mason`,
-`leader`, `teammate` or `unknown`), `channel`, `text` and `source`. A reply in
+`phm leader thread --since <hours|date> [--limit <n>] [--json]` (or GET
+`/api/verse/leader/thread/merged?since=…&limit=…`): each entry has `at`, `from` (`mason`,
+`leader`, `teammate` or `unknown`), `channel`, `text`, `source` and `refs` (PR
+numbers named in the text). `--limit` keeps the newest n. A reply in
 both the outbox and the PLAN-LOG shows once, and an entry with no readable date
 keeps `at: null` ("time unknown") and sorts last.
 These journals are read only. `--follow` still streams the in-process Leader

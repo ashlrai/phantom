@@ -27,10 +27,20 @@ export interface LeaderThreadEntry {
   channel: string;
   text: string;
   source: ThreadSource;
+  /** PR numbers named in the text ("#7873", "PR 7873", github .../pull/7873), ascending, no repeats. */
+  refs: number[];
+}
+
+const PR_REF = /(?:\bPRs?\s*#?|#|\/pull\/)(\d{1,6})\b/gi;
+/** PR numbers found in free text, ascending and unique. */
+export function prRefs(text: string): number[] {
+  const found = new Set<number>();
+  for (const m of text.matchAll(PR_REF)) found.add(Number(m[1]));
+  return [...found].sort((a, b) => a - b);
 }
 
 export interface LeaderThreadTexts { inbox: string; outbox: string; planLog: string }
-export interface LeaderThreadOptions { nowMs?: number; sinceHours?: number }
+export interface LeaderThreadOptions { nowMs?: number; sinceHours?: number; /** ISO instant; entries older than this are dropped. */ sinceAt?: string; /** Keep only the newest n entries. */ limit?: number }
 
 const CHANNEL_LINE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2}))\s+\[src:([a-z0-9._-]{1,32})(?:\s+id:[A-Za-z0-9._:-]{1,64})?\]\s+(.+)$/;
 const DATED_HEADING = /^## (\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}))?/;
@@ -51,11 +61,11 @@ function fromWho(who: string): ThreadFrom {
 /** Both inbox forms, oldest first. A heading with no readable date is kept with a null time. */
 function inboxEntries(markdown: string): LeaderThreadEntry[] {
   const out: LeaderThreadEntry[] = [];
-  let open: { head: Omit<LeaderThreadEntry, 'text'>; body: string[]; channelForm: boolean } | null = null;
+  let open: { head: Omit<LeaderThreadEntry, 'text' | 'refs'>; body: string[]; channelForm: boolean } | null = null;
   const close = (): void => {
     if (!open) return;
     const text = open.body.filter(line => !isFlagOnlyInboxText(line) || !line.trim()).join('\n').trim();
-    if (text && !isFlagOnlyInboxText(text)) out.push({ ...open.head, text });
+    if (text && !isFlagOnlyInboxText(text)) out.push({ ...open.head, text, refs: prRefs(text) });
     open = null;
   };
   for (const line of markdown.replace(/\r\n/g, '\n').split('\n')) {
@@ -101,16 +111,40 @@ export function mergeLeaderThread(texts: LeaderThreadTexts, opts: LeaderThreadOp
       return;
     }
     seen.set(key, replies.length);
-    replies.push({ at: when, from: 'leader', channel: source, text: clean.trim(), source });
+    replies.push({ at: when, from: 'leader', channel: source, text: clean.trim(), source, refs: prRefs(clean) });
   };
   for (const entry of parseOutbox(texts.outbox, Number.MAX_SAFE_INTEGER)) add('outbox', entry.at, entry.text);
   for (const entry of parsePlanLog(texts.planLog)) add('plan-log', entry.at, entry.text);
   const all = [...inboxEntries(texts.inbox), ...replies].map((entry, order) => ({ entry, order, ms: entry.at === null ? null : Date.parse(entry.at) }));
-  const sinceMs = opts.sinceHours !== undefined && Number.isFinite(opts.sinceHours) ? (opts.nowMs ?? Date.now()) - opts.sinceHours * 3_600_000 : null;
-  return all
+  const byHours = opts.sinceHours !== undefined && Number.isFinite(opts.sinceHours) ? (opts.nowMs ?? Date.now()) - opts.sinceHours * 3_600_000 : null;
+  const byTime = opts.sinceAt !== undefined && Number.isFinite(Date.parse(opts.sinceAt)) ? Date.parse(opts.sinceAt) : null;
+  const sinceMs = byHours === null ? byTime : byTime === null ? byHours : Math.max(byHours, byTime);
+  const sorted = all
     .filter(row => sinceMs === null || row.ms === null || row.ms >= sinceMs)
     .sort((a, b) => (a.ms === null ? 1 : 0) - (b.ms === null ? 1 : 0) || (a.ms ?? 0) - (b.ms ?? 0) || a.order - b.order)
     .map(row => row.entry);
+  return opts.limit !== undefined && opts.limit >= 0 && Number.isFinite(opts.limit) ? sorted.slice(Math.max(0, sorted.length - Math.floor(opts.limit))) : sorted;
+}
+
+/** `--since` is hours (a number) or a time Date can read; `--limit` is a whole number of newest messages. Null = unusable. */
+export function parseThreadWindow(since: string | undefined, limit: string | undefined): { sinceHours?: number; sinceAt?: string; limit?: number } | null {
+  const out: { sinceHours?: number; sinceAt?: string; limit?: number } = {};
+  if (since !== undefined) {
+    if (/^\d+(?:\.\d+)?$/.test(since)) {
+      const hours = Number(since);
+      if (!(hours > 0 && hours <= 24 * 365)) return null;
+      out.sinceHours = hours;
+    } else {
+      const ms = /\d{4}-\d{2}-\d{2}/.test(since) ? Date.parse(since) : NaN;
+      if (!Number.isFinite(ms)) return null;
+      out.sinceAt = new Date(ms).toISOString();
+    }
+  }
+  if (limit !== undefined) {
+    if (!/^\d{1,4}$/.test(limit) || Number(limit) < 1) return null;
+    out.limit = Number(limit);
+  }
+  return out;
 }
 
 export interface LeaderThreadRead {
