@@ -486,7 +486,8 @@ decisions only) and `fallback_used` (job receipts). See [gates and inert status]
 
 `router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?, revertedPrKeys?})`,
 `authorityRevertedPrKeys(evidence)`, `foldSpendCosts(text)`,
-`foldRouteDecisionWorkClasses(text)`, `readLedgerFile(path, limit?)`,
+`foldRouteDecisionWorkClasses(text)`, `foldEmptyTags(text)`,
+`readLedgerFile(path, limit?)`,
 `readLedgerTail(path, maxBytes?)` and
 `readRouterOutcomes({runsDir?, lane?, ashlarDir?, authorityEvidence?})`,
 producing `router.outcome.v1` records folded from `metrics/jobs.jsonl`. The jobs
@@ -516,7 +517,23 @@ non-route-identifier `work_class`, or a wrong schema/event are
 skipped. The market read degrades independently too:
 `RouterOutcomeRead.market_state` reports its health and
 `market_truncated` marks a cut tail; anything but `read` leaves
-classes ledger-recorded only. `passk` is the
+classes ledger-recorded only. `empty_tag` joins the same bound of
+`metrics/empty-tags.jsonl`: `foldEmptyTags` collapses `job.empty-tag.v1`
+rows — the `{schema, job, lane, tag}` records `phm jobs empty --record`
+appends from the fleet's final-output verdict (src/core/fleet/
+empty-tags.ts) — to each job's recorded tag in the closed
+`already_done`/`pool_cap`/`blocked`/`no_change_needed`/`unknown`
+vocabulary, last appended row winning a repeat. Only rows with the exact
+schema, a bounded job id and an in-vocabulary tag count; malformed JSON,
+other schemas and unrecognized tags are skipped, never recorded raw. The
+tag attaches to the job's outcome regardless of its standing finish
+verdict — it is the fleet's post-hoc why-it-ended-empty triage, distinct
+from the finish row's own `empty`/`empty_class` measures — and rows
+naming jobs outside the jobs window never create outcomes. The tags read
+degrades independently: `RouterOutcomeRead.empty_tag_state` reports its
+health and `empty_tag_truncated` marks a cut tail; anything but `read`
+leaves every `empty_tag` null — unknown, never a guessed cause, and a
+recorded `unknown` tag stays distinct from missing evidence. `passk` is the
 lane+model's pass^k (`passPowK`) from the published `eval.lane-scores.v1`
 projection (`~/.ashlr/eval/passk/lane-scores.json`, `ASHLR_HOME` honored);
 it is `null` whenever the ledger lacks lane/model, the projection is

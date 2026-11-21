@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   authorityRevertedPrKeys,
+  foldEmptyTags,
   foldRouteDecisionWorkClasses,
   foldRouterOutcomes,
   foldSpendCosts,
@@ -43,6 +44,18 @@ function writeMarket(root: string, rows: object[]): void {
   mkdirSync(join(root, 'metrics'), { recursive: true });
   writeFileSync(marketPath(root), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
 }
+
+const emptyTagsPath = (root: string) => join(root, 'metrics', 'empty-tags.jsonl');
+
+function writeEmptyTags(root: string, rows: object[]): void {
+  mkdirSync(join(root, 'metrics'), { recursive: true });
+  writeFileSync(emptyTagsPath(root), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+}
+
+/** A job.empty-tag.v1 row in the shape `phm jobs empty --record` appends (src/core/fleet/empty-tags.ts). */
+const emptyTag = (job: string, tag: string, extra: Record<string, unknown> = {}): object => ({
+  schema: 'job.empty-tag.v1', job, lane: 'alpha', tag, ...extra,
+});
 
 /** A work-market.v1 route_decision row in the dispatcher's own shape. */
 const decision = (job: string, workClass: string, ts: number, extra: Record<string, unknown> = {}): object => ({
@@ -203,7 +216,7 @@ describe('router outcome ledger (612S preservation)', () => {
       tokens_cache_read: null, tokens_cache_write: null,
       usage_source: null, usage_missing: null,
       ttm_s: null, queue_wait_s: null, ci_wall_s: null, publish_wait_s: null, empty: null, diff_files: null, diff_lines: null,
-      exit_code: null, failure_class: null, empty_class: null,
+      exit_code: null, failure_class: null, empty_class: null, empty_tag: null,
       task_outcome: null, lane_hint_blocked_by: null,
       skipped: null, skip_reason: null, skip_code: null, passk: null,
     }]);
@@ -1156,6 +1169,83 @@ describe('router outcome work_class join', () => {
     const result = await readRouterOutcomes({ runsDir: root });
     expect(result).toMatchObject({ state: 'read', market_state: 'read', market_truncated: true });
     expect(result.outcomes[0]?.work_class).toBeNull();
+  });
+});
+
+describe('router outcome empty-tag join', () => {
+  it('folds job.empty-tag.v1 rows to each job\'s recorded tag, last row wins', () => {
+    const tags = foldEmptyTags([
+      JSON.stringify(emptyTag('J1', 'already_done')),
+      JSON.stringify(emptyTag('J1', 'pool_cap')),          // repeated job: last append stands
+      JSON.stringify(emptyTag('J2', 'unknown')),
+      JSON.stringify(emptyTag('J3', 'no_change_needed', { lane: 'beta' })),
+      JSON.stringify(emptyTag('J4', 'not_a_tag')),
+      JSON.stringify(emptyTag('J5', 'blocked', { schema: 'jobs.empty-tags.v1' })),
+      JSON.stringify({ schema: 'job.empty-tag.v1', job: '', tag: 'blocked' }),
+      JSON.stringify({ schema: 'job.empty-tag.v1', job: 'J6' }),
+      JSON.stringify({ schema: 'job.empty-tag.v1', job: 'J7', tag: 42 }),
+      JSON.stringify({ job: 'J8', tag: 'blocked' }),       // no schema: not a tag row
+      'not json',
+      '[1,2]',
+      '',
+    ].join('\n'));
+    expect(tags.get('J1')).toBe('pool_cap');
+    expect(tags.get('J2')).toBe('unknown');
+    expect(tags.get('J3')).toBe('no_change_needed');
+    expect(tags.size).toBe(3);
+  });
+
+  it('joins recorded tags onto outcomes and never creates outcomes for tag-only jobs', async () => {
+    const root = runsDir([
+      '{"job":"J1","lane":"alpha","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J2","lane":"alpha","phase":"CLOSED","empty":true,"exit_code":0,"ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J3","lane":"beta","phase":"VERIFIED","ts":"2026-11-01T00:00:00Z"}',
+    ].join('\n'));
+    writeEmptyTags(root, [
+      emptyTag('J2', 'already_done'),
+      emptyTag('J3', 'blocked'),
+      emptyTag('J-UNDECLARED', 'pool_cap'),  // no jobs outcome: never creates one
+    ]);
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'read', empty_tag_state: 'read', empty_tag_truncated: false });
+    const byId = new Map(result.outcomes.map(o => [o.job_id, o]));
+    // The tag attaches regardless of the standing finish verdict — J1 merged
+    // yet still carries no tag row, J2's empty finish reads its recorded
+    // cause, and the recorded 'unknown' tag on J3 is evidence, not a gap.
+    expect(byId.get('J1')?.empty_tag).toBeNull();
+    expect(byId.get('J2')?.empty_tag).toBe('already_done');
+    expect(byId.get('J3')?.empty_tag).toBe('blocked');
+    expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3']);
+  });
+
+  it('keeps empty_tag null and reports empty_tag_state when the tags ledger is absent or refused', async () => {
+    const missing = await readRouterOutcomes({ runsDir: runsDir('{"job":"J1","phase":"MERGED"}\n') });
+    expect(missing).toMatchObject({ state: 'read', empty_tag_state: 'missing', empty_tag_truncated: false });
+    expect(missing.outcomes[0]?.empty_tag).toBeNull();
+
+    const root = runsDir('{"job":"J1","phase":"MERGED"}\n');
+    const target = join(root, 'real-empty-tags.jsonl');
+    writeFileSync(target, JSON.stringify(emptyTag('J1', 'blocked')) + '\n');
+    symlinkSync(target, emptyTagsPath(root));
+    const linked = await readRouterOutcomes({ runsDir: root });
+    expect(linked).toMatchObject({ state: 'read', empty_tag_state: 'unreadable' });
+    expect(linked.outcomes[0]?.empty_tag).toBeNull();
+  });
+
+  it('still reports empty-tag health when the jobs ledger itself is missing', async () => {
+    const root = runsDir();
+    writeEmptyTags(root, [emptyTag('J1', 'blocked')]);
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'missing', empty_tag_state: 'read', empty_tag_truncated: false, outcomes: [] });
+  });
+
+  it('flags a cut empty-tags tail so joined tags read as newest-bytes coverage', async () => {
+    const root = runsDir('{"job":"J1","phase":"MERGED"}\n');
+    writeFileSync(emptyTagsPath(root), '');
+    truncateSync(emptyTagsPath(root), ROUTER_OUTCOME_LEDGER_LIMIT + 1);
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'read', empty_tag_state: 'read', empty_tag_truncated: true });
+    expect(result.outcomes[0]?.empty_tag).toBeNull();
   });
 });
 

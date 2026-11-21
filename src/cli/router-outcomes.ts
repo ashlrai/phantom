@@ -1,7 +1,9 @@
 /**
  * `ashlr router outcomes` — read-only per-job outcome records folded from the
  * host metrics ledgers (metrics/jobs.jsonl joined with metrics/api-spend.jsonl
- * for cost_usd) by src/core/router/outcomes.ts: merge and revert state, CI
+ * for cost_usd, metrics/work-market.jsonl for work_class and
+ * metrics/empty-tags.jsonl for empty_tag) by src/core/router/outcomes.ts:
+ * merge and revert state, CI
  * first pass, review findings, cost, wall time, recorded merge latency
  * (ttm_s), recorded queue-admission wait (queue_wait_s), recorded CI
  * wall seconds (ci_wall_s), recorded publish-station wait
@@ -11,14 +13,16 @@
  * size (diff_files/diff_lines), the batch member's recorded
  * task_outcome word, the dispatch claim's recorded lane override
  * (lane_hint/lane_override), the skip gate's recorded launch decline
- * (skipped/skip_reason/skip_code) and the advisory pass^k join from
- * eval.lane-scores.v1.
+ * (skipped/skip_reason/skip_code), the fleet's recorded empty tag
+ * (empty_tag, joined from metrics/empty-tags.jsonl) and the advisory
+ * pass^k join from eval.lane-scores.v1.
  * RQ-BATCH-* session rows are infrastructure evidence counted in
  * session_rows, never outcomes. Never writes; a missing ledger reports
  * `missing`, an unreadable or non-file one exits 1. Each read retains the
  * newest bounded tail of its ledger, so an oversized ledger reports
- * `truncated: true` (jobs) or `spend_truncated: true` (spend) — coverage of
- * the retained window, not a refusal.
+ * `truncated: true` (jobs), `spend_truncated: true` (spend),
+ * `market_truncated: true` (market) or `empty_tag_truncated: true`
+ * (empty tags) — coverage of the retained window, not a refusal.
  */
 import { isAbsolute } from 'node:path';
 
@@ -85,6 +89,10 @@ export interface RouterOutcomesReport {
   market_state: RouterOutcomeRead['market_state'];
   /** True when the market tail was cut; joined classes cover only the newest bytes. */
   market_truncated: boolean;
+  /** Health of the empty-tags.jsonl tail behind empty_tag joins. */
+  empty_tag_state: RouterOutcomeRead['empty_tag_state'];
+  /** True when the empty-tags tail was cut; joined tags cover only the newest bytes. */
+  empty_tag_truncated: boolean;
   /** Jobs with at least one folded outcome row, after --lane filtering. */
   total: number;
   /** Rows actually returned (newest first, capped by --limit). */
@@ -112,6 +120,8 @@ export function buildRouterOutcomesReport(read: RouterOutcomeRead, limit: number
     spend_truncated: read.spend_truncated,
     market_state: read.market_state,
     market_truncated: read.market_truncated,
+    empty_tag_state: read.empty_tag_state,
+    empty_tag_truncated: read.empty_tag_truncated,
     total: read.outcomes.length,
     returned: page.length,
     limit,
@@ -136,7 +146,7 @@ function outcomeLine(o: RouterOutcome): string {
     `merged=${text(o.merged)}`, `reverted=${text(o.reverted)}`, `ci_first_pass=${text(o.ci_first_pass)}`, `review=${review}`,
     `cost_usd=${text(o.cost_usd)}`, `acus=${text(o.acus)}`, `wall_s=${text(o.wall_s)}`, `ttm_s=${text(o.ttm_s)}`, `queue_wait_s=${text(o.queue_wait_s)}`, `ci_wall_s=${text(o.ci_wall_s)}`, `publish_wait_s=${text(o.publish_wait_s)}`, `tokens_total=${text(o.tokens_total)}`, `passk=${text(o.passk)}`,
     `empty=${text(o.empty)}`, `exit_code=${text(o.exit_code)}`, `failure_class=${text(o.failure_class)}`,
-    `empty_class=${text(o.empty_class)}`, `task_outcome=${text(o.task_outcome)}`,
+    `empty_class=${text(o.empty_class)}`, `empty_tag=${text(o.empty_tag)}`, `task_outcome=${text(o.task_outcome)}`,
     `skipped=${text(o.skipped)}`, `skip_reason=${text(o.skip_reason)}`, `skip_code=${text(o.skip_code)}`,
     `lane_hint_blocked_by=${o.lane_hint_blocked_by === null ? 'unknown' : `[${o.lane_hint_blocked_by.join(',')}]`}`,
   ].join(' ');
@@ -144,11 +154,12 @@ function outcomeLine(o: RouterOutcome): string {
 
 export function routerOutcomeLines(report: RouterOutcomesReport): string[] {
   return [
-    `router outcomes state=${report.state} eval=${report.eval_state} spend=${report.spend_state} market=${report.market_state} jobs=${report.total} shown=${report.returned} truncated=${report.truncated} malformed=${report.malformed_rows} unattached=${report.unattached_rows} ambiguous_urls=${report.ambiguous_urls} session_rows=${report.session_rows}`,
+    `router outcomes state=${report.state} eval=${report.eval_state} spend=${report.spend_state} market=${report.market_state} empty_tags=${report.empty_tag_state} jobs=${report.total} shown=${report.returned} truncated=${report.truncated} malformed=${report.malformed_rows} unattached=${report.unattached_rows} ambiguous_urls=${report.ambiguous_urls} session_rows=${report.session_rows}`,
     `ledger ${report.path}`,
     ...(report.truncated ? ['coverage: retained tail only; older ledger rows were not read'] : []),
     ...(report.spend_truncated ? ['spend coverage: retained tail only; per-job costs are lower bounds'] : []),
     ...(report.market_truncated ? ['market coverage: retained tail only; work_class joins cover the newest bytes'] : []),
+    ...(report.empty_tag_truncated ? ['empty-tag coverage: retained tail only; empty_tag joins cover the newest bytes'] : []),
     ...report.outcomes.map(outcomeLine),
   ];
 }
