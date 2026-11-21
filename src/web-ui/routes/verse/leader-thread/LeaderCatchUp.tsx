@@ -1,7 +1,8 @@
 /**
  * "Since you last looked": the card above the Leader conversation when Mason comes back to it. It counts what
  * arrived while the pane was off screen, shows the newest thing the Leader said, and jumps to the first new
- * line. Read-only and request-free: it summarises what the pane already read. The last-looked moment lives in
+ * line, and lists the sessions that finished or failed meanwhile (CatchUpSessions.tsx, from the session list the
+ * Working now strip reads). Read-only: it summarises what the pane already read. The last-looked moment lives in
  * localStorage and is refreshed while the pane is on screen, so closing the app mid-read still leaves it right.
  */
 import { useEffect, useMemo, useState, type RefObject } from 'react';
@@ -10,6 +11,7 @@ import { useNow } from '../autonomy/use-ticker.js';
 import type { Merged } from '../fleet-merges/fleet-merges-model.js';
 import { clockTime, dayLabel } from '../leader/thread-model.js';
 import { useDocumentVisible } from '../shell/section-visibility.js';
+import { CatchUpSessions, useAwaySessions } from './CatchUpSessions.js';
 import { awayWindow, catchUp, catchUpParts, loadLastLooked, saveLastLooked, type AwayWindow } from './leader-catchup-model.js';
 import type { BusReply } from './thread-bus-replies.js';
 import type { MergedLine } from './thread-merge-model.js';
@@ -53,7 +55,10 @@ export function LeaderCatchUp({ visible, lines, ownerLines, busRows, merged, ask
   }, [looking]);
 
   const view = useMemo(() => (away ? catchUp({ lines: [...lines, ...ownerLines], busRows, merged, asks }, away) : null), [away, lines, ownerLines, busRows, merged, asks]);
-  if (!view || view.total === 0) return null;
+  // Sessions that finished or failed in the window: from the session list, not from the conversation.
+  const ended = useAwaySessions(away);
+  if (!view || view.total + ended.rows.length === 0) return null;
+  const failed = ended.rows.filter(row => row.state === 'failed').length;
 
   const sinceIso = new Date(view.since).toISOString();
   const day = dayLabel(sinceIso, now);
@@ -72,7 +77,7 @@ export function LeaderCatchUp({ visible, lines, ownerLines, busRows, merged, ask
     if (!calm) row.animate?.([{ backgroundColor: 'var(--bg-hover)' }, { backgroundColor: 'transparent' }], { duration: 1400, easing: 'ease-out' });
   }
 
-  return <section className={styles.card} aria-label="Since you last looked" data-attention={view.needsYou + view.questions > 0 ? 'true' : undefined}
+  return <section className={styles.card} aria-label="Since you last looked" data-attention={view.needsYou + view.questions + failed > 0 ? 'true' : undefined}
     onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setAway(null); } }}>
     <header className={styles.head}>
       <h3 className={styles.title}>Since you last looked</h3>
@@ -84,9 +89,10 @@ export function LeaderCatchUp({ visible, lines, ownerLines, busRows, merged, ask
         <button type="button" className={styles.action} onClick={() => setAway(null)}>Caught up</button>
       </span>
     </header>
-    <ul className={styles.parts} aria-label="What arrived">
+    {parts.length > 0 ? <ul className={styles.parts} aria-label="What arrived">
       {parts.map(part => <li key={part.key} data-tone={part.tone}>{part.text}</li>)}
-    </ul>
+    </ul> : null}
+    <CatchUpSessions view={ended} now={now} />
     {view.latest ? <p className={styles.latest}>
       <span className={styles.latestLabel}>Latest from the Leader</span>
       <span className={styles.latestText} title={view.latest.text}>{view.latest.text}</span>

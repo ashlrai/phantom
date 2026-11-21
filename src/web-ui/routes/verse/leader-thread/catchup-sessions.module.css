@@ -1,0 +1,124 @@
+/* "Ended while you were away": the sessions that finished or failed, inside the
+   "Since you last looked" card. One row each; the dot is the state. */
+.root {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-2);
+  margin: 0;
+}
+
+.label { color: var(--text-tertiary); }
+
+.counts {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.more {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-link);
+  font: inherit;
+  cursor: pointer;
+}
+
+.more:hover { text-decoration: underline; }
+
+.list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+  animation: away-row-in var(--duration-base) var(--ease-standard);
+}
+
+@keyframes away-row-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.dot {
+  flex: none;
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--status-success-solid);
+}
+
+.row[data-state='failed'] .dot { background: var(--status-danger-solid); }
+
+.door {
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-link);
+  font: inherit;
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+
+.door:hover { text-decoration: underline; }
+
+/* The session open beside the chat. */
+.door[aria-current] {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-decoration-color: var(--accent-500);
+  text-underline-offset: 2px;
+}
+
+.door:focus-visible,
+.more:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.kind { flex: none; color: var(--text-tertiary); }
+
+.when { flex: none; color: var(--text-secondary); }
+
+.row[data-state='failed'] .when { color: var(--status-danger-fg); font-weight: 600; }
+
+/* How it ended: one line, cut with an ellipsis. */
+.outcome {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outcome[data-unknown] { color: var(--status-unknown-fg); }
+
+.note { margin: 0; }
+
+.note[data-tone='unknown'] { color: var(--status-unknown-fg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .row { animation: none; }
+}
