@@ -70,6 +70,14 @@ describe('phm agents bus (unified)', () => {
     const wakes = await run(['wakes', 'nova']);
     expect(wakes.json).toMatchObject({ matched: 2, truncated: false });
     expect(wakes.json.wakes.map((w: { id: string }) => w.id)).toEqual(['cli-dm', 'cli-ho']);
+    // --job keeps only the hint whose referent names the job: the handoff's
+    // taskId cites RQ-CLI-1, the plain DM names none.
+    const jobWakes = await run(['wakes', 'nova', '--job', 'RQ-CLI-1']);
+    expect(jobWakes.json).toMatchObject({ matched: 1, truncated: false });
+    expect(jobWakes.json.wakes.map((w: { id: string }) => w.id)).toEqual(['cli-ho']);
+    expect((await run(['wakes', 'nova', '--job', 'RQ-ABSENT'])).json)
+      .toMatchObject({ matched: 0, wakes: [] });
+    expect(await run(['wakes', 'nova', '--job', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
     const adapters = await run(['adapters']);
     expect(adapters.json.adapters.map((a: { cli: string }) => a.cli)).toEqual(['claude', 'codex', 'devin', 'cursor', 'grok']);
   });

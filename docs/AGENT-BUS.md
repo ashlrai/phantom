@@ -354,7 +354,7 @@ feed's own `refused`/`unavailable` state) without a `show` per item; the
 compact `job=<id>:<state>` marker rides inside the frame's bracket and on
 the human line the same way `held` does, and `work mine`'s inbox section
 carries the same field.
-`phm agents bus wakes <agent>` lists wake hints for the agent and its
+`phm agents bus wakes <agent> [--job <id>]` lists wake hints for the agent and its
 channels. A ref that resolves to no registered identity keeps exact-label
 matching instead — the page reports `scope: 'label'` (vs `'identity'`),
 `agent` the queried label verbatim, and only hints whose `to` is that label
@@ -363,7 +363,17 @@ raw claim-owner labels the claim-holder fan-out writes, stay readable by
 their addressee. The page reports `matched` — every hint the bounded queue tail
 accepted for the agent before its row cap — and `truncated`, true when the
 256 KiB observation window or the row cap cut matches beyond the returned
-slice, so a capped list is never passed off as the whole queue. Claim-holder
+slice, so a capped list is never passed off as the whole queue. `--job`
+keeps only the hints that provably name one job — the same
+`busBodyJobMatch` rule `inbox --job` and `channel read --job` apply,
+decided on the live referent: a feed `jobId` citation, a `worker-handoff`
+`taskId` or a `job:<id>` thread label on the message the hint refers to,
+or the `jobId` a claim-holder hint's citing status carries. A hint whose
+referent is `unresolved` or `unknown` names no provable job and never
+matches; because the verdict needs the resolved referent, an unreadable
+bus store makes the filtered read `unavailable` rather than an empty
+page, and `matched` then counts the proven matches on the resolved page
+while `truncated` keeps its queue-tail meaning. Claim-holder
 hints (`wh-…` ids) carry no envelope id of their own, so the read re-derives
 each one's citation against the live `work.status` receipts that could have
 generated it: a match annotates the row with `claimHolder` naming the status

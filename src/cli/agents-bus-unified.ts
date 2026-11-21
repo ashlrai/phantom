@@ -34,7 +34,7 @@ ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--thread <t
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--matched] [--frame <cli>]
-ashlr agents bus wakes [<agent>] [--since <epoch ms>]
+ashlr agents bus wakes [<agent>] [--since <epoch ms>] [--job <id>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
@@ -74,7 +74,13 @@ worker-handoff assigning that fleet job id through taskId, or a
 note/context body carrying the job:<id> thread label — and the same flag
 on channel read keeps only the channel's posts that name it, so an agent
 on one job reads its pending mail and its room's job traffic without
-paging the whole store. --matched
+paging the whole store. --job on wakes keeps only the hints that provably
+name the job — the same rule applied to the message a hint refers to, or
+the citing status's jobId on a claim-holder hint — so job-scoped triage
+reads one filtered hint list; matched then counts the proven matches on
+the resolved page, an unreadable bus store reports unavailable rather
+than an empty page, and truncated still marks queue-tail or row-cap cuts.
+--matched
 on inbox and channel read reports matched, the true pending total across the
 whole retained store the same filters accept; messages still caps at --limit
 and nextCursor then resumes at the newest shown row, so paging never skips
@@ -491,7 +497,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       noExtra(2);
       const agent = sub ?? self;
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
-      const page = readAgentWakes(agent, integer(one('--since'), '--since'), options);
+      const page = readAgentWakes(agent, integer(one('--since'), '--since'), options, { job: one('--job') });
       if (page.status !== 'ok') return finish(page, '');
       out(json ? JSON.stringify(page) : [
         ...(page.truncated ? [`${page.matched} wake hint(s) matched; the bounded queue tail is truncated — showing the newest ${page.wakes.length}`] : []),

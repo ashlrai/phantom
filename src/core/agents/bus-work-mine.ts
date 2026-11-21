@@ -186,7 +186,7 @@ export type BusWorkMineWakes =
       matched: number;
       /** The queue tail or a row cap cut matches beyond `wakes` — matched is then a lower bound, never proven total. */
       truncated: boolean }
-  | { status: 'unknown-agent' | 'unavailable'; reason: string };
+  | { status: 'unknown-agent' | 'unavailable' | 'invalid'; reason: string };
 
 /** One mail row addressed to the agent, summarized the way the inbox frame reads it. */
 export interface BusWorkMineInboxMessage {
