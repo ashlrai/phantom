@@ -13,11 +13,14 @@ import { readFleetRunsDirState } from '../core/fleet/runs-dir-state.js';
 import { buildFleetLiveSnapshot } from '../core/verse/fleet-live-api.js';
 import { computeLaneHealth, laneHealthLine, stuckBadge } from '../core/fleet/lane-health.js';
 import { readLanePressure } from '../core/fleet/lane-memory-pressure.js';
+import { lanePoolWait, type PoolWait } from '../core/fleet/lane-pool-wait.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const USAGE = `Usage: phm lanes --json | phm lanes health [--json] | phm lanes fit --lane <lane> [--json]
+const USAGE = `Usage: phm lanes --json | phm lanes pool [--json] | phm lanes health [--json] | phm lanes fit --lane <lane> [--json]
        phm lanes yield [--json] [--since 24h] | phm lanes held [--json] | phm lanes caps [--check <prompt-file>] [--json]
        phm lanes pressure [--json]
+"phm lanes pool" says per lane whether queued rows wait on a used-up pool (98% used or more, nothing running):
+"waiting on a used-up pool until <time> (<n> rows)", "normal", or "no meter" (no pool reading, so unknown).
 Calls, error rate, p50 latency and deployed commit per lane over the last 12 h,
 plus a "stuck" badge with phase age for any run past its phase timeout.
 "phm lanes yield" shows merged PRs per launch over each lane's last 50 jobs, the empty rate and the
@@ -77,11 +80,25 @@ async function lanesCaps(flags: string[]): Promise<number> {
   return 0;
 }
 
+const laneWait = (l: { queued: number; running: number; seat?: { usedPct: number | null; resetAt: string | null } }, now: number): PoolWait =>
+  lanePoolWait({ queued: l.queued, running: l.running, usedPct: l.seat?.usedPct ?? null, resetAt: l.seat?.resetAt ?? null }, now);
+
 export async function cmdLanes(args: string[]): Promise<number> {
   if (args.length === 1 && args[0] === '--json') {
     const state = await readFleetRunsDirState();
     console.log(JSON.stringify(sanitizePublicJson({ schema: 'lanes.dispatchd.v1', lastTick: state.lastTick,
-      sourceState: state.sources.status, lanes: state.lanes })));
+      sourceState: state.sources.status, lanes: state.lanes.map(l => ({ ...l, poolWait: laneWait(l, Date.now()) })) })));
+    return 0;
+  }
+  if (args[0] === 'pool') {
+    const flags = args.slice(1);
+    if (flags.some(x => x !== '--json') || flags.length > 1) { console.error(USAGE); return 2; }
+    const state = await readFleetRunsDirState();
+    const now = Date.now();
+    const lanes = state.lanes.map(l => ({ lane: l.lane, ...laneWait(l, now) }));
+    if (flags.length) console.log(JSON.stringify(sanitizePublicJson({ schema: 'lanes.pool.v1', lastTick: state.lastTick, lanes })));
+    else if (!lanes.length) console.log('No lane readings. Pool state is unknown.');
+    else for (const l of lanes) console.log(`${l.lane}: ${l.words}`);
     return 0;
   }
   if (args.length === 0 || ['--help', '-h'].includes(args[0]!)) {
