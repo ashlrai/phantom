@@ -20,10 +20,12 @@
  * all of it (LeaderDock.tsx, wall-leader.ts), and L goes to that reply box.
  * O changes the card order; the side list follows it. A card says when a
  * pause stands for its job or a request is waiting (wall-steer.ts), a button
- * keeps only those sessions, and P pauses or resumes the focused card's job
- * (WallSteer.tsx). Under its facts a card draws what its job has done: the
- * newest recorded step and its age, the diff, the commands seen, its helpers
- * and a link to its pull request (wall-vitals.ts, WallVitals.tsx).
+ * keeps only those sessions, and P pauses or resumes the focused card's job,
+ * S stops it and M moves it to another lane (WallSteer.tsx). The card says a
+ * request from the moment the server records it.
+ * Under its facts a card draws what its job has done: the newest recorded
+ * step and its age, the diff, the commands seen, its helpers and a link to
+ * its pull request (wall-vitals.ts, WallVitals.tsx).
  */
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { sessionAge } from '../../../../core/fleet/live-sessions.js';
@@ -48,7 +50,7 @@ import { findEntries, isScoped, NO_SCOPE, replyLine, scopeChoices, scopeWords, s
 import { WallBar } from './WallBar.js';
 import { WallRequests } from './WallRequests.js';
 import { servedEntries } from './wall-requests-model.js';
-import { steeredEntries, steerMark } from './wall-steer.js';
+import { isSteerKey, steeredEntries, steerMark, withLanded, type SteerKey } from './wall-steer.js';
 import { useWallSteer } from './WallSteer.js';
 import { cardVitals, hasVitals, summaryLeft } from './wall-vitals.js';
 import { CardPullRequest, CardVitalsLine } from './WallVitals.js';
@@ -114,8 +116,8 @@ export interface WallViewProps {
   /** A session whose whole conversation is on screen beside the cards (the Leader's); its card carries no "new" mark. */
   readingId?: string | null;
   order?: WallOrder;
-  /** P on a card: pause its job, or resume it while a pause stands. Without it the key does nothing. */
-  onSteer?: (entry: WallEntry) => void;
+  /** P, S or M on a card: pause or resume its job, stop it, move it. Without it the keys do nothing. */
+  onSteer?: (entry: WallEntry, key: SteerKey) => void;
 }
 
 /** The button that keeps only the sessions with a pause in force or a request waiting. */
@@ -148,9 +150,9 @@ export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_S
       onOpen(all[at]!.dataset.card!, true);
       return;
     }
-    if (event.key === 'p' && at >= 0 && onSteer) {
+    if (isSteerKey(event.key) && at >= 0 && onSteer) {
       const entry = shown.find(candidate => candidate.session.id === all[at]!.dataset.card);
-      if (entry) { event.preventDefault(); onSteer(entry); }
+      if (entry) { event.preventDefault(); onSteer(entry, event.key); }
       return;
     }
     const to = event.key === 'ArrowDown' || event.key === 'ArrowRight' || event.key === 'j' ? Math.min(at + 1, all.length - 1)
@@ -194,7 +196,7 @@ export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_S
         })}
       </ul>}
     {read.gaps.length > 0 && <ul className={styles.gaps} aria-label="Not shown">{read.gaps.map(gap => <li key={gap}>{gap}</li>)}</ul>}
-    <p className={styles.notice}>Updated {clockTime(read.generatedAt) || 'at an unknown time'}. Enter opens a conversation, R opens it ready to reply, N opens the next with new messages, / finds, L writes to the Leader, O changes the order{onSteer ? ', P pauses or resumes the job of the card the keyboard is on' : ''}. Summaries are assembled from the records, not written by a model. Same read for agents: <code>phm sessions threads --json</code></p>
+    <p className={styles.notice}>Updated {clockTime(read.generatedAt) || 'at an unknown time'}. Enter opens a conversation, R opens it ready to reply, N opens the next with new messages, / finds, L writes to the Leader, O changes the order{onSteer ? ', P pauses or resumes the job of the card the keyboard is on, S stops it, M moves it to another lane' : ''}. Summaries are assembled from the records, not written by a model. Same read for agents: <code>phm sessions threads --json</code></p>
   </section>;
 }
 
@@ -251,8 +253,10 @@ export function SessionWallPane({ visible, host }: Pick<PaneProps, 'visible' | '
   const read = useQuery(def, { enabled: visible, freshMs: WALL_POLL_MS });
   const refetch = useRefetch(def);
   usePollWhileVisible(refetch, WALL_POLL_MS, { enabled: visible });
-  const wall = read.data ?? null;
-  const steer = useWallSteer(wall?.entries ?? null, refetch);
+  const asRead = read.data ?? null;
+  const steer = useWallSteer(asRead, refetch);
+  // A request the server has recorded is on its card at once; the read takes over when it carries it (wall-steer.ts).
+  const wall = useMemo(() => (asRead && steer.landed.length > 0 ? { ...asRead, entries: withLanded(asRead.entries, steer.landed) } : asRead), [asRead, steer.landed]);
   // The order is where Mason left it too (wall-order.ts). The list beside an open conversation, and J, K and N in it, follow the same order as the cards.
   const [order, setOrder] = useState<WallOrder>(() => loadWallOrder());
   useEffect(() => { saveWallOrder(order); }, [order]);

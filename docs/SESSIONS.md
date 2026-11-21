@@ -262,10 +262,20 @@ resumes it while a pause stands. It is the same call as `phm job pause` and
 `phm job resume`, so it needs the mutation token (the unlock dialog opens when
 none is held) and the same refusals apply. The receipt is said in a line above
 the cards, which leaves once the card itself shows the request; a refusal
-stays until you dismiss it. P does nothing for the Leader, a helper or a
-finished session except say so. Stop and Move stay inside the conversation,
-where Stop asks first. The marks come with the wall's own read (`control` on
-each entry), up to about 15 seconds behind the request. If the control record
+stays until you dismiss it. S stops the job after asking, the same as
+`phm job stop`. M opens a list of the other lanes from the fleet read, each
+with what it is running; a held lane and a lane with no free slot are listed
+with the reason and cannot be chosen. Up and Down move through the lanes,
+Enter moves the job (`phm job move`), Esc leaves it where it is. If the fleet
+read does not answer, the list says the lanes are unknown. P, S and M do
+nothing for the Leader, a helper or a finished session except say so. The
+conversation keeps its own Pause, Stop and Move buttons.
+
+The card says a request from the moment the server records it, on the
+receipt's word, and P goes by what the card says. The marks otherwise come
+with the wall's own read (`control` on each entry), which is up to about 15
+seconds behind the request. A read made 45 seconds or more after the receipt
+that still does not show the request is believed instead. If the control record
 cannot be read, no card is marked and a line under the cards says controls are
 unknown.
 
