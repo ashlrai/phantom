@@ -19,7 +19,7 @@ export interface SelfTickHook {
 
 const rec = (v: unknown): Record<string, unknown> | null => typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Record<string, unknown> : null;
 const num = (v: unknown): number | null => typeof v === 'number' && Number.isFinite(v) ? v : null;
-const text = (v: unknown): string | null => typeof v === 'string' ? v.slice(0, 120) : null;
+const text = (v: unknown): string | null => typeof v === 'string' ? v.slice(0, 200) : null;
 const missing = (hook: SelfTickHookName): SelfTickHook => ({ hook, state: 'not-recorded', items: null, count: null, note: null });
 const skipped = (hook: SelfTickHookName, reason: unknown): SelfTickHook => ({ hook, state: 'skipped', items: null, count: null, note: text(reason) });
 const failed = (hook: SelfTickHookName, error: unknown): SelfTickHook => ({ hook, state: 'failed', items: null, count: null, note: text(error) ?? 'unknown error' });
@@ -47,8 +47,8 @@ export function hooksFromPlannerReport(planner: unknown, mode: 'apply' | 'dry-ru
         autofill = { hook: 'autofill', state: 'ran', items: applied, count: null, note: text(auto['reason']) };
         const g = rec(auto['gaps']);
         gaps = g && num(g['queued']) !== null && num(g['candidates']) !== null
-          ? { hook: 'gaps', state: 'ran', items: num(g['queued']), count: num(g['candidates']), note: g['unknown'] === true ? 'some sources unknown' : null }
-          : skipped('gaps', 'the gap hook did not run');
+          ? { hook: 'gaps', state: 'ran', items: num(g['queued']), count: num(g['candidates']), note: text(auto['gapsNote']) ?? (g['unknown'] === true ? 'some sources unknown' : null) }
+          : skipped('gaps', text(auto['gapsNote']) ?? 'no gap note in this report (older build)');
       }
     } else { autofill = skipped('autofill', auto['reason']); gaps = skipped('gaps', text(auto['reason']) ?? 'autofill did not run'); }
   }

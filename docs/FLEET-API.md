@@ -52,6 +52,7 @@ named nested type. Relative source links refer to the source checkout.
 | GET | `/api/fleet` | none | [FleetStatus](../src/core/fleet/status.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet'` |
 | GET | `/api/fleet/lanes` | none | [FleetLaneSnapshot](../src/core/fleet/lane-console.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/lanes'` |
 | GET | `/api/fleet/message-graph` | since (10m, 2h, 1d, epoch ms or ISO; default 15m) | [FleetMessageGraph](../src/core/fleet/message-graph.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/message-graph?since=1h'` |
+| GET | `/api/fleet/map/messages` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), limit (1 to 100; default 20) | [MapMessages](../src/core/fleet/map-messages.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/map/messages?limit=10'` |
 | GET | `/api/fleet/activity` | hours, limit | [AgentActivityReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/activity?hours=6'` |
 | GET | `/api/fleet/verified-completion` | hours (claim window, default 24, max 168) | [VerifiedCompletionReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/verified-completion'` |
 | GET | `/api/fleet/sessions` | none | [FleetSessionsV1](../src/core/fleet/runs-sessions.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/sessions'` |
@@ -698,7 +699,7 @@ replies are read once, and the recorded activity once for each job shown.
   message in the leader's thread, and a worker with a job opens with the
   message it serves (kind `order`) and says so in its summary. Helpers get
   none. The trace is read once for the whole document.
-- `serves` is each entry's last key. For a worker whose job serves a message
+- `serves` comes after `reply`. For a worker whose job serves a message
   of Mason's it is `{key, at, source, text, truncated, jobs}`: the newest such
   message, with a `key` every entry serving it shares, the inbox's own time
   (`at`, Eastern, to the minute), Mason's words cut at 400 characters (`text`,
@@ -708,6 +709,17 @@ replies are read once, and the recorded activity once for each job shown.
   without a job, a job whose prompt cites no message, and when the trace was
   not read; `sources.orders` tells an unread trace from no citation. A screen
   can group the sessions by `serves.key` to show who is working on what.
+- `work` is each entry's last key: what the session's job has done, as the
+  values behind the summary's own sentences, so a screen can draw them
+  without reading prose. `{commands, files, step}`: `commands` is the count
+  of commands seen in the job's log (null when the log's commands could not
+  be read); `files` is `{count, added, removed, partial}` for the job's
+  changed files, with `partial` true when the change read was cut short
+  (null when no change read answered); `step` is the newest recorded step,
+  `{event, summary, at}`, with `at` null when the record carried no time
+  that parses (null when no step is recorded). A null part is unknown, not
+  zero. `work` itself is null for a session with no job and when the job's
+  activity was not read; the entry's `sources.activity` tells those apart.
 - `control` sits just before `reply` in each entry: the pause, resume, stop
   or move that stands for the session's job, `{action, lane, status, at}`
   with `status` `requested` or `applied`, the same answer
@@ -739,8 +751,8 @@ as the session list.
 
 ### Session thread
 
-`phm sessions thread <id> [--json]` reads one session as a conversation, and
-`GET /api/verse/fleet/control/session-thread?id=<id>` serves the same
+`phm sessions thread <id> [--all] [--json]` reads one session as a conversation, and
+`GET /api/verse/fleet/control/session-thread?id=<id>[&depth=full]` serves the same
 `fleet.session-thread.v1` document with a current read session. The id is
 `leader`, a job id or a subagent id from the session tree. It adds no source:
 it joins the session's row in `fleet.live-sessions.v1`, the job's
@@ -748,6 +760,15 @@ it joins the session's row in `fleet.live-sessions.v1`, the job's
 messages Mason wrote in the Leader inbox and, for the leader,
 `leader.replies.v1`.
 
+- `depth` and `deeper`, the last two keys: the limits below are the default
+  depth, `recent`. `--all` (or `depth=full`) reads the same records and shows
+  more of them: up to 400 bus messages, every message of Mason's in the inbox
+  entries read, 40 leader replies, 60 commands, 60 changed files, 25 served
+  messages, 40 control requests and 120 log lines. `deeper` is true for a
+  `recent` thread that left out something the `full` one would show, so a
+  client knows whether to offer the earlier entries; it is always false for
+  `full`, whose own omissions are lines in `gaps`. The route answers 400 for
+  any other `depth` value, or for `depth` given twice.
 - `session`: `id`, `kind`, `agent`, `lane`, `model`, `repo`, `jobId`,
   `parentId` (null for the leader), `state` (`quiet` for a running session
   with no output for 10 minutes, otherwise the tree's state), `startedAt`,

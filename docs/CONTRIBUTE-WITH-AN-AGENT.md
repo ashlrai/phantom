@@ -72,7 +72,7 @@ protected path, it waits for the owner's review; see
 Run these in the foreground and wait for each to finish:
 
 ```sh
-node scripts/verify-changed.mjs           # lint of changed files, one type check, docs check when docs/deletions changed, quarantine check when tests/ledger changed, syntax check of changed .py/.sh files
+node scripts/verify-changed.mjs           # lint of changed files, one type check, docs check when docs/deletions changed, quarantine check when tests/ledger changed, syntax check of changed files by type (table below)
 npm run test:ci -- test/<file>.test.ts    # affected backend suites, isolated HOME
 npm run test:web                          # only if src/web-ui/ changed
 npm run check:docs                        # if docs changed (verify-changed already ran it when the diff touched markdown or deleted files)
@@ -91,8 +91,16 @@ unchanged tree prints `SKIP verify-changed`; pass `--force` to rerun.
 prefer one command. If authority drift fails, run `npm run authority:regen` and
 list each new Tier-1 root in the pull request body.
 
-If you added or renamed a document, run `npm run docs:sync` and commit what it
-regenerates; the hosted generated-files check fails on a stale tree.
+If you added, renamed or deleted a page under `docs/`, or changed a page's
+`#` title or first sentence, run `node scripts/generate-docs-llms.mjs` and
+commit the updated `docs/llms.txt`. Its page index lists each page's title and
+first sentence, and the required `Check generated files` job reruns the
+generator and fails if any tracked file changes. If you changed `bin/ashlr`,
+commit it, then run `npm run canonical-launcher-digests:regen` (it reads the
+launcher's git history) and commit `scripts/canonical-launcher-digests.json`.
+`npm run docs:sync` regenerates every generated surface (version blocks, site
+pages, CODEMAP, the CLI references) and can also rewrite files you did not
+touch; keep only the output your change caused.
 
 ### Reading `verify-changed` output
 
@@ -117,12 +125,13 @@ exit code is non-zero if any of them failed.
 | Swift syntax check | A `.swift` file changed | Fix the parse error `swiftc -parse` reports; with no working `swiftc` the step prints `SKIP`. |
 | YAML syntax check | A `.yml` or `.yaml` file changed | Fix the parse error the bundled `yaml` package reports; every document of a multi-document file is checked and duplicate keys are errors. With no installed `yaml` package the step prints `SKIP`. |
 | TOML syntax check | A `.toml` file changed | Fix the parse error the bundled `smol-toml` package reports. With no installed `smol-toml` package the step prints `SKIP`. |
+| CSS syntax check | A `.css` file changed | Fix the `path:line:column` parse error `lightningcss` reports; it is the CSS parser Vite bundles for the web-ui build, so it applies the grammar the build does. When vite or `lightningcss` cannot be resolved under `node_modules`, the step prints `SKIP`. |
 | Quarantine ledger | A `*.test.*` or `*.spec.*` file or `queue/quarantine.tsv` changed | An added skip marker or `.only`, or a stale or expired ledger row; see [Skipping a flaky test](#skipping-a-flaky-test). |
 | Type check | Always (`tsgo`, falling back to `tsc`); the web project too when `src/web-ui/` changed | Fix the reported errors. With many parallel worktrees, `FAIL tsc slot wait` means no type-check slot freed in time (`PHANTOM_TSC_TIMEOUT_SECONDS`, default 900). |
 | Real-I/O lane lint | Always | A changed test that spawns processes or does real I/O must be listed in `test/config/realio-lane-membership.mjs` (a protected path), or carry a comment near the match saying why it is safe in the fast lane. Files you did not change only print a `WARN`. |
 | Verse sync-I/O lint | Always | No new synchronous filesystem or child-process call in a Verse route file (`src/core/verse/**/*-api.ts`) unless a `// sync-io-ok: <reason>` comment explains it. |
 
-`SKIP eslint` or `SKIP docs check` with "run npm ci to restore it" means the
+`SKIP eslint`, `SKIP docs check` or `SKIP css syntax check` with "run npm ci to restore it" means the
 install is incomplete; run `npm ci` and then `node scripts/verify-changed.mjs --force`.
 
 ### Skipping a flaky test
@@ -178,7 +187,7 @@ when these jobs succeed:
 | Secret-shape scan | Added lines contain nothing token-shaped outside fake test fixtures. |
 | Secret scan (diff) | A second secret scan over the diff. |
 | Classify | Picks the lane (site, docs or full) for the change. |
-| Check generated files | Regenerated docs indexes and launcher digests match what you committed. |
+| Check generated files | `node scripts/generate-docs-llms.mjs` leaves every tracked file unchanged, and the `bin/ashlr` digest is listed in `scripts/canonical-launcher-digests.json`. |
 | Fast gate (typecheck + affected tests) | Type check plus a bounded set of tests selected from your diff (below). |
 
 Quick typecheck and `Check authority drift (hermetic)` also run but are

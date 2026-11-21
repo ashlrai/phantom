@@ -198,12 +198,14 @@ resolved identity belongs to. A missing registry is a verified-empty list
 (`source: missing`), an unreadable one is `unavailable` — never an empty
 list — and membership is a routing label set (who may post), not proof of
 presence or authority. `phm agents bus channel read <name> [--topic <t>]
-[--from <agent>] [--thread <t>] [--after <cursor>] [--limit <n>]` pages the room's posts
+[--from <agent>] [--thread <t>] [--priority P0..P3] [--after <cursor>] [--limit <n>]` pages the room's posts
 oldest-first — every live envelope addressed to `group:<name>:*` (or one
 `--topic`), minus `group.presence` heartbeats, which are observations with
 their own read, not messages; `--from` narrows by sender through the same
-identity-label matching `comms bus read` uses, and `--thread` narrows to
-`note`/`context` bodies carrying that v2 thread label. Reading needs no identity
+identity-label matching `comms bus read` uses, `--thread` narrows to
+`note`/`context` bodies carrying that v2 thread label, and `--priority`
+keeps only posts stamped with that exact band — the same match
+`comms bus read --priority` applies. Reading needs no identity
 and no membership; an unknown channel is `unknown-channel`, an unreadable
 registry or store is reported — never an empty page passed off as history.
 Because channel addresses are bus-group addresses, existing `subscribeGroup`
@@ -249,7 +251,8 @@ projections — it is threading metadata, never a feed lookup, so a wake needs
 no announced job and reads no feed before posting. Like every send it is
 untrusted data: a wake is a hint to read the inbox and grants no authority.
 
-**Inbox.** `phm agents bus inbox <agent> [--thread <t>] [--from <agent>]`
+**Inbox.** `phm agents bus inbox <agent> [--thread <t>] [--from <agent>]
+[--priority P0..P3]`
 returns one page of
 DMs, handoffs,
 posts in the agent's channels (minus its own and minus `group.presence`
@@ -263,7 +266,16 @@ the same coverage `work mine` handoffs and `handoff-receive` apply;
 `--thread` keeps only `note`/`context` bodies
 carrying that v2 thread label, and `--from` narrows by sender through the
 same identity-label matching `channel read` uses (a handle, `agent:<handle>`,
-stable id or alias; an unresolvable ref keeps exact-label matching). Persist
+stable id or alias; an unresolvable ref keeps exact-label matching).
+`--priority` keeps only mail stamped with that exact P0..P3 band — the same
+match `comms bus read --priority` applies — so urgent mail is one filtered
+read, not a page through the backlog.
+`--matched` additionally reports `matched`, the true pending total — every
+row the same filters accept across the whole retained store, the same count
+`work mine`'s inbox section reports — while `messages` still caps at
+`--limit`; because that read scans to the store's end, `nextCursor` then
+resumes at the newest shown row's cursor, so paging never skips an unshown
+match. Persist
 `nextCursor` only after handling the
 page. `--frame <cli>` prints the page as one bounded block marked untrusted
 data, the same for every CLI: each line summarizes the body — `note`,
@@ -287,7 +299,16 @@ appears inside the frame's bracket on those items. `held` is
 `true`/`false` only when both hold stores were read — a store that cannot
 be read reports `held: null` (unknown), never free.
 `phm agents bus wakes <agent>` lists wake hints for the agent and its
-channels.
+channels. The page reports `matched` — every hint the bounded queue tail
+accepted for the agent before its row cap — and `truncated`, true when the
+256 KiB observation window or the row cap cut matches beyond the returned
+slice, so a capped list is never passed off as the whole queue. Claim-holder
+hints (`wh-…` ids) carry no envelope id of their own, so the read re-derives
+each one's citation against the live `work.status` receipts that could have
+generated it: a match annotates the row with `claimHolder` naming the status
+receipt (`statusId`, `jobId`, `status`, optional `detail` — `agents bus show
+<statusId>` resolves it), no reproducing receipt reports `unresolved`, and an
+unreadable bus store reports `unknown`, never a guessed citation.
 
 **Lookup.** `phm agents bus show <id>` resolves one retained envelope by the
 wire id wake hints, `work mine` items and claim operations cite — the third
@@ -302,6 +323,15 @@ message-id claim or a live coordination hold already covers that exact
 receipt, the same evidence `work mine` next/handoffs and the unified comms
 inbox show. `held` is `true`/`false` only when both hold stores were read —
 a store that cannot be read reports `held: null` (unknown), never free.
+A claim-holder `wh-…` hint id — the id `wakes` and `work mine` print for
+those rows — resolves the same way `wakes` annotates it: through the wake
+queue's retained row and the live terminal `work.status` receipts that
+could have generated it, returning the citing receipt with a `wakeHint`
+citation (`to` holder label, `statusId`, `jobId`, `status`, optional
+`detail`). A hint with no retained row or no reproducing receipt reports
+`not-found`, an unreadable wake queue `unavailable` — never a guessed
+receipt. Envelope ids are caller-chosen printable tokens, so a real
+receipt always wins over hint interpretation.
 
 **Work announcements.** `phm agents bus work post --job <id> --title <text>
 --repo <owner/name> [--claim <key>]... [--provider <p>] [--tier <fast|mid|work|frontier>
@@ -328,7 +358,13 @@ holding `queue:`/`path:`/`repo:`/`pr:` scope learns the job ended instead of
 waiting out its lease. The poster's own identity is skipped, labels of one
 identity collapse to a single hint, and the fan-out is capped at 32 hints per
 status; hint ids are a deterministic hash of the status envelope and holder,
-so reposting the same status dedupes rather than re-waking. `--no-wake` opts
+so reposting the same status dedupes rather than re-waking. Because the hash
+is one-way, `agents bus wakes` and `work mine` re-derive each `wh-…` hint's
+citation on read — the hint's `to` label is the hashed holder, so scanning
+live `work.status` receipts and re-hashing names the exact status that woke
+the holder (`claimHolder` on the row: `statusId`/`jobId`/`status`/`detail`,
+`unresolved` when no live receipt reproduces it, `unknown` when the bus store
+cannot be read). `--no-wake` opts
 out of this fan-out as well as the message's own hint, and non-terminal
 statuses never fan out. The result's `claimHoldersWoken` counts the hints
 present after the call — absent when the fan-out did not run, `null` when the
@@ -410,10 +446,20 @@ handoffs, each naming `waitingOn` plus the resolved `waitingOnAgent` (null
 for a topic, a `group:` address, an unregistered label or an unreadable
 registry), the same 20-item cap and `matched`/`truncated`/`skipped`
 semantics; the two thread sections are mutually exclusive on every thread —
-the wake
+and the blocked conversation threads it is a party to: every
+`state:'blocked'` thread the one shared conversations read reports (a
+blocker or failed report nothing has answered), narrowed to threads with a
+participant naming the agent under any of its labels or a
+`group:<channel>:<topic>` address of a channel it belongs to — a block the
+agent reported itself still lists, since the thread stays pending until a
+newer message moves it — longest-standing first, the same 20-item cap and
+`matched`/`truncated`/`skipped` semantics, each item citing the latest
+message's envelope `id`, `kind`, sender, recipient `to`, `blockedMs`,
+`messageCount` and scrubbed subject — the wake
 hints addressed to it, capped at the
-newest 20 with `matched` the count of every hint the bounded queue read
-matched, and
+newest 20 with `matched` the count of every hint the bounded queue tail
+matched for the agent before its row cap and `truncated` marking queue-tail
+or cap cuts beyond the shown slice, and
 the next page of mail in its inbox: the same matching, order and owner-share
 receipt checks `agents bus inbox` applies, capped at the oldest 20 pending
 messages with each body summarized by the shared one-line composer and
@@ -473,7 +519,8 @@ read, 2 on an invalid agent ref.
 **Status.** `phm agents bus status [--json]` is a read-only probe of the six
 dependencies every verb above touches: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
-the wake queue (state and observed hint count), the shared coordination table
+the wake queue (state, observed hint count before the row cap, and whether
+the bounded tail or cap truncated older hints), the shared coordination table
 (live claims and status rows), the message-id claim journal behind `fleet
 bus-next`/`bus-claim` and the `work mine` hold state (retained claim records),
 and the work-feed projection (job count, or the refusal reason when the feed
@@ -754,8 +801,9 @@ reply counts when its `from` resolves to the request's `to` identity and its
 label that resolves to no identity, and an unreadable registry, keep
 exact-label matching. `fleet bus-follow --to` resolves its stream filter the
 same way, once when the stream starts: mail addressed under any label of the
-named identity streams, and an unresolvable `--to` or an unreadable registry
-keeps exact-label matching. `phm comms bus read|watch` resolves its `--to`,
+named identity — or to a `group:<channel>:<topic>` address of a channel it
+belongs to, minus the identity's own channel posts — streams, and an
+unresolvable `--to` or an unreadable registry keeps exact-label matching. `phm comms bus read|watch` resolves its `--to`,
 `--from` and `--exclude-from` address filters the same way, once per read:
 a filter naming any label of a registered identity matches every label of
 that identity, and an unresolvable label or an unreadable registry keeps

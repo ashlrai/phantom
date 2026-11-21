@@ -71,7 +71,7 @@ describe('phm fleet self-tick --status', () => {
     record({ autofill: { runs: [], reason: 'No lane is starved.', gaps: null } });
     const s = readSelfTickStatus(runs, NOW);
     if (s.state !== 'recorded') throw new Error('expected a record');
-    expect(selfTickStatusLines(s)[2]).toBe('  gaps: skipped (the gap hook did not run)');
+    expect(selfTickStatusLines(s)[2]).toBe('  gaps: skipped (no gap note in this report (older build))');
   });
 
   it('a record without hook numbers reads not recorded', () => {

@@ -12,7 +12,7 @@ function thread(over: Partial<SessionThread> = {}, session: Partial<SessionThrea
     session: { id: 'RQ-A', kind: 'worker', lane: 'claude', model: 'fixture-model', repo: 'phantom', jobId: 'RQ-A', parentId: 'leader', state: 'running',
       lastMessageAgeSeconds: 120, prUrl: null, ...session },
     summary: ['Running for 30 minutes on claude.', 'It last said: Running the tests.'],
-    messages: [],
+    messages: [], depth: null, deeper: false,
     sources: { activity: 'available', bus: 'none', owner: 'none', replies: 'none', orders: 'none' },
     gaps: [],
     control: null,

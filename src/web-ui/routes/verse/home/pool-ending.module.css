@@ -1,20 +1,6 @@
-/* The bar on a pool tile's bottom edge, split by how the pool ends its window: used so far is solid, what the measured burn uses before
-   the reset is the same colour at a third of its strength, and the gap after it is the share unused at the reset. */
-.track { display: flex; flex: none; width: 100%; height: 3px; overflow: hidden; background: var(--border-subtle); }
-.used, .more { flex: none; height: 100%; background: var(--accent-500); transition: width var(--duration-base) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard); }
-.more { opacity: 0.35; }
-/* Runs dry before its reset: the bar reaches the end, in the tile's amber. */
-.track[data-ending='dry'] .used, .track[data-ending='dry'] .more { background: var(--status-warning-solid); }
-/* No usage reading: hatched, never an empty bar. */
-.track[data-ending='unread'] { background: repeating-linear-gradient(135deg, var(--status-unknown-solid) 0 2px, transparent 2px 6px); }
-
+/* The words around a pool tile's bar. The bar itself is the design system's WindowBar (components/primitives). */
 .key { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
 .parts { display: inline-flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); }
 .parts > span { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
-.swatch { display: inline-block; width: 0.75rem; height: 3px; background: var(--accent-500); }
-.swatch[data-part='more'] { opacity: 0.35; }
-.swatch[data-part='unused'] { background: var(--border-default); }
 /* The runway's own sentence for the open pool, above its running jobs. */
 .advice { margin: 0; color: var(--text-primary); font-size: var(--text-sm-size); overflow-wrap: anywhere; }
-
-@media (prefers-reduced-motion: reduce) { .used, .more { transition: none; } }

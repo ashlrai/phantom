@@ -13,7 +13,7 @@ it('durably queues only routing fields and deduplicates IDs', () => {
   expect(enqueueBusWake(request, opts)).toBe('queued');
   expect(enqueueBusWake(request, opts)).toBe('duplicate');
   const row = { kind: 'bus.send', id: 'fake-id', from: 'mason', to: 'leaders', at: 42 };
-  expect(readBusWakes(opts)).toEqual({ state: 'ok', wakes: [row] });
+  expect(readBusWakes(opts)).toEqual({ state: 'ok', wakes: [row], matched: 1, truncated: false });
   expect(JSON.parse(readFileSync(busWakeQueuePath(opts.root), 'utf8'))).toEqual(row);
   appendFileSync(busWakeQueuePath(opts.root), 'malformed\n');
   expect(readBusWakes(opts).wakes).toEqual([row]);
@@ -59,4 +59,38 @@ it('refuses a row larger than the whole budget without touching stored wakes', (
   const before = readFileSync(busWakeQueuePath(directory));
   expect(() => enqueueBusWake({ ...request, id: 'other-id' }, { root: directory, now: () => 2, maxBytes: 10 })).toThrow();
   expect(readFileSync(busWakeQueuePath(directory))).toEqual(before);
+});
+it('reports matched totals and truncation instead of silently capping the page', () => {
+  const opts = { root: root(), now: () => 7 };
+  for (const [id, to] of [['w-1', 'leaders'], ['w-2', 'agent:nova'], ['w-3', 'leaders'], ['w-4', 'agent:nova']] as const) {
+    enqueueBusWake({ kind: 'bus.send', id, from: 'mason', to }, opts);
+  }
+  // The match predicate filters before the cap: matched counts every accepted
+  // row in the observable tail, wakes keeps only the newest `limit` of them.
+  const page = readBusWakes({ ...opts, limit: 1, match: row => row.to === 'leaders' });
+  expect(page).toMatchObject({ state: 'ok', matched: 2, truncated: true });
+  expect(page.wakes.map(row => row.id)).toEqual(['w-3']);
+  const all = readBusWakes(opts);
+  expect(all).toMatchObject({ state: 'ok', matched: 4, truncated: false });
+  expect(all.wakes).toHaveLength(4);
+  // sinceAt composes with match: only newer accepted rows count as matched.
+  expect(readBusWakes({ ...opts, sinceAt: 7, match: row => row.to === 'leaders' }))
+    .toMatchObject({ matched: 0, truncated: false, wakes: [] });
+});
+it('marks the read truncated when older bytes sit beyond the bounded tail window', () => {
+  const directory = root();
+  enqueueBusWake(request, { root: directory, now: () => 1 });
+  // Valid rows carrying an ignored pad field push the file past the 256 KiB
+  // observation window, so the oldest bytes — including the first hint —
+  // become unobservable. matched is then a lower bound, never a proven total.
+  const pad = 'x'.repeat(16 * 1024);
+  const lines = Array.from({ length: 20 }, (_, i) =>
+    JSON.stringify({ kind: 'bus.send', id: `pad-${i}`, from: 'mason', to: 'leaders', at: i + 2, pad }) + '\n').join('');
+  appendFileSync(busWakeQueuePath(directory), lines);
+  const read = readBusWakes({ root: directory });
+  expect(read.state).toBe('ok');
+  expect(read.truncated).toBe(true);
+  expect(read.matched).not.toBeNull();
+  expect(read.matched!).toBeLessThan(21);
+  expect(read.wakes.length).toBeLessThanOrEqual(500);
 });

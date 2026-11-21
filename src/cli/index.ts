@@ -35,6 +35,7 @@
  *   genome                     Genome status/health: entry count, projects, staleness.
  *   update [--check] [--json]  Safe self-update: git pull --ff-only + rebuild; --check reports only.
  *   runtime <install|status|rollback|run>  Pinned local candidate installation and foreground Universe commands.
+ *   local capacity [--json]    How many local-model workers fit in free memory (plain words; --json local.capacity.v1).
  *   local-runtime <start|stop|status|restart|install>  Supervised llama-server: the parallel local fleet.
  *   authority <status|switch|stop|grant|revoke|ledger|setup|…>  Standing authority (Touch ID grants, Stop, ledger).
  *   leader <show|run|tick|veto|oversight-plist>  The Leader (Visionary): latest memo, run now, apply due
@@ -3123,6 +3124,11 @@ async function main(): Promise<void> {
       case 'release': {
         const cmdRelease = await loadReleaseCmd();
         process.exitCode = await cmdRelease(rest);
+        break;
+      }
+
+      case 'local': {
+        process.exitCode = await (await import('./local-capacity.js')).cmdLocal(rest);
         break;
       }
 

@@ -21,6 +21,9 @@
  * keeps only those sessions, and P pauses or resumes the focused card's job,
  * S stops it and M moves it to another lane (WallSteer.tsx). The card says a
  * request from the moment the server records it.
+ * Under its facts a card draws what its job has done: the newest recorded
+ * step and its age, the diff, the commands seen, its helpers and a link to
+ * its pull request (wall-vitals.ts, WallVitals.tsx).
  */
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { sessionAge } from '../../../../core/fleet/live-sessions.js';
@@ -46,18 +49,22 @@ import { WallRequests } from './WallRequests.js';
 import { servedEntries } from './wall-requests-model.js';
 import { isSteerKey, steeredEntries, steerMark, withLanded, type SteerKey } from './wall-steer.js';
 import { useWallSteer } from './WallSteer.js';
+import { cardVitals, hasVitals, summaryLeft } from './wall-vitals.js';
+import { CardPullRequest, CardVitalsLine } from './WallVitals.js';
 import styles from './session-wall.module.css';
 import steerStyles from './wall-steer.module.css';
 
 const spoke = (session: WallSession) => (session.lastMessageAgeSeconds === null ? 'last spoke unknown' : `spoke ${sessionAge(session.lastMessageAgeSeconds)} ago`);
 
 /** One session on the wall. The card is a single button, so its text stays plain; the opened conversation renders markdown. */
-function Card({ entry, fresh, onOpen }: { entry: WallEntry; fresh: number; onOpen: (id: string) => void }) {
-  const { session } = entry, summaryId = useId(), freshId = useId(), markId = useId();
+function Card({ entry, fresh, at, onOpen }: { entry: WallEntry; fresh: number; at: string; onOpen: (id: string) => void }) {
+  const { session } = entry, summaryId = useId(), freshId = useId(), markId = useId(), vitalsId = useId();
+  // Measured against the read's own time, so the step's age and the read agree.
+  const vitals = cardVitals(entry, at), drawn = hasVitals(vitals), left = summaryLeft(entry.summary, vitals);
   const earlier = entry.messageCount - entry.messages.length;
   const mark = steerMark(entry);
-  const described = [mark && markId, fresh > 0 && freshId, summaryId].filter(Boolean).join(' ');
-  return <li className={styles.card} data-state={session.state} data-steer={mark?.tone}>
+  const described = [mark && markId, fresh > 0 && freshId, drawn && vitalsId, summaryId].filter(Boolean).join(' ');
+  return <li className={styles.card} data-state={session.state} data-steer={mark?.tone} data-pr={vitals.pr ? '' : undefined}>
     <button type="button" className={styles.open} data-card={session.id} onClick={() => onOpen(session.id)}
       aria-label={`${session.id}, ${STATE_WORD[session.state]}`} aria-describedby={described}>
       <span className={styles.top}>
@@ -73,7 +80,8 @@ function Card({ entry, fresh, onOpen }: { entry: WallEntry; fresh: number; onOpe
         <span>{session.repo === 'unknown' ? 'repo unknown' : session.repo}</span>
         {session.kind === 'subagent' && <span>{session.parentId ? `helps ${session.parentId}` : 'parent unknown'}</span>}
       </span>
-      <span id={summaryId} className={styles.summary}>{entry.summary.length > 0 ? entry.summary.join(' ') : 'Summary unknown: the read returned none.'}</span>
+      {drawn && <CardVitalsLine vitals={vitals} id={vitalsId} />}
+      <span id={summaryId} className={styles.summary}>{entry.summary.length > 0 ? left.join(' ') : 'Summary unknown: the read returned none.'}</span>
       <span className={styles.lines}>
         {earlier > 0 && <span className={styles.record}>{earlier} earlier</span>}
         {entry.messages.map(message => message.side === 'record'
@@ -86,6 +94,7 @@ function Card({ entry, fresh, onOpen }: { entry: WallEntry; fresh: number; onOpe
       </span>
       <span className={styles.replyTo} data-to={entry.reply.to} title={entry.reply.hint}>{replyLine(entry.reply)}</span>
     </button>
+    {vitals.pr && <CardPullRequest pr={vitals.pr} session={session.id} />}
   </li>;
 }
 
@@ -179,7 +188,7 @@ export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_S
               {order === 'lane' && head.name !== null && <ProviderBadge of={head.name} iconOnly size={12} />}
               <strong>{head.label}</strong><span>{head.count}</span>
             </li>}
-            <Card entry={entry} fresh={unseenCount(entry, readingId)} onOpen={onOpen} />
+            <Card entry={entry} fresh={unseenCount(entry, readingId)} at={read.generatedAt} onOpen={onOpen} />
           </Fragment>;
         })}
       </ul>}

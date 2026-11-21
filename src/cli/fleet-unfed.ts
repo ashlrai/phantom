@@ -67,9 +67,9 @@ export async function cmdFleetUnfed(args: string[]): Promise<number> {
       readOptional(join(root, 'HOLD')),
       readOptional(join(root, 'queue', 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES),
     ]);
-    const history = await readTail(join(root, 'metrics', 'work-market.jsonl'), HISTORY_TAIL_BYTES);
+    const history = (await readTail(join(root, 'metrics', 'work-market.jsonl'), HISTORY_TAIL_BYTES))?.text ?? null;
     const jobsPath = join(root, 'metrics', 'jobs.jsonl');
-    const jobsText = await readTail(jobsPath, CLAIMS_TAIL_BYTES);
+    const jobsText = (await readTail(jobsPath, CLAIMS_TAIL_BYTES))?.text ?? null;
     // Stat after the tail read: the append-only ledger only grows, so a size
     // over the bound here means the folded claims are a lower bound.
     const jobsInfo = await stat(jobsPath).catch(() => null);

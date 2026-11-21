@@ -42,6 +42,21 @@
         "ratio": {"type": ["number", "null"]}
       }
     },
+    "notRunning": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["job_or_lane", "kind", "reason", "since", "unblock"],
+        "properties": {
+          "job_or_lane": {"type": "string"},
+          "kind": {"type": "string"},
+          "reason": {"type": "string"},
+          "since": {"type": ["string", "null"]},
+          "unblock": {"type": "string"}
+        }
+      }
+    },
     "lanes": {
       "type": "array",
       "items": {

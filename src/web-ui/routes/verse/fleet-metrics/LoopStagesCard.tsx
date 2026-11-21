@@ -24,6 +24,7 @@ export function LoopStagesCard({ report, range = '24h', onWindow }: { report: Lo
     </div>
     {!known ? <p className={styles.note}>Loop stages: unknown{onWindow && range === '7d' ? ' (reading the 7 day window)' : ''}</p> : <>
       <p className={styles.note}>{known.headline}. {known.jobs} finished job{known.jobs === 1 ? '' : 's'} in {WINDOW_WORDS[range]}.</p>
+      {known.jobs_truncated === true ? <p className={styles.note}>jobs.jsonl tail was cut at the read cap: stage times cover only the newest bytes.</p> : null}
       {known.releases === 'unavailable' ? <p className={styles.note}>Merged to released: unknown. {known.releases_reason ?? 'Releases could not be read.'}</p> : null}
       <div className={styles.scroll}>
         <table className={styles.table}><caption>Minutes per stage. Same report as phm metrics loop.</caption>

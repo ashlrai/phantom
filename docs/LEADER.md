@@ -261,6 +261,24 @@ phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky
   seconds while the pane is on screen. If it does not answer the toolbar says
   **App actions unknown** and no line is drawn; a phone, which the log route
   does not serve, shows none.
+- **Leader health:** when the Leader's own passes fail, the desktop Leader
+  pane says so just above the reply box, where you are about to write. One
+  failed pass is a warning. From two in a row, the count at which
+  `phm fleet leader-health` exits 1, the notice turns red and says the Leader
+  is not reading you: what you send is kept in its inbox until a pass
+  succeeds. It gives the number of failed passes, how long ago a pass last
+  succeeded (or that the dispatch log holds none), and the first line the
+  failing pass wrote as the cause, or "unknown" when it left no output. When
+  the cause names its own fix, as an expired Claude sign-in does, a button
+  copies that command. **Open the journal** opens the Leader journal and
+  **Check again** reads now. After a notice has been on screen, the first
+  read that counts no failure says the Leader is passing again until you
+  dismiss it. A healthy Leader, a log with no pass in it and a read that did
+  not answer show no notice; the line under the reply box still says when the
+  last pass ran. The pane reads `GET /api/verse/leader/health` (read session
+  required; the same `fleet.leader-health.v1` document as
+  `phm fleet leader-health --json`) once a minute while it is on screen, and
+  the server shares one reading for 15 seconds.
 
 ---
 

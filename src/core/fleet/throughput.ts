@@ -2,8 +2,8 @@
  * `phm throughput`: what the fleet produced per hour (RQ-THROUGHPUTN17PQ8).
  *
  * One read of the job metrics file gives jobs launched, PRs published, PRs merged,
- * empty jobs and the median publish-to-merge time, per hour and per lane, repo or
- * tier. It reuses the `phm empties` readers (same rows, same empty rule) and the
+ * empty jobs and the median publish-to-merge time, per hour and per lane, repo,
+ * tier or model (the model a job's launch row names). It reuses the `phm empties` readers (same rows, same empty rule) and the
  * main-guardian status. The desktop Throughput pane shows this exact report.
  * Anything not measured is null (JSON) or "unknown" (text), never zero.
  */
@@ -12,7 +12,7 @@ import { finishesIn } from './empties.js';
 import { readFleetMainHealth } from './main-health.js';
 import { outcomePercentile } from './outcome-metrics.js';
 
-export const THROUGHPUT_BY = ['lane', 'repo', 'tier'] as const;
+export const THROUGHPUT_BY = ['lane', 'repo', 'tier', 'model'] as const;
 export type ThroughputBy = (typeof THROUGHPUT_BY)[number];
 export const THROUGHPUT_MAX_HOURS = 168;
 
@@ -43,7 +43,7 @@ export interface ThroughputReport {
   totals: ThroughputCounts;
   /** One per hour, oldest first; the last one ends at `as_of`. */
   buckets: ThroughputHour[];
-  /** One per lane, repo or tier (`by`), sorted by name. */
+  /** One per lane, repo, tier or model (`by`), sorted by name; `unknown` holds the work whose job record names none. */
   groups: ThroughputGroup[];
 }
 
@@ -87,6 +87,8 @@ const prLink = (row: Record<string, unknown>): string => {
 };
 /** `ashlrai/phantom` and `phantom` are one repo. */
 const repoName = (value: unknown): string | null => label(value)?.split('/').pop()?.toLowerCase() || null;
+/** A model id as the launch row wrote it (the same names `phm fleet lane-models` accepts); anything else is no name. */
+const modelName = (value: unknown): string | null => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}$/.test(value.trim()) ? value.trim() : null;
 
 /** Pure: validate the window and grouping for the CLI and the desktop API. Null when either is invalid. */
 export function throughputOptions(hours?: string | null, by?: string | null): { hours: number; by: ThroughputBy } | null {
@@ -103,9 +105,9 @@ function marksOf(rows: readonly LedgerRow[], since: number, now: number, perLaun
   for (const { row, id, at } of rows) {
     const event = eventName(row) ?? (row.source === 'metrics-outcomes-reconciler' ? 'outcome' : null);
     if (id) {
-      // The launch row decides a job's lane, repo and tier; other rows only fill gaps.
+      // The launch row decides a job's lane, repo, tier and model; other rows only fill gaps.
       const route = routes.get(id) ?? {};
-      for (const [key, value] of [['lane', label(row.lane ?? row.pool)], ['repo', repoName(row.repo)], ['tier', label(row.tier)]] as const) {
+      for (const [key, value] of [['lane', label(row.lane ?? row.pool)], ['repo', repoName(row.repo)], ['tier', label(row.tier)], ['model', modelName(row.model)]] as const) {
         if (value && (event === 'launch' || !route[key])) route[key] = value;
       }
       routes.set(id, route);
@@ -131,7 +133,7 @@ function marksOf(rows: readonly LedgerRow[], since: number, now: number, perLaun
   }
   const routeOf = (job: string, repo?: string | null): Route => {
     const route = routes.get(job);
-    return { lane: route?.lane ?? 'unknown', repo: repo ?? route?.repo ?? 'unknown', tier: route?.tier ?? 'unknown' };
+    return { lane: route?.lane ?? 'unknown', repo: repo ?? route?.repo ?? 'unknown', tier: route?.tier ?? 'unknown', model: route?.model ?? 'unknown' };
   };
   const marks: Mark[] = [...launches.values()].map(({ job, at }): Mark => ({ kind: 'launched', at, route: routeOf(job) }));
   for (const pr of prs.values()) {
