@@ -664,6 +664,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'MasonThread {schema:"phantom.mason.thread.v1", as_of, since, items:[{at, dir:"in"|"out", channel, text, state:"RECEIVED"|"ASSIGNED"|"RUNNING"|"BLOCKED"|"VERIFIED"|"UNKNOWN"|null, job_ids, also_on}], gaps}',
   },
   {
+    usage: 'phm work state <id> [--json]',
+    description: 'Same read as `phm channels reply-state`: one of RECEIVED, ASSIGNED, RUNNING, BLOCKED or VERIFIED, printed as `STATE (as of HH:MM UTC, source: <file or route>)` plus one line of evidence. A stated intention ("routed") never raises it above RECEIVED. Read-only. Exit 0 report, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'ReplyState {schema:"phantom.channels.reply-state.v1", requestId, id, duplicateOf, state, owner, claim, evidence, missing, asOf, source, records, text}',
+  },
+  {
     usage: 'phm channels reply-state <request-id> [--json]',
     description: 'The one state read before any fleet reply about a work item: RECEIVED, ASSIGNED, RUNNING, BLOCKED or VERIFIED with its as-of time and source, computed from the bus inbox and claim records. No record means RECEIVED, no owner yet. A repeat request in the same thread resolves to the first request id. Read-only. Exit 0 report, 2 bad usage.',
     safety: 'read',
@@ -1163,6 +1169,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'pr resolve-conflicts [--repo owner/name] [--pr N] [--apply] [--json]', desc: 'Dry-run append-union conflict repair; apply verifies an isolated merge and exports a supersede bundle. See docs/PR-CONFLICT-RESOLVER.md.', topic: 'autonomy' },
   { cmd: 'prs triage [--repo ashlrai/<name>] [--limit N] --json', desc: 'Read-only classification of open pull requests.', topic: 'autonomy' },
   { cmd: 'log [--since 6h] [--lane <lane>] [--repo <repo>] [--json]', desc: 'What the fleet did, one row per job, newest first, under a one-line summary: jobs, merged, no-change rate and median time to merge.', topic: 'observability' },
+  { cmd: 'work state <id> [--json]', desc: 'One honest state for a work item: RECEIVED, ASSIGNED, RUNNING, BLOCKED or VERIFIED, with as-of time, source and one line of evidence.', topic: 'observability' },
   { cmd: 'worklog [--hours 6] [--kind <kind>] [--repo <repo>] [--lane <lane>] [--json]', desc: 'One feed of what the fleet did, newest first: merges, launches, empty jobs, leader replies and incidents.', topic: 'observability' },
   { cmd: 'library [--json|--text] [--kind file|media|memory|message|context] [--since 1h] [--q text]', desc: 'Search Library files, media, agent memory, messages and context, newest first, with owner and size. Read-only; show <id> prints one item; list [--json] keeps the leader-file format.', topic: 'observability' },
   { cmd: 'fleet status [--json]',        desc: 'Read-only fleet snapshot: daemon, per-backend dispatches+quota, queue, proposals, merges, paused state.', topic: 'autonomy' },
