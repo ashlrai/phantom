@@ -7,6 +7,7 @@ import type { FleetSessionMap, MapSession } from '../../../../core/fleet/session
 import { evictAll } from '../../../data/cache.js';
 import { FleetMap } from './FleetMap.js';
 import { cpuPercent } from './fleet-map-model.js';
+import type { MapMessage } from '../../../../core/fleet/map-messages.js';
 import { isFleetMessageGraph } from './fleet-map-queries.js';
 
 const NOW = Date.parse('2026-11-15T12:00:00Z');
@@ -37,23 +38,25 @@ function graph(groups: NonNullable<FleetMessageGraph['groups']> | null = []): Fl
   return { schema: 'fleet.message-graph.v1', version: 1, generatedAt: iso, since: new Date(NOW - 900_000).toISOString(), source: groups ? 'available' : 'unavailable',
     organizations: groups && [], groups, messages: groups && groups.reduce((sum, group) => sum + group.count, 0), skipped: 0 };
 }
+let live: MapMessage[] = [];
 let machine: FleetCompute, inventory: FleetSessionMap, talk: FleetMessageGraph, failCompute: boolean, failSessions: boolean, plan: unknown;
 const fetcher = vi.fn(async (url: string, _init?: RequestInit) => {
   if (url === '/api/verse/fleet/control/compute') return Response.json(failCompute ? { error: 'offline' } : machine, { status: failCompute ? 503 : 200 });
   if (url === '/api/verse/fleet/control/sessions') return Response.json(failSessions ? { error: 'offline' } : inventory, { status: failSessions ? 503 : 200 });
   if (url === '/api/fleet/message-graph') return Response.json(talk, { status: talk.groups ? 200 : 503 });
+  if (url === '/api/fleet/map/messages') return Response.json({ schema: 'fleet.map-messages.v1', version: 1, generatedAt: iso, since: iso, source: 'available', messages: live, matched: live.length, skipped: 0 });
   if (url === '/api/verse/fleet/runtime-identity/nodes-plan') return Response.json(plan, { status: plan ? 200 : 503 });
   throw new Error(`Unexpected read: ${url}`);
 });
 /** Reads of the live maps; the slow-moving plan badges are counted on their own. */
-const reads = () => fetcher.mock.calls.filter(([url]) => !url.includes('nodes-plan')).length;
+const reads = () => fetcher.mock.calls.filter(([url]) => !url.includes('nodes-plan') && !url.includes('map/messages')).length;
 async function mount(path = '/control/fleet') {
   await act(async () => { render(<MemoryRouter initialEntries={[path]}><FleetMap /></MemoryRouter>); });
 }
 const tick = () => act(async () => { await vi.advanceTimersByTimeAsync(4000); });
 beforeEach(() => {
   evictAll(); vi.useFakeTimers(); vi.setSystemTime(NOW);
-  machine = compute(); inventory = sessions(); talk = graph(); failCompute = false; failSessions = false; plan = null;
+  live = []; machine = compute(); inventory = sessions(); talk = graph(); failCompute = false; failSessions = false; plan = null;
   fetcher.mockClear(); vi.stubGlobal('fetch', fetcher);
 });
 afterEach(() => { cleanup(); evictAll(); vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -70,6 +73,20 @@ it('rejects incompatible successful responses without crashing or replacing reta
 });
 
 describe('FleetMap', () => {
+  it('draws live message edges, shows a summary on click, and hides them with the toggle', async () => {
+    live = [{ id: 'm1', from: 'claude', to: 'codex', fromNode: 'lane:claude', toNode: 'lane:codex', kind: 'ask', summary: 'can you review the docs', at: new Date(NOW - 2000).toISOString() }];
+    await mount();
+    fireEvent.click(screen.getByRole('button', { name: 'claude to codex, ask' }));
+    expect(screen.getByRole('status')).toHaveTextContent('can you review the docs');
+    const toggle = screen.getByRole('checkbox', { name: 'Show messages' });
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    expect(screen.queryByRole('button', { name: 'claude to codex, ask' })).not.toBeInTheDocument();
+    const reads = () => fetcher.mock.calls.filter(([url]) => url === '/api/fleet/map/messages').length, before = reads();
+    await tick();
+    expect(reads()).toBe(before);
+  });
+
   it('renders real node telemetry, capacity heat and placed session tokens', async () => {
     await mount();
     const zone = within(screen.getByRole('region', { name: 'Machine mini' }));

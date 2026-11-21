@@ -43,6 +43,7 @@ import { runFleetAction } from '../fleet-actions.js';
 import { getMobileFleetClient } from '../fleet-client.js';
 import { wasteLines } from '../fleet-waste-lines.js';
 import { FleetUsageCard } from '../FleetUsageCard.js';
+import { MapMessagesCard } from '../MapMessagesCard.js';
 import { UsageResourcesCard } from '../UsageResourcesCard.js';
 import { MobileReleaseCard } from '../MobileReleaseCard.js';
 import { MobileReleasesCard } from '../MobileReleasesCard.js';
@@ -467,6 +468,7 @@ export function FleetScreen() {
         )}
       </Section>
       <Section title="Right now" flat>{liveBody}</Section>
+      <MapMessagesCard />
       <FleetUsageCard />
       <UsageResourcesCard />
       <Section title="Waste forecast">
