@@ -102,7 +102,7 @@ async function execute(b: Request, runsDir: string, deps?: SteerDeps): Promise<E
     const lane = state.lanes.find(row => row.lane === b.lane);
     if (state.sourceState !== 'healthy' || !lane) throw new Error('Unavailable lane');
     const target = b.action === 'lane.pause' ? 0 : b.action === 'lane.resume' ? lane.pausedFrom : b.target;
-    if (target == null || target < lane.floor || target > lane.ceiling) throw new Error('Invalid target');
+    if (target == null || target < lane.floor || (lane.ceiling !== null && target > lane.ceiling)) throw new Error('Invalid target');
     await setLaneTarget(b.lane!, target, { runsDir, dryRun: b.dryRun });
   } else if (b.action === 'reap.count') {
     const result = reclaimableTempWorktrees(process.cwd());
