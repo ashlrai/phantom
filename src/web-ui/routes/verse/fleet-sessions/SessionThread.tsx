@@ -13,7 +13,7 @@
  * resumed, stopped or moved from the row under the header (ThreadControls.tsx), and
  * each such request reads in the conversation as a record line.
  */
-import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { sessionAge } from '../../../../core/fleet/live-sessions.js';
 import { MutationTokenDialog } from '../../../components/auth/MutationTokenDialog.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
@@ -22,6 +22,7 @@ import { readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { clockTime } from '../leader/thread-model.js';
 import { inboxHeld } from '../leader-thread/inbox-held-model.js';
+import { LeaderHealth } from '../leader-thread/LeaderHealth.js';
 import { sendLeaderInboxMessage } from '../leader-thread/leader-inbox-data.js';
 import { MessageMarkdown } from '../MessageMarkdown.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
@@ -112,9 +113,11 @@ export interface SessionThreadViewProps {
   onSent: (line: SentLine) => void;
   /** The message the "New" mark sits above: the first one that arrived while the reader was further up. */
   markKey?: string | null;
+  /** Drawn just above the reply box: the notice that the Leader, which every reply goes through, is not reading. */
+  aboveReply?: ReactNode;
 }
 
-export function SessionThreadView({ thread, sent, onSent, markKey = null }: SessionThreadViewProps) {
+export function SessionThreadView({ thread, sent, onSent, markKey = null, aboveReply = null }: SessionThreadViewProps) {
   const { session } = thread;
   const days = useMemo(() => dayBreaks(thread.messages), [thread.messages]);
   // Once the read holds Mason's own record of a message, the local copy steps aside for it.
@@ -141,6 +144,7 @@ export function SessionThreadView({ thread, sent, onSent, markKey = null }: Sess
       </ol>}
     <p className={styles.sources}>{sourcesLine(thread)}</p>
     <ThreadEarlier thread={thread} />
+    {aboveReply}
     <ReplyBox thread={thread} onSent={onSent} />
   </>;
 }
@@ -155,12 +159,14 @@ export interface SessionThreadProps {
   backTo?: { label: string; text: string; title?: string };
   /** False where the conversation sits beside something else and must not take the keyboard when it appears. */
   autoFocus?: boolean;
+  /** False where the same screen already says the Leader is not reading (the Leader chat beside it, the Leader's own conversation beside the wall). */
+  leaderHealth?: boolean;
 }
 
 const BACK_TO_SESSIONS = { label: 'Back to all sessions', text: '← Sessions' };
 const NOTHING_UNREAD: readonly string[] = [];
 
-export function SessionThread({ id, visible, onBack, onOpenLog, backTo = BACK_TO_SESSIONS, autoFocus = true }: SessionThreadProps) {
+export function SessionThread({ id, visible, onBack, onOpenLog, backTo = BACK_TO_SESSIONS, autoFocus = true, leaderHealth = true }: SessionThreadProps) {
   const def = useMemo(() => sessionThreadQuery(id), [id]);
   const read = useQuery(def, { enabled: visible, freshMs: THREAD_POLL_MS });
   const refetch = useRefetch(def);
@@ -225,7 +231,9 @@ export function SessionThread({ id, visible, onBack, onOpenLog, backTo = BACK_TO
       {failure.kind === 'gone' ? 'This session has left the list. Showing the last read.' : 'Refresh failed. Showing the last read, which may be stale.'}
     </p>}
     {thread && <ThreadControls thread={thread} onDone={refetch} />}
-    {thread ? <SessionThreadView thread={thread} sent={sent} markKey={follow.markKey} onSent={line => setSent(lines => [...lines, line])} />
+    {thread ? <SessionThreadView thread={thread} sent={sent} markKey={follow.markKey} onSent={line => setSent(lines => [...lines, line])}
+      // Only where there is a box to write in: a session that takes no message is not waiting on the Leader.
+      aboveReply={leaderHealth && thread.reply.to !== 'none' ? <LeaderHealth visible={visible} place="thread" to={thread.reply.to === 'job' ? thread.reply.job : null} /> : null} />
       : failure ? <div className={styles.fault} role="alert" data-kind={failure.kind}>
         <p className={styles.plain}>{failure.text}</p>
         {failure.kind !== 'unsupported' && <button type="button" className={styles.link} onClick={refetch}>Try again</button>}

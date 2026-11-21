@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
 import { evictAll } from '../../../data/cache.js';
+import { LEADER_HEALTH_API } from '../leader-thread/leader-health-model.js';
 import { SessionWallPane, WallView } from './SessionWall.js';
 import { findEntries, narrowSessionWall, NO_SCOPE, scopeChoices, sessionWallQuery, sessionWallQueryFor, wallPath, type WallScope } from './session-wall-model.js';
 import { barNote } from './WallBar.js';
@@ -34,6 +35,7 @@ function serve(wall: (scope: WallScope) => unknown = scope => answer(scope)) {
   vi.stubGlobal('fetch', fetch);
   return fetch;
 }
+/** Every path asked for, once each. The wall also reads whether the Leader is passing (the notice above the cards), once, whatever is narrowed. */
 const asked = (fetch: ReturnType<typeof serve>) => [...new Set(fetch.mock.calls.map(call => String(call[0])))];
 const read = (over: Record<string, unknown> = {}) => narrowSessionWall(answer(NO_SCOPE, over))!;
 const shownIds = () => within(screen.getByRole('list', { name: 'Conversations' })).getAllByRole('listitem').map(item => item.querySelector('strong')?.textContent);
@@ -136,7 +138,7 @@ describe('the Conversations pane, narrowed', () => {
     expect(shownIds()).toEqual(['RQ-B', 'RQ-C']);
     expect(within(screen.getByRole('search')).getByRole('status').textContent).toBe('2 of 4 on screen match');
     // Finding asks the server nothing.
-    expect(asked(fetch)).toEqual(['/api/verse/fleet/control/session-threads']);
+    expect(asked(fetch)).toEqual([LEADER_HEALTH_API, '/api/verse/fleet/control/session-threads']);
     fireEvent.keyDown(findBox(), { key: 'ArrowDown' });
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'RQ-B, quiet' }));
     // "/" typed inside the box is a character, not the shortcut.
@@ -185,7 +187,7 @@ describe('the Conversations pane, narrowed', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Every session' }));
     await waitFor(() => expect(shownIds()).toEqual(['leader', 'RQ-A', 'RQ-B', 'RQ-C']));
     expect(lane.value).toBe('');
-    expect(asked(fetch)).toEqual(['/api/verse/fleet/control/session-threads', '/api/verse/fleet/control/session-threads?lane=codex', '/api/verse/fleet/control/session-threads?lane=codex&live=1']);
+    expect(asked(fetch)).toEqual([LEADER_HEALTH_API, '/api/verse/fleet/control/session-threads', '/api/verse/fleet/control/session-threads?lane=codex', '/api/verse/fleet/control/session-threads?lane=codex&live=1']);
   });
 
   it('says so when the server answers with every session instead of the lane asked for', async () => {

@@ -17,6 +17,10 @@
   --health-wash: var(--status-warning-bg);
 }
 
+/* In a session's conversation the column already has its padding; on the Conversations wall it lines up with the bar above the cards. */
+.health[data-place='thread'] { margin: 0; }
+.health[data-place='wall'] { margin: var(--space-2) var(--space-3) 0; }
+
 .health[data-state='down'] { --health-tone: var(--status-danger-fg); --health-wash: var(--status-danger-bg); }
 .health[data-state='recovered'] { --health-tone: var(--status-success-fg); --health-wash: var(--status-success-bg); }
 

@@ -278,7 +278,9 @@ phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky
   last pass ran. The pane reads `GET /api/verse/leader/health` (read session
   required; the same `fleet.leader-health.v1` document as
   `phm fleet leader-health --json`) once a minute while it is on screen, and
-  the server shares one reading for 15 seconds.
+  the server shares one reading for 15 seconds. The same notice shows above a
+  session's reply box and on the Conversations wall, because those messages
+  go through the same inbox; see [Sessions](SESSIONS.md).
 
 ---
 

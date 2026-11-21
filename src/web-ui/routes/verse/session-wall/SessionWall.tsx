@@ -31,6 +31,7 @@ import { sessionThreadQuery, THREAD_POLL_MS } from '../fleet-sessions/session-th
 import { clockTime } from '../leader/thread-model.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { LeaderHealth } from '../leader-thread/LeaderHealth.js';
 import { LeaderDock } from './LeaderDock.js';
 import { newLabel, railEntries, railStep, SessionRail } from './SessionRail.js';
 import { leaderIdOf, loadLeaderHidden, saveLeaderHidden, useLeaderRoom } from './wall-leader.js';
@@ -200,14 +201,14 @@ function Fault({ failure, onRetry, children }: { failure: WallFailure; onRetry: 
 const BACK_TO_WALL = { label: 'Back to every conversation', text: '← All' };
 
 /** One session's whole conversation, with its reply box. `toReply` puts the cursor in the box once the conversation has been read. */
-function OpenConversation({ id, toReply, visible, host, onBack }: { id: string; toReply: boolean; onBack: () => void } & Pick<PaneProps, 'visible' | 'host'>) {
+function OpenConversation({ id, toReply, visible, host, onBack, leaderHealth }: { id: string; toReply: boolean; onBack: () => void; leaderHealth: boolean } & Pick<PaneProps, 'visible' | 'host'>) {
   const wrap = useRef<HTMLDivElement>(null);
   // The same cache entry the conversation itself reads, watched only to know when a reply box can exist.
   const def = useMemo(() => sessionThreadQuery(id), [id]);
   const loaded = useQuery(def, { enabled: visible && toReply, freshMs: THREAD_POLL_MS }).data != null;
   useEffect(() => { if (toReply && loaded) wrap.current?.querySelector('textarea')?.focus(); }, [toReply, loaded]);
   return <div ref={wrap} className={styles.opened}>
-    <SessionThread id={id} visible={visible} onBack={onBack} backTo={BACK_TO_WALL}
+    <SessionThread id={id} visible={visible} onBack={onBack} backTo={BACK_TO_WALL} leaderHealth={leaderHealth}
       onOpenLog={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} />
   </div>;
 }
@@ -301,13 +302,15 @@ export function SessionWallPane({ visible, host }: Pick<PaneProps, 'visible' | '
         <SessionRail read={listed} failed={read.error != null} openId={open.id} onPick={id => setOpen({ id, toReply: false })} onClose={close}
           find={find} onShowAll={() => setFind('')} />
         {/* Keyed by session, so a line sent to one conversation never shows in the next. */}
-        <OpenConversation key={open.id} id={open.id} toReply={open.toReply} visible={visible} host={host} onBack={close} />
+        <OpenConversation key={open.id} id={open.id} toReply={open.toReply} visible={visible} host={host} onBack={close} leaderHealth={!leaderShown} />
       </div>
     </div>;
   } else {
     const failure = read.error ? wallFailure(read.error) : null;
     // The bar keeps its place in the tree through every state below, so choosing a lane never takes the keyboard off the control.
     side = <>
+      {/* One notice a screen that the Leader is not reading: here while only the cards show, otherwise above the reply box of the Leader's conversation beside them. */}
+      {!leaderShown && <LeaderHealth visible={visible} place="wall" />}
       {(wall || isScoped(scope)) && <WallBar find={find} onFind={setFind} scope={scope} onScope={setScope} lanes={choices.lanes} repos={choices.repos} read={wall} order={order} onOrder={setOrder}
         onLeave={() => wrap.current?.querySelector<HTMLButtonElement>('button[data-card]')?.focus()} />}
       {room > 0 && leaderHidden && <button type="button" className={styles.leaderShow} onClick={() => setLeaderHidden(false)} title="Show the Leader conversation beside the cards (L writes to the Leader)">
