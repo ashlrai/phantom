@@ -103,6 +103,24 @@ says it may be stale. The same list for agents:
 phm sessions --json
 ```
 
+Home's **Machines** card is a tile per Mac in the pool, this Mac first. Each
+tile gives the Mac's name, whether it is online, offline or unknown with a
+mark beside the word, and when it was last seen. Below that come its free
+slots as the large figure, memory as the free amount and the share in use
+with a bar of that share, the jobs it is running, then load, free disk and
+offload. On the desktop each running job is a button that opens that job's
+messages in the Worker log; a tile names up to six jobs and counts the rest.
+A line above the tiles counts the Macs that are online and the jobs running
+on the Macs that report them. Nothing is estimated: unmeasured slots read
+"free slots unknown" instead of a number, a Mac with no memory share gets a
+hatched bar instead of an empty one, and an offline Mac's tile is dashed, with
+when it was last seen in its head. The card refreshes every 30 seconds while
+visible. The same report for agents:
+
+```sh
+phm nodes pool --json
+```
+
 The Metrics pane is one board of the last 24 hours. It leads with the merged
 PR counts and the busiest hour, then four numbers (the first with a line of
 the merges in each hour), the two hourly charts side by side and a ranked bar
