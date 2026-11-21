@@ -44,12 +44,22 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // skipped/skip_reason/skip_code: the newest decline stands until a later
 // claim/batch_claim/launch row supersedes it, so a job the fleet chose not
 // to launch stops reading as an unexplained unknown.
+// `empty_tag` joins a fourth bounded ledger, <runs>/metrics/empty-tags.jsonl:
+// the `job.empty-tag.v1` rows `phm jobs empty --record` appends beside the
+// job ledger — the fleet's own recorded WHY for a job that finished empty
+// (already_done/pool_cap/blocked/no_change_needed/unknown, the closed
+// empty-tags vocabulary). The tag is evidence an empty finish was recorded
+// fleet-side; it attaches to the job's outcome regardless of the standing
+// finish verdict, stays null when no tag row named the job, and rows for
+// jobs outside the jobs window never create outcomes — the same join rule
+// spend costs and market classes follow.
 
 /** Newest-bytes bound retained from the append-only jobs ledger. */
 export const ROUTER_OUTCOME_LEDGER_LIMIT = 16 * 1024 * 1024;
 export const ROUTER_OUTCOME_LEDGER_RELATIVE = join('metrics', 'jobs.jsonl');
 export const ROUTER_SPEND_LEDGER_RELATIVE = join('metrics', 'api-spend.jsonl');
 export const ROUTER_MARKET_LEDGER_RELATIVE = join('metrics', 'work-market.jsonl');
+export const ROUTER_EMPTY_TAGS_LEDGER_RELATIVE = join('metrics', 'empty-tags.jsonl');
 
 export interface RouterOutcome {
   schema: 'router.outcome.v1';
@@ -250,6 +260,22 @@ export interface RouterOutcome {
    * recorded one.
    */
   empty_class: string | null;
+  /**
+   * The fleet's recorded WHY for a job that ended empty — the
+   * `job.empty-tag.v1` row `phm jobs empty --record` appends to
+   * metrics/empty-tags.jsonl from empty-final-reason's verdict (src/core/
+   * fleet/empty-tags.ts): the closed five-tag vocabulary
+   * already_done/pool_cap/blocked/no_change_needed/unknown. Unlike
+   * empty_class — the finish row's own no_diff/error/unknown measure —
+   * the tag is the fleet's post-hoc triage of the job's final output, so
+   * it attaches to the outcome whether or not the finish row's
+   * empty_class resolved. The newest tag row for the job stands
+   * (recordEmptyTags dedups by job id, so repeats are rare); rows naming
+   * jobs outside the jobs window never create outcomes, and a missing,
+   * unreadable or truncated tags ledger leaves every tag null — unknown,
+   * never a guessed cause.
+   */
+  empty_tag: string | null;
   /**
    * The batch member's recorded end-of-session word — a `task_outcome`
    * event row's `outcome` field in dispatchd's closed batcher.OUTCOMES
@@ -920,7 +946,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       ttm_s: null, queue_wait_s: queueWaitS.get(j) ?? null, ci_wall_s: ciWallS.get(j) ?? null,
       publish_wait_s: publishWaitS.get(j) ?? null,
       empty: null, diff_files: null, diff_lines: null,
-      exit_code: null, failure_class: null, empty_class: null,
+      exit_code: null, failure_class: null, empty_class: null, empty_tag: null,
       task_outcome: null, lane_hint_blocked_by: null,
       skipped: null, skip_reason: null, skip_code: null, passk: null,
     };
@@ -1139,6 +1165,53 @@ export function foldRouteDecisionWorkClasses(text: string): Map<string, string> 
   return new Map([...latest].map(([job, entry]) => [job, entry.workClass]));
 }
 
+/**
+ * The empty-tags ledger's row schema and closed tag vocabulary, mirrored
+ * from the producer (src/core/fleet/empty-tags.ts): `phm jobs empty
+ * --record` appends `job.empty-tag.v1` rows — { schema, job, lane, tag } —
+ * where tag is one of EMPTY_TAGS. The router keeps its own copy of the
+ * vocabulary so a fleet-side rename can never leak an unbounded label
+ * into router.outcome.v1.
+ */
+const EMPTY_TAG_SCHEMA = 'job.empty-tag.v1';
+const EMPTY_TAGS: ReadonlySet<string> = new Set([
+  'already_done', 'pool_cap', 'blocked', 'no_change_needed', 'unknown',
+]);
+
+/**
+ * Folds empty-tags.jsonl text into each job's recorded empty tag. The
+ * ledger carries no timestamp — recordEmptyTags dedups by job id, so a
+ * repeated row for one job resolves last-appended-wins like every other
+ * append-only fold here. Only rows with the exact job.empty-tag.v1 schema,
+ * a bounded job id and a tag in the closed EMPTY_TAGS vocabulary count;
+ * malformed JSON, other schemas, out-of-vocabulary tags and non-object
+ * rows are skipped, never guessed. A job with no tag row stays absent from
+ * the map so its outcome keeps empty_tag null — the recorded-unknown tag
+ * is itself evidence, distinct from missing evidence.
+ */
+export function foldEmptyTags(text: string): Map<string, string> {
+  const tags = new Map<string, string>();
+  for (const line of text.split('\n')) {
+    // Cheap prefilter: the schema marker is on every real row.
+    if (!line.includes(EMPTY_TAG_SCHEMA)) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const row = value as Row;
+    if (row['schema'] !== EMPTY_TAG_SCHEMA) continue;
+    const job = row['job'];
+    if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
+    const tag = row['tag'];
+    if (typeof tag !== 'string' || !EMPTY_TAGS.has(tag)) continue;
+    tags.set(job, tag);
+  }
+  return tags;
+}
+
 export interface RouterOutcomeRead extends RouterOutcomeFold {
   /** 'read' is the only state with trustworthy outcomes; everything else is an unknown ledger. */
   state: LedgerReadState;
@@ -1167,6 +1240,17 @@ export interface RouterOutcomeRead extends RouterOutcomeFold {
    * cover only the newest bytes, so older decisions read as unclassified.
    */
   market_truncated: boolean;
+  /**
+   * Health of the empty-tags.jsonl tail behind empty_tag joins. Anything
+   * but 'read' means no tags were joined — outcomes keep empty_tag null,
+   * never a guessed cause.
+   */
+  empty_tag_state: Exclude<LedgerReadState, 'too-large'>;
+  /**
+   * True when the empty-tags ledger exceeded the retained tail: joined
+   * tags cover only the newest bytes, so older empties read untagged.
+   */
+  empty_tag_truncated: boolean;
   /**
    * True when the ledger exceeded the retained tail: the fold, and so every
    * count on this read, covers only the newest ROUTER_OUTCOME_LEDGER_LIMIT
@@ -1212,19 +1296,22 @@ async function liveAuthorityEvidence(): Promise<readonly RouterOutcomeEvidenceRo
 /**
  * Reads the newest ROUTER_OUTCOME_LEDGER_LIMIT bytes of
  * <runsDir>/metrics/jobs.jsonl plus the same bound of
- * <runsDir>/metrics/api-spend.jsonl and <runsDir>/metrics/work-market.jsonl.
+ * <runsDir>/metrics/api-spend.jsonl, <runsDir>/metrics/work-market.jsonl
+ * and <runsDir>/metrics/empty-tags.jsonl.
  * `runsDir` defaults to ASHLR_RUNS_DIR,
  * then ~/.ashlr-runs, and must be absolute when given. `ashlarDir` is the
  * ASHLR root holding eval/passk/lane-scores.json (default ASHLR_HOME, then
  * ~/.ashlr). A missing or unreadable jobs ledger yields state != 'read' with
  * no outcomes, so callers can tell unknown input from a successfully read
  * empty ledger; a ledger larger than the bound reads its tail and reports
- * truncated:true. The spend and market ledgers degrade independently:
- * spend_state and market_state report their health, spend-derived cost_usd
- * fills only outcomes whose explicit ledger cost stayed null, and
- * market-derived work_class fills only outcomes whose jobs rows recorded
- * none — a missing joined ledger never zeroes, guesses or blocks the jobs
- * fold. `reverted` additionally joins the authority ledger's verified
+ * truncated:true. The spend, market and empty-tags ledgers degrade
+ * independently: spend_state, market_state and empty_tag_state report
+ * their health, spend-derived cost_usd fills only outcomes whose explicit
+ * ledger cost stayed null, market-derived work_class fills only outcomes
+ * whose jobs rows recorded none, and empty_tag fills only outcomes a
+ * job.empty-tag.v1 row named — a missing joined ledger never zeroes,
+ * guesses or blocks the jobs fold. `reverted` additionally joins the
+ * authority ledger's verified
  * evidence index (`authorityRevertedPrKeys`): a fleet merge the ledger
  * records as reverted marks its outcome through the job's unambiguous PR
  * URL claim, so held-merge tallies see reverts jobs.jsonl never writes.
@@ -1254,10 +1341,14 @@ export async function readRouterOutcomes(opts: {
   const marketRead = await readLedgerTail(join(runsDir, ROUTER_MARKET_LEDGER_RELATIVE));
   const marketState = marketRead.state;
   const marketTruncated = marketRead.state === 'read' ? marketRead.truncated : false;
+  const emptyTagRead = await readLedgerTail(join(runsDir, ROUTER_EMPTY_TAGS_LEDGER_RELATIVE));
+  const emptyTagState = emptyTagRead.state;
+  const emptyTagTruncated = emptyTagRead.state === 'read' ? emptyTagRead.truncated : false;
   if (read.state !== 'read') {
     return { ...empty, state: read.state, path, eval_state: laneScores.state,
       spend_state: spendState, spend_truncated: spendTruncated,
-      market_state: marketState, market_truncated: marketTruncated, truncated: false };
+      market_state: marketState, market_truncated: marketTruncated,
+      empty_tag_state: emptyTagState, empty_tag_truncated: emptyTagTruncated, truncated: false };
   }
   const workClasses = marketRead.state === 'read'
     ? foldRouteDecisionWorkClasses(marketRead.text)
@@ -1278,8 +1369,17 @@ export async function readRouterOutcomes(opts: {
       if (sum !== undefined) o.cost_usd = sum;
     }
   }
+  if (emptyTagRead.state === 'read') {
+    const tags = foldEmptyTags(emptyTagRead.text);
+    for (const o of folded.outcomes) {
+      const tag = tags.get(o.job_id);
+      if (tag !== undefined) o.empty_tag = tag;
+    }
+  }
   const outcomes = opts.lane === undefined ? folded.outcomes : folded.outcomes.filter(o => o.lane === opts.lane);
   return { ...folded, outcomes, state: 'read', path, eval_state: laneScores.state,
     spend_state: spendState, spend_truncated: spendTruncated,
-    market_state: marketState, market_truncated: marketTruncated, truncated: read.truncated };
+    market_state: marketState, market_truncated: marketTruncated,
+    empty_tag_state: emptyTagState, empty_tag_truncated: emptyTagTruncated,
+    truncated: read.truncated };
 }

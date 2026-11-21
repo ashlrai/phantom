@@ -1,6 +1,7 @@
 /**
  * `phm fleet router-weights [--runs-dir <absolute dir>] [--json]` — advisory per-work-class router-weight
- * proposals from recorded outcomes (metrics/jobs.jsonl). Read-only: never writes weights.json and never
+ * proposals from recorded outcomes (metrics/jobs.jsonl joined with the bounded side ledgers
+ * api-spend/work-market/empty-tags). Read-only: never writes weights.json and never
  * changes routing. Logic lives in src/core/router/weight-proposals.ts; this file parses argv and renders.
  * Exit: 0 for a bounded read (proposals or an insufficient-evidence refusal); 1 when the ledger is missing,
  * unreadable, not a file or oversized (reported as unavailable, never as an empty success); 2 for usage.
@@ -60,7 +61,7 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
 }
 
 function proposalLines(report: RouterWeightProposalReport): string[] {
-  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} truncated=${report.truncated} as_of=${report.as_of} ` +
+  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} empty_tags=${report.empty_tag_state} truncated=${report.truncated} as_of=${report.as_of} ` +
     'advisory-only: not applied to routing or weights.json';
   if (report.status === 'unavailable') {
     return [header, `unavailable: ledger state=${report.ledger.state}; no proposals were computed`, `ledger ${report.ledger.path}`];
@@ -80,6 +81,9 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
         : '') +
       (report.unknown_skip_reasons !== null && report.unknown_skip_reasons.length > 0
         ? ` skip_reasons=${report.unknown_skip_reasons.map(c => `${c.reason}:${c.jobs}`).join(',')}`
+        : '') +
+      (report.unknown_empty_tags !== null && report.unknown_empty_tags.length > 0
+        ? ` empty_tags=${report.unknown_empty_tags.map(c => `${c.tag}:${c.jobs}`).join(',')}`
         : ''),
   ];
   const rows = report.proposals.map(p => {
@@ -102,6 +106,11 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
       ? [`market coverage: work-market.jsonl ${report.market_state}; work_class groups reflect jobs-ledger fields only`]
       : report.market_truncated
         ? ['market coverage: retained tail only; work_class joins cover the newest bytes']
+        : []),
+    ...(report.empty_tag_state !== 'read'
+      ? [`empty-tag coverage: empty-tags.jsonl ${report.empty_tag_state}; no empty finish causes joined`]
+      : report.empty_tag_truncated
+        ? ['empty-tag coverage: retained tail only; empty_tag joins cover the newest bytes']
         : []),
   ];
   return [header, counts, ...resolution, `ledger ${report.ledger.path}`, ...usage, ...coverage, ...rows, ...none];

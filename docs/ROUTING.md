@@ -300,8 +300,9 @@ Positive allowance with a future reset is `reset-pressure` even when burn pace i
 `phm router outcomes [--json] [--runs-dir <dir>] [--lane <lane>] [--limit <1..1000>]`
 reads the newest bounded tail of `<runs-dir>/metrics/jobs.jsonl` (default
 `ASHLR_RUNS_DIR`, then `~/.ashlr-runs`; 16 MiB retained) joined with the
-same bound of `<runs-dir>/metrics/api-spend.jsonl` and
-`<runs-dir>/metrics/work-market.jsonl`, and reports one
+same bound of `<runs-dir>/metrics/api-spend.jsonl`,
+`<runs-dir>/metrics/work-market.jsonl` and
+`<runs-dir>/metrics/empty-tags.jsonl`, and reports one
 `router.outcome.v1` record per job in that window, newest
 first: merge and revert state, CI first pass, review findings, cost, wall
 time, recorded merge latency (`ttm_s` — the jobs-ledger `ttm_s`/`ttmS`
@@ -388,7 +389,24 @@ integer; a string `code` joins `skip_reason` instead).
 carries the canonical decline — and all three stay `null`/`false` when
 no skip receipt stands, distinct from the finish row's measured
 `empty` no-diff verdict, the member's `task_outcome` word and terminal
-no-op phases. `cost_usd`
+no-op phases. `empty_tag` is the fleet's recorded WHY for a job that
+ended empty — the `job.empty-tag.v1` rows `phm jobs empty --record`
+appends to `metrics/empty-tags.jsonl` from empty-final-reason's verdict
+(src/core/fleet/empty-tags.ts): the closed
+`already_done`/`pool_cap`/`blocked`/`no_change_needed`/`unknown`
+vocabulary. The newest tag row for the job stands (the recorder dedups
+by job id); the tag attaches regardless of the standing finish verdict —
+it is the fleet's post-hoc triage of the job's final output, distinct
+from the finish row's own `empty`/`empty_class` measures — and rows
+naming jobs outside the jobs window never create outcomes. Only rows
+with the exact schema, a bounded job id and an in-vocabulary tag join;
+malformed rows, other schemas and unrecognized tags are skipped, never
+recorded raw. The tags read degrades independently like the market and
+spend joins: the report's `empty_tag_state` mirrors the jobs `state`
+vocabulary and `empty_tag_truncated` marks a cut tags tail, in which case
+joined tags cover only the newest bytes; anything but `read` leaves
+every `empty_tag` `null` — unknown, never a guessed cause — while a
+recorded `unknown` tag stays distinct from missing evidence. `cost_usd`
 is an explicit `cost_usd`/`usd`/`cost` field on a jobs row when one is
 recorded; otherwise it is the sum of api-spend call costs naming the job
 (same `job`/`job_id`/`id` attribution and `cost_usd`/`usd`/`cost`
@@ -463,15 +481,24 @@ standing launch decision is a recorded skip-gate decline (a
 `skipped_empty`/`precheck_skip` receipt no later dispatch superseded)
 and `unknown_skip_reasons` tallies their recorded reason labels (the
 empty-gate vocabulary, bounded `code` strings and `code:<n>`
-gate-code-only declines, top entries first) — and `unknown_unresolved` is
+gate-code-only declines, top entries first) — `unknown_empty_tags`
+tallies the fleet's recorded empty tags inside the same cohort (the
+`job.empty-tag.v1` rows `phm jobs empty --record` stores in
+metrics/empty-tags.jsonl, so an empty finish reads with its recorded
+cause — work already on master, quota exhausted, blocked on a missing
+tool, genuinely no change needed, or the fleet's own unknown — instead
+of only the finish row's bare empty flag) — and `unknown_unresolved` is
 the remainder with no
 recorded failure signal, no requeue word and no standing skip
 decline (finished cleanly awaiting a
 verdict, still in flight, or carrying only transient launch receipts). These are counts over the retained window; when the ledger was
-not read they are `null`, never zero. When the ledger exceeds the retained tail the
+not read they are `null`, never zero — and `unknown_empty_tags` is
+`null` whenever the empty-tags ledger itself was not read, since an
+absent tag journal means tag coverage is unknown rather than zero. When the ledger exceeds the retained tail the
 report carries `truncated: true` and every count covers the newest bytes
 only; `market_state`/`market_truncated` report the decision journal's
-health the same way. Each proposal also carries an `evidence` block folded
+health and `empty_tag_state`/`empty_tag_truncated` the tags journal's
+the same way. Each proposal also carries an `evidence` block folded
 from the same known cohort: the group's CI first-pass rate, summed review
 findings, mean `cost_usd`, mean recorded `acus` (the Devin lane's billed
 spend — a different unit, never mixed with USD), mean `wall_s`, mean

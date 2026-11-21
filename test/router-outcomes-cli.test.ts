@@ -38,7 +38,7 @@ function outcome(job_id: string, over: Partial<RouterOutcome> = {}): RouterOutco
     tokens_cache_read: null, tokens_cache_write: null,
     usage_source: null, usage_missing: null,
     ttm_s: null, queue_wait_s: null, ci_wall_s: null, publish_wait_s: null, empty: null, diff_files: null, diff_lines: null,
-    exit_code: null, failure_class: null, empty_class: null,
+    exit_code: null, failure_class: null, empty_class: null, empty_tag: null,
     task_outcome: null, lane_hint_blocked_by: null,
     skipped: null, skip_reason: null, skip_code: null, passk: null,
     ...over,
@@ -50,6 +50,7 @@ function read(over: Partial<RouterOutcomeRead> = {}): RouterOutcomeRead {
     state: 'read', path: '/runs/metrics/jobs.jsonl', eval_state: 'missing',
     spend_state: 'missing', spend_truncated: false,
     market_state: 'missing', market_truncated: false,
+    empty_tag_state: 'missing', empty_tag_truncated: false,
     outcomes: [], malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0, session_rows: 0, truncated: false,
     ...over,
   };
@@ -159,9 +160,9 @@ describe('phm router outcomes', () => {
       malformed_rows: 3, unattached_rows: 1, ambiguous_urls: 2, session_rows: 4,
     }), 100);
     const lines = routerOutcomeLines(report);
-    expect(lines[0]).toBe('router outcomes state=read eval=missing spend=missing market=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2 session_rows=4');
+    expect(lines[0]).toBe('router outcomes state=read eval=missing spend=missing market=missing empty_tags=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2 session_rows=4');
     expect(lines[1]).toBe(`ledger ${report.path}`);
-    expect(lines[3]).toContain('A lane=alpha model=m1 tier=work work_class=unknown lane_hint=unknown lane_override=unknown merged=unknown reverted=true ci_first_pass=true review=fixed:2,rejected:1,ignored:0 cost_usd=unknown acus=unknown wall_s=unknown ttm_s=unknown queue_wait_s=unknown ci_wall_s=unknown publish_wait_s=unknown tokens_total=unknown passk=unknown empty=unknown exit_code=unknown failure_class=unknown empty_class=unknown task_outcome=done skipped=unknown skip_reason=unknown skip_code=unknown lane_hint_blocked_by=[quota_exhausted,saturated]');
+    expect(lines[3]).toContain('A lane=alpha model=m1 tier=work work_class=unknown lane_hint=unknown lane_override=unknown merged=unknown reverted=true ci_first_pass=true review=fixed:2,rejected:1,ignored:0 cost_usd=unknown acus=unknown wall_s=unknown ttm_s=unknown queue_wait_s=unknown ci_wall_s=unknown publish_wait_s=unknown tokens_total=unknown passk=unknown empty=unknown exit_code=unknown failure_class=unknown empty_class=unknown empty_tag=unknown task_outcome=done skipped=unknown skip_reason=unknown skip_code=unknown lane_hint_blocked_by=[quota_exhausted,saturated]');
     expect(lines[2]).toContain('B lane=unknown model=unknown tier=unknown work_class=docs lane_hint=unknown lane_override=unknown merged=true reverted=unknown');
     expect(lines[2]).toContain('task_outcome=unknown skipped=unknown skip_reason=unknown skip_code=unknown lane_hint_blocked_by=unknown');
   });
@@ -204,6 +205,21 @@ describe('phm router outcomes', () => {
     const h = harness(canned(read({ outcomes: [outcome('A')], market_state: 'unreadable' })));
     expect(await cmdRouterOutcomes(['--json'], h.readFn)).toBe(0);
     expect(JSON.parse(h.out())).toMatchObject({ market_state: 'unreadable', market_truncated: false });
+  });
+
+  it('surfaces empty-tag ledger health and cut-tail coverage in JSON and text', async () => {
+    const report = buildRouterOutcomesReport(read({
+      outcomes: [outcome('A', { empty_tag: 'already_done' })], empty_tag_state: 'read', empty_tag_truncated: true,
+    }), 100);
+    expect(report).toMatchObject({ empty_tag_state: 'read', empty_tag_truncated: true });
+    const lines = routerOutcomeLines(report);
+    expect(lines[0]).toContain('empty_tags=read');
+    expect(lines).toContain('empty-tag coverage: retained tail only; empty_tag joins cover the newest bytes');
+    expect(lines[3]).toContain('empty_tag=already_done');
+
+    const h = harness(canned(read({ outcomes: [outcome('A')], empty_tag_state: 'unreadable' })));
+    expect(await cmdRouterOutcomes(['--json'], h.readFn)).toBe(0);
+    expect(JSON.parse(h.out())).toMatchObject({ empty_tag_state: 'unreadable', empty_tag_truncated: false });
   });
 
   it('folds a real ledger end-to-end through cmdRouter and cmdRouterOutcomes', async () => {

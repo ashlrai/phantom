@@ -42,6 +42,8 @@ const ledgerPath = (): string => join(runs, 'metrics', 'jobs.jsonl');
 const writeLedger = (rows: object[]): void => writeFileSync(ledgerPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
 const marketPath = (): string => join(runs, 'metrics', 'work-market.jsonl');
 const writeMarket = (rows: object[]): void => writeFileSync(marketPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+const emptyTagsPath = (): string => join(runs, 'metrics', 'empty-tags.jsonl');
+const writeEmptyTags = (rows: object[]): void => writeFileSync(emptyTagsPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
 
 /** A work-market.v1 route_decision row in the dispatcher's own shape. */
 const marketDecision = (job: string, workClass: string, ts: number): object => ({
@@ -744,6 +746,70 @@ describe('unknown-outcome resolution', () => {
     expect(out).toContain('empty_classes=no_diff:2,error:1,unknown:1');
   });
 
+  it('tallies the fleet\'s recorded empty tags inside the unknown cohort', async () => {
+    // `phm jobs empty --record` appends job.empty-tag.v1 rows to
+    // metrics/empty-tags.jsonl — the fleet's own why-it-ended-empty
+    // classification. The tally explains the merged:null cohort's empty
+    // finishes without touching the unresolved remainder or weight math.
+    const tagRow = (job: string, tag: string): object =>
+      ({ schema: 'job.empty-tag.v1', job, lane: 'alpha', tag });
+    writeLedger([
+      ...merged(20),
+      finishRow('synthetic-unq-ad-1', { empty: true, exit_code: 0 }),
+      finishRow('synthetic-unq-ad-2', { empty: true, exit_code: 0 }),
+      finishRow('synthetic-unq-pc-1', { empty: true, exit_code: 1, failure_class: 'quota' }),
+      finishRow('synthetic-unq-unk-1', { empty: true, empty_class: 'unknown' }),
+      event('synthetic-unq-open', 'alpha', 'code', 'VERIFIED'),
+      // A known-cohort job's tag never joins the unknown tally.
+      event('synthetic-known-tag', 'alpha', 'code', 'MERGED'),
+    ]);
+    writeEmptyTags([
+      tagRow('synthetic-unq-ad-1', 'already_done'),
+      tagRow('synthetic-unq-ad-2', 'already_done'),
+      tagRow('synthetic-unq-pc-1', 'pool_cap'),
+      tagRow('synthetic-unq-unk-1', 'unknown'),
+      tagRow('synthetic-unq-open', 'blocked'),
+      tagRow('synthetic-known-tag', 'blocked'),
+      tagRow('synthetic-no-outcome', 'blocked'),
+      // Out-of-vocabulary and wrong-schema rows never mint a tally.
+      tagRow('synthetic-unq-ad-1', 'sideways'),
+      { schema: 'jobs.empty-tags.v1', job: 'synthetic-unq-ad-2', lane: 'alpha', tag: 'blocked' },
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      known_outcomes: 21, unknown_outcomes: 5,
+      empty_tag_state: 'read', empty_tag_truncated: false,
+      // The tag explains composition; the unresolved remainder is unchanged.
+      unknown_unresolved: 1,
+      unknown_empty_tags: [
+        { tag: 'already_done', jobs: 2 },
+        { tag: 'blocked', jobs: 1 },
+        { tag: 'pool_cap', jobs: 1 },
+        { tag: 'unknown', jobs: 1 },
+      ],
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('empty_tags=read');
+    expect(out).toContain('empty_tags=already_done:2,blocked:1,pool_cap:1,unknown:1');
+  });
+
+  it('reports unknown_empty_tags null when the tags ledger was not read', async () => {
+    // No empty-tags.jsonl: tag coverage is unknown, so the tally is null —
+    // never an empty list claiming no empty jobs were tagged.
+    writeLedger([...merged(20), finishRow('synthetic-unq-ad-1', { empty: true, exit_code: 0 })]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      status: 'proposed', empty_tag_state: 'missing', empty_tag_truncated: false,
+      unknown_empty_tags: null,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('empty_tags=missing');
+    expect(out).toContain('empty-tag coverage: empty-tags.jsonl missing');
+    expect(out).not.toContain('empty_tags=already_done');
+  });
+
   it('never counts finish signals from the known cohort as unknown resolution', async () => {
     writeLedger([
       // A merged job can still carry a nonzero exit (the PR landed anyway)
@@ -767,7 +833,8 @@ describe('unknown-outcome resolution', () => {
       status: 'unavailable',
       unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null,
       unknown_empty_classes: null, unknown_task_outcomes: null,
-      unknown_skipped: null, unknown_skip_reasons: null, unknown_unresolved: null,
+      unknown_skipped: null, unknown_skip_reasons: null, unknown_empty_tags: null,
+      unknown_unresolved: null,
     });
   });
 

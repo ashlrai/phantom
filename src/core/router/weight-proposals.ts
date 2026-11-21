@@ -185,7 +185,15 @@ export interface RouterWeightProposalSet {
    * labels (the empty-gate vocabulary, bounded `code` strings, and
    * `code:<n>` for gate-code-only declines, top entries first), so a job
    * the fleet chose not to launch reads as explained rather than
-   * unresolved. `unknown_unresolved`
+   * unresolved. `unknown_empty_tags` tallies the fleet's recorded empty
+   * tags — the `job.empty-tag.v1` rows `phm jobs empty --record` stores in
+   * metrics/empty-tags.jsonl, empty-tags.ts's closed
+   * already_done/pool_cap/blocked/no_change_needed/unknown vocabulary —
+   * so an empty finish reads with its recorded cause (work already on
+   * master, quota exhausted, blocked on a missing tool, genuinely no
+   * change needed, or the fleet's own unknown) instead of only the
+   * finish row's bare empty flag. Like empty_class it explains composition
+   * without changing the unresolved remainder. `unknown_unresolved`
    * is the remainder with no recorded failure signal — finished cleanly and
    * awaiting a merge verdict, still in flight, or only transient launch
    * receipts; the ledger simply records no terminal productivity outcome
@@ -199,6 +207,7 @@ export interface RouterWeightProposalSet {
   unknown_task_outcomes: { task_outcome: string; jobs: number }[];
   unknown_skipped: number;
   unknown_skip_reasons: { reason: string; jobs: number }[];
+  unknown_empty_tags: { tag: string; jobs: number }[];
   unknown_unresolved: number;
   /**
    * Top recorded `usage_missing` labels across every folded outcome —
@@ -348,6 +357,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   const emptyClasses = new Map<string, number>();
   const taskOutcomes = new Map<string, number>();
   const skipReasons = new Map<string, number>();
+  const emptyTags = new Map<string, number>();
   const usageMissing = new Map<string, number>();
   const usageSources = new Map<string, number>();
   let unknownSkipped = 0;
@@ -380,6 +390,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
       if (o.failure_class !== null) failureClasses.set(o.failure_class, (failureClasses.get(o.failure_class) ?? 0) + 1);
       if (o.empty_class !== null) emptyClasses.set(o.empty_class, (emptyClasses.get(o.empty_class) ?? 0) + 1);
       if (o.task_outcome !== null) taskOutcomes.set(o.task_outcome, (taskOutcomes.get(o.task_outcome) ?? 0) + 1);
+      if (o.empty_tag !== null) emptyTags.set(o.empty_tag, (emptyTags.get(o.empty_tag) ?? 0) + 1);
       if (declined) {
         unknownSkipped++;
         const key = o.skip_reason ?? (o.skip_code !== null ? `code:${o.skip_code}` : 'unlabeled');
@@ -455,6 +466,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     .map(([reason, jobs]) => ({ reason, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
     .slice(0, 10);
+  const topEmptyTags = [...emptyTags.entries()]
+    .map(([tag, jobs]) => ({ tag, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.tag.localeCompare(b.tag))
+    .slice(0, 10);
   const topUsageMissing = [...usageMissing.entries()]
     .map(([usage_missing, jobs]) => ({ usage_missing, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.usage_missing.localeCompare(b.usage_missing))
@@ -467,7 +482,8 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     unknown_empty: unknownEmpty, unknown_nonzero_exit: unknownNonzeroExit,
     unknown_failure_classes: topFailureClasses, unknown_empty_classes: topEmptyClasses,
     unknown_task_outcomes: topTaskOutcomes, unknown_skipped: unknownSkipped,
-    unknown_skip_reasons: topSkipReasons, unknown_unresolved: unknownUnresolved,
+    unknown_skip_reasons: topSkipReasons, unknown_empty_tags: topEmptyTags,
+    unknown_unresolved: unknownUnresolved,
     usage_missing: topUsageMissing, usage_sources: topUsageSources };
 }
 
@@ -488,6 +504,15 @@ export interface RouterWeightProposalReport {
   market_state: RouterOutcomeRead['market_state'];
   /** True when the market tail was cut; joined classes cover only the newest bytes. */
   market_truncated: boolean;
+  /**
+   * Health of the empty-tags.jsonl tail behind empty_tag joins and the
+   * unknown_empty_tags tally. Anything but 'read' means no tags joined —
+   * unknown_empty_tags is then null (coverage unknown), never an empty
+   * list claiming no empty jobs were tagged.
+   */
+  empty_tag_state: RouterOutcomeRead['empty_tag_state'];
+  /** True when the empty-tags tail was cut; joined tags cover only the newest bytes. */
+  empty_tag_truncated: boolean;
   /** 'unavailable' when the ledger was not read; counts are then null, never zero. */
   status: 'proposed' | 'insufficient-evidence' | 'unavailable';
   bounds: { min_samples: number; max_shift: number };
@@ -530,6 +555,15 @@ export interface RouterWeightProposalReport {
    * recorded.
    */
   unknown_skip_reasons: { reason: string; jobs: number }[] | null;
+  /**
+   * Top recorded empty tags inside the unknown cohort, by jobs — the
+   * fleet's own why-it-ended-empty classification (already_done/pool_cap/
+   * blocked/no_change_needed/unknown). Null when the ledger was not read
+   * or the empty-tags ledger was not read (tag coverage unknown); empty
+   * when the tags ledger was read and no unknown-cohort outcome carried
+   * a tag.
+   */
+  unknown_empty_tags: { tag: string; jobs: number }[] | null;
   unknown_unresolved: number | null;
   /**
    * Top recorded `usage_missing` labels across every folded outcome —
@@ -552,11 +586,13 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
   const bounds = { min_samples: opts.minSamples ?? ROUTER_WEIGHT_DEFAULT_MIN_SAMPLES, max_shift: opts.maxShift ?? ROUTER_WEIGHT_DEFAULT_MAX_SHIFT };
   const head = { schema: 'router.weight-proposals.v1' as const, advisory_only: true as const, as_of: asOf,
     source: ROUTER_WEIGHT_PROPOSAL_SOURCE, ledger: { state: read.state, path: read.path }, truncated: read.truncated,
-    market_state: read.market_state, market_truncated: read.market_truncated, bounds };
+    market_state: read.market_state, market_truncated: read.market_truncated,
+    empty_tag_state: read.empty_tag_state, empty_tag_truncated: read.empty_tag_truncated, bounds };
   if (read.state !== 'read') {
     return { ...head, status: 'unavailable', known_outcomes: null, unknown_outcomes: null, unclassified_outcomes: null,
       unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null, unknown_empty_classes: null,
-      unknown_task_outcomes: null, unknown_skipped: null, unknown_skip_reasons: null, unknown_unresolved: null,
+      unknown_task_outcomes: null, unknown_skipped: null, unknown_skip_reasons: null, unknown_empty_tags: null,
+      unknown_unresolved: null,
       usage_missing: null, usage_sources: null, proposals: [] };
   }
   const set = proposeRouterWeights(read.outcomes, { ...opts, minSamples: bounds.min_samples, maxShift: bounds.max_shift });
@@ -566,7 +602,12 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     unknown_empty: set.unknown_empty, unknown_nonzero_exit: set.unknown_nonzero_exit,
     unknown_failure_classes: set.unknown_failure_classes, unknown_empty_classes: set.unknown_empty_classes,
     unknown_task_outcomes: set.unknown_task_outcomes, unknown_skipped: set.unknown_skipped,
-    unknown_skip_reasons: set.unknown_skip_reasons, unknown_unresolved: set.unknown_unresolved,
+    unknown_skip_reasons: set.unknown_skip_reasons,
+    // Tag coverage is only as good as the tags ledger read: anything but
+    // 'read' leaves every empty_tag null, so the tally would claim "no
+    // empty jobs tagged" when it only knows "tags unread" — report null.
+    unknown_empty_tags: read.empty_tag_state === 'read' ? set.unknown_empty_tags : null,
+    unknown_unresolved: set.unknown_unresolved,
     usage_missing: set.usage_missing, usage_sources: set.usage_sources,
     proposals: set.proposals };
 }
