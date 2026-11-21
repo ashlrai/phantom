@@ -15,23 +15,28 @@ import { isPaused } from '../core/comms/pause.js';
 import { killSwitchOn } from '../core/sandbox/policy.js';
 import { readLeaderReplies } from '../core/fleet/mason-outbox.js';
 import { readOwnerLiveStatus } from '../core/comms/owner-live-status.js';
+import { ensureOwnerAdaptersFile, setImessageBridge } from '../core/comms/owner-adapters-file.js';
+import { fixedOwnerConfigDir } from '../core/comms/owner-channel.js';
 import { sendOwnerLiveNotices } from '../core/comms/owner-live-notice.js';
 import type { OwnerThreadOptions } from '../core/comms/owner-thread.js';
 import { ownerThreadOptions } from './comms-owner-thread.js';
 
-const usage = 'Usage: ashlr fleet owner-live [--apply] [--json] [--runs-dir DIR]\n       ashlr owner-live status [--json]';
+const usage = 'Usage: ashlr fleet owner-live [--apply] [--json] [--runs-dir DIR]\n       ashlr owner-live status [--json]\n       ashlr owner-live enable|disable imessage [--json]';
 
 export interface FleetOwnerLiveDeps {
   /** Full owner-thread options for tests; production defaults to ownerThreadOptions(). */
   options?: OwnerThreadOptions;
   output?: (text: string) => void;
   error?: (text: string) => void;
+  /** Config directory (the folder holding comms/owner-adapters.toml); tests pass a temp dir. */
+  configDir?: string;
 }
 
 export async function cmdFleetOwnerLive(args: string[], deps: FleetOwnerLiveDeps = {}): Promise<number> {
   const output = deps.output ?? console.log;
   const error = deps.error ?? console.error;
   if (args[0] === 'status') return cmdOwnerLiveStatus(args.slice(1), deps);
+  if (args[0] === 'enable' || args[0] === 'disable') return cmdOwnerLiveSwitch(args, deps);
   let apply = false;
   let json = false;
   let runsDir: string | undefined;
@@ -49,6 +54,8 @@ export async function cmdFleetOwnerLive(args: string[], deps: FleetOwnerLiveDeps
       runsDir = value;
     } else { error(usage); return 2; }
   }
+  // No config file yet: write the starter (iMessage on, no secrets) so no human step is needed.
+  if (apply && deps.options === undefined) ensureOwnerAdaptersFile(deps.configDir ?? fixedOwnerConfigDir());
   const options = deps.options ?? { ...ownerThreadOptions(), ...(runsDir === undefined ? {} : { runsDir }) };
   // The newest leader reply is what owner-live sends once a channel is on.
   const replies = await readLeaderReplies({ limit: 1, planLog: loadConfigReadOnly().comms?.leaderPlanLogPath }).then(r => r.replies, () => []);
@@ -63,6 +70,21 @@ export async function cmdFleetOwnerLive(args: string[], deps: FleetOwnerLiveDeps
   return apply && report.failed.length > 0 ? 1 : 0;
 }
 
+/** `phm owner-live enable|disable imessage [--json]`: flips only `[imessage] bridge` in owner-adapters.toml. */
+export async function cmdOwnerLiveSwitch(args: string[], deps: FleetOwnerLiveDeps = {}): Promise<number> {
+  const output = deps.output ?? console.log;
+  const error = deps.error ?? console.error;
+  if (args.some(a => a === '--help' || a === '-h')) { output(usage); return 0; }
+  const json = args.includes('--json');
+  const rest = args.slice(1).filter(a => a !== '--json');
+  if (rest.length !== 1 || rest[0] !== 'imessage' || args.length - rest.length > 2) { error('Only iMessage can be switched here: the other channels need a secret handle. ' + usage); return 2; }
+  const on = args[0] === 'enable';
+  const result = setImessageBridge(deps.configDir ?? fixedOwnerConfigDir(), on);
+  const line = `iMessage ${on ? 'on' : 'off'}${result.changed ? '' : ' (already)'}. Check: phm owner-live status`;
+  output(json ? JSON.stringify({ schema: 'owner-live.switch.v1', channel: 'imessage', bridge: result.bridge, changed: result.changed }) : line);
+  return 0;
+}
+
 /** `phm owner-live status [--json]`: per channel on / off / not-set-up, what decides it, and the one next step. */
 export async function cmdOwnerLiveStatus(args: string[], deps: FleetOwnerLiveDeps = {}): Promise<number> {
   const output = deps.output ?? console.log;
@@ -74,8 +96,7 @@ export async function cmdOwnerLiveStatus(args: string[], deps: FleetOwnerLiveDep
   if (args[0] === '--json') { output(JSON.stringify(report)); return 0; }
   output(report.line);
   for (const c of report.channels) {
-    output(`  ${c.channel}: ${c.state} — ${c.reason}`);
-    if (c.nextStep) output(`    next: ${c.nextStep}`);
+    output(`  ${c.channel}: ${c.state} — ${c.reason}${c.nextStep && !c.reason.includes(c.nextStep) ? ` Next: ${c.nextStep}` : ''}`);
   }
   return 0;
 }

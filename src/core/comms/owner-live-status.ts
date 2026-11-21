@@ -64,6 +64,10 @@ export function readOwnerLiveStatus(settings: OwnerThreadSettings, hold: { halte
     if (hold.halted || hold.paused) {
       return { ...base, state: 'off', reason: `${NAME[channel]} is held: ${gate.reason}`, nextStep: 'Remove ~/.ashlr/KILL or resume comms.' };
     }
+    if (channel === 'imessage' && settings.imessageBridge === 'loopback' && !idSet) {
+      // The bridge is on; only Mason's own handle is missing. Nothing is sent until it is paired.
+      return { ...base, state: 'not-set-up', reason: 'iMessage on, but no verified Mason handle: run phm owner pair imessage', nextStep: 'phm owner pair imessage' };
+    }
     if (!gate.configured) {
       return { ...base, state: 'not-set-up', reason: `${NAME[channel]} not set up: ${gate.reason.replace(/\.$/, '')}.`, nextStep: gate.nextStep };
     }
