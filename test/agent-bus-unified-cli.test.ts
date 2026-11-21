@@ -260,6 +260,35 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['inbox', 'nova', '--kind', 'note'])).toMatchObject({ code: 2 });
   });
 
+  it('filters inbox reads by --job across feed citations and job-threaded mail', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-CLI-JF', '--title', 'Job filter',
+      '--repo', 'a/b', '--claim', 'queue:RQ-CLI-JF', '--to', 'agent:nova', '--id', 'jf-post'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'status', '--from', 'atlas', '--job', 'RQ-CLI-JF', '--status', 'running',
+      '--to', 'agent:nova', '--id', 'jf-st'])).json).toMatchObject({ status: 'posted' });
+    // A note threaded job:<id> is the job's conversation bucket; a bare-id
+    // thread and unrelated mail name different conversations.
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'job note',
+      '--thread', 'job:RQ-CLI-JF', '--id', 'jf-note'])).json).toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'other job',
+      '--thread', 'job:RQ-CLI-OTHER', '--id', 'jf-other'])).json).toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'plain', '--id', 'jf-plain'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    const page = await run(['inbox', 'nova', '--job', 'RQ-CLI-JF']);
+    expect(page.code).toBe(0);
+    expect(page.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id).sort())
+      .toEqual(['jf-note', 'jf-post', 'jf-st']);
+    // --job composes with --matched: the count honors the same filter.
+    const counted = await run(['inbox', 'nova', '--job', 'RQ-CLI-JF', '--matched']);
+    expect(counted.json.matched).toBe(3);
+    expect((await run(['inbox', 'nova', '--job', 'RQ-ABSENT'])).json.messages).toEqual([]);
+    // A job id must be a printable label; anything else fails closed.
+    expect(await run(['inbox', 'nova', '--job', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('reports the true pending total with --matched and resumes before unshown mail', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
