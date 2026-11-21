@@ -1,6 +1,7 @@
 /**
  * The list that fills in a typed command's argument in the Leader reply box:
- * the held lanes after `/release `, the running jobs after `/stop `, the Mac
+ * the held lanes after `/release `, the lane and then the minutes after
+ * `/hold `, the running jobs after `/stop `, the Mac
  * apps after `/app `, the panes after `/open ` (command-arg-model.ts has the
  * full set). ↑/↓ move, Tab writes the highlighted row, Esc closes. Enter
  * writes it too while nothing is typed yet or after the arrows moved, and
@@ -18,13 +19,13 @@ import { macAppsQuery } from '../fleet-host/MacAppsCard.js';
 import { liveSessionsQuery, SESSIONS_POLL_MS } from '../fleet-sessions/sessions-model.js';
 import { laneTargetsQuery } from '../ops/lane-targets-queries.js';
 import { usePanes } from '../panes/pane-registry.js';
-import { appOptions, ARG_LIST_NAME, argQuery, enterFills, insertArg, laneOptions, paneOptions, sessionOptions, type ArgOptions, type ArgSource } from './command-arg-model.js';
+import { appOptions, argListName, argQuery, enterFills, insertArg, laneOptions, minuteOptions, moreFollows, paneOptions, sessionOptions, type ArgOptions, type ArgSource } from './command-arg-model.js';
 import { stepOption } from './composer-assist-model.js';
 import styles from './composer-assist.module.css';
 
 const LANES_FRESH_MS = 10_000, APPS_FRESH_MS = 30_000;
 
-const WORDS: Readonly<Record<Exclude<ArgSource, 'panes'>, { reading: string; gone: string; typed: string }>> = {
+const WORDS: Readonly<Record<Exclude<ArgSource, 'panes' | 'minutes'>, { reading: string; gone: string; typed: string }>> = {
   lanes: { reading: 'Reading lanes…', gone: 'Lanes unavailable.', typed: 'a lane name' },
   sessions: { reading: 'Reading sessions…', gone: 'Sessions unavailable.', typed: 'an id' },
   apps: { reading: 'Reading apps…', gone: 'Apps unavailable.', typed: 'an app name' },
@@ -51,8 +52,8 @@ export function useCommandArgs({ id, draft, caret, enabled, selected, setSelecte
   /** The highlighted row; the reply box resets it on every edit. */
   selected: number;
   setSelected: (index: number) => void;
-  /** Receives the draft with the argument filled in. */
-  onChoose: (text: string) => void;
+  /** Receives the draft with the argument filled in; `more` when the next argument has a list of its own. */
+  onChoose: (text: string, more: boolean) => void;
 }): CommandArgAssist {
   // The draft the arrows last moved in: an edit makes it stale, so Enter runs the command again.
   const [movedIn, setMovedIn] = useState<string | null>(null);
@@ -66,15 +67,17 @@ export function useCommandArgs({ id, draft, caret, enabled, selected, setSelecte
 
   const name = at?.name ?? null, query = at?.query ?? '';
   const options = useMemo((): ArgOptions | null => {
-    if (name === 'release' || name === 'hold') return lanes.data ? laneOptions(lanes.data, name, query) : null;
+    // The end times are as of the last key press, which is when the row is read.
+    if (source === 'minutes') return minuteOptions(query, Date.now());
+    if (name === 'release' || name === 'hold' || name === 'lane') return lanes.data ? laneOptions(lanes.data, name, query) : null;
     if (name === 'app') return apps.data ? appOptions(apps.data, query) : null;
     if (name === 'open') return paneOptions(panes, query);
     return name !== null && sessions.data ? sessionOptions(sessions.data, name, query) : null;
-  }, [name, query, lanes.data, sessions.data, apps.data, panes]);
+  }, [name, source, query, lanes.data, sessions.data, apps.data, panes]);
 
   const shown = options?.shown ?? [];
   const active = shown.length === 0 ? -1 : Math.min(selected, shown.length - 1);
-  const choose = (value: string) => { if (at) onChoose(insertArg(draft, at, value)); };
+  const choose = (value: string) => { if (at) onChoose(insertArg(draft, at, value), moreFollows(at)); };
 
   function onKey(key: string): boolean {
     if (!at || active < 0) return false;
@@ -90,14 +93,14 @@ export function useCommandArgs({ id, draft, caret, enabled, selected, setSelecte
   const listId = `${id}-args`;
   let panel: ReactNode = null;
   if (at) {
-    const words = source === null || source === 'panes' ? null : WORDS[source];
+    const words = source === null || source === 'panes' || source === 'minutes' ? null : WORDS[source];
     const hint = options ? (options.empty === null ? null : <p role="status">{options.empty}</p>)
       : !words ? null
         : read?.data === undefined && !read?.error ? <p role="status" aria-busy="true">{words.reading}</p>
           : <p role="status" data-tone="unknown">{words.gone} {read?.error ? readFailureReason(read.error) : 'This server does not list them.'} You can still type {words.typed}.</p>;
     panel = <div className={styles.assist} data-leader-command-args={at.name}>
       {hint}
-      {shown.length > 0 && <div id={listId} className={styles.list} role="listbox" aria-label={ARG_LIST_NAME[at.name]}>
+      {shown.length > 0 && <div id={listId} className={styles.list} role="listbox" aria-label={argListName(at)}>
         {shown.map((option, index) => <div key={option.value} id={`${id}-arg-${index}`} className={styles.option} role="option" aria-selected={index === active}
           data-tone={option.tone} onMouseDown={event => event.preventDefault()} onClick={() => choose(option.value)}>
           <span className={styles.name}>{option.lane !== null && <ProviderBadge of={option.lane} iconOnly size={14} />}<strong>{option.label}</strong></span>
