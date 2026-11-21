@@ -12,6 +12,7 @@ import { computeLaneYield, NEUTRAL_WEIGHT, type LaneYieldRow } from '../core/fle
 import { readFleetRunsDirState } from '../core/fleet/runs-dir-state.js';
 import { buildFleetLiveSnapshot } from '../core/verse/fleet-live-api.js';
 import { computeLaneHealth, laneHealthLine, stuckBadge } from '../core/fleet/lane-health.js';
+import { readPauseState, pauseLine } from '../core/fleet/pause-state.js';
 import { readLanePressure } from '../core/fleet/lane-memory-pressure.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
@@ -31,6 +32,8 @@ worktree); with --check it says which lanes can run the job in that prompt file.
 "phm lanes pressure" says, per lane, whether this Mac's memory is throttling it and why. Lanes whose model runs
 on this Mac (codex-local by default, or memory_class "local" in queue/slots.json) step down first; cloud lanes keep
 their target until memory is critical (under 15% free, or swap growing fast while memory is short). Read-only.
+Both commands also say when launches are paused: "All launches paused: <reasons>" (PAUSE) or "Local models paused,
+cloud lanes running: <reasons>" (PAUSE_LOCAL).
 Figures that cannot be measured print "unknown".`;
 
 const pct = (n: number | null): string => n === null ? 'unknown' : `${Math.round(n * 100)}%`;
@@ -79,9 +82,9 @@ async function lanesCaps(flags: string[]): Promise<number> {
 
 export async function cmdLanes(args: string[]): Promise<number> {
   if (args.length === 1 && args[0] === '--json') {
-    const state = await readFleetRunsDirState();
+    const [state, pause] = await Promise.all([readFleetRunsDirState(), readPauseState()]);
     console.log(JSON.stringify(sanitizePublicJson({ schema: 'lanes.dispatchd.v1', lastTick: state.lastTick,
-      sourceState: state.sources.status, lanes: state.lanes })));
+      sourceState: state.sources.status, pause, pauseLine: pauseLine(pause), lanes: state.lanes })));
     return 0;
   }
   if (args.length === 0 || ['--help', '-h'].includes(args[0]!)) {
@@ -124,6 +127,7 @@ export async function cmdLanes(args: string[]): Promise<number> {
     const report = await readLanePressure();
     if (flags.length) console.log(JSON.stringify(sanitizePublicJson(report)));
     else {
+      if (report.pauseLine) console.log(report.pauseLine);
       for (const row of report.lanes) console.log(row.reason);
       for (const gap of report.gaps) console.log(`Note: ${gap}`);
     }
@@ -155,6 +159,8 @@ export async function cmdLanes(args: string[]): Promise<number> {
     console.log(JSON.stringify(sanitizePublicJson(health)));
     return 0;
   }
+  const paused = pauseLine(await readPauseState());
+  if (paused) console.log(paused);
   console.log(`Lane health, last ${health.window.hours} h (to ${health.window.until})`);
   for (const lane of health.lanes) {
     const badge = stuckBadge(lane);

@@ -7,6 +7,9 @@ import { formatFleetStatus } from '../src/cli/fleet.js';
 import { buildFleetStatus, type FleetStatus } from '../src/core/fleet/status.js';
 import type { AshlrConfig } from '../src/core/types.js';
 
+const off = { state: 'off', since: null, reasons: [] };
+const noPause = { global: off, local: off };
+
 describe('fleet.v1 local memory fixtures', () => {
   let root: string;
   let paths: Required<FleetMemoryPaths>;
@@ -44,6 +47,7 @@ describe('fleet.v1 local memory fixtures', () => {
     await writeFile(paths.admissionPath, JSON.stringify({ admissionWaitsByPool: { 'codex-personal': 3, work: 0 } }));
     expect(await readFleetMemory(paths)).toEqual({
       pause: { state: 'present', reason: 'low free memory\nwaiting for recovery' },
+      pauseState: { global: { state: 'on', since: null, reasons: ['low free memory', 'waiting for recovery'] }, local: off },
       freeMemoryPercent: 4.5, swapUsedBytes: 1024,
       admissionWaitsByPool: { 'codex-personal': 3, work: 0 },
     });
@@ -62,7 +66,7 @@ describe('fleet.v1 local memory fixtures', () => {
 
   it('reports absent PAUSE and missing optional files without claiming zero usage', async () => {
     expect(await readFleetMemory(paths)).toEqual({
-      pause: { state: 'absent', reason: null },
+      pause: { state: 'absent', reason: null }, pauseState: noPause,
       freeMemoryPercent: null, swapUsedBytes: null, admissionWaitsByPool: null,
     });
   });
@@ -71,7 +75,7 @@ describe('fleet.v1 local memory fixtures', () => {
     await writeFile(paths.metricsPath, '{"freeMemoryPercent":100,"swapUsedBytes":0}');
     await writeFile(paths.admissionPath, '{"admissionWaitsByPool":{}}');
     expect(await readFleetMemory(paths)).toEqual({
-      pause: { state: 'absent', reason: null },
+      pause: { state: 'absent', reason: null }, pauseState: noPause,
       freeMemoryPercent: 100, swapUsedBytes: 0, admissionWaitsByPool: {},
     });
   });
@@ -89,7 +93,8 @@ describe('fleet.v1 local memory fixtures', () => {
     await mkdir(paths.metricsPath);
     await writeFile(paths.admissionPath, '{"admissionWaitsByPool":{"work":2}}');
     expect(await readFleetMemory(paths)).toEqual({
-      pause: { state: 'unknown', reason: null }, freeMemoryPercent: null, swapUsedBytes: null,
+      pause: { state: 'unknown', reason: null },
+      pauseState: { global: { state: 'unknown', since: null, reasons: [] }, local: off }, freeMemoryPercent: null, swapUsedBytes: null,
       admissionWaitsByPool: { work: 2 },
     });
   });
