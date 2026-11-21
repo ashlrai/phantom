@@ -13,6 +13,7 @@ import {
   type BottleneckSignals,
 } from '../src/core/fleet/bottleneck-ideas.js';
 import { cmdIdeas } from '../src/cli/ideas.js';
+import { DROP_JOB_QUEUE_LIMIT } from '../src/core/fleet/drop-job-writer.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00Z');
 const iso = (hoursAgo: number) => new Date(NOW - hoursAgo * 3_600_000).toISOString();
@@ -155,6 +156,25 @@ describe('stable JSON', () => {
 });
 
 describe('queue it', () => {
+  it('ignores retained prompts and parked rows when admitting an idea', async () => {
+    await seedAllSignals();
+    await Promise.all(Array.from({ length: DROP_JOB_QUEUE_LIMIT }, (_, i) => put(`queue/prompts/RQ-PHX-OLD${i}.md`, 'old')));
+    const ready = Array.from({ length: DROP_JOB_QUEUE_LIMIT - 1 }, (_, i) => `RQ-WAIT${i}\tphantom\tclaude\twork\tWaiting ${i}`);
+    const parked = Array.from({ length: DROP_JOB_QUEUE_LIMIT }, (_, i) => `RQ-HELD${i}\tphantom\tPARKED-HOLD.claude\twork\tHeld ${i}`);
+    await put('queue/ready.tsv', [...ready, ...parked].join('\n'));
+    expect(await queueIdea('idle-lanes:claude', { runsDir: root, now: NOW })).toMatchObject({ queued: true, existing: false });
+  });
+
+  it('refuses a full ready queue without prompt files, but still finds existing jobs', async () => {
+    await seedAllSignals();
+    const deps = { runsDir: root, now: NOW };
+    const existing = await queueIdea('idle-lanes:claude', deps);
+    await put('queue/ready.tsv', Array.from({ length: DROP_JOB_QUEUE_LIMIT }, (_, i) => `RQ-WAIT${i}\tphantom\tclaude\twork\tWaiting ${i}`).join('\n'));
+    await expect(queueIdea('disk-trend:runway', deps)).rejects.toMatchObject({ status: 507 });
+    expect(await queueIdea('idle-lanes:claude', deps)).toEqual({ ...existing, queued: false, existing: true });
+    expect(await readdir(join(root, 'leader/drop/claude'))).toHaveLength(1);
+  });
+
   it('writes one drop job per idea and finds it again on a second click', async () => {
     await seedAllSignals();
     const deps = { runsDir: root, usageLogPaths: [join(root, 'queue', 'usage-readings.log')], now: NOW };
@@ -208,6 +228,20 @@ describe('phm ideas list / queue', () => {
       expect(await cmdIdeas(['queue', 'idle-lanes:nope', '--json'])).toBe(1);
       expect(JSON.parse(out.at(-1)!)).toEqual({ error: 'that idea is not on the current list' });
       expect(await cmdIdeas(['list', '--help'])).toBe(0);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it('queues despite retained prompts and reports a full ready queue as an error', async () => {
+    await seedAllSignals();
+    await Promise.all(Array.from({ length: DROP_JOB_QUEUE_LIMIT }, (_, i) => put(`queue/prompts/RQ-PHX-OLD${i}.md`, 'old')));
+    vi.stubEnv('ASHLR_RUNS_DIR', root);
+    try {
+      const out = capture();
+      expect(await cmdIdeas(['queue', 'idle-lanes:claude', '--json'])).toBe(0);
+      expect(JSON.parse(out.at(-1)!)).toMatchObject({ queued: true });
+      await put('queue/ready.tsv', Array.from({ length: DROP_JOB_QUEUE_LIMIT }, (_, i) => `RQ-WAIT${i}\tphantom\tclaude\twork\tWaiting ${i}`).join('\n'));
+      expect(await cmdIdeas(['queue', 'disk-trend:runway', '--json'])).toBe(1);
+      expect(JSON.parse(out.at(-1)!)).toEqual({ error: 'the job queue is full' });
     } finally { vi.unstubAllEnvs(); }
   });
 });
