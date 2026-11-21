@@ -26,6 +26,19 @@ describe('coordinationRowBlocks', () => {
     expect(coordinationRowBlocks(team, 'repo:fake/other')).toBe(false);
   });
 
+  it('treats a concrete team path as a prefix claim against wildcard bus globs', () => {
+    const team = row({ origin: 'team', key: 'team:fake/repo::src', repo: 'fake/repo', path: 'src' });
+    // 'src' covers the path and everything beneath it; a bus glob that matches
+    // any of those paths overlaps even when it cannot match 'src' itself.
+    expect(coordinationRowBlocks(team, 'path:fake/repo:src/**')).toBe(true);
+    expect(coordinationRowBlocks(team, 'path:fake/repo:src/*.ts')).toBe(true);
+    expect(coordinationRowBlocks(team, 'path:fake/repo:**/*.ts')).toBe(true);
+    expect(coordinationRowBlocks(team, 'path:fake/repo:src')).toBe(true);
+    expect(coordinationRowBlocks(team, 'path:fake/repo:src/x.ts')).toBe(true);
+    expect(coordinationRowBlocks(team, 'path:fake/repo:docs/**')).toBe(false);
+    expect(coordinationRowBlocks(team, 'path:fake/repo:src2/**')).toBe(false);
+  });
+
   it('blocks wildcard path claims that share a concrete path', () => {
     const held = row({ key: 'path:fake/repo:**/*.ts' });
     expect(coordinationRowBlocks(held, 'path:fake/repo:src/*.ts')).toBe(true);
