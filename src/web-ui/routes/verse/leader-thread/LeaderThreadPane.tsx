@@ -71,6 +71,8 @@ import { useComposerAssist } from './ComposerAssist.js';
 import { recallable } from './composer-assist-model.js';
 import { EarlierMessages, useEarlierMessages } from './LeaderEarlier.js';
 import { ComposerResultLine } from './ComposerResultLine.js';
+import { AppActionRunView, useThreadAppActions } from './AppActionRun.js';
+import { conversationActions, runCountWords, weaveAppActions } from './thread-app-actions.js';
 
 /** Shared 'verse-fleet-runs' key so the pane rides the same cache and SSE invalidation as the other fleet panes. */
 const fleetRunsQuery: QueryDef<unknown> = {
@@ -191,6 +193,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const busPageQuery = useMemo(() => agentBusPageQuery(after, 100), [after]);
   const busPage = useQuery(busPageQuery, { enabled: visible && busStatus.data?.source === 'available' && !agentBusMissing(), freshMs: 10_000 });
   const orders = useQuery(ordersTraceQuery, { enabled: visible, freshMs: 10_000 });
+  const apps = useThreadAppActions(visible);
   const refetchThread = useRefetch(leaderThreadQuery);
   const refetchRuns = useRefetch(fleetRunsQuery);
   const refetchTargets = useRefetch(laneTargetsQuery);
@@ -281,13 +284,17 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const bottleneck = summary.bottleneck ?? leader.data?.value?.latest?.bottleneck?.statement ?? null;
   const health = useMemo(() => fleet.data?.value ? computeLaneHealth(fleet.data.value) : null, [fleet.data]);
 
+  // The conversation's lines and bus replies, then the Mac's app actions placed between them by time.
+  const spoken = useMemo(() => mergeByTime([...mergeOwnerLines(merged.lines, ownerLines), ...merged.undated], busRows), [merged, ownerLines, busRows]);
+  const appActions = useMemo(() => conversationActions(apps.report, spoken), [apps.report, spoken]);
+
   // One row per line, keeping the conversation's day separators; undated lines go last.
   const items = useMemo(() => {
     const out: ThreadFindItem[] = [];
     let day = '';
-    for (const item of mergeByTime([...mergeOwnerLines(merged.lines, ownerLines), ...merged.undated], busRows)) {
+    for (const item of weaveAppActions(spoken, appActions)) {
       if (needsYouOnly && (item.type !== 'line' || !((item.line.source === 'outbox' && (item.line.kind === 'decision' || item.line.kind === 'alert')) || (item.line.who === 'mason' && !item.line.quiet && item.line.ack?.state === 'waiting')))) continue;
-      const at = item.type === 'line' ? item.line.at : Date.parse(item.row.at);
+      const at = item.type === 'line' ? item.line.at : item.type === 'app' ? item.run.atMs : Date.parse(item.row.at);
       if (Number.isFinite(at)) {
         const d = new Date(at);
         const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
@@ -296,10 +303,10 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
           out.push({ type: 'day', key: `day-${key}`, label: dayLabel(d.toISOString(), now) });
         }
       }
-      out.push(item.type === 'line' ? { ...item, key: item.line.id } : { ...item, key: item.row.key });
+      out.push(item.type === 'line' ? { ...item, key: item.line.id } : item.type === 'app' ? { ...item, key: item.run.key } : { ...item, key: item.row.key });
     }
     return out;
-  }, [merged, ownerLines, busRows, now, needsYouOnly]);
+  }, [spoken, appActions, now, needsYouOnly]);
 
   // Where each of Mason's inbox messages went: the jobs citing it, by lane and stage.
   const routings = useMemo(() => {
@@ -474,6 +481,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   } else {
     body = items.map(item => {
       if (item.type === 'day') return <div key={item.key} className={leaderStyles.day} role="separator" aria-label={item.label}><span>{item.label}</span></div>;
+      if (item.type === 'app') return <AppActionRunView key={item.key} run={item.run} now={now} match={findOpen && matches.includes(item.key)} current={findOpen && item.key === currentKey} onOpenHost={() => openDockPane('fleet-host')} />;
       if (item.type !== 'line') return <BusReplyView key={item.key} row={item.row} now={now} match={findOpen && matches.includes(item.key)} current={findOpen && item.key === currentKey} />;
       const target = item.line.who === 'mason' ? steerTargetId(item.line.text) : null;
       const routing = routings.get(item.key);
@@ -509,11 +517,15 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       <DotReplyAge visible={visible} />
       <button type="button" className={styles.tool} disabled={checkingStatus} aria-busy={checkingStatus || undefined} onClick={() => void checkStatus()}>{checkingStatus ? 'Checking…' : 'Status now'}</button>
       <button type="button" className={styles.tool} aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button>
+      <button type="button" className={styles.tool} aria-pressed={apps.show} onClick={() => apps.setShow(!apps.show)}
+        title={apps.show ? 'Hide what Phantom opened, focused, quit or restarted on this Mac' : 'Show what Phantom opened, focused, quit or restarted on this Mac, where it happened in the conversation'}>App actions</button>
       <button type="button" className={styles.tool} onClick={() => setFindOpen(true)}>Find</button>
       <span className={styles.toolbarMeta}>
         {routingUnavailable ? <span data-tone="unknown" title="The order trace did not answer, so messages show no routing.">Routing unavailable</span>
           : routedInFlight > 0 ? <span title="Jobs from the messages below that are queued, launched or awaiting merge">{routedInFlight} routed {routedInFlight === 1 ? 'job' : 'jobs'} in flight</span> : null}
         <span>{busRows.length} bus replies</span>
+        {apps.unknown ? <span role="status" data-tone="unknown" title="The app action log did not answer, so the conversation shows no app actions. It is read again every 30 seconds.">App actions unknown</span>
+          : appActions.length > 0 ? <span title="Actions Phantom took on this Mac's apps since the first message shown">{runCountWords(appActions.length)}</span> : null}
         {busUnavailable ? <span role="status" data-tone="unknown">Durable bus unavailable</span> : null}
       </span>
     </header>
