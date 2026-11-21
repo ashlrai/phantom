@@ -429,8 +429,12 @@ const STATUS_DETAIL_MAX = 160;
  * refuses it `no-claim-keys`, so it is unclaimable work needing a re-announce
  * or a terminal status, not a worker; it lists with the announcement's own
  * `bus show` handle and no claim act. Unknown holds
- * list candidates under 'degraded' rather than hiding them. A refused,
- * retryable or unreadable feed degrades the section; it never invents jobs.
+ * list candidates under 'degraded' rather than hiding them. A refused feed
+ * lists one high item naming the retained receipt the projection blamed —
+ * every announced job is hidden and every work verb refuses until that
+ * receipt's TTL ends, so the refusal itself is pending work; `expiresAt` is
+ * the blamed receipt's own deadline. A retryable or unreadable feed degrades
+ * the section; it never invents jobs.
  */
 function busFeedJobItems(options: UnifiedInboxOptions, now: number,
   posts: ReadonlyMap<string, BusFeedPost>,
@@ -439,6 +443,29 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
   try { feed = (options.readFeed ?? readBusWorkFeed)({ root: options.busRoot, claims: true, now: () => now }); }
   catch { return { state: 'unavailable', items: [] }; }
   if (feed.status === 'unavailable') return { state: 'unavailable', items: [] };
+  if (feed.status === 'refused') {
+    const receipt = feed.receipt;
+    const expiry = receipt === undefined ? NaN : receipt.receivedAt + receipt.ttl;
+    // ECMAScript's Date range ends at ±8.64e15 ms; an out-of-range expiry
+    // stays null — unknown, never an invalid timestamp.
+    const expiresAt = Number.isSafeInteger(expiry) && expiry <= 8_640_000_000_000_000 ? iso(expiry) : null;
+    return { state: 'degraded', items: [{
+      id: 'bus-feed-refused',
+      source: 'bus',
+      kind: 'bus-work',
+      severity: 'high',
+      blocking: false,
+      title: `work feed refused: ${feed.reason}`,
+      detail: cap('every announced job is hidden and work verbs refuse until the receipt expires' +
+        (receipt === undefined ? '' : ` · receipt ${receipt.id}`), DETAIL_MAX),
+      since: receipt === undefined ? null : iso(receipt.receivedAt),
+      expiresAt,
+      act: [
+        ...(receipt === undefined ? [] : [`phm agents bus show ${receipt.id}`]),
+        'phm agents bus work feed',
+      ],
+    }] };
+  }
   if (feed.status !== 'ok') return { state: 'degraded', items: [] };
 
   const holdsKnown = feed.claims?.source !== 'unavailable';

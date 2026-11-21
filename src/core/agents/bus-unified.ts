@@ -363,7 +363,10 @@ function workRoute(to: string | undefined): string | UnifiedSendResult {
  * an unreadable feed refuses the send rather than posting unchecked.
  */
 function workFeedBlocked(feed: BusWorkFeedReadResult): UnifiedSendResult {
-  if (feed.status === 'refused') return refuse('refused', `Work feed is refused (${feed.reason}).`);
+  if (feed.status === 'refused') {
+    return refuse('refused', `Work feed is refused (${feed.reason})` +
+      `${feed.receipt === undefined ? '' : ` at receipt ${feed.receipt.id}`}.`);
+  }
   if (feed.status === 'retryable') return refuse('retryable', 'Work feed read is retryable.');
   if (feed.status === 'invalid') return refuse('invalid', 'Work feed read is invalid.');
   return refuse('unavailable', 'Work feed is unavailable.');

@@ -108,7 +108,8 @@ describe('retained v2 work projection', () => {
   });
   it('resolves omitted providers only through explicit participant metadata', () => {
     const { provider: _provider, ...withoutProvider } = post;
-    expect(projectBusWorkFeed([receipt(withoutProvider)])).toEqual({ status: 'refused', reason: 'missing-provider' });
+    expect(projectBusWorkFeed([receipt(withoutProvider)])).toEqual({ status: 'refused', reason: 'missing-provider',
+      receipt: { id: 'm-1', receivedAt: 100, ttl: 1000 } });
     const result = projectBusWorkFeed([receipt(withoutProvider)], [participant]);
     expect(result.status === 'ok' && result.feed.jobs[0]?.provider).toBe('claude');
     expect(projectBusWorkFeed([], [participant, participant])).toEqual({ status: 'refused', reason: 'invalid-participants' });
@@ -127,20 +128,25 @@ describe('retained v2 work projection', () => {
       .toMatchObject({ status: 'ok', feed: { jobs: [{ provider: 'devin' }] } });
     // Unknown and invalid hints still refuse rather than guessing.
     expect(projectBusWorkFeed([receipt(withoutProvider, 1, 'other')], [], () => undefined))
-      .toEqual({ status: 'refused', reason: 'missing-provider' });
+      .toEqual({ status: 'refused', reason: 'missing-provider',
+        receipt: { id: 'm-1', receivedAt: 100, ttl: 1000 } });
     expect(projectBusWorkFeed([receipt(withoutProvider, 1, 'other')], [], () => 'not-a-provider' as never))
-      .toEqual({ status: 'refused', reason: 'missing-provider' });
+      .toEqual({ status: 'refused', reason: 'missing-provider',
+        receipt: { id: 'm-1', receivedAt: 100, ttl: 1000 } });
   });
   it.each([
     { ...post, claimKeys: ['path:a/b:../x'] }, { ...post, provider: 'unknown' }, { ...post, extra: true },
     { kind: 'work.status', jobId: 'job', status: 'unknown' },
   ])('refuses malformed v2 work data: %j', body => {
-    expect(projectBusWorkFeed([receipt(body)])).toEqual({ status: 'refused', reason: 'invalid-body' });
+    expect(projectBusWorkFeed([receipt(body)])).toEqual({ status: 'refused', reason: 'invalid-body',
+      receipt: { id: 'm-1', receivedAt: 100, ttl: 1000 } });
   });
   it('refuses duplicate posts and status updates from a different routing owner', () => {
-    expect(projectBusWorkFeed([receipt(post), receipt(post, 2)])).toEqual({ status: 'refused', reason: 'duplicate-job' });
+    expect(projectBusWorkFeed([receipt(post), receipt(post, 2)])).toEqual({ status: 'refused', reason: 'duplicate-job',
+      receipt: { id: 'm-2', receivedAt: 200, ttl: 1000 } });
     expect(projectBusWorkFeed([receipt(post), receipt({ kind: 'work.status', jobId: 'job', status: 'done' }, 2, 'other')]))
-      .toEqual({ status: 'refused', reason: 'owner-mismatch' });
+      .toEqual({ status: 'refused', reason: 'owner-mismatch',
+        receipt: { id: 'm-2', receivedAt: 200, ttl: 1000 } });
   });
   it.each([
     [null], [receipt(post), receipt(post)], [{ ...receipt(post), receivedAt: -1 }],
@@ -162,12 +168,34 @@ describe('retained v2 work projection', () => {
     // Different identities, and labels the resolver cannot place, still refuse.
     for (const from of ['agent:other', 'stranger']) {
       expect(projectBusWorkFeed([receipt(post, 1, 'agent:bot'), status(2, from)], [], undefined, ownerKeyFor))
-        .toEqual({ status: 'refused', reason: 'owner-mismatch' });
+        .toEqual({ status: 'refused', reason: 'owner-mismatch',
+          receipt: { id: 'm-2', receivedAt: 200, ttl: 1000 } });
     }
     // Empty keys never match, and without a resolver labels must be identical.
     expect(projectBusWorkFeed([receipt(post, 1, 'agent:bot'), status(2, 'bot-alias')], [], undefined, () => ''))
-      .toEqual({ status: 'refused', reason: 'owner-mismatch' });
+      .toEqual({ status: 'refused', reason: 'owner-mismatch',
+        receipt: { id: 'm-2', receivedAt: 200, ttl: 1000 } });
     expect(projectBusWorkFeed([receipt(post, 1, 'agent:bot'), status(2, 'bot-alias')]))
-      .toEqual({ status: 'refused', reason: 'owner-mismatch' });
+      .toEqual({ status: 'refused', reason: 'owner-mismatch',
+        receipt: { id: 'm-2', receivedAt: 200, ttl: 1000 } });
+  });
+  it('names the retained receipt behind each body-level refusal and none for shape refusals', () => {
+    const { provider: _provider, ...withoutProvider } = post;
+    const cases: Array<[unknown[], string, { id: string; receivedAt: number; ttl: number } | undefined]> = [
+      [[receipt(withoutProvider)], 'missing-provider', { id: 'm-1', receivedAt: 100, ttl: 1000 }],
+      [[receipt({ ...post, extra: true })], 'invalid-body', { id: 'm-1', receivedAt: 100, ttl: 1000 }],
+      [[receipt(post), receipt(post, 2)], 'duplicate-job', { id: 'm-2', receivedAt: 200, ttl: 1000 }],
+      [[receipt(post), receipt({ kind: 'work.status', jobId: 'job', status: 'done' }, 2, 'other')],
+        'owner-mismatch', { id: 'm-2', receivedAt: 200, ttl: 1000 }],
+      // Receipt-shape, participant-metadata and volume refusals blame no single receipt.
+      [[null], 'invalid-receipts', undefined],
+      [Array(1025).fill(null), 'invalid-receipts', undefined],
+      [[], 'invalid-participants', undefined],
+    ];
+    for (const [rows, reason, receiptSite] of cases) {
+      const participants = reason === 'invalid-participants' ? [participant, participant] : [];
+      expect(projectBusWorkFeed(rows, participants)).toEqual({ status: 'refused', reason,
+        ...(receiptSite === undefined ? {} : { receipt: receiptSite }) });
+    }
   });
 });

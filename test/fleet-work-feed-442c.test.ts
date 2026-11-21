@@ -46,8 +46,10 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     const { provider: _provider, ...withoutProvider } = post;
     append(withoutProvider, 1, 'agent:worker-bot');
     append({ ...withoutProvider, jobId: 'fake-alias-job' }, 2, 'lane-7');
-    // Labels that resolve to no identity keep provider unknown: still refused.
-    expect(readBusWorkFeed({ root })).toMatchObject({ status: 'refused', reason: 'missing-provider', receipts: 2 });
+    // Labels that resolve to no identity keep provider unknown: still refused,
+    // and the refusal names the first retained receipt that lacked a provider.
+    expect(readBusWorkFeed({ root })).toMatchObject({ status: 'refused', reason: 'missing-provider', receipts: 2,
+      receipt: { id: 'fake-message-1', receivedAt: now, ttl: 1000 } });
     expect(registerAgentIdentity({ handle: 'worker-bot', aliases: ['lane-7'],
       runtime: { cli: 'codex', provider: 'codex-cmp', model: null } }, { root, now: () => now }).status).toBe('created');
     expect(readBusWorkFeed({ root })).toMatchObject({ status: 'ok', jobs: [
@@ -143,13 +145,16 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
   it('refuses a status from a different owner and exits 1 in text and JSON', async () => {
     append(post);
     append({ kind: 'work.status', jobId: post.jobId, status: 'done' }, 2, 'fake-other');
-    expect(readBusWorkFeed({ root })).toMatchObject({ status: 'refused', reason: 'owner-mismatch', receipts: 2 });
+    // The foreign status receipt is the one the projection blames.
+    expect(readBusWorkFeed({ root })).toMatchObject({ status: 'refused', reason: 'owner-mismatch', receipts: 2,
+      receipt: { id: 'fake-message-2', receivedAt: now, ttl: 1000 } });
     const log = output();
     expect(await cmdFleetWorkFeed(['--root', root])).toBe(1);
     expect(log.mock.calls).toHaveLength(1);
-    expect(log.mock.calls[0]?.[0]).toContain('jobs=unknown receipts=2 feed=refused:owner-mismatch');
+    expect(log.mock.calls[0]?.[0]).toContain('jobs=unknown receipts=2 feed=refused:owner-mismatch receipt=fake-message-2');
     expect(await cmdFleetWorkFeed(['--root', root, '--json'])).toBe(1);
-    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({ status: 'refused', reason: 'owner-mismatch' });
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({ status: 'refused', reason: 'owner-mismatch',
+      receipt: { id: 'fake-message-2', receivedAt: now, ttl: 1000 } });
   });
 
   it('pages through 130 real posts and leaves the original journal unchanged', () => {

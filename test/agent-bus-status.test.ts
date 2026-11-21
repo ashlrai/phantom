@@ -92,6 +92,8 @@ describe('readUnifiedBusStatus', () => {
     expect(status.feed.status).toBe('refused');
     expect(status.feed.jobs).toBeNull();
     expect(status.feed.reason).toContain('missing-provider');
+    // The probe names the retained receipt the projection blamed.
+    expect(status.feed.receipt).toBe('poison-1');
     // The store itself is still readable and counted.
     expect(status.store.source).toBe('available');
     expect(status.store.retainedCount).toBe(1);

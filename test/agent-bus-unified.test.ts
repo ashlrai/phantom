@@ -864,6 +864,9 @@ describe('v2 work announcements and statuses on the one bus store', () => {
       body: { kind: 'work.post', jobId: 'RQ-POISON', title: 'x', repo: 'a/b', claimKeys: [] } }, options).status).toBe('posted');
     expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-6' }, options))
       .toMatchObject({ status: 'refused', reason: expect.stringContaining('missing-provider') });
+    // The refusal names the retained receipt that poisoned the feed.
+    expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-6' }, options))
+      .toMatchObject({ status: 'refused', reason: expect.stringContaining('receipt poison-1') });
     expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-W-6', status: 'done' }, options))
       .toMatchObject({ status: 'refused' });
     const raw = listBusInboxAfter(0, 10, options);

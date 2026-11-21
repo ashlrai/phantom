@@ -767,9 +767,14 @@ Statuses from that owner update retained jobs in cursor order with receipt time
 as `updatedAt`; when the read layer supplies `ownerKeyFor`, any sender label
 resolving to the job owner's key counts as that owner, while labels it cannot
 resolve still require exact label equality. Orphan statuses are ignored.
-Duplicate posts and malformed work bodies are refused. Legacy and unrelated
-bodies stay opaque. This projection is neither a historical ledger nor an
-authentication check; labels grant no authority.
+Duplicate posts and malformed work bodies are refused. A body-level refusal
+carries `receipt` — the wire id, receipt time and TTL of the retained envelope
+whose processing refused the projection — so a poisoned feed names its cause
+(`agents bus show <id>` resolves it) instead of silently hiding every job
+until the receipt expires; receipt-shape, participant-metadata and volume
+refusals name none. Legacy and unrelated bodies stay opaque. This projection
+is neither a historical ledger nor an authentication check; labels grant no
+authority.
 
 `phm fleet work-feed --json`, `phm agents bus work feed` and GET
 `/api/verse/agent-bus/work-feed` serve the same `BusWorkFeedReadResult` as
@@ -786,10 +791,17 @@ registry keeps exact-label matching — the filter narrows the fleet view, it
 never widens it. The
 endpoint needs a current read session and accepts only `claims=true` (any
 other parameter or value is a 400), and answers 200
-for `ok` and `refused` — the projection's own status and reason stay in the
-body — while `unavailable`, `retryable` and `invalid` storage answer 503. A
-missing store reads as an empty `ok` feed. Status filtering stays client-side;
-a missing provider stays a refusal, never a fabricated owner.
+for `ok` and `refused` — the projection's own status, reason and blamed
+receipt stay in the body — while `unavailable`, `retryable` and `invalid`
+storage answer 503. A missing store reads as an empty `ok` feed. Status
+filtering stays client-side; a missing provider stays a refusal, never a
+fabricated owner. Every refused-feed read names the receipt when the
+projection could attribute one: the feed CLIs print it as `receipt=<id>`,
+`agents bus status` reports it as `feed.receipt`, `agents bus work mine`
+carries it on the refused `jobs`/`announced` sections, the work send verbs
+refuse `at receipt <id>`, and the unified comms inbox lists the refusal
+itself as a high-severity bus item deep-linking `agents bus show <id>` —
+a poisoned feed is pending work, never a silent empty list.
 
 The read resolves an omitted post `provider` and the job `owner` match
 through the agent identity registry beside the bus store: a sender label

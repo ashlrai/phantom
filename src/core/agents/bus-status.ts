@@ -65,6 +65,9 @@ export interface UnifiedBusStatus {
     jobs: number | null;
     /** Refusal reason when status is refused; absent otherwise. */
     reason?: string;
+    /** Wire id of the retained receipt the refused projection blamed;
+     * absent when the refusal names none or the feed is not refused. */
+    receipt?: string;
   };
 }
 
@@ -115,7 +118,8 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     feed = read.status === 'ok'
       ? { status: 'ok', jobs: read.jobs.length }
       : read.status === 'refused'
-        ? { status: 'refused', jobs: null, reason: read.reason }
+        ? { status: 'refused', jobs: null, reason: read.reason,
+            ...(read.receipt === undefined ? {} : { receipt: read.receipt.id }) }
         : { status: read.status, jobs: null };
   } catch {
     feed = { status: 'unavailable', jobs: null };

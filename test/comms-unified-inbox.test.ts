@@ -349,18 +349,62 @@ describe('v2 work-feed jobs in the bus source', () => {
     expect(items[0]!.act[0]).toBe('phm agents bus claim acquire --key path:ashlrai/phantom:src/** --owner <label> --lease-ms 600000');
   });
 
+  it('lists a refused feed as pending work naming the blamed receipt', async () => {
+    postJob('RQ-POISON');
+    const poisonId = postV2Body({ kind: 'work.status', jobId: 'RQ-POISON', status: 'done' }, { from: 'agent:other' });
+    const inbox = await read();
+    expect(inbox.sources.bus).toEqual({ state: 'degraded', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'bus-feed-refused')!;
+    expect(item).toMatchObject({
+      source: 'bus', kind: 'bus-work', severity: 'high', blocking: false,
+      title: 'work feed refused: owner-mismatch',
+      detail: `every announced job is hidden and work verbs refuse until the receipt expires · receipt ${poisonId}`,
+      since: new Date(now).toISOString(),
+      expiresAt: new Date(now + 7 * 24 * 3_600_000).toISOString(),
+      act: [`phm agents bus show ${poisonId}`, 'phm agents bus work feed'],
+    });
+    // The refused feed still hides every job — no feed items list beside it.
+    expect(inbox.items.filter(i => i.id.startsWith('bus-feed:'))).toHaveLength(0);
+  });
+
+  it('lists a receipt-less refusal with unknown times and no show link', async () => {
+    postWork('legacy-ok', { priority: 'P1' });
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now,
+      readRequests: () => ({ status: 'missing', requests: [] }),
+      readFeed: () => ({ status: 'refused', reason: 'invalid-receipts', receipts: 2,
+        asOf: new Date(now).toISOString() }),
+    });
+    expect(inbox.sources.bus.state).toBe('degraded');
+    const item = inbox.items.find(i => i.id === 'bus-feed-refused')!;
+    expect(item).toMatchObject({
+      kind: 'bus-work', severity: 'high',
+      title: 'work feed refused: invalid-receipts',
+      since: null, expiresAt: null,
+      act: ['phm agents bus work feed'],
+    });
+    expect(item.detail).toBe('every announced job is hidden and work verbs refuse until the receipt expires');
+    // Legacy claimable work still lists beside the refusal item.
+    expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id).sort())
+      .toEqual(['bus-feed-refused', 'bus:legacy-ok']);
+  });
+
   it('degrades the bus source on a refused feed while legacy items still list', async () => {
     postWork('legacy-ok', { priority: 'P1' });
     postJob('RQ-POISON'); postStatus('RQ-POISON', 'done', 'agent:other');
     const inbox = await read();
     expect(inbox.sources.bus.state).toBe('degraded');
-    expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual(['bus:legacy-ok']);
+    expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id))
+      .toEqual(['bus-feed-refused', 'bus:legacy-ok']);
   });
 
   it('degrades rather than guessing when a post cannot resolve a provider', async () => {
     postV2Body({ kind: 'work.post', jobId: 'RQ-NOPROV', title: 'fake', repo: 'ashlrai/phantom', claimKeys: ['queue:RQ-NOPROV'] });
     const inbox = await read();
-    expect(inbox.sources.bus).toEqual({ state: 'degraded', pending: 0 });
+    expect(inbox.sources.bus).toEqual({ state: 'degraded', pending: 1 });
+    const item = inbox.items.find(i => i.id === 'bus-feed-refused')!;
+    expect(item.title).toBe('work feed refused: missing-provider');
+    expect(item.act[0]).toMatch(/^phm agents bus show v2-\d+$/);
     expect(inbox.items.filter(i => i.id.startsWith('bus-feed:'))).toHaveLength(0);
   });
 

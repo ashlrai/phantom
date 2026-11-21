@@ -13,10 +13,24 @@ export interface WorkFeedCitation {
   status: string | null;
 }
 
+/** The retained receipt a feed refusal is attributable to. */
+export interface WorkFeedRefusalReceipt {
+  /** Wire id of the retained envelope; `agents bus show <id>` resolves it. */
+  id: string;
+  /** Receipt time in ms; the receipt itself stops mattering at `receivedAt + ttl`. */
+  receivedAt: number;
+  /** The envelope's own TTL in ms. */
+  ttl: number;
+}
+
 export type WorkFeedResult =
   | { status: 'ok'; feed: { v: 2; jobs: WorkJob[] }; citations: ReadonlyMap<string, WorkFeedCitation> }
   | { status: 'refused'; reason: 'invalid-receipts' | 'invalid-participants' | 'invalid-body'
-    | 'missing-provider' | 'duplicate-job' | 'owner-mismatch' };
+    | 'missing-provider' | 'duplicate-job' | 'owner-mismatch';
+    /** The retained envelope whose processing refused the projection; absent
+     * when no single well-formed receipt is the cause (receipt-shape,
+     * participant-metadata or volume refusals). */
+    receipt?: WorkFeedRefusalReceipt };
 
 /** Resolves a sender label to a provider when the post and participants do not name one. */
 export type WorkFeedProviderFor = (from: string) => Participant['provider'] | undefined;
@@ -70,15 +84,18 @@ export function projectBusWorkFeed(receipts: readonly unknown[], participants: r
     const { body, from, to } = checked.value;
     // Legacy and unrelated bodies remain opaque, including authenticated peer messages.
     if (body === null || typeof body !== 'object' || Array.isArray(body)) continue;
+    // A body-level refusal names the retained receipt that caused it, so a
+    // poisoned feed is diagnosable instead of silently hiding every job.
+    const refusal = { id: checked.value.id, receivedAt: row.receivedAt, ttl: checked.value.ttl };
     if (body.kind === 'work.post') {
       const post = workPostBodySchema.safeParse(body);
-      if (!post.success) return { status: 'refused', reason: 'invalid-body' };
-      if (jobs.has(post.data.jobId)) return { status: 'refused', reason: 'duplicate-job' };
+      if (!post.success) return { status: 'refused', reason: 'invalid-body', receipt: refusal };
+      if (jobs.has(post.data.jobId)) return { status: 'refused', reason: 'duplicate-job', receipt: refusal };
       const hinted = providerFor?.(from);
       const resolved = hinted === undefined ? undefined
         : providerSchema.safeParse(hinted).success ? hinted : undefined;
       const provider = post.data.provider ?? providers.get(from) ?? resolved;
-      if (!provider) return { status: 'refused', reason: 'missing-provider' };
+      if (!provider) return { status: 'refused', reason: 'missing-provider', receipt: refusal };
       jobs.set(post.data.jobId, { id: post.data.jobId, owner: from, to, provider,
         repo: post.data.repo, title: post.data.title,
         ...(post.data.dispatch === undefined ? {} : { dispatch: post.data.dispatch }),
@@ -86,14 +103,14 @@ export function projectBusWorkFeed(receipts: readonly unknown[], participants: r
       citations.set(post.data.jobId, { post: checked.value.id, status: null });
     } else if (body.kind === 'work.status') {
       const status = workStatusBodySchema.safeParse(body);
-      if (!status.success) return { status: 'refused', reason: 'invalid-body' };
+      if (!status.success) return { status: 'refused', reason: 'invalid-body', receipt: refusal };
       const job = jobs.get(status.data.jobId);
       if (!job) continue;
       if (job.owner !== from) {
         const postKey = ownerKey?.(job.owner);
         const fromKey = ownerKey?.(from);
         if (postKey === undefined || postKey !== fromKey) {
-          return { status: 'refused', reason: 'owner-mismatch' };
+          return { status: 'refused', reason: 'owner-mismatch', receipt: refusal };
         }
       }
       // Cursor order wins even when receipt clocks move backwards. The job's
