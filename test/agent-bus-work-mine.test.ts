@@ -329,8 +329,11 @@ describe('readBusWorkMine', () => {
     expect(byId.get('RQ-H-1')).toMatchObject({ status: 'running', held: true,
       heldKeys: ['queue:RQ-H-1'], freeKeys: ['repo:a/b'] });
     // Complete coverage with no holds: every declared key is provably free.
+    // RQ-H-2 is open, so the feed annotates it claimable — announced items
+    // report the held tri-state instead and must not carry that field.
     expect(byId.get('RQ-H-2')).toMatchObject({ status: 'queued', held: false,
       heldKeys: [], freeKeys: ['queue:RQ-H-2'] });
+    expect(byId.get('RQ-H-2')).not.toHaveProperty('claimable');
     // No declared keys: nothing a hold could cover.
     expect(byId.get('RQ-H-3')).toMatchObject({ status: 'blocked', held: false,
       heldKeys: [], freeKeys: [], claimKeys: [] });

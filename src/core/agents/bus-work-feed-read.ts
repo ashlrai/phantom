@@ -42,6 +42,66 @@ export interface BusWorkFeedJob extends WorkJob {
   postId: string;
   /** Wire id of the newest accepted `work.status` receipt; null while no status has moved the job. */
   statusId: string | null;
+  /** Present only on open-status jobs (`BUS_FEED_OPEN_STATUSES`) when the read joined claims: declared claim keys with no shown live hold — null unless hold coverage is complete. */
+  freeKeys?: string[] | null;
+  /** Present only on open-status jobs when the read joined claims: declared claim keys with at least one shown live hold — null when the hold set itself is unknown. */
+  heldKeys?: string[] | null;
+  /** Present only on open-status jobs when the read joined claims: true — a declared key is provably free; false — every declared key is provably held; null — coverage cannot prove either way. */
+  claimable?: boolean | null;
+}
+
+/** How completely the coordination holds behind a feed read are known. */
+export type BusWorkFeedHoldCoverage = 'complete' | 'truncated' | 'unknown';
+
+/** The per-key hold coverage one job's declared claim keys carry — the same tri-state `work mine` reports. */
+export interface BusWorkFeedJobHold {
+  /** Declared keys with no shown live hold — null unless hold coverage is complete. */
+  freeKeys: string[] | null;
+  /** Declared keys with at least one shown live hold — null when the hold set itself is unknown. */
+  heldKeys: string[] | null;
+  /** true: a declared key is provably free; false: every declared key is provably held; null: coverage incomplete. */
+  claimable: boolean | null;
+}
+
+/**
+ * The hold-coverage rule every "is this job claimable" surface shares:
+ * `complete` means every live hold is shown, so an unheld declared key is
+ * provably free; `truncated` means shown holds are real but later ones are
+ * not, so a key with no shown hold might still be held; `unknown` means the
+ * hold set could not be read at all. `claimable` is true only on a provably
+ * free key, false only when every declared key is provably held.
+ */
+export function busWorkFeedJobHold(
+  job: BusWorkFeedJob, held: ReadonlySet<string> | undefined, coverage: BusWorkFeedHoldCoverage,
+): BusWorkFeedJobHold {
+  const heldKeys = coverage === 'unknown' ? null : job.claimKeys.filter(key => held?.has(key));
+  const freeKeys = coverage === 'complete' ? job.claimKeys.filter(key => !held?.has(key)) : null;
+  const claimable = coverage === 'unknown' ? null
+    : coverage === 'complete' ? job.claimKeys.some(key => !held?.has(key))
+    : heldKeys !== null && heldKeys.length === job.claimKeys.length ? false : null;
+  return { freeKeys, heldKeys, claimable };
+}
+
+/**
+ * The hold evidence behind one claims join, shared by the feed annotation
+ * and the `work mine` digest: the coverage state plus the shown holds grouped
+ * by job id. `unknown` means the coordination table could not be read;
+ * `truncated` means shown holds are real but later ones are unseen.
+ */
+export function busWorkFeedHoldIndex(claims: BusWorkFeedClaims | undefined): {
+  coverage: BusWorkFeedHoldCoverage;
+  heldByJob: ReadonlyMap<string, ReadonlySet<string>>;
+} {
+  const coverage: BusWorkFeedHoldCoverage =
+    claims === undefined || claims.source === 'unavailable' ? 'unknown'
+    : claims.truncated ? 'truncated' : 'complete';
+  const heldByJob = new Map<string, Set<string>>();
+  for (const hold of claims?.holds ?? []) {
+    const set = heldByJob.get(hold.jobId) ?? new Set<string>();
+    set.add(hold.claimKey);
+    heldByJob.set(hold.jobId, set);
+  }
+  return { coverage, heldByJob };
 }
 
 export type BusWorkFeedReadResult =
@@ -150,7 +210,14 @@ export function readBusWorkFeed(options: BusWorkFeedReadOptions = {}): BusWorkFe
       }
     }
   }
-  return { ...ok, claims: { source: listed.source, holds, truncated } };
+  const claims: BusWorkFeedClaims = { source: listed.source, holds, truncated };
+  // Open jobs carry the same per-key hold coverage `work mine` reports, so a
+  // feed read answers "which of these can I claim" without a second join;
+  // non-open jobs keep only the raw holds — claimable has no meaning there.
+  const { coverage, heldByJob } = busWorkFeedHoldIndex(claims);
+  return { ...ok, jobs: ok.jobs.map(job => BUS_FEED_OPEN_STATUSES.has(job.status)
+      ? { ...job, ...busWorkFeedJobHold(job, heldByJob.get(job.id), coverage) } : job),
+    claims };
 }
 
 /**
@@ -234,9 +301,11 @@ function feedJobLine(job: BusWorkFeedJob): string {
   const title = feedField(job.title, FEED_TITLE_MAX);
   const detail = job.detail === undefined ? '' : feedField(job.detail, FEED_DETAIL_MAX);
   const keys = job.claimKeys.length === 0 ? 'none' : feedField(job.claimKeys.join(','), FEED_KEYS_MAX);
+  const claimable = job.claimable === undefined ? ''
+    : ` claimable=${job.claimable === null ? 'unknown' : job.claimable ? 'yes' : 'no'}`;
   return `${job.id} ${job.status}${title === '' ? '' : ` "${title}"`}` +
     `${detail === '' ? '' : ` detail="${detail}"`}` +
-    ` owner=${job.owner} to=${job.to} provider=${job.provider} repo=${job.repo} keys=${keys} ` +
+    ` owner=${job.owner} to=${job.to} provider=${job.provider} repo=${job.repo} keys=${keys}${claimable} ` +
     `updated=${new Date(job.updatedAt).toISOString()} post=${job.postId}` +
     `${job.statusId === null ? '' : ` status=${job.statusId}`}`;
 }

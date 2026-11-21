@@ -24,8 +24,8 @@ import { agentLabels, agentPendingAddressMatcher, readAgentRegistry, resolveAgen
 import { agentName, type AgentMessageKind } from '../fleet/agent-messages.js';
 import { readAgentConversations, type AgentConversations } from '../fleet/agent-conversations.js';
 import { plainAge } from '../fleet/agent-conversation-model.js';
-import { BUS_FEED_OPEN_STATUSES, busWorkFeedOwnerMatcher, busWorkFeedToMatcher, readBusWorkFeed,
-  type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
+import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobHold, busWorkFeedOwnerMatcher, busWorkFeedToMatcher,
+  readBusWorkFeed, type BusWorkFeedHoldCoverage, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import { agentWakeClaimHolderSuffix, busBodyFallbackSummary, busBodySummary, readAgentInbox, readAgentWakes,
   type AgentWakeRow, type InboxKind } from './bus-unified.js';
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter } from '../fleet/bus-inbox.js';
@@ -49,7 +49,7 @@ export interface BusWorkMineOptions {
 }
 
 /** How completely the coordination holds behind the feed are known. */
-export type BusWorkMineHoldCoverage = 'complete' | 'truncated' | 'unknown';
+export type BusWorkMineHoldCoverage = BusWorkFeedHoldCoverage;
 
 /** An open feed job plus its per-key hold state; a null field means unknown, never none. */
 export interface BusWorkMineJob extends BusWorkFeedJob {
@@ -366,23 +366,17 @@ const WORK_MINE_SUMMARY_MAX = 200;
 const AGENT_REF = /^[\x21-\x7e]{1,128}$/;
 
 /**
- * The hold-coverage rule every "is this job claimable" surface shares:
- * `complete` means every live hold is shown, so an unheld declared key is
- * provably free; `truncated` means shown holds are real but later ones are
- * not, so a key with no shown hold might still be held; `unknown` means the
- * hold set could not be read at all. `claimable` is true only on a provably
- * free key, false only when every declared key is provably held.
+ * The hold-coverage rule every "is this job claimable" surface shares lives
+ * in `busWorkFeedJobHold` (`bus-work-feed-read.ts`); this adds the two
+ * agent-relative flags on top. `claimable` is true only on a provably free
+ * key, false only when every declared key is provably held, and `null`
+ * whenever coverage is `truncated` or `unknown` — never a guess.
  */
 export function busWorkMineJobAnnotation(
   job: BusWorkFeedJob, held: ReadonlySet<string> | undefined, coverage: BusWorkMineHoldCoverage,
   addressed: boolean, announced = false,
 ): BusWorkMineJob {
-  const heldKeys = coverage === 'unknown' ? null : job.claimKeys.filter(key => held?.has(key));
-  const freeKeys = coverage === 'complete' ? job.claimKeys.filter(key => !held?.has(key)) : null;
-  const claimable = coverage === 'unknown' ? null
-    : coverage === 'complete' ? job.claimKeys.some(key => !held?.has(key))
-    : heldKeys !== null && heldKeys.length === job.claimKeys.length ? false : null;
-  return { ...job, addressed, announced, freeKeys, heldKeys, claimable };
+  return { ...job, addressed, announced, ...busWorkFeedJobHold(job, held, coverage) };
 }
 
 /**
@@ -399,36 +393,28 @@ export function busWorkMineJobAnnotation(
 export function busWorkMineAnnouncedAnnotation(
   job: BusWorkFeedJob, held: ReadonlySet<string> | undefined, coverage: BusWorkMineHoldCoverage,
 ): BusWorkMineAnnouncedJob {
-  const heldKeys = coverage === 'unknown' ? null : job.claimKeys.filter(key => held?.has(key));
-  const freeKeys = coverage === 'complete' ? job.claimKeys.filter(key => !held?.has(key)) : null;
+  // The feed annotates open jobs with `claimable`; announced items report the
+  // `held` tri-state instead, so the feed-level field does not leak through.
+  const { claimable: _claimable, ...rest } = job;
+  const { heldKeys, freeKeys } = busWorkFeedJobHold(job, held, coverage);
   const heldState = job.claimKeys.length === 0 ? false
     : heldKeys !== null && heldKeys.length > 0 ? true
     : coverage === 'unknown' || coverage === 'truncated' ? null
     : false;
-  return { ...job, held: heldState, heldKeys, freeKeys };
+  return { ...rest, held: heldState, heldKeys, freeKeys };
 }
 
 /**
  * The hold evidence behind one ok feed read, shared by the jobs and
- * announced sections: the coverage state plus the shown holds grouped by
- * job id. `unknown` means the coordination table could not be read; `truncated`
+ * announced sections — `busWorkFeedHoldIndex` over the read's claims join.
+ * `unknown` means the coordination table could not be read; `truncated`
  * means shown holds are real but later ones are unseen.
  */
 function feedHoldIndex(feed: Extract<BusWorkFeedReadResult, { status: 'ok' }>): {
   coverage: BusWorkMineHoldCoverage;
   heldByJob: ReadonlyMap<string, ReadonlySet<string>>;
 } {
-  const claims = feed.claims;
-  const coverage: BusWorkMineHoldCoverage =
-    claims === undefined || claims.source === 'unavailable' ? 'unknown'
-    : claims.truncated ? 'truncated' : 'complete';
-  const heldByJob = new Map<string, Set<string>>();
-  for (const hold of claims?.holds ?? []) {
-    const set = heldByJob.get(hold.jobId) ?? new Set<string>();
-    set.add(hold.claimKey);
-    heldByJob.set(hold.jobId, set);
-  }
-  return { coverage, heldByJob };
+  return busWorkFeedHoldIndex(feed.claims);
 }
 
 function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined): BusWorkMineJobs {

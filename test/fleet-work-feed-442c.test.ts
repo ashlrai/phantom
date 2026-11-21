@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
+import { busWorkFeedJobHold, readBusWorkFeed, type BusWorkFeedJob } from '../src/core/agents/bus-work-feed-read.js';
 import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
@@ -209,6 +209,90 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
       claims: { source: 'missing', holds: [] } });
   });
 
+  it('annotates open jobs with per-key hold coverage under --claims and leaves other jobs bare', () => {
+    append(post); // fake-job queued, keys ['repo:fake/repo']
+    append({ ...post, jobId: 'fake-free', claimKeys: ['repo:fake/repo', 'queue:fake-free'] }, 2);
+    append({ ...post, jobId: 'fake-running', claimKeys: ['queue:fake-running'] }, 3);
+    append({ kind: 'work.status', jobId: 'fake-running', status: 'running' }, 4);
+    const claim = { root, origin: 'resource' as const, key: 'repo:fake/repo', owner: 'fake-holder',
+      leaseMs: 60_000, leaseUntil: now + 60_000, sourceId: 'work:fake-claim', now };
+    expect(acquireCoordination(claim).status).toBe('acquired');
+
+    const held = readBusWorkFeed({ root, claims: true });
+    expect(held.status).toBe('ok');
+    if (held.status !== 'ok') throw new Error('fixture refused');
+    const byId = new Map(held.jobs.map(job => [job.id, job]));
+    // Every declared key held: provably not claimable.
+    expect(byId.get(post.jobId)).toMatchObject({ claimable: false, heldKeys: ['repo:fake/repo'], freeKeys: [] });
+    // One key held, one provably free under complete coverage.
+    expect(byId.get('fake-free')).toMatchObject({ claimable: true, heldKeys: ['repo:fake/repo'],
+      freeKeys: ['queue:fake-free'] });
+    // Non-open jobs keep no claim annotation — claimable has no meaning off the open set.
+    expect(byId.get('fake-running')).not.toHaveProperty('claimable');
+    expect(byId.get('fake-running')).not.toHaveProperty('freeKeys');
+    expect(byId.get('fake-running')).not.toHaveProperty('heldKeys');
+    // Without the claims join the fields stay absent entirely.
+    const plain = readBusWorkFeed({ root });
+    if (plain.status !== 'ok') throw new Error('fixture refused');
+    expect(plain.jobs.every(job => !('claimable' in job))).toBe(true);
+  });
+
+  it('reports provably-free keys on a missing table and unknown coverage on an unreadable one', () => {
+    append(post);
+    // No coordination store at all: verified empty, so every declared key is free.
+    const missing = readBusWorkFeed({ root, claims: true });
+    expect(missing).toMatchObject({ status: 'ok', claims: { source: 'missing' },
+      jobs: [{ claimable: true, heldKeys: [], freeKeys: ['repo:fake/repo'] }] });
+    // An unreadable table means hold state is unknown, never a free set.
+    mkdirSync(join(root, 'coordination'), { mode: 0o700 });
+    writeFileSync(join(root, 'coordination', 'claims.json'), 'invalid JSON');
+    const unreadable = readBusWorkFeed({ root, claims: true });
+    expect(unreadable).toMatchObject({ status: 'ok', claims: { source: 'unavailable' },
+      jobs: [{ claimable: null, heldKeys: null, freeKeys: null }] });
+  });
+
+  it('keeps claimable honest when the hold list truncates', () => {
+    append(post, 1, 'fake-agent', 'leaders'); // fake-job — fills the hold cap first
+    append({ ...post, jobId: 'fake-late', claimKeys: ['repo:fake/repo', 'repo:fake/other'] }, 2);
+    // 1024 live rows all blocking repo:fake/repo — the store maximum — so the
+    // first job's pairs fill HOLDS_MAX exactly and the second job's are cut.
+    const claims = Array.from({ length: 1024 }, (_, i) => ({
+      origin: 'resource', key: 'repo:fake/repo', owner: `fake-holder-${i}`, token: 'a'.repeat(64),
+      leaseMs: 60_000, leaseUntil: now + 60_000, state: 'live', sourceId: `work:fake-${i}`,
+      repo: null, branch: null, path: null,
+    }));
+    mkdirSync(join(root, 'coordination'), { mode: 0o700 });
+    writeFileSync(join(root, 'coordination', 'claims.json'),
+      JSON.stringify({ version: 1, claims, statuses: [] }));
+
+    const result = readBusWorkFeed({ root, claims: true });
+    expect(result).toMatchObject({ status: 'ok', claims: { source: 'available', truncated: true } });
+    if (result.status !== 'ok') throw new Error('fixture refused');
+    const byId = new Map(result.jobs.map(job => [job.id, job]));
+    // Shown holds are real: every declared key of the first job is provably held.
+    expect(byId.get(post.jobId)).toMatchObject({ claimable: false, heldKeys: ['repo:fake/repo'], freeKeys: null });
+    // The second job's holds were cut before any showed: nothing is provable.
+    expect(byId.get('fake-late')).toMatchObject({ claimable: null, heldKeys: [], freeKeys: null });
+  });
+
+  it('prints claimable=yes|no|unknown on annotated job lines', async () => {
+    append(post);
+    append({ ...post, jobId: 'fake-free', claimKeys: ['repo:fake/repo', 'queue:fake-free'] }, 2);
+    const claim = { root, origin: 'resource' as const, key: 'repo:fake/repo', owner: 'fake-holder',
+      leaseMs: 60_000, leaseUntil: now + 60_000, sourceId: 'work:fake-claim', now };
+    expect(acquireCoordination(claim).status).toBe('acquired');
+    const log = output();
+    expect(await cmdFleetWorkFeed(['--root', root, '--claims'])).toBe(0);
+    const lines = log.mock.calls.map(call => String(call[0]));
+    expect(lines.some(line => line.startsWith(`${post.jobId} queued`) && line.includes('claimable=no'))).toBe(true);
+    expect(lines.some(line => line.startsWith('fake-free queued') && line.includes('claimable=yes'))).toBe(true);
+    log.mockClear();
+    mkdirSync(join(root, 'coordination'), { recursive: true });
+    writeFileSync(join(root, 'coordination', 'claims.json'), 'invalid JSON');
+    expect(await cmdFleetWorkFeed(['--root', root, '--claims'])).toBe(0);
+    expect(log.mock.calls.some(call => String(call[0]).includes('claimable=unknown'))).toBe(true);
+  });
+
   it('rejects relative roots and invalid flags with usage on stderr and exit 2', async () => {
     const log = output();
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -356,5 +440,28 @@ describe('work-feed --job and --owner filters', () => {
     }
     expect(log).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledTimes(9);
+  });
+});
+
+describe('busWorkFeedJobHold', () => {
+  const feedJob = (claimKeys: string[]): BusWorkFeedJob => ({ id: 'J', owner: 'agent:o', to: 'leaders',
+    provider: 'devin', repo: 'a/b', title: 'T', claimKeys, status: 'queued', updatedAt: 1,
+    postId: 'm-post', statusId: null });
+
+  it('marks provably free, provably held and unknown coverage honestly', () => {
+    const held = new Set(['queue:J', 'repo:a/b']);
+    // Complete coverage: unheld declared keys are free, held ones are not.
+    expect(busWorkFeedJobHold(feedJob(['queue:J', 'path:x']), held, 'complete'))
+      .toEqual({ freeKeys: ['path:x'], heldKeys: ['queue:J'], claimable: true });
+    expect(busWorkFeedJobHold(feedJob(['queue:J', 'repo:a/b']), held, 'complete'))
+      .toEqual({ freeKeys: [], heldKeys: ['queue:J', 'repo:a/b'], claimable: false });
+    // Truncated coverage: shown holds are real, but an unshown key might still be held.
+    expect(busWorkFeedJobHold(feedJob(['queue:J', 'path:x']), held, 'truncated'))
+      .toEqual({ freeKeys: null, heldKeys: ['queue:J'], claimable: null });
+    expect(busWorkFeedJobHold(feedJob(['queue:J', 'repo:a/b']), held, 'truncated'))
+      .toEqual({ freeKeys: null, heldKeys: ['queue:J', 'repo:a/b'], claimable: false });
+    // Unknown coverage: nothing is provable, so nothing is claimed free or held.
+    expect(busWorkFeedJobHold(feedJob(['queue:J']), undefined, 'unknown'))
+      .toEqual({ freeKeys: null, heldKeys: null, claimable: null });
   });
 });
