@@ -2,7 +2,7 @@
  * landed-from-git.ts — which fleet jobs reached the default branch, read from plain git.
  *
  * gh cannot run on the host, so the self-tick never saw its own merges. This lists every job id
- * found in a commit subject or body on origin/<default branch> inside the window
+ * found in a commit subject on origin/<default branch> inside the window
  * (`bridge(RQ-...)`, or `RQ-...` in a squash title). One reader, no gh, no guessing:
  * a failed fetch or log is `ok: false` with a plain reason, never an empty "nothing landed".
  */
@@ -37,7 +37,7 @@ export interface LandedFromGitOptions {
   git?: (args: string[], cwd?: string) => string;
 }
 
-// A job id anywhere in a subject or body: `bridge(RQ-X)`, `bridge: RQ-X`, `RQ-X (#12)`, or a bare mention.
+// Only subjects attribute landed jobs; bodies may mention superseded or related jobs.
 const ID = /(?<![A-Za-z0-9_-])RQ-[A-Za-z0-9][A-Za-z0-9-]*/g;
 const FIELD = '\x1f', RECORD = '\x1e';
 
@@ -75,16 +75,16 @@ export function readLandedFromGit(opts: LandedFromGitOptions = {}): LandedFromGi
       let shallow = false;
       try { shallow = git(['rev-parse', '--is-shallow-repository']).trim() === 'true'; } catch { /* not shallow */ }
       git(['fetch', '--quiet', ...(shallow ? [`--shallow-since=${sinceIso}`] : []), 'origin', branch]);
-      log = git(['log', `origin/${branch}`, `--since=${sinceIso}`, `--format=%H${FIELD}%cI${FIELD}%B${RECORD}`]);
+      log = git(['log', `origin/${branch}`, `--since=${sinceIso}`, `--format=%H${FIELD}%cI${FIELD}%s${RECORD}`]);
     } catch (err) {
       readings.push({ repo: name, ok: false, jobs: 0, reason: `git could not read origin/${branch} (${failure(err)})` });
       continue;
     }
     const found = new Map<string, LandedJob>();
     for (const rec of log.split(RECORD)) {
-      const [sha = '', at = '', ...body] = rec.replace(/^\s+/, '').split(FIELD);
+      const [sha = '', at = '', subject = ''] = rec.replace(/^\s+/, '').split(FIELD);
       if (!sha) continue;
-      for (const raw of new Set(body.join(FIELD).match(ID) ?? [])) {
+      for (const raw of new Set(subject.match(ID) ?? [])) {
         const id = raw.replace(/-+$/, '');
         found.set(id, { id, repo: name, sha, at }); // log is newest first, so the last write is the oldest
       }

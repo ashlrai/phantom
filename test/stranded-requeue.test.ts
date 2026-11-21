@@ -166,6 +166,16 @@ it('requeues when the landed commit is for another job', async () => {
   expect(plan.alreadyLanded).toEqual([]);
 });
 
+it('requeues a job mentioned only as superseded in a landed commit body', async () => {
+  const dir = await setup({ 'RQ-RESULT': 'result-abort' });
+  const git = (args: string[]) => landedLog(args.some(a => a.includes('%B'))
+    ? 'bridge(RQ-OTHER): x (#8)\n\nSupersedes RQ-RESULT'
+    : 'bridge(RQ-OTHER): x (#8)')(args);
+  const plan = await planStrandedRequeue(dir, { ready: fast, landed: () => readLandedFromGit({ git }) });
+  expect(plan.requeued.map(r => r.id)).toEqual(['RQ-RESULTR2']);
+  expect(plan.alreadyLanded).toEqual([]);
+});
+
 it('skips a job that finished over 48 h ago and counts it as tooOld', async () => {
   const dir = await setup({ 'RQ-RESULT': 'result-abort' });
   const plan = await planStrandedRequeue(dir, { ready: fast, now: Date.now() + 72 * 3_600_000 });

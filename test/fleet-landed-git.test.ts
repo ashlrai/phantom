@@ -5,12 +5,12 @@ import { landedHeadline, readLandedFromGit } from '../src/core/fleet/landed-from
 
 const F = '\x1f', R = '\x1e';
 const sha = (c: string) => c.repeat(40);
-const commit = (c: string, at: string, body: string) => `${sha(c)}${F}${at}${F}${body}${R}\n`;
+const commit = (c: string, at: string, subject: string) => `${sha(c)}${F}${at}${F}${subject}${R}\n`;
 // Newest first: 3 bridge commits and 1 unrelated one.
-const LOG = commit('d', '2026-11-21T09:00:00Z', 'bridge(RQ-ALPHA): alpha (#3)\n\nbody')
+const LOG = commit('d', '2026-11-21T09:00:00Z', 'bridge(RQ-ALPHA): alpha (#3)')
   + commit('c', '2026-11-21T08:00:00Z', 'fix typo in readme')
   + commit('b', '2026-11-21T07:00:00Z', 'bridge(RQ-BETA): beta (#2)')
-  + commit('a', '2026-11-21T06:00:00Z', 'merge work\n\nRQ-GAMMA: gamma');
+  + commit('a', '2026-11-21T06:00:00Z', 'RQ-GAMMA: gamma');
 const gitOk = (calls: string[][] = []) => (args: string[]) => {
   calls.push(args);
   if (args[0] === 'symbolic-ref') return 'origin/master\n';
@@ -39,20 +39,40 @@ describe('readLandedFromGit', () => {
     expect(r).toMatchObject({ ok: false, jobs: [], reason: 'git could not read origin/master (fatal: no route to host)' });
     expect(landedHeadline(r)).toContain("Can't tell");
   });
+
+  it('ignores body references and keeps the oldest subject attribution per job', () => {
+    const messages = [
+      ['d', '2026-11-21T09:00:00Z', 'bridge(RQ-CURRENT): fix (#3)', 'Supersedes RQ-OLD.\nRelated: RQ-RELATED'],
+      ['c', '2026-11-21T08:00:00Z', 'chore: update notes', 'Job: RQ-BODY-ONLY'],
+      ['b', '2026-11-21T07:00:00Z', 'bridge: RQ-CURRENT follow-up (#2)', ''],
+      ['a', '2026-11-21T06:00:00Z', 'docs: prior context', 'Related: RQ-CURRENT'],
+    ] as const;
+    const calls: string[][] = [];
+    const git = (args: string[]) => {
+      calls.push(args);
+      if (args[0] !== 'log') return '';
+      return messages.map(([c, at, subject, body]) => commit(c, at,
+        args.some(a => a.includes('%B')) ? `${subject}\n\n${body}` : subject)).join('');
+    };
+    const r = readLandedFromGit({ git });
+    expect(calls.find(a => a[0] === 'log')).toContain(`--format=%H${F}%cI${F}%s${R}`);
+    expect(r.jobs).toEqual([{ id: 'RQ-CURRENT', repo: 'phantom', sha: sha('b'), at: '2026-11-21T07:00:00Z' }]);
+    expect(r.repos).toEqual([{ repo: 'phantom', ok: true, jobs: 1 }]);
+  });
 });
 
 describe('readLandedFromGit on real subject shapes', () => {
   const real = commit('f', '2026-11-21T09:50:00Z', 'Fix queue drain (RQ-SQUASH, #7887)')
     + commit('e', '2026-11-21T09:40:00Z', 'bridge(RQ-PAREN-N22TQ8): (#7888)')
     + commit('d', '2026-11-21T09:30:00Z', 'bridge: RQ-COLON-1795R2 (#7889)')
-    + commit('c', '2026-11-21T09:20:00Z', 'Merge queue: docs sweep (#7890)\n\nJob: RQ-INBODY.')
+    + commit('c', '2026-11-21T09:20:00Z', 'Merge queue: docs sweep (RQ-QUEUE, #7890)')
     + commit('b', '2026-11-21T09:10:00Z', 'chore: bump a dependency (#7891)');
   const now = Date.parse('2026-11-21T10:00:00Z');
 
   it('counts every form and skips the unrelated commit', () => {
     const git = (args: string[]) => args[0] === 'log' ? real : '';
     const r = readLandedFromGit({ git, now });
-    expect(r.jobs.map(j => j.id).sort()).toEqual(['RQ-COLON-1795R2', 'RQ-INBODY', 'RQ-PAREN-N22TQ8', 'RQ-SQUASH']);
+    expect(r.jobs.map(j => j.id).sort()).toEqual(['RQ-COLON-1795R2', 'RQ-PAREN-N22TQ8', 'RQ-QUEUE', 'RQ-SQUASH']);
   });
 
   it('deepens a shallow checkout to the window, so a day of merges is not counted as 1', () => {
