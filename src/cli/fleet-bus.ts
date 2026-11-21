@@ -12,6 +12,7 @@ export const usage = `Usage: phm bus thread create <title> [--peer <id>] [--json
        phm bus thread ack <thread-id> <delivery-id> [--peer <id>] [--json]
        phm bus thread post <thread-id> <body> [--peer <id>] [--json]
        phm bus thread list [--peer <id>] [--json]
+       phm bus board pending [--peer <id>] [--json]
        phm bus task create <thread-id> <fleet-item-id> <title> [--peer <id>] [--json]
        phm bus task list <thread-id> [--peer <id>] [--json]
        phm bus task claim|renew|release <task-id> [--peer <id>] [--json]
@@ -27,6 +28,7 @@ authority.`;
 const ARITIES: Record<string, number> = {
   'thread:create': 1, 'thread:join': 1, 'thread:post': 2,
   'thread:read': 1, 'thread:pending': 1, 'thread:list': 0, 'thread:hops': 1, 'thread:ack': 2, 'thread:receipts': 1,
+  'board:pending': 0,
   'task:create': 3, 'task:list': 1, 'task:claim': 1,
   'task:handoff': 2, 'task:renew': 1, 'task:release': 1,
 };
@@ -135,6 +137,7 @@ export async function cmdFleetBus(args: string[], deps: FleetBusDeps = {}): Prom
       case 'thread:ack': result = board.acknowledge(actor, first!, second!); break;
       case 'thread:receipts': result = board.receipts(actor, first!); break;
       case 'thread:hops': result = board.hops(actor, first!); break;
+      case 'board:pending': result = board.pending(actor); break;
       case 'task:create': result = board.createTask(actor, first!, second!, third!); break;
       case 'task:list': result = board.listTasks(actor, first!); break;
       case 'task:claim': result = board.claimTask(actor, first!); break;

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -327,6 +327,130 @@ describe('bus board task claims tied to fleet claims', () => {
   });
 });
 
+describe('bus board pending digest', () => {
+  it('returns an empty honest digest for a peer with no threads', () => {
+    const result = board().pending('nobody');
+    expect(result.peer).toBe('nobody');
+    expect(result.claims).toBe('readable');
+    expect(result.threads).toEqual([]);
+    expect(result.deliveries).toEqual({ matched: 0, items: [], truncated: false });
+    expect(result.tasks).toEqual({ matched: 0, items: [], truncated: false });
+  });
+
+  it('aggregates unacknowledged deliveries across joined threads only', async () => {
+    const store = board();
+    const first = threadWith('alice', 'bob');
+    const second = store.createThread('alice', 'Second').id;
+    store.joinThread('bob', second);
+    const hidden = store.createThread('alice', 'Carol only').id;
+    store.joinThread('carol', hidden);
+    await store.post('alice', first, 'one');
+    await store.post('alice', second, 'two');
+    await store.post('alice', first, 'three');
+    await store.post('carol', hidden, 'not for bob');
+
+    const digest = store.pending('bob');
+    expect(digest.deliveries.matched).toBe(3);
+    expect(digest.deliveries.truncated).toBe(false);
+    expect(digest.deliveries.items.map((row) => row.id).sort())
+      .toEqual(store.readThread('bob', first, true).map((row) => row.id)
+        .concat(store.readThread('bob', second, true).map((row) => row.id)).sort());
+    expect(digest.deliveries.items[0]!.content.trust).toBe('untrusted');
+    expect(digest.deliveries.items[0]!.content.text).toContain('untrusted id=');
+    expect(digest.threads.map((row) => row.id).sort()).toEqual([first, second].sort());
+    const rollup = new Map(digest.threads.map((row) => [row.id, row.pendingDeliveries]));
+    expect(rollup.get(first)).toBe(2);
+    expect(rollup.get(second)).toBe(1);
+
+    // The digest's own id + threadId feed thread ack; reading acknowledged nothing.
+    store.acknowledge('bob', first, digest.deliveries.items[0]!.id);
+    expect(store.pending('bob').deliveries.matched).toBe(2);
+    const carol = store.pending('carol');
+    expect(carol.deliveries.matched).toBe(1);
+    expect(carol.deliveries.items[0]!.threadId).toBe(hidden);
+    expect(carol.threads.map((row) => row.id)).toEqual([hidden]);
+  });
+
+  it('annotates task hold state from the live fleet queue', () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob');
+    store.createTask('alice', threadId, 'item-open', 'Open task');
+    const held = store.createTask('alice', threadId, 'item-held', 'Held task');
+    store.claimTask('alice', held.id);
+    // A queue claim with no board record still reports held: the queue is the fence.
+    store.createTask('alice', threadId, 'item-external', 'Externally held');
+    expect(fleet.claimLeases(['item-external'], 1, 'fleet-worker')).toHaveLength(1);
+    // A task on a thread bob never joined stays out of bob's digest.
+    const other = store.createThread('alice', 'Alice and carol').id;
+    store.joinThread('carol', other);
+    store.createTask('alice', other, 'item-hidden', 'Hidden task');
+
+    const digest = store.pending('bob');
+    expect(digest.claims).toBe('readable');
+    expect(digest.tasks.matched).toBe(3);
+    const byItem = new Map(digest.tasks.items.map((row) => [row.itemId, row]));
+    expect(byItem.get('item-open')).toMatchObject({ hold: 'open', claimed: false, owner: null });
+    expect(byItem.get('item-held')).toMatchObject({ hold: 'held', claimed: true });
+    expect(byItem.get('item-held')!.owner).toMatchObject({ peerId: 'alice' });
+    expect(byItem.get('item-external')).toMatchObject({ hold: 'held', claimed: false });
+    expect(byItem.get('item-external')!.owner).toMatchObject({ peerId: 'fleet-worker' });
+    expect(digest.tasks.items.some((row) => row.itemId === 'item-hidden')).toBe(false);
+    expect(digest.threads.find((row) => row.id === threadId)!.tasks)
+      .toEqual({ open: 1, held: 2, ambiguous: 0, unknown: 0 });
+  });
+
+  it('reports an expired claimed lease as open and an expired executing lease as ambiguous', () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob');
+    const reclaimable = store.createTask('alice', threadId, 'item-reclaimable', 'Reclaimable');
+    const executing = store.createTask('alice', threadId, 'item-executing', 'Executing');
+    const first = store.claimTask('alice', reclaimable.id);
+    const second = store.claimTask('alice', executing.id);
+    const stored = JSON.parse(readFileSync(join(boardRoot, 'state.json'), 'utf8')) as
+      { tasks: { id: string; claim: QueueClaimRef }[] };
+    const live = fleet.validateClaims([stored.tasks.find((row) => row.id === executing.id)!.claim]);
+    expect(live).toHaveLength(1);
+    expect(fleet.beginClaimExecution(live[0]!)).not.toBeNull();
+
+    vi.spyOn(Date, 'now').mockReturnValue(Math.max(first.owner!.leaseUntil, second.owner!.leaseUntil) + 1);
+    const byItem = new Map(store.pending('bob').tasks.items.map((row) => [row.itemId, row]));
+    expect(byItem.get('item-reclaimable')).toMatchObject({ hold: 'open', claimed: true, owner: null });
+    expect(byItem.get('item-executing')).toMatchObject({ hold: 'ambiguous', claimed: true, owner: null });
+    expect(store.pending('bob').threads[0]!.tasks).toEqual({ open: 1, held: 0, ambiguous: 1, unknown: 0 });
+  });
+
+  it('marks every task hold unknown when the shared queue cannot be read', async () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob');
+    store.createTask('alice', threadId, 'item-x', 'Task');
+    await store.post('alice', threadId, 'mail still arrives');
+    mkdirSync(queueDir, { recursive: true });
+    writeFileSync(join(queueDir, 'ashlr-fleet-queue.json'), '{broken');
+    const digest = store.pending('bob');
+    expect(digest.claims).toBe('unreadable');
+    expect(digest.deliveries.matched).toBe(1);
+    expect(digest.tasks.items[0]).toMatchObject({ hold: 'unknown', owner: null });
+    expect(digest.threads[0]!.tasks).toEqual({ open: 0, held: 0, ambiguous: 0, unknown: 1 });
+  });
+
+  it('keeps true matched totals when item lists truncate at the cap', async () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob');
+    for (let index = 0; index < 51; index++) await store.post('alice', threadId, `m${index}`);
+    const digest = store.pending('bob');
+    expect(digest.deliveries.matched).toBe(51);
+    expect(digest.deliveries.items).toHaveLength(50);
+    expect(digest.deliveries.truncated).toBe(true);
+    expect(digest.threads[0]!.pendingDeliveries).toBe(51);
+  });
+
+  it('refuses while disabled and enforces the peer allowlist', () => {
+    expect(() => board({ cfg: disabledCfg }).pending('alice')).toThrow('Fleet event bus is disabled');
+    expect(() => board({ peers: [{ id: 'alice' }] }).pending('mallory'))
+      .toThrow('Bus peer is absent from the peer registry');
+  });
+});
+
 describe('phm bus CLI end-to-end', () => {
   let output: string[];
   const loadConfig = () => ({}) as AshlrConfig;
@@ -380,6 +504,24 @@ describe('phm bus CLI end-to-end', () => {
     expect(released.value.result.owner).toBeNull();
     expect(fleet.claimLeases(['fleet-item-1'], 1, 'external-worker')).toHaveLength(1);
     expect(output.join('\n')).not.toMatch(/ownerToken|ownerKey/);
+  });
+
+  it('answers the board pending digest through argv', async () => {
+    const thread = (await call(['thread', 'create', 'Board'])).value.result.id;
+    await call(['thread', 'join', thread], 'bob');
+    await call(['thread', 'post', thread, 'ping'], 'alice');
+    const task = (await call(['task', 'create', thread, 'fleet-item-9', 'Work'])).value.result.id;
+    await call(['task', 'claim', task], 'bob');
+    const digest = await call(['board', 'pending'], 'bob');
+    expect(digest.code).toBe(0);
+    expect(digest.value.result.peer).toBe('bob');
+    expect(digest.value.result.claims).toBe('readable');
+    expect(digest.value.result.deliveries.matched).toBe(1);
+    expect(digest.value.result.tasks.items[0]).toMatchObject({ hold: 'held', claimed: true });
+    expect(digest.value.result.tasks.items[0].owner.peerId).toBe('bob');
+    expect(output.join('\n')).not.toMatch(/ownerToken|ownerKey/);
+    expect((await call(['board', 'pending', 'extra'])).code).toBe(2);
+    expect((await call(['board', 'bogus'])).code).toBe(2);
   });
 
   it('reports usage errors as exit 2 and prints help as exit 0', async () => {

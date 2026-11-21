@@ -166,7 +166,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog', 'lane-slots',
     'empties', 'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'feedback', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'merge-batch-run', 'rebase-plan', 'merge-plan', 'bus', 'usage', 'research-digest', 'ideation', 'drive', 'wt-census', 'unfed', 'autopilot', 'launches',
   ],
-  bus: ['thread', 'task', 'send', 'inbox', 'ack', 'recent', '--since', '--from', '--to', '--body', '--id', '--priority', '--ttl', '--limit', '--peer', '--root', '--queue-root', '--json', '--help'],
+  bus: ['thread', 'task', 'board', 'send', 'inbox', 'ack', 'recent', '--since', '--from', '--to', '--body', '--id', '--priority', '--ttl', '--limit', '--peer', '--root', '--queue-root', '--json', '--help'],
   estates: ['--repo', '--json', '--help'],
   'ci': ['baseline', 'reruns', '--repo', '--json', '--queue', '--queue-file', '--apply', '--help'],
   'ci-metrics': ['--json', '--help'],
