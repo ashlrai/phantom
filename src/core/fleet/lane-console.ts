@@ -967,7 +967,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   try { stateText = await readBounded(join(options.starvedStateDir ?? join(homedir(), '.ashlr', 'vision', 'leader'), STARVED_STATE_FILE), 16 * 1024); } catch { /* no record yet */ }
   const starved = readStarved(views.map(view => ({
     lane: view.lane,
-    floor: holds.get(view.lane)?.floor ?? null,
+    target: holds.get(view.lane)?.target ?? null,
     running: view.liveJobs,
     ready: view.queueDepth,
     held: view.hold?.held === true,
