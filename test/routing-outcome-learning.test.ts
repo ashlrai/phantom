@@ -263,6 +263,69 @@ describe('outcome learning', () => {
       expect(cell?.mergeRate).toBeCloseTo(1 / 3);
     });
 
+    it('folds batch members per line and never the session id', () => {
+      // A typical session id fits ident(): before this fold it opened an
+      // attempt that could never resolve. It must now skip as infrastructure.
+      const bid = 'RQ-BATCH-PHANTOM-CONTRIB-MAC-A1B2C3D4E5F6';
+      const ledger = [
+        JSON.stringify({ event: 'batch_claim', job: 'J-A', batch: bid, repo: 'phantom', lane: 'claude', tier: 'work', area: 'core', model: 'sonnet', ts: '2026-11-01T00:00:00+00:00' }),
+        JSON.stringify({ event: 'batch_claim', job: 'J-B', batch: bid, repo: 'phantom', lane: 'claude', tier: 'work', area: 'core', model: 'sonnet', ts: '2026-11-01T00:00:00+00:00' }),
+        JSON.stringify({ event: 'launch', job: bid, repo: 'phantom', lane: 'claude', tier: 'work', model: 'sonnet', batch_size: 2, ts: '2026-11-01T00:10:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: bid, lane: 'claude', tokens_total: 9000, wall_s: 3600, batch_size: 2 }),
+        // done publishes on its own and resolves on the reconciler verdict;
+        // failed requeues with no publish, so its attempt is dead.
+        JSON.stringify({ event: 'task_outcome', job: 'J-A', batch: bid, lane: 'claude', repo: 'phantom', outcome: 'done', model: 'sonnet', ts: '2026-11-01T01:10:00+00:00' }),
+        JSON.stringify({ event: 'task_outcome', job: 'J-B', batch: bid, lane: 'claude', repo: 'phantom', outcome: 'failed', model: 'sonnet', reason: 'no diff', ts: '2026-11-01T01:10:00+00:00' }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-A', prUrl: 'https://github.com/ashlrai/phantom/pull/11', outcome: 'MERGED', mergedAt: '2026-11-01T02:00:00+00:00', ts: '2026-11-01T02:01:00+00:00' }),
+        // J-B requeued and relaunched solo: a fresh attempt, not an overwrite.
+        JSON.stringify({ event: 'launch', job: 'J-B', repo: 'phantom', lane: 'claude', tier: 'work', model: 'sonnet', ts: '2026-11-01T03:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-B', lane: 'claude', tokens_total: 1500, wall_s: 600 }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-B', prUrl: 'https://github.com/ashlrai/phantom/pull/12', outcome: 'MERGED', mergedAt: '2026-11-01T04:00:00+00:00', ts: '2026-11-01T04:01:00+00:00' }),
+      ].join('\n');
+      const view = outcomeLearningView(learnFleetOutcomes(null, ledger));
+      expect(view.finished).toBe(3);
+      expect(view.malformed).toBe(0);
+      const cell = view.cells.find((c) => c.resource === 'claude' && c.jobType === 'work');
+      // J-A merged in the batch, J-B's batch attempt died and its solo
+      // relaunch merged: three attempts, two merges. Member usage is
+      // unmeasured (no per-member finish), so the cell mean is imputed.
+      expect(cell).toMatchObject({ attempts: 3, merges: 2, goodMerges: 2, censored: 0 });
+      expect(cell?.meanUsage).toBeCloseTo(1500);
+      // J-A merged 110 min after the session launch; J-B's solo relaunch 60.
+      expect(cell?.meanMinutesToMerge).toBeCloseTo(85);
+    });
+
+    it('closes member attempts when the batch session dies, and counts nothing for a batch that never launched', () => {
+      // Past the 64-char ident bound: the session rows must skip cleanly
+      // rather than count malformed.
+      const dead = 'RQ-BATCH-PHANTOM-CONTRIB-MAC-DISPATCHD-QUEUE-BATCH-SESSIONS-2-A1B2C3D4';
+      const unborn = 'RQ-BATCH-PHANTOM-CONTRIB-MAC-C3D4E5F6A7B8';
+      const ledger = [
+        JSON.stringify({ event: 'batch_claim', job: 'J-C', batch: dead, repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T00:00:00+00:00' }),
+        JSON.stringify({ event: 'batch_claim', job: 'J-D', batch: dead, repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T00:00:00+00:00' }),
+        JSON.stringify({ event: 'launch', job: dead, repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', batch_size: 2, ts: '2026-11-01T00:10:00+00:00' }),
+        // The launcher died before the session reported: both member
+        // attempts close unmerged, like a solo dead launch.
+        JSON.stringify({ event: 'launch_terminal', job: dead, reason: 'launcher-exited', ts: '2026-11-01T00:20:00+00:00' }),
+        // J-C requeued and relaunched solo, then merged.
+        JSON.stringify({ event: 'launch', job: 'J-C', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T01:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-C', lane: 'devin', tokens_total: 900, wall_s: 400 }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-C', prUrl: 'https://github.com/ashlrai/phantom/pull/13', outcome: 'MERGED', mergedAt: '2026-11-01T02:00:00+00:00', ts: '2026-11-01T02:01:00+00:00' }),
+        // Claims for a bundle released before launch (spawn failure writes
+        // launch_terminal with no launch row): no attempt ever opened.
+        JSON.stringify({ event: 'batch_claim', job: 'J-E', batch: unborn, repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T03:00:00+00:00' }),
+        JSON.stringify({ event: 'launch_terminal', job: unborn, reason: 'spawn-failed', ts: '2026-11-01T03:01:00+00:00' }),
+      ].join('\n');
+      const view = outcomeLearningView(learnFleetOutcomes(null, ledger));
+      expect(view.finished).toBe(3);
+      expect(view.malformed).toBe(0);
+      const cell = view.cells.find((c) => c.resource === 'devin' && c.jobType === 'work');
+      // J-C dead-in-batch + J-C merged solo + J-D dead-in-batch = 3 attempts,
+      // 1 merge. J-E's unborn bundle contributes nothing.
+      expect(cell).toMatchObject({ attempts: 3, merges: 1, goodMerges: 1, censored: 0 });
+      expect(cell?.mergeRate).toBeCloseTo(1 / 3);
+    });
+
     it('keeps dispatch-log learning identical when the ledger is absent', () => {
       const viaFleet = learnFleetOutcomes(LOG, null);
       const viaPlain = learnOutcomes(LOG);

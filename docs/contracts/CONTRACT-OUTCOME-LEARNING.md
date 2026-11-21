@@ -26,6 +26,19 @@ readings stay uncharged rather than reading as zero spend. `phm fleet
 outcomes` reads both sources by default; `--ledger <file>` overrides the
 jobs-ledger path and `--events <file>` the dispatch log.
 
+Batch sessions count per member, not per session. A `batch_claim` row is the
+member's dispatch record, held until the session's own `launch` row — which
+carries the `RQ-BATCH-*` infrastructure id, never an attempt — opens one
+attempt per recorded member at the session's stamp. A bundle released before
+launch (spawn failure, route-lock busy) therefore counts nothing, matching a
+solo launch that never wrote its `launch` row. A member's `task_outcome`
+row closes its attempt as unmerged only for the requeue words
+(`failed`/`deferred`/`unreported`); `done`/`skipped` members still publish
+on their own and resolve on the reconciler verdict, and members get no
+per-member `finish` row so their usage is charged like any unread outcome. A
+`launch_failed`/`launch_terminal` row naming the session id closes every
+member attempt it opened.
+
 ## How it routes
 
 `routeLearnedJob` draws a Thompson sample from a Beta success posterior and a

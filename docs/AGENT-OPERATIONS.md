@@ -212,7 +212,11 @@ that resource can finish the job. In the jobs ledger, `launch` rows open an
 attempt and the reconciler's `MERGED`/`CLOSED` rows close it; a
 `launch_failed`/`launch_terminal` row closes the still-open attempt as an
 unmerged one, so a dead launch the dispatcher requeues and retries counts as
-its own failed attempt rather than disappearing into the relaunch.
+its own failed attempt rather than disappearing into the relaunch. Batch
+sessions count per member: a `batch_claim` row is the member's dispatch
+record and the session's `launch` row (under its `RQ-BATCH-*` id) opens one
+attempt per member; a requeue-word `task_outcome` or a session-id
+`launch_failed`/`launch_terminal` closes the member attempts it recorded.
 
 ### Selector
 

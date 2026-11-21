@@ -157,6 +157,10 @@ interface OutcomeEvent {
 type ParsedEvent = AssignEvent | OutcomeEvent;
 
 const IDENT = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
+/** RQ-BATCH-* session ids are dispatch infrastructure, never task attempts. */
+const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
+/** batcher.RETRY — per-line batch outcomes that requeue the member without a publish, so the attempt is dead. */
+const BATCH_RETRY_OUTCOMES: ReadonlySet<string> = new Set(['failed', 'deferred', 'unreported']);
 const CLOCK = /^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/;
 const STAMP = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) (\S+)(?: (.*))?$/;
 const RESOURCE_WORDS: Readonly<Record<string, string>> = {
@@ -561,6 +565,19 @@ export function learnOutcomes(text: string, censor?: CensorOptions): OutcomeLear
  * counting as malformed. Operational rows (concurrency, posture, route
  * decisions, claims that never launched) are not outcome evidence and are
  * skipped without counting as malformed.
+ *
+ * Batch sessions (RQ-BATCH-*) launch under the session id, which is
+ * infrastructure and never an attempt — member jobs get `batch_claim` rows
+ * instead of `launch` rows. A claim is held until the session's own `launch`
+ * row, which opens one attempt per recorded member at the session's stamp,
+ * so a bundle released before launch (spawn failure, route-lock busy) counts
+ * nothing exactly like a solo launch that never wrote its `launch` row. A
+ * member's `task_outcome` row closes its attempt as unmerged only for the
+ * requeue words (`failed`/`deferred`/`unreported`); `done`/`skipped` members
+ * still publish on their own and resolve on the reconciler verdict. A
+ * `launch_failed`/`launch_terminal` row naming the session id closes every
+ * member attempt it opened. Members get no per-member `finish` row, so
+ * their usage stays unmeasured and reconcileUsage charges the cell mean.
  */
 function ledgerAssign(row: Record<string, unknown>): AssignEvent | null {
   const job = ledgerJobId(row);
@@ -581,6 +598,14 @@ function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed
   const launchAtByJob = new Map<string, number>();
   const resolvedJobs = new Set<string>();
   const openJobs = new Set<string>();
+  // Batch members claimed but not yet launched: member job -> its claim,
+  // and session id -> member jobs, so a dead session can close them all.
+  const batchClaims = new Map<string, { bid: string; assign: AssignEvent }>();
+  const batchMembers = new Map<string, Set<string>>();
+  const closeAttempt = (job: string): void => {
+    openJobs.delete(job);
+    events.push({ kind: 'outcome', job, state: 'closed', usage: null, minutes: null, breakage: 0 });
+  };
   for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (trimmed === '') continue;
@@ -591,7 +616,42 @@ function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed
       row = value as Record<string, unknown>;
     } catch { malformed += 1; continue; }
     const eventName = ledgerEventName(row);
+    if (eventName === 'batch_claim') {
+      const assign = ledgerAssign(row);
+      const bid = row['batch'];
+      if (assign !== null && typeof bid === 'string' && bid.length > 0 && bid.length <= 128) {
+        batchClaims.set(assign.job, { bid, assign });
+        let members = batchMembers.get(bid);
+        if (members === undefined) { members = new Set<string>(); batchMembers.set(bid, members); }
+        members.add(assign.job);
+      }
+      continue;
+    }
     if (eventName === 'launch') {
+      const jobId = ledgerJobId(row);
+      const batchSize = row['batch_size'];
+      const isBatchSession = jobId !== null && (jobId.startsWith(BATCH_SESSION_PREFIX)
+        || batchMembers.has(jobId)
+        || (typeof batchSize === 'number' && Number.isFinite(batchSize) && batchSize > 0));
+      if (isBatchSession) {
+        // The session id is infrastructure: promote each recorded member
+        // claim to an attempt stamped at the session's launch.
+        const atMs = ledgerAtMs(row);
+        if (atMs === null || !Number.isFinite(atMs)) { malformed += 1; continue; }
+        const members = batchMembers.get(jobId);
+        if (members !== undefined) {
+          for (const member of members) {
+            const claim = batchClaims.get(member);
+            if (claim === undefined || claim.bid !== jobId) continue;
+            batchClaims.delete(member);
+            events.push({ ...claim.assign, atMs });
+            launchAtByJob.set(member, atMs);
+            resolvedJobs.delete(member);
+            openJobs.add(member);
+          }
+        }
+        continue;
+      }
       const assign = ledgerAssign(row);
       if (assign === null) { malformed += 1; continue; }
       events.push(assign);
@@ -606,11 +666,25 @@ function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed
       if (job !== null && ident(job) && usage !== null) usageByJob.set(job, usage);
       continue;
     }
+    if (eventName === 'task_outcome') {
+      // A reaped member on a requeue word never publishes: its attempt is
+      // dead. done/skipped members still publish — leave them for the
+      // reconciler verdict.
+      const outcome = row['outcome'];
+      const job = ledgerJobId(row);
+      if (typeof outcome === 'string' && BATCH_RETRY_OUTCOMES.has(outcome)
+        && job !== null && ident(job) && openJobs.has(job)) closeAttempt(job);
+      continue;
+    }
     if (eventName === 'launch_failed' || eventName === 'launch_terminal') {
       const job = ledgerJobId(row);
-      if (job !== null && ident(job) && openJobs.has(job)) {
-        openJobs.delete(job);
-        events.push({ kind: 'outcome', job, state: 'closed', usage: null, minutes: null, breakage: 0 });
+      if (job !== null) {
+        if (ident(job) && openJobs.has(job)) closeAttempt(job);
+        // A dead session id closes every member attempt it launched.
+        const members = batchMembers.get(job);
+        if (members !== undefined) {
+          for (const member of members) if (openJobs.has(member)) closeAttempt(member);
+        }
       }
       continue;
     }
