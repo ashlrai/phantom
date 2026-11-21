@@ -443,6 +443,70 @@ describe('work-feed --job and --owner filters', () => {
   });
 });
 
+describe('work-feed --repo, --provider and --claimable filters', () => {
+  it('keeps jobs by announced repo case-insensitively and by provider, in text and JSON', async () => {
+    append({ ...post, repo: 'Fake/Repo' }, 1, 'fake-agent');
+    append({ ...post, jobId: 'fake-other', repo: 'fake/other', provider: 'claude',
+      claimKeys: ['repo:fake/other'] }, 2, 'fake-agent');
+    const log = output();
+    // --repo normalizes to the lowercase claim-key slug: announced case never matters.
+    const jobLines = () => log.mock.calls.map(call => String(call[0])).filter(line => line.startsWith('fake-'));
+    expect(await cmdFleetWorkFeed(['--root', root, '--repo', 'fake/repo'])).toBe(0);
+    expect(jobLines()).toEqual([expect.stringContaining(`${post.jobId} queued`)]);
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--repo', 'FAKE/OTHER', '--provider', 'claude', '--json'])).toBe(0);
+    const json = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
+    expect(json.jobs.map((job: { id: string }) => job.id)).toEqual(['fake-other']);
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--provider', 'devin'])).toBe(0);
+    expect(jobLines()).toEqual([expect.stringContaining(`${post.jobId} queued`)]);
+    log.mockClear();
+    // An unmatched repo is an honest empty view, and filters compose.
+    expect(await cmdFleetWorkFeed(['--root', root, '--repo', 'ghost/repo'])).toBe(0);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0');
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--repo', 'fake/repo', '--provider', 'claude'])).toBe(0);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0');
+  });
+
+  it('keeps only provably-claimable open jobs under --claimable, implying the claims join', async () => {
+    append(post, 1, 'fake-agent'); // fake-job queued, sole key repo:fake/repo — free
+    append({ ...post, jobId: 'fake-held', claimKeys: ['repo:fake/held'] }, 2, 'fake-agent');
+    const claim = { root, origin: 'resource' as const, key: 'repo:fake/held', owner: 'fake-holder',
+      leaseMs: 60_000, leaseUntil: now + 60_000, sourceId: 'work:fake-held-claim', now };
+    expect(acquireCoordination(claim).status).toBe('acquired');
+    const log = output();
+    // --claimable alone performs the claims join and keeps only the free job.
+    expect(await cmdFleetWorkFeed(['--root', root, '--claimable'])).toBe(0);
+    const lines = log.mock.calls.map(call => String(call[0]));
+    expect(lines.some(line => line.startsWith(`${post.jobId} queued`) && line.includes('claimable=yes'))).toBe(true);
+    expect(lines.some(line => line.startsWith('fake-held queued'))).toBe(false);
+    expect(lines.at(-1)).toContain('claims=available');
+    log.mockClear();
+    // It composes with the other filters and stays honest when nothing matches.
+    expect(await cmdFleetWorkFeed(['--root', root, '--claimable', '--repo', 'fake/held', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({ status: 'ok', jobs: [],
+      claims: { source: 'available' } });
+    log.mockClear();
+    // Unknown hold coverage never counts as claimable: an unreadable table empties the view honestly.
+    writeFileSync(join(root, 'coordination', 'claims.json'), 'invalid JSON');
+    expect(await cmdFleetWorkFeed(['--root', root, '--claimable'])).toBe(0);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0');
+  });
+
+  it('rejects bad --repo, --provider and --claimable values with usage on stderr and exit 2', async () => {
+    const log = output();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const args of [['--repo'], ['--repo', 'no-slash'], ['--repo', 'a/b/c'], ['--repo', 'x', '--repo', 'y'],
+      ['--provider'], ['--provider', 'bogus'], ['--provider', 'x', '--provider', 'y'],
+      ['--claimable', '--claimable'], ['--repo', 'a/b', '--provider', 'devin', '--claimable', '--bogus']]) {
+      expect(await cmdFleetWorkFeed(args)).toBe(2);
+    }
+    expect(log).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledTimes(9);
+  });
+});
+
 describe('busWorkFeedJobHold', () => {
   const feedJob = (claimKeys: string[]): BusWorkFeedJob => ({ id: 'J', owner: 'agent:o', to: 'leaders',
     provider: 'devin', repo: 'a/b', title: 'T', claimKeys, status: 'queued', updatedAt: 1,

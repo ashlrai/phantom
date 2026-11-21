@@ -680,6 +680,53 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['work', 'feed', '--owner', 'bad owner'])).toMatchObject({ code: 2 });
   });
 
+  it('filters the work feed by repo, provider and claimable', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-REPO-A', '--title', 'Repo job',
+      '--repo', 'AshlrAI/Phantom', '--provider', 'claude', '--claim', 'repo:ashlrai/phantom',
+      '--id', 'feed-ra'])).json).toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-REPO-B', '--title', 'Other job',
+      '--repo', 'ashlrai/other', '--provider', 'local', '--claim', 'repo:ashlrai/other',
+      '--id', 'feed-rb'])).json).toMatchObject({ status: 'posted' });
+
+    // --repo matches the announced owner/name case-insensitively, the claim-key rule.
+    for (const ref of ['ashlrai/phantom', 'AshlrAI/Phantom', 'ASHLRAI/PHANTOM']) {
+      expect((await run(['work', 'feed', '--repo', ref])).json.jobs)
+        .toEqual([expect.objectContaining({ id: 'RQ-REPO-A', repo: 'AshlrAI/Phantom' })]);
+    }
+    expect((await run(['work', 'feed', '--repo', 'ashlrai/other'])).json.jobs)
+      .toEqual([expect.objectContaining({ id: 'RQ-REPO-B' })]);
+    expect((await run(['work', 'feed', '--repo', 'ghost/repo'])).json.jobs).toEqual([]);
+    // --provider keeps jobs announced for that provider; filters compose.
+    expect((await run(['work', 'feed', '--provider', 'claude'])).json.jobs)
+      .toEqual([expect.objectContaining({ id: 'RQ-REPO-A', provider: 'claude' })]);
+    expect((await run(['work', 'feed', '--provider', 'local'])).json.jobs)
+      .toEqual([expect.objectContaining({ id: 'RQ-REPO-B', provider: 'local' })]);
+    expect((await run(['work', 'feed', '--repo', 'ashlrai/phantom', '--provider', 'local'])).json.jobs).toEqual([]);
+
+    // --claimable implies the claims join and keeps only provably-free open jobs.
+    expect((await run(['claim', 'acquire', '--key', 'repo:ashlrai/other', '--lease-ms', '600000',
+      '--owner', 'holder', '--id', 'feed-rb-hold'])).json).toMatchObject({ status: 'acquired' });
+    const claimable = await run(['work', 'feed', '--claimable']);
+    expect(claimable.code).toBe(0);
+    expect(claimable.json).toMatchObject({ status: 'ok', claims: { source: 'available' } });
+    expect(claimable.json.jobs).toEqual([expect.objectContaining({ id: 'RQ-REPO-A', claimable: true })]);
+    // The unfiltered claims view still shows both jobs with honest tri-state coverage.
+    const claims = await run(['work', 'feed', '--claims']);
+    expect(claims.json.jobs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'RQ-REPO-A', claimable: true }),
+      expect.objectContaining({ id: 'RQ-REPO-B', claimable: false }),
+    ]));
+    expect((await run(['work', 'feed', '--claimable', '--repo', 'ashlrai/other'])).json.jobs).toEqual([]);
+    expect((await run(['work', 'feed', '--claimable', '--provider', 'local'])).json.jobs).toEqual([]);
+
+    // Bad filter values are usage errors, never silent empty views.
+    expect(await run(['work', 'feed', '--repo', 'no-slash'])).toMatchObject({ code: 2 });
+    expect(await run(['work', 'feed', '--repo', 'a/b/c'])).toMatchObject({ code: 2 });
+    expect(await run(['work', 'feed', '--provider', 'bogus'])).toMatchObject({ code: 2 });
+    expect(await run(['work', 'feed', '--claimable', '--claimable'])).toMatchObject({ code: 2 });
+  });
+
   it('filters claim list by owner through the identity registry', async () => {
     expect((await run(['id', 'register', 'atlas', '--alias', 'lane-atlas'])).json)
       .toMatchObject({ status: 'created' });
