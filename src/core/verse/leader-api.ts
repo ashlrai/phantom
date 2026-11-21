@@ -1007,8 +1007,10 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
         let seat: LeaderStateV1['seat'];
         try {
           const { readLeaderSeat, pickSeat, leaderSeatLine, leaderChip } = await import('../fleet/leader-seat.js');
+          const { buildSeatSwap, readSeatPools } = await import('../fleet/leader-seat-swap.js');
           const report = await (hooks.leaderSeat ?? readLeaderSeat)();
-          seat = { ...pickSeat(report), line: leaderSeatLine(report), chip: leaderChip(report) };
+          const swap = report.current.lane ? buildSeatSwap(report, await readSeatPools(process.env['ASHLR_RUNS_DIR'] || join(homedir(), '.ashlr-runs'), now()), now()) : null;
+          seat = { ...pickSeat(report), line: swap?.line ?? leaderSeatLine(report), chip: leaderChip(report) };
         } catch { seat = undefined; }
         sendJson(res, 200, seat ? { ...state, seat } : state);
         return true;
