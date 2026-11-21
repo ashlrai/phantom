@@ -14,6 +14,7 @@ import { readSelfTickLast, SELF_TICK_LAST } from './self-tick-last.js';
 
 export const SELF_TICK_STATUS_SCHEMA = 'fleet.self-tick-status.v1';
 export type { SelfTickHook, SelfTickHookName };
+export { hooksFromPlannerReport };
 
 export type SelfTickStatus =
   | { schema: typeof SELF_TICK_STATUS_SCHEMA; state: 'none'; line: string }
