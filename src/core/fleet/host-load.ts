@@ -84,6 +84,7 @@ export interface ProcessRow { pid: number; ppid: number; cpu: number; memoryKb: 
 export interface TreeRootMatcher { name: string; fleet: boolean; pid?: number; command?: RegExp }
 export interface TreeRow {
   name: string; fleet: boolean; cpuPercent: number; memoryMb: number;
+  processes: number;
   /** Processes in the tree other than the root process itself. */
   descendants: number;
   /** The three busiest descendant commands, busiest first. */
@@ -149,7 +150,7 @@ export function attributeProcessTrees(rowsIn: readonly ProcessRow[], matchers: r
   const out: TreeRow[] = [...trees].map(([name, tree]) => {
     const below = tree.members.filter(row => !tree.rootPids.has(row.pid)).sort((a, b) => b.cpu - a.cpu || a.pid - b.pid);
     return {
-      name, fleet: tree.fleet, descendants: below.length,
+      name, fleet: tree.fleet, descendants: below.length, processes: tree.members.length,
       cpuPercent: round1(tree.members.reduce((sum, row) => sum + row.cpu, 0)),
       memoryMb: Math.round(tree.members.reduce((sum, row) => sum + row.memoryKb, 0) / 1024),
       topCommands: below.slice(0, 3).map(row => ({ command: shortCommand(row.command), cpuPercent: round1(row.cpu) })),
