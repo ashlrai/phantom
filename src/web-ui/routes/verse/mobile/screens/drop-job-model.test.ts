@@ -11,6 +11,15 @@ describe('mobile drop job model', () => {
     expect(model.DROP_JOB_MAX_FILE_BYTES).toBe(core.DROP_JOB_MAX_FILE_BYTES);
     expect(model.dropJobBytes(valid)).toBe(new TextEncoder().encode(core.composeDropJobFile(valid)).length);
   });
+  it('keeps the chosen repo in the header and validates it', () => {
+    expect(model.dropJobHeader('claude', 'work', 'locus')).toBe('#job repo=locus lane=claude tier=work');
+    expect(model.dropJobHeader('claude', 'work')).toBe('#job repo=phantom lane=claude tier=work');
+    const locus = { ...valid, repo: 'locus' };
+    expect(model.validateDropJob(locus)).toEqual({ ok: true, payload: locus });
+    expect(model.dropJobBytes(locus)).toBe(new TextEncoder().encode(core.composeDropJobFile(locus)).length);
+    expect(new TextDecoder().decode(new TextEncoder().encode(core.composeDropJobFile(locus))).startsWith('#job repo=locus ')).toBe(true);
+    expect(model.validateDropJob({ ...valid, repo: 'nowhere' })).toEqual({ ok: false, reason: 'repo' });
+  });
   it('round trips the drop-job route under More', () => {
     const route = { screen: 'drop-job' } as const;
     expect(parseMobileHash(formatMobileHash(route))).toEqual(route);
