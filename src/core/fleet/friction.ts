@@ -216,9 +216,10 @@ export function mineFriction(input: FrictionInput): FrictionReport {
   let empty = zero, refused = zero, failed = zero, authHolds = zero, quotaSkips = zero, authSkips = zero;
   let anomalousDiffs = zero;
   let badTierEnqueue = zero, precheckParks = zero, quotaHoldJobs = zero, quotaFinish = zero;
-  let deferredEvents = zero, concBackoffs = zero, concRaises = zero;
+  let deferredEvents = zero, concBackoffs = zero, concRaises = zero, recutDeferrals = zero;
   const concDanger: Record<string, number | null> = Object.fromEntries(CONC_DANGER_ZONES.map(z => [z, zero]));
   const deferredJobs = new Set<string>();
+  const recutDeferredJobs = new Set<string>();
   const enqueued = new Map<string, number>(); const launched = new Map<string, number>();
   const laneAuthHold = new Map<string, number>(); const laneFinish = new Map<string, number>();
   for (const r of jobs ?? []) {
@@ -266,6 +267,17 @@ export function mineFriction(input: FrictionInput): FrictionReport {
       if (r.job) deferredJobs.add(r.job);
       const owner = typeof r.raw.repeatOf === 'string' && JID.test(r.raw.repeatOf) ? r.raw.repeatOf : null;
       ev('deferred-requests', `jobs.jsonl dispatch_deferred job=${r.job ?? 'unknown'}${owner ? ` repeatOf=${owner}` : ''}`);
+    }
+    // recut_admission defer: the recut loop's own dedup gate held the READY
+    // row because an in-flight recut covers the same (pr, head) — claimed
+    // coverage like dispatch_deferred's, so the job joins the same deferred
+    // set while its own event count stays attributable. skip resolves the
+    // job DONE-NOOP and ready launches it; neither defers.
+    if (r.event === 'recut_admission' && strField(r.raw, ['action'])?.toLowerCase() === 'defer') {
+      recutDeferrals = (recutDeferrals ?? 0) + 1;
+      if (r.job) { deferredJobs.add(r.job); recutDeferredJobs.add(r.job); }
+      const owner = typeof r.raw.repeatOf === 'string' && JID.test(r.raw.repeatOf) ? r.raw.repeatOf : null;
+      ev('deferred-requests', `jobs.jsonl recut_admission job=${r.job ?? 'unknown'}${owner ? ` repeatOf=${owner}` : ''}`);
     }
     if (r.event === 'concurrency') {
       const from = r.raw.from, to = r.raw.to;
@@ -410,7 +422,8 @@ export function mineFriction(input: FrictionInput): FrictionReport {
     'invalid-tier': { ready_rows: badTierRows, enqueued: badTierEnqueue },
     'red-main': { repos_red: reposRed, max_red_hours: maxRedH },
     'stale-ready': { unclaimed, unknown_age: unknownAge, max_age_hours: maxAgeH, queued: readyRows },
-    'deferred-requests': { deferred_jobs: jobs === null ? null : deferredJobs.size, deferrals: deferredEvents },
+    'deferred-requests': { deferred_jobs: jobs === null ? null : deferredJobs.size, deferrals: deferredEvents,
+      recut_deferrals: recutDeferrals, recut_deferred_jobs: jobs === null ? null : recutDeferredJobs.size },
     'manual-interventions': { manual_holds: manualHolds, budget_overrides: overrideCount, kept_jobs: kept },
     'wrong-route': {
       route_moves: sum([counts.routes, counts.routeHolds, counts.routeInvalid]),
