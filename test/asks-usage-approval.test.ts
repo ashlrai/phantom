@@ -48,7 +48,7 @@ describe('asks list carries question, replies, what it unblocks and age', () => 
   });
 
   it('shows the batch with a short-value box for usage and yes/no for the approval', () => {
-    const batch = listAskBatch(opts);
+    const batch = listAskBatch(opts, listAsks, true);
     expect(batch.asks.map(ask => [ask.kind, ask.choices])).toEqual([['short-value', []], ['yes-no', ['yes', 'no']]]);
     expect(batch.asks[0]!.whatHappens).toBe('The Cursor and Grok lanes can launch again.');
   });
@@ -141,7 +141,7 @@ describe('phm asks CLI', () => {
       expect(await cmdAsks(['answer', idOf('usage'), '40', '--json'], { options: opts })).toBe(0);
       expect(await cmdAsks(['answer', idOf('approval'), 'forty', '--json'], { options: opts })).toBe(2);
       expect(await cmdAsks(['usage', '--json'], { options: opts })).toBe(0);
-      expect(await cmdAsks(['--json'], { options: opts })).toBe(0);
+      expect(await cmdAsks(['--all', '--json'], { options: opts })).toBe(0);
     } finally { console.log = log; }
     expect(JSON.parse(lines[2]!)).toMatchObject({ schema: 'asks.usage.v1', pool: 'grok-ultra', reading: { pctUsed: 40, source: 'mason' } });
     expect(JSON.parse(lines[3]!)).toMatchObject({ schema: 'asks.v1', count: 1 });

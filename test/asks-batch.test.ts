@@ -160,7 +160,7 @@ describe('phm asks list --json', () => {
     const out = JSON.parse(log.mock.calls[0]![0] as string);
     expect(Object.keys(out).sort()).toEqual(['asks', 'count', 'ledger', 'schema']);
     expect(Object.keys(out.asks[0]).sort()).toEqual(
-      ['askedAt', 'choices', 'expires', 'hardLimit', 'id', 'ids', 'kind', 'number', 'question', 'whatHappens']);
+      ['askedAt', 'choices', 'expires', 'fleetDid', 'hardLimit', 'id', 'ids', 'kind', 'number', 'question', 'type', 'whatHappens']);
     expect(out.schema).toBe('asks.batch.v1');
   });
   it('shows an unreadable ledger as unknown, not as zero', async () => {
