@@ -66,17 +66,21 @@ describe('FleetRouterPane', () => {
     expect(screen.getByText('balanced')).toBeInTheDocument();
     const order = within(screen.getByRole('list', { name: 'Try order' })).getAllByRole('listitem');
     expect(order.map(row => row.textContent?.replace(/^\d/, '').split(/Usage|\d+%|Local/)[0])).toEqual(['Claude Max', 'Codex', 'qwen3:8b']);
-    expect(within(order[0]!).getByRole('img', { name: 'Claude Max: 23% of the weekly window used' })).toBeInTheDocument();
+    expect(within(order[0]!).getByRole('meter', { name: 'Claude Max weekly window used' })).toHaveAttribute('aria-valuetext', '23% of the weekly window used');
     expect(order[0]!.textContent).toMatch(/23% of the weekly window used · resets /);
     // Each seat carries its provider's mark; a local seat is looked up by engine, not by its model tag.
     expect(order.map(row => row.querySelector('svg[data-provider]')?.getAttribute('data-provider'))).toEqual(['claude', 'codex', 'local']);
-    // The binding window is the one shown, and a nearly spent one is marked.
-    expect(within(order[1]!).getByRole('img', { name: 'Codex: 96% of the session window used' }).querySelector('[data-high]')).not.toBeNull();
+    // The binding window is the one shown, on the shared window bar: its fill is the share used, and use is not health, so a high reading takes no status colour.
+    const spent = within(order[1]!).getByRole('meter', { name: 'Codex session window used' });
+    expect(spent).toHaveAttribute('aria-valuetext', '96% of the session window used');
+    expect(spent.querySelector<HTMLElement>('[data-part="used"]')?.style.width).toBe('96%');
+    expect(spent).not.toHaveAttribute('data-ending');
     expect(within(order[2]!).getByText('Local: no usage window')).toBeInTheDocument();
     const held = within(screen.getByRole('list', { name: 'Held back' })).getByRole('listitem');
     expect(held.textContent).toMatch(/Grok.*Signed out\. Eligible again: /);
     // A seat with no reading gets a hatched track and the word unknown, never a zero bar.
-    expect(within(held).getByRole('img', { name: 'Grok usage unknown' })).toHaveAttribute('data-unknown');
+    expect(within(held).getByRole('meter', { name: 'Grok usage' })).toHaveAttribute('data-unread');
+    expect(within(held).getByRole('meter', { name: 'Grok usage' })).toHaveAttribute('aria-valuetext', 'Usage unknown');
     expect(container.textContent).not.toMatch(/\b0% of/);
     // One unlogged preview per kind of work, all for fleet work, and nothing else is asked of the router.
     expect(previews(fetch)).toHaveLength(15);
@@ -171,7 +175,7 @@ describe('FleetRouterPane', () => {
     render(<FleetRouterPane {...props} />);
     expect(await screen.findByText('Unknown: the route table does not hold this kind of work.')).toBeInTheDocument();
     expect(within(screen.getByRole('table', { name: 'Route table' })).getAllByText('Unknown')).toHaveLength(4);
-    expect(screen.getAllByRole('button')).toHaveLength(11);
+    expect(within(screen.getByRole('table', { name: 'Route table' })).getAllByRole('button')).toHaveLength(11);
     // The count by seat is of the cells answered, and the unanswered ones are counted in words, never as "No seat".
     expect(screen.getByText('4 of 15 kinds of work got no answer from the router.')).toBeInTheDocument();
     expect(within(screen.getByRole('list', { name: 'First choice by seat' })).getAllByRole('listitem').map(item => item.textContent)).toEqual(['Claude Max11', 'of 11 kinds of work']);

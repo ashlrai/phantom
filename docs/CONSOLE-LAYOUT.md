@@ -418,7 +418,34 @@ fleet work. Choose a cell (click, or arrow keys then Enter; Home and End jump
 along the row) to draw its answer as a numbered try order. Each seat has a bar
 of the share of its binding usage window already used and that window's reset
 time; seats the router holds back are listed underneath with its reason and
-when they become eligible again. Below, the last 200 recorded routing
+when they become eligible again. The bar is the shared window bar: its fill is
+the share used and takes no status colour for a high reading.
+
+Under the try order, "Seats the router balances across" turns the same table
+on its side: one row per seat that the budget reading or any answered cell
+names, the seat that is first choice for the most kinds of work at the top. A
+row holds the provider's mark and the seat's name, a count in words (`First
+for 9 of 14, held back from 4`, out of the cells the router answered), and
+fifteen cells in five groups, one group per task reading low, medium, high. A
+filled cell is a first choice, an outlined cell with a number is a later try
+and its place in the order, a dashed cell is held back (its label and tooltip
+carry the router's reason), a faint cell is a kind of work the router
+answered without naming the seat, and a hatched cell is a kind it gave no
+answer for. Under the cells are the usage windows `GET /api/verse/budget`
+holds a percent for (session, weekly or both), each as a window bar; the one
+fleet work is measured against is marked "binds fleet work" with its reset,
+the only reset that read reports. A seat with no reading gets a hatched bar
+and "Usage unknown", a local seat "Local: no usage window". The last line is
+what the budget reading says about fleet work on the seat: open (with the
+share of the binding window it may still use when the reading has one),
+closed with the reading's reasons, or unknown when the reading does not name
+the seat. The kind of work chosen in the route table is ringed down every
+row, and choosing a cell on the board chooses that kind in the table. The
+board is one tab stop: Left and Right walk a seat's kinds of work, Up and
+Down keep the kind and change seat, Home and End jump along the row, Enter
+chooses. It adds no request.
+
+Below, the last 200 recorded routing
 decisions are counted by chosen seat and drawn over time: one row per seat,
 most chosen first, each holding a lane of 24 columns that cut the span from
 the oldest decision read to now into equal slices. A column's height is how
