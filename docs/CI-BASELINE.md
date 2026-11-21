@@ -362,6 +362,42 @@ groups classify `shared-baseline`, `pr-caused` or `unknown` -- never
 analyzer's evidence never sees (macOS/Windows lanes, release
 pipelines, merge-group-only attribution) are not listed.
 
+The test runners' own watchdog verdicts get the same treatment.
+`scripts/test-ci.mjs` wraps every `npm run test:ci` invocation -- the
+fast-gate affected-test shards (through `ci-fast-run.mjs`), the quick
+job's selected contract test and the full lanes' hermetic steps --
+with a private HOME, an inactivity watchdog and a hard runtime cap,
+and `scripts/test-ci-sharded.mjs` plans the complete partitions from
+the measured duration table before spawning the same wrapper per
+shard. When the wrapper itself fails -- Vitest hangs past the idle
+window or the hard cap, dies by signal, cannot spawn, the Node floor
+is unmet, or the shard plan cannot be built -- the step prints only
+its bracketed verdict (`[test-ci] idle-timeout ...`, `[test-ci]
+hard-runtime-cap ...`, `[test-ci] received SIGINT|SIGTERM ...`,
+`[test-ci] failed to start Vitest: ...`, `[test-ci] Vitest exited
+via signal ...`, `[test-ci] Node >=22.15.0 ...`, `[test-ci:sharded]
+cannot plan balanced shards: ...`, `[test-ci:sharded] <shard> failed
+to start: ...`) with no vitest FAIL, TAP, typecheck or report shape
+naming it, so a stalled or crashed runner used to leave every open PR
+unknown. Verdicts group under `scripts/test-ci.mjs > (test-ci)` and
+`scripts/test-ci-sharded.mjs > (test-ci-sharded)`; each identity's
+dependency set is a closed input list -- the runner scripts, the
+type-stripped memory-policy module the wrapper reads as text, the
+reporter and vitest config surface the spawned run executes under,
+the shard plan's duration table and the wrapper the orchestrator
+spawns, plus the toolchain manifests -- since the wrapper's computed
+`data:` import gives no enumerable closure and the vitest harness
+ambient set does not apply. A hang is usually caused by test content
+the runner cannot name, so test files never count as touched: a
+master stall still groups `shared-baseline` for a fix brief. Like the
+other non-test identities these groups can never resolve through a
+vitest pass line and classify `shared-baseline`, `pr-caused` or
+`unknown` -- never `probable-flake`. Heartbeat, capacity-observer,
+job-memory, lifecycle (`started`/`exited`), aggregate
+(`FAIL (...)`/`PASS (...)`), usage and report-summary lines stay
+unparsed: `exited` lines fire on ordinary test failures and on the
+stop-others SIGTERM cascade, so they can never be runner identities.
+
 Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
 brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
 with an explicit test pass on master's current run produces
