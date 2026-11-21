@@ -438,6 +438,22 @@ trail reads `GET /api/verse/leader/orders`, the same order trace as:
 phm fleet orders --json
 ```
 
+A job the Leader names in one of its own messages is live too. Under the
+message, each named job is one chip: a dot and words for what that session is
+doing now ("running · claude · spoke 2m ago", "quiet 14m", "finished",
+"failed"), the last thing it said while it is working, and Log for its Worker
+log. The job id opens the session as a conversation in the same place a
+routed job's does, and is underlined while it is the one open. A job the
+session list does not hold reads "not in the session list" and is never
+called finished; when the list cannot be read every chip reads "state
+unknown". Pull requests the message names stay links on their own line. The
+chips read the list the Working now strip already reads, so they add no
+request:
+
+```sh
+phm sessions --json
+```
+
 ## Fleet telemetry and Show Mode
 
 The Fleet screen's read-only **Fleet map** places agent sessions inside their
