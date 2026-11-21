@@ -5,7 +5,9 @@
  * a "New" mark sits above the first message they have not reached and a count
  * says how many wait. Reaching the end clears the count and leaves the mark
  * where it was, so the place is not lost. Nothing here is a fleet fact: "new"
- * means "arrived in this window since the end was last on screen".
+ * means "arrived since the end was last on screen". A conversation that was
+ * read to its end before (thread-read-store.ts) opens with the mark above the
+ * first message that arrived since.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { dayLabel } from '../leader/thread-model.js';
@@ -23,8 +25,15 @@ export interface FollowState {
   followed: number;
 }
 
-/** Everything in the first read counts as read: opening a conversation never marks its history as new. */
-export const startFollow = (id: string, keys: readonly string[]): FollowState => ({ id, keys, seen: new Set(keys), markKey: null, followed: 0 });
+/**
+ * The first read. Everything counts as read except the keys in `unread` (what arrived since the conversation was last read to
+ * its end); the mark sits above the first of those. With none, opening a conversation never marks its history as new.
+ */
+export function startFollow(id: string, keys: readonly string[], unread: readonly string[] = []): FollowState {
+  const waiting = new Set(unread);
+  const markKey = keys.find(key => waiting.has(key)) ?? null;
+  return { id, keys, seen: new Set(markKey === null ? keys : keys.filter(key => !waiting.has(key))), markKey, followed: 0 };
+}
 
 export const unseenKeys = (state: FollowState): string[] => state.keys.filter(key => !state.seen.has(key));
 
@@ -75,22 +84,28 @@ export interface ThreadFollow {
   jumpToNew: () => void;
   /** Scrolls to the newest message. */
   jumpToEnd: () => void;
+  /** Every message of the newest read has been on screen. False until the first read has been taken in. */
+  caughtUp: boolean;
 }
+
+const NOTHING_UNREAD: readonly string[] = [];
 
 export const NEW_MARK_ATTR = 'data-new-mark';
 
 /**
  * `keys` is null until the conversation has been read. `end` is the element after the conversation; whether it is on
  * screen decides between following and keeping the reader's place. Without IntersectionObserver the view follows.
+ * `unreadAtOpen` (message keys) is used once, when the conversation's first read arrives.
  */
-export function useThreadFollow(id: string, keys: readonly string[] | null, root: RefObject<HTMLElement | null>, end: RefObject<HTMLElement | null>): ThreadFollow {
+export function useThreadFollow(id: string, keys: readonly string[] | null, root: RefObject<HTMLElement | null>, end: RefObject<HTMLElement | null>,
+  unreadAtOpen: readonly string[] = NOTHING_UNREAD): ThreadFollow {
   const [state, setState] = useState<FollowState | null>(null);
   const pinned = useRef(true);
   const signature = keys === null ? null : keys.join('\n');
   useEffect(() => {
     if (keys === null) return;
-    setState(prev => (prev === null || prev.id !== id ? startFollow(id, keys) : arrive(prev, keys, pinned.current)));
-    // `signature` stands for `keys`: the array is rebuilt by every poll, its content is what matters.
+    setState(prev => (prev === null || prev.id !== id ? startFollow(id, keys, unreadAtOpen) : arrive(prev, keys, pinned.current)));
+    // `signature` stands for `keys`: the array is rebuilt by every poll, its content is what matters. `unreadAtOpen` is read only on the first read.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, signature]);
 
@@ -120,5 +135,7 @@ export function useThreadFollow(id: string, keys: readonly string[] | null, root
     if (mark) mark.scrollIntoView?.({ block: 'start' });
     else jumpToEnd();
   }, [root, jumpToEnd]);
-  return { markKey: current?.markKey ?? null, unseen: current === null ? 0 : unseenKeys(current).length, jumpToNew, jumpToEnd };
+  // Asked of the keys in hand, not the ones last taken in: a read that has just arrived is not caught up with until it has been.
+  const caughtUp = current !== null && keys !== null && keys.every(key => current.seen.has(key));
+  return { markKey: current?.markKey ?? null, unseen: current === null ? 0 : unseenKeys(current).length, jumpToNew, jumpToEnd, caughtUp };
 }

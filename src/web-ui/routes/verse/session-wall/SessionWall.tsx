@@ -12,7 +12,8 @@
  * (SessionRail.tsx) and J and K step to the next and previous conversation.
  * The bar above the wall (WallBar.tsx) finds among the sessions on screen and
  * asks the server for one lane, one repo or only running sessions; both are
- * kept across a reload. N opens the next conversation with new messages.
+ * kept across a reload. N opens the next conversation with new messages; the
+ * counts behind the "N new" marks are kept across a reload too (wall-seen.ts).
  */
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { sessionAge } from '../../../../core/fleet/live-sessions.js';
