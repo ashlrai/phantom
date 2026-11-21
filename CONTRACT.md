@@ -497,13 +497,18 @@ to no join; `authorityEvidence: null` skips the join and an explicit
 array is used as given. Revert evidence is sticky-true like
 metrics-ingest, so a recorded revert is never contradicted by a later
 `reverted:false`; it is `null` when neither source records anything
-either way. Finish rows also fold four productivity verdicts, newest
+either way. Jobs rows also fold four productivity verdicts, newest
 explicit row wins: `empty` (the recorded no-diff boolean), `exit_code`
 (the worker's recorded exit status, negative signal exits included),
-`failure_class` — the finish row's recorded failure classification,
-resolved `failure_class`, then `failure_reason`, then `pool_error`
+`failure_class` — the recorded failure classification, resolved
+`failure_class`, then `failure_reason`, then `pool_error` on a finish row
 (snake_case before camelCase within each, the precedence the skill-nudge
-ledger reader shares) and accepted only as bounded identifier-shaped
+ledger reader shares) or the fixed `reason` on a `launch_failed` row
+whose `action` is `give_up` — the dead launch's recorded cause, since
+dispatchd drops the line when the retry budget is spent or the failure
+is permanent; `action: 'retry'` receipts are transient backoff and
+`launch_terminal` rows fire on requeues and skips, so neither mints a
+classification — and accepted only as bounded identifier-shaped
 labels; anything else is skipped, never recorded raw — and `empty_class`,
 the finish row's recorded empty-diff classification in dispatchd's closed
 `classify_empty` vocabulary (`no_diff`/`error`/`unknown`, snake_case
@@ -512,8 +517,12 @@ dispatchd writes
 `failure_class` only for the devin pool, so the fallbacks carry every
 other lane's classified cause (`launch_timeout`, `provider_*`,
 `agent_exit_nonzero`, `exit_status_missing`, pool errors like
-`rate_limit`). All stay `null` when no jobs row recorded them — the fold
-never infers a finish verdict from merge state, PR URLs or event names.
+`rate_limit`), and the give_up reason carries the launch vocabulary
+(`launch_timeout`, `local_backend_unavailable`, `authentication`,
+`resource_exhausted`, `provider_unavailable`, `launch_interrupted`,
+`launch_script_error`). All stay `null` when no jobs row recorded them —
+the fold never infers a finish verdict from merge state, PR URLs or
+event names.
 Batch sessions fold per member like the sibling fleet readers:
 `RQ-BATCH-*` session rows (launch, finish, session-aggregate usage) are
 infrastructure evidence counted in `RouterOutcomeFold.session_rows` —

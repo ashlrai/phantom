@@ -102,8 +102,9 @@ export interface RouterWeightProposalSet {
    * no diff); `unknown_nonzero_exit` counts jobs whose newest `exit_code`
    * was not 0 — the two overlap, since a crashed run usually diffs nothing.
    * `unknown_failure_classes` tallies the recorded failure classifications
-   * (failure_class, else failure_reason, else pool_error),
-   * top entries first. `unknown_empty_classes` tallies the recorded
+   * (failure_class, else failure_reason, else pool_error on a finish row,
+   * or the fixed reason on a launch_failed give_up receipt — the dead
+   * launch's recorded cause), top entries first. `unknown_empty_classes` tallies the recorded
    * finish-row `empty_class` verdicts — dispatchd's classify_empty triage
    * (`no_diff` healthy no-op, `error` infrastructure, `unknown` capture
    * gap) — so the empty share splits the way the dispatcher's own
@@ -114,9 +115,10 @@ export interface RouterWeightProposalSet {
    * `unreported`, batcher.RETRY) reads as an explained attempt instead of
    * an unresolved one, while `done`/`skipped` members still awaiting their
    * own publish verdict count in `unknown_unresolved`. `unknown_unresolved`
-   * is the remainder with no finish failure signal — finished cleanly and
-   * awaiting a merge verdict, or still in flight; the ledger simply
-   * records no terminal productivity outcome for it. All are counts of
+   * is the remainder with no recorded failure signal — finished cleanly and
+   * awaiting a merge verdict, still in flight, or only transient launch
+   * receipts; the ledger simply records no terminal productivity outcome
+   * for it. All are counts of
    * recorded evidence over the retained window, so 0 is a real measurement.
    */
   unknown_empty: number;
@@ -206,8 +208,9 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
       unknown++;
       // Finish productivity evidence explains the missing merge verdict:
       // empty:true means the run produced no diff, a nonzero exit_code means
-      // the worker failed, and failure_class names the classified cause. A
-      // batch member's task_outcome is its finish boundary: the requeue
+      // the worker failed, and failure_class names the classified cause —
+      // a finish row's classification or a dead launch's give_up reason.
+      // A batch member's task_outcome is its finish boundary: the requeue
       // words (failed/deferred/unreported) are the recorded failure signal,
       // while done/skipped members still await their own publish verdict.
       // A job carrying none of them has no recorded finish failure — it
@@ -305,7 +308,7 @@ export interface RouterWeightProposalReport {
    */
   unknown_empty: number | null;
   unknown_nonzero_exit: number | null;
-  /** Top recorded failure classifications inside the unknown cohort, by jobs; empty when none recorded. */
+  /** Top recorded failure classifications inside the unknown cohort, by jobs — finish-row labels or dead-launch give_up reasons; empty when none recorded. */
   unknown_failure_classes: { failure_class: string; jobs: number }[] | null;
   /**
    * Top recorded finish-row empty_class verdicts inside the unknown

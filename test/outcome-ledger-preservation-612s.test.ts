@@ -313,6 +313,48 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(byId.get('G7')?.failure_class).toBe('launch_timeout');
   });
 
+  it('folds a dead launch give_up reason into failure_class, never a retry receipt or launch_terminal', () => {
+    const fold = foldRouterOutcomes([
+      // dispatchd's launch_failed receipt: action=retry is transient
+      // backoff, action=give_up is the recorded cause for a launch the
+      // dispatcher will not retry (budget spent or permanent failure).
+      '{"job":"L1","event":"launch_failed","reason":"provider_unavailable","action":"retry","attempt":1}',
+      '{"job":"L1","event":"launch_failed","reason":"provider_unavailable","class":"retryable","action":"give_up","attempt":3,"lane":"alpha"}',
+      '{"job":"L2","event":"launch_failed","reason":"authentication","class":"permanent","action":"give_up","attempt":1}',
+      // launch_terminal rows fire on requeues and skips too — never a class.
+      '{"job":"L3","event":"launch_terminal","reason":"launcher-exited"}',
+      '{"job":"L3","event":"launch_terminal","reason":"spawn-failed"}',
+      // A give_up row without a bounded reason label stays unknown, as do
+      // retry receipts, missing actions and other launch_failed reasons
+      // spelled outside the identifier shape.
+      '{"job":"L4","event":"launch_failed","reason":"Not A Label!","action":"give_up"}',
+      '{"job":"L5","event":"launch_failed","reason":"launch_timeout","action":"retry"}',
+      '{"job":"L6","event":"launch_failed","reason":"launch_timeout"}',
+      // The receipt's class field describes retryability, not cause.
+      '{"job":"L7","event":"launch_failed","class":"permanent","action":"give_up"}',
+      // Newest recognized classification wins across finish and launch
+      // rows in either order.
+      '{"job":"L8","event":"finish","exit_code":1,"pool_error":"rate_limit"}',
+      '{"job":"L8","event":"launch_failed","reason":"resource_exhausted","action":"give_up"}',
+      '{"job":"L9","event":"launch_failed","reason":"launch_timeout","action":"give_up"}',
+      '{"job":"L9","event":"finish","exit_code":1,"failure_reason":"agent_exit_nonzero"}',
+      // Dialect spellings: type/kind event names and an uppercase action.
+      '{"job":"L10","kind":"launch_failed","reason":"launch_interrupted","action":"GIVE_UP"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('L1')?.failure_class).toBe('provider_unavailable');
+    expect(byId.get('L1')?.lane).toBe('alpha');
+    expect(byId.get('L2')?.failure_class).toBe('authentication');
+    expect(byId.get('L3')?.failure_class).toBeNull();
+    expect(byId.get('L4')?.failure_class).toBeNull();
+    expect(byId.get('L5')?.failure_class).toBeNull();
+    expect(byId.get('L6')?.failure_class).toBeNull();
+    expect(byId.get('L7')?.failure_class).toBeNull();
+    expect(byId.get('L8')?.failure_class).toBe('resource_exhausted');
+    expect(byId.get('L9')?.failure_class).toBe('agent_exit_nonzero');
+    expect(byId.get('L10')?.failure_class).toBe('launch_interrupted');
+  });
+
   it('folds the finish row empty_class in its closed classify_empty vocabulary', () => {
     const fold = foldRouterOutcomes([
       // dispatchd writes empty_class from classify_empty: no_diff for a
