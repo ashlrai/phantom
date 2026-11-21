@@ -478,6 +478,8 @@ adds by the reset in the same colour at 40%, and the share left unused as an emp
 outlined in `--status-warning-solid`. Use is not health, so the fill never takes a status
 colour for being high; amber fill is kept for a window that runs dry before its reset. No
 reading is a hatched track, never an empty bar. Do not hand-roll this split in a route's CSS.
+The Usage board's account windows use the same bar with `used` and, only where the window's
+start is known, the `elapsed` mark; a provider's limit flag is not a reading and keeps its own bar.
 
 **Engines.** Each engine is marked by a 2px tick and a monogram tile
 (`ENGINE_MONOGRAM`) in text contexts. Since 3.11.1 engine tiles, seat chips, lane ticks and the resource bar

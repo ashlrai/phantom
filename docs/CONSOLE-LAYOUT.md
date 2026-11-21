@@ -388,7 +388,16 @@ flagged it, never from a 100% reading, because credits can keep that account
 usable. Each window shows its bar, percent and reset as a countdown plus a
 local clock time; Claude's reset is the provider's own sentence, so no clock
 time is derived for it. A window with no reading has a hatched bar, not an
-empty one. Above the cards, Resets ahead puts every window that gave its reset
+empty one. The bar is the same one the Pools board draws, and it is never
+coloured for being high: a limit is the provider's flag, drawn as its own full
+bar. Where the accounts read holds the window's start, the bar carries a mark
+for how much of the window's time has gone and a line under it gives that
+share, how many points use sits behind or ahead of an even spend, and when the
+window began. The start is the provider's own (Grok's billing period) or seven
+days before a reset the server confirmed as weekly, and the line says which. A
+window whose start the read does not hold has no mark and no pace line; nothing
+is projected here, because this read has no burn rate (the Pools board has).
+Above the cards, Resets ahead puts every window that gave its reset
 as a date and time on one line that starts at now, soonest first: the wait
 drawn to a dot at the reset, the countdown and local time, and the usage now
 in words (a percent, "limit reached" with a square in place of the dot, or
