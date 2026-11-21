@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.52 |
-| Latest dated changelog release (2026-11-20) | 3.30.52 |
+| Source package | 3.30.53 |
+| Latest dated changelog release (2026-11-21) | 3.30.53 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -126,6 +126,16 @@ Merged after v3.30.40 (#7245 to #7384). Bridge and recovery bookkeeping is left 
 ### Removed
 
 - Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
+
+## [3.30.53] - 2026-11-21
+
+
+### Changes
+
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795218132-N17:** ([#7676](https://github.com/ashlrai/phantom/issues/7676)) ([13a8b84](https://github.com/ashlrai/phantom/commit/13a8b84ae5a72e7aa9deda3c80a0dc03bf0a2ce1))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795219934-N17:** ([#7679](https://github.com/ashlrai/phantom/issues/7679)) ([d2f5353](https://github.com/ashlrai/phantom/commit/d2f535393615aa4c989ee4e565e96b3a0c1c8bcb))
+* **RQ-REFILLCARDN22AQ8:** RQ-REFILLCARDN22AQ8: Pools card: refilled pools and whether ([#7680](https://github.com/ashlrai/phantom/issues/7680)) ([7cdb614](https://github.com/ashlrai/phantom/commit/7cdb6145e2b80c7a2de99ea49234ae17635f1eb3))
+* **RQ-RESETWAKEN22AQ8:** RQ-RESETWAKEN22AQ8: a pool past its reset counts as refilled ([#7677](https://github.com/ashlrai/phantom/issues/7677)) ([88824d5](https://github.com/ashlrai/phantom/commit/88824d52cf3da95763594d31563767e68f2eb19b))
 
 ## [3.30.52] - 2026-11-20
 
