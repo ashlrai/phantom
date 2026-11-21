@@ -10,6 +10,7 @@
  */
 import { readFleetResourcesView } from '../../cli/fleet-resources.js';
 import { ledgerRows, readText } from './empty-cause.js';
+import { buildRelaunches, type JobRelaunches, type RelaunchJob } from './relaunches.js';
 
 export const LAUNCH_RATE_SCHEMA = 'fleet.launches.v1';
 export const LAUNCH_RATE_MAX_HOURS = 168;
@@ -42,6 +43,8 @@ export interface LaunchLane {
   starts_24h: number;
   merged_24h: number;
   merged_per_start_24h: number | null;
+  /** 24-hour starts for each merged PR (starts_24h / merged_24h); null when nothing merged. */
+  starts_per_merged_pr: number | null;
   /** 24-hour merged per start under the threshold with at least the minimum starts. */
   wasted: boolean;
   /** Plan use 0..1+ from the router; null when unknown. */
@@ -67,6 +70,10 @@ export interface LaunchRateReport {
   /** Starts in the window that went to wasted lanes. */
   wasted_starts: number | null;
   lanes: LaunchLane[];
+  /** Per job id over the last 24 h: launches, lanes, minutes spent, PRs and merged (see relaunches.ts). */
+  relaunches: Record<string, JobRelaunches>;
+  /** Jobs with 3 or more launches in 24 h and no merged PR, worst first, in plain words. */
+  repeat_jobs: RelaunchJob[];
   headline: string;
   /** Plain-words changes, most important first. Never empty. */
   recommendations: string[];
@@ -149,7 +156,7 @@ export function buildLaunchRate(input: LaunchRateInput): LaunchRateReport {
     schema: LAUNCH_RATE_SCHEMA, as_of: new Date(now).toISOString(), hours,
     metrics: input.ledger === null ? 'unreadable' : 'ok', plans: plans === null || plans.length === 0 ? 'unknown' : 'ok',
     waste_rule: { merged_per_start_under: threshold, min_starts_24h: minStarts },
-    starts: null, starts_per_hour: null, longest_gap: null, wasted_starts: null, lanes: [], headline: '', recommendations: [],
+    starts: null, starts_per_hour: null, longest_gap: null, wasted_starts: null, lanes: [], relaunches: {}, repeat_jobs: [], headline: '', recommendations: [],
   };
   if (input.ledger === null) {
     report.headline = `Starts in the last ${hours} h: unknown (cannot read the job metrics file)`;
@@ -161,7 +168,7 @@ export function buildLaunchRate(input: LaunchRateInput): LaunchRateReport {
   const lane = (name: string): LaunchLane => {
     let entry = lanes.get(name);
     if (!entry) {
-      entry = { lane: name, starts: 0, merged: 0, merged_per_start: null, starts_24h: 0, merged_24h: 0, merged_per_start_24h: null, wasted: false, used_frac: null, reset_hours: null };
+      entry = { lane: name, starts: 0, merged: 0, merged_per_start: null, starts_24h: 0, merged_24h: 0, merged_per_start_24h: null, starts_per_merged_pr: null, wasted: false, used_frac: null, reset_hours: null };
       lanes.set(name, entry);
     }
     return entry;
@@ -186,9 +193,13 @@ export function buildLaunchRate(input: LaunchRateInput): LaunchRateReport {
   for (const entry of lanes.values()) {
     entry.merged_per_start = rate(entry.merged, entry.starts);
     entry.merged_per_start_24h = rate(entry.merged_24h, entry.starts_24h);
+    entry.starts_per_merged_pr = rate(entry.starts_24h, entry.merged_24h);
     entry.wasted = entry.starts_24h >= minStarts && entry.merged_24h / entry.starts_24h < threshold;
     if (entry.wasted) wasted += entry.starts;
   }
+  const relaunches = buildRelaunches(input.ledger, now);
+  report.relaunches = relaunches.jobs;
+  report.repeat_jobs = relaunches.repeat_jobs;
   inWindow.sort((a, b) => a - b);
   const edges = [since, ...inWindow, now];
   for (let i = 1; i < edges.length; i++) {

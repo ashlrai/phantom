@@ -374,6 +374,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'red-merges': () => import('./fleet-red-merges.js'),
   'release': () => import('./fleet-release.js'),
   'release-advance': () => import('./fleet-release-advance.js'),
+  'relaunches': () => import('./fleet-relaunches.js'),
   'release-advance-batch': () => import('./fleet-release-advance-batch.js'),
   'release-advance-once': () => import('./fleet-release-advance-once.js'),
   'release-advance-wait': () => import('./fleet-release-advance-wait.js'),

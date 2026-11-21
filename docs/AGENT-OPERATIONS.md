@@ -1121,6 +1121,14 @@ claude (9% used, 48 h left)". Plan use and reset come from
 sets the window (1 to 168, default 24). The desktop Fleet view's "Job starts" card
 shows the same report (`GET /api/verse/fleet/runs/launches`).
 
+Launch starts are scarce, so the same report also carries `relaunches`, an object per
+job id over the last 24 hours (`launches`, `lanes`, `minutes_spent`, `prs`, `merged`),
+`starts_per_merged_pr` on each lane, and `repeat_jobs`. `phm fleet relaunches --json`
+(schema `fleet.relaunches.v1`) prints just the jobs with 3 or more launches and no
+merged PR, in plain words, for example "launched 4 times on zai, 98 minutes, no PR came
+out; suggest: move to another lane or retire". The Job starts card lists the top three
+with one next step. Read-only over `metrics/jobs.jsonl`.
+
 `phm metrics` shows how well the self-improving loop is running, in one glance:
 PRs merged per hour over the last 1, 6 and 24 hours, the median time from publish
 to merge, the empty rate, each lane's jobs, merged PRs, empty rate and merge
