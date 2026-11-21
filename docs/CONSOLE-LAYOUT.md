@@ -522,6 +522,27 @@ a local seat says it has no usage window, an unreadable decision log reads
 unknown rather than empty, and a failed refresh labels the reading as an old
 one.
 
+Between the lanes and the list, "What was asked, and the seat chosen" draws
+the same decisions as a flow. Names on the left are what was asked, grouped by
+the switch above the diagram: kind of work (most asked first), difficulty (low,
+medium, high) or who asked (the record's source: daemon, gateway, best of N,
+leader, console, test). Names on the right are the seats chosen, most chosen
+first as in the lanes, with "No seat" for requests nothing was eligible for.
+Each name has a bar as tall as its count and a band joins each pair that
+occurs. One scale turns counts into pixels on both sides (168 px for the whole
+log, at most 12 px a decision), so a band is as thick at the seat as at the
+request; a record that does not say what was asked is counted under "Not
+recorded", never dropped. Pointing at a name lights its bands, fades the rest
+and gives the line under the diagram its words (`Code: 42 of 120 decisions.
+Went to Claude Max 30, Codex 12. 3 ran on another seat.`). The diagram is one
+tab stop: Up and Down walk a side, Home and End jump to its ends, Right and
+Left cross the name's thickest band. Enter or a click keeps a name: the list
+below is held to its decisions (heading `Latest: Code`, six shown, the rest
+counted) until Esc, a second click or "Show all". Switching the grouping lets
+go of a kept request and keeps a kept seat. While a column of the time axis is
+being read, the flow is drawn from that column's decisions only, and an empty
+column draws none. It adds no request.
+
 Feed puts what the fleet did in one newest-first stream: merged PRs (title and
 repo), published releases, failures (main going red, a job failing or ending
 empty with its reason when known), lanes (a lane hitting its plan limit, being

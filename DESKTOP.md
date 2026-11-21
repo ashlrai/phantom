@@ -53,6 +53,12 @@ each name carries a few live words when its board has something to flag
 `[` and `]` step between the boards. See
 [Console layout](docs/CONSOLE-LAYOUT.md).
 
+Under the lanes the Router pane draws the same recorded decisions as a flow:
+what was asked on the left (kind of work, difficulty or who asked), the seat
+chosen on the right, and a band between each pair as thick as its count. Point
+at a name or walk the names with the arrow keys to read it; Enter keeps it and
+holds the list below to its decisions.
+
 ## Desktop control ("computer use", macOS)
 
 Chat seats can drive apps on this Mac through the `computer_*` tools
