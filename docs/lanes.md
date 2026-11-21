@@ -27,7 +27,13 @@ phm lanes health --json
 phm lanes fit --lane codex-personal --json
 phm lanes yield --json --since 24h
 phm lanes held --json
+phm lanes pool
 ```
+
+`phm lanes pool` says, per lane, whether queued rows are waiting on a used-up pool
+(98% used or more, nothing running): "waiting on a used-up pool until Sat 3:30 PM (10 rows)",
+"normal", or "no meter" when there is no pool reading. The gaps hook counts only rows
+that can launch now, using the same rule.
 
 `phm lanes health` shows calls, error rate and latency per lane over the last
 12 hours. `phm lanes fit` shows which job kinds a lane should take and which

@@ -7,6 +7,7 @@
  * lanes (the same readings `phm pools` and `phm fleet lane-supply` show).
  */
 import type { LaneFacts } from './autofill-lanes.js';
+import { POOL_USED_UP_PCT } from './lane-pool-wait.js';
 
 /** A lane that can take new gap work now. */
 export interface GapLaneOpen { lane: string; free: number; running: number; target: number }
@@ -25,7 +26,7 @@ export const GAP_LANE_ORDER = ['claude', 'codex-local', 'codex-personal'] as con
 export function gapLaneRoom(lanes: readonly LaneFacts[], nowMs: number): GapLaneRoom {
   const room: GapLaneRoom = { open: [], waiting: [], stuck: 0 };
   for (const f of lanes) {
-    const spent = f.remainingPct !== null && f.remainingPct <= 0;
+    const spent = f.remainingPct !== null && 100 - f.remainingPct >= POOL_USED_UP_PCT;
     const back = f.resetAt ? Date.parse(f.resetAt) : NaN;
     // A reset already past means the reading is stale, so the pool is not treated as used up.
     if (spent && Number.isFinite(back) && back <= nowMs) { addOpen(room, f); continue; }
