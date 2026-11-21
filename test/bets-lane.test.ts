@@ -140,7 +140,10 @@ describe('betsCounts', () => {
 function readers(runsDir: string, files: Record<string, string>, over: Partial<LoopReaders> = {}): LoopReaders {
   return {
     runsDir, now: () => T0,
-    readText: async (path) => files[path.slice(runsDir.length + 1)] ?? null,
+    readText: async (path) => {
+      const text = files[path.slice(runsDir.length + 1)];
+      return text === undefined ? null : { text, truncated: false };
+    },
     gh: async () => null, installed: async () => null, nodes: () => null, peerTasks: async () => null, ncpu: () => 8,
     ...over,
   };
@@ -165,7 +168,7 @@ describe('bet store and CLI', () => {
       { event: 'outcome', job: 'RQ-BET-FAST', lane: 'claude', state: 'MERGED', url: 'https://github.com/ashlrai/phantom/pull/9', ts: iso(30) },
     ].map(r => JSON.stringify(r)).join('\n');
     const r = readers(runs, { 'metrics/jobs.jsonl': jobs, 'metrics/bets.jsonl': readFileSync(join(runs, 'metrics', 'bets.jsonl'), 'utf8') });
-    const dry = await scoreCycle({ ...r, readText: async (p) => p.endsWith('bets.jsonl') ? readFileSync(p, 'utf8') : r.readText(p, 0) }, { dryRun: true });
+    const dry = await scoreCycle({ ...r, readText: async (p) => p.endsWith('bets.jsonl') ? { text: readFileSync(p, 'utf8'), truncated: false } : r.readText(p, 0) }, { dryRun: true });
     expect(dry.written).toBe(false);
     expect(dry.decisions[0]).toMatchObject({ decision: 'killed', numbers: { laneHours: 2, merged: 1, jobs: 1, value: 0.17 } });
 

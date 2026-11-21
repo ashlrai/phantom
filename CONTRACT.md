@@ -461,6 +461,12 @@ explicit row wins: `empty` (the recorded no-diff boolean), `exit_code`
 `failure_class` (only bounded identifier-shaped labels; anything else is
 skipped). All stay `null` when no jobs row recorded them — the fold
 never infers a finish verdict from merge state, PR URLs or event names.
+`merged` reads the jobs-ledger outcome dialect the sibling fleet readers
+share: a terminal phase across
+`phase`/`state`/`outcome`/`status`/`result`/`conclusion`, or a `merged` /
+`closed` event name when no phase field resolves (a resolved phase stays
+authoritative; `mergedAt`/`closedAt` stay the preferred terminal stamps),
+with the `merged` boolean as before; every other spelling stays `null`.
 The fold is read-only and advisory: it
 never routes, ranks, tunes or writes.
 
@@ -1647,6 +1653,21 @@ whole document when a shown session has a job (`readSessionThreads` takes an
 injectable `readControls`): each such entry carries the same `control`,
 control messages and `sources.controls` as its single thread, and a failed
 read is `sources.controls: 'unavailable'` with one line in `gaps`.
+Depth (additive): `session-thread.ts` exports `SessionThreadDepth`
+(`'recent' | 'full'`), `SESSION_THREAD_DEPTHS`, `SessionThreadLimits` and
+`THREAD_LIMITS` (the limits for each depth; `recent` is the constants above).
+`buildSessionThread(list, id, parts, now, depth = 'recent')` takes the depth
+as an optional fifth argument and `sessionOutputLines(lines, shown =
+THREAD_OUTPUT_LINES)` the number of lines to keep. The document gains two
+last top-level keys: `depth` and `deeper: boolean` (true only for a
+`recent` thread in which a limit left out something `full` would show).
+`SessionThreadReadOptions` gains `depth`, and the default reply read asks
+for one reply more than the depth shows. `cmdSessionThread(args, read)`
+accepts `--all` and calls `read(id, 'full')` for it, `read(id)` otherwise;
+`SessionThreadRead` is `(id, depth?) => Promise<SessionThreadV1>`, and the
+route accepts `depth=recent|full` at most once, passing `'full'` on only
+when asked. `renderSessionThreadText` adds a note naming `--all` when
+`deeper` is true.
 `src/core/fleet/session-thread-read.ts` exports `readSessionThread(id,
 options)` with injectable `readMap`, `readSubagents`, `readActivity`,
 `readBus`, `readOwner` and `readReplies`; each read is guarded on its own and the result is
@@ -1856,7 +1877,7 @@ no execution authority; the token returns only to its acquirer.
 `phm agents bus work mine [<agent>]`. `readBusWorkMine(agent, options?)`
 (`BusWorkMineOptions`: `root?`, `runsRoot?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, claims, jobs, announced, next, handoffs, threads, awaiting, wakes, inbox}` or `{status:'invalid',
+asOf, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
@@ -1978,9 +1999,26 @@ party owing the reply (null for a topic or `group:` address, an
 unregistered label, or an unreadable registry). Same 20-item cap,
 longest-waiting order, `matched`/`truncated`/`skipped` semantics and
 `unavailable`-on-unreadable rule as `threads`.
+`blocked` is the third view over the same shared conversations read — now
+unfiltered, so all three sections narrow one projection at the frozen
+instant: every `state:'blocked'` thread (a blocker or failed report nothing
+has answered) the agent is a party to, where participation is any
+participant name the section's denotes rule matches — the agent's own
+labels, a name resolving to its identity, or a `group:<channel>:<topic>`
+address of a registry channel it belongs to. A block the agent reported
+itself still lists: the thread stays pending until a newer message moves it
+out of the state. Each `BusWorkMineBlockedItem` carries the conversation
+`id`, the latest message's envelope `id` as `messageId`, its `kind`, the
+sender's `from`/`fromAgent`, the recipient `to`, `lastAt`, `blockedMs`
+(ms the thread has stood blocked at the frozen instant), `messageCount` and
+the scrubbed `subject`; the first 20 show longest-standing first with
+`matched` the true total and `truncated` definitive, same
+`matched`/`truncated`/`skipped`/`unavailable` semantics as `threads`.
 `wakes` reuses
 `readAgentWakes` capped at the newest 20 with `matched` the count of every
-hint the bounded queue read matched and `truncated`, or
+hint the bounded queue tail matched for the agent before its row cap —
+a lower bound, never a proven total, when `truncated` marks queue-tail or
+cap cuts beyond the shown slice — and
 `unknown-agent`/`unavailable` with `reason`. `inbox` reuses `readAgentInbox`
 for the next page of mail addressed to the agent — same matching, order and
 owner-share receipt checks as `agents bus inbox` — as `{status:'ok', agent,
@@ -2041,7 +2079,11 @@ worker-handoff items
 additionally carry `held`/`holder` — the same hold evidence
 `readBusEnvelopeById` reports, read once per page, `held` null when a hold
 store cannot be read),
-`readAgentWakes(ref, sinceAt, options?)`, `listBusChannels(agent, options?)`
+`readAgentWakes(ref, sinceAt, options?)` (the ok page carries `matched`,
+every hint the bounded queue tail accepted for the agent before its row
+cap, and `truncated`, true when the 256 KiB observation window or the cap
+cut matches beyond the returned slice — `matched` is then a lower bound,
+never a proven total), `listBusChannels(agent, options?)`
 (the registry channels name-sorted with `createdBy`, `createdAt` and member
 handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or
@@ -2115,8 +2157,10 @@ are routing names and grant no authority.
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
 read-only probe over the five dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
-null when unreadable), the wake queue (`state` plus the observed hint count,
-null unless `ok`), the shared coordination table (`coordinationSummary`) and
+null when unreadable), the wake queue (`state`, the observed hint count
+before the row cap — 0 on a verified-missing queue, null when unreadable —
+plus `truncated` for queue-tail or cap cuts, null when the state is
+unknown), the shared coordination table (`coordinationSummary`) and
 the work-feed projection (job count, or the refusal `reason` plus the blamed
 receipt's wire id as `receipt` when the projection named one). Each section
 reports its own real state, a failed probe degrades only its own section, and

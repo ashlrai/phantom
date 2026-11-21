@@ -271,9 +271,17 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
         readLanes: async () => {
           const { getFleetLaneSnapshot } = await import('../core/fleet/lane-console.js');
           const snapshot = await getFleetLaneSnapshot();
-          const counts: Record<string, { running: number | null; target: number | null; queued: number | null }> = {};
-          for (const view of snapshot.lanes) counts[view.lane] = { running: view.liveJobs ?? null, target: view.slotTarget ?? null, queued: view.queueDepth ?? null };
-          return { starved: Object.entries(snapshot.starved.lanes).filter(([, row]) => row.starved).map(([lane]) => lane), counts };
+          // Clamp only the local lane to available memory, retaining the shared lane eligibility facts.
+          const { readLocalCapacity, clampLocalTarget, LOCAL_LANE } = await import('../core/fleet/local-capacity.js');
+          const room = await readLocalCapacity({ runsDir: root });
+          return {
+            lanes: snapshot.lanes.map(view => ({
+              lane: view.lane, running: view.liveJobs ?? null,
+              target: (view.lane === LOCAL_LANE ? clampLocalTarget(view.slotTarget ?? null, room) : view.slotTarget) ?? null,
+              queued: view.queueDepth ?? null,
+              held: view.hold?.held === true, remainingPct: view.credit.remainingPct,
+            })),
+          };
         },
         ...deps.autofill,
       });

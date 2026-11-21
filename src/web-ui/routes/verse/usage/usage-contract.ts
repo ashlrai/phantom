@@ -234,6 +234,8 @@ export interface AccountWindow {
   resetsAt: string | null;
   /** Verbatim provider prose, e.g. "resets Sep 25 at 7pm (America/New_York)". */
   resetDescription: string | null;
+  /** When this window began, where the server's reset provenance says. Absent or null = not known, so nothing is drawn against time. */
+  period?: WindowPeriod | null;
   /**
    * True when the provider signalled `rateLimitReachedType` — the upstream
    * writes the SENTINEL 100, which is a flag, not a measurement. Rendered as
@@ -504,6 +506,30 @@ function clampPercent(value: number | null): number | null {
   return Math.max(0, Math.min(100, value));
 }
 
+/**
+ * The start of a window, from the `resetProvenance` the server attaches to it.
+ * `reported`: the provider gave the period's own start (Grok's billing period).
+ * `weekly`: the server qualified the reset as a weekly deadline, so the window
+ * began seven days before it. Any other kind, or a provenance that names a
+ * different reset than the window's, has no known start.
+ */
+export interface WindowPeriod { startsAt: string; basis: 'reported' | 'weekly' }
+
+const WEEK_MS = 7 * 86_400_000;
+
+function projectPeriod(raw: unknown, resetsAt: string | null): WindowPeriod | null {
+  const r = record(raw);
+  const end = resetsAt === null ? NaN : Date.parse(resetsAt);
+  const at = r ? str(r, 'at') : null;
+  if (!r || !Number.isFinite(end) || at === null || Date.parse(at) !== end) return null;
+  const kind = str(r, 'kind');
+  if (kind === 'weekly-deadline') return { startsAt: new Date(end - WEEK_MS).toISOString(), basis: 'weekly' };
+  if (kind !== 'fixed-period') return null;
+  const startsAt = str(r, 'startsAt');
+  const start = startsAt === null ? NaN : Date.parse(startsAt);
+  return Number.isFinite(start) && start < end ? { startsAt: new Date(start).toISOString(), basis: 'reported' } : null;
+}
+
 function projectWindow(raw: unknown): AccountWindow | null {
   const r = record(raw);
   if (!r) return null;
@@ -512,6 +538,7 @@ function projectWindow(raw: unknown): AccountWindow | null {
   const native = record(r['nativeReport']);
   const limitReached = bool(r, 'limitReached') || bool(r, 'rateLimitReached');
   const measuredRaw = r['measured'];
+  const period = projectPeriod(r['resetProvenance'], str(r, 'resetsAt') ?? str(r, 'resets_at'));
   return {
     id,
     label: str(r, 'label'),
@@ -524,6 +551,8 @@ function projectWindow(raw: unknown): AccountWindow | null {
     // upstream writes the sentinel 100. Defaulting a flagged window to
     // `measured: true` would let a denial print as "100% used".
     measured: typeof measuredRaw === 'boolean' ? measuredRaw : !limitReached,
+    // Only when known, so a window without provenance is the object it has always been.
+    ...(period ? { period } : {}),
   };
 }
 

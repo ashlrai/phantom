@@ -30,7 +30,10 @@ const pools = () => screen.findAllByRole('listitem', { name: / pool$/ });
 const names = () => screen.getAllByRole('listitem', { name: / pool$/ }).map(row => row.getAttribute('aria-label'));
 /** The value drawn under a label in one pool's readings. */
 const fact = (row: HTMLElement, label: string) => within(row).getByText(label).nextElementSibling?.textContent;
-const bars = (row: HTMLElement) => within(row).queryAllByRole('img', { name: /used|usage/ }).map(bar => bar.getAttribute('aria-label'));
+/** Each card's own bar: the meter's name and the sentence it is read as. */
+const bars = (row: HTMLElement) => within(row).queryAllByRole('meter').map(bar => `${bar.getAttribute('aria-label')}: ${bar.getAttribute('aria-valuetext')}`);
+/** The parts drawn inside a card's bar, left to right, with the width (or, for the time mark, the place) of each. */
+const drawn = (row: HTMLElement) => [...within(row).getByRole('meter').children].map(part => [part.getAttribute('data-part'), (part as HTMLElement).style.width || (part as HTMLElement).style.left]);
 
 const props = { visible: true } as PaneProps;
 beforeEach(() => { evictAll(); vi.spyOn(Date, 'now').mockReturnValue(NOW); });
@@ -43,15 +46,27 @@ it('draws one card per resource, most at risk first, with its bar, projection an
   expect(names()).toEqual(['codex-personal pool', 'claude pool', 'codex-cmp pool']);
   expect(rows.map(row => row.dataset.risk)).toEqual(['high', 'low', 'unknown']);
   expect(within(rows[0]!).getByText('Codex personal: 68% will go unused: add work')).toBeInTheDocument();
-  expect(bars(rows[0]!)).toEqual(['codex-personal: 20% used, 85.7% of the window elapsed, 32% by reset at this burn']);
+  expect(bars(rows[0]!)).toEqual(['codex-personal used: 20% used, 85.7% of the window elapsed, 32% by reset at this burn, 68% left unused']);
+  // The same three parts Home draws for a pool, then the mark for the time gone.
+  expect(drawn(rows[0]!)).toEqual([['used', '20%'], ['more', '12%'], ['unused', '68%'], ['elapsed', '85.7%']]);
+  expect(within(rows[0]!).getByRole('meter')).toHaveAttribute('data-ending', 'unused');
+  expect(within(rows[0]!).getByRole('meter')).toHaveAttribute('aria-valuenow', '20');
   expect(['Used', 'Left', 'Resets', 'Burn', 'Unused at reset', 'Empty', 'Jobs', 'Read'].map(label => fact(rows[0]!, label)))
     .toEqual(['20%', '80%', 'in 1 d', '0.5%/h', '68%', 'not before reset', '3 of 4 running', '6 min ago']);
   expect(within(rows[0]!).getByText('reported')).toBeInTheDocument();
   expect(within(rows[0]!).getByText('claude-native-usage')).toBeInTheDocument();
   expect(within(rows[1]!).getByText('Claude: on pace')).toBeInTheDocument();
-  expect(bars(rows[1]!)).toEqual(['claude: 60% used, 64.3% of the window elapsed, 100% by reset at this burn']);
+  expect(bars(rows[1]!)).toEqual(['claude used: 60% used, 64.3% of the window elapsed, 100% by reset at this burn']);
+  // Used up by its reset: nothing is left over, so no outline is drawn.
+  expect(drawn(rows[1]!)).toEqual([['used', '60%'], ['more', '40%'], ['elapsed', '64.3%']]);
+  expect(within(rows[1]!).getByRole('meter')).toHaveAttribute('data-ending', 'even');
   expect(within(rows[2]!).getByText(`Codex cmp: unknown: no reading since ${at(-2)}`)).toBeInTheDocument();
-  expect(bars(rows[2]!)).toEqual(['codex-cmp usage unknown']);
+  expect(bars(rows[2]!)).toEqual(['codex-cmp used: usage unknown']);
+  // No reading: hatched, no parts, no number and no time mark.
+  expect(drawn(rows[2]!)).toEqual([]);
+  expect(within(rows[2]!).getByRole('meter')).toHaveAttribute('data-unread');
+  expect(within(rows[2]!).getByRole('meter')).not.toHaveAttribute('aria-valuenow');
+  expect(document.querySelector('[data-bar-key]')).toHaveTextContent(/used so far.*more by its reset at this burn.*left unused at its reset.*time elapsed in the window/);
   // A stale reading keeps its reported reset and its age, and every usage number reads unknown.
   expect(['Used', 'Left', 'Resets', 'Burn', 'Unused at reset', 'Read'].map(label => fact(rows[2]!, label))).toEqual(['unknown', 'unknown', 'in 2 h', 'unknown', 'unknown', '2 h ago']);
   expect(screen.getByText('1 behind, 1 unknown.')).toBeInTheDocument();
@@ -110,7 +125,7 @@ it('says so when every reading is unknown, and never draws a zero bar or a zero 
   render(<FleetPoolsPane {...props} />);
   const [claude, devin] = await pools();
   expect(screen.getByText('No current reading for any resource. Nothing here is known to be on pace.')).toBeInTheDocument();
-  expect(bars(claude!)).toEqual(['claude usage unknown']);
+  expect(bars(claude!)).toEqual(['claude used: usage unknown']);
   expect(['Used', 'Left', 'Resets', 'Burn', 'Unused at reset', 'Jobs'].map(label => fact(claude!, label))).toEqual(Array(6).fill('unknown'));
   expect(fact(devin!, 'Balance')).toBe('unknown');
   expect(screen.getByText('Claude: unknown: no reading')).toBeInTheDocument();

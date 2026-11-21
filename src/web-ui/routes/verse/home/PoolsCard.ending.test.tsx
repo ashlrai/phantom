@@ -32,7 +32,7 @@ describe('Pools card: how each pool ends its window', () => {
     expect(grok).toHaveAttribute('aria-valuenow', '20');
     expect(grok).toHaveAttribute('aria-valuetext', '20% used, 10% more by its reset, 70% unused at its reset');
     expect([...grok.children].map(part => (part as HTMLElement).style.width)).toEqual(['20%', '10%']);
-    expect(grok.querySelector('[data-more]')).not.toBeNull();
+    expect([...grok.children].map(part => part.getAttribute('data-part'))).toEqual(['used', 'more']);
   });
   it('projects nothing without a burn reading and draws no bar parts without a usage reading', async () => {
     show([short, spare, unburnt]);

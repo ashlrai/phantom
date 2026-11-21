@@ -157,6 +157,15 @@ describe('prose gaps and the drop queue', () => {
     expect(report.schema).toBe(JOB_GAPS_SCHEMA);
     expect(JOB_GAPS_SCHEMA).toBe('jobs.gaps.v1');
   });
+  it('reads repo attribution from jobs-ledger dialect job ids', async () => {
+    await seed({ JOBD: '## Remaining gaps\n- Add the sort flag to the list command\n' });
+    await writeFile(join(root, 'metrics', 'jobs.jsonl'), `${JSON.stringify({ event: 'outcome', lane: 'claude', empty: true, ts: iso(2), job_id: 'JOBD', repo: 'locus' })}\n`);
+    const report = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, ...none });
+    expect(report.proposed!.filter(p => p.queued)).toHaveLength(1);
+    const files = await dropFiles();
+    expect(files).toHaveLength(1);
+    expect(await headerOf(files[0]!)).toBe('#job repo=locus lane=claude tier=work');
+  });
   it('allows all seven repos and skips an unknown repo with a reason', async () => {
     expect([...DROP_QUEUE_REPOS]).toEqual(['phantom', 'phantom-secrets', 'ashlr-plugin', 'ashlr-stack', 'locus', 'lexicon', 'ashlr-md']);
     await seed({ JOBX: '## Remaining gaps\n- Wire the digest into the weekly report\n' });

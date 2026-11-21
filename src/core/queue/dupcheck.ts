@@ -194,25 +194,37 @@ export function referenceCommands(markdown: string): DupcheckCommand[] {
   const out: DupcheckCommand[] = [];
   for (const line of markdown.split('\n')) {
     const m = /^\|\s*<code>((?:phm|ashlr)\s[^|]*?)<\/code>\s*\|\s*(.*?)\s*\|/.exec(line.replace(/&#124;/g, '\u0001'));
-    if (m) out.push({ name: decode(m[1]!).replace(/\u0001/g, '|'), text: decode(m[2]!).replace(/\u0001/g, '|'), ref: CLI_REFERENCE, type: 'docs' });
+    if (m) out.push({ name: decode(m[1]!).replaceAll('\u0001', '|'), text: decode(m[2]!).replaceAll('\u0001', '|'), ref: CLI_REFERENCE, type: 'docs' });
   }
   return out;
 }
 
+const MERGED_LINE = /merge/i;
 /** Merged job records inside the window: ledger rows that say merged, with a PR number or title. */
 export async function readMergedJobs(runsDir: string, now: number, days = DUPCHECK_WINDOW_DAYS): Promise<DupcheckMerged[] | null> {
   const since = now - days * 86_400_000, rows = new Map<string, DupcheckMerged>();
   const ok = await readLedgerLines(join(runsDir, 'metrics', 'jobs.jsonl'), line => {
-    if (rows.size >= MAX_MERGED || !line.includes('merge')) return;
+    if (rows.size >= MAX_MERGED || !MERGED_LINE.test(line)) return;
     try {
       const r = JSON.parse(line) as Record<string, unknown>;
-      const str = (k: string): string | null => (typeof r[k] === 'string' && r[k] ? (r[k] as string) : null);
-      if (r.outcome !== 'merged' && r.state !== 'merged' && !str('merged_at')) return;
-      const at = str('merged_at') ?? str('at') ?? str('ts') ?? str('time');
+      // jobs.jsonl field dialects: phases outcome|state|status plus producer
+      // aliases, merge stamps merged_at|mergedAt, and the usual id/timestamp
+      // spellings dispatchd `_vc_pick` and metrics-outcomes accept.
+      const pick = (keys: readonly string[]): string | null => {
+        for (const key of keys) {
+          const value = r[key];
+          if (typeof value === 'string' && value) return value;
+        }
+        return null;
+      };
+      const phase = pick(['outcome', 'state', 'phase', 'status', 'result', 'conclusion']);
+      const mergedStamp = pick(['merged_at', 'mergedAt']);
+      if ((phase === null || phase.toUpperCase() !== 'MERGED') && mergedStamp === null) return;
+      const at = mergedStamp ?? pick(['at', 'ts', 'time', 'timestamp', 'closedAt', 'recordedAt', 'updatedAt']);
       const ms = at ? Date.parse(at) : NaN;
       if (!Number.isFinite(ms) || ms < since || ms > now + 86_400_000) return;
-      const jobId = str('job_id') ?? str('job') ?? str('jobId'), pr = typeof r.pr === 'number' ? r.pr : null;
-      const title = scrubSecrets(str('pr_title') ?? str('title') ?? str('subject') ?? '').slice(0, 300);
+      const jobId = pick(['job_id', 'job', 'jobId', 'id']), pr = typeof r.pr === 'number' ? r.pr : null;
+      const title = scrubSecrets(pick(['pr_title', 'title', 'subject']) ?? '').slice(0, 300);
       if (!title && !jobId) return;
       rows.set(`${jobId ?? ''}#${pr ?? title}`, { jobId, pr, title: title || (jobId ?? ''), mergedAt: new Date(ms).toISOString() });
     } catch { /* a bad line cannot show that anything merged */ }

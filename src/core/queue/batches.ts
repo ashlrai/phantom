@@ -86,9 +86,11 @@ async function readEmptyPrefixes(root: string, now: number): Promise<EmptyPrefix
     try {
       const row = JSON.parse(line);
       if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error();
-      if (row.event !== 'finish') continue;
+      // jobs.jsonl event names arrive as event|type|kind; stamps as
+      // ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt.
+      if ((row.event ?? row.type ?? row.kind) !== 'finish') continue;
       const job = id.parse(row.job ?? row.job_id ?? row.jobId ?? row.id);
-      const stamp = row.ts ?? row.timestamp ?? row.at;
+      const stamp = row.ts ?? row.timestamp ?? row.at ?? row.time ?? row.mergedAt ?? row.closedAt ?? row.recordedAt ?? row.updatedAt;
       const at = typeof stamp === 'string' && /(?:Z|[+-]\d{2}:?\d{2})$/.test(stamp) ? Date.parse(stamp) : NaN;
       if (!Number.isFinite(at)) throw new Error();
       if (at < now - 86400000 || at > now) continue;

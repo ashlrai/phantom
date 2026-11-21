@@ -263,7 +263,13 @@ the same coverage `work mine` handoffs and `handoff-receive` apply;
 `--thread` keeps only `note`/`context` bodies
 carrying that v2 thread label, and `--from` narrows by sender through the
 same identity-label matching `channel read` uses (a handle, `agent:<handle>`,
-stable id or alias; an unresolvable ref keeps exact-label matching). Persist
+stable id or alias; an unresolvable ref keeps exact-label matching).
+`--matched` additionally reports `matched`, the true pending total — every
+row the same filters accept across the whole retained store, the same count
+`work mine`'s inbox section reports — while `messages` still caps at
+`--limit`; because that read scans to the store's end, `nextCursor` then
+resumes at the newest shown row's cursor, so paging never skips an unshown
+match. Persist
 `nextCursor` only after handling the
 page. `--frame <cli>` prints the page as one bounded block marked untrusted
 data, the same for every CLI: each line summarizes the body — `note`,
@@ -287,7 +293,10 @@ appears inside the frame's bracket on those items. `held` is
 `true`/`false` only when both hold stores were read — a store that cannot
 be read reports `held: null` (unknown), never free.
 `phm agents bus wakes <agent>` lists wake hints for the agent and its
-channels.
+channels. The page reports `matched` — every hint the bounded queue tail
+accepted for the agent before its row cap — and `truncated`, true when the
+256 KiB observation window or the row cap cut matches beyond the returned
+slice, so a capped list is never passed off as the whole queue.
 
 **Lookup.** `phm agents bus show <id>` resolves one retained envelope by the
 wire id wake hints, `work mine` items and claim operations cite — the third
@@ -410,10 +419,20 @@ handoffs, each naming `waitingOn` plus the resolved `waitingOnAgent` (null
 for a topic, a `group:` address, an unregistered label or an unreadable
 registry), the same 20-item cap and `matched`/`truncated`/`skipped`
 semantics; the two thread sections are mutually exclusive on every thread —
-the wake
+and the blocked conversation threads it is a party to: every
+`state:'blocked'` thread the one shared conversations read reports (a
+blocker or failed report nothing has answered), narrowed to threads with a
+participant naming the agent under any of its labels or a
+`group:<channel>:<topic>` address of a channel it belongs to — a block the
+agent reported itself still lists, since the thread stays pending until a
+newer message moves it — longest-standing first, the same 20-item cap and
+`matched`/`truncated`/`skipped` semantics, each item citing the latest
+message's envelope `id`, `kind`, sender, recipient `to`, `blockedMs`,
+`messageCount` and scrubbed subject — the wake
 hints addressed to it, capped at the
-newest 20 with `matched` the count of every hint the bounded queue read
-matched, and
+newest 20 with `matched` the count of every hint the bounded queue tail
+matched for the agent before its row cap and `truncated` marking queue-tail
+or cap cuts beyond the shown slice, and
 the next page of mail in its inbox: the same matching, order and owner-share
 receipt checks `agents bus inbox` applies, capped at the oldest 20 pending
 messages with each body summarized by the shared one-line composer and
@@ -473,7 +492,8 @@ read, 2 on an invalid agent ref.
 **Status.** `phm agents bus status [--json]` is a read-only probe of the six
 dependencies every verb above touches: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
-the wake queue (state and observed hint count), the shared coordination table
+the wake queue (state, observed hint count before the row cap, and whether
+the bounded tail or cap truncated older hints), the shared coordination table
 (live claims and status rows), the message-id claim journal behind `fleet
 bus-next`/`bus-claim` and the `work mine` hold state (retained claim records),
 and the work-feed projection (job count, or the refusal reason when the feed
@@ -754,8 +774,9 @@ reply counts when its `from` resolves to the request's `to` identity and its
 label that resolves to no identity, and an unreadable registry, keep
 exact-label matching. `fleet bus-follow --to` resolves its stream filter the
 same way, once when the stream starts: mail addressed under any label of the
-named identity streams, and an unresolvable `--to` or an unreadable registry
-keeps exact-label matching. `phm comms bus read|watch` resolves its `--to`,
+named identity — or to a `group:<channel>:<topic>` address of a channel it
+belongs to, minus the identity's own channel posts — streams, and an
+unresolvable `--to` or an unreadable registry keeps exact-label matching. `phm comms bus read|watch` resolves its `--to`,
 `--from` and `--exclude-from` address filters the same way, once per read:
 a filter naming any label of a registered identity matches every label of
 that identity, and an unresolvable label or an unreadable registry keeps

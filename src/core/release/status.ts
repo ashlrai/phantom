@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { loadConfigAt } from '../config.js';
 import { getLocalReleaseStatus, type ReleaseSummary } from '../fleet/release-chain-status.js';
 export { getLocalReleaseStatus } from '../fleet/release-chain-status.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -20,11 +21,17 @@ export interface ReleaseStatusRow {
   mergedPrsSinceTag: number | null;
   /** Merged PRs since the tag, newest first, or null when unknown. Not capped here; the cadence report shows the newest 5. */
   mergedPrs: ReleasePrTitle[] | null;
+  /** The clone that was read, or null when none was found. */
+  path?: string | null;
+  /** Every clone path tried, in order. Listed when the repo is not found. */
+  tried?: string[];
+  /** Plain reason this row is unknown, or null when it was read fine. */
+  reason?: string | null;
 }
 /** One merged PR as plain text: its number and title. */
 export interface ReleasePrTitle { number: number; title: string }
 export interface ReleaseStatusReport { schema: 'phantom.release-status.v2'; repos: ReleaseStatusRow[]; release: ReleaseSummary }
-export interface ReleaseStatusDeps { root?: string; repos?: readonly string[]; now?: number; repoPath?: string; runsDir?: string; cadenceMinutes?: number; installed?: () => InstalledBuild }
+export interface ReleaseStatusDeps { root?: string; roots?: readonly string[]; repos?: readonly string[]; now?: number; repoPath?: string; runsDir?: string; cadenceMinutes?: number; installed?: () => InstalledBuild }
 const DAY_MS = 86_400_000;
 export const RELEASE_PR_TITLES_SHOWN = 5;
 
@@ -47,17 +54,30 @@ export function parseMergedPrs(subjects: string): ReleasePrTitle[] {
   return [...seen.values()];
 }
 
+/**
+ * Folders to look for clones in, first match wins: the repo roots in ~/.ashlr/config.json (read only, never
+ * written), then ~/Projects/ashlrai. A test or caller can pass `root` or `roots` instead.
+ */
+export function releaseRoots(deps: Pick<ReleaseStatusDeps, 'root' | 'roots'> = {}): string[] {
+  if (deps.roots) return [...new Set(deps.roots)];
+  if (deps.root) return [deps.root];
+  let configured: string[] = [];
+  try { configured = loadConfigAt(join(homedir(), '.ashlr')).roots.filter((root): root is string => typeof root === 'string' && isAbsolute(root)); } catch { /* no readable config: default only */ }
+  return [...new Set([...configured, join(homedir(), 'Projects', 'ashlrai')])];
+}
+
 /** Reads local clones only. Local refs can be stale; missing or incomplete evidence is reported as null. */
 export function readReleaseRows(deps: ReleaseStatusDeps = {}): ReleaseStatusRow[] {
-  const root = deps.root ?? join(homedir(), 'Projects', 'ashlrai');
+  const roots = releaseRoots(deps);
   return (deps.repos ?? AUTONOMY_REPOS).map((name): ReleaseStatusRow => {
-    const path = join(root, name);
+    const tried = roots.map(root => join(root, name));
+    const path = tried.find(candidate => existsSync(join(candidate, '.git'))) ?? tried[0] ?? name;
     const git = (...args: string[]): string | null => {
       try { return execFileSync('git', ['-C', path, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, maxBuffer: 16 * 1024 * 1024 }).trim(); }
       catch { return null; }
     };
-    const empty: ReleaseStatusRow = { repo: `ashlrai/${name}`, defaultBranch: null, latestTag: null, ageDays: null, unreleasedCommits: null, readable: false, taggedAt: null, mergedPrsSinceTag: null, mergedPrs: null };
-    if (!existsSync(join(path, '.git'))) return empty;
+    const empty: ReleaseStatusRow = { repo: `ashlrai/${name}`, defaultBranch: null, latestTag: null, ageDays: null, unreleasedCommits: null, readable: false, taggedAt: null, mergedPrsSinceTag: null, mergedPrs: null, path: null, tried, reason: null };
+    if (!existsSync(join(path, '.git'))) return { ...empty, reason: `not found (tried ${tried.join(', ') || 'no folders'})` };
     const remoteHead = git('symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD') || null;
     const defaultBranch = remoteHead?.startsWith('origin/') ? remoteHead.slice(7) : null;
     const tag = git('for-each-ref', '--sort=-creatordate', '--count=1', '--format=%(refname:strip=2)%09%(creatordate:unix)', 'refs/tags');
@@ -77,7 +97,9 @@ export function readReleaseRows(deps: ReleaseStatusDeps = {}): ReleaseStatusRow[
       if (!cuts || cuts.some(sha => log!.includes(sha))) log = null;
     }
     const mergedPrs = log === null ? null : parseMergedPrs(log.replace(/^[0-9a-f]+\t/gm, ''));
-    return { ...empty, readable: tag !== null && !(shallow && !latestTag), defaultBranch, latestTag: latestTag || null, ageDays,
+    const reason = tag === null ? 'could not read tags' : !latestTag ? 'no tags in this clone' : !remoteHead ? 'no default-branch ref (origin/HEAD is not set; fetch or set it)'
+      : latestTag && mergedPrs === null ? 'clone is shallow or incomplete, so PRs since the tag cannot be counted' : null;
+    return { ...empty, path, reason, readable: tag !== null && !(shallow && !latestTag), defaultBranch, latestTag: latestTag || null, ageDays,
       unreleasedCommits: count !== null && /^\d+$/.test(count) && Number.isSafeInteger(Number(count)) ? Number(count) : null,
       taggedAt: Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null,
       mergedPrsSinceTag: mergedPrs === null ? null : mergedPrs.length, mergedPrs };
@@ -94,6 +116,8 @@ export type ReleaseVerdict = 'fresh' | 'due' | 'no release yet' | 'unknown';
 /** One repo's release facts, gathered by the caller. `readable: false` means the facts could not be read at all. */
 export interface ReleaseCadenceInput {
   repo: string; latestTag: string | null; taggedAt: string | null; mergedPrsSinceTag: number | null; readable?: boolean;
+  /** Plain reason the facts are missing, shown after "unknown". */
+  reason?: string | null;
   /** Merged PRs since the tag, newest first; absent or null reads as unknown. */
   mergedPrs?: readonly ReleasePrTitle[] | null;
   /** Releases the installed build trails (Phantom only, from `phm self drift`); unknown or absent adds nothing. */
@@ -101,6 +125,8 @@ export interface ReleaseCadenceInput {
 }
 export interface ReleaseCadenceRow {
   repo: string; latestTag: string | null; taggedAt: string | null; ageDays: number | null; mergedPrsSince: number | null; verdict: ReleaseVerdict; suggestion: string;
+  /** Why the verdict is unknown (not found, no default-branch ref, shallow clone), or null. */
+  reason: string | null;
   /** The newest merged PRs since the tag (at most 5), or null when unknown. Compare with `mergedPrsSince` for the total. */
   recentPrs: ReleasePrTitle[] | null;
   /** Present only when the installed build is known to trail this repo's releases. */
@@ -131,15 +157,16 @@ export function releaseCadence(inputs: readonly ReleaseCadenceInput[], now: numb
     const ageDays = input.latestTag !== null && Number.isFinite(at) ? Math.max(0, Math.floor((now - at) / DAY_MS)) : null;
     const behind = typeof input.behindReleases === 'number' && Number.isSafeInteger(input.behindReleases) && input.behindReleases > 0 ? input.behindReleases : null;
     const recentPrs = input.latestTag !== null && Array.isArray(input.mergedPrs) ? input.mergedPrs.slice(0, RELEASE_PR_TITLES_SHOWN).map(({ number, title }) => ({ number, title })) : null;
-    const row = { repo: input.repo, latestTag: input.latestTag, taggedAt: ageDays === null ? null : input.taggedAt, ageDays, mergedPrsSince: merged, recentPrs, ...(behind ? { behindReleases: behind } : {}) };
+    const reason = input.reason ?? null;
+    const row = { repo: input.repo, reason, latestTag: input.latestTag, taggedAt: ageDays === null ? null : input.taggedAt, ageDays, mergedPrsSince: merged, recentPrs, ...(behind ? { behindReleases: behind } : {}) };
     const lag = behind ? `; installed build ${count(behind, 'release')} behind` : '';
-    if (input.readable === false) return { ...row, verdict: 'unknown', suggestion: `${name}: release state unknown (local clone missing or incomplete)` };
-    if (input.latestTag === null) return { ...row, verdict: 'no release yet', suggestion: `${name}: no release yet${merged === null ? '' : `; ${count(merged, 'PR')} merged`}` };
+    if (input.readable === false) return { ...row, verdict: 'unknown', suggestion: `${name}: ${reason ?? 'release state unknown (local clone missing or incomplete)'}` };
+    if (input.latestTag === null) return { ...row, verdict: 'no release yet', suggestion: `${name}: no release yet${reason ? ` (${reason})` : ''}${merged === null ? '' : `; ${count(merged, 'PR')} merged`}` };
     const facts = `${merged === null ? 'unknown PRs' : count(merged, 'PR')} since ${input.latestTag}${ageDays === null ? ', tag age unknown' : ` ${count(ageDays, 'day')} ago`}`;
     const byCount = merged !== null && merged > RELEASE_DUE.mergedPrs;
     const byAge = ageDays !== null && ageDays > RELEASE_DUE.days && merged !== 0;
     const verdict: ReleaseVerdict = byCount || byAge ? 'due' : merged === 0 || (merged !== null && ageDays !== null) ? 'fresh' : 'unknown';
-    return { ...row, verdict, suggestion: `${name}: ${facts}; ${verdict === 'due' ? 'release due' : verdict === 'fresh' ? merged === 0 ? 'nothing to release' : 'fresh' : 'cannot tell if a release is due'}${lag}` };
+    return { ...row, verdict, suggestion: `${name}: ${facts}; ${verdict === 'due' ? 'release due' : verdict === 'fresh' ? merged === 0 ? 'nothing to release' : 'fresh' : `cannot tell if a release is due${reason ? ` (${reason})` : ''}`}${lag}` };
   });
   const counts: Record<ReleaseVerdict, number> = { fresh: 0, due: 0, 'no release yet': 0, unknown: 0 };
   for (const row of repos) counts[row.verdict] += 1;
@@ -152,10 +179,22 @@ export function releaseCadence(inputs: readonly ReleaseCadenceInput[], now: numb
 export function getReleases(deps: ReleaseStatusDeps = {}): ReleasesReport {
   const rows = readReleaseRows(deps);
   const phantom = rows.find(row => row.repo === 'ashlrai/phantom' && row.readable);
-  const root = deps.root ?? join(homedir(), 'Projects', 'ashlrai');
   // Only a readable Phantom clone is asked: the boost reads its tags and the installed manifest, never the network.
-  const behindReleases = phantom ? readBehindReleases({ repo: join(root, 'phantom'), installed: deps.installed }) : null;
+  const behindReleases = phantom?.path ? readBehindReleases({ repo: phantom.path, installed: deps.installed }) : null;
   return releaseCadence(rows.map(row => row === phantom ? { ...row, behindReleases } : row), deps.now ?? Date.now());
+}
+
+/**
+ * The one line on the Leader card (desktop and phone): the most overdue repo, or "all fresh".
+ * "Release due: locus (23 PRs since v1.4.0, 9 days)" | "Releases: all fresh" | "Releases: none due (1 unknown)" | "Releases: unknown".
+ */
+export function releasesLeaderLine(report: ReleasesReport | null | undefined): string {
+  if (!report || !Array.isArray(report.repos) || !report.repos.length || report.counts.unknown === report.repos.length) return 'Releases: unknown';
+  const next = report.next;
+  if (next) return `Release due: ${next.repo.replace(/^ashlrai\//, '')} (${next.mergedPrsSince === null ? 'unknown PRs' : count(next.mergedPrsSince, 'PR')} since ${next.latestTag ?? 'unknown'}, ${next.ageDays === null ? 'unknown days' : count(next.ageDays, 'day')})`;
+  if (report.counts.fresh === report.repos.length) return 'Releases: all fresh';
+  const other = report.counts.unknown + report.counts['no release yet'];
+  return `Releases: none due${other ? ` (${report.counts.unknown ? `${report.counts.unknown} unknown` : ''}${report.counts.unknown && report.counts['no release yet'] ? ', ' : ''}${report.counts['no release yet'] ? `${report.counts['no release yet']} with no release yet` : ''})` : ''}`;
 }
 
 /**
