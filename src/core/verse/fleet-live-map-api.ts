@@ -18,7 +18,7 @@
  * GET /api/verse/fleet/control/map-replay[?since=6h&step=5m] is `phm map replay --json`
  * (fleet.map-replay.v1): the fleet one frame per step, for the Map pane's time slider.
  *
- * GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&job=RQ-1&waitingOn=claude] is
+ * GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&blocked=1&job=RQ-1&waitingOn=claude] is
  * `phm agents conversations --json` (agents.conversations.v1): threads by reply
  * chain with their state, for the map's thread lines and the Conversations panel.
  */
@@ -91,15 +91,16 @@ export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = thrott
       return true;
     }
     if (path === AGENT_CONVERSATIONS_PATH) {
-      const waiting = params.get('waiting'), agent = params.get('agent'), job = params.get('job'), waitingOn = params.get('waitingOn');
-      if ([...params.keys()].some(key => key !== 'agent' && key !== 'waiting' && key !== 'job' && key !== 'waitingOn')
-        || params.getAll('agent').length > 1 || params.getAll('waiting').length > 1 || params.getAll('job').length > 1
-        || params.getAll('waitingOn').length > 1
-        || (waiting !== null && waiting !== '1' && waiting !== '0') || agent === '' || job === '' || waitingOn === '') {
-        sendJson(res, 400, { error: 'Use agent (a name), waiting (1), job (a job id) and waitingOn (a name) only, once each.' }); return true;
+      const waiting = params.get('waiting'), blocked = params.get('blocked'), agent = params.get('agent'), job = params.get('job'), waitingOn = params.get('waitingOn');
+      if ([...params.keys()].some(key => key !== 'agent' && key !== 'waiting' && key !== 'blocked' && key !== 'job' && key !== 'waitingOn')
+        || params.getAll('agent').length > 1 || params.getAll('waiting').length > 1 || params.getAll('blocked').length > 1
+        || params.getAll('job').length > 1 || params.getAll('waitingOn').length > 1
+        || (waiting !== null && waiting !== '1' && waiting !== '0') || (blocked !== null && blocked !== '1' && blocked !== '0')
+        || agent === '' || job === '' || waitingOn === '') {
+        sendJson(res, 400, { error: 'Use agent (a name), waiting (1), blocked (1), job (a job id) and waitingOn (a name) only, once each.' }); return true;
       }
       try {
-        const result = conversations({ agent: agent ?? undefined, waitingOnly: waiting === '1', job: job ?? undefined, waitingOn: waitingOn ?? undefined });
+        const result = conversations({ agent: agent ?? undefined, waitingOnly: waiting === '1', blockedOnly: blocked === '1', job: job ?? undefined, waitingOn: waitingOn ?? undefined });
         sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
       } catch { sendJson(res, 503, { error: 'Agent conversations unavailable.' }); }
       return true;

@@ -70,7 +70,7 @@ export interface AgentConversations {
   waiting: number | null;
   skipped: number;
 }
-export interface ConversationQuery { agent?: string; waitingOnly?: boolean; job?: string; waitingOn?: string }
+export interface ConversationQuery { agent?: string; waitingOnly?: boolean; blockedOnly?: boolean; job?: string; waitingOn?: string }
 
 /** Whether a routing label is a known agent (the leader, a lane, a job, a lane's numbered agent; a topic is not) and its map node. */
 export type PlaceAgent = (name: string, lane: string | null) => { known: boolean; node: string | null };
@@ -126,8 +126,8 @@ export function groupConversations(messages: readonly ConversationMessage[], now
 }
 
 /**
- * One agent (by name), waiting threads only and/or one job: `job` keeps the
- * threads the projection ties to that id — the `job:<id>` bucket itself or a
+ * One agent (by name), waiting threads only, blocked threads only and/or one job:
+ * `job` keeps the threads the projection ties to that id — the `job:<id>` bucket itself or a
  * member message naming it — whole threads, never partial message lists. With
  * `identityOf`, a participant also matches when its label and the query
  * resolve to the same registered identity, so one agent's handle, alias and
@@ -151,6 +151,7 @@ export function filterConversations(list: readonly Conversation[], query: Conver
     && (!agent || c.participants.some(p => p.name.toLowerCase() === agent
       || (key !== undefined && identityOf?.(p.name) === key)))
     && (!query.waitingOnly || c.state === 'waiting')
+    && (!query.blockedOnly || c.state === 'blocked')
     && (query.waitingOn === undefined || (c.waiting !== null && (
       waitingOnMatch !== undefined
         ? waitingOnMatch(c.waiting.on, c.messages[c.messages.length - 1]?.from ?? '')
