@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DROP_QUEUE_REPOS, extractAllGaps, extractGaps, gapIsActionable, JOB_GAPS_SCHEMA, maxNewFromEnv, readJobGaps, sameWork } from '../src/core/fleet/job-gaps.js';
+import { DROP_QUEUE_REPOS, extractAllGaps, extractGaps, gapIsActionable, JOB_GAPS_SCHEMA, maxNewFromEnv, readGapQueueInputs, readJobGaps, sameWork } from '../src/core/fleet/job-gaps.js';
 import { cmdJobsGaps } from '../src/cli/jobs-gaps.js';
 
 const NOW = Date.parse('2026-11-19T12:00:00Z');
@@ -221,7 +221,8 @@ describe('prose gaps and the drop queue', () => {
 describe('gaps from published jobs', () => {
   const dropDir = join('leader', 'drop');
   const dropFiles = async (lane: string) => (await readdir(join(root, dropDir, lane)).catch(() => [])).filter(f => f.endsWith('.md'));
-  const run = (extra: Record<string, unknown> = {}) => readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, ...none, ...extra });
+  // These scenarios need unimplemented targets; master admission is covered above.
+  const run = (extra: Record<string, unknown> = {}) => readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, ...none, masterHasTarget: async () => false, ...extra });
   async function publish(id: string, log: string): Promise<void> {
     await mkdir(join(root, 'metrics'), { recursive: true });
     await writeFile(join(root, 'metrics', 'jobs.jsonl'), `${JSON.stringify({ event: 'outcome', job: id, lane: 'claude', empty: false, repo: 'phantom', ts: iso(2) })}\n`);
@@ -298,29 +299,33 @@ describe('gaps from published jobs', () => {
 describe('gaps and lanes that can run them', () => {
   const dropDir = join('leader', 'drop', 'claude');
   const lane = (name: string, over: Record<string, unknown> = {}) => ({ lane: name, running: 0, target: 8, queued: 0, held: false, remainingPct: 68, resetAt: null, ...over });
-  const stuckLanes = [lane('codex-personal', { queued: 10, remainingPct: 0, resetAt: '2026-11-21T20:30:00Z' }), lane('claude', { remainingPct: 68 })];
+  const stuckLanes = [lane('codex-personal', { queued: 40, remainingPct: 0, resetAt: '2026-11-21T20:30:00Z' }), lane('claude', { remainingPct: 68 })];
   const dropFiles = async () => (await readdir(join(root, dropDir)).catch(() => [])).filter(f => f.endsWith('.md'));
-  const fillPrompts = async (n: number) => {
-    await mkdir(join(root, 'queue', 'prompts'), { recursive: true });
-    for (let i = 0; i < n; i++) await writeFile(join(root, 'queue', 'prompts', `RQ-PHX-FULL${String(i).padStart(3, '0')}.md`), 'waiting\n');
+  const fillReadyRows = async (pool: string) => {
+    await mkdir(join(root, 'queue'), { recursive: true });
+    await writeFile(join(root, 'queue', 'ready.tsv'), Array.from({ length: 40 }, (_, i) => `RQ-RDY${i}\tphantom\t${pool}\twork\tplain row ${i}`).join('\n') + '\n');
+    expect(await readGapQueueInputs(root, null)).toMatchObject({ readyRows: 40, parkedRows: 0, launchableRows: 40, limit: 40, full: true });
   };
   const run = (lanes: readonly unknown[] | undefined) => readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, ...none, ...(lanes ? { lanes: lanes as never } : {}) });
 
   it('queues gaps for the idle lane when only rows on a used-up pool fill the queue', async () => {
     await seed({ 'RQ-A': '## Gaps\n- Wire the digest into phm report weekly\n' });
-    await fillPrompts(40);
+    await fillReadyRows('codex-personal');
     const report = await run(stuckLanes);
+    expect(report.queue).toMatchObject({ readyRows: 40, parkedRows: 40, launchableRows: 0, lanesSource: 'lane readings', full: false });
     expect(report.proposed).toMatchObject([{ queued: true, lane: 'claude', skipped: null }]);
     expect(await dropFiles()).toHaveLength(1);
-    expect(report.parked).toBe(10);
+    expect(report.parked).toBe(40);
   });
 
   it('parks rows on a lane whose slots are all busy, and queues for the starved lane', async () => {
     await seed({ 'RQ-A': '## Gaps\n- Wire the digest into phm report weekly\n' });
-    await fillPrompts(40);
-    const report = await run([lane('codex-local', { running: 2, target: 2, queued: 12 }), lane('claude')]);
-    expect(report.parked).toBe(12);
-    expect(report.proposed).toMatchObject([{ queued: true, lane: 'claude' }]);
+    await fillReadyRows('codex-local');
+    const report = await run([lane('codex-local', { running: 2, target: 2, queued: 40 }), lane('claude')]);
+    expect(report.queue).toMatchObject({ readyRows: 40, parkedRows: 40, launchableRows: 0, lanesSource: 'lane readings', full: false });
+    expect(report.parked).toBe(40);
+    expect(report.proposed).toMatchObject([{ queued: true, lane: 'claude', skipped: null }]);
+    expect(await dropFiles()).toHaveLength(1);
   });
 
   it('gives a lane at 100% no gap rows', async () => {
