@@ -713,7 +713,8 @@ values, and `phm queue add` takes `--max-tier`, `--data-class` and
 nowMs, windowHours)`, `foldMarketOverrides(jsonl, nowMs, windowHours)`,
 `foldClaimOverrides(jsonl, nowMs, windowHours, truncated?)`,
 `foldDecisionOutcomes(marketJsonl, jobsJsonl, nowMs, windowHours,
-jobsTruncated?)` and
+jobsTruncated?)`,
+`foldRouteRejections(marketJsonl, nowMs, windowHours)` and
 `renderUnfed(report)` in
 `src/core/fleet/unfed-capacity.ts` and `src/core/fleet/unfed-market.ts` back
 `phm fleet unfed` (`fleet.unfed.v1`). `foldMarketOverrides` collapses the
@@ -732,7 +733,13 @@ into `hinted`/`overridden`/`open`/`unrouted`/`unexplained` outcome tallies
 `byReason` override-reason counts and per-`work_class` tallies in the
 report's `decisionOutcomes` field (`available`, `jobsAvailable`,
 `jobsTruncated`, `decided`); a missing jobs ledger leaves every decided
-job `unresolved`, never a fabricated outcome. The optional `market` carries the
+job `unresolved`, never a fabricated outcome. `foldRouteRejections` reads
+the same collapsed decisions' `rejected_lanes` — every lane the market
+refused each job, with its recorded reason codes — into the report's
+`rejections` field (`available`, `decided`, `unrouted`, `lanes`,
+`byReason`): `lanes` tallies rejected lanes per job with per-lane reason
+counts, `byReason` counts each job once per reason across all its rejected
+lanes, and malformed entries or codes are skipped rather than guessed. The optional `market` carries the
 dispatcher's own input files (slots.json, models.json, budget-overrides.json,
 adaptive.json, HOLD, router-queue.md); when slots.json parses, a derived
 report recomputes per-lane `blocked` reason codes with the same eligibility

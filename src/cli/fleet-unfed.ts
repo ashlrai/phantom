@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { currentUnfed, foldClaimOverrides, foldDecisionOutcomes, foldMarketOverrides, foldUnfedHistory, renderUnfed, FLEET_UNFED_SCHEMA, type UnfedReport } from '../core/fleet/unfed-capacity.js';
+import { currentUnfed, foldClaimOverrides, foldDecisionOutcomes, foldMarketOverrides, foldRouteRejections, foldUnfedHistory, renderUnfed, FLEET_UNFED_SCHEMA, type UnfedReport } from '../core/fleet/unfed-capacity.js';
 import { readTail, runsRoot } from '../core/metrics/loop-collect.js';
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -14,7 +14,7 @@ const DEFAULT_WINDOW_HOURS = 24;
 const MAX_WINDOW_HOURS = 24 * 7;
 
 const USAGE = `Usage: phm fleet unfed [--window <hours>] [--json]
-Per-resource utilization of the shared work queue, unfed capacity: lanes with free slots while ready rows wait under another lane's hint, with reason codes, and lane-override accounting over the window — once over market decisions and once over recorded claim launches. When the dispatcher does not publish its own verdict, codes are recomputed from queue/slots.json, models.json, queue/budget-overrides.json, queue/adaptive.json, queue/router-queue.md and HOLD under ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Also folds the last <hours> (default 24, max 168) of unfed ticks and route decisions from metrics/work-market.jsonl, and claim launches from the tail of metrics/jobs.jsonl.
+Per-resource utilization of the shared work queue, unfed capacity: lanes with free slots while ready rows wait under another lane's hint, with reason codes, and lane-override accounting over the window — once over market decisions and once over recorded claim launches. When the dispatcher does not publish its own verdict, codes are recomputed from queue/slots.json, models.json, queue/budget-overrides.json, queue/adaptive.json, queue/router-queue.md and HOLD under ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Also folds the last <hours> (default 24, max 168) of unfed ticks and route decisions from metrics/work-market.jsonl — overrides, per-lane rejections and decision outcomes — and claim launches from the tail of metrics/jobs.jsonl.
 Reads queue/status.json, queue/ready.tsv, queue/slots.json, models.json, queue/budget-overrides.json, queue/adaptive.json, queue/router-queue.md, HOLD, metrics/work-market.jsonl and metrics/jobs.jsonl under ~/.ashlr-runs (override with ASHLR_RUNS_DIR). The report carries status.json's last_tick as statusAsOf and flags statusFresh false when the tick is older than two minutes, in the future, or missing — the same freshness rule the spend projection uses; a stale snapshot is reported as the last published state, never as live. Read-only: no writes, no child processes, no network.
 Exit 1 when any lane is unfed now, 2 when status.json is unreadable.`;
 
@@ -82,6 +82,7 @@ export async function cmdFleetUnfed(args: string[]): Promise<number> {
       overrides: foldMarketOverrides(history, nowMs, window),
       claims: foldClaimOverrides(jobsText, nowMs, window, jobsTruncated),
       decisionOutcomes: foldDecisionOutcomes(history, jobsText, nowMs, window, jobsTruncated),
+      rejections: foldRouteRejections(history, nowMs, window),
     };
   } catch {
     const error = 'Cannot read lane status. Expected lanes with running and target in queue/status.json.';
