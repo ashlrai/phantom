@@ -833,7 +833,7 @@ describe('agent conversation threads in the unified inbox', () => {
   it('reports unavailable and degraded reads honestly and uses the seam', async () => {
     const convStub = (over: Partial<AgentConversations>): AgentConversations => ({
       schema: 'agents.conversations.v1', version: 1, generatedAt: new Date(now).toISOString(),
-      source: 'available', conversations: [], waiting: 0, skipped: 0, ...over,
+      source: 'available', conversations: [], matched: 0, waiting: 0, skipped: 0, ...over,
     });
     const seen: unknown[] = [];
     const degraded = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
@@ -841,7 +841,7 @@ describe('agent conversation threads in the unified inbox', () => {
     expect(seen).toEqual([{}]);
     expect(degraded.sources.conversations).toEqual({ state: 'degraded', pending: 0 });
     const unavailable = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
-      readConversations: () => convStub({ source: 'unavailable', conversations: null, waiting: null }) });
+      readConversations: () => convStub({ source: 'unavailable', conversations: null, matched: null, waiting: null }) });
     expect(unavailable.sources.conversations).toEqual({ state: 'unavailable', pending: 0 });
     const throwing = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
       readConversations: () => { throw new Error('boom'); } });
