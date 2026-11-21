@@ -11,7 +11,7 @@
  */
 import { isAbsolute } from 'node:path';
 import type { CloudGh } from '../core/cloud/pr-actions.js';
-import { readLandedFromGit, type LandedFromGit } from '../core/fleet/landed-from-git.js';
+import { landedReposFromEnv, readLandedFromGit, type LandedFromGit } from '../core/fleet/landed-from-git.js';
 import { cmdFleetDirtyLanded } from './fleet-dirty-landed.js';
 import { MAX_LIMIT, cmdFleetLandedClose, type LandedCloseRunner } from './fleet-landed-close.js';
 
@@ -95,11 +95,12 @@ export async function cmdFleetLandedSweep(args: string[], deps: FleetLandedSweep
   // offline) there is nothing to sweep: say so and let the tick go on. Bad data still fails.
   if (inputGap !== undefined) {
     // gh is out: plain git still says which jobs reached the default branch in the last 24 h.
-    const git = (deps.landedFromGit ?? (nowMs => readLandedFromGit({ now: nowMs })))((deps.now ?? Date.now)());
+    const git = (deps.landedFromGit ?? (nowMs => readLandedFromGit({ now: nowMs, repos: landedReposFromEnv() })))((deps.now ?? Date.now)());
     result.source = 'git';
     if (git.ok) {
-      result.inspected = result.landed = git.jobs.length;
-      result.skippedReason = `gh pr list could not be read (${inputGap}); from git, ${git.jobs.length} jobs landed on ${git.repo} in the last ${git.sinceHours} h. No PRs closed`;
+      const here = git.jobs.filter(j => j.repo === git.repo).length;
+      result.inspected = result.landed = here;
+      result.skippedReason = `gh pr list could not be read (${inputGap}); from git, ${here} jobs landed on ${git.repo} in the last ${git.sinceHours} h. No PRs closed`;
     } else {
       result.skippedReason = `no landed report yet: gh pr list could not be read (${inputGap}) and ${git.reason ?? 'git could not be read'}`;
     }

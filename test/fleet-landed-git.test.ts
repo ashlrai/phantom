@@ -30,7 +30,7 @@ describe('readLandedFromGit', () => {
     expect(r.jobs[2]).toMatchObject({ repo: 'phantom', sha: sha('d') });
     expect(calls.some(a => a[0] === 'fetch' && a.includes('master'))).toBe(true);
     expect(calls.find(a => a[0] === 'log')).toContain('--since=2026-11-20T10:00:00.000Z');
-    expect(landedHeadline(r)).toBe('3 jobs landed on phantom in the last 24 h (from git).');
+    expect(landedHeadline(r)).toBe('3 jobs landed in the last 24 h: phantom 3 (from git).');
   });
 
   it('a fetch failure is a plain reason, not an empty guess', () => {
@@ -41,13 +41,46 @@ describe('readLandedFromGit', () => {
   });
 });
 
+describe('readLandedFromGit on real subject shapes', () => {
+  const real = commit('f', '2026-11-21T09:50:00Z', 'Fix queue drain (RQ-SQUASH, #7887)')
+    + commit('e', '2026-11-21T09:40:00Z', 'bridge(RQ-PAREN-N22TQ8): (#7888)')
+    + commit('d', '2026-11-21T09:30:00Z', 'bridge: RQ-COLON-1795R2 (#7889)')
+    + commit('c', '2026-11-21T09:20:00Z', 'Merge queue: docs sweep (#7890)\n\nJob: RQ-INBODY.')
+    + commit('b', '2026-11-21T09:10:00Z', 'chore: bump a dependency (#7891)');
+  const now = Date.parse('2026-11-21T10:00:00Z');
+
+  it('counts every form and skips the unrelated commit', () => {
+    const git = (args: string[]) => args[0] === 'log' ? real : '';
+    const r = readLandedFromGit({ git, now });
+    expect(r.jobs.map(j => j.id).sort()).toEqual(['RQ-COLON-1795R2', 'RQ-INBODY', 'RQ-PAREN-N22TQ8', 'RQ-SQUASH']);
+  });
+
+  it('deepens a shallow checkout to the window, so a day of merges is not counted as 1', () => {
+    const calls: string[][] = [];
+    const git = (args: string[]) => { calls.push(args); return args[0] === 'rev-parse' ? 'true\n' : args[0] === 'log' ? real : ''; };
+    readLandedFromGit({ git, now });
+    expect(calls.find(a => a[0] === 'fetch')).toContain('--shallow-since=2026-11-20T10:00:00.000Z');
+  });
+
+  it('counts per repo and keeps going when one repo cannot be read', () => {
+    const git = (args: string[], cwd?: string) => {
+      if (cwd === '/x/md' && args[0] === 'fetch') throw new Error('no route');
+      return args[0] === 'log' ? real : '';
+    };
+    const r = readLandedFromGit({ git, now, repos: [{ name: 'phantom', cwd: '/x/p' }, { name: 'ashlr-md', cwd: '/x/md' }] });
+    expect(r.ok).toBe(true);
+    expect(r.repos).toMatchObject([{ repo: 'phantom', ok: true, jobs: 4 }, { repo: 'ashlr-md', ok: false, jobs: 0 }]);
+    expect(landedHeadline(r)).toBe('4 jobs landed in the last 24 h: phantom 4 (from git). Could not read ashlr-md (git could not read origin/master (no route)).');
+  });
+});
+
 describe('fleet landed', () => {
   it('prints a plain first line then one line per job', async () => {
     const out: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((t: string) => { out.push(t); });
     const code = await cmdFleetLanded([], { read: () => readLandedFromGit({ git: gitOk() }) });
     expect(code).toBe(0);
-    expect(out[0]).toBe('3 jobs landed on phantom in the last 24 h (from git).');
+    expect(out[0]).toBe('3 jobs landed in the last 24 h: phantom 3 (from git).');
     expect(out[1]).toBe(`RQ-GAMMA phantom ${'a'.repeat(7)} 2026-11-21T06:00:00Z`);
     expect(out).toHaveLength(4);
   });

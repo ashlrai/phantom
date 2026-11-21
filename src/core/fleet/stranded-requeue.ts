@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { readReadyText, parseReadyRows, rewriteReadyRows, type RewriteReadyRowsOptions } from './ready-row-edit.js';
 import { readStrandedBranches, type StrandedBranch } from './stranded-branches.js';
 import { needsGh } from './job-gaps.js';
+import type { LandedFromGit } from './landed-from-git.js';
 
 export const REQUEUE_SCHEMA = 'jobs.stranded.requeue.v1';
 /** Recovery ids are `<job>R2` then `<job>R3`; an R3 that is spent means gave up. */
@@ -25,6 +26,8 @@ export const GH_LANE = 'codex-personal';
 export const NO_GH_LANE_WHY = 'needs gh; no gh lane free';
 const GH_JOB_ID = /^(?:RQ-)?FIXUP-(?:CI|MAIN)-/i;
 const HEAD_BYTES = 512;
+/** A job that finished longer ago than this is stale filler, not a stranded recovery. */
+export const MAX_STRANDED_AGE_HOURS = 48;
 
 export interface RequeuedRow { job: string; id: string; repo: string; lane: string; promptPath: string; written: boolean }
 export interface RequeueReport {
@@ -36,6 +39,12 @@ export interface RequeueReport {
   gaveUp: { job: string; tries: number }[];
   /** Skipped because a PR exists, a recovery is already queued or running, or the id is taken. */
   already: { job: string; why: string; by?: string }[];
+  /** Skipped because git shows the job (or its R-suffix base id) already landed on a default branch. */
+  alreadyLanded: { job: string; landedAs: string }[];
+  /** Skipped because the job finished more than 48 h ago. */
+  tooOld: { job: string; ageHours: number }[];
+  /** Why the landed check could not run (git unreadable); requeue then proceeds without it. */
+  landedCheck?: string;
   /** Aborts that are not a fetch race: listed, never requeued. */
   notRequeued: { job: string; reason: string }[];
   /** Not requeued this run: over the per-run limit, or gh work with no gh lane free; the next run picks them up. */
@@ -53,6 +62,10 @@ export interface RequeueOptions {
   ready?: RewriteReadyRowsOptions;
   /** Free slots on the gh lane, read only when a job needs gh. Null or missing means unknown, which counts as none. */
   ghSlots?: () => Promise<number | null>;
+  /** The same git landed check as `phm fleet landed`, over a window wide enough to see the job. Missing means no check. */
+  landed?: () => LandedFromGit;
+  /** Finish older than this many hours is skipped as stale (default 48). */
+  maxAgeHours?: number;
 }
 
 /** Free slots on the gh lane from the live lane readings; null when they cannot be read. */
@@ -121,14 +134,15 @@ async function readOriginal(promptsDir: string, job: string): Promise<string | n
   } catch { return null; }
 }
 
-const summaryLine = (r: Pick<RequeueReport, 'apply' | 'requeued' | 'gaveUp' | 'already'>): string =>
-  `${r.apply ? 'requeued' : 'would_requeue'}=${r.requeued.length} gave_up=${r.gaveUp.length} already=${r.already.length}`;
+const summaryLine = (r: Pick<RequeueReport, 'apply' | 'requeued' | 'gaveUp' | 'already' | 'alreadyLanded' | 'tooOld'>): string =>
+  `${r.apply ? 'requeued' : 'would_requeue'}=${r.requeued.length} gave_up=${r.gaveUp.length} already=${r.already.length}`
+  + (r.alreadyLanded.length ? ` already_landed=${r.alreadyLanded.length}` : '') + (r.tooOld.length ? ` too_old=${r.tooOld.length}` : '');
 
 export async function planStrandedRequeue(runsDir: string, opts: RequeueOptions = {}): Promise<RequeueReport> {
   const limit = opts.limit ?? 3, queueDir = join(runsDir, 'queue'), promptsDir = join(queueDir, 'prompts');
   const stranded = await readStrandedBranches(runsDir, { now: opts.now, sinceHours: opts.sinceHours ?? null });
   const report: RequeueReport = {
-    schema: REQUEUE_SCHEMA, apply: opts.apply === true, status: stranded.status, requeued: [], gaveUp: [], already: [],
+    schema: REQUEUE_SCHEMA, apply: opts.apply === true, status: stranded.status, requeued: [], gaveUp: [], already: [], alreadyLanded: [], tooOld: [],
     notRequeued: [], deferred: [], unknown: [], unreadable: stranded.unreadable, summary: '',
   };
 
@@ -158,12 +172,28 @@ export async function planStrandedRequeue(runsDir: string, opts: RequeueOptions 
   const strandedJobs = new Set(stranded.branches.map(b => b.job));
   const recoveredBases = new Set(stranded.recovered.map(r => baseJob(r.job)));
 
+  let landedIds: Map<string, string> | null = null;
+  if (opts.landed && groups.size > 0) {
+    try {
+      const git = opts.landed();
+      if (git.ok) landedIds = new Map(git.jobs.flatMap(j => [[baseJob(j.id), j.id], [j.id, j.id]] as [string, string][]));
+      else report.landedCheck = git.reason ?? 'git could not be read';
+    } catch (e) { report.landedCheck = e instanceof Error ? e.message.slice(0, 120) : 'git could not be read'; }
+  }
+  const landedAs = (job: string, base: string): string | undefined => landedIds?.get(job) ?? landedIds?.get(base);
+  // A landed `<job>R2` counts for `<job>` too: the map is keyed by both the id and its base.
+  const maxAge = opts.maxAgeHours ?? MAX_STRANDED_AGE_HOURS;
+
   const planned: { base: string; id: string; row: StrandedBranch }[] = [];
   const originals = new Map<string, string | null>();
   for (const [base, rows] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
     const bad = rows.find(r => r.reason !== FETCH_RACE);
     if (bad) { report.notRequeued.push({ job: bad.job, reason: bad.reason }); continue; }
     if (recoveredBases.has(base)) { report.already.push({ job: base, why: 'a pull request exists' }); continue; }
+    const landed = rows.map(r => landedAs(r.job, base)).find(Boolean);
+    if (landed) { report.alreadyLanded.push({ job: base, landedAs: landed }); continue; }
+    const ages = rows.map(r => r.ageHours).filter((a): a is number => a !== null);
+    if (ages.length > 0 && Math.min(...ages) > maxAge) { report.tooOld.push({ job: base, ageHours: Math.round(Math.min(...ages)) }); continue; }
     const by = recoveredBy(base, strandedJobs);
     if (by !== null) { report.already.push({ job: base, why: `${by} already recovers this branch`, by }); continue; }
     const live = TRIES.map(n => `${base}R${n}`).find(id => taken(id) && !strandedJobs.has(id));
@@ -225,6 +255,9 @@ export function requeueText(r: RequeueReport): string[] {
   const out = [r.summary];
   for (const x of r.requeued) out.push(`${r.apply ? 'requeued' : 'would requeue'} ${x.job} as ${x.id} (${x.repo}${x.lane === 'claude' ? '' : `, ${x.lane} only: needs gh`})`);
   for (const x of r.already) if (x.by) out.push(`already recovered ${x.job}: ${x.by}`);
+  for (const x of r.alreadyLanded) out.push(`already landed ${x.job}: ${x.landedAs} is on the default branch`);
+  for (const x of r.tooOld) out.push(`too old ${x.job}: finished ${x.ageHours} h ago, over ${MAX_STRANDED_AGE_HOURS} h`);
+  if (r.landedCheck !== undefined) out.push(`landed check skipped: ${r.landedCheck}`);
   for (const x of r.gaveUp) out.push(`gave up on ${x.job}: ${x.tries} tries used`);
   for (const x of r.notRequeued) out.push(`not requeued ${x.job}: abort reason ${x.reason} is not a fetch race, a person must look`);
   for (const x of r.unknown) out.push(`unknown ${x.job}: ${x.why}`);

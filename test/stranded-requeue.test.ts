@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cmdJobsStranded } from '../src/cli/jobs-stranded.js';
 import { planStrandedRequeue, requeueText } from '../src/core/fleet/stranded-requeue.js';
+import { readLandedFromGit } from '../src/core/fleet/landed-from-git.js';
 import { hooksFromPlannerReport } from '../src/core/fleet/self-tick-hooks.js';
 
 const dirs: string[] = [];
@@ -130,9 +131,9 @@ it('the CLI prints json with a schema id, plain text, and rejects --apply alone'
   const out: string[] = [];
   vi.spyOn(console, 'log').mockImplementation((...a) => { out.push(a.join(' ')); });
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  expect(await cmdJobsStranded(['--requeue', '--json', '--runs-dir', dir])).toBe(0);
+  expect(await cmdJobsStranded(['--requeue', '--json', '--runs-dir', dir], undefined, noGit)).toBe(0);
   expect(JSON.parse(out[0]!).schema).toBe('jobs.stranded.requeue.v1');
-  expect(await cmdJobsStranded(['--requeue', '--runs-dir', dir])).toBe(0);
+  expect(await cmdJobsStranded(['--requeue', '--runs-dir', dir], undefined, noGit)).toBe(0);
   expect(out[1]).toContain('would requeue RQ-RESULT as RQ-RESULTR2');
   expect(await cmdJobsStranded(['--apply', '--runs-dir', dir])).toBe(2);
 });
@@ -142,4 +143,41 @@ it('the self-tick hook reads the requeue summary', () => {
   expect(hook({ strandedRequeue: { requeued: [{}, {}], summary: 'requeued=2 gave_up=0 already=5' } })).toMatchObject({ state: 'ran', items: 2, note: 'requeued=2 gave_up=0 already=5' });
   expect(hook({ strandedRequeue: { error: 'boom' } })).toMatchObject({ state: 'failed' });
   expect(hook({})).toMatchObject({ state: 'not-recorded' });
+});
+
+const landedLog = (...subjects: string[]) => (args: string[]) => args[0] === 'log'
+  ? subjects.map((m, i) => `${String(i).repeat(40)}\x1f2026-11-21T0${i}:00:00Z\x1f${m}\x1e\n`).join('') : '';
+const gitSays = (...subjects: string[]) => () => readLandedFromGit({ git: landedLog(...subjects) });
+const noGit = () => readLandedFromGit({ git: () => { throw new Error('offline'); } });
+
+it('skips a job whose base id already landed, even when only its R2 id is on master', async () => {
+  const dir = await setup({ 'RQ-RESULT': 'result-abort' });
+  const plan = await planStrandedRequeue(dir, { ready: fast, landed: gitSays('bridge: RQ-RESULTR2 (#7)') });
+  expect(plan.requeued).toEqual([]);
+  expect(plan.alreadyLanded).toEqual([{ job: 'RQ-RESULT', landedAs: 'RQ-RESULTR2' }]);
+  expect(plan.summary).toContain('already_landed=1');
+  expect(requeueText(plan).join('\n')).toContain('already landed RQ-RESULT');
+});
+
+it('requeues when the landed commit is for another job', async () => {
+  const dir = await setup({ 'RQ-RESULT': 'result-abort' });
+  const plan = await planStrandedRequeue(dir, { ready: fast, landed: gitSays('bridge(RQ-OTHER): x (#8)') });
+  expect(plan.requeued.map(r => r.id)).toEqual(['RQ-RESULTR2']);
+  expect(plan.alreadyLanded).toEqual([]);
+});
+
+it('skips a job that finished over 48 h ago and counts it as tooOld', async () => {
+  const dir = await setup({ 'RQ-RESULT': 'result-abort' });
+  const plan = await planStrandedRequeue(dir, { ready: fast, now: Date.now() + 72 * 3_600_000 });
+  expect(plan.requeued).toEqual([]);
+  expect(plan.tooOld).toHaveLength(1);
+  expect(plan.tooOld[0]).toMatchObject({ job: 'RQ-RESULT' });
+  expect(plan.summary).toContain('too_old=1');
+});
+
+it('a git failure is said plainly and the requeue goes on', async () => {
+  const dir = await setup({ 'RQ-RESULT': 'result-abort' });
+  const plan = await planStrandedRequeue(dir, { ready: fast, landed: noGit });
+  expect(plan.requeued).toHaveLength(1);
+  expect(plan.landedCheck).toContain('git could not read origin/master');
 });
