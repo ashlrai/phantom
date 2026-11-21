@@ -173,14 +173,22 @@ far; lighter: where the current burn ends by reset; marker: time elapsed in
 the window) and labelled readings: used, left, the reset as a countdown and a
 local time, burn per hour and its basis, unused at reset, jobs running against
 the slot target, and how long ago the reading was taken and by which reader.
+Under the bar, a plan pool draws its window so far: every stored reading from
+the window's start to its reset, the dashed even line from 0% to 100%, a rule
+at now and a dotted line from the newest reading to where the card says this
+burn ends. The sentence below it counts the readings and gives the newest one
+against the even line in points. One reading is one dot, a pool without a
+reset time says its window cannot be drawn, and when the stored readings
+cannot be read the board says so once and draws no chart.
 Claude's per-model weekly windows sit under its card. A credits pool shows its
 balance and no bar. The line under the headline names the next reset, and the
 switch narrows the list to Behind, On pace or Unknown (arrow keys move it).
 Every value is read from `pools.v1`; one it does not hold reads unknown, never
-zero. The same rows for agents:
+zero. The same rows and the same stored readings for agents:
 
 ```sh
 phm pools
+phm fleet usage-history
 ```
 
 The Models pane is one board of every model the router knows, grouped under
