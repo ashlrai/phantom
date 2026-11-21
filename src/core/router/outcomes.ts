@@ -225,6 +225,31 @@ export interface RouterOutcome {
    * never inferred from merge state or event names.
    */
   task_outcome: string | null;
+  /**
+   * The dispatch claim's recorded lane-hint blocking codes — the third
+   * field of the claim's lane-override record. A solo `claim` row that
+   * left its hinted lane spreads the work market's
+   * `preferred_lane_blocked_by` here (contrib/mac/dispatchd.py,
+   * docs/QUEUE.md): the rejected preferred lane's `reason_codes` —
+   * `quota_exhausted`, `saturated`, `held`, `provider_backoff`,
+   * `hysteresis_*` and the rest of the market's closed vocabulary — or
+   * `[]` when the preferred lane was unknown to the market or merely
+   * outranked rather than rejected (`unknown_preference`,
+   * `resource_fit`, hysteresis-held fallbacks). `batch_claim` rows
+   * never carry the field — a member that moved lanes with its session
+   * has no market blocking record — so it stays `null` there, unknown,
+   * never `[]`. The list joins only alongside a well-formed
+   * `lane_override` on the newest `claim`/`batch_claim` row — the same
+   * newest-claim-stands rule the override pair follows: a later
+   * on-hint claim clears it, a malformed reason or hint skips the row,
+   * and non-claim rows never touch it. Entries join only in the bounded
+   * lowercase reason-code shape, deduplicated in recorded order and
+   * capped; a non-array value or a list whose entries are all
+   * unrecognizable reads as unrecorded (`null`), while a recorded empty
+   * list stays `[]` — the market's own "nothing blocked it" verdict,
+   * distinct from missing evidence.
+   */
+  lane_hint_blocked_by: string[] | null;
   /** The lane+model's pass^k (passPowK) from the latest eval.lane-scores.v1 projection; null when unknown. */
   passk: number | null;
 }
@@ -413,6 +438,53 @@ const taskOutcome = (r: Row): string | null => {
   if (event === null || !TASK_OUTCOME_EVENTS.has(event)) return null;
   const word = str(r, 'outcome');
   return word !== null && TASK_OUTCOME_WORDS.has(word) ? word : null;
+};
+
+/**
+ * The claim events that can carry lane-routing evidence — `claim` for
+ * solo launches, `batch_claim` for batch members. The same pair the
+ * lane-override fold reads; kept under its own name so each fold binds
+ * the evidence it consumes.
+ */
+const LANE_BLOCKED_CLAIM_EVENTS: ReadonlySet<string> = new Set(['claim', 'batch_claim']);
+/**
+ * The recorded blocking-code and hint shapes — the same bounds the
+ * lane-override fold applies to its pair: each blocked-by entry joins
+ * only as a lowercase bounded reason code and the claim's hint only as
+ * a bounded lane id. Anything else is skipped, never recorded raw.
+ */
+const LANE_BLOCKED_CODE = /^[a-z][a-z0-9_]{0,63}$/;
+const LANE_BLOCKED_HINT = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
+/** Bound on recorded blocking codes per claim — the market's per-lane rejection list never approaches it. */
+const LANE_BLOCKED_MAX = 32;
+
+/**
+ * The claim row's recorded lane-hint blocking codes. dispatchd spreads
+ * the market's `preferred_lane_blocked_by` onto solo `claim` rows whose
+ * launch left its hinted lane — the rejected preferred lane's
+ * `reason_codes`, possibly empty when the lane was unknown to the
+ * market or merely outranked (`resource_fit`/`unknown_preference`/
+ * hysteresis-held fallbacks record `[]`). `batch_claim` rows never
+ * carry the field. Entries join only in the bounded reason-code shape,
+ * deduplicated in recorded order and capped; a non-array value or a
+ * list whose entries are all unrecognizable reads as unrecorded
+ * (`null`), while a recorded empty list stays `[]` — the market's own
+ * "nothing blocked it" verdict, distinct from missing evidence.
+ */
+const laneHintBlockedBy = (r: Row): string[] | null => {
+  const v = r['lane_hint_blocked_by'];
+  if (!Array.isArray(v)) return null;
+  if (v.length === 0) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of v) {
+    if (out.length >= LANE_BLOCKED_MAX) break;
+    if (typeof entry === 'string' && LANE_BLOCKED_CODE.test(entry) && !seen.has(entry)) {
+      seen.add(entry);
+      out.push(entry);
+    }
+  }
+  return out.length === 0 ? null : out;
 };
 
 /**
@@ -665,7 +737,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       ttm_s: null, queue_wait_s: queueWaitS.get(j) ?? null,
       empty: null, diff_files: null, diff_lines: null,
       exit_code: null, failure_class: null, empty_class: null,
-      task_outcome: null, passk: null,
+      task_outcome: null, lane_hint_blocked_by: null, passk: null,
     };
     o.lane = str(r, 'lane', 'pool', 'arm') ?? o.lane;
     o.model = str(r, 'model') ?? o.model;
@@ -745,6 +817,24 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     if (f !== null && typeof f === 'object' && !Array.isArray(f)) {
       const fixed = count((f as Row)['fixed']), rejected = count((f as Row)['rejected']), ignored = count((f as Row)['ignored']);
       if (fixed !== null && rejected !== null && ignored !== null) o.review_findings = { fixed, rejected, ignored };
+    }
+    // The same claim rows carry the hinted lane's recorded blocking
+    // codes — the third field of the dispatch override record. The
+    // newest claim stands under the same rule the override pair
+    // follows: a later claim that ran on its hint clears the codes, a
+    // malformed reason or hint skips the row entirely, and every
+    // non-claim row leaves them alone.
+    const blockedEvent = str(r, ...EVENT_NAME_KEYS)?.toLowerCase();
+    if (blockedEvent !== undefined && LANE_BLOCKED_CLAIM_EVENTS.has(blockedEvent)) {
+      const blockedReason = str(r, 'lane_override');
+      if (blockedReason === null) {
+        o.lane_hint_blocked_by = null;
+      } else if (LANE_BLOCKED_CODE.test(blockedReason)) {
+        const blockedHint = str(r, 'lane_hint');
+        if (blockedHint === null || LANE_BLOCKED_HINT.test(blockedHint)) {
+          o.lane_hint_blocked_by = laneHintBlockedBy(r);
+        }
+      }
     }
     outcomes.set(j, o);
   }

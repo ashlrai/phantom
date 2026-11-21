@@ -548,6 +548,27 @@ word under `outcome`; unrecognized spellings and every other row's
 finish row, so their finish verdicts and usage stay `null` rather than
 split from the session aggregate; `task_outcome` is the member's only
 recorded productivity verdict and stays `null` for solo jobs.
+`lane_hint_blocked_by` is the dispatch claim's recorded lane-hint
+blocking codes — the third field of the claim's lane-override record.
+A solo `claim` row that left its hinted lane spreads the work market's
+`preferred_lane_blocked_by` here: the rejected preferred lane's
+`reason_codes` (`quota_exhausted`, `saturated`, `held`,
+`provider_backoff`, `hysteresis_*` and the rest of the market's closed
+vocabulary) or `[]` when the preferred lane was unknown to the market
+or merely outranked rather than rejected (`unknown_preference`,
+`resource_fit`, hysteresis-held fallbacks). `batch_claim` rows never
+carry the field — a member that moved lanes with its session has no
+market blocking record — so it stays `null` there, unknown, never
+`[]`. The list joins only alongside a well-formed `lane_override` on
+the newest `claim`/`batch_claim` row under the same newest-claim-stands
+rule the override pair follows: a later on-hint claim clears it, a
+malformed reason or hint skips the row, and rows of every other event
+never touch it. Entries join only in the bounded lowercase
+reason-code shape, deduplicated in recorded order and capped; a
+non-array value or a list whose entries are all unrecognizable reads
+as unrecorded (`null`), while a recorded empty list stays `[]` — the
+market's own "nothing blocked it" verdict, distinct from missing
+evidence.
 `merged` reads the jobs-ledger outcome dialect the sibling fleet readers
 share: a terminal phase across
 `phase`/`state`/`outcome`/`status`/`result`/`conclusion`, or a `merged` /

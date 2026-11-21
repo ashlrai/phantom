@@ -134,6 +134,7 @@ function outcomeLine(o: RouterOutcome): string {
     `cost_usd=${text(o.cost_usd)}`, `acus=${text(o.acus)}`, `wall_s=${text(o.wall_s)}`, `ttm_s=${text(o.ttm_s)}`, `queue_wait_s=${text(o.queue_wait_s)}`, `tokens_total=${text(o.tokens_total)}`, `passk=${text(o.passk)}`,
     `empty=${text(o.empty)}`, `exit_code=${text(o.exit_code)}`, `failure_class=${text(o.failure_class)}`,
     `empty_class=${text(o.empty_class)}`, `task_outcome=${text(o.task_outcome)}`,
+    `lane_hint_blocked_by=${o.lane_hint_blocked_by === null ? 'unknown' : `[${o.lane_hint_blocked_by.join(',')}]`}`,
   ].join(' ');
 }
 

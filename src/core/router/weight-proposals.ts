@@ -57,6 +57,21 @@ export interface RouterWeightEvidence {
   queue_wait_known: number;
   /** Mean recorded queue_wait_s over queue_wait_known; null when none recorded. */
   queue_wait_s_mean: number | null;
+  /**
+   * Group outcomes (the known cohort) whose standing dispatch claim
+   * recorded lane-hint blocking codes — a non-empty
+   * `lane_hint_blocked_by`. The market's recorded empty list (`[]`,
+   * written when the preferred lane was unknown or merely outranked
+   * rather than rejected) is its "nothing blocked it" verdict and does
+   * not count here. `lane_blocked_reasons` tallies the recorded codes
+   * over the same cohort — `quota_exhausted`, `saturated`, `held`,
+   * `lower_rank`, `hysteresis_*` — most jobs first, so a lane whose
+   * hinted work keeps losing to capacity or rank shows the blocking
+   * mix behind its off-hint share. Null when no outcome recorded
+   * codes — never zero-filled.
+   */
+  lane_blocked_known: number;
+  lane_blocked_reasons: { reason: string; jobs: number }[] | null;
   /** Group outcomes with a recorded finish-row tokens_total. */
   tokens_known: number;
   /** Mean recorded tokens_total over tokens_known; null when no outcome recorded usage. */
@@ -197,6 +212,7 @@ interface WeightEvidenceTally {
   wallSum: number; wallKnown: number;
   ttmSum: number; ttmKnown: number;
   queueWaitSum: number; queueWaitKnown: number;
+  laneBlocked: number; blockedReasons: Map<string, number>;
   tokensSum: number; tokensKnown: number;
   passkSum: number; passkKnown: number;
   acusSum: number; acusKnown: number;
@@ -210,12 +226,15 @@ interface WeightEvidenceTally {
 const freshTally = (): WeightEvidenceTally => ({
   ciPass: 0, ciKnown: 0, reviewFixed: 0, reviewRejected: 0, reviewIgnored: 0, reviewKnown: 0,
   costSum: 0, costKnown: 0, wallSum: 0, wallKnown: 0, ttmSum: 0, ttmKnown: 0,
-  queueWaitSum: 0, queueWaitKnown: 0,
+  queueWaitSum: 0, queueWaitKnown: 0, laneBlocked: 0, blockedReasons: new Map(),
   tokensSum: 0, tokensKnown: 0, passkSum: 0, passkKnown: 0,
   acusSum: 0, acusKnown: 0, diffFilesSum: 0, diffFilesKnown: 0,
   diffLinesSum: 0, diffLinesKnown: 0, usageMissingKnown: 0,
   laneOverrides: 0, overrideReasons: new Map(),
 });
+
+/** Top recorded lane-hint blocking codes kept per group, most jobs first. */
+const MAX_BLOCKED_REASONS = 8;
 
 /**
  * The batch-member task_outcome words that end the attempt without a
@@ -241,6 +260,12 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   ttm_s_mean: t.ttmKnown === 0 ? null : round6(t.ttmSum / t.ttmKnown),
   queue_wait_known: t.queueWaitKnown,
   queue_wait_s_mean: t.queueWaitKnown === 0 ? null : round6(t.queueWaitSum / t.queueWaitKnown),
+  lane_blocked_known: t.laneBlocked,
+  lane_blocked_reasons: t.laneBlocked === 0 ? null
+    : [...t.blockedReasons.entries()]
+        .map(([reason, jobs]) => ({ reason, jobs }))
+        .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
+        .slice(0, MAX_BLOCKED_REASONS),
   tokens_known: t.tokensKnown,
   tokens_total_mean: t.tokensKnown === 0 ? null : round6(t.tokensSum / t.tokensKnown),
   passk_known: t.passkKnown,
@@ -266,8 +291,12 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
  * weight moves toward the observed held-merge rate — merged outcomes recorded as reverted count as
  * known evidence but never as held merges — capped at maxShift and clamped to [0, 1]. Each proposal
  * also reports the group's other recorded outcome signals (CI verdicts, review findings, cost, wall
- * time, merge latency, queue-admission wait, pass^k, dispatch lane overrides) as advisory evidence
- * over the same known cohort.
+ * time, merge latency, queue-admission wait, pass^k, dispatch lane
+ * overrides and lane-hint blocking codes) as advisory evidence over
+ * the same known cohort. Recorded lane-hint blocking codes
+ * (`lane_hint_blocked_by`) tally per group as
+ * `lane_blocked_known`/`lane_blocked_reasons` — the market's reasons
+ * the hinted lane could not take the work.
  */
 export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: RouterWeightProposalOptions = {}): RouterWeightProposalSet {
   const minSamples = opts.minSamples ?? ROUTER_WEIGHT_DEFAULT_MIN_SAMPLES;
@@ -340,6 +369,12 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     if (o.wall_s !== null) { t.wallKnown++; t.wallSum += o.wall_s; }
     if (o.ttm_s !== null) { t.ttmKnown++; t.ttmSum += o.ttm_s; }
     if (o.queue_wait_s !== null) { t.queueWaitKnown++; t.queueWaitSum += o.queue_wait_s; }
+    if (o.lane_hint_blocked_by !== null && o.lane_hint_blocked_by.length > 0) {
+      t.laneBlocked++;
+      for (const code of o.lane_hint_blocked_by) {
+        t.blockedReasons.set(code, (t.blockedReasons.get(code) ?? 0) + 1);
+      }
+    }
     if (o.tokens_total !== null) { t.tokensKnown++; t.tokensSum += o.tokens_total; }
     if (o.passk !== null) { t.passkKnown++; t.passkSum += o.passk; }
     if (o.acus !== null) { t.acusKnown++; t.acusSum += o.acus; }

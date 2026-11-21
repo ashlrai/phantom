@@ -44,6 +44,9 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
   if (e.wall_s_mean !== null) parts.push(`wall_s=${e.wall_s_mean}(${e.wall_known})`);
   if (e.ttm_s_mean !== null) parts.push(`ttm_s=${e.ttm_s_mean}(${e.ttm_known})`);
   if (e.queue_wait_s_mean !== null) parts.push(`queue_wait_s=${e.queue_wait_s_mean}(${e.queue_wait_known})`);
+  if (e.lane_blocked_known > 0 && e.lane_blocked_reasons !== null) {
+    parts.push(`lane_blocked=${e.lane_blocked_known}(${e.lane_blocked_reasons.map(r => `${r.reason}:${r.jobs}`).join(',')})`);
+  }
   if (e.tokens_total_mean !== null) parts.push(`tokens_total=${e.tokens_total_mean}(${e.tokens_known})`);
   if (e.diff_files_mean !== null) parts.push(`diff_files=${e.diff_files_mean}(${e.diff_files_known})`);
   if (e.diff_lines_mean !== null) parts.push(`diff_lines=${e.diff_lines_mean}(${e.diff_lines_known})`);

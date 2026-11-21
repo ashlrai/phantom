@@ -339,6 +339,8 @@ describe('outcome-quality evidence', () => {
       ttm_s_mean: 245,
       queue_wait_known: 0,
       queue_wait_s_mean: null,
+      lane_blocked_known: 0,
+      lane_blocked_reasons: null,
       tokens_known: 10,
       tokens_total_mean: 1450,
       passk_known: 20,
@@ -431,6 +433,7 @@ describe('outcome-quality evidence', () => {
       wall_known: 0, wall_s_mean: null,
       ttm_known: 0, ttm_s_mean: null,
       queue_wait_known: 0, queue_wait_s_mean: null,
+      lane_blocked_known: 0, lane_blocked_reasons: null,
       tokens_known: 0, tokens_total_mean: null,
       passk_known: 0, passk_mean: null,
       acus_known: 0, acus_mean: null,
@@ -530,6 +533,45 @@ describe('outcome-quality evidence', () => {
     expect(out).toContain('usage coverage:');
     expect(out).toContain('missing=devin-usage-incomplete:6,devin-usage-not-reported:4');
     expect(out).toContain('sources=devin-sessions-db:10,tokens-line:6');
+  });
+
+  it('folds claim lane-hint blocking codes into group evidence with reason tallies', async () => {
+    // Each overridden job claims off its hint before its merge verdict; the
+    // market's recorded blocked-by codes tally per known-cohort outcome.
+    // The recorded empty list is the "nothing blocked it" verdict and stays
+    // out of the count, like every other unrecorded signal.
+    const claim = (job: string, lane: string, hint: string, reason: string, blocked?: string[]): object =>
+      ({ job, event: 'claim', lane, lane_hint: hint, lane_override: reason, ...(blocked === undefined ? {} : { lane_hint_blocked_by: blocked }) });
+    const jobs = Array.from({ length: 20 }, (_, i) => `synthetic-blk-${i}`);
+    writeLedger([
+      ...jobs.flatMap((job, i) => [
+        ...(i < 8 ? [claim(job, 'alpha', 'codex-personal', 'preferred_lane_fallback',
+          i < 5 ? ['quota_exhausted', 'saturated'] : i < 7 ? ['held'] : [])] : []),
+        event(job, 'alpha', 'code', 'MERGED'),
+      ]),
+      // A batch_claim override carries no blocking record — stays out.
+      { job: 'synthetic-blk-batch', event: 'batch_claim', batch: 'RQ-BATCH-blk', lane: 'alpha', lane_hint: 'devin', lane_override: 'batch_session' },
+      event('synthetic-blk-batch', 'alpha', 'code', 'MERGED'),
+      // An unknown-cohort blocked claim stays out of the known group's tally.
+      claim('synthetic-blk-unq', 'alpha', 'devin', 'preferred_lane_fallback', ['saturated']),
+      event('synthetic-blk-unq', 'alpha', 'code', 'VERIFIED'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    const p = report.proposals[0];
+    expect(p).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 21 });
+    // 5 quota+saturated + 2 held = 7 non-empty records; the two [] verdicts
+    // and the batch_claim's absent field do not count.
+    expect(p.evidence.lane_blocked_known).toBe(7);
+    expect(p.evidence.lane_blocked_reasons).toEqual([
+      { reason: 'quota_exhausted', jobs: 5 },
+      { reason: 'saturated', jobs: 5 },
+      { reason: 'held', jobs: 2 },
+    ]);
+    // Advisory context only: the held-merge weight math never reads it.
+    expect(p.proposed_weight).toBe(0.6);
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('lane_blocked=7(quota_exhausted:5,saturated:5,held:2)');
   });
 
   it('reports null usage tallies when the ledger was not read', async () => {
