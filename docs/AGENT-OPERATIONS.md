@@ -208,7 +208,11 @@ plain-language reason. The same types are exported from
 `src/core/routing/outcome-learning.ts` for the desktop app. There is no
 routing setting to tune: the logs are the memory. Critical jobs are never held
 for an exhausted resource, and allowance that resets soon is still spent when
-that resource can finish the job.
+that resource can finish the job. In the jobs ledger, `launch` rows open an
+attempt and the reconciler's `MERGED`/`CLOSED` rows close it; a
+`launch_failed`/`launch_terminal` row closes the still-open attempt as an
+unmerged one, so a dead launch the dispatcher requeues and retries counts as
+its own failed attempt rather than disappearing into the relaunch.
 
 ### Selector
 
