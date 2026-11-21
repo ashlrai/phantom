@@ -765,8 +765,9 @@ reply counts when its `from` resolves to the request's `to` identity and its
 label that resolves to no identity, and an unreadable registry, keep
 exact-label matching. `fleet bus-follow --to` resolves its stream filter the
 same way, once when the stream starts: mail addressed under any label of the
-named identity streams, and an unresolvable `--to` or an unreadable registry
-keeps exact-label matching. `phm comms bus read|watch` resolves its `--to`,
+named identity — or to a `group:<channel>:<topic>` address of a channel it
+belongs to, minus the identity's own channel posts — streams, and an
+unresolvable `--to` or an unreadable registry keeps exact-label matching. `phm comms bus read|watch` resolves its `--to`,
 `--from` and `--exclude-from` address filters the same way, once per read:
 a filter naming any label of a registered identity matches every label of
 that identity, and an unresolvable label or an unreadable registry keeps

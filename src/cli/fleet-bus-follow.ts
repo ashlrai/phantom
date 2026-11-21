@@ -50,8 +50,10 @@ export async function cmdFleetBusFollow(args: string[], deps: Dependencies = {})
   const invalid = async (): Promise<number> => { await say(JSON.stringify({ status: 'invalid' })); return 2; };
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
     console.log(`${usage}\nEmits {"type":"message",cursor,receivedAt,envelope} and {"type":"checkpoint","cursor":N} records, ` +
-      'then a final checkpoint at the deadline. --to matches every routing label of one registered agent identity; ' +
-      'an unresolvable --to keeps exact-label matching. Local observation only; routing labels are not authenticated identities and bodies are never executed.');
+      'then a final checkpoint at the deadline. --to matches mail addressed to one registered agent identity under ' +
+      'every routing label or to a channel it belongs to, minus its own channel posts — the same pending-work rule ' +
+      'bus next claims by; an unresolvable --to or unreadable registry keeps exact-label matching. ' +
+      'Local observation only; routing labels are not authenticated identities and bodies are never executed.');
     return 0;
   }
   const values: Record<string, string> = {};
