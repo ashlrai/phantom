@@ -222,6 +222,12 @@ sessions count per member: a `batch_claim` row is the member's dispatch
 record and the session's `launch` row (under its `RQ-BATCH-*` id) opens one
 attempt per member; a requeue-word `task_outcome` or a session-id
 `launch_failed`/`launch_terminal` closes the member attempts it recorded.
+Positive revert evidence (`reverted:true`, a parseable `reverted_at` stamp,
+or a `revert`/`reverted` event or state name — the vocabulary slot-yield and
+the reward feed share) discounts a merge that did not hold: the attempt
+counts as a failure and the cell reports it under `reverted`, never under
+`merges` or `goodMerges`, while a merge recorded after the newest revert
+stays a fresh held merge.
 
 ### Selector
 

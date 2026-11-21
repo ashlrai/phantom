@@ -387,6 +387,98 @@ describe('outcome learning', () => {
       expect(learnFleetOutcomes(null, null)).toMatchObject({ finished: 0, malformed: 0, cells: [] });
     });
 
+    it('counts a merge recorded as reverted as a failed attempt, never a held merge', () => {
+      const ledger = [
+        JSON.stringify({ event: 'launch', job: 'J-R', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T00:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-R', lane: 'devin', tokens_total: 500, wall_s: 200 }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-R', prUrl: 'https://github.com/ashlrai/phantom/pull/21', outcome: 'MERGED', mergedAt: '2026-11-01T01:00:00+00:00', ts: '2026-11-01T01:01:00+00:00' }),
+        // The fleet's own revert record lands after the merge verdict.
+        JSON.stringify({ event: 'revert', job: 'J-R', lane: 'devin', ts: '2026-11-01T05:00:00+00:00' }),
+        // An explicit reverted:false is not evidence: the merge stays held.
+        JSON.stringify({ event: 'launch', job: 'J-K', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T02:00:00+00:00' }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-K', prUrl: 'https://github.com/ashlrai/phantom/pull/22', outcome: 'MERGED', mergedAt: '2026-11-01T03:00:00+00:00', ts: '2026-11-01T03:01:00+00:00', reverted: false }),
+      ].join('\n');
+      const view = outcomeLearningView(learnFleetOutcomes(null, ledger));
+      expect(view.finished).toBe(2);
+      expect(view.malformed).toBe(0);
+      const cell = view.cells.find((c) => c.resource === 'devin' && c.jobType === 'work');
+      // J-R's merge did not hold: one failed attempt that still spent its
+      // 500 recorded tokens; J-K's held merge counts normally.
+      expect(cell).toMatchObject({ attempts: 2, merges: 1, goodMerges: 1, reverted: 1, censored: 0 });
+      expect(cell?.mergeRate).toBeCloseTo(0.5);
+      expect(cell?.meanUsage).toBeCloseTo(500);
+    });
+
+    it('keeps a merge held when the revert evidence predates the verdict', () => {
+      const ledger = [
+        // Revert evidence from an earlier merge era of the same job id.
+        JSON.stringify({ event: 'revert', job: 'J-E', lane: 'devin', ts: '2026-11-01T00:00:00+00:00' }),
+        JSON.stringify({ event: 'launch', job: 'J-E', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T01:00:00+00:00' }),
+        // A revert recorded after the launch but before this attempt's merge
+        // verdict cannot have undone a merge that did not exist yet.
+        JSON.stringify({ event: 'revert', job: 'J-M', lane: 'devin', reverted_at: '2026-11-01T01:30:00+00:00', ts: '2026-11-01T01:31:00+00:00' }),
+        JSON.stringify({ event: 'launch', job: 'J-M', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T01:00:00+00:00' }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-E', prUrl: 'https://github.com/ashlrai/phantom/pull/23', outcome: 'MERGED', mergedAt: '2026-11-01T02:00:00+00:00', ts: '2026-11-01T02:01:00+00:00' }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-M', prUrl: 'https://github.com/ashlrai/phantom/pull/24', outcome: 'MERGED', mergedAt: '2026-11-01T02:30:00+00:00', ts: '2026-11-01T02:31:00+00:00' }),
+      ].join('\n');
+      const view = outcomeLearningView(learnFleetOutcomes(null, ledger));
+      expect(view.finished).toBe(2);
+      const cell = view.cells.find((c) => c.resource === 'devin' && c.jobType === 'work');
+      expect(cell).toMatchObject({ attempts: 2, merges: 2, goodMerges: 2, reverted: 0 });
+    });
+
+    it('counts a relaunch merge after the revert as a fresh held merge', () => {
+      const ledger = [
+        JSON.stringify({ event: 'launch', job: 'J-2A', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T00:00:00+00:00' }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-2A', prUrl: 'https://github.com/ashlrai/phantom/pull/25', outcome: 'MERGED', mergedAt: '2026-11-01T01:00:00+00:00', ts: '2026-11-01T01:01:00+00:00' }),
+        JSON.stringify({ event: 'revert', job: 'J-2A', lane: 'devin', ts: '2026-11-01T02:00:00+00:00' }),
+        // Recut relaunch of the same job id after the revert: a fresh attempt.
+        JSON.stringify({ event: 'launch', job: 'J-2A', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T03:00:00+00:00' }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-2A', prUrl: 'https://github.com/ashlrai/phantom/pull/26', outcome: 'MERGED', mergedAt: '2026-11-01T04:00:00+00:00', ts: '2026-11-01T04:01:00+00:00' }),
+      ].join('\n');
+      const view = outcomeLearningView(learnFleetOutcomes(null, ledger));
+      expect(view.finished).toBe(2);
+      const cell = view.cells.find((c) => c.resource === 'devin' && c.jobType === 'work');
+      // First attempt's merge was reverted; the relaunch's merge post-dates
+      // the revert and stays held.
+      expect(cell).toMatchObject({ attempts: 2, merges: 1, goodMerges: 1, reverted: 1 });
+    });
+
+    it('closes an unresolved attempt as reverted on post-launch revert evidence, and ignores pre-launch evidence', () => {
+      const ledger = [
+        // J-O's merge verdict never reached the window, but its revert did:
+        // the attempt is a recorded failure, not missing data.
+        JSON.stringify({ event: 'launch', job: 'J-O', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T00:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-O', lane: 'devin', tokens_total: 300, wall_s: 100 }),
+        JSON.stringify({ event: 'revert', job: 'J-O', lane: 'devin', ts: '2026-11-01T01:00:00+00:00' }),
+        // J-P's only revert evidence predates its launch — an earlier era —
+        // so the still-open attempt is untouched.
+        JSON.stringify({ event: 'revert', job: 'J-P', lane: 'devin', ts: '2026-11-01T00:30:00+00:00' }),
+        JSON.stringify({ event: 'launch', job: 'J-P', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T02:00:00+00:00' }),
+      ].join('\n');
+      const view = outcomeLearningView(learnFleetOutcomes(null, ledger));
+      expect(view.finished).toBe(1);
+      expect(view.malformed).toBe(0);
+      const cell = view.cells.find((c) => c.resource === 'devin' && c.jobType === 'work');
+      expect(cell).toMatchObject({ attempts: 1, merges: 0, goodMerges: 0, reverted: 1 });
+      expect(cell?.meanUsage).toBeCloseTo(300);
+    });
+
+    it('discounts a batch member merge recorded as reverted', () => {
+      const bid = 'RQ-BATCH-PHANTOM-REV-A1B2C3D4';
+      const ledger = [
+        JSON.stringify({ event: 'batch_claim', job: 'J-M1', batch: bid, repo: 'phantom', lane: 'claude', tier: 'work', model: 'sonnet', ts: '2026-11-01T00:00:00+00:00' }),
+        JSON.stringify({ event: 'launch', job: bid, repo: 'phantom', lane: 'claude', tier: 'work', model: 'sonnet', batch_size: 1, ts: '2026-11-01T00:10:00+00:00' }),
+        JSON.stringify({ event: 'task_outcome', job: 'J-M1', batch: bid, lane: 'claude', repo: 'phantom', outcome: 'done', model: 'sonnet', ts: '2026-11-01T01:00:00+00:00' }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-M1', prUrl: 'https://github.com/ashlrai/phantom/pull/27', outcome: 'MERGED', mergedAt: '2026-11-01T02:00:00+00:00', ts: '2026-11-01T02:01:00+00:00' }),
+        JSON.stringify({ event: 'revert', job: 'J-M1', lane: 'claude', ts: '2026-11-01T05:00:00+00:00' }),
+      ].join('\n');
+      const view = outcomeLearningView(learnFleetOutcomes(null, ledger));
+      expect(view.finished).toBe(1);
+      const cell = view.cells.find((c) => c.resource === 'claude' && c.jobType === 'work');
+      expect(cell).toMatchObject({ attempts: 1, merges: 0, goodMerges: 0, reverted: 1 });
+    });
+
     it('serves the ledger view through --ledger and the default runs path', async () => {
       home = mkdtempSync(join(tmpdir(), 'outcome-ledger-'));
       const ledgerPath = join(home, 'jobs.jsonl');
