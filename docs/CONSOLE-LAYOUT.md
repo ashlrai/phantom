@@ -290,8 +290,20 @@ along the row) to draw its answer as a numbered try order. Each seat has a bar
 of the share of its binding usage window already used and that window's reset
 time; seats the router holds back are listed underneath with its reason and
 when they become eligible again. Below, the last 200 recorded routing
-decisions are counted by chosen seat as ranked bars, with the six newest
-listed and any whose work ran on a different seat marked. A decision is the
+decisions are counted by chosen seat and drawn over time: one row per seat,
+most chosen first, each holding a lane of 24 columns that cut the span from
+the oldest decision read to now into equal slices. A column's height is how
+many decisions chose that seat in that slice, every lane against the same
+tallest cell so lanes compare, and an amber cap marks a slice whose work ran
+on a different seat than the one chosen. The span never reaches back past the
+oldest decision read, and a decision whose time cannot be read is counted in
+words and not drawn (with no readable time at all, the rows keep plain share
+bars). Point at a column to read it: the line under the chart gives its start
+and end, its count, the seats chosen in it and how many ran elsewhere, and
+the list below becomes that column's decisions (six shown, the rest
+counted) instead of the six newest. The time axis under the lanes is one tab
+stop: Left and Right step a column, Home and End jump to the oldest and
+newest, Esc lets go, and a click keeps a column until focus leaves. A decision is the
 seat the router chose, not proof the work ran there. The pane decides nothing
 and launches nothing: besides the previews it reads `GET /api/verse/budget`
 (seat usage, resets and the time that usage was read) and
