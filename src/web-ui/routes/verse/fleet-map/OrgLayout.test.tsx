@@ -22,14 +22,14 @@ let viewport: ViewportMock | null = null;
 afterEach(() => { cleanup(); viewport?.restore(); viewport = null; localStorage.clear(); });
 
 describe('layoutByOrg', () => {
-  it('places each lane with its jobs in one box, anything without a parent in "unassigned", and every node once', () => {
+  it('places each lane with its jobs in one box, anything without a parent in "Other", and every node once', () => {
     const layout = layoutByOrg(fleet());
     expect(layout.nodes.map(n => n.id).sort()).toEqual(fleet().nodes.map(n => n.id).sort());
-    expect(layout.boxes.map(box => box.label)).toEqual(['claude', 'grok', 'unassigned']);
+    expect(layout.boxes.map(box => box.label)).toEqual(['claude', 'grok', 'Other']);
     const box = (label: string) => layout.boxes.find(b => b.label === label)!;
     const inside = (id: string, b: { x: number; width: number; y: number; height: number }) => { const n = layout.at.get(id)!; return n.x > b.x && n.x < b.x + b.width && n.y > b.y && n.y < b.y + b.height; };
     expect(['lane:claude', 'job:one', 'job:two'].every(id => inside(id, box('claude')))).toBe(true);
-    expect(inside('job:lost', box('unassigned'))).toBe(true);
+    expect(inside('job:lost', box('Other'))).toBe(true);
     expect(layout.at.get('leader')!.y).toBeLessThan(layout.at.get('lane:claude')!.y);
     expect(layout.at.get('computer:a')!.y).toBeGreaterThan(layout.at.get('job:two')!.y);
   });
@@ -47,7 +47,7 @@ describe('guardian and loops in "By org"', () => {
     expect(container.querySelector('[data-link-note]')).toBeNull();
     fireEvent.click(screen.getByRole('radio', { name: 'By org' }));
     expect([...container.querySelectorAll('[data-org-group]')].map(el => el.querySelector('span')!.textContent)).toEqual(
-      ['claude: 2 running', 'grok: 0 running', 'Guardian: 0 running', 'Loops: 1 running', 'unassigned: 0 running, 1 unknown']);
+      ['claude: 2 running', 'grok: 0 running', 'Guardian: 0 running', 'Loops: 1 running', 'Other: 0 running, 1 unknown']);
     expect([...container.querySelectorAll('[data-planner]')].map(el => el.textContent)).toEqual(['Main guardian: idle', 'Executor: running']);
     // Parent links carry the newest message either way round; a link with no message has no note.
     expect([...container.querySelectorAll('[data-link-note]')].map(el => [el.getAttribute('data-link-note'), el.textContent])).toEqual([
@@ -67,7 +67,7 @@ describe('the "By org" toggle', () => {
     expect(first.container.querySelector('[data-org-group]')).toBeNull();
     fireEvent.click(within(toggle).getByRole('radio', { name: 'By org' }));
     const boxes = [...first.container.querySelectorAll('[data-org-group]')].map(el => el.textContent);
-    expect(boxes).toEqual(['claude: 2 running', 'grok: 0 running', 'unassigned: 0 running, 1 unknown']);
+    expect(boxes).toEqual(['claude: 2 running', 'grok: 0 running', 'Other: 0 running, 1 unknown']);
     // Same nodes, the message line and the provider logo are still there, and the choice was stored.
     expect(screen.getAllByRole('button', { name: /^Open / })).toHaveLength(7);
     expect(first.container.querySelectorAll('path[data-kind="messaged-in-last-15-min"]')).toHaveLength(1);

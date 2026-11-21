@@ -413,7 +413,7 @@ session. It groups the live map below and reads nothing else.
   `idle`, `unknown`, summed over the leaves below). Parents come before children.
 - Branches under the leader: one per lane, `Guardian` (`group:guardian`, the main
   guardian planner), `Loops` (`group:loops`: executor, Core orchestrator and comms)
-  and `unassigned` for anything with no known parent. The guardian and loops
+  and `Other` (id `group:unassigned`) for anything with no known parent. The guardian and loops
   branches come from the live map's `planners` and appear only when it has them;
   their counts stay out of the leader's and the headline, which count jobs.
   `phm org --json` adds this tree as `groups` (null when the live map could not be
@@ -463,7 +463,7 @@ so those filters find none until one reports; the `gaps` list says so.
 
 - `orgLayout`: where the 3D map puts each org node, grouped by who it reports
   to (the tree `phm fleet org` prints; anything with no owner is under
-  `unassigned`). `positions[]` has `id`, `role`, `label`, `parent`, `depth`, `x`,
+  `Other`). `positions[]` has `id`, `role`, `label`, `parent`, `depth`, `x`,
   `y`, `z`; `labels[]` has one per lane and group with `text` such as
   `claude: 2 running`. The same input gives the same positions.
 - `nodes[]`: `id`, `kind` (`leader`, `lane`, `job`, `computer`, `resource`),
