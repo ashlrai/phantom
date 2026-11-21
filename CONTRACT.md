@@ -256,7 +256,13 @@ on the `✖ N problems` run summary -- the same step's
 paths (missing-members reasons included; the soft-signal advisory
 section stays unparsed) and `<file> > (verse-sync-io)` rows from the
 `verse-sync-io: N synchronous call(s)` header and its
-`<file>:<line>  <call>(…)  → <hint>` route-file rows, plus
+`<file>:<line>  <call>(…)  → <hint>` route-file rows, the first-paint
+budget gate's
+`scripts/check-first-paint-budget.mjs > (first-paint) chat` /
+`> (first-paint) phone` rows from the `OVER BUDGET: <arm>
+first-paint critical JS <kb> KB (budget <kb> KB)` verdicts and its
+`> (first-paint) gate` row from the script's
+`check-first-paint-budget: <message>` error lines, plus
 summaries. `auditExceptions` is the optional
 `DependencyAuditException[] | null` list (`{id, package, graph}` with
 graph `full` or `raycast-production`); `null` leaves audit reports
@@ -303,7 +309,20 @@ dependency set is the checker script plus its imported lane manifests,
 measured-fast allowlist and lane-inventory helper, and the
 verse-sync-io guard's is the checker script alone -- closed input
 lists, never the failing file's import closure, and the harness ambient
-set does not apply to either. Parenthesized
+set does not apply to either. The first-paint budget gate's dependency
+sets are likewise closed input lists -- the checker script,
+`vite.config.web.ts`, `package.json`, `package-lock.json`,
+`src/web-ui/tsconfig.json`, `src/web-ui/index.html`,
+`src/web-ui/main.tsx` and the presentation-format modules the vite
+config names, plus each arm's manifest roots
+(`src/web-ui/app/VerseConsoleApp.tsx` and
+`src/web-ui/routes/verse/sections/ChatSection.tsx` for chat,
+`src/web-ui/app/VerseMobileApp.tsx` and
+`src/web-ui/routes/verse/mobile/screens/HomeScreen.tsx` for phone; the
+gate identity takes the union of both arms) -- never the failing
+file's import closure, since the measured bundle graph has no
+enumerable closure, and the harness ambient set does not apply to it
+either. Parenthesized
 gate identities other than `(suite)` can never resolve a master pass or
 flake classification, even when their file is a test path a green-module
 line could otherwise match.

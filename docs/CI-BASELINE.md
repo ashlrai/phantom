@@ -276,6 +276,38 @@ line and classify `shared-baseline`, `pr-caused` or `unknown` -- never
 `Offline partition comparison refused:`), empty messages, non-prefixed
 assert output and unrelated lines stay unparsed.
 
+The same `Capture pack smoke build snapshot` step then runs
+`npm run check:first-paint:built` --
+`scripts/check-first-paint-budget.mjs --no-build --out-dir
+dist/core/web/public/next --budget-kb 354 --mobile-budget-kb 250` --
+which walks the Vite manifest's static-import closure of each
+first-paint root (`index.html` -> `main.tsx` -> the Verse apps and
+their chat or home screens), sums the chunk bytes and prints one
+verdict per arm: `OVER BUDGET: chat first-paint critical JS <kb> KB
+(budget <kb> KB)` and `OVER BUDGET: phone (/verse/m) first-paint
+critical JS <kb> KB (budget <kb> KB)`. Each over-budget verdict groups
+per arm under `scripts/check-first-paint-budget.mjs > (first-paint)
+chat` / `> (first-paint) phone` -- the arms measure different closures
+against different budgets, so a phone regression never merges into
+the chat group -- and the script's own `check-first-paint-budget:
+<message>` error path (a renamed first-paint root, a manifest import
+with no entry, a missing manifest) groups under `> (first-paint)
+gate`. The measured dist/ graph has no enumerable closure -- the
+web-ui static closure alone runs to hundreds of modules, past the
+import walk's bound -- so each identity's dependency set is a closed
+input list: the checker script, `vite.config.web.ts` (which folds
+the first-paint chunks and names the presentation-format group
+members), `package.json`, `package-lock.json`,
+`src/web-ui/tsconfig.json`, `src/web-ui/index.html`,
+`src/web-ui/main.tsx` and the arm's named manifest roots; the gate
+identity takes the union of both arms. The vitest harness ambient set
+does not apply. Like the other non-test identities these groups can
+never resolve through a vitest pass line and classify
+`shared-baseline`, `pr-caused` or `unknown` -- never
+`probable-flake`. OK verdicts, the per-file `N.N KB  <file>` listing,
+`--json` reports, npm lifecycle noise and unrelated output stay
+unparsed.
+
 The PR-visible trust gates fail with no vitest, typecheck or TAP line
 naming them, so each gets its own count-or-verdict identity. The
 `secret-shape` job pipes the candidate diff through the pinned
