@@ -268,7 +268,18 @@ work feed itself — one high item naming the retained receipt the projection
 blamed (`agents bus show <id>` / `work feed` links, `expiresAt` that
 receipt's TTL deadline; a refusal that names no receipt keeps unknown
 times), since the refusal hides every announced job and refuses the work
-verbs until the receipt expires — plus agent
+verbs until the receipt expires — plus pending mail in the legacy `phm bus`
+mailbox store (`$ASHLR_HOME/bus-mailbox`, the records `phm bus inbox --to
+<label>` reads and `phm bus ack` clears — a separate store the unified bus
+never carried, so leftover mail would otherwise be invisible to this one
+pending view; every pending unacked, unexpired message across EVERY
+recipient label lists through `BusMailbox.pendingAll` in the mailbox's own
+priority/acceptance/id drain order, each item keeping its own `to` label —
+the `--to` `phm bus inbox`/`ack` take — with `since` the store acceptance
+time and `expiresAt` acceptance plus TTL; titles reuse the shared bus body
+composer so a secret-shaped body never reaches the item raw, an absent store
+is `missing` while an unreadable one is `unavailable`, never an empty list
+passed off as fact) — plus agent
 conversation threads still needing a person — the same `waiting` and
 `blocked` threads the one shared conversations projection computes,
 fleet-wide: a waiting item names who must answer, how long it has waited
@@ -313,6 +324,7 @@ imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms th
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
 `phm fleet handoff-receive`, `phm agents conversations`,
 `phm bots handoff`, `phm agents bus post`, `phm fleet email-outbox`,
+`phm bus inbox`, `phm bus ack`,
 `phm team approve|deny`, `phm inbox approve|reject`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200

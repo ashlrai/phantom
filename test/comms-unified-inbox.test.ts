@@ -16,7 +16,7 @@ import { appendDraft as appendCommsDraft, type CommsDraft } from '../src/core/co
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
-import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type UnifiedInbox } from '../src/core/comms/unified-inbox.js';
+import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type UnifiedInbox, type UnifiedInboxOptions } from '../src/core/comms/unified-inbox.js';
 import type { ProposalApprovalItem, Section, TeamApprovalItem } from '../src/core/approvals/surface.js';
 import type { SeatHandoff, SeatHandoffPlanEntry, SeatHandoffsPlan } from '../src/core/bots/seats.js';
 import type { CommsRequest, CommsRequestsRead } from '../src/core/comms/requests.js';
@@ -25,8 +25,9 @@ import { markTeammateTextsAnswered, recordTeammateText } from '../src/core/comms
 import { writeEmailDropConfig, type EmailDropConfig } from '../src/core/comms/email-drop-config.js';
 import { EMAIL_OUTBOX_MAX_BYTES } from '../src/core/comms/email-outbox.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { createBusMailbox, type BusMailboxPendingMessage } from '../src/core/fleet/bus-mailbox.js';
 import type { AgentConversations } from '../src/core/fleet/agent-conversations.js';
-import type { BusJsonValue } from '../src/core/fleet/bus-envelope.js';
+import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { listNeedsMason } from '../src/core/fleet/needs-mason-resolve.js';
 import { writeDelivery } from '../src/core/fleet/needs-mason-reply-delivery.js';
@@ -114,6 +115,7 @@ describe('readUnifiedInbox sources', () => {
         'teammate-tasks': { state: 'missing', pending: 0 },
         drafts: { state: 'healthy', pending: 0 },
         bus: { state: 'missing', pending: 0 },
+        mailbox: { state: 'missing', pending: 0 },
         conversations: { state: 'missing', pending: 0 },
         seats: { state: 'missing', pending: 0 },
         'email-outbox': { state: 'missing', pending: 0 },
@@ -1617,6 +1619,97 @@ describe('readUnifiedInbox teammate tasks', () => {
     });
     expect(degraded.sources['teammate-tasks']).toEqual({ state: 'degraded', pending: 0 });
     expect(degraded.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+});
+
+describe('legacy phm bus mailbox in the unified inbox', () => {
+  // The mailbox store lives at <dirname(busRoot)>/bus-mailbox — `root` here —
+  // the same home `agents bus status` and `work mine` derive from the fleet root.
+  const mailbox = () => createBusMailbox(root, () => now);
+  const send = (envelope: BusEnvelope) => {
+    const result = mailbox().send(envelope);
+    expect(result.replayed).toBe(false);
+    return result.id;
+  };
+
+  it('lists pending mail across every recipient label in drain order with per-label acts', async () => {
+    send({ id: 'mb-low', from: 'codex-cmp', to: 'other', priority: 'P3', ttl: 60_000, body: { kind: 'work', text: 'fake low mail' } });
+    send({ id: 'mb-first', from: 'codex-cmp', to: 'fleet', priority: 'P0', ttl: 60_000, body: { kind: 'work', text: 'fake first mail' } });
+    send({ id: 'mb-second', from: 'codex-cmp', to: 'other', priority: 'P0', ttl: 60_000, body: { kind: 'work', text: 'fake second mail' } });
+    send({ id: 'mb-mid', from: 'codex-cmp', to: 'fleet', priority: 'P1', ttl: 60_000, body: { kind: 'work', text: 'fake mid mail' } });
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'mailbox');
+    expect(items.map(i => i.id)).toEqual(['mailbox:mb-first', 'mailbox:mb-second', 'mailbox:mb-mid', 'mailbox:mb-low']);
+    expect(items[0]).toMatchObject({
+      kind: 'mailbox-message', severity: 'high', blocking: false,
+      title: 'work: fake first mail',
+      detail: 'from codex-cmp to fleet · P0',
+      since: new Date(now).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+      act: ['phm bus inbox --to fleet', 'phm bus ack mb-first --to fleet'],
+    });
+    expect(items[1]).toMatchObject({
+      severity: 'high', detail: 'from codex-cmp to other · P0',
+      act: ['phm bus inbox --to other', 'phm bus ack mb-second --to other'],
+    });
+    expect(items[2]).toMatchObject({ severity: 'warn', detail: 'from codex-cmp to fleet · P1' });
+    expect(items[3]).toMatchObject({ severity: 'info', detail: 'from codex-cmp to other · P3' });
+    expect(inbox.sources.mailbox).toEqual({ state: 'healthy', pending: 4 });
+  });
+
+  it('omits acknowledged and expired mail and reports a missing store honestly', async () => {
+    expect((await read()).sources.mailbox).toEqual({ state: 'missing', pending: 0 });
+    const mb = mailbox();
+    mb.send({ id: 'mb-stale', from: 'codex-cmp', to: 'fleet', priority: 'P2', ttl: 1_000, body: 'fake stale mail' });
+    mb.send({ id: 'mb-acked', from: 'codex-cmp', to: 'fleet', priority: 'P2', ttl: 60_000, body: 'fake acked mail' });
+    mb.send({ id: 'mb-live', from: 'codex-cmp', to: 'fleet', priority: 'P2', ttl: 60_000, body: 'fake live mail' });
+    mb.ack('mb-acked', 'fleet');
+    now += 2_000; // mb-stale's 1s TTL elapsed; mb-live still has 58s left.
+    const inbox = await read();
+    expect(inbox.sources.mailbox).toEqual({ state: 'healthy', pending: 1 });
+    const items = inbox.items.filter(i => i.source === 'mailbox');
+    expect(items.map(i => i.id)).toEqual(['mailbox:mb-live']);
+    expect(items[0]).toMatchObject({
+      title: 'fake live mail',
+      since: new Date(now - 2_000).toISOString(),
+      expiresAt: new Date(now - 2_000 + 60_000).toISOString(),
+    });
+  });
+
+  it('reports missing, unavailable, throwing and truncated reads honestly while other sources list', async () => {
+    postWork('mailbox-neighbor');
+    const opts = { runsDir, busRoot, now: () => now, readRequests: () => ({ status: 'missing' as const, requests: [] }) };
+    const message = (id: string): BusMailboxPendingMessage => ({
+      envelope: { id, from: 'codex-cmp', to: 'fleet', priority: 'P2', ttl: 60_000, body: 'fake mail' },
+      acceptedAt: now,
+    });
+    const readWith = (readMailbox: NonNullable<UnifiedInboxOptions['readMailbox']>) =>
+      readUnifiedInbox({ ...opts, readMailbox });
+    const missing = await readWith(() => ({ source: 'missing', messages: [], matched: 0 }));
+    expect(missing.sources.mailbox).toEqual({ state: 'missing', pending: 0 });
+    const unavailable = await readWith(() => ({ source: 'unavailable', messages: [], matched: null }));
+    expect(unavailable.sources.mailbox).toEqual({ state: 'unavailable', pending: 0 });
+    expect(unavailable.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual(['bus:mailbox-neighbor']);
+    const throwing = await readWith(() => { throw new Error('boom'); });
+    expect(throwing.sources.mailbox).toEqual({ state: 'unavailable', pending: 0 });
+    const truncated = await readWith(() => ({ source: 'available', messages: [message('mb-1')], matched: 7 }));
+    expect(truncated.sources.mailbox).toEqual({ state: 'degraded', pending: 1 });
+    expect(truncated.items.filter(i => i.source === 'mailbox').map(i => i.id)).toEqual(['mailbox:mb-1']);
+  });
+
+  it('scrubs secret-shaped mail bodies before they reach the item', async () => {
+    // The store itself refuses credential-shaped envelopes, so this exercises
+    // the projection's own scrub through the seam — defense in depth.
+    const message = (body: string): BusMailboxPendingMessage => ({
+      envelope: { id: 'mb-secret', from: 'codex-cmp', to: 'fleet', priority: 'P2', ttl: 60_000, body: { kind: 'note', text: body } },
+      acceptedAt: now,
+    });
+    const inbox = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
+      readRequests: () => ({ status: 'missing' as const, requests: [] }),
+      readMailbox: () => ({ source: 'available', messages: [message('token sk-abcdefghijklmnop leaked')], matched: 1 }) });
+    const item = inbox.items.find(i => i.id === 'mailbox:mb-secret')!;
+    expect(item.title).toBe('token [REDACTED] leaked');
+    expect(item.title).not.toContain('sk-abcdefghijklmnop');
   });
 });
 

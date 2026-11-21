@@ -558,6 +558,7 @@
     "src/core/fleet/bus-hoplog.ts",
     "src/core/fleet/bus-inbox.ts",
     "src/core/fleet/bus-leader-inbox.ts",
+    "src/core/fleet/bus-mailbox.ts",
     "src/core/fleet/bus-wake-queue.ts",
     "src/core/fleet/bus-wake.ts",
     "src/core/fleet/bus-work-claims.ts",
