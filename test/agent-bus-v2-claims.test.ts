@@ -77,6 +77,23 @@ describe('executeBusClaimBody', () => {
     expect(tokenOf(retry)).not.toBe(token);
   });
 
+  it('binds a retried operation id to its owner instead of replacing a live lease', () => {
+    const root = tempDir('v2claim-');
+    const token = tokenOf(acquire('repo:ashlrai/phantom', 'dot-main', 600_000, 'op-1', root));
+    // A different owner reusing the operation id conflicts with the live holder —
+    // never a silent replacement that kills dot-main's fencing token.
+    const stolen = acquire('repo:ashlrai/phantom', 'other-seat', 600_000, 'op-1', root);
+    expect(stolen).toEqual({ v: 2, status: 'conflict', holder: { owner: 'dot-main', claimKey: 'repo:ashlrai/phantom', leaseUntil: NOW + 600_000 } });
+    expect(JSON.stringify(stolen)).not.toContain(token);
+    // The holder's token still works and the same owner retrying the id re-acquires.
+    expect(renew('repo:ashlrai/phantom', token, 600_000, root, NOW))
+      .toEqual({ v: 2, status: 'renewed', claim: { claimKey: 'repo:ashlrai/phantom', leaseUntil: NOW + 600_000 } });
+    expect(acquire('repo:ashlrai/phantom', 'dot-main', 600_000, 'op-1', root)).toMatchObject({ status: 'acquired' });
+    // Once the lease expires the operation id is free for any owner to reuse.
+    expect(acquire('repo:ashlrai/phantom', 'other-seat', 600_000, 'op-1', root, NOW + 600_001))
+      .toMatchObject({ status: 'acquired', claim: { owner: 'other-seat' } });
+  });
+
   it('refuses wildcard path claims that share a concrete path', () => {
     const root = tempDir('v2claim-');
     // '**/*.ts' and 'src/*.ts' both match src/x.ts; the literal-prefix rule missed this.
@@ -338,6 +355,23 @@ describe('claimBusWorkJob', () => {
       scope: { source: 'available', holds: [] },
       holder: { owner: 'worker-1', claimKey: 'queue:RQ-C', leaseUntil: NOW + 600_000 } });
     expect(JSON.stringify(second)).not.toContain(first.claim.token);
+  });
+
+  it('conflicts when a second owner reuses a live claim operation id', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-O', ['queue:RQ-O']);
+    const first = claimBusWorkJob({ root, now: NOW, job: 'RQ-O', owner: 'worker-1', leaseMs: 600_000, id: 'op-shared' });
+    if (first.status !== 'acquired') throw new Error('expected acquired');
+    // worker-2 presenting the same --id is not worker-1's retry: the live lease
+    // conflicts with its holder instead of being silently replaced.
+    const second = claimBusWorkJob({ root, now: NOW, job: 'RQ-O', owner: 'worker-2', leaseMs: 600_000, id: 'op-shared' });
+    expect(second).toMatchObject({ status: 'conflict',
+      holder: { owner: 'worker-1', claimKey: 'queue:RQ-O', leaseUntil: NOW + 600_000 } });
+    expect(JSON.stringify(second)).not.toContain(first.claim.token);
+    // worker-1's fencing token still renews the untouched lease.
+    expect(executeBusClaimBody({ kind: 'work.claim', op: 'renew', claimKey: 'queue:RQ-O',
+      token: first.claim.token, leaseMs: 600_000 }, 'op-renew', { root, now: NOW }))
+      .toMatchObject({ v: 2, status: 'renewed' });
   });
 
   it('reports live holds on the job\'s other declared keys in the claim scope', () => {

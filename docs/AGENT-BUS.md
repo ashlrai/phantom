@@ -918,7 +918,9 @@ conflict (with `holder`, never the token) or `mismatched-token`/`expired`,
 `404` lost, `400` invalid, `507` full, `503` unavailable. Claim operations do
 not append to the inbox; the coordination table row keyed by the envelope id
 (`sourceId` `agentbus:<id>:<key-hash>`) is the record, so a retried acquire on
-the same key replaces its own lease. Renew `leaseMs` is the new lease length
+the same key replaces its own lease. That row is bound to its owner: the same
+operation id presented by a different owner conflicts with the live holder
+instead of replacing the lease and killing its fencing token. Renew `leaseMs` is the new lease length
 from now and may not exceed the acquired length. `phm agents bus claim
 acquire|renew|release` runs the same core path locally with `--key`,
 `--lease-ms`, `--owner` (defaults to `PHM_AGENT_ID`), `--token`, `--outcome`
