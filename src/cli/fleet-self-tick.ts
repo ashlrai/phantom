@@ -185,7 +185,9 @@ function summary(step: string, report: unknown): string {
   }
   if (step === 'landed-sweep') {
     const n = (value: unknown): number => typeof value === 'number' ? value : 0;
-    return `closed=${n(row['closed'])} planned=${n(row['planned'])}`;
+    const why = typeof row['reason'] === 'string' ? ` (${row['reason']})` : '';
+    if (row['mode'] === 'git-only') return `git-only landed=${n(row['landed'])} of ${n(row['inspected'])} branches${why}`;
+    return row['state'] === 'skipped' ? `skipped${why}` : `closed=${n(row['closed'])} planned=${n(row['planned'])}`;
   }
   const reason = row['reason'] ?? row['outcome'];
   return typeof reason === 'string' ? reason : '';

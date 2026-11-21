@@ -69,7 +69,7 @@ describe('fleet landed-sweep', () => {
   it('dry run plans the landed PR and closes nothing', async () => {
     const { run, calls, ledger } = setup();
     expect(await run(['--json'])).toBe(0);
-    expect(JSON.parse(out[0]!)).toEqual({ v: 1, inspected: 2, landed: 1, planned: 1, closed: 0, skipped: 0, failed: 0 });
+    expect(JSON.parse(out[0]!)).toEqual({ v: 1, state: 'ok', mode: 'gh', inspected: 2, landed: 1, planned: 1, closed: 0, skipped: 0, failed: 0 });
     expect(calls).toEqual([]);
     expect(existsSync(ledger())).toBe(false);
   });
@@ -107,7 +107,7 @@ describe('fleet landed-sweep', () => {
       gh: async () => ({ ok: false, stdout: '', stderr: 'nope' }), output: t => out.push(t), error: t => errs.push(t),
     });
     expect(code).toBe(1);
-    expect(JSON.parse(out[0]!)).toMatchObject({ v: 1, closed: 0, error: 'dirty-landed report unreadable' });
+    expect(JSON.parse(out[0]!)).toMatchObject({ v: 1, closed: 0, error: 'gh failed: nope' });
   });
 
   it('exits 2 on usage errors', async () => {
