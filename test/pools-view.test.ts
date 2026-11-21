@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdPools } from '../src/cli/pools.js';
 import { handleApi } from '../src/core/web/api.js';
+import { describeCap } from '../src/core/fleet/model-caps.js';
 import { buildPoolsView, formatPoolsText, POOLS_PATH, POOLS_STALE_AFTER_MINUTES, wasteLevel } from '../src/core/fleet/pools-view.js';
 import { readResourceLedger, type ResourceLaneRow, type ResourceLedgerV1 } from '../src/core/fleet/runs-resource-ledger.js';
 
@@ -58,6 +59,13 @@ describe('buildPoolsView', () => {
       burnBasis: 'reported', burn: { samples: 1, window_h: 0, method: 'reported' }, projectedUnusedPct: 0, projectedEmptyAt: at(60 + 0) === '' ? null : expect.any(String), verdict: 'on pace', wasteRisk: 'low', creditsRemaining: null, held: false,
       running: 1, target: 2, source: 'claude-native-usage', scopes: [], asOf: at(-0.1), reason: null, summary: 'On pace: on pace',
     });
+  });
+
+  it('shows a capped model under its pool in plain words with the plan percent', () => {
+    const cap = { model: 'fable', capped_at: at(-1), source: 'worker-log' as const, lane: 'claude', reset_at: null };
+    const text = formatPoolsText(buildPoolsView(ledger(lane('claude', { usedPct: 63 })), NOW, [], [cap]));
+    expect(text).toContain(`${describeCap(cap, 63)}; resets unknown; jobs use the next model`);
+    expect(text).toMatch(/Fable capped since \d\d:\d\d \(plan at 63%\)/);
   });
 
   it('carries running jobs, the reader and per-model windows, and drops the windows with a stale reading', () => {

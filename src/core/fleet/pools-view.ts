@@ -9,7 +9,7 @@
  */
 import { burnRate, BURN_METHOD, BURN_MIN_SAMPLES, BURN_WINDOW_HOURS, type BurnSample } from '../usage/burn-rate.js';
 import { poolLabel } from '../usage/runway.js';
-import type { ModelCap } from './model-caps.js';
+import { describeCap, type ModelCap } from './model-caps.js';
 import { effectivePoolReading, type PoolReadingState } from './pool-reading.js';
 import type { ResourceLaneRow, ResourceLedgerV1 } from './runs-resource-ledger.js';
 
@@ -279,7 +279,7 @@ export function formatPoolsText(view: PoolsViewV1): string {
     lines.push(row.summary);
     lines.push(`  risk ${row.wasteRisk}; used ${cell(row.usedPct, '%')}; resets ${row.resetAt ?? 'unknown'} (${cell(row.hoursLeft, 'h')} left); `
       + `burn ${cell(row.burnPctPerHour, '%/h')}${row.burnBasis ? ` (${row.burnBasis === 'least-squares' ? `${row.burnBasis}, ${row.burn.samples} readings over ${row.burn.window_h} h` : row.burnBasis})` : ''}; unused at reset ${cell(row.projectedUnusedPct, '%')}; empty ${row.projectedEmptyAt ?? (row.burnPctPerHour === null ? 'unknown' : 'not before reset')}; as of ${row.asOf ?? 'unknown'}`);
-    for (const cap of row.cappedModels ?? []) lines.push(`  ${cap.model}: hit its usage limit at ${cap.cappedAt}; resets ${cap.resetAt ?? 'unknown'}; jobs use the next model`);
+    for (const cap of row.cappedModels ?? []) lines.push(`  ${describeCap({ model: cap.model, capped_at: cap.cappedAt }, row.usedPct)}; resets ${cap.resetAt ?? 'unknown'}; jobs use the next model`);
     for (const scope of row.scopes) lines.push(`  ${scope.id}: used ${cell(scope.usedPct, '%')}; resets ${scope.resetAt ?? 'unknown'} (${cell(scope.hoursLeft, 'h')} left)`);
   }
   for (const gap of view.gaps) lines.push(`Not covered: ${gap}`);

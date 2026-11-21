@@ -270,6 +270,8 @@ export interface RoutingContext {
    * autonomous/fail-closed. So an unset flag there cannot launch an engine.
    */
   autonomous?: boolean;
+  /** Models of the claude lane that hit their own usage cap (e.g. `fable`); the fleet reads them from model-caps.json. */
+  cappedModels?: readonly string[];
 }
 
 // Thresholds (mirror fleet/router.ts so they stay in sync)
@@ -802,7 +804,7 @@ function routeTaskUnenforced(
     // picked entry to the string dispatched to the engine CLI: Claude 5 entries
     // carry the full API id ('claude-sonnet-5' — the bare 'sonnet-5' tag is not
     // a documented CLI alias); legacy entries keep their tags unchanged.
-    const c5Excludes = claude5ExcludeIds(cfg);
+    const c5Excludes = claude5ExcludeIds(cfg, ctx.cappedModels);
 
     // ── M240: Learned-bias score map ──────────────────────────────────────
     // Build once per routeTask call. Only an explicit true enables learned
@@ -973,7 +975,7 @@ function routeTaskUnenforced(
       const primary = tryFrontier(
         frontierEngine,
         cap164,
-        `${reasonPrefix} → ${frontierEngine}-${frontierEngine === 'claude' ? `${c5Excludes.has('claude:fable-5') ? 'opus' : 'fable-5'} (reasoning/architecture)` : 'gpt-5.5 (implementation)'}`,
+        `${reasonPrefix}${frontierEngine === 'claude' && ctx.cappedModels?.includes('fable') ? ' (Fable is capped; sending frontier work to Opus)' : ''} → ${frontierEngine}-${frontierEngine === 'claude' ? `${c5Excludes.has('claude:fable-5') ? 'opus' : 'fable-5'} (reasoning/architecture)` : 'gpt-5.5 (implementation)'}`,
       );
       if (primary) return primary;
 
