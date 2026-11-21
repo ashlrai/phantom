@@ -8,6 +8,7 @@
  */
 import { OWNER_SECRET_HANDLES, adapterStatus, busIdentity, type OwnerSecretChannel, type OwnerThreadSettings } from './owner-channel.js';
 import type { OwnerChannel } from './leader-mailbox.js';
+import type { OwnerPairStatusV1 } from './owner-pair.js';
 
 export const PHONE_CHANNELS = ['telegram', 'email', 'imessage', 'slack'] as const satisfies readonly OwnerChannel[];
 export type PhoneChannel = typeof PHONE_CHANNELS[number];
@@ -31,6 +32,8 @@ export interface OwnerLiveStatusV1 {
   /** One line for a panel row, e.g. "Phone updates: off (iMessage not set up)". */
   line: string;
   channels: OwnerLiveChannelStatus[];
+  /** The iMessage pairing, when the caller read it: not paired / waiting for YES / paired. */
+  pair?: OwnerPairStatusV1;
 }
 
 const NETWORK = '~/.ashlr/agent-network.toml';
@@ -47,7 +50,7 @@ function bound(channel: PhoneChannel, settings: OwnerThreadSettings): boolean {
   return settings.team.some(t => t.channel === want.channel && t.id === id);
 }
 
-export function readOwnerLiveStatus(settings: OwnerThreadSettings, hold: { halted: boolean; paused: boolean }): OwnerLiveStatusV1 {
+export function readOwnerLiveStatus(settings: OwnerThreadSettings, hold: { halted: boolean; paused: boolean }, pair?: OwnerPairStatusV1): OwnerLiveStatusV1 {
   const channels = PHONE_CHANNELS.map((channel): OwnerLiveChannelStatus => {
     const gate = adapterStatus(channel, settings, hold.halted, hold.paused);
     const idSet = Boolean(settings.owners[channel]);
@@ -66,6 +69,7 @@ export function readOwnerLiveStatus(settings: OwnerThreadSettings, hold: { halte
     }
     if (channel === 'imessage' && settings.imessageBridge === 'loopback' && !idSet) {
       // The bridge is on; only Mason's own handle is missing. Nothing is sent until it is paired.
+      if (pair?.state === 'waiting') return { ...base, state: 'not-set-up', reason: 'iMessage waiting for your YES', nextStep: 'Reply YES to the text on your phone' };
       return { ...base, state: 'not-set-up', reason: 'iMessage on, but no verified Mason handle: run phm owner pair imessage', nextStep: 'phm owner pair imessage' };
     }
     if (!gate.configured) {
@@ -82,8 +86,9 @@ export function readOwnerLiveStatus(settings: OwnerThreadSettings, hold: { halte
   const anyOn = channels.some(c => c.state === 'on');
   // iMessage is the route Mason reads first, so it names the row when it is off.
   const worst = channels.find(c => c.channel === 'imessage' && c.state !== 'on') ?? channels.find(c => c.state === 'not-set-up') ?? channels.find(c => c.state !== 'on');
+  const waiting = worst?.channel === 'imessage' && worst.reason === 'iMessage waiting for your YES';
   const line = anyOn
     ? `Phone updates: on (${channels.filter(c => c.state === 'on').map(c => NAME[c.channel]).join(', ')})`
-    : `Phone updates: off (${worst ? `${NAME[worst.channel]} ${worst.state === 'not-set-up' ? 'not set up' : 'held'}` : 'no channels'})`;
-  return { schema: 'owner-live.status.v1', anyOn, line, channels };
+    : `Phone updates: off (${waiting ? 'iMessage waiting for your YES' : worst ? `${NAME[worst.channel]} ${worst.state === 'not-set-up' ? 'not set up' : 'held'}` : 'no channels'})`;
+  return { schema: 'owner-live.status.v1', anyOn, line, channels, ...(pair ? { pair } : {}) };
 }

@@ -449,6 +449,32 @@ export function probeChatDb(dbPath: string = chatDbPath()): ChatDbState {
   }
 }
 
+/** A plain iMessage address: letters, digits and `@ . _ + -` only (no quotes, spaces or control characters). */
+export const IMESSAGE_HANDLE_RE = /^[A-Za-z0-9@._+-]{3,128}$/;
+
+/**
+ * The iMessage addresses this Mac is signed in with, read read-only from
+ * chat.db (`last_addressed_handle` and `account_login`). Empty when Messages is
+ * unreadable. Never throws.
+ */
+export async function detectOwnIMessageHandles(): Promise<string[]> {
+  if (process.platform !== 'darwin' || probeChatDb() !== 'ok') return [];
+  const sql =
+    `SELECT DISTINCT last_addressed_handle AS h FROM chat WHERE service_name = 'iMessage' AND last_addressed_handle IS NOT NULL ` +
+    `UNION SELECT DISTINCT substr(account_login, 3) AS h FROM chat WHERE service_name = 'iMessage' AND (account_login LIKE 'E:%' OR account_login LIKE 'P:%');`;
+  const out = await sqlite(['-readonly', '-json', readOnlyUri(chatDbPath()), sql]);
+  if (!out.ok) return [];
+  let rows: unknown;
+  try { rows = out.stdout.trim() ? JSON.parse(out.stdout) : []; } catch { return []; }
+  if (!Array.isArray(rows)) return [];
+  const seen = new Map<string, string>();
+  for (const row of rows as Array<Record<string, unknown>>) {
+    const h = typeof row?.h === 'string' ? row.h.trim() : '';
+    if (IMESSAGE_HANDLE_RE.test(h) && !seen.has(h.toLowerCase())) seen.set(h.toLowerCase(), h);
+  }
+  return [...seen.values()];
+}
+
 export interface DoctorCheck {
   id: 'config_handle' | 'chat_db_readable' | 'responsible_binary' | 'sqlite3_present' | 'automation_messages';
   state: string;
