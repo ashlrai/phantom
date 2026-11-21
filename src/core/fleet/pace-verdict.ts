@@ -6,6 +6,7 @@
  * use it to stop adding rows to a pool that would go dark early and to prefer one with room.
  * Nothing here changes a plan or a bill: it only chooses among pools already included.
  */
+import { reservePace } from '../usage/reserve-pace.js';
 import { poolLabel } from '../usage/runway.js';
 import type { PoolRow } from './pools-view.js';
 
@@ -19,7 +20,7 @@ export type PaceState = 'on-pace' | 'ahead' | 'behind' | 'unknown';
 
 export type PaceInput = Pick<PoolRow, 'id' | 'usedPct' | 'hoursLeft' | 'burnPctPerHour' | 'resetAt'>;
 
-export interface PaceVerdict {
+export interface PaceVerdict extends Partial<ReturnType<typeof reservePace>> {
   pool: string;
   state: PaceState;
   usedPct: number | null;
@@ -37,7 +38,7 @@ const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 export function paceVerdict(pool: PaceInput, nowMs: number): PaceVerdict {
   const { usedPct, hoursLeft: hours, burnPctPerHour: recent } = pool;
-  const base = { pool: pool.id, usedPct, hoursToReset: hours, resetAt: pool.resetAt };
+  const base = { ...reservePace(pool), pool: pool.id, usedPct, hoursToReset: hours, resetAt: pool.resetAt };
   if (usedPct === null || hours === null || hours <= 0 || recent === null || !Number.isFinite(recent)) {
     return { ...base, state: 'unknown', emptyAt: null, evenPacePerHour: null, recentPerHour: recent ?? null };
   }
@@ -61,6 +62,7 @@ export function aheadWords(v: PaceVerdict): string {
 
 /** One plain line per pool for `phm fleet pace`. */
 export function paceLine(v: PaceVerdict): string {
+  if (v.line) return v.line;
   const label = poolLabel(v.pool);
   if (v.state === 'unknown') return `${label}: unknown (no usable reading)`;
   const rates = `${v.usedPct}% used, ${v.recentPerHour}%/h recent vs ${v.evenPacePerHour}%/h even`;
@@ -97,15 +99,36 @@ export function buildFleetPace(view: { generatedAt: string; pools: readonly Pace
   };
 }
 
-/** Reads the resource ledger and usage history, then the verdicts. Read-only. */
+/** Reads the status budget and usage history, then the verdicts. Read-only. */
 export async function readFleetPace(opts: { runsDir?: string; now?: () => number } = {}): Promise<FleetPaceV1> {
   const nowMs = (opts.now ?? Date.now)();
-  const [{ readResourceLedger }, { buildPoolsView }, { readUsageSamples }] = await Promise.all([
-    import('./runs-resource-ledger.js'), import('./pools-view.js'), import('./usage-history.js'),
+  const [{ readDispatchStatus }, { readUsageSamples }, { burnSeries }, { homedir }, { join }] = await Promise.all([
+    import('../usage/spend.js'), import('./usage-history.js'), import('../usage/burn-rate.js'), import('node:os'), import('node:path'),
   ]);
-  const runs = opts.runsDir === undefined ? {} : { runsDir: opts.runsDir };
-  const view = buildPoolsView(await readResourceLedger({ ...runs, now: () => nowMs }), nowMs, await readUsageSamples({ nowMs }));
-  return buildFleetPace(view, nowMs);
+  const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  const raw = await readDispatchStatus(join(runsDir, 'queue/status.json'));
+  const object = (v: unknown): Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
+  const status = object(raw), budget = object(status.budget), samples = await readUsageSamples({ runsDir, nowMs });
+  const number = (v: unknown): number | null => typeof v === 'number' && Number.isFinite(v) ? v : null;
+  const tick = Date.parse(String(status.last_tick ?? ''));
+  const fresh = tick <= nowMs && nowMs - tick <= 120_000;
+  const pools = Object.keys(budget).filter(id => /^[a-z0-9][a-z0-9._-]{0,79}$/.test(id)).map(id => {
+    const b = object(budget[id]), u = b.use_it_all === undefined ? b : object(b.use_it_all);
+    const usable = fresh && u.known !== false && u.stale !== true;
+    const usedPct = usable ? number(u.used_pct ?? b.weekly_used_pct) : null;
+    const reset = u.reset_at ?? b.reset_at;
+    const resetMs = typeof reset === 'number' ? reset * 1000 : Date.parse(String(reset ?? ''));
+    const resetAt = Number.isFinite(resetMs) ? new Date(resetMs).toISOString() : null;
+    const hoursLeft = usable ? resetAt ? (resetMs - nowMs) / 3_600_000 : number(u.hours_to_reset) : null;
+    const pair = burnSeries(samples.filter(s => s.pool === id && usedPct !== null && s.used_pct <= usedPct
+      && (resetAt === null || s.reset_at !== null && Math.abs(Date.parse(s.reset_at) - resetMs) <= 300_000))
+      .map(s => ({ at: s.observed_at, used_pct: s.used_pct, reset_at: s.reset_at })), nowMs).slice(-2);
+    const [older, newer] = pair;
+    const span = older && newer ? (Date.parse(newer.at) - Date.parse(older.at)) / 3_600_000 : 0;
+    const burn = span > 0 && nowMs - Date.parse(newer!.at) <= 3_600_000 ? (newer!.used_pct - older!.used_pct) / span : number(u.burn_pct_per_hour);
+    return { id, usedPct, hoursLeft, resetAt, burnPctPerHour: usable ? burn : null };
+  });
+  return buildFleetPace({ generatedAt: new Date(nowMs).toISOString(), pools }, nowMs);
 }
 
 /** Verdicts keyed by pool/lane name, or an empty map when the read fails (unknown changes nothing). */
