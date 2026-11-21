@@ -164,7 +164,11 @@ FAILED/CLOSED-unmerged/reverted evidence as `failed`; CANCELLED as
 `devin:<mode>`), and rows that cannot prove attribution are skipped — unknown
 stays unknown. A merged-then-reverted task counts as `failed`, matching the
 fleet revert rule, and tasks superseded by a fleet PR are skipped because the
-carrying PR reports its own outcome.
+carrying PR reports its own outcome. Batch-member `task_outcome` rows are
+session bookkeeping, not lifecycle evidence: their `outcome` word
+(done/skipped/failed/deferred/unreported) reports what the bundle session
+did with the line — `failed` and kin mean it went back to `ready.tsv` — so
+the member's own publish/reconciler rows carry its real outcome.
 
 The review half produces `retro-input/review-blocks.jsonl` from the GitHub
 verdict the cloud tracker records on each task at its terminal transition
