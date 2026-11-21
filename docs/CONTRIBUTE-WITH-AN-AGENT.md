@@ -77,9 +77,16 @@ npm run test:ci -- test/<file>.test.ts    # affected backend suites, isolated HO
 npm run test:web                          # only if src/web-ui/ changed
 npm run check:docs                        # if docs changed (verify-changed already ran it when the diff touched markdown or deleted files)
 npx vitest run test/doc-facts.test.ts     # if a documented command, flag or npm script changed
-npm run build                             # if build, packaging or CLI wiring changed
+npm run build                             # before suites that run dist/ (below), or if build, packaging or CLI wiring changed
 npm run dev -- verify-safety              # if safety-relevant code changed; read-only, changes nothing
 ```
+
+Some backend suites test the compiled CLI in `dist/`, not `src/`: they import
+`test/helpers/require-built-dist.ts` or spawn `dist/cli/index.js`, and stop
+with "run npm run build first" (or a similar message) when `dist/` is
+missing. Run `npm run build` before them, and again after each source change,
+or they test stale output. The fast gate leaves suites that import the helper
+to the scheduled `master` run, so a green pull request does not cover them.
 
 These match the "How it was verified" checklist in the pull request template
 (`phm verify-safety` there is the installed form of the last line), so tick
