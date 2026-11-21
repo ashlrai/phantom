@@ -172,6 +172,56 @@ describe('outcome learning', () => {
     expect(panel).toContain('5 min to merge');
   });
 
+  it('counts outcomes with unknown usage without inventing a cost', () => {
+    const text = [
+      '2026-11-01 00:00:00 ASSIGN job=RQ-U1 resource=devin model=swe-2-max type=code repo=phantom priority=normal',
+      '2026-11-01 00:10:00 OUTCOME job=RQ-U1 state=merged minutes=10 breakage=0',
+      '2026-11-01 00:20:00 ASSIGN job=RQ-U2 resource=devin model=swe-2-max type=code repo=phantom priority=normal',
+      '2026-11-01 00:30:00 OUTCOME job=RQ-U2 state=merged usage=2 minutes=10 breakage=0',
+      '2026-11-01 00:40:00 ASSIGN job=RQ-U3 resource=devin model=swe-2-max type=code repo=phantom priority=normal',
+      '2026-11-01 00:50:00 OUTCOME job=RQ-U3 state=closed breakage=0',
+    ].join('\n');
+    const view = outcomeLearningView(learnOutcomes(text));
+    expect(view.finished).toBe(3);
+    const cell = view.cells[0]!;
+    expect(cell).toMatchObject({ attempts: 3, merges: 2, goodMerges: 2, usage: 2, usageSamples: 1 });
+    // Mean usage covers only the attempt that reported it; unknown is null, never 0.
+    expect(cell.meanUsage).toBe(2);
+    const allUnknown = outcomeLearningView(learnOutcomes(text.replace('usage=2 ', '')));
+    expect(allUnknown.cells[0]).toMatchObject({ attempts: 3, usageSamples: 0, usage: 0 });
+    expect(allUnknown.cells[0]!.meanUsage).toBeNull();
+  });
+
+  it('accepts a JSON outcome line without usage and rejects a malformed one', () => {
+    const text = [
+      '{"event":"assign","job":"RQ-J1","repo":"phantom","resource":"claude","model":"haiku","jobType":"code","ts":"2026-11-01T00:00:00Z"}',
+      '{"event":"outcome","job":"RQ-J1","state":"merged","minutes":5,"ts":"2026-11-01T00:10:00Z"}',
+      '{"event":"assign","job":"RQ-J2","repo":"phantom","resource":"claude","model":"haiku","jobType":"code","ts":"2026-11-01T00:20:00Z"}',
+      '{"event":"outcome","job":"RQ-J2","state":"merged","usage":"lots","ts":"2026-11-01T00:30:00Z"}',
+    ].join('\n');
+    const view = outcomeLearningView(learnOutcomes(text));
+    expect(view.finished).toBe(1);
+    expect(view.malformed).toBe(1);
+    expect(view.cells[0]).toMatchObject({ attempts: 1, usageSamples: 0, meanUsage: null });
+  });
+
+  it('does not let unknown usage make a cell look cheap', () => {
+    const pick = (cells: ReturnType<typeof outcomeLearningView>['cells']) =>
+      cells.find((cell) => cell.resource === 'devin' && cell.model === 'swe-2-max' && cell.jobType === 'code' && cell.repo === 'phantom')!;
+    const cheap = outcomeLearningView(learnOutcomes(LOG));
+    const devinBefore = pick(cheap.cells);
+    const stripped = LOG.split('\n')
+      .map((line) => line.replace(/ usage=\S+(?=\s|$)/, '').replace(/,\s*"usage":\s*[\d.eE+-]+/, '').replace(/"usage":\s*[\d.eE+-]+,\s*/, ''))
+      .join('\n');
+    const noUsage = outcomeLearningView(learnOutcomes(stripped));
+    const devinAfter = pick(noUsage.cells);
+    // Same attempts and merges, but with usage unknown the cheapness posterior
+    // must not improve: mean reward can only stay flat or drop.
+    expect(devinAfter.attempts).toBe(devinBefore.attempts);
+    expect(devinAfter.meanUsage).toBeNull();
+    expect((1 + devinAfter.usageSamples) / (1 + devinAfter.usage)).toBeLessThanOrEqual((1 + devinBefore.usageSamples) / (1 + devinBefore.usage) + 1e-9);
+  });
+
   it('serves the view and a route from the fleet CLI', async () => {
     const help = await run(['--help']);
     expect(help.code).toBe(0);

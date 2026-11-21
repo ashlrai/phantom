@@ -461,6 +461,7 @@
 /test/fleet-guardian-stream-input-budget-02solz3.test.ts @masonwyatt23
 /test/fleet-guardian-verify-loop-01.test.ts @masonwyatt23
 /test/fleet-incident-gate.test.ts @masonwyatt23
+/test/fleet-jobs-outcome-events.test.ts @masonwyatt23
 /test/fleet-lane-truth-gate-sole2.test.ts @masonwyatt23
 /test/fleet-learning-loop-sweeps.test.ts @masonwyatt23
 /test/fleet-live-api-310b.test.ts @masonwyatt23

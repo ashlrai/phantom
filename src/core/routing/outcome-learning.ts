@@ -37,13 +37,17 @@ export interface OutcomeCellView {
   breakages: number;
   dirty: number;
   fixups: number;
+  /** Sum of usage over the attempts that carry a reading: reported, or imputed for censored ones. */
   usage: number;
+  /** How many attempts carry a usage reading. Resolved attempts with unknown usage are not samples; censored charges are. */
+  usageSamples: number;
   mergeRate: number;
   goodMergeRate: number;
   breakageRate: number;
   dirtyRate: number;
   fixupRate: number;
-  meanUsage: number;
+  /** Mean usage per reporting attempt; null when no attempt reported usage. */
+  meanUsage: number | null;
   meanMinutesToMerge: number | null;
 }
 
@@ -144,7 +148,8 @@ interface OutcomeEvent {
   kind: 'outcome';
   job: string;
   state: 'merged' | 'closed' | 'dirty' | 'fixup';
-  usage: number;
+  /** Null when the outcome carried no usage reading; unknown stays unknown, never zero. */
+  usage: number | null;
   minutes: number | null;
   breakage: number;
 }
@@ -263,10 +268,11 @@ function assignFrom(fields: { positional: string[]; kv: Record<string, string> }
 function outcomeFrom(fields: { positional: string[]; kv: Record<string, string> }): OutcomeEvent | null {
   const job = pickIdent(fields.kv, fields.positional, 0, 'job');
   const state = normalizeState(fields.kv['state'] ?? fields.kv['outcome'] ?? fields.positional[1]);
-  const usage = finiteNumber(fields.kv['usage']);
+  // usage may be absent (unknown); a present-but-unreadable value is malformed.
+  const usage = fields.kv['usage'] === undefined ? null : finiteNumber(fields.kv['usage']);
   const minutes = fields.kv['minutes'] === undefined ? null : finiteNumber(fields.kv['minutes'], 1e7);
   const breakage = fields.kv['breakage'] === undefined ? 0 : finiteNumber(fields.kv['breakage'], 1);
-  if (!job || !state || usage === null || breakage === null || (breakage !== 0 && breakage !== 1)) return null;
+  if (!job || !state || (fields.kv['usage'] !== undefined && usage === null) || breakage === null || (breakage !== 0 && breakage !== 1)) return null;
   if (fields.kv['minutes'] !== undefined && minutes === null) return null;
   return { kind: 'outcome', job, state, usage, minutes, breakage };
 }
@@ -344,9 +350,9 @@ function blankCell(resource: string, model: string, jobType: string, repo: strin
   return {
     resource, model, jobType, repo,
     attempts: 0, censored: 0, merges: 0, goodMerges: 0, breakages: 0, dirty: 0, fixups: 0,
-    usage: 0, mergeMinutes: 0, timedMerges: 0,
+    usage: 0, usageSamples: 0, mergeMinutes: 0, timedMerges: 0,
     mergeRate: 0, goodMergeRate: 0, breakageRate: 0, dirtyRate: 0, fixupRate: 0,
-    meanUsage: 0, meanMinutesToMerge: null,
+    meanUsage: null, meanMinutesToMerge: null,
   };
 }
 
@@ -364,7 +370,7 @@ function publish(cell: Cell): OutcomeCellView {
     breakageRate: attempts > 0 ? cell.breakages / attempts : 0,
     dirtyRate: attempts > 0 ? cell.dirty / attempts : 0,
     fixupRate: attempts > 0 ? cell.fixups / attempts : 0,
-    meanUsage: attempts > 0 ? cell.usage / attempts : 0,
+    meanUsage: cell.usageSamples > 0 ? cell.usage / cell.usageSamples : null,
     meanMinutesToMerge: timedMerges > 0 ? mergeMinutes / timedMerges : null,
   };
 }
@@ -415,7 +421,10 @@ function fold(events: readonly ParsedEvent[], malformed: number, censor?: Censor
     const key = cellKey(assign.resource, assign.model, assign.jobType, assign.repo);
     const cell = cells.get(key) ?? blankCell(assign.resource, assign.model, assign.jobType, assign.repo);
     cell.attempts += 1;
-    cell.usage += event.usage;
+    if (event.usage !== null) {
+      cell.usage += event.usage;
+      cell.usageSamples += 1;
+    }
     switch (event.state) {
       case 'merged':
         cell.merges += 1;
@@ -485,19 +494,20 @@ function censorStale(
     stale.set(key, entry);
   }
   let fleetUsage = 0;
-  let fleetAttempts = 0;
+  let fleetUsageSamples = 0;
   for (const cell of cells.values()) {
     fleetUsage += cell.usage;
-    fleetAttempts += cell.attempts;
+    fleetUsageSamples += cell.usageSamples;
   }
-  const fleetMean = fleetAttempts > 0 ? fleetUsage / fleetAttempts : 0;
+  const fleetMean = fleetUsageSamples > 0 ? fleetUsage / fleetUsageSamples : 0;
   let added = 0;
   for (const [key, { assign, count }] of stale) {
     const cell = cells.get(key) ?? blankCell(assign.resource, assign.model, assign.jobType, assign.repo);
-    const mean = cell.attempts > 0 ? cell.usage / cell.attempts : fleetMean;
+    const mean = cell.usageSamples > 0 ? cell.usage / cell.usageSamples : fleetMean;
     cell.attempts += count;
     cell.censored += count;
     cell.usage += mean * count;
+    cell.usageSamples += count;
     cells.set(key, cell);
     added += count;
   }
@@ -626,6 +636,7 @@ function evidenceFor(learning: OutcomeLearning, resource: string, model: string,
     sum.dirty += cell.dirty;
     sum.fixups += cell.fixups;
     sum.usage += cell.usage;
+    sum.usageSamples += cell.usageSamples;
     if (cell.meanMinutesToMerge !== null) {
       sum.mergeMinutes += cell.meanMinutesToMerge * cell.merges;
       sum.timedMerges += cell.merges;
@@ -639,7 +650,9 @@ function meanSuccess(cell: OutcomeCellView): number {
 }
 
 function meanCheapness(cell: OutcomeCellView): number {
-  return (1 + cell.attempts) / (1 + cell.usage);
+  // Only attempts that reported usage count as cheapness evidence; attempts
+  // with unknown usage still cost denominator through censored imputation.
+  return (1 + cell.usageSamples) / (1 + cell.usage);
 }
 
 function minutesUntil(resetAt: string | null, nowMs: number): number | null {
@@ -672,7 +685,7 @@ function meanReward(cell: OutcomeCellView, burn: number): number {
 
 function sampledReward(cell: OutcomeCellView, burn: number, rng: BanditRng): number {
   const success = betaSample(1 + cell.goodMerges, 1 + Math.max(0, cell.attempts - cell.goodMerges), rng);
-  const cheap = gammaSample(1 + cell.attempts, 1 + cell.usage, rng);
+  const cheap = gammaSample(1 + cell.usageSamples, 1 + cell.usage, rng);
   return success * cheap * (1 + burn);
 }
 
@@ -755,12 +768,13 @@ function learnedSentence(winner: ScoredOffer, runner: ScoredOffer | null, job: L
     return `Sent to ${offerLabel(winner.offer, offers, false)} to check a resource that has not finished this ${job.repo} ${job.jobType} job yet.`;
   }
   const rate = Math.round(winner.cell.goodMergeRate * 100);
-  const usage = formatUsage(winner.cell.meanUsage);
+  const usage = winner.cell.meanUsage === null ? 'unknown' : formatUsage(winner.cell.meanUsage);
   if (!runner || runner.cell.attempts < 1) {
     return `Sent to ${who} because ${rate}% of its ${job.repo} ${job.jobType} jobs merge without breaking main, at usage ${usage}.`;
   }
   const other = offerLabel(runner.offer, offers, true);
-  const cheaper = winner.cell.meanUsage < runner.cell.meanUsage;
+  const cheaper = winner.cell.meanUsage !== null && runner.cell.meanUsage !== null
+    && winner.cell.meanUsage < runner.cell.meanUsage;
   const breakRate = Math.round(runner.cell.breakageRate * 100);
   const cost = cheaper ? ` at lower usage than ${other}` : '';
   const broke = breakRate > 0 ? `${cost ? ',' : ''} and ${other} breaks main on ${breakRate}% of them` : '';
@@ -903,8 +917,9 @@ export function offersFromLearning(learning: OutcomeLearning): ResourceOffer[] {
 
 function cellSentence(cell: OutcomeCellView): string {
   const time = cell.meanMinutesToMerge === null ? 'time to merge unknown' : `${Math.round(cell.meanMinutesToMerge)} min to merge`;
+  const usage = cell.meanUsage === null ? 'unknown' : formatUsage(cell.meanUsage);
   return `${resourceWords(cell.resource)} (${modelWords(cell.model)}) on ${cell.repo} ${cell.jobType} jobs: `
-    + `${Math.round(cell.mergeRate * 100)}% merge, ${time}, usage ${formatUsage(cell.meanUsage)}, `
+    + `${Math.round(cell.mergeRate * 100)}% merge, ${time}, usage ${usage}, `
     + `${Math.round(cell.breakageRate * 100)}% breakage`
     + (cell.censored > 0 ? `, ${cell.censored} unmerged past the horizon.` : '.');
 }

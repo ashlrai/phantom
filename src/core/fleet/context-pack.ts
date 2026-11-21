@@ -7,6 +7,7 @@ import { dispatchEventsCandidates } from './dispatch-events-path.js';
 import { sanitizePublicJson } from '../util/public-json.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { learnOutcomes, outcomeLearningView } from '../routing/outcome-learning.js';
+import { readJobsOutcomeEvents } from './jobs-outcome-events.js';
 import { pinnedContextRows } from './library-pins.js';
 
 export interface ContextPackOptions extends BusInboxOptions {
@@ -53,7 +54,7 @@ export async function buildContextPack(options: ContextPackOptions): Promise<str
     throw new Error('Use safe job/lane IDs, --max-tokens 256..2000, and --merges 0..100.');
   }
   const now = (options.now ?? Date.now)();
-  const [state, events] = await Promise.all([readFleetRunsDirState({ runsDir, now: () => now }), eventsFile(runsDir)]);
+  const [state, events, jobsEvents] = await Promise.all([readFleetRunsDirState({ runsDir, now: () => now }), eventsFile(runsDir), readJobsOutcomeEvents(runsDir)]);
   if (state.sources.status !== 'healthy') throw new Error('Fleet status missing or unreadable. Restore queue/status.json and retry.');
   if (inspectBusInbox(options).source !== 'available') throw new Error('Bus missing or unreadable. Restore private bus storage and retry.');
   const rows: BusInboxReceipt[] = [];
@@ -86,7 +87,7 @@ export async function buildContextPack(options: ContextPackOptions): Promise<str
   const threads = [...selected.values()].sort((a, b) => a.envelope.priority.localeCompare(b.envelope.priority) || b.cursor - a.cursor)
     .map(({ cursor: at, envelope: { id, from, to, priority, body } }) => ({ source: 'bus-inbox', cursor: at, id, from, to, priority, body }));
   const merges = events.text.split(/\r?\n/).filter(line => /\b(?:MERGED|MERGE)\b|\bOUTCOME \S+ merged\b|\bstate=merged\b|"state"\s*:\s*"merged"/.test(line)).reverse().slice(0, count);
-  const learning = outcomeLearningView(learnOutcomes(events.text));
+  const learning = outcomeLearningView(learnOutcomes(`${events.text}\n${jobsEvents.text}`));
   const pins = pinnedContextRows(10, { home: options.home });
   const json = compactContext(job, lane, [
     { name: 'fleet', rows: [{ lastTick: state.lastTick, sources: state.sources, paused: state.paused, lanes: state.lanes.sort((a, b) => a.lane.localeCompare(b.lane)).map(({ lane, running, target, queued, held }) => ({ lane, running, target, queued, held })), finished: learning.finished }] },

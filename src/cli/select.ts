@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { appendBusInbox, type BusInboxOptions } from '../core/fleet/bus-inbox.js';
 import { collectFrictionTop, frictionLedgerPath, type FrictionItem } from '../core/fleet/friction-ledger.js';
 import { censorFromConfig, learnOutcomes } from '../core/routing/outcome-learning.js';
+import { readJobsOutcomeEvents } from '../core/fleet/jobs-outcome-events.js';
 import {
   DEFAULT_FUND_COUNT, fundedIds, parseCandidates, pickRecords, rankCandidates, readyLine,
   type SelectorCandidate, type SelectorResult,
@@ -115,7 +116,12 @@ export async function cmdSelect(args: string[], deps: SelectDeps = {}): Promise<
   const candidateText = await readCapped(parsed.candidates ?? join(dir, 'candidates.jsonl'));
   if (candidateText === null) { io.err('error: candidate file unavailable'); return 1; }
   // A missing log is a cold start, not a failure: defaults apply and every merge rate is the prior.
-  const events = await readCapped(parsed.events ?? join(root, 'queue', 'dispatch-events.log')) ?? '';
+  // The jobs ledger folds in as additional outcome evidence alongside the dispatch log.
+  const [events, jobsEvents] = await Promise.all([
+    readCapped(parsed.events ?? join(root, 'queue', 'dispatch-events.log')),
+    readJobsOutcomeEvents(root),
+  ]);
+  const learningText = [events ?? '', jobsEvents.text].filter((part) => part.trim() !== '').join('\n');
 
   const { candidates, rejected } = parseCandidates(candidateText);
   // The ledger is a second candidate pool: top open items fund RQ-FRICTION-* lines (noop churn absorbed first; dry run writes nothing).
@@ -124,7 +130,7 @@ export async function cmdSelect(args: string[], deps: SelectDeps = {}): Promise<
   candidates.push(...top.map(frictionCandidate).filter((c) => !candidates.some((f) => f.id === c.id)));
   const now = (deps.now ?? (() => new Date()))();
   const { loadConfigReadOnly } = await import('../core/config.js');
-  const learning = learnOutcomes(events, censorFromConfig(loadConfigReadOnly().router, now.getTime()));
+  const learning = learnOutcomes(learningText, censorFromConfig(loadConfigReadOnly().router, now.getTime()));
   const result: SelectorResult = rankCandidates(candidates, learning, {
     count: parsed.top, rejected, exclude: fundedIds(await readCapped(picksPath) ?? ''),
   });

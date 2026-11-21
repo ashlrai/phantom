@@ -14,12 +14,16 @@ import {
   type OutcomeLearningView,
   type ResourceOffer,
 } from '../core/routing/outcome-learning.js';
+import { readJobsOutcomeEvents, type JobsOutcomeEventsRead } from '../core/fleet/jobs-outcome-events.js';
 
 const usage = `Usage: phm fleet outcomes --lane <lane|all> [--hours 24] [--json]
        phm fleet outcomes [--events <file>] [--json]
        phm fleet outcomes route --repo <repo> --type <jobType> [--priority critical|normal] [--job <id>] [--offers <file>] [--events <file>] [--json]
 
 --events <file>  Dispatch event log. Default: ~/.ashlr-runs/queue/dispatch-events.log
+                 The metrics/jobs.jsonl ledger (and work-market.jsonl route
+                 decisions) under ASHLR_RUNS_DIR or ~/.ashlr-runs is always
+                 folded in as additional outcome evidence.
 --offers <file>  JSON array of resources that can take the job. Without it, every resource in the log is treated as free.
 --json           One JSON object on stdout.
 
@@ -138,8 +142,16 @@ function parseArgs(args: string[]): Parsed | null {
   return parsed;
 }
 
-function payload(view: OutcomeLearningView, route: LearnedRoute | null): OutcomeLearningView & { route: LearnedRoute | null } {
-  return { ...view, route };
+interface OutcomeSources {
+  events: 'read' | 'unavailable';
+  jobsLedger: JobsOutcomeEventsRead['jobsState'];
+  workMarket: JobsOutcomeEventsRead['marketState'];
+  truncated: boolean;
+  bridged: { jobs: number; outcomes: number; pending: number; skipped: number } | null;
+}
+
+function payload(view: OutcomeLearningView, route: LearnedRoute | null, sources?: OutcomeSources): OutcomeLearningView & { route: LearnedRoute | null; sources?: OutcomeSources } {
+  return sources === undefined ? { ...view, route } : { ...view, route, sources };
 }
 
 const JOB_FLAGS = new Set(['--lane', '--hours', '--runs-dir', '--jobs']);
@@ -182,15 +194,26 @@ export async function cmdFleetOutcomes(args: string[]): Promise<number> {
     process.stderr.write(`${usage}\n`);
     return 2;
   }
-  const text = await readEvents(parsed.events);
-  if (text === null) {
-    const empty = payload({ schema: 'routing.outcome-learning.v1', finished: 0, malformed: 0, cells: [], improvementJobs: [] }, null);
+  const runsRoot = process.env['ASHLR_RUNS_DIR'] || join(homedir(), '.ashlr-runs');
+  const [text, jobsEvents] = await Promise.all([readEvents(parsed.events), readJobsOutcomeEvents(runsRoot)]);
+  const learningText = [text, jobsEvents.text].filter((part): part is string => part !== null && part.trim() !== '').join('\n');
+  const sources: OutcomeSources = {
+    events: text === null ? 'unavailable' : 'read',
+    jobsLedger: jobsEvents.jobsState,
+    workMarket: jobsEvents.marketState,
+    truncated: jobsEvents.truncated,
+    bridged: jobsEvents.stats.jobs + jobsEvents.stats.skipped > 0
+      ? { jobs: jobsEvents.stats.jobs, outcomes: jobsEvents.stats.outcomes, pending: jobsEvents.stats.pending, skipped: jobsEvents.stats.skipped }
+      : null,
+  };
+  if (learningText === '') {
+    const empty = payload({ schema: 'routing.outcome-learning.v1', finished: 0, malformed: 0, cells: [], improvementJobs: [] }, null, sources);
     if (parsed.json) process.stdout.write(`${JSON.stringify(empty)}\n`);
     else process.stderr.write('error: event log unavailable\n');
     return 1;
   }
   const { loadConfigReadOnly } = await import('../core/config.js');
-  const learning = learnOutcomes(text, censorFromConfig(loadConfigReadOnly().router, Date.now()));
+  const learning = learnOutcomes(learningText, censorFromConfig(loadConfigReadOnly().router, Date.now()));
   const view = outcomeLearningView(learning);
   let route: LearnedRoute | null = null;
   if (parsed.mode === 'route') {
@@ -206,6 +229,6 @@ export async function cmdFleetOutcomes(args: string[]): Promise<number> {
       priority: parsed.priority,
     }, offers, { nowMs: Date.now() });
   }
-  process.stdout.write(parsed.json ? `${JSON.stringify(payload(view, route))}\n` : `${formatOutcomeLearning(view, route)}\n`);
+  process.stdout.write(parsed.json ? `${JSON.stringify(payload(view, route, sources))}\n` : `${formatOutcomeLearning(view, route)}\n`);
   return 0;
 }
