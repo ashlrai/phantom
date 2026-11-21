@@ -1,0 +1,15 @@
+/* The task on a "Working now" line (RosterTask.tsx). It takes up to half the line and is cut before the last message is; a hairline parts the two. */
+.task {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 50%;
+  padding-right: var(--space-2);
+  overflow: hidden;
+  border-right: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Only how the brief opens, not a stated task: quieter than a title or a queue row. */
+.task[data-roster-task='opening'] { color: var(--text-secondary); }

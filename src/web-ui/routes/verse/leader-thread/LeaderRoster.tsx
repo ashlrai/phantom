@@ -1,7 +1,8 @@
 /**
  * "Working now": every running agent session, one line each, above the Leader
  * conversation. A line shows who it is, when it last spoke and the last thing
- * it said. Choosing a line aims the next message at it by putting `@RQ-...` in
+ * it said, with what its job was asked to do between the two when the
+ * Conversations read knows it (roster-task.ts). Choosing a line aims the next message at it by putting `@RQ-...` in
  * the Leader reply box (the same hand-off the Feed's "Ask Leader" uses), so
  * nothing is sent until Mason sends it. Thread reads that session as a
  * conversation without leaving the pane; Log opens that job's Worker log.
@@ -12,6 +13,9 @@
  */
 import { useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
+import type { ThreadTask } from '../fleet-sessions/session-thread-model.js';
+import { RosterTask } from './RosterTask.js';
+import { rosterTaskWords, useRosterTasks } from './roster-task.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { liveSessionsQuery, SESSIONS_POLL_MS } from '../fleet-sessions/sessions-model.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
@@ -29,7 +33,9 @@ function writeOpen(open: boolean): void {
   try { window.localStorage.setItem(ROSTER_OPEN_KEY, open ? '1' : '0'); } catch { /* Storage can be unavailable. */ }
 }
 
-function Row({ row, aimed, reading, onAim, onOpenLog, onOpenThread }: {
+function Row({ row, task, aimed, reading, onAim, onOpenLog, onOpenThread }: {
+  /** What its job was asked to do; null or undefined when the Conversations read knows no line or does not say. */
+  task: ThreadTask | null | undefined;
   row: RosterRow; aimed: boolean; reading: boolean; onAim: (id: string) => void; onOpenLog: (job: string) => void; onOpenThread?: (session: string) => void;
 }) {
   const line = <>
@@ -37,12 +43,13 @@ function Row({ row, aimed, reading, onAim, onOpenLog, onOpenThread }: {
     <strong>{row.id}</strong>
     {row.kind === 'subagent' ? <span className={styles.kind}>helper</span> : null}
     <span className={styles.when} data-state={row.state}>{row.when}</span>
+    <RosterTask task={task} />
     <span className={styles.said} data-unknown={row.said === null || undefined}>{row.said ?? 'Last message unknown'}</span>
   </>;
   return <li className={styles.item} data-state={row.state} data-aimed={aimed || undefined} data-reading={reading || undefined}>
     {row.aimable
       ? <button type="button" className={styles.row} data-roster-row={row.id} data-job={row.job ?? undefined} data-session={row.session}
-        aria-label={`Aim your next message at ${row.id}, ${row.when}`} title="Put this job in the reply box" onClick={() => onAim(row.id)}>{line}</button>
+        aria-label={`Aim your next message at ${row.id}, ${row.when}${task ? `. ${rosterTaskWords(task)}` : ''}`} title="Put this job in the reply box" onClick={() => onAim(row.id)}>{line}</button>
       : <span className={styles.row} data-roster-row={row.id} data-job={row.job ?? undefined} data-session={row.session} tabIndex={0}
         title="Only RQ- jobs can be named in a message">{line}</span>}
     {onOpenThread ? <button type="button" className={styles.side} data-roster-thread={row.session} aria-current={reading || undefined} aria-label={`Read ${row.id} as a conversation`}
@@ -64,6 +71,7 @@ export function LeaderRoster({ visible, onOpenLog, onOpenSessions, onOpenThread,
   const read = useQuery(liveSessionsQuery, { enabled: visible, freshMs: SESSIONS_POLL_MS });
   const refetch = useRefetch(liveSessionsQuery);
   usePollWhileVisible(refetch, SESSIONS_POLL_MS, { enabled: visible });
+  const tasks = useRosterTasks(visible);
   const [open, setOpen] = useState(readOpen);
   const [aimed, setAimed] = useState<string | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
@@ -106,7 +114,7 @@ export function LeaderRoster({ visible, onOpenLog, onOpenSessions, onOpenThread,
     </header>
     {open && list !== null && rows.length > 0
       ? <ul ref={listRef} className={styles.list} aria-label="Running agent sessions" onKeyDown={onKeyDown}>
-        {rows.map(row => <Row key={row.id} row={row} aimed={aimed === row.id} reading={openSession === row.session} onAim={aim} onOpenLog={onOpenLog} onOpenThread={onOpenThread} />)}
+        {rows.map(row => <Row key={row.id} row={row} task={tasks.get(row.session)} aimed={aimed === row.id} reading={openSession === row.session} onAim={aim} onOpenLog={onOpenLog} onOpenThread={onOpenThread} />)}
       </ul> : null}
     {open && list !== null && read.error ? <p className={styles.note} role="status" data-tone="unknown">Refresh failed; this list may be stale.</p> : null}
     {open && list !== null && list.gaps.length > 0
