@@ -78,6 +78,9 @@ Approval cards record consent and do not collect credentials.
 - [Cloud lane](CLOUD.md): Claude Code cloud sessions from chat, Command, or CLI.
 - [Add a computer in 60 seconds](add-a-computer.md): install, join, choose capabilities, verify, and leave.
 - Node router: `phm node join|pull|plan|status --json`, guide in `docs/NODE-ROUTER.md`. Nodes advertise caps, jobs carry an owner scope and a fenced lease, auth stays local.
+- [Team org](AGENT-NETWORK.md#team-org): `phm org show|join|plan --json`; declarative org.toml of members, agents, lanes and contributed shares; opt-in per lane, plan within contributed limits, nothing private pooled.
+- [Team invite, join and remove](TEAM.md#invite-join-and-remove-a-teammate): `phm team invite <gh-user>`, `phm team join <invite>`, `phm team remove <gh-user> --json`; membership only, no credentials, each node keeps its own local auth, removal drains claims.
+- Dispatcher admission: `phm pool admission --json` reads the starvation signals and what dispatchd would decide about new claims right now; read-only.
 - [Drive](DRIVE.md): Mac queue supervisor. Serial ticks, worker reaping, and READY job admission.
 - [Daemon tick phases](daemon-tick-phases.md): Bounded resident tick stages — per-phase status/duration/error and tick outcomes via `phm daemon status --json | jq .tick.phases`.
 - [Disk maintenance](DISK-MAINT.md): `phm disk-maint [--apply] [--json]` reclaims rebuildable bytes by class; `phm disk-maint schedule` installs the daily job. Dry run by default; the protect-list (`~/.codex*`, model weights, Docker, client trees, secrets) is unconditional.
