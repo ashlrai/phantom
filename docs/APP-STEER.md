@@ -56,6 +56,27 @@ does not answer, `/who` reads "Working sessions are unknown" with the reason,
 and `/thread` opens the name unchecked and says that. The reads are the ones
 behind `phm sessions --json` and `phm sessions thread <id> --json`.
 
+### See and open the Mac's apps by typing
+
+Two more commands reach the apps on the Mac Phantom runs on, through the
+same routes as the Mac host pane's Apps and App actions cards:
+
+| Type | What happens |
+| --- | --- |
+| `/apps` | One line in the conversation: each known app with its state (in front, running with its memory, not running, running unknown), the ones not installed named last, then the newest thing Phantom did to an app and how many actions on record did not go through. It only reads, so it needs no unlock and leaves no note. |
+| `/app <name>` | Opens that app, or brings it to the front when it is already running: the one action its row on the Apps card offers. The name is the app's id, its full name, or enough of the start to fit one app (`/app cur` for Cursor). It needs the unlock, asks for no confirm, and a done action leaves a `[composer] /app <name>: done` note in the Leader inbox. |
+
+`/app` reads the app list first and runs nothing when the name fits no app or
+more than one, when the app is not installed, or when its row offers no
+action (Phantom itself, or the app already in front). The allowlist, request
+mode, KILL and the comms pause apply as they do to `phm apps open claude
+--json`: a refusal is shown with the server's reason and leaves no note, and a
+request-mode app answers that the request went to needs-you. There is no quit
+or restart from the reply box. When a read does not answer, that half of the
+`/apps` line says it is unknown and why; away from the Mac both halves say
+they can be read only there. The reads are the ones behind `phm apps --json`
+and `phm apps log --json`.
+
 Every fleet graph node offers Steer and Hand off. Both open the existing
 message dialog for review before sending. Steer asks for a routing decision
 when a node is exhausted, held or stale, and a neutral question otherwise.

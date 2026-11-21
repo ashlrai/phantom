@@ -8,7 +8,7 @@ import { normalizePaneId } from '../shell/dock-catalog.js';
 
 import { validJob } from '../fleet/workers-card-model.js';
 
-export type ComposerCommandName = 'pause' | 'resume' | 'release' | 'hold' | 'stop' | 'drop' | 'status' | 'help' | 'open' | 'who' | 'thread' | 'summary' | 'log';
+export type ComposerCommandName = 'pause' | 'resume' | 'release' | 'hold' | 'stop' | 'drop' | 'status' | 'help' | 'open' | 'who' | 'thread' | 'summary' | 'log' | 'apps' | 'app';
 
 export interface ComposerCommandSpec {
   name: ComposerCommandName;
@@ -32,6 +32,9 @@ export const COMPOSER_COMMANDS: readonly ComposerCommandSpec[] = [
   { name: 'thread', usage: '/thread <session>', summary: 'Open a session as a conversation (type @ to pick one)', arg: 'session' },
   { name: 'summary', usage: '/summary <session>', summary: 'Print what a session is doing, here', arg: 'session' },
   { name: 'log', usage: '/log <job-id>', summary: 'Open a job’s live log', arg: 'job-id' },
+  // Mac apps, through the Mac host pane's own reads and its one write (composer-app-commands.ts).
+  { name: 'apps', usage: '/apps', summary: 'Say which Mac apps are open and what Phantom last did to them', arg: null },
+  { name: 'app', usage: '/app <name>', summary: 'Open a Mac app, or bring it to the front', arg: 'name' },
   { name: 'help', usage: '/help', summary: 'List these commands', arg: null },
 ];
 
@@ -87,6 +90,7 @@ export function commandArgError(command: { name: ComposerCommandName; arg: strin
   }
   if (spec.name === 'stop' && /\s/.test(command.arg)) return `/stop takes one job id: ${spec.usage}`;
   if ((spec.name === 'thread' || spec.name === 'summary') && sessionArg(command.arg) === null) return `/${spec.name} takes one session id: ${spec.usage}`;
+  if (spec.name === 'app' && command.arg.length > 80) return `/app takes one app name: ${spec.usage}`;
   if (spec.name === 'log' && !validJob(sessionArg(command.arg))) return `/log takes one job id: ${spec.usage}`;
   return null;
 }
