@@ -933,8 +933,9 @@ contains routing labels, a message count and the latest receipt time; it never
 includes message bodies. Provider labels come from sender metadata observed on
 live receipts. A missing or conflicting provider is `null` (unknown). Labels
 are not authenticated identities. Broadcasts to `leaders`, human/external
-messages, self-messages and `group.presence` heartbeats — observations with
-their own read, never agent-to-agent mail — are excluded. The local bus retains and expires
+messages, self-messages, dead-letter notices filed to `bus.dead-letter` and
+`group.presence` heartbeats — system traffic with its own read, never
+agent-to-agent mail — are excluded. The local bus retains and expires
 messages, so these links are not a complete history; A2A events are not yet
 included. A missing or unreadable bus reports unknown edges, not an empty list.
 

@@ -79,6 +79,17 @@ describe('phm agents messages', () => {
     expect(result.pairs![1]!.lastAt).toBe('2026-11-18T12:00:06.000Z');
   });
 
+  it('a dead-letter notice is a delivery report, not agent mail', () => {
+    const result = read(store([
+      [T0, 'bus-router', 'bus.dead-letter', { protocol: { version: 1, kind: 'status' }, correlation_id: 'c-1',
+        payload: { deadLetter: { id: 'lost', reason: 'exhausted' }, payloadDropped: false, envelope: null } }],
+      [T0 + 1_000, 'leader', 'claude', { text: 'hi' }],
+    ]));
+    expect(result.matched).toBe(1);
+    expect(result.messages!.map(m => m.summary)).toEqual(['hi']);
+    expect(result.pairs!.map(p => `${p.from}->${p.to}`)).toEqual(['leader->lane:claude']);
+  });
+
   it('an unreadable bus is unknown, not zero', () => {
     const result = buildAgentsMessages({ source: 'unavailable', rows: [], skipped: 2 }, { since: T0 }, NOW);
     expect(result).toMatchObject({ messages: null, pairs: null, matched: null, skipped: 2 });
