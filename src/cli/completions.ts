@@ -22,7 +22,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'approvals', 'decisions', 'org', 'lanes', 'steward', 'improve', 'autopilot', 'metrics', 'jobs', 'recut', 'self', 'empties', 'shipped', 'mobile', 'throughput', 'merges', 'home', 'asks', 'needs-you', 'subagent', 'init',
   'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test', 'land',
   'new', 'ship', 'recall', 'learn', 'genome',
-  'self-swap', 'update', 'upgrade', 'desktop', 'desktop-update', 'desktopctl', 'apps', 'browser', 'app', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
+  'self-swap', 'self-update', 'update', 'upgrade', 'desktop', 'desktop-update', 'desktopctl', 'apps', 'browser', 'app', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
   'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router', 'router-calibration', 'node', 'sandbox', 'audit',
   'enroll', 'backlog', 'inbox', 'ideas', 'claim', 'daemon', 'worker', 'ask', 'knowledge', 'reflect',
   'health', 'goals', 'pr', 'prs', 'fleet', 'recovery', 'manager', 'vision', 'goal', 'loop',

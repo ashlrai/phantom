@@ -14,6 +14,7 @@ import { execFileSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { readBuildIdentity } from '../build-identity.js';
+import { readLastBuild, type LastBuild } from './build-last.js';
 
 export const BUILD_LIVE_SCHEMA = 'doctor.build.v1';
 /** Local refs tried in order; the first that exists is "master". No network. */
@@ -34,6 +35,8 @@ export interface BuildLiveReport {
   branch: Known<{ name: string | 'detached' }> | Unknown;
   /** `since`: when the oldest commit the running build lacks was merged (ISO), null when git would not say. */
   behind: Known<{ count: number; ref: string; since: string | null }> | Unknown;
+  /** The host's last rebuild (leader/phm-live-state.txt); absent when no path was given. */
+  lastBuild?: LastBuild;
   verdict: string;
 }
 
@@ -56,6 +59,8 @@ export interface BuildLiveOptions {
   git?: GitRunner;
   /** The build-time commit; null = none embedded. Defaults to dist/build-identity.json. */
   readBuiltSha?: () => string | null;
+  /** Path of leader/phm-live-state.txt; when set, the report carries the last rebuild's result. */
+  liveStatePath?: string;
 }
 
 const defaultCodeDir = (): string => fileURLToPath(new URL('../../../', import.meta.url));
@@ -109,6 +114,7 @@ export function readBuildLive(opts: BuildLiveOptions = {}): BuildLiveReport {
   }
 
   const report = { schema: BUILD_LIVE_SCHEMA, generatedAt: new Date(now).toISOString(), codeDir, commit, branch, behind } as BuildLiveReport;
+  if (opts.liveStatePath) report.lastBuild = readLastBuild(opts.liveStatePath);
   report.verdict = buildVerdict(report);
   return report;
 }

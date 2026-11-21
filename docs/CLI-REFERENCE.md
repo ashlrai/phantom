@@ -884,6 +884,7 @@ Missing fleet summaries are marked explicitly; flags hidden behind `[opts]` or u
 | <code>phm select [--json] [--dry-run] [--top &lt;n&gt;]</code> | Rank candidates by value x leverage / (time + usage), fund the top 5 as READY lines, record picks with predicted value. | <code>--dry-run</code>, <code>--json</code>, <code>--top</code> | <code>phm select --json [--dry-run] [--top &lt;n&gt;]</code> |
 | <code>phm self drift [--json] [--repo &lt;phantom clone&gt;]</code> | Is the installed phm behind the latest release and master, and which merged fleet features are not live in it yet. Unreadable facts print as unknown. | <code>--json</code>, <code>--repo</code> | <code>phm self drift --json [--repo &lt;phantom clone&gt;]</code> |
 | <code>phm self-swap [--plan &#124; --apply --supervised] [--json]</code> | Plan a versioned install swap; apply builds, probes, flips current and drains the old supervised process. | <code>--apply</code>, <code>--json</code>, <code>--plan</code>, <code>--supervised</code> | <code>phm self-swap [--plan &#124; --apply --supervised] --json</code> |
+| <code>phm self-update --check [--json] &#124; --plan</code> | Is the phm running on this host current? The running commit and build time, how many commits it is behind origin/master (local ref, no network), the last rebuild result, then a verdict: current, behind N commits, or last build failed. --plan prints the blue/green steps and runs nothing. Read-only. | <code>--check</code>, <code>--json</code>, <code>--plan</code> | <code>phm self-update --check --json &#124; --plan</code> |
 | <code>phm serve --allow-dispatch</code> | Enable guarded POST /api/run + web inbox approve/reject (prints session token). | <code>--allow-dispatch</code> | - |
 | <code>phm serve --open</code> | Start dashboard and open browser automatically. | <code>--open</code> | - |
 | <code>phm serve [--port N]</code> | Start local web dashboard + JSON API on 127.0.0.1 (default port 7777). | <code>--port</code> | - |
@@ -1150,7 +1151,6 @@ These registered verbs have no one-line help in their source yet. Their rows abo
 - <code>phm fleet planner-brief</code>
 - <code>phm fleet planner-cycle</code>
 - <code>phm fleet planner-output</code>
-- <code>phm fleet planner-slate</code>
 - <code>phm fleet pool-reach</code>
 - <code>phm fleet post</code>
 - <code>phm fleet pr-leverage</code>
