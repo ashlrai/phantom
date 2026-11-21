@@ -44,7 +44,8 @@ Use Ops ▸ Live runs to watch workers and Fleet ▸ Tell the leaders to append 
 To see where work would be sent, open the **Router** pane from the command
 palette (⌘K, "Open pane: Router"). Its route table shows the seat each kind of
 work goes to first; choose a cell for the order the router would try seats,
-each seat's usage and reset, and below it where recent decisions went, drawn
+each seat's usage and reset, then a row per seat showing where it stands for
+every kind of work with its usage windows, and below it where recent decisions went, drawn
 over time with a lane per seat (arrow keys on the time axis read one slice). Router
 shares one row of names with Pools, Usage, Models, Lanes, Capacity and Supply;
 each name carries a few live words when its board has something to flag
