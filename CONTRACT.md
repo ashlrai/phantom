@@ -250,7 +250,13 @@ memory benchmark gate's
 violation lines, and the `ci` job's Lint step eslint stylish output as
 `<file> > (lint)` rows -- absolute checkout-marker file headers,
 `line:col severity message ruleId` rows, `error` severity only and gated
-on the `✖ N problems` run summary -- plus
+on the `✖ N problems` run summary -- the same step's
+`<file> > (realio-lane)` rows from the
+`[check-realio-lane-membership]` section headers and their bare test
+paths (missing-members reasons included; the soft-signal advisory
+section stays unparsed) and `<file> > (verse-sync-io)` rows from the
+`verse-sync-io: N synchronous call(s)` header and its
+`<file>:<line>  <call>(…)  → <hint>` route-file rows, plus
 summaries. `auditExceptions` is the optional
 `DependencyAuditException[] | null` list (`{id, package, graph}` with
 graph `full` or `raycast-production`); `null` leaves audit reports
@@ -292,7 +298,12 @@ static inputs for the toolchain files tsx reads, and the harness
 ambient set does not apply to it either. The lint gate's dependency set
 is `eslint.config.js`, `package.json` and `package-lock.json` -- never
 the failing file's import closure, since eslint's rules are per-file --
-and the harness ambient set does not apply to it either. Parenthesized
+and the harness ambient set does not apply to it either. The realio-lane guard's
+dependency set is the checker script plus its imported lane manifests,
+measured-fast allowlist and lane-inventory helper, and the
+verse-sync-io guard's is the checker script alone -- closed input
+lists, never the failing file's import closure, and the harness ambient
+set does not apply to either. Parenthesized
 gate identities other than `(suite)` can never resolve a master pass or
 flake classification, even when their file is a test path a green-module
 line could otherwise match.

@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; script?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; script?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -63,7 +63,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.flaky ? 'flaky-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : head;
       const receipt = options.bound
         ? `Bound candidate ${options.boundHead ?? sha} to event tree ${'e'.repeat(40)}\n`
@@ -1159,6 +1159,125 @@ describe('CI baseline evidence', () => {
     // Two unaffected PRs still group shared-baseline on a test path.
     const shared = await analyzeCiBaseline('owner/repo', github({ lintTestFile: true }).gh);
     expect(shared.groups[0]).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail' });
+  });
+  it('parses the realio-lane and verse-sync-io lint guards as per-file failures', () => {
+    const realio = parseBaselineFailures(fixture('realio-shared'), 'owner/repo');
+    expect(realio.map(f => f.testId)).toEqual([
+      'test/example.test.ts > (realio-lane)',
+      'test/other.test.ts > (realio-lane)',
+    ]);
+    expect(realio[0]).toMatchObject({ file: 'test/example.test.ts', names: '(realio-lane)' });
+    expect(realio[0]?.excerpt).toContain('use a real-io marker');
+    expect(realio[0]?.excerpt).toContain('spawns a real child process');
+    const verse = parseBaselineFailures(fixture('verse-shared'), 'owner/repo');
+    expect(verse.map(f => f.testId)).toEqual([
+      'src/core/verse/example-api.ts > (verse-sync-io)',
+      'src/core/verse/other-api.ts > (verse-sync-io)',
+    ]);
+    expect(verse[0]).toMatchObject({ file: 'src/core/verse/example-api.ts', names: '(verse-sync-io)' });
+    expect(verse[0]?.excerpt).toContain('readFileSync');
+    // Timestamped job-log lines keep the section headers and rows.
+    for (const [name, expected] of [['realio-shared', realio], ['verse-shared', verse]] as const) {
+      const stamped = fixture(name).split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+      expect(parseBaselineFailures(stamped, 'owner/repo').map(f => f.testId)).toEqual(expected.map(f => f.testId));
+    }
+    // The stale-entries and lane-overlap sections group the same way.
+    const stale = parseBaselineFailures([
+      '[check-realio-lane-membership] stale KNOWN_FAST_SPAWN_FILES entries (no longer',
+      'matched, or file no longer exists) — remove from scripts/realio-lane-known-fast-spawns.mjs:',
+      '  test/gone.test.ts',
+      '',
+      '[check-realio-lane-membership] files cannot belong to both real-I/O and serial-CPU lanes:',
+      '  test/both.test.ts',
+      '##[error]Process completed with exit code 1.',
+    ].join('\n'), 'owner/repo');
+    expect(stale.map(f => f.testId)).toEqual([
+      'test/gone.test.ts > (realio-lane)',
+      'test/both.test.ts > (realio-lane)',
+    ]);
+    expect(stale[0]?.excerpt).toContain('stale KNOWN_FAST_SPAWN_FILES entries');
+    expect(stale[1]?.excerpt).toContain('cannot belong to both');
+  });
+  it('keeps unrecognized lint-guard output unparsed', () => {
+    // The soft-signal section prints bare test paths but never fails.
+    expect(parseBaselineFailures([
+      '[check-realio-lane-membership] soft signal only (not gate-failing) — large fixture',
+      'marker found outside the real-io lane, worth a second look:',
+      '  test/example.test.ts',
+      '',
+      '[check-realio-lane-membership] ok — 3 real-io files, 1 serial-cpu files, 40 unit files, no unclassified real-io markers found.',
+    ].join('\n'), 'owner/repo')).toEqual([]);
+    // Section paths outside the test-file shape stay unparsed.
+    expect(parseBaselineFailures([
+      '[check-realio-lane-membership] files cannot belong to both real-I/O and serial-CPU lanes:',
+      '  scripts/not-a-test.ts',
+      '  ../escape.test.ts',
+      '  /abs/test/example.test.ts',
+    ].join('\n'), 'owner/repo')).toEqual([]);
+    // Verse rows need the count header; the trailer alone is not a failure.
+    expect(parseBaselineFailures([
+      'If the call can never touch an operator folder, say why on it or on the line above: // sync-io-ok: <reason>',
+      'verse-sync-io: no synchronous fs/child-process calls in Phantom console route files',
+    ].join('\n'), 'owner/repo')).toEqual([]);
+    // Non-route paths and non-ellipsis call shapes stay unparsed.
+    expect(parseBaselineFailures([
+      'verse-sync-io: 2 synchronous call(s) in Phantom console route files — a macOS privacy prompt on the folder freezes the whole sidecar:',
+      '  src/core/example.ts:42  readFileSync(…)  → use the fs/promises form',
+      '  src/core/verse/example-api.ts:42  readFileSync()  → use the fs/promises form',
+    ].join('\n'), 'owner/repo')).toEqual([]);
+    // A `##[` step boundary closes the verse window: rows after it are
+    // another step's output, not this guard's.
+    expect(parseBaselineFailures([
+      'verse-sync-io: 1 synchronous call(s) in Phantom console route files — a macOS privacy prompt on the folder freezes the whole sidecar:',
+      '##[error]Process completed with exit code 1.',
+      '  src/core/verse/late-api.ts:9  readFileSync(…)  → use the async form',
+    ].join('\n'), 'owner/repo')).toEqual([]);
+  });
+  it('groups lint-guard failures and attributes their closed input sets', async () => {
+    for (const [flag, testId, file, inputs] of [
+      ['realio', 'test/example.test.ts > (realio-lane)', 'test/example.test.ts',
+        ['test/config/realio-lane-membership.mjs', 'test/config/serial-cpu-lane-membership.mjs', 'scripts/check-realio-lane-membership.mjs', 'scripts/realio-lane-inventory.mjs', 'scripts/realio-lane-known-fast-spawns.mjs']],
+      ['verse', 'src/core/verse/example-api.ts > (verse-sync-io)', 'src/core/verse/example-api.ts',
+        ['scripts/check-verse-sync-io.mjs']],
+    ] as const) {
+      const options: Parameters<typeof github>[0] = flag === 'realio' ? { realio: true } : { verse: true };
+      const report = await analyzeCiBaseline('owner/repo', github(options).gh);
+      expect(report.groups.map(g => g.testId)).toEqual(flag === 'realio'
+        ? ['test/example.test.ts > (realio-lane)', 'test/other.test.ts > (realio-lane)']
+        : ['src/core/verse/example-api.ts > (verse-sync-io)', 'src/core/verse/other-api.ts > (verse-sync-io)']);
+      for (const group of report.groups) {
+        expect(group).toMatchObject({ names: `(${flag === 'realio' ? 'realio-lane' : 'verse-sync-io'})`, classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      }
+      // The failing file itself is pr-caused; so are the guard's closed
+      // inputs. A file the failing source merely imports is not: the
+      // guards grep text and never read the import closure.
+      const caused = await analyzeCiBaseline('owner/repo', github({ ...options, touched: file }).gh);
+      const byId = new Map(caused.groups.map(g => [g.testId, g]));
+      expect(byId.get(testId)?.action).toBe('pr-caused');
+      expect(caused.groups.filter(g => g.testId !== testId).every(g => g.action === 'queue-master-fix')).toBe(true);
+      for (const touched of inputs) {
+        const config = await analyzeCiBaseline('owner/repo', github({ ...options, touched }).gh);
+        expect(config.groups.every(g => g.action === 'pr-caused'), `${flag} ${touched}`).toBe(true);
+      }
+      const contents = {
+        [file]: "import { dep } from './dep.js';\nexport const x = dep;",
+        'src/core/dep.ts': 'export const dep = 1;',
+      };
+      const imported = await analyzeCiBaseline('owner/repo', github({ ...options, touched: 'src/core/dep.ts', contents }).gh);
+      expect(imported.groups.every(g => g.action === 'queue-master-fix')).toBe(true);
+      // The vitest harness ambient set cannot reach a lint-guard failure.
+      const ambient = await analyzeCiBaseline('owner/repo', github({ ...options, touched: 'vitest.config.ts' }).gh);
+      expect(ambient.groups.every(g => g.action === 'queue-master-fix')).toBe(true);
+    }
+  });
+  it('never resolves lint-guard failures through vitest pass lines', async () => {
+    // A realio-lane break on a test file must not read probable-flake:
+    // a green vitest module says nothing about the lane guard, so the
+    // group stays unknown on a single unaffected PR.
+    const flake = await analyzeCiBaseline('owner/repo', github({ realio: true, count: 1, pass: true, filePass: true }).gh);
+    expect(flake.groups[0]).toMatchObject({ names: '(realio-lane)', classification: 'unknown', action: 'unknown', master: 'unknown' });
+    const verseFlake = await analyzeCiBaseline('owner/repo', github({ verse: true, count: 1, pass: true, filePass: true }).gh);
+    expect(verseFlake.groups[0]).toMatchObject({ names: '(verse-sync-io)', classification: 'unknown', action: 'unknown', master: 'unknown' });
   });
   it('parses qualification-lane flaky verdicts as test failures', () => {
     // ci-qualification-lane.mjs fails the lane when a Vitest case passes

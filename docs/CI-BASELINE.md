@@ -77,6 +77,31 @@ parenthesized gate identity, which also closes the hole where a
 `(typecheck)` failure on a test path could read a green module line as a
 master pass.
 
+The same step's two trailing guards get the same per-file treatment.
+`npm run lint:realio-lane`
+(scripts/check-realio-lane-membership.mjs) prints
+`[check-realio-lane-membership]` section headers followed by bare
+test paths: unclassified real-io markers under a missing-members
+header (each with its reason line), stale lane-manifest or
+measured-fast-allowlist entries, and real-I/O/serial-CPU overlaps.
+Each named path groups under `<file> > (realio-lane)`; the
+soft-signal advisory section prints the same path shape but never
+fails the step and stays unparsed, as do the ok line, non-test paths
+and sections cut off by a `##[` step boundary. `npm run
+lint:verse-sync-io` (scripts/check-verse-sync-io.mjs) prints a
+`verse-sync-io: N synchronous call(s)` count header then
+`<file>:<line>  <call>(…)  → <hint>` rows for synchronous fs or
+child-process calls in `src/core/verse/*-api.ts` route files; each
+route file groups under `<file> > (verse-sync-io)`, with rows accepted
+only between the header and the next step boundary. Both guards grep
+source text and never read a file's imports, so their dependency sets
+are closed input lists -- the realio checker plus its two lane
+manifests, the measured-fast allowlist and the lane-inventory helper;
+the verse checker script alone -- and the vitest harness ambient set
+does not apply to either. Like `(lint)` they can never resolve through
+a vitest pass line: `shared-baseline`, `pr-caused` or `unknown` --
+never `probable-flake`.
+
 The `.github/tests/*.test.mjs` contract suites run under `node --test`, which
 prints TAP on the Node 22 CI image. `not ok N - name` results resolve their
 file from the diagnostic block's absolute `location:` path through the
