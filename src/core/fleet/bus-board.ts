@@ -508,7 +508,33 @@ export class BusBoard {
   }
 
   /**
-   * The shared snapshot math behind `pending`/`pendingFor`: `labels` is the
+   * The fleet-wide form of `pendingFor`: the same locked snapshot and queue
+   * read with every thread member as the label set, so every unacknowledged
+   * delivery (a delivery's recipient is always a joined member) and every
+   * task on every thread lists — the pending board `phm comms inbox`
+   * projects, where `pendingFor` still requires knowing peer labels ahead of
+   * time and `pending` only one. `peers` reports every member label the
+   * board knows, sorted. Item `content.text` stays the stored untrusted
+   * text, exactly like `pendingFor`; reading never acknowledges anything and
+   * grants no authority.
+   */
+  pendingAll(now?: number): BusBoardPendingPeers {
+    return this.transaction(false, (state) => {
+      const labels = new Set(state.threads.flatMap((thread) => thread.members));
+      const digest = this.pendingDigest(state, labels, now ?? Date.now());
+      const known = new Set(digest.threads.flatMap((thread) => thread.members));
+      return {
+        peers: [...known].sort(),
+        claims: digest.claims,
+        threads: digest.threads,
+        deliveries: digest.deliveries,
+        tasks: digest.tasks,
+      };
+    });
+  }
+
+  /**
+   * The shared snapshot math behind `pending`/`pendingFor`/`pendingAll`: `labels` is the
    * peer set a thread joins or a delivery addresses. Task `hold` reads the
    * one queue claim index; an unreadable queue leaves every hold `unknown`.
    */

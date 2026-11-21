@@ -553,6 +553,8 @@
     "src/core/fleet/backpressure.ts",
     "src/core/fleet/best-of-n-ledger.ts",
     "src/core/fleet/budget-view.ts",
+    "src/core/fleet/bus-board.ts",
+    "src/core/fleet/bus-delivery.ts",
     "src/core/fleet/bus-envelope.ts",
     "src/core/fleet/bus-group.ts",
     "src/core/fleet/bus-hoplog.ts",

@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates eighteen local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates nineteen local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), act: `phm fleet needs-resolve`.
@@ -88,6 +88,25 @@
  *               absent store is 'missing' (verified empty); an unreadable
  *               one 'unavailable', never an empty list passed off as fact.
  *               Act: `phm bus inbox --to`, `phm bus ack`.
+ *   board       pending work on the shared task board
+ *               (`phm bus thread`/`task`/`board`, docs/BUS-THREADS.md)
+ *               across EVERY peer — the fleet-wide read
+ *               `BusBoard.pendingAll` serves, where `work mine`'s board
+ *               section still needs the agent's labels and `phm bus board
+ *               pending` one `--peer` at a time. Every unacknowledged
+ *               delivery lists as board mail awaiting `thread ack` (`since`
+ *               the recorded `createdAt`; the wire TTL bounds live
+ *               observers only, so `expiresAt` stays null), and every task
+ *               whose observed hold is not `held` lists — `open` claimable,
+ *               `ambiguous` an expired claim record the claim path never
+ *               auto-reclaims, `unknown` a hold the unreadable queue could
+ *               not prove; tasks carry no timestamp, so `since`/`expiresAt`
+ *               stay null. An absent board is 'missing' (verified empty —
+ *               the read never creates the store a write would leave); an
+ *               unreadable one 'unavailable'; an unreadable claim index or
+ *               truncated item list degrades the source. Act:
+ *               `phm bus thread pending|ack`, `phm bus task claim|list`,
+ *               `phm bus board pending`.
  *   conversations  agent-to-agent conversation threads still needing a
  *               person — the same `state:'waiting'` and `state:'blocked'`
  *               threads the one shared conversations projection computes,
@@ -204,12 +223,17 @@ import { listDrafts as listCommsAgentDrafts, type CommsDraft } from '../comms-ag
 import { compareRanked, needsYouPriorityHeuristic, type AttentionItem, type NeedsYouPriority, type RankedAttentionItem } from '../decide/needs-you.js';
 import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxInspection, type BusInboxOptions, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { createBusMailbox, type BusMailboxPendingMessage } from '../fleet/bus-mailbox.js';
+import { BusBoard, busBoardStoragePaths, type BusBoardPendingPeers } from '../fleet/bus-board.js';
+import { busBoardDeliveryText } from '../fleet/bus-delivery.js';
+import { SharedStore } from '../fleet/shared-store.js';
 import { BUS_PROTOCOL_KEY, isClaimableWork, type BusPriority } from '../fleet/bus-envelope.js';
 import { busReplyCitations, isWorkerHandoffBody, workerHandoffAnswered, type BusReplyCitation } from '../fleet/handoff-body.js';
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
 import { readNeedsMasonReplyDeliveries, type NeedsMasonReplyDeliveryReport } from '../fleet/needs-mason-relay.js';
-import { loadConfigReadOnly } from '../config.js';
+import { loadConfigReadOnly, loadConfigReadOnlyStrict } from '../config.js';
+import { ashlrHome } from '../cloud/store.js';
+import type { AshlrConfig } from '../types.js';
 import { readEmailDropConfig } from './email-drop-config.js';
 import { probeOutboxDir, readEmailOutbox, type EmailOutboxEntry, type EmailOutboxListing } from './email-outbox.js';
 import { gmailArchivePlanLatestPath, readGmailArchivePlanLatest } from './gmail-archive-plan-latest.js';
@@ -232,9 +256,9 @@ const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
 
-export type UnifiedInboxSource = 'needs-you' | 'needs-you-delivery' | 'imessage' | 'teammate-tasks' | 'owner-thread' | 'owner-delivery' | 'drafts' | 'bus' | 'mailbox' | 'conversations' | 'seats' | 'gmail' | 'linkedin' | 'requests' | 'email-outbox' | 'team-approvals' | 'proposals' | 'slack';
+export type UnifiedInboxSource = 'needs-you' | 'needs-you-delivery' | 'imessage' | 'teammate-tasks' | 'owner-thread' | 'owner-delivery' | 'drafts' | 'bus' | 'mailbox' | 'board' | 'conversations' | 'seats' | 'gmail' | 'linkedin' | 'requests' | 'email-outbox' | 'team-approvals' | 'proposals' | 'slack';
 export type UnifiedInboxSourceState = 'healthy' | 'missing' | 'degraded' | 'unavailable';
-export type UnifiedInboxKind = 'needs-you' | 'needs-you-delivery' | 'teammate-text' | 'teammate-task' | 'owner-message' | 'owner-reply-undelivered' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'mailbox-message' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-stuck' | 'team-approval' | 'inbox-proposal' | 'slack-request';
+export type UnifiedInboxKind = 'needs-you' | 'needs-you-delivery' | 'teammate-text' | 'teammate-task' | 'owner-message' | 'owner-reply-undelivered' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'mailbox-message' | 'board-delivery' | 'board-task' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-stuck' | 'team-approval' | 'inbox-proposal' | 'slack-request';
 
 export interface UnifiedInboxItem extends AttentionItem {
   /** Stable, namespaced: `<source>:<ref>` (e.g. `drafts:d-0123…`). */
@@ -288,6 +312,15 @@ export interface MailboxPendingRead {
   matched: number | null;
 }
 
+/** The resolved shared-board read: `BusBoard.pendingAll`'s fleet-wide digest
+ * when the store could be read — 'missing' is a verified-empty board (no
+ * `state.json` ever written), 'unavailable' an unreadable one, never an
+ * empty list passed off as fact. */
+export type BoardPendingRead =
+  | { source: 'available'; pending: BusBoardPendingPeers }
+  | { source: 'missing' }
+  | { source: 'unavailable' };
+
 export interface UnifiedInboxOptions {
   /** Shared runs context (`~/.ashlr-runs`): needs-you, teammate text/task and draft stores. */
   runsDir?: string;
@@ -308,6 +341,8 @@ export interface UnifiedInboxOptions {
   inspectBus?: typeof inspectBusInbox;
   /** Legacy `phm bus` mailbox seam; default reads `pendingAll` under the fleet root's parent. */
   readMailbox?: (options: { busRoot?: string; now?: () => number }) => MailboxPendingRead;
+  /** Shared task board seam; default reads `BusBoard.pendingAll` under the same `busBoardStoragePaths` derivation `phm bus board`, `work mine` and `agents bus status` share. */
+  readBoard?: (options: { busRoot?: string; now?: () => number }) => BoardPendingRead;
   readClaims?: (root?: string) => BusWorkClaimsInspection;
   readCoordination?: typeof listCoordination;
   readFeed?: typeof readBusWorkFeed;
@@ -1085,6 +1120,112 @@ function mailboxItems(read: NonNullable<UnifiedInboxOptions['readMailbox']>, opt
   return { report: { state: truncated ? 'degraded' : 'healthy', pending: items.length }, items };
 }
 
+/**
+ * The default board read: `BusBoard.pendingAll` under the same path
+ * derivation `phm bus board`, `agents bus work mine`'s board section and
+ * `agents bus status` share — `busBoardStoragePaths` over the fleet root
+ * (`busRoot`, else `<ashlrHome>/fleet`, the same default `bus inbox`
+ * resolves), so a custom `busRoot` probes the matching scratch store. A
+ * board that was never used — no `state.json` — is 'missing' (verified
+ * empty) and the read returns before `BusBoard`'s transaction can create
+ * the directory or lock file a write would leave; an unreadable board, a
+ * malformed config, a relative path override or a disabled event bus
+ * reports 'unavailable', never an empty list passed off as fact.
+ */
+function readBoardPending(options: { busRoot?: string; now?: () => number }): BoardPendingRead {
+  let cfg: AshlrConfig;
+  try { cfg = loadConfigReadOnlyStrict(); } catch { return { source: 'unavailable' }; }
+  const paths = busBoardStoragePaths(options.busRoot ?? join(ashlrHome(), 'fleet'), cfg);
+  if (paths.status !== 'ok') return { source: 'unavailable' };
+  if (!existsSync(join(paths.boardRoot, 'state.json'))) return { source: 'missing' };
+  try {
+    const shared = cfg.fleet?.sharedQueue;
+    const fleet = new SharedStore(paths.queueRoot, shared?.leaseMs);
+    return { source: 'available', pending: new BusBoard({ root: paths.boardRoot, fleet, cfg }).pendingAll(options.now?.()) };
+  } catch {
+    return { source: 'unavailable' };
+  }
+}
+
+/** Same identifier grammar `BusBoard` validates every stored peer, thread, task, delivery and fleet-item id against; re-checked before one reaches a command line. */
+const BOARD_ID = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$/;
+
+/**
+ * Pending work on the shared task board (`phm bus thread`/`task`/`board`,
+ * docs/BUS-THREADS.md) across EVERY peer — the fleet-wide read
+ * `BusBoard.pendingAll` serves, where `work mine`'s board section still
+ * needs the agent's labels ahead of time and `phm bus board pending` one
+ * `--peer` at a time. Two pending classes list: every unacknowledged
+ * delivery (board mail awaiting `thread ack` — the wire TTL bounds live
+ * observers only, so `expiresAt` stays null and `since` is the delivery's
+ * recorded `createdAt`) and every task whose observed hold is not `held` —
+ * `open` is claimable work, `ambiguous` an expired claim record the claim
+ * path never auto-reclaims, `unknown` a hold the unreadable queue could not
+ * prove; `held` is in-flight work, not pending. Tasks carry no timestamp,
+ * so `since`/`expiresAt` stay null — unknown, never invented. An absent
+ * board is 'missing' (verified empty); an unreadable one 'unavailable'; an
+ * unreadable claim index or a truncated item list degrades the source
+ * rather than under-counting `pending`. Every item is agent work — claiming
+ * coordinates, never grants authority — so none blocks Mason.
+ */
+function boardItems(read: NonNullable<UnifiedInboxOptions['readBoard']>, options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let result: BoardPendingRead;
+  try { result = read({ busRoot: options.busRoot, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
+  if (result.source === 'unavailable') return { report: { state: 'unavailable', pending: 0 }, items: [] };
+  if (result.source === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  const { pending } = result;
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  for (const delivery of pending.deliveries.items) {
+    const text = oneLine(busBoardDeliveryText(delivery), TITLE_MAX);
+    const act = BOARD_ID.test(delivery.threadId) && BOARD_ID.test(delivery.id) && BOARD_ID.test(delivery.recipient)
+      ? [`phm bus thread pending ${delivery.threadId} --peer ${delivery.recipient}`,
+        `phm bus thread ack ${delivery.threadId} ${delivery.id} --peer ${delivery.recipient}`]
+      : ['phm bus board pending --peer <label>'];
+    const created = Date.parse(delivery.createdAt);
+    items.push({
+      id: `board:delivery:${delivery.id}`,
+      source: 'board',
+      kind: 'board-delivery',
+      // Board posts are P2 wire mail awaiting receipt — agent work, info like the mailbox's own P2 rows.
+      severity: 'info',
+      blocking: false,
+      title: text === '' ? `board post ${delivery.sender} → ${delivery.recipient}` : text,
+      detail: oneLine(`thread ${delivery.threadId} · ${delivery.sender} → ${delivery.recipient} · awaiting receipt`, DETAIL_MAX) || null,
+      since: Number.isFinite(created) ? delivery.createdAt : null,
+      expiresAt: null,
+      act,
+    });
+  }
+  for (const task of pending.tasks.items) {
+    // A live queue claim means the work is in flight, not pending.
+    if (task.hold === 'held') continue;
+    const idsOk = BOARD_ID.test(task.id) && BOARD_ID.test(task.threadId);
+    const hold = task.hold === 'open' ? 'unclaimed'
+      : task.hold === 'ambiguous' ? 'ambiguous hold — expired claim the claim path never reclaims'
+      : 'hold unknown — shared queue unreadable';
+    const act = !idsOk ? ['phm bus board pending --peer <label>']
+      : task.hold === 'ambiguous'
+        ? [`phm bus task list ${task.threadId} --peer <label>`, 'phm bus board pending --peer <label>']
+        : [`phm bus task claim ${task.id} --peer <label>`, `phm bus task list ${task.threadId} --peer <label>`];
+    items.push({
+      id: `board:task:${task.id}`,
+      source: 'board',
+      kind: 'board-task',
+      severity: task.hold === 'open' ? 'info' : 'warn',
+      blocking: false,
+      title: oneLine(task.content.text, TITLE_MAX) || `board task ${task.id}`,
+      detail: oneLine(`thread ${task.threadId} · fleet item ${task.itemId} · ${hold}` +
+        (task.claimed ? ' · claim record on file' : ''), DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      act,
+    });
+  }
+  const degraded = pending.claims === 'unreadable' || pending.deliveries.truncated || pending.tasks.truncated;
+  return { report: { state: degraded ? 'degraded' : 'healthy', pending: items.length }, items };
+}
+
 /** The `--thread` label rule `agents bus post` enforces: printable ASCII, 1-128 chars. */
 const THREAD_LABEL = /^[\x21-\x7e]{1,128}$/;
 
@@ -1549,6 +1690,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const drafts = await draftItems(options.listPendingDrafts ?? listDrafts, options.listCommsDrafts ?? listCommsAgentDrafts, options.runsDir);
   const bus = busItems(options);
   const mailbox = mailboxItems(options.readMailbox ?? readMailboxPending, options);
+  const board = boardItems(options.readBoard ?? readBoardPending, options);
   const conversations = conversationItems(options.readConversations ?? readAgentConversations, options, now, bus.covered);
   const seats = await seatItems(options.readSeatHandoffs ?? planSeatHandoffs, now);
   const gmail = gmailItems(options.readGmailPlans ?? readGmailArchivePlanLatest, options.runsDir);
@@ -1571,6 +1713,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     drafts: drafts.report,
     bus: bus.report,
     mailbox: mailbox.report,
+    board: board.report,
     conversations: conversations.report,
     seats: seats.report,
     gmail: gmail.report,
@@ -1581,7 +1724,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     proposals: proposals.report,
     slack: slack.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

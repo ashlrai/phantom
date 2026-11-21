@@ -44,7 +44,7 @@ import { createBusMailbox } from '../fleet/bus-mailbox.js';
 import { ashlrHome } from '../cloud/store.js';
 import { loadConfigReadOnlyStrict } from '../config.js';
 import { BusBoard, busBoardStoragePaths, type BusBoardPendingThread, type BusBoardTaskHold } from '../fleet/bus-board.js';
-import type { BusBoardDelivery } from '../fleet/bus-delivery.js';
+import { busBoardDeliveryText } from '../fleet/bus-delivery.js';
 import { SharedStore } from '../fleet/shared-store.js';
 import { neutralisePageText } from '../verse/browser-act-policy.js';
 import type { AshlrConfig } from '../types.js';
@@ -676,19 +676,6 @@ function mailboxSection(agent: string, identity: AgentIdentity | undefined,
     })) };
 }
 
-/** The post text inside a board delivery's stored canonical envelope JSON; the raw stored text when it does not parse. */
-function boardDeliveryText(delivery: BusBoardDelivery): string {
-  try {
-    const parsed = JSON.parse(delivery.content.text) as { body?: unknown } | null;
-    const body = parsed?.body;
-    if (body !== null && typeof body === 'object') {
-      const text = (body as Record<string, unknown>)['text'];
-      if (typeof text === 'string') return text;
-    }
-  } catch { /* stored content is not the canonical envelope JSON */ }
-  return delivery.content.text;
-}
-
 /** Scrubbed, single-line, clipped board text: the board's own invisible-byte neutralisation, then the digest clip. */
 function boardText(text: string): string {
   return mineField(neutralisePageText(text), WORK_MINE_SUMMARY_MAX);
@@ -749,7 +736,7 @@ function boardSection(agent: string, identity: AgentIdentity | undefined,
         items: digest.deliveries.items.map(delivery => ({
           id: delivery.id, threadId: delivery.threadId, sender: delivery.sender,
           recipient: delivery.recipient, createdAt: delivery.createdAt,
-          summary: boardText(boardDeliveryText(delivery)),
+          summary: boardText(busBoardDeliveryText(delivery)),
         })),
       },
       tasks: {

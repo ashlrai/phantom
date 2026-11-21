@@ -26,6 +26,10 @@ import { writeEmailDropConfig, type EmailDropConfig } from '../src/core/comms/em
 import { EMAIL_OUTBOX_MAX_BYTES } from '../src/core/comms/email-outbox.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { createBusMailbox, type BusMailboxPendingMessage } from '../src/core/fleet/bus-mailbox.js';
+import { BusBoard, type BusBoardPendingPeers, type BusBoardPendingTask, type BusBoardTaskHold } from '../src/core/fleet/bus-board.js';
+import type { BusBoardDelivery } from '../src/core/fleet/bus-delivery.js';
+import { SharedStore } from '../src/core/fleet/shared-store.js';
+import type { AshlrConfig } from '../src/core/types.js';
 import type { AgentConversations } from '../src/core/fleet/agent-conversations.js';
 import type { SlackJournalRead, SlackObservation } from '../src/core/agents/slack-journal.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
@@ -117,6 +121,7 @@ describe('readUnifiedInbox sources', () => {
         drafts: { state: 'healthy', pending: 0 },
         bus: { state: 'missing', pending: 0 },
         mailbox: { state: 'missing', pending: 0 },
+        board: { state: 'missing', pending: 0 },
         conversations: { state: 'missing', pending: 0 },
         seats: { state: 'missing', pending: 0 },
         'email-outbox': { state: 'missing', pending: 0 },
@@ -1831,6 +1836,162 @@ describe('legacy phm bus mailbox in the unified inbox', () => {
     const item = inbox.items.find(i => i.id === 'mailbox:mb-secret')!;
     expect(item.title).toBe('token [REDACTED] leaked');
     expect(item.title).not.toContain('sk-abcdefghijklmnop');
+  });
+});
+
+describe('shared task board in the unified inbox', () => {
+  // busBoardStoragePaths(busRoot) derives boardRoot = <dirname(busRoot)>/bus
+  // — busRoot itself in this fixture — and queueRoot = busRoot/bus-queue:
+  // the same scratch stores the default board read probes.
+  const board = () => new BusBoard({
+    root: busRoot,
+    fleet: new SharedStore(join(busRoot, 'bus-queue'), 60_000),
+    cfg: { foundry: {} } as AshlrConfig,
+  });
+  const digest = (over: Partial<BusBoardPendingPeers> = {}): BusBoardPendingPeers => ({
+    peers: ['alice'], claims: 'readable', threads: [],
+    deliveries: { matched: 0, items: [], truncated: false },
+    tasks: { matched: 0, items: [], truncated: false },
+    ...over,
+  });
+  const fakeDelivery = (id: string, text = 'fake board post'): BusBoardDelivery => ({
+    schemaVersion: 1, id, threadId: 'thread-1', sender: 'alice', recipient: 'bob',
+    createdAt: new Date(now).toISOString(),
+    message: { id, from: 'alice', to: 'bob', priority: 'P2', ttl: 60_000 },
+    content: { trust: 'untrusted', text: JSON.stringify({ body: { text } }) },
+  });
+  const fakeTask = (id: string, hold: BusBoardTaskHold, over: Partial<BusBoardPendingTask> = {}): BusBoardPendingTask => ({
+    id, threadId: 'thread-1', itemId: `fleet-${id}`,
+    content: { trust: 'untrusted', text: 'Fake task title' },
+    claimed: false, hold, owner: null, ...over,
+  });
+  const readWith = (readBoard: NonNullable<UnifiedInboxOptions['readBoard']>) =>
+    readUnifiedInbox({ runsDir, busRoot, now: () => now,
+      readRequests: () => ({ status: 'missing' as const, requests: [] }), readBoard });
+
+  it('reports a never-used board as missing, honestly empty', async () => {
+    expect((await read()).sources.board).toEqual({ state: 'missing', pending: 0 });
+  });
+
+  it('lists unacknowledged deliveries and unheld tasks across every peer while held work stays out', async () => {
+    const store = board();
+    const threadId = store.createThread('alice', 'Rollout').id;
+    store.joinThread('bob', threadId);
+    const posted = await store.post('alice', threadId, 'fake board post');
+    expect(posted.delivered).toBe(2); // one delivery per member, sender included
+    const open = store.createTask('alice', threadId, 'item-open', 'Fake open task');
+    const held = store.createTask('alice', threadId, 'item-held', 'Fake held task');
+    store.claimTask('alice', held.id);
+    const pending = store.pendingAll(now);
+    expect(pending.deliveries.matched).toBe(2);
+    expect(pending.tasks.items.map(t => t.hold).sort()).toEqual(['held', 'open']);
+
+    const inbox = await read();
+    expect(inbox.sources.board).toEqual({ state: 'healthy', pending: 3 });
+    const items = inbox.items.filter(i => i.source === 'board');
+    const deliveries = items.filter(i => i.kind === 'board-delivery');
+    const tasks = items.filter(i => i.kind === 'board-task');
+    expect(deliveries).toHaveLength(2);
+    expect(tasks.map(i => i.id)).toEqual([`board:task:${open.id}`]);
+    const toBob = deliveries.find(i => i.detail?.includes('→ bob'))!;
+    const bobDelivery = pending.deliveries.items.find(d => d.recipient === 'bob')!;
+    expect(toBob).toMatchObject({
+      severity: 'info', blocking: false,
+      title: 'fake board post',
+      detail: `thread ${threadId} · alice → bob · awaiting receipt`,
+      expiresAt: null,
+      act: [
+        `phm bus thread pending ${threadId} --peer bob`,
+        `phm bus thread ack ${threadId} ${bobDelivery.id} --peer bob`,
+      ],
+    });
+    expect(toBob.since).toBe(bobDelivery.createdAt);
+    expect(tasks[0]).toMatchObject({
+      severity: 'info', blocking: false,
+      title: 'Fake open task',
+      detail: `thread ${threadId} · fleet item item-open · unclaimed`,
+      since: null, expiresAt: null,
+      act: [
+        `phm bus task claim ${open.id} --peer <label>`,
+        `phm bus task list ${threadId} --peer <label>`,
+      ],
+    });
+    // The held task is in flight, not pending — it never lists.
+    expect(items.some(i => i.id === `board:task:${held.id}`)).toBe(false);
+    // Reading acknowledged nothing.
+    expect(store.pendingAll(now).deliveries.matched).toBe(2);
+  });
+
+  it('acknowledging a delivery removes only its row; an ambiguous or unknown hold still lists as warn', async () => {
+    const store = board();
+    const threadId = store.createThread('alice', 'Rollout').id;
+    store.joinThread('bob', threadId);
+    await store.post('alice', threadId, 'fake board post');
+    const snapshot = store.pendingAll(now);
+    store.acknowledge('bob', threadId, snapshot.deliveries.items.find(d => d.recipient === 'bob')!.id);
+
+    const inbox = await readWith(() => ({ source: 'available', pending: digest({
+      deliveries: { matched: 1, items: [fakeDelivery('d-1')], truncated: false },
+      tasks: { matched: 2, items: [fakeTask('t-open', 'open'), fakeTask('t-amb', 'ambiguous', { claimed: true })], truncated: false },
+    }) }));
+    // The real read: bob's copy is acknowledged, alice's still lists.
+    const real = await read();
+    expect(real.sources.board).toEqual({ state: 'healthy', pending: 1 });
+    expect(real.items.filter(i => i.source === 'board').map(i => i.kind)).toEqual(['board-delivery']);
+    // The seam read: both unheld hold classes list; ambiguous warns.
+    const seamItems = inbox.items.filter(i => i.source === 'board');
+    expect(seamItems.map(i => i.id).sort()).toEqual(['board:delivery:d-1', 'board:task:t-amb', 'board:task:t-open']);
+    expect(seamItems.find(i => i.id === 'board:task:t-open')).toMatchObject({ severity: 'info' });
+    expect(seamItems.find(i => i.id === 'board:task:t-amb')).toMatchObject({
+      severity: 'warn',
+      detail: 'thread thread-1 · fleet item fleet-t-amb · ambiguous hold — expired claim the claim path never reclaims · claim record on file',
+      act: ['phm bus task list thread-1 --peer <label>', 'phm bus board pending --peer <label>'],
+    });
+    expect(inbox.sources.board).toEqual({ state: 'healthy', pending: 3 });
+  });
+
+  it('reports unavailable for a malformed board and degraded for unreadable claims or truncated lists', async () => {
+    postWork('board-neighbor');
+    writeFileSync(join(busRoot, 'state.json'), 'not json', { mode: 0o600 });
+    const broken = await read();
+    expect(broken.sources.board).toEqual({ state: 'unavailable', pending: 0 });
+    expect(broken.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual(['bus:board-neighbor']);
+
+    const opts = { runsDir, busRoot, now: () => now, readRequests: () => ({ status: 'missing' as const, requests: [] }) };
+    const unavailable = await readUnifiedInbox({ ...opts, readBoard: () => ({ source: 'unavailable' }) });
+    expect(unavailable.sources.board).toEqual({ state: 'unavailable', pending: 0 });
+    const throwing = await readUnifiedInbox({ ...opts, readBoard: () => { throw new Error('boom'); } });
+    expect(throwing.sources.board).toEqual({ state: 'unavailable', pending: 0 });
+    const missing = await readUnifiedInbox({ ...opts, readBoard: () => ({ source: 'missing' }) });
+    expect(missing.sources.board).toEqual({ state: 'missing', pending: 0 });
+    const unreadableClaims = await readUnifiedInbox({ ...opts, readBoard: () => ({ source: 'available', pending: digest({
+      claims: 'unreadable',
+      tasks: { matched: 1, items: [fakeTask('t-1', 'unknown')], truncated: false },
+    }) }) });
+    expect(unreadableClaims.sources.board).toEqual({ state: 'degraded', pending: 1 });
+    expect(unreadableClaims.items.find(i => i.id === 'board:task:t-1')).toMatchObject({
+      severity: 'warn', detail: 'thread thread-1 · fleet item fleet-t-1 · hold unknown — shared queue unreadable',
+    });
+    for (const truncated of [
+      digest({ deliveries: { matched: 60, items: [fakeDelivery('d-1')], truncated: true } }),
+      digest({ tasks: { matched: 60, items: [fakeTask('t-1', 'open')], truncated: true } }),
+    ]) {
+      const result = await readUnifiedInbox({ ...opts, readBoard: () => ({ source: 'available', pending: truncated }) });
+      expect(result.sources.board.state).toBe('degraded');
+    }
+  });
+
+  it('falls back to a generic act on stored ids outside the identifier grammar and scrubs untrusted text', async () => {
+    const inbox = await readWith(() => ({ source: 'available', pending: digest({
+      deliveries: { matched: 1, items: [fakeDelivery('d-bad;rm -rf', 'token sk-abcdefghijklmnop leaked')], truncated: false },
+      tasks: { matched: 1, items: [fakeTask('t-bad id', 'open', { content: { trust: 'untrusted' as const, text: 'sk-abcdefghijklmnop task' } })], truncated: false },
+    }) }));
+    const delivery = inbox.items.find(i => i.id === 'board:delivery:d-bad;rm -rf')!;
+    expect(delivery.title).toBe('token [REDACTED] leaked');
+    expect(delivery.act).toEqual(['phm bus board pending --peer <label>']);
+    const task = inbox.items.find(i => i.id === 'board:task:t-bad id')!;
+    expect(task.title).toBe('[REDACTED] task');
+    expect(task.act).toEqual(['phm bus board pending --peer <label>']);
   });
 });
 

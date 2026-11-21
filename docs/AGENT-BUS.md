@@ -607,6 +607,13 @@ material. Board paths derive exactly like the board CLI, an absent board
 is a verified-empty `ok` (the read never creates its store), and an
 unreadable board reports `unavailable`, never an empty list passed off as
 fact; board content stays untrusted shared data and grants no authority.
+`phm comms inbox`'s `board` source projects the same store fleet-wide
+through `BusBoard.pendingAll` — every thread member as the label set, so
+no agent labels are needed ahead of time — listing each unacknowledged
+delivery and each task whose observed hold is not `held` (`held` is
+in-flight work, not pending) with the same missing/unavailable/degraded
+honesty and `phm bus thread`/`task`/`board` deep links; it reads only,
+never acknowledges or claims.
 `addressed` marks jobs whose announcement
 `to` label resolves to the agent's
 identity, and `announced` marks jobs whose `owner` (announcer) label resolves
