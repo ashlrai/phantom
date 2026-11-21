@@ -24,6 +24,7 @@ import { EMPTY_CAUSE_TAIL_LINES, readText } from './empty-cause.js';
 import { readIdeaList } from './bottleneck-ideas.js';
 import { parseIngestedTsv } from './drop-job-fate.js';
 import { parsePublishResult } from './job-state.js';
+import { readGapProposals, recordGapProposal } from './gap-proposal-record.js';
 
 export const JOB_GAPS_SCHEMA = 'jobs.gaps.v1';
 export const MAX_GAPS_PER_JOB = 12;
@@ -43,7 +44,7 @@ const WHY_MAX = 240;
 const SAME_WORK = 0.6;
 const MERGE_WINDOW_DAYS = 14;
 
-export type GapDropReason = 'open-idea' | 'queued' | 'ingested' | 'recent-merge' | 'duplicate-gap';
+export type GapDropReason = 'open-idea' | 'queued' | 'ingested' | 'recent-merge' | 'duplicate-gap' | 'proposed-24h';
 /** Where a gap came from: a no-change job, or a job that finished with a PR. */
 export type GapSource = 'no-change' | 'published';
 export interface GapCandidate { title: string; repo: string | null; sourceJob: string; why: string; /** Absent on reports written before published jobs were read: no-change. */ source?: GapSource }
@@ -204,6 +205,8 @@ export interface JobGapsDeps {
   mergedTitles?: () => Promise<string[]>;
   /** Titles already accepted by the host ingest (last 2000 rows of leader/drop/ingested.tsv). */
   ingestedTitles?: (runsDir: string) => Promise<string[]>;
+  /** Titles this proposer queued in the last 24 h (metrics/gap-proposed.jsonl). Unreadable = unknown, not empty. */
+  proposedTitles?: (runsDir: string) => Promise<string[]>;
   /** Most new drop jobs this call writes. Defaults to ASHLR_GAPS_MAX, then 3. */
   maxNew?: number;
   write?: (root: string, input: DropJobInput) => Promise<unknown>;
@@ -227,6 +230,13 @@ const GOAL = /^Goal:\s*/i;
 async function defaultQueued(runsDir: string): Promise<string[]> {
   const jobs = await listDropJobs(resolveDropJobRoot(runsDir));
   return jobs.map(j => (j.title ?? '').replace(GOAL, '')).filter(Boolean);
+}
+
+async function defaultProposed(runsDir: string, now: number): Promise<string[]> {
+  const r = await readGapProposals(runsDir, now);
+  if (r.state === 'known') return r.proposals.map(p => p.title);
+  if (r.why === 'missing') return [];
+  throw new Error('gap proposal record unreadable');
 }
 
 async function defaultIngested(runsDir: string): Promise<string[]> {
@@ -312,13 +322,14 @@ export async function readJobGaps(hours: number, opts: { propose?: boolean } & J
   report.jobsWithoutGaps.sort();
   raw.sort((a, b) => a.sourceJob.localeCompare(b.sourceJob) || a.title.localeCompare(b.title));
 
-  const [open, queued, ingested, merged] = await Promise.all([
+  const [open, queued, ingested, merged, proposedBefore] = await Promise.all([
     settle(report.unknownSources, 'open ideas', opts.openIdeas ?? (async () => (await readIdeaList({ runsDir })).ideas.map(i => i.title))),
     settle(report.unknownSources, 'queued work', () => (opts.queuedWork ?? defaultQueued)(runsDir)),
     settle(report.unknownSources, 'ingested titles', () => (opts.ingestedTitles ?? defaultIngested)(runsDir)),
     settle(report.unknownSources, 'recent merges', opts.mergedTitles ?? (() => recentMergeTitles(opts.repoDir ?? process.cwd()))),
+    settle(report.unknownSources, 'proposed in 24 h', () => (opts.proposedTitles ?? defaultProposed)(runsDir, now)),
   ]);
-  const checks: { reason: GapDropReason; titles: string[] }[] = [{ reason: 'open-idea', titles: open }, { reason: 'queued', titles: queued }, { reason: 'ingested', titles: ingested }, { reason: 'recent-merge', titles: merged }];
+  const checks: { reason: GapDropReason; titles: string[] }[] = [{ reason: 'open-idea', titles: open }, { reason: 'queued', titles: queued }, { reason: 'ingested', titles: ingested }, { reason: 'recent-merge', titles: merged }, { reason: 'proposed-24h', titles: proposedBefore }];
   for (const gap of raw) {
     let hit: DroppedGap | null = null;
     for (const { reason, titles } of checks) {
@@ -331,7 +342,7 @@ export async function readJobGaps(hours: number, opts: { propose?: boolean } & J
     else report.candidates.push(gap);
   }
   for (const c of report.candidates) report.bySource[c.source ?? 'no-change']++;
-  if (opts.propose) report.proposed = await proposeGaps(report.candidates, runsDir, opts.write, opts.maxNew ?? maxNewFromEnv());
+  if (opts.propose) report.proposed = await proposeGaps(report.candidates, runsDir, opts.write, opts.maxNew ?? maxNewFromEnv(), now);
   return report;
 }
 
@@ -348,7 +359,7 @@ export function maxNewFromEnv(env: NodeJS.ProcessEnv = process.env): number {
   return Number.isInteger(n) && n >= 0 && n <= 40 && env.ASHLR_GAPS_MAX?.trim() ? n : DEFAULT_MAX_NEW_DROPS;
 }
 
-async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: JobGapsDeps['write'], maxNew: number): Promise<ProposedGap[]> {
+async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: JobGapsDeps['write'], maxNew: number, now: number): Promise<ProposedGap[]> {
   const root = resolveDropJobRoot(runsDir);
   const out: ProposedGap[] = [];
   const perRepo = new Map<string, number>();
@@ -370,6 +381,8 @@ async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: J
       const written = await (write ?? writeDropJob)(root, job);
       row.path = (written as { file?: string } | undefined)?.file ?? null;
       row.queued = true;
+      // The proposer's own record: feeds the 24 h dedupe and the doctor's Self-supply line. Losing it must not undo the queued job.
+      await recordGapProposal(runsDir, { at: new Date(now).toISOString(), id: job.id, title: gap.title, repo }).catch(() => undefined);
       newDrops++;
       perRepo.set(repo, (perRepo.get(repo) ?? 0) + 1);
     } catch (e) {

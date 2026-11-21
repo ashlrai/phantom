@@ -23,6 +23,7 @@ import { readSelfTickStatus, type SelfTickStatus } from './self-tick-status.js';
 import { readDispatchEventsLog } from './dispatch-events-read.js';
 import { computeLanesHeld, type LaneHeldRow } from './lane-held.js';
 import { parseDoneName, parseIngestedTsv } from './drop-job-fate.js';
+import { readGapProposals } from './gap-proposal-record.js';
 
 export const SUPPLY_DOCTOR_SCHEMA = 'doctor.supply.v1';
 /** The prefix gapJobId() gives every gap job id (after RQ-PHX-). */
@@ -48,6 +49,8 @@ export interface SupplyDoctorReport {
   hook: { enabled: boolean | null; switch: 'autofill.off'; note: string };
   /** Gap jobs the ingest accepted in 24 h; null when ingested.tsv is unreadable. */
   selfSupply: { landed24h: number | null; lastLanded: string | null };
+  /** Gap jobs in 24 h; each count is null (unknown) when its source cannot be read: proposed (metrics/gap-proposed.jsonl), ingested (gap rows of ingested.tsv), launched (an ingested gap with an RQ-PHX-<id>.prompt in the runs dir). */
+  selfSupplyToday: { proposed: number | null; ingested: number | null; launched: number | null; line: string };
   /** Gap candidates the finder would queue now (24 h, after de-duplication), by source; unknown when the job metrics cannot be read. */
   candidates: { state: 'known'; noChange: number; published: number } | { state: 'unknown'; why: string };
   /** Jobs that launched in 24 h and vanished (no finish or publish, or a failed launch); newest 5. Unknown when the job metrics cannot be read. */
@@ -120,6 +123,33 @@ async function readIngested(path: string, nowMs: number): Promise<SupplyDoctorRe
   return { state: 'known', path, sources };
 }
 
+/** The ids of gap rows ingested in 24 h; null when ingested.tsv is unreadable. */
+async function readIngestedGapIds(path: string, nowMs: number): Promise<string[] | null> {
+  let text: string;
+  try { text = await readTail(path); } catch { return null; }
+  const ids = new Set<string>();
+  for (const row of parseIngestedTsv(text)) {
+    const age = nowMs - Date.parse(row.at.replace(' ', 'T'));
+    if (row.id.startsWith(`RQ-PHX-${GAP_JOB_ID_PREFIX}`) && age >= 0 && age < DAY_MS) ids.add(row.id);
+  }
+  return [...ids];
+}
+
+/** "Self-supply today: 3 proposed, 2 ingested, 1 launched"; an unreadable count says unknown. */
+export async function readSelfSupplyToday(runsDir: string, nowMs: number): Promise<SupplyDoctorReport['selfSupplyToday']> {
+  const [record, gapIds] = await Promise.all([
+    readGapProposals(runsDir, nowMs),
+    readIngestedGapIds(join(runsDir, 'leader', 'drop', 'ingested.tsv'), nowMs),
+  ]);
+  const proposed = record.state === 'known' ? new Set(record.proposals.map(p => p.id)).size : null;
+  // A launched job leaves <runsDir>/RQ-PHX-<id>.prompt (see drop-job-writer.ts).
+  const launched = gapIds === null ? null
+    : (await Promise.all(gapIds.map(id => lstat(join(runsDir, `${id}.prompt`)).then(() => 1, () => 0)))).reduce<number>((a, b) => a + b, 0);
+  const n = (v: number | null): string => v === null ? 'unknown' : String(v);
+  const ingested = gapIds === null ? null : gapIds.length;
+  return { proposed, ingested, launched, line: `Self-supply today: ${n(proposed)} proposed, ${n(ingested)} ingested, ${n(launched)} launched` };
+}
+
 async function readRejected(dir: string, nowMs: number): Promise<SupplyDoctorReport['rejected']> {
   let names: string[];
   try { names = (await readdir(dir)).slice(0, MAX_DONE_ENTRIES); } catch (e) { return { state: 'unknown', path: dir, why: errText(e) }; }
@@ -172,7 +202,7 @@ export async function readSupplyDoctor(opts: SupplyDoctorOptions = {}): Promise<
     const r = await (await import('./empty-jobs.js')).readEmptyJobs(24, dir, undefined, at);
     return r?.final ? { total: r.total, reasons: r.final.reasons } : null;
   });
-  const [ingested, rejected, off, found, lost, events, emptyRead] = await Promise.all([
+  const [ingested, rejected, off, found, lost, events, emptyRead, selfSupplyToday] = await Promise.all([
     readIngested(join(runsDir, 'leader', 'drop', 'ingested.tsv'), nowMs),
     readRejected(join(runsDir, 'leader', 'drop', 'done'), nowMs),
     readOff(runsDir).catch(() => null),
@@ -180,6 +210,7 @@ export async function readSupplyDoctor(opts: SupplyDoctorOptions = {}): Promise<
     readLost(runsDir, nowMs).catch(() => null),
     readEvents(runsDir).catch(() => null),
     readEmpty(runsDir, nowMs).catch(() => null),
+    readSelfSupplyToday(runsDir, nowMs),
   ]);
   // Real reasons outrank unknown: a lone unknown pile is not a reason.
   const topEmpty = emptyRead ? Object.entries(emptyRead.reasons).filter(([r, n]) => r !== 'unknown' && n > 0)
@@ -195,7 +226,7 @@ export async function readSupplyDoctor(opts: SupplyDoctorOptions = {}): Promise<
     switch: 'autofill.off' as const,
     note: 'Runs once per self-tick when a lane is starved, applying, and autofill is on.',
   };
-  const report = { schema: SUPPLY_DOCTOR_SCHEMA, generatedAt: new Date(nowMs).toISOString(), runsDir, ingested, rejected, hook, selfSupply,
+  const report = { schema: SUPPLY_DOCTOR_SCHEMA, generatedAt: new Date(nowMs).toISOString(), runsDir, ingested, rejected, hook, selfSupply, selfSupplyToday,
     selfHeld: held.source === 'ok'
       ? { state: 'known', windowMinutes: held.windowMinutes, lanes: held.lanes.filter(r => r.selfHeld) }
       : { state: 'unknown', why: 'dispatch event log unreadable' },
@@ -210,7 +241,7 @@ export async function readSupplyDoctor(opts: SupplyDoctorOptions = {}): Promise<
 
 /** Plain words: the verdict first, then one line per source, then rejects and the hook. */
 export function supplyDoctorLines(report: SupplyDoctorReport): string[] {
-  const lines = [report.verdict];
+  const lines = [report.verdict, report.selfSupplyToday.line + '.'];
   if (report.ingested.state === 'known') {
     if (!report.ingested.sources.length) lines.push(`No jobs in ${report.ingested.path} yet.`);
     for (const s of report.ingested.sources) lines.push(`  ${s.source}: last ingest ${s.lastIngest}, ${s.count24h} in 24 h`);
