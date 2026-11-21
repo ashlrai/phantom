@@ -3,7 +3,7 @@ import { closeSync, fstatSync, openSync, readFileSync, readSync } from 'node:fs'
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { acknowledgeInboxEntries, inboxAckEntry, type InboxAckSenders } from '../core/fleet/inbox-ack.js';
-import { isAnsweredByReplies, noChannelReason, type AckReply } from '../core/fleet/inbox-ack-match.js';
+import { answeringReply, noChannelReason, type AckReply } from '../core/fleet/inbox-ack-match.js';
 import { readOutboxEntries } from '../core/fleet/mason-outbox.js';
 import { INBOX_CHANNEL_LINE, INBOX_HEADING } from '../core/fleet/inbox-channel-line.js';
 import { scrubSecrets } from '../core/util/scrub.js';
@@ -24,7 +24,7 @@ export interface FleetInboxAcksDeps {
 }
 
 type State = 'acked' | 'skipped' | 'pending' | 'no-channel';
-interface Row { entryId: string; channel: string | null; state: State; reason?: string; text: string }
+interface Row { entryId: string; channel: string | null; state: State; reason?: string; ackedBy?: string; text: string }
 
 function readTail(file: string): string {
   let fd: number;
@@ -83,8 +83,10 @@ function report(raws: readonly string[], runsDir: string, replies: readonly AckR
     const base = { entryId: entry.entryId, channel: entry.channel, text: entry.text || raw };
     if (hit?.status === 'acked') return { ...base, state: 'acked' };
     if (hit?.status === 'skipped') return { ...base, state: 'skipped', ...(hit.reason ? { reason: hit.reason } : {}) };
-    if (isAnsweredByReplies({ entryId: entry.entryId, raw }, replies)) return { ...base, state: 'acked', reason: 'answered in a leader reply' };
-    return entry.channel ? { ...base, state: 'pending' } : { ...base, state: 'no-channel', reason: noChannelReason(/^## .*? ET \(([^)]+)\)/.exec(raw)?.[1] ?? null) };
+    if (!entry.channel) return { ...base, state: 'no-channel', reason: noChannelReason(/^## .*? ET \(([^)]+)\)/.exec(raw)?.[1] ?? null) };
+    const reply = answeringReply({ entryId: entry.entryId, raw }, replies);
+    if (reply) return { ...base, state: 'acked', ackedBy: `plan-log ${reply.at}` };
+    return { ...base, state: 'pending', reason: replies.length ? 'no leader reply after this entry yet' : 'no leader reply found in PLAN-LOG yet' };
   });
   return { rows, malformed };
 }
@@ -135,7 +137,7 @@ export async function cmdFleetInboxAcks(args: string[], deps: FleetInboxAcksDeps
   if (json) {
     output(JSON.stringify({
       v: 1, generatedAt: now().toISOString(),
-      entries: rows.map(r => ({ entryId: r.entryId, channel: r.channel, state: r.state, ...(r.reason ? { reason: r.reason } : {}) })),
+      entries: rows.map(r => ({ entryId: r.entryId, channel: r.channel, state: r.state, ...(r.reason ? { reason: r.reason } : {}), ...(r.ackedBy ? { ackedBy: r.ackedBy } : {}) })),
       totals, malformedLedgerRows: malformed,
     }));
     return 0;
@@ -143,7 +145,7 @@ export async function cmdFleetInboxAcks(args: string[], deps: FleetInboxAcksDeps
   for (const r of rows) {
     const preview = scrubSecrets(r.text).replace(/\s+/g, ' ').trim().slice(0, 60);
     const state = r.state === 'skipped' && r.reason ? `skipped (${r.reason})` : r.state;
-    const why = r.reason && r.state !== 'skipped' ? `  [${r.reason}]` : '';
+    const why = r.ackedBy ? `  [${r.ackedBy}]` : r.reason && r.state !== 'skipped' ? `  [${r.reason}]` : '';
     output(`${state}  ${r.channel ?? '-'}  ${r.entryId.slice(0, 12)}  ${preview}${why}`);
   }
   output(`Totals: ${totals.acked} acked, ${totals.skipped} skipped, ${totals.pending} pending, ${totals.noChannel} no-channel`
