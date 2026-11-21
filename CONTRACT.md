@@ -2114,7 +2114,15 @@ unreadable registry never hides the envelope; claimable work and
 worker-handoff bodies also report `held`/`holder` — whether a taken
 message-id claim or live coordination hold covers the exact receipt, the
 same rule `work mine` next/handoffs and the unified comms inbox apply —
-with `held` null when a hold store cannot be read, never proven free),
+with `held` null when a hold store cannot be read, never proven free. A
+claim-holder `wh-…` wake-hint id that names no live envelope resolves
+through the wake queue and the live terminal `work.status` receipts that
+could have generated it — the same re-derivation `wakes` annotates — to
+the citing receipt, returned with a `wakeHint` citation (`to` holder
+label, `statusId`, `jobId`, `status`, optional `detail`); a hint with no
+retained row or no reproducing receipt answers `not-found`, an unreadable
+wake queue `unavailable`, never a guessed receipt. Envelope ids are
+caller-chosen, so a real receipt always wins over hint interpretation),
 `shouldWake(priority, requested, handoff?)`
 and `busBodySummary(body)` — a pure, secret-scrubbed read of a bus body for
 inbox surfaces (`note`/`context`/`worker-handoff` return their message text,

@@ -71,7 +71,10 @@ then resumes at the newest shown row, so paging never skips an unshown match.
 show
 resolves one retained envelope by the wire id wake hints, work mine items
 and claim operations cite; an expired id reports not-found, and the read
-needs no identity.
+needs no identity. A claim-holder wh-… hint id resolves through the wake
+queue to the live terminal work.status receipt that cites it, returned
+with its wakeHint citation; a hint no live receipt reproduces reports
+not-found.
 A terminal work status also queues a routing-only wake hint for each live claim
 holder on the job's keys; --no-wake opts out. work feed and claim list are
 read-only and need no identity; work feed --to keeps jobs announced to that
@@ -400,6 +403,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         `  ${busBodyFallbackSummary(m.envelope.body)}`,
         ...(result.held === undefined ? [] : [`  held=${result.held === null ? 'unknown' : result.held ? 'yes' : 'no'}` +
           (result.holder ? ` holder=${result.holder}` : '')]),
+        ...(result.wakeHint === undefined ? [] : [`  via claim-holder wake hint ${result.id}` +
+          ` to=${result.wakeHint.to} job=${result.wakeHint.jobId} status=${result.wakeHint.status}`]),
       ].join('\n'));
       return 0;
     }
