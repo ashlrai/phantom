@@ -25,10 +25,10 @@ const JOBS: Record<string, { rows: unknown[]; mtimeHours?: number }> = {
   'RQ-LIVEMERGED': { rows: merged('RQ-LIVEMERGED') },
 };
 
-interface Host { jobs?: typeof JOBS; keep?: string; pinsValid?: boolean; dirty?: Set<string> }
+interface Host { jobs?: typeof JOBS; keep?: string; pinsValid?: boolean; dirty?: Set<string>; merges?: Set<string> }
 
 /** Fully readable fake host; every reader, the clean check, the remover and the log are spies. */
-function host({ jobs = JOBS, keep = 'RQ-KEPT\n', pinsValid = true, dirty = new Set(['RQ-DIRTY']) }: Host = {}) {
+function host({ jobs = JOBS, keep = 'RQ-KEPT\n', pinsValid = true, dirty = new Set(['RQ-DIRTY']), merges = new Set() }: Host = {}) {
   const names = ['guardian-claude', ...Object.keys(jobs)];
   const files: Record<string, string> = { [`${RUNS}/queue/status.json`]: '{}', [`${RUNS}/queue/keep.txt`]: keep };
   const fs: WtAuditFs = {
@@ -47,6 +47,7 @@ function host({ jobs = JOBS, keep = 'RQ-KEPT\n', pinsValid = true, dirty = new S
     ps: () => `claude --cwd ${WT}/RQ-LIVE\nnode ${WT}/RQ-LIVEMERGED/run.js\n`,
     readPins: () => ({ paths: [], valid: pinsValid }),
     isClean: vi.fn(async (path: string) => !dirty.has(path.slice(WT.length + 1))),
+    isMerged: vi.fn(async (path: string) => merges.has(path.slice(WT.length + 1))),
     measure: vi.fn(() => ({ bytes: 2e9, complete: true })),
     remove: vi.fn(async () => undefined),
     logRemoval: vi.fn(async () => undefined),
@@ -70,7 +71,8 @@ describe('phm worktrees list', () => {
       ['RQ-OPEN', 'open', false, 'open-pr'],
       ['RQ-UNKNOWN', 'unknown', false, 'state-unknown'],
     ]);
-    expect(report.counts).toEqual({ total: 9, safe: 2, live: 2, merged: 3, empty: 1, open: 1, kept: 1, unknown: 1 });
+    expect(report.counts).toEqual({ total: 9, safe: 2, live: 2, merged: 3, closed: 0, empty: 1, open: 1, kept: 1, unknown: 1 });
+    expect(report.reasons).toEqual({ empty: 1, merged: 1, closed: 0, kept: 1, 'dirty-no-result': 1, 'too-new': 1, other: 4 });
     expect(report.reclaimableBytes).toBe(4e9);
     expect(row(report, 'RQ-EMPTY')).toMatchObject({ repo: 'ashlr-stack', ageHours: 10, bytes: 2e9, clean: true });
     expect(row(report, 'RQ-LIVE')).toMatchObject({ repo: 'ashlrai/phantom', bytes: null, clean: null });
@@ -111,8 +113,8 @@ describe('phm worktrees list', () => {
     const first = JSON.stringify(await readWorktrees('list', host()));
     expect(JSON.stringify(await readWorktrees('list', host()))).toBe(first);
     const parsed = JSON.parse(first) as WorktreesReport;
-    expect(Object.keys(parsed)).toEqual(['schema', 'generatedAt', 'sourcesOk', 'warnAt', 'counts', 'reclaimableBytes', 'reclaimableComplete', 'mode', 'rows']);
-    expect(Object.keys(parsed.rows[0]!)).toEqual(['job', 'repo', 'state', 'ageHours', 'bytes', 'clean', 'safe', 'hold']);
+    expect(Object.keys(parsed)).toEqual(['schema', 'generatedAt', 'sourcesOk', 'warnAt', 'counts', 'reasons', 'reclaimableBytes', 'reclaimableComplete', 'mode', 'rows']);
+    expect(Object.keys(parsed.rows[0]!)).toEqual(['job', 'repo', 'state', 'ageHours', 'bytes', 'clean', 'safe', 'hold', 'reason']);
     expect(parsed).toMatchObject({ schema: 'worktrees.v1', generatedAt: '2026-11-17T12:00:00.000Z', warnAt: 40, mode: 'list' });
   });
 });
@@ -179,8 +181,8 @@ describe('phm worktrees CLI', () => {
     expect(code).toBe(0);
     expect(out[0]).toBe('JOB\tREPO\tSTATE\tAGE\tSIZE\tSAFE TO REMOVE');
     expect(out).toContain('RQ-EMPTY\tashlr-stack\tempty result\t10 h\t2.0 GB\tyes');
-    expect(out).toContain('RQ-DIRTY\tashlrai/phantom\tmerged PR\t10 h\t-\tno, has uncommitted changes');
-    expect(out).toContain('9 job worktrees (warning at 40): 2 live job, 3 merged PR, 1 empty result, 1 open PR, 1 kept on purpose, 1 unknown.');
+    expect(out).toContain('RQ-DIRTY\tashlrai/phantom\tmerged\t10 h\t-\tno, has uncommitted changes');
+    expect(out).toContain('9 job worktrees (warning at 40): 2 live job, 3 merged, 1 empty result, 1 open PR, 1 kept on purpose, 1 unknown.');
     expect(out).toContain('Safe to remove: 2 (4.0 GB).');
     expect(out.at(-1)).toBe('Run phm worktrees --reap to preview removal.');
   });
@@ -189,7 +191,7 @@ describe('phm worktrees CLI', () => {
     const deps = host();
     const { code, out } = await run(['--reap'], deps);
     expect(code).toBe(0);
-    expect(out.filter(line => line.startsWith('RQ-'))).toEqual(['RQ-EMPTY\tashlr-stack\tempty result\t10 h\t2.0 GB\tyes', 'RQ-MERGED\tashlrai/phantom\tmerged PR\t10 h\t2.0 GB\tyes']);
+    expect(out.filter(line => line.startsWith('RQ-'))).toEqual(['RQ-EMPTY\tashlr-stack\tempty result\t10 h\t2.0 GB\tyes', 'RQ-MERGED\tashlrai/phantom\tmerged\t10 h\t2.0 GB\tyes']);
     expect(deps.remove).not.toHaveBeenCalled();
   });
 
@@ -232,20 +234,18 @@ describe('age rule per class', () => {
   const emptyRows = (job: string, h: number) => [launch(job, h + 1), { event: 'finish', job, empty: true, ts: iso(h) }];
   const verdict = async (jobs: typeof JOBS) => row(await readWorktrees('list', host({ jobs, dirty: new Set() })), 'RQ-AGED');
 
-  it('names two hours for merged and empty', () => {
-    expect(WORKTREES_SAFE_AGE_HOURS).toEqual({ merged: 2, empty: 2 });
+  it('names six hours for every finished worktree', () => {
+    expect(WORKTREES_SAFE_AGE_HOURS).toBe(6);
   });
 
-  it.each([['merged', merged], ['empty', emptyRows]] as const)('a %s worktree is safe at 2 h and held just under', async (_state, rows) => {
-    expect(await verdict(aged(2, rows))).toMatchObject({ safe: true, hold: null });
-    expect(await verdict(aged(1.9, rows))).toMatchObject({ safe: false, hold: 'too-new' });
-    // The old 6 h rule no longer applies.
-    expect(await verdict(aged(5, rows))).toMatchObject({ safe: true });
+  it.each([['merged', merged], ['empty', emptyRows]] as const)('a %s worktree is safe at 6 h and held just under', async (_state, rows) => {
+    expect(await verdict(aged(6, rows))).toMatchObject({ safe: true, hold: null });
+    expect(await verdict(aged(5.9, rows))).toMatchObject({ safe: false, hold: 'too-new', reason: 'too-new' });
   });
 
   it('says how young a held row is in plain words', async () => {
-    const report = await readWorktrees('list', host({ jobs: aged(1.5, merged), dirty: new Set() }));
-    expect(formatWorktrees(report)).toContain('RQ-AGED\tashlrai/phantom\tmerged PR\t2 h\t-\tno, under 2 hours old');
+    const report = await readWorktrees('list', host({ jobs: aged(5.5, merged), dirty: new Set() }));
+    expect(formatWorktrees(report)).toContain('RQ-AGED\tashlrai/phantom\tmerged\t6 h\t-\tno, under 6 hours old');
   });
 
   it('live and open-PR worktrees stay held however old they are', async () => {
