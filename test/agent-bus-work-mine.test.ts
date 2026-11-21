@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -10,8 +10,11 @@ import { busWorkMineAnnouncedAnnotation, busWorkMineJobAnnotation, formatBusWork
   type BusWorkMineOptions } from '../src/core/agents/bus-work-mine.js';
 import type { BusWorkFeedJob } from '../src/core/agents/bus-work-feed-read.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { BusBoard } from '../src/core/fleet/bus-board.js';
 import { enqueueBusWake } from '../src/core/fleet/bus-wake-queue.js';
 import { createBusMailbox } from '../src/core/fleet/bus-mailbox.js';
+import { SharedStore } from '../src/core/fleet/shared-store.js';
+import type { AshlrConfig } from '../src/core/types.js';
 import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
@@ -1526,6 +1529,167 @@ describe('mailbox section', () => {
     if (result.status !== 'ok' || result.mailbox.status !== 'ok') throw new Error('unreachable');
     expect(result.mailbox).toMatchObject({ matched: 21, truncated: true });
     expect(result.mailbox.messages).toHaveLength(20);
+  });
+});
+
+describe('board section', () => {
+  type Setup = BusWorkMineOptions & { clock: { now: number }; root: string; runsRoot: string };
+
+  /** The shared task board at the paths `boardSection` derives from the fleet root. */
+  function board(options: Setup) {
+    return new BusBoard({ root: join(dirname(options.root), 'bus'),
+      fleet: new SharedStore(join(options.root, 'bus-queue'), 60_000),
+      cfg: { foundry: {} } as AshlrConfig });
+  }
+
+  function section(result: ReturnType<typeof readBusWorkMine>) {
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    return result.board;
+  }
+
+  it('reports an absent board as verified empty without creating its store', () => {
+    const options = setup();
+    register(options, 'atlas');
+    expect(section(readBusWorkMine('atlas', options))).toEqual({
+      status: 'ok', peers: [], claims: 'readable', threads: [],
+      deliveries: { matched: 0, items: [], truncated: false },
+      tasks: { matched: 0, items: [], truncated: false } });
+    // Read-only: the digest never creates the board directory or lock file.
+    expect(existsSync(join(dirname(options.root), 'bus'))).toBe(false);
+    expect(existsSync(join(options.root, 'bus-queue'))).toBe(false);
+  });
+
+  it('lists unacknowledged deliveries and tasks under every board label', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    const store = board(options);
+    const threadId = store.createThread('nova', 'Release coordination').id;
+    store.joinThread('atlas', threadId);
+    store.joinThread('agent:atlas', threadId);
+    await store.post('nova', threadId, 'ping atlas');
+    await store.post('nova', threadId, 'second ping');
+    store.createTask('nova', threadId, 'item-review', 'Review the patch');
+
+    const boardSection = section(readBusWorkMine('atlas', options));
+    expect(boardSection.status).toBe('ok');
+    if (boardSection.status !== 'ok') throw new Error('unreachable');
+    // The board knows the agent under its bare handle and agent: address —
+    // never its stable id, which is not a member: matching never widens.
+    expect(boardSection.peers.sort()).toEqual(['agent:atlas', 'atlas']);
+    expect(boardSection.threads).toHaveLength(1);
+    expect(boardSection.threads[0]).toMatchObject({ id: threadId, pendingDeliveries: 4 });
+    // Two posts snapshot three members each; the agent's two labels match four deliveries.
+    expect(boardSection.deliveries).toMatchObject({ matched: 4, truncated: false });
+    expect(boardSection.deliveries.items.map(row => row.recipient).sort())
+      .toEqual(['agent:atlas', 'agent:atlas', 'atlas', 'atlas']);
+    const first = boardSection.deliveries.items.find(row => row.recipient === 'atlas')!;
+    expect(first).toMatchObject({ id: expect.any(String), threadId, sender: 'nova', recipient: 'atlas' });
+    expect(first.summary).toBe('ping atlas');
+    expect(first.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(boardSection.tasks).toMatchObject({ matched: 1, truncated: false });
+    expect(boardSection.tasks.items[0]).toMatchObject({ id: expect.any(String), threadId,
+      itemId: 'item-review', title: 'Review the patch', claimed: false, hold: 'open', owner: null });
+  });
+
+  it('annotates board task hold state from the live fleet queue', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    const store = board(options);
+    const threadId = store.createThread('nova', 'Claims').id;
+    store.joinThread('atlas', threadId);
+    const open = store.createTask('nova', threadId, 'item-open', 'Open task');
+    const held = store.createTask('nova', threadId, 'item-held', 'Held task');
+    store.claimTask('nova', held.id);
+
+    const boardSection = section(readBusWorkMine('atlas', options));
+    expect(boardSection.status).toBe('ok');
+    if (boardSection.status !== 'ok') throw new Error('unreachable');
+    const byItem = new Map(boardSection.tasks.items.map(row => [row.itemId, row]));
+    expect(byItem.get('item-open')).toMatchObject({ hold: 'open', claimed: false, owner: null });
+    expect(byItem.get('item-held')).toMatchObject({ hold: 'held', claimed: true });
+    expect(byItem.get('item-held')!.owner).toMatchObject({ peerId: 'nova' });
+    expect(boardSection.threads[0]!.tasks).toEqual({ open: 1, held: 1, ambiguous: 0, unknown: 0 });
+    expect(open.id).not.toBe(held.id);
+  });
+
+  it('narrows board matching to the literal ref when the registry is unreadable', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    const store = board(options);
+    const threadId = store.createThread('nova', 'Narrow').id;
+    store.joinThread('atlas', threadId);
+    await store.post('nova', threadId, 'bare label mail');
+
+    writeFileSync(join(options.root, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+    // 'agent:atlas' is not a board member — only the bare 'atlas' label is.
+    const narrowed = section(readBusWorkMine('agent:atlas', options));
+    expect(narrowed.status).toBe('ok');
+    if (narrowed.status !== 'ok') throw new Error('unreachable');
+    expect(narrowed.peers).toEqual([]);
+    expect(narrowed.deliveries.matched).toBe(0);
+    const literal = section(readBusWorkMine('atlas', options));
+    expect(literal.status).toBe('ok');
+    if (literal.status !== 'ok') throw new Error('unreachable');
+    expect(literal.peers).toEqual(['atlas']);
+    expect(literal.deliveries.matched).toBe(1);
+    expect(literal.deliveries.items[0]!.summary).toBe('bare label mail');
+  });
+
+  it('reports an unreadable board and an unreadable queue honestly', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    const store = board(options);
+    const threadId = store.createThread('nova', 'Faults').id;
+    store.joinThread('atlas', threadId);
+    store.createTask('nova', threadId, 'item-x', 'Task');
+
+    // Corrupt board state: the section reports unavailable, never an empty list.
+    writeFileSync(join(dirname(options.root), 'bus', 'state.json'), '{broken', { mode: 0o600 });
+    expect(section(readBusWorkMine('atlas', options))).toEqual({ status: 'unavailable', reason: 'board-unreadable' });
+  });
+
+  it('marks every task hold unknown when the shared queue cannot be read', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    const store = board(options);
+    const threadId = store.createThread('nova', 'Queue fault').id;
+    store.joinThread('atlas', threadId);
+    store.createTask('nova', threadId, 'item-x', 'Task');
+
+    mkdirSync(join(options.root, 'bus-queue'), { recursive: true });
+    writeFileSync(join(options.root, 'bus-queue', 'ashlr-fleet-queue.json'), '{broken', { mode: 0o600 });
+    const boardSection = section(readBusWorkMine('atlas', options));
+    expect(boardSection.status).toBe('ok');
+    if (boardSection.status !== 'ok') throw new Error('unreachable');
+    expect(boardSection.claims).toBe('unreadable');
+    expect(boardSection.tasks.items[0]).toMatchObject({ hold: 'unknown', owner: null });
+    expect(boardSection.threads[0]!.tasks).toEqual({ open: 0, held: 0, ambiguous: 0, unknown: 1 });
+  });
+
+  it('derives board paths from a configured shared queue', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    const sharedDir = join(dirname(options.root), 'shared-queue');
+    const store = new BusBoard({ root: join(sharedDir, 'bus'),
+      fleet: new SharedStore(sharedDir, 60_000), cfg: { foundry: {} } as AshlrConfig });
+    const threadId = store.createThread('nova', 'Shared').id;
+    store.joinThread('atlas', threadId);
+    await store.post('nova', threadId, 'shared queue mail');
+
+    const cfg = { foundry: {}, fleet: { sharedQueue: { mode: 'filesystem' as const,
+      path: sharedDir, trustedCoherentStorage: true } } } as AshlrConfig;
+    options.board = { config: cfg };
+    const boardSection = section(readBusWorkMine('atlas', options));
+    expect(boardSection.status).toBe('ok');
+    if (boardSection.status !== 'ok') throw new Error('unreachable');
+    expect(boardSection.deliveries.matched).toBe(1);
+    expect(boardSection.deliveries.items[0]!.summary).toBe('shared queue mail');
+
+    // A shared-queue config without the coherent-storage attestation is unavailable.
+    options.board = { config: { foundry: {}, fleet: { sharedQueue: { mode: 'filesystem' as const,
+      path: sharedDir } } } as AshlrConfig };
+    expect(section(readBusWorkMine('atlas', options))).toEqual({ status: 'unavailable', reason: 'board-unreadable' });
   });
 });
 

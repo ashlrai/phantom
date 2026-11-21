@@ -8,17 +8,21 @@
  * belongs to — in `bus next` order, the conversation threads waiting on its
  * answer, the conversation threads it is waiting on, the blocked conversation
  * threads it is a party to, the wake hints addressed to
- * it, the next page of mail in its inbox and the pending mail the legacy
- * `phm bus` mailbox still holds for any of its labels. Each section reads the same
+ * it, the next page of mail in its inbox, the pending mail the legacy
+ * `phm bus` mailbox still holds for any of its labels and the shared task
+ * board's pending digest (`phm bus board pending`) under the same labels.
+ * Each section reads the same
  * projection the dedicated verb
  * serves and keeps its honesty rules: an unreadable store, coordination table,
  * registry or wake queue narrows the match or reports unknown, never an empty
  * list passed off as fact. Routing labels are not authentication; claims
  * coordinate scope and grant no execution authority. Read-only: no writes, no
- * claims, no dispatch.
+ * claims, no dispatch — the board section reads an existing board only and
+ * never creates its state directory or lock file.
  */
 import { coordinationRowBlocks, listCoordination } from './claim-store.js';
-import { dirname } from 'node:path';
+import { existsSync } from 'node:fs';
+import { dirname, isAbsolute, join } from 'node:path';
 import { busClaimJobRef, listBusClaims, type BusClaimsListClaim, type BusClaimsOwnerMatch } from './bus-claims.js';
 import { agentLabels, agentPendingAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity, type AgentRegistry } from './bus-identity.js';
 import { agentName, type AgentMessageKind } from '../fleet/agent-messages.js';
@@ -34,7 +38,27 @@ import { BUS_PROTOCOL_KEY, BUS_PRIORITIES, isClaimableWork,
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
 import { createBusMailbox } from '../fleet/bus-mailbox.js';
+import { ashlrHome } from '../cloud/store.js';
+import { loadConfigReadOnlyStrict } from '../config.js';
+import { BusBoard, type BusBoardPendingThread, type BusBoardTaskHold } from '../fleet/bus-board.js';
+import type { BusBoardDelivery } from '../fleet/bus-delivery.js';
+import { SharedStore } from '../fleet/shared-store.js';
+import { neutralisePageText } from '../verse/browser-act-policy.js';
+import type { AshlrConfig } from '../types.js';
 import { scrubSecrets } from '../util/scrub.js';
+
+/** Overrides for the shared task board (`phm bus board pending`) the board
+ * section reads; production derives the same paths the board CLI uses. */
+export interface BusWorkMineBoardOptions {
+  /** Board state dir; default `<dirname(root)>/bus` (`<ashlrHome>/bus` when `root` is unset). Must be absolute. */
+  root?: string;
+  /** Shared queue dir behind board task claims; default `<root>/bus-queue` (`<ashlrHome>/fleet/bus-queue` when `root` is unset). Must be absolute. */
+  queueRoot?: string;
+  /** Queue lease override; default the shared-queue config's `leaseMs`. */
+  leaseMs?: number;
+  /** Config the board's event-bus kill switch and shared-queue derivation read; default `loadConfigReadOnlyStrict()`. */
+  config?: AshlrConfig;
+}
 
 export interface BusWorkMineOptions {
   /** Fleet root shared by the bus store, identity registry and coordination table. */
@@ -44,6 +68,8 @@ export interface BusWorkMineOptions {
   /** ASHLR home owning the legacy `bus-mailbox` store (`$ASHLR_HOME/bus-mailbox`);
    * default `dirname(root)` when `root` is set — the fleet root's parent — else `ashlrHome()`. */
   mailboxHome?: string;
+  /** Shared task board digest overrides; production derives the board CLI's paths. */
+  board?: BusWorkMineBoardOptions;
   /** Injectable clock, frozen once so every section reads the same instant. */
   now?: () => number;
 }
@@ -180,6 +206,56 @@ export type BusWorkMineMailbox =
       matched: number;
       /** True only when pending rows remain beyond the shown page. */
       truncated: boolean }
+  | { status: 'unavailable'; reason: string };
+
+/** One unacknowledged shared task board delivery addressed to the agent. */
+export interface BusWorkMineBoardDelivery {
+  /** Delivery id — `phm bus thread ack <threadId> <id>` takes it verbatim. */
+  id: string;
+  threadId: string;
+  /** Raw sender peer label. */
+  sender: string;
+  /** Raw recipient peer label — one of the agent's board labels. */
+  recipient: string;
+  /** ISO of the delivery record's creation time. */
+  createdAt: string;
+  /** Scrubbed, single-line post text, clipped to the digest bound. */
+  summary: string;
+}
+
+/** One shared task board task on a thread the agent belongs to. */
+export interface BusWorkMineBoardTask {
+  id: string;
+  threadId: string;
+  /** Fleet queue item id the task coordinates. */
+  itemId: string;
+  /** Scrubbed, single-line task title, clipped to the digest bound. */
+  title: string;
+  /** Board state still records a claim ref; it may be live, expired, or superseded. */
+  claimed: boolean;
+  /** Observed fleet-queue hold state; 'unknown' whenever the queue cannot be read — never 'open' by default. */
+  hold: BusBoardTaskHold;
+  /** Live queue holder when `hold` is 'held': peer label and lease expiry only, never capability material. */
+  owner: { peerId: string; leaseUntil: number } | null;
+}
+
+/**
+ * The shared task board's pending digest (`phm bus board pending`) under
+ * every routing label the agent answers to — the one pending-work store the
+ * unified bus never carried. `peers` names the queried labels the board
+ * actually knows (each a member of at least one thread), so an agent that
+ * never joined the board reads verified-empty rather than mistaking "not a
+ * peer" for "nothing pending". `threads` keeps the board's own joined-thread
+ * rollups; deliveries and tasks carry the board's 50-item caps with `matched`
+ * the true totals and `truncated` definitive.
+ */
+export type BusWorkMineBoard =
+  | { status: 'ok'; peers: string[];
+      /** 'unreadable' means the shared queue could not be inspected; every task `hold` is then 'unknown', never 'open'. */
+      claims: 'readable' | 'unreadable';
+      threads: BusBoardPendingThread[];
+      deliveries: { matched: number; items: BusWorkMineBoardDelivery[]; truncated: boolean };
+      tasks: { matched: number; items: BusWorkMineBoardTask[]; truncated: boolean } }
   | { status: 'unavailable'; reason: string };
 
 /** One live claimable work envelope addressed to the agent, in `bus next` claim order. */
@@ -348,7 +424,8 @@ export type BusWorkMineResult =
       next: BusWorkMineNext;
       handoffs: BusWorkMineHandoffs; threads: BusWorkMineThreads; awaiting: BusWorkMineAwaiting;
       blocked: BusWorkMineBlocked;
-      wakes: BusWorkMineWakes; inbox: BusWorkMineInbox; mailbox: BusWorkMineMailbox }
+      wakes: BusWorkMineWakes; inbox: BusWorkMineInbox; mailbox: BusWorkMineMailbox;
+      board: BusWorkMineBoard }
   | { status: 'invalid'; reason: string };
 
 /** Newest open jobs, newest wake hints and next inbox page a digest shows; totals stay honest via `open`/`matched`/`truncated`. */
@@ -553,6 +630,103 @@ function mailboxSection(agent: string, identity: AgentIdentity | undefined,
       summary: mineField(busBodySummary(row.envelope.body) ?? busBodyFallbackSummary(row.envelope.body),
         WORK_MINE_SUMMARY_MAX),
     })) };
+}
+
+/** The post text inside a board delivery's stored canonical envelope JSON; the raw stored text when it does not parse. */
+function boardDeliveryText(delivery: BusBoardDelivery): string {
+  try {
+    const parsed = JSON.parse(delivery.content.text) as { body?: unknown } | null;
+    const body = parsed?.body;
+    if (body !== null && typeof body === 'object') {
+      const text = (body as Record<string, unknown>)['text'];
+      if (typeof text === 'string') return text;
+    }
+  } catch { /* stored content is not the canonical envelope JSON */ }
+  return delivery.content.text;
+}
+
+/** Scrubbed, single-line, clipped board text: the board's own invisible-byte neutralisation, then the digest clip. */
+function boardText(text: string): string {
+  return mineField(neutralisePageText(text), WORK_MINE_SUMMARY_MAX);
+}
+
+/**
+ * The shared task board's pending digest (`phm bus board pending`) under
+ * every routing label the agent answers to — the one pending-work store the
+ * unified bus never carried, so without this section an agent on the board
+ * still needs a separate `phm bus board pending --peer` read per label.
+ * Labels are the resolved identity's `agentLabels` set, or the literal ref
+ * alone when no identity resolves — the same narrowing the mailbox section
+ * applies, so an unreadable registry or unregistered ref never widens the
+ * match. Board paths derive exactly like the board CLI: `<dirname(root)>/bus`
+ * and `<root>/bus-queue` (the fleet root's parent `bus/` dir and
+ * `<ashlrHome>/fleet/bus-queue` when `root` is unset), or the configured
+ * shared queue's `path` and `path/bus` under `fleet.sharedQueue.mode:
+ * filesystem` with `trustedCoherentStorage`. A board that was never used —
+ * no `state.json` — is a verified-empty `ok`: the read never creates the
+ * directory or lock file the board's own transaction would leave, while the
+ * queue read still reports claim-store readability honestly. An unreadable
+ * board, a malformed shared-queue config, a relative path override or a
+ * disabled event bus reports `unavailable`, never an empty list passed off
+ * as fact.
+ */
+function boardSection(agent: string, identity: AgentIdentity | undefined,
+  options: BusWorkMineOptions, nowMs: number): BusWorkMineBoard {
+  const unavailable: BusWorkMineBoard = { status: 'unavailable', reason: 'board-unreadable' };
+  if ((options.board?.root !== undefined && !isAbsolute(options.board.root)) ||
+      (options.board?.queueRoot !== undefined && !isAbsolute(options.board.queueRoot))) {
+    return unavailable;
+  }
+  let cfg: AshlrConfig;
+  try {
+    cfg = options.board?.config ?? loadConfigReadOnlyStrict();
+  } catch {
+    return unavailable;
+  }
+  const shared = cfg.fleet?.sharedQueue;
+  const fleetRoot = options.root ?? join(ashlrHome(), 'fleet');
+  let boardRoot = join(dirname(fleetRoot), 'bus');
+  let queueRoot = join(fleetRoot, 'bus-queue');
+  if (shared?.mode === 'filesystem') {
+    if (shared.trustedCoherentStorage !== true || typeof shared.path !== 'string' || !isAbsolute(shared.path)) {
+      return unavailable;
+    }
+    queueRoot = shared.path;
+    boardRoot = join(queueRoot, 'bus');
+  }
+  boardRoot = options.board?.root ?? boardRoot;
+  queueRoot = options.board?.queueRoot ?? queueRoot;
+  const fleet = new SharedStore(queueRoot, options.board?.leaseMs ?? shared?.leaseMs);
+  if (!existsSync(join(boardRoot, 'state.json'))) {
+    const index = fleet.readClaimIndex();
+    return { status: 'ok', peers: [], claims: index.readable ? 'readable' : 'unreadable',
+      threads: [], deliveries: { matched: 0, items: [], truncated: false },
+      tasks: { matched: 0, items: [], truncated: false } };
+  }
+  try {
+    const labels = identity === undefined ? [agent] : agentLabels(identity);
+    const digest = new BusBoard({ root: boardRoot, fleet, cfg }).pendingFor(labels, nowMs);
+    return {
+      status: 'ok', peers: digest.peers, claims: digest.claims, threads: digest.threads,
+      deliveries: {
+        matched: digest.deliveries.matched, truncated: digest.deliveries.truncated,
+        items: digest.deliveries.items.map(delivery => ({
+          id: delivery.id, threadId: delivery.threadId, sender: delivery.sender,
+          recipient: delivery.recipient, createdAt: delivery.createdAt,
+          summary: boardText(boardDeliveryText(delivery)),
+        })),
+      },
+      tasks: {
+        matched: digest.tasks.matched, truncated: digest.tasks.truncated,
+        items: digest.tasks.items.map(task => ({
+          id: task.id, threadId: task.threadId, itemId: task.itemId,
+          title: boardText(task.content.text), claimed: task.claimed, hold: task.hold, owner: task.owner,
+        })),
+      },
+    };
+  } catch {
+    return unavailable;
+  }
 }
 
 /** The claimable body kind an envelope carries: legacy `work` or protocol-v1 `task`. */
@@ -932,8 +1106,9 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
 
   const inbox = inboxSection(agent, options, nowMs);
   const mailbox = mailboxSection(agent, identity, options, nowMs);
+  const board = boardSection(agent, identity, options, nowMs);
 
-  return { status: 'ok', agent: who, asOf, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox };
+  return { status: 'ok', agent: who, asOf, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board };
 }
 
 /** Scrubbed, single-line, clipped display field; '' when nothing readable remains. */
@@ -1111,6 +1286,35 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
     for (const message of mailbox.messages) {
       lines.push(`  [${message.priority} legacy id=${message.id} from ${message.from} to ${message.to}] ` +
         `${message.summary} expires=${message.expiresAt}`);
+    }
+  }
+
+  const board = result.board;
+  if (board.status !== 'ok') {
+    lines.push(`board=unknown ${board.status}`);
+  } else {
+    const peers = board.peers.length === 0 ? '-' : board.peers.join(',');
+    lines.push(`board peers=${peers} claims=${board.claims} threads=${board.threads.length} ` +
+      `deliveries=${board.deliveries.matched} shown=${board.deliveries.items.length}` +
+      `${board.deliveries.truncated ? '+truncated' : ''} tasks=${board.tasks.matched} ` +
+      `shown=${board.tasks.items.length}${board.tasks.truncated ? '+truncated' : ''}`);
+    for (const thread of board.threads) {
+      const title = mineField(neutralisePageText(thread.content.text), 80);
+      const counts = thread.tasks;
+      lines.push(`  thread ${thread.id} members=${thread.members.join(',')} ` +
+        `pending=${thread.pendingDeliveries} tasks=open:${counts.open},held:${counts.held},` +
+        `ambiguous:${counts.ambiguous},unknown:${counts.unknown}` +
+        `${title === '' ? '' : ` "${title}"`}`);
+    }
+    for (const delivery of board.deliveries.items) {
+      lines.push(`  [delivery id=${delivery.id} thread=${delivery.threadId} from ${delivery.sender} ` +
+        `to ${delivery.recipient}] ${delivery.summary}`);
+    }
+    for (const task of board.tasks.items) {
+      const owner = task.owner === null ? '' :
+        ` owner=${task.owner.peerId} until=${new Date(task.owner.leaseUntil).toISOString()}`;
+      lines.push(`  [task id=${task.id} thread=${task.threadId} item=${task.itemId} hold=${task.hold}` +
+        `${task.claimed ? ' claimed' : ''}${owner}] ${task.title}`);
     }
   }
   return lines;

@@ -83,6 +83,32 @@ export interface BusBoardPending {
   tasks: { matched: number; items: BusBoardPendingTask[]; truncated: boolean };
 }
 
+/**
+ * The multi-peer pending digest: `pending`'s sections under the union of a
+ * label set, for callers that hold several routing labels for one agent.
+ * Unlike `pending`, item `content.text` is the stored untrusted text — a
+ * delivery's canonical envelope JSON, a task's or thread's title — rather
+ * than the re-wrapped display frame, so structured consumers can read the
+ * body; the `trust:'untrusted'` marker and authority rules are unchanged.
+ */
+export interface BusBoardPendingPeers {
+  /** Queried labels the board knows — each is a member of at least one thread, sorted. */
+  peers: string[];
+  /** 'unreadable' means the shared queue could not be inspected; every task `hold` is then 'unknown', never 'open'. */
+  claims: 'readable' | 'unreadable';
+  threads: BusBoardPendingThread[];
+  deliveries: { matched: number; items: BusBoardDelivery[]; truncated: boolean };
+  tasks: { matched: number; items: BusBoardPendingTask[]; truncated: boolean };
+}
+
+/** The stored-content digest `pending` and `pendingFor` share; `pending` re-wraps every `content.text` for display. */
+interface BusBoardDigest {
+  claims: 'readable' | 'unreadable';
+  threads: BusBoardPendingThread[];
+  deliveries: { matched: number; items: BusBoardDelivery[]; truncated: boolean };
+  tasks: { matched: number; items: BusBoardPendingTask[]; truncated: boolean };
+}
+
 export interface BusBoardOptions {
   root: string;
   fleet: SharedStore;
@@ -407,70 +433,132 @@ export class BusBoard {
    */
   pending(actor: string): BusBoardPending {
     actor = this.peer(actor);
+    return this.transaction(false, (state) => ({
+      peer: actor,
+      ...this.presentDigest(this.pendingDigest(state, new Set([actor]), Date.now())),
+    }));
+  }
+
+  /**
+   * The multi-peer form of `pending`: the same locked snapshot and queue
+   * read covering every label in `peers` at once — a joined thread counts
+   * once even when several labels are members, and each delivery still
+   * lists under its single recipient. A label that is not a well-formed
+   * board peer, or is absent from a configured allowlist, simply matches
+   * nothing. `peers` reports the queried labels the board actually knows —
+   * each appears as a member of at least one thread — so a caller can tell
+   * "nothing pending" from "not a board peer". Item `content.text` stays
+   * the stored untrusted text (a delivery's canonical envelope JSON, a
+   * task's or thread's title) rather than `pending`'s re-wrapped display
+   * frame, so structured consumers can read the body; every outbound read
+   * still marks it `trust:'untrusted'` and it grants no authority.
+   */
+  pendingFor(peers: readonly string[], now?: number): BusBoardPendingPeers {
+    const labels = new Set<string>();
+    for (const peer of peers) {
+      try { labels.add(this.peer(peer)); } catch { /* not a board peer label; it can match nothing */ }
+    }
     return this.transaction(false, (state) => {
-      const index = this.options.fleet.readClaimIndex();
-      const now = Date.now();
-      const acknowledged = new Set((state.receipts ?? []).map((receipt) => receipt.deliveryId));
-      const joined = state.threads.filter((thread) => thread.members.includes(actor));
-      const joinedIds = new Set(joined.map((thread) => thread.id));
-
-      const deliveries = state.deliveries.filter((delivery) =>
-        delivery.recipient === actor && joinedIds.has(delivery.threadId) && !acknowledged.has(delivery.id));
-
-      const tasks = state.tasks.filter((task) => joinedIds.has(task.threadId)).map((task): BusBoardPendingTask => {
-        const entry = index.claims[task.itemId];
-        let hold: BusBoardTaskHold = 'unknown';
-        let owner: BusBoardPendingTask['owner'] = null;
-        if (index.readable) {
-          if (!entry) hold = 'open';
-          else if (entry.leaseUntil > now) {
-            hold = 'held';
-            owner = { peerId: entry.machineId, leaseUntil: entry.leaseUntil };
-          } else hold = entry.phase === 'claimed' ? 'open' : 'ambiguous';
-        }
-        return {
-          id: task.id, threadId: task.threadId, itemId: task.itemId,
-          content: { trust: 'untrusted', text: presentBusBoardText(task.title) },
-          claimed: task.claim !== undefined, hold, owner,
-        };
-      });
-
-      const deliveryCounts = new Map<string, number>();
-      for (const delivery of deliveries) {
-        deliveryCounts.set(delivery.threadId, (deliveryCounts.get(delivery.threadId) ?? 0) + 1);
-      }
-      const holdCounts = new Map<string, Record<BusBoardTaskHold, number>>();
-      for (const task of tasks) {
-        const counts = holdCounts.get(task.threadId) ?? { open: 0, held: 0, ambiguous: 0, unknown: 0 };
-        counts[task.hold]++;
-        holdCounts.set(task.threadId, counts);
-      }
-      const threads: BusBoardPendingThread[] = joined.map((thread) => ({
-        id: thread.id, members: [...thread.members],
-        content: { trust: 'untrusted' as const, text: presentBusBoardText(thread.title) },
-        pendingDeliveries: deliveryCounts.get(thread.id) ?? 0,
-        tasks: holdCounts.get(thread.id) ?? { open: 0, held: 0, ambiguous: 0, unknown: 0 },
-      }));
-
+      const digest = this.pendingDigest(state, labels, now ?? Date.now());
+      const known = new Set(digest.threads.flatMap((thread) => thread.members));
       return {
-        peer: actor,
-        claims: index.readable ? 'readable' : 'unreadable',
-        threads,
-        deliveries: {
-          matched: deliveries.length,
-          items: deliveries.slice(0, BUS_BOARD_PENDING_MAX).map((delivery) => ({
-            ...delivery,
-            content: { trust: 'untrusted' as const, text: presentBusBoardText(delivery.content.text) },
-          })),
-          truncated: deliveries.length > BUS_BOARD_PENDING_MAX,
-        },
-        tasks: {
-          matched: tasks.length,
-          items: tasks.slice(0, BUS_BOARD_PENDING_MAX),
-          truncated: tasks.length > BUS_BOARD_PENDING_MAX,
-        },
+        peers: [...labels].filter((label) => known.has(label)).sort(),
+        claims: digest.claims,
+        threads: digest.threads,
+        deliveries: digest.deliveries,
+        tasks: digest.tasks,
       };
     });
+  }
+
+  /**
+   * The shared snapshot math behind `pending`/`pendingFor`: `labels` is the
+   * peer set a thread joins or a delivery addresses. Task `hold` reads the
+   * one queue claim index; an unreadable queue leaves every hold `unknown`.
+   */
+  private pendingDigest(state: BoardState, labels: ReadonlySet<string>, now: number): BusBoardDigest {
+    const index = this.options.fleet.readClaimIndex();
+    const acknowledged = new Set((state.receipts ?? []).map((receipt) => receipt.deliveryId));
+    const joined = state.threads.filter((thread) => thread.members.some((member) => labels.has(member)));
+    const joinedIds = new Set(joined.map((thread) => thread.id));
+
+    const deliveries = state.deliveries.filter((delivery) =>
+      labels.has(delivery.recipient) && joinedIds.has(delivery.threadId) && !acknowledged.has(delivery.id));
+
+    const tasks = state.tasks.filter((task) => joinedIds.has(task.threadId)).map((task): BusBoardPendingTask => {
+      const entry = index.claims[task.itemId];
+      let hold: BusBoardTaskHold = 'unknown';
+      let owner: BusBoardPendingTask['owner'] = null;
+      if (index.readable) {
+        if (!entry) hold = 'open';
+        else if (entry.leaseUntil > now) {
+          hold = 'held';
+          owner = { peerId: entry.machineId, leaseUntil: entry.leaseUntil };
+        } else hold = entry.phase === 'claimed' ? 'open' : 'ambiguous';
+      }
+      return {
+        id: task.id, threadId: task.threadId, itemId: task.itemId,
+        content: { trust: 'untrusted', text: task.title },
+        claimed: task.claim !== undefined, hold, owner,
+      };
+    });
+
+    const deliveryCounts = new Map<string, number>();
+    for (const delivery of deliveries) {
+      deliveryCounts.set(delivery.threadId, (deliveryCounts.get(delivery.threadId) ?? 0) + 1);
+    }
+    const holdCounts = new Map<string, Record<BusBoardTaskHold, number>>();
+    for (const task of tasks) {
+      const counts = holdCounts.get(task.threadId) ?? { open: 0, held: 0, ambiguous: 0, unknown: 0 };
+      counts[task.hold]++;
+      holdCounts.set(task.threadId, counts);
+    }
+    const threads: BusBoardPendingThread[] = joined.map((thread) => ({
+      id: thread.id, members: [...thread.members],
+      content: { trust: 'untrusted' as const, text: thread.title },
+      pendingDeliveries: deliveryCounts.get(thread.id) ?? 0,
+      tasks: holdCounts.get(thread.id) ?? { open: 0, held: 0, ambiguous: 0, unknown: 0 },
+    }));
+
+    return {
+      claims: index.readable ? 'readable' : 'unreadable',
+      threads,
+      deliveries: {
+        matched: deliveries.length,
+        items: deliveries.slice(0, BUS_BOARD_PENDING_MAX).map((delivery) => ({
+          ...delivery,
+          content: { trust: 'untrusted' as const, text: delivery.content.text },
+        })),
+        truncated: deliveries.length > BUS_BOARD_PENDING_MAX,
+      },
+      tasks: {
+        matched: tasks.length,
+        items: tasks.slice(0, BUS_BOARD_PENDING_MAX),
+        truncated: tasks.length > BUS_BOARD_PENDING_MAX,
+      },
+    };
+  }
+
+  /** Re-wrap every stored `content.text` in the untrusted display frame `pending` has always returned. */
+  private presentDigest(digest: BusBoardDigest): Omit<BusBoardPending, 'peer'> {
+    return {
+      claims: digest.claims,
+      threads: digest.threads.map((thread) => ({
+        ...thread, content: { trust: 'untrusted' as const, text: presentBusBoardText(thread.content.text) },
+      })),
+      deliveries: {
+        ...digest.deliveries,
+        items: digest.deliveries.items.map((delivery) => ({
+          ...delivery, content: { trust: 'untrusted' as const, text: presentBusBoardText(delivery.content.text) },
+        })),
+      },
+      tasks: {
+        ...digest.tasks,
+        items: digest.tasks.items.map((task) => ({
+          ...task, content: { trust: 'untrusted' as const, text: presentBusBoardText(task.content.text) },
+        })),
+      },
+    };
   }
 
   createTask(actor: string, threadId: string, itemId: string, title: string): BusTaskView {

@@ -141,4 +141,8 @@ when the queue could not be read at all; the top-level `claims` field reports
 `readable`/`unreadable` so `unknown` is never mistaken for `open`. `open` is
 observed state, not a promise: `task claim` still applies its own fences.
 Delivery `id` + `threadId` pairs feed `thread ack` directly; reading the
-digest acknowledges nothing and grants no authority.
+digest acknowledges nothing and grants no authority. `phm agents bus work
+mine` carries the same digest as its `board` section — one locked snapshot
+under every routing label the agent's identity answers to, with the same
+hold-state honesty — so an agent on the board finds its pending deliveries
+and tasks without a separate `board pending --peer` read per label.

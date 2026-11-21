@@ -451,6 +451,68 @@ describe('bus board pending digest', () => {
   });
 });
 
+describe('bus board pendingFor digest', () => {
+  it('unions pending work across every peer label in one read', async () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob', 'agent:bob');
+    await store.post('alice', threadId, 'for bob');
+    await store.post('alice', threadId, 'for agent bob');
+    store.createTask('alice', threadId, 'item-x', 'Shared task');
+
+    const digest = store.pendingFor(['bob', 'agent:bob', 'mallory']);
+    // Both member labels are known; the stranger label matches nothing.
+    expect(digest.peers).toEqual(['agent:bob', 'bob']);
+    // The thread counts once even though two queried labels are members.
+    expect(digest.threads).toHaveLength(1);
+    expect(digest.threads[0]!.members.sort()).toEqual(['agent:bob', 'alice', 'bob']);
+    // Each post snapshots all three members; the two bob labels match four deliveries.
+    expect(digest.deliveries.matched).toBe(4);
+    expect(digest.deliveries.items.map((row) => row.recipient).sort())
+      .toEqual(['agent:bob', 'agent:bob', 'bob', 'bob']);
+    expect(digest.tasks.matched).toBe(1);
+    expect(digest.tasks.items[0]).toMatchObject({ itemId: 'item-x', hold: 'open', claimed: false });
+  });
+
+  it('returns stored content text where pending returns the display frame', async () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob');
+    store.createTask('alice', threadId, 'item-t', 'Raw title');
+    await store.post('alice', threadId, 'hello board');
+
+    const single = store.pending('bob');
+    const multi = store.pendingFor(['bob']);
+    expect(single.tasks.items[0]!.content.text).toContain('untrusted id=');
+    expect(multi.tasks.items[0]!.content.text).toBe('Raw title');
+    expect(single.deliveries.items[0]!.content.text).toContain('untrusted id=');
+    // The stored delivery content is the canonical envelope JSON.
+    const stored = JSON.parse(multi.deliveries.items[0]!.content.text) as
+      { body?: { text?: string } };
+    expect(stored.body?.text).toBe('hello board');
+    expect(multi.threads[0]!.content.text).toBe('Thread title');
+  });
+
+  it('evaluates task holds at the injected instant and skips invalid labels', () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob');
+    const task = store.createTask('alice', threadId, 'item-timed', 'Timed');
+    const claimed = store.claimTask('alice', task.id);
+
+    expect(store.pendingFor(['bob', 'bad label!', '']).tasks.items[0]!.hold).toBe('held');
+    const after = claimed.owner!.leaseUntil + 1;
+    expect(store.pendingFor(['bob'], after).tasks.items[0]!.hold).toBe('open');
+    // Invalid labels never reach the peer set; only well-formed members are known.
+    expect(store.pendingFor(['bob', 'bad label!', '']).peers).toEqual(['bob']);
+  });
+
+  it('enforces the peer allowlist per label without throwing', () => {
+    const store = board({ peers: [{ id: 'alice' }, { id: 'bob' }] });
+    threadWith('alice', 'bob');
+    // 'carol' is well-formed but absent from the allowlist, so it matches nothing.
+    const digest = store.pendingFor(['alice', 'carol']);
+    expect(digest.peers).toEqual(['alice']);
+  });
+});
+
 describe('phm bus CLI end-to-end', () => {
   let output: string[];
   const loadConfig = () => ({}) as AshlrConfig;
