@@ -15,7 +15,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  countJobWorktrees, formatBytes, readWorktrees, WORKTREES_WARN_AT, type WorktreesDeps, type WorktreesReport,
+  countJobWorktrees, formatBytes, readWorktrees, WORKTREES_WARN_AT, type WorktreeReason, type WorktreesDeps, type WorktreesReport,
 } from './worktrees.js';
 
 export const WORKTREE_REAP_STATUS_SCHEMA = 'worktrees.reap-status.v1';
@@ -37,6 +37,30 @@ export interface WorktreeReapLast {
   /** Bytes of the removed worktrees; a floor when bytesComplete is false. */
   bytesFreed: number;
   bytesComplete: boolean;
+  /** Every worktree counted once under its reason (empty, merged, closed, kept, dirty-no-result, too-new, other). */
+  reasons?: Record<WorktreeReason, number>;
+}
+
+/** The plan `phm fleet reap` prints: what the next reap would remove, up to the cap, and the breakdown of every worktree. */
+export interface WorktreeReapPlan {
+  schema: 'fleet.reap-plan.v1';
+  total: number;
+  cap: number;
+  candidates: Array<{ job: string; reason: WorktreeReason; bytes: number | null }>;
+  /** Safe rows over the cap, left for the next run. */
+  waiting: number;
+  reasons: Record<WorktreeReason, number>;
+}
+
+/** Read-only: the safe worktrees a reap would take first. No warning-level gate, no recording. */
+export async function planWorktreeReap(deps: WorktreesDeps = {}): Promise<WorktreeReapPlan> {
+  const report = await readWorktrees('dry-run', deps);
+  const safe = report.rows.filter(row => row.safe);
+  return {
+    schema: 'fleet.reap-plan.v1', total: report.counts.total, cap: WORKTREE_REAP_CAP, reasons: report.reasons,
+    waiting: Math.max(0, safe.length - WORKTREE_REAP_CAP),
+    candidates: safe.slice(0, WORKTREE_REAP_CAP).map(row => ({ job: row.job, reason: row.reason, bytes: row.bytes })),
+  };
 }
 
 export interface WorktreeReapStatus {
@@ -57,7 +81,7 @@ export interface WorktreeReapStatus {
 export type WorktreeReapTickResult =
   | { state: 'skipped'; reason: string }
   /** Dry run: the safe rows an apply run would remove first (up to the cap), plus what is held. Nothing removed or recorded. */
-  | { state: 'dry-run'; total: number; candidates: Array<{ job: string; bytes: number | null }>; waiting: number; held: Record<string, number> }
+  | { state: 'dry-run'; total: number; candidates: Array<{ job: string; bytes: number | null }>; waiting: number; held: Record<string, number>; reasons: Record<WorktreeReason, number> }
   | { state: 'ran'; last: WorktreeReapLast };
 
 export interface WorktreeReapTickOptions {
@@ -87,7 +111,7 @@ export function summarizeReap(report: WorktreesReport, now: number): WorktreeRea
   return {
     at: new Date(now).toISOString(), total: report.counts.total, removed: removed.size,
     waiting: Math.max(0, report.counts.safe - attempted), skipped,
-    bytesFreed, bytesComplete: report.reclaimableComplete && report.rows.filter(r => removed.has(r.job)).every(r => r.bytes !== null),
+    reasons: report.reasons, bytesFreed, bytesComplete: report.reclaimableComplete && report.rows.filter(r => removed.has(r.job)).every(r => r.bytes !== null),
   };
 }
 
@@ -129,7 +153,7 @@ export async function runWorktreeReapTick(options: WorktreeReapTickOptions): Pro
       for (const row of preview.rows) if (!row.safe && row.hold) held[row.hold] = (held[row.hold] ?? 0) + 1;
       const safe = preview.rows.filter(row => row.safe);
       return {
-        state: 'dry-run', total: preview.counts.total, held, waiting: Math.max(0, safe.length - WORKTREE_REAP_CAP),
+        state: 'dry-run', total: preview.counts.total, held, reasons: preview.reasons, waiting: Math.max(0, safe.length - WORKTREE_REAP_CAP),
         candidates: safe.slice(0, WORKTREE_REAP_CAP).map(row => ({ job: row.job, bytes: row.bytes })),
       };
     }

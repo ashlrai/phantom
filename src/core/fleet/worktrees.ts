@@ -21,10 +21,10 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { measureWorktreeBytes, type WorktreeMeasurement } from '../worktree-retention.js';
-import { readWtAudit, type WtAuditDeps, type WtAuditEntry, type WtAuditState } from './wt-audit.js';
+import { readWtAudit, type WtAuditDeps, type WtAuditEntry, type WtAuditReport, type WtAuditState } from './wt-audit.js';
 
-/** Hours of quiet before a worktree of each class is safe to remove. Only these two classes can ever be safe. */
-export const WORKTREES_SAFE_AGE_HOURS = { merged: 2, empty: 2 } as const satisfies Partial<Record<WorktreeState, number>>;
+/** Hours of quiet before any finished worktree is safe to remove. */
+export const WORKTREES_SAFE_AGE_HOURS = 6;
 /** The command every warning about the worktree count points to. */
 export const WORKTREES_PLAN_COMMAND = 'phm worktrees --reap --plan';
 /** Fleet warning level for job worktrees on one host. */
@@ -33,8 +33,12 @@ const CLEAN_CHECK_BUDGET_MS = 60_000;
 const MEASURE_BUDGET_MS = 20_000;
 const CLEAN_CHECK_CONCURRENCY = 4;
 
-export type WorktreeState = 'live' | 'merged' | 'empty' | 'open' | 'kept' | 'unknown';
-export const WORKTREE_STATES: readonly WorktreeState[] = ['live', 'merged', 'empty', 'open', 'kept', 'unknown'];
+export type WorktreeState = 'live' | 'merged' | 'closed' | 'empty' | 'open' | 'kept' | 'unknown';
+export const WORKTREE_STATES: readonly WorktreeState[] = ['live', 'merged', 'closed', 'empty', 'open', 'kept', 'unknown'];
+
+/** The one plain reason behind each row: why it is safe (empty, merged, closed) or why it waits. */
+export type WorktreeReason = 'empty' | 'merged' | 'closed' | 'kept' | 'dirty-no-result' | 'too-new' | 'other';
+export const WORKTREE_REASONS: readonly WorktreeReason[] = ['empty', 'merged', 'closed', 'kept', 'dirty-no-result', 'too-new', 'other'];
 
 /** Why a row is not safe to remove; null when it is safe. */
 export type WorktreeHold =
@@ -53,6 +57,7 @@ export interface WorktreeRow {
   clean: boolean | null;
   safe: boolean;
   hold: WorktreeHold | null;
+  reason: WorktreeReason;
 }
 
 export interface WorktreeRemoval {
@@ -68,6 +73,8 @@ export interface WorktreesReport {
   sourcesOk: boolean;
   warnAt: number;
   counts: Record<WorktreeState, number> & { total: number; safe: number };
+  /** Every row counted once under its reason. */
+  reasons: Record<WorktreeReason, number>;
   reclaimableBytes: number;
   /** false when a size scan timed out: reclaimableBytes is then a floor. */
   reclaimableComplete: boolean;
@@ -84,6 +91,8 @@ export interface WorktreesDeps extends Pick<WtAuditDeps, 'fs' | 'readJobs' | 'ps
   audit?: typeof readWtAudit;
   /** true/false from `git status`; null when it could not be read. */
   isClean?: (path: string) => Promise<boolean | null>;
+  /** true when every commit in the worktree is already in origin/master; null when Git could not tell. */
+  isMerged?: (path: string) => Promise<boolean | null>;
   measure?: (path: string) => WorktreeMeasurement | Promise<WorktreeMeasurement>;
   /** Removes one worktree with `git worktree remove` (never --force). */
   remove?: (path: string, wtRoot: string) => Promise<void>;
@@ -102,19 +111,27 @@ const STATE_OF: Record<WtAuditState, WorktreeState | null> = {
   excluded: null,
 };
 
-const HOLD_OF_STATE: Partial<Record<WorktreeState, WorktreeHold>> = {
-  live: 'live-job', open: 'open-pr', kept: 'kept', unknown: 'state-unknown',
-};
+/** Audit states where the job has stopped, so its branch can be checked against origin/master. */
+const FINISHED_STATES: ReadonlySet<WtAuditState> = new Set(['merged', 'empty', 'open', 'published', 'ended', 'finished']);
 
-/** Gates that need no Git call: state, audit blockers, age. */
-function preHold(entry: WtAuditEntry, state: WorktreeState): WorktreeHold | null {
-  const byState = HOLD_OF_STATE[state];
-  if (byState) return byState;
-  if (!entry.reapable) return entry.blockers.includes('fresh') ? 'too-new' : 'records-unreadable';
-  const minHours = state === 'merged' || state === 'empty' ? WORKTREES_SAFE_AGE_HOURS[state] : Infinity;
-  if (entry.ageHours === null || entry.ageHours < minHours) return 'too-new';
-  return null;
+interface Verdict { state: WorktreeState; hold: WorktreeHold | null; reason: WorktreeReason; needsGit: boolean }
+
+/** Gates that need no Git call: live job, kept, unreadable records, age, then the job's own verdict. */
+function judge(entry: WtAuditEntry, state: WorktreeState, sourcesOk: boolean): Verdict {
+  const no = (hold: WorktreeHold, reason: WorktreeReason = 'other'): Verdict => ({ state, hold, reason, needsGit: false });
+  if (state === 'live') return no('live-job');
+  if (state === 'kept') return no('kept', 'kept');
+  if (!sourcesOk) return no('records-unreadable');
+  if (entry.ageHours === null || entry.ageHours < WORKTREES_SAFE_AGE_HOURS) return no('too-new', 'too-new');
+  if (state === 'merged' || state === 'empty') return { state, hold: null, reason: state, needsGit: false };
+  if (entry.signals.outcome === 'closed') return { state: 'closed', hold: null, reason: 'closed', needsGit: false };
+  // No verdict on the PR: only a finished job can be proven landed by Git.
+  const finished = FINISHED_STATES.has(entry.state) || entry.signals.rc || entry.signals.publishClass !== null;
+  return { state, hold: state === 'open' ? 'open-pr' : 'state-unknown', reason: 'other', needsGit: finished };
 }
+
+/** A fresh read with any of these holds means a job relaunched, was kept or went stale since the check. */
+const LOST_PROTECTION: ReadonlySet<WorktreeHold | null> = new Set(['live-job', 'kept', 'records-unreadable', 'too-new']);
 
 const run = promisify(execFile);
 
@@ -126,6 +143,14 @@ async function defaultIsClean(path: string): Promise<boolean | null> {
       { timeout: 15_000, maxBuffer: 1024 * 1024 });
     return stdout.length === 0;
   } catch { return null; }
+}
+
+/** Exit 0 from merge-base means HEAD is inside origin/master; exit 1 means it is not. */
+async function defaultIsMerged(path: string): Promise<boolean | null> {
+  try {
+    await run('git', ['-C', path, 'merge-base', '--is-ancestor', 'HEAD', 'origin/master'], { timeout: 15_000, maxBuffer: 64 * 1024 });
+    return true;
+  } catch (error) { return (error as { code?: unknown }).code === 1 ? false : null; }
 }
 
 async function defaultRemove(path: string, wtRoot: string): Promise<void> {
@@ -157,15 +182,23 @@ export async function readWorktrees(mode: WorktreesReport['mode'] = 'list', deps
     ...(deps.ps ? { ps: deps.ps } : {}), ...(deps.readPins ? { readPins: deps.readPins } : {}),
   });
   const audit = await readAudit();
-  const rows = rowsOf(audit.worktrees);
+  const { rows, needsGit, hasResult } = rowsOf(audit.worktrees, sourcesOkOf(audit.sources));
 
   // Git and size scans run only for rows that passed every cheaper gate.
+  // A finished job with no verdict on its PR is still safe when Git shows all its commits in origin/master.
+  const isMerged = deps.isMerged ?? defaultIsMerged;
+  await pool(rows.filter(row => needsGit.has(row.job)), CLEAN_CHECK_CONCURRENCY, async row => {
+    if (await isMerged(join(wtRoot, row.job)).catch(() => null) === true) Object.assign(row, { state: 'merged', hold: null, reason: 'merged' });
+  });
   const isClean = deps.isClean ?? defaultIsClean;
   const cleanDeadline = Date.now() + CLEAN_CHECK_BUDGET_MS;
   await pool(rows.filter(row => row.hold === null), CLEAN_CHECK_CONCURRENCY, async row => {
     row.clean = Date.now() < cleanDeadline ? await isClean(join(wtRoot, row.job)).catch(() => null) : null;
     row.hold = row.clean === true ? null : row.clean === false ? 'uncommitted-changes' : 'not-checked';
     row.safe = row.hold === null;
+    // Changes with no RESULT line may be the only copy of the work.
+    if (row.clean === false) row.reason = hasResult.has(row.job) ? 'other' : 'dirty-no-result';
+    else if (!row.safe) row.reason = 'other';
   });
   const measureDeadline = Date.now() + MEASURE_BUDGET_MS;
   const measure = deps.measure ?? ((path: string) => measureWorktreeBytes(path, { deadlineMs: measureDeadline }));
@@ -178,16 +211,16 @@ export async function readWorktrees(mode: WorktreesReport['mode'] = 'list', deps
     reclaimableComplete &&= size.complete;
   }
 
-  const counts = { total: rows.length, safe: 0, live: 0, merged: 0, empty: 0, open: 0, kept: 0, unknown: 0 };
-  for (const row of rows) { counts[row.state]++; if (row.safe) counts.safe++; }
-  const s = audit.sources;
+  const counts = { total: rows.length, safe: 0, live: 0, merged: 0, closed: 0, empty: 0, open: 0, kept: 0, unknown: 0 };
+  const reasons = { empty: 0, merged: 0, closed: 0, kept: 0, 'dirty-no-result': 0, 'too-new': 0, other: 0 };
+  for (const row of rows) { counts[row.state]++; reasons[row.reason]++; if (row.safe) counts.safe++; }
   const report: WorktreesReport = {
     schema: 'worktrees.v1',
     generatedAt: new Date(now).toISOString(),
-    sourcesOk: s.worktrees === 'healthy' && s.runs === 'healthy' && s.jobs === 'healthy' && s.ps === 'healthy'
-      && s.pins === 'valid' && ![s.queue, s.keep, s.run, s.status].includes('degraded'),
+    sourcesOk: sourcesOkOf(audit.sources),
     warnAt: WORKTREES_WARN_AT,
     counts,
+    reasons,
     reclaimableBytes,
     reclaimableComplete,
     mode,
@@ -195,8 +228,9 @@ export async function readWorktrees(mode: WorktreesReport['mode'] = 'list', deps
   };
   if (mode === 'apply') {
     // Git checks can take a while; a job relaunched or kept since then must win.
-    const fresh = new Map(rowsOf((await readAudit()).worktrees).map(row => [row.job, row]));
-    report.removals = await removeSafe(rows, fresh, wtRoot, runsRoot, isClean, deps, deps.maxRemovals);
+    const fresh = await readAudit();
+    const latest = new Map(rowsOf(fresh.worktrees, sourcesOkOf(fresh.sources)).rows.map(row => [row.job, row]));
+    report.removals = await removeSafe(rows, latest, wtRoot, runsRoot, isClean, deps, deps.maxRemovals);
   }
   return report;
 }
@@ -208,17 +242,28 @@ export async function countJobWorktrees(deps: WorktreesDeps = {}): Promise<numbe
     ...(deps.fs ? { fs: deps.fs } : {}), ...(deps.readJobs ? { readJobs: deps.readJobs } : {}),
     ...(deps.ps ? { ps: deps.ps } : {}), ...(deps.readPins ? { readPins: deps.readPins } : {}),
   });
-  return rowsOf(audit.worktrees).length;
+  return rowsOf(audit.worktrees, true).rows.length;
 }
 
-function rowsOf(entries: readonly WtAuditEntry[]): WorktreeRow[] {
+function sourcesOkOf(s: WtAuditReport['sources']): boolean {
+  return s.worktrees === 'healthy' && s.runs === 'healthy' && s.jobs === 'healthy' && s.ps === 'healthy'
+    && s.pins === 'valid' && ![s.queue, s.keep, s.run, s.status].includes('degraded');
+}
+
+function rowsOf(entries: readonly WtAuditEntry[], sourcesOk: boolean) {
   const rows: WorktreeRow[] = [];
+  const needsGit = new Set<string>();
+  const hasResult = new Set<string>();
   for (const entry of entries) {
     const state = STATE_OF[entry.state];
     if (state === null) continue;
-    rows.push({ job: entry.name, repo: entry.repo, state, ageHours: entry.ageHours, bytes: null, clean: null, safe: false, hold: preHold(entry, state) });
+    const verdict = judge(entry, state, sourcesOk);
+    if (verdict.needsGit) needsGit.add(entry.name);
+    if (entry.signals.publishClass !== null) hasResult.add(entry.name);
+    rows.push({ job: entry.name, repo: entry.repo, state: verdict.state, ageHours: entry.ageHours, bytes: null, clean: null, safe: false, hold: verdict.hold, reason: verdict.reason });
   }
-  return rows.sort((a, b) => a.job.localeCompare(b.job));
+  rows.sort((a, b) => a.job.localeCompare(b.job));
+  return { rows, needsGit, hasResult };
 }
 
 async function removeSafe(
@@ -236,7 +281,7 @@ async function removeSafe(
     const path = join(wtRoot, row.job);
     let removal: WorktreeRemoval;
     const latest = fresh.get(row.job);
-    if (latest?.state !== row.state || latest.hold !== null) removal = { job: row.job, status: 'refused', reason: 'state-changed' };
+    if (!latest || LOST_PROTECTION.has(latest.hold)) removal = { job: row.job, status: 'refused', reason: 'state-changed' };
     // Re-check right before removal: work may have landed since the read.
     else if (await isClean(path).catch(() => null) !== true) removal = { job: row.job, status: 'refused', reason: 'uncommitted-changes' };
     else {
@@ -263,7 +308,7 @@ export function formatBytes(bytes: number): string {
 }
 
 export const STATE_WORDS: Record<WorktreeState, string> = {
-  live: 'live job', merged: 'merged PR', empty: 'empty result', open: 'open PR', kept: 'kept on purpose', unknown: 'unknown',
+  live: 'live job', merged: 'merged', closed: 'closed PR', empty: 'empty result', open: 'open PR', kept: 'kept on purpose', unknown: 'unknown',
 };
 const HOLD_WORDS: Record<WorktreeHold, string> = {
   'live-job': 'job is running', 'open-pr': 'PR is open', kept: 'kept on purpose', 'state-unknown': 'state unknown',
@@ -272,7 +317,7 @@ const HOLD_WORDS: Record<WorktreeHold, string> = {
 };
 
 function holdWords(row: WorktreeRow): string {
-  if (row.hold === 'too-new' && (row.state === 'merged' || row.state === 'empty')) return `under ${WORKTREES_SAFE_AGE_HOURS[row.state]} hours old`;
+  if (row.hold === 'too-new') return `under ${WORKTREES_SAFE_AGE_HOURS} hours old`;
   return HOLD_WORDS[row.hold!];
 }
 

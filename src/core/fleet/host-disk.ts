@@ -175,7 +175,7 @@ export function summarizeWorktrees(audit: WtAuditReport | null): HostDiskWorktre
   const folders = audit.worktrees.filter((w: WtAuditEntry) => w.state !== 'excluded');
   // The reaper takes merged or empty folders over the safe age; its own clean check can only lower this.
   const take = folders.filter(w => w.reapable && (w.state === 'merged' || w.state === 'empty')
-    && w.ageHours !== null && w.ageHours >= WORKTREES_SAFE_AGE_HOURS[w.state]);
+    && w.ageHours !== null && w.ageHours >= WORKTREES_SAFE_AGE_HOURS);
   const largest = folders.filter(w => w.bytes !== null && w.bytes > 0).sort((a, b) => b.bytes! - a.bytes!).slice(0, LARGEST)
     .map(w => ({ job: w.name, gb: gb(w.bytes!), ageHours: w.ageHours === null ? null : round1(w.ageHours), finished: finishedOf(w.state) }));
   return {

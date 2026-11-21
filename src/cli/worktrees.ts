@@ -51,10 +51,12 @@ const USAGE = `Usage: phm worktrees [--json] [--reap [--dry-run | --apply | --pl
        phm worktrees report [--dir <worktrees-dir>] [--json]
        phm worktrees prune [--dry-run | --apply] [--json]
 
-List every job worktree with its job, repo, state (live job, merged PR, empty
-result, open PR, kept on purpose, unknown), age, size and whether it is safe to
-remove. Safe means: merged or empty, over 2 hours old, no uncommitted changes,
-no live job and not kept on purpose.
+List every job worktree with its job, repo, state (live job, merged, closed PR,
+empty result, open PR, kept on purpose, unknown), age, size and whether it is
+safe to remove. Safe means: the job finished and its PR merged or closed, its
+result was empty, or its branch is already in origin/master; over 6 hours old,
+no uncommitted changes, no live job and not kept on purpose.
+`phm fleet reap` shows the same plan with a count for each reason.
   --reap            Preview removal of the safe worktrees (a dry run).
   --reap --plan     Print only the git worktree remove commands, one per line, for a script to run.
   --reap --apply    Remove them with git worktree remove (never --force).
