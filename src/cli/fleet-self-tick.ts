@@ -27,7 +27,7 @@ import type { SpawnLike } from '../core/fleet/planner-run.js';
 import { runSelfTick, type RunSelfTickOptions, type SelfTickStep, type SelfTickSteps } from '../core/fleet/self-tick.js';
 import { refreshClaudeQuotaPeriodically, refreshHeldClaudeQuota, type Probe } from '../core/fleet/claude-quota-refresh.js';
 import { readSelfTickLast } from '../core/fleet/self-tick-last.js';
-import { readSelfTickStatus, selfTickStatusLines } from '../core/fleet/self-tick-status.js';
+import { gapsHookLine, hooksFromPlannerReport, readSelfTickStatus, selfTickStatusLines } from '../core/fleet/self-tick-status.js';
 import { capSelfTickLog, selfTickLogPath } from '../core/fleet/self-tick-log-cap.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import { cmdFleetStrayStop } from './fleet-stray-stop.js';
@@ -129,8 +129,8 @@ function summary(step: string, report: unknown): string {
     const runs = Array.isArray(autofill?.['runs']) ? autofill['runs'] as Record<string, unknown>[] : [];
     const applied = runs.reduce((sum, r) => sum + (typeof r['applied'] === 'number' ? r['applied'] : 0), 0);
     const base = typeof (row['reason'] ?? row['outcome']) === 'string' ? String(row['reason'] ?? row['outcome']) : '';
-    const gaps = autofill?.['gaps'] as Record<string, unknown> | null | undefined;
-    const gapNote = gaps && typeof gaps['queued'] === 'number' ? `  gaps=${gaps['queued']} queued of ${gaps['candidates']}${gaps['unknown'] === true ? ' (some sources unknown)' : ''}` : '';
+    const gap = hooksFromPlannerReport(row).find(h => h.hook === 'gaps');
+    const gapNote = gap ? `  ${gapsHookLine(gap)}` : '';
     return runs.length ? `${base}  autofill=${applied} applied across ${runs.length} starved ${runs.length === 1 ? 'lane' : 'lanes'}${gapNote}`.trim() : base;
   }
   if (step === 'reset-release') {
