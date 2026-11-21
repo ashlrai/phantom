@@ -48,7 +48,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--to <label>] [--owner <agent>] [--claims]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
-ashlr agents bus work mine [<agent>]
+ashlr agents bus work mine [<agent>] [--job <id>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
@@ -138,7 +138,15 @@ to it, pending legacy phm bus mailbox mail addressed to any of its
 labels and the shared task board's pending digest (phm bus board pending)
 under the same labels — capped sections carry matched (or open for jobs) as their true
 pending total — where every section reports its own read state and unknown
-stays unknown.
+stays unknown. --job on work mine narrows the whole digest to one job id —
+the same citation rule inbox --job applies plus the feed-id and board
+itemId joins: feed jobs and announced jobs match by id, claims by
+declared-key overlap with an announced job or a leased body's job
+citations, next and handoffs by body citation (claimable work names none,
+so next is empty under --job), threads/awaiting/blocked by
+the conversations job query, wakes and inbox by their own job filters,
+mailbox by body citation, and the board by its job-carrying-thread rule —
+with every count the filtered total.
 status is a read-only probe of the store, registry, wake queue, coordination
 table, message-id claim journal, work feed, owner-chat share receipts, the
 legacy mailbox, the shared task board with its fleet queue and the claim-drift
@@ -547,7 +555,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       noExtra(3);
       const agent = arg ?? self;
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
-      const result = readBusWorkMine(agent, options);
+      const job = one('--job');
+      const result = readBusWorkMine(agent, { ...options, ...(job === undefined ? {} : { job }) });
       if (result.status !== 'ok') {
         out(json ? JSON.stringify(result) : `${result.status}: ${result.reason}`);
         return 2;

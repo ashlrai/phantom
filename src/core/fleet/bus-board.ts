@@ -488,14 +488,23 @@ export class BusBoard {
    * task's or thread's title) rather than `pending`'s re-wrapped display
    * frame, so structured consumers can read the body; every outbound read
    * still marks it `trust:'untrusted'` and it grants no authority.
+   * `jobId`, when given, scopes the digest to the board work one fleet job
+   * coordinates: a thread stays in scope only when it carries a task whose
+   * `itemId` equals the job id — the fleet item and bus job share the id
+   * namespace, so the task's `itemId` is the job citation — and that
+   * thread's deliveries and rollup ride along because the thread is the
+   * job's board coordination surface. Deliveries and thread rows carry no
+   * per-item job field of their own, so thread membership is the finest
+   * structured citation the board records; `matched`/`truncated` count the
+   * filtered sets, never the unfiltered totals.
    */
-  pendingFor(peers: readonly string[], now?: number): BusBoardPendingPeers {
+  pendingFor(peers: readonly string[], now?: number, jobId?: string): BusBoardPendingPeers {
     const labels = new Set<string>();
     for (const peer of peers) {
       try { labels.add(this.peer(peer)); } catch { /* not a board peer label; it can match nothing */ }
     }
     return this.transaction(false, (state) => {
-      const digest = this.pendingDigest(state, labels, now ?? Date.now());
+      const digest = this.pendingDigest(state, labels, now ?? Date.now(), jobId);
       const known = new Set(digest.threads.flatMap((thread) => thread.members));
       return {
         peers: [...labels].filter((label) => known.has(label)).sort(),
@@ -537,17 +546,27 @@ export class BusBoard {
    * The shared snapshot math behind `pending`/`pendingFor`/`pendingAll`: `labels` is the
    * peer set a thread joins or a delivery addresses. Task `hold` reads the
    * one queue claim index; an unreadable queue leaves every hold `unknown`.
+   * `jobId` narrows the digest to threads carrying a task for that fleet
+   * item: deliveries on those threads and the threads' own rollups list
+   * under the job filter, while tasks list only when their `itemId` cites
+   * the job — the per-item citation — so a job-scoped read never mixes in
+   * a sibling item's tasks.
    */
-  private pendingDigest(state: BoardState, labels: ReadonlySet<string>, now: number): BusBoardDigest {
+  private pendingDigest(state: BoardState, labels: ReadonlySet<string>, now: number, jobId?: string): BusBoardDigest {
     const index = this.options.fleet.readClaimIndex();
     const acknowledged = new Set((state.receipts ?? []).map((receipt) => receipt.deliveryId));
-    const joined = state.threads.filter((thread) => thread.members.some((member) => labels.has(member)));
+    const jobThreads = jobId === undefined ? undefined : new Set(
+      state.tasks.filter(task => task.itemId === jobId).map(task => task.threadId));
+    const joined = state.threads.filter((thread) =>
+      thread.members.some((member) => labels.has(member)) &&
+      (jobThreads === undefined || jobThreads.has(thread.id)));
     const joinedIds = new Set(joined.map((thread) => thread.id));
 
     const deliveries = state.deliveries.filter((delivery) =>
       labels.has(delivery.recipient) && joinedIds.has(delivery.threadId) && !acknowledged.has(delivery.id));
 
-    const tasks = state.tasks.filter((task) => joinedIds.has(task.threadId)).map((task): BusBoardPendingTask => {
+    const tasks = state.tasks.filter((task) => joinedIds.has(task.threadId) &&
+      (jobId === undefined || task.itemId === jobId)).map((task): BusBoardPendingTask => {
       const entry = index.claims[task.itemId];
       let hold: BusBoardTaskHold = 'unknown';
       let owner: BusBoardPendingTask['owner'] = null;

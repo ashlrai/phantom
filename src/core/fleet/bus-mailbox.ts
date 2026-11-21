@@ -124,8 +124,12 @@ export interface BusMailbox {
    * the same priority/acceptance/id order `inbox` applies per label. `matched`
    * counts every pending row across the labels before `limit`; each row keeps
    * its own `to` label — the `--to` `inbox`/`ack` take for that message.
+   * `match`, when given, narrows the pending set before `matched` and `limit`
+   * count it, so a filtered read's total is the filtered total — never the
+   * unfiltered one padded or hidden.
    */
-  pendingFor(labels: readonly string[], limit?: number): { messages: BusMailboxPendingMessage[]; matched: number };
+  pendingFor(labels: readonly string[], limit?: number,
+    match?: (message: BusMailboxPendingMessage) => boolean): { messages: BusMailboxPendingMessage[]; matched: number };
   /**
    * Pending mail across EVERY recipient label in the same drain order —
    * the fleet-wide read the unified comms inbox needs, where `pendingFor`
@@ -255,12 +259,13 @@ export function createBusMailbox(
         hasMore: pending.length > limit,
       };
     },
-    pendingFor(labels, limit = 1000) {
+    pendingFor(labels, limit = 1000, match) {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 5000) throw new BusMailboxError('invalid-envelope');
       const wanted = new Set(labels.filter((label): label is string => typeof label === 'string' && label.length > 0));
       const at = now();
       if (!Number.isSafeInteger(at) || at < 0) throw new BusMailboxError('storage');
-      const pending = pendingMailboxMessages(read(), at).filter(message => wanted.has(message.envelope.to));
+      let pending = pendingMailboxMessages(read(), at).filter(message => wanted.has(message.envelope.to));
+      if (match !== undefined) pending = pending.filter(match);
       return { messages: pending.slice(0, limit), matched: pending.length };
     },
     pendingAll(limit = 1000) {
