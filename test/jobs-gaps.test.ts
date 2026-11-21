@@ -284,6 +284,29 @@ describe('gaps and lanes that can run them', () => {
     const report = await run(stuckLanes);
     expect(report.proposed).toMatchObject([{ queued: true, lane: 'claude', skipped: null }]);
     expect(await dropFiles()).toHaveLength(1);
+    expect(report.parked).toBe(10);
+  });
+
+  it('parks rows on a lane whose slots are all busy, and queues for the starved lane', async () => {
+    await seed({ 'RQ-A': '## Gaps\n- Wire the digest into the weekly report\n' });
+    await fillPrompts(40);
+    const report = await run([lane('codex-local', { running: 2, target: 2, queued: 12 }), lane('claude')]);
+    expect(report.parked).toBe(12);
+    expect(report.proposed).toMatchObject([{ queued: true, lane: 'claude' }]);
+  });
+
+  it('gives a lane at 100% no gap rows', async () => {
+    await seed({ 'RQ-A': '## Gaps\n- Wire the digest into the weekly report\n' });
+    const report = await run([lane('claude', { remainingPct: 0, resetAt: '2026-11-21T20:30:00Z' })]);
+    expect(report.proposed).toMatchObject([{ queued: false, skipped: 'no lane has free slots and usage left' }]);
+    expect(await dropFiles()).toHaveLength(0);
+  });
+
+  it('never queues the same gap twice', async () => {
+    await seed({ 'RQ-A': '## Gaps\n- Wire the digest into the weekly report\n' });
+    await run(stuckLanes);
+    await run(stuckLanes);
+    expect(await dropFiles()).toHaveLength(1);
   });
 
   it('skips with the full reason when the rows can launch', async () => {

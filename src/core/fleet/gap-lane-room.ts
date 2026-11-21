@@ -13,7 +13,7 @@ import { aheadWords, type PaceVerdict } from './pace-verdict.js';
 /** A lane that can take new gap work now. */
 export interface GapLaneOpen { lane: string; free: number; running: number; target: number }
 /** A lane with queued rows that cannot launch yet. */
-export interface GapLaneWaiting { lane: string; rows: number; why: 'held' | 'out of usage'; backAt: string | null }
+export interface GapLaneWaiting { lane: string; rows: number; why: 'held' | 'out of usage' | 'no free slot'; backAt: string | null }
 export interface GapLaneRoom {
   open: GapLaneOpen[];
   waiting: GapLaneWaiting[];
@@ -38,6 +38,12 @@ export function gapLaneRoom(lanes: readonly LaneFacts[], nowMs: number): GapLane
       }
       continue;
     }
+    // Every slot busy: its queued rows wait for a slot, so they cannot make the queue look full either.
+    if (f.queued && f.running !== null && f.target !== null && f.running >= f.target) {
+      room.waiting.push({ lane: f.lane, rows: f.queued, why: 'no free slot', backAt: null });
+      room.stuck += f.queued;
+      continue;
+    }
     addOpen(room, f);
   }
   return room;
@@ -49,13 +55,13 @@ function addOpen(room: GapLaneRoom, f: LaneFacts): void {
   if (free > 0) room.open.push({ lane: f.lane, free, running: f.running, target: f.target });
 }
 
+/** Plain words for the gap hook note: "10 rows parked on codex-personal (pool spent until Sat 3:30 PM)". */
+export function parkedWords(waiting: readonly GapLaneWaiting[]): string {
+  return waiting.map(w => `${w.rows} ${w.rows === 1 ? 'row' : 'rows'} parked on ${w.lane} (${w.why === 'held' ? 'lane held' : w.why === 'no free slot' ? 'every slot busy' : w.backAt ? `pool spent until ${when(w.backAt)}` : 'pool spent'})`).join('; ');
+}
+
 /** "Sat 3:30 PM" in the reader's zone. */
 const when = (iso: string): string => new Date(iso).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
-
-/** Plain words for rows that wait: "10 rows wait on codex-personal (back Sat 3:30 PM)". */
-export function waitingWords(waiting: readonly GapLaneWaiting[]): string {
-  return waiting.map(w => `${w.rows} ${w.rows === 1 ? 'row waits' : 'rows wait'} on ${w.lane} (${w.why === 'held' ? 'held' : w.backAt ? `back ${when(w.backAt)}` : 'out of usage'})`).join('; ');
-}
 
 /** Pick the lane for one gap: gh work only on codex-personal, everything else the best open lane. Null when none has room. */
 export function pickGapLane(room: GapLaneRoom, needsGh: boolean): string | null {

@@ -16,7 +16,7 @@ import type { BottleneckIdea } from './bottleneck-ideas.js';
 import { followUpCandidates, ideaCandidates, readFollowUps, type FollowUp } from './autofill-sources.js';
 import type { JobGapsReport } from './job-gaps.js';
 import { aheadWords, readPaceByPool, type PaceVerdict } from './pace-verdict.js';
-import { gapLaneRoom, waitingWords } from './gap-lane-room.js';
+import { gapLaneRoom, parkedWords } from './gap-lane-room.js';
 import { judgeLanes, type LaneFacts, type LaneVerdict } from './autofill-lanes.js';
 import { planAutofill, type QueueAutofillReport } from './queue-autofill.js';
 
@@ -235,7 +235,7 @@ export interface AutofillTickReport {
   /** Every lane, in plain words: starved or not, how many bets it was fed, and why not. Added to v1 as an optional field. */
   lanes?: AutofillLaneRow[];
   /** The gap harvest: gaps from no-change jobs, queued as drop jobs. null when it did not run (dry run, autofill off, no starved lane) or failed. Added to v1 as an optional field. */
-  gaps?: { candidates: number; queued: number; skipped: number; unknown: boolean } | null;
+  gaps?: { candidates: number; queued: number; skipped: number; unknown: boolean; /** Ready rows that cannot launch now (lane held, pool spent or every slot busy); they do not make the queue full. */ parked?: number } | null;
   /** Why the gap harvest did not run (or ran and queued nothing); null when it ran and queued something. */
   gapsNote?: string | null;
   /** One plain line per pace decision (a lane skipped or preferred, rows sent to another pool). Absent when pace changed nothing. */
@@ -259,16 +259,17 @@ async function harvestStep(o: AutofillTickOptions, nowMs: number, off: boolean |
     const gaps = await harvest({ runsDir: o.runsDir, root: o.root, ...(lanes ? { lanes } : {}), ...(pace.size ? { pace } : {}) });
     const proposed = gaps.proposed ?? [];
     const queued = proposed.filter(p => p.queued).length;
-    const waiting = lanes ? waitingWords(gapLaneRoom(lanes, nowMs).waiting) : '';
+    const parkedRooms = lanes ? gapLaneRoom(lanes, nowMs) : null;
+    const waiting = parkedRooms ? parkedWords(parkedRooms.waiting) : '';
     const queuedLanes = [...new Set(proposed.filter(p => p.queued).map(p => p.lane).filter((l): l is string => !!l))];
     const busy = (lane: string): string => { const f = lanes?.find(l => l.lane === lane); return f && f.running !== null && f.target !== null ? ` (${f.running} of ${f.target} busy)` : ''; };
     const found = `${gaps.candidates.length} gaps found`;
     const note = gaps.candidates.length === 0
       ? (gaps.known ? 'no new gaps found' : `no gap source readable: ${gaps.unknownSources.join(', ') || 'unknown'}`.slice(0, 120))
       : queued === 0 ? `${found}, none queued: ${proposed.find(p => p.skipped)?.skipped ?? 'already known'}${waiting ? `; ${waiting}` : ''}`.slice(0, 200)
-      : waiting ? `${found}, queued ${queued} for ${queuedLanes.map(l => `${l}${busy(l)}`).join(', ') || 'a lane'}; ${waiting}`.slice(0, 200) : null;
+      : waiting ? `queued ${queued} ${queued === 1 ? 'gap' : 'gaps'} for ${queuedLanes.map(l => `${l}${busy(l)}`).join(', ') || 'a lane'}; ${waiting}`.slice(0, 200) : null;
     const paceNotes = gaps.paceNotes ?? [];
-    return { gaps: { candidates: gaps.candidates.length, queued, skipped: proposed.length - queued, unknown: !gaps.known }, gapsNote: paceNotes.length ? [note, ...paceNotes].filter(Boolean).join('; ').slice(0, 400) : note, ...(paceNotes.length ? { paceNotes } : {}) };
+    return { gaps: { candidates: gaps.candidates.length, queued, skipped: proposed.length - queued, unknown: !gaps.known, ...(parkedRooms ? { parked: parkedRooms.stuck } : {}) }, gapsNote: paceNotes.length ? [note, ...paceNotes].filter(Boolean).join('; ').slice(0, 400) : note, ...(paceNotes.length ? { paceNotes } : {}) };
   } catch (error) { return none(`the gap harvest failed: ${error instanceof Error ? error.message.slice(0, 80) : 'unknown error'}`); }
 }
 
