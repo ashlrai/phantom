@@ -263,6 +263,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'leader-health': () => import('./fleet-leader-health.js'),
   'leader-score': () => import('./fleet-leader-score.js'),
   'leader-search': () => import('./fleet-leader-search.js'),
+  'leader-seat': () => import('./fleet-leader-seat.js'),
   'ledger-score': () => import('./fleet-ledger-score.js'),
   'library-pins': () => import('./fleet-library-pins.js'),
   'load': () => import('./fleet-load.js'),
