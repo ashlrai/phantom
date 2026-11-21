@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { projectBusWorkFeed } from '../src/core/agents/bus-work-feed.js';
-import { busWorkJobDispatch, formatBusWorkFeed, formatBusWorkFeedJob, type BusWorkFeedJob } from '../src/core/agents/bus-work-feed-read.js';
+import { busWorkFeedRepoKey, busWorkJobDispatch, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView,
+  type BusWorkFeedClaims, type BusWorkFeedJob, type BusWorkFeedReadResult } from '../src/core/agents/bus-work-feed-read.js';
 import { workFeedSchema, type Participant, WORK_STATUSES } from '../src/core/agents/bus-v2-schema.js';
 import { isClaimableWork } from '../src/core/fleet/bus-envelope.js';
 import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
@@ -198,6 +199,69 @@ describe('retained v2 work projection', () => {
       expect(projectBusWorkFeed(rows, participants)).toEqual({ status: 'refused', reason,
         ...(receiptSite === undefined ? {} : { receipt: receiptSite }) });
     }
+  });
+});
+
+describe('work-feed view filters', () => {
+  const viewJob = (over: Partial<BusWorkFeedJob> = {}): BusWorkFeedJob => ({
+    id: 'job', owner: 'agent', to: 'leaders', provider: 'devin', repo: 'AshlrAI/Phantom',
+    title: 'Review', claimKeys: ['repo:ashlrai/phantom'], status: 'queued', updatedAt: 100,
+    postId: 'm-1', statusId: null, ...over,
+  });
+  const okResult = (jobs: BusWorkFeedJob[], claims?: BusWorkFeedClaims): BusWorkFeedReadResult => ({
+    status: 'ok', jobs, receipts: jobs.length, asOf: 'now',
+    ...(claims === undefined ? {} : { claims }),
+  });
+  const ids = (result: BusWorkFeedReadResult) => result.status === 'ok' ? result.jobs.map(job => job.id) : result.status;
+
+  it('normalizes --repo to the lowercase claim-key slug and refuses non-slugs', () => {
+    expect(busWorkFeedRepoKey('AshlrAI/Phantom')).toBe('ashlrai/phantom');
+    expect(busWorkFeedRepoKey('a/b')).toBe('a/b');
+    for (const bad of ['', 'no-slash', 'a/b/c', 'a b/c', 'a//b', '/a', 'a/', 'a\nb/c']) {
+      expect(busWorkFeedRepoKey(bad)).toBeUndefined();
+    }
+  });
+
+  it('keeps jobs by announced repo case-insensitively and by provider', () => {
+    const result = okResult([
+      viewJob({ id: 'one', repo: 'AshlrAI/Phantom', provider: 'devin' }),
+      viewJob({ id: 'two', repo: 'ashlrai/other', provider: 'claude' }),
+      viewJob({ id: 'three', repo: 'third/repo', provider: 'devin' }),
+    ]);
+    expect(ids(projectBusWorkFeedView(result, { repo: 'ashlrai/phantom' }))).toEqual(['one']);
+    expect(ids(projectBusWorkFeedView(result, { repo: busWorkFeedRepoKey('ASHLRAI/PHANTOM')! }))).toEqual(['one']);
+    expect(ids(projectBusWorkFeedView(result, { repo: 'ashlrai/other' }))).toEqual(['two']);
+    expect(ids(projectBusWorkFeedView(result, { repo: 'ghost/repo' }))).toEqual([]);
+    expect(ids(projectBusWorkFeedView(result, { provider: 'devin' }))).toEqual(['one', 'three']);
+    expect(ids(projectBusWorkFeedView(result, { provider: 'claude' }))).toEqual(['two']);
+    // Every dimension narrows: repo and provider compose.
+    expect(ids(projectBusWorkFeedView(result, { repo: 'ashlrai/phantom', provider: 'claude' }))).toEqual([]);
+    expect(ids(projectBusWorkFeedView(result, { repo: 'ashlrai/phantom', provider: 'devin' }))).toEqual(['one']);
+  });
+
+  it('keeps only provably-claimable open jobs under --claimable and regroups holds', () => {
+    const claims: BusWorkFeedClaims = { source: 'available', truncated: false, holds: [
+      { jobId: 'held', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:x' },
+    ] };
+    const result = okResult([
+      viewJob({ id: 'free', claimable: true }),
+      viewJob({ id: 'held', claimable: false }),
+      viewJob({ id: 'unknown', claimable: null }),
+      viewJob({ id: 'done', status: 'done', claimable: undefined }),
+    ], claims);
+    const view = projectBusWorkFeedView(result, { claimable: true });
+    expect(ids(view)).toEqual(['free']);
+    // The claims block stays but holds regroup under the shown job only.
+    expect(view.status === 'ok' && view.claims?.holds).toEqual([]);
+    // Unknown coverage and a read without the claims join never count as claimable.
+    expect(ids(projectBusWorkFeedView(okResult([viewJob({ id: 'a', claimable: null })]), { claimable: true }))).toEqual([]);
+    expect(ids(projectBusWorkFeedView(okResult([viewJob({ id: 'a' })]), { claimable: true }))).toEqual([]);
+  });
+
+  it('passes non-ok reads through untouched', () => {
+    const refused: BusWorkFeedReadResult = { status: 'refused', reason: 'duplicate-job', receipts: 2, asOf: 'now' };
+    expect(projectBusWorkFeedView(refused, { repo: 'a/b', provider: 'devin', claimable: true })).toBe(refused);
   });
 });
 

@@ -29,7 +29,7 @@ const label = z.string().regex(/^[\x21-\x7e]{1,128}(?![\s\S])/, 'printable ASCII
 const wakeTarget = z.string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?![\s\S])/, 'label only: letters, digits, . _ : -')
   .refine((s) => !/[A-Za-z0-9]{32,}/.test(s), 'looks like a secret, not a label');
-const repoSlug = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?![\s\S])/, 'owner/name');
+export const repoSlugSchema = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?![\s\S])/, 'owner/name');
 const text = z.string().min(1).max(BUS_V2_TEXT_MAX);
 const epochMs = z.number().int().nonnegative().safe();
 const leaseMs = z.number().int().min(CLAIM_MIN_LEASE_MS).max(CLAIM_MAX_LEASE_MS);
@@ -259,7 +259,7 @@ export type WorkDispatch = z.infer<typeof workDispatchSchema>;
 
 export const workPostBodySchema = z.object({
   kind: z.literal('work.post'), jobId, title: z.string().min(1).max(256), provider: providerSchema.optional(),
-  repo: repoSlug, claimKeys: z.array(claimKeySchema).max(16),
+  repo: repoSlugSchema, claimKeys: z.array(claimKeySchema).max(16),
   dispatch: workDispatchSchema.optional(),
 }).strict();
 export const workResultBodySchema = z.object({
@@ -314,7 +314,7 @@ export const workJobSchema = z.object({
   /** Routing label the work.post announcement was addressed to. */
   to: label,
   provider: providerSchema,
-  repo: repoSlug,
+  repo: repoSlugSchema,
   /** The announcement's own title and optional dispatch spec, carried so the feed names the work. */
   title: z.string().min(1).max(256),
   dispatch: workDispatchSchema.optional(),

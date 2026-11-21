@@ -4,6 +4,7 @@ import { coordinationRowBlocks, listCoordination, type CoordinationOrigin } from
 import { projectBusWorkFeed, type WorkFeedOwnerKeyFor, type WorkFeedProviderFor, type WorkFeedRefusalReceipt, type WorkFeedResult } from './bus-work-feed.js';
 import { agentAddressMatcher, agentIdentityKeys, readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { repoSlugSchema } from './bus-v2-schema.js';
 import type { Participant, WorkDispatch, WorkJob } from './bus-v2-schema.js';
 
 /** One live coordination lease blocking a job's declared claim key. */
@@ -242,12 +243,28 @@ export function busWorkFeedOwnerMatcher(owner: string, options: { root?: string 
   return feedLabelMatcher(owner, options);
 }
 
+/**
+ * Normalize a `--repo` feed filter to the lowercase `owner/name` key claim
+ * keys compare under — the same repo-slug shape `work.post`/`workJob` enforce;
+ * undefined when the value is not a repo slug, so a bad filter is a usage
+ * error rather than a silent empty view.
+ */
+export function busWorkFeedRepoKey(repo: string): string | undefined {
+  return repoSlugSchema.safeParse(repo).success ? repo.toLowerCase() : undefined;
+}
+
 /** Client-side feed filters shared by the feed CLIs; every field narrows, none fabricates. */
 export interface BusWorkFeedViewFilters {
   /** Keep only jobs in this feed status. */
   status?: WorkJob['status'];
   /** Keep only the job with this exact id. */
   jobId?: string;
+  /** Keep only jobs announced for this repo — the lowercase owner/name key `busWorkFeedRepoKey` returns. */
+  repo?: string;
+  /** Keep only jobs announced for this provider. */
+  provider?: Participant['provider'];
+  /** Keep only open jobs whose declared claim keys provably include a free key; needs the claims join to mean anything. */
+  claimable?: true;
   /** Announcement-address predicate from `busWorkFeedToMatcher`. */
   toMatch?: (to: string) => boolean;
   /** Announcer predicate over `job.owner` from `busWorkFeedOwnerMatcher`. */
@@ -255,18 +272,24 @@ export interface BusWorkFeedViewFilters {
 }
 
 /**
- * Client-side `--status`/`--job`/`--to`/`--owner` filters and newest-first
- * ordering shared by the feed CLIs; the matchers are the
- * `busWorkFeedToMatcher`/`busWorkFeedOwnerMatcher` predicates. With claims,
- * holds regroup under the jobs still shown so a filtered view never lists a
- * hold for a hidden job. Non-ok results pass through untouched; nothing is
- * fabricated for a refused or unavailable read.
+ * Client-side `--status`/`--job`/`--repo`/`--provider`/`--claimable`/`--to`/
+ * `--owner` filters and newest-first ordering shared by the feed CLIs; the
+ * matchers are the `busWorkFeedToMatcher`/`busWorkFeedOwnerMatcher` predicates.
+ * With claims, holds regroup under the jobs still shown so a filtered view
+ * never lists a hold for a hidden job. `--claimable` keeps only jobs whose
+ * tri-state `claimable` is provably true — unknown coverage never counts as
+ * claimable, and a read without the claims join has no field to match, so it
+ * answers an honest empty view. Non-ok results pass through untouched;
+ * nothing is fabricated for a refused or unavailable read.
  */
 export function projectBusWorkFeedView(result: BusWorkFeedReadResult, filters: BusWorkFeedViewFilters = {}): BusWorkFeedReadResult {
   if (result.status !== 'ok') return result;
   const jobs = result.jobs
     .filter(job => (filters.status === undefined || job.status === filters.status)
       && (filters.jobId === undefined || job.id === filters.jobId)
+      && (filters.repo === undefined || job.repo.toLowerCase() === filters.repo)
+      && (filters.provider === undefined || job.provider === filters.provider)
+      && (filters.claimable !== true || job.claimable === true)
       && (filters.toMatch === undefined || filters.toMatch(job.to))
       && (filters.ownerMatch === undefined || filters.ownerMatch(job.owner)))
     .sort((a, b) => b.updatedAt - a.updatedAt);

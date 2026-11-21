@@ -461,10 +461,12 @@ statuses never fan out. The result's `claimHoldersWoken` counts the hints
 present after the call — absent when the fan-out did not run, `null` when the
 live claim table could not be read (unknown holders are never reported as
 none), and a hint that cannot be written is best-effort, never a failed send.
-`phm agents bus work feed [--status <s>] [--job <id>] [--to <label>]
-[--owner <agent>] [--claims]` reads the
+`phm agents bus work feed [--status <s>] [--job <id>] [--repo <owner/name>]
+[--provider <p>] [--to <label>] [--owner <agent>] [--claims] [--claimable]`
+reads the
 same projection back — jobs newest-first, optionally filtered by status,
-exact job id, announcement address or announcing agent and joined with the
+exact job id, announced repo, provider, announcement address or announcing
+agent and joined with the
 live coordination holds — so the
 whole post/status/feed loop stays on this surface without dropping to
 `phm fleet work-feed`. With `--claims`, every open job (`queued`/`rescheduled`)
@@ -473,7 +475,10 @@ also carries the same per-key hold coverage `work mine` reports —
 coverage is `truncated` or `unknown`, never a guess — and the human lines mark
 it `claimable=yes|no|unknown`; non-open jobs and claimless reads carry none of
 the fields, so "which of these can I claim" answers in one read instead of a
-second join. Every job cites the retained envelopes its state came
+second join. `--claimable` keeps only the open jobs whose `claimable` is
+provably true — it implies the claims join, and unknown coverage never counts
+as claimable, so an unreadable hold table answers an honest empty view rather
+than a guessed one. Every job cites the retained envelopes its state came
 from: `postId` is the wire id of the `work.post` receipt that announced it
 and `statusId` the wire id of the newest accepted `work.status` receipt
 (`null` while none has moved it), so `phm agents bus show <id>` resolves the
@@ -482,7 +487,11 @@ evidence behind a job without a second scan; the human lines print them as
 that routing label and `--owner` keeps jobs announced by that agent; each
 matches literally and under every label of one agent identity through the
 registry, while an unresolvable ref or an unreadable registry keeps
-exact-label matching — the filters narrow the fleet view, they never widen
+exact-label matching. `--repo` keeps jobs announced for one `owner/name`
+repo, compared case-insensitively under the same rule claim keys use, and
+`--provider` keeps jobs announced for one provider; a malformed `--repo` or
+`--provider` is a usage error, never a silent empty view. The filters narrow
+the fleet view, they never widen
 it. `phm fleet work-feed` accepts the same flags.
 
 **Job claims.** `phm agents bus work claim --job <id> --lease-ms <1..3600000>

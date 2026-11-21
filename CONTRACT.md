@@ -2103,7 +2103,10 @@ paths, GATES files) are refused by the writer and ignored by the resolver. See
 `src/core/agents/bus-v2-schema.ts` owns the `agent-bus.v2` body, participant,
 claim and work-feed schemas described in [Agent Bus v2](docs/AGENT-BUS.md#v2),
 plus `busBodyThread(body)`, the read-side predicate that returns the `thread`
-label a `note`/`context` body carries (null for every other kind and shape).
+label a `note`/`context` body carries (null for every other kind and shape),
+and the exported `repoSlugSchema` — the `owner/name` slug `work.post` and
+`workJob` enforce and `busWorkFeedRepoKey` validates `--repo` feed filters
+against.
 Routing labels, repo slugs and claim tokens reject trailing newlines; claim keys
 reject ASCII controls including DEL. Claims grant no execution authority.
 
@@ -2178,8 +2181,15 @@ and `claimBusWorkJob` share it so "claimable" means one thing.
 `coordinationRowBlocks(row, key)` in `src/core/agents/claim-store.ts` is the
 exported read-only overlap predicate; acquisition and observation now share one
 structural overlap rule. `projectBusWorkFeedView(result, filters?)` applies the
-client-side feed filters (`{status?, jobId?, toMatch?, ownerMatch?}`),
-newest-first order and per-job hold regrouping; `toMatch` is the predicate
+client-side feed filters (`{status?, jobId?, repo?, provider?, claimable?,
+toMatch?, ownerMatch?}`),
+newest-first order and per-job hold regrouping; `repo` is the lowercase
+`owner/name` key `busWorkFeedRepoKey(repo)` normalizes a `--repo` argument to
+(undefined for a non-slug, so callers reject it as usage) and matches a job's
+announced repo case-insensitively, `provider` keeps jobs announced for that
+provider, and `claimable:true` keeps only jobs whose tri-state `claimable` is
+provably true — a read without the claims join carries no field to match, so
+it answers an honest empty view. `toMatch` is the predicate
 `busWorkFeedToMatcher(to, {root?})` builds over a job's `to` label and
 `ownerMatch` the predicate `busWorkFeedOwnerMatcher(owner, {root?})` builds
 over its `owner` (announcer) label — each matching literally and under every
@@ -2191,10 +2201,13 @@ and display-clipped (JSON keeps the full values; `detail=`, `status=` and the
 dispatch fields appear only when present, `post=` always) — a refused read's
 footer adds `receipt=<id>` when the projection blamed a retained envelope —
 both feed CLIs use them, and both accept `--to <label>`, `--owner
-<agent>` and `--job <id>` beside `--status`. `phm fleet work-feed [--claims]
-[--to <label>] [--owner <agent>] [--job <id>]` and
-`phm agents bus work feed [--status] [--claims] [--to <label>] [--owner
-<agent>] [--job <id>]` print the same
+<agent>`, `--job <id>`, `--repo <owner/name>`, `--provider <p>` and
+`--claimable` beside `--status`; `--claimable` implies the claims join.
+`phm fleet work-feed [--claims]
+[--to <label>] [--owner <agent>] [--job <id>] [--repo <owner/name>]
+[--provider <p>] [--claimable]` and
+`phm agents bus work feed [--status] [--claims] [--claimable] [--to <label>]
+[--owner <agent>] [--job <id>] [--repo <owner/name>] [--provider <p>]` print the same
 projection — hold lines plus a `claims=` footer — and non-ok reads print
 `jobs=unknown` rather than a fabricated count.
 

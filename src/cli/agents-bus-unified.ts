@@ -9,8 +9,8 @@ import {
   readAgentChannel, readAgentInbox, readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
   updateWorkStatus, INBOX_KINDS, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
-import { WORK_STATUSES, parseClaimKey, type WorkJob } from '../core/agents/bus-v2-schema.js';
-import { busWorkFeedOwnerMatcher, busWorkFeedToMatcher, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
+import { PROVIDERS, providerSchema, WORK_STATUSES, parseClaimKey, type WorkJob } from '../core/agents/bus-v2-schema.js';
+import { busWorkFeedOwnerMatcher, busWorkFeedRepoKey, busWorkFeedToMatcher, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope } from '../core/agents/bus-claims.js';
@@ -46,7 +46,7 @@ ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--clai
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
-ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--to <label>] [--owner <agent>] [--claims]
+ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--to <label>] [--owner <agent>] [--claims] [--claimable]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work mine [<agent>] [--job <id>]
 ashlr agents bus status
@@ -111,7 +111,11 @@ exact-label matching for a ref that resolves to no identity — JSON reports
 scope: label and only hints whose to is that label verbatim match. work feed and claim list are
 read-only and need no identity; work feed --to keeps jobs announced to that
 routing label and --owner keeps jobs announced by that agent, each under
-every label of one agent identity, while --job keeps one job id. work claim
+every label of one agent identity, --repo keeps jobs announced for one
+owner/name repo (case-insensitive, the claim-key rule), --provider keeps
+jobs announced for one provider, --claimable keeps only open jobs whose
+declared claim keys provably include a free key (it implies the claims
+join), while --job keeps one job id. work claim
 takes one of
 a shown job's declared claim keys — queue:<jobId> preferred, --key picks
 another declared key — into the shared coordination table, reporting live
@@ -160,7 +164,7 @@ const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
   '--kind']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
-const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--jobs', '--matched']);
+const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--claimable', '--jobs', '--matched']);
 
 class UsageError extends Error {}
 
@@ -527,9 +531,21 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         return value;
       };
       const to = labelArg('--to'), owner = labelArg('--owner'), jobId = labelArg('--job');
+      const repoRaw = one('--repo');
+      const repo = repoRaw === undefined ? undefined : busWorkFeedRepoKey(repoRaw);
+      if (repoRaw !== undefined && repo === undefined) {
+        throw new UsageError('--repo must be an owner/name repo slug.');
+      }
+      const providerRaw = one('--provider');
+      if (providerRaw !== undefined && !providerSchema.safeParse(providerRaw).success) {
+        throw new UsageError(`--provider must be one of ${PROVIDERS.join(', ')}.`);
+      }
+      const claimable = p.bools.has('--claimable');
       const result = projectBusWorkFeedView(
-        readBusWorkFeed({ root: options.root, claims: p.bools.has('--claims') }),
-        { status: status as WorkJob['status'] | undefined, jobId,
+        readBusWorkFeed({ root: options.root, claims: p.bools.has('--claims') || claimable }),
+        { status: status as WorkJob['status'] | undefined, jobId, repo,
+          provider: providerRaw as WorkJob['provider'] | undefined,
+          claimable: claimable ? true : undefined,
           toMatch: to === undefined ? undefined : busWorkFeedToMatcher(to, { root: options.root }),
           ownerMatch: owner === undefined ? undefined : busWorkFeedOwnerMatcher(owner, { root: options.root }) });
       out(json ? JSON.stringify(result) : formatBusWorkFeed(result).join('\n'));
