@@ -13,6 +13,19 @@ setting for the weights, the exploration rate, or the failure threshold.
 (resource, model, job type, repo) the view reports merge rate, time to merge,
 usage, and breakage rate.
 
+`learnFleetOutcomes` folds the second evidence source the fleet actually
+writes: the jobs ledger (`metrics/jobs.jsonl`, read as a bounded tail).
+Dispatchd `launch` rows are the assigns — `lane` is the resource and `tier`
+keys job type, the only work-shape field the ledger records — `finish` rows
+supply the `tokens_total` usage reading joined by job id, and the
+metrics-outcomes reconciler's `MERGED`/`CLOSED` rows are the verdicts.
+Minutes-to-merge is the reconciler stamp minus the launch stamp. An outcome
+with no usage reading is charged the measured mean of its cell (the fleet
+mean when the cell has none); when nothing anywhere reported usage, missing
+readings stay uncharged rather than reading as zero spend. `phm fleet
+outcomes` reads both sources by default; `--ledger <file>` overrides the
+jobs-ledger path and `--events <file>` the dispatch log.
+
 ## How it routes
 
 `routeLearnedJob` draws a Thompson sample from a Beta success posterior and a
