@@ -27,6 +27,12 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // evidence index: a `revert:landed` row undoing a `merge:landed` landing marks
 // the merged PR's outcome reverted through its unambiguous jobs-ledger PR URL
 // claim — the fleet's own revert record, which jobs.jsonl rows never carry.
+// Batch sessions fold per member like the sibling fleet readers: RQ-BATCH-*
+// session rows are infrastructure evidence counted in session_rows, never
+// outcomes or URL claims, and a member's task_outcome row supplies its
+// recorded end-of-session word — members get no per-member finish row, so
+// their finish verdicts and usage stay null rather than split from the
+// session's aggregates.
 
 /** Newest-bytes bound retained from the append-only jobs ledger. */
 export const ROUTER_OUTCOME_LEDGER_LIMIT = 16 * 1024 * 1024;
@@ -126,6 +132,19 @@ export interface RouterOutcome {
    * recorded one.
    */
   empty_class: string | null;
+  /**
+   * The batch member's recorded end-of-session word — a `task_outcome`
+   * event row's `outcome` field in dispatchd's closed batcher.OUTCOMES
+   * vocabulary (`done`/`skipped` handed the member to its own publish;
+   * `failed`/`deferred`/`unreported` requeued it). This is the member's
+   * finish boundary: batch members get no per-member finish row, so the
+   * word is the only recorded per-member productivity verdict. Newest
+   * explicit recognized row wins like the other finish fields;
+   * unrecognized spellings and non-task_outcome rows never set it. Null
+   * for solo jobs and when no task_outcome row recorded a word — unknown,
+   * never inferred from merge state or event names.
+   */
+  task_outcome: string | null;
   /** The lane+model's pass^k (passPowK) from the latest eval.lane-scores.v1 projection; null when unknown. */
   passk: number | null;
 }
@@ -252,6 +271,37 @@ const emptyClass = (r: Row): string | null => {
   return v !== null && EMPTY_CLASSES.has(v) ? v : null;
 };
 
+/**
+ * RQ-BATCH-* ids are batch-session infrastructure, not jobs: dispatchd runs
+ * related ready lines as one session whose members arrive through
+ * `batch_claim` rows and close through per-member `task_outcome` rows,
+ * while the session id's own launch/finish rows carry session-aggregate
+ * evidence no single job owns (members get no per-member finish row, so
+ * their usage stays unmeasured — the same call the fleet outcome readers
+ * make). The sibling readers already skip the prefix; the fold does the
+ * same so a session never mints a phantom outcome or a PR-URL claim.
+ */
+const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
+
+/**
+ * The batch member's recorded end-of-session word — the `task_outcome`
+ * row's `outcome` field in dispatchd's closed batcher.OUTCOMES vocabulary:
+ * `done`/`skipped` handed the member to its own publish, while
+ * `failed`/`deferred`/`unreported` requeued it. Only `task_outcome`
+ * events carry the word; every other row's `outcome` field stays a
+ * merge-phase spelling and never sets it. snake_case before camelCase on
+ * the event name, the same dialect tolerance the other event reads use.
+ */
+const TASK_OUTCOME_EVENT_KEYS = ['event', 'type', 'kind'] as const;
+const TASK_OUTCOME_EVENTS: ReadonlySet<string> = new Set(['task_outcome']);
+const TASK_OUTCOME_WORDS: ReadonlySet<string> = new Set(['done', 'skipped', 'failed', 'deferred', 'unreported']);
+const taskOutcome = (r: Row): string | null => {
+  const event = str(r, ...TASK_OUTCOME_EVENT_KEYS);
+  if (event === null || !TASK_OUTCOME_EVENTS.has(event)) return null;
+  const word = str(r, 'outcome');
+  return word !== null && TASK_OUTCOME_WORDS.has(word) ? word : null;
+};
+
 // Revert evidence uses the same field vocabulary the fleet ledger readers
 // already honor: event names (event/type/kind), terminal state fields
 // (phase/state/outcome/status/result/conclusion) and the reverted_at /
@@ -362,6 +412,13 @@ export interface RouterOutcomeFold {
   unattached_rows: number;
   /** PR URLs claimed by more than one job; URL-only rows for them are not attached to any job. */
   ambiguous_urls: number;
+  /**
+   * Rows keyed by an RQ-BATCH-* session id — batch-session infrastructure
+   * evidence (launch, finish, session-aggregate usage). They never form
+   * outcomes and never claim PR URLs; member jobs fold through their own
+   * batch_claim/task_outcome/publish/verdict rows instead.
+   */
+  session_rows: number;
 }
 
 export interface RouterOutcomeFoldOptions {
@@ -400,11 +457,12 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
   const jobId = (r: Row) => str(r, 'job', 'job_id', 'jobId', 'id');
   const prUrl = (r: Row) => str(r, 'url', 'pr_url', 'prUrl', 'pr');
 
-  // A PR URL resolves to a job only when exactly one job claims it.
+  // A PR URL resolves to a job only when exactly one job claims it. Batch
+  // session rows are infrastructure: they never claim URLs themselves.
   const claims = new Map<string, Set<string>>();
   for (const r of rows) {
     const j = jobId(r), u = prUrl(r);
-    if (j && u) claims.set(u, (claims.get(u) ?? new Set()).add(j));
+    if (j && u && !j.startsWith(BATCH_SESSION_PREFIX)) claims.set(u, (claims.get(u) ?? new Set()).add(j));
   }
   const ambiguous = new Set([...claims].filter(([, jobs]) => jobs.size > 1).map(([u]) => u));
   const urlToJob = new Map([...claims].filter(([u, jobs]) => !ambiguous.has(u) && jobs.size === 1)
@@ -413,14 +471,17 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
   const outcomes = new Map<string, RouterOutcome>();
   const mergedAt = new Map<string, number>();
   let unattached = 0;
+  let sessionRows = 0;
   for (const r of rows) {
     const u = prUrl(r);
     const j = jobId(r) ?? (u ? urlToJob.get(u) : undefined);
     if (!j) { unattached++; continue; }
+    if (j.startsWith(BATCH_SESSION_PREFIX)) { sessionRows++; continue; }
     const o: RouterOutcome = outcomes.get(j) ?? {
       schema: 'router.outcome.v1', job_id: j, lane: null, model: null, tier: null, work_class: null,
       merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
-      tokens_total: null, ttm_s: null, empty: null, exit_code: null, failure_class: null, empty_class: null, passk: null,
+      tokens_total: null, ttm_s: null, empty: null, exit_code: null, failure_class: null, empty_class: null,
+      task_outcome: null, passk: null,
     };
     o.lane = str(r, 'lane', 'pool', 'arm') ?? o.lane;
     o.model = str(r, 'model') ?? o.model;
@@ -465,6 +526,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     o.exit_code = exitStatus(r['exit_code']) ?? exitStatus(r['exitCode']) ?? o.exit_code;
     o.failure_class = failureClass(r) ?? o.failure_class;
     o.empty_class = emptyClass(r) ?? o.empty_class;
+    o.task_outcome = taskOutcome(r) ?? o.task_outcome;
     const f = r['review_findings'];
     if (f !== null && typeof f === 'object' && !Array.isArray(f)) {
       const fixed = count((f as Row)['fixed']), rejected = count((f as Row)['rejected']), ignored = count((f as Row)['ignored']);
@@ -489,6 +551,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     malformed_rows: malformed,
     unattached_rows: unattached,
     ambiguous_urls: ambiguous.size,
+    session_rows: sessionRows,
   };
 }
 
@@ -671,7 +734,7 @@ export async function readRouterOutcomes(opts: {
   const laneScores = readLaneScores({ rootDir: opts.ashlarDir });
   const path = join(runsDir, ROUTER_OUTCOME_LEDGER_RELATIVE);
   const read = await readLedgerTail(path);
-  const empty: RouterOutcomeFold = { outcomes: [], malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0 };
+  const empty: RouterOutcomeFold = { outcomes: [], malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0, session_rows: 0 };
   const spendRead = await readLedgerTail(join(runsDir, ROUTER_SPEND_LEDGER_RELATIVE));
   const spendState = spendRead.state;
   const spendTruncated = spendRead.state === 'read' ? spendRead.truncated : false;

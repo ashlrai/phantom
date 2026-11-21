@@ -198,7 +198,8 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(fold.outcomes).toEqual([{
       schema: 'router.outcome.v1', job_id: 'U1', lane: null, model: null, tier: null, work_class: null,
       merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
-      tokens_total: null, ttm_s: null, empty: null, exit_code: null, failure_class: null, empty_class: null, passk: null,
+      tokens_total: null, ttm_s: null, empty: null, exit_code: null, failure_class: null, empty_class: null,
+      task_outcome: null, passk: null,
     }]);
   });
 
@@ -345,6 +346,73 @@ describe('router outcome ledger (612S preservation)', () => {
     // Newest recognized wins; the trailing finish row carried no class.
     expect(byId.get('E9')?.empty_class).toBe('no_diff');
     expect(byId.get('E10')?.empty_class).toBeNull();
+  });
+
+  it('skips RQ-BATCH-* session rows and folds member task_outcome words', () => {
+    const fold = foldRouterOutcomes([
+      // Session infrastructure: launch and finish rows keyed by the bundle
+      // id carry session-aggregate evidence no member owns.
+      '{"job":"RQ-BATCH-abc123","event":"launch","lane":"alpha","wall_s":900,"tokens_total":50000}',
+      '{"job":"RQ-BATCH-abc123","event":"finish","lane":"alpha","wall_s":900,"exit_code":0,"empty":false,"tokens_total":50000,"pr_url":"https://github.com/o/r/pull/77"}',
+      // Members arrive through batch_claim and close through task_outcome;
+      // they never get per-member launch/finish rows of their own.
+      '{"job":"M1","event":"batch_claim","batch":"RQ-BATCH-abc123","lane":"alpha","tier":"work"}',
+      '{"job":"M1","event":"task_outcome","batch":"RQ-BATCH-abc123","lane":"alpha","outcome":"failed","reason":"crash"}',
+      '{"job":"M2","event":"batch_claim","batch":"RQ-BATCH-abc123","lane":"alpha","tier":"work"}',
+      '{"job":"M2","event":"task_outcome","batch":"RQ-BATCH-abc123","lane":"alpha","outcome":"done"}',
+      // A later task_outcome row is the member's newest recorded word.
+      '{"job":"M2","event":"task_outcome","batch":"RQ-BATCH-abc123","lane":"alpha","outcome":"skipped"}',
+      // Unrecognized words and non-task_outcome rows never set the field.
+      '{"job":"M3","event":"batch_claim","batch":"RQ-BATCH-abc123","lane":"alpha"}',
+      '{"job":"M3","event":"task_outcome","batch":"RQ-BATCH-abc123","lane":"alpha","outcome":"exploded"}',
+      '{"job":"M3","event":"outcome","outcome":"done"}',
+      '{"job":"M3","event":"task_outcome","batch":"RQ-BATCH-abc123","lane":"alpha","outcome":"deferred"}',
+      // A solo job's rows are untouched by the batch dialect.
+      '{"job":"S1","event":"finish","lane":"alpha","empty":false,"exit_code":0,"outcome":"done"}',
+    ].join('\n'));
+    expect(fold.session_rows).toBe(2);
+    expect(fold.outcomes.map(o => o.job_id)).toEqual(['M1', 'M2', 'M3', 'S1']);
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    // The session's finish verdicts and usage stay session evidence: members
+    // keep their own fields null rather than split the aggregate.
+    for (const id of ['M1', 'M2', 'M3']) {
+      expect(byId.get(id)).toMatchObject({
+        wall_s: null, tokens_total: null, empty: null, exit_code: null, failure_class: null,
+      });
+    }
+    expect(byId.get('M1')?.task_outcome).toBe('failed');
+    // Newest recognized task_outcome word wins.
+    expect(byId.get('M2')?.task_outcome).toBe('skipped');
+    // An out-of-vocabulary word and a non-task_outcome outcome field are
+    // skipped; the later deferred row still lands.
+    expect(byId.get('M3')?.task_outcome).toBe('deferred');
+    // A solo job's outcome-named phase field is merge evidence, not a member word.
+    expect(byId.get('S1')?.task_outcome).toBeNull();
+    expect(byId.get('S1')?.empty).toBe(false);
+    expect(byId.get('S1')?.exit_code).toBe(0);
+  });
+
+  it('never lets a session row claim a PR URL or resolve an outcome', () => {
+    const fold = foldRouterOutcomes([
+      // The session's own finish row names a pull URL; it must not claim it.
+      '{"job":"RQ-BATCH-def456","event":"finish","pr_url":"https://github.com/o/r/pull/9"}',
+      // The member's publish row claims the same URL and resolves cleanly.
+      '{"job":"P1","event":"publish","pr_url":"https://github.com/o/r/pull/9","phase":"MERGED"}',
+      // A second session row reusing another member's URL stays invisible too.
+      '{"job":"RQ-BATCH-ghi789","event":"finish","pr_url":"https://github.com/o/r/pull/10"}',
+      '{"job":"P2","event":"publish","pr_url":"https://github.com/o/r/pull/10","phase":"CLOSED"}',
+      // A URL claimed only by a session resolves to nothing at all.
+      '{"pr_url":"https://github.com/o/r/pull/11","event":"revert"}',
+      '{"job":"RQ-BATCH-jkl012","event":"finish","pr_url":"https://github.com/o/r/pull/11"}',
+    ].join('\n'));
+    expect(fold.session_rows).toBe(3);
+    expect(fold.ambiguous_urls).toBe(0);
+    // The session's URL claim never contests the member's: both resolve.
+    expect(fold.outcomes.find(o => o.job_id === 'P1')).toMatchObject({ merged: true });
+    expect(fold.outcomes.find(o => o.job_id === 'P2')).toMatchObject({ merged: false });
+    // The session-only URL row is unattached evidence, never a phantom outcome.
+    expect(fold.outcomes.map(o => o.job_id)).toEqual(['P1', 'P2']);
+    expect(fold.unattached_rows).toBe(1);
   });
 
   it('reads the real folder and filters by lane', async () => {

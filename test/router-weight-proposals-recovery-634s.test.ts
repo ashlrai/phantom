@@ -513,8 +513,66 @@ describe('unknown-outcome resolution', () => {
     expect(code).toBe(1);
     expect(report).toMatchObject({
       status: 'unavailable',
-      unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null, unknown_unresolved: null,
+      unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null,
+      unknown_empty_classes: null, unknown_task_outcomes: null, unknown_unresolved: null,
     });
+  });
+
+  it('tallies batch-member task_outcome words and exempts the requeue words from unresolved', async () => {
+    // dispatchd's batcher closes members with task_outcome rows — the
+    // member's only finish boundary, since batch members get no per-member
+    // finish row. The RETRY words (failed/deferred/unreported) are the
+    // recorded failure signal; done/skipped members still await their own
+    // publish verdict, and RQ-BATCH-* session rows never mint outcomes.
+    const requeued = [
+      ...[0, 1, 2].map(i => `synthetic-batch-fail-${i}`),
+      ...[0, 1].map(i => `synthetic-batch-defer-${i}`),
+      'synthetic-batch-unrep',
+    ];
+    const awaiting = [
+      ...[0, 1].map(i => `synthetic-batch-done-${i}`),
+      'synthetic-batch-skip',
+      'synthetic-batch-open',
+    ];
+    const members = [...requeued, ...awaiting];
+    const word = (job: string, outcome: string): object =>
+      ({ job, event: 'task_outcome', batch: 'RQ-BATCH-syn0001', lane: 'alpha', outcome });
+    writeLedger([
+      ...merged(20),
+      { job: 'RQ-BATCH-syn0001', event: 'launch', lane: 'alpha' },
+      { job: 'RQ-BATCH-syn0001', event: 'finish', lane: 'alpha', wall_s: 800, tokens_total: 40000 },
+      ...members.map(job => ({ job, event: 'batch_claim', batch: 'RQ-BATCH-syn0001', lane: 'alpha', tier: 'work' })),
+      ...[0, 1, 2].map(i => word(`synthetic-batch-fail-${i}`, 'failed')),
+      ...[0, 1].map(i => word(`synthetic-batch-defer-${i}`, 'deferred')),
+      word('synthetic-batch-unrep', 'unreported'),
+      ...[0, 1].map(i => word(`synthetic-batch-done-${i}`, 'done')),
+      word('synthetic-batch-skip', 'skipped'),
+      // A solo in-flight job joins the same awaiting-verdict remainder.
+      { job: 'synthetic-solo-open', event: 'claim', lane: 'alpha' },
+    ]);
+    // Members carry no work_class of their own; the market's route_decision
+    // journal is the recorded classification, same as every other job.
+    writeMarket([...members, 'synthetic-solo-open']
+      .map((job, i) => marketDecision(job, 'code', 2_000 + i)));
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 11, unclassified_outcomes: 0,
+      unknown_empty: 0, unknown_nonzero_exit: 0,
+      unknown_task_outcomes: [
+        { task_outcome: 'failed', jobs: 3 },
+        { task_outcome: 'deferred', jobs: 2 },
+        { task_outcome: 'done', jobs: 2 },
+        { task_outcome: 'skipped', jobs: 1 },
+        { task_outcome: 'unreported', jobs: 1 },
+      ],
+      // The six requeued members are explained attempts; done/skipped members,
+      // the member still awaiting its word and the solo in-flight job are not.
+      unknown_unresolved: 5,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('unresolved=5');
+    expect(out).toContain('task_outcomes=failed:3,deferred:2,done:2,skipped:1,unreported:1');
   });
 });
 
