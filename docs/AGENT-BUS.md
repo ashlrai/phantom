@@ -230,13 +230,21 @@ resolved identity belongs to. A missing registry is a verified-empty list
 (`source: missing`), an unreadable one is `unavailable` — never an empty
 list — and membership is a routing label set (who may post), not proof of
 presence or authority. `phm agents bus channel read <name> [--topic <t>]
-[--from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>]
+[--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3]
+[--job <id>]
 [--since <15m|2h|1d|ISO>] [--contains <text>] [--matched]
 [--after <cursor>] [--limit <n>]` pages the room's posts
 oldest-first — every live envelope addressed to `group:<name>:*` (or one
 `--topic`), minus `group.presence` heartbeats, which are observations with
 their own read, not messages; `--from` narrows by sender through the same
-identity-label matching `comms bus read` uses, `--thread` narrows to
+identity-label matching `comms bus read` uses, `--exclude-from` drops
+posts sent under any registered spelling of one identity — the same
+sender-exclusion rule `comms bus read|watch`'s `--exclude-from`,
+`fleet bus-follow`'s `--exclude-from` and `fleet_bus_inbox`'s `excludeFrom`
+apply, with an unresolvable ref keeping exact-label matching, so a room's
+noisy member never reaches the transcript while every other sender still
+does — and it composes with `--from` so a sender both included and
+excluded matches nothing, `--thread` narrows to
 `note`/`context` bodies carrying that v2 thread label, `--priority`
 keeps only posts stamped with that exact band — the same match
 `comms bus read --priority` applies, and `--since` keeps only posts
@@ -314,7 +322,8 @@ no announced job and reads no feed before posting. Like every send it is
 untrusted data: a wake is a hint to read the inbox and grants no authority.
 
 **Inbox.** `phm agents bus inbox <agent> [--thread <t>] [--from <agent>]
-[--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>]
+[--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy]
+[--job <id>]
 [--since <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>]`
 returns one page of
 DMs, handoffs,
@@ -330,6 +339,13 @@ the same coverage `work mine` handoffs and `handoff-receive` apply;
 carrying that v2 thread label, and `--from` narrows by sender through the
 same identity-label matching `channel read` uses (a handle, `agent:<handle>`,
 stable id or alias; an unresolvable ref keeps exact-label matching).
+`--exclude-from` drops mail sent under any registered spelling of one
+identity — the same sender-exclusion rule `comms bus read|watch`'s
+`--exclude-from`, `fleet bus-follow`'s `--exclude-from` and
+`fleet_bus_inbox`'s `excludeFrom` apply, with an unresolvable ref keeping
+exact-label matching — so a flooding sender never reaches the page while
+every other sender still does; it composes with `--from` so a sender both
+included and excluded matches nothing, and with every other inbox filter.
 `--priority` keeps only mail stamped with that exact P0..P3 band — the same
 match `comms bus read --priority` applies — so urgent mail is one filtered
 read, not a page through the backlog. `--kind` keeps only one delivery kind —
