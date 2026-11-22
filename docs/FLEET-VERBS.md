@@ -128,3 +128,14 @@ is excluded from CI correlation; optional checks do not count. Standard `gh pr
 list --json statusCheckRollup` exports do not supply all this evidence, so they
 report unknown until enriched by a trustworthy observer. These observations do
 not establish historical branch protection or grant merge authority.
+
+## Open PR snapshot
+
+Run `phm fleet open-prs --repo ashlrai/phantom --json` to read GitHub and save
+`<ASHLR_RUNS_DIR or ~/.ashlr-runs>/fleet/open-prs.json` (`--root PATH` overrides it).
+It never changes GitHub. The typed `fleet.open-prs.v1` JSON includes repo, PR number,
+merge state, age in hours at `observedAt`, and an unambiguous RQ job ID from title/branch.
+Missing values are null (unknown); unknown merge states are `UNKNOWN`. Exit 1 means
+GitHub or the local write failed; a full 1000-row page is incomplete. API failure
+retains same-repo rows up to five minutes old as `fallback`, with a null current total.
+Both leader brief readers use only fresh, successful totals; failed or stale totals stay unknown.

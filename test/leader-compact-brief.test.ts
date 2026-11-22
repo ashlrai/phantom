@@ -181,3 +181,13 @@ it('ranks 24-hour EMPTY token waste and preserves unknown usage', async () => {
     'gamma-*: 0 EMPTY tokens (24h), 0 jobs with unknown usage',
   ]));
 });
+it('reads produced open PR counts and reports a failed refresh as unknown', async () => {
+  const { refreshOpenPrs } = await import('../src/core/fleet/open-prs.js');
+  const run = async () => ({ stdout: '[{"number":7}]', stderr: '', code: 0, timedOut: false, truncated: false, missing: false });
+  await refreshOpenPrs(dir, 'ashlrai/phantom', now, run);
+  const b = await readCompactBrief(dir, now);
+  expect(b.openPrs).toBe(1); expect(compactBriefLines(b)).toContain('Open PRs: 1');
+  await refreshOpenPrs(dir, 'ashlrai/phantom', now, async () => ({ ...await run(), code: 1 }));
+  const failed = await readCompactBrief(dir, now);
+  expect(failed.openPrs).toBeNull(); expect(compactBriefLines(failed)).toContain('Open PRs: unknown');
+});
