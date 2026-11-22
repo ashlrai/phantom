@@ -32,8 +32,9 @@ export interface UnifiedInboxEntry {
 }
 
 export interface UnifiedInboxSources {
-  /** null: the source was absent from the response. */
-  [source: string]: { state: InboxSourceState; pending: number } | null;
+  /** null: the source was absent from the response. `pending` is null when
+   * the source could not be read — its pending total is unknown, never 0. */
+  [source: string]: { state: InboxSourceState; pending: number | null } | null;
 }
 
 export type UnifiedInboxView =
@@ -65,7 +66,8 @@ export function readUnifiedInboxView(data: unknown): UnifiedInboxView | null {
   const sources: UnifiedInboxSources = {};
   for (const source of SOURCES) {
     const report = (data.sources as Record<string, unknown>)[source];
-    sources[source] = isRecord(report) && oneOf(STATES, report.state) && isCount(report.pending)
+    sources[source] = isRecord(report) && oneOf(STATES, report.state) &&
+      (report.pending === null || isCount(report.pending))
       ? { state: report.state, pending: report.pending } : null;
   }
   const items = data.items.map(readEntry).filter((e): e is UnifiedInboxEntry => e !== null);
@@ -81,7 +83,7 @@ export function sourceSummary(sources: UnifiedInboxSources): string {
     const report = sources[source] ?? null;
     if (report === null || report.state === 'missing') return `${SOURCE_NAMES[source]} —`;
     const state = report.state === 'healthy' ? '' : ` ${report.state}`;
-    return `${SOURCE_NAMES[source]}${state} ${report.state === 'unavailable' ? '—' : report.pending}`;
+    return `${SOURCE_NAMES[source]}${state} ${report.pending === null || report.state === 'unavailable' ? '—' : report.pending}`;
   }).join(' · ');
 }
 
