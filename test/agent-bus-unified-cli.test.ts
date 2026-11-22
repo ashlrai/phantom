@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runAgentsCli } from '../src/cli/agents-bus-contract.js';
 import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
 import * as seats from '../src/core/bots/seats.js';
+import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 
 let base: string;
 let root: string;
@@ -616,6 +618,68 @@ describe('phm agents bus (unified)', () => {
       '--lease-ms', '600000', '--owner', 'worker-3', '--root', root], t => text.push(t), () => {}, {})).toBe(1);
     expect(text.join('\n')).toContain('conflict repo:ashlrai/phantom');
     expect(text.join('\n')).toContain('RQ-CLI-CLAIM(queued)');
+  });
+
+  it('claims the next pending work envelope addressed to an agent', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    const post = (id: string, to: string, priority: BusEnvelope['priority'], body: unknown): void => {
+      expect(appendBusInbox({ id, from: 'agent:nova', to, priority, ttl: 3_600_000,
+        body: body as BusEnvelope['body'] }, { root }).status).toBe('posted');
+    };
+    // bus-next order is priority band then cursor: the P0 claims first though posted last.
+    post('wn-routine', 'agent:atlas', 'P2', { kind: 'work', text: 'routine sweep' });
+    post('wn-note', 'agent:atlas', 'P1', { kind: 'note', text: 'not claimable' });
+    post('wn-urgent', 'agent:atlas', 'P0', { kind: 'work', text: 'urgent fix' });
+    post('wn-other', 'agent:nova', 'P0', { kind: 'work', text: 'nova only' });
+
+    // PHM_AGENT_ID supplies both the addressee and the default claim owner.
+    const first = await run(['work', 'next', '--lease-ms', '60000'], { PHM_AGENT_ID: 'atlas' });
+    expect(first.code).toBe(0);
+    expect(first.json).toMatchObject({ status: 'acquired',
+      receipt: { cursor: expect.any(Number), envelope: { id: 'wn-urgent', from: 'agent:nova',
+        to: 'agent:atlas', priority: 'P0' } } });
+    expect(first.json.token).toMatch(/^[a-f0-9]{64}$/);
+    expect(first.json.leaseUntil).toBeGreaterThan(Date.now());
+
+    // The positional agent resolves under any of its labels; --owner records independently.
+    const second = await run(['work', 'next', 'agent:atlas', '--lease-ms', '60000', '--owner', 'crew-a']);
+    expect(second.code).toBe(0);
+    expect(second.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wn-routine' } } });
+    const claims = await run(['claim', 'list', '--owner', 'crew-a']);
+    expect(claims.json.claims).toEqual([expect.objectContaining({ key: 'queue:wn-routine',
+      owner: 'crew-a', origin: 'message', live: true })]);
+
+    // Both atlas-addressed claimable receipts are now leased: empty reports the
+    // observed scan totals, distinguishing held work from a dry well.
+    const drained = await run(['work', 'next', '--lease-ms', '60000'], { PHM_AGENT_ID: 'atlas' });
+    expect(drained.code).toBe(0);
+    expect(drained.json).toEqual({ status: 'empty', candidates: 2, held: 2 });
+    // A different addressee still finds its own pending work.
+    const nova = await run(['work', 'next', 'nova', '--lease-ms', '60000']);
+    expect(nova.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wn-other', to: 'agent:nova' } } });
+
+    // Usage errors exit 2; a lease past the cap is an invalid result, not a claim.
+    expect(await run(['work', 'next'])).toMatchObject({ code: 2 });
+    expect(await run(['work', 'next', '--lease-ms', '60000'], {})).toMatchObject({ code: 2 });
+    expect(await run(['work', 'next', '--lease-ms', 'abc'], { PHM_AGENT_ID: 'atlas' })).toMatchObject({ code: 2 });
+    expect(await run(['work', 'next', '--lease-ms', '3600001'], { PHM_AGENT_ID: 'atlas' }))
+      .toMatchObject({ code: 2, json: { status: 'invalid' } });
+
+    // Human output names the claimed id, owner, lease and token plus the routing line.
+    post('wn-last', 'agent:nova', 'P3', { kind: 'work', text: 'last one' });
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['work', 'next', 'nova', '--lease-ms', '60000',
+      '--root', root], t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('acquired wn-last owner=nova');
+    expect(text.join('\n')).toContain('token=');
+    expect(text.join('\n')).toContain('agent:nova');
+    const emptyText: string[] = [];
+    expect(await runAgentsBusUnified(['work', 'next', 'nova', '--lease-ms', '60000',
+      '--root', root], t => emptyText.push(t), () => {}, {})).toBe(0);
+    expect(emptyText.join('\n')).toContain('empty candidates=2 held=2');
   });
 
   it('filters the work feed by announcement address under one agent identity', async () => {

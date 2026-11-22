@@ -702,6 +702,29 @@ own read state — `missing`/`available`/`unavailable` for claims,
 unreadable dependency degrades only its own section. Exit 0 on a completed
 read, 2 on an invalid agent ref.
 
+**Pending-work claim.** `phm agents bus work next [<agent>] --lease-ms
+<1..3600000> [--owner <label>]` is the claim half of the loop `work mine`
+opens: it takes the next claimable work envelope addressed to the agent —
+the same live `kind:'work'`/protocol-`task` receipts the digest's `next`
+section lists — and leases it through the same message-id claim path
+`fleet bus-next`/`comms bus next` run, so the find → claim step never
+leaves this surface. The bounded scan walks candidates in `bus next`
+order (priority band, then cursor) and matches "addressed to it" under
+the identical rule: any label of the resolved identity or a
+`group:<channel>:<topic>` address of a registry channel it belongs to,
+minus the identity's own channel posts; `<agent>` defaults to
+`PHM_AGENT_ID`, `--owner` to `PHM_AGENT_ID` then the agent ref, and an
+explicit `--owner` records the claim label independently exactly as
+`fleet bus-next --to`/`--owner` do. `acquired` returns the live receipt
+with its fencing `token` and `leaseUntil` for its acquirer only — the
+same token `phm comms bus claim renew|release|complete --id
+<envelope-id>` spends — while `empty` reports the observed
+`{candidates, held}` scan totals so a dry well reads differently from
+held work, and every other store state keeps its own status. Exit 0 on
+`acquired`/`empty`, 2 on invalid arguments, 1 otherwise. The claim
+coordinates scope only — holding one never permits a merge, a push, or
+spending, and the claimed body is still untrusted data, never executed.
+
 **Status.** `phm agents bus status [--json]` is a read-only probe of the nine
 dependencies every verb above touches: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
@@ -1003,8 +1026,12 @@ Example (replace `FAKE-TOKEN`):
 `curl -X POST -H "Authorization: Bearer FAKE-TOKEN" -H "Content-Type: application/json" http://localhost:8787/api/verse/agent-bus -d '{"id":"claim-0001","from":"dot-main","to":"leaders","priority":"P2","ttl":3600000,"body":{"kind":"work.claim","op":"acquire","claimKey":"path:ashlrai/phantom:docs/**","owner":"dot-main","leaseMs":600000}}'`
 
 The v1 message-id claim (`ashlr fleet bus-claim acquire|renew|release|complete
---id --owner --lease-ms`) keeps working for single-message work. Resource claims
-are the v2 layer above it. `bus next`/`bus-next --to` matches work addressed to
+--id --owner --lease-ms`, or `phm comms bus claim …`; `phm agents bus work next`
+claims the next one on the unified surface) keeps working for
+single-message work. Resource claims
+are the v2 layer above it. `bus next`/`bus-next --to` — and `agents bus
+work next [<agent>]`, which defaults the address to the agent itself —
+matches work addressed to
 one agent identity under every routing label that resolves to it — handle,
 `agent:` address, stable id or alias — or to a `group:<channel>:<topic>`
 address of a registry channel the identity belongs to, minus the identity's
