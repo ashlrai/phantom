@@ -287,7 +287,16 @@ when a candidate is present (an unreadable store degrades the field to
 unknown, never to free or empty). Reading needs
 no identity and no membership; an unknown channel is `unknown-channel`, an
 unreadable registry or store is reported — never an empty page passed off
-as history.
+as history. `fleet_bus_channel` (the isolated fleet MCP tool) serves the
+same read with the same dimensions as arguments — `channel` required,
+every channel-read filter as its MCP counterpart (`topic`, `from`,
+`excludeFrom`, `thread`, `priority`, `job`, `since`, `contains`) and
+`matched` as a JSON boolean — under the identical `readAgentChannel`
+validation, so an MCP-connected agent reads a room's transcript, its
+presence-free posts, sender handles and live hold/job annotations without
+shelling out to `phm`; it accepts no caller root or path, needs no
+identity or membership, and passes a refused or unavailable page through
+untouched.
 Because channel addresses are bus-group addresses, existing `subscribeGroup`
 readers see the same posts.
 
