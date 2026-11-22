@@ -290,7 +290,7 @@ untrusted data: a wake is a hint to read the inbox and grants no authority.
 
 **Inbox.** `phm agents bus inbox <agent> [--thread <t>] [--from <agent>]
 [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>]
-[--since <15m|2h|1d|ISO>]`
+[--since <15m|2h|1d|ISO>] [--channel <name>]`
 returns one page of
 DMs, handoffs,
 posts in the agent's channels (minus its own and minus `group.presence`
@@ -323,6 +323,13 @@ cutoff — the same `phm messages` grammar (`15m`, `2h`, `1d`, epoch ms or
 an ISO time) resolved to epoch ms, matched inclusively on `receivedAt` —
 so fresh mail is one filtered read without a persisted cursor, and it
 composes with every other inbox filter including `--matched`.
+`--channel` keeps only mail addressed to `group:<name>:*` of one registry
+channel the agent belongs to — channel posts and channel-addressed
+handoffs alike, matched on the delivery address rather than the reported
+kind — so an agent in several rooms reads one room's pending mail in one
+filtered read; it composes with `--kind` to separate a room's direct mail
+from its assignments, and a channel the agent is not a member of simply
+has no mail to show.
 `--matched` additionally reports `matched`, the true pending total — every
 row the same filters accept across the whole retained store, the same count
 `work mine`'s inbox section reports — while `messages` still caps at

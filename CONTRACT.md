@@ -2675,13 +2675,18 @@ with a `reason`); they never throw for bad input or storage faults.
 `postLabelMessage`, `sendHandoff`, `sendWakeRequest`, `announceWork`,
 `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
-carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?, priority?, kind?, job?, matched?, since?}, options?)`
+carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?, priority?, kind?, job?, matched?, since?, channel?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
 keeping exact-label matching, `priority` keeps only envelopes stamped
 with that exact P0..P3 band — the same match `comms bus read --priority`
-applies, and `kind` keeps only one delivery kind — `dm`, `channel`,
-`handoff` or `legacy`, the same kind each inbox row reports; `job` keeps
+applies, `kind` keeps only one delivery kind — `dm`, `channel`,
+`handoff` or `legacy`, the same kind each inbox row reports, and `channel`
+keeps only mail addressed to `group:<name>:*` of one registry channel the
+agent belongs to — channel posts and channel-addressed handoffs alike,
+matched on the delivery address rather than the reported kind, so it
+composes with `kind` and a channel the agent is not a member of simply
+has no mail to show; `job` keeps
 only mail that names one job — a `work.post`/`work.status`/`work.result`/`wake`
 body declaring that `jobId`, a `worker-handoff` assigning that fleet job id
 through `taskId`, or a `note`/`context` body carrying the

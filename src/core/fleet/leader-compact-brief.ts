@@ -52,7 +52,8 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
       : state === 'bounded' ? 'last 1000 ledger rows' : 'invalid or incomplete rows in this source');
   sourceState('ledger', tail === null ? 'missing' : tail.truncated ? 'bounded tail' : 'healthy', tail === null ? 'job ledger unreadable' : 'at most 8 MiB of job ledger');
   sourceState('guardian', guardian?.length ? 'healthy' : 'missing', guardian?.length ? 'local guardian observations' : 'no guardian observations');
-  sourceState('pace', pace?.pools.length ? 'healthy' : 'missing', pace?.pools.length ? 'status budget and usage history' : 'no pool budget readings');
+  const hasPace = pace?.pools.some(p => p.observedAt || p.usedPct !== null || (p.headroom?.slots ?? 0) > 0);
+  sourceState('pace', hasPace ? 'healthy' : 'missing', hasPace ? 'recorded readings, status budget and usage history' : 'no pool budget readings');
   sourceState('stops', stopText === null ? 'unknown' : 'healthy', stopText === null ? 'stop file unavailable' : 'local stop file');
   sourceState('hostLoad', hostLoad.state === 'known' ? 'healthy' : 'unknown', hostLoad.state === 'known' ? 'local process observations' : 'host process readings unavailable');
   const tick = dispatchTick(log?.text ?? '', now);
@@ -99,10 +100,11 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     .map(s => ({ family: clean(s.family), until: s.until }));
   const brief = {
     schema: 'leader.compact-brief.v1', at: new Date(now).toISOString(), headline,
-    state: lanes.length || tail || pace?.pools.length || guardian?.length ? 'ready' : 'no data', sources,
+    state: lanes.length || tail || hasPace || guardian?.length ? 'ready' : 'no data', sources,
     windowHours: 2, emptyWindowHours: 24, lanes,
     pools: (pace?.pools ?? []).map(p => ({ pool: clean(p.pool), usedPct: p.usedPct, hoursToReset: p.hoursToReset,
-      burnPerHour: p.recentPerHour, safeBurn: p.safeBurnPerHour ?? null, verdict: p.verdict ?? 'unknown',
+      burnPerHour: p.recentPerHour, safeBurn: p.safeBurnPerHour ?? null, verdict: p.verdict === 'stale' || p.verdict === 'spent' ? p.line ?? p.verdict : p.verdict ?? 'unknown',
+      headroom: p.headroom, source: p.source, ageHours: p.ageHours,
       why: p.verdict === 'unknown' ? [p.usedPct === null ? 'usage missing or stale' : '', p.hoursToReset === null || p.hoursToReset <= 0 ? 'reset missing or elapsed' : '', p.recentPerHour === null ? 'burn rate missing' : ''].filter(Boolean).join('; ') : 'usage, reset and burn rate known' })),
     families: [...groups.values()].sort((a, b) => a.prs / Math.max(1, a.launches) - b.prs / Math.max(1, b.launches) || b.launches - a.launches || a.family.localeCompare(b.family)),
     attention, liveAt: typeof live?.generatedAt === 'string' ? clean(live.generatedAt) : null, main: (guardian ?? []).map(g => ({ repo: clean(g.repo), state: g.state, stale: g.stale })),
