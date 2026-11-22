@@ -10,6 +10,7 @@ import { defaultWtRoot } from './worktrees.js';
 export interface LiveJob {
   id: string; lane: string; repo: string; started: string; elapsed: number | 'unknown';
   lastLogWrite: string; lastLine: string; status: 'moving' | 'quiet' | 'stuck' | 'unknown';
+  processLive?: boolean;
 }
 export interface LiveJobsReport { schema: 'jobs.live.v1'; generatedAt: string; known: boolean; jobs: LiveJob[]; other_worktrees?: number | null; finished_recent?: { id: string; finished: string }[] }
 export const LIVE_JOBS_FILE = 'queue/live-jobs.json';
@@ -32,11 +33,12 @@ export async function readLiveJobs(opts: StuckReadOptions & { wtRoot?: string } 
       if (line) lastLine = scrubJobLogLine(line).slice(0, 120);
     } catch { /* Missing, linked or unreadable logs stay unknown. */ }
     const idle = now - (job.logMtimeMs ?? job.startedMs ?? now);
-    const status = job.pid === null || !(opts.alive ?? pidAlive)(job.pid) || idle > 60 * 60_000 ? 'stuck'
+    const processLive = job.pid !== null && (opts.alive ?? pidAlive)(job.pid);
+    const status = !processLive || idle > 60 * 60_000 ? 'stuck'
       : job.logMtimeMs === null ? 'unknown' : idle < 10 * 60_000 ? 'moving' : 'quiet';
     report.jobs.push({ id: scrubJobLogLine(job.job), lane: scrubJobLogLine(job.lane), repo: scrubJobLogLine(job.repo ?? 'unknown'),
       started: iso(job.startedMs), elapsed: iso(job.startedMs) === 'unknown' ? 'unknown' : Math.max(0, Math.floor((now - job.startedMs!) / 1000)),
-      lastLogWrite: iso(job.logMtimeMs), lastLine, status });
+      lastLogWrite: iso(job.logMtimeMs), lastLine, status, processLive });
   }
   try {
     const entries = await readdir(opts.wtRoot ?? defaultWtRoot(), { withFileTypes: true });

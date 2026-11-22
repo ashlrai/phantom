@@ -75,11 +75,20 @@ it('shows the empty state with every unknown spelled out', () => {
 });
 
 it('opens the existing detail pane for the node clicked and polls at most every 5 seconds', async () => {
-  const fetch = vi.fn(async () => new Response(JSON.stringify(fleet()), { status: 200, headers: { 'content-type': 'application/json' } }));
+  const fetch = vi.fn(async (input: RequestInfo | URL) => Response.json(String(input).includes('/job/tail') ? {
+    schema: 'fleet.job.tail.v1', job: 'RQ-A', events: [
+      ...Array.from({ length: 25 }, (_, i) => ({ source: 'log', text: `line ${i}` })), { source: 'event', text: 'launched' }],
+  } : fleet()));
   vi.stubGlobal('fetch', fetch);
   const openPane = vi.fn();
   render(<MapPane visible host={{ openPane } as never} />);
   fireEvent.click(await screen.findByRole('button', { name: /^Open job RQ-A/ }));
+  const log = await screen.findByRole('log');
+  await waitFor(() => expect(log.textContent).toContain('line 24'));
+  expect(log.textContent?.split('\n')).toHaveLength(20);
+  expect(log.textContent).not.toContain('line 4'); expect(log.textContent).not.toContain('launched');
+  expect(fetch).toHaveBeenCalledWith('/api/fleet/job/tail?id=RQ-A&lines=20', expect.anything());
+  fireEvent.click(screen.getByRole('button', { name: 'Open full log' }));
   expect(openPane).toHaveBeenLastCalledWith('worker-log');
   fireEvent.click(screen.getByRole('button', { name: /^Open lane claude:/ }));
   expect(openPane).toHaveBeenLastCalledWith('fleet-lanes');
@@ -90,7 +99,13 @@ it('opens the existing detail pane for the node clicked and polls at most every 
   expect(DETAIL_PANE.resource).toBe('fleet-usage');
   // One read each of the graph, its message edges, its message cards, its conversations and its replay frames; none repeats inside the poll interval.
   await new Promise(resolve => setTimeout(resolve, 50));
-  expect((fetch.mock.calls as unknown[][]).map(call => String(call[0]).replace(/^.*\/control\//, '')).sort()).toEqual(['agent-conversations', 'agent-messages', 'live-map', 'map-edges', 'map-replay']);
+  expect((fetch.mock.calls as unknown[][]).map(call => String(call[0]).replace(/^.*\/control\//, '')).sort()).toEqual(['/api/fleet/job/tail?id=RQ-A&lines=20', 'agent-conversations', 'agent-messages', 'live-map', 'map-edges', 'map-replay']);
+});
+
+it('shows a plain message for a known empty fleet', () => {
+  const map = buildFleetLiveMap({ now: NOW, jobs: { schema: 'jobs.live.v1', generatedAt: AT, known: true, jobs: [] } });
+  render(<MapView map={map} now={NOW} onOpen={() => {}} />);
+  expect(screen.getByRole('status').textContent).toBe('Nothing running right now');
 });
 
 it('reads an unexpected payload as unavailable, and drops edges to nodes it does not have', async () => {

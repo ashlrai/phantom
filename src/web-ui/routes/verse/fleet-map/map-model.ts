@@ -39,6 +39,7 @@ export function narrowLiveMap(raw: unknown): FleetLiveMap | null {
       ...(kind === 'lane' && narrowLaneHealth(row.health) ? { health: narrowLaneHealth(row.health) } : {}),
       ...(kind === 'lane' && (row.mergedPerHour === null || typeof row.mergedPerHour === 'number') ? { mergedPerHour: row.mergedPerHour } : {}),
       ...(kind === 'job' ? { lane: text(row.lane), repo: text(row.repo), ...(MAP_STATES.includes(row.state as MapState) ? { state: row.state as MapState } : {}) } : {}),
+      ...(kind === 'job' && 'ageMinutes' in row ? { ageMinutes: count(row.ageMinutes) } : {}),
       ...(kind === 'computer' && row.remote === true ? { remote: true } : {}),
       ...(kind === 'resource' && (row.usedPct === null || typeof row.usedPct === 'number') ? { usedPct: row.usedPct } : {}) });
   }

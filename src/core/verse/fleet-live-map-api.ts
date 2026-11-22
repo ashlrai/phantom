@@ -1,7 +1,7 @@
 /**
  * GET /api/verse/fleet/control/live-map: the fleet.live-map.v1 graph behind
- * `phm map` and the desktop Map pane. Reads only what `phm org` and
- * `phm nodes` already read (core/fleet/live-map.ts joins them).
+ * `phm map` and the desktop Map pane. Current jobs come from the reader that
+ * publishes the leader brief's live-jobs feed; org and nodes supply structure.
  *
  * Fast by construction: one graph build serves every caller for 5 seconds,
  * and callers that arrive while a build is running share it, so the map costs
@@ -32,6 +32,7 @@ import { readAgentConversations } from '../fleet/agent-conversations.js';
 import { CONVERSATION_STATES, type ConversationState } from '../fleet/agent-conversation-model.js';
 import { readMapReplay } from '../fleet/map-replay-build.js';
 import { sanitizePublicJson } from '../util/public-json.js';
+import { readLiveJobs } from '../fleet/live-jobs.js';
 
 export const LIVE_MAP_PATH = '/api/verse/fleet/control/live-map';
 export const MAP_EDGES_PATH = '/api/verse/fleet/control/map-edges';
@@ -45,6 +46,7 @@ export async function readFleetLiveMap(now = Date.now()): Promise<FleetLiveMap> 
   const [{ readFleetOrgSources }, { defaultNodesViewDeps, readNodesView }] = await Promise.all([
     import('./fleet-org-map-api.js'), import('../fleet/nodes-view.js')]);
   const org = await readFleetOrgSources(LIVE_MAP_WINDOW_MINUTES).catch(() => null);
+  const jobs = await readLiveJobs({ now: () => now }).catch(() => null);
   let computers = null;
   try { computers = readNodesView(defaultNodesViewDeps()); } catch { /* unknown, listed in gaps */ }
   // Sanitizing keeps the shape; it only rewrites home paths and secret-shaped strings.
@@ -54,7 +56,7 @@ export async function readFleetLiveMap(now = Date.now()): Promise<FleetLiveMap> 
     const { fleetLaneEmptyNotes } = await import('../fleet/lane-empty-notes.js');
     lanes = await getFleetLaneSnapshot({ emptyNotes: fleetLaneEmptyNotes });
   } catch { /* badges absent, listed nowhere: the map still draws */ }
-  return sanitizePublicJson(buildFleetLiveMap({ org: org?.map ?? null, usage: org?.usage ?? null, computers, lanes, now })) as FleetLiveMap;
+  return sanitizePublicJson(buildFleetLiveMap({ org: org?.map ?? null, jobs, usage: org?.usage ?? null, computers, lanes, now })) as FleetLiveMap;
 }
 
 /** At most one `read` per interval; concurrent callers share the build in flight. A failed build is not kept. Also throttles the Sessions read. */

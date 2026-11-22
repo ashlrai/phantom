@@ -2,8 +2,8 @@
  * The Map pane: the whole fleet on one screen (`phm map`). Leader on top, then
  * lanes with their provider logo, running jobs, computers and pools. A line
  * pulses when a message crossed it in the last minute and is thicker the more
- * messages it carried. Select any node to open the pane that already shows its
- * details, or a message line to open its last 20 messages in the Messages pane.
+ * messages it carried. Select a job to preview its last 20 redacted log lines;
+ * other nodes open their detail pane. A message line opens its last 20 messages.
  * A thicker line over a pair that talked in a thread in the last 10 minutes (thicker with more messages) carries a marker
  * when a reply is awaited; selecting it opens that thread in the Conversations panel beside the map (`phm agents conversations`).
  * Hovering a message line (or its row in the list) shows a card of its last 5
@@ -31,6 +31,8 @@ import { LaneHealthBadge } from '../../../components/fleet/LaneHealthBadge.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 import { Segmented } from '../../../components/primitives/Segmented.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { apiGet } from '../../../data/client.js';
+import type { FleetJobTailV1 } from '../../../../core/fleet/runs-job-tail.js';
 import { relativeAt } from '../fleet/bus-feed-model.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { showMessagePair, type MessagePair } from '../fleet-messages/messages-pair.js';
@@ -78,6 +80,7 @@ export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => 
   const changeFilter = (next: MapFilter) => { setFilter(next); saveMapFilter(next); };
   const filterBar = <MapFilterBar map={full} filter={filter} onChange={changeFilter} />;
   const noMatch = <p className={styles.notice} role="status">{MAP_FILTER_EMPTY}</p>;
+  const noJobs = map.counts.jobs === 0 && map.sources.jobs === 'available' && !none ? <p className={styles.notice} role="status">Nothing running right now</p> : null;
   const [selectedThread, setSelectedThread] = useState<string | null>(null);
   const [showMessages, setShowMessages] = useState(true);
   const [hovered, setHovered] = useState<string | null>(null);
@@ -88,7 +91,7 @@ export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => 
   const mode: MapViewMode = compact ? '2d' : chosen;
   const arrange = (next: MapLayoutMode) => { setArrangement(next); setHovered(null); saveMapLayout(next); };
   const choose = (next: MapViewMode) => { setChosen(next); setHovered(null); saveMapViewMode(next); };
-  if (compact && !phoneMap) return <>{filterBar}{none ? noMatch
+  if (compact && !phoneMap) return <>{filterBar}{noJobs}{none ? noMatch
     : <PhoneOrg groups={fleetOrgGroups(map)} asks={asks} messages={showMessages ? edges : undefined} now={now} onShowMap={() => setPhoneMap(true)}
       onOpenJob={job => { const node = map.nodes.find(row => row.kind === 'job' && row.label === job); if (node) onOpen(node); }} />}</>;
   const orgLayout = arrangement === 'org' ? layoutByOrg(map) : null;
@@ -121,7 +124,8 @@ export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => 
     </div>
     <p className={styles.notice}>Map as of {Number.isFinite(Date.parse(map.generatedAt)) ? <time dateTime={map.generatedAt}>{map.generatedAt}</time> : 'unknown'}.</p>
     {filterBar}
-    {emptyMap(map) && !none && <p className={styles.notice} role="status">Nothing to map yet: no lanes, jobs or computers reported.</p>}
+    {noJobs}
+    {emptyMap(map) && map.sources.jobs !== 'available' && !none && <p className={styles.notice} role="status">Nothing to map yet: no lanes, jobs or computers reported.</p>}
     {none ? noMatch : mode === '3d' ? <MapStage3D map={map} now={now} onOpen={onOpen} onOpenEdge={edge => onOpenMessages(pairOf(edge))} nameOf={nameOf}
       showMessages={showMessages} reducedMotion={reducedMotion} onHover={setHovered} cardEdge={card}
       card={card ? <MessageCard edge={card} pair={pairs?.get(`${card.from}->${card.to}`)} layout={layout} now={now} title={`${label(card.from)} → ${label(card.to)}`} anchored /> : null} />
@@ -229,6 +233,7 @@ function MessageCard({ edge, pair, layout, now, title, anchored = false }: { edg
 }
 
 export function MapPane({ visible, host }: Pick<PaneProps, 'visible' | 'host'>) {
+  const [selectedJob, setSelectedJob] = useState<string | null>(null);
   const read = useQuery(liveMapQuery, { enabled: visible, freshMs: MAP_POLL_MS });
   const refetch = useRefetch(liveMapQuery);
   const edges = useQuery(mapEdgesQuery, { enabled: visible, freshMs: MAP_POLL_MS });
@@ -244,12 +249,16 @@ export function MapPane({ visible, host }: Pick<PaneProps, 'visible' | 'host'>) 
   usePollWhileVisible(() => { refetch(); refetchEdges(); refetchPairs(); refetchThreads(); }, MAP_POLL_MS, { enabled: visible });
   const openMessages = (pair: MessagePair) => { showMessagePair(pair); host.openPane('fleet-messages'); };
   const open = (node: LiveMapNode) => {
-    if (node.kind === 'job') requestWorkerLogJob(node.label);
+    if (node.kind === 'job') { setSelectedJob(node.label); return; }
+    setSelectedJob(null);
     host.openPane(DETAIL_PANE[node.kind]);
   };
   if (read.data === undefined && !read.error) return <div className={styles.root} role="status">Reading the fleet…</div>;
   if (!read.data) return <div className={styles.root}><p className={styles.notice} role="status">Map unavailable right now. It retries every few seconds.</p></div>;
   return <>
+    {selectedJob && <MapJobLog key={selectedJob} job={selectedJob} visible={visible} onClose={() => setSelectedJob(null)} onOpen={() => {
+      requestWorkerLogJob(selectedJob); host.openPane('worker-log');
+    }} />}
     {read.error && <p className={styles.notice} role="status">Refresh failed; showing the last map, which may be stale.</p>}
     <p className={styles.notice}>Message summaries as of {edges.updatedAt === null ? 'unknown' : <time dateTime={new Date(edges.updatedAt).toISOString()}>{new Date(edges.updatedAt).toISOString()}</time>}
       {edges.error ? ' · refresh failed; cached summaries may be stale' : ''}. Message cards as of {pairs.updatedAt === null ? 'unknown' : <time dateTime={new Date(pairs.updatedAt).toISOString()}>{new Date(pairs.updatedAt).toISOString()}</time>}
@@ -260,4 +269,19 @@ export function MapPane({ visible, host }: Pick<PaneProps, 'visible' | 'host'>) 
       : <MapView map={read.data} now={Date.now()} onOpen={open} edges={edges.data} onOpenMessages={openMessages}
       pairs={pairs.data} conversations={threads.data} reducedMotion={prefersReducedMotion()} />}
   </>;
+}
+
+/** The existing tail API applies scrubJobLogLine before any line reaches this preview. */
+function MapJobLog({ job, visible, onClose, onOpen }: { job: string; visible: boolean; onClose: () => void; onOpen: () => void }) {
+  const query = { key: `map-job-log:${job}`, fetch: (signal?: AbortSignal) => apiGet<FleetJobTailV1>(`/api/fleet/job/tail?id=${encodeURIComponent(job)}&lines=20`, signal) };
+  const read = useQuery(query, { enabled: visible, freshMs: MAP_POLL_MS });
+  const refetch = useRefetch(query);
+  usePollWhileVisible(refetch, MAP_POLL_MS, { enabled: visible });
+  const lines = read.data?.events?.filter(event => event.source === 'log').slice(-20);
+  return <section className={styles.root} aria-label={`Last 20 log lines for ${job}`}>
+    <strong>{job} · last 20 log lines</strong>
+    <button type="button" onClick={onClose}>Close log</button> <button type="button" onClick={onOpen}>Open full log</button>
+    {read.error ? <p role="status">Log unavailable right now.</p> : !lines ? <p role="status">Reading log…</p>
+      : <pre className={styles.logPreview} role="log">{lines.map(event => event.text).join('\n') || 'No log lines recorded yet.'}</pre>}
+  </section>;
 }
