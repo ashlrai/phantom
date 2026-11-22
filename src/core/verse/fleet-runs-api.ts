@@ -1,5 +1,6 @@
 import { readGoals } from '../fleet/goals.js';
 import { readGoalScorecard } from '../fleet/goal-scorecard.js';
+import { readWhyIdle } from '../fleet/why-idle-read.js';
 import { readMetricsPanel } from '../fleet/metrics-panel.js';
 import { defaultLoopReaders, readLoopReleasesCached, type LoopReleases } from '../metrics/loop-collect.js';
 import { LOOP_STAGES_DEFAULT_SINCE_MS, parseSince } from '../metrics/loop-stages.js';
@@ -460,6 +461,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         await mod.noteMergeSnapshot(result.mergesLastHour.items, deps.runsDir ?? defaultRunsDir(), new Date(now()).toISOString());
       } catch { /* Private ledger failures must not affect the snapshot. */ }
     }
+    result.whyIdle = await readWhyIdle(deps.runsDir ?? defaultRunsDir(), now());
     return result;
   }
   // Lane-median duration evidence is a slow statistic: refresh at most once a
