@@ -126,7 +126,9 @@ describe('claims', () => {
 describe('body kinds and work feed', () => {
   const valid: Record<string, unknown>[] = [
     { kind: 'note', text: 'hi', refs: ['pr:1'] },
+    { kind: 'note', text: 're: hi', inReplyTo: 'msg-1' },
     { kind: 'context', text: 'ctx', thread: 't1' },
+    { kind: 'context', text: 'ctx', inReplyTo: 'msg-9' },
     { kind: 'work.post', jobId: 'j1', title: 'Fix', repo: 'a/b', claimKeys: ['repo:a/b'] },
     { kind: 'work.post', jobId: 'j2', title: 'Fix', repo: 'a/b', claimKeys: ['repo:a/b'],
       dispatch: { tier: 'work', scope: 'the scope', acceptance: 'the check' } },
@@ -145,6 +147,10 @@ describe('body kinds and work feed', () => {
   it.each([
     { kind: 'note' },
     { kind: 'note', text: 'x', extra: 1 },
+    { kind: 'note', text: 'x', inReplyTo: 'has space' },
+    { kind: 'note', text: 'x', inReplyTo: 'x'.repeat(129) },
+    { kind: 'note', text: 'x', inReplyTo: 42 },
+    { kind: 'context', text: 'x', inReplyTo: 'line\nbreak' },
     { kind: 'work.status', jobId: 'j', status: 'paused' },
     { kind: 'work.claim', op: 'acquire', claimKey: 'queue:q', owner: 'o', leaseMs: 3_600_001 },
     { kind: 'work.claim', op: 'acquire', claimKey: 'queue:q', owner: 'o', leaseMs: 1, token: TOKEN },

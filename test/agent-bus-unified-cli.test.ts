@@ -84,6 +84,28 @@ describe('phm agents bus (unified)', () => {
     expect(adapters.json.adapters.map((a: { cli: string }) => a.cli)).toEqual(['claude', 'codex', 'devin', 'cursor', 'grok']);
   });
 
+  it('stamps --reply-to as the v2 inReplyTo citation on dm, post and channel post', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'nova', '--to', 'atlas', '--text', 'question', '--id', 'rq-1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'answer', '--reply-to', 'rq-1', '--id', 'rs-dm'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'create', 'ops', '--from', 'atlas', '--member', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'post', 'ops', '--from', 'nova', '--text', 'channel answer', '--reply-to', 'rq-1', '--id', 'rs-ch'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['post', '--from', 'atlas', '--to', 'fleet.mesh', '--kind', 'context', '--text', '{}', '--reply-to', 'rq-1', '--id', 'rs-lp'])).json)
+      .toMatchObject({ status: 'posted' });
+    for (const id of ['rs-dm', 'rs-ch', 'rs-lp']) {
+      const shown = await run(['show', id]);
+      expect(shown.json).toMatchObject({ status: 'ok', message: { envelope: { body: { inReplyTo: 'rq-1' } } } });
+    }
+    // A target that is not a printable message id refuses like any invalid
+    // send; the duplicate flag form is a usage error like every value flag.
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'x', '--reply-to', 'has space', '--id', 'rs-bad'])).code).toBe(1);
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'x', '--reply-to', 'a', '--reply-to', 'b'])).code).toBe(2);
+  });
+
   it('filters wakes by sender identity', async () => {
     expect((await run(['id', 'register', 'atlas', '--alias', 'lane-atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

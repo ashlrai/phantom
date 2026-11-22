@@ -318,7 +318,7 @@ conversation threads still needing a person — the same `waiting` and
 `blocked` threads the one shared conversations projection computes,
 fleet-wide: a waiting item names who must answer, how long it has waited
 and deep-links `phm agents conversations`, `phm agents bus show` and a
-`phm agents bus post --thread` reply template; a blocked item names who
+`phm agents bus post --thread`/`--reply-to` reply template; a blocked item names who
 reported the block, who was told and how long it has stood, with the same
 deep links. A thread whose latest message is already a pending bus item or
 whose `job:` thread the feed already lists stays under the bus source, one

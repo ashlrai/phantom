@@ -884,6 +884,24 @@ describe('readBusWorkMine', () => {
     expect(assigner.handoffs.matched).toBe(0);
   });
 
+  it('drops a worker-handoff the addressee answers through the unified replyTo send', async () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    expect(await sendHandoff({ from: 'nova', to: 'atlas', taskId: 'RQ-H-C',
+      prompt: 'take the dm-answered task', id: 'ho-dm' }, options)).toMatchObject({ status: 'posted' });
+    const before = readBusWorkMine('atlas', options);
+    if (before.status !== 'ok' || before.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(before.handoffs.matched).toBe(1);
+    // `agents bus dm --reply-to` stamps the same inReplyTo citation the
+    // worker-exit reply carries, routed recipient -> sender — the durable
+    // evidence this section and the conversation projection already credit.
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'done, see the PR',
+      replyTo: 'ho-dm', id: 'dm-ans' }, options)).toMatchObject({ status: 'posted' });
+    const after = readBusWorkMine('atlas', options);
+    if (after.status !== 'ok' || after.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(after.handoffs).toMatchObject({ status: 'ok', matched: 0, items: [], truncated: false });
+  });
+
   it('keeps a worker-handoff pending when the citation is not the assignee answering back', async () => {
     const options = setup(Date.now());
     register(options, 'atlas', 'nova', 'bystander');

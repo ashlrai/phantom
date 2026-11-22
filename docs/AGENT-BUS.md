@@ -695,7 +695,9 @@ unreadable, never a guess — the worker-handoff envelopes addressed to it that
 `fleet handoff-receive`/`handoff-reply` would accept, found in the same
 bounded walk and claim order (the first 20 shown, `matched` the true total;
 an assignment the addressee already answered drops out once a live reply
-routed recipient -> sender cites the handoff id through `inReplyTo`/`replyTo`,
+routed recipient -> sender cites the handoff id through `inReplyTo`/`replyTo` —
+the citation `agents bus dm|post|channel post --reply-to` stamps on a v2
+`note`/`context` body —
 the same durable evidence `agents conversations` credits when it marks the
 thread answered),
 each carrying the envelope `id` those verbs take as `--id`, the raw `to`
@@ -1187,14 +1189,21 @@ Repeatable `--ref <ref>` on `dm`, `post` and `channel post` records v2 `refs` on
 the field that ties a question and its answer together — on `dm`, `post`,
 `channel post`, and (as a read filter) `inbox` and `channel read`, plus
 `comms bus read`/`watch`. A thread read matches that field on `note`/`context` bodies
-only; every other body kind never matches.
+only; every other body kind never matches. `--reply-to <id>` on `dm`, `post`
+and `channel post` records the v2 `inReplyTo` citation — the envelope id the
+message answers — the same field `postBusReply`, `comms bus post --reply-to`
+and the fleet reply verbs stamp; `agents conversations` threads on it and the
+`work mine` handoff/awaiting sections credit a routed recipient -> sender
+citation as the answer, so an agent can close an ask or assignment without
+dropping to the fleet reply verbs. The citation names a routing id, never
+proof the target existed or was received.
 
 `body.kind` is one of:
 
 | kind | fields |
 | --- | --- |
-| `note` | `text`, optional `thread`, `refs` |
-| `context` | `text`, optional `thread`, `refs` |
+| `note` | `text`, optional `thread`, `refs`, `inReplyTo` |
+| `context` | `text`, optional `thread`, `refs`, `inReplyTo` |
 | `work.post` | `jobId`, `title`, `repo`, `claimKeys[]`, optional `provider`, `dispatch: {tier, scope, acceptance}` |
 | `work.claim` | `op: acquire` with `claimKey`, `owner`, `leaseMs`; or `op: renew` with `claimKey`, `token`, `leaseMs` |
 | `work.status` | `jobId`, `status`, optional `detail` |
