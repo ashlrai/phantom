@@ -1,14 +1,14 @@
 /** Compact projection of the existing host-load process trees; argv never leaves this module. */
 import { execFile } from 'node:child_process';
 import { scrubSecrets } from '../util/scrub.js';
-import { attributeProcessTrees, baseName, HOST_LOAD_MODEL_COMMAND, parseProcessList, plainName, readHostLoad, type HostLoad, type TreeRootMatcher } from './host-load.js';
+import { attributeProcessTrees, baseName, HOST_LOAD_MODEL_COMMAND, parseProcessList, plainName, readHostLoad, type HostLoad, type HostLoadItem, type TreeRootMatcher } from './host-load.js';
 import { findHostLeftovers, readLeftoverEvidence, type LeftoverEvidence } from './host-leftovers.js';
 import { parseEtime } from './runs-live-workers.js';
 
 export const HOST_FAMILIES_PS_ARGS = ['-axo', 'pid,ppid,pcpu,rss,etime,comm,command'];
 export type HostFamily = string;
 export interface HostFamilyRow { family: HostFamily; job: string | null; jobs?: string[]; processes: number; cpuPercent: number; rssMb: number }
-export interface HostFamilies { state: 'known' | 'unknown'; families: HostFamilyRow[]; omitted: number; blame: string; leftovers?: ReturnType<typeof findHostLeftovers> }
+export interface HostFamilies { state: 'known' | 'unknown'; families: HostFamilyRow[]; omitted: number; blame: string; fleetCpuPercent: number; totalCpuPercent: number; unknownCommands: HostLoadItem[]; leftovers?: ReturnType<typeof findHostLeftovers> }
 const familyRows = (text: string | null) => {
   const header = text?.split('\n', 1)[0] ?? '', start = header.indexOf('COMM');
   const width = start >= 0 ? header.indexOf('COMMAND', start + 4) - start - 1 : 0;
@@ -22,6 +22,22 @@ const executableFamily = (command: string): string => {
   const name = appName(command) ?? (/^(?:\S*\/)?Code Helper\b/.test(command) ? 'Code Helper' : baseName(command.trim().split(/\s+/)[0] ?? ''));
   return /^(?:mds(?:_stores)?|mdworker(?:_shared)?)$/.test(name) ? 'Spotlight' : scrubSecrets(plainName(name));
 };
+
+/** Only the executable token: never search arguments for a display name. */
+const commandName = (command: string): string => plainName(command.trim().split(/\s+/)[0]?.split('/').pop() ?? 'unknown');
+function isKnownStandalone(command: string): boolean {
+  const name = commandName(command).toLowerCase();
+  const path = command.split(/\s+/)[0]!.toLowerCase();
+  if (/docker|com\.docker|qemu|virtualbox|vmware|virtualization|vfkit|lima/.test(name + ' ' + path)) return true;
+  if (/^(?:mds(?:_stores)?|mdworker(?:_shared)?|spotlight)$/.test(name)) return true;
+  if (/^git(?:-|$)/.test(name)) return true;
+  if (/\b(?:tsserver|eslint(?:server|[-.]server)|typescript-language-server|vscode-eslint-language-server)\b/i.test(command)) return true;
+  if (/^(?:codex|claude)(?:[-.]|$)/.test(name) || /\/(?:@openai\/codex|@anthropic-ai\/claude-code)\//.test(command)) return true;
+  if (/chrome|chromium|safari|webkit|firefox/.test(name + ' ' + path) || /^\/.*?(?:Chrome|Chromium|Safari|Firefox)[^/]*\.app\//i.test(command)) return true;
+  if (/^(?:node|nodejs|npm|npx|vite)(?:[-.]|$)/.test(name)) return true;
+  if (/^python(?:\d|$)/.test(name)) return true;
+  return false;
+}
 
 /** Pure: strips elapsed time, then reuses host load's parser and cycle-safe ancestor attribution. */
 export function groupHostFamilies(text: string | null, evidence?: LeftoverEvidence, host: Pick<HostLoad, 'load1' | 'cores'> = { load1: null, cores: null }): HostFamilies {
@@ -45,7 +61,14 @@ export function groupHostFamilies(text: string | null, evidence?: LeftoverEviden
     // Use tree attribution's priority tier so a launching terminal app cannot swallow work or models.
     matchers.push({ name, pid: row.pid, fleet: !appName(row.executable) || !!wt || !!loop || test || family === 'local model' });
   }
-  const trees = attributeProcessTrees(rows.filter(r => !leftoverPids.has(r.pid)), matchers, row => names.get(row.pid)!);
+  const unknown = new Map<string, HostLoadItem>();
+  const trees = attributeProcessTrees(rows.filter(r => !leftoverPids.has(r.pid)), matchers, row => names.get(row.pid)!, (row, root) => {
+    if (root || isKnownStandalone(row.command)) return;
+    const name = names.get(row.pid)!;
+    const item = unknown.get(name) ?? { name, processes: 0, cpuPercent: 0, rssMb: 0 };
+    item.processes++; item.cpuPercent += row.cpu; item.rssMb += row.memoryKb / 1024;
+    unknown.set(name, item);
+  });
   const families: HostFamilyRow[] = trees.roots.filter(t => t.cpuPercent >= 20 || labels.has(t.name)).map(t => ({ ...(labels.get(t.name) ?? { family: t.name, job: null }),
     processes: t.processes, cpuPercent: t.cpuPercent, rssMb: t.memoryMb }));
   const small = trees.roots.filter(t => t.cpuPercent < 20 && !labels.has(t.name));
@@ -57,7 +80,10 @@ export function groupHostFamilies(text: string | null, evidence?: LeftoverEviden
   const fleet = families.filter(r => r.job !== null || r.family === 'leftover from finished jobs').reduce((n, r) => n + r.cpuPercent, 0);
   const blame = `load1 ${host.load1 ?? 'unknown'} on ${host.cores ?? 'unknown'} cores: ${rows.length
     ? [...families.slice(0, 2).map(r => `${r.family} ${r.cpuPercent}%`), `fleet ${Math.round(fleet * 10) / 10}%`].join(', ') : 'process load unknown'}`;
-  return { state: rows.length ? 'known' : 'unknown', families: families.slice(0, 8), omitted: Math.max(0, families.length - 8), blame, ...(evidence ? { leftovers } : {}) };
+  return { state: rows.length ? 'known' : 'unknown', families: families.slice(0, 8), omitted: Math.max(0, families.length - 8), blame,
+    unknownCommands: [...unknown.values()].sort((a, b) => b.cpuPercent - a.cpuPercent || a.name.localeCompare(b.name)).slice(0, 5)
+      .map(item => ({ ...item, cpuPercent: Math.round(item.cpuPercent * 10) / 10, rssMb: Math.round(item.rssMb) })),
+    fleetCpuPercent: Math.round(fleet * 10) / 10, totalCpuPercent: Math.round((trees.totalCpuPercent + leftovers.cpuPercent) * 10) / 10, ...(evidence ? { leftovers } : {}) };
 }
 
 /** Read-only, bounded ps call; failures never echo argv or subprocess errors. */

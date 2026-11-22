@@ -48,6 +48,7 @@ import { createHash } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { isHubRepositoryLabel } from '../authority/repository-binding.js';
 import { detectTestTampering, protectedPathHits } from '../authority/protected-paths.js';
@@ -307,11 +308,20 @@ async function requeueRecut(opts: TickOptions, obs: Observation, state: Autopilo
   if (recut.retryAt && (opts.now ?? (() => new Date()))().getTime() < Date.parse(recut.retryAt)) return { line: `recut #${recut.number} rate limited; retry after ${recut.retryAt} (attempt ${attempts}/${RECUT_QUEUE_ATTEMPTS})`, queued: false };
   let head: string;
   try {
+    let live = await readPr(opts.repo, recut.number, gh);
+    // GitHub computes new PR mergeability asynchronously. Give it two brief
+    // re-reads here instead of losing an entire tick to a transient unknown.
+    // Persistent unknowns still defer without spending a submission attempt.
+    for (let retry = 0; retry < 2 && live.state === 'open' && !live.draft && live.mergeable !== false
+      && (live.mergeableState === 'unknown' || (!live.mergeableState && live.mergeable === null)); retry++) {
+      await delay(250 * 2 ** retry);
+      live = await readPr(opts.repo, recut.number, gh);
+    }
+    // Revalidate authority after polling, as well as the final replacement.
     const source = await readPr(opts.repo, opts.number, gh);
     if (source.state !== 'open' || source.headSha !== recut.fromHead || source.headRef !== obs.pr.headRef
       || source.baseRef !== obs.pr.baseRef || source.headRepo.toLowerCase() !== opts.repo.toLowerCase() || source.draft || !source.autoMerge)
       return { line: `source #${opts.number} changed before recut submission; nothing queued`, queued: false };
-    const live = await readPr(opts.repo, recut.number, gh);
     if (live.state !== 'open') return null;
     if (live.headRef !== recut.branch || live.baseRef !== source.baseRef || live.headRepo.toLowerCase() !== opts.repo.toLowerCase()
       || (recut.headSha && live.headSha !== recut.headSha))
