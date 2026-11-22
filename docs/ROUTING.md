@@ -719,7 +719,38 @@ stands and rows resolving outside the jobs window join nothing and
 never create outcomes. The report's `launch_cost_state` mirrors the
 jobs `state` vocabulary and `launch_cost_truncated` marks a cut
 tail; anything but `read` leaves every `launch_cost_*` field null —
-unknown, never a zeroed or guessed resource figure. `reverted`
+unknown, never a zeroed or guessed resource figure. `cross_review` is
+the cross-provider review gate's recorded verdict for the job's
+standing pull request — the bounded append-only
+`fleet/cross-review.jsonl` audit journal under the ASHLR home root
+(the same root the eval passk projection and reward ledger resolve;
+`CROSS_REVIEW_SCHEMA_VERSION` 1 rows written by
+`src/core/fleet/cross-review-run.ts`). The journal carries `review`
+records — one per cross-model review of a standing PR, keyed
+`repo`+`pr` — and `decision` records recording the merge-action the
+review informed; `foldCrossReviews` keeps only `kind:'review'` rows
+under the producer's closed contract (`schemaVersion` 1, an
+`owner/repo`-shaped `repo`, a positive integral `pr`, the
+`approve`/`reject`/`failed`/`skipped` outcome vocabulary and a
+bounded `at` stamp) and collapses them to each PR's newest verdict —
+decision rows, wrong-schema rows, malformed rows and foreign kinds
+are skipped, never counted, and the reviewer's pool/family, reasons
+and semantic detail stay audit-side rather than joining. The join
+resolves each outcome's `cross_review` through the job's newest
+unambiguous canonical github.com pull URL claim — the same claim rule
+the merge-queue join applies, so a contested or foreign URL never
+resolves and a PR no outcome claims unambiguously joins nothing
+(cross-review rows never create outcomes). The evidence is
+review-gate context like `merge_queue`: a `reject` is the recorded
+reason the PR may never merge, but a review verdict is not a merge
+verdict — the join never feeds routing, ranking, admission or weight
+math. The read degrades independently like the other side ledgers:
+the report's `cross_review_state` mirrors the jobs `state`
+vocabulary and `cross_review_truncated` marks a cut tail, in which
+case joined verdicts cover only the newest bytes; anything but
+`read` leaves every `cross_review` `null` — unknown, never a guessed
+verdict — while an empty readable ledger means zero recorded joins.
+`reverted`
 folds explicit revert evidence — a `reverted` boolean, a revert event name
 or terminal REVERT/REVERTED state, or a parseable `reverted_at`/`revertedAt`
 stamp — plus the authority ledger's verified evidence index: a
@@ -886,7 +917,16 @@ most jobs first), and `unknown_merge_queue_check_failures`,
 `unknown_merge_queue_recuts` count the same cohort's jobs whose PR
 recorded at least one of each — queue-side diagnostic context for
 what the merge queue was doing with the PR while its merge verdict
-stayed unrecorded, never a reduction of the remainder — and
+stayed unrecorded, never a reduction of the remainder —
+`unknown_cross_reviews` counts the unknown-cohort jobs whose standing
+PR carried a recorded cross-model review verdict (joined as
+`cross_review` — the review gate's `approve`/`reject`/`failed`/
+`skipped` answer for the job's pull request) with
+`unknown_cross_review_verdicts` tallying the recorded verdict words
+over the same cohort (most jobs first) — review-gate context like the
+merge-queue join: a `reject` is the recorded reason the PR may never
+merge, but a review verdict is not a merge verdict, so it never
+reduces the remainder — and
 `unknown_unresolved` is
 the remainder with no
 recorded failure signal, no requeue word, no standing skip
@@ -900,10 +940,12 @@ not read they are `null`, never zero — and `unknown_empty_tags` is
 absent tag journal means tag coverage is unknown rather than zero;
 `unknown_market_reasons`, `unknown_market_rejected` and
 `unknown_market_rejected_reasons` are `null` the same way whenever the
-market ledger itself was not read, and the `unknown_merge_queue*`
+market ledger itself was not read, the `unknown_merge_queue*`
 tallies are `null` whenever the merge-events ledger itself was not
-read (`unknown_noop`/
-`unknown_noop_reasons` and the handoff, provider-wall, pool-throttle
+read, `unknown_cross_reviews`/`unknown_cross_review_verdicts` are
+`null` whenever the cross-review ledger itself was not read
+(`unknown_noop`/`unknown_noop_reasons` and the handoff,
+provider-wall, pool-throttle
 and node-runner tallies read jobs-ledger rows
 only, so they are real
 whenever the jobs read succeeded). When the ledger exceeds the retained tail the
@@ -912,8 +954,10 @@ only; `market_state`/`market_truncated` report the decision journal's
 health, `empty_tag_state`/`empty_tag_truncated` the tags journal's,
 `merge_events_state`/`merge_events_truncated` the merge-events
 journal's, `revert_ledger_state` the scan-detected revert ledger's,
-`reward_state`/`reward_truncated` the reward-signal substrate's and
+`reward_state`/`reward_truncated` the reward-signal substrate's,
 `launch_cost_state`/`launch_cost_truncated` the launch-cost journal's
+and `cross_review_state`/`cross_review_truncated` the cross-review
+journal's
 the same way. The report also carries the fleet controller's own recorded
 lane-quality verdicts: `controller_quality_state` reports the health of
 `<runs-dir>/queue/fleet-controller.json` (`'unreported'` when the caller
@@ -1036,7 +1080,15 @@ reason once, most jobs first), while `merge_queue_check_failures_known`,
 `merge_queue_recuts_known` count the same cohort's outcomes whose PR
 recorded at least one failed check observation, merge conflict,
 merge-retry request or recut request — post-publish queue-side
-friction behind a lane's merge latency. The weight math
+friction behind a lane's merge latency. The same evidence
+block also tallies the review gate's recorded cross-model verdicts —
+`cross_review_known` counts the known-cohort outcomes whose standing
+PR carried a joined `cross_review` verdict and `cross_review` breaks
+the count down by recorded outcome (`approve`/`reject`/`failed`/
+`skipped` — the cross-provider review's answer for the job's pull
+request, advisory context like `review_findings`: a `reject` is the
+recorded reason the PR may never merge, but a review verdict is not a
+merge verdict and never feeds the weight). The weight math
 still moves on
 held-merge rate alone; the evidence is context for whoever applies a
 proposal, and text output renders it as `name=value(known)` suffixes only

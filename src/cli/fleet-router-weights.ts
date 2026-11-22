@@ -1,8 +1,8 @@
 /**
  * `phm fleet router-weights [--runs-dir <absolute dir>] [--json]` — advisory per-work-class router-weight
  * proposals from recorded outcomes (metrics/jobs.jsonl joined with the bounded side ledgers
- * api-spend/work-market/empty-tags/merge-events/launch-cost plus the reward-signal substrate under the
- * ASHLR home root). Read-only: never writes weights.json and never
+ * api-spend/work-market/empty-tags/merge-events/launch-cost plus the reward-signal substrate and the
+ * cross-review verdict journal under the ASHLR home root). Read-only: never writes weights.json and never
  * changes routing. Logic lives in src/core/router/weight-proposals.ts; this file parses argv and renders.
  * Exit: 0 for a bounded read (proposals or an insufficient-evidence refusal); 1 when the ledger is missing,
  * unreadable, not a file or oversized (reported as unavailable, never as an empty success); 2 for usage.
@@ -17,7 +17,8 @@ export const FLEET_ROUTER_WEIGHTS_USAGE =
   'Usage: phm fleet router-weights [--runs-dir <absolute dir>] [--json]\n' +
   'Advisory only. Reads <runs-dir>/metrics/jobs.jsonl (default ASHLR_RUNS_DIR, then ~/.ashlr-runs) plus the bounded ' +
   'side ledgers (api-spend/work-market/empty-tags/merge-events/launch-cost) plus the reward-signal ledger ' +
-  '(<ashlr>/metrics/reward-signals.jsonl) and the fleet controller\'s recorded lane-quality ' +
+  '(<ashlr>/metrics/reward-signals.jsonl), the cross-review verdict journal (<ashlr>/fleet/cross-review.jsonl) ' +
+  'and the fleet controller\'s recorded lane-quality ' +
   'verdicts in <runs-dir>/queue/fleet-controller.json. ' +
   'Proposes bounded weight shifts per work_class/lane from held-merge outcomes (20 known outcomes required, ' +
   'shifts capped at 0.1; merges recorded as reverted never count as held). Writes nothing and changes no ' +
@@ -44,6 +45,11 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
   if (e.review_findings !== null) {
     const f = e.review_findings;
     parts.push(`review_findings=${f.fixed + f.rejected + f.ignored}(${e.review_findings_known})`);
+  }
+  if (e.cross_review !== null) {
+    const c = e.cross_review;
+    parts.push(`cross_review=${c.approve + c.reject + c.failed + c.skipped}(${e.cross_review_known})` +
+      `(approve:${c.approve},reject:${c.reject},failed:${c.failed},skipped:${c.skipped})`);
   }
   if (e.cost_usd_mean !== null) parts.push(`cost_usd=${e.cost_usd_mean}(${e.cost_known})`);
   if (e.acus_mean !== null) parts.push(`acus=${e.acus_mean}(${e.acus_known})`);
@@ -127,7 +133,7 @@ function qualityReceiptLine(r: ControllerQualityReceipt): string {
 }
 
 function proposalLines(report: RouterWeightProposalReport): string[] {
-  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} empty_tags=${report.empty_tag_state} merge_events=${report.merge_events_state} reward=${report.reward_state} launch_cost=${report.launch_cost_state} controller_quality=${report.controller_quality_state} truncated=${report.truncated} as_of=${report.as_of} ` +
+  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} empty_tags=${report.empty_tag_state} merge_events=${report.merge_events_state} reward=${report.reward_state} launch_cost=${report.launch_cost_state} cross_review=${report.cross_review_state} controller_quality=${report.controller_quality_state} truncated=${report.truncated} as_of=${report.as_of} ` +
     'advisory-only: not applied to routing or weights.json';
   if (report.status === 'unavailable') {
     return [header, `unavailable: ledger state=${report.ledger.state}; no proposals were computed`, `ledger ${report.ledger.path}`];
@@ -189,6 +195,11 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
               `retries:${report.unknown_merge_queue_retries},recuts:${report.unknown_merge_queue_recuts})`
             : `(check_failures:${report.unknown_merge_queue_check_failures},conflicts:${report.unknown_merge_queue_conflicts},` +
               `retries:${report.unknown_merge_queue_retries},recuts:${report.unknown_merge_queue_recuts})`)
+        : '') +
+      (report.unknown_cross_reviews !== null && report.unknown_cross_reviews > 0
+        ? ` cross_reviews=${report.unknown_cross_reviews}` +
+          (report.unknown_cross_review_verdicts !== null && report.unknown_cross_review_verdicts.length > 0
+            ? `(${report.unknown_cross_review_verdicts.map(c => `${c.verdict}:${c.jobs}`).join(',')})` : '')
         : ''),
   ];
   const rows = report.proposals.map(p => {
@@ -237,6 +248,11 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
       ? [`launch-cost coverage: launch-cost.jsonl ${report.launch_cost_state}; no launch resource evidence joined`]
       : report.launch_cost_truncated
         ? ['launch-cost coverage: retained tail only; launch_cost joins cover the newest bytes']
+        : []),
+    ...(report.cross_review_state !== 'read'
+      ? [`cross-review coverage: cross-review.jsonl ${report.cross_review_state}; no review verdicts joined`]
+      : report.cross_review_truncated
+        ? ['cross-review coverage: retained tail only; cross_review joins cover the newest bytes']
         : []),
     ...(report.controller_quality_state !== 'read' && report.controller_quality_state !== 'unreported'
       ? [`controller-quality coverage: fleet-controller.json ${report.controller_quality_state}; no lane-quality verdicts joined`]

@@ -53,6 +53,21 @@ const writeRewardSignals = (rows: object[]): void => {
 };
 const launchCostsPath = (): string => join(runs, 'metrics', 'launch-cost.jsonl');
 const writeLaunchCosts = (rows: object[]): void => writeFileSync(launchCostsPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+const crossReviewsPath = (): string => join(root, 'ashlr', 'fleet', 'cross-review.jsonl');
+const writeCrossReviews = (rows: (object | string)[]): void => {
+  mkdirSync(join(root, 'ashlr', 'fleet'), { recursive: true });
+  writeFileSync(crossReviewsPath(), rows.map(r => typeof r === 'string' ? r : JSON.stringify(r)).join('\n') + '\n');
+};
+/** A cross-review.jsonl kind:'review' row in the shape cross-review-run.ts appends (src/core/fleet/cross-review.ts). */
+const crossReview = (pr: number, outcome: string, extra: Record<string, unknown> = {}): object => ({
+  schemaVersion: 1, kind: 'review', at: '2026-11-21T00:00:00.000Z',
+  repo: 'ashlrai/phantom', pr,
+  prUrl: `https://github.com/ashlrai/phantom/pull/${pr}`,
+  reviewedHeadSha: 'a'.repeat(40), diffSha256: 'b'.repeat(64),
+  producerPool: 'mac-a', producerFamily: 'openai',
+  reviewerPool: 'mac-b', reviewerFamily: 'claude',
+  outcome, reasons: [], failure: null, skippedFor: [], ...extra,
+});
 /** A fleet.launch-cost.v1 row in the shape contrib/mac/launch_cost.py appends (src/core/fleet/launch-cost.ts). */
 const launchCostRow = (launchId: string, status: 'measured' | 'partial' | 'unknown', extra: Record<string, unknown> = {}): object => ({
   schema: 'fleet.launch-cost.v1', lane: 'alpha', launchId, startedAt: '2026-11-01T00:00:00Z',
@@ -364,6 +379,8 @@ describe('outcome-quality evidence', () => {
       ci_first_pass_rate: 0.8,
       review_findings_known: 10,
       review_findings: { fixed: 20, rejected: 10, ignored: 0 },
+      cross_review_known: 0,
+      cross_review: null,
       cost_known: 10,
       cost_usd_mean: 1.5,
       wall_known: 10,
@@ -426,6 +443,50 @@ describe('outcome-quality evidence', () => {
     expect(out).toContain('ttm_s=245(10)');
     expect(out).toContain('tokens_total=1450(10)');
     expect(out).toContain('passk=0.71(20)');
+  });
+
+  it('folds joined cross-review verdicts into group evidence as advisory tallies', async () => {
+    // cross-review.jsonl verdicts join outcomes through each job's newest
+    // unambiguous canonical PR claim — the same join merge_queue uses. The
+    // tally is advisory review-gate context: it never feeds the held-merge
+    // weight, and a job with no recorded verdict keeps cross_review_known at
+    // its real coverage rather than counting as a non-verdict.
+    const claim = (i: number, pr: number | null): object =>
+      event(`synthetic-xr-${i}`, 'alpha', 'code', 'MERGED',
+        pr === null ? {} : { pr_url: `https://github.com/ashlrai/phantom/pull/${pr}` });
+    writeLedger([
+      claim(0, 100), claim(1, 101), claim(2, 102), claim(3, 103),
+      claim(4, 130), claim(5, 130),   // two jobs contest PR 130 -> ambiguous, joins nothing
+      claim(6, 106),                  // claimed PR with no recorded review
+      claim(7, null),                 // no PR claim at all
+      ...merged(12).map((r, i) => event(`synthetic-xr-f-${i}`, 'alpha', 'code', 'MERGED')),
+    ]);
+    writeCrossReviews([
+      crossReview(100, 'approve'),
+      crossReview(101, 'reject'),
+      crossReview(102, 'failed'),
+      crossReview(103, 'skipped'),
+      crossReview(130, 'approve'),    // ambiguous claim: joins neither job
+      // A decision row is merge-action evidence, never a review verdict.
+      { ...crossReview(104, 'approve'), kind: 'decision', action: 'enable-auto-merge' },
+      'not json',                     // malformed rows never count
+      crossReview(999, 'approve'),    // no outcome claims PR 999: joins nothing
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      cross_review_state: 'read', cross_review_truncated: false,
+      known_outcomes: 20, unknown_outcomes: 0,
+    });
+    const p = report.proposals[0];
+    expect(p).toMatchObject({ status: 'proposed', proposed_weight: 0.6, known_n: 20 });
+    expect(p.evidence).toMatchObject({
+      cross_review_known: 4,
+      cross_review: { approve: 1, reject: 1, failed: 1, skipped: 1 },
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('cross_review=4(4)(approve:1,reject:1,failed:1,skipped:1)');
+    expect(out).toContain('cross_review=read');
   });
 
   it('folds queue-admission wait into group evidence with coverage counts', async () => {
@@ -561,6 +622,7 @@ describe('outcome-quality evidence', () => {
     expect(report.proposals[0].evidence).toEqual({
       ci_first_pass_known: 0, ci_first_pass_rate: null,
       review_findings_known: 0, review_findings: null,
+      cross_review_known: 0, cross_review: null,
       cost_known: 0, cost_usd_mean: null,
       wall_known: 0, wall_s_mean: null,
       ttm_known: 0, ttm_s_mean: null,
@@ -1306,6 +1368,70 @@ describe('unknown-outcome resolution', () => {
     const { out } = await run(['--runs-dir', runs]);
     expect(out).not.toContain('market_reasons=');
     expect(out).not.toContain('market_rejected=');
+  });
+
+  it('tallies joined cross-review verdicts inside the unknown cohort without resolving them', async () => {
+    // The review join is queue-side diagnostic context like the market and
+    // merge-queue joins: the standing PR's newest recorded cross-model
+    // verdict explains what the review gate saw while the merge verdict
+    // stayed unrecorded. A `reject` is the recorded reason the PR may never
+    // merge — but a review verdict is not a merge verdict, so every joined
+    // job stays in the unresolved remainder and weight math is untouched.
+    const claim = (job: string, pr: number | null): object =>
+      event(job, 'alpha', 'code', 'VERIFIED',
+        pr === null ? {} : { pr_url: `https://github.com/ashlrai/phantom/pull/${pr}` });
+    writeLedger([
+      ...merged(20),
+      claim('synthetic-xru-0', 200), claim('synthetic-xru-1', 201),
+      claim('synthetic-xru-2', 202), claim('synthetic-xru-3', 203),
+      claim('synthetic-xru-4', null),
+    ]);
+    writeCrossReviews([
+      crossReview(200, 'approve'),
+      crossReview(201, 'reject'),
+      crossReview(202, 'approve'),
+      // PR 203 has no recorded review; a decision row is never a verdict.
+      { ...crossReview(204, 'approve'), kind: 'decision', action: 'enable-auto-merge' },
+      'not json',
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      cross_review_state: 'read', cross_review_truncated: false,
+      known_outcomes: 20, unknown_outcomes: 5,
+      unknown_cross_reviews: 3,
+      unknown_cross_review_verdicts: [
+        { verdict: 'approve', jobs: 2 },
+        { verdict: 'reject', jobs: 1 },
+      ],
+      // Review verdicts never resolve the merge question: all five
+      // unmerged unknowns stay unresolved however the reviewer ruled.
+      unknown_unresolved: 5,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('cross_reviews=3(approve:2,reject:1)');
+    expect(out).toContain('unresolved=5');
+    expect(out).toContain('cross_review=read');
+  });
+
+  it('reports unknown_cross_reviews null when the review ledger was not read', async () => {
+    // No cross-review.jsonl: verdict coverage is unknown, so both tallies
+    // are null — never an empty list claiming no reviews were recorded.
+    writeLedger([
+      ...merged(20),
+      event('synthetic-xru-open', 'alpha', 'code', 'VERIFIED',
+        { pr_url: 'https://github.com/ashlrai/phantom/pull/300' }),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      status: 'proposed', cross_review_state: 'missing', cross_review_truncated: false,
+      unknown_cross_reviews: null,
+      unknown_cross_review_verdicts: null,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).not.toContain('cross_reviews=');
+    expect(out).toContain('cross-review coverage: cross-review.jsonl missing; no review verdicts joined');
   });
 });
 
