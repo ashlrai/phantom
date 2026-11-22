@@ -2630,7 +2630,7 @@ with a `reason`); they never throw for bad input or storage faults.
 `postLabelMessage`, `sendHandoff`, `sendWakeRequest`, `announceWork`,
 `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
-carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?, priority?, kind?, job?, matched?}, options?)`
+carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?, priority?, kind?, job?, matched?, since?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
 keeping exact-label matching, `priority` keeps only envelopes stamped
@@ -2641,7 +2641,9 @@ only mail that names one job — a `work.post`/`work.status`/`work.result`/`wake
 body declaring that `jobId`, a `worker-handoff` assigning that fleet job id
 through `taskId`, or a `note`/`context` body carrying the
 `job:<id>` v2 thread label, the same bucket the messages and conversations
-projections group under `job:<id>`; `matched: true` scans the whole retained store
+projections group under `job:<id>`; `since` keeps only mail received at
+or after that epoch-ms cutoff — the same inclusive `receivedAt >= since`
+match `phm messages --since` applies; `matched: true` scans the whole retained store
 and returns `matched`, the count of every filter-matched row, while
 `messages` still caps at `limit`; `group.presence` heartbeats are observations
 with their own read and never appear as mail of any kind; claimable work and
@@ -2690,7 +2692,7 @@ handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or
 `available`, `agent` the resolved handle or null, and an unknown ref or
 unreadable registry answers `unknown-agent`/`unavailable`, never an empty
-list), `readAgentChannel(name, {topic, from, thread, priority, job, matched, after, limit}, options?)`
+list), `readAgentChannel(name, {topic, from, thread, priority, job, matched, since, after, limit}, options?)`
 (one oldest-first page of a registry channel's live posts addressed to
 `group:<name>:*` — or one topic — with `group.presence` heartbeats
 excluded; `from` filters by sender through identity-label matching,
@@ -2700,7 +2702,9 @@ keeps only posts that name one job — the same `busBodyJobMatch` rule
 `readAgentInbox`'s `job` applies: a `work.post`/`work.status`/`work.result`/`wake`
 body declaring that `jobId`, a `worker-handoff` assigning that fleet job id
 through `taskId`, or a `note`/`context` body carrying the `job:<id>` v2
-thread label; `matched: true` scans the whole retained store and returns `matched`, the
+thread label; `since` keeps only posts received at or after that epoch-ms
+cutoff — the same `receivedAt >= since` match `readAgentInbox`'s `since`
+applies; `matched: true` scans the whole retained store and returns `matched`, the
 count of every filter-matched post, while `messages` still caps at
 `limit`; claimable work and worker-handoff posts additionally carry
 `held`/`holder` — the same hold evidence `readAgentInbox` and
