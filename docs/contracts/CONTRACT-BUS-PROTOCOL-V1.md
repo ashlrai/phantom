@@ -68,22 +68,31 @@ status.
 engine (`src/core/fleet/bus-work-claims.ts`, `bus-next-claim.ts`). They add no
 new state:
 
-- `next --to <address|topic> --owner <label> --lease-ms <1..3600000>` claims
+- `next --to <address|topic> --owner <label> --lease-ms <1..3600000>
+  [--contains <text>] [--since <15m|2h|1d|ISO>] [--priority <P0|P1|P2|P3>]`
+  claims
   the oldest highest-priority live task addressed to `--to`. When `--to`
   resolves to a registered agent identity, work addressed under any routing
   label of that identity (handle, `agent:` address, stable id or alias) — or
   to a `group:<channel>:<topic>` address of a registry channel the identity
   belongs to, minus the identity's own channel posts — is eligible; a `--to`
   that names no identity, membership in no channel, or an unreadable registry,
-  keeps exact-label matching. It returns
+  keeps exact-label matching. `--contains`, `--since` and `--priority` apply
+  the same rules every bus read's filters do — the scrubbed one-line summary
+  substring, the inclusive `receivedAt` cutoff and the exact P0..P3 band —
+  inside the claim scan, so the claimable set is exactly what the matching
+  read would list; a malformed value is `invalid`, never a widened claim. It
+  returns
   `{status:'acquired', receipt, token, leaseUntil}` or
   `{status:'empty', candidates, held}`. `candidates` counts every live
-  claimable receipt the bounded scan found addressed to `--to`, and `held`
+  claimable receipt the bounded scan found addressed to `--to` and matching
+  the request's filters, and `held`
   counts how many answered `conflict` — a live claim on the message id or an
   overlapping coordination key, possibly the requester's own. `candidates -
   held` failed acquire for other reasons (completed, expired, lost, missing,
   or a receipt that changed mid-claim); expired receipts never reach the
-  scan. Both are observed counts, so `empty` distinguishes a dry well
+  scan. Both are observed counts over the filtered scan, so `empty`
+  distinguishes a dry well
   (`candidates: 0`) from work that exists but is held, without a second read.
 - `claim acquire --id <message-id> --owner <label> --lease-ms <n>` claims one
   message by ID. A live lease answers `conflict` to every other claimant.

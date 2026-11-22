@@ -929,12 +929,20 @@ unreadable dependency degrades only its own section. Exit 0 on a completed
 read, 2 on an invalid agent ref.
 
 **Pending-work claim.** `phm agents bus work next [<agent>] --lease-ms
-<1..3600000> [--owner <label>]` is the claim half of the loop `work mine`
+<1..3600000> [--owner <label>] [--contains <text>] [--since
+<15m|2h|1d|ISO>] [--priority P0..P3]` is the claim half of the loop `work
+mine`
 opens: it takes the next claimable work envelope addressed to the agent —
 the same live `kind:'work'`/protocol-`task` receipts the digest's `next`
 section lists — and leases it through the same message-id claim path
 `fleet bus-next`/`comms bus next` run, so the find → claim step never
-leaves this surface. The bounded scan walks candidates in `bus next`
+leaves this surface. `--contains`, `--since` and `--priority` narrow the
+claimable set under the same rules every bus read applies — the scrubbed
+one-line summary substring, the inclusive `receivedAt` cutoff and the
+exact P0..P3 band — so "claim the next work about X" or "claim the next
+urgent one" is one atomic step rather than a filtered list followed by a
+claim-by-id, and `empty`'s `{candidates, held}` totals count only the
+filtered scan. The bounded scan walks candidates in `bus next`
 order (priority band, then cursor) and matches "addressed to it" under
 the identical rule: any label of the resolved identity or a
 `group:<channel>:<topic>` address of a registry channel it belongs to,
@@ -1303,10 +1311,19 @@ address of a registry channel the identity belongs to, minus the identity's
 own channel posts: the same membership rule the inbox, wake and `work mine`
 reads apply, through the same identity registry the message filters use; a
 `--to` naming no identity, membership in no channel, or an unreadable registry
-keeps exact-label matching and never widens. When nothing is acquirable the
+keeps exact-label matching and never widens. All four claim surfaces —
+`agents bus work next`, `fleet bus-next`, `fleet bus-wait-claim` and
+`comms bus next` — take the same `--contains <text>`, `--since
+<15m|2h|1d|ISO>` and `--priority <P0|P1|P2|P3>` read filters, applied inside
+the claim scan under the identical rules the reads use (the scrubbed
+one-line summary substring, the inclusive `receivedAt` cutoff, the exact
+priority band), so the claimable set is exactly what the matching read
+would list and a filtered claim can never pick work the read would hide.
+When nothing is acquirable the
 result is `{status:'empty', candidates, held}` rather than a bare `empty`:
 `candidates` counts every live claimable receipt the bounded scan found
-addressed to `--to`, and `held` counts how many answered `conflict` — a live
+addressed to `--to` and matching the request's filters, and `held` counts
+how many answered `conflict` — a live
 claim on the message id or an overlapping coordination key, possibly the
 requester's own prior claim — so `empty` distinguishes a dry well
 (`candidates: 0`) from work that exists but is held without a second
