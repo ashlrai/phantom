@@ -269,6 +269,12 @@ export function buildPoolsView(ledger: ResourceLedgerV1, now: number, samples: r
   return { schema: POOLS_SCHEMA, generatedAt: new Date(now).toISOString(), staleAfterMinutes: POOLS_STALE_AFTER_MINUTES, pools, gaps };
 }
 
+/** Describe the model cap alongside the independently observed plan usage. */
+export function describeCap(cap: Pick<ModelCap, 'model' | 'capped_at'>, planUsedPct: number | null = null): string {
+  const label = cap.model.charAt(0).toUpperCase() + cap.model.slice(1);
+  return `${label} capped since ${cap.capped_at} (plan ${planUsedPct === null ? 'unknown' : `at ${Math.round(planUsedPct)}%`})`;
+}
+
 const cell = (value: number | null, unit: string): string => value === null ? 'unknown' : `${value}${unit}`;
 
 /** `phm pools --text`: one line per resource, same order as the JSON. */
@@ -279,7 +285,7 @@ export function formatPoolsText(view: PoolsViewV1): string {
     lines.push(row.summary);
     lines.push(`  risk ${row.wasteRisk}; used ${cell(row.usedPct, '%')}; resets ${row.resetAt ?? 'unknown'} (${cell(row.hoursLeft, 'h')} left); `
       + `burn ${cell(row.burnPctPerHour, '%/h')}${row.burnBasis ? ` (${row.burnBasis === 'least-squares' ? `${row.burnBasis}, ${row.burn.samples} readings over ${row.burn.window_h} h` : row.burnBasis})` : ''}; unused at reset ${cell(row.projectedUnusedPct, '%')}; empty ${row.projectedEmptyAt ?? (row.burnPctPerHour === null ? 'unknown' : 'not before reset')}; as of ${row.asOf ?? 'unknown'}`);
-    for (const cap of row.cappedModels ?? []) lines.push(`  ${cap.model}: hit its usage limit at ${cap.cappedAt}; resets ${cap.resetAt ?? 'unknown'}; jobs use the next model`);
+    for (const cap of row.cappedModels ?? []) lines.push(`  ${describeCap({ model: cap.model, capped_at: cap.cappedAt }, row.usedPct)}; resets ${cap.resetAt ?? 'unknown'}`);
     for (const scope of row.scopes) lines.push(`  ${scope.id}: used ${cell(scope.usedPct, '%')}; resets ${scope.resetAt ?? 'unknown'} (${cell(scope.hoursLeft, 'h')} left)`);
   }
   for (const gap of view.gaps) lines.push(`Not covered: ${gap}`);
