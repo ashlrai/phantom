@@ -1501,11 +1501,14 @@ claims holds under the shown jobs only; without a limit parameter the whole
 filtered view answers exactly as before, and `fleet_work_feed` keeps its own
 default of 50.
 `--to <label>` keeps only jobs whose post was addressed to
-that routing label; like `bus next`, `bus-follow`, handoff receive and claim
-`--owner`, the label matches literally and under every label of one agent
-identity through the registry, while an unresolvable `--to` or an unreadable
-registry keeps exact-label matching — the filter narrows the fleet view, it
-never widens it. The
+that agent — the literal routing label, every label of one agent identity,
+and `group:<channel>:<topic>` addresses of registry channels the identity
+belongs to, minus channel posts the identity sent itself, the same
+addressed-to-agent rule `bus next`, `bus-follow`, handoff receive, the
+`work mine` digest and `agents bus inbox` apply; an unresolvable `--to` or
+an unreadable registry keeps exact-label matching — the filter narrows the
+fleet view, it never widens it. `--owner` keeps jobs announced by that agent
+under every label of one agent identity. The
 endpoint needs a current read session and accepts `claims=true` plus the
 same filter parameters the feed CLIs take — `status`, `job`, `repo`,
 `provider`, `tier`, `to`, `owner`, `since`, `contains`, `open`,
