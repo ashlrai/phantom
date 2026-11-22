@@ -72,8 +72,9 @@ and every full lane was skipped. `Quick typecheck` and
 drift) also run but are advisory. Auto-tag and the release gate require
 `Check authority drift (hermetic)` green on the exact commit; fix drift in
 the same pull request. A direct push to master takes the same gate
-without the fast gate. No pull request or merge-queue commit may occupy a macOS
-or Windows runner: the `ci` Ubuntu/Windows matrix, the Mac exhaustive lanes
+without the fast gate. No pull request, merge-queue commit or direct `master`
+push may occupy a macOS or Windows runner: the `ci` Ubuntu/Windows matrix, the
+Mac exhaustive lanes
 (`Mac exhaustive (N/4)`, `Mac exhaustive (isolated)`), the shared-macOS and
 native-broker lanes, and the Windows service authority run only in the
 scheduled run on master (every six hours), on manual dispatch (optionally

@@ -357,14 +357,16 @@ pressure stay separate; diagnostic values never change admission or worker count
 Hosted CI includes exhaustive Ubuntu shards, named Windows portability contracts,
 four exhaustive Mac partitions, a separate Mac lane for all isolated suites
 (two at a time, each in its own home with one worker; locally they stay serial
-unless `ASHLR_TEST_CI_ISOLATED_CONCURRENCY=2`), macOS queue coverage and native
-broker checks. None of these lanes runs on a pull request, in the merge queue
-or on a `master` push; there `Merge Gate` runs the secret scans, the
-generated-files check and the fast gate. The full Ubuntu, Windows and Mac lanes
-run on the six-hour scheduled `master` run, on manual dispatch and on the
-reusable workflow call. The scheduled run rotates the exhaustive Mac work over
-seven daily slices; a dispatch defaults to the complete set. Local tests
-and hosted checks prove different environments. Inspect each actual run and report unavailable or
+unless `ASHLR_TEST_CI_ISOLATED_CONCURRENCY=2`), macOS queue coverage, native
+broker checks and the Windows service authority lane. None of these lanes runs
+on a pull request, in the merge queue or on a `master` push; there `Merge Gate`
+runs the secret scans, the generated-files check and the fast gate. The full
+Ubuntu, Windows and Mac lanes run on the six-hour scheduled `master` run and
+on manual dispatch. The scheduled run rotates the exhaustive Mac work over
+seven daily slices; a dispatch defaults to the complete set. The reusable
+release call retains the Ubuntu/Windows matrix but defers the macOS and
+Windows service lanes to the scheduled run. Failures there are fixed forward.
+Local tests and hosted checks prove different environments. Inspect each actual run and report unavailable or
 skipped coverage separately; do not weaken checks to make a release pass.
 
 The optional [qualified build handoff](docs/RELEASING.md#qualified-ci-build-handoff)
