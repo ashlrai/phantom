@@ -2531,11 +2531,20 @@ authentication check. It performs no I/O, transport, claim mutation or execution
 journals/readers remain unchanged; feed output is explicitly versioned `v:2`.
 `readBusWorkFeed` (`src/core/agents/bus-work-feed-read.ts`) is the bounded
 read-only reader over the local inbox; `GET /api/verse/agent-bus/work-feed`
-(`src/core/verse/agent-bus-api.ts`, read session required; `claims=true` is
-the only accepted parameter and adds the `claims` hold join, every other
-parameter or value is a 400) serves its `BusWorkFeedReadResult` as `{v:1, ...}` — `ok` and `refused` answer
+(`src/core/verse/agent-bus-api.ts`, read session required) serves its
+`BusWorkFeedReadResult` as `{v:1, ...}` — `ok` and `refused` answer
 200 with the projection's own status, `unavailable`/`retryable`/`invalid`
-answer 503.
+answer 503. Its query is the feed CLIs' filter set: `claims=true` adds the
+claims hold join, `open=true`/`claimable=true` imply it like the CLI flags,
+and `status`, `job`, `repo`, `provider`, `tier`, `to`, `owner`, `since` and
+`contains` narrow the answer through the same `projectBusWorkFeedView` the
+CLIs use — jobs answer newest-first, `to`/`owner` resolve through the
+server-side identity registry with exact-label fallback, and `repo`,
+`since` and `contains` share the CLI normalization. Every parameter is a
+single value validated by the shared `parseBusWorkFeedQuery`
+(`src/core/agents/bus-work-feed-query.ts`) rules; repeated, unknown or
+malformed parameters or values are a 400, and no caller-supplied root or
+path is accepted — the read always uses the server-side fleet root.
 
 `readBusWorkFeed({root?, now?, claims?, participants?, providerFor?, ownerKeyFor?})` in `src/core/agents/bus-work-feed-read.ts`
 pages the bounded bus inbox without writes and returns ok/refused/unavailable/

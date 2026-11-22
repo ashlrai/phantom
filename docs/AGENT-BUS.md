@@ -1331,8 +1331,16 @@ that routing label; like `bus next`, `bus-follow`, handoff receive and claim
 identity through the registry, while an unresolvable `--to` or an unreadable
 registry keeps exact-label matching — the filter narrows the fleet view, it
 never widens it. The
-endpoint needs a current read session and accepts only `claims=true` (any
-other parameter or value is a 400), and answers 200
+endpoint needs a current read session and accepts `claims=true` plus the
+same filter parameters the feed CLIs take — `status`, `job`, `repo`,
+`provider`, `tier`, `to`, `owner`, `since`, `contains`, `open` and
+`claimable` — each a single value validated by the shared
+`parseBusWorkFeedQuery` rules (`src/core/agents/bus-work-feed-query.ts`) and
+applied through the same `projectBusWorkFeedView` the CLIs use, so an HTTP
+client gets the identical narrowed, newest-first view: `open`/`claimable`
+imply the claims join like the CLI flags, `to`/`owner` resolve through the
+server-side identity registry with exact-label fallback, and repeated,
+unknown or malformed parameters or values are a 400. It answers 200
 for `ok` and `refused` — the projection's own status, reason and blamed
 receipt stay in the body — while `unavailable`, `retryable` and `invalid`
 storage answer 503. A missing store reads as an empty `ok` feed. Status
@@ -1363,7 +1371,8 @@ lease end, origin, source id; tokens never leave the store), with
 `claims.source` of `missing`, `available` or `unavailable`. An unavailable
 claim table means holds are unknown, not absent. GET
 `/api/verse/agent-bus/work-feed?claims=true` serves the same join to
-HTTP-only implementers; without the parameter the response omits `claims`.
+HTTP-only implementers — as do `open=true` and `claimable=true`, which
+imply it; without a claims parameter the response omits `claims`.
 
 ### Bounded peer dispatch
 
@@ -1486,7 +1495,8 @@ a read-only view of queue prompt files and can be merged onto that board with
 A message-id lease is shown under its bus message id, so a roster session and
 a bus claim still share one lease.
 GET `/api/verse/agent-bus/work-feed` serves the work-feed projection over
-HTTP (read session required; `ok`/`refused` answer 200, storage faults 503).
+HTTP with the feed CLIs' filter parameters (read session required;
+`ok`/`refused` answer 200, storage faults 503).
 
 ### Message links in Fleet
 
