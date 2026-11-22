@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   authorityRevertedPrKeys,
+  foldCrossReviews,
   foldEmptyTags,
   foldLaunchCosts,
   foldMergeEvents,
@@ -18,6 +19,7 @@ import {
   readLedgerTail,
   readRouterOutcomes,
   ROUTER_OUTCOME_LEDGER_LIMIT,
+  type CrossReviewEvidence,
   type MergeQueueEvidence,
   type RouterOutcomeEvidenceRow,
 } from '../src/core/router/outcomes.js';
@@ -120,6 +122,28 @@ function rewardLedger(rows: object[]): string {
   writeFileSync(rewardSignalsPath(root), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
   return root;
 }
+
+const crossReviewLedgerPath = (root: string) => join(root, 'fleet', 'cross-review.jsonl');
+
+/** An ASHLR-home temp root carrying fleet/cross-review.jsonl rows (the cross-review audit journal shape). */
+function crossReviewLedger(rows: (object | string)[]): string {
+  const root = mkdtempSync(join(tmpdir(), 'ledger-612s-xreview-'));
+  roots.push(root);
+  mkdirSync(join(root, 'fleet'), { recursive: true });
+  writeFileSync(crossReviewLedgerPath(root), rows.map(r => typeof r === 'string' ? r : JSON.stringify(r)).join('\n') + '\n');
+  return root;
+}
+
+/** A cross-review.jsonl kind:'review' row in the shape cross-review-run.ts appends (src/core/fleet/cross-review.ts). */
+const crossReview = (pr: number, outcome: string, extra: Record<string, unknown> = {}): object => ({
+  schemaVersion: 1, kind: 'review', at: '2026-11-21T00:00:00.000Z',
+  repo: 'ashlrai/phantom', pr,
+  prUrl: `https://github.com/ashlrai/phantom/pull/${pr}`,
+  reviewedHeadSha: 'a'.repeat(40), diffSha256: 'b'.repeat(64),
+  producerPool: 'mac-a', producerFamily: 'openai',
+  reviewerPool: 'mac-b', reviewerFamily: 'claude',
+  outcome, reasons: [], failure: null, skippedFor: [], ...extra,
+});
 
 /** A reward-signals.jsonl v1 row in the shape the reward-sync feed appends (src/core/metrics/reward-signal.ts). */
 const rewardRow = (jobId: string, merged: boolean, extra: Record<string, unknown> = {}): object => ({
@@ -283,7 +307,7 @@ describe('router outcome ledger (612S preservation)', () => {
       provider_wall_trigger: null, provider_wall_pattern: null, provider_wall_lane: null,
       pool_kind: null, pool_mem_free_pct: null, pool_swap_gb: null, pool_pct_used: null,
       node_outcome: null, node_id: null, node_pack: null,
-      merge_queue: null,
+      merge_queue: null, cross_review: null,
       launch_cost_status: null, launch_peak_processes: null, launch_mean_cpu_pct: null, launch_peak_cpu_pct: null,
       passk: null,
     }]);
@@ -1936,6 +1960,111 @@ describe('router outcome merge-events join', () => {
     const result = await readRouterOutcomes({ runsDir: root });
     expect(result).toMatchObject({ state: 'read', merge_events_state: 'read', merge_events_truncated: true });
     expect(result.outcomes[0]?.merge_queue).toBeNull();
+  });
+});
+
+describe('router outcome cross-review join', () => {
+  it('foldCrossReviews keeps only kind:review rows under the schema with a bounded verdict', () => {
+    const reviews = foldCrossReviews([
+      // Malformed and non-object rows never count.
+      'not json', '[1,2]', '42', '',
+      // Wrong schema version, decision rows and foreign kinds never count.
+      JSON.stringify({ ...crossReview(1, 'approve'), schemaVersion: 2 }),
+      JSON.stringify({ ...crossReview(2, 'approve'), kind: 'decision' }),
+      JSON.stringify({ ...crossReview(3, 'approve'), kind: 'sideways' }),
+      // Bad repo/pr/outcome shapes skip.
+      JSON.stringify({ ...crossReview(4, 'approve'), repo: 'no-slash' }),
+      JSON.stringify({ ...crossReview(0, 'approve') }),
+      JSON.stringify({ ...crossReview(1.5, 'approve') }),
+      JSON.stringify(crossReview(5, 'sideways')),
+      // The qualifying rows for PR 7 — repo case canonicalizes to the
+      // prKey pullRequestKey produces, and the last appended review wins.
+      JSON.stringify(crossReview(7, 'reject', { repo: 'AshlrAI/Phantom', at: '2026-11-21T01:00:00Z' })),
+      JSON.stringify(crossReview(7, 'approve', { at: '2026-11-21T02:00:00Z' })),
+      // An unparseable `at` keeps the verdict but nulls the timestamp.
+      JSON.stringify(crossReview(8, 'failed', { at: 'not a time' })),
+      // A PR no outcome claims joins nothing — the map never creates outcomes.
+      JSON.stringify(crossReview(99, 'approve')),
+    ].join('\n'));
+    expect(reviews.get('ashlrai/phantom#7')).toEqual({ outcome: 'approve', at: '2026-11-21T02:00:00Z' } satisfies CrossReviewEvidence);
+    expect(reviews.get('ashlrai/phantom#8')).toEqual({ outcome: 'failed', at: null });
+    expect(reviews.size).toBe(3);
+  });
+
+  it('joins cross_review through each job\'s newest unambiguous canonical PR claim only', () => {
+    const reviews = new Map<string, CrossReviewEvidence>([
+      ['ashlrai/phantom#42', { outcome: 'reject', at: '2026-11-21T00:00:00Z' }],
+      ['ashlrai/phantom#77', { outcome: 'approve', at: '2026-11-22T00:00:00Z' }],
+    ]);
+    const fold = foldRouterOutcomes([
+      // J1 claims PR 42 unambiguously -> joins.
+      '{"job":"J1","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42","ts":"2026-11-01T00:00:00Z"}',
+      // J2 and J3 contest PR 43 -> ambiguous, never joins.
+      '{"job":"J2","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/43"}',
+      '{"job":"J3","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/43"}',
+      // J4's claim is not the canonical github.com pull shape -> never joins.
+      '{"job":"J4","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42/files"}',
+      // J5 claims PR 88 first, then PR 77 — the newest standing claim joins.
+      '{"job":"J5","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/88"}',
+      '{"job":"J5","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/77","ts":"2026-11-02T00:00:00Z"}',
+      // J6 claims a PR with no recorded review -> cross_review stays null.
+      '{"job":"J6","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/99"}',
+    ].join('\n'), { crossReviews: reviews });
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')?.cross_review).toEqual({ outcome: 'reject', at: '2026-11-21T00:00:00Z' });
+    expect(byId.get('J5')?.cross_review).toEqual({ outcome: 'approve', at: '2026-11-22T00:00:00Z' });
+    for (const id of ['J2', 'J3', 'J4', 'J6']) {
+      expect(byId.get(id)?.cross_review).toBeNull();
+    }
+    // Absent option: no join at all.
+    const bare = foldRouterOutcomes('{"job":"J1","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42"}');
+    expect(bare.outcomes[0]?.cross_review).toBeNull();
+  });
+
+  it('joins recorded review verdicts onto outcomes and never creates outcomes for review-only PRs', async () => {
+    const root = runsDir([
+      '{"job":"J1","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J2","lane":"alpha","phase":"CLOSED","pr_url":"https://github.com/ashlrai/phantom/pull/43","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J3","lane":"beta","phase":"VERIFIED","ts":"2026-11-01T00:00:00Z"}',
+    ].join('\n'));
+    const ashlar = crossReviewLedger([
+      crossReview(42, 'approve'),
+      // A decision row is merge-action evidence, never a review verdict.
+      { ...crossReview(43, 'approve'), kind: 'decision', action: 'enable-auto-merge' },
+      crossReview(43, 'reject'),
+      // PR 44 has a review but no jobs outcome claims it: joins nothing.
+      crossReview(44, 'approve'),
+    ]);
+    const result = await readRouterOutcomes({ runsDir: root, ashlarDir: ashlar });
+    expect(result).toMatchObject({ state: 'read', cross_review_state: 'read', cross_review_truncated: false });
+    const byId = new Map(result.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')?.cross_review).toEqual({ outcome: 'approve', at: '2026-11-21T00:00:00.000Z' });
+    expect(byId.get('J2')?.cross_review).toEqual({ outcome: 'reject', at: '2026-11-21T00:00:00.000Z' });
+    // No claim, no join — unknown stays null, never a guessed review.
+    expect(byId.get('J3')?.cross_review).toBeNull();
+    expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3']);
+  });
+
+  it('keeps cross_review null and reports cross_review_state when the ledger is absent or refused', async () => {
+    const emptyAshlar = mkdtempSync(join(tmpdir(), 'ledger-612s-xreview-empty-'));
+    roots.push(emptyAshlar);
+    const missing = await readRouterOutcomes({
+      runsDir: runsDir('{"job":"J1","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42"}\n'),
+      ashlarDir: emptyAshlar,
+    });
+    expect(missing).toMatchObject({ state: 'read', cross_review_state: 'missing', cross_review_truncated: false });
+    expect(missing.outcomes[0]?.cross_review).toBeNull();
+
+    const root = runsDir('{"job":"J1","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42"}\n');
+    const target = join(root, 'real-cross-review.jsonl');
+    writeFileSync(target, JSON.stringify(crossReview(42, 'approve')) + '\n');
+    const ashlar = mkdtempSync(join(tmpdir(), 'ledger-612s-xreview-link-'));
+    roots.push(ashlar);
+    mkdirSync(join(ashlar, 'fleet'), { recursive: true });
+    symlinkSync(target, crossReviewLedgerPath(ashlar));
+    const linked = await readRouterOutcomes({ runsDir: root, ashlarDir: ashlar });
+    expect(linked).toMatchObject({ state: 'read', cross_review_state: 'unreadable' });
+    expect(linked.outcomes[0]?.cross_review).toBeNull();
   });
 });
 

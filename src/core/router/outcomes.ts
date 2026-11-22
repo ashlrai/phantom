@@ -205,6 +205,17 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // `launch_cost_truncated` marks a cut tail; anything but 'read' leaves
 // every launch_cost_* field null — unknown, never a zeroed or guessed
 // resource figure.
+// An eighth ledger joins under the ASHLR home root —
+// <ashlr>/fleet/cross-review.jsonl, the audit journal
+// src/core/fleet/cross-review-run.ts appends each recorded cross-model
+// review verdict and merge decision to. `foldCrossReviews` keeps the
+// `kind:'review'` rows' per-PR verdicts (approve/reject/failed/skipped)
+// and the fold joins each outcome's `cross_review` through the job's
+// unambiguous canonical PR claim — the same claim rule merge_queue and
+// the revert joins use — carrying the verdict and its `at` timestamp.
+// `cross_review_state` reports the ledger's health and
+// `cross_review_truncated` marks a cut tail; anything but 'read' leaves
+// every cross_review null — unknown, never a guessed review.
 
 /** Newest-bytes bound retained from the append-only jobs ledger. */
 export const ROUTER_OUTCOME_LEDGER_LIMIT = 16 * 1024 * 1024;
@@ -228,6 +239,16 @@ export const ROUTER_REWARD_LEDGER_RELATIVE = join('metrics', 'reward-signals.jso
  * under the ASHLR home root.
  */
 export const ROUTER_LAUNCH_COST_LEDGER_RELATIVE = join('metrics', 'launch-cost.jsonl');
+/**
+ * The cross-review ledger's path relative to the ASHLR home root —
+ * `<ashlr>/fleet/cross-review.jsonl`, the audit journal
+ * src/core/fleet/cross-review-run.ts appends each recorded cross-model
+ * review verdict and merge decision to (the same root the eval passk
+ * projection and reward-signals ledger resolve under, ASHLR_HOME
+ * honored). Unlike the runs-dir side ledgers it is not joined under
+ * runsDir.
+ */
+export const ROUTER_CROSS_REVIEW_LEDGER_RELATIVE = join('fleet', 'cross-review.jsonl');
 
 export interface RouterOutcome {
   schema: 'router.outcome.v1';
@@ -890,6 +911,31 @@ export interface RouterOutcome {
    * verdict follows.
    */
   merge_queue: MergeQueueEvidence | null;
+  /**
+   * The job's standing pull request's newest recorded cross-model review
+   * verdict — the `kind:'review'` rows of the cross-review ledger
+   * (`<ashlr>/fleet/cross-review.jsonl`, the audit journal
+   * src/core/fleet/cross-review-run.ts appends), joined by
+   * readRouterOutcomes under `cross_review_state` through the job's
+   * newest unambiguous canonical PR claim (`owner/repo#n`, the same
+   * prKey the merge-queue and authority revert joins use). `outcome` is
+   * the review record's verdict in the producer's closed vocabulary —
+   * `approve`/`reject` are the independent reviewer's recorded verdicts,
+   * `failed`/`skipped` the recorded non-verdicts (the reviewer could not
+   * run, or the change escalated before a model was asked) — and `at`
+   * the review record's own timestamp for staleness judgment (`null`
+   * when the row's `at` was not a parseable timestamp). The newest
+   * appended review row for the PR stands, matching the ledger's own
+   * newest-wins rule; `kind:'decision'` rows are merge-action evidence,
+   * never review verdicts, and never join. Null when the cross-review
+   * ledger was not read, the job never claimed a canonical github.com
+   * pull URL unambiguously, or no review row named that PR — unknown,
+   * never a guessed review. A verdict binds to the head the reviewer
+   * saw (`reviewedHeadSha`); the outcome carries no current-head field
+   * to compare it against, so `at` is the staleness signal a consumer
+   * judges.
+   */
+  cross_review: CrossReviewEvidence | null;
   /**
    * The fleet's recorded first-minute launch resource probe for the
    * job — metrics/launch-cost.jsonl's fleet.launch-cost.v1 rows
@@ -1581,6 +1627,17 @@ export interface RouterOutcomeFoldOptions {
    * merge-events join — every merge_queue stays null.
    */
   mergeEvents?: ReadonlyMap<string, MergeQueueEvidence>;
+  /**
+   * `owner/repo#n` (lowercase repo) → the PR's newest recorded cross-model
+   * review verdict, e.g. `foldCrossReviews` over
+   * <ashlr>/fleet/cross-review.jsonl. The fold joins each outcome's
+   * newest unambiguous canonical PR claim (the same claim rule
+   * `mergeEvents` and `revertedPrKeys` apply) to its summary as
+   * `cross_review`; a job with no unambiguous claim or no recorded review
+   * keeps null. Absent means no cross-review join — every cross_review
+   * stays null.
+   */
+  crossReviews?: ReadonlyMap<string, CrossReviewEvidence>;
 }
 
 /** Folds JSONL text into one outcome per job. Explicit fields only; nothing inferred. */
@@ -1754,7 +1811,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       provider_wall_trigger: null, provider_wall_pattern: null, provider_wall_lane: null,
       pool_kind: null, pool_mem_free_pct: null, pool_swap_gb: null,
       node_outcome: null, node_id: null, node_pack: null,
-      merge_queue: null,
+      merge_queue: null, cross_review: null,
       launch_cost_status: null, launch_peak_processes: null, launch_mean_cpu_pct: null, launch_peak_cpu_pct: null,
       passk: null,
     };
@@ -2054,13 +2111,18 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       }
     }
   }
-  if (opts.mergeEvents !== undefined) {
+  if (opts.mergeEvents !== undefined || opts.crossReviews !== undefined) {
     for (const o of outcomes.values()) {
       const prKey = jobPrKeys.get(o.job_id);
       if (prKey === undefined) continue;
-      const evidence = opts.mergeEvents.get(prKey);
-      if (evidence === undefined) continue;
-      o.merge_queue = { ...evidence, blocked_reasons: [...evidence.blocked_reasons] };
+      if (opts.mergeEvents !== undefined) {
+        const evidence = opts.mergeEvents.get(prKey);
+        if (evidence !== undefined) o.merge_queue = { ...evidence, blocked_reasons: [...evidence.blocked_reasons] };
+      }
+      if (opts.crossReviews !== undefined) {
+        const review = opts.crossReviews.get(prKey);
+        if (review !== undefined) o.cross_review = { ...review };
+      }
     }
   }
   return {
@@ -2682,6 +2744,81 @@ export function foldLaunchCosts(text: string): Map<string, LaunchCostEvidence> {
   return costs;
 }
 
+/**
+ * The cross-model review verdict vocabulary — the producer's closed
+ * ReviewOutcome set (src/core/fleet/cross-review.ts). Kept as a local
+ * copy for the same reason the merge-event vocabulary is: a producer-side
+ * rename can never leak an unbounded verdict word into router.outcome.v1.
+ * `approve`/`reject` are the independent reviewer's recorded verdicts;
+ * `failed`/`skipped` are the recorded non-verdicts.
+ */
+export type CrossReviewVerdict = 'approve' | 'reject' | 'failed' | 'skipped';
+
+const CROSS_REVIEW_VERDICTS: ReadonlySet<string> = new Set(['approve', 'reject', 'failed', 'skipped']);
+/** The cross-review ledger's schema version — a local copy of CROSS_REVIEW_SCHEMA_VERSION. */
+const CROSS_REVIEW_SCHEMA = 1;
+
+/**
+ * The per-PR cross-model review evidence one outcome's `cross_review`
+ * carries — the newest `kind:'review'` row's recorded verdict for the
+ * job's standing pull request. Every figure is the row's own recorded
+ * value; nothing is derived.
+ */
+export interface CrossReviewEvidence {
+  /** The review record's verdict in the closed approve/reject/failed/skipped vocabulary. */
+  outcome: CrossReviewVerdict;
+  /**
+   * The review record's `at` timestamp — when the verdict was recorded,
+   * the staleness signal a consumer judges since the outcome carries no
+   * current-head field to compare `reviewedHeadSha` against. Null when
+   * the row's `at` was not a parseable timestamp.
+   */
+  at: string | null;
+}
+
+/**
+ * Folds cross-review.jsonl text into per-PR review evidence keyed
+ * `owner/repo#n` (lowercase repo — the same prKey shape pullRequestKey
+ * and foldMergeEvents produce, so the outcome join needs no second
+ * canonicalization). Only `kind:'review'` rows under the producer's
+ * schema version count — `kind:'decision'` rows are merge-action
+ * evidence, never review verdicts, and foreign or version-mismatched
+ * rows are skipped. A row counts only with a bounded `owner/repo` repo
+ * label, a safe-integer `pr` >= 1 and an in-vocabulary `outcome`;
+ * anything else is skipped, never recorded raw, never guessed. The last
+ * appended review row for a PR wins — the ledger's own append order is
+ * its chronology, matching latestCrossReview's newest-wins rule. Rows
+ * for PRs no jobs outcome claims unambiguously join nothing — the map
+ * itself never creates outcomes.
+ */
+export function foldCrossReviews(text: string): Map<string, CrossReviewEvidence> {
+  const reviews = new Map<string, CrossReviewEvidence>();
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const row = value as Row;
+    if (row['schemaVersion'] !== CROSS_REVIEW_SCHEMA || row['kind'] !== 'review') continue;
+    const repo = row['repo'];
+    const pr = row['pr'];
+    const outcome = row['outcome'];
+    if (typeof repo !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(repo) ||
+        typeof pr !== 'number' || !Number.isSafeInteger(pr) || pr < 1 ||
+        typeof outcome !== 'string' || !CROSS_REVIEW_VERDICTS.has(outcome)) continue;
+    const at = row['at'];
+    reviews.set(`${repo.toLowerCase()}#${pr}`, {
+      outcome: outcome as CrossReviewVerdict,
+      at: typeof at === 'string' && Number.isFinite(Date.parse(at)) ? at : null,
+    });
+  }
+  return reviews;
+}
+
 export interface RouterOutcomeRead extends RouterOutcomeFold {
   /** 'read' is the only state with trustworthy outcomes; everything else is an unknown ledger. */
   state: LedgerReadState;
@@ -2769,6 +2906,19 @@ export interface RouterOutcomeRead extends RouterOutcomeFold {
    * unprobed.
    */
   launch_cost_truncated: boolean;
+  /**
+   * Health of the cross-review.jsonl tail under the ASHLR home root
+   * behind cross_review joins. Anything but 'read' means no review
+   * verdicts were joined — outcomes keep cross_review null, never a
+   * guessed review.
+   */
+  cross_review_state: Exclude<LedgerReadState, 'too-large'>;
+  /**
+   * True when the cross-review tail exceeded the retained bound: joined
+   * verdicts cover only the newest bytes, so older reviews read
+   * unreviewed.
+   */
+  cross_review_truncated: boolean;
   /**
    * True when the ledger exceeded the retained tail: the fold, and so every
    * count on this read, covers only the newest ROUTER_OUTCOME_LEDGER_LIMIT
@@ -2913,6 +3063,28 @@ function unionRevertKeys(authority: ReadonlySet<string> | undefined, scan: Reado
  * ledger's health and `launch_cost_truncated` marks a cut tail;
  * anything but 'read' leaves every launch_cost_* field null —
  * unknown, never a zeroed or guessed resource figure.
+ * An eighth ledger joins under the ASHLR home root — the same root
+ * `ashlarDir` resolves for the eval passk projection and the
+ * reward-signals ledger (ASHLR_HOME honored):
+ * `<ashlr>/fleet/cross-review.jsonl`, the audit journal
+ * src/core/fleet/cross-review-run.ts appends each recorded cross-model
+ * review verdict and merge decision to. `foldCrossReviews` collapses
+ * the tail to per-PR `owner/repo#n` evidence — the same prKey shape
+ * `pullRequestKey` produces — keeping only `kind:'review'` rows under
+ * the producer's schema version with a bounded repo label, a
+ * safe-integer `pr` and an in-vocabulary `outcome`
+ * (`approve`/`reject`/`failed`/`skipped`); `kind:'decision'` rows are
+ * merge-action evidence and never join, and the last appended review
+ * row for a PR stands. The fold's `crossReviews` option joins each
+ * outcome's `cross_review` through the job's newest unambiguous
+ * canonical PR claim — the same claim rule `mergeEvents` and
+ * `revertedPrKeys` apply, so a contested or foreign URL never resolves
+ * — carrying the verdict and the review record's `at` timestamp.
+ * Review rows for PRs no outcome claims unambiguously join nothing and
+ * never create outcomes. `cross_review_state` reports the ledger's
+ * health and `cross_review_truncated` marks a cut tail; anything but
+ * 'read' leaves every `cross_review` null — unknown, never a guessed
+ * review.
  */
 export async function readRouterOutcomes(opts: {
   runsDir?: string;
@@ -2956,6 +3128,12 @@ export async function readRouterOutcomes(opts: {
   const launchCostRead = await readLedgerTail(join(runsDir, ROUTER_LAUNCH_COST_LEDGER_RELATIVE));
   const launchCostState = launchCostRead.state;
   const launchCostTruncated = launchCostRead.state === 'read' ? launchCostRead.truncated : false;
+  // The cross-review ledger lives under the ASHLR home root, not runsDir —
+  // the same root ashlarRoot resolves for the eval passk projection and
+  // the reward-signals ledger (ASHLR_HOME honored).
+  const crossReviewRead = await readLedgerTail(join(ashlarRoot, ROUTER_CROSS_REVIEW_LEDGER_RELATIVE));
+  const crossReviewState = crossReviewRead.state;
+  const crossReviewTruncated = crossReviewRead.state === 'read' ? crossReviewRead.truncated : false;
   const revertLedger = await liveRevertOutcomeKeys(opts.ashlarDir);
   if (read.state !== 'read') {
     return { ...empty, state: read.state, path, eval_state: laneScores.state,
@@ -2965,7 +3143,8 @@ export async function readRouterOutcomes(opts: {
       merge_events_state: mergeEventsState, merge_events_truncated: mergeEventsTruncated,
       revert_ledger_state: revertLedger.state,
       reward_state: rewardState, reward_truncated: rewardTruncated,
-      launch_cost_state: launchCostState, launch_cost_truncated: launchCostTruncated, truncated: false };
+      launch_cost_state: launchCostState, launch_cost_truncated: launchCostTruncated,
+      cross_review_state: crossReviewState, cross_review_truncated: crossReviewTruncated, truncated: false };
   }
   const workClasses = marketRead.state === 'read'
     ? foldRouteDecisionWorkClasses(marketRead.text)
@@ -2980,6 +3159,7 @@ export async function readRouterOutcomes(opts: {
       authorityEvidence === null ? undefined : authorityRevertedPrKeys(authorityEvidence),
       revertLedger.keys),
     mergeEvents: mergeEventsRead.state === 'read' ? foldMergeEvents(mergeEventsRead.text) : undefined,
+    crossReviews: crossReviewRead.state === 'read' ? foldCrossReviews(crossReviewRead.text) : undefined,
   });
   if (spendRead.state === 'read') {
     const costs = foldSpendCosts(spendRead.text);
@@ -3067,5 +3247,6 @@ export async function readRouterOutcomes(opts: {
     revert_ledger_state: revertLedger.state,
     reward_state: rewardState, reward_truncated: rewardTruncated,
     launch_cost_state: launchCostState, launch_cost_truncated: launchCostTruncated,
+    cross_review_state: crossReviewState, cross_review_truncated: crossReviewTruncated,
     truncated: read.truncated };
 }

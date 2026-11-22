@@ -693,7 +693,35 @@ outside the jobs window join nothing and never create outcomes.
 `RouterOutcomeRead.launch_cost_state` reports the ledger's health and
 `launch_cost_truncated` marks a cut tail; anything but `read` leaves
 every `launch_cost_*` field null — unknown, never a zeroed or guessed
-resource figure. `passk` is the
+resource figure. An eighth ledger joins under the ASHLR home root —
+`<ashlr>/fleet/cross-review.jsonl`, the bounded append-only audit
+journal the cross-provider review gate writes
+(`CROSS_REVIEW_SCHEMA_VERSION` 1 rows; src/core/fleet/cross-review.ts
+and cross-review-run.ts). The journal carries two row kinds: `review`
+records — one per cross-model review of a standing PR, keyed
+`repo`+`pr` — and `decision` records recording the merge-action the
+review informed. `foldCrossReviews` collapses the tail to each PR's
+newest `kind:'review'` row under the producer's closed contract:
+`schemaVersion` 1, `kind` `review`, a `owner/repo`-shaped `repo`, a
+positive integral `pr`, the `approve`/`reject`/`failed`/`skipped`
+outcome vocabulary, and a bounded `at` stamp (unparseable stamps keep
+the verdict but null the timestamp); decision rows, wrong-schema rows,
+malformed rows and foreign kinds are skipped, never counted. The
+evidence records only `{outcome, at}` — the reviewer's pool/family,
+reasons and semantic detail stay audit-side and never join. The fold's
+`crossReviews` option joins each outcome's `cross_review` through the
+job's newest unambiguous canonical PR claim — the same claim rule the
+merge-queue join applies, so a contested or foreign URL never
+resolves — and review rows for PRs no outcome claims unambiguously
+join nothing and never create outcomes. The join is fill-only
+diagnostic context: it explains what the review gate recorded while
+the merge verdict stayed unrecorded, and it never feeds routing,
+ranking, admission or weight math. The read degrades independently:
+`RouterOutcomeRead.cross_review_state` reports its health and
+`cross_review_truncated` marks a cut tail; anything but `read` leaves
+every `cross_review` null — unknown, never a guessed verdict, and an
+empty readable ledger means zero recorded joins rather than missing
+coverage. `passk` is the
 lane+model's pass^k (`passPowK`) from the published `eval.lane-scores.v1`
 projection (`~/.ashlr/eval/passk/lane-scores.json`, `ASHLR_HOME` honored);
 it is `null` whenever the ledger lacks lane/model, the projection is
