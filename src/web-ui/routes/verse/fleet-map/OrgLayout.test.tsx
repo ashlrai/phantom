@@ -7,7 +7,7 @@ import { MapView } from './MapPane.js';
 import { layoutByOrg, MAP_LAYOUT_KEY } from './org-layout-model.js';
 
 const node = (kind: LiveMapNode['kind'], id: string, label: string, status: string, provider: LiveMapNode['provider'] = 'unknown'): LiveMapNode =>
-  ({ id, kind, level: { leader: 0, lane: 1, job: 2, computer: 3, resource: 4 }[kind], label, provider, status, detail: `${label} detail`, live: null });
+  ({ id, kind, level: { leader: 0, lane: 1, job: 2, computer: 3, resource: 4, planner: 1 }[kind], label, provider, status, detail: `${label} detail`, live: null });
 const edge = (kind: LiveMapEdge['kind'], from: string, to: string, messages: number | null = null): LiveMapEdge =>
   ({ id: `${kind}:${from}->${to}`, kind, from, to, messages, lastMessageAt: messages ? '2026-11-18T00:00:00Z' : null, pulse: false });
 const fleet = (): FleetLiveMap => ({ schema: 'fleet.live-map.v1', generatedAt: '2026-11-18T00:00:00Z', windowMinutes: 15, pulseSeconds: 60,

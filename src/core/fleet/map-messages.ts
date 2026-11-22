@@ -5,8 +5,8 @@
  *
  * Not a second bus: a read-only projection of the durable bus inbox through the
  * `phm messages` read (agent-messages.ts) with the map's own agent-to-agent
- * rule. Only a short one-line summary leaves this read, and it is passed
- * through the shared secret scrub again here, so a message body is never
+ * rule. Display text and a short summary leave this read, and both are passed
+ * through the shared secret scrub again here, so the raw envelope is never
  * echoed. Names are routing labels, not proven identities; an agent the map
  * does not draw has a null node (unknown, never guessed).
  */
@@ -31,6 +31,8 @@ export interface MapMessage {
   kind: AgentMessageKind;
   summary: string;
   at: string;
+  /** Scrubbed display text, bounded to 8192 characters; never the raw envelope. */
+  text?: string;
 }
 export interface MapMessages {
   schema: 'fleet.map-messages.v1';
@@ -56,12 +58,17 @@ export interface MapMessagesOptions extends BusInboxOptions {
 export function buildMapMessages(scan: ReturnType<typeof scanBusInbox>, since: number, now: number, limit: number, redact: (text: string) => string = scrubSecrets): MapMessages {
   const head = { schema: 'fleet.map-messages.v1' as const, version: 1 as const, generatedAt: new Date(now).toISOString(), since: new Date(since).toISOString(), source: scan.source };
   if (scan.source === 'unavailable') return { ...head, messages: null, matched: null, skipped: scan.skipped ?? 0 };
-  const rows = scan.rows.filter(row => agentToAgent(row.envelope) && row.receivedAt >= since && row.receivedAt <= now);
+  const unique = new Map([...scan.rows].sort((a, b) => a.receivedAt - b.receivedAt || a.cursor - b.cursor).map(row => [row.envelope.id, row]));
+  const rows = [...unique.values()].filter(row => agentToAgent(row.envelope) && row.receivedAt >= since && row.receivedAt <= now);
   const all = projectAgentMessages(rows);
   const messages = all.slice(0, limit).map(message => {
     const from = mapEdgeAgent(message.from), to = mapEdgeAgent(message.to);
+    const body = unique.get(message.id)?.envelope.body;
+    const fields = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {};
+    const display = [fields.text, fields.prompt, fields.summary, fields.detail, fields.reason].find(value => typeof value === 'string');
+    const text = redact(scrubSecrets(typeof display === 'string' ? display : typeof body === 'string' ? body : message.summary)).slice(0, 8192);
     return { id: message.id, from: from.name, to: to.name, fromNode: from.node, toNode: to.node, kind: message.kind,
-      summary: redact(message.summary).replace(/\s+/g, ' ').trim().slice(0, MAP_EDGE_SUMMARY_MAX) || 'No text.', at: message.ts };
+      summary: redact(message.summary).replace(/\s+/g, ' ').trim().slice(0, MAP_EDGE_SUMMARY_MAX) || 'No text.', at: message.ts, text };
   });
   return { ...head, messages, matched: all.length, skipped: scan.skipped ?? 0 };
 }

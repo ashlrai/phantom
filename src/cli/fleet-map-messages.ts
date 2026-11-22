@@ -5,12 +5,13 @@ export const mapMessagesUsage = `Usage: phm fleet map messages [--json] [--since
 
 The last agent-to-agent messages (default: the last 15 minutes, newest 20),
 one line each: who to whom, what kind, and a short redacted summary. Never the
-message body. Read only.
+raw envelope. The map can also open scrubbed display text. Read only.
 --json prints fleet.map-messages.v1, the same read as GET /api/fleet/map/messages.
 Exit 0 read, 1 bus unreadable, 2 bad usage.`;
 
-export function cmdFleetMapMessages(args: string[]): number {
-  if (args.some(arg => arg === '--help' || arg === '-h')) { console.log(mapMessagesUsage); return 0; }
+export function cmdFleetMapMessages(args: string[], rowsOnly = false): number {
+  const usage = rowsOnly ? mapMessagesUsage.replaceAll("fleet map messages", "fleet messages").replace("--json prints fleet.map-messages.v1,", "--json prints message rows from") : mapMessagesUsage;
+  if (args.some(arg => arg === '--help' || arg === '-h')) { console.log(usage); return 0; }
   let json = false, since: string | undefined, limit: number | undefined;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--json' && !json) json = true;
@@ -19,10 +20,10 @@ export function cmdFleetMapMessages(args: string[]): number {
       const parsed = parseMapMessagesLimit(args[++i]!);
       if (parsed === null) { console.error(`--limit takes a whole number from 1 to ${MAP_MESSAGES_MAX_LIMIT}.`); return 2; }
       limit = parsed;
-    } else { console.error(mapMessagesUsage); return 2; }
+    } else { console.error(usage); return 2; }
   }
   const read = readMapMessages(since, { limit });
   if (!read) { console.error('--since takes 10m, 2h, 1d, epoch ms or an ISO time.'); return 2; }
-  console.log(json ? JSON.stringify(read, null, 2) : formatMapMessagesText(read));
+  console.log(json ? JSON.stringify(rowsOnly ? read.messages?.map(({ from, to, kind, at, summary }) => ({ from, to, kind, at, summary })) ?? null : read, null, 2) : formatMapMessagesText(read));
   return read.source === 'unavailable' ? 1 : 0;
 }

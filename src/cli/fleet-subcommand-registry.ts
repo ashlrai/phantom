@@ -300,6 +300,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'merge-retry': () => import('./fleet-merge-retry.js'),
   'merge-status': () => import('./fleet-merge-status.js'),
   'message-graph': () => import('./fleet-message-graph.js'),
+  'messages': () => import('./fleet-messages.js'),
   'meter-drop': () => import('./fleet-meter-drop.js'),
   'meter-incident': () => import('./fleet-meter-incident.js'),
   'metrics': () => import('./fleet-metrics.js'),

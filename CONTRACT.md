@@ -3692,3 +3692,10 @@ command names remain evidence. No direct push fallback exists.
 `runPrConflictResolution(ConflictRunOptions): Promise<unknown>` reads GitHub and
 fleet hold evidence for the `pr.resolve-conflicts.v1` CLI envelope.
 See [the resolver guide](docs/PR-CONFLICT-RESOLVER.md).
+
+`phm fleet messages --since <ts> --json` returns the map reader's newest-first
+`{from,to,kind,at,summary}` rows (null and exit 1 when unreadable). The existing
+`fleet.map-messages.v1` adds optional scrubbed `text` (8192 characters); receipts
+are deduplicated by id before the since filter. The desktop's existing 2D/3D
+map overlays these messages for 10 seconds; clicking opens the text in place.
+`fleet.live-map.v1` also draws standing planners as `kind: "planner"` nodes.

@@ -4,11 +4,12 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
+import { cmdFleetMessages } from '../src/cli/fleet-messages.js';
 import { cmdFleetMap } from '../src/cli/fleet-map.js';
 import { cmdFleetMapMessages } from '../src/cli/fleet-map-messages.js';
 import type { AshlrConfig } from '../src/core/config.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
-import { formatMapMessagesText, MAP_MESSAGES_PATH, mapMessagesResponse, readMapMessages } from '../src/core/fleet/map-messages.js';
+import { buildMapMessages, formatMapMessagesText, MAP_MESSAGES_PATH, mapMessagesResponse, readMapMessages } from '../src/core/fleet/map-messages.js';
 import { handleApi } from '../src/core/web/api.js';
 
 const T0 = Date.UTC(2026, 10, 18, 12, 0, 0), NOW = T0 + 60_000;
@@ -49,10 +50,21 @@ describe('fleet map messages', () => {
     const root = store([[T0, 'claude', 'codex', `${'word '.repeat(60)}secret-plan`]]);
     const redact = vi.fn((text: string) => text.replace('secret-plan', '[hidden]'));
     const read = readMapMessages(undefined, { root, now: () => NOW, redact })!;
-    expect(redact).toHaveBeenCalledTimes(1);
+    expect(redact).toHaveBeenCalledTimes(2);
     expect(read.messages![0]!.summary.length).toBeLessThanOrEqual(80);
     const short = readMapMessages(undefined, { root: store([[T0, 'claude', 'codex', 'see secret-plan now']]), now: () => NOW, redact })!;
     expect(short.messages![0]!.summary).toBe('see [hidden] now');
+  });
+
+  it('deduplicates receipts before since filtering and exposes scrubbed display text', () => {
+    const row = (id: string, receivedAt: number) => ({ cursor: receivedAt, receivedAt,
+      envelope: { id, from: 'comms', to: 'leader', priority: 'P2' as const, ttl: 60_000,
+        body: { text: `${'message '.repeat(30)}password=fixture-password` } } });
+    const result = buildMapMessages({ source: 'available', skipped: 0, rows: [row('same', T0), row('same', NOW), row('old', T0), row('future', NOW + 1)] }, NOW, NOW, 20);
+    expect(result.matched).toBe(1);
+    expect(result.messages![0]).toMatchObject({ from: 'comms', to: 'leader', fromNode: 'planner:comms', at: new Date(NOW).toISOString() });
+    expect(result.messages![0]!.text).toContain('message '.repeat(30));
+    expect(JSON.stringify(result)).not.toContain('fixture-password');
   });
 
   it('an unreadable bus is unknown, not zero', () => {
@@ -87,6 +99,9 @@ describe('fleet map messages', () => {
     expect(err).toHaveBeenCalledTimes(6);
     expect(cmdFleetMapMessages(['--json', '--limit', '5'])).toBe(0);
     expect(JSON.parse(out.mock.lastCall![0])).toMatchObject({ schema: 'fleet.map-messages.v1', version: 1 });
+    expect(await cmdFleetMessages(['--json', '--since', '1m'])).toBe(0);
+    expect(JSON.parse(out.mock.lastCall![0])).toEqual([]);
+    expect(await cmdFleetMessages(['--since', 'bad'])).toBe(2);
     expect(await cmdFleetMap(['messages', '--json', '--since', '1m'])).toBe(0);
     expect(Object.keys(JSON.parse(out.mock.lastCall![0]))).toEqual(KEYS);
   });
