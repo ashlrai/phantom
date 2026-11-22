@@ -15,6 +15,73 @@ walks that path from clone to auto-merge; agents also follow
 
 ---
 
+## Contribute with an agent
+
+The shortest path from a fresh clone to a mergeable pull request. It works the
+same whether you or a coding agent (Claude Code, Codex, Cursor and others) does
+the typing. [Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md) has the
+full walkthrough and recovery steps.
+
+1. **Clone upstream, push to your fork.** `scripts/verify-changed.mjs` diffs
+   against `origin/master`, so keep `origin` pointing at this repository and
+   add your fork as a second remote:
+
+   ```sh
+   git clone https://github.com/ashlrai/phantom.git && cd phantom
+   git remote add fork https://github.com/<you>/phantom.git
+   git switch -c <topic-branch>
+   ```
+
+2. **Install.** Node 22.15+. Use `npm ci` for one checkout. For several trusted
+   local worktrees, use `npm run install:worktree` instead; it requires pnpm
+   10.28.2 (see [Shared installs](#shared-installs-for-trusted-local-worktrees)).
+
+3. **Brief the agent.** Point it at [AGENTS.md](AGENTS.md) (the constitution and
+   "Working in this repository"); Claude Code also loads [CLAUDE.md](CLAUDE.md).
+   Keep one coherent change per pull request: logic in `src/core/`, thin
+   handlers in `src/cli/`, `.js` import extensions, hermetic tests, and contract
+   files updated with any exported signature ([conventions](#conventions)).
+
+4. **Verify locally**, once, in the foreground:
+
+   ```sh
+   node scripts/verify-changed.mjs                # changed-file lint, one typecheck, docs links
+   npm run test:ci -- test/<affected>.test.ts     # affected backend suites, isolated HOME
+   npm run test:web                               # only when src/web-ui changed
+   npm run check:docs                             # if verify-changed skipped it
+   npx vitest run test/doc-facts.test.ts          # when docs name commands, flags or scripts
+   ```
+
+   `npm run gate` runs build, static checks and related tests together if you
+   prefer one command. Never weaken a test to make a check pass.
+
+5. **Commit and open the pull request.** Use a short conventional subject
+   (`docs(readme): ...`, `fix(cli): ...`), push the branch to `fork`, and open
+   the pull request against `master`. The [pull request template](.github/PULL_REQUEST_TEMPLATE.md)
+   includes the safety checklist for changes to the autonomous path.
+
+6. **What hosted CI requires.** Pull requests and merge-queue commits run only
+   the Ubuntu fast gate: secret scans, typecheck plus affected tests,
+   generated-file and authority-drift checks. `Merge Gate` is the one required
+   check. macOS, Windows and exhaustive suites run on master's six-hour
+   schedule after merge; a red full run opens a fix-forward issue for the
+   failing commit. See [What CI requires](docs/CONTRIBUTE-WITH-AN-AGENT.md#6-what-ci-requires)
+   for details. GitHub may hold workflow runs on a first-time contributor's
+   fork pull request until a maintainer approves them.
+
+7. **How it merges.** Pull requests land through GitHub's merge queue, which
+   reruns the fast gate on the combined commit; a maintainer or the fleet
+   queues yours once `Merge Gate` is green. Paths listed in
+   [CODEOWNERS](.github/CODEOWNERS) (CI configuration, authority and safety
+   surfaces) also need the owner's review. If authority drift fails, run
+   `npm run authority:regen` and list each new Tier-1 root in the pull
+   request body.
+
+Changes that weaken a [safety invariant](#safety-invariants-contributors-must-never-weaken)
+are refused regardless of who opens them.
+
+---
+
 ## Prerequisites
 
 - **Node.js 22.15+** for the package runtime. A release gate can require stricter, exact tool versions; use the [release policy](docs/RELEASING.md#qualified-ci-build-handoff) for release verification.
