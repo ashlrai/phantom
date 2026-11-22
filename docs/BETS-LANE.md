@@ -53,7 +53,7 @@ guardian fix jobs. Lane suggestions take the tier with the best merged-per-launc
 | `metrics/bets.jsonl` | `bets.ledger.v1` | `phm bets` | Append-only events: `launch`, `score`, `kill`. Events after a terminal state are ignored. |
 | `metrics/bets-share.json` | `bets.share.v1` | `phm metrics loop`, `phm bets score` | `reserved` and `usable` bet slots this cycle, stamped `at`. |
 | `metrics/loop-YYYYMMDD.json` | `metrics.loop.v1` | `phm metrics loop` | Full report. Unknown values are `{"missing": "<reason>"}`. `truncated_sources` names ledger files whose bounded tail read was cut; counts folded from them cover only the newest bytes. |
-| `metrics/selection-hints.json` | `metrics.selection-hints.v1` | `phm metrics loop` | Advisory: ranked lanes, nodes with spare slots, top constraint. |
+| `metrics/selection-hints.json` | `metrics.selection-hints.v1` | `phm metrics loop` | Advisory: ranked lanes, nodes with spare slots, top constraint, and `loop_wait` — the where-the-loop-waits summary (headline, slowest stage, window, truncation flag) folded from the same jobs.jsonl tail as `metrics.loop-stages.v1`. |
 | `reports/morning-YYYYMMDD.json` | (existing) | `phm metrics loop` | Adds `bets`, `feedback_loop_minutes`, `cost_per_merged_pr`, `capacity_per_node`; other keys are kept. A file that is not a JSON object is left untouched. |
 
 ## Bet rows and the capacity share
