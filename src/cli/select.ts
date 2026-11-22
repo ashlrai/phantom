@@ -5,14 +5,15 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { appendBusInbox, type BusInboxOptions } from '../core/fleet/bus-inbox.js';
 import { collectFrictionTop, frictionLedgerPath, type FrictionItem } from '../core/fleet/friction-ledger.js';
-import { censorFromConfig, learnOutcomes } from '../core/routing/outcome-learning.js';
+import { censorFromConfig, learnFleetOutcomes } from '../core/routing/outcome-learning.js';
+import { readLedgerTail, ROUTER_OUTCOME_LEDGER_RELATIVE } from '../core/router/outcomes.js';
 import {
   DEFAULT_FUND_COUNT, fundedIds, parseCandidates, pickRecords, rankCandidates, readyLine,
   type SelectorCandidate, type SelectorResult,
 } from '../core/routing/selector.js';
 import { selectorSchedule } from '../core/routing/selector-schedule.js';
 
-const usage = `Usage: phm select [--json] [--dry-run] [--top <n>] [--candidates <file>] [--events <file>] [--runs-dir <abs>]
+const usage = `Usage: phm select [--json] [--dry-run] [--top <n>] [--candidates <file>] [--events <file>] [--ledger <file>] [--runs-dir <abs>]
        phm select schedule [--write] [--phm-path <abs>]
 
 Scores each candidate value x leverage / (minutes + usage), takes the top n (default ${DEFAULT_FUND_COUNT}),
@@ -24,6 +25,9 @@ posts a summary to the local bus inbox. A candidate already in picks.jsonl is no
              Default: <runs-dir>/selector/candidates.jsonl
 --events <file>      Dispatch event log the minutes, usage and merge rate are learned from.
              Default: <runs-dir>/queue/dispatch-events.log
+--ledger <file>      Jobs ledger (launch/finish/reconciler rows) the merge rate and minutes are also
+             learned from; its token readings stay out of the usage prior, which keeps the
+             dispatch log's allowance unit. Default: <runs-dir>/metrics/jobs.jsonl
 --friction <file>    Friction ledger (JSONL): top open items join the pool as RQ-FRICTION-*
              ids carrying friction_id=<item id>. Default: ~/.ashlr/friction-ledger.jsonl
 --runs-dir   Default: $ASHLR_RUNS_DIR or ~/.ashlr-runs
@@ -53,7 +57,7 @@ async function readCapped(path: string): Promise<string | null> {
   } catch { return null; }
 }
 
-interface Parsed { json: boolean; dryRun: boolean; top: number; candidates?: string; events?: string; runsDir?: string; friction?: string }
+interface Parsed { json: boolean; dryRun: boolean; top: number; candidates?: string; events?: string; ledger?: string; runsDir?: string; friction?: string }
 
 function parse(args: string[]): Parsed | null {
   const p: Parsed = { json: false, dryRun: false, top: DEFAULT_FUND_COUNT };
@@ -64,7 +68,7 @@ function parse(args: string[]): Parsed | null {
     seen.add(arg);
     if (arg === '--json') p.json = true;
     else if (arg === '--dry-run') p.dryRun = true;
-    else if (arg === '--top' || arg === '--candidates' || arg === '--events' || arg === '--runs-dir' || arg === '--friction') {
+    else if (arg === '--top' || arg === '--candidates' || arg === '--events' || arg === '--ledger' || arg === '--runs-dir' || arg === '--friction') {
       const value = args[++i];
       if (value === undefined || value.startsWith('--')) return null;
       if (arg === '--top') {
@@ -73,7 +77,7 @@ function parse(args: string[]): Parsed | null {
       } else if (arg === '--runs-dir' || arg === '--friction') {
         if (!isAbsolute(value)) return null;
         if (arg === '--runs-dir') p.runsDir = value; else p.friction = value;
-      } else p[arg === '--candidates' ? 'candidates' : 'events'] = value;
+      } else p[arg === '--candidates' ? 'candidates' : arg === '--ledger' ? 'ledger' : 'events'] = value;
     } else return null;
   }
   return p;
@@ -116,6 +120,10 @@ export async function cmdSelect(args: string[], deps: SelectDeps = {}): Promise<
   if (candidateText === null) { io.err('error: candidate file unavailable'); return 1; }
   // A missing log is a cold start, not a failure: defaults apply and every merge rate is the prior.
   const events = await readCapped(parsed.events ?? join(root, 'queue', 'dispatch-events.log')) ?? '';
+  // The jobs ledger is the fleet's real outcome memory; a missing or
+  // unreadable one contributes nothing, like a missing dispatch log.
+  const ledgerTail = await readLedgerTail(parsed.ledger ?? join(root, ROUTER_OUTCOME_LEDGER_RELATIVE));
+  const ledger = ledgerTail.state === 'read' ? ledgerTail.text : null;
 
   const { candidates, rejected } = parseCandidates(candidateText);
   // The ledger is a second candidate pool: top open items fund RQ-FRICTION-* lines (noop churn absorbed first; dry run writes nothing).
@@ -124,7 +132,7 @@ export async function cmdSelect(args: string[], deps: SelectDeps = {}): Promise<
   candidates.push(...top.map(frictionCandidate).filter((c) => !candidates.some((f) => f.id === c.id)));
   const now = (deps.now ?? (() => new Date()))();
   const { loadConfigReadOnly } = await import('../core/config.js');
-  const learning = learnOutcomes(events, censorFromConfig(loadConfigReadOnly().router, now.getTime()));
+  const learning = learnFleetOutcomes(events, ledger, censorFromConfig(loadConfigReadOnly().router, now.getTime()));
   const result: SelectorResult = rankCandidates(candidates, learning, {
     count: parsed.top, rejected, exclude: fundedIds(await readCapped(picksPath) ?? ''),
   });

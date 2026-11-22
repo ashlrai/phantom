@@ -32,6 +32,16 @@ readings stay uncharged rather than reading as zero spend. `phm fleet
 outcomes` reads both sources by default; `--ledger <file>` overrides the
 jobs-ledger path and `--events <file>` the dispatch log.
 
+Usage readings carry their unit. `usage`/`meanUsage` sum every recorded
+reading whatever its unit, which is what the cheapness posterior reads. Each
+cell also reports `usageAllowance` — the summed dispatch-log `usage=`
+readings in the allowance unit (roughly 0.04-1.2 per job) — and
+`usageAllowanceKnown`, the count of attempts that contributed one.
+Jobs-ledger `tokens_total` readings (thousands per job) and the imputed
+reconcile/censor charges are never allowance readings, so a consumer
+calibrated to the dispatch unit, like the selector's `estUsage`, cannot be
+distorted by token counts.
+
 Batch sessions count per member, not per session. A `batch_claim` row is the
 member's dispatch record, held until the session's own `launch` row — which
 carries the `RQ-BATCH-*` infrastructure id, never an attempt — opens one
