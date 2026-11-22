@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.71 |
-| Latest dated changelog release (2026-11-22) | 3.30.71 |
+| Source package | 3.30.72 |
+| Latest dated changelog release (2026-11-22) | 3.30.72 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -15,16 +15,6 @@ Versions map to milestone series: **2.1.0** = v2.1 "Harden & Prove" (H1–H8),
 hub (M1–M20). Entries below detail each milestone; dates are merge dates into `master`.
 
 ---
-
-## [3.30.72](https://github.com/ashlrai/phantom/compare/v3.30.71...v3.30.72) (2026-11-22)
-
-
-### Changes
-
-* **RQ-CL-DOCS-1795367711:** ([#8338](https://github.com/ashlrai/phantom/issues/8338)) ([c9d1e9c](https://github.com/ashlrai/phantom/commit/c9d1e9c17eea9ef521d74c673d3c69a73679533a))
-* **RQ-PHX-ADAPTDIGESTORIGINAL796S:** Bridge notes: lane adaptation digest ([#8341](https://github.com/ashlrai/phantom/issues/8341)) ([ec54f5c](https://github.com/ashlrai/phantom/commit/ec54f5cbde5f2ee7b816b56dd302780f3ffe7b24))
-* **RQ-PHX-SLACKORIGINALPROOF792S:** PR [#7504](https://github.com/ashlrai/phantom/issues/7504) preservation receipt ([#8339](https://github.com/ashlrai/phantom/issues/8339)) ([10bc82c](https://github.com/ashlrai/phantom/commit/10bc82c6294716aa6b0d2c7e4697ed8c8c1fc0da))
-* **RQ-YIELDCARDN25HQ8:** RQ-YIELDCARDN25HQ8 ([#8340](https://github.com/ashlrai/phantom/issues/8340)) ([6aa5479](https://github.com/ashlrai/phantom/commit/6aa5479eb884d9cbf98182513011e1fdae24c963))
 
 ## [Unreleased]
 
@@ -178,6 +168,16 @@ Merged after #7384 (#7385 to #7604). Bridge, recovery and release bookkeeping is
 ### Removed
 
 - Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
+
+## [3.30.72] - 2026-11-22
+
+
+### Changes
+
+* **RQ-CL-DOCS-1795367711:** ([#8338](https://github.com/ashlrai/phantom/issues/8338)) ([c9d1e9c](https://github.com/ashlrai/phantom/commit/c9d1e9c17eea9ef521d74c673d3c69a73679533a))
+* **RQ-PHX-ADAPTDIGESTORIGINAL796S:** Bridge notes: lane adaptation digest ([#8341](https://github.com/ashlrai/phantom/issues/8341)) ([ec54f5c](https://github.com/ashlrai/phantom/commit/ec54f5cbde5f2ee7b816b56dd302780f3ffe7b24))
+* **RQ-PHX-SLACKORIGINALPROOF792S:** PR [#7504](https://github.com/ashlrai/phantom/issues/7504) preservation receipt ([#8339](https://github.com/ashlrai/phantom/issues/8339)) ([10bc82c](https://github.com/ashlrai/phantom/commit/10bc82c6294716aa6b0d2c7e4697ed8c8c1fc0da))
+* **RQ-YIELDCARDN25HQ8:** RQ-YIELDCARDN25HQ8 ([#8340](https://github.com/ashlrai/phantom/issues/8340)) ([6aa5479](https://github.com/ashlrai/phantom/commit/6aa5479eb884d9cbf98182513011e1fdae24c963))
 
 ## [3.30.71] - 2026-11-22
 
