@@ -71,12 +71,24 @@ describe('fleet_agent_wakes argument parsing', () => {
   it('maps every shared wakes filter onto the read arguments', () => {
     const parsed = parseFleetAgentWakesArgs({
       agent: 'agent:planner', since: '1800000000000', job: 'RQ-9',
-      from: 'agent:sender', excludeFrom: 'agent:bot', contains: '  Parser   Fix ',
+      from: 'agent:sender', excludeFrom: 'agent:bot', priority: 'P0',
+      contains: '  Parser   Fix ',
     });
     expect(parsed).toEqual({
       agent: 'agent:planner', since: 1800000000000, job: 'RQ-9',
-      from: 'agent:sender', excludeFrom: 'agent:bot', contains: 'parser fix',
+      from: 'agent:sender', excludeFrom: 'agent:bot', priority: 'P0',
+      contains: 'parser fix',
     });
+  });
+
+  it('accepts every P0..P3 band and rejects anything outside the enum', () => {
+    for (const band of ['P0', 'P1', 'P2', 'P3']) {
+      expect(parseFleetAgentWakesArgs({ agent: 'a', priority: band }))
+        .toMatchObject({ priority: band });
+    }
+    for (const bad of ['p0', 'P4', 'high', 'urgent', '', 5, null, true, ['P0']]) {
+      expect(parseFleetAgentWakesArgs({ agent: 'a', priority: bad })).toBeNull();
+    }
   });
 
   it('resolves the shared since grammar to epoch ms', () => {
@@ -91,6 +103,7 @@ describe('fleet_agent_wakes argument parsing', () => {
       { agent: 'a', limit: 5 }, { agent: 'a', after: 0 }, { agent: 'a', matched: true },
       { agent: 'a', job: 'has space' }, { agent: 'a', job: '' }, { agent: 'a', job: 5 },
       { agent: 'a', from: 5 }, { agent: 'a', excludeFrom: null }, { agent: 'a', excludeFrom: 'has space' },
+      { agent: 'a', priority: 'P4' }, { agent: 'a', priority: 'high' }, { agent: 'a', priority: 5 },
       { agent: 'a', since: 'never' }, { agent: 'a', since: 5 }, { agent: 'a', since: '' },
       { agent: 'a', since: '1960-01-01T00:00:00.000Z' },
       { agent: 'a', contains: '' }, { agent: 'a', contains: '   ' },
@@ -107,9 +120,9 @@ describe('fleet_agent_wakes reader', () => {
       return okPage({ matched: 3 });
     };
     const result = await readFleetAgentWakes(
-      parseFleetAgentWakesArgs({ agent: 'planner', since: '1800000000000', job: 'RQ-9', from: 'agent:sender' })!,
+      parseFleetAgentWakesArgs({ agent: 'planner', since: '1800000000000', job: 'RQ-9', from: 'agent:sender', priority: 'P1' })!,
       { read });
-    expect(seen).toEqual([['planner', 1800000000000, {}, { job: 'RQ-9', from: 'agent:sender' }]]);
+    expect(seen).toEqual([['planner', 1800000000000, {}, { job: 'RQ-9', from: 'agent:sender', priority: 'P1' }]]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
       status: 'ok', agent: 'planner', scope: 'identity', matched: 3, truncated: false,
@@ -162,6 +175,8 @@ describe('fleet_agent_wakes MCP tool', () => {
     expect(tool?.inputSchema).toMatchObject({ type: 'object', additionalProperties: false, required: ['agent'] });
     expect(tool?.inputSchema.properties?.['agent'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    expect(tool?.inputSchema.properties?.['priority'])
+      .toMatchObject({ type: 'string', enum: ['P0', 'P1', 'P2', 'P3'] });
     expect(tool?.inputSchema.properties?.['contains'])
       .toMatchObject({ type: 'string', minLength: 1, maxLength: 512 });
   });
@@ -171,6 +186,7 @@ describe('fleet_agent_wakes MCP tool', () => {
     [{ agent: 'a', root: '/tmp/fake-root' }], [{ agent: 'a', path: '/tmp/x' }], [{ agent: 'a', cwd: '/tmp' }],
     [{ agent: 'a', limit: 5 }], [{ agent: 'a', after: 0 }], [{ agent: 'a', matched: true }],
     [{ agent: 'a', job: 'has space' }], [{ agent: 'a', from: 5 }], [{ agent: 'a', excludeFrom: null }],
+    [{ agent: 'a', priority: 'P4' }], [{ agent: 'a', priority: 'high' }], [{ agent: 'a', priority: 5 }],
     [{ agent: 'a', since: 'never' }], [{ agent: 'a', since: 5 }],
     [{ agent: 'a', contains: '' }], [{ agent: 'a', contains: 'x'.repeat(513) }], [{ agent: 'a', extra: 1 }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
@@ -191,10 +207,10 @@ describe('fleet_agent_wakes MCP tool', () => {
     const agentWakes = vi.fn(async () => payload);
     const client = await connect({ status: async () => ({}), loop: async () => ({}), agentWakes });
     const { parsed } = await callWakes(client, {
-      agent: 'planner', since: '1800000000000', job: 'RQ-9', contains: 'Parser Fix',
+      agent: 'planner', since: '1800000000000', job: 'RQ-9', priority: 'P2', contains: 'Parser Fix',
     });
     expect(agentWakes).toHaveBeenCalledWith(expect.objectContaining({
-      agent: 'planner', since: 1800000000000, job: 'RQ-9', contains: 'parser fix',
+      agent: 'planner', since: 1800000000000, job: 'RQ-9', priority: 'P2', contains: 'parser fix',
     }));
     const args = agentWakes.mock.calls[0]![0] as FleetAgentWakesArgs;
     expect(args.from).toBeUndefined();

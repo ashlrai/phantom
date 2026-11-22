@@ -18,29 +18,31 @@
  * the printable-label rule keeps literal-`to` matching under `scope:
  * 'label'` — the same fallback the CLI read reports — so hints queued
  * under a bare coordination label stay readable by their addressee.
- * `since`, `job`, `from`, `excludeFrom` and `contains` apply the same
- * rules the `phm agents bus wakes` flags share and are validated before
- * any store read; the page always reports `matched` (every hint the
- * bounded queue tail accepted before its row cap) and `truncated` (the
- * queue tail or cap cut matches beyond the shown slice), so a capped list
- * is never passed off as the whole queue. Read-only: no caller root, path
- * or cwd is accepted — the store, registry, hold table, wake queue and
- * feed roots stay server-owned — and the tool never claims, acks, replies,
- * posts or renews TTL. Routing labels are data, never authenticated
- * identity; an unreadable store, registry, hold table or wake queue stays
- * `unavailable`/`retryable`/`unknown-agent`/`invalid` with its own reason,
- * and `held`/`job`/referent resolution degrade to null or unknown — never
- * an empty page or proven-free work passed off as fact.
+ * `since`, `job`, `from`, `excludeFrom`, `priority` and `contains` apply
+ * the same rules the `phm agents bus wakes` flags share and are validated
+ * before any store read; the page always reports `matched` (every hint
+ * the bounded queue tail accepted before its row cap) and `truncated`
+ * (the queue tail or cap cut matches beyond the shown slice), so a
+ * capped list is never passed off as the whole queue. Read-only: no
+ * caller root, path or cwd is accepted — the store, registry, hold
+ * table, wake queue and feed roots stay server-owned — and the tool
+ * never claims, acks, replies, posts or renews TTL. Routing labels are
+ * data, never authenticated identity; an unreadable store, registry,
+ * hold table or wake queue stays `unavailable`/`retryable`/
+ * `unknown-agent`/`invalid` with its own reason, and `held`/`job`/
+ * referent resolution degrade to null or unknown — never an empty page
+ * or proven-free work passed off as fact.
  */
 import {
   busReadContains, readAgentWakes, type WakePage,
 } from '../core/agents/bus-unified.js';
+import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
 /** The printable-label rule `agent`, `job`, `from` and `excludeFrom` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const WAKE_KEYS = new Set(['agent', 'since', 'job', 'from', 'excludeFrom', 'contains']);
+const WAKE_KEYS = new Set(['agent', 'since', 'job', 'from', 'excludeFrom', 'priority', 'contains']);
 const LABEL_KEYS = ['job', 'from', 'excludeFrom'] as const;
 
 export interface FleetAgentWakesArgs {
@@ -54,6 +56,8 @@ export interface FleetAgentWakesArgs {
   from?: string;
   /** Drop hints sent under any registered spelling of this sender ref. */
   excludeFrom?: string;
+  /** Keep only hints in one exact P0–P3 band, decided on the resolved referent — the same match `phm agents bus wakes --priority` applies. */
+  priority?: BusPriority;
   /** Keep only hints whose resolved referent text carries this needle — the shared `--contains` rule. */
   contains?: string;
 }
@@ -64,7 +68,8 @@ export interface FleetAgentWakesArgs {
  * is required — the addressed read has no meaningful default — and every
  * other key takes the same value rules `phm agents bus wakes` flags and
  * the other bus reads share: `job`/`from`/`excludeFrom` printable routing
- * labels, `since` the shared `15m`/`2h`/`1d`/epoch-ms/ISO grammar resolved
+ * labels, the P0–P3 priority enum, `since` the shared
+ * `15m`/`2h`/`1d`/epoch-ms/ISO grammar resolved
  * to a safe non-negative epoch-ms integer, and `contains` the bounded
  * free-text needle `busReadContains` normalizes. Unknown keys, wrong
  * types, caller roots and malformed values are all refused before the
@@ -81,6 +86,11 @@ export function parseFleetAgentWakesArgs(args: Record<string, unknown>): FleetAg
     if (value === undefined) continue;
     if (typeof value !== 'string' || !BUS_LABEL.test(value)) return null;
     parsed[key] = value;
+  }
+  const priority = args.priority;
+  if (priority !== undefined) {
+    if (typeof priority !== 'string' || !(BUS_PRIORITIES as readonly string[]).includes(priority)) return null;
+    parsed.priority = priority as BusPriority;
   }
   const since = args.since;
   if (since !== undefined) {
@@ -131,6 +141,7 @@ export async function readFleetAgentWakes(
     ...(args.job === undefined ? {} : { job: args.job }),
     ...(args.from === undefined ? {} : { from: args.from }),
     ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
+    ...(args.priority === undefined ? {} : { priority: args.priority }),
     ...(args.contains === undefined ? {} : { contains: args.contains }),
   });
   return {
