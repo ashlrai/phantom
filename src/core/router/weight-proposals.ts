@@ -199,7 +199,13 @@ export interface RouterWeightProposalSet {
    * superseded — and `unknown_defer_reasons` tallies their recorded
    * reason labels (top entries first), so a job the fleet recorded
    * keeping queued reads as explained rather than unresolved, the same
-   * exemption `unknown_skipped` applies. `unknown_unresolved`
+   * exemption `unknown_skipped` applies. `unknown_market_reasons`
+   * tallies the work market's recorded `reason_codes` for each job's
+   * newest `route_decision` row — queue-side diagnostic context for why
+   * the market was or was not routing the job (`no_runnable_lane`,
+   * `global_admission`, `hysteresis_*`, `preferred_lane`/
+   * `healthy_capacity`), never a launch decision and never a reduction
+   * of `unknown_unresolved`. `unknown_unresolved`
    * is the remainder with no recorded failure signal — finished cleanly and
    * awaiting a merge verdict, still in flight, or only transient launch
    * receipts; the ledger simply records no terminal productivity outcome
@@ -216,6 +222,21 @@ export interface RouterWeightProposalSet {
   unknown_empty_tags: { tag: string; jobs: number }[];
   unknown_deferred: number;
   unknown_defer_reasons: { reason: string; jobs: number }[];
+  /**
+   * Top recorded work-market `reason_codes` inside the unknown cohort,
+   * by jobs — the market's own routing verdict for each job's newest
+   * `route_decision` row (`preferred_lane`/`healthy_capacity` behind a
+   * chosen lane, `no_runnable_lane` when no executor could take it,
+   * `hysteresis_*` holds, `hard_down`/`residency_elapsed` switches,
+   * `global_admission`/`invalid_requirements`). Each job contributes
+   * each recorded code once; a `market_reasons` of `[]` or `null`
+   * contributes nothing — recorded-empty and missing evidence stay
+   * distinct upstream. This is queue-side diagnostic context, not a
+   * launch decision: it explains why the market was or was not routing
+   * the job, and never reduces `unknown_unresolved` — a job still
+   * awaiting a merge verdict stays unresolved however it was routed.
+   */
+  unknown_market_reasons: { reason: string; jobs: number }[];
   unknown_unresolved: number;
   /**
    * Top recorded `usage_missing` labels across every folded outcome —
@@ -367,6 +388,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   const skipReasons = new Map<string, number>();
   const emptyTags = new Map<string, number>();
   const deferReasons = new Map<string, number>();
+  const marketReasons = new Map<string, number>();
   const usageMissing = new Map<string, number>();
   const usageSources = new Map<string, number>();
   let unknownSkipped = 0;
@@ -416,6 +438,17 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
         unknownDeferred++;
         const key = o.defer_reason ?? 'unlabeled';
         deferReasons.set(key, (deferReasons.get(key) ?? 0) + 1);
+      }
+      // The market's newest route_decision verdict is queue-side
+      // diagnostic: each recorded reason code tallies once per job —
+      // `no_runnable_lane`/`global_admission` read as capacity-blocked,
+      // `preferred_lane`/`healthy_capacity` as routable-and-waiting.
+      // It never feeds the unresolved remainder: a job with no terminal
+      // productivity verdict stays unresolved however the market routed it.
+      if (o.market_reasons !== null) {
+        for (const code of o.market_reasons) {
+          marketReasons.set(code, (marketReasons.get(code) ?? 0) + 1);
+        }
       }
       if (!empty && !nonzeroExit && o.failure_class === null && !requeued && !declined && !deferred) unknownUnresolved++;
       continue;
@@ -495,6 +528,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     .map(([reason, jobs]) => ({ reason, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
     .slice(0, 10);
+  const topMarketReasons = [...marketReasons.entries()]
+    .map(([reason, jobs]) => ({ reason, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
+    .slice(0, 10);
   const topUsageMissing = [...usageMissing.entries()]
     .map(([usage_missing, jobs]) => ({ usage_missing, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.usage_missing.localeCompare(b.usage_missing))
@@ -509,6 +546,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     unknown_task_outcomes: topTaskOutcomes, unknown_skipped: unknownSkipped,
     unknown_skip_reasons: topSkipReasons, unknown_empty_tags: topEmptyTags,
     unknown_deferred: unknownDeferred, unknown_defer_reasons: topDeferReasons,
+    unknown_market_reasons: topMarketReasons,
     unknown_unresolved: unknownUnresolved,
     usage_missing: topUsageMissing, usage_sources: topUsageSources };
 }
@@ -603,6 +641,14 @@ export interface RouterWeightProposalReport {
    * ledger was not read; empty when none recorded.
    */
   unknown_defer_reasons: { reason: string; jobs: number }[] | null;
+  /**
+   * Top recorded work-market `reason_codes` inside the unknown cohort,
+   * by jobs — the market's routing verdict for each job's newest
+   * route_decision row (see RouterWeightProposalSet). Null when the
+   * ledger was not read; empty when read but no unknown-cohort outcome
+   * carried market reasons.
+   */
+  unknown_market_reasons: { reason: string; jobs: number }[] | null;
   unknown_unresolved: number | null;
   /**
    * Top recorded `usage_missing` labels across every folded outcome —
@@ -631,7 +677,7 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     return { ...head, status: 'unavailable', known_outcomes: null, unknown_outcomes: null, unclassified_outcomes: null,
       unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null, unknown_empty_classes: null,
       unknown_task_outcomes: null, unknown_skipped: null, unknown_skip_reasons: null, unknown_empty_tags: null,
-      unknown_deferred: null, unknown_defer_reasons: null,
+      unknown_deferred: null, unknown_defer_reasons: null, unknown_market_reasons: null,
       unknown_unresolved: null,
       usage_missing: null, usage_sources: null, proposals: [] };
   }
@@ -648,6 +694,11 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     // empty jobs tagged" when it only knows "tags unread" — report null.
     unknown_empty_tags: read.empty_tag_state === 'read' ? set.unknown_empty_tags : null,
     unknown_deferred: set.unknown_deferred, unknown_defer_reasons: set.unknown_defer_reasons,
+    // Market reasons join through the same work-market.jsonl tail as
+    // work_class: anything but 'read' means no decision verdicts joined,
+    // so the tally would claim "no market reasons recorded" when it only
+    // knows "market unread" — report null, the same rule empty_tags uses.
+    unknown_market_reasons: read.market_state === 'read' ? set.unknown_market_reasons : null,
     unknown_unresolved: set.unknown_unresolved,
     usage_missing: set.usage_missing, usage_sources: set.usage_sources,
     proposals: set.proposals };

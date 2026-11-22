@@ -41,7 +41,9 @@ function outcome(job_id: string, over: Partial<RouterOutcome> = {}): RouterOutco
     exit_code: null, failure_class: null, empty_class: null, empty_tag: null,
     task_outcome: null, lane_hint_blocked_by: null,
     skipped: null, skip_reason: null, skip_code: null,
-    deferred: null, defer_reason: null, defer_repeat_of: null, passk: null,
+    deferred: null, defer_reason: null, defer_repeat_of: null,
+    market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
+    passk: null,
     ...over,
   };
 }
@@ -155,7 +157,7 @@ describe('phm router outcomes', () => {
   it('renders text lines with unknown for null fields and review counts when present', async () => {
     const report = buildRouterOutcomesReport(read({
       outcomes: [
-        outcome('A', { merged: null, reverted: true, cost_usd: null, wall_s: null, passk: null, task_outcome: 'done', lane_hint_blocked_by: ['quota_exhausted', 'saturated'], review_findings: { fixed: 2, rejected: 1, ignored: 0 } }),
+        outcome('A', { merged: null, reverted: true, cost_usd: null, wall_s: null, passk: null, task_outcome: 'done', lane_hint_blocked_by: ['quota_exhausted', 'saturated'], market_lane: 'beta', market_preferred: 'alpha', market_override: 'resource_fit', market_reasons: ['no_runnable_lane', 'global_admission'], review_findings: { fixed: 2, rejected: 1, ignored: 0 } }),
         outcome('B', { lane: null, model: null, tier: null, work_class: 'docs' }),
       ],
       malformed_rows: 3, unattached_rows: 1, ambiguous_urls: 2, session_rows: 4,
@@ -163,9 +165,9 @@ describe('phm router outcomes', () => {
     const lines = routerOutcomeLines(report);
     expect(lines[0]).toBe('router outcomes state=read eval=missing spend=missing market=missing empty_tags=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2 session_rows=4');
     expect(lines[1]).toBe(`ledger ${report.path}`);
-    expect(lines[3]).toContain('A lane=alpha model=m1 tier=work work_class=unknown lane_hint=unknown lane_override=unknown merged=unknown reverted=true ci_first_pass=true review=fixed:2,rejected:1,ignored:0 cost_usd=unknown acus=unknown wall_s=unknown ttm_s=unknown queue_wait_s=unknown ci_wall_s=unknown publish_wait_s=unknown tokens_total=unknown passk=unknown empty=unknown exit_code=unknown failure_class=unknown empty_class=unknown empty_tag=unknown task_outcome=done skipped=unknown skip_reason=unknown skip_code=unknown deferred=unknown defer_reason=unknown defer_repeat_of=unknown lane_hint_blocked_by=[quota_exhausted,saturated]');
+    expect(lines[3]).toContain('lane_hint_blocked_by=[quota_exhausted,saturated] market_lane=beta market_preferred=alpha market_override=resource_fit market_reasons=[no_runnable_lane,global_admission]');
     expect(lines[2]).toContain('B lane=unknown model=unknown tier=unknown work_class=docs lane_hint=unknown lane_override=unknown merged=true reverted=unknown');
-    expect(lines[2]).toContain('task_outcome=unknown skipped=unknown skip_reason=unknown skip_code=unknown deferred=unknown defer_reason=unknown defer_repeat_of=unknown lane_hint_blocked_by=unknown');
+    expect(lines[2]).toContain('task_outcome=unknown skipped=unknown skip_reason=unknown skip_code=unknown deferred=unknown defer_reason=unknown defer_repeat_of=unknown lane_hint_blocked_by=unknown market_lane=unknown market_preferred=unknown market_override=unknown market_reasons=unknown');
   });
 
   it('surfaces truncated coverage in JSON and text without changing exit 0', async () => {

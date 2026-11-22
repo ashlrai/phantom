@@ -354,7 +354,17 @@ recorded one. The market read
 degrades independently: the report's
 `market_state` mirrors the jobs `state` vocabulary and `market_truncated`
 marks a cut decision tail, in which case joined classes cover only the
-newest bytes. `lane_hint_blocked_by` carries the dispatch claim's
+newest bytes. The same newest-decision collapse also joins the market's
+recorded routing verdict — `market_lane` (the row's `chosen_lane`,
+`null` inside a recorded decision that routed nowhere),
+`market_preferred` (`preferred_lane`), `market_override` (the override
+object's recorded `reason` — `resource_fit`/`unknown_preference`/
+`preferred_lane_fallback`) and `market_reasons` (the row's
+`reason_codes`, deduplicated in the bounded reason-code shape and
+capped) — under the same `market_state` health and newest-decision
+rule: a missing field stays `null`, a recorded empty reason list
+stays `[]`, and decision rows naming jobs outside the jobs window
+never create outcomes. `lane_hint_blocked_by` carries the dispatch claim's
 recorded lane-hint blocking codes — the third field of the claim's
 lane-override record: a solo `claim` row that left its hinted lane
 spreads the work market's `preferred_lane_blocked_by`, the rejected
@@ -516,14 +526,23 @@ jobs whose standing launch decision is a recorded keep-queued verdict
 defer, or a `precheck_parked` park no later dispatch or decline
 superseded) and `unknown_defer_reasons` tallies their recorded reason
 labels (top entries first), so a job the fleet recorded keeping queued
-reads as explained rather than unresolved — and `unknown_unresolved` is
+reads as explained rather than unresolved — `unknown_market_reasons`
+tallies the work market's recorded `reason_codes` for each
+unknown-cohort job's newest `route_decision` row — queue-side
+diagnostic context for why the market was or was not routing the job
+(`no_runnable_lane`, `global_admission`, `hysteresis_*`,
+`preferred_lane`/`healthy_capacity`), never a launch decision and
+never a reduction of the unresolved remainder — and
+`unknown_unresolved` is
 the remainder with no
 recorded failure signal, no requeue word and no standing skip
 decline or keep-queued verdict (finished cleanly awaiting a
 verdict, still in flight, or carrying only transient launch receipts). These are counts over the retained window; when the ledger was
 not read they are `null`, never zero — and `unknown_empty_tags` is
 `null` whenever the empty-tags ledger itself was not read, since an
-absent tag journal means tag coverage is unknown rather than zero. When the ledger exceeds the retained tail the
+absent tag journal means tag coverage is unknown rather than zero;
+`unknown_market_reasons` is `null` the same way whenever the market
+ledger itself was not read. When the ledger exceeds the retained tail the
 report carries `truncated: true` and every count covers the newest bytes
 only; `market_state`/`market_truncated` report the decision journal's
 health and `empty_tag_state`/`empty_tag_truncated` the tags journal's

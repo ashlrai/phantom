@@ -16,7 +16,11 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // score leaves passk null. jobs.jsonl rows never carry work_class, so the
 // fold fills it from each job's latest work-market route_decision row — the
 // market's own recorded classification — while an explicit jobs-row
-// work_class always wins. The ledgers are append-only and unbounded, so each
+// work_class always wins. The same newest route_decision row also supplies
+// the market's recorded routing verdict as market_lane/market_preferred/
+// market_override/market_reasons — decision-side intent and reason codes
+// (no_runnable_lane, hysteresis_*, global_admission) distinct from the
+// claim rows' launch record. The ledgers are append-only and unbounded, so each
 // read retains a tail window: an oversized ledger reports truncated:true (or
 // spend_truncated/market_truncated for the joined sources) and folds only
 // the retained rows, never a refused read. jobs.jsonl finish rows carry
@@ -416,6 +420,55 @@ export interface RouterOutcome {
    * cleared with the verdict; `null` whenever `deferred` is not `true`.
    */
   defer_repeat_of: string | null;
+  /**
+   * The work market's recorded routing verdict for the job — the newest
+   * `work-market.v1` `route_decision` row's `chosen_lane`, the lane the
+   * market last decided to send the job to (`null` inside a recorded
+   * decision when it routed nowhere — `no_runnable_lane`,
+   * `global_admission` or `invalid_requirements`). This is decision-side
+   * intent, not the launch record: the claim rows' `lane` is where the
+   * job actually ran, and a later hysteresis release, batch move or lane
+   * change can legitimately diverge from the market's pick. Joins only
+   * in the bounded lane-id shape; a malformed value is skipped, never
+   * recorded raw. `null` when no decision row named the job or the
+   * market ledger was not read — unknown, never a guessed lane.
+   */
+  market_lane: string | null;
+  /**
+   * The market decision's recorded `preferred_lane` — the job's declared
+   * lane hint the market evaluated (an open hint records `null` inside
+   * the decision). Same bounded lane-id shape and newest-decision rule
+   * as `market_lane`; `null` when unrecorded or no decision exists.
+   */
+  market_preferred: string | null;
+  /**
+   * The market decision's recorded override reason — `override.reason`
+   * on the newest `route_decision` row, the market's own
+   * `resource_fit`/`unknown_preference`/`preferred_lane_fallback`
+   * verdict for picking a lane other than the hint (the same closed
+   * vocabulary the claim-side `lane_override` carries, minus
+   * `batch_session`, which only a claim can record). Joins only in the
+   * bounded lowercase reason-code shape; a malformed reason or a
+   * decision with no override stays `null` — the pair
+   * (`market_preferred` → `market_lane`) already names the move, so
+   * only the reason joins here. `null` when no decision recorded one.
+   */
+  market_override: string | null;
+  /**
+   * The market decision's recorded `reason_codes` — why the newest
+   * `route_decision` row resolved as it did: `preferred_lane` or
+   * `healthy_capacity` behind a chosen lane, `no_runnable_lane` when no
+   * executor could take the job, `hysteresis_*` residency/move-cap
+   * holds, `hard_down`/`residency_elapsed` prior-pool switches, and
+   * dispatchd's appended `global_admission`/`invalid_requirements`
+   * verdicts. Entries join only in the bounded lowercase reason-code
+   * shape, deduplicated in recorded order and capped; a recorded empty
+   * list stays `[]` while a missing or all-unrecognizable list reads as
+   * unrecorded (`null`) — the same recorded-empty-vs-missing-evidence
+   * distinction `lane_hint_blocked_by` keeps. `null` when no decision
+   * row named the job or the market ledger was not read.
+   */
+  market_reasons: string[] | null;
   /** The lane+model's pass^k (passPowK) from the latest eval.lane-scores.v1 projection; null when unknown. */
   passk: number | null;
 }
@@ -1043,7 +1096,9 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       exit_code: null, failure_class: null, empty_class: null, empty_tag: null,
       task_outcome: null, lane_hint_blocked_by: null,
       skipped: null, skip_reason: null, skip_code: null,
-      deferred: null, defer_reason: null, defer_repeat_of: null, passk: null,
+      deferred: null, defer_reason: null, defer_repeat_of: null,
+      market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
+      passk: null,
     };
     o.lane = str(r, 'lane', 'pool', 'arm') ?? o.lane;
     o.model = str(r, 'model') ?? o.model;
@@ -1293,6 +1348,96 @@ export function foldRouteDecisionWorkClasses(text: string): Map<string, string> 
 }
 
 /**
+ * One job's newest work-market route_decision verdict — the decision-side
+ * routing record the outcome's market_* fields carry. `lane` is the
+ * market's `chosen_lane` (null inside a recorded decision when it routed
+ * nowhere), `preferred` its `preferred_lane` hint, `override` the
+ * `override.reason` code when the market picked off-hint, and `reasons`
+ * its `reason_codes` list. Every field stays null when the row recorded
+ * none — unknown, never guessed.
+ */
+export interface MarketRouteDecision {
+  lane: string | null;
+  preferred: string | null;
+  override: string | null;
+  reasons: string[] | null;
+}
+
+/**
+ * Folds work-market.jsonl route_decision rows into each job's newest
+ * recorded routing verdict. The dispatcher re-decides every waiting job
+ * each tick, so rows collapse to the newest timestamp per job — the same
+ * latest-decision rule foldRouteDecisionWorkClasses and the unfed
+ * report's latestRouteDecisions apply, but without the work_class
+ * requirement: a decision row counts on its bounded job id and finite
+ * epoch-seconds ts alone, and each field joins only when it parses in
+ * its bounded shape. `chosen_lane`/`preferred_lane` join in the bounded
+ * lane-id shape the claim folds use, `override.reason` in the bounded
+ * lowercase reason-code shape, and `reason_codes` entries deduplicated
+ * in recorded order and capped — a recorded empty list stays `[]`
+ * while a missing or all-unrecognizable list reads as unrecorded
+ * (`null`), the same distinction lane_hint_blocked_by keeps. Rows with
+ * a missing or non-finite ts, a wrong schema/event, or a malformed job
+ * id are skipped, never guessed; a job absent from the map keeps every
+ * market_* field null.
+ */
+export function foldRouteDecisions(text: string): Map<string, MarketRouteDecision> {
+  const latest = new Map<string, { ts: number; decision: MarketRouteDecision }>();
+  for (const line of text.split('\n')) {
+    // Cheap prefilter: route decisions are the bulk of the file.
+    if (!line.includes('"route_decision"')) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const row = value as Row;
+    if (row['schema'] !== 'work-market.v1' || row['event'] !== 'route_decision') continue;
+    const job = row['job'];
+    if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
+    const ts = row['ts'];
+    if (typeof ts !== 'number' || !Number.isFinite(ts)) continue;
+    const prev = latest.get(job);
+    if (prev !== undefined && prev.ts >= ts) continue;
+    const lane = row['chosen_lane'];
+    const preferred = row['preferred_lane'];
+    const override = row['override'];
+    const overrideReason = override !== null && typeof override === 'object' && !Array.isArray(override)
+      ? (override as Row)['reason'] : undefined;
+    const rawReasons = row['reason_codes'];
+    let reasons: string[] | null = null;
+    if (Array.isArray(rawReasons)) {
+      if (rawReasons.length === 0) {
+        reasons = [];
+      } else {
+        const collected: string[] = [];
+        const seen = new Set<string>();
+        for (const code of rawReasons) {
+          if (collected.length >= LANE_BLOCKED_MAX) break;
+          if (typeof code === 'string' && LANE_BLOCKED_CODE.test(code) && !seen.has(code)) {
+            seen.add(code);
+            collected.push(code);
+          }
+        }
+        reasons = collected.length === 0 ? null : collected;
+      }
+    }
+    latest.set(job, {
+      ts,
+      decision: {
+        lane: typeof lane === 'string' && LANE_BLOCKED_HINT.test(lane) ? lane : null,
+        preferred: typeof preferred === 'string' && LANE_BLOCKED_HINT.test(preferred) ? preferred : null,
+        override: typeof overrideReason === 'string' && LANE_BLOCKED_CODE.test(overrideReason) ? overrideReason : null,
+        reasons,
+      },
+    });
+  }
+  return new Map([...latest].map(([job, entry]) => [job, entry.decision]));
+}
+
+/**
  * The empty-tags ledger's row schema and closed tag vocabulary, mirrored
  * from the producer (src/core/fleet/empty-tags.ts): `phm jobs empty
  * --record` appends `job.empty-tag.v1` rows — { schema, job, lane, tag } —
@@ -1437,7 +1582,12 @@ async function liveAuthorityEvidence(): Promise<readonly RouterOutcomeEvidenceRo
  * ledger cost stayed null, market-derived work_class fills only outcomes
  * whose jobs rows recorded none, and empty_tag fills only outcomes a
  * job.empty-tag.v1 row named — a missing joined ledger never zeroes,
- * guesses or blocks the jobs fold. `reverted` additionally joins the
+ * guesses or blocks the jobs fold. The market ledger's newest
+ * route_decision rows additionally join each outcome's
+ * market_lane/market_preferred/market_override/market_reasons verdict
+ * fields under the same market_state health and newest-decision rule
+ * work_class follows — decision rows naming jobs outside the jobs
+ * window never create outcomes. `reverted` additionally joins the
  * authority ledger's verified
  * evidence index (`authorityRevertedPrKeys`): a fleet merge the ledger
  * records as reverted marks its outcome through the job's unambiguous PR
@@ -1501,6 +1651,17 @@ export async function readRouterOutcomes(opts: {
     for (const o of folded.outcomes) {
       const tag = tags.get(o.job_id);
       if (tag !== undefined) o.empty_tag = tag;
+    }
+  }
+  if (marketRead.state === 'read') {
+    const decisions = foldRouteDecisions(marketRead.text);
+    for (const o of folded.outcomes) {
+      const decision = decisions.get(o.job_id);
+      if (decision === undefined) continue;
+      o.market_lane = decision.lane;
+      o.market_preferred = decision.preferred;
+      o.market_override = decision.override;
+      o.market_reasons = decision.reasons;
     }
   }
   const outcomes = opts.lane === undefined ? folded.outcomes : folded.outcomes.filter(o => o.lane === opts.lane);

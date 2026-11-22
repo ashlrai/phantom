@@ -87,6 +87,9 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
         : '') +
       (report.unknown_empty_tags !== null && report.unknown_empty_tags.length > 0
         ? ` empty_tags=${report.unknown_empty_tags.map(c => `${c.tag}:${c.jobs}`).join(',')}`
+        : '') +
+      (report.unknown_market_reasons !== null && report.unknown_market_reasons.length > 0
+        ? ` market_reasons=${report.unknown_market_reasons.map(c => `${c.reason}:${c.jobs}`).join(',')}`
         : ''),
   ];
   const rows = report.proposals.map(p => {
