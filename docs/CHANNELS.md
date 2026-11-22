@@ -327,7 +327,19 @@ the same store `phm comms status` counts — a sent one is the single
 outstanding slot Mason's numbered reply or button tap resolves and lists as a
 blocking warn, a pending one is queued behind it; informational reports never
 await a reply and never list, and `expiresAt` is the real TTL deadline
-`expireStaleRequests` applies) — plus `.reply.eml` artifacts the email send
+`expireStaleRequests` applies) — plus `*.eml` files still sitting in the
+email-drop inbox dir (the same saved `queue/email-drop.json` config →
+`inboxDir` → `readEmailDropInbox` the drop pass scans: inbound mail no
+recorded-receipt source can see until `runEmailDropOnce` moves it into
+`processedDir`, so a stalled cycle, a paused config or an unsafe folder
+leaves real pending comms invisible; the whole backlog lists as ONE warn
+item naming only the real file count — filenames never leave the directory —
+with `since` the newest entry's filesystem mtime and `expiresAt` null, an
+other-writable inbox degrading the source state while `enabled:false` only
+annotates the detail, missing config or a missing inbox dir reporting
+`missing`, invalid config `degraded` and a non-directory or unreadable inbox
+`unavailable`; items deep-link `phm comms email-cycle` and `phm comms
+diagnose --json`) — plus `.reply.eml` artifacts the email send
 pass marked `stuck` in the reply outbox (the same read `phm fleet
 email-outbox` serves: saved email-drop config → `outboxDir`, else the sibling
 of `inboxDir` → `readEmailOutbox`; interrupted send claims, oversized or
@@ -365,7 +377,8 @@ imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms th
 `phm drafts approve`, `phm comms-agent drafts`,
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
 `phm fleet handoff-receive`, `phm agents conversations`,
-`phm bots handoff`, `phm agents bus post`, `phm fleet email-outbox`,
+`phm bots handoff`, `phm agents bus post`, `phm comms email-cycle`,
+`phm fleet email-outbox`,
 `phm bus inbox`, `phm bus ack`, `phm bus thread pending`, `phm bus thread
 ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
 `phm team approve|deny`, `phm inbox approve|reject`,

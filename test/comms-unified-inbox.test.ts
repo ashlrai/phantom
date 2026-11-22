@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -125,6 +125,7 @@ describe('readUnifiedInbox sources', () => {
         board: { state: 'missing', pending: 0 },
         conversations: { state: 'missing', pending: 0 },
         seats: { state: 'missing', pending: 0 },
+        'email-inbox': { state: 'missing', pending: 0 },
         'email-outbox': { state: 'missing', pending: 0 },
         'team-approvals': { state: 'healthy', pending: 0 },
         proposals: { state: 'healthy', pending: 0 },
@@ -1384,6 +1385,113 @@ describe('readUnifiedInbox email outbox', () => {
     expect(item.title).not.toMatch(/\n/);
     // The opaque id and every other field must not echo the artifact name either.
     expect(JSON.stringify(item)).not.toContain('sk-abcdefghijklmnop');
+  });
+});
+
+describe('readUnifiedInbox email inbox', () => {
+  const config = (over: Partial<EmailDropConfig> = {}): EmailDropConfig => ({
+    v: 1, inboxDir: join(root, 'drop-inbox'), from: ['operator@example.test'], ...over,
+  });
+  const dropFile = (dir: string, name: string, at = '2026-11-07T10:00:00Z') => {
+    writeFileSync(join(dir, name), 'From: a@b.c\r\n\r\nbody\r\n', { mode: 0o600 });
+    const ms = Date.parse(at);
+    utimesSync(join(dir, name), ms / 1000, ms / 1000);
+  };
+  const inboxId = (): string => `email-inbox:${createHash('sha256').update(runsDir).digest('hex').slice(0, 16)}`;
+
+  it('lists the whole unprocessed .eml backlog as one warn item with the real count and newest mtime', async () => {
+    const dir = join(root, 'drop-inbox');
+    mkdirSync(dir, { recursive: true });
+    await writeEmailDropConfig(runsDir, config());
+    dropFile(dir, 'old.eml', '2026-11-06T09:00:00Z');
+    dropFile(dir, 'new.eml', '2026-11-07T10:00:00Z');
+    dropFile(dir, 'notes.txt');
+    const inbox = await read();
+    expect(inbox.sources['email-inbox']).toEqual({ state: 'healthy', pending: 1 });
+    const items = inbox.items.filter(i => i.source === 'email-inbox');
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: inboxId(), kind: 'email-inbound', severity: 'warn', blocking: false,
+      title: '2 inbound email files awaiting ingestion',
+      detail: null, since: '2026-11-07T10:00:00.000Z', expiresAt: null,
+      act: ['phm comms email-cycle', 'phm comms diagnose --json'],
+    });
+    expect(items[0]!.jobIds).toBeUndefined();
+  });
+
+  it('reports missing config, invalid config, a missing inbox and a non-directory inbox honestly', async () => {
+    expect((await read()).sources['email-inbox']).toEqual({ state: 'missing', pending: 0 });
+    mkdirSync(join(runsDir, 'queue'), { recursive: true });
+    writeFileSync(join(runsDir, 'queue', 'email-drop.json'), '{oops', { mode: 0o600 });
+    expect((await read()).sources['email-inbox']).toEqual({ state: 'degraded', pending: 0 });
+    await writeEmailDropConfig(runsDir, config());
+    expect((await read()).sources['email-inbox']).toEqual({ state: 'missing', pending: 0 });
+    const file = join(root, 'inbox-is-a-file');
+    writeFileSync(file, 'x', { mode: 0o600 });
+    await writeEmailDropConfig(runsDir, config({ inboxDir: file }));
+    expect((await read()).sources['email-inbox']).toEqual({ state: 'unavailable', pending: null });
+  });
+
+  it('degrades an other-writable inbox and annotates a paused config without hiding the count', async () => {
+    const dir = join(root, 'drop-inbox');
+    mkdirSync(dir, { recursive: true });
+    dropFile(dir, 'a.eml');
+    await writeEmailDropConfig(runsDir, config());
+    chmodSync(dir, 0o777);
+    const unsafe = await read();
+    expect(unsafe.sources['email-inbox']).toEqual({ state: 'degraded', pending: 1 });
+    expect(unsafe.items.find(i => i.source === 'email-inbox')!.detail).toContain('writable by other users');
+    chmodSync(dir, 0o700);
+    await writeEmailDropConfig(runsDir, config({ enabled: false }));
+    const paused = await read();
+    expect(paused.sources['email-inbox']).toEqual({ state: 'healthy', pending: 1 });
+    expect(paused.items.find(i => i.source === 'email-inbox')!.detail).toContain('enabled:false');
+  });
+
+  it('reports an unreadable inbox as unavailable while other sources still list', async () => {
+    const dir = join(root, 'drop-inbox');
+    mkdirSync(dir, { recursive: true });
+    dropFile(dir, 'a.eml');
+    await writeEmailDropConfig(runsDir, config());
+    chmodSync(dir, 0o000);
+    try {
+      writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+      const inbox = await read();
+      expect(inbox.sources['email-inbox']).toEqual({ state: 'unavailable', pending: null });
+      expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+    } finally {
+      chmodSync(dir, 0o700);
+    }
+  });
+
+  it('builds the backlog item from an injected read and reports a throwing seam as unavailable', async () => {
+    const pinned = { readRequests: () => ({ status: 'missing' as const, requests: [] }) };
+    const stubbed = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readEmailInbox: async () => ({ state: 'healthy', pending: 3, since: '2026-11-07T11:00:00.000Z', unsafe: false, paused: false }),
+    });
+    const items = stubbed.items.filter(i => i.source === 'email-inbox');
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ title: '3 inbound email files awaiting ingestion', since: '2026-11-07T11:00:00.000Z' });
+    expect(stubbed.sources['email-inbox']).toEqual({ state: 'healthy', pending: 1 });
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    const throwing = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now, ...pinned,
+      readEmailInbox: async () => { throw new Error('boom'); },
+    });
+    expect(throwing.sources['email-inbox']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+
+  it('never lets a secret-shaped or address-carrying filename reach the item', async () => {
+    const dir = join(root, 'drop-inbox');
+    mkdirSync(dir, { recursive: true });
+    await writeEmailDropConfig(runsDir, config());
+    dropFile(dir, 'sk-abcdefghijklmnop@example.com.eml');
+    const item = (await read()).items.find(i => i.source === 'email-inbox')!;
+    expect(JSON.stringify(item)).not.toContain('sk-abcdefghijklmnop');
+    expect(JSON.stringify(item)).not.toContain('example.com.eml');
+    expect(item.title).not.toMatch(/\n/);
   });
 });
 

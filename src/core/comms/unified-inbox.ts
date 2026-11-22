@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates nineteen local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates twenty local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -166,6 +166,27 @@
  *               invalid config, a missing outbox and an unreadable one keep
  *               their own source state — never an empty outbox passed off
  *               as fact.
+ *   email-inbox  `*.eml` files still sitting in the email-drop inbox dir
+ *               (`<runsDir>/queue/email-drop.json` → `inboxDir`) — inbound
+ *               mail the drop pass has not recorded yet, the mirror of the
+ *               email-outbox source on the receive side. A file leaves only
+ *               when `runEmailDropOnce` moves it into `processedDir`, so a
+ *               stalled cycle, a paused config or an unsafe folder leaves
+ *               real pending comms invisible to every recorded-receipt
+ *               source; each backlog lists as ONE warn item naming the real
+ *               file count (filenames never leave the directory — they can
+ *               carry addresses), `since` the newest entry's filesystem
+ *               mtime — the last arrival on the pending set, never a parsed
+ *               header — and `expiresAt` null. An other-writable inbox
+ *               degrades the source state (the pass refuses the folder, so
+ *               the files cannot move until permissions are fixed); a config
+ *               with `enabled:false` only annotates the detail — polling is
+ *               paused by owner choice while the files stay pending. Missing
+ *               config or a missing inbox dir is 'missing'
+ *               (verified empty — the pass treats it as an empty pass too);
+ *               invalid config 'degraded'; a non-directory or unreadable
+ *               inbox 'unavailable', never an empty listing passed off as
+ *               fact. Act: `phm comms email-cycle`, `phm comms diagnose`.
  *   team-approvals  pending team approvals — access requests and
  *               consequential handoffs only an owner/admin can decide — from
  *               the team event log, the same `readTeamApprovals` section
@@ -244,7 +265,7 @@ import { readNeedsMasonReplyDeliveries, type NeedsMasonReplyDeliveryReport } fro
 import { loadConfigReadOnly, loadConfigReadOnlyStrict } from '../config.js';
 import { ashlrHome } from '../cloud/store.js';
 import type { AshlrConfig } from '../types.js';
-import { readEmailDropConfig } from './email-drop-config.js';
+import { readEmailDropConfig, readEmailDropInbox } from './email-drop-config.js';
 import { probeOutboxDir, readEmailOutbox, type EmailOutboxEntry, type EmailOutboxListing } from './email-outbox.js';
 import { gmailArchivePlanLatestPath, readGmailArchivePlanLatest } from './gmail-archive-plan-latest.js';
 import { readLinkedInDrop, type LinkedInMessage } from './linkedin-drop.js';
@@ -271,7 +292,7 @@ const SUGGESTED_LEASE_MS = 600_000;
 export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
   'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'seats',
-  'gmail', 'linkedin', 'requests', 'email-outbox', 'team-approvals', 'proposals', 'slack',
+  'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -281,7 +302,7 @@ export type UnifiedInboxSeverity = 'info' | 'warn' | 'high';
 const UNIFIED_INBOX_SEVERITIES: readonly UnifiedInboxSeverity[] = ['info', 'warn', 'high'];
 export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeverity =>
   (UNIFIED_INBOX_SEVERITIES as readonly string[]).includes(value);
-export type UnifiedInboxKind = 'needs-you' | 'needs-you-delivery' | 'teammate-text' | 'teammate-task' | 'owner-message' | 'owner-reply-undelivered' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'mailbox-message' | 'board-delivery' | 'board-task' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-stuck' | 'team-approval' | 'inbox-proposal' | 'slack-request';
+export type UnifiedInboxKind = 'needs-you' | 'needs-you-delivery' | 'teammate-text' | 'teammate-task' | 'owner-message' | 'owner-reply-undelivered' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'mailbox-message' | 'board-delivery' | 'board-task' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-inbound' | 'email-stuck' | 'team-approval' | 'inbox-proposal' | 'slack-request';
 
 export interface UnifiedInboxItem extends AttentionItem {
   /** Stable, namespaced: `<source>:<ref>` (e.g. `drafts:d-0123…`). */
@@ -365,6 +386,19 @@ export interface UnifiedInbox {
   items: UnifiedInboxItem[];
 }
 
+/** The resolved email-drop inbox read: a unified source state plus the real pending-file count, the freshest arrival the directory listing proved, and the two conditions that explain a stuck backlog. */
+export interface EmailInboxSourceRead {
+  state: UnifiedInboxSourceState;
+  /** `.eml` entries awaiting the drop pass — the real directory count. */
+  pending: number;
+  /** Newest entry mtime (ISO) — filesystem evidence of the last arrival on the pending set; null when no entry stat succeeded. */
+  since: string | null;
+  /** The inbox folder is other-writable: the pass refuses it, so these files cannot move until permissions are fixed. */
+  unsafe: boolean;
+  /** The saved config sets `enabled:false` — polling is paused by owner choice while files stay pending. */
+  paused: boolean;
+}
+
 /** One reply artifact as the email-outbox source reports it: name, state and the fixed stuck reason — never a recipient, subject, body or path. */
 export type EmailOutboxSourceEntry = Pick<EmailOutboxEntry, 'name' | 'state' | 'reason'>;
 
@@ -426,6 +460,7 @@ export interface UnifiedInboxOptions {
   readRequests?: typeof readCommsRequests;
   /** Test seam: the request TTL `expiresAt` uses; default resolves cfg.comms.requestTtlHours like dispatch. */
   requestTtlMs?: number;
+  readEmailInbox?: (options: { runsDir?: string }) => Promise<EmailInboxSourceRead>;
   readEmailOutbox?: (options: { runsDir?: string }) => Promise<EmailOutboxSourceRead>;
   /** Team-approvals seam; default reads the DEFAULT_TEAM event log like `phm approvals`. */
   readTeamApprovals?: typeof readTeamApprovals;
@@ -1741,6 +1776,73 @@ function slackItems(read: NonNullable<UnifiedInboxOptions['readSlackJournal']>,
 }
 
 /**
+ * The same drop inbox `runEmailDropOnce` scans, resolved at the shared runs
+ * dir: saved email-drop config → `inboxDir` → `readEmailDropInbox`. A missing
+ * config or inbox dir is 'missing' (the pass treats an absent inbox as an
+ * empty pass too); a config that exists but cannot be used is 'degraded'; a
+ * non-directory or unreadable inbox is 'unavailable' — a broken drop folder
+ * never reports a healthy empty inbox. An other-writable inbox degrades the
+ * state because the pass refuses the whole folder, so the pending files
+ * cannot move until permissions are fixed; a paused config (`enabled:false`)
+ * leaves the state alone — the listing itself is healthy — and only the item
+ * detail says why the backlog sits.
+ */
+async function readEmailInboxSource(runsDir: string): Promise<EmailInboxSourceRead> {
+  const none = (state: UnifiedInboxSourceState): EmailInboxSourceRead =>
+    ({ state, pending: 0, since: null, unsafe: false, paused: false });
+  let saved: Awaited<ReturnType<typeof readEmailDropConfig>>;
+  try { saved = await readEmailDropConfig(runsDir); } catch { return none('unavailable'); }
+  if (saved.state === 'missing') return none('missing');
+  if (saved.state !== 'ok' || saved.config === undefined) return none('degraded');
+  let scan: ReturnType<typeof readEmailDropInbox>;
+  try { scan = readEmailDropInbox(saved.config.inboxDir); } catch { return none('unavailable'); }
+  if (scan.state === 'missing') return none('missing');
+  if (scan.state !== 'ok') return none('unavailable');
+  return {
+    state: scan.unsafe ? 'degraded' : 'healthy',
+    pending: scan.pending,
+    since: scan.newestAtMs === null ? null : new Date(scan.newestAtMs).toISOString(),
+    unsafe: scan.unsafe,
+    paused: saved.config.enabled === false,
+  };
+}
+
+/**
+ * `*.eml` files still sitting in the email-drop inbox — inbound mail the drop
+ * pass has not recorded into MASON-INBOX.md, the bus or the owner thread yet.
+ * Every recorded-receipt source is blind to them: a stalled `phm comms cycle`,
+ * a paused config or an unsafe folder leaves real pending comms invisible, so
+ * the whole backlog lists as ONE warn item — filenames never leave the
+ * directory (they can carry addresses), the title carries only the real file
+ * count, `since` is the newest entry's filesystem mtime (the last arrival on
+ * the pending set, never a parsed Date header) and `expiresAt` stays null.
+ * Non-`.eml` files and a missing inbox are not pending mail and never list.
+ */
+async function emailInboxItems(read: NonNullable<UnifiedInboxOptions['readEmailInbox']>,
+  runsDir: string | undefined): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: EmailInboxSourceRead;
+  try { result = await read({ runsDir: dir }); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = result.pending > 0 ? [{
+    // One runs dir carries one email-drop config, so its hash names the backlog slot without echoing the path.
+    id: `email-inbox:${createHash('sha256').update(dir).digest('hex').slice(0, 16)}`,
+    source: 'email-inbox',
+    kind: 'email-inbound',
+    severity: 'warn',
+    blocking: false,
+    title: oneLine(`${result.pending} inbound email file${result.pending === 1 ? '' : 's'} awaiting ingestion`, TITLE_MAX),
+    detail: [
+      ...(result.unsafe ? ['the inbox folder is writable by other users — the drop pass refuses it until permissions are fixed'] : []),
+      ...(result.paused ? ['the saved email-drop config has enabled:false — polling is paused'] : []),
+    ].join('; ') || null,
+    since: result.since,
+    expiresAt: null,
+    act: ['phm comms email-cycle', 'phm comms diagnose --json'],
+  }] : [];
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
+}
+
+/**
  * The same read `phm fleet email-outbox` serves, resolved at the shared runs
  * dir: saved email-drop config → outbox dir (`outboxDir`, else the sibling of
  * `inboxDir`, the rule every consumer applies) → availability probe →
@@ -1823,6 +1925,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const gmail = gmailItems(options.readGmailPlans ?? readGmailArchivePlanLatest, options.runsDir);
   const linkedin = linkedInItems(options.readLinkedIn ?? readLinkedInDrop, options.runsDir, now);
   const requests = requestItems(options.readRequests ?? readCommsRequests, now, options.requestTtlMs);
+  const emailInbox = await emailInboxItems(
+    options.readEmailInbox ?? (async (opts: { runsDir?: string }) => readEmailInboxSource(opts.runsDir ?? join(homedir(), '.ashlr-runs'))),
+    options.runsDir);
   const emailOutbox = await emailOutboxItems(
     options.readEmailOutbox ?? (async (opts: { runsDir?: string }) => readEmailOutboxSource(opts.runsDir ?? join(homedir(), '.ashlr-runs'))),
     options.runsDir);
@@ -1846,12 +1951,13 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     gmail: gmail.report,
     linkedin: linkedin.report,
     requests: requests.report,
+    'email-inbox': emailInbox.report,
     'email-outbox': emailOutbox.report,
     'team-approvals': teamApprovals.report,
     proposals: proposals.report,
     slack: slack.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
