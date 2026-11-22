@@ -617,14 +617,28 @@ skipped, never guessed. The evidence records `events` (qualifying row
 count), `blocked_reasons` (distinct recorded blockers, first-seen
 order), `conflicts`, `check_failures` and `required_check_failures`
 (failed `check_observed` rows, split on recorded `required: true`),
-`retries`/`retry_failures` (distinct `at`+`head_sha` pairs, the sibling
-reader's replay-dedupe), `recuts` and `auto_merge` (the last recorded
-toggle in append order, `enabled`/`disabled`/`null`). The fold's
-`mergeEvents` option joins each outcome's `merge_queue` through the
-job's newest unambiguous canonical PR claim — the same claim rule the
-authority revert join applies, so a contested or foreign URL never
+`checks_passed` (recorded all-required-green boundary rows) and
+`check_observations` (recorded `check_observed` rows of any
+conclusion — the coverage `check_failures` counts the failure subset
+of), `retries`/`retry_failures` (distinct `at`+`head_sha` pairs, the
+sibling reader's replay-dedupe), `recuts` and `auto_merge` (the last
+recorded toggle in append order, `enabled`/`disabled`/`null`). The
+fold's `mergeEvents` option joins each outcome's `merge_queue` through
+the job's newest unambiguous canonical PR claim — the same claim rule
+the authority revert join applies, so a contested or foreign URL never
 resolves — and merge-events rows for PRs no outcome claims unambiguously
-join nothing and never create outcomes. The read degrades
+join nothing and never create outcomes. The same joined check record
+resolves `ci_first_pass` fill-only when no jobs row recorded a verdict:
+any recorded `check_observed` failure — required or unrelated — reads
+`false` even beside a later `checks_passed` boundary or a merge (a
+rerun or a new head got it green, which is not a first pass); with
+zero recorded failures a `checks_passed` boundary or a recorded merge
+beside observed check activity reads `true`; pending-only
+observations, no check rows at all and unmerged PRs without the
+boundary stay `null` — unknown, never guessed from absent evidence.
+`readRouterOutcomes` reruns the same fill-only pass after the
+reward-signal join so a reward-only merge verdict reaches the
+fallback. The read degrades
 independently: `RouterOutcomeRead.merge_events_state` reports its
 health and `merge_events_truncated` marks a cut tail; anything but
 `read` leaves every `merge_queue` null — unknown, never a guessed

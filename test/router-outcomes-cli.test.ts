@@ -189,7 +189,8 @@ describe('phm router outcomes', () => {
   it('renders merge_queue evidence and reports merge-events ledger health', async () => {
     const mq = {
       events: 5, blocked_reasons: ['required_checks', 'conflict'], conflicts: 1,
-      check_failures: 2, required_check_failures: 1, retries: 1, retry_failures: 0,
+      check_failures: 2, required_check_failures: 1, checks_passed: 1, check_observations: 4,
+      retries: 1, retry_failures: 0,
       recuts: 0, auto_merge: 'enabled' as const,
     };
     const report = buildRouterOutcomesReport(read({
@@ -199,7 +200,7 @@ describe('phm router outcomes', () => {
     const lines = routerOutcomeLines(report);
     expect(lines[0]).toContain('merge_events=read');
     expect(lines).toContain('merge-event coverage: retained tail only; merge_queue joins cover the newest bytes');
-    expect(lines[3]).toContain('merge_queue=events:5,blocked:[required_checks,conflict],conflicts:1,check_failures:2,required_check_failures:1,retries:1,retry_failures:0,recuts:0,auto_merge:enabled');
+    expect(lines[3]).toContain('merge_queue=events:5,blocked:[required_checks,conflict],conflicts:1,check_failures:2,required_check_failures:1,checks_passed:1,check_observations:4,retries:1,retry_failures:0,recuts:0,auto_merge:enabled');
 
     const h = harness(canned(read({ outcomes: [outcome('A')], merge_events_state: 'unreadable' })));
     expect(await cmdRouterOutcomes(['--json'], h.readFn)).toBe(0);

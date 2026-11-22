@@ -212,6 +212,7 @@ function outcomeLine(o: RouterOutcome): string {
   const mergeQueue = mq === null ? 'unknown'
     : `events:${mq.events},blocked:[${mq.blocked_reasons.join(',')}],conflicts:${mq.conflicts},` +
       `check_failures:${mq.check_failures},required_check_failures:${mq.required_check_failures},` +
+      `checks_passed:${mq.checks_passed},check_observations:${mq.check_observations},` +
       `retries:${mq.retries},retry_failures:${mq.retry_failures},recuts:${mq.recuts},` +
       `auto_merge:${mq.auto_merge ?? 'unknown'}`;
   const cr = o.cross_review;
