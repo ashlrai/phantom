@@ -2978,7 +2978,14 @@ absent when no job relation is provable; and
 `jobAnnotationFromFeed(feed, jobId)` maps one already-read
 `BusWorkFeedReadResult` to the `BusEnvelopeLookupJob` every citing read
 shares — the inbox page, `readBusEnvelopeById`, wake referents and the
-`agent-messages.v1` `jobState` field. Claim tokens and `work.result`
+`agent-messages.v1` `jobState` field. `labelIdentityOf(registry)` binds one
+already-read `AgentRegistry` into the label→identity-key lookup every
+sender filter shares — `readAgentInbox`/`readAgentChannel` `from`,
+`comms bus read`/`watch --from` and `followBusStream` (`fleet bus-follow
+--from`) — resolving a label through handle, `agent:` address, stable id or
+alias (exact match first, then lowercase), so a filter naming any spelling
+of one identity matches every label of that identity while an unresolvable
+label keeps exact-label matching. Claim tokens and `work.result`
 queueId/receiptId never appear in a summary.
 Every send is one `appendBusInbox` post; wakes go through `createBusWakeHook`.
 `announceWork(WorkAnnouncementInput)` posts a schema-checked v2 `work.post` to

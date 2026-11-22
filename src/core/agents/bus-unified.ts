@@ -1002,7 +1002,7 @@ function channelOf(to: string, channels: Map<string, string>): string | null {
  * sender filters share: a label resolves to its identity's stable id through
  * handle, `agent:` address, id or alias (exact match first, then lowercase).
  */
-function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
+export function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
   const resolved = new Map<string, string | undefined>();
   return (label) => {
     if (!resolved.has(label)) {

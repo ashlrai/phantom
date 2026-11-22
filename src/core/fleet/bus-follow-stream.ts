@@ -2,9 +2,10 @@
 import { performance } from 'node:perf_hooks';
 import { isAbsolute } from 'node:path';
 import { BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxPage } from './bus-inbox.js';
-import type { BusEnvelope } from './bus-envelope.js';
-import { agentPendingAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
-import { busBodyJobMatch } from '../agents/bus-unified.js';
+import { BUS_PRIORITIES, type BusEnvelope, type BusPriority } from './bus-envelope.js';
+import { agentAddressMatcher, agentPendingAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
+import { busBodyJobMatch, labelIdentityOf } from '../agents/bus-unified.js';
+import { busBodyThread } from '../agents/bus-v2-schema.js';
 
 export const BUS_FOLLOW_MAX_DURATION_MS = 3_600_000;
 export const BUS_FOLLOW_MIN_INTERVAL_MS = 100;
@@ -39,6 +40,25 @@ export interface BusFollowRequest {
    * no job and never matches; checkpoints still advance past filtered rows
    * exactly like `--to`, so a job-scoped stream resumes on the same cursor. */
   job?: string;
+  /** Optional sender filter: the same `agentAddressMatcher` rule
+   * `agents bus inbox --from` and `comms bus read --from` apply — a handle,
+   * `agent:` address, stable id or alias resolves through the registry to
+   * every label of that identity; a sender resolving to no identity and an
+   * unreadable registry keep exact-label matching, so unknown identity state
+   * never widens the stream. Filtering is not authentication. */
+  from?: string;
+  /** Optional priority filter: exact `BUS_PRIORITIES` match on
+   * `envelope.priority`, the same field `agents bus inbox --priority` and
+   * `channel read --priority` narrow on. */
+  priority?: BusPriority;
+  /** Optional thread filter: `busBodyThread` on `note`/`context` bodies —
+   * the same field `agents bus inbox --thread` and `channel read --thread`
+   * match; bodies carrying no thread never match. */
+  thread?: string;
+  /** Optional received-at floor in epoch ms: rows received before the cutoff
+   * never emit, the same inclusive `receivedAt >= since` match
+   * `agents bus inbox --since` resolves its grammar to once per read. */
+  since?: number;
   intervalMs?: number;
   /** Selects an existing local store; never creates or mutates inbox files. */
   root?: string;
@@ -49,6 +69,10 @@ export function validBusFollowRequest(request: BusFollowRequest): boolean {
     Number.isSafeInteger(request.durationMs) && request.durationMs >= 1 && request.durationMs <= BUS_FOLLOW_MAX_DURATION_MS &&
     (request.to === undefined || label(request.to)) &&
     (request.job === undefined || label(request.job)) &&
+    (request.from === undefined || label(request.from)) &&
+    (request.priority === undefined || BUS_PRIORITIES.includes(request.priority)) &&
+    (request.thread === undefined || label(request.thread)) &&
+    (request.since === undefined || (Number.isSafeInteger(request.since) && request.since >= 0)) &&
     (request.intervalMs === undefined || (Number.isSafeInteger(request.intervalMs) &&
       request.intervalMs >= BUS_FOLLOW_MIN_INTERVAL_MS && request.intervalMs <= BUS_FOLLOW_MAX_INTERVAL_MS)) &&
     (request.root === undefined || (isAbsolute(request.root) && !request.root.includes('\0')));
@@ -120,6 +144,8 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
   const registryRead = readAgentRegistry({ root: request.root });
   const addressedTo = request.to === undefined ? () => true
     : agentPendingAddressMatcher(request.to, registryRead.status === 'ok' ? registryRead.registry : undefined);
+  const fromMatch = request.from === undefined ? undefined
+    : agentAddressMatcher(registryRead.status === 'ok' ? labelIdentityOf(registryRead.registry) : undefined, request.from);
   const emit = async (record: BusFollowRecord): Promise<boolean> => {
     try { await deps.emit(record); return true; } catch { return false; }
   };
@@ -138,6 +164,10 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
       for (const row of page.messages) {
         if (!addressedTo(row.envelope.to, row.envelope.from)) continue;
         if (request.job !== undefined && !busBodyJobMatch(row.envelope.body, request.job)) continue;
+        if (fromMatch !== undefined && !fromMatch(row.envelope.from)) continue;
+        if (request.priority !== undefined && row.envelope.priority !== request.priority) continue;
+        if (request.thread !== undefined && busBodyThread(row.envelope.body) !== request.thread) continue;
+        if (request.since !== undefined && row.receivedAt < request.since) continue;
         if (!(await emit({ type: 'message', cursor: row.cursor, receivedAt: row.receivedAt, envelope: row.envelope }))) {
           status = aborted() ? 'cancelled' : 'output-unavailable';
           accepted = false;
