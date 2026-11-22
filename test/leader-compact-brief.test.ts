@@ -31,7 +31,9 @@ it('bounds 500 jobs, ranks zero PRs in six launches first, and reads status and 
   await writeFile(join(dir, 'queue/ready.tsv'), 'waiting\tphantom\tlocal\twork\tplain\n');
   await writeFile(join(dir, 'stops.tsv'), `^empty.*$\t${now / 1000 + 60}\tquiet\n`);
   const host = groupHostFamilies(Array.from({ length: 8 }, (_, i) => `${100 + i} 1 5 1024 00:01 worker /repo/wt/RQ-WORK-${i}`).join('\n'));
+  await writeFile(join(dir, 'dispatchd.log'), `${localIso(new Date(now)).slice(0, 19).replace('T', ' ')} tick run={} q=4 launched=2 reap=0 pause=False wall=48s\n`);
   const b = await readCompactBrief(dir, now, async () => host);
+  expect(b.tickWallP95).toBe(48);
   expect(b.hostLoad.families).toHaveLength(5); expect(b.hostLoad.omitted).toBe(3);
   expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(8192);
   expect(b.families[0]).toMatchObject({ family: 'empty-*', launches: 6, prs: 0, empty: 6 });
