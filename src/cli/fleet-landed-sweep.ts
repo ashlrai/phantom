@@ -9,6 +9,8 @@
  * title, SHA, OPEN-at-head re-read, ledger-before-continue) stay the only
  * write path. Without --apply landed-close plans and closes nothing.
  */
+import { sanitizePublicJson } from '../core/util/public-json.js';
+import { gitOnlyLanded, type BranchEvidence } from '../core/fleet/landed-git-only.js';
 import { isAbsolute } from 'node:path';
 import type { CloudGh } from '../core/cloud/pr-actions.js';
 import { landedReposFromEnv, readLandedFromGit, type LandedFromGit } from '../core/fleet/landed-from-git.js';
@@ -27,6 +29,7 @@ export interface FleetLandedSweepDeps {
   runner?: LandedCloseRunner;
   /** git-only landed reader used when the gh report is missing (tests inject). */
   landedFromGit?: (nowMs: number) => LandedFromGit;
+  branchEvidence?: (refresh: boolean) => Promise<BranchEvidence>;
   now?: () => number;
   output?: (text: string) => void;
   error?: (text: string) => void;
@@ -39,6 +42,7 @@ interface SweepResult {
   skippedReason?: string;
   /** Where inspected/landed came from when gh could not answer. */
   source?: 'git';
+  branchEvidence?: BranchEvidence;
 }
 
 const num = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -97,6 +101,8 @@ export async function cmdFleetLandedSweep(args: string[], deps: FleetLandedSweep
     // gh is out: plain git still says which jobs reached the default branch in the last 24 h.
     const git = (deps.landedFromGit ?? (nowMs => readLandedFromGit({ now: nowMs, repos: landedReposFromEnv() })))((deps.now ?? Date.now)());
     result.source = 'git';
+    try { result.branchEvidence = sanitizePublicJson(await (deps.branchEvidence ?? (refresh => gitOnlyLanded({ fetch: refresh })))(apply)) as BranchEvidence; }
+    catch { result.branchEvidence = { state: 'unknown', reason: 'branch evidence unavailable' }; }
     if (git.ok) {
       const here = git.jobs.filter(j => j.repo === git.repo).length;
       result.inspected = result.landed = here;
