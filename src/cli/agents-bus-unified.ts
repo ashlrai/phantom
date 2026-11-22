@@ -277,9 +277,13 @@ the observed {candidates, held} scan totals so a dry well reads
 differently from held work. Claims coordinate scope only; bodies are
 never executed. status is a read-only probe of the store, registry, wake queue, coordination
 table, message-id claim journal, work feed, owner-chat share receipts, the
-legacy mailbox, the shared task board with its fleet queue and the claim-drift
-verdict comparing the claim journal with the coordination table; a section that
-cannot be read reports unavailable or unknown, never zero.
+legacy mailbox, the shared task board with its fleet queue, the claim-drift
+verdict comparing the claim journal with the coordination table, and the
+outbound send gate every write verb passes through — its sendGate section
+reports open, blocked or unknown plus the kill-switch and comms-pause
+verdicts separately, so an agent learns sends are gated before a write
+refuses; a section that cannot be read reports unavailable or unknown,
+never zero.
 No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
 
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
@@ -509,6 +513,10 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         `peerDispatch ${result.peerDispatch.source} receipts=${result.peerDispatch.receipts ?? unknown} ` +
           `unpublished=${result.peerDispatch.unpublished ?? unknown}`,
         `peerLedger ${result.peerLedger.source} liveRows=${result.peerLedger.liveRows ?? unknown}`,
+        `sendGate ${result.sendGate.state} kill=${result.sendGate.kill.state}:${result.sendGate.kill.reason} ` +
+          `pause=${result.sendGate.pause.state}` +
+          `${result.sendGate.pause.reason === null ? '' : `:${result.sendGate.pause.reason}`}` +
+          `${result.sendGate.pause.since === null ? '' : ` since=${result.sendGate.pause.since}`}`,
         `as-of=${result.asOf}`,
       ].join('\n'));
       return 0;

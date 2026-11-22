@@ -3521,7 +3521,16 @@ comparison (`readClaimStoreDrift` run over the probe's own two reads, the
 same `fleet.claim-drift.v1` read `ashlr fleet claim-drift` serves:
 `claimDrift.state` VERIFIED/DRIFT/UNKNOWN with `matched` and per-kind
 `busOnly`/`coordOnly`/`ownerMismatch` counts, every count null — never zero —
-when the comparison cannot run). Each section
+when the comparison cannot run), plus the outbound send gate every write
+verb passes through — `sendGate.state` open/blocked/unknown over the
+kill-switch sentinel's `readKillSwitch` verdict (`kill.state`
+active/inactive/unknown with its `reason`) and the comms pause file's
+`probePauseState` verdict (`pause.state` paused/clear/unknown with `since`
+and `reason`), resolved under `realHome()` exactly as `localWriteGate`
+resolves them, never the probe's `root` override; open means neither gate
+blocks, blocked means at least one provably refuses, unknown means a
+source could not be inspected — the send path fails closed on both, so
+unknown is never open). Each section
 reports its own real state, a failed probe degrades only its own section, and
 the read never throws, writes or takes a lock; unknown stays null, never zero.
 See [Unified bus](docs/AGENT-BUS.md#unified-bus-identities-dms-channels-handoffs-and-wake).
