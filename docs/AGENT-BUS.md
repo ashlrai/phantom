@@ -973,7 +973,8 @@ coordinates scope only — holding one never permits a merge, a push, or
 spending, and the claimed body is still untrusted data, never executed.
 
 **Status.** `phm agents bus status [--json]` is a read-only probe of the twelve
-dependencies every verb above touches: the message store (retained/live/expired
+dependencies every verb above touches plus the outbound send gate every
+write verb passes through: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
 the wake queue (state, observed hint count before the row cap, and whether
 the bounded tail or cap truncated older hints), the shared coordination table
@@ -1023,7 +1024,19 @@ verdict describes the same snapshots: `claimDrift.state` is VERIFIED when
 every live message claim has its coordination partner under the same owner,
 DRIFT with `matched` plus per-kind `busOnly`/`coordOnly`/`ownerMismatch`
 counts naming the disagreeing rows, or UNKNOWN with every count null when a
-side cannot be read — never zero. Each section reports its own real
+side cannot be read — never zero), plus the outbound send gate every write
+verb passes through — the kill-switch sentinel and the comms soft-pause
+flag `localWriteGate` consults before `dm`, `post`, `channel post`,
+`handoff`, `wake` and the work verbs append. Its `sendGate` section reports
+`state` open, blocked or unknown with the kill-switch sentinel's
+`readKillSwitch` verdict (active, inactive or unknown) and the comms pause
+file's `probePauseState` verdict (paused, clear or unknown, with the
+recorded `since` when the flag carries one) kept separately under
+`realHome()` — the same paths the send path resolves, never the probe's
+`root` override. Open means neither gate blocks, blocked means at least
+one provably refuses, and unknown means a source could not be inspected —
+the send path still fails closed on both, so unknown is never open. Each
+section reports its own real
 state — a store that cannot be read reports `unavailable` with null counts,
 never zero, and the probe never throws, writes or takes a lock. Use it before a
 session assumes the bus is healthy.
