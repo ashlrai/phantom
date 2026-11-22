@@ -532,11 +532,11 @@ hold coverage rule and reports incomplete coverage as degraded.
 
 `phm agents bus work feed [--status <s>] [--job <id>] [--repo <owner/name>]
 [--provider <p>] [--to <label>] [--owner <agent>] [--claims] [--open] [--claimable]
-[--since <15m|2h|1d|ISO>]`
+[--since <15m|2h|1d|ISO>] [--contains <text>]`
 reads the
 same projection back — jobs newest-first, optionally filtered by status,
-exact job id, announced repo, provider, announcement address or announcing
-agent and joined with the
+exact job id, announced repo, provider, announcement address, announcing
+agent or descriptive text and joined with the
 live coordination holds — so the
 whole post/status/feed loop stays on this surface without dropping to
 `phm fleet work-feed`. With `--claims`, every open job (`queued`/`rescheduled`)
@@ -572,7 +572,16 @@ only jobs whose last activity reaches the cutoff — `updatedAt`, the receipt
 time of the newest accepted `work.status`, or the `work.post` receipt time
 while no status has moved the job — matched inclusively like every other
 `--since` bus read, so "which jobs moved lately" is one filtered read
-instead of paging terminal jobs that have sat unchanged. The filters narrow
+instead of paging terminal jobs that have sat unchanged. `--contains`
+keeps only jobs whose descriptive text carries the needle as a
+case-insensitive substring — the announcement title, the newest status
+detail and the declared dispatch scope/acceptance, each scrubbed,
+single-lined and clipped at the same bounds the job line renders, with
+whitespace collapsed on both sides like every other `--contains` bus
+read — so "which announced jobs mention X" is one filtered read; ids,
+claim keys, statuses and routing labels are structured fields with their
+own filters, never search text, and a secret-shaped value is scrubbed
+before the match even though the stored envelope keeps it. The filters narrow
 the fleet view, they never widen
 it. `phm fleet work-feed` accepts the same flags.
 

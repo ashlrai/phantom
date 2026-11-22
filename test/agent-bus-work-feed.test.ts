@@ -323,9 +323,55 @@ describe('work-feed view filters', () => {
     expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['new']);
   });
 
+  it('keeps jobs whose descriptive text carries the --contains needle', () => {
+    const dispatch = { tier: 'work' as const, scope: 'Migrate the queue drain path', acceptance: 'Drain finishes green' };
+    const jobs = [
+      viewJob({ id: 'title', title: 'Fix the Feed drain' }),
+      viewJob({ id: 'detail', title: 'Unrelated', detail: 'blocked on mailbox backlog review' }),
+      viewJob({ id: 'scope', title: 'Unrelated', dispatch }),
+      viewJob({ id: 'accept', title: 'Unrelated', dispatch: { ...dispatch, scope: 'Other scope', acceptance: 'queue DRAIN lands' } }),
+      viewJob({ id: 'none', title: 'Polish the docs', repo: 'ashlrai/other', provider: 'claude' }),
+    ];
+    const result = okResult(jobs);
+    // Case-insensitive substring across title, newest status detail and the
+    // declared dispatch spec — the fields the job line renders.
+    expect(ids(projectBusWorkFeedView(result, { contains: 'feed drain' }))).toEqual(['title']);
+    expect(ids(projectBusWorkFeedView(result, { contains: 'MAILBOX BACKLOG' }))).toEqual(['detail']);
+    expect(ids(projectBusWorkFeedView(result, { contains: 'queue drain path' }))).toEqual(['scope']);
+    expect(ids(projectBusWorkFeedView(result, { contains: 'drain lands' }))).toEqual(['accept']);
+    // Whitespace collapses on both sides, so a multi-line needle still finds its job.
+    expect(ids(projectBusWorkFeedView(result, { contains: '  queue\n  drain  ' }))).toEqual(['scope', 'accept']);
+    // Ids, claim keys, statuses and routing labels are structured fields with
+    // their own filters — never search text.
+    for (const needle of ['job', 'none', 'queued', 'devin', 'claude', 'ashlrai/phantom',
+      'repo:ashlrai/phantom', 'leaders', 'agent', 'm-1']) {
+      expect(ids(projectBusWorkFeedView(result, { contains: needle }))).toEqual([]);
+    }
+    // A blank needle narrows nothing; the needle matches the rendered clip,
+    // so text clipped out of the row stays unfindable.
+    expect(ids(projectBusWorkFeedView(result, { contains: '   ' }))).toEqual(['title', 'detail', 'scope', 'accept', 'none']);
+    const clipped = okResult([viewJob({ id: 'long', title: `${'x'.repeat(200)}needle-tail` })]);
+    expect(ids(projectBusWorkFeedView(clipped, { contains: 'needle-tail' }))).toEqual([]);
+    // Matching runs over the scrubbed display text: a secret-shaped value is
+    // unfindable even though the stored job keeps it.
+    const secret = okResult([viewJob({ id: 'secret', title: `rotate sk-${'a'.repeat(24)} now` })]);
+    expect(ids(projectBusWorkFeedView(secret, { contains: 'sk-aaaaaaaa' }))).toEqual([]);
+    expect(ids(projectBusWorkFeedView(secret, { contains: 'rotate' }))).toEqual(['secret']);
+    // The filter composes with the others and holds still regroup under shown jobs.
+    const claims: BusWorkFeedClaims = { source: 'available', truncated: false, holds: [
+      { jobId: 'title', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:x' },
+      { jobId: 'none', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:y' },
+    ] };
+    const view = projectBusWorkFeedView(okResult(jobs, claims), { contains: 'drain', status: 'queued' });
+    expect(ids(view)).toEqual(['title', 'scope', 'accept']);
+    expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['title']);
+  });
+
   it('passes non-ok reads through untouched', () => {
     const refused: BusWorkFeedReadResult = { status: 'refused', reason: 'duplicate-job', receipts: 2, asOf: 'now' };
-    expect(projectBusWorkFeedView(refused, { repo: 'a/b', provider: 'devin', claimable: true, since: 1 })).toBe(refused);
+    expect(projectBusWorkFeedView(refused, { repo: 'a/b', provider: 'devin', claimable: true, since: 1, contains: 'x' })).toBe(refused);
   });
 });
 

@@ -10,7 +10,7 @@ import {
   updateWorkStatus, INBOX_KINDS, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { PROVIDERS, providerSchema, WORK_STATUSES, parseClaimKey, type WorkJob } from '../core/agents/bus-v2-schema.js';
-import { busWorkFeedOwnerMatcher, busWorkFeedRepoKey, busWorkFeedToMatcher, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
+import { busWorkFeedOwnerMatcher, busWorkFeedRepoKey, busWorkFeedToMatcher, BUS_WORK_FEED_CONTAINS_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope } from '../core/agents/bus-claims.js';
@@ -52,7 +52,7 @@ ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--clai
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
-ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--to <label>] [--owner <agent>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>]
+ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--to <label>] [--owner <agent>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--contains <text>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work mine [<agent>] [--job <id>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>]
@@ -150,7 +150,12 @@ join), --open keeps queued/rescheduled candidates with claim keys, including
 unknown holds, and implies --claims; --since keeps only jobs whose last activity — the newest accepted
 status receipt time, or the announcement's while no status has moved the
 job — reaches the cutoff (15m, 2h, 1d, epoch ms or an ISO time, the same
-grammar inbox --since takes), while --job keeps one job id. A job line
+grammar inbox --since takes), while --job keeps one job id. --contains on
+work feed keeps only jobs whose title, newest status detail or declared
+dispatch scope/acceptance carries the needle as a case-insensitive
+substring over the same scrubbed display-clipped text the job line renders
+— ids, keys, statuses and labels stay structured fields with their own
+filters, and a secret-shaped value stays unfindable. A job line
 also cites the newest retained work.result receipt — the outcome a
 worker reported with its receipt id — as evidence only: it never moves
 the job's status, which only the announcer's work.status does. work claim
@@ -632,13 +637,17 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (providerRaw !== undefined && !providerSchema.safeParse(providerRaw).success) {
         throw new UsageError(`--provider must be one of ${PROVIDERS.join(', ')}.`);
       }
+      const contains = one('--contains');
+      if (contains !== undefined && (contains.trim() === '' || contains.length > BUS_WORK_FEED_CONTAINS_MAX)) {
+        throw new UsageError(`--contains takes a non-empty search text of at most ${BUS_WORK_FEED_CONTAINS_MAX} characters.`);
+      }
       const claimable = p.bools.has('--claimable');
       const open = p.bools.has('--open');
       const result = projectBusWorkFeedView(
         readBusWorkFeed({ root: options.root, claims: p.bools.has('--claims') || claimable || open }),
         { status: status as WorkJob['status'] | undefined, jobId, repo,
           provider: providerRaw as WorkJob['provider'] | undefined,
-          open: open || undefined, claimable: claimable ? true : undefined, since: sinceArg(),
+          open: open || undefined, claimable: claimable ? true : undefined, since: sinceArg(), contains,
           toMatch: to === undefined ? undefined : busWorkFeedToMatcher(to, { root: options.root }),
           ownerMatch: owner === undefined ? undefined : busWorkFeedOwnerMatcher(owner, { root: options.root }) });
       out(json ? JSON.stringify(result) : formatBusWorkFeed(result).join('\n'));

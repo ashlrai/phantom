@@ -2515,7 +2515,7 @@ hold coverage rule and reports incomplete coverage as degraded.
 exported read-only overlap predicate; acquisition and observation now share one
 structural overlap rule. `projectBusWorkFeedView(result, filters?)` applies the
 client-side feed filters (`{status?, jobId?, repo?, provider?, claimable?, open?,
-since?, toMatch?, ownerMatch?}`),
+since?, toMatch?, ownerMatch?, contains?}`),
 newest-first order and per-job hold regrouping; `repo` is the lowercase
 `owner/name` key `busWorkFeedRepoKey(repo)` normalizes a `--repo` argument to
 (undefined for a non-slug, so callers reject it as usage) and matches a job's
@@ -2531,7 +2531,14 @@ it answers an honest empty view. `toMatch` is the predicate
 `ownerMatch` the predicate `busWorkFeedOwnerMatcher(owner, {root?})` builds
 over its `owner` (announcer) label — each matching literally and under every
 label of one agent identity (an unresolvable ref or unreadable registry keeps
-exact-label matching). `formatBusWorkFeed(result)` renders the shared human
+exact-label matching). `contains` is the `--contains` needle normalized once
+(lowercase, whitespace collapsed, trimmed) and matched as a case-insensitive
+substring over the job's descriptive text — the announcement title, the
+newest status detail and the declared dispatch scope/acceptance, each
+scrubbed, single-lined and clipped at the same bounds `formatBusWorkFeedJob`
+renders — so ids, claim keys, statuses and routing labels stay structured
+fields with their own filters, never search text, and a secret-shaped value
+is scrubbed before the match. `formatBusWorkFeed(result)` renders the shared human
 lines — each job as `<id> <status> "<title>" detail="<why>" owner=… to=… provider=… repo=… [tier=… scope="…" acceptance="…"] keys=<claim keys> claimable=… updated=… post=<postId> [status=<statusId>] [result=<outcome> [reason=<r>] by=<from> at=<iso> receipt=<id>]`
 with title, detail, the optional dispatch spec and keys scrubbed, single-lined
 and display-clipped (JSON keeps the full values; `detail=`, `status=`, the
@@ -2542,9 +2549,12 @@ renders the newest `work.result` report identically — a refused read's
 footer adds `receipt=<id>` when the projection blamed a retained envelope —
 both feed CLIs use them, and both accept `--to <label>`, `--owner
 <agent>`, `--job <id>`, `--repo <owner/name>`, `--provider <p>`,
-`--claimable` and `--since <15m|2h|1d|ISO>` beside `--status`; `--claimable`
-implies the claims join and `--since` parses through the shared `parseSince`
-grammar, refusing unparseable values as usage errors.
+`--claimable`, `--since <15m|2h|1d|ISO>` and `--contains <text>` beside
+`--status`; `--claimable`
+implies the claims join, `--since` parses through the shared `parseSince`
+grammar, and `--contains` takes a non-empty needle of at most
+`BUS_WORK_FEED_CONTAINS_MAX` (512) characters, refusing unparseable or
+overlong values as usage errors.
 `phm fleet work-feed [--claims]
 [--to <label>] [--owner <agent>] [--job <id>] [--repo <owner/name>]
 [--provider <p>] [--claimable] [--since <15m|2h|1d|ISO>]` and
