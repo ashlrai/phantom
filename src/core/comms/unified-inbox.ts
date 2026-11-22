@@ -5,7 +5,14 @@
  *   readUnifiedInbox(opts) — aggregates nineteen local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
- *               (`phm fleet needs`), act: `phm fleet needs-resolve`.
+ *               (`phm fleet needs`), classified by the same
+ *               `classifyNeedsYou` verdict `phm needs-you` reports: only a
+ *               hard-limit item (secrets, money, an outside send, destroyed
+ *               data, a sign-in, or unclear wording) blocks Mason; an auto
+ *               item is ordinary work the fleet clears with
+ *               `phm needs-you resolve --auto`, so it lists non-blocking
+ *               with that verb as its first act. Act:
+ *               `phm fleet needs-resolve`.
  *   needs-you-delivery  recorded needs-you answers whose planner-inbox relay
  *               is not confirmed — the delivery side of needs-you, the same
  *               `readNeedsMasonReplyDeliveries` read `phm fleet needs`
@@ -246,6 +253,7 @@ import { readAgentConversations, plainAge, type AgentConversations } from '../fl
 import { readSlackJournal, type SlackJournalRead, type SlackObservation } from '../agents/slack-journal.js';
 import { isSlackChannelId, isSlackTs } from '../agents/slack-network.js';
 import { JOB_THREAD_PREFIX } from '../fleet/agent-messages.js';
+import { classifyNeedsYou } from '../needs-you/classify.js';
 import { planSeatHandoffs, type SeatHandoffsPlan } from '../bots/seats.js';
 import { DEFAULT_TEAM } from '../teams/tools.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -434,18 +442,28 @@ function needsYouItems(read: NonNullable<UnifiedInboxOptions['readNeeds']>, runs
   let result: NeedsMasonReadResult;
   try { result = read({ runsDir }); } catch { result = { status: 'unavailable', items: [] }; }
   const state: UnifiedInboxSourceState = result.status === 'available' ? 'healthy' : result.status;
-  const items = result.items.map((item: NeedsMasonItem): Omit<UnifiedInboxItem, 'priority'> => ({
-    id: `needs-you:${item.id}`,
-    source: 'needs-you',
-    kind: 'needs-you',
-    severity: 'warn',
-    blocking: true,
-    title: oneLine(item.text, TITLE_MAX),
-    detail: null,
-    since: null,
-    expiresAt: null,
-    act: [`phm fleet needs-resolve ${item.id} --reply "<reply>"`],
-  }));
+  const items = result.items.map((item: NeedsMasonItem): Omit<UnifiedInboxItem, 'priority'> => {
+    // The same verdict `phm needs-you` reports: only a hard-limit item waits
+    // on Mason. An auto item is ordinary work the fleet resolves itself, so
+    // it lists non-blocking with `resolve --auto` as its first act — pending
+    // work, never a Mason block. `classifyNeedsYou` is pure and never throws.
+    const verdict = classifyNeedsYou({ text: item.text });
+    const hard = verdict.class === 'hard_limit';
+    return {
+      id: `needs-you:${item.id}`,
+      source: 'needs-you',
+      kind: 'needs-you',
+      severity: 'warn',
+      blocking: hard,
+      title: oneLine(item.text, TITLE_MAX),
+      detail: oneLine(`${verdict.class === 'hard_limit' ? 'hard limit' : 'auto'} — ${verdict.reason}`, DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      act: hard
+        ? [`phm fleet needs-resolve ${item.id} --reply "<reply>"`]
+        : ['phm needs-you resolve --auto', `phm fleet needs-resolve ${item.id} --reply "<reply>"`],
+    };
+  });
   return { report: { state, pending: items.length }, items };
 }
 

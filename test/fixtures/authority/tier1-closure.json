@@ -917,6 +917,7 @@
     "src/core/metrics/reward-signal.ts",
     "src/core/metrics/scoring.ts",
     "src/core/metrics/telemetry.ts",
+    "src/core/needs-you/classify.ts",
     "src/core/observability/budget-alert.ts",
     "src/core/observability/codex-source.ts",
     "src/core/observability/estimate.ts",

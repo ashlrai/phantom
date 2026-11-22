@@ -132,18 +132,32 @@ describe('readUnifiedInbox sources', () => {
     });
   });
 
-  it('lists unresolved needs-you lines as blocking warn items with resolve links', async () => {
-    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- restart the worker pool on mac-2\n- second fake item\n');
+  it('lists unresolved needs-you lines with the needs-you class verdict', async () => {
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- restart the worker pool on mac-2\n- Rotate the deploy secret for the example app\n');
     const inbox = await read();
     const items = inbox.items.filter(i => i.source === 'needs-you');
     expect(items).toHaveLength(2);
     const restart = items.find(i => i.title === 'restart the worker pool on mac-2')!;
+    // An auto line is ordinary work the fleet resolves: warn, non-blocking,
+    // `resolve --auto` first, and the class named in the detail.
     expect(restart).toMatchObject({
-      kind: 'needs-you', severity: 'warn', blocking: true, priority: 'now',
-      act: [expect.stringMatching(/^phm fleet needs-resolve nm-[0-9a-f]{12} --reply "<reply>"$/)],
+      kind: 'needs-you', severity: 'warn', blocking: false, priority: 'today',
+      detail: 'auto — ordinary engineering work; the fleet goes ahead',
+      act: ['phm needs-you resolve --auto', expect.stringMatching(/^phm fleet needs-resolve nm-[0-9a-f]{12} --reply "<reply>"$/)],
     });
     expect(restart.id).toBe(`needs-you:${listNeedsMason({ runsDir }).find(i => i.text === restart.title)!.id}`);
+    const secret = items.find(i => i.title === 'Rotate the deploy secret for the example app')!;
+    // A hard-limit line still waits on Mason: blocking, with the limit named.
+    expect(secret).toMatchObject({
+      kind: 'needs-you', severity: 'warn', blocking: true, priority: 'now',
+      detail: 'hard limit — secrets or keys',
+      act: [expect.stringMatching(/^phm fleet needs-resolve nm-[0-9a-f]{12} --reply "<reply>"$/)],
+    });
     expect(inbox.sources['needs-you']).toEqual({ state: 'healthy', pending: 2 });
+    // --blocking keeps only the hard-limit item; the auto line stays listed unfiltered.
+    const blocking = await read({ filter: { blocking: true } });
+    expect(blocking.items.filter(i => i.source === 'needs-you').map(i => i.id)).toEqual([secret.id]);
+    expect(blocking.sources['needs-you']).toEqual({ state: 'healthy', pending: 2 });
   });
 
   it('lists unanswered teammate texts, ranking decision requests above chatter', async () => {
@@ -2001,8 +2015,8 @@ describe('readUnifiedInbox ordering and bounds', () => {
     // info band: a teammate text (this-week) and a P2 work item expiring in 2 days.
     recordTeammateText({ rowid: 50, handle: '+1555fake', text: 'status?' }, runsDir, new Date(now - 60_000));
     postWork('slow-p2', { priority: 'P2', ttl: 48 * 3_600_000 });
-    // warn band: needs-you (blocking → now) and P1 work (warn → today).
-    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    // warn band: needs-you (hard limit, blocking → now) and P1 work (warn → today).
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- Rotate the deploy secret for the example app\n');
     postWork('patient-p1', { priority: 'P1', ttl: 72 * 3_600_000 });
     // high band: P0 work expiring in an hour (now) — tops the list.
     postWork('hot-p0', { priority: 'P0', ttl: 3_600_000 });
@@ -2055,7 +2069,7 @@ describe('readUnifiedInbox view filters', () => {
     postWork('flt-p0', { priority: 'P0' });   // bus: high, non-blocking
     postWork('flt-p1', { priority: 'P1' });   // bus: warn, non-blocking
     postWork('flt-p2');                        // bus: info, non-blocking
-    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');  // needs-you: warn, blocking
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- Rotate the deploy secret for the example app\n');  // needs-you: warn, blocking (hard limit)
     recordTeammateText({ rowid: 77, handle: '+1555fake', text: 'status?' }, runsDir, new Date(now - 60_000));  // imessage: info, non-blocking
 
     const high = await read({ filter: { severity: 'high' } });
@@ -2312,10 +2326,10 @@ describe('phm comms inbox cli', () => {
     const { command, lines } = setupCli();
     expect(await command([])).toBe(0);
     expect(lines().at(-1)).toBe('Nothing pending.');
-    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- restart the worker pool\n');
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- Rotate the deploy secret for the example app\n');
     expect(await command([])).toBe(0);
     const out = lines().join('\n');
-    expect(out).toContain('[now] needs-you  restart the worker pool');
+    expect(out).toContain('[now] needs-you  Rotate the deploy secret');
     expect(out).toContain('phm fleet needs-resolve');
     expect(out).toContain('1 pending');
   });
@@ -2334,7 +2348,7 @@ describe('phm comms inbox cli', () => {
 
   it('filters the unified JSON view by source, severity and blocking', async () => {
     const { command, json } = setupCli();
-    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- Rotate the deploy secret for the example app\n');
     postWork('cli-bus', { priority: 'P0' });
     postWork('cli-bus2');
 
