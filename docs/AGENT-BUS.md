@@ -23,9 +23,11 @@ for only the traffic that names one job, `--thread <label>` for only the
 `note`/`context` bodies carrying that v2 thread label — the same
 `busBodyThread` match `agents bus inbox --thread`, `agents bus channel
 read --thread`, `comms bus read|watch --thread` and `fleet bus-follow
---thread` apply — `--limit <n>`)
+--thread` apply — `--contains <text>` for only the messages whose scrubbed
+summary carries that text, `--limit <n>`)
 or GET `/api/verse/agent-bus/messages` with the same
-`since`, `agent`, `with`, `kind`, `priority`, `job`, `thread` and `limit` params. Both return `agent-messages.v1`: newest
+`since`, `agent`, `with`, `kind`, `priority`, `job`, `thread`, `contains`
+and `limit` params. Both return `agent-messages.v1`: newest
 first, each with `id`, `ts`, `priority` (the envelope's P0–P3 band, the
 same band `comms bus read --priority` filters on), `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line
@@ -81,7 +83,18 @@ message that names no job never passes. `--agent` and `--with` match through
 the agent identity registry beside the store: a handle, alias or `agent:`
 address of one registered identity counts as that agent, so its labels never
 split the filter. With no readable registry the match stays on the literal
-label — an unreadable registry never widens a read.
+label — an unreadable registry never widens a read. `--contains` is the
+fleet-wide text search no other bus read offers: a case-insensitive
+substring over each message's scrubbed one-line `summary` — the text the
+row actually shows, so a match is always visible in the row it selects —
+with whitespace collapsed the same way the summary's is, so a phrase typed
+with stray spacing still finds its line. It composes with every other
+filter and `matched` counts only the rows it accepts. The summary is scrubbed,
+collapsed to one line and clipped to 160 characters before the match, so the
+search runs over exactly the bounded text the read reports — never the raw
+body — and a needle longer than that line can never match. `phm comms inbox
+read --contains` applies the same literal case-insensitive substring to
+Mason's own inbox file.
 
 ## Write
 
