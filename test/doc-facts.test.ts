@@ -58,10 +58,9 @@ const DOCS = [
   'docs/AGENTS-MD-AUDIT.md',
   // Pages CONTRIBUTING.md, the contributor guide, AGENT-OPERATIONS.md and
   // AGENT-TOOLCHAIN.md link a contributor to next. Linked pages still missing:
-  // LEADER, AUTHORITY, RELEASING, FLEET-COORDINATION, FLEET-MCP-ONRAMP,
-  // CLI-REFERENCE and fleet/pr-hygiene name verbs that dispatch but that
-  // completions does not list yet; RESIDENT-RUNTIME names deleted commands on
-  // purpose; desktop/README.md documents its own package.json scripts.
+  // CLI-REFERENCE is generated from src/cli/help.ts and names `fleet verbs`,
+  // whose --help exits 2; RESIDENT-RUNTIME names deleted commands on purpose;
+  // desktop/README.md documents its own package.json scripts.
   'docs/ARCHITECTURE.md',
   'docs/BUN-SHARDS.md',
   'docs/CLOUD.md',
@@ -76,9 +75,11 @@ const DOCS = [
   'docs/contracts/CONTRACT-SELECTOR.md',
   'docs/verify-changed.md',
   // Operating guides AGENTS.md and README.md link to. Linked guides that are
-  // missing here (QUEUE, FLEET-API, CHANNELS, AGENT-BUS, SESSIONS, VERSE and
-  // others) name verbs that dispatch but that completions SUBCOMMANDS does
-  // not list yet; add each one once its verbs are in src/cli/completions.ts.
+  // missing here name a verb completions SUBCOMMANDS does not offer: QUEUE
+  // (`queue yield`, whose --help exits 2, and a `phm foo bar` example),
+  // AGENT-BUS (`agents mesh status`, whose --help exits 2), FLEET-API
+  // (`fleet merge-recover`, whose -h exits 2) and NODE-ROUTER (`node release`,
+  // which the CLI does not dispatch).
   'docs/AGENT-APPS.md',
   'docs/AGENT-NETWORK-CHANNELS.md',
   'docs/AGENT-PROFILES.md',
@@ -175,6 +176,22 @@ const DOCS = [
   'docs/VERSE.md',
   'docs/fleet-health.md',
   'docs/fleet/pr-hygiene.md',
+  // Guides held out until completion offered the job, leader, node, notify,
+  // release, inbox, apps, mcp, daemon and authority verbs they document.
+  'docs/APPS-CONTROL.md',
+  'docs/AUTHORITY.md',
+  'docs/CHANNELS.md',
+  'docs/CONSOLE-LAYOUT.md',
+  'docs/FLEET-COORDINATION.md',
+  'docs/FLEET-MCP-ONRAMP.md',
+  'docs/LEADER.md',
+  'docs/OWNER-THREAD.md',
+  'docs/RELEASE-AUTONOMY.md',
+  'docs/RELEASING.md',
+  'docs/ROUTING.md',
+  'docs/RUN-THE-FLEET.md',
+  'docs/SESSIONS.md',
+  'docs/daemon-tick-phases.md',
 ];
 
 /** Every `--flag` spelled anywhere in src/ (code, help text, comments). */
