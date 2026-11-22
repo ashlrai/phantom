@@ -426,8 +426,8 @@ step in a `##[group]Run <script>` block, so the analyzer attributes the
 marker to the step's script when every script line is a `node --test`
 invocation or one whitelisted gate script, all gate lines naming the
 same file: `ci-fetch-range`, `ci-source-binding`, `ci-site-lane`,
-`ci-mac-rotation`, `ci-dep-graph`, `ci-fast-inputs`, `ci-green-reuse`
-and `ci-mcp-selection` group under
+`ci-mac-rotation`, `ci-dep-graph`, `ci-fast-select`, `ci-fast-inputs`,
+`ci-green-reuse` and `ci-mcp-selection` group under
 `.github/scripts/<script> > (<gate>)`. Mixed bash, `uses:` actions,
 non-whitelisted scripts and ambiguous multi-script steps stay
 unattributed, and a `not ok` or vitest `FAIL` line in the step's own
