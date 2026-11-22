@@ -81,6 +81,7 @@ function recordSummary(report: SelfTickReport) {
     at: report.at,
     mode: report.mode,
     state: report.state,
+    familyStops: sanitizePublicJson(report.familyStops ?? null),
     hooks: report.state === 'busy' ? [] : hooksFromPlannerReport(sanitizePublicJson(planner?.report ?? null), report.mode),
     failedSteps: report.steps
       .filter((step) => step.state === 'failed')

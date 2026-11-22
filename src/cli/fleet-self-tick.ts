@@ -386,11 +386,11 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       return { exitCode: posted.some(row => !['posted', 'duplicate'].includes(row.status)) ? 1 : 0,
         output: JSON.stringify({ report, posted, reason: apply ? 'observed' : 'dry-run' }) };
     },
-    // Autofill runs first inside this step, so the planner sees the bets it just queued. Like the quota
+    // Empty stops precede autofill, so refill sees the new holds. Like the quota
     // refresh above it is a sub-stage, not a new step name, so the fixed order and report shape stay as they are.
     'planner-tick': async (argv) => {
-      const autofill = await runAutofillStage();
       const emptyStop = await runEmptyStopStage();
+      const autofill = await runAutofillStage();
       const worktreeReap = await runWorktreeReapStage();
       const asksSync = await runAsksSyncStage();
       const strandedRequeue = await runStrandedRequeueStage();
@@ -400,7 +400,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       try {
         const parsed: unknown = JSON.parse(run.output);
         if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          return { ...run, output: JSON.stringify({ ...parsed, autofill, emptyStop, worktreeReap, asksSync, strandedRequeue, order }) };
+          return { ...run, output: JSON.stringify({ ...parsed, autofill, emptyStop, familyStops: (emptyStop as { familyStops?: unknown }).familyStops ?? null, worktreeReap, asksSync, strandedRequeue, order }) };
         }
       } catch { /* the verb's own output stands untouched */ }
       return run;

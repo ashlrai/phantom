@@ -37,6 +37,7 @@
 import { join } from 'node:path';
 import { LIVE_JOBS_FILE, readLiveJobs, writeLiveJobs } from './live-jobs.js';
 import { writeCompactBrief } from './leader-compact-brief.js';
+import type { FamilyAutoStop } from './family-auto-stop.js';
 import {
   acquireLocalStoreLockWithOutcome,
   releaseLocalStoreLock,
@@ -98,6 +99,7 @@ export interface SelfTickReport {
   steps: SelfTickStepResult[];
   liveJobs?: 'written' | 'failed';
   leaderBrief?: 'written' | 'failed';
+  familyStops?: Omit<FamilyAutoStop, 'pattern'>[] | null;
 }
 
 export interface SelfTickOutcome {
@@ -180,6 +182,9 @@ export async function runSelfTick(options: RunSelfTickOptions): Promise<SelfTick
         }
         const { exitCode, output } = await run(argv);
         const parsed = parseReport(output);
+        if (step === 'planner-tick' && parsed && typeof parsed === 'object' && 'familyStops' in parsed) {
+          report.familyStops = (parsed as Pick<SelfTickReport, 'familyStops'>).familyStops;
+        }
         const skippedReason = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
           ? (parsed as Record<string, unknown>)['skippedReason'] : undefined;
         report.steps.push({
