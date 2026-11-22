@@ -70,6 +70,17 @@ same cadence folds the same jobs-ledger tail plus the live READY rows of
 --apply` appends by hand, now automatic, so `phm queue stats` and
 `/api/queue/stats` stay fed; it is best-effort, never throws, dedups
 against the journal and skips the append when the journal is unreadable.
+A `swapout-sync` off-tick job runs on every resident tick — outside the
+`selfImprove` cadence, since it is host evidence rather than queue work —
+and folds the bridge's latest `memstat.json` sample into
+`metrics/swapout-rate.jsonl` (`src/core/fleet/swapout-sync.ts`), the tuning
+ledger `lane-autopilot.ts`'s MEMORY_GUARD constants name but nothing wrote.
+Sample time is the sample's own timestamp, dedup by `sampled_at` keeps
+appends at the bridge's cadence, and an unreadable ledger blocks the
+append rather than risking a duplicate row; it is best-effort, never
+throws, and writes only under the runs dir. `phm fleet vitals` reads the
+ledger back into its `swapout_rate` evidence so the distribution the
+thresholds should be tuned against is visible; unknown stays unknown.
 A job that ignores
 cancellation remains single-flight until its work settles; shutdown cancels
 running jobs with bounded waiting. Once ticks keep reflection in-tick;
@@ -148,6 +159,7 @@ and persists the outcome in a `finally`, whatever `tick()` did.
 | `skill-nudge`    | 1 min            | `TICK_PHASE_SKILL_NUDGE_MS`; resident off-tick shadow skill-card feed |
 | `empty-tag-sync` | 1 min            | `TICK_PHASE_EMPTY_TAG_SYNC_MS`; resident off-tick empty-tag/dupcheck evidence feed |
 | `visit-sync`     | 1 min            | `TICK_PHASE_VISIT_SYNC_MS`; resident off-tick queue-visit journal feed |
+| `swapout-sync`   | 1 min            | `TICK_PHASE_SWAPOUT_SYNC_MS`; resident off-tick memstat → swapout-rate ledger feed |
 | `ci-rerun`       | 5 min            | `TICK_PHASE_CI_RERUN_MS`; optional resident off-tick flake maintenance |
 | `auto-merge`, `proposal-repair` | 5 min | `TICK_PHASE_MAINTENANCE_MS`                   |
 | `capacity`       | 30 s             | `TICK_PHASE_CAPACITY_MS`; internally probed             |
