@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/p
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { compactBriefLines, LEADER_COMPACT_FILE, readCompactBrief } from '../src/core/fleet/leader-compact-brief.js';
+import { compactBriefLines, LEADER_COMPACT_FILE, readCompactBrief, writeCompactBrief } from '../src/core/fleet/leader-compact-brief.js';
 import { runSelfTick, SELF_TICK_STEP_ORDER, type SelfTickSteps } from '../src/core/fleet/self-tick.js';
 import { cmdLeaderBrief } from '../src/cli/leader-brief.js';
 import { groupHostFamilies } from '../src/core/fleet/host-families.js';
@@ -28,6 +28,20 @@ it.each([50, 51])('shows leftover load only above fifty percent: %s', async cpu 
   const brief = await readCompactBrief(dir, now, async () => host);
   expect(compactBriefLines(brief).some(line => line.includes('leftover processes from finished jobs'))).toBe(cpu > 50);
   expect(JSON.stringify(brief.hostLoad)).not.toContain('"items"');
+});
+it('carries I/O wait names into the typed brief, saved JSON and plain output', async () => {
+  const table = `PID PPID %CPU RSS STAT ELAPSED ${'COMM'.padEnd(32)} COMMAND\n` +
+    `10 1 1 1024 U 00:01 ${''.padEnd(32)} /usr/libexec/fseventsd hiddenword`;
+  const host = groupHostFamilies(table, undefined, { load1: 77, cores: 18 });
+  const brief = await readCompactBrief(dir, now, async () => host);
+  expect(brief.hostLoad.ioWait).toEqual([{ name: 'fseventsd', processes: 1 }]);
+  expect(compactBriefLines(brief)).toContain('io-wait: fseventsd 1');
+  expect(compactBriefLines(brief)).toContain('load1 77 on 18 cores: load is mostly I/O wait (fseventsd 1)');
+  vi.mocked(hostFamilies.readHostFamilies).mockResolvedValue(host);
+  await writeCompactBrief(dir, now);
+  const saved = await readFile(join(dir, LEADER_COMPACT_FILE), 'utf8');
+  expect(JSON.parse(saved).hostLoad.ioWait).toEqual(brief.hostLoad.ioWait);
+  expect(saved).not.toMatch(/hiddenword|\/usr\/libexec|unnamed/);
 });
 it('bounds 500 jobs, ranks zero PRs in six launches first, and reads status and ready rows', async () => {
   const rows: object[] = [];
