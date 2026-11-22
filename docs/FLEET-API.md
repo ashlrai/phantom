@@ -566,7 +566,7 @@ compute scene draws its message lines at the same thickness.
 
 #### Agent conversations
 
-`phm agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--limit <1..1024>] [--json]`
+`phm agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..1024>] [--json]`
 groups the same bus read into threads by reply chain and by the declared
 conversation label a body carries, longest-waiting first and then newest
 first. `--agent` matches a participant's routing label and, through
@@ -599,7 +599,14 @@ the cutoff, in the same grammar `phm messages --since` takes (`15m`, `2h`,
 filtered read, whole threads like every other filter here. A dormant thread
 drops out even while it still waits, so pair it with `--waiting` or `--state`
 when the question is what is still outstanding — the `waiting` count still
-reports every waiting thread on the bus, filtered or not. `--limit <1..1024>`
+reports every waiting thread on the bus, filtered or not. `--contains
+<text>` keeps only the threads where at least one member message's scrubbed
+one-line subject carries the needle as a case-insensitive substring — the
+same text search `phm messages --contains`, `agents bus inbox --contains`
+and `agents bus channel read --contains` apply, matched over the rendered
+summaries, never the raw body, so a secret-shaped value stays unfindable —
+so "which thread is about X" is one filtered read, whole threads like every
+other filter here. `--limit <1..1024>`
 caps the threads returned, longest-waiting order kept, while `matched` still
 reports the full filtered count — the same matched-before-limit convention
 `phm agents messages` uses; absent, every matched thread returns. Messages
@@ -616,7 +623,7 @@ conversation; only the synthesized per-pair fallback stays reply-chain
 rooted. `group.presence` heartbeats are expiring observations with their own
 read (`phm comms bus group presence`), never messages: they form no thread
 and cannot answer a waiting one. `--json` prints `agents.conversations.v1` (`version` 1), and
-`GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&since=1h&limit=50]`
+`GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&since=1h&contains=text&limit=50]`
 serves the same read with a current read session.
 
 - `conversations[]`: `id`, `participants[]` (`name`, `label`, `known`, `node`;
