@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   authorityRevertedPrKeys,
   foldEmptyTags,
+  foldLaunchCosts,
   foldMergeEvents,
   foldRewardSignals,
   foldRouteDecisionWorkClasses,
@@ -64,6 +65,23 @@ function writeMergeEvents(root: string, rows: object[]): void {
   mkdirSync(join(root, 'metrics'), { recursive: true });
   writeFileSync(mergeEventsPath(root), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
 }
+
+const launchCostsPath = (root: string) => join(root, 'metrics', 'launch-cost.jsonl');
+
+function writeLaunchCosts(root: string, rows: object[]): void {
+  mkdirSync(join(root, 'metrics'), { recursive: true });
+  writeFileSync(launchCostsPath(root), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+}
+
+/** A fleet.launch-cost.v1 row in the shape contrib/mac/launch_cost.py appends (src/core/fleet/launch-cost.ts). */
+const launchCostRow = (launchId: string, status: 'measured' | 'partial' | 'unknown', extra: Record<string, unknown> = {}): object => ({
+  schema: 'fleet.launch-cost.v1', lane: 'alpha', launchId, startedAt: '2026-11-01T00:00:00Z',
+  windowSeconds: 60, sampledSeconds: status === 'measured' ? 60 : 30, samples: status === 'measured' ? 60 : 6,
+  peakProcesses: status === 'unknown' ? null : 4,
+  meanCpuPercentOneCore: status === 'unknown' ? null : 12.5,
+  peakCpuPercentOneCore: status === 'unknown' ? null : 40,
+  status, ...extra,
+});
 
 /** A merge-events.jsonl observation row in the fleet merge-latency shape (repo#pr keyed). */
 const mergeEvent = (pr: number, type: string, extra: Record<string, unknown> = {}): object => ({
@@ -266,6 +284,7 @@ describe('router outcome ledger (612S preservation)', () => {
       pool_kind: null, pool_mem_free_pct: null, pool_swap_gb: null, pool_pct_used: null,
       node_outcome: null, node_id: null, node_pack: null,
       merge_queue: null,
+      launch_cost_status: null, launch_peak_processes: null, launch_mean_cpu_pct: null, launch_peak_cpu_pct: null,
       passk: null,
     }]);
   });
@@ -2023,6 +2042,136 @@ describe('router outcome reward-signals join', () => {
     expect(result).toMatchObject({ state: 'read', reward_state: 'read', reward_truncated: true });
     // A cut tail that parses no valid rows in its retained window joins nothing.
     expect(result.outcomes[0]).toMatchObject({ merged: null, pool_pct_used: null });
+  });
+});
+
+describe('router outcome launch-cost join', () => {
+  it('foldLaunchCosts keeps only fleet.launch-cost.v1 rows under the producer contract and collapses repeats last-wins', () => {
+    const costs = foldLaunchCosts([
+      JSON.stringify(launchCostRow('J1-aaaabbbbcccc', 'measured')),
+      'not json',
+      JSON.stringify({ ...launchCostRow('J2', 'unknown'), schema: 'fleet.launch-cost.v2' }),
+      JSON.stringify(launchCostRow('bad id!', 'measured')),
+      JSON.stringify(launchCostRow('J3', 'measured', { windowSeconds: 30 })),
+      JSON.stringify(launchCostRow('J4', 'unknown', { peakProcesses: 2 })),
+      JSON.stringify(launchCostRow('J5', 'measured', { meanCpuPercentOneCore: 50, peakCpuPercentOneCore: 40 })),
+      JSON.stringify(launchCostRow('J6', 'measured', { sampledSeconds: 30 })),
+      JSON.stringify(launchCostRow('J7', 'partial', { samples: 0 })),
+      JSON.stringify(launchCostRow('J8-hash00000001', 'measured')),
+      JSON.stringify(launchCostRow('J8-hash00000002', 'partial', { peakProcesses: 9, meanCpuPercentOneCore: 3, peakCpuPercentOneCore: 8 })),
+    ].join('\n'));
+    expect([...costs.keys()].sort()).toEqual(['J1-aaaabbbbcccc', 'J8-hash00000001', 'J8-hash00000002']);
+    expect(costs.get('J1-aaaabbbbcccc')).toEqual({
+      status: 'measured', peakProcesses: 4, meanCpuPct: 12.5, peakCpuPct: 40,
+    });
+    // Distinct launchIds are distinct attempts — both rows stand.
+    expect(costs.get('J8-hash00000002')).toEqual({
+      status: 'partial', peakProcesses: 9, meanCpuPct: 3, peakCpuPct: 8,
+    });
+  });
+
+  it('joins measured, partial and unknown probes through the producer\'s launchId forms', async () => {
+    const root = runsDir([
+      '{"job":"J1","lane":"alpha","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J2","lane":"alpha","phase":"VERIFIED","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J3","lane":"beta","phase":"CLOSED","ts":"2026-11-01T00:00:00Z"}',
+      // JX has launch-cost rows but no jobs outcome: it never creates one.
+    ].join('\n'));
+    writeLaunchCosts(root, [
+      // Measured rows key <job>-<12-hex claim hash> — the suffix strips to the job.
+      launchCostRow('J1-aaaabbbbcccc', 'measured'),
+      launchCostRow('J2-ddddeeeeffff', 'partial', { peakProcesses: 7, meanCpuPercentOneCore: 20, peakCpuPercentOneCore: 55 }),
+      // Unknown probes key the bare job id.
+      launchCostRow('J3', 'unknown'),
+      launchCostRow('JX-999988887777', 'measured'),
+      // Malformed rows never join.
+      launchCostRow('J1-ffffeeee1111', 'measured', { samples: 'lots' }),
+    ]);
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'read', launch_cost_state: 'read', launch_cost_truncated: false });
+    const byId = new Map(result.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')).toMatchObject({
+      launch_cost_status: 'measured', launch_peak_processes: 4,
+      launch_mean_cpu_pct: 12.5, launch_peak_cpu_pct: 40,
+    });
+    expect(byId.get('J2')).toMatchObject({
+      launch_cost_status: 'partial', launch_peak_processes: 7,
+      launch_mean_cpu_pct: 20, launch_peak_cpu_pct: 55,
+    });
+    // An unknown probe records the verdict but no figures — never zeros.
+    expect(byId.get('J3')).toMatchObject({
+      launch_cost_status: 'unknown', launch_peak_processes: null,
+      launch_mean_cpu_pct: null, launch_peak_cpu_pct: null,
+    });
+    expect(byId.has('JX')).toBe(false);
+    expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3']);
+  });
+
+  it('keeps a job id ending in a 12-hex segment from being stripped into a different job', async () => {
+    const root = runsDir([
+      '{"job":"RQ-X","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"RQ-X-deadbeefcafe","phase":"VERIFIED","ts":"2026-11-01T00:00:00Z"}',
+    ].join('\n'));
+    writeLaunchCosts(root, [
+      // The bare unknown probe belongs to the hex-suffixed job id itself.
+      launchCostRow('RQ-X-deadbeefcafe', 'unknown'),
+      // A measured row for RQ-X strips its own attempt suffix.
+      launchCostRow('RQ-X-0123456789ab', 'measured', { peakProcesses: 6, meanCpuPercentOneCore: 8, peakCpuPercentOneCore: 30 }),
+    ]);
+    const result = await readRouterOutcomes({ runsDir: root });
+    const byId = new Map(result.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('RQ-X')).toMatchObject({
+      launch_cost_status: 'measured', launch_peak_processes: 6,
+      launch_mean_cpu_pct: 8, launch_peak_cpu_pct: 30,
+    });
+    expect(byId.get('RQ-X-deadbeefcafe')).toMatchObject({
+      launch_cost_status: 'unknown', launch_peak_processes: null,
+    });
+  });
+
+  it('leaves the last appended row standing when several attempts recorded probes for one job', async () => {
+    const root = runsDir('{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}\n');
+    writeLaunchCosts(root, [
+      launchCostRow('J1-aaaabbbbcccc', 'measured', { peakProcesses: 4, meanCpuPercentOneCore: 12.5, peakCpuPercentOneCore: 40 }),
+      launchCostRow('J1-ddddeeeeffff', 'partial', { peakProcesses: 9, meanCpuPercentOneCore: 3, peakCpuPercentOneCore: 8 }),
+    ]);
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result.outcomes[0]).toMatchObject({
+      launch_cost_status: 'partial', launch_peak_processes: 9,
+      launch_mean_cpu_pct: 3, launch_peak_cpu_pct: 8,
+    });
+  });
+
+  it('keeps launch_cost fields null and reports launch_cost_state when the ledger is absent, refused or the jobs read failed', async () => {
+    const missing = await readRouterOutcomes({ runsDir: runsDir('{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}\n') });
+    expect(missing).toMatchObject({ state: 'read', launch_cost_state: 'missing', launch_cost_truncated: false });
+    expect(missing.outcomes[0]).toMatchObject({
+      launch_cost_status: null, launch_peak_processes: null,
+      launch_mean_cpu_pct: null, launch_peak_cpu_pct: null,
+    });
+
+    const root = runsDir('{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}\n');
+    const target = join(root, 'real-launch-cost.jsonl');
+    writeFileSync(target, JSON.stringify(launchCostRow('J1-aaaabbbbcccc', 'measured')) + '\n');
+    symlinkSync(target, launchCostsPath(root));
+    const linked = await readRouterOutcomes({ runsDir: root });
+    expect(linked).toMatchObject({ state: 'read', launch_cost_state: 'unreadable' });
+    expect(linked.outcomes[0]).toMatchObject({ launch_cost_status: null, launch_peak_processes: null });
+
+    // The launch-cost read still reports its health when the jobs ledger is missing.
+    const noJobs = runsDir();
+    writeLaunchCosts(noJobs, [launchCostRow('J1', 'measured')]);
+    const withCosts = await readRouterOutcomes({ runsDir: noJobs });
+    expect(withCosts).toMatchObject({ state: 'missing', launch_cost_state: 'read', launch_cost_truncated: false, outcomes: [] });
+  });
+
+  it('flags a cut launch-cost tail so joined evidence reads as newest-bytes coverage', async () => {
+    const root = runsDir('{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}\n');
+    writeFileSync(launchCostsPath(root), '');
+    truncateSync(launchCostsPath(root), ROUTER_OUTCOME_LEDGER_LIMIT + 1);
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'read', launch_cost_state: 'read', launch_cost_truncated: true });
+    expect(result.outcomes[0]).toMatchObject({ launch_cost_status: null, launch_peak_processes: null });
   });
 });
 
