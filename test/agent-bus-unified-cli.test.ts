@@ -944,6 +944,56 @@ describe('phm agents bus (unified)', () => {
     expect(emptyText.join('\n')).toContain('empty candidates=2 held=2');
   });
 
+  it('filters the next-work claim by contains, since and priority', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    const post = (id: string, priority: BusEnvelope['priority'], body: unknown): void => {
+      expect(appendBusInbox({ id, from: 'agent:nova', to: 'agent:atlas', priority, ttl: 3_600_000,
+        body: body as BusEnvelope['body'] }, { root }).status).toBe('posted');
+    };
+    post('wf-old', 'P0', { kind: 'work', text: 'deploy alpha' });
+    post('wf-chore', 'P3', { kind: 'work', text: 'unrelated chore' });
+    post('wf-alpha', 'P1', { kind: 'work', text: 'ship ALPHA build' });
+    const env = { PHM_AGENT_ID: 'atlas' };
+    const complete = async (id: string, token: string): Promise<void> => {
+      expect(await run(['claim', 'message', 'complete', '--id', id, '--token', token], env))
+        .toMatchObject({ code: 0, json: { status: 'completed' } });
+    };
+
+    // --priority keeps only the exact band: the P1 alpha claims while the
+    // higher-priority old-alpha and lower-priority chore stay outside it.
+    const byPriority = await run(['work', 'next', '--lease-ms', '60000', '--priority', 'P1'], env);
+    expect(byPriority.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wf-alpha' } } });
+    await complete('wf-alpha', byPriority.json.token);
+
+    // --contains matches the scrubbed one-line summary case-insensitively:
+    // both alpha receipts remain candidates (one completed), so claim order
+    // takes the P0 old-alpha; the chore never enters the filtered scan.
+    const byContains = await run(['work', 'next', '--lease-ms', '60000', '--contains', '  ALPHA  '], env);
+    expect(byContains.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wf-old' } } });
+    await complete('wf-old', byContains.json.token);
+
+    // --since is the inclusive receivedAt cutoff in the phm messages grammar:
+    // a cutoff past every receipt's arrival empties the filtered scan, while
+    // 15m keeps all three — completed receipts still count as candidates.
+    const future = String(Date.now() + 3_600_000);
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--since', future], env))
+      .toMatchObject({ code: 0, json: { status: 'empty', candidates: 0, held: 0 } });
+    const bySince = await run(['work', 'next', '--lease-ms', '60000', '--since', '15m'], env);
+    expect(bySince.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wf-chore' } } });
+    await complete('wf-chore', bySince.json.token);
+
+    // Malformed filters are usage or invalid results, never a widened claim.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--priority', 'P9'], env))
+      .toMatchObject({ code: 2 });
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--since', 'bogus'], env))
+      .toMatchObject({ code: 2 });
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--contains', '   '], env))
+      .toMatchObject({ code: 2, json: { status: 'invalid' } });
+  });
+
   it('claims one envelope id and renews, releases and completes its message claim', async () => {
     expect(appendBusInbox({ id: 'mc-work', from: 'agent:nova', to: 'agent:atlas', priority: 'P2',
       ttl: 3_600_000, body: { kind: 'work', text: 'named work' } }, { root }).status).toBe('posted');

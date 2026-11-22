@@ -313,6 +313,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'needs-triage': () => import('./fleet-needs-triage.js'),
   'needs-wait': () => import('./fleet-needs-wait.js'),
   'needs-wait-group': () => import('./fleet-needs-wait-group.js'),
+  'open-prs': () => import('./fleet-open-prs.js'),
   'orchestrate': () => import('./fleet-orchestrate.js'),
   'order-jobs': () => import('./fleet-order-jobs.js'),
   'order-notices': () => import('./fleet-order-notices.js'),

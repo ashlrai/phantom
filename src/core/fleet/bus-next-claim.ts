@@ -1,19 +1,36 @@
 /** One-shot local coordination; message labels do not authenticate or authorize execution. */
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxReceipt } from './bus-inbox.js';
-import { BUS_PRIORITIES, isClaimableWork } from './bus-envelope.js';
+import { BUS_PRIORITIES, isClaimableWork, type BusPriority } from './bus-envelope.js';
 import { mutateBusWorkClaim, validBusClaimRequest } from './bus-work-claims.js';
 import { agentPendingAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
+import { busReadContains, busReadContainsMatch } from '../agents/bus-unified.js';
 
-export interface BusNextRequest { to: string; owner: string; leaseMs: number; root?: string }
+export interface BusNextRequest {
+  to: string; owner: string; leaseMs: number; root?: string;
+  /** Keep only receipts whose scrubbed one-line summary carries this text —
+   * the same `busReadContains`/`busReadContainsMatch` rule every bus read's
+   * `--contains` applies, so "claim the next work about X" is one atomic
+   * step instead of a filtered list followed by a claim-by-id. */
+  contains?: string;
+  /** Keep only receipts received at or after this epoch-ms cutoff — the same
+   * inclusive `receivedAt >= since` rule `agents bus inbox --since` applies. */
+  since?: number;
+  /** Keep only envelopes in this priority band — the same exact-band match
+   * every bus read's `--priority` applies. Ordering already prefers P0, so
+   * this narrows the claimable set rather than reordering it. */
+  priority?: BusPriority;
+}
 /** `empty` still means no receipt could be claimed, but now carries the honest
  * scan totals so a caller can tell a dry well from held work without a second
  * read: `candidates` is every live claimable envelope addressed to `--to` the
- * bounded scan found, and `held` is how many of those answered `conflict` — a
+ * bounded scan found that also satisfies the request's `contains`/`since`/
+ * `priority` filters, and `held` is how many of those answered `conflict` — a
  * live claim on the message id or an overlapping coordination key, which may
  * be the requester's own prior claim. `candidates - held` failed acquire for
  * other reasons (completed, expired, lost, missing, or a receipt that changed
  * mid-claim); expired envelopes never reach the scan, so they are not
- * candidates. Both counts are observed, never estimated. */
+ * candidates. Both counts are observed over the filtered scan, never
+ * estimated. */
 export type BusNextResult = { status: 'acquired'; receipt: BusInboxReceipt; token: string; leaseUntil: number }
   | { status: 'empty'; candidates: number; held: number }
   | { status: string };
@@ -37,6 +54,10 @@ function claimAddressMatcher(request: BusNextRequest): (to: string, from: string
 export function claimNextBusWork(request: BusNextRequest): BusNextResult {
   const claim = { action: 'acquire' as const, id: request.to, owner: request.owner, leaseMs: request.leaseMs, root: request.root };
   if (!validBusClaimRequest(claim)) return { status: 'invalid' };
+  const containsNeedle = busReadContains(request.contains);
+  if (containsNeedle === null) return { status: 'invalid' };
+  if (request.since !== undefined && (!Number.isSafeInteger(request.since) || request.since < 0)) return { status: 'invalid' };
+  if (request.priority !== undefined && !BUS_PRIORITIES.includes(request.priority)) return { status: 'invalid' };
   const addressedTo = claimAddressMatcher(request);
   const candidates: BusInboxReceipt[] = [];
   let cursor = 0, scanned = 0, finished = false;
@@ -47,7 +68,16 @@ export function claimNextBusWork(request: BusNextRequest): BusNextResult {
     scanned += result.messages.length;
     if (scanned > BUS_INBOX_MAX_MESSAGES || result.nextCursor < cursor) return { status: 'retryable' };
     for (const receipt of result.messages) {
-      if (addressedTo(receipt.envelope.to, receipt.envelope.from) && isClaimableWork(receipt.envelope.body)) candidates.push(receipt);
+      // The read filters every bus surface shares apply to the claimable set
+      // the same way: `since` is the inclusive receivedAt cutoff, `priority`
+      // the exact band, and `contains` the scrubbed one-line summary — so a
+      // filtered claim can never pick work the matching read would hide.
+      if (addressedTo(receipt.envelope.to, receipt.envelope.from) && isClaimableWork(receipt.envelope.body) &&
+          (request.since === undefined || receipt.receivedAt >= request.since) &&
+          (request.priority === undefined || receipt.envelope.priority === request.priority) &&
+          (containsNeedle === undefined || busReadContainsMatch(receipt.envelope.body, containsNeedle))) {
+        candidates.push(receipt);
+      }
     }
     if (result.messages.length < BUS_INBOX_MAX_READ) { finished = true; break; }
     if (result.nextCursor <= cursor) return { status: 'retryable' };

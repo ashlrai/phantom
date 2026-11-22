@@ -17,6 +17,7 @@ import { parseStopFile, stopFilePath, stoppedFamilies } from './stop-file.js';
 import { readSource } from './runs-parked-queue.js';
 import { ioWaitLine, readHostFamilies } from './host-families.js';
 import { readReleaseBacklog } from '../release/backlog.js';
+import { openPrCount } from './open-prs.js';
 import { mergeLatencyLine } from './git-merge-latency.js';
 import { activeFamilyStops, type BriefFamily } from './family-auto-stop.js';
 
@@ -103,7 +104,8 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     try { return JSON.parse(text ?? 'null'); } catch { sourceState(name, 'degraded', 'invalid JSON'); return null; }
   };
   const slotRoot = objectRow(json(slotsText, 'queue/slots.json')), slots = objectRow(slotRoot.lanes ?? slotRoot);
-  const latency = await compactMergeLatency(runsDir, tail?.text ?? '', now, json(prsText, 'fleet/open-prs.json'), sources['fleet/open-prs.json']?.state === 'missing');
+  const prs = json(prsText, 'fleet/open-prs.json'), openPrs = openPrCount(prs, now);
+  const latency = await compactMergeLatency(runsDir, tail?.text ?? '', now, prs, sources['fleet/open-prs.json']?.state === 'missing');
   const rows = ledgerRows(tail?.text ?? '', now, 24).rows.sort((a, b) => a.at - b.at);
   const readyRows = ready === null ? null : parseReadyRows(ready);
   const lanes = (snapshot?.snapshot.lanes ?? []).map(l => {
@@ -138,11 +140,12 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
   stops.push(...activeFamilyStops(familyStopText ?? '', now).map(s => ({ ...s, family: clean(s.family) })));
   const release = await readReleaseBacklog({ now, cacheOnly: true });
   const brief = {
+    openPrs,
     release: release.counts,
     releaseRepos: release.repos.map(r => ({ repo: r.repo, latestTag: r.latestTag, tagDate: r.releasedAt,
       commitsSinceTag: r.mergedCommits, state: r.verdict, reason: r.git?.reason ?? null, source: r.git ? 'local git' : 'GitHub cache' })),
     schema: 'leader.compact-brief.v1', at: new Date(now).toISOString(), headline, hostLoadWarning,
-    state: lanes.length || tail || hasPace || guardian?.length ? 'ready' : 'no data', sources,
+    state: openPrs !== null || lanes.length || tail || hasPace || guardian?.length ? 'ready' : 'no data', sources,
     windowHours: 2, emptyWindowHours: 24, lanes,
     pools: (pace?.pools ?? []).map(p => ({ pool: clean(p.pool), usedPct: p.usedPct, hoursToReset: p.hoursToReset,
       burnPerHour: p.recentPerHour, safeBurn: p.safeBurnPerHour ?? null, verdict: p.verdict === 'stale' || p.verdict === 'spent' ? p.line ?? p.verdict : p.verdict ?? 'unknown',
@@ -183,6 +186,7 @@ export function compactBriefLines(b: CompactLeaderBrief): string[] {
     ...b.stopped.filter(s => s.auto).map(s => `Stopped '${s.family}' for ${Math.ceil((s.until - Date.parse(b.at) / 1000) / 3600)} h: ${s.why}`),
     `Quiet/stuck: ${b.attention.map(j => j.id).join(', ') || (b.sources[LIVE_JOBS_FILE]?.state === 'healthy' ? 'none recorded' : 'unknown')}`,
     `Main: ${b.main.map(g => `${g.repo} ${g.state}${g.stale ? ' stale' : ''}`).join(', ') || 'unknown'}`,
+    `Open PRs: ${b.openPrs ?? 'unknown'}`,
     `Release: ${b.release.due} due, ${b.release.stale} stale, ${b.release.unknown} unknown`,
     mergeLatencyLine(b.mergeLatency), b.hostLoad.blame, ioWaitLine(b.hostLoad), `Stopped: ${b.sources.stops?.state === 'healthy' ? b.stopped.length : 'unknown'}; omitted: ${b.omitted}`,
     `Sources: ${Object.values(b.sources).filter(s => s.state !== 'healthy').length} missing, degraded or bounded`];

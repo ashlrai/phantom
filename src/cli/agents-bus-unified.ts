@@ -56,7 +56,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>]
-ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>]
+ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--priority P0..P3]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
@@ -263,7 +263,12 @@ receipts work mine's next section lists, walked in bus-next order
 (priority band, then cursor) under the same addressed-to rule: any label
 of the resolved identity or a member channel's group:<channel>:<topic>
 address, minus the agent's own channel posts. <agent> defaults to
-PHM_AGENT_ID and --owner to PHM_AGENT_ID then the agent ref; acquired
+PHM_AGENT_ID and --owner to PHM_AGENT_ID then the agent ref; --contains,
+--since and --priority narrow the claimable set under the same rules the
+bus reads apply — the scrubbed one-line summary substring, the inclusive
+receivedAt cutoff and the exact P0..P3 band — so "claim the next work
+about X" or "claim the next urgent one" is one atomic step, and empty's
+{candidates, held} totals count only the filtered scan. acquired
 returns the live receipt with its fencing token and lease expiry — the
 token feeds the message-claim verbs claim message renew|release|complete
 on this surface (the same journal comms bus claim spends) — while empty
@@ -779,7 +784,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const owner = one('--owner') ?? self ?? agent;
       const leaseMs = integer(one('--lease-ms'), '--lease-ms');
       if (leaseMs === undefined) throw new UsageError('--lease-ms is required.');
-      const result = claimNextBusWork({ to: agent, owner, leaseMs, root: options.root });
+      const result = claimNextBusWork({ to: agent, owner, leaseMs, root: options.root,
+        contains: one('--contains'), since: sinceArg(), priority: priorityArg() });
       out(json ? JSON.stringify(result) : workNextHuman(result, owner));
       return result.status === 'acquired' || result.status === 'empty' ? 0 :
         result.status === 'invalid' ? 2 : 1;
