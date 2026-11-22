@@ -15,14 +15,14 @@ import type { AutofillDraft } from './queue-autofill.js';
 export interface SupplyFloorSlate { v: 1; candidates: never[]; rankedJobs: (AutofillDraft & { lane: string })[] }
 
 /** FINISH recovery jobs vary their area prefix; they share one measured family. */
-const family = (id: string) => /FINISH.*S(?:R\d+)?$/.test(id) ? 'FINISH' : jobFamily(id);
+export const supplyFamily = (id: string) => /FINISH.*S(?:R\d+)?$/.test(id) ? 'FINISH' : jobFamily(id);
 
 export async function readSupplyRank(root: string, now: number) {
   const tally = yieldTally(now, 24);
   const known = await readLedgerLines(join(root, 'metrics/jobs.jsonl'), line => tally.add(line));
   const families = new Map<string, { launches: number; prs: number }>();
   if (known) for (const run of tally.runs()) {
-    const name = family(run.job), row = families.get(name) ?? { launches: 0, prs: 0 };
+    const name = supplyFamily(run.job), row = families.get(name) ?? { launches: 0, prs: 0 };
     row.launches++; row.prs += run.prs.size; families.set(name, row);
   }
   const stop = await readSource(join(root, 'queue/family-stop.tsv'), 65536, false);
@@ -30,7 +30,7 @@ export async function readSupplyRank(root: string, now: number) {
   const stops = parseStopFile(stop.text).filter(row => row.until > now / 1000);
   const ids = new Set(retired.text.split(/\s+/));
   return (c: Pick<AutofillCandidate, 'id' | 'family'>): number | null => {
-    const row = families.get(family(c.id)) ?? families.get(c.family);
+    const row = families.get(supplyFamily(c.id)) ?? families.get(c.family);
     if (stop.state === 'degraded' || retired.state === 'degraded' || ids.has(c.id)
       || stoppedBy(stops, [c.id, c.family]) || (row && row.launches >= 4 && row.prs / row.launches < 0.25)) return null;
     return row ? row.prs / row.launches : -1;
