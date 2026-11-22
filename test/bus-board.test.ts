@@ -511,6 +511,42 @@ describe('bus board pendingFor digest', () => {
     const digest = store.pendingFor(['alice', 'carol']);
     expect(digest.peers).toEqual(['alice']);
   });
+
+  it('filters deliveries, tasks and thread rollups by displayed text while peers stay known', async () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob');
+    await store.post('alice', threadId, 'frobnicate the plan');
+    await store.post('alice', threadId, 'unrelated chatter');
+    store.createTask('alice', threadId, 'item-frob', 'Frobnicate task');
+    store.createTask('alice', threadId, 'item-other', 'Water plants');
+    // A second thread bob belongs to with nothing the needle names: its
+    // rollup drops out but bob stays a known peer — membership is not text.
+    const quiet = store.createThread('carol', 'Watering rota').id;
+    store.joinThread('bob', quiet);
+
+    // 'carol' belongs only to the quiet thread — peers staying complete
+    // proves the text filter never narrows board membership.
+    const digest = store.pendingFor(['bob', 'carol'], undefined, undefined, ' Frobnicate ');
+    expect(digest.peers).toEqual(['bob', 'carol']);
+    // Only the frobnicate post's bob delivery survives; matched counts the
+    // filtered set, never the unfiltered total.
+    expect(digest.deliveries.matched).toBe(1);
+    expect(digest.deliveries.items).toHaveLength(1);
+    const stored = JSON.parse(digest.deliveries.items[0]!.content.text) as { body?: { text?: string } };
+    expect(stored.body?.text).toBe('frobnicate the plan');
+    expect(digest.tasks.matched).toBe(1);
+    expect(digest.tasks.items[0]).toMatchObject({ itemId: 'item-frob' });
+    // The matching thread's rollup counts only matching items; the quiet
+    // thread drops out entirely.
+    expect(digest.threads).toHaveLength(1);
+    expect(digest.threads[0]).toMatchObject({ id: threadId, pendingDeliveries: 1 });
+    expect(digest.threads[0]!.tasks).toEqual({ open: 1, held: 0, ambiguous: 0, unknown: 0 });
+    // Case and padding normalize like every other --contains read.
+    expect(store.pendingFor(['bob'], undefined, undefined, 'FROBNICATE').deliveries.matched).toBe(1);
+    expect(store.pendingFor(['bob'], undefined, undefined, 'absent-text').deliveries.matched).toBe(0);
+    expect(store.pendingFor(['bob'], undefined, undefined, 'absent-text').threads).toEqual([]);
+    expect(store.pendingFor(['bob'], undefined, undefined, 'absent-text').peers).toEqual(['bob']);
+  });
 });
 
 describe('bus board pendingAll digest', () => {

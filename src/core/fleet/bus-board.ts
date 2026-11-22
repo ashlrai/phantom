@@ -14,10 +14,11 @@ import { fsyncDirectory } from '../util/durability.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
+import { scrubSecrets } from '../util/scrub.js';
 import { acquireLocalStoreLock, ownsLocalStoreLock, releaseLocalStoreLock } from './local-store-lock.js';
 import { SharedStore, type QueueClaimRef } from './shared-store.js';
 import {
-  busBoardHop, createBusBoardDelivery, presentBusBoardText,
+  busBoardDeliveryText, busBoardHop, createBusBoardDelivery, presentBusBoardText,
   type BusBoardDelivery, type BusBoardHop,
 } from './bus-delivery.js';
 import { validateBusEnvelope } from './bus-envelope.js';
@@ -104,6 +105,8 @@ export interface BusBoardPendingPeers {
 /** The stored-content digest `pending` and `pendingFor` share; `pending` re-wraps every `content.text` for display. */
 interface BusBoardDigest {
   claims: 'readable' | 'unreadable';
+  /** Every member label across the joined threads before any item filter — the board-membership fact `peers` reports inside the digest's thread scope, never narrowed by the `contains` text filter. */
+  members: string[];
   threads: BusBoardPendingThread[];
   deliveries: { matched: number; items: BusBoardDelivery[]; truncated: boolean };
   tasks: { matched: number; items: BusBoardPendingTask[]; truncated: boolean };
@@ -496,16 +499,24 @@ export class BusBoard {
    * job's board coordination surface. Deliveries and thread rows carry no
    * per-item job field of their own, so thread membership is the finest
    * structured citation the board records; `matched`/`truncated` count the
-   * filtered sets, never the unfiltered totals.
+   * filtered sets, never the unfiltered totals. `contains`, when given, is
+   * the normalized `--contains` needle every bus read shares (lowercase,
+   * whitespace collapsed, trimmed — re-normalized here so a raw value is
+   * safe): deliveries keep only posts whose `busBoardDeliveryText` — the
+   * same post text the pending views render — carries it, tasks and thread
+   * rollups keep only titles that carry it or that still hold a matching
+   * delivery or task, and `matched`/`truncated` count the filtered sets.
+   * Matching runs over scrubbed display text, never the stored envelope
+   * JSON or peer labels, so a secret-shaped value stays unfindable.
    */
-  pendingFor(peers: readonly string[], now?: number, jobId?: string): BusBoardPendingPeers {
+  pendingFor(peers: readonly string[], now?: number, jobId?: string, contains?: string): BusBoardPendingPeers {
     const labels = new Set<string>();
     for (const peer of peers) {
       try { labels.add(this.peer(peer)); } catch { /* not a board peer label; it can match nothing */ }
     }
     return this.transaction(false, (state) => {
-      const digest = this.pendingDigest(state, labels, now ?? Date.now(), jobId);
-      const known = new Set(digest.threads.flatMap((thread) => thread.members));
+      const digest = this.pendingDigest(state, labels, now ?? Date.now(), jobId, contains);
+      const known = new Set(digest.members);
       return {
         peers: [...labels].filter((label) => known.has(label)).sort(),
         claims: digest.claims,
@@ -531,9 +542,8 @@ export class BusBoard {
     return this.transaction(false, (state) => {
       const labels = new Set(state.threads.flatMap((thread) => thread.members));
       const digest = this.pendingDigest(state, labels, now ?? Date.now());
-      const known = new Set(digest.threads.flatMap((thread) => thread.members));
       return {
-        peers: [...known].sort(),
+        peers: digest.members,
         claims: digest.claims,
         threads: digest.threads,
         deliveries: digest.deliveries,
@@ -550,9 +560,15 @@ export class BusBoard {
    * item: deliveries on those threads and the threads' own rollups list
    * under the job filter, while tasks list only when their `itemId` cites
    * the job — the per-item citation — so a job-scoped read never mixes in
-   * a sibling item's tasks.
+   * a sibling item's tasks. `contains` narrows each pending collection by
+   * its displayed text — a delivery's post body, a task's or thread's
+   * title — scrubbed and normalized like every other bus read's
+   * `--contains`; thread rollups keep a thread whose title matches or
+   * that still holds a matching delivery or task, and the per-thread
+   * pending counts then measure the matching items only.
    */
-  private pendingDigest(state: BoardState, labels: ReadonlySet<string>, now: number, jobId?: string): BusBoardDigest {
+  private pendingDigest(state: BoardState, labels: ReadonlySet<string>, now: number,
+    jobId?: string, contains?: string): BusBoardDigest {
     const index = this.options.fleet.readClaimIndex();
     const acknowledged = new Set((state.receipts ?? []).map((receipt) => receipt.deliveryId));
     const jobThreads = jobId === undefined ? undefined : new Set(
@@ -562,11 +578,20 @@ export class BusBoard {
       (jobThreads === undefined || jobThreads.has(thread.id)));
     const joinedIds = new Set(joined.map((thread) => thread.id));
 
+    // The needle normalizes once — lowercase, whitespace collapsed, trimmed —
+    // the same form every bus read's --contains applies; a blank needle is
+    // the empty substring and narrows nothing.
+    const needle = contains?.toLowerCase().replace(/\s+/g, ' ').trim();
+    const textHit = (value: string): boolean =>
+      needle === undefined ||
+      scrubSecrets(value).toLowerCase().replace(/\s+/g, ' ').includes(needle);
+
     const deliveries = state.deliveries.filter((delivery) =>
-      labels.has(delivery.recipient) && joinedIds.has(delivery.threadId) && !acknowledged.has(delivery.id));
+      labels.has(delivery.recipient) && joinedIds.has(delivery.threadId) && !acknowledged.has(delivery.id) &&
+      textHit(busBoardDeliveryText(delivery)));
 
     const tasks = state.tasks.filter((task) => joinedIds.has(task.threadId) &&
-      (jobId === undefined || task.itemId === jobId)).map((task): BusBoardPendingTask => {
+      (jobId === undefined || task.itemId === jobId) && textHit(task.title)).map((task): BusBoardPendingTask => {
       const entry = index.claims[task.itemId];
       let hold: BusBoardTaskHold = 'unknown';
       let owner: BusBoardPendingTask['owner'] = null;
@@ -594,15 +619,18 @@ export class BusBoard {
       counts[task.hold]++;
       holdCounts.set(task.threadId, counts);
     }
-    const threads: BusBoardPendingThread[] = joined.map((thread) => ({
-      id: thread.id, members: [...thread.members],
-      content: { trust: 'untrusted' as const, text: thread.title },
-      pendingDeliveries: deliveryCounts.get(thread.id) ?? 0,
-      tasks: holdCounts.get(thread.id) ?? { open: 0, held: 0, ambiguous: 0, unknown: 0 },
-    }));
+    const threads: BusBoardPendingThread[] = joined
+      .filter((thread) => textHit(thread.title) || deliveryCounts.has(thread.id) || holdCounts.has(thread.id))
+      .map((thread) => ({
+        id: thread.id, members: [...thread.members],
+        content: { trust: 'untrusted' as const, text: thread.title },
+        pendingDeliveries: deliveryCounts.get(thread.id) ?? 0,
+        tasks: holdCounts.get(thread.id) ?? { open: 0, held: 0, ambiguous: 0, unknown: 0 },
+      }));
 
     return {
       claims: index.readable ? 'readable' : 'unreadable',
+      members: [...new Set(joined.flatMap((thread) => thread.members))].sort(),
       threads,
       deliveries: {
         matched: deliveries.length,

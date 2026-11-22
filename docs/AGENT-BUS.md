@@ -403,7 +403,7 @@ compact `job=<id>:<state>` marker rides inside the frame's bracket and on
 the human line the same way `held` does, and `work mine`'s inbox section
 carries the same field.
 `phm agents bus wakes <agent> [--since <15m|2h|1d|ISO>] [--job <id>]
-[--from <agent>]` lists wake hints for the agent and its
+[--from <agent>] [--contains <text>]` lists wake hints for the agent and its
 channels. `--since` keeps only hints after the cutoff — the same `phm
 messages` grammar the inbox and channel read take, resolved to epoch ms —
 so a wake-driven agent reads just the hints newer than its last check.
@@ -433,7 +433,15 @@ referent is `unresolved` or `unknown` names no provable job and never
 matches; because the verdict needs the resolved referent, an unreadable
 bus store makes the filtered read `unavailable` rather than an empty
 page, and `matched` then counts the proven matches on the resolved page
-while `truncated` keeps its queue-tail meaning. Claim-holder
+while `truncated` keeps its queue-tail meaning. `--contains` keeps only
+the hints whose resolved referent text — a `bus.send` hint's live message
+summary or a claim-holder hint's citing `work.status` detail, the same
+scrubbed one-line text the row reports — carries the needle as a
+case-insensitive substring, so "which wake was about X" is one filtered
+read; a hint whose referent is `unresolved` or `unknown` names no
+provable text and never matches, an unreadable bus store makes the
+filtered read `unavailable`, and `matched` counts the proven matches on
+the resolved page. Claim-holder
 hints (`wh-…` ids) carry no envelope id of their own, so the read re-derives
 each one's citation against the live `work.status` receipts that could have
 generated it: a match annotates the row with `claimHolder` naming the status
@@ -611,7 +619,7 @@ free set. Exit 0 acquired,
 2 invalid, 1 otherwise. Claims still coordinate scope only — holding one
 never permits a merge, a push, or spending.
 
-**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>]` is the read-only
+**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>]` is the read-only
 digest that answers "what is pending for this agent" in one call: the live
 coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block — the reverse of `work feed --claims`,
@@ -821,7 +829,28 @@ a coordination claim key, not a job citation. Every count stays the
 filtered
 total, the result echoes `job` in JSON and the human header prints
 `job=<id>`, and a row whose job relation cannot be proven stays out of
-the match rather than padding it. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
+the match rather than padding it. `--contains <text>` narrows the whole
+digest the same way — "what is pending for this agent about X" — under
+the case-insensitive substring rule every other bus `--contains` read
+applies, matched over each section's scrubbed one-line display text and
+never over raw bodies, ids, claim keys as keys, statuses or routing
+labels: feed and announced jobs match the feed's job search text
+(title, newest status detail, declared dispatch); a claim lists only
+when its displayed evidence carries the needle — a blocked announced
+job's title/detail or a resolved leased message's summary; `next`,
+`handoffs` and `mailbox` mail match the body summary; threads, awaiting
+and blocked match member-message subjects through the shared
+conversations read; wakes match the resolved referent's summary or
+citing status detail; inbox applies its own contains rule; the board
+keeps deliveries whose post text and tasks/threads whose titles carry
+the needle — a thread rollup survives on a matching title or a
+surviving member item, per-thread counts measure matching items only,
+and `peers` still reports board membership independent of the text
+filter; and seats keep only handoff records whose held-work
+ref/branch/pr carries it. `channels` is registry context, not pending
+work, and stays unfiltered; every count stays the filtered total, the
+result echoes `contains` in JSON and the human header prints it, and a
+row whose text cannot be proven never matches. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
 exact-label claim matching, reports `identity: null`, answers `unknown-agent`
 for inbox rather than an empty list, and reads wakes under `scope: 'label'`
 — the same literal-`to` matching `agents bus wakes` applies — so pending

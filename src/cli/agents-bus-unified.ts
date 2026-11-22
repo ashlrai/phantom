@@ -38,7 +38,7 @@ ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--thread <t
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--matched] [--frame <cli>]
-ashlr agents bus wakes [<agent>] [--since <15m|2h|1d|ISO>] [--job <id>] [--from <agent>]
+ashlr agents bus wakes [<agent>] [--since <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--contains <text>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
@@ -54,7 +54,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--to <label>] [--owner <agent>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--contains <text>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
-ashlr agents bus work mine [<agent>] [--job <id>]
+ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
@@ -87,6 +87,13 @@ the citing status's jobId on a claim-holder hint — so job-scoped triage
 reads one filtered hint list; matched then counts the proven matches on
 the resolved page, an unreadable bus store reports unavailable rather
 than an empty page, and truncated still marks queue-tail or row-cap cuts.
+--contains on wakes keeps only hints whose resolved referent text — a
+bus.send hint's live message summary or a claim-holder hint's citing
+work.status detail, the same scrubbed one-line text the row reports —
+carries the needle as a case-insensitive substring, so "which wake was
+about X" is one filtered read; a hint whose referent cannot be resolved
+names no provable text and never matches, and matched counts the proven
+matches on the resolved page.
 --since on inbox, channel read and wakes keeps only rows at or after the
 cutoff — the phm messages grammar (15m, 2h, 1d, epoch ms or an ISO
 time), resolved to epoch ms — so fresh mail, a room's recent posts and
@@ -198,7 +205,21 @@ so next is empty under --job), threads/awaiting/blocked by
 the conversations job query, wakes and inbox by their own job filters,
 mailbox by body citation, the board by its job-carrying-thread rule, and
 the seats section by node-job handoff refs — with every count the
-filtered total. work next claims the next claimable
+filtered total. --contains on work mine narrows the whole digest to the
+rows whose displayed descriptive text carries the needle as a
+case-insensitive substring — the same rule every other bus --contains
+read applies: feed and announced jobs match the feed's job search text,
+claims match a blocked job's title/detail or a resolved leased message's
+summary, next/handoffs/mailbox match the body summary,
+threads/awaiting/blocked match member-message subjects through the
+conversations read, wakes match the resolved referent's summary or
+citing status detail, inbox matches the inbox read's own contains rule,
+the board matches delivery post text and task/thread titles inside
+pendingFor, and seats match the held-work ref/branch/pr a handoff
+record carries — while ids, claim keys as keys, statuses and routing
+labels keep their own filters and channels, registry context rather
+than pending work, stays unfiltered; a row whose text cannot be proven
+never matches and every count stays the filtered total. work next claims the next claimable
 work envelope addressed to the agent — the same kind:'work'/protocol-task
 receipts work mine's next section lists, walked in bus-next order
 (priority band, then cursor) under the same addressed-to rule: any label
@@ -606,7 +627,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       noExtra(2);
       const agent = sub ?? self;
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
-      const page = readAgentWakes(agent, sinceArg(), options, { job: one('--job'), from: one('--from') });
+      const page = readAgentWakes(agent, sinceArg(), options,
+        { job: one('--job'), from: one('--from'), contains: one('--contains') });
       if (page.status !== 'ok') return finish(page, '');
       out(json ? JSON.stringify(page) : [
         ...(page.truncated ? [`${page.matched} wake hint(s) matched; the bounded queue tail is truncated — showing the newest ${page.wakes.length}`] : []),
@@ -674,7 +696,10 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const agent = arg ?? self;
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
       const job = one('--job');
-      const result = await readBusWorkMineWithSeats(agent, { ...options, ...(job === undefined ? {} : { job }) });
+      const contains = one('--contains');
+      const result = await readBusWorkMineWithSeats(agent,
+        { ...options, ...(job === undefined ? {} : { job }),
+          ...(contains === undefined ? {} : { contains }) });
       if (result.status !== 'ok') {
         out(json ? JSON.stringify(result) : `${result.status}: ${result.reason}`);
         return 2;

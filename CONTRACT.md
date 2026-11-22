@@ -2637,13 +2637,15 @@ while reuse on another key cannot relocate it. Claims coordinate only and grant
 no execution authority; the token returns only to its acquirer.
 
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
-`phm agents bus work mine [<agent>] [--job <id>]`. `readBusWorkMine(agent, options?)`
-(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `now?: () => number` frozen once
+`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>]`. `readBusWorkMine(agent, options?)`
+(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `contains?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, job?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
+asOf, job?, contains?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
 reason}` for a
-ref outside the printable-label rule, or a `job` outside the same rule
-(`invalid-job`). `job` echoes the applied filter and is absent on an
+ref outside the printable-label rule, a `job` outside the same rule
+(`invalid-job`), or a `contains` outside the shared bounded free-text
+rule every bus `--contains` read applies (`invalid-contains`). `job` and
+`contains` echo the applied filters and are absent on an
 unfiltered read. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
 `claims` reuses
@@ -2855,7 +2857,7 @@ proven, not fabricated) and an unreadable one reports
 `{status:'unavailable', reason}`.
 `board` is the digest's window into the shared task board
 (`src/core/fleet/bus-board.ts`, the store `phm bus board pending` reads)
-that the unified bus never carried: `BusBoard.pendingFor(labels, now)` runs
+that the unified bus never carried: `BusBoard.pendingFor(labels, now, jobId?, contains?)` runs
 the board's own locked snapshot plus one shared-queue claim-index read under
 the union of every label the agent answers to, so an agent on the board no
 longer needs a separate `--peer` read per label. `peers` names the queried
@@ -2926,12 +2928,12 @@ and `now` default to the digest's `root`, `runsRoot` and frozen clock so
 seat work joins the same coordination table, identity registry and quota
 evidence. A throwing plan read reports `{status:'unavailable',
 reason:'seat-handoff-plan-unreadable'}`, never an empty plan passed off as
-fact; `busWorkMineSeatsFromPlan(plan, denotes, job?)` is the exported pure
+fact; `busWorkMineSeatsFromPlan(plan, denotes, job?, contains?)` is the exported pure
 shaping rule. `formatBusWorkMine(result)`
 renders the shared human lines — titles, the declared dispatch spec and key
 lists scrubbed, single-lined and display-clipped (the same
 `busWorkJobDispatch` tag the feed job line prints); JSON keeps full values.
-Exit 0 on a completed read, 2 on an invalid agent or job.
+Exit 0 on a completed read, 2 on an invalid agent, job or contains.
 
 `options.job` narrows the whole digest to one job id under the same
 `busBodyJobMatch` citation rule the inbox/channel `job` filters apply —
@@ -2961,6 +2963,34 @@ Every count stays the filtered total — `matched`/`open`/`truncated` all
 measure the filtered sets — and a row whose job relation cannot be
 proven (a scope-key claim, an unreadable feed, an unresolvable message)
 stays out of the match rather than padding it.
+
+`options.contains` narrows the whole digest to the rows whose displayed
+descriptive text carries the needle — the same case-insensitive
+substring rule every other bus `--contains` read applies, normalized
+once through `busReadContains` and matched over scrubbed one-line
+display text, never raw bodies, ids, claim keys as keys, statuses or
+routing labels: `jobs`/`announced` match `busWorkFeedJobSearchText` (the
+feed's own title/detail/dispatch haystack), `claims` keep a row only
+when its displayed evidence carries the needle — a blocked announced
+job's title or newest status detail (`claim.jobs`) or a resolved leased
+message's summary, with a claim whose evidence cannot be read naming no
+provable text — `next`/`handoffs` apply `busReadContainsMatch` to the
+envelope body inside the shared pending-work walk, `threads`/`awaiting`/
+`blocked` pass `contains` into the one shared conversations read (member
+-message subjects, the same query `agents conversations --contains`
+serves), `wakes` pass it to `readAgentWakes`' `filter.contains`,
+`inbox` passes it to `readAgentInbox`, `mailbox` ANDs
+`busReadContainsMatch` into `BusMailbox.pendingFor`'s `match` predicate,
+`board` passes it to `BusBoard.pendingFor` (deliveries match
+`busBoardDeliveryText`, tasks and thread titles match theirs, and a
+thread rollup survives on a matching title or a surviving member item —
+with per-thread pending counts measuring matching items only and `peers`
+still reporting board membership independent of the text filter), and
+`seats` keeps only handoff records whose held-work `ref`/`branch`/`pr`
+carries the needle — the only descriptive fields a seat record holds.
+`channels` is registry context, not pending work, and stays unfiltered
+like it does under `job`. Every count stays the filtered total, and a
+row whose text cannot be proven never matches.
 
 ### Unified agent bus (RQ-BUS-UNIFY-1)
 
@@ -3052,6 +3082,14 @@ a `worker-handoff` `taskId` or a `job:<id>` thread label) or on the
 `unknown` referents never matching, `matched` counting the proven matches
 on the resolved page, an unreadable bus store answering `unavailable`
 rather than an empty page, and a malformed job id answering `invalid`;
+`filter.contains` keeps only hints whose resolved referent text — a
+`bus.send` hint's live message summary or a claim-holder hint's citing
+`work.status` detail, the same scrubbed one-line text the row reports —
+carries the normalized needle as a case-insensitive substring, with
+`unresolved`/`unknown` referents never matching (they name no provable
+text), `matched` counting the proven matches on the resolved page, an
+unreadable bus store answering `unavailable`, and a malformed contains
+value answering `invalid`;
 `filter.from` keeps only hints whose recorded `from` label matches one
 agent through the same `agentAddressMatcher` identity-label rule
 `readAgentInbox`'s `from` applies — a handle, `agent:<handle>`, stable id
