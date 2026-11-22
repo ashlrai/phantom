@@ -125,4 +125,9 @@ are data. This module does not enqueue them, spend, or merge.
 
 `phm fleet outcomes` and `phm fleet outcomes route` print the view. `--json`
 is the same object the desktop imports from
-`desktop/outcome-learning-view.ts`.
+`desktop/outcome-learning-view.ts`. The fleet context pack
+(`phm fleet context-pack build`) folds the same two sources through
+`learnFleetOutcomes` for its `finished` count — the dispatch log alone
+carries no stamped outcome lines, so the jobs-ledger tail is what makes the
+count real; a missing or unreadable ledger degrades to dispatch-log
+evidence and `sources.metrics` reports the ledger's health.
