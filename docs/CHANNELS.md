@@ -260,7 +260,10 @@ live `worker-handoff` envelopes (`isWorkerHandoffBody`, the exact contract
 until its TTL ends or the addressee answers it, claims are evidence only,
 never a gate; an assignment the recipient already answered drops out once a
 live reply routed recipient -> sender cites the handoff id through
-`inReplyTo`/`replyTo`, the same durable evidence `agents conversations`
+`inReplyTo`/`replyTo` — resolved through the identity registry, so any
+label of the two identities (or a member of the addressed channel) counts,
+with an unreadable registry keeping literal-label matching —
+the same durable evidence `agents conversations`
 credits when it marks the thread answered), and
 open agent-bus v2 work-feed jobs (queued or rescheduled
 `work.post` announcements with at least one claim key not fully held, plus

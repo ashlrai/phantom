@@ -43,7 +43,7 @@ import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter, type Bus
 import { BUS_PROTOCOL_KEY, BUS_PRIORITIES, isClaimableWork,
   type BusPriority } from '../fleet/bus-envelope.js';
 import { inspectBusWorkClaims, type BusWorkClaimView } from '../fleet/bus-work-claims.js';
-import { busReplyCitations, isWorkerHandoffBody, workerHandoffAnswered, type BusReplyCitation } from '../fleet/handoff-body.js';
+import { busReplyCitations, handoffAnswerScope, isWorkerHandoffBody, workerHandoffAnswered, type BusReplyCitation } from '../fleet/handoff-body.js';
 import { createBusMailbox, type BusMailboxPendingMessage } from '../fleet/bus-mailbox.js';
 import { ashlrHome } from '../cloud/store.js';
 import { loadConfigReadOnlyStrict } from '../config.js';
@@ -950,6 +950,9 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
   // `group:<name>:` address, minus the agent's own channel posts — never
   // widened on an unreadable registry or unresolvable ref.
   const pendingAddress = agentPendingAddressMatcher(agent, registry);
+  // The answered check resolves reply labels through the same registry the
+  // pending rule reads; an unreadable registry keeps literal-label matching.
+  const answerScope = handoffAnswerScope(registry);
   const nextCandidates: NextCandidate[] = [];
   const handoffCandidates: HandoffCandidate[] = [];
   // Live reply citations collected across the same walk — a handoff's answer
@@ -1023,8 +1026,10 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
   // A handoff the addressee already answered is not pending work: a live reply
   // routed recipient -> sender and citing the handoff id is the same durable
   // evidence the conversation projection credits when it marks the thread
-  // answered. Only live envelopes were scanned, matching that window.
-  const openHandoffs = handoffCandidates.filter(candidate => !workerHandoffAnswered(candidate, replyCites));
+  // answered — under any label of either identity, or from a member of the
+  // addressed channel. Only live envelopes were scanned, matching that
+  // window.
+  const openHandoffs = handoffCandidates.filter(candidate => !workerHandoffAnswered(candidate, replyCites, answerScope));
 
   const claimsRead = inspectBusWorkClaims(options.root);
   const coordination = listCoordination(options.root, nowMs);

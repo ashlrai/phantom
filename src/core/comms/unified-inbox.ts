@@ -277,7 +277,8 @@ import { BusBoard, busBoardStoragePaths, type BusBoardPendingPeers } from '../fl
 import { busBoardDeliveryText } from '../fleet/bus-delivery.js';
 import { SharedStore } from '../fleet/shared-store.js';
 import { BUS_PROTOCOL_KEY, isClaimableWork, type BusPriority } from '../fleet/bus-envelope.js';
-import { busReplyCitations, isWorkerHandoffBody, workerHandoffAnswered, type BusReplyCitation } from '../fleet/handoff-body.js';
+import { busReplyCitations, handoffAnswerScope, isWorkerHandoffBody, workerHandoffAnswered, type BusReplyCitation, type HandoffAnswerScope } from '../fleet/handoff-body.js';
+import { readAgentRegistry } from '../agents/bus-identity.js';
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
 import { readNeedsMasonReplyDeliveries, type NeedsMasonReplyDeliveryReport } from '../fleet/needs-mason-relay.js';
@@ -1251,10 +1252,18 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
   // A handoff the addressee already answered is not pending work: a live reply
   // routed recipient -> sender and citing the handoff id is the same durable
   // evidence the conversation projection credits when it marks the thread
-  // answered, so this view and `agents conversations` agree. Only live
-  // envelopes were scanned, matching that projection's own window.
+  // answered, so this view and `agents conversations` agree — under any label
+  // of either identity, or from a member of the addressed channel. Only live
+  // envelopes were scanned, matching that projection's own window. The
+  // identity registry binds the label resolution only when a handoff could
+  // drop; an unreadable registry keeps literal-label matching.
+  let answerScope: HandoffAnswerScope | undefined;
+  if (pendingHandoffs.length > 0) {
+    const registryRead = readAgentRegistry({ root: options.busRoot });
+    answerScope = registryRead.status === 'ok' ? handoffAnswerScope(registryRead.registry) : undefined;
+  }
   for (const pending of pendingHandoffs) {
-    if (!workerHandoffAnswered(pending, replyCites)) items.push(pending.item);
+    if (!workerHandoffAnswered(pending, replyCites, answerScope)) items.push(pending.item);
   }
   const feed = busFeedJobItems(options, now, feedPosts, feedStatuses);
   items.push(...feed.items);

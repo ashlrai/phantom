@@ -2957,8 +2957,14 @@ same claim order, capped at the first 20 shown with `matched` the true total
 and `truncated` definitive. A handoff the addressee already answered is not
 pending and does not list: the walk also collects every live envelope's
 `inReplyTo`/`replyTo` citations (`busReplyCitations`), and a citation routed
-recipient -> sender — the exact direction the handoff verbs publish — drops
-the assignment (`workerHandoffAnswered`), the same durable evidence the
+recipient -> sender — the direction the handoff verbs publish, resolved
+through the identity registry so the reply's `to` may name the assigner
+under any of its labels and its `from` may name the addressee under any of
+its labels or, for a `group:<channel>:<topic>` address, a member of that
+channel (`handoffAnswerScope`/`workerHandoffAnswered` in
+`src/core/fleet/handoff-body.ts`; an unreadable registry keeps
+literal-label matching, never widening) — drops
+the assignment, the same durable evidence the
 conversation projection credits when it marks the thread answered; a
 citation routed any other way, or one that has expired out of the retained
 window, leaves the handoff pending. Each `BusWorkMineHandoff` carries `cursor`,
