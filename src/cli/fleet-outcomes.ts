@@ -14,6 +14,7 @@ import {
   type OutcomeLearningView,
   type ResourceOffer,
 } from '../core/routing/outcome-learning.js';
+import { readStandingRevertKeys } from '../core/improve/revert-ledger.js';
 import { readLedgerTail, ROUTER_OUTCOME_LEDGER_RELATIVE } from '../core/router/outcomes.js';
 
 const usage = `Usage: phm fleet outcomes --lane <lane|all> [--hours 24] [--json]
@@ -208,7 +209,7 @@ export async function cmdFleetOutcomes(args: string[]): Promise<number> {
     return 1;
   }
   const { loadConfigReadOnly } = await import('../core/config.js');
-  const learning = learnFleetOutcomes(text, ledger, censorFromConfig(loadConfigReadOnly().router, Date.now()));
+  const learning = learnFleetOutcomes(text, ledger, censorFromConfig(loadConfigReadOnly().router, Date.now()), readStandingRevertKeys());
   const view = outcomeLearningView(learning);
   let route: LearnedRoute | null = null;
   if (parsed.mode === 'route') {

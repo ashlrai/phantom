@@ -236,7 +236,12 @@ or a `revert`/`reverted` event or state name — the vocabulary slot-yield and
 the reward feed share) discounts a merge that did not hold: the attempt
 counts as a failure and the cell reports it under `reverted`, never under
 `merges` or `goodMerges`, while a merge recorded after the newest revert
-stays a fresh held merge.
+stays a fresh held merge. A second source covers reverts only git history
+proves: both callers resolve the standing `owner/repo#n` keys recorded in
+`$ASHLR_HOME/improve/revert-outcomes.jsonl` (`phm fleet reverts --record`),
+and a `MERGED` verdict whose own unambiguous PR claim names one resolves
+`reverted` the same way — so a merge the jobs ledger never marked as
+reverted still counts against the cell instead of inflating its merge rate.
 
 ### Selector
 
