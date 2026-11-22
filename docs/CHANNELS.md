@@ -326,6 +326,18 @@ pending thing one item — plus bot seats whose projected handoff plan still has
 move (the same `planSeatHandoffs` read `phm bots handoffs` serves; only
 eligible seats with pending, not yet journaled, handoff records list, each
 item deep-linking `phm bots handoff --seat` and `phm bots handoffs`) — plus
+unpublished peer work-dispatch results (the private
+`agentnet/work-dispatch.json` journal's `work.result` receipts whose latest
+recorded outcome was never confirmed sent to the proposing peer — the same
+`sent !== outcome` rule `phm agentnet peers dispatch`'s publish pass and the
+peer-bus admission check apply, so a peer cannot see a result the journal
+does not prove this host published; the dispatch feed page reports only the
+current proposals, so this backlog had no surface until now — each warn item
+names the peer, outcome, consumer and receipt with `since`/`expiresAt` null
+because the journal stamps receipt creation, not the last outcome move, and
+deep-links `phm agentnet peers dispatch --apply`; an absent journal is
+`missing`, an unreadable one `unavailable`, never an empty backlog passed off
+as fact) — plus
 Gmail archive-plan overages, LinkedIn messages saved as
 JSON files under `<runsDir>/comms/linkedin/inbox/` (answered when a file of the
 same id exists in `.../linkedin/answered/`; replies stay drafts) and live
@@ -384,7 +396,7 @@ imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms th
 `phm drafts approve`, `phm comms-agent drafts`,
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
 `phm fleet handoff-receive`, `phm agents conversations`,
-`phm bots handoff`, `phm agents bus post`, `phm comms email-cycle`,
+`phm bots handoff`, `phm agentnet peers dispatch`, `phm agents bus post`, `phm comms email-cycle`,
 `phm fleet email-outbox`,
 `phm bus inbox`, `phm bus ack`, `phm bus thread pending`, `phm bus thread
 ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
@@ -401,8 +413,9 @@ several kinds (the `bus` source's `bus-work`/`bus-handoff` split, the
 severity band, `--blocking` only items that block, `--job <id>` only items
 that provably name that job — a bus or mailbox body's `busBodyJobMatch`
 citation, a feed job's id, a board task's fleet item or a delivery on a
-job-carrying thread, a conversation thread's jobs, a teammate task's job or a
-seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job) —
+job-carrying thread, a conversation thread's jobs, a teammate task's job, a
+seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job) or a
+peer-dispatch receipt's job —
 and `--since <15m|2h|1d|ISO>` only items whose recorded `since` appearance
 time reaches the cutoff, the same inclusive `>=` match every bus read
 `--since` applies; an item whose store keeps no timestamp (`since` null) or
