@@ -143,7 +143,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     openPrs,
     release: release.counts,
     releaseRepos: release.repos.map(r => ({ repo: r.repo, latestTag: r.latestTag, tagDate: r.releasedAt,
-      commitsSinceTag: r.mergedCommits, state: r.verdict, reason: r.git?.reason ?? null, source: r.git ? 'local git' : 'GitHub cache' })),
+      commitsSinceTag: r.mergedCommits, state: r.verdict, reason: r.git?.reason ?? null, source: r.git?.source ?? (r.git ? 'local git' : 'GitHub cache') })),
     schema: 'leader.compact-brief.v1', at: new Date(now).toISOString(), headline, hostLoadWarning,
     state: openPrs !== null || lanes.length || tail || hasPace || guardian?.length ? 'ready' : 'no data', sources,
     windowHours: 2, emptyWindowHours: 24, lanes,

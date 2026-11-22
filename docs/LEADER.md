@@ -655,14 +655,20 @@ The compact brief (`leader.compact-brief.v1`) reads cached GitHub release eviden
 then local git tags for each missing repository. Its `release` counts include this
 fallback; `releaseRepos` gives the tag, tag date, commits since the tag, state,
 source and unknown reason. Local git is due over 20 commits or over seven days;
-otherwise it is ok. Missing clones, tags or default-branch refs and shallow
-history stay unknown. Tags describe local release state, not publication proof.
+otherwise it is ok. On `phm leader brief --json` or `phm fleet release-backlog
+--json`, shallow clones or missing local tags fall back to public remote version
+tags (highest stable version), their dates and GitHub compare counts. Each remote
+read has a five-second budget; readings are cached for ten minutes.
+Background compact reads use that cache without network calls. An unreachable
+remote stays unknown with a plain reason; an unreadable count stays null.
+Missing clones or default-branch refs stay unknown. Tags are not publication proof.
 The same evidence appears in `phm fleet release-backlog --json` under `repos[].git`.
 
 Default clone paths are `~/Projects/ashlrai/wt/guardian-<repo>`, then
 `~/.ashlr-runs/phm-live` for Phantom, then `~/Projects/ashlrai/<repo>`.
 Set `PHANTOM_RELEASE_CLONES` to a JSON object such as
 `{"phantom":"/path/to/phantom","locus":"/path/to/locus"}` to replace that list;
-unlisted repositories stay unknown with reason `no local clone`. Reads use
-`origin/HEAD` (or `origin/master`, then `origin/main` if unset), never fetch, and
-have a five-second budget per clone. Local refs reflect their last fleet refresh.
+unlisted repositories stay unknown with reason `no local clone`. Local reads use
+`origin/HEAD` (or `origin/master`, then `origin/main` if unset) and have a
+five-second budget per clone. Remote reads use `git ls-remote` against the public
+AshlrAI URL, without fetching or changing clones. Local refs reflect their last fleet refresh.

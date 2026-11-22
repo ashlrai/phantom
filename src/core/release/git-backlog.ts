@@ -7,6 +7,7 @@ import { join } from 'node:path';
 export interface GitReleaseRow {
   repo: string; latestTag: string | null; tagDate: string | null; commitsSinceTag: number | null;
   state: 'ok' | 'due' | 'unknown'; reason: string | null;
+  source?: 'remote git';
 }
 
 /** PHANTOM_RELEASE_CLONES replaces defaults with a JSON object of repo names to clone paths. */
