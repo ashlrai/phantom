@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.61 |
-| Latest dated changelog release (2026-11-21) | 3.30.61 |
+| Source package | 3.30.62 |
+| Latest dated changelog release (2026-11-22) | 3.30.62 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -168,6 +168,35 @@ Merged after #7384 (#7385 to #7604). Bridge, recovery and release bookkeeping is
 ### Removed
 
 - Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
+
+## [3.30.62] - 2026-11-22
+
+
+### Changes
+
+* **RQ-BRIEFLANESN23HQ8:** RQ-BRIEFLANESN23HQ8 ([#8041](https://github.com/ashlrai/phantom/issues/8041)) ([a6d5f1e](https://github.com/ashlrai/phantom/commit/a6d5f1e033c33ff4927841a650873a08fa1bb8fa))
+* **RQ-CL-DOCS-1795307547:** ([#8052](https://github.com/ashlrai/phantom/issues/8052)) ([ae60a6d](https://github.com/ashlrai/phantom/commit/ae60a6d3dc7ad3e7c904d56c72bb998c3b09d172))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795306355-N17:** ([#8044](https://github.com/ashlrai/phantom/issues/8044)) ([43abdfa](https://github.com/ashlrai/phantom/commit/43abdfa34107aadfb15a2414f320c9da8771ef42))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795306957-N17:** ([#8050](https://github.com/ashlrai/phantom/issues/8050)) ([ad2f50c](https://github.com/ashlrai/phantom/commit/ad2f50c037f643f31c10297c48674a0e84a69915))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795307679-N17:** ([#8056](https://github.com/ashlrai/phantom/issues/8056)) ([ae31eec](https://github.com/ashlrai/phantom/commit/ae31eec1ba19069f8c6c7b0e9048a3997a305987))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795308548-N17:** ([#8058](https://github.com/ashlrai/phantom/issues/8058)) ([3cd403b](https://github.com/ashlrai/phantom/commit/3cd403b3bc60a641655214a3faefd2bab771592b))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795309459-N17:** ([#8065](https://github.com/ashlrai/phantom/issues/8065)) ([7452e30](https://github.com/ashlrai/phantom/commit/7452e3071a8ca7e2a1b71d40aa66eb2ad2ce4b43))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795310641-N17:** ([#8068](https://github.com/ashlrai/phantom/issues/8068)) ([c0bb713](https://github.com/ashlrai/phantom/commit/c0bb7130fca6135b22da2b230c68e62bd96024e9))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795311628-N17:** ([#8069](https://github.com/ashlrai/phantom/issues/8069)) ([50dfaff](https://github.com/ashlrai/phantom/commit/50dfaff97f878509de7b5e25f3e573a6d920107c))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795306222-N17:** ([#8053](https://github.com/ashlrai/phantom/issues/8053)) ([2446f62](https://github.com/ashlrai/phantom/commit/2446f62e2e5f84382ca28500afa08550433d134c))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795308932-N17:** ([#8064](https://github.com/ashlrai/phantom/issues/8064)) ([b9ee4b8](https://github.com/ashlrai/phantom/commit/b9ee4b8b7f013cdf21904f8a27f0a4bfc3ff47e4))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795311743-N17:** ([#8071](https://github.com/ashlrai/phantom/issues/8071)) ([5ebe187](https://github.com/ashlrai/phantom/commit/5ebe1871944410cb9d6f2df01e050b3dc5c7334d))
+* **RQ-DISPATCHHEALTHQ8:** RQ-DISPATCHHEALTHQ8 ([#8046](https://github.com/ashlrai/phantom/issues/8046)) ([1512842](https://github.com/ashlrai/phantom/commit/151284236b4b6cb98773d2cbac0358341a90ab81))
+* **RQ-JOBLOADN23JQ8:** RQ-JOBLOADN23JQ8 ([#8059](https://github.com/ashlrai/phantom/issues/8059)) ([0c8174d](https://github.com/ashlrai/phantom/commit/0c8174d3d1b6df9824a628643402ae0b53015d8c))
+* **RQ-MERGEDFEEDQ8:** RQ-MERGEDFEEDQ8 ([#8057](https://github.com/ashlrai/phantom/issues/8057)) ([22cdacb](https://github.com/ashlrai/phantom/commit/22cdacb0f5582d1e1208fa66372283273aee3caa))
+* **RQ-MERGELATGITN23JQ8:** RQ-MERGELATGITN23JQ8 ([#8062](https://github.com/ashlrai/phantom/issues/8062)) ([7ff029d](https://github.com/ashlrai/phantom/commit/7ff029d0437ee9732e638f05972e7fbd86e021ed))
+* **RQ-PHX-FAMILYSTOPFINISH748S:** PR 7992 handoff — blocked before implementation ([#8049](https://github.com/ashlrai/phantom/issues/8049)) ([cfd52f3](https://github.com/ashlrai/phantom/commit/cfd52f384faeccc5a89c522b1ee4e4b7c9979777))
+* **RQ-PHX-GAPCAPACITYFINISH749S:** RQ-PHX-GAPCAPACITYFINISH749S — continuation of PR [#8009](https://github.com/ashlrai/phantom/issues/8009) ([#8051](https://github.com/ashlrai/phantom/issues/8051)) ([865d8be](https://github.com/ashlrai/phantom/commit/865d8be17f715520d5a59303359acbc77d45ac5f))
+* **RQ-PHX-POOLKNOWNOWNER751S:** RQ-PHX-POOLKNOWNOWNER751S — PR [#8042](https://github.com/ashlrai/phantom/issues/8042) owner continuation ([#8070](https://github.com/ashlrai/phantom/issues/8070)) ([40d1e77](https://github.com/ashlrai/phantom/commit/40d1e77436eb13345fddc16d55c4df6f8bde7400))
+* **RQ-PHX-POOLREADFINISH747SR2:** RQ-PHX-POOLREADFINISH747SR2 ([#8047](https://github.com/ashlrai/phantom/issues/8047)) ([80b8dad](https://github.com/ashlrai/phantom/commit/80b8dad093605045f9ef104204e490967beaf4bf))
+* **RQ-PHX-REAPOWNERFINISH750S:** RQ-PHX-REAPOWNERFINISH750S — blocked preservation audit ([#8067](https://github.com/ashlrai/phantom/issues/8067)) ([f0f9590](https://github.com/ashlrai/phantom/commit/f0f9590268627cf6ecf4ada1c4329f2bea27b95e))
+* **RQ-SETTLEADVICEQ8:** RQ-SETTLEADVICEQ8 ([#8054](https://github.com/ashlrai/phantom/issues/8054)) ([117f965](https://github.com/ashlrai/phantom/commit/117f9652cd74d385270a52b9fdfc9fd2407484f2))
+* **RQ-STARTYIELDN23JQ8:** RQ-STARTYIELDN23JQ8 ([#8060](https://github.com/ashlrai/phantom/issues/8060)) ([c47d562](https://github.com/ashlrai/phantom/commit/c47d562d2994926c9ed79447e0a7987e732a93b1))
 
 ## [3.30.61] - 2026-11-21
 
