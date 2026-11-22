@@ -24,7 +24,8 @@ full walkthrough and recovery steps.
 
 1. **Clone upstream, push to your fork.** `scripts/verify-changed.mjs` diffs
    against `origin/master`, so keep `origin` pointing at this repository and
-   add your fork as a second remote:
+   add your fork as a second remote. Use a full-history clone so diff-based
+   checks have a merge base:
 
    ```sh
    git clone https://github.com/ashlrai/phantom.git && cd phantom
@@ -91,6 +92,24 @@ full walkthrough and recovery steps.
 
 Changes that weaken a [safety invariant](#safety-invariants-contributors-must-never-weaken)
 are refused regardless of who opens them.
+
+### What Merge Gate requires
+
+Pull requests and merge-queue batches run the fast gate. These jobs must
+succeed for `Merge Gate` to pass:
+
+| Check | What it does |
+|-------|--------------|
+| Secret-shape scan, Secret scan (diff) | Fail closed on secret-shaped values in the diff |
+| Classify PR site lane | Sorts the change into the site, docs or full lane |
+| Check generated files | Checks canonical launcher digests and runs `node scripts/generate-docs-llms.mjs`; fails if the generated tree changes |
+| Fast gate (typecheck + affected tests) | Type checks, then runs the tests selected from the diff, including doc-reading tests for docs-only changes |
+
+Tests that require a built `dist/` stay in the full suites, which build first;
+the fast gate has no build step. See [What CI requires](docs/CONTRIBUTE-WITH-AN-AGENT.md#6-what-ci-requires)
+for the advisory checks and full-suite schedule. A passing local check does
+not replace these hosted results or the owner review for
+[CODEOWNERS](.github/CODEOWNERS) paths.
 
 ---
 
@@ -451,6 +470,7 @@ Comms transports live in `src/core/integrations/` (`telegram.ts`, `imessage.ts`)
 
 - Keep commits focused and atomic; one logical change per commit.
 - Use a concise, imperative subject with a conventional type prefix (e.g. `feat: add genome embedding rerank fallback`), with a body explaining the "why" when it is not obvious.
+- Follow [Conventional Commits](https://www.conventionalcommits.org/) syntax: `type(scope): imperative summary`, for example `docs(contributing): describe the first pull request path`.
 - Pull requests land as squash commits, so the pull request title becomes the subject on `master`. release-please groups `master` subjects into `CHANGELOG.md` sections by type (see `release-please-config.json`): `feat` (Features), `fix` (Fixes), `bridge` (Changes), `perf` (Performance), `refactor` and `chore` (Maintenance), `docs` (Documentation), `test` (Tests), `ci` (CI) and `build` (Build). Fleet agents use the `bridge(<job>):` type; outside contributors pick the type that fits the change.
 - A commit must preserve the [local verification gates](#definition-of-green), including web and documentation checks when those surfaces change.
 - Do not commit `dist/` (it is git-ignored) or machine-specific paths.
