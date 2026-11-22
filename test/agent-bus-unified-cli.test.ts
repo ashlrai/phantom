@@ -1350,4 +1350,18 @@ describe('phm agents bus (unified)', () => {
     expect(await runAgentsCli(['bus', 'contract', '--json'], t => contract.push(t), () => {})).toBe(0);
     expect(JSON.parse(contract[0]!).schemaVersion).toBe('agent-bus.v2');
   });
+
+  it('agents help names the roster read and the real conversations and chat flags', async () => {
+    const out: string[] = [];
+    expect(await runAgentsCli(['--help'], t => out.push(t), () => {})).toBe(0);
+    const help = out.join('\n');
+    // `phm agents --help` is the complete agents reference: it must name every
+    // dispatched subcommand and the filters each read actually accepts, so an
+    // agent discovering the surface here is not told a narrower command than
+    // the dispatcher runs.
+    expect(help).toContain('ashlr agents roster [--json]');
+    expect(help).toMatch(/ashlr agents conversations [^\n]*--contains <text>/);
+    expect(help).toMatch(/ashlr agents chat [^\n]*--after <cursor>/);
+    expect(help).toMatch(/ashlr agents chat [^\n]*--limit <1-100>/);
+  });
 });

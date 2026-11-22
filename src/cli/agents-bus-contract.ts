@@ -9,11 +9,12 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 import { AGENTS_BUS_UNIFIED_HELP, AGENTS_BUS_UNIFIED_VERBS, runAgentsBusUnified } from './agents-bus-unified.js';
 
 const HELP = `ashlr agents list|show <id>|validate <id>|versions <id> [--json]
-ashlr agents chat list|read <outcome:id|run:id> --channel <channel> [--json]
+ashlr agents chat list|read <outcome:id|run:id> --channel <channel> [--after <cursor>] [--limit <1-100>] [--json]
 ashlr agents mesh status [--root <abs>] [--json]
 ashlr agents edges [--json]
 ashlr agents messages [--since 1h] [--limit N] [--json]
-ashlr agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--limit <1..1024>] [--json]
+ashlr agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..1024>] [--json]
+ashlr agents roster [--json]
 ashlr agents bus contract [--json]
 ashlr agents bus channels list [--json]
 ashlr agents bus channels test <id> [--root <abs>] [--json]
