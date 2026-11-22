@@ -115,6 +115,25 @@ describe('static ecosystem page', () => {
     expect(html).toContain('docs/CONTRIBUTE-WITH-AN-AGENT.md#8-the-other-ecosystem-repositories');
   });
 
+  it('states the open-source RSI mission on the homepage and the ecosystem page', () => {
+    // The README "Mission" section is the source; both public pages carry the same framing and links.
+    const readme = readFileSync(resolve(root, 'README.md'), 'utf8');
+    expect(readme).toMatch(/^## How agents work on Phantom$/m);
+    const strategy = 'docs/strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md';
+    expect(existsSync(resolve(root, strategy))).toBe(true);
+    for (const page of ['index.html', 'ecosystem.html']) {
+      const document = new JSDOM(readFileSync(resolve(site, page), 'utf8')).window.document;
+      const mission = document.querySelector('.mission');
+      expect(mission, page).not.toBeNull();
+      const text = mission!.textContent!.replace(/\s+/g, ' ');
+      expect(text, page).toContain('chasing open-source RSI (recursive self-improvement)');
+      expect(text, page).toContain('passive board member');
+      const hrefs = [...mission!.querySelectorAll('a')].map((a) => a.getAttribute('href'));
+      expect(hrefs, page).toContain(`https://github.com/ashlrai/phantom/blob/master/${strategy}`);
+      expect(hrefs, page).toContain('https://github.com/ashlrai/phantom/blob/master/README.md#how-agents-work-on-phantom');
+    }
+  });
+
   it('fails visibly when the snapshot is unavailable', () => {
     const dom = mount(false);
     expect(dom.window.document.getElementById('data-notice')?.textContent).toMatch(/unavailable/);
