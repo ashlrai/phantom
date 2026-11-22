@@ -4,6 +4,7 @@ import { cpus, homedir, loadavg } from 'node:os';
 import { join } from 'node:path';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { readLoadOwnerInputs, summarizeLoadOwners, type LoadOwnerInputs, type LoadOwners } from './load-owners.js';
+import { findHostLeftovers, readLeftoverEvidence, type LeftoverEvidence } from './host-leftovers.js';
 
 export interface HostLoad {
   load1: number | null; load5: number | null; load15: number | null;
@@ -275,6 +276,7 @@ export function groupHostLoad(
 }
 
 export interface HostLoadDeps {
+  leftovers?: LeftoverEvidence;
   /** Returns the text of `ps -axo pid,ppid,pcpu,rss,comm`, or null when it cannot be read. Tests inject text. */
   ps?: (full?: boolean) => Promise<string | null>;
   /** Returns the fleet's job roots, or null when they cannot be read. */
@@ -311,9 +313,15 @@ export async function readHostLoadReport(deps: HostLoadDeps = {}, opts: { byTree
   let psText: string | null = null, roots: HostLoadJobRoot[] | null = null;
   try { psText = await (deps.ps ?? readHostPs)(opts.byTree === true); } catch { /* Unknown process list. */ }
   try { roots = (deps.jobRoots ?? readHostLoadJobRoots)(); } catch { /* Unknown job roots. */ }
+  const rows = parseProcessList(psText);
+  const evidence = deps.leftovers ?? (deps.ps ? undefined : await readLeftoverEvidence(rows).catch(() => undefined));
+  const leftoverRoots = findHostLeftovers(rows, evidence).items.map(row => ({ jobId: row.job, pid: row.pid }));
+  const attributedRoots = roots === null && !leftoverRoots.length ? null : [...(roots ?? []), ...leftoverRoots];
   const load = (deps.load ?? readHostLoad)();
-  const report = groupHostLoad(psText, roots, { load1: load.load1, cores: load.cores, now: (deps.now ?? Date.now)() });
+  const report = groupHostLoad(psText, attributedRoots, { load1: load.load1, cores: load.cores, now: (deps.now ?? Date.now)() });
+  report.jobRoots = roots?.length ?? null;
+  if (roots === null && leftoverRoots.length) { report.state = rows.length ? 'partial' : 'unknown'; report.gaps.push('Live job roots are unknown; confirmed leftovers count as fleet work.'); }
   try { report.owners = summarizeLoadOwners(report, { ...(deps.owners ?? readLoadOwnerInputs)(report), now: (deps.now ?? Date.now)() }); } catch { /* Owners are optional. */ }
-  if (opts.byTree) report.trees = attributeProcessTrees(parseProcessList(psText), defaultTreeMatchers(roots));
+  if (opts.byTree) report.trees = attributeProcessTrees(rows, defaultTreeMatchers(attributedRoots));
   return report;
 }

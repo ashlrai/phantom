@@ -21,6 +21,14 @@ beforeEach(async () => {
   await mkdir(join(dir, 'queue')); await mkdir(join(dir, 'metrics'));
 });
 afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); await rm(dir, { recursive: true, force: true }); });
+it.each([50, 51])('shows leftover load only above fifty percent: %s', async cpu => {
+  const host = groupHostFamilies(`10 1 ${cpu} 1024 00:01 tsgo plainword`, {
+    worktreeRoot: '/root', cwds: new Map([[10, '/root/done']]), liveJobs: new Map([['done', false]]),
+  });
+  const brief = await readCompactBrief(dir, now, async () => host);
+  expect(compactBriefLines(brief).some(line => line.includes('leftover processes from finished jobs'))).toBe(cpu > 50);
+  expect(JSON.stringify(brief.hostLoad)).not.toContain('"items"');
+});
 it('bounds 500 jobs, ranks zero PRs in six launches first, and reads status and ready rows', async () => {
   const rows: object[] = [];
   for (let i = 0; i < 500; i++) {
