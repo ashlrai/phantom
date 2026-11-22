@@ -25,6 +25,7 @@ it('classifies boundary ages and dead or missing processes, preserving redacted 
   expect(Object.fromEntries(report.jobs.map(j => [j.id, j.status]))).toEqual({ fresh: 'moving', quiet: 'quiet', hour: 'quiet', old: 'stuck', gone: 'stuck', missing: 'stuck' });
   expect(report.jobs[0]).toMatchObject({ repo: 'phantom', lane: 'local', elapsed: 7200, lastLine: 'hidden', started: '2026-11-21T10:00:00.000Z' });
   expect(redact).toHaveBeenCalledWith('working');
+  expect(report.jobs.filter(j => !j.processLive).map(j => j.id)).toEqual(['gone', 'missing']);
 });
 it('keeps missing evidence unknown and excludes finished attempts', async () => {
   await job('bare', 1); await rm(join(dir, 'bare.log')); await rm(join(dir, 'bare.launch')); await rm(join(dir, 'queue/run/bare.dispatched'));
