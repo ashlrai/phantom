@@ -1,6 +1,7 @@
 import { matchesGlob } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { defaultGh, type Gh } from '../autopilot/github.js';
+import { pausedFamily, readLaunchFamilies } from './family-yield.js';
 
 type Check = { name: string; status: string; conclusion: string; startedAt: string; detailsUrl: string; log?: string };
 export type RedfixPr = { number: number; title: string; headRefName: string; updatedAt: string; files: { path: string }[]; changedFiles?: number; body?: string; statusCheckRollup: Check[] };
@@ -96,10 +97,12 @@ export async function readRedCandidates(bucket: RedBucket, read = readRedfixScan
 }
 
 /** Integration seam for the external C-cycle emitter: scan once for every path bucket. */
-export async function planRedfixCycle(cycle: number, read = readRedfixScan, log = console.error): Promise<string[]> {
+export async function planRedfixCycle(cycle: number, read = readRedfixScan, log = console.error, families = readLaunchFamilies): Promise<string[]> {
   if (!Number.isSafeInteger(cycle) || cycle < 1) throw new Error('Invalid cycle');
   const { open, merged } = await read(), rows: string[] = [], now = Date.now();
+  const stats = await families();
   for (const [bucket, paths] of Object.entries(RED_BUCKETS)) {
+    if (pausedFamily(stats, `RQ-PHX-REDFIX${bucket.replace(/\//g, '')}C${cycle}`)) continue;
     const c = redCandidates(open, paths, merged, now).candidates[0];
     if (c) rows.push(`- READY RQ-PHX-REDFIX${bucket.replace(/\//g, '')}C${cycle} (P1, pool=codex-personal, tier=work, repo=phantom): Fix PR #${c.number} in ${bucket} (${paths.join(', ')}); skip candidate discovery. Recheck its head and CI before editing; stop if resolved. Include Supersedes #${c.number} in BRIDGE_NOTES.md. Leave changes uncommitted.`);
   }

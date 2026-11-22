@@ -13,13 +13,14 @@ it('shows the worst five typed family sentences at phone width and rejects a fai
   const names = ['SCRIPTSLAND', 'DOCSLAND', 'CONSOLELAND', 'RECUT', 'TESTS', 'BRIDGE', 'CORE'];
   const report = familyYield(names.flatMap(name => [
     JSON.stringify({ event: 'launch', job: `RQ-PHX-${name}793B`, ts: new Date(now - 1000).toISOString() }),
-    JSON.stringify({ event: 'finish', job: `RQ-PHX-${name}793B`, empty: true, tokens_total: 1500000 }),
+    JSON.stringify({ event: 'finish', job: `RQ-PHX-${name}793B`, empty: true, tokens_total: 1500000, summary: 'No eligible PR' }),
   ]), now, 24);
   stubFetch({ [`GET ${path}`]: report });
   const { container } = renderMobile(<div style={{ width: 390 }}><FamilyYieldCard /></div>);
   const card = within(screen.getByRole('region', { name: 'Launch yield' }));
   await waitFor(() => expect(card.getAllByRole('listitem')).toHaveLength(5));
   expect(card.getAllByRole('listitem').map(n => n.textContent)).toEqual(report.launch_families.slice(0, 5).map(r => r.sentence));
+  expect(card.getAllByRole('listitem')[0]).toHaveTextContent("1 of 1 empty, mostly 'no eligible source PR (or source PR already merged)'");
   expect(checkView('yield', 'Launch yield', container).findings).toEqual([]);
   stubFetch({});
   await refetchQuery(familyYieldQuery.key, () => familyYieldQuery.fetch(), true).catch(() => undefined);
