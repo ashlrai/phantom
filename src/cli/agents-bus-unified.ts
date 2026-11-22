@@ -14,6 +14,7 @@ import { busWorkFeedOwnerMatcher, busWorkFeedRepoKey, busWorkFeedToMatcher, BUS_
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope } from '../core/agents/bus-claims.js';
+import { COORDINATION_ORIGINS, type CoordinationOrigin } from '../core/agents/claim-store.js';
 import { formatBusWorkMine } from '../core/agents/bus-work-mine.js';
 import { readBusWorkMineWithSeats } from '../core/agents/bus-work-mine-seats.js';
 import { readUnifiedBusStatus } from '../core/agents/bus-status.js';
@@ -44,7 +45,7 @@ ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
 ashlr agents bus claim renew --key <claimKey> --token <64hex> --lease-ms <1..3600000>
 ashlr agents bus claim release --key <claimKey> --token <64hex> --outcome released|completed
-ashlr agents bus claim list [--key <claimKey>] [--owner <label>] [--jobs]
+ashlr agents bus claim list [--key <claimKey>] [--owner <label>] [--origin <resource|message|team|board>] [--jobs]
 ashlr agents bus claim message acquire --id <envelope-id> --lease-ms <1..3600000> [--owner <label>]
 ashlr agents bus claim message renew|release|complete --id <envelope-id> --token <64hex>
 ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--claim <key>]... [--to <label>]
@@ -270,7 +271,7 @@ No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
 
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
-  '--frame', '--since', '--root', '--key', '--owner', '--lease-ms', '--token', '--outcome', '--reason',
+  '--frame', '--since', '--root', '--key', '--owner', '--origin', '--lease-ms', '--token', '--outcome', '--reason',
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
   '--kind', '--channel', '--contains', '--exclude-from']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
@@ -438,6 +439,15 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         throw new UsageError('--kind must be dm, channel, handoff or legacy.');
       }
       return value as InboxKind | undefined;
+    };
+    // Read-side --origin on claim list is the claim-origin enum: a bad
+    // value is a usage error here and an 'invalid' result inside the core read.
+    const originArg = (): CoordinationOrigin | undefined => {
+      const value = one('--origin');
+      if (value !== undefined && !(COORDINATION_ORIGINS as readonly string[]).includes(value)) {
+        throw new UsageError('--origin must be resource, message, team or board.');
+      }
+      return value as CoordinationOrigin | undefined;
     };
     // Read-side --since takes the phm messages grammar — 15m, 2h, 1d, epoch
     // ms or an ISO time — resolved to epoch ms; anything else is a usage
@@ -814,9 +824,9 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       noExtra(2);
       if (sub === 'list') {
-        const result = listBusClaims({ root: options.root, key: one('--key'), owner: one('--owner'), jobs: p.bools.has('--jobs') });
+        const result = listBusClaims({ root: options.root, key: one('--key'), owner: one('--owner'), origin: originArg(), jobs: p.bools.has('--jobs') });
         if (result.status === 'invalid') {
-          out(json ? JSON.stringify(result) : 'invalid: --key must be a v2 claim key (repo:, path:, queue: or pr:); --owner must be a printable label');
+          out(json ? JSON.stringify(result) : 'invalid: --key must be a v2 claim key (repo:, path:, queue: or pr:); --owner must be a printable label; --origin must be resource, message, team or board');
           return 2;
         }
         if (result.status !== 'ok') {
