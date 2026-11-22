@@ -463,6 +463,34 @@ keep-queued receipt or a `recut_admission` verdict — supersedes it to
 `false`; `finish`/`publish`/outcome rows of other phases and
 non-decision events never touch it. All three stay `null` when no
 empty-family row named the job.
+`handoff_trigger`/`handoff_lane`/`handoff_target` carry the fleet's
+recorded session-handoff advisory — dispatchd's
+`session_handoff_advisory` rows (`session-failover.v1`, the
+contrib/mac/session_handoff.py producer mirrored in the fold). The
+producer's closed trigger vocabulary has two verdicts:
+`rate-limit`, the once-per-attempt receipt dispatchd appends to
+jobs.jsonl when a run's log tail matched a usage-limit pattern and
+the attempt failed or produced no usable work — the provider wall
+that names the lane whose run died, distinct from the finish row's
+own exit/empty measures since a walled run can exit cleanly and
+still produce nothing publishable — and `quota-exhausted`, the
+pending-job verdict dispatchd writes to work-market.jsonl when the
+job's lane measured zero quota, carrying the market's chosen lane as
+`target` (that market-side copy is a different ledger's row — the
+same decision's rejection evidence already folds through the
+route_decision joins — while this fold keeps the producer's full
+vocabulary so a quota-exhausted row landing in the jobs window still
+joins under the same rules). The row counts only on the exact
+schema and event name (the `event`/`type`/`kind` alias set) with a
+`trigger` inside the producer's closed vocabulary; lane and target
+join independently in the bounded lane-identifier shape — a
+malformed trigger skips the row, malformed lane/target values drop
+to `null` without discarding the recorded trigger. The newest
+recognized advisory replaces the triple wholesale; the advisory is
+attempt evidence, not a launch decision, so rows of every other
+event leave it standing. All three stay `null` when no advisory row
+named the job — the retained window recorded no provider-wall
+verdict, which is unknown, not "no wall ever".
 `empty_tag` is the fleet's recorded WHY for a job that
 ended empty — the `job.empty-tag.v1` rows `phm jobs empty --record`
 appends to `metrics/empty-tags.jsonl` from empty-final-reason's verdict
@@ -593,11 +621,24 @@ once however many lanes rejected it for it — the per-lane why behind
 `no_runnable_lane`/`global_admission` verdicts, like
 `quota_exhausted`, `saturated`, `held`, `provider_backoff`,
 `cost_class_*`, the `unavailable` verdicts, `hysteresis_*` and
-`lower_rank`) — and
+`lower_rank`) — `unknown_handoffs` counts the unknown-cohort jobs
+whose recorded session-handoff advisory is a `rate-limit` verdict
+(the fleet's once-per-attempt receipt — the advisory dispatchd
+appends to jobs.jsonl — that the run died on a provider
+usage-limit wall and produced no usable work, the same kind of
+recorded failure signal `failure_class` carries, so it explains the
+missing merge verdict) and `unknown_handoff_triggers` tallies every
+recorded advisory trigger in the cohort (`rate-limit` attempt kills
+and `quota-exhausted` pending-lane verdicts — the producer's other
+closed-vocabulary trigger, which dispatchd writes to the market
+ledger and this fold accepts if it lands in the jobs window; like
+`unknown_market_reasons` it is queue-side context, never a
+reduction of the remainder) — and
 `unknown_unresolved` is
 the remainder with no
-recorded failure signal, no requeue word and no standing skip
-decline, keep-queued verdict or terminal no-op verdict (finished
+recorded failure signal, no requeue word, no standing skip
+decline, keep-queued verdict, terminal no-op verdict or
+rate-limit handoff verdict (finished
 cleanly awaiting a
 verdict, still in flight, or carrying only transient launch receipts). These are counts over the retained window; when the ledger was
 not read they are `null`, never zero — and `unknown_empty_tags` is
@@ -606,7 +647,8 @@ absent tag journal means tag coverage is unknown rather than zero;
 `unknown_market_reasons`, `unknown_market_rejected` and
 `unknown_market_rejected_reasons` are `null` the same way whenever the
 market ledger itself was not read (`unknown_noop`/
-`unknown_noop_reasons` read jobs-ledger rows only, so they are real
+`unknown_noop_reasons` and the handoff tallies read jobs-ledger rows
+only, so they are real
 whenever the jobs read succeeded). When the ledger exceeds the retained tail the
 report carries `truncated: true` and every count covers the newest bytes
 only; `market_state`/`market_truncated` report the decision journal's
@@ -673,7 +715,13 @@ outcomes whose newest `route_decision` recorded a non-empty
 down by recorded rejection code (each job contributes each code once
 however many lanes rejected it for it), so a group whose decisions
 kept bouncing off capacity or rank shows the blocking mix behind its
-routing. The weight math still moves on
+routing. The same evidence block also tallies the fleet's recorded
+session-handoff advisories — `handoff_known` counts the
+known-cohort outcomes carrying a `handoff_trigger` and
+`handoff_triggers` breaks the count down by recorded trigger
+(`rate-limit`, `quota-exhausted`), so a lane whose merges rest partly
+on provider-wall-hit runs shows the recorded mix. The weight math
+still moves on
 held-merge rate alone; the evidence is context for whoever applies a
 proposal, and text output renders it as `name=value(known)` suffixes only
 for signals with coverage. The report is advisory-only: it writes nothing, never

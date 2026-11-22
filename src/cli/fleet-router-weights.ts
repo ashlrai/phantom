@@ -64,6 +64,11 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
       (e.market_rejected_reasons !== null && e.market_rejected_reasons.length > 0
         ? `(${e.market_rejected_reasons.map(r => `${r.reason}:${r.jobs}`).join(',')})` : ''));
   }
+  if (e.handoff_known > 0) {
+    parts.push(`handoff=${e.handoff_known}` +
+      (e.handoff_triggers !== null && e.handoff_triggers.length > 0
+        ? `(${e.handoff_triggers.map(r => `${r.trigger}:${r.jobs}`).join(',')})` : ''));
+  }
   return parts.length === 0 ? '' : ` evidence ${parts.join(' ')}`;
 }
 
@@ -91,7 +96,7 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
   const counts = `known=${report.known_outcomes} unknown=${report.unknown_outcomes} unclassified=${report.unclassified_outcomes} ` +
     `min_samples=${report.bounds.min_samples} max_shift=${report.bounds.max_shift}`;
   const resolution = report.unknown_unresolved === null ? [] : [
-    `unknown resolution: empty=${report.unknown_empty} nonzero_exit=${report.unknown_nonzero_exit} skipped=${report.unknown_skipped} deferred=${report.unknown_deferred} noop=${report.unknown_noop} unresolved=${report.unknown_unresolved}` +
+    `unknown resolution: empty=${report.unknown_empty} nonzero_exit=${report.unknown_nonzero_exit} skipped=${report.unknown_skipped} deferred=${report.unknown_deferred} noop=${report.unknown_noop} handoffs=${report.unknown_handoffs} unresolved=${report.unknown_unresolved}` +
       (report.unknown_failure_classes !== null && report.unknown_failure_classes.length > 0
         ? ` failure_classes=${report.unknown_failure_classes.map(c => `${c.failure_class}:${c.jobs}`).join(',')}`
         : '') +
@@ -120,6 +125,9 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
         ? ` market_rejected=${report.unknown_market_rejected}` +
           (report.unknown_market_rejected_reasons !== null && report.unknown_market_rejected_reasons.length > 0
             ? `(${report.unknown_market_rejected_reasons.map(c => `${c.reason}:${c.jobs}`).join(',')})` : '')
+        : '') +
+      (report.unknown_handoff_triggers !== null && report.unknown_handoff_triggers.length > 0
+        ? ` handoff_triggers=${report.unknown_handoff_triggers.map(c => `${c.trigger}:${c.jobs}`).join(',')}`
         : ''),
   ];
   const rows = report.proposals.map(p => {

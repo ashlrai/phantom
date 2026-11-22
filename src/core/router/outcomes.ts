@@ -82,7 +82,20 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // every lane the market would not run the job on with its reason_codes —
 // which folds as market_rejected: the per-lane why behind a
 // no_runnable_lane/global_admission verdict that market_reasons only names
-// in aggregate.
+// in aggregate. jobs.jsonl `session_handoff_advisory` rows — dispatchd's
+// session-failover.v1 provider-wall receipts (rate-limit verdicts land
+// here through metric(); the producer's quota-exhausted verdicts land in
+// work-market.jsonl through market_metric(), where the same decision's
+// rejection evidence already folds through the route_decision joins) —
+// fold as
+// handoff_trigger/handoff_lane/handoff_target: the fleet's recorded
+// verdict that a run attempt died on a usage-limit wall or that a
+// pending job's lane measured zero quota, the
+// once-per-attempt evidence the finish row's own classification can
+// miss when a walled run exits cleanly. The advisory is evidence about
+// an attempt, not a launch decision, so it competes with nothing: the
+// newest recognized advisory row replaces the triple wholesale and
+// every other event leaves it alone.
 
 /** Newest-bytes bound retained from the append-only jobs ledger. */
 export const ROUTER_OUTCOME_LEDGER_LIMIT = 16 * 1024 * 1024;
@@ -564,6 +577,40 @@ export interface RouterOutcome {
    * unknown, never a guessed rejection set.
    */
   market_rejected: { lane: string; reasons: string[] | null }[] | null;
+  /**
+   * The fleet's recorded session-handoff advisory verdict for the job —
+   * dispatchd's `session_handoff_advisory` rows (`session-failover.v1`,
+   * the contrib/mac/session_handoff.py producer mirrored here). The
+   * producer's closed trigger vocabulary has two verdicts:
+   * `rate-limit`, the once-per-attempt receipt dispatchd appends to
+   * metrics/jobs.jsonl through `metric()` when a run's log tail matched
+   * a usage-limit pattern AND the attempt failed or produced no usable
+   * work (docs/SESSION-HANDOFF.md) — the provider wall that names the
+   * lane whose run died, distinct from the finish row's own
+   * exit/empty measures since a walled run can exit cleanly and still
+   * produce nothing publishable; and `quota-exhausted`, the
+   * pending-job verdict dispatchd writes through `market_metric()` to
+   * metrics/work-market.jsonl when the job's lane measured zero quota,
+   * carrying the market's chosen lane as `target` — that market-side
+   * copy is a different ledger's row (the same decision's rejection
+   * evidence already folds through the route_decision joins), while
+   * this fold keeps the producer's full vocabulary so a
+   * quota-exhausted row that lands in the jobs window still joins
+   * under the same rules. `handoff_trigger` joins only in the producer's closed
+   * vocabulary (`rate-limit`, `quota-exhausted`); `handoff_lane` the
+   * advisory's lane in the bounded lane-id shape and `handoff_target`
+   * its target lane when one was recorded (the market's chosen lane
+   * on quota-exhausted verdicts; the rate-limit producer records
+   * none). The newest recognized advisory row stands like the other
+   * newest-explicit fields — the triple replaces wholesale — and rows
+   * of every other event never touch it; a malformed trigger, lane or
+   * target is skipped, never recorded raw. All stay null when no
+   * advisory row named the job — the retained window recorded no
+   * provider-wall verdict, which is unknown, not "no wall ever".
+   */
+  handoff_trigger: string | null;
+  handoff_lane: string | null;
+  handoff_target: string | null;
   /** The lane+model's pass^k (passPowK) from the latest eval.lane-scores.v1 projection; null when unknown. */
   passk: number | null;
 }
@@ -954,6 +1001,23 @@ const noopReason = (r: Row): string | null => {
   return v !== null && LEDGER_LABEL.test(v) ? v : null;
 };
 
+/**
+ * The session-handoff advisory's row schema and closed trigger
+ * vocabulary, mirrored from the producer (contrib/mac/
+ * session_handoff.py): `session_handoff_advisory` rows carry
+ * `schema: 'session-failover.v1'` and a `trigger` of `rate-limit`
+ * (a run attempt died on a usage-limit wall) or `quota-exhausted`
+ * (a pending job's lane measured zero quota). dispatchd appends the
+ * rate-limit verdict to metrics/jobs.jsonl through the same `metric()`
+ * path every other job receipt takes and the quota-exhausted verdict
+ * to metrics/work-market.jsonl through `market_metric()`; the router
+ * keeps its own copy of the vocabulary so a producer-side rename can
+ * never leak an unbounded label into router.outcome.v1.
+ */
+const HANDOFF_SCHEMA = 'session-failover.v1';
+const HANDOFF_EVENT = 'session_handoff_advisory';
+const HANDOFF_TRIGGERS: ReadonlySet<string> = new Set(['rate-limit', 'quota-exhausted']);
+
 // Revert evidence uses the same field vocabulary the fleet ledger readers
 // already honor: event names (event/type/kind), terminal state fields
 // (phase/state/outcome/status/result/conclusion) and the reverted_at /
@@ -1246,6 +1310,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       noop: null, noop_reason: null, noop_repeat_of: null,
       market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
       market_rejected: null,
+      handoff_trigger: null, handoff_lane: null, handoff_target: null,
       passk: null,
     };
     o.lane = str(r, 'lane', 'pool', 'arm') ?? o.lane;
@@ -1438,6 +1503,27 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       o.noop = false;
       o.noop_reason = null;
       o.noop_repeat_of = null;
+    }
+    // The session-handoff advisory is the fleet's recorded provider-wall
+    // verdict for the job — evidence about an attempt, not a launch
+    // decision, so it competes with nothing: the newest recognized
+    // advisory row replaces the triple wholesale and every other event
+    // leaves it alone. The row counts only on the exact
+    // session-failover.v1 schema and event name with a trigger inside
+    // the producer's closed vocabulary; lane and target join
+    // independently in the bounded lane-id shape, so a malformed value
+    // drops to null rather than skipping the recorded trigger, and a
+    // malformed trigger skips the row entirely — never recorded raw.
+    if (r['schema'] === HANDOFF_SCHEMA &&
+        str(r, ...EVENT_NAME_KEYS)?.toLowerCase() === HANDOFF_EVENT) {
+      const trigger = str(r, 'trigger');
+      if (trigger !== null && HANDOFF_TRIGGERS.has(trigger)) {
+        const lane = str(r, 'lane');
+        const target = str(r, 'target');
+        o.handoff_trigger = trigger;
+        o.handoff_lane = lane !== null && LANE_BLOCKED_HINT.test(lane) ? lane : null;
+        o.handoff_target = target !== null && LANE_BLOCKED_HINT.test(target) ? target : null;
+      }
     }
     outcomes.set(j, o);
   }

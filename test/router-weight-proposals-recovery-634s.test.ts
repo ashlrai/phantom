@@ -362,6 +362,8 @@ describe('outcome-quality evidence', () => {
       lane_override_reasons: null,
       market_rejected_known: 0,
       market_rejected_reasons: null,
+      handoff_known: 0,
+      handoff_triggers: null,
     });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).toContain('evidence ci_first_pass=0.8(10)');
@@ -521,6 +523,7 @@ describe('outcome-quality evidence', () => {
       usage_missing_known: 0,
       lane_overrides_known: 0, lane_override_reasons: null,
       market_rejected_known: 0, market_rejected_reasons: null,
+      handoff_known: 0, handoff_triggers: null,
     });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).not.toContain('ci_first_pass=');
@@ -691,7 +694,7 @@ describe('unknown-outcome resolution', () => {
       ],
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('unknown resolution: empty=3 nonzero_exit=5 skipped=0 deferred=0 noop=0 unresolved=4');
+    expect(out).toContain('unknown resolution: empty=3 nonzero_exit=5 skipped=0 deferred=0 noop=0 handoffs=0 unresolved=4');
     expect(out).toContain('failure_classes=quota:3,authentication:1');
   });
 
@@ -941,7 +944,7 @@ describe('unknown-outcome resolution', () => {
       unknown_unresolved: 4,
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('skipped=3 deferred=0 noop=0 unresolved=4');
+    expect(out).toContain('skipped=3 deferred=0 noop=0 handoffs=0 unresolved=4');
     expect(out).toContain('skip_reasons=prompt_empty_same_base_24h:2,code:13:1');
   });
 
@@ -1029,7 +1032,7 @@ describe('unknown-outcome resolution', () => {
       unknown_unresolved: 3,
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('deferred=4 noop=0 unresolved=3');
+    expect(out).toContain('deferred=4 noop=0 handoffs=0 unresolved=3');
     expect(out).toContain('defer_reasons=duplicate-request:2,files_and_tests_exist:1,recut-in-flight:1');
   });
 
@@ -1096,7 +1099,7 @@ describe('unknown-outcome resolution', () => {
       unknown_unresolved: 3,
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('skipped=1 deferred=1 noop=6 unresolved=3');
+    expect(out).toContain('skipped=1 deferred=1 noop=6 handoffs=0 unresolved=3');
     expect(out).toContain('noop_reasons=already-merged:1,recut-already-merged:1,target_pr_closed:1,target_pr_conflicts_resolved:1,target_pr_merged:1,unlabeled:1');
   });
 
@@ -1204,6 +1207,98 @@ describe('unknown-outcome resolution', () => {
     const { out } = await run(['--runs-dir', runs]);
     expect(out).not.toContain('market_reasons=');
     expect(out).not.toContain('market_rejected=');
+  });
+});
+
+describe('session-handoff advisory evidence', () => {
+  /** A session-failover.v1 advisory row in the producer's own shape (contrib/mac/session_handoff.py).
+   *  dispatchd appends rate-limit verdicts to jobs.jsonl and quota-exhausted
+   *  verdicts to work-market.jsonl; fixtures here exercise the fold's full
+   *  closed vocabulary on the jobs ledger. */
+  const advisory = (job: string, trigger: string, extra: Record<string, unknown> = {}): object => ({
+    schema: 'session-failover.v1', event: 'session_handoff_advisory', advisory: true,
+    job, lane: 'alpha', trigger, target: null, packet: `handoffs/${job}.jsonl`,
+    next: 'validate-packet-repo-capabilities-and-claim', dispatched: false, ...extra,
+  });
+
+  it('tallies handoff advisories per known group as advisory evidence without touching weight math', async () => {
+    // Six of twenty merged jobs carry recorded provider-wall advisories:
+    // four rate-limit attempt kills and two quota-exhausted pending-lane
+    // verdicts. The evidence is diagnostic context — the held-merge
+    // weight is computed from merge verdicts alone.
+    const jobs = Array.from({ length: 20 }, (_, i) => `synthetic-ho-k-${i}`);
+    writeLedger(jobs.flatMap((job, i) => [
+      event(job, 'alpha', 'code', 'MERGED'),
+      // The advisory's lane is the lane whose run was walled — the same
+      // alpha lane the merge verdict names, so the group stays coherent.
+      ...(i < 4 ? [advisory(job, 'rate-limit')] : []),
+      ...(i >= 4 && i < 6 ? [advisory(job, 'quota-exhausted', { target: 'devin' })] : []),
+    ]));
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    const p = report.proposals[0];
+    expect(p).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 20, proposed_weight: 0.6 });
+    expect(p.evidence).toMatchObject({
+      handoff_known: 6,
+      handoff_triggers: [
+        { trigger: 'rate-limit', jobs: 4 },
+        { trigger: 'quota-exhausted', jobs: 2 },
+      ],
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('handoff=6(rate-limit:4,quota-exhausted:2)');
+  });
+
+  it('resolves rate-limit unknowns while quota-exhausted stays diagnostic context', async () => {
+    // A rate-limit advisory is the fleet's recorded receipt that the run
+    // died on a provider usage-limit wall with no usable work — the same
+    // kind of failure signal failure_class carries, so it explains the
+    // missing merge verdict. quota-exhausted is the pending job's lane
+    // measuring zero quota: queue-side context, never a resolution.
+    writeLedger([
+      ...merged(20),
+      ...[0, 1].flatMap(i => [
+        event(`synthetic-ho-rate-${i}`, 'alpha', 'code', 'VERIFIED'),
+        advisory(`synthetic-ho-rate-${i}`, 'rate-limit', { lane: 'codex-personal' }),
+      ]),
+      event('synthetic-ho-quota', 'alpha', 'code', 'VERIFIED'),
+      advisory('synthetic-ho-quota', 'quota-exhausted', { lane: 'alpha', target: 'devin' }),
+      // A plain in-flight job with no advisory stays unresolved.
+      event('synthetic-ho-open', 'alpha', 'code', 'VERIFIED'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 4, unclassified_outcomes: 0,
+      unknown_handoffs: 2,
+      unknown_handoff_triggers: [
+        { trigger: 'rate-limit', jobs: 2 },
+        { trigger: 'quota-exhausted', jobs: 1 },
+      ],
+      // Only the quota verdict and the open job remain unexplained.
+      unknown_unresolved: 2,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('handoffs=2 unresolved=2 handoff_triggers=rate-limit:2,quota-exhausted:1');
+  });
+
+  it('keeps handoff tallies real whenever the jobs read succeeded and null when it did not', async () => {
+    // Jobs-ledger rows need no side-ledger join: a readable jobs ledger
+    // with no advisories reports zero tallies, while an unreadable one
+    // reports null — never an empty list claiming none were recorded.
+    writeLedger(merged(20));
+    const { report } = await runJson();
+    expect(report).toMatchObject({
+      unknown_handoffs: 0, unknown_handoff_triggers: [], unknown_unresolved: 0,
+    });
+    expect(report.proposals[0].evidence).toMatchObject({ handoff_known: 0, handoff_triggers: null });
+
+    rmSync(ledgerPath());
+    const missing = await runJson();
+    expect(missing.code).toBe(1);
+    expect(missing.report).toMatchObject({
+      unknown_handoffs: null, unknown_handoff_triggers: null, unknown_unresolved: null,
+    });
   });
 });
 
