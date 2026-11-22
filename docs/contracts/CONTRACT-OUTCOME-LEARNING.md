@@ -96,6 +96,25 @@ merge of a different PR stays held exactly like the in-ledger era rule,
 and a contested or foreign claim never discounts. Absent, empty or
 unmatched keys change nothing.
 
+A third evidence source joins the same way when the caller supplies the
+per-PR merge-queue map `foldMergeEvents` produces from
+`metrics/merge-events.jsonl` — `learnFleetOutcomes`'s optional fifth
+argument (`mergeQueue`, `owner/repo#n` → evidence). Each verdict's own
+unambiguously claimed PR contributes its recorded friction to the
+attempt: conflicts, recuts or a conflict `blocked` reason set the attempt's
+`mergeDirty` flag, and required-check failures or failed retries set
+`mergeFixup`. The flags are additive like `breakage` — the attempt keeps
+its merged/closed/reverted state and still counts its merge — and the
+fold adds them to the cell's `dirty`/`fixups` totals, so those rates and
+the dirty/fixup improvement patterns finally see fleet evidence instead of
+only the dispatch log's exclusive `dirty`/`fixup` outcome states.
+Non-required check observations, plain retry requests, pending checks and
+PRs no verdict claims unambiguously contribute nothing, and absent, empty
+or unmatched evidence changes nothing. `phm fleet outcomes` reads the
+ledger's bounded tail by default (`--merge-events <file>` overrides) and
+passes the fold; `phm select` and the fleet context pack do not consume
+the friction fields and pass nothing.
+
 ## How it routes
 
 `routeLearnedJob` draws a Thompson sample from a Beta success posterior and a
@@ -118,8 +137,12 @@ Omitting the penalty leaves `routeSeat` unchanged.
 ## Improvement jobs
 
 A failure pattern becomes an improvement job when it has happened at least
-three times and, for a low merge rate, good merges are the minority. The jobs
-are data. This module does not enqueue them, spend, or merge.
+three times and, for a low merge rate, good merges are the minority. The
+`dirty` and `fixup` patterns count both the dispatch log's exclusive
+outcome states and the merge-queue friction flags above, so recurring
+merge conflicts and required-check failures surface as improvement work
+even though every affected attempt still merged. The jobs are data. This
+module does not enqueue them, spend, or merge.
 
 ## Surfaces
 
