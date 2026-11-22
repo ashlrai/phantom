@@ -217,6 +217,7 @@ import {
   TICK_PHASE_CI_RERUN_MS,
   TICK_PHASE_REWARD_SYNC_MS,
   TICK_PHASE_SKILL_NUDGE_MS,
+  TICK_PHASE_EMPTY_TAG_SYNC_MS,
   TICK_BUDGET_MS,
 } from './tick-phases.js';
 import { launchOffTickJob, cancelOffTickJobs, offTickJobsSnapshot } from './off-tick-jobs.js';
@@ -4815,6 +4816,14 @@ export async function tick(
         const { syncSkillNudgesFromJobsLedger } = await import('../fleet/skill-nudge.js');
         await syncSkillNudgesFromJobsLedger({ signal });
       }, { deadlineMs: TICK_PHASE_SKILL_NUDGE_MS, parentSignal: opts.signal, log: phaseLog });
+      // Empty-job evidence: fold the same tail into empty-tags.jsonl and the
+      // dupcheck outcome rows `phm jobs empty --record` used to write only
+      // when run by hand. Best-effort and deduplicated by job id;
+      // launchOffTickJob keeps it single-flight.
+      launchOffTickJob('empty-tag-sync', async signal => {
+        const { syncEmptyTagsFromJobsLedger } = await import('../fleet/empty-tag-sync.js');
+        await syncEmptyTagsFromJobsLedger({ signal });
+      }, { deadlineMs: TICK_PHASE_EMPTY_TAG_SYNC_MS, parentSignal: opts.signal, log: phaseLog });
     } else {
       await runPhase('reflection', TICK_PHASE_REFLECTION_MS, run);
     }
