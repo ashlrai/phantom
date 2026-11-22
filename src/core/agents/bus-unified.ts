@@ -85,8 +85,8 @@ interface SendCommon {
    */
   wake?: boolean;
 }
-export interface DirectMessageInput extends SendCommon { to: string; text: string; thread?: string; refs?: string[] }
-export interface ChannelPostInput extends SendCommon { channel: string; topic?: string; text: string; thread?: string; refs?: string[] }
+export interface DirectMessageInput extends SendCommon { to: string; text: string; thread?: string; refs?: string[]; replyTo?: string }
+export interface ChannelPostInput extends SendCommon { channel: string; topic?: string; text: string; thread?: string; refs?: string[]; replyTo?: string }
 export interface LabelPostInput extends SendCommon {
   /** Plain routing label the message addresses; the reserved prefixes are refused. */
   to: string;
@@ -95,6 +95,7 @@ export interface LabelPostInput extends SendCommon {
   kind?: 'note' | 'context';
   thread?: string;
   refs?: string[];
+  replyTo?: string;
 }
 export interface HandoffInput extends SendCommon { to: string; taskId: string; prompt: string }
 
@@ -165,19 +166,23 @@ function metadata(sender: AgentIdentity, channel: 'bus' | 'handoff', channelRef:
   } as const;
 }
 
-function noteBody(input: { kind?: 'note' | 'context'; text: string; thread?: string; refs?: string[] }) {
+function noteBody(input: { kind?: 'note' | 'context'; text: string; thread?: string; refs?: string[]; replyTo?: string }) {
   return {
     kind: input.kind ?? 'note', text: input.text,
     ...(input.thread === undefined ? {} : { thread: input.thread }),
     ...(input.refs === undefined ? {} : { refs: input.refs }),
+    ...(input.replyTo === undefined ? {} : { inReplyTo: input.replyTo }),
   };
 }
 
-function noteFields(input: { text: unknown; thread?: unknown; refs?: unknown }): string | null {
+function noteFields(input: { text: unknown; thread?: unknown; refs?: unknown; replyTo?: unknown }): string | null {
   if (!text(input.text)) return `Text must be 1-${BUS_V2_TEXT_MAX} characters.`;
   if (input.thread !== undefined && (typeof input.thread !== 'string' || !THREAD.test(input.thread))) return 'Thread must be a printable label.';
   if (input.refs !== undefined && (!Array.isArray(input.refs) || input.refs.length > 32 ||
     input.refs.some(ref => typeof ref !== 'string' || ref.length < 1 || ref.length > 256))) return 'Refs must be up to 32 short strings.';
+  if (input.replyTo !== undefined && (typeof input.replyTo !== 'string' || !THREAD.test(input.replyTo))) {
+    return 'Reply target must be a printable message id.';
+  }
   return null;
 }
 

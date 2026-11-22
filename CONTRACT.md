@@ -2537,7 +2537,10 @@ plus `busBodyThread(body)`, the read-side predicate that returns the `thread`
 label a `note`/`context` body carries (null for every other kind and shape),
 and the exported `repoSlugSchema` — the `owner/name` slug `work.post` and
 `workJob` enforce and `busWorkFeedRepoKey` validates `--repo` feed filters
-against.
+against. `note`/`context` bodies may also carry `inReplyTo`, the printable
+envelope-id citation naming the message they answer — the same field
+`postBusReply` and `comms bus post --reply-to` stamp and `busReplyCitations`,
+the conversation projection and the pending-work sections already credit.
 Routing labels, repo slugs and claim tokens reject trailing newlines; claim keys
 reject ASCII controls including DEL. Claims grant no execution authority.
 
@@ -3187,7 +3190,9 @@ with a `reason`); they never throw for bad input or storage faults.
 `postLabelMessage`, `sendHandoff`, `sendWakeRequest`, `announceWork`,
 `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
-carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, priority?, kind?, job?, matched?, since?, channel?, contains?}, options?)`
+carry `claimHoldersWoken`; the three conversational sends accept `replyTo`,
+stamped as the body's `inReplyTo` citation after the same printable-label
+check `thread` gets), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, priority?, kind?, job?, matched?, since?, channel?, contains?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
 keeping exact-label matching, `excludeFrom` drops mail sent under every

@@ -22,7 +22,7 @@ import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.j
 import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import { enqueueBusWake } from '../src/core/fleet/bus-wake-queue.js';
 import { publishGroupPresence, subscribeGroup } from '../src/core/fleet/bus-group.js';
-import { busV2ContractSummary } from '../src/core/agents/bus-v2-schema.js';
+import { busBodySchema, busV2ContractSummary } from '../src/core/agents/bus-v2-schema.js';
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -1643,6 +1643,54 @@ describe('label posts on the one bus store', () => {
     expect(inbox.messages.map(m => m.envelope.id)).toEqual(['lp-inbox']);
     expect(readAgentInbox('atlas', {}, options)).toMatchObject({ status: 'ok', messages: [] });
     expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ status: 'ok', wakes: [] });
+  });
+});
+
+describe('reply citations on conversational sends', () => {
+  it('stamps inReplyTo on dm, channel and label posts and refuses bad targets', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    expect(await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'take this', id: 'ask-1' }, options))
+      .toMatchObject({ status: 'posted' });
+
+    // Every conversational send verb carries the same citation the fleet
+    // reply paths stamp: the cited envelope id lands as body.inReplyTo.
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'on it', replyTo: 'ask-1', id: 'ans-1' }, options))
+      .toMatchObject({ status: 'posted' });
+    expect(await postChannelMessage({ from: 'atlas', channel: 'release', text: 're: ship it', replyTo: 'ask-1', id: 'ch-r1' }, options))
+      .toMatchObject({ status: 'posted' });
+    expect(await postLabelMessage({ from: 'atlas', to: 'fleet.mesh', text: 'ack', replyTo: 'ask-1', id: 'lp-r1' }, options))
+      .toMatchObject({ status: 'posted' });
+    expect(await postLabelMessage({ from: 'atlas', to: 'fleet.mesh', kind: 'context', text: '{}', replyTo: 'ask-1', id: 'lp-r2' }, options))
+      .toMatchObject({ status: 'posted' });
+
+    const raw = listBusInboxAfter(0, 10, options);
+    if (raw.status !== 'ok') throw new Error('unreadable');
+    const body = (id: string) => raw.messages.find(row => row.envelope.id === id)!.envelope.body as Record<string, unknown>;
+    expect(body('ans-1')).toMatchObject({ kind: 'note', inReplyTo: 'ask-1' });
+    expect(body('ch-r1')).toMatchObject({ kind: 'note', inReplyTo: 'ask-1' });
+    expect(body('lp-r1')).toMatchObject({ kind: 'note', inReplyTo: 'ask-1' });
+    expect(body('lp-r2')).toMatchObject({ kind: 'context', inReplyTo: 'ask-1' });
+    // A send without the flag carries no citation key at all.
+    expect(body('ask-1')).not.toHaveProperty('inReplyTo');
+    // Every stamped body still satisfies the v2 contract.
+    for (const id of ['ans-1', 'ch-r1', 'lp-r1', 'lp-r2']) {
+      expect(busBodySchema.safeParse(body(id)).success).toBe(true);
+    }
+
+    // Non-label targets refuse before anything reaches the store; a
+    // credential-shaped citation hits the same scrub gate message text does.
+    const before = raw.messages.length;
+    for (const [index, replyTo] of ['', 'has space', 'x'.repeat(129), 'line\nbreak'].entries()) {
+      expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'x', replyTo, id: `bad-${index}` }, options))
+        .toMatchObject({ status: 'invalid' });
+    }
+    const secretish = await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'x',
+      replyTo: 'ghp_' + 'b'.repeat(36), id: 'bad-secret' }, options);
+    expect(secretish.status).not.toBe('posted');
+    const after = listBusInboxAfter(0, 10, options);
+    expect(after.status === 'ok' && after.messages.length).toBe(before);
   });
 });
 
