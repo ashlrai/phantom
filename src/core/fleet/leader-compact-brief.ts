@@ -20,6 +20,7 @@ import { readReleaseBacklog } from '../release/backlog.js';
 import { openPrCount } from './open-prs.js';
 import { mergeLatencyLine } from './git-merge-latency.js';
 import { activeFamilyStops, type BriefFamily } from './family-auto-stop.js';
+import { whyIdle } from './why-idle.js';
 
 export const LEADER_COMPACT_FILE = 'queue/leader-brief.json';
 const clean = (s: string) => scrubSecrets(s).replace(/\s+/g, ' ').slice(0, 80);
@@ -159,6 +160,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     hostLoad: { ...hostLoad, leftovers: hostLoad.leftovers ? { ...hostLoad.leftovers, items: undefined } : undefined,
       families: hostLoad.families.slice(0, 8), omitted: hostLoad.omitted + Math.max(0, hostLoad.families.length - 8) },
     stopped: stops, omitted: 0,
+    whyIdle: whyIdle({ at: new Date(now).toISOString(), lanes, attention, pools: [] }).map(clean),
   };
   // Drop the lowest-priority rows, explicitly counting omissions, until the entire wire payload fits.
   const lists = [brief.families, brief.stopped, brief.main, brief.pools, brief.lanes, brief.attention];
@@ -179,7 +181,8 @@ export async function writeCompactBrief(runsDir: string, now = Date.now(), file 
 }
 export function compactBriefLines(b: CompactLeaderBrief): string[] {
   const lines = [b.headline, ...(b.hostLoadWarning ? [b.hostLoadWarning] : []), `Leader: ${b.state} (${b.at}); lanes: ${b.lanes.length}; pools: ${b.pools.length}`,
-    ...b.lanes.slice(0, 3).map(l => `${l.lane}: ${l.running ?? '?'}/${l.target ?? '?'}, ${l.queued ?? '?'} queued, held ${l.held ?? '?'}, empty ${l.emptyRate === null ? '?' : Math.round(l.emptyRate * 100) + '%'}`),
+    ...b.whyIdle,
+    ...b.lanes.slice(0, 3 - b.whyIdle.length).map(l => `${l.lane}: ${l.running ?? '?'}/${l.target ?? '?'}, ${l.queued ?? '?'} queued, held ${l.held ?? '?'}, empty ${l.emptyRate === null ? '?' : Math.round(l.emptyRate * 100) + '%'}`),
     ...b.pools.slice(0, 2).map(p => `${p.pool}: ${p.usedPct ?? '?'}%, reset ${p.hoursToReset ?? '?'}h, burn ${p.burnPerHour ?? '?'}/h, safe ${p.safeBurn ?? '?'}/h, ${p.verdict}`),
     ...b.families.slice(0, 2).map(f => `${f.family}: ${f.launches} launches, ${f.prs} PRs, ${f.merges} merges, ${f.empty} empty (2h)`),
     ...(b.emptyTokenFamilies === null ? ['EMPTY tokens (24h): unknown'] : b.emptyTokenFamilies.slice(0, 3).map(f => `${f.family}: ${f.tokens === null ? 'unknown' : f.tokens} EMPTY tokens (24h), ${f.unknownJobs} jobs with unknown usage`)),
