@@ -743,15 +743,21 @@ function parsePerfBudgetFailures(log: string): Failure[] {
 // or a still-exempt package name -- and emits only packages outside the
 // exempt set; a report exempt end to end passed its step and emits
 // nothing. `auditExceptions` carries master's exception list: `null`
-// means the file was unreadable or malformed, and audit reports then stay
-// unparsed rather than risk a phantom group for an accepted advisory.
+// means the file was unreadable or malformed, and npm audit reports then
+// stay unparsed rather than risk a phantom group for an accepted advisory.
 // Expiry is not re-checked: a report printed by a completed run was
-// governed by the exceptions valid at run time. OSV-Scanner table output
-// (the transport fallback) and cargo-audit output carry no audit v2
-// document and stay unparsed. Invalid reports (non-v2 schema, malformed
-// severity counts), reports with no preceding step echo, unrelated JSON
-// and clean reports (`total: 0`) stay unparsed. Like the other non-test
-// identities these groups can never resolve through a vitest pass line:
+// governed by the exceptions valid at run time. When npm's transport fails
+// all three bounded attempts the gate script falls back to the pinned
+// OSV-Scanner (`scan source --lockfile <lockfile> --format table`), whose
+// go-pretty table carries no audit v2 document: it parses separately
+// below, per printed row, because osv-scanner itself already applied the
+// step's IgnoredVulns config -- every row it prints is an unexcepted
+// advisory, so these groups do not need the exception list and still emit
+// when it is unreadable. Cargo-audit output carries no audit v2 document
+// and stays unparsed. Invalid reports (non-v2 schema, malformed severity
+// counts), reports with no preceding step echo, unrelated JSON and clean
+// reports (`total: 0`) stay unparsed. Like the other non-test identities
+// these groups can never resolve through a vitest pass line:
 // shared-baseline, pr-caused or unknown -- never probable-flake.
 export type DependencyAuditException = { id: string; package: string; graph: 'full' | 'raycast-production' };
 const DEPENDENCY_AUDIT_NAMES = '(dependency-audit)';
@@ -817,10 +823,97 @@ function exemptAuditPackages(vulnerabilities: Record<string, unknown>, exception
   return exempt;
 }
 
+// The fallback leg's go-pretty table: in the piped CI log terminalWidth is
+// 0, so osv-scanner renders StyleDefault's ASCII `+`/`-`/`|` box with no
+// colors, seven columns in this order, one `|` row per vulnerability and
+// `+`-ruled borders. The rounded unicode style only appears on a TTY and
+// stays unparsed. A vuln group's alias ids join inside the OSV URL cell
+// with newlines, so they continue onto following `|` lines whose other
+// cells are blank.
+const OSV_TABLE_HEADER = ['OSV URL', 'CVSS', 'Ecosystem', 'Package', 'Version', 'Fixed Version', 'Source'];
+const OSV_TABLE_BORDER = /^\+(?:-+\+)+$/;
+const OSV_URL = /^https:\/\/osv\.dev\/\S+$/;
+const OSV_DEV_SUFFIX = ' (dev)';
+const OSV_URLS_PER_PACKAGE = 8;
+
+interface OsvAuditPackage {
+  file: string;
+  names: string;
+  testId: string;
+  pkg: string;
+  ecosystems: string[];
+  versions: string[];
+  fixed: string[];
+  cvss: string[];
+  urls: string[];
+}
+
+// One `|`-delimited row of the table: exactly seven trimmed cells or null.
+// None of the printed columns can contain `|` (URLs, ecosystem names,
+// package names, versions, lockfile paths), so any other arity is not this
+// table's shape and stays unparsed rather than guessed at.
+function auditTableCells(line: string): string[] | null {
+  if (!line.startsWith('|') || !line.endsWith('|')) return null;
+  const cells = line.slice(1, -1).split('|').map(cell => cell.trim());
+  return cells.length === OSV_TABLE_HEADER.length ? cells : null;
+}
+
+function isOsvAuditHeader(cells: string[]): boolean {
+  return cells.every((cell, index) => cell === OSV_TABLE_HEADER[index]);
+}
+
+function pushUnique(list: string[], value: string, cap: number): void {
+  if (value !== '' && !list.includes(value) && list.length < cap) list.push(value);
+}
+
+// Consume the `|` rows of one OSV table starting at `start` (just past its
+// header) and fold them into `packages` keyed by the shared
+// `<lockfile> > (dependency-audit) <package>` testId. Returns the index of
+// the first line after the table so the caller's loop resumes there. Rows
+// are accepted only inside a recognized audit step echo and only when the
+// Source cell names the echoed lockfile (basename or repo-relative); the
+// scanner's own IgnoredVulns config already filtered excepted advisories,
+// so every surviving row is a real failure. ` (dev)` suffixes come off to
+// match the npm report's package identity.
+function collectOsvAuditTable(raw: string[], start: number, context: AuditStep, packages: Map<string, OsvAuditPackage>): number {
+  let j = start;
+  while (j < raw.length && OSV_TABLE_BORDER.test(raw[j]!)) j++;
+  let current: OsvAuditPackage | null = null;
+  for (; j < raw.length && raw[j]!.startsWith('|'); j++) {
+    const cells = auditTableCells(raw[j]!);
+    if (cells === null) continue;
+    const [url = '', cvss = '', ecosystem = '', packageCell = '', version = '', fixed = '', source = ''] = cells;
+    if (url !== '' && cells.slice(1).every(cell => cell === '')) {
+      if (OSV_URL.test(url) && current !== null) pushUnique(current.urls, url, OSV_URLS_PER_PACKAGE);
+      continue;
+    }
+    const pkg = packageCell.endsWith(OSV_DEV_SUFFIX) ? packageCell.slice(0, -OSV_DEV_SUFFIX.length) : packageCell;
+    const sourcePath = posix.normalize(source);
+    if (!OSV_URL.test(url) || !DEPENDENCY_AUDIT_PACKAGE.test(pkg) || pkg.length > 214 ||
+        (sourcePath !== posix.basename(context.file) && sourcePath !== context.file)) {
+      current = null;
+      continue;
+    }
+    const testId = `${context.file} > ${DEPENDENCY_AUDIT_NAMES} ${pkg}`;
+    let entry = packages.get(testId);
+    if (entry === undefined) {
+      entry = { file: context.file, names: `${DEPENDENCY_AUDIT_NAMES} ${pkg}`, testId, pkg, ecosystems: [], versions: [], fixed: [], cvss: [], urls: [] };
+      packages.set(testId, entry);
+    }
+    current = entry;
+    pushUnique(entry.urls, url, OSV_URLS_PER_PACKAGE);
+    pushUnique(entry.ecosystems, ecosystem, 4);
+    pushUnique(entry.versions, version, 8);
+    pushUnique(entry.fixed, fixed, 8);
+    pushUnique(entry.cvss, cvss, 8);
+  }
+  return j;
+}
+
 function parseAuditFailures(log: string, auditExceptions: readonly DependencyAuditException[] | null): Failure[] {
   const out: Failure[] = [];
-  if (auditExceptions === null) return out;
   const seen = new Set<string>();
+  const osvPackages = new Map<string, OsvAuditPackage>();
   // Timestamped job-log lines keep the document's and table's own columns:
   // the strip removes the stamp and its single separating space only, the
   // same convention as the check:docs and perf-budget report parsers, so a
@@ -840,7 +933,17 @@ function parseAuditFailures(log: string, auditExceptions: readonly DependencyAud
         : null;
       continue;
     }
-    if (!line.startsWith('{')) continue;
+    // The OSV fallback table needs no exception list -- the scanner applied
+    // the step's IgnoredVulns config itself -- so it parses even when the
+    // npm fixpoint below cannot run.
+    if (context !== null) {
+      const cells = auditTableCells(line);
+      if (cells !== null && isOsvAuditHeader(cells)) {
+        i = collectOsvAuditTable(raw, i + 1, context, osvPackages) - 1;
+        continue;
+      }
+    }
+    if (auditExceptions === null || !line.startsWith('{')) continue;
     let doc: unknown;
     let end = i;
     try {
@@ -902,6 +1005,18 @@ function parseAuditFailures(log: string, auditExceptions: readonly DependencyAud
       seen.add(testId);
       out.push({ file: step.file, names: namesField, testId, excerpt: clean([`${pkg} severity=${severity}`, ...advisories, ...(fixText === '' ? [] : [fixText])].join('\n')) });
     }
+  }
+  for (const entry of osvPackages.values()) {
+    if (out.length >= DEPENDENCY_AUDIT_MAX) break;
+    if (seen.has(entry.testId)) continue;
+    seen.add(entry.testId);
+    const meta = [
+      entry.ecosystems.length ? `ecosystem=${entry.ecosystems.join(',')}` : '',
+      entry.versions.length ? `version=${entry.versions.join(',')}` : '',
+      entry.fixed.length ? `fixed=${entry.fixed.join(',')}` : '',
+      entry.cvss.length ? `cvss=${entry.cvss.join(',')}` : '',
+    ].filter(part => part !== '').join(' ');
+    out.push({ file: entry.file, names: entry.names, testId: entry.testId, excerpt: clean([`${entry.pkg}${meta === '' ? '' : ` ${meta}`}`, ...entry.urls].join('\n')) });
   }
   return out;
 }

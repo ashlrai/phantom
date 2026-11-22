@@ -290,7 +290,10 @@ error, the advisory perf gate's
 `ashlr.perf-budget-report.v1` JSON document (`fail` and `error` results
 only), and the Dependency Audit job's
 `<lockfile> > (dependency-audit) <package>` rows from npm audit v2 JSON
-reports (advisories outside the exception fixpoint only), the
+reports (advisories outside the exception fixpoint only) and from the
+npm-transport-fallback OSV-Scanner table report (the pinned scanner's
+own `IgnoredVulns` config has already filtered excepted advisories, so
+those rows need no exception fixpoint), the
 pack-smoke/artifact gate's
 `.github/scripts/ci-pack-smoke.mjs > (pack-smoke)` /
 `scripts/hosted-build-artifact.mjs > (hosted-artifact)` rows from the
@@ -329,8 +332,9 @@ first-paint critical JS <kb> KB (budget <kb> KB)` verdicts and its
 `check-first-paint-budget: <message>` error lines, plus
 summaries. `auditExceptions` is the optional
 `DependencyAuditException[] | null` list (`{id, package, graph}` with
-graph `full` or `raycast-production`); `null` leaves audit reports
-unparsed. TAP `ok` results carry no
+graph `full` or `raycast-production`); `null` leaves npm audit reports
+unparsed but still parses OSV fallback tables, whose advisories the
+scanner already filtered through its own ignore config. TAP `ok` results carry no
 location, so TAP failures never resolve a master pass or flake
 classification. Generated artifacts carry no import closure: `docs/llms.txt`
 depends on its generator inputs and every public docs page from the master
@@ -348,8 +352,8 @@ set is its manifest, shrinkwrap, .npmrc, the lockfile itself,
 `scripts/npm-audit-with-osv-fallback.sh` (seeded as static inputs), and the
 harness ambient set does not apply to it either; the analyzer reads the
 exception file once from master and an unreadable or malformed file
-leaves audit reports unparsed rather than risk phantom groups for
-accepted advisories. The pack-smoke gate's dependency set is
+leaves npm audit reports unparsed rather than risk phantom groups for
+accepted advisories (OSV fallback tables still parse). The pack-smoke gate's dependency set is
 `package.json` and the artifact gate's `package.json` plus
 `package-lock.json` (seeded as static inputs, since the measured dist/
 graph has no enumerable closure), and the harness ambient set does not

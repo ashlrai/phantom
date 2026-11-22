@@ -239,7 +239,7 @@ gate script's exemption fixpoint -- a package stays exempt while every
 and emits only packages outside the exempt set; a report exempt end to
 end passed its step and emits nothing. The analyzer reads the exception
 file once from master: an absent file means no exceptions, while an
-unreadable or malformed file leaves audit reports unparsed (unknown)
+unreadable or malformed file leaves npm audit reports unparsed (unknown)
 rather than risk a phantom group for an accepted advisory; exception
 expiry is not re-checked because a completed run was governed by the
 exceptions valid at run time. Each lockfile's dependency set is its
@@ -248,10 +248,32 @@ file and the audit script (seeded as static inputs), and the vitest
 harness ambient set does not apply. Like the other non-test identities
 these groups can never resolve through a vitest pass line and classify
 `shared-baseline`, `pr-caused` or `unknown` -- never `probable-flake`.
-OSV-Scanner table output (the transport fallback) and cargo-audit output
-carry no audit v2 document and stay unparsed, as do invalid reports
-(non-v2 schema, malformed severity counts), reports with no preceding
-step echo, clean reports (`total: 0`) and unrelated JSON.
+Invalid reports (non-v2 schema, malformed severity counts), reports with
+no preceding step echo, clean reports (`total: 0`) and unrelated JSON
+stay unparsed, as does cargo-audit output.
+
+When npm's transport fails all three bounded attempts the gate script
+falls back to the pinned OSV-Scanner (`scan source --lockfile
+<lockfile> --format table`), which prints a `Total N packages affected`
+summary and a go-pretty table -- `| OSV URL | CVSS | Ecosystem | Package
+| Version | Fixed Version | Source |` rows between `+`-ruled borders.
+In the piped CI log the scanner renders its ASCII StyleDefault box (the
+rounded unicode style only appears on a TTY and stays unparsed). Each
+data row groups per package under the same `<lockfile> >
+(dependency-audit) <package>` identity the npm reports use, since
+bumping the dependency or adding a reviewed exception is the same unit
+a master fix restores; a vuln group's alias ids continue onto
+blank-cell rows and join the package's advisory list, ` (dev)` suffixes
+come off to match the npm identity, and rows merge per package so one
+group carries the printed advisory URLs (bounded). Rows are accepted only inside
+a recognized step echo and only when the Source cell names the echoed
+lockfile; the scanner's own `IgnoredVulns` config already filtered
+excepted advisories, so these groups emit even when the exception file
+is unreadable -- the npm fixpoint is the only audit shape that needs it.
+Near-miss headers, other table shapes (license, deprecated, OS-package
+summaries), wrong-arity rows, invalid package names and sources naming
+another file stay unparsed, as do clean scans (the table only renders
+when vulnerabilities exist).
 
 The `ci` job's "Memory benchmark regression gate" step on the ubuntu
 authority 3/3 shard runs `npm run --silent bench:memory -- --check >
