@@ -10,6 +10,7 @@ vi.mock('../../../data/hooks.js', () => ({ useQuery: () => state.read, useRefetc
 const REPORT: WorktreesReport = {
   schema: 'worktrees.v1', generatedAt: '2026-11-17T12:00:00.000Z', sourcesOk: true, warnAt: 40,
   counts: { total: 540, safe: 412, live: 9, merged: 300, empty: 130, open: 80, kept: 6, unknown: 15 },
+  reaper: { state: 'stale', reason: 'never-ran', lastRunAt: null, lastRunAgeHours: null, lastRun: null, eligible: [], stuckRuns: [], next: null },
   reclaimableBytes: 612_400_000_000, reclaimableComplete: true, mode: 'list', rows: [],
 };
 let viewport: ViewportMock | null = null;
