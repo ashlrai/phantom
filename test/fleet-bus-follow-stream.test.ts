@@ -264,6 +264,11 @@ it('bus-follow rejects invalid arguments before touching the store', async () =>
     ['--after', '0', '--duration-ms', '100', '--job', 'bad label', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--job=', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--job', 'RQ-1', '--job', 'RQ-2', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--from', 'bad label', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--priority', 'P9', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--thread', 'bad label', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--since', 'not-a-time', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--since', '-5', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--root', 'relative', '--json'],
     ['--after', '0', '--duration-ms', '100', '--root', root, '--to', '--json']]) {
     expect(await cmdFleetBusFollow(args, { emit, list })).toBe(2);
@@ -297,6 +302,106 @@ it('filters the CLI stream by --job', async () => {
   const rows = emitted.map(line => JSON.parse(line) as BusFollowRecord);
   expect(messages(rows).map(row => row.envelope.id)).toEqual(['hit']);
   expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 2 });
+});
+
+it('delivers only envelopes from --from senders under every registered spelling', async () => {
+  expect(registerAgentIdentity({ handle: 'worker-a', aliases: ['wa-alias'] }, { root }).status).toBe('created');
+  post('noise');
+  post('bare', 'worker-a', { from: 'worker-a' });
+  post('address', 'worker-a', { from: 'agent:worker-a' });
+  post('alias', 'worker-a', { from: 'wa-alias' });
+  post('id', 'worker-a', { from: stableAgentId('worker-a') });
+  post('other', 'worker-a', { from: 'worker-b' });
+  for (const from of ['worker-a', 'agent:worker-a', 'wa-alias', stableAgentId('worker-a')]) {
+    const { records, pending, expire } = follow({ from });
+    expire();
+    const result = await pending;
+    expect(result.status).toBe('expired');
+    expect(messages(records).map(row => row.envelope.id)).toEqual(['bare', 'address', 'alias', 'id']);
+    expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 6 });
+  }
+});
+
+it('keeps exact-label --from matching when the identity registry is unreadable', async () => {
+  expect(registerAgentIdentity({ handle: 'worker-a', aliases: ['wa-alias'] }, { root }).status).toBe('created');
+  post('exact', 'worker-a', { from: 'agent:worker-a' });
+  post('alias', 'worker-a', { from: 'wa-alias' });
+  post('bare', 'worker-a', { from: 'worker-a' });
+  writeFileSync(join(root, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+  const { records, pending, expire } = follow({ from: 'agent:worker-a' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['exact']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
+it('delivers only envelopes at --priority while checkpoints advance past the rest', async () => {
+  post('p2-default');
+  post('p0', 'worker-a', { priority: 'P0' });
+  post('p1', 'worker-a', { priority: 'P1' });
+  post('p0-two', 'worker-a', { priority: 'P0' });
+  const { records, pending, expire } = follow({ priority: 'P0' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['p0', 'p0-two']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 4 });
+});
+
+it('delivers only note/context envelopes carrying --thread', async () => {
+  post('t1-note', 'worker-a', { body: { kind: 'note', thread: 't-1' } });
+  post('t1-context', 'worker-a', { body: { kind: 'context', thread: 't-1' } });
+  post('t2-note', 'worker-a', { body: { kind: 'note', thread: 't-2' } });
+  post('no-thread', 'worker-a', { body: { kind: 'note' } });
+  post('work-body', 'worker-a', { body: { kind: 'work.post', jobId: 'RQ-X', title: 'x' } });
+  const { records, pending, expire } = follow({ thread: 't-1' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['t1-note', 't1-context']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 5 });
+});
+
+it('delivers only envelopes received at or after --since', async () => {
+  post('old', 'worker-a', {}, Date.now() - 120_000);
+  post('boundary', 'worker-a', {}, Date.now() - 30_000);
+  post('new');
+  const { records, pending, expire } = follow({ since: Date.now() - 60_000 });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['boundary', 'new']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
+it('applies --from, --priority, --thread and --since together', async () => {
+  post('hit', 'worker-a', { from: 'agent:worker-a', priority: 'P0', body: { kind: 'note', thread: 't-9' } });
+  post('wrong-sender', 'worker-a', { from: 'worker-b', priority: 'P0', body: { kind: 'note', thread: 't-9' } });
+  post('wrong-priority', 'worker-a', { from: 'agent:worker-a', priority: 'P2', body: { kind: 'note', thread: 't-9' } });
+  post('wrong-thread', 'worker-a', { from: 'agent:worker-a', priority: 'P0', body: { kind: 'note', thread: 't-8' } });
+  post('old-hit', 'worker-a', { from: 'agent:worker-a', priority: 'P0', body: { kind: 'note', thread: 't-9' } }, Date.now() - 120_000);
+  const { records, pending, expire } = follow({ from: 'agent:worker-a', priority: 'P0', thread: 't-9', since: Date.now() - 60_000 });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['hit']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 5 });
+});
+
+it('filters the CLI stream by --from, --priority, --thread and --since', async () => {
+  post('noise');
+  post('hit', 'worker-a', { from: 'agent:worker-a', priority: 'P0', body: { kind: 'note', thread: 't-cli' } });
+  post('old-hit', 'worker-a', { from: 'agent:worker-a', priority: 'P0', body: { kind: 'note', thread: 't-cli' } }, Date.now() - 120_000);
+  const emitted: string[] = [];
+  const code = await cmdFleetBusFollow(['--after', '0', '--duration-ms', '250', '--interval-ms', '100',
+    '--from', 'agent:worker-a', '--priority', 'P0', '--thread', 't-cli', '--since', String(Date.now() - 60_000),
+    '--root', root, '--json'],
+    { emit: (json: string) => { emitted.push(json); } });
+  expect(code).toBe(0);
+  const rows = emitted.map(line => JSON.parse(line) as BusFollowRecord);
+  expect(messages(rows).map(row => row.envelope.id)).toEqual(['hit']);
+  expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
 });
 
 it('owns its help and dispatches through the fleet verb convention', async () => {

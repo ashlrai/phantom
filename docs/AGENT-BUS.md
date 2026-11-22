@@ -1141,7 +1141,16 @@ apply, so a raw label read (the `leaders` sink that work announcements
 default to included) answers one job's traffic without paging the whole
 stream. On `bus-follow` only citing envelopes emit message records while
 checkpoints still advance past the rest, so a job-scoped stream resumes on
-the same cursor an unfiltered one would. `--since <15m|2h|1d|ISO>` narrows
+the same cursor an unfiltered one would. `fleet bus-follow` also narrows on
+the fields the inbox reads filter by: `--from` keeps envelopes sent under any
+registered spelling of one identity — the same `agentAddressMatcher` rule
+`agents bus inbox --from` applies, resolved once at stream start, with an
+unresolvable sender or unreadable registry keeping exact-label matching —
+`--priority` keeps one `P0`–`P3`, `--thread` keeps `note`/`context` bodies
+carrying that thread label, and `--since <15m|2h|1d|ISO>` keeps rows received
+at or after the cutoff. As with `--to` and `--job`, filtered rows still
+advance checkpoints, so a narrowed stream resumes on the same cursor an
+unfiltered one would. `--since <15m|2h|1d|ISO>` narrows
 `comms bus read|watch` to rows received at or after the cutoff — the same
 inclusive `receivedAt >= since` match `agents bus inbox --since`,
 `channel read --since`, `wakes --since` and `phm messages --since` apply,
