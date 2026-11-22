@@ -186,13 +186,105 @@ export function materializeMasterOverlay(root, changed, exec = execFileSync) {
   }
 }
 
-/** Identify changed test files without a test declaration; unreadable files are left to other checks. */
+/** Strip comments so doc text cannot satisfy or spoof a declaration/import scan. */
+function stripComments(text) {
+  return text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n]*/g, '');
+}
+
+const TEST_DECLARATION = /\b(?:it|test|describe|bench)(?:\s*\(|\s*\.\s*(?:each\b|skip\s*\())/;
+
+/**
+ * Static module specifiers in already comment-stripped code. `from '...'`
+ * covers import-from and re-export-from clauses — type-only forms are
+ * excluded because they erase before the module ever executes — a bare
+ * `import '...'` covers side-effect registration, and `import('...')` covers
+ * dynamic registration. Bare package specifiers resolve into node_modules
+ * and cannot register repo suites, so only relative specifiers are followed.
+ */
+const IMPORT_FROM = /\b(?:import|export)\s+([^'";]*?)\bfrom\s*['"]([^'"]+)['"]/g;
+const IMPORT_SIDE_EFFECT = /\bimport\s*['"]([^'"]+)['"]/g;
+const IMPORT_DYNAMIC = /\bimport\s*\(\s*['"]([^'"]+)['"]/g;
+
+function importSpecifiers(code) {
+  const specifiers = [];
+  for (const match of code.matchAll(IMPORT_FROM)) {
+    // A clause head starting with `type` (`import type`, `export type`) is
+    // erased before execution, so it cannot register the target's suites.
+    if (!/^\s*type\b/.test(match[1])) specifiers.push(match[2]);
+  }
+  for (const pattern of [IMPORT_SIDE_EFFECT, IMPORT_DYNAMIC]) {
+    for (const match of code.matchAll(pattern)) specifiers.push(match[1]);
+  }
+  return specifiers;
+}
+
+/**
+ * Candidate files for a relative specifier, mirroring NodeNext resolution:
+ * `./suite.js` names `suite.ts` on disk, an extensionless specifier tries the
+ * source extensions, and a directory specifier tries index modules. An
+ * explicit `.mjs`/`.cjs` specifier maps to `.mts`/`.cts` first, then the
+ * literal file — plain `.mjs` suites exist under `test/`.
+ */
+function localImportCandidates(fromFile, specifier) {
+  const base = resolve(dirname(fromFile), specifier);
+  const stem = base.replace(/\.[cm]?[jt]sx?$/, '');
+  const candidates = [];
+  if (stem !== base) {
+    for (const ext of ['.ts', '.tsx', '.mts', '.cts']) candidates.push(stem + ext);
+    candidates.push(base);
+  } else {
+    for (const ext of ['.ts', '.tsx', '.js', '.mjs', '.mts', '.cts']) candidates.push(base + ext);
+    for (const ext of ['.ts', '.tsx', '.js', '.mjs']) candidates.push(join(base, `index${ext}`));
+  }
+  return [...new Set(candidates)];
+}
+
+/** First readable candidate for a relative specifier, or null when none resolves. */
+function loadLocalImport(fromFile, specifier, read) {
+  if (!specifier.startsWith('.')) return null;
+  for (const candidate of localImportCandidates(fromFile, specifier)) {
+    try {
+      return { path: candidate, code: stripComments(read(candidate)) };
+    } catch { /* try the next candidate */ }
+  }
+  return null;
+}
+
+const MAX_IMPORT_DEPTH = 6;
+
+/**
+ * A module counts as declaring tests when its own code does or when a
+ * relative import chain reaches one that does. The `test/` wrapper
+ * convention registers colocated `src/` suites by side-effect import, so the
+ * declarations legitimately live one or more modules away; depth and visited
+ * caps keep import cycles finite, and unreadable or unresolvable imports
+ * contribute nothing rather than failing the file.
+ */
+function moduleTreeDeclaresTests(code, fromFile, read, seen, depth) {
+  if (TEST_DECLARATION.test(code)) return true;
+  if (depth >= MAX_IMPORT_DEPTH) return false;
+  for (const specifier of importSpecifiers(code)) {
+    const loaded = loadLocalImport(fromFile, specifier, read);
+    if (loaded !== null && !seen.has(loaded.path)) {
+      seen.add(loaded.path);
+      if (moduleTreeDeclaresTests(loaded.code, loaded.path, read, seen, depth + 1)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Identify changed test files that cannot run a test: no local declaration
+ * and no relative import chain reaching one. Import-only `test/` wrappers
+ * that register colocated `src/` suites count as non-empty — the imported
+ * module owns the declarations. Unreadable files are left to other checks.
+ */
 export function emptyChangedTests(existingChangedPaths, read = (p) => readFileSync(p, 'utf8')) {
   return existingChangedPaths.filter((path) => {
     if (!/\.test\.(?:[cm]?ts|tsx|[cm]?js|jsx)$/.test(path)) return false;
     try {
-      const text = read(resolve(path)).replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n]*/g, '');
-      return !/\b(?:it|test|describe|bench)(?:\s*\(|\s*\.\s*(?:each\b|skip\s*\())/.test(text);
+      const file = resolve(path);
+      return !moduleTreeDeclaresTests(stripComments(read(file)), file, read, new Set([file]), 0);
     } catch {
       return false;
     }

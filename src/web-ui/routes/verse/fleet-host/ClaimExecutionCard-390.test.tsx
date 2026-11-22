@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
-import { evictAll } from '../src/web-ui/data/cache.js';
-import { ClaimExecutionBody, ClaimExecutionCard } from '../src/web-ui/routes/verse/fleet-host/ClaimExecutionCard.js';
-import { claimExecutionHeadline, parseClaimExecution } from '../src/web-ui/routes/verse/fleet-host/claim-execution-model.js';
+import { evictAll } from '../../../data/cache.js';
+import { ClaimExecutionBody, ClaimExecutionCard } from './ClaimExecutionCard.js';
+import { claimExecutionHeadline, parseClaimExecution } from './claim-execution-model.js';
 
 const NOW = Date.parse('2026-11-15T04:00:00Z');
 const running = {

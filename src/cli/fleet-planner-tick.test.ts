@@ -178,9 +178,20 @@ describe('fleet planner-tick', () => {
     const out: string[] = [];
     const code = await cmdFleetPlannerTick(['--runs-dir', dir, '--apply'], {
       now: NOW, spawn: fake.spawn, output: (text) => out.push(text),
+      // An executed pass exits 0 only on productive output evidence; the fake
+      // pass wrote one pending drop, so the injected read reports it.
+      readOutput: async () => ({
+        v: 1,
+        window: { since: new Date(NOW).toISOString(), until: new Date(NOW + 60_000).toISOString() },
+        ingested: [],
+        pending: [{ id: 'RQ-PHX-FIXTURE1', dropDir: join(dir, 'drop'), ageSeconds: 0 }],
+        rejected: [],
+        counts: { ingested: 0, pending: 1, rejected: 0 },
+        sources: { ledger: 'ok', drops: [{ dir: 'drop', state: 'ok' }], skipped: 0 },
+      }),
     });
     expect(code).toBe(0);
-    expect(JSON.parse(out.join('\n'))).toMatchObject({ v: 1, provider: 'cmp', outcome: 'ran', exitCode: 0 });
+    expect(JSON.parse(out.join('\n'))).toMatchObject({ v: 1, provider: 'cmp', outcome: 'ran', exitCode: 0, verdict: 'productive' });
     expect(fake.calls).toEqual(['fake-planner --plan']);
     expect(fake.children[0]!.stdinText).toBe(PROMPT);
     // The pass wrote its run log and both observational rows.
