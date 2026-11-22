@@ -62,6 +62,7 @@ function read(over: Partial<RouterOutcomeRead> = {}): RouterOutcomeRead {
     market_state: 'missing', market_truncated: false,
     empty_tag_state: 'missing', empty_tag_truncated: false,
     merge_events_state: 'missing', merge_events_truncated: false,
+    revert_ledger_state: 'missing',
     outcomes: [], malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0, session_rows: 0, truncated: false,
     ...over,
   };
@@ -171,7 +172,7 @@ describe('phm router outcomes', () => {
       malformed_rows: 3, unattached_rows: 1, ambiguous_urls: 2, session_rows: 4,
     }), 100);
     const lines = routerOutcomeLines(report);
-    expect(lines[0]).toBe('router outcomes state=read eval=missing spend=missing market=missing empty_tags=missing merge_events=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2 session_rows=4');
+    expect(lines[0]).toBe('router outcomes state=read eval=missing spend=missing market=missing empty_tags=missing merge_events=missing revert_ledger=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2 session_rows=4');
     expect(lines[1]).toBe(`ledger ${report.path}`);
     expect(lines[3]).toContain('lane_hint_blocked_by=[quota_exhausted,saturated] market_lane=beta market_preferred=alpha market_override=resource_fit market_reasons=[no_runnable_lane,global_admission] market_rejected=[alpha:quota_exhausted+held;beta]');
     expect(lines[3]).toContain('handoff_trigger=rate-limit handoff_lane=codex-personal handoff_target=unknown');

@@ -620,8 +620,16 @@ canonicalizes to one of those keys (ambiguous, foreign or non-canonical
 claims never mark). `readRouterOutcomes` reads that index lazily through
 `ledgerSnapshot('cached')` — only hash-verified rows contribute, a broken
 chain still marks only its verified prefix, and any read failure degrades
-to no join; `authorityEvidence: null` skips the join and an explicit
-array is used as given. Revert evidence is sticky-true like
+to no join; `authorityEvidence: null` skips the authority join only and an
+explicit array is used as given. A second, independent revert source joins
+under the same claim rule: `improve/revert-outcomes.jsonl`, the bounded
+append-only ledger `phm fleet reverts --record` writes from its
+72h-window git-history scan. Its newest record per `owner/repo#n` key
+decides — a later detection whose `relandedBy` is set clears the key —
+and `RouterOutcomeRead.revert_ledger_state` reports the ledger's health
+(`read`/`missing`/`unreadable`/`too-large`); anything but `read`
+contributes no keys, so corrupt evidence never marks a merge reverted.
+Revert evidence is sticky-true like
 metrics-ingest, so a recorded revert is never contradicted by a later
 `reverted:false`; it is `null` when neither source records anything
 either way. Jobs rows also fold four productivity verdicts, newest

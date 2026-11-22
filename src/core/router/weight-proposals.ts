@@ -1071,6 +1071,13 @@ export interface RouterWeightProposalReport {
   merge_events_state: RouterOutcomeRead['merge_events_state'];
   /** True when the merge-events tail was cut; joined evidence covers only the newest bytes. */
   merge_events_truncated: boolean;
+  /**
+   * Health of the revert-outcomes.jsonl ledger behind scan-detected
+   * revert joins. Anything but 'read' means no `phm fleet reverts
+   * --record` detections joined — held-merge tallies then see only
+   * jobs-ledger, authority-ledger and explicit revert evidence.
+   */
+  revert_ledger_state: RouterOutcomeRead['revert_ledger_state'];
   /** 'unavailable' when the ledger was not read; counts are then null, never zero. */
   status: 'proposed' | 'insufficient-evidence' | 'unavailable';
   bounds: { min_samples: number; max_shift: number };
@@ -1287,6 +1294,7 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     market_state: read.market_state, market_truncated: read.market_truncated,
     empty_tag_state: read.empty_tag_state, empty_tag_truncated: read.empty_tag_truncated,
     merge_events_state: read.merge_events_state, merge_events_truncated: read.merge_events_truncated,
+    revert_ledger_state: read.revert_ledger_state,
     controller_quality_state: (controller?.state ?? 'unreported') as RouterWeightProposalReport['controller_quality_state'],
     controller_quality: controller?.state === 'read' ? controller.receipts : null,
     controller_quality_invalid_rows: controller?.state === 'read' ? controller.invalid_rows : null,

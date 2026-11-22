@@ -122,6 +122,8 @@ export interface RouterOutcomesReport {
   merge_events_state: RouterOutcomeRead['merge_events_state'];
   /** True when the merge-events tail was cut; joined evidence covers only the newest bytes. */
   merge_events_truncated: boolean;
+  /** Health of the revert-outcomes.jsonl ledger behind scan-detected revert joins. */
+  revert_ledger_state: RouterOutcomeRead['revert_ledger_state'];
   /** Jobs with at least one folded outcome row, after --lane filtering. */
   total: number;
   /** Rows actually returned (newest first, capped by --limit). */
@@ -153,6 +155,7 @@ export function buildRouterOutcomesReport(read: RouterOutcomeRead, limit: number
     empty_tag_truncated: read.empty_tag_truncated,
     merge_events_state: read.merge_events_state,
     merge_events_truncated: read.merge_events_truncated,
+    revert_ledger_state: read.revert_ledger_state,
     total: read.outcomes.length,
     returned: page.length,
     limit,
@@ -201,7 +204,7 @@ function outcomeLine(o: RouterOutcome): string {
 
 export function routerOutcomeLines(report: RouterOutcomesReport): string[] {
   return [
-    `router outcomes state=${report.state} eval=${report.eval_state} spend=${report.spend_state} market=${report.market_state} empty_tags=${report.empty_tag_state} merge_events=${report.merge_events_state} jobs=${report.total} shown=${report.returned} truncated=${report.truncated} malformed=${report.malformed_rows} unattached=${report.unattached_rows} ambiguous_urls=${report.ambiguous_urls} session_rows=${report.session_rows}`,
+    `router outcomes state=${report.state} eval=${report.eval_state} spend=${report.spend_state} market=${report.market_state} empty_tags=${report.empty_tag_state} merge_events=${report.merge_events_state} revert_ledger=${report.revert_ledger_state} jobs=${report.total} shown=${report.returned} truncated=${report.truncated} malformed=${report.malformed_rows} unattached=${report.unattached_rows} ambiguous_urls=${report.ambiguous_urls} session_rows=${report.session_rows}`,
     `ledger ${report.path}`,
     ...(report.truncated ? ['coverage: retained tail only; older ledger rows were not read'] : []),
     ...(report.spend_truncated ? ['spend coverage: retained tail only; per-job costs are lower bounds'] : []),

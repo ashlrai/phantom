@@ -200,6 +200,9 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
       : report.merge_events_truncated
         ? ['merge-event coverage: retained tail only; merge_queue joins cover the newest bytes']
         : []),
+    ...(report.revert_ledger_state !== 'read'
+      ? [`revert-ledger coverage: revert-outcomes.jsonl ${report.revert_ledger_state}; no scan-detected reverts joined`]
+      : []),
     ...(report.controller_quality_state !== 'read' && report.controller_quality_state !== 'unreported'
       ? [`controller-quality coverage: fleet-controller.json ${report.controller_quality_state}; no lane-quality verdicts joined`]
       : []),
