@@ -141,6 +141,22 @@ export interface RouterWeightEvidence {
    */
   market_rejected_known: number;
   market_rejected_reasons: { reason: string; jobs: number }[] | null;
+  /**
+   * Group outcomes (the known cohort) carrying the fleet's recorded
+   * session-handoff advisory — dispatchd's `session_handoff_advisory`
+   * provider-wall verdicts joined as `handoff_trigger`: a `rate-limit`
+   * receipt that the job's run attempt died on a usage-limit wall (the
+   * verdict dispatchd appends to jobs.jsonl), or a `quota-exhausted`
+   * receipt that the job's lane measured zero quota (the producer's
+   * other closed-vocabulary verdict — dispatchd writes it to
+   * work-market.jsonl, so it joins here only if such a row lands in
+   * the jobs window). `handoff_triggers` tallies the recorded trigger
+   * labels over the same cohort, most jobs first — a lane whose merges
+   * rest partly on provider-wall-hit runs shows the recorded mix.
+   * Null when no outcome recorded an advisory — never zero-filled.
+   */
+  handoff_known: number;
+  handoff_triggers: { trigger: string; jobs: number }[] | null;
 }
 
 export interface RouterWeightProposalOptions {
@@ -304,6 +320,28 @@ export interface RouterWeightProposalSet {
    * `unknown_unresolved`.
    */
   unknown_market_rejected_reasons: { reason: string; jobs: number }[];
+  /**
+   * Jobs inside the unknown cohort whose recorded session-handoff
+   * advisory is a `rate-limit` verdict — the fleet's once-per-attempt
+   * receipt that the job's run hit a provider usage-limit wall and
+   * produced no usable work. Like a failure classification it explains
+   * the missing merge verdict, so these jobs leave
+   * `unknown_unresolved`. A `quota-exhausted` advisory — the pending
+   * job's lane measured at zero quota, a verdict the producer writes
+   * to the market ledger — is queue-side context tallied in
+   * `unknown_handoff_triggers` but never reduces the remainder, the
+   * same rule `unknown_market_reasons` follows: the job is still
+   * waiting on capacity, not failed.
+   */
+  unknown_handoffs: number;
+  /**
+   * Top recorded session-handoff trigger labels inside the unknown
+   * cohort, by jobs — `rate-limit` attempt kills (the jobs-ledger
+   * verdict) and `quota-exhausted` pending-lane verdicts (accepted
+   * producer vocabulary). Diagnostic context only; only the
+   * rate-limit share is counted in `unknown_handoffs`.
+   */
+  unknown_handoff_triggers: { trigger: string; jobs: number }[];
   unknown_unresolved: number;
   /**
    * Top recorded `usage_missing` labels across every folded outcome —
@@ -348,6 +386,8 @@ interface WeightEvidenceTally {
   overrideReasons: Map<string, number>;
   marketRejected: number;
   rejectedReasons: Map<string, number>;
+  handoff: number;
+  handoffTriggers: Map<string, number>;
 }
 
 const freshTally = (): WeightEvidenceTally => ({
@@ -361,6 +401,7 @@ const freshTally = (): WeightEvidenceTally => ({
   diffLinesSum: 0, diffLinesKnown: 0, usageMissingKnown: 0,
   laneOverrides: 0, overrideReasons: new Map(),
   marketRejected: 0, rejectedReasons: new Map(),
+  handoff: 0, handoffTriggers: new Map(),
 });
 
 /** Top recorded lane-hint blocking codes kept per group, most jobs first. */
@@ -377,6 +418,8 @@ const MAX_REJECTED_REASONS = 8;
 const TASK_OUTCOME_RETRY: ReadonlySet<string> = new Set(['failed', 'deferred', 'unreported']);
 
 const MAX_OVERRIDE_REASONS = 8;
+/** Top recorded handoff trigger labels kept per group and in the unknown cohort, most jobs first. */
+const MAX_HANDOFF_TRIGGERS = 8;
 
 const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   ci_first_pass_known: t.ciKnown,
@@ -425,6 +468,12 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
         .map(([reason, jobs]) => ({ reason, jobs }))
         .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
         .slice(0, MAX_REJECTED_REASONS),
+  handoff_known: t.handoff,
+  handoff_triggers: t.handoff === 0 ? null
+    : [...t.handoffTriggers.entries()]
+        .map(([trigger, jobs]) => ({ trigger, jobs }))
+        .sort((a, b) => b.jobs - a.jobs || a.trigger.localeCompare(b.trigger))
+        .slice(0, MAX_HANDOFF_TRIGGERS),
 });
 
 /**
@@ -435,11 +484,15 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
  * also reports the group's other recorded outcome signals (CI verdicts, review findings, cost, wall
  * time, merge latency, queue-admission wait, CI wall, publish-station
  * wait, pass^k, dispatch lane
- * overrides and lane-hint blocking codes) as advisory evidence over
+ * overrides, lane-hint blocking codes and session-handoff advisories)
+ * as advisory evidence over
  * the same known cohort. Recorded lane-hint blocking codes
  * (`lane_hint_blocked_by`) tally per group as
  * `lane_blocked_known`/`lane_blocked_reasons` — the market's reasons
- * the hinted lane could not take the work.
+ * the hinted lane could not take the work. Recorded session-handoff
+ * advisories (`handoff_trigger`) tally per group as
+ * `handoff_known`/`handoff_triggers` — the provider-wall verdicts the
+ * fleet recorded on the group's jobs.
  */
 export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: RouterWeightProposalOptions = {}): RouterWeightProposalSet {
   const minSamples = opts.minSamples ?? ROUTER_WEIGHT_DEFAULT_MIN_SAMPLES;
@@ -469,12 +522,14 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   const noopReasons = new Map<string, number>();
   const marketReasons = new Map<string, number>();
   const marketRejectedReasons = new Map<string, number>();
+  const handoffTriggersUnknown = new Map<string, number>();
   const usageMissing = new Map<string, number>();
   const usageSources = new Map<string, number>();
   let unknownSkipped = 0;
   let unknownDeferred = 0;
   let unknownNoop = 0;
   let unknownMarketRejected = 0;
+  let unknownHandoffs = 0;
   for (const o of outcomes) {
     // Usage provenance is capture evidence, not merge evidence: every folded
     // outcome tallies its recorded labels — classified or not.
@@ -558,7 +613,20 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
           marketRejectedReasons.set(code, (marketRejectedReasons.get(code) ?? 0) + 1);
         }
       }
-      if (!empty && !nonzeroExit && o.failure_class === null && !requeued && !declined && !deferred && !noop) unknownUnresolved++;
+      // The fleet's session-handoff advisory is recorded provider-wall
+      // evidence: a `rate-limit` verdict means the job's run attempt
+      // died on a usage-limit wall with no usable work — the same kind
+      // of recorded failure signal failure_class carries, so it
+      // explains the missing merge verdict and leaves
+      // unknown_unresolved. A `quota-exhausted` verdict is queue-side
+      // context — the pending job's lane measured at zero quota —
+      // tallied diagnostically like market_reasons and never a
+      // reduction of the remainder.
+      if (o.handoff_trigger !== null) {
+        handoffTriggersUnknown.set(o.handoff_trigger, (handoffTriggersUnknown.get(o.handoff_trigger) ?? 0) + 1);
+        if (o.handoff_trigger === 'rate-limit') unknownHandoffs++;
+      }
+      if (!empty && !nonzeroExit && o.failure_class === null && !requeued && !declined && !deferred && !noop && o.handoff_trigger !== 'rate-limit') unknownUnresolved++;
       continue;
     }
     const key = JSON.stringify([o.work_class, o.lane]);
@@ -608,6 +676,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
       for (const code of rejectedCodes) {
         t.rejectedReasons.set(code, (t.rejectedReasons.get(code) ?? 0) + 1);
       }
+    }
+    if (o.handoff_trigger !== null) {
+      t.handoff++;
+      t.handoffTriggers.set(o.handoff_trigger, (t.handoffTriggers.get(o.handoff_trigger) ?? 0) + 1);
     }
     groups.set(key, g);
     known++;
@@ -659,6 +731,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     .map(([reason, jobs]) => ({ reason, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
     .slice(0, 10);
+  const topHandoffTriggers = [...handoffTriggersUnknown.entries()]
+    .map(([trigger, jobs]) => ({ trigger, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.trigger.localeCompare(b.trigger))
+    .slice(0, MAX_HANDOFF_TRIGGERS);
   const topUsageMissing = [...usageMissing.entries()]
     .map(([usage_missing, jobs]) => ({ usage_missing, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.usage_missing.localeCompare(b.usage_missing))
@@ -677,6 +753,8 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     unknown_market_reasons: topMarketReasons,
     unknown_market_rejected: unknownMarketRejected,
     unknown_market_rejected_reasons: topMarketRejectedReasons,
+    unknown_handoffs: unknownHandoffs,
+    unknown_handoff_triggers: topHandoffTriggers,
     unknown_unresolved: unknownUnresolved,
     usage_missing: topUsageMissing, usage_sources: topUsageSources };
 }
@@ -806,6 +884,21 @@ export interface RouterWeightProposalReport {
    * carried rejection codes.
    */
   unknown_market_rejected_reasons: { reason: string; jobs: number }[] | null;
+  /**
+   * Jobs inside the unknown cohort whose recorded session-handoff
+   * advisory is a `rate-limit` verdict — see RouterWeightProposalSet.
+   * Reads jobs-ledger rows only, so the tally is real whenever the
+   * jobs read succeeded. Null when the ledger was not read; 0 is a
+   * real measurement.
+   */
+  unknown_handoffs: number | null;
+  /**
+   * Top recorded session-handoff trigger labels inside the unknown
+   * cohort, by jobs — `rate-limit` attempt kills and `quota-exhausted`
+   * pending-lane verdicts (see RouterWeightProposalSet). Null when the
+   * ledger was not read; empty when none recorded.
+   */
+  unknown_handoff_triggers: { trigger: string; jobs: number }[] | null;
   unknown_unresolved: number | null;
   /**
    * Top recorded `usage_missing` labels across every folded outcome —
@@ -859,6 +952,7 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
       unknown_deferred: null, unknown_defer_reasons: null, unknown_noop: null,
       unknown_noop_reasons: null, unknown_market_reasons: null,
       unknown_market_rejected: null, unknown_market_rejected_reasons: null,
+      unknown_handoffs: null, unknown_handoff_triggers: null,
       unknown_unresolved: null,
       usage_missing: null, usage_sources: null, proposals: [] };
   }
@@ -887,6 +981,11 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     unknown_market_reasons: read.market_state === 'read' ? set.unknown_market_reasons : null,
     unknown_market_rejected: read.market_state === 'read' ? set.unknown_market_rejected : null,
     unknown_market_rejected_reasons: read.market_state === 'read' ? set.unknown_market_rejected_reasons : null,
+    // Session-handoff advisories are jobs-ledger rows like the skip,
+    // keep-queued and no-op verdicts — no side-ledger join — so the
+    // tallies are real whenever the jobs read succeeded.
+    unknown_handoffs: set.unknown_handoffs,
+    unknown_handoff_triggers: set.unknown_handoff_triggers,
     unknown_unresolved: set.unknown_unresolved,
     usage_missing: set.usage_missing, usage_sources: set.usage_sources,
     proposals: set.proposals };

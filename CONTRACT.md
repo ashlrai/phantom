@@ -766,6 +766,39 @@ keep-queued receipt or a `recut_admission` verdict — supersedes it to
 non-decision events never touch it, and the newest no-op row replaces
 reason and cover wholesale. All three stay `null` when no empty-family
 row named the job — unknown, never a guessed verdict.
+`handoff_trigger`/`handoff_lane`/`handoff_target` are the fleet's
+recorded session-handoff advisory — dispatchd's
+`session_handoff_advisory` rows (`session-failover.v1`, the
+contrib/mac/session_handoff.py producer mirrored in the fold). The
+producer's closed trigger vocabulary has two verdicts:
+`rate-limit`, the once-per-attempt receipt dispatchd appends to
+metrics/jobs.jsonl through `metric()` when a run's log tail matched
+a usage-limit pattern and the attempt failed or produced no usable
+work — the provider wall that names the lane whose run died,
+distinct from the finish row's own exit/empty measures since a
+walled run can exit cleanly and still produce nothing publishable —
+and `quota-exhausted`, the pending-job verdict dispatchd writes
+through `market_metric()` to metrics/work-market.jsonl when the
+job's lane measured zero quota, carrying the market's chosen lane as
+`target` (that market-side copy is a different ledger's row — the
+same decision's rejection evidence already folds through the
+route_decision joins — while this fold keeps the producer's full
+vocabulary so a quota-exhausted row landing in the jobs window
+still joins under the same rules). The row counts only on the exact
+`session-failover.v1`
+schema and `session_handoff_advisory` event name (the
+`event`/`type`/`kind` alias set) with a `trigger` inside the
+producer's closed vocabulary; `handoff_trigger` joins only those two
+labels, `handoff_lane` the advisory's `lane` and `handoff_target` its
+`target` each only in the bounded lane-identifier shape — a malformed
+trigger skips the row entirely, malformed lane/target values drop to
+`null` without discarding the recorded trigger, and nothing is ever
+recorded raw. The newest recognized advisory row replaces the triple
+wholesale; the advisory is attempt evidence, not a launch decision,
+so rows of every other event — including later `finish`/`claim`
+receipts — leave it standing. All three stay `null` when no advisory
+row named the job: the retained window recorded no provider-wall
+verdict, which is unknown, not "no wall ever".
 `merged` reads the jobs-ledger outcome dialect the sibling fleet readers
 share: a terminal phase across
 `phase`/`state`/`outcome`/`status`/`result`/`conclusion`, or a `merged` /

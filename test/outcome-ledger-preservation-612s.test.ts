@@ -224,6 +224,7 @@ describe('router outcome ledger (612S preservation)', () => {
       noop: null, noop_reason: null, noop_repeat_of: null,
       market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
       market_rejected: null,
+      handoff_trigger: null, handoff_lane: null, handoff_target: null,
       passk: null,
     }]);
   });
@@ -1734,5 +1735,105 @@ describe('router outcome authority revert join', () => {
     // null skips the join entirely: same ledger, no authority mark.
     const skipped = await readRouterOutcomes({ runsDir: root, authorityEvidence: null });
     expect(skipped.outcomes.find(o => o.job_id === 'J1')?.reverted).toBeNull();
+  });
+});
+
+describe('router outcome session-handoff advisory fold', () => {
+  /** A session-failover.v1 advisory row in the producer's own shape (contrib/mac/session_handoff.py).
+   *  dispatchd appends rate-limit verdicts to jobs.jsonl and quota-exhausted
+   *  verdicts to work-market.jsonl; fixtures here exercise the fold's full
+   *  closed vocabulary on the jobs ledger. */
+  const advisory = (job: string, trigger: string, extra: Record<string, unknown> = {}): object => ({
+    schema: 'session-failover.v1', event: 'session_handoff_advisory', advisory: true,
+    job, lane: 'alpha', trigger, target: null, packet: `handoffs/${job}.jsonl`,
+    next: 'validate-packet-repo-capabilities-and-claim', dispatched: false, ...extra,
+  });
+
+  it('folds both trigger verdicts with their lane and target', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"J1","lane":"alpha","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+      JSON.stringify(advisory('J1', 'rate-limit', { lane: 'codex-personal' })),
+      '{"job":"J2","lane":"alpha","phase":"VERIFIED","ts":"2026-11-01T00:00:00Z"}',
+      JSON.stringify(advisory('J2', 'quota-exhausted', { lane: 'alpha', target: 'devin' })),
+      '{"job":"J3","phase":"MERGED"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')).toMatchObject({
+      handoff_trigger: 'rate-limit', handoff_lane: 'codex-personal', handoff_target: null,
+    });
+    expect(byId.get('J2')).toMatchObject({
+      handoff_trigger: 'quota-exhausted', handoff_lane: 'alpha', handoff_target: 'devin',
+    });
+    // J3 has no advisory row: unknown stays null, never a guessed verdict.
+    expect(byId.get('J3')).toMatchObject({ handoff_trigger: null, handoff_lane: null, handoff_target: null });
+  });
+
+  it('lets the newest recognized advisory replace the triple and never clears it on other events', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"J1","phase":"MERGED"}',
+      JSON.stringify(advisory('J1', 'rate-limit', { lane: 'alpha' })),
+      // A later launch/finish lifecycle row is not a launch decision about
+      // the advisory — it leaves the recorded wall verdict standing.
+      '{"job":"J1","event":"finish","exit_code":1,"ts":"2026-11-02T00:00:00Z"}',
+      JSON.stringify(advisory('J1', 'quota-exhausted', { lane: 'beta', target: 'gamma' })),
+    ].join('\n'));
+    expect(fold.outcomes[0]).toMatchObject({
+      handoff_trigger: 'quota-exhausted', handoff_lane: 'beta', handoff_target: 'gamma',
+    });
+  });
+
+  it('skips rows outside the closed schema/event/trigger vocabulary without touching the verdict', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"J1","phase":"MERGED"}',
+      JSON.stringify(advisory('J1', 'rate-limit', { lane: 'alpha' })),
+      // Wrong schema, wrong event, and a trigger outside the producer's
+      // vocabulary are all unrecognized — the standing verdict survives.
+      JSON.stringify(advisory('J1', 'rate-limit', { schema: 'session-failover.v2' })),
+      JSON.stringify({ ...advisory('J1', 'rate-limit'), event: 'session_handoff' }),
+      JSON.stringify(advisory('J1', 'provider-error')),
+      // Trigger matching is case-sensitive like the producer's own labels.
+      JSON.stringify(advisory('J1', 'Rate-Limit')),
+      // An event-alias row (type instead of event) still counts.
+      JSON.stringify({ ...advisory('J2', 'rate-limit'), event: undefined, type: 'session_handoff_advisory' }),
+      '{"job":"J2","phase":"VERIFIED"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')).toMatchObject({ handoff_trigger: 'rate-limit', handoff_lane: 'alpha' });
+    expect(byId.get('J2')).toMatchObject({ handoff_trigger: 'rate-limit' });
+  });
+
+  it('drops malformed lane and target to null while keeping the recorded trigger', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"J1","phase":"MERGED"}',
+      // Lane with a space and a 65-char target both fail the bounded
+      // lane-id shape; the trigger is still the fleet's recorded verdict.
+      JSON.stringify(advisory('J1', 'quota-exhausted', {
+        lane: 'not a lane!', target: `t${'x'.repeat(64)}`,
+      })),
+      // Non-string lane/target values are equally unrecorded.
+      '{"job":"J2","phase":"MERGED"}',
+      JSON.stringify(advisory('J2', 'rate-limit', { lane: 42, target: ['devin'] })),
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')).toMatchObject({ handoff_trigger: 'quota-exhausted', handoff_lane: null, handoff_target: null });
+    expect(byId.get('J2')).toMatchObject({ handoff_trigger: 'rate-limit', handoff_lane: null, handoff_target: null });
+  });
+
+  it('lets an advisory-only job stand as its own outcome and tolerates malformed rows', () => {
+    // The advisory lives in the primary jobs ledger, so its job is a real
+    // ledger job: the outcome exists with merged unknown and the wall
+    // verdict attached — the same standing every lifecycle row gets.
+    const fold = foldRouterOutcomes([
+      JSON.stringify(advisory('J-ONLY', 'rate-limit', { lane: 'alpha' })),
+      '{"job":"J1","phase":"MERGED"}',
+      'not json',
+      '[1,2]',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J-ONLY')).toMatchObject({
+      merged: null, handoff_trigger: 'rate-limit', handoff_lane: 'alpha', handoff_target: null,
+    });
+    expect(byId.get('J1')?.handoff_trigger).toBeNull();
+    expect(fold.malformed_rows).toBe(2);
   });
 });

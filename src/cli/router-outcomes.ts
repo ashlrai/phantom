@@ -22,6 +22,9 @@
  * terminal no-op verdict
  * (noop/noop_reason/noop_repeat_of, folded from empty-family outcome
  * phases like DONE-NOOP), the fleet's recorded
+ * session-handoff advisory
+ * (handoff_trigger/handoff_lane/handoff_target, folded from
+ * session-failover.v1 provider-wall receipts), the fleet's recorded
  * empty tag
  * (empty_tag, joined from metrics/empty-tags.jsonl) and the advisory
  * pass^k join from eval.lane-scores.v1.
@@ -163,6 +166,7 @@ function outcomeLine(o: RouterOutcome): string {
     `market_lane=${text(o.market_lane)}`, `market_preferred=${text(o.market_preferred)}`, `market_override=${text(o.market_override)}`,
     `market_reasons=${o.market_reasons === null ? 'unknown' : `[${o.market_reasons.join(',')}]`}`,
     `market_rejected=${o.market_rejected === null ? 'unknown' : `[${o.market_rejected.map(e => e.reasons === null ? e.lane : `${e.lane}:${e.reasons.join('+')}`).join(';')}]`}`,
+    `handoff_trigger=${text(o.handoff_trigger)}`, `handoff_lane=${text(o.handoff_lane)}`, `handoff_target=${text(o.handoff_target)}`,
   ].join(' ');
 }
 
