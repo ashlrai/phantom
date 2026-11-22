@@ -386,7 +386,8 @@ whose recorded time cannot be parsed never matches, so unknown never counts
 as new. The dimensions AND together. `total`, `omitted` and `items` then
 describe
 the matched view and the report echoes the applied `filter`, while `sources`
-keeps every store's real unfiltered pending count — a filtered view never
+keeps every store's real unfiltered pending count — `null` when a source
+could not be read, never a fabricated 0 — a filtered view never
 reports a busy or degraded source as empty. `phm comms inbox read` and
 `post` keep their original meaning for Mason's local inbox file.
 
