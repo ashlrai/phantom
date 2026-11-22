@@ -192,6 +192,10 @@ const DOCS = [
   'docs/RUN-THE-FLEET.md',
   'docs/SESSIONS.md',
   'docs/daemon-tick-phases.md',
+  // The hand-written source of docs/llms.txt, the agent map the docs index
+  // links to. The generated docs/llms.txt adds every doc's first line, so the
+  // source is checked instead.
+  'docs/llms-source.txt',
 ];
 
 /** Every `--flag` spelled anywhere in src/ (code, help text, comments). */
