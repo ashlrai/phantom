@@ -603,9 +603,10 @@ recognized runner row named the job — the retained window recorded
 no node execution verdict, which is unknown, not "never ran on a
 node".
 `empty_tag` is the fleet's recorded WHY for a job that
-ended empty — the `job.empty-tag.v1` rows `phm jobs empty --record`
-appends to `metrics/empty-tags.jsonl` from empty-final-reason's verdict
-(src/core/fleet/empty-tags.ts): the closed
+ended empty — the `job.empty-tag.v1` rows the daemon's
+`empty-tag-sync` off-tick job and `phm jobs empty --record`
+append to `metrics/empty-tags.jsonl` from empty-final-reason's verdict
+(src/core/fleet/empty-tags.ts, src/core/fleet/empty-tag-sync.ts): the closed
 `already_done`/`pool_cap`/`blocked`/`no_change_needed`/`unknown`
 vocabulary. The newest tag row for the job stands (the recorder dedups
 by job id); the tag attaches regardless of the standing finish verdict —
@@ -767,7 +768,8 @@ and `unknown_skip_reasons` tallies their recorded reason labels (the
 empty-gate vocabulary, bounded `code` strings and `code:<n>`
 gate-code-only declines, top entries first) — `unknown_empty_tags`
 tallies the fleet's recorded empty tags inside the same cohort (the
-`job.empty-tag.v1` rows `phm jobs empty --record` stores in
+`job.empty-tag.v1` rows the daemon's `empty-tag-sync` job and
+`phm jobs empty --record` store in
 metrics/empty-tags.jsonl, so an empty finish reads with its recorded
 cause — work already on master, quota exhausted, blocked on a missing
 tool, genuinely no change needed, or the fleet's own unknown — instead
