@@ -47,6 +47,7 @@ function outcome(job_id: string, over: Partial<RouterOutcome> = {}): RouterOutco
     market_rejected: null,
     handoff_trigger: null, handoff_lane: null, handoff_target: null,
     provider_wall_trigger: null, provider_wall_pattern: null, provider_wall_lane: null,
+    pool_kind: null, pool_mem_free_pct: null, pool_swap_gb: null,
     merge_queue: null,
     passk: null,
     ...over,
@@ -175,7 +176,7 @@ describe('phm router outcomes', () => {
     expect(lines[3]).toContain('handoff_trigger=rate-limit handoff_lane=codex-personal handoff_target=unknown');
     expect(lines[3]).toContain('provider_wall_trigger=auth-failure provider_wall_pattern=claude_auth_401 provider_wall_lane=claude');
     expect(lines[2]).toContain('B lane=unknown model=unknown tier=unknown work_class=docs lane_hint=unknown lane_override=unknown merged=true reverted=unknown');
-    expect(lines[2]).toContain('task_outcome=unknown skipped=unknown skip_reason=unknown skip_code=unknown deferred=unknown defer_reason=unknown defer_repeat_of=unknown noop=unknown noop_reason=unknown noop_repeat_of=unknown lane_hint_blocked_by=unknown market_lane=unknown market_preferred=unknown market_override=unknown market_reasons=unknown market_rejected=unknown handoff_trigger=unknown handoff_lane=unknown handoff_target=unknown provider_wall_trigger=unknown provider_wall_pattern=unknown provider_wall_lane=unknown merge_queue=unknown');
+    expect(lines[2]).toContain('task_outcome=unknown skipped=unknown skip_reason=unknown skip_code=unknown deferred=unknown defer_reason=unknown defer_repeat_of=unknown noop=unknown noop_reason=unknown noop_repeat_of=unknown lane_hint_blocked_by=unknown market_lane=unknown market_preferred=unknown market_override=unknown market_reasons=unknown market_rejected=unknown handoff_trigger=unknown handoff_lane=unknown handoff_target=unknown provider_wall_trigger=unknown provider_wall_pattern=unknown provider_wall_lane=unknown pool_kind=unknown pool_mem_free_pct=unknown pool_swap_gb=unknown merge_queue=unknown');
   });
 
   it('renders merge_queue evidence and reports merge-events ledger health', async () => {

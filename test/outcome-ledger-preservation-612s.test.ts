@@ -240,6 +240,7 @@ describe('router outcome ledger (612S preservation)', () => {
       market_rejected: null,
       handoff_trigger: null, handoff_lane: null, handoff_target: null,
       provider_wall_trigger: null, provider_wall_pattern: null, provider_wall_lane: null,
+      pool_kind: null, pool_mem_free_pct: null, pool_swap_gb: null,
       merge_queue: null,
       passk: null,
     }]);
@@ -2141,6 +2142,131 @@ describe('router outcome provider-wall hold fold', () => {
       provider_wall_pattern: 'codex_auth_failure', provider_wall_lane: 'alpha',
     });
     expect(byId.get('J1')?.provider_wall_trigger).toBeNull();
+    expect(fold.malformed_rows).toBe(2);
+  });
+});
+
+describe('router outcome slot-throttle (pool) fold', () => {
+  /** A pool row in the producer's own shape (contrib/mac/dispatchd.py):
+   *  the per-tick ratelimited() scan appends {event:'pool', lane, job,
+   *  kind, mem_free_pct, swap_gb} once per (job, class). */
+  const pool = (job: string, kind: string, extra: Record<string, unknown> = {}): object => ({
+    event: 'pool', lane: 'alpha', job, kind,
+    mem_free_pct: 42.5, swap_gb: 3.25, ...extra,
+  });
+
+  it('folds pool receipts with their throttle class and host memory readings', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"J1","lane":"alpha","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+      JSON.stringify(pool('J1', 'rate_limit')),
+      '{"job":"J2","lane":"claude","phase":"VERIFIED","ts":"2026-11-01T00:00:00Z"}',
+      JSON.stringify(pool('J2', 'credits_exhausted', { lane: 'claude', mem_free_pct: 12, swap_gb: 40 })),
+      '{"job":"J3","phase":"MERGED"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')).toMatchObject({
+      pool_kind: 'rate_limit', pool_mem_free_pct: 42.5, pool_swap_gb: 3.25,
+    });
+    expect(byId.get('J2')).toMatchObject({
+      pool_kind: 'credits_exhausted', pool_mem_free_pct: 12, pool_swap_gb: 40,
+    });
+    // J3 has no pool row: unknown stays null, never a guessed verdict.
+    expect(byId.get('J3')).toMatchObject({
+      pool_kind: null, pool_mem_free_pct: null, pool_swap_gb: null,
+    });
+  });
+
+  it('accepts every class in the producer CLS vocabulary', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"J1","phase":"MERGED"}', JSON.stringify(pool('J1', 'credits_exhausted')),
+      '{"job":"J2","phase":"MERGED"}', JSON.stringify(pool('J2', 'usage_limit')),
+      '{"job":"J3","phase":"MERGED"}', JSON.stringify(pool('J3', 'model_capacity')),
+      '{"job":"J4","phase":"MERGED"}', JSON.stringify(pool('J4', 'rate_limit')),
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    for (const [id, kind] of [['J1', 'credits_exhausted'], ['J2', 'usage_limit'], ['J3', 'model_capacity'], ['J4', 'rate_limit']] as const) {
+      expect(byId.get(id)?.pool_kind).toBe(kind);
+    }
+  });
+
+  it('lets the newest recognized pool row replace the triple and ignores other events', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"J1","phase":"MERGED"}',
+      JSON.stringify(pool('J1', 'rate_limit', { mem_free_pct: 50, swap_gb: 1 })),
+      // A finish row is attempt evidence but not a throttle verdict —
+      // the standing detection survives it.
+      '{"job":"J1","event":"finish","exit_code":0,"ts":"2026-11-02T00:00:00Z"}',
+      JSON.stringify(pool('J1', 'usage_limit', { mem_free_pct: 8, swap_gb: 22 })),
+      // A different event name never touches the triple.
+      JSON.stringify({ event: 'throttle', lane: 'alpha', job: 'J1', kind: 'rate_limit' }),
+    ].join('\n'));
+    expect(fold.outcomes[0]).toMatchObject({
+      pool_kind: 'usage_limit', pool_mem_free_pct: 8, pool_swap_gb: 22,
+    });
+  });
+
+  it('skips rows outside the event/kind bounds without touching the verdict', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"J1","phase":"MERGED"}',
+      JSON.stringify(pool('J1', 'rate_limit', { lane: 'alpha' })),
+      // A different event name, a kind outside the CLS vocabulary and
+      // an overlong kind are all unrecognized — the standing verdict
+      // survives.
+      JSON.stringify({ ...pool('J1', 'rate_limit'), event: 'throttled' }),
+      JSON.stringify(pool('J1', 'not_a_class')),
+      JSON.stringify(pool('J1', 'x'.repeat(200))),
+      // An event-alias row (type instead of event) still counts.
+      JSON.stringify({ ...pool('J2', 'model_capacity'), event: undefined, type: 'pool' }),
+      '{"job":"J2","phase":"VERIFIED"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')).toMatchObject({
+      pool_kind: 'rate_limit', pool_mem_free_pct: 42.5, pool_swap_gb: 3.25,
+    });
+    expect(byId.get('J2')).toMatchObject({ pool_kind: 'model_capacity' });
+  });
+
+  it('drops malformed memory readings to null while keeping the recorded class', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"J1","phase":"MERGED"}',
+      // mem_free_pct outside [0,100], a string swap_gb and a negative
+      // swap figure are all unrecorded — the class still joins.
+      JSON.stringify(pool('J1', 'rate_limit', { mem_free_pct: 140, swap_gb: 'lots' })),
+      '{"job":"J2","phase":"MERGED"}',
+      JSON.stringify(pool('J2', 'usage_limit', { mem_free_pct: -5, swap_gb: -1 })),
+      // Missing readings join as null, never zero.
+      '{"job":"J3","phase":"MERGED"}',
+      JSON.stringify({ event: 'pool', lane: 'alpha', job: 'J3', kind: 'rate_limit' }),
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')).toMatchObject({
+      pool_kind: 'rate_limit', pool_mem_free_pct: null, pool_swap_gb: null,
+    });
+    expect(byId.get('J2')).toMatchObject({
+      pool_kind: 'usage_limit', pool_mem_free_pct: null, pool_swap_gb: null,
+    });
+    expect(byId.get('J3')).toMatchObject({
+      pool_kind: 'rate_limit', pool_mem_free_pct: null, pool_swap_gb: null,
+    });
+  });
+
+  it('lets a pool-only job stand as its own outcome and tolerates malformed rows', () => {
+    // The receipt lives in the primary jobs ledger, so its job is a
+    // real ledger job: the outcome exists with merged unknown and the
+    // throttle detection attached — the same standing every lifecycle
+    // row gets.
+    const fold = foldRouterOutcomes([
+      JSON.stringify(pool('J-ONLY', 'credits_exhausted', { mem_free_pct: 30, swap_gb: 0 })),
+      '{"job":"J1","phase":"MERGED"}',
+      'not json',
+      '[1,2]',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J-ONLY')).toMatchObject({
+      merged: null, pool_kind: 'credits_exhausted',
+      pool_mem_free_pct: 30, pool_swap_gb: 0,
+    });
+    expect(byId.get('J1')?.pool_kind).toBeNull();
     expect(fold.malformed_rows).toBe(2);
   });
 });

@@ -284,6 +284,8 @@ import { listTeammateTasks } from './imessage-teammate-tasks.js';
 import { imessageStateDir } from '../integrations/imessage.js';
 
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
+/** Longest `--contains` needle the unified view accepts; the title/detail text it matches is already bounded far shorter. */
+export const UNIFIED_INBOX_CONTAINS_MAX = 512;
 const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
@@ -369,6 +371,15 @@ export interface UnifiedInboxFilter {
    * (`since` null) or whose recorded time cannot be parsed never matches:
    * unknown stays out of the match rather than being counted as recent. */
   since?: number;
+  /** Keep only items whose displayed text carries this search string — a
+   * case-insensitive substring over the item's scrubbed `title` and `detail`,
+   * whitespace collapsed on both sides the same way every other bus read's
+   * `--contains` applies, so a phrase typed across the title/detail boundary
+   * still finds its item and a match is always visible in the row it
+   * selects. The `act` deep links are commands, never item content, and
+   * stay out of the match; source/kind labels have their own dimensions.
+   * Callers bound the raw value to UNIFIED_INBOX_CONTAINS_MAX. */
+  contains?: string;
 }
 
 export interface UnifiedInbox {
@@ -469,7 +480,7 @@ export interface UnifiedInboxOptions {
   /** Slack journal seam; default reads the same bounded journal `phm fleet slack-trace` and `phm channels slack status` project. */
   readSlackJournal?: typeof readSlackJournal;
   /** Optional narrowing of the returned item list by stored source, severity,
-   * blocking, job citation or appearance time. `total`/`omitted`/`items` then
+   * blocking, job citation, appearance time or display text. `total`/`omitted`/`items` then
    * describe the matched view and the applied filter echoes on the report;
    * `sources` stays unfiltered. */
   filter?: UnifiedInboxFilter;
@@ -1984,8 +1995,16 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const filter = requested !== undefined &&
     (requested.source !== undefined || requested.severity !== undefined ||
       requested.blocking !== undefined || requested.job !== undefined ||
-      requested.since !== undefined)
+      requested.since !== undefined || requested.contains !== undefined)
     ? requested : undefined;
+  // --contains is a case-insensitive substring over the item's scrubbed
+  // title/detail — the text the row actually shows, so a match is always
+  // visible in the row it selects. Whitespace collapses the same way the
+  // rendered fields' does; a needle that normalizes to nothing imposes no
+  // text constraint, the same empty-needle rule `phm messages --contains`
+  // applies.
+  const containsNeedle = filter?.contains === undefined ? undefined
+    : filter.contains.toLowerCase().replace(/\s+/g, ' ').trim();
   const matched = filter === undefined ? ranked : ranked.filter(({ item }) =>
     (filter.source === undefined || item.source === filter.source) &&
     (filter.severity === undefined || item.severity === filter.severity) &&
@@ -1997,7 +2016,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     // the cutoff — an undated or unparseable item cannot prove it appeared
     // then and stays out of the match rather than being counted as new.
     (filter.since === undefined ||
-      (item.since !== null && Date.parse(item.since) >= filter.since)));
+      (item.since !== null && Date.parse(item.since) >= filter.since)) &&
+    (containsNeedle === undefined || containsNeedle === '' ||
+      `${item.title} ${item.detail ?? ''}`.toLowerCase().replace(/\s+/g, ' ').includes(containsNeedle)));
   const total = matched.length;
   return {
     v: 1,

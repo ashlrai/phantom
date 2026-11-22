@@ -108,7 +108,32 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // advisory it is attempt evidence, not a launch decision: the newest
 // recognized hold row replaces the triple wholesale and every other
 // event leaves it alone; the skip receipts (helper-unavailable scans
-// that recorded no verdict) never join.
+// that recorded no verdict) never join. jobs.jsonl `pool` rows —
+// dispatchd's slot-throttle detector receipts, appended through the
+// same `metric()` path when the per-tick `ratelimited()` scan finds a
+// launched job's recent error-log tail matching a provider-limit
+// pattern — fold as pool_kind/pool_mem_free_pct/pool_swap_gb: the
+// fleet's recorded throttle class for the attempt (`kind` in the
+// producer's closed CLS vocabulary — credits_exhausted, usage_limit,
+// model_capacity, rate_limit — the same classes the finish row's
+// pool_error and the friction ledger's quota vocabulary share) plus
+// the host memory readings (`mem_free_pct`/`swap_gb`) the detector
+// captured at detection time. The receipt is scan-time evidence, not
+// a launch or terminal verdict: `ratelimited()` fires on a log-tail
+// pattern match for any job whose `.base` still stands — a run that
+// recovered, is still in flight, or already finished without the
+// finish row's own pool_error all carry the same receipt — so like
+// the market and merge-queue evidence it competes with nothing: the
+// newest recognized pool row replaces the triple wholesale and every
+// other event leaves it alone. The row counts only on the `pool`
+// event name (the `event`/`type`/`kind` alias set) with a `kind`
+// inside the closed vocabulary; `mem_free_pct` joins only as a
+// bounded percentage and `swap_gb` only as a non-negative figure — a
+// malformed value drops to null without discarding the recorded
+// class, and a `kind` outside the vocabulary skips the row entirely,
+// never recorded raw. All three stay null when no pool row named the
+// job: the retained window recorded no throttle detection, which is
+// unknown, not "no throttle ever".
 // `merge_queue` joins a fifth bounded ledger, <runs>/metrics/merge-events.jsonl:
 // the fleet merge-latency observation journal (repo+pr keyed rows the
 // host merge observer and `phm fleet merge-retry` append — opened,
@@ -673,6 +698,38 @@ export interface RouterOutcome {
   provider_wall_pattern: string | null;
   provider_wall_lane: string | null;
   /**
+   * The fleet's recorded slot-throttle detection for the job —
+   * dispatchd's `pool` receipts (jobs.jsonl rows the per-tick
+   * `ratelimited()` scan appends through `metric()` when a launched
+   * job's recent error-log tail matches a provider-limit pattern;
+   * the contrib/mac/dispatchd.py producer mirrored here). The row is
+   * scan-time evidence, not a launch or terminal verdict: the
+   * detector fires on a log-tail match for any job whose `.base`
+   * still stands, once per (job, class) via the producer's `.seen`
+   * markers, so a recovered run, an in-flight run and a finished run
+   * whose finish row never recorded `pool_error` all carry the same
+   * receipt. `pool_kind` joins only in the producer's closed CLS
+   * vocabulary — `credits_exhausted`, `usage_limit`,
+   * `model_capacity`, `rate_limit`, the same classes the finish
+   * row's `pool_error` and the friction ledger's quota vocabulary
+   * share — `pool_mem_free_pct` the host free-memory percentage and
+   * `pool_swap_gb` the host swap figure the detector captured at
+   * detection time, each only as a bounded number (a malformed
+   * value drops to null without discarding the recorded class). The
+   * row counts only on the `pool` event name (the
+   * `event`/`type`/`kind` alias set, case-folded like the sibling
+   * verdict folds); a `kind` outside the vocabulary skips the row
+   * entirely, never recorded raw. The newest recognized pool row
+   * replaces the triple wholesale and every other event leaves it
+   * alone — the receipt competes with nothing, like the market and
+   * merge-queue evidence. All three stay null when no pool row named
+   * the job: the retained window recorded no throttle detection,
+   * which is unknown, not "no throttle ever".
+   */
+  pool_kind: string | null;
+  pool_mem_free_pct: number | null;
+  pool_swap_gb: number | null;
+  /**
    * The job's recorded merge-queue evidence — the merge-events.jsonl
    * observations for the job's newest unambiguous canonical PR claim
    * (`owner/repo#n`, the same prKey the authority revert join uses),
@@ -1132,6 +1189,32 @@ const wallTrigger = (r: Row, pattern: string): string | null => {
   return null;
 };
 
+/**
+ * The slot-throttle detector's receipt event name and closed class
+ * vocabulary, mirrored from the producer (contrib/mac/dispatchd.py):
+ * the per-tick `ratelimited()` scan matches a launched job's recent
+ * error-log tail against `CLS` — credits_exhausted, usage_limit,
+ * model_capacity, rate_limit, in the producer's own order — and the
+ * first unmarked match appends a `pool` row carrying the class under
+ * `kind` plus the host `mem_free_pct`/`swap_gb` readings. The router
+ * keeps its own copy of the vocabulary so a producer-side rename can
+ * never leak an unbounded label into router.outcome.v1; the same four
+ * classes are the finish row's `pool_error` values and the friction
+ * ledger's quota-error set. `mem_free_pct` is a percentage and joins
+ * only inside [0, 100]; `swap_gb` joins only as a non-negative
+ * figure — both through the same bounded-number rule the other
+ * measured fields use.
+ */
+const POOL_EVENT = 'pool';
+const POOL_KINDS: ReadonlySet<string> = new Set([
+  'credits_exhausted', 'usage_limit', 'model_capacity', 'rate_limit',
+]);
+/** A recorded free-memory percentage joins only inside its physical range. */
+const memFreePct = (v: unknown): number | null => {
+  const n = num(v);
+  return n !== null && n <= 100 ? n : null;
+};
+
 // Revert evidence uses the same field vocabulary the fleet ledger readers
 // already honor: event names (event/type/kind), terminal state fields
 // (phase/state/outcome/status/result/conclusion) and the reverted_at /
@@ -1445,6 +1528,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       market_rejected: null,
       handoff_trigger: null, handoff_lane: null, handoff_target: null,
       provider_wall_trigger: null, provider_wall_pattern: null, provider_wall_lane: null,
+      pool_kind: null, pool_mem_free_pct: null, pool_swap_gb: null,
       merge_queue: null,
       passk: null,
     };
@@ -1684,6 +1768,26 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
         o.provider_wall_trigger = wallTrigger(r, pattern);
         o.provider_wall_pattern = pattern;
         o.provider_wall_lane = lane !== null && LANE_BLOCKED_HINT.test(lane) ? lane : null;
+      }
+    }
+    // The slot-throttle detector's receipt is the fleet's recorded
+    // provider-limit detection for the job — scan-time evidence like
+    // the market and merge-queue joins, not a launch or terminal
+    // verdict, so it competes with nothing: the newest recognized
+    // pool row replaces the triple wholesale and every other event
+    // leaves it alone. The row counts only on the `pool` event name
+    // with a `kind` inside the producer's closed CLS vocabulary —
+    // the payload field every producer pool row carries; the host
+    // memory readings join independently as bounded numbers, so a
+    // malformed value drops to null rather than skipping the
+    // recorded class, and a `kind` outside the vocabulary skips the
+    // row entirely — never recorded raw.
+    if (str(r, ...EVENT_NAME_KEYS)?.toLowerCase() === POOL_EVENT) {
+      const kind = str(r, 'kind');
+      if (kind !== null && POOL_KINDS.has(kind)) {
+        o.pool_kind = kind;
+        o.pool_mem_free_pct = memFreePct(r['mem_free_pct']);
+        o.pool_swap_gb = num(r['swap_gb']);
       }
     }
     outcomes.set(j, o);

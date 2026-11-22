@@ -174,6 +174,22 @@ export interface RouterWeightEvidence {
   provider_wall_known: number;
   provider_wall_triggers: { trigger: string; jobs: number }[] | null;
   /**
+   * Group outcomes (the known cohort) carrying the fleet's recorded
+   * slot-throttle detection — dispatchd's `pool` receipts joined as
+   * `pool_kind`: the per-tick `ratelimited()` scan's provider-limit
+   * class for the job's recent error-log tail (`credits_exhausted`,
+   * `usage_limit`, `model_capacity`, `rate_limit`). The receipt is
+   * scan-time evidence, not a terminal verdict — a recovered run, an
+   * in-flight run and a finished run whose finish row never recorded
+   * `pool_error` all carry it — so `pool_kinds` tallies the recorded
+   * classes over the same cohort, most jobs first, as diagnostic
+   * context for how much provider-throttle exposure the group's
+   * outcomes rested on. Null when no outcome recorded a detection —
+   * never zero-filled.
+   */
+  pool_known: number;
+  pool_kinds: { kind: string; jobs: number }[] | null;
+  /**
    * Group outcomes (the known cohort) carrying recorded merge-queue
    * evidence — the merge-events.jsonl observations joined as
    * `merge_queue` for the job's standing PR. `merge_queue_blocked_known`
@@ -404,6 +420,26 @@ export interface RouterWeightProposalSet {
    */
   unknown_provider_wall_triggers: { trigger: string; jobs: number }[];
   /**
+   * Jobs inside the unknown cohort carrying the fleet's recorded
+   * slot-throttle detection — dispatchd's `pool` receipts joined as
+   * `pool_kind`. The receipt is scan-time evidence, not a terminal
+   * verdict: the detector fires on a log-tail pattern match for any
+   * job whose `.base` still stands, so a recovered run, an in-flight
+   * run and a finished run all carry it — it never reduces
+   * `unknown_unresolved`, the same rule `unknown_market_reasons`
+   * follows: the job's terminal state stays genuinely unrecorded.
+   * Reads jobs-ledger rows only, so the tally is real whenever the
+   * jobs read succeeded.
+   */
+  unknown_pool_throttles: number;
+  /**
+   * Top recorded pool throttle classes inside the unknown cohort, by
+   * jobs — the producer's closed CLS vocabulary (`credits_exhausted`,
+   * `usage_limit`, `model_capacity`, `rate_limit`). Diagnostic
+   * context only; never a reduction of `unknown_unresolved`.
+   */
+  unknown_pool_kinds: { kind: string; jobs: number }[];
+  /**
    * Jobs inside the unknown cohort carrying recorded merge-queue
    * evidence — the merge-events.jsonl observations joined as
    * `merge_queue` for the job's standing PR, so a job still awaiting
@@ -477,6 +513,8 @@ interface WeightEvidenceTally {
   handoffTriggers: Map<string, number>;
   providerWall: number;
   providerWallTriggers: Map<string, number>;
+  pool: number;
+  poolKinds: Map<string, number>;
   mergeQueue: number;
   mergeQueueBlocked: number;
   mergeQueueBlockedReasons: Map<string, number>;
@@ -499,6 +537,7 @@ const freshTally = (): WeightEvidenceTally => ({
   marketRejected: 0, rejectedReasons: new Map(),
   handoff: 0, handoffTriggers: new Map(),
   providerWall: 0, providerWallTriggers: new Map(),
+  pool: 0, poolKinds: new Map(),
   mergeQueue: 0, mergeQueueBlocked: 0, mergeQueueBlockedReasons: new Map(),
   mergeQueueCheckFailures: 0, mergeQueueConflicts: 0, mergeQueueRetries: 0,
   mergeQueueRecuts: 0,
@@ -524,6 +563,8 @@ const MAX_OVERRIDE_REASONS = 8;
 const MAX_HANDOFF_TRIGGERS = 8;
 /** Top recorded provider-wall trigger labels kept per group and in the unknown cohort, most jobs first. */
 const MAX_PROVIDER_WALL_TRIGGERS = 8;
+/** Top recorded pool throttle classes kept per group and in the unknown cohort, most jobs first. */
+const MAX_POOL_KINDS = 8;
 
 const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   ci_first_pass_known: t.ciKnown,
@@ -584,6 +625,12 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
         .map(([trigger, jobs]) => ({ trigger, jobs }))
         .sort((a, b) => b.jobs - a.jobs || a.trigger.localeCompare(b.trigger))
         .slice(0, MAX_PROVIDER_WALL_TRIGGERS),
+  pool_known: t.pool,
+  pool_kinds: t.pool === 0 ? null
+    : [...t.poolKinds.entries()]
+        .map(([kind, jobs]) => ({ kind, jobs }))
+        .sort((a, b) => b.jobs - a.jobs || a.kind.localeCompare(b.kind))
+        .slice(0, MAX_POOL_KINDS),
   merge_queue_known: t.mergeQueue,
   merge_queue_blocked_known: t.mergeQueueBlocked,
   merge_queue_blocked_reasons: t.mergeQueueBlocked === 0 ? null
@@ -605,8 +652,9 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
  * also reports the group's other recorded outcome signals (CI verdicts, review findings, cost, wall
  * time, merge latency, queue-admission wait, CI wall, publish-station
  * wait, pass^k, dispatch lane
- * overrides, lane-hint blocking codes, session-handoff advisories and
- * provider-wall lane holds)
+ * overrides, lane-hint blocking codes, session-handoff advisories,
+ * provider-wall lane holds, slot-throttle detections and
+ * merge-queue friction)
  * as advisory evidence over
  * the same known cohort. Recorded lane-hint blocking codes
  * (`lane_hint_blocked_by`) tally per group as
@@ -649,6 +697,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   const marketRejectedReasons = new Map<string, number>();
   const handoffTriggersUnknown = new Map<string, number>();
   const providerWallTriggersUnknown = new Map<string, number>();
+  const poolKindsUnknown = new Map<string, number>();
   const mergeQueueBlockedReasonsUnknown = new Map<string, number>();
   const usageMissing = new Map<string, number>();
   const usageSources = new Map<string, number>();
@@ -658,6 +707,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   let unknownMarketRejected = 0;
   let unknownHandoffs = 0;
   let unknownProviderWalls = 0;
+  let unknownPoolThrottles = 0;
   let unknownMergeQueue = 0;
   let unknownMergeQueueBlocked = 0;
   let unknownMergeQueueCheckFailures = 0;
@@ -774,6 +824,18 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
           providerWallTriggersUnknown.set(o.provider_wall_trigger, (providerWallTriggersUnknown.get(o.provider_wall_trigger) ?? 0) + 1);
         }
       }
+      // The slot-throttle detector's receipt is scan-time evidence,
+      // not a terminal verdict: it fires on a log-tail pattern match
+      // for any job whose `.base` still stands, so a recovered run,
+      // an in-flight run and a finished run all carry it. Like the
+      // market verdicts it is queue-side diagnostic — it tallies the
+      // recorded throttle classes but never feeds the unresolved
+      // remainder: the job's terminal state stays genuinely
+      // unrecorded however the detector classified its log tail.
+      if (o.pool_kind !== null) {
+        unknownPoolThrottles++;
+        poolKindsUnknown.set(o.pool_kind, (poolKindsUnknown.get(o.pool_kind) ?? 0) + 1);
+      }
       // The merge-queue join is queue-side diagnostic like the market
       // verdicts: each job's standing PR carried recorded merge-events
       // observations — blocked reasons, check failures, conflicts,
@@ -855,6 +917,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
         t.providerWallTriggers.set(o.provider_wall_trigger, (t.providerWallTriggers.get(o.provider_wall_trigger) ?? 0) + 1);
       }
     }
+    if (o.pool_kind !== null) {
+      t.pool++;
+      t.poolKinds.set(o.pool_kind, (t.poolKinds.get(o.pool_kind) ?? 0) + 1);
+    }
     if (o.merge_queue !== null) {
       t.mergeQueue++;
       if (o.merge_queue.blocked_reasons.length > 0) {
@@ -926,6 +992,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     .map(([trigger, jobs]) => ({ trigger, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.trigger.localeCompare(b.trigger))
     .slice(0, MAX_PROVIDER_WALL_TRIGGERS);
+  const topPoolKinds = [...poolKindsUnknown.entries()]
+    .map(([kind, jobs]) => ({ kind, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.kind.localeCompare(b.kind))
+    .slice(0, MAX_POOL_KINDS);
   const topMergeQueueBlockedReasons = [...mergeQueueBlockedReasonsUnknown.entries()]
     .map(([reason, jobs]) => ({ reason, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
@@ -952,6 +1022,8 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     unknown_handoff_triggers: topHandoffTriggers,
     unknown_provider_walls: unknownProviderWalls,
     unknown_provider_wall_triggers: topProviderWallTriggers,
+    unknown_pool_throttles: unknownPoolThrottles,
+    unknown_pool_kinds: topPoolKinds,
     unknown_merge_queue: unknownMergeQueue,
     unknown_merge_queue_blocked: unknownMergeQueueBlocked,
     unknown_merge_queue_blocked_reasons: topMergeQueueBlockedReasons,
@@ -1129,6 +1201,24 @@ export interface RouterWeightProposalReport {
    */
   unknown_provider_wall_triggers: { trigger: string; jobs: number }[] | null;
   /**
+   * Jobs inside the unknown cohort carrying the fleet's recorded
+   * slot-throttle detection — dispatchd's `pool` receipts joined as
+   * `pool_kind` (see RouterWeightProposalSet). Scan-time diagnostic
+   * context only; never reduces unknown_unresolved. Reads
+   * jobs-ledger rows only, so the tally is real whenever the jobs
+   * read succeeded. Null when the ledger was not read; 0 is a real
+   * measurement.
+   */
+  unknown_pool_throttles: number | null;
+  /**
+   * Top recorded pool throttle classes inside the unknown cohort, by
+   * jobs — the producer's closed CLS vocabulary (`credits_exhausted`,
+   * `usage_limit`, `model_capacity`, `rate_limit`). Diagnostic
+   * context only; never a reduction of unknown_unresolved. Null when
+   * the ledger was not read; empty when none recorded.
+   */
+  unknown_pool_kinds: { kind: string; jobs: number }[] | null;
+  /**
    * Jobs inside the unknown cohort carrying recorded merge-queue
    * evidence — see RouterWeightProposalSet. Queue-side diagnostic
    * context only; never reduces unknown_unresolved. Null when the
@@ -1210,6 +1300,7 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
       unknown_market_rejected: null, unknown_market_rejected_reasons: null,
       unknown_handoffs: null, unknown_handoff_triggers: null,
       unknown_provider_walls: null, unknown_provider_wall_triggers: null,
+      unknown_pool_throttles: null, unknown_pool_kinds: null,
       unknown_merge_queue: null, unknown_merge_queue_blocked: null,
       unknown_merge_queue_blocked_reasons: null,
       unknown_merge_queue_check_failures: null, unknown_merge_queue_conflicts: null,
@@ -1250,6 +1341,11 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     unknown_handoff_triggers: set.unknown_handoff_triggers,
     unknown_provider_walls: set.unknown_provider_walls,
     unknown_provider_wall_triggers: set.unknown_provider_wall_triggers,
+    // Pool receipts are jobs-ledger rows like the skip, keep-queued,
+    // no-op, handoff and provider-wall verdicts — no side-ledger join —
+    // so the tallies are real whenever the jobs read succeeded.
+    unknown_pool_throttles: set.unknown_pool_throttles,
+    unknown_pool_kinds: set.unknown_pool_kinds,
     // Merge-queue evidence joins through the same bounded
     // merge-events.jsonl tail: anything but 'read' means no merge_queue
     // joined, so the tallies would claim "no merge friction recorded"

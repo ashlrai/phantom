@@ -864,6 +864,33 @@ so rows of every other event — including later `finish`/`claim`
 receipts — leave it standing. All three stay `null` when no hold
 row named the job: the retained window recorded no confirmed
 provider wall, which is unknown, not "no wall ever".
+`pool_kind`/`pool_mem_free_pct`/`pool_swap_gb` are the fleet's
+recorded slot-throttle detection — dispatchd's `pool` receipts
+(jobs.jsonl rows the per-tick `ratelimited()` scan appends through
+`metric()` when a launched job's recent error-log tail matches a
+provider-limit pattern; the contrib/mac/dispatchd.py producer
+mirrored in the fold). The row is scan-time evidence, not a launch
+or terminal verdict: the detector fires on a log-tail pattern match
+for any job whose `.base` still stands, once per (job, class) via
+the producer's `.seen` markers, so a recovered run, an in-flight
+run and a finished run whose finish row never recorded `pool_error`
+all carry the same receipt. `pool_kind` joins only in the
+producer's closed CLS vocabulary — `credits_exhausted`,
+`usage_limit`, `model_capacity`, `rate_limit`, the same classes the
+finish row's `pool_error` and the friction ledger's quota-error set
+share — `pool_mem_free_pct` the host free-memory percentage (only
+inside [0, 100]) and `pool_swap_gb` the host swap figure (only
+non-negative) the detector captured at detection time, each a
+bounded number whose malformed value drops to `null` without
+discarding the recorded class. The row counts only on the `pool`
+event name (the `event`/`type`/`kind` alias set, case-folded like
+the sibling verdict folds) with a `kind` inside the vocabulary; a
+`kind` outside it skips the row entirely, never recorded raw. The
+newest recognized pool row replaces the triple wholesale; the
+receipt competes with nothing, so rows of every other event leave
+it standing. All three stay `null` when no pool row named the job:
+the retained window recorded no throttle detection, which is
+unknown, not "no throttle ever".
 `merged` reads the jobs-ledger outcome dialect the sibling fleet readers
 share: a terminal phase across
 `phase`/`state`/`outcome`/`status`/`result`/`conclusion`, or a `merged` /
@@ -3080,7 +3107,12 @@ item's `jobIds` (feed jobs by their id, bus/mailbox bodies by their
 citations, board tasks by `itemId` with deliveries riding their thread's
 citations, conversations by `thread.jobs`, teammate tasks by `jobId`, seat
 handoffs by `node-job` refs) for `comms inbox --job` to match against,
-absent when no job relation is provable; and
+absent when no job relation is provable; and `comms inbox --contains`
+(`UnifiedInboxFilter.contains`, bounded by `UNIFIED_INBOX_CONTAINS_MAX`)
+keeps only items whose scrubbed `title`/`detail` — the text the row shows,
+never the `act` command links — carries the needle as a case-insensitive
+whitespace-collapsed substring, the same `--contains` contract every other
+bus read applies; and
 `jobAnnotationFromFeed(feed, jobId)` maps one already-read
 `BusWorkFeedReadResult` to the `BusEnvelopeLookupJob` every citing read
 shares — the inbox page, `readBusEnvelopeById`, wake referents and the
