@@ -12,6 +12,7 @@ const localStamp = (minAgo: number) => {
 function healthy(over: FleetDoctorOptions = {}): FleetDoctorOptions {
   return {
     now: () => NOW,
+    readGuardian: async () => ({ name: 'guardian', level: 'ok', reason: 'Healthy.', nextStep: 'No action needed.' }),
     leader: { readEvents: async () => `${localStamp(30)} OPUS-LEADER rc=0\n` },
     heartbeat: { queueStatus: async () => JSON.stringify({ last_tick: at(5) }), supervisorStatuses: async () => [] },
     readJobs: async () => '',
@@ -33,21 +34,21 @@ describe('fleet doctor', () => {
     vi.useFakeTimers();
     try {
       const hang = (): Promise<never> => new Promise(() => {});
-      const pending = runFleetDoctor(healthy({ leader: { readEvents: hang }, readJobs: hang, readWaste: hang,
+      const pending = runFleetDoctor(healthy({ leader: { readEvents: hang }, readJobs: hang, readWaste: hang, readGuardian: hang,
         heartbeat: { queueStatus: hang, supervisorStatuses: async () => [] },
         readLaneStatus: hang, readKeptStatus: hang, worktreeFs: { listDirs: hang, mtimeMs: hang } }));
       await vi.advanceTimersByTimeAsync(2_500);
       const report = await pending;
       expect(report.level).toBe('red');
       expect(report.checks[1]).toEqual({ name: 'heartbeat', level: 'red', reason: 'queue status probe timed out' });
-      expect(report.checks.filter(c => c.reason === 'probe timed out after 2500 ms')).toHaveLength(7);
+      expect(report.checks.filter(c => c.reason === 'probe timed out after 2500 ms')).toHaveLength(8);
       expect(vi.getTimerCount()).toBe(0);
     } finally { vi.useRealTimers(); }
   });
 
   it('prints one ok line per check and exits 0 when healthy', async () => {
     expect(await cmdFleetDoctor([], healthy())).toBe(0);
-    expect(out).toHaveLength(8);
+    expect(out).toHaveLength(9);
     expect(out.every(l => l.startsWith('ok '))).toBe(true);
   });
 
@@ -97,7 +98,7 @@ describe('fleet doctor', () => {
     expect(await cmdFleetDoctor(['--json'], healthy())).toBe(0);
     const parsed = JSON.parse(out[0]!);
     expect(parsed).toMatchObject({ v: 1, level: 'ok' });
-    expect(parsed.checks.map((c: { name: string }) => c.name)).toEqual(['leader', 'heartbeat', 'stuck-prs', 'slow-prs', 'waste', 'kept', 'worktrees', 'lanes']);
+    expect(parsed.checks.map((c: { name: string }) => c.name)).toEqual(['leader', 'heartbeat', 'stuck-prs', 'slow-prs', 'waste', 'kept', 'worktrees', 'guardian', 'lanes']);
   });
 
   it('rejects bad usage with 2 and prints help with 0', async () => {

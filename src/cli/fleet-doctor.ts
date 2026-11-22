@@ -10,12 +10,13 @@ import { findStaleWorktrees, type FleetWorktreeStaleFs } from './fleet-worktree-
 import { summarizeFleetSlowPrs } from './fleet-slow-prs.js';
 import { parseKeptWorktrees, summarizeFleetKept } from './fleet-kept.js';
 import { parseIdleLanes } from '../core/fleet/idle-lanes.js';
+import { readGuardianDoctorCheck } from '../core/fleet/guardian-doctor.js';
 import { readFile, readdir, stat } from 'node:fs/promises';
 
-const USAGE = 'Usage: ashlr fleet doctor [--json]\nRead-only health check: one line per check (leader, heartbeat, stuck-prs, slow-prs, waste, kept, worktrees, lanes) as ok, warn or red, with the reason. Checks run together with a 2.5 second deadline each. Exits 1 when any check is red, 2 on bad usage.';
+const USAGE = 'Usage: ashlr fleet doctor [--json]\nRead-only health check: one line per check (leader, heartbeat, stuck-prs, slow-prs, waste, kept, worktrees, guardian, lanes) as ok, warn or red, with the reason. Checks run together with a 2.5 second deadline each. Exits 1 when any check is red, 2 on bad usage.';
 
 export type DoctorLevel = 'ok' | 'warn' | 'red';
-export interface DoctorCheck { name: string; level: DoctorLevel; reason: string }
+export interface DoctorCheck { name: string; level: DoctorLevel; reason: string; nextStep?: string }
 export interface FleetDoctorReport { v: 1; generatedAt: string; level: DoctorLevel; checks: DoctorCheck[] }
 
 /** Every reader is injectable so tests use fixtures and never touch ~/.ashlr-runs. */
@@ -29,6 +30,7 @@ export interface FleetDoctorOptions {
   worktreeFs?: FleetWorktreeStaleFs;
   worktreeRoot?: string;
   readLaneStatus?: () => Promise<string>;
+  readGuardian?: typeof readGuardianDoctorCheck;
   /** Queue status text for the kept check; defaults to reading queue/status.json. */
   readKeptStatus?: () => Promise<string>;
   now?: () => number;
@@ -157,6 +159,7 @@ export async function runFleetDoctor(o: FleetDoctorOptions = {}): Promise<FleetD
     safe('waste', () => wasteCheck(readWaste, now)),
     safe('kept', () => keptCheck(o, readJobs)),
     safe('worktrees', () => worktreeCheck(o, readJobs, now)),
+    safe('guardian', () => (o.readGuardian ?? readGuardianDoctorCheck)({ now: () => now })),
     safe('lanes', () => lanesCheck(o)),
   ]);
   const level: DoctorLevel = checks.some(c => c.level === 'red') ? 'red' : checks.some(c => c.level === 'warn') ? 'warn' : 'ok';
@@ -168,6 +171,6 @@ export async function cmdFleetDoctor(args: string[], opts: FleetDoctorOptions = 
   if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) { console.error(USAGE); return 2; }
   const report = await runFleetDoctor(opts);
   if (args[0] === '--json') console.log(JSON.stringify(report));
-  else for (const c of report.checks) console.log(`${c.level} ${c.name}: ${c.reason}`);
+  else for (const c of report.checks) console.log(`${c.level} ${c.name}: ${c.reason}${c.nextStep ? ` Next: ${c.nextStep}` : ''}`);
   return report.level === 'red' ? 1 : 0;
 }

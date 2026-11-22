@@ -17,8 +17,12 @@ Read results in plain words:
 - **red**: a reported failure or blocked engine needs fixing.
 
 These are reading guidelines, not shared JSON values. Each verb keeps its own
-fields and thresholds. Doctor currently returns engine readiness rows (`ready`,
-`installed`, `authed`), not an `ok`/`warn`/`red` report. Read the result,
+fields and thresholds. Doctor returns engine readiness rows (`ready`, `installed`,
+`authed`) followed by a `name: "guardian"` row with `level`, `reason` and one
+`nextStep`. Guardian is red when status is over 30 minutes old, its service is
+unloaded, its last exit failed, or the bounded log tail has errors from the last
+24 hours. Missing or uncertain evidence is warn. Follow `nextStep`, then rerun
+doctor. It never starts services or repairs files. Read the result,
 not just the exit code: several report commands exit 0 even with problems.
 
 | Check | Example command | What to read |
