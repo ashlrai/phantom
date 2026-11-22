@@ -41,7 +41,15 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // per-attempt id and `jobId` the logical queue id, so only `jobId` keys an
 // outcome — the attempt id never mints a phantom outcome, and a queue
 // job's launch/finish rows fold together whether one session or a later
-// retry ran them. Finish rows also carry dispatchd's job_usage block
+// retry ran them. Node-runner finish rows (phm-node-runner.v1) carry the
+// same dual-id contract — `job` is the per-claim id (<jobId>:<token>)
+// and `jobId` the logical node-queue id the claim worked — so only
+// `jobId` keys their outcome either, and the runner's recorded verdict
+// folds as node_outcome/node_id/node_pack: the fleet's recorded
+// succeeded/fenced/failed word for the offloaded pack job plus the node
+// and pack that ran it — the node pool's execution evidence reaching
+// router.outcome.v1 instead of stopping at the attempt-scoped id.
+// Finish rows also carry dispatchd's job_usage block
 // (acus — the Devin lane's billed spend, the token breakdown, and the
 // usage_source/usage_missing provenance labels) plus job_diff_metrics'
 // diff_files/diff_lines: the fold keeps each recorded figure
@@ -730,6 +738,35 @@ export interface RouterOutcome {
   pool_mem_free_pct: number | null;
   pool_swap_gb: number | null;
   /**
+   * The node runner's recorded execution verdict for the job — a
+   * `phm-node-runner.v1` finish row's `outcome` word in the producer's
+   * closed three-value vocabulary (src/core/drive/nodes/runner.ts):
+   * `succeeded` (the pack completed and staged its result artifact),
+   * `fenced` (the claim's lease was lost mid-run — renewal failed,
+   * expiry passed or the node was demoted) and `failed` (the pack
+   * errored or its result could not be staged). This is the offloaded
+   * node-pack job's terminal execution verdict — the node pool's
+   * answer to "did the work run" — distinct from every merge and
+   * launch-decision field: node-pack jobs produce result artifacts,
+   * not pull requests, so none of the three words is a terminal merge
+   * phase and `merged` stays null. The row counts only on
+   * the `phm-node-runner.v1` schema with an `outcome` inside the
+   * vocabulary; the newest recognized finish row replaces the triple
+   * wholesale and every other row leaves it alone. `node_id` joins the
+   * row's `node` — the machine that ran the pack — and `node_pack`
+   * its `pack` reference, each only in the bounded identifier shape
+   * the producer's validId alphabet allows (a malformed value drops
+   * to null without discarding the recorded verdict, and is never
+   * recorded raw). Claim and leader fencing tokens on the same rows
+   * are machinery, never outcome evidence, and never join. All three
+   * stay null when no recognized runner row named the job — the
+   * retained window recorded no node execution verdict, which is
+   * unknown, not "never ran on a node".
+   */
+  node_outcome: string | null;
+  node_id: string | null;
+  node_pack: string | null;
+  /**
    * The job's recorded merge-queue evidence — the merge-events.jsonl
    * observations for the job's newest unambiguous canonical PR claim
    * (`owner/repo#n`, the same prKey the authority revert join uses),
@@ -928,6 +965,40 @@ const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
  * just-pulled task's ids like `launch`/`finish` do.
  */
 const SESSION_POOL_SCHEMA = 'fleet.session-pool.v1';
+/**
+ * The node runner's ledger schema (src/core/drive/nodes/runner.ts —
+ * the multi-Mac node pool's pack executor). Its finish rows carry the
+ * same dual-id contract the session pool uses: `job` is the unique
+ * per-claim id (`<jobId>:<token>` — the claim's fencing token makes
+ * every attempt distinct) and `jobId` the logical node-queue id the
+ * claim worked (`ready:<job>:<attempt>`, the node bridge's
+ * routerJobId). Only `jobId` may key an outcome: the standard dialect
+ * would otherwise mint one phantom outcome per claim token and never
+ * attach the finish rows to the queue job they actually ran, and a
+ * retried claim's rows fold into the same outcome like the session
+ * pool's. The row's `outcome` is the runner's closed terminal verdict
+ * vocabulary — `succeeded` (the pack completed and staged its result
+ * artifact), `fenced` (the lease was lost mid-run — renewal failed,
+ * expiry passed or the node was demoted) and `failed` (the pack errored
+ * or its result could not be staged) — an execution verdict, never a
+ * merge phase: node-pack jobs produce result artifacts, not pull
+ * requests, so none of the three words resolves a merge verdict and
+ * `merged` stays null. The producer writes exactly one row shape
+ * (`event: 'finish'`); the fold keys the verdict on the schema plus
+ * the bounded outcome word and lets `node`/`pack` join independently
+ * in the producer's id shape.
+ */
+const NODE_RUNNER_SCHEMA = 'phm-node-runner.v1';
+const NODE_RUNNER_OUTCOMES: ReadonlySet<string> = new Set(['succeeded', 'fenced', 'failed']);
+/**
+ * Bounded identifier shape for the runner's `node` and `pack` fields —
+ * the producer validates both through drive/nodes/state.ts's validId
+ * (`[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,199}`); the fold keeps the same
+ * alphabet at the 63-character bound the file's other id fields use.
+ * A malformed value drops to null rather than skipping the recorded
+ * verdict, and anything outside the shape is never recorded raw.
+ */
+const NODE_RUNNER_ID = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,63}$/;
 
 /**
  * The batch member's recorded end-of-session word — the `task_outcome`
@@ -1375,10 +1446,11 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       malformed++;
     }
   }
-  // fleet.session-pool.v1 rows resolve their job identity differently:
-  // `job` is the per-attempt id and `jobId` the logical queue id, so the
-  // attempt id must never key an outcome (see SESSION_POOL_SCHEMA).
-  const jobId = (r: Row) => r['schema'] === SESSION_POOL_SCHEMA
+  // fleet.session-pool.v1 and phm-node-runner.v1 rows resolve their job
+  // identity differently: `job` is the per-attempt id and `jobId` the
+  // logical queue id, so the attempt id must never key an outcome (see
+  // SESSION_POOL_SCHEMA and NODE_RUNNER_SCHEMA).
+  const jobId = (r: Row) => r['schema'] === SESSION_POOL_SCHEMA || r['schema'] === NODE_RUNNER_SCHEMA
     ? str(r, 'jobId')
     : str(r, 'job', 'job_id', 'jobId', 'id');
   const prUrl = (r: Row) => str(r, 'url', 'pr_url', 'prUrl', 'pr');
@@ -1529,6 +1601,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       handoff_trigger: null, handoff_lane: null, handoff_target: null,
       provider_wall_trigger: null, provider_wall_pattern: null, provider_wall_lane: null,
       pool_kind: null, pool_mem_free_pct: null, pool_swap_gb: null,
+      node_outcome: null, node_id: null, node_pack: null,
       merge_queue: null,
       passk: null,
     };
@@ -1788,6 +1861,29 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
         o.pool_kind = kind;
         o.pool_mem_free_pct = memFreePct(r['mem_free_pct']);
         o.pool_swap_gb = num(r['swap_gb']);
+      }
+    }
+    // The node runner's finish receipt is the fleet's recorded
+    // execution verdict for an offloaded node-pack job — attempt
+    // evidence like the market and pool joins, not a launch or merge
+    // decision, so it competes with nothing: the newest recognized
+    // runner row replaces the triple wholesale and every other row
+    // leaves it alone. The row counts only on the
+    // phm-node-runner.v1 schema with an `outcome` inside the
+    // producer's closed vocabulary — succeeded/fenced/failed; a word
+    // outside it skips the row entirely, never recorded raw — while
+    // `node` and `pack` join independently in the bounded id shape,
+    // so a malformed value drops to null without discarding the
+    // recorded verdict. The row's `job`/`token`/`leaderToken` fields
+    // are claim machinery and never join.
+    if (r['schema'] === NODE_RUNNER_SCHEMA) {
+      const verdict = str(r, 'outcome');
+      if (verdict !== null && NODE_RUNNER_OUTCOMES.has(verdict)) {
+        const node = str(r, 'node');
+        const pack = str(r, 'pack');
+        o.node_outcome = verdict;
+        o.node_id = node !== null && NODE_RUNNER_ID.test(node) ? node : null;
+        o.node_pack = pack !== null && NODE_RUNNER_ID.test(pack) ? pack : null;
       }
     }
     outcomes.set(j, o);
