@@ -301,8 +301,9 @@ Positive allowance with a future reset is `reset-pressure` even when burn pace i
 reads the newest bounded tail of `<runs-dir>/metrics/jobs.jsonl` (default
 `ASHLR_RUNS_DIR`, then `~/.ashlr-runs`; 16 MiB retained) joined with the
 same bound of `<runs-dir>/metrics/api-spend.jsonl`,
-`<runs-dir>/metrics/work-market.jsonl` and
-`<runs-dir>/metrics/empty-tags.jsonl`, and reports one
+`<runs-dir>/metrics/work-market.jsonl`,
+`<runs-dir>/metrics/empty-tags.jsonl` and
+`<runs-dir>/metrics/merge-events.jsonl`, and reports one
 `router.outcome.v1` record per job in that window, newest
 first: merge and revert state, CI first pass, review findings, cost, wall
 time, recorded merge latency (`ttm_s` — the jobs-ledger `ttm_s`/`ttmS`
@@ -508,7 +509,35 @@ spend joins: the report's `empty_tag_state` mirrors the jobs `state`
 vocabulary and `empty_tag_truncated` marks a cut tags tail, in which case
 joined tags cover only the newest bytes; anything but `read` leaves
 every `empty_tag` `null` — unknown, never a guessed cause — while a
-recorded `unknown` tag stays distinct from missing evidence. `cost_usd`
+recorded `unknown` tag stays distinct from missing evidence.
+`merge_queue` is the merge queue's recorded per-PR history for the
+job's standing pull request — the `metrics/merge-events.jsonl`
+observations the host merge observer and `phm fleet merge-retry`
+append (the same ledger `phm fleet merge-latency` reads), joined
+through the job's newest unambiguous canonical github.com pull URL
+claim — the same `owner/repo#n` claim rule the authority revert join
+applies, so a contested or foreign URL never resolves and a PR no
+outcome claims unambiguously joins nothing (merge-events rows never
+create outcomes). `foldMergeEvents` keeps only rows passing the
+merge-latency reader's own validation — a `blocked` row needs a
+recorded in-vocabulary `reason`, a `check_observed` row a recorded
+`conclusion` (with `required` only as a boolean when present), and
+every type outside the state/terminal set a parseable `at` — and
+collapses them per PR to `events` (qualifying row count),
+`blocked_reasons` (distinct recorded blockers in first-seen order),
+`conflicts`, `check_failures` and `required_check_failures` (failed
+check observations split on recorded `required: true`),
+`retries`/`retry_failures` (distinct `at`+`head_sha` pairs, so a
+replayed append counts once), `recuts` and `auto_merge` (the last
+recorded toggle in append order). The evidence is post-publish
+queue-side context — it never replaces the jobs ledger's merge
+verdict and never feeds routing by itself. The read degrades
+independently like the other side ledgers: the report's
+`merge_events_state` mirrors the jobs `state` vocabulary and
+`merge_events_truncated` marks a cut merge-events tail, in which case
+joined evidence covers only the newest bytes; anything but `read`
+leaves every `merge_queue` `null` — unknown, never a guessed queue
+history. `cost_usd`
 is an explicit `cost_usd`/`usd`/`cost` field on a jobs row when one is
 recorded; otherwise it is the sum of api-spend call costs naming the job
 (same `job`/`job_id`/`id` attribution and `cost_usd`/`usd`/`cost`
@@ -633,7 +662,20 @@ and `quota-exhausted` pending-lane verdicts — the producer's other
 closed-vocabulary trigger, which dispatchd writes to the market
 ledger and this fold accepts if it lands in the jobs window; like
 `unknown_market_reasons` it is queue-side context, never a
-reduction of the remainder) — and
+reduction of the remainder) — `unknown_merge_queue` counts the
+unknown-cohort jobs whose standing PR carried recorded
+merge-events observations (joined as `merge_queue` — the merge
+queue's blocked reasons, check failures, conflicts, retries and
+recuts for the job's pull request),
+`unknown_merge_queue_blocked` counts those whose queue blocked the
+PR at least once with `unknown_merge_queue_blocked_reasons` tallying
+the recorded blocker codes (each job contributes each reason once,
+most jobs first), and `unknown_merge_queue_check_failures`,
+`unknown_merge_queue_conflicts`, `unknown_merge_queue_retries` and
+`unknown_merge_queue_recuts` count the same cohort's jobs whose PR
+recorded at least one of each — queue-side diagnostic context for
+what the merge queue was doing with the PR while its merge verdict
+stayed unrecorded, never a reduction of the remainder — and
 `unknown_unresolved` is
 the remainder with no
 recorded failure signal, no requeue word, no standing skip
@@ -646,13 +688,17 @@ not read they are `null`, never zero — and `unknown_empty_tags` is
 absent tag journal means tag coverage is unknown rather than zero;
 `unknown_market_reasons`, `unknown_market_rejected` and
 `unknown_market_rejected_reasons` are `null` the same way whenever the
-market ledger itself was not read (`unknown_noop`/
+market ledger itself was not read, and the `unknown_merge_queue*`
+tallies are `null` whenever the merge-events ledger itself was not
+read (`unknown_noop`/
 `unknown_noop_reasons` and the handoff tallies read jobs-ledger rows
 only, so they are real
 whenever the jobs read succeeded). When the ledger exceeds the retained tail the
 report carries `truncated: true` and every count covers the newest bytes
 only; `market_state`/`market_truncated` report the decision journal's
-health and `empty_tag_state`/`empty_tag_truncated` the tags journal's
+health, `empty_tag_state`/`empty_tag_truncated` the tags journal's and
+`merge_events_state`/`merge_events_truncated` the merge-events
+journal's
 the same way. The report also carries the fleet controller's own recorded
 lane-quality verdicts: `controller_quality_state` reports the health of
 `<runs-dir>/queue/fleet-controller.json` (`'unreported'` when the caller
@@ -720,7 +766,19 @@ session-handoff advisories — `handoff_known` counts the
 known-cohort outcomes carrying a `handoff_trigger` and
 `handoff_triggers` breaks the count down by recorded trigger
 (`rate-limit`, `quota-exhausted`), so a lane whose merges rest partly
-on provider-wall-hit runs shows the recorded mix. The weight math
+on provider-wall-hit runs shows the recorded mix. The same evidence
+block also tallies the merge queue's recorded per-PR history —
+`merge_queue_known` counts the known-cohort outcomes whose standing PR
+carried merge-events observations and `merge_queue_blocked_known`/
+`merge_queue_blocked_reasons` break down those whose queue blocked the
+PR at least once by recorded blocker code (`required_checks`,
+`review`, `conflict`, `queue`, `other` — each job contributes each
+reason once, most jobs first), while `merge_queue_check_failures_known`,
+`merge_queue_conflicts_known`, `merge_queue_retries_known` and
+`merge_queue_recuts_known` count the same cohort's outcomes whose PR
+recorded at least one failed check observation, merge conflict,
+merge-retry request or recut request — post-publish queue-side
+friction behind a lane's merge latency. The weight math
 still moves on
 held-merge rate alone; the evidence is context for whoever applies a
 proposal, and text output renders it as `name=value(known)` suffixes only

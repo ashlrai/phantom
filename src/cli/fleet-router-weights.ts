@@ -1,7 +1,7 @@
 /**
  * `phm fleet router-weights [--runs-dir <absolute dir>] [--json]` — advisory per-work-class router-weight
  * proposals from recorded outcomes (metrics/jobs.jsonl joined with the bounded side ledgers
- * api-spend/work-market/empty-tags). Read-only: never writes weights.json and never
+ * api-spend/work-market/empty-tags/merge-events). Read-only: never writes weights.json and never
  * changes routing. Logic lives in src/core/router/weight-proposals.ts; this file parses argv and renders.
  * Exit: 0 for a bounded read (proposals or an insufficient-evidence refusal); 1 when the ledger is missing,
  * unreadable, not a file or oversized (reported as unavailable, never as an empty success); 2 for usage.
@@ -14,8 +14,9 @@ import { buildRouterWeightProposalReport, type RouterWeightEvidence, type Router
 
 export const FLEET_ROUTER_WEIGHTS_USAGE =
   'Usage: phm fleet router-weights [--runs-dir <absolute dir>] [--json]\n' +
-  'Advisory only. Reads <runs-dir>/metrics/jobs.jsonl (default ASHLR_RUNS_DIR, then ~/.ashlr-runs) plus the ' +
-  'fleet controller\'s recorded lane-quality verdicts in <runs-dir>/queue/fleet-controller.json. ' +
+  'Advisory only. Reads <runs-dir>/metrics/jobs.jsonl (default ASHLR_RUNS_DIR, then ~/.ashlr-runs) plus the bounded ' +
+  'side ledgers (api-spend/work-market/empty-tags/merge-events) and the fleet controller\'s recorded lane-quality ' +
+  'verdicts in <runs-dir>/queue/fleet-controller.json. ' +
   'Proposes bounded weight shifts per work_class/lane from held-merge outcomes (20 known outcomes required, ' +
   'shifts capped at 0.1; merges recorded as reverted never count as held). Writes nothing and changes no ' +
   'live routing. Exit 0 for a read, 1 for an unavailable ledger, 2 for usage.';
@@ -69,6 +70,15 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
       (e.handoff_triggers !== null && e.handoff_triggers.length > 0
         ? `(${e.handoff_triggers.map(r => `${r.trigger}:${r.jobs}`).join(',')})` : ''));
   }
+  if (e.merge_queue_known > 0) {
+    parts.push(`merge_queue=${e.merge_queue_known}` +
+      (e.merge_queue_blocked_reasons !== null && e.merge_queue_blocked_reasons.length > 0
+        ? `(blocked:${e.merge_queue_blocked_known}[${e.merge_queue_blocked_reasons.map(r => `${r.reason}:${r.jobs}`).join(',')}],` +
+          `check_failures:${e.merge_queue_check_failures_known},conflicts:${e.merge_queue_conflicts_known},` +
+          `retries:${e.merge_queue_retries_known},recuts:${e.merge_queue_recuts_known})`
+        : `(check_failures:${e.merge_queue_check_failures_known},conflicts:${e.merge_queue_conflicts_known},` +
+          `retries:${e.merge_queue_retries_known},recuts:${e.merge_queue_recuts_known})`));
+  }
   return parts.length === 0 ? '' : ` evidence ${parts.join(' ')}`;
 }
 
@@ -88,7 +98,7 @@ function qualityReceiptLine(r: ControllerQualityReceipt): string {
 }
 
 function proposalLines(report: RouterWeightProposalReport): string[] {
-  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} empty_tags=${report.empty_tag_state} controller_quality=${report.controller_quality_state} truncated=${report.truncated} as_of=${report.as_of} ` +
+  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} empty_tags=${report.empty_tag_state} merge_events=${report.merge_events_state} controller_quality=${report.controller_quality_state} truncated=${report.truncated} as_of=${report.as_of} ` +
     'advisory-only: not applied to routing or weights.json';
   if (report.status === 'unavailable') {
     return [header, `unavailable: ledger state=${report.ledger.state}; no proposals were computed`, `ledger ${report.ledger.path}`];
@@ -128,6 +138,17 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
         : '') +
       (report.unknown_handoff_triggers !== null && report.unknown_handoff_triggers.length > 0
         ? ` handoff_triggers=${report.unknown_handoff_triggers.map(c => `${c.trigger}:${c.jobs}`).join(',')}`
+        : '') +
+      (report.unknown_merge_queue !== null && report.unknown_merge_queue > 0
+        ? ` merge_queue=${report.unknown_merge_queue}` +
+          (report.unknown_merge_queue_blocked !== null && report.unknown_merge_queue_blocked > 0
+            ? `(blocked:${report.unknown_merge_queue_blocked}` +
+              (report.unknown_merge_queue_blocked_reasons !== null && report.unknown_merge_queue_blocked_reasons.length > 0
+                ? `[${report.unknown_merge_queue_blocked_reasons.map(c => `${c.reason}:${c.jobs}`).join(',')}]` : '') +
+              `,check_failures:${report.unknown_merge_queue_check_failures},conflicts:${report.unknown_merge_queue_conflicts},` +
+              `retries:${report.unknown_merge_queue_retries},recuts:${report.unknown_merge_queue_recuts})`
+            : `(check_failures:${report.unknown_merge_queue_check_failures},conflicts:${report.unknown_merge_queue_conflicts},` +
+              `retries:${report.unknown_merge_queue_retries},recuts:${report.unknown_merge_queue_recuts})`)
         : ''),
   ];
   const rows = report.proposals.map(p => {
@@ -155,6 +176,11 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
       ? [`empty-tag coverage: empty-tags.jsonl ${report.empty_tag_state}; no empty finish causes joined`]
       : report.empty_tag_truncated
         ? ['empty-tag coverage: retained tail only; empty_tag joins cover the newest bytes']
+        : []),
+    ...(report.merge_events_state !== 'read'
+      ? [`merge-event coverage: merge-events.jsonl ${report.merge_events_state}; no merge-queue evidence joined`]
+      : report.merge_events_truncated
+        ? ['merge-event coverage: retained tail only; merge_queue joins cover the newest bytes']
         : []),
     ...(report.controller_quality_state !== 'read' && report.controller_quality_state !== 'unreported'
       ? [`controller-quality coverage: fleet-controller.json ${report.controller_quality_state}; no lane-quality verdicts joined`]

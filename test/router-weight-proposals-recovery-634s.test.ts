@@ -44,6 +44,13 @@ const marketPath = (): string => join(runs, 'metrics', 'work-market.jsonl');
 const writeMarket = (rows: object[]): void => writeFileSync(marketPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
 const emptyTagsPath = (): string => join(runs, 'metrics', 'empty-tags.jsonl');
 const writeEmptyTags = (rows: object[]): void => writeFileSync(emptyTagsPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+const mergeEventsPath = (): string => join(runs, 'metrics', 'merge-events.jsonl');
+const writeMergeEvents = (rows: object[]): void => writeFileSync(mergeEventsPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+
+/** A merge-events.jsonl observation row in the fleet merge-latency shape (repo#pr keyed). */
+const mergeEvent = (pr: number, type: string, extra: Record<string, unknown> = {}): object => ({
+  repo: 'ashlrai/phantom', pr, type, at: '2026-11-21T00:00:00Z', ...extra,
+});
 
 /** A work-market.v1 route_decision row in the dispatcher's own shape. */
 const marketDecision = (job: string, workClass: string, ts: number): object => ({
@@ -364,6 +371,13 @@ describe('outcome-quality evidence', () => {
       market_rejected_reasons: null,
       handoff_known: 0,
       handoff_triggers: null,
+      merge_queue_known: 0,
+      merge_queue_blocked_known: 0,
+      merge_queue_blocked_reasons: null,
+      merge_queue_check_failures_known: 0,
+      merge_queue_conflicts_known: 0,
+      merge_queue_retries_known: 0,
+      merge_queue_recuts_known: 0,
     });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).toContain('evidence ci_first_pass=0.8(10)');
@@ -524,6 +538,9 @@ describe('outcome-quality evidence', () => {
       lane_overrides_known: 0, lane_override_reasons: null,
       market_rejected_known: 0, market_rejected_reasons: null,
       handoff_known: 0, handoff_triggers: null,
+      merge_queue_known: 0, merge_queue_blocked_known: 0, merge_queue_blocked_reasons: null,
+      merge_queue_check_failures_known: 0, merge_queue_conflicts_known: 0,
+      merge_queue_retries_known: 0, merge_queue_recuts_known: 0,
     });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).not.toContain('ci_first_pass=');
@@ -1299,6 +1316,136 @@ describe('session-handoff advisory evidence', () => {
     expect(missing.report).toMatchObject({
       unknown_handoffs: null, unknown_handoff_triggers: null, unknown_unresolved: null,
     });
+  });
+});
+
+describe('merge-queue evidence', () => {
+  it('tallies merge-events observations per known group as advisory evidence', async () => {
+    // Twenty merged jobs each claim a distinct canonical PR; four of those
+    // PRs carry recorded merge-queue observations. The evidence is
+    // post-publish queue-side context — the held-merge weight math never
+    // reads it.
+    const jobs = Array.from({ length: 20 }, (_, i) => `synthetic-mq-k-${i}`);
+    writeLedger(jobs.map((job, i) =>
+      event(job, 'alpha', 'code', 'MERGED', { pr_url: `https://github.com/ashlrai/phantom/pull/${100 + i}` })));
+    writeMergeEvents([
+      // PR 100: a full friction history — two distinct blockers, an
+      // unrelated and a required check failure, a conflict, a retry
+      // pair, a recut and the merge terminal.
+      mergeEvent(100, 'opened'), mergeEvent(100, 'queued'),
+      mergeEvent(100, 'blocked', { reason: 'required_checks' }),
+      mergeEvent(100, 'blocked', { reason: 'review' }),
+      mergeEvent(100, 'check_observed', { conclusion: 'failure', required: false }),
+      mergeEvent(100, 'check_observed', { conclusion: 'failure', required: true }),
+      mergeEvent(100, 'conflict'),
+      mergeEvent(100, 'retry_requested', { head_sha: 'abc123' }),
+      mergeEvent(100, 'retry_failed', { head_sha: 'abc123' }),
+      mergeEvent(100, 'recut_requested', { head_sha: 'abc123' }),
+      mergeEvent(100, 'merged'),
+      // PR 101: a repeated blocker reason counts once per job, and the
+      // last auto-merge toggle in append order stands.
+      mergeEvent(101, 'blocked', { reason: 'queue' }),
+      mergeEvent(101, 'blocked', { reason: 'queue' }),
+      mergeEvent(101, 'auto_merge_enabled'),
+      mergeEvent(101, 'auto_merge_disabled'),
+      // PR 102: a bare observation joins coverage with zero friction.
+      mergeEvent(102, 'opened'),
+      // PR 103: passing checks only — events counted, no friction tallies.
+      mergeEvent(103, 'check_observed', { conclusion: 'success', required: true }),
+      mergeEvent(103, 'eligible'),
+      // Rows that fail the merge-latency validation never join.
+      mergeEvent(103, 'blocked'),                                    // missing reason
+      mergeEvent(103, 'blocked', { reason: 'sideways' }),            // out-of-vocabulary reason
+      mergeEvent(103, 'check_observed', { conclusion: 'green' }),    // bad conclusion
+      { repo: 'ashlrai/phantom', pr: 103, type: 'queued' },          // missing at
+      { repo: 'not a repo', pr: 103, type: 'queued', at: '2026-11-21T00:00:00Z' },
+      // A PR no outcome claims unambiguously joins nothing.
+      mergeEvent(999, 'blocked', { reason: 'conflict' }),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    const p = report.proposals[0];
+    expect(p).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 20, proposed_weight: 0.6 });
+    expect(p.evidence).toMatchObject({
+      merge_queue_known: 4,
+      merge_queue_blocked_known: 2,
+      merge_queue_blocked_reasons: [
+        { reason: 'queue', jobs: 1 },
+        { reason: 'required_checks', jobs: 1 },
+        { reason: 'review', jobs: 1 },
+      ],
+      merge_queue_check_failures_known: 1,
+      merge_queue_conflicts_known: 1,
+      merge_queue_retries_known: 1,
+      merge_queue_recuts_known: 1,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('merge_events=read');
+    expect(out).toContain('merge_queue=4(blocked:2[queue:1,required_checks:1,review:1],check_failures:1,conflicts:1,retries:1,recuts:1)');
+  });
+
+  it('tallies unknown-cohort merge-queue diagnostics without reducing unresolved', async () => {
+    // Merge-queue observations are queue-side context like the market
+    // verdicts: they explain what the merge queue was doing with the PR
+    // while the merge verdict stayed unrecorded — never a resolution.
+    writeLedger([
+      ...merged(20),
+      event('synthetic-mq-u-0', 'alpha', 'code', 'VERIFIED', { pr_url: 'https://github.com/ashlrai/phantom/pull/200' }),
+      event('synthetic-mq-u-1', 'alpha', 'code', 'VERIFIED', { pr_url: 'https://github.com/ashlrai/phantom/pull/201' }),
+      // No canonical PR claim: merge-events rows can never join it.
+      event('synthetic-mq-u-2', 'alpha', 'code', 'VERIFIED'),
+      // A claim on a PR with no recorded events stays unjoined.
+      event('synthetic-mq-u-3', 'alpha', 'code', 'VERIFIED', { pr_url: 'https://github.com/ashlrai/phantom/pull/202' }),
+    ]);
+    writeMergeEvents([
+      mergeEvent(200, 'blocked', { reason: 'conflict' }),
+      mergeEvent(200, 'check_observed', { conclusion: 'failure', required: true }),
+      mergeEvent(200, 'retry_requested'),
+      mergeEvent(201, 'opened'),
+      mergeEvent(201, 'recut_requested'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 4, unclassified_outcomes: 0,
+      merge_events_state: 'read', merge_events_truncated: false,
+      unknown_merge_queue: 2,
+      unknown_merge_queue_blocked: 1,
+      unknown_merge_queue_blocked_reasons: [{ reason: 'conflict', jobs: 1 }],
+      unknown_merge_queue_check_failures: 1,
+      unknown_merge_queue_conflicts: 0,
+      unknown_merge_queue_retries: 1,
+      unknown_merge_queue_recuts: 1,
+      // Every unresolved job stays unresolved however the queue treated
+      // its PR — merge_queue never feeds the remainder.
+      unknown_unresolved: 4,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('merge_queue=2(blocked:1[conflict:1],check_failures:1,conflicts:0,retries:1,recuts:1)');
+    expect(out).toContain('unresolved=4');
+  });
+
+  it('reports merge-queue tallies null when the merge-events ledger was not read', async () => {
+    // No merge-events.jsonl: queue coverage is unknown, so the tallies are
+    // null — never an empty list claiming no merge friction was recorded.
+    writeLedger([
+      ...merged(20),
+      event('synthetic-mq-u-0', 'alpha', 'code', 'VERIFIED', { pr_url: 'https://github.com/ashlrai/phantom/pull/300' }),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      status: 'proposed', merge_events_state: 'missing', merge_events_truncated: false,
+      unknown_merge_queue: null, unknown_merge_queue_blocked: null,
+      unknown_merge_queue_blocked_reasons: null,
+      unknown_merge_queue_check_failures: null, unknown_merge_queue_conflicts: null,
+      unknown_merge_queue_retries: null, unknown_merge_queue_recuts: null,
+    });
+    expect(report.proposals[0].evidence).toMatchObject({ merge_queue_known: 0, merge_queue_blocked_reasons: null });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('merge_events=missing');
+    expect(out).toContain('merge-event coverage: merge-events.jsonl missing');
+    expect(out).not.toContain('merge_queue=');
   });
 });
 

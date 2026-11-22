@@ -96,6 +96,19 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // an attempt, not a launch decision, so it competes with nothing: the
 // newest recognized advisory row replaces the triple wholesale and
 // every other event leaves it alone.
+// `merge_queue` joins a fifth bounded ledger, <runs>/metrics/merge-events.jsonl:
+// the fleet merge-latency observation journal (repo+pr keyed rows the
+// host merge observer and `phm fleet merge-retry` append — opened,
+// queued, eligible, blocked, conflict, check_observed, retry_*,
+// recut_requested, auto_merge_* and the merged/closed terminals). The
+// join runs through each job's newest unambiguous canonical PR claim —
+// the same owner/repo#n prKey the authority revert join uses — so a
+// job's recorded merge-queue friction (blocked reasons, conflicts,
+// failed checks, dropped auto-merges, recuts, retries) reaches
+// router.outcome.v1 instead of stopping at the merge-latency report.
+// Rows for PRs no jobs outcome claims unambiguously join nothing, and
+// a missing or cut merge-events tail leaves every merge_queue null —
+// unknown, never a guessed queue history.
 
 /** Newest-bytes bound retained from the append-only jobs ledger. */
 export const ROUTER_OUTCOME_LEDGER_LIMIT = 16 * 1024 * 1024;
@@ -103,6 +116,7 @@ export const ROUTER_OUTCOME_LEDGER_RELATIVE = join('metrics', 'jobs.jsonl');
 export const ROUTER_SPEND_LEDGER_RELATIVE = join('metrics', 'api-spend.jsonl');
 export const ROUTER_MARKET_LEDGER_RELATIVE = join('metrics', 'work-market.jsonl');
 export const ROUTER_EMPTY_TAGS_LEDGER_RELATIVE = join('metrics', 'empty-tags.jsonl');
+export const ROUTER_MERGE_EVENTS_LEDGER_RELATIVE = join('metrics', 'merge-events.jsonl');
 
 export interface RouterOutcome {
   schema: 'router.outcome.v1';
@@ -611,6 +625,20 @@ export interface RouterOutcome {
   handoff_trigger: string | null;
   handoff_lane: string | null;
   handoff_target: string | null;
+  /**
+   * The job's recorded merge-queue evidence — the merge-events.jsonl
+   * observations for the job's newest unambiguous canonical PR claim
+   * (`owner/repo#n`, the same prKey the authority revert join uses),
+   * joined by readRouterOutcomes under `merge_events_state`. See
+   * MergeQueueEvidence for the field semantics. Null when the merge
+   * ledger was not read, the job never claimed a canonical github.com
+   * pull URL unambiguously, or no merge-events row named that PR —
+   * unknown, never a guessed queue history. Earlier PRs the job claimed
+   * (a superseded recut's, say) are not joined: the standing claim is
+   * the newest recorded one, the same newest-wins rule the merge
+   * verdict follows.
+   */
+  merge_queue: MergeQueueEvidence | null;
   /** The lane+model's pass^k (passPowK) from the latest eval.lane-scores.v1 projection; null when unknown. */
   passk: number | null;
 }
@@ -1153,6 +1181,15 @@ export interface RouterOutcomeFoldOptions {
    * foreign claims never mark. Absent means no authority join.
    */
   revertedPrKeys?: ReadonlySet<string>;
+  /**
+   * `owner/repo#n` (lowercase repo) → recorded merge-queue evidence, e.g.
+   * `foldMergeEvents` over metrics/merge-events.jsonl. The fold joins each
+   * outcome's newest unambiguous canonical PR claim (the same claim rule
+   * `revertedPrKeys` applies) to its summary as `merge_queue`; a job with
+   * no unambiguous claim or no recorded events keeps null. Absent means no
+   * merge-events join — every merge_queue stays null.
+   */
+  mergeEvents?: ReadonlyMap<string, MergeQueueEvidence>;
 }
 
 /** Folds JSONL text into one outcome per job. Explicit fields only; nothing inferred. */
@@ -1284,6 +1321,12 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     if (waitMs >= 0) publishWaitS.set(j, waitMs / 1000);
   }
 
+  // Each job's standing PR identity for side-ledger joins: the newest row
+  // (ledger order) whose canonical github.com pull URL this job claims
+  // unambiguously — the same claim rule the authority revert join applies,
+  // so a contested or foreign URL never resolves to a prKey.
+  const jobPrKeys = new Map<string, string>();
+
   const outcomes = new Map<string, RouterOutcome>();
   const mergedAt = new Map<string, number>();
   let unattached = 0;
@@ -1293,6 +1336,10 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     const j = jobId(r) ?? (u ? urlToJob.get(u) : undefined);
     if (!j) { unattached++; continue; }
     if (j.startsWith(BATCH_SESSION_PREFIX)) { sessionRows++; continue; }
+    if (u !== null && urlToJob.get(u) === j) {
+      const prKey = pullRequestKey(u);
+      if (prKey !== null) jobPrKeys.set(j, prKey);
+    }
     const o: RouterOutcome = outcomes.get(j) ?? {
       schema: 'router.outcome.v1', job_id: j, lane: null, model: null, tier: null, work_class: null,
       lane_hint: null, lane_override: null,
@@ -1311,6 +1358,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
       market_rejected: null,
       handoff_trigger: null, handoff_lane: null, handoff_target: null,
+      merge_queue: null,
       passk: null,
     };
     o.lane = str(r, 'lane', 'pool', 'arm') ?? o.lane;
@@ -1537,6 +1585,15 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
         const workClass = opts.workClassFor(o.job_id);
         if (typeof workClass === 'string' && workClass.trim()) o.work_class = workClass.trim();
       }
+    }
+  }
+  if (opts.mergeEvents !== undefined) {
+    for (const o of outcomes.values()) {
+      const prKey = jobPrKeys.get(o.job_id);
+      if (prKey === undefined) continue;
+      const evidence = opts.mergeEvents.get(prKey);
+      if (evidence === undefined) continue;
+      o.merge_queue = { ...evidence, blocked_reasons: [...evidence.blocked_reasons] };
     }
   }
   return {
@@ -1809,6 +1866,193 @@ export function foldEmptyTags(text: string): Map<string, string> {
   return tags;
 }
 
+/**
+ * One PR's recorded merge-queue evidence — the merge-events.jsonl
+ * observations `foldMergeEvents` collapses per `owner/repo#n` key. Every
+ * figure counts recorded rows under the same validation the fleet
+ * merge-latency reader applies; a PR with no qualifying rows has no map
+ * entry at all, so a joined outcome's merge_queue always carries at
+ * least one recorded event.
+ */
+export interface MergeQueueEvidence {
+  /** Recorded merge-events rows naming the PR. */
+  events: number;
+  /**
+   * Distinct recorded `blocked` reasons in first-seen order — the merge
+   * queue's own blocker vocabulary (`required_checks`, `review`,
+   * `conflict`, `queue`, `other`). A `blocked` row without a recorded
+   * in-vocabulary reason is not a merge observation at all and never
+   * counts.
+   */
+  blocked_reasons: string[];
+  /** Recorded `conflict` rows. */
+  conflicts: number;
+  /**
+   * Recorded `check_observed` rows whose conclusion is `failure` —
+   * required and unrelated check failures alike; `required` absent or
+   * false still counts here.
+   */
+  check_failures: number;
+  /** Of those, rows recorded `required: true`. */
+  required_check_failures: number;
+  /**
+   * Distinct recorded `retry_requested` rows — deduplicated by
+   * `at`+`head_sha` exactly like the merge-latency reader's retry
+   * verdict, so a replayed append counts once.
+   */
+  retries: number;
+  /** Distinct recorded `retry_failed` rows under the same dedupe. */
+  retry_failures: number;
+  /** Recorded `recut_requested` rows — the fleet asked for a recut of this PR. */
+  recuts: number;
+  /**
+   * The ledger's last recorded auto-merge toggle in append order —
+   * `enabled`/`disabled`; null when no toggle row was recorded. Untimed
+   * toggle rows still count: they are state evidence, and append order
+   * is the ledger's own chronology.
+   */
+  auto_merge: 'enabled' | 'disabled' | null;
+}
+
+/**
+ * The merge-events ledger's closed event vocabulary — the same set the
+ * fleet merge-latency reader accepts (src/cli/fleet-merge-latency.ts
+ * MergeEventType). The router keeps its own copy so a producer-side
+ * rename can never leak an unbounded event name into
+ * router.outcome.v1.
+ */
+const MERGE_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'opened', 'queued', 'checks_passed', 'conflict', 'recut_requested',
+  'retry_requested', 'retry_failed', 'merged', 'closed',
+  'auto_merge_enabled', 'auto_merge_disabled', 'eligible', 'blocked',
+  'check_observed',
+]);
+
+/**
+ * The `blocked` row's closed reason vocabulary — the merge-queue blocker
+ * set (src/core/fleet/merge-queue-status.ts MergeQueueBlocker), kept as a
+ * local copy for the same reason the event vocabulary is.
+ */
+const MERGE_BLOCKER_REASONS: ReadonlySet<string> = new Set([
+  'queue', 'required_checks', 'conflict', 'review', 'other',
+]);
+
+/**
+ * Merge-event types the ledger contract allows without a parseable `at`
+ * — the auto-merge toggles and the merged/closed terminals are state
+ * evidence; every other type needs its timestamp, the same rule
+ * fleet-merge-latency's parseEvent applies.
+ */
+const MERGE_UNTIMED_TYPES: ReadonlySet<string> = new Set([
+  'auto_merge_enabled', 'auto_merge_disabled', 'merged', 'closed',
+]);
+
+/**
+ * Folds merge-events.jsonl text into per-PR merge-queue evidence keyed
+ * `owner/repo#n` (lowercase repo — the same prKey shape
+ * pullRequestKey and authorityRevertedPrKeys produce, so the outcome
+ * join needs no second canonicalization). Only rows passing the same
+ * validation the merge-latency reader applies count: a `blocked` row
+ * needs a recorded in-vocabulary `reason`, a `check_observed` row a
+ * recorded `conclusion` (and a boolean `required` when present), every
+ * non-state/terminal type a parseable `at`, and `repo`/`pr`/`type` the
+ * recorded shapes — anything else is skipped, never guessed. `blocked`
+ * reasons join distinct in first-seen order; retry rows dedupe by
+ * `at`+`head_sha` like the sibling's retry verdict; `auto_merge` is the
+ * last recorded toggle in append order. Rows for PRs no jobs outcome
+ * claims unambiguously join nothing — the map itself never creates
+ * outcomes.
+ */
+export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
+  interface Acc {
+    events: number;
+    blocked: string[];
+    blockedSeen: Set<string>;
+    conflicts: number;
+    checkFailures: number;
+    requiredCheckFailures: number;
+    retryKeys: Set<string>;
+    retryFailedKeys: Set<string>;
+    recuts: number;
+    autoMerge: 'enabled' | 'disabled' | null;
+  }
+  const prs = new Map<string, Acc>();
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const row = value as Row;
+    const repo = row['repo'];
+    const pr = row['pr'];
+    const type = row['type'];
+    if (typeof repo !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(repo) ||
+        typeof pr !== 'number' || !Number.isSafeInteger(pr) || pr < 1 ||
+        typeof type !== 'string' || !MERGE_EVENT_TYPES.has(type)) continue;
+    let reason: string | null = null;
+    if (type === 'blocked') {
+      const r = row['reason'];
+      if (typeof r !== 'string' || !MERGE_BLOCKER_REASONS.has(r)) continue;
+      reason = r;
+    }
+    let conclusion: string | null = null;
+    let required = false;
+    if (type === 'check_observed') {
+      const c = row['conclusion'];
+      if (c !== 'success' && c !== 'failure' && c !== 'pending') continue;
+      conclusion = c;
+      const req = row['required'];
+      if (req !== undefined && typeof req !== 'boolean') continue;
+      required = req === true;
+    }
+    const at = row['at'];
+    const atOk = typeof at === 'string' && Number.isFinite(Date.parse(at));
+    if (!atOk && !MERGE_UNTIMED_TYPES.has(type)) continue;
+    const key = `${repo.toLowerCase()}#${pr}`;
+    const acc = prs.get(key) ?? {
+      events: 0, blocked: [], blockedSeen: new Set<string>(), conflicts: 0,
+      checkFailures: 0, requiredCheckFailures: 0,
+      retryKeys: new Set<string>(), retryFailedKeys: new Set<string>(),
+      recuts: 0, autoMerge: null,
+    };
+    acc.events++;
+    if (reason !== null && !acc.blockedSeen.has(reason)) {
+      acc.blockedSeen.add(reason);
+      acc.blocked.push(reason);
+    }
+    if (type === 'conflict') acc.conflicts++;
+    if (conclusion === 'failure') {
+      acc.checkFailures++;
+      if (required) acc.requiredCheckFailures++;
+    }
+    if (type === 'retry_requested' || type === 'retry_failed') {
+      const head = typeof row['head_sha'] === 'string' ? row['head_sha'].toLowerCase() : '';
+      const dedupe = `${at}|${head}`;
+      (type === 'retry_requested' ? acc.retryKeys : acc.retryFailedKeys).add(dedupe);
+    }
+    if (type === 'recut_requested') acc.recuts++;
+    if (type === 'auto_merge_enabled' || type === 'auto_merge_disabled') {
+      acc.autoMerge = type === 'auto_merge_enabled' ? 'enabled' : 'disabled';
+    }
+    prs.set(key, acc);
+  }
+  return new Map([...prs].map(([key, a]) => [key, {
+    events: a.events,
+    blocked_reasons: a.blocked,
+    conflicts: a.conflicts,
+    check_failures: a.checkFailures,
+    required_check_failures: a.requiredCheckFailures,
+    retries: a.retryKeys.size,
+    retry_failures: a.retryFailedKeys.size,
+    recuts: a.recuts,
+    auto_merge: a.autoMerge,
+  }]));
+}
+
 export interface RouterOutcomeRead extends RouterOutcomeFold {
   /** 'read' is the only state with trustworthy outcomes; everything else is an unknown ledger. */
   state: LedgerReadState;
@@ -1848,6 +2092,17 @@ export interface RouterOutcomeRead extends RouterOutcomeFold {
    * tags cover only the newest bytes, so older empties read untagged.
    */
   empty_tag_truncated: boolean;
+  /**
+   * Health of the merge-events.jsonl tail behind merge_queue joins.
+   * Anything but 'read' means no merge-queue evidence was joined —
+   * outcomes keep merge_queue null, never a guessed queue history.
+   */
+  merge_events_state: Exclude<LedgerReadState, 'too-large'>;
+  /**
+   * True when the merge-events ledger exceeded the retained tail: joined
+   * evidence covers only the newest bytes, so older PRs read unqueued.
+   */
+  merge_events_truncated: boolean;
   /**
    * True when the ledger exceeded the retained tail: the fold, and so every
    * count on this read, covers only the newest ROUTER_OUTCOME_LEDGER_LIMIT
@@ -1893,8 +2148,9 @@ async function liveAuthorityEvidence(): Promise<readonly RouterOutcomeEvidenceRo
 /**
  * Reads the newest ROUTER_OUTCOME_LEDGER_LIMIT bytes of
  * <runsDir>/metrics/jobs.jsonl plus the same bound of
- * <runsDir>/metrics/api-spend.jsonl, <runsDir>/metrics/work-market.jsonl
- * and <runsDir>/metrics/empty-tags.jsonl.
+ * <runsDir>/metrics/api-spend.jsonl, <runsDir>/metrics/work-market.jsonl,
+ * <runsDir>/metrics/empty-tags.jsonl and
+ * <runsDir>/metrics/merge-events.jsonl.
  * `runsDir` defaults to ASHLR_RUNS_DIR,
  * then ~/.ashlr-runs, and must be absolute when given. `ashlarDir` is the
  * ASHLR root holding eval/passk/lane-scores.json (default ASHLR_HOME, then
@@ -1913,7 +2169,13 @@ async function liveAuthorityEvidence(): Promise<readonly RouterOutcomeEvidenceRo
  * market_rejected verdict fields under the same market_state health
  * and newest-decision rule
  * work_class follows — decision rows naming jobs outside the jobs
- * window never create outcomes. `reverted` additionally joins the
+ * window never create outcomes. The merge-events tail folds through
+ * `foldMergeEvents` into per-PR `owner/repo#n` evidence and joins each
+ * outcome's `merge_queue` through the job's newest unambiguous
+ * canonical PR claim under the same claim rule the authority revert
+ * join applies; merge_events_state reports the ledger's health and
+ * merge_events_truncated marks a cut tail — anything but 'read' leaves
+ * every merge_queue null. `reverted` additionally joins the
  * authority ledger's verified
  * evidence index (`authorityRevertedPrKeys`): a fleet merge the ledger
  * records as reverted marks its outcome through the job's unambiguous PR
@@ -1947,11 +2209,15 @@ export async function readRouterOutcomes(opts: {
   const emptyTagRead = await readLedgerTail(join(runsDir, ROUTER_EMPTY_TAGS_LEDGER_RELATIVE));
   const emptyTagState = emptyTagRead.state;
   const emptyTagTruncated = emptyTagRead.state === 'read' ? emptyTagRead.truncated : false;
+  const mergeEventsRead = await readLedgerTail(join(runsDir, ROUTER_MERGE_EVENTS_LEDGER_RELATIVE));
+  const mergeEventsState = mergeEventsRead.state;
+  const mergeEventsTruncated = mergeEventsRead.state === 'read' ? mergeEventsRead.truncated : false;
   if (read.state !== 'read') {
     return { ...empty, state: read.state, path, eval_state: laneScores.state,
       spend_state: spendState, spend_truncated: spendTruncated,
       market_state: marketState, market_truncated: marketTruncated,
-      empty_tag_state: emptyTagState, empty_tag_truncated: emptyTagTruncated, truncated: false };
+      empty_tag_state: emptyTagState, empty_tag_truncated: emptyTagTruncated,
+      merge_events_state: mergeEventsState, merge_events_truncated: mergeEventsTruncated, truncated: false };
   }
   const workClasses = marketRead.state === 'read'
     ? foldRouteDecisionWorkClasses(marketRead.text)
@@ -1963,6 +2229,7 @@ export async function readRouterOutcomes(opts: {
     passkFor: laneScoreLookup(laneScores),
     workClassFor: (jobId) => workClasses.get(jobId) ?? null,
     revertedPrKeys: authorityEvidence === null ? undefined : authorityRevertedPrKeys(authorityEvidence),
+    mergeEvents: mergeEventsRead.state === 'read' ? foldMergeEvents(mergeEventsRead.text) : undefined,
   });
   if (spendRead.state === 'read') {
     const costs = foldSpendCosts(spendRead.text);
@@ -1996,5 +2263,6 @@ export async function readRouterOutcomes(opts: {
     spend_state: spendState, spend_truncated: spendTruncated,
     market_state: marketState, market_truncated: marketTruncated,
     empty_tag_state: emptyTagState, empty_tag_truncated: emptyTagTruncated,
+    merge_events_state: mergeEventsState, merge_events_truncated: mergeEventsTruncated,
     truncated: read.truncated };
 }
