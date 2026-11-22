@@ -27,8 +27,18 @@ phm docs --agent --json
 - [Documentation map](docs/README.md): canonical guides by task
 - [Full docs index](docs/llms.txt): every docs page, generated and checked for completeness
 - [Agent operations](docs/AGENT-OPERATIONS.md): cold-start checklist for building and operating Phantom from source
-- [Contributing](CONTRIBUTING.md): conventions, tests and contracts
 - [Website index](site/llms.txt): landing page, use-case guides and comparison
+
+## Contribute
+
+Outside contributors and their agents follow the same path as the fleet: one focused branch, local checks run once, a pull request from a fork, and `Merge Gate` as the one required hosted check.
+
+- [Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md): first pull request from a fork. Clone with `ashlrai/phantom` as `origin`, `npm ci`, make one change, run `node scripts/verify-changed.mjs` once, push to your fork and open the pull request against `master`; a maintainer or fleet agent arms auto-merge
+- [Which tests the fast gate runs](docs/CONTRIBUTE-WITH-AN-AGENT.md#which-tests-the-fast-gate-runs): how `.github/scripts/ci-fast-select.mjs` picks tests from the changed paths; the full suites run on the scheduled `master` run
+- [Protected paths](docs/CONTRIBUTE-WITH-AN-AGENT.md#protected-paths-wait-for-the-owner): diffs under `.github/CODEOWNERS` paths wait for the owner even when `Merge Gate` passes
+- [Contributing](CONTRIBUTING.md): full conventions, tests, contracts and the dependency boundary
+- [verify-changed reference](docs/verify-changed.md): what the local pre-PR check runs, step by step
+- [FAQ](docs/FAQ.md) and [Glossary](docs/GLOSSARY.md): common questions and Phantom terms
 
 ## Ecosystem
 
