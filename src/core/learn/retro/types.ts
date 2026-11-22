@@ -19,6 +19,7 @@
  */
 
 import type { PlaybookRef } from '../../playbooks/types.js';
+import type { TrajectoryRealizedOutcome, TrajectoryTerminalOutcome } from '../../autonomy/trajectory-records.js';
 
 export const VERSE_LESSONS_PATH = '/api/verse/learning/lessons';
 export const VERSE_LESSONS_KNOWLEDGE_PATH = `${VERSE_LESSONS_PATH}/knowledge`;
@@ -177,6 +178,21 @@ export interface RetroV1 {
 
 export type KnowledgeStatus = 'pending' | 'approved' | 'rejected';
 
+/**
+ * Descriptive outcome tallies for one note's served fleet trajectories.
+ * `runs` counts distinct trajectories the note was injected into (the
+ * retained knowledge-runs window); `joined` counts how many of those
+ * resolved to a trajectory record inside the read window. `outcomes` and
+ * `realized` are sparse exact counts over joined runs — present only once a
+ * note reaches the outcome sample floor, absent otherwise (unknown, never 0).
+ */
+export interface KnowledgeNoteOutcomes {
+  runs: number;
+  joined: number;
+  outcomes?: Partial<Record<TrajectoryTerminalOutcome, number>>;
+  realized?: Partial<Record<TrajectoryRealizedOutcome, number>>;
+}
+
 export interface KnowledgeNoteV1 {
   v: 1;
   id: string;
@@ -193,6 +209,14 @@ export interface KnowledgeNoteV1 {
   /** Times this note was injected into a prompt. */
   hits: number;
   lastHitAt: string | null;
+  /**
+   * How the fleet trajectories this note was injected into ended — computed
+   * at read time from the knowledge-runs ledger joined to trajectory records,
+   * never stored. Absent = not measured (no correlated injections, the
+   * trajectory evidence was degraded, or the note is below the outcome
+   * sample floor); never zero-filled.
+   */
+  outcomes?: KnowledgeNoteOutcomes;
   /** Retros that suggested the same note again while it was pending/approved. */
   seen: number;
   /** Fleet task that proposes it for AGENTS.md; null until requested. */

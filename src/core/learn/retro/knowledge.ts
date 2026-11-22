@@ -41,6 +41,7 @@ import {
   type RetroSummary,
   type RetroV1,
 } from './types.js';
+import { readKnowledgeNoteOutcomes } from './knowledge-outcomes.js';
 
 // ---------------------------------------------------------------------------
 // Queue
@@ -219,13 +220,20 @@ export function recurringCauses(retros: readonly RetroV1[]): LessonsCauseRow[] {
 
 export async function buildLessonsState(nowMs: number, windowDays = 30): Promise<LessonsStateV1> {
   const since = new Date(nowMs - windowDays * 86_400_000).toISOString();
-  const [all, notes, hits, sweep] = await Promise.all([listRetros(), readKnowledge(), readKnowledgeHits(), readSweepState()]);
+  const [all, notes, hits, sweep, noteOutcomes] = await Promise.all([
+    listRetros(), readKnowledge(), readKnowledgeHits(), readSweepState(),
+    // Trajectory outcome tallies for injected notes; null = evidence degraded,
+    // in which case every note's `outcomes` stays absent (unknown, never 0).
+    readKnowledgeNoteOutcomes().catch(() => null),
+  ]);
   const inWindow = all.filter((r) => r.endedAt >= since);
   const endKinds: LessonsStateV1['endKinds'] = {};
   for (const r of inWindow) endKinds[r.endKind] = (endKinds[r.endKind] ?? 0) + 1;
   const withHits = notes.map((n) => {
     const h = hits.get(n.id);
-    return h ? { ...n, hits: n.hits + h.hits, lastHitAt: h.lastHitAt ?? n.lastHitAt } : n;
+    const o = noteOutcomes?.get(n.id);
+    const base = h ? { ...n, hits: n.hits + h.hits, lastHitAt: h.lastHitAt ?? n.lastHitAt } : n;
+    return o ? { ...base, outcomes: o } : base;
   });
   const approved = withHits.filter((n) => n.status === 'approved')
     .sort((a, b) => b.hits - a.hits || (b.decidedAt ?? '').localeCompare(a.decidedAt ?? ''));
