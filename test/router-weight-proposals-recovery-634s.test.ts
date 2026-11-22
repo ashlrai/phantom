@@ -691,7 +691,7 @@ describe('unknown-outcome resolution', () => {
       ],
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('unknown resolution: empty=3 nonzero_exit=5 skipped=0 deferred=0 unresolved=4');
+    expect(out).toContain('unknown resolution: empty=3 nonzero_exit=5 skipped=0 deferred=0 noop=0 unresolved=4');
     expect(out).toContain('failure_classes=quota:3,authentication:1');
   });
 
@@ -838,6 +838,7 @@ describe('unknown-outcome resolution', () => {
       unknown_empty_classes: null, unknown_task_outcomes: null,
       unknown_skipped: null, unknown_skip_reasons: null, unknown_empty_tags: null,
       unknown_deferred: null, unknown_defer_reasons: null,
+      unknown_noop: null, unknown_noop_reasons: null,
       unknown_unresolved: null,
     });
   });
@@ -940,7 +941,7 @@ describe('unknown-outcome resolution', () => {
       unknown_unresolved: 4,
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('skipped=3 deferred=0 unresolved=4');
+    expect(out).toContain('skipped=3 deferred=0 noop=0 unresolved=4');
     expect(out).toContain('skip_reasons=prompt_empty_same_base_24h:2,code:13:1');
   });
 
@@ -1028,8 +1029,75 @@ describe('unknown-outcome resolution', () => {
       unknown_unresolved: 3,
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('deferred=4 unresolved=3');
+    expect(out).toContain('deferred=4 noop=0 unresolved=3');
     expect(out).toContain('defer_reasons=duplicate-request:2,files_and_tests_exist:1,recut-in-flight:1');
+  });
+
+  it('counts standing terminal no-op verdicts inside the unknown cohort and exempts them from unresolved', async () => {
+    // dispatchd's admission/recut/repair-freshness verdicts and restock's
+    // precheck retirements write {event:'outcome', state:'DONE-NOOP'}
+    // rows — the fleet's recorded "no publishable work needed" decision.
+    // The verdict explains the missing merge verdict the same way a
+    // decline or deferral does; a later launch-decision receipt
+    // supersedes it back into the unresolved remainder.
+    const noopRow = (job: string, extra: Record<string, unknown> = {}): object =>
+      ({ job, lane: 'alpha', work_class: 'code', event: 'outcome', state: 'DONE-NOOP', ...extra });
+    writeLedger([
+      ...merged(20),
+      // Three standing no-op verdicts across the recorded reason labels.
+      noopRow('synthetic-noop-merged', { reason: 'already-merged', launched: false }),
+      noopRow('synthetic-noop-target-1', { reason: 'target_pr_merged' }),
+      noopRow('synthetic-noop-target-2', { reason: 'target_pr_closed' }),
+      // A verdict row with no bounded reason tallies as unlabeled; the
+      // defensive empty-family spellings mint the same verdict.
+      noopRow('synthetic-noop-unlabeled'),
+      { job: 'synthetic-noop-empty', lane: 'alpha', work_class: 'code', phase: 'EMPTY', reason: 'target_pr_conflicts_resolved' },
+      // Superseded verdicts rejoin the ordinary remainder: a dispatch, a
+      // skip-gate decline and a keep-queued receipt are each the fleet's
+      // newer recorded decision.
+      noopRow('synthetic-noop-dispatched', { reason: 'already-merged' }),
+      { job: 'synthetic-noop-dispatched', event: 'claim', lane: 'alpha', work_class: 'code' },
+      noopRow('synthetic-noop-declined', { reason: 'already-merged' }),
+      { job: 'synthetic-noop-declined', event: 'skipped_empty', lane: 'alpha', work_class: 'code',
+        reason: 'prompt_empty_same_base_24h' },
+      noopRow('synthetic-noop-deferred', { reason: 'already-merged' }),
+      { job: 'synthetic-noop-deferred', event: 'dispatch_deferred', lane: 'alpha', work_class: 'code',
+        reason: 'duplicate-request' },
+      // A no-op verdict resolving a standing decline/deferral counts once,
+      // under noop — the cleared receipts mint no second explanation.
+      { job: 'synthetic-noop-resolved', event: 'skipped_empty', lane: 'alpha', work_class: 'code',
+        reason: 'prompt_empty_same_base_24h' },
+      noopRow('synthetic-noop-resolved', { reason: 'recut-already-merged', repeatOf: 'RQ-PHX-1' }),
+      // A task_outcome 'skipped' word resolves to SKIPPED — outside the
+      // empty family — and mints no verdict; an ordinary in-flight job
+      // joins the same remainder.
+      { job: 'synthetic-noop-member', event: 'task_outcome', batch: 'RQ-BATCH-syn9', lane: 'alpha',
+        work_class: 'code', outcome: 'skipped' },
+      event('synthetic-noop-open', 'alpha', 'code', 'VERIFIED'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 11, unclassified_outcomes: 0,
+      unknown_noop: 6,
+      unknown_noop_reasons: [
+        { reason: 'already-merged', jobs: 1 },
+        { reason: 'recut-already-merged', jobs: 1 },
+        { reason: 'target_pr_closed', jobs: 1 },
+        { reason: 'target_pr_conflicts_resolved', jobs: 1 },
+        { reason: 'target_pr_merged', jobs: 1 },
+        { reason: 'unlabeled', jobs: 1 },
+      ],
+      // The superseded verdicts are ordinary unresolved/declined rows;
+      // the dispatched job, the skipped member word and the open job are
+      // the three genuinely unexplained rows.
+      unknown_skipped: 1,
+      unknown_deferred: 1,
+      unknown_unresolved: 3,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('skipped=1 deferred=1 noop=6 unresolved=3');
+    expect(out).toContain('noop_reasons=already-merged:1,recut-already-merged:1,target_pr_closed:1,target_pr_conflicts_resolved:1,target_pr_merged:1,unlabeled:1');
   });
 
   it('tallies the market\'s recorded route_decision reasons inside the unknown cohort', async () => {

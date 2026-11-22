@@ -39,7 +39,7 @@ describe('unified inbox linkedin source', () => {
 
   it('a throwing seam reports unavailable and the other sources still list', async () => {
     const inbox = await readUnifiedInbox({ runsDir, busRoot, now: () => NOW, readNeeds: needs, readLinkedIn: () => { throw new Error('boom'); } });
-    expect(inbox.sources.linkedin).toEqual({ state: 'unavailable', pending: 0 });
+    expect(inbox.sources.linkedin).toEqual({ state: 'unavailable', pending: null });
     expect(inbox.items.map(i => i.id)).toContain('needs-you:nm-1');
   });
 });

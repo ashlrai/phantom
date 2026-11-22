@@ -315,10 +315,14 @@ export interface UnifiedInboxItem extends AttentionItem {
 
 export interface UnifiedInboxSourceReport {
   state: UnifiedInboxSourceState;
-  /** Pending items contributed by this source (before the global cap). Never
-   * narrowed by a view `filter`: it is the store-health report, so a filtered
-   * read cannot hide a busy or degraded source behind an empty match set. */
-  pending: number;
+  /** Pending items the source found (before the global cap), never narrowed
+   * by a view `filter`: it is the store-health report, so a filtered read
+   * cannot hide a busy or degraded source behind an empty match set. Null
+   * when `state` is 'unavailable' — an unreadable store's pending total is
+   * unknown, never a fabricated 0; 'missing' is a verified-empty store, so
+   * its real total is 0, and 'degraded' still counts the items found while
+   * the state flags the partial read. */
+  pending: number | null;
 }
 
 /**
@@ -439,6 +443,12 @@ export interface UnifiedInboxOptions {
 const cap = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 const oneLine = (text: string, max: number): string => cap(scrubSecrets(text).replace(/\s+/g, ' ').trim(), max);
 const iso = (ms: number): string => new Date(ms).toISOString();
+/** The per-source `pending` value: the items the source found, or null when
+ * the store could not be read at all — an 'unavailable' source's true pending
+ * total is unknown, never a fabricated 0 ('missing' is a verified-empty
+ * store, so its real total is 0; 'degraded' counts what it found). */
+const pendingCount = (state: UnifiedInboxSourceState, count: number): number | null =>
+  state === 'unavailable' ? null : count;
 /** `jobIds` only when the citation set is non-empty — absent means the item names no job, never a guess. */
 const jobIdsField = (ids: Iterable<string>): { jobIds?: readonly string[] } => {
   const sorted = [...new Set(ids)].sort();
@@ -471,7 +481,7 @@ function needsYouItems(read: NonNullable<UnifiedInboxOptions['readNeeds']>, runs
         : ['phm needs-you resolve --auto', `phm fleet needs-resolve ${item.id} --reply "<reply>"`],
     };
   });
-  return { report: { state, pending: items.length }, items };
+  return { report: { state, pending: pendingCount(state, items.length) }, items };
 }
 
 /**
@@ -493,7 +503,7 @@ function needsYouItems(read: NonNullable<UnifiedInboxOptions['readNeeds']>, runs
 function needsYouDeliveryItems(read: NonNullable<UnifiedInboxOptions['readNeedsDeliveries']>, runsDir: string | undefined): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   let result: NeedsMasonReplyDeliveryReport;
   try { result = read({ runsDir }); } catch { result = { status: 'unavailable' }; }
-  if (result.status !== 'ok') return { report: { state: 'unavailable', pending: 0 }, items: [] };
+  if (result.status !== 'ok') return { report: { state: 'unavailable', pending: null }, items: [] };
   const items = [
     ...result.pending.map((entry): Omit<UnifiedInboxItem, 'priority'> => ({
       id: `needs-you-delivery:${entry.itemId}`,
@@ -596,7 +606,7 @@ function teammateTaskItems(read: NonNullable<UnifiedInboxOptions['readTeammateTa
   let result: TeammateTaskLedgerRead;
   try { result = read({ runsDir }); } catch { result = { state: 'unavailable', tasks: [] }; }
   if (result.state === 'missing' || result.state === 'unavailable') {
-    return { report: { state: result.state, pending: 0 }, items: [], coveredResultRowids: new Set() };
+    return { report: { state: result.state, pending: pendingCount(result.state, 0) }, items: [], coveredResultRowids: new Set() };
   }
   const nowMs = now();
   const coveredResultRowids = new Set<number>();
@@ -644,7 +654,7 @@ function ownerThreadItems(read: NonNullable<UnifiedInboxOptions['readOwnerAwaiti
   const dir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
   let result: OwnerAwaitingReplies;
   try { result = read({ runsDir: dir }); } catch { result = { status: 'unavailable' }; }
-  if (result.status !== 'ok') return { report: { state: 'unavailable', pending: 0 }, items: [] };
+  if (result.status !== 'ok') return { report: { state: 'unavailable', pending: null }, items: [] };
   const items = result.items.map((reply): Omit<UnifiedInboxItem, 'priority'> => ({
     id: `owner-thread:${reply.id}`,
     source: 'owner-thread',
@@ -682,7 +692,7 @@ function ownerDeliveryItems(read: NonNullable<UnifiedInboxOptions['readOwnerUnde
   const dir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
   let result: OwnerUndeliveredReplies;
   try { result = read({ runsDir: dir }); } catch { result = { status: 'unavailable' }; }
-  if (result.status !== 'ok') return { report: { state: 'unavailable', pending: 0 }, items: [] };
+  if (result.status !== 'ok') return { report: { state: 'unavailable', pending: null }, items: [] };
   const items = result.items.map((reply): Omit<UnifiedInboxItem, 'priority'> => {
     const act = ['phm comms thread'];
     // The resend must reuse the recorded text, the reply's own key and the
@@ -768,7 +778,7 @@ async function draftItems(
       })),
   ];
   const merged: UnifiedInboxSourceState = state === 'unavailable' ? 'unavailable' : commsFailed ? 'degraded' : 'healthy';
-  return { report: { state: merged, pending: items.length }, items };
+  return { report: { state: merged, pending: pendingCount(merged, items.length) }, items };
 }
 
 /**
@@ -1021,7 +1031,7 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
   let inspection: BusInboxInspection;
   try { inspection = (options.inspectBus ?? inspectBusInbox)(bus); }
   catch { inspection = { source: 'unavailable', retainedCount: null, retainedBytes: null, maxMessages: BUS_INBOX_MAX_MESSAGES, maxBytes: BUS_INBOX_MAX_BYTES, liveCount: null, expiredCount: null }; }
-  if (inspection.source !== 'available') return { report: { state: inspection.source === 'missing' ? 'missing' : 'unavailable', pending: 0 }, items: [], covered };
+  if (inspection.source !== 'available') return { report: { state: inspection.source === 'missing' ? 'missing' : 'unavailable', pending: inspection.source === 'missing' ? 0 : null }, items: [], covered };
 
   const now = (options.now ?? Date.now)();
   const claims = (options.readClaims ?? inspectBusWorkClaims)(options.busRoot);
@@ -1149,7 +1159,7 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
     else if (item.id.startsWith('bus-handoff:')) covered.envelopes.add(item.id.slice('bus-handoff:'.length));
     else if (item.id.startsWith('bus:')) covered.envelopes.add(item.id.slice('bus:'.length));
   }
-  return { report: { state, pending: items.length }, items, covered };
+  return { report: { state, pending: pendingCount(state, items.length) }, items, covered };
 }
 
 /** Pending mail rows one mailbox read returns — the store's own message ceiling, so every pending row lists. */
@@ -1190,8 +1200,8 @@ function readMailboxPending(options: { busRoot?: string; now?: () => number }): 
 function mailboxItems(read: NonNullable<UnifiedInboxOptions['readMailbox']>, options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   let result: MailboxPendingRead;
   try { result = read({ busRoot: options.busRoot, now: options.now }); }
-  catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
-  if (result.source === 'unavailable') return { report: { state: 'unavailable', pending: 0 }, items: [] };
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.source === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
   if (result.source === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
   const items = result.messages.map((message): Omit<UnifiedInboxItem, 'priority'> => {
     const { envelope } = message;
@@ -1265,8 +1275,8 @@ const BOARD_ID = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$/;
 function boardItems(read: NonNullable<UnifiedInboxOptions['readBoard']>, options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   let result: BoardPendingRead;
   try { result = read({ busRoot: options.busRoot, now: options.now }); }
-  catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
-  if (result.source === 'unavailable') return { report: { state: 'unavailable', pending: 0 }, items: [] };
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.source === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
   if (result.source === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
   const { pending } = result;
   // The board's own `--job` citation: a thread stays in scope when it carries
@@ -1363,9 +1373,9 @@ function conversationItems(read: NonNullable<UnifiedInboxOptions['readConversati
   covered: BusItemCoverage): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   let result: AgentConversations;
   try { result = read({}, { root: options.busRoot, now }); }
-  catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
   if (result.source === 'unavailable' || result.conversations === null) {
-    return { report: { state: 'unavailable', pending: 0 }, items: [] };
+    return { report: { state: 'unavailable', pending: null }, items: [] };
   }
   if (result.source === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
   const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
@@ -1441,7 +1451,7 @@ const SEAT_DETAIL_REFS = 4;
 async function seatItems(read: NonNullable<UnifiedInboxOptions['readSeatHandoffs']>,
   now: () => number): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
   let plan: SeatHandoffsPlan;
-  try { plan = await read({ now }); } catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
+  try { plan = await read({ now }); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
   if (plan.seats.length === 0) return { report: { state: 'missing', pending: 0 }, items: [] };
   const items = plan.seats
     .filter(seat => seat.eligible && seat.handoffs.length > 0)
@@ -1503,7 +1513,7 @@ function gmailItems(read: typeof readGmailArchivePlanLatest, runsDir: string | u
 
 function linkedInItems(read: typeof readLinkedInDrop, runsDir: string | undefined, now: () => number): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   let result: ReturnType<typeof readLinkedInDrop>;
-  try { result = read({ runsDir, now }); } catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
+  try { result = read({ runsDir, now }); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
   const items = result.messages.map((m: LinkedInMessage): Omit<UnifiedInboxItem, 'priority'> => ({
     id: `linkedin:${m.id}`,
     source: 'linkedin',
@@ -1543,8 +1553,8 @@ const PROPOSAL_ID = /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}$/;
  */
 function requestItems(read: typeof readCommsRequests, now: () => number, ttlOverride?: number): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   let result: CommsRequestsRead;
-  try { result = read(); } catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
-  if (result.status === 'unavailable') return { report: { state: 'unavailable', pending: 0 }, items: [] };
+  try { result = read(); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.status === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
   if (result.status === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
   // A malformed store row must never take the whole inbox down.
   const candidates = result.requests.filter(r =>
@@ -1592,8 +1602,8 @@ function requestItems(read: typeof readCommsRequests, now: () => number, ttlOver
  */
 function teamApprovalItems(read: NonNullable<UnifiedInboxOptions['readTeamApprovals']>): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   let section: ReturnType<typeof readTeamApprovals>;
-  try { section = read(DEFAULT_TEAM); } catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
-  if (section.state !== 'ok') return { report: { state: 'unavailable', pending: 0 }, items: [] };
+  try { section = read(DEFAULT_TEAM); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (section.state !== 'ok') return { report: { state: 'unavailable', pending: null }, items: [] };
   const items = section.items.map((approval: TeamApprovalItem): Omit<UnifiedInboxItem, 'priority'> => ({
     id: `team-approvals:${approval.id}`,
     source: 'team-approvals',
@@ -1626,7 +1636,7 @@ function teamApprovalItems(read: NonNullable<UnifiedInboxOptions['readTeamApprov
  */
 function proposalItems(read: NonNullable<UnifiedInboxOptions['readInboxProposals']>): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   let section: ReturnType<typeof readPendingProposals>;
-  try { section = read(); } catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
+  try { section = read(); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
   const items = section.items.map((proposal: ProposalApprovalItem): Omit<UnifiedInboxItem, 'priority'> => {
     const idOk = PROPOSAL_ID.test(proposal.id);
     const act = idOk
@@ -1652,7 +1662,7 @@ function proposalItems(read: NonNullable<UnifiedInboxOptions['readInboxProposals
   const state: UnifiedInboxSourceState = section.state !== 'ok'
     ? (items.length > 0 ? 'degraded' : 'unavailable')
     : section.truncated ? 'degraded' : 'healthy';
-  return { report: { state, pending: items.length }, items };
+  return { report: { state, pending: pendingCount(state, items.length) }, items };
 }
 
 /**
@@ -1684,7 +1694,7 @@ function slackItems(read: NonNullable<UnifiedInboxOptions['readSlackJournal']>,
   let journal: SlackJournalRead;
   try {
     journal = read({ ...(options.runsDir !== undefined ? { runsDir: options.runsDir } : {}), limit: 4096 });
-  } catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
+  } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
   const state: UnifiedInboxSourceState = journal.state === 'ok' ? 'healthy'
     : journal.state === 'missing' ? 'missing' : 'degraded';
   const nowMs = now();
@@ -1775,7 +1785,7 @@ async function emailOutboxItems(read: NonNullable<UnifiedInboxOptions['readEmail
   runsDir: string | undefined): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
   const dir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
   let result: EmailOutboxSourceRead;
-  try { result = await read({ runsDir: dir }); } catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
+  try { result = await read({ runsDir: dir }); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
   const items = result.entries.filter(entry => entry.state === 'stuck').map((entry): Omit<UnifiedInboxItem, 'priority'> => ({
     // Artifact names are filenames and can carry secret-shaped text; the id stays opaque.
     id: `email-outbox:${createHash('sha256').update(entry.name).digest('hex').slice(0, 16)}`,
@@ -1789,7 +1799,7 @@ async function emailOutboxItems(read: NonNullable<UnifiedInboxOptions['readEmail
     expiresAt: null,
     act: ['phm fleet email-outbox', 'phm comms diagnose --json'],
   }));
-  return { report: { state: result.state, pending: items.length }, items };
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
 }
 
 /**

@@ -35,7 +35,8 @@ recorded appearance time reaches the cutoff (15m, 2h, 1d, epoch ms or an
 ISO time; an item whose store keeps no timestamp never matches, so unknown
 never counts as new); the dimensions AND together, and the
 per-source counts still report every
-store's real pending total, so a filtered view never hides a busy or degraded
+store's real pending total — null when a source could not be read, never a
+fabricated 0 — so a filtered view never hides a busy or degraded
 source. --json prints the same view as JSON.
 read and post read and write Mason's local inbox file. Output is JSON; post returns the receiver acknowledgement.
 --receipt-only on post returns only the acknowledgement status, channel and durable deduplication key, or a failure reason; it excludes message text and private paths.
@@ -163,7 +164,7 @@ function printUnified(report: UnifiedInbox): void {
     for (const act of item.act) console.log(`         → ${act}`);
   }
   for (const [name, s] of degraded) console.log(`note: ${name} source ${s.state}`);
-  const counts = Object.entries(report.sources).map(([name, s]) => `${name} ${s.pending}`).join(' · ');
+  const counts = Object.entries(report.sources).map(([name, s]) => `${name} ${s.pending === null ? 'unknown' : s.pending}`).join(' · ');
   const filter = report.filter;
   const match = filter === undefined ? '' : ` matching ${describeUnifiedFilter(filter)}`;
   // Per-source counts are the unfiltered store reports; under a filter they

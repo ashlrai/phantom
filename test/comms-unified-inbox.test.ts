@@ -856,10 +856,10 @@ describe('agent conversation threads in the unified inbox', () => {
     expect(degraded.sources.conversations).toEqual({ state: 'degraded', pending: 0 });
     const unavailable = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
       readConversations: () => convStub({ source: 'unavailable', conversations: null, matched: null, waiting: null }) });
-    expect(unavailable.sources.conversations).toEqual({ state: 'unavailable', pending: 0 });
+    expect(unavailable.sources.conversations).toEqual({ state: 'unavailable', pending: null });
     const throwing = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
       readConversations: () => { throw new Error('boom'); } });
-    expect(throwing.sources.conversations).toEqual({ state: 'unavailable', pending: 0 });
+    expect(throwing.sources.conversations).toEqual({ state: 'unavailable', pending: null });
   });
 });
 
@@ -925,7 +925,7 @@ describe('bot seat handoffs in the unified inbox', () => {
     const throwing = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
       readSeatHandoffs: () => { throw new Error('boom'); },
       readRequests: () => ({ status: 'missing', requests: [] }) });
-    expect(throwing.sources.seats).toEqual({ state: 'unavailable', pending: 0 });
+    expect(throwing.sources.seats).toEqual({ state: 'unavailable', pending: null });
     writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
     const mixed = await readSeats([seat()]);
     expect(mixed.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
@@ -987,14 +987,14 @@ describe('owner-thread awaiting replies in the unified inbox', () => {
     writeFileSync(join(runsDir, 'leader', 'owner-thread.json'), 'not json', { mode: 0o600 });
     writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
     const inbox = await read();
-    expect(inbox.sources['owner-thread']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(inbox.sources['owner-thread']).toEqual({ state: 'unavailable', pending: null });
     expect(inbox.items.filter(i => i.source === 'owner-thread')).toHaveLength(0);
     expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
   });
 
   it('degrades on a throwing seam and builds items from a stubbed read', async () => {
     const throwing = await readUnifiedInbox({ runsDir, busRoot, now: () => now, readOwnerAwaiting: () => { throw new Error('boom'); } });
-    expect(throwing.sources['owner-thread']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(throwing.sources['owner-thread']).toEqual({ state: 'unavailable', pending: null });
     const stubbed = await readUnifiedInbox({
       runsDir, busRoot, now: () => now,
       readOwnerAwaiting: () => ({ status: 'ok', items: [{
@@ -1067,14 +1067,14 @@ describe('owner-delivery undelivered replies in the unified inbox', () => {
     writeFileSync(join(runsDir, 'leader', 'owner-thread.json'), 'not json', { mode: 0o600 });
     writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
     const inbox = await read();
-    expect(inbox.sources['owner-delivery']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(inbox.sources['owner-delivery']).toEqual({ state: 'unavailable', pending: null });
     expect(inbox.items.filter(i => i.source === 'owner-delivery')).toHaveLength(0);
     expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
   });
 
   it('degrades on a throwing seam and builds items from a stubbed read', async () => {
     const throwing = await readUnifiedInbox({ runsDir, busRoot, now: () => now, readOwnerUndelivered: () => { throw new Error('boom'); } });
-    expect(throwing.sources['owner-delivery']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(throwing.sources['owner-delivery']).toEqual({ state: 'unavailable', pending: null });
     const stubbed = await readUnifiedInbox({
       runsDir, busRoot, now: () => now,
       readOwnerUndelivered: () => ({ status: 'ok', items: [
@@ -1157,14 +1157,14 @@ describe('needs-you reply deliveries in the unified inbox', () => {
     writeFileSync(join(runsDir, 'needs-mason-delivery'), 'not a dir');
     writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
     const inbox = await read();
-    expect(inbox.sources['needs-you-delivery']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(inbox.sources['needs-you-delivery']).toEqual({ state: 'unavailable', pending: null });
     expect(inbox.items.filter(i => i.source === 'needs-you-delivery')).toHaveLength(0);
     expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
   });
 
   it('degrades on a throwing seam and builds items from a stubbed read', async () => {
     const throwing = await readUnifiedInbox({ runsDir, busRoot, now: () => now, readNeedsDeliveries: () => { throw new Error('boom'); } });
-    expect(throwing.sources['needs-you-delivery']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(throwing.sources['needs-you-delivery']).toEqual({ state: 'unavailable', pending: null });
     const stubbed = await readUnifiedInbox({
       runsDir, busRoot, now: () => now,
       readNeedsDeliveries: () => ({ status: 'ok',
@@ -1252,10 +1252,10 @@ describe('readUnifiedInbox comms requests', () => {
     const missing = await readReq(() => ({ status: 'missing', requests: [] }));
     expect(missing.sources.requests).toEqual({ state: 'missing', pending: 0 });
     const unavailable = await readReq(() => ({ status: 'unavailable', requests: [] }));
-    expect(unavailable.sources.requests).toEqual({ state: 'unavailable', pending: 0 });
+    expect(unavailable.sources.requests).toEqual({ state: 'unavailable', pending: null });
     expect(unavailable.items.filter(i => i.source === 'requests')).toHaveLength(0);
     const throwing = await readReq(() => { throw new Error('boom'); });
-    expect(throwing.sources.requests).toEqual({ state: 'unavailable', pending: 0 });
+    expect(throwing.sources.requests).toEqual({ state: 'unavailable', pending: null });
   });
 
   it('treats an available-but-empty queue as healthy zero, not missing', async () => {
@@ -1347,7 +1347,7 @@ describe('readUnifiedInbox email outbox', () => {
     const file = join(root, 'outbox-is-a-file');
     writeFileSync(file, 'x', { mode: 0o600 });
     await writeEmailDropConfig(runsDir, config({ outboxDir: file }));
-    expect((await read()).sources['email-outbox']).toEqual({ state: 'unavailable', pending: 0 });
+    expect((await read()).sources['email-outbox']).toEqual({ state: 'unavailable', pending: null });
   });
 
   it('builds items from an injected read and reports a throwing seam as unavailable while other sources list', async () => {
@@ -1369,7 +1369,7 @@ describe('readUnifiedInbox email outbox', () => {
       runsDir, busRoot, now: () => now, ...pinned,
       readEmailOutbox: async () => { throw new Error('boom'); },
     });
-    expect(throwing.sources['email-outbox']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(throwing.sources['email-outbox']).toEqual({ state: 'unavailable', pending: null });
     expect(throwing.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
   });
 
@@ -1445,14 +1445,14 @@ describe('readUnifiedInbox team approvals', () => {
       runsDir, busRoot, now: () => now, ...pinned,
       readTeamApprovals: (): Section<TeamApprovalItem> => ({ state: 'unavailable', reason: 'boom', items: [] }),
     });
-    expect(refused.sources['team-approvals']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(refused.sources['team-approvals']).toEqual({ state: 'unavailable', pending: null });
     expect(refused.items.filter(i => i.source === 'team-approvals')).toHaveLength(0);
     expect(refused.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
     const throwing = await readUnifiedInbox({
       runsDir, busRoot, now: () => now, ...pinned,
       readTeamApprovals: () => { throw new Error('boom'); },
     });
-    expect(throwing.sources['team-approvals']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(throwing.sources['team-approvals']).toEqual({ state: 'unavailable', pending: null });
     expect(throwing.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
   });
 });
@@ -1531,14 +1531,14 @@ describe('readUnifiedInbox inbox proposals', () => {
       runsDir, busRoot, now: () => now, ...pinned,
       readInboxProposals: () => section([], { state: 'unavailable' }),
     });
-    expect(refused.sources.proposals).toEqual({ state: 'unavailable', pending: 0 });
+    expect(refused.sources.proposals).toEqual({ state: 'unavailable', pending: null });
     expect(refused.items.filter(i => i.source === 'proposals')).toHaveLength(0);
     expect(refused.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
     const throwing = await readUnifiedInbox({
       runsDir, busRoot, now: () => now, ...pinned,
       readInboxProposals: () => { throw new Error('boom'); },
     });
-    expect(throwing.sources.proposals).toEqual({ state: 'unavailable', pending: 0 });
+    expect(throwing.sources.proposals).toEqual({ state: 'unavailable', pending: null });
     expect(throwing.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
   });
 });
@@ -1633,7 +1633,7 @@ describe('readUnifiedInbox slack requests', () => {
       runsDir, busRoot, now: () => now, ...pinned,
       readSlackJournal: () => { throw new Error('boom'); },
     });
-    expect(inbox.sources.slack).toEqual({ state: 'unavailable', pending: 0 });
+    expect(inbox.sources.slack).toEqual({ state: 'unavailable', pending: null });
     expect(inbox.items.filter(i => i.source === 'slack')).toHaveLength(0);
     expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
   });
@@ -1727,10 +1727,10 @@ describe('readUnifiedInbox teammate tasks', () => {
     expect((await read()).sources['teammate-tasks']).toEqual({ state: 'healthy', pending: 0 });
     writeFileSync(join(ledgerDir(), 'teammate-tasks.json'), '{oops', { mode: 0o600 });
     const broken = await read();
-    expect(broken.sources['teammate-tasks']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(broken.sources['teammate-tasks']).toEqual({ state: 'unavailable', pending: null });
     expect(broken.items.filter(i => i.source === 'teammate-tasks')).toHaveLength(0);
     writeLedger([{ jobId: 'bad' }]);
-    expect((await read()).sources['teammate-tasks']).toEqual({ state: 'unavailable', pending: 0 });
+    expect((await read()).sources['teammate-tasks']).toEqual({ state: 'unavailable', pending: null });
   });
 
   it('keeps a replied task RESULT text under the task item, not the texts source', async () => {
@@ -1752,7 +1752,7 @@ describe('readUnifiedInbox teammate tasks', () => {
       runsDir, busRoot, now: () => now, ...pinned,
       readTeammateTasks: () => { throw new Error('boom'); },
     });
-    expect(throwing.sources['teammate-tasks']).toEqual({ state: 'unavailable', pending: 0 });
+    expect(throwing.sources['teammate-tasks']).toEqual({ state: 'unavailable', pending: null });
     expect(throwing.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
     const degraded = await readUnifiedInbox({
       runsDir, busRoot, now: () => now, ...pinned,
@@ -1829,10 +1829,10 @@ describe('legacy phm bus mailbox in the unified inbox', () => {
     const missing = await readWith(() => ({ source: 'missing', messages: [], matched: 0 }));
     expect(missing.sources.mailbox).toEqual({ state: 'missing', pending: 0 });
     const unavailable = await readWith(() => ({ source: 'unavailable', messages: [], matched: null }));
-    expect(unavailable.sources.mailbox).toEqual({ state: 'unavailable', pending: 0 });
+    expect(unavailable.sources.mailbox).toEqual({ state: 'unavailable', pending: null });
     expect(unavailable.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual(['bus:mailbox-neighbor']);
     const throwing = await readWith(() => { throw new Error('boom'); });
-    expect(throwing.sources.mailbox).toEqual({ state: 'unavailable', pending: 0 });
+    expect(throwing.sources.mailbox).toEqual({ state: 'unavailable', pending: null });
     const truncated = await readWith(() => ({ source: 'available', messages: [message('mb-1')], matched: 7 }));
     expect(truncated.sources.mailbox).toEqual({ state: 'degraded', pending: 1 });
     expect(truncated.items.filter(i => i.source === 'mailbox').map(i => i.id)).toEqual(['mailbox:mb-1']);
@@ -1969,14 +1969,14 @@ describe('shared task board in the unified inbox', () => {
     postWork('board-neighbor');
     writeFileSync(join(busRoot, 'state.json'), 'not json', { mode: 0o600 });
     const broken = await read();
-    expect(broken.sources.board).toEqual({ state: 'unavailable', pending: 0 });
+    expect(broken.sources.board).toEqual({ state: 'unavailable', pending: null });
     expect(broken.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual(['bus:board-neighbor']);
 
     const opts = { runsDir, busRoot, now: () => now, readRequests: () => ({ status: 'missing' as const, requests: [] }) };
     const unavailable = await readUnifiedInbox({ ...opts, readBoard: () => ({ source: 'unavailable' }) });
-    expect(unavailable.sources.board).toEqual({ state: 'unavailable', pending: 0 });
+    expect(unavailable.sources.board).toEqual({ state: 'unavailable', pending: null });
     const throwing = await readUnifiedInbox({ ...opts, readBoard: () => { throw new Error('boom'); } });
-    expect(throwing.sources.board).toEqual({ state: 'unavailable', pending: 0 });
+    expect(throwing.sources.board).toEqual({ state: 'unavailable', pending: null });
     const missing = await readUnifiedInbox({ ...opts, readBoard: () => ({ source: 'missing' }) });
     expect(missing.sources.board).toEqual({ state: 'missing', pending: 0 });
     const unreadableClaims = await readUnifiedInbox({ ...opts, readBoard: () => ({ source: 'available', pending: digest({
