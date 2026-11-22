@@ -298,9 +298,15 @@ scripts' `pack smoke refused:` / `hosted artifact refused:` stderr
 prefixes, and the PR-visible trust gates'
 `.github/tests/secret-shape/scrub.pl > (secret-shape)` /
 `.github/workflows/ci.yml > (secret-scan)` /
+`.github/workflows/ci.yml > (secret-shape-gate)` /
+`.github/workflows/ci.yml > (secret-scan-gate)` /
 `.github/scripts/release-version-provenance.mjs > (version-provenance)`
 rows from the scrub.pl `<blocked> allowed=<n>` count, the gitleaks
-`leaks found: <n>` summary and the provenance `::error::` /
+`leaks found: <n>` summary, the scanners' pre-verdict bootstrap
+failures (the pinned-hash `: FAILED` checklist lines naming
+`scrub.pl`/`gitleaks.tar.gz`, `secret-shape base is missing`, fatal
+perl diagnostics naming `scrub.pl`, and `secret scan refused an
+incomplete commit range`) and the provenance `::error::` /
 `check failed:` lines (nonzero counts and verdicts only), the
 memory benchmark gate's
 `scripts/benchmark-memory.ts > (memory-benchmark)` rows from the
@@ -351,10 +357,14 @@ apply to either; refusal continuations stay excerpt-free, empty
 messages and release-only `* refused:` prefixes stay unparsed. The
 secret-shape and secret-scan groups key on the scanner definition alone
 (the diff and commit-range scans have no enumerable repo input, so a
-shape carried inside a PR's own diff stays unattributed) and the
+shape carried inside a PR's own diff stays unattributed), the gate
+bootstrap groups take the closed input lists of the repo files their
+steps execute (`.github/workflows/ci.yml` plus `scrub.pl` for
+secret-shape, plus `ci-fetch-range.mjs` for secret-scan's
+merge-group/push scan-base path), and the
 provenance group's dependency set adds `package.json` and
 `.release-please-manifest.json` as static inputs; the harness ambient
-set does not apply to any of the three. The memory benchmark gate's
+set does not apply to any of these gates. The memory benchmark gate's
 dependency set is the entry script's import closure -- the benchmark,
 its floors file and the `src/core/memory` implementation -- plus
 `package.json`, `package-lock.json` and `tsconfig.json` seeded as

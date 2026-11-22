@@ -969,14 +969,37 @@ const SECRET_SHAPE_FILE = '.github/tests/secret-shape/scrub.pl';
 const SECRET_SHAPE_NAMES = '(secret-shape)';
 const SECRET_SHAPE_COUNT = /^(\d+) allowed=(\d+)$/;
 const SECRET_SHAPE_MAX = 8;
+// The same step can also fail before the scanner prints its verdict: the
+// pinned-hash check rejects scrub.pl, the candidate base cannot be resolved
+// and the step refuses closed, or the script itself dies under perl. None
+// of those shapes carries a count line, so without these identities a
+// broken gate leaves every open PR unknown. They group under the workflow
+// that owns the pin and step as `.github/workflows/ci.yml >
+// (secret-shape-gate)`; the group's closed inputs are the workflow and the
+// scanner -- the only repo files the step executes -- so a PR touching
+// either is pr-caused. sha256sum's `: FAILED` line names the checklist
+// target verbatim, which keeps the check attributable inside this job's
+// log; the WARNING summary line alone is never enough.
+const SECRET_SHAPE_GATE_FILE = '.github/workflows/ci.yml';
+const SECRET_SHAPE_GATE_NAMES = '(secret-shape-gate)';
+const SECRET_SHAPE_PIN_FAILED = /^\.github\/tests\/secret-shape\/scrub\.pl: FAILED/;
+const SECRET_SHAPE_BASE_MISSING = /^secret-shape base is missing$/;
+const SECRET_SHAPE_PL_PATH = /\.github\/tests\/secret-shape\/scrub\.pl/;
+const SECRET_SHAPE_PL_FATAL = /syntax error|aborted due to compilation errors|BEGIN failed|requires explicit package name|Undefined subroutine|Can't call method|Search pattern not terminated|Unrecognized character/;
 
 function parseSecretShapeFailures(log: string): Failure[] {
   const out: Failure[] = [];
   for (const line of lines(log)) {
     if (out.length >= SECRET_SHAPE_MAX) break;
     const match = SECRET_SHAPE_COUNT.exec(line);
-    if (match === null || Number(match[1]) === 0) continue;
-    out.push({ file: SECRET_SHAPE_FILE, names: SECRET_SHAPE_NAMES, testId: `${SECRET_SHAPE_FILE} > ${SECRET_SHAPE_NAMES}`, excerpt: clean(line) });
+    if (match !== null && Number(match[1]) !== 0) {
+      out.push({ file: SECRET_SHAPE_FILE, names: SECRET_SHAPE_NAMES, testId: `${SECRET_SHAPE_FILE} > ${SECRET_SHAPE_NAMES}`, excerpt: clean(line) });
+      continue;
+    }
+    if (SECRET_SHAPE_PIN_FAILED.test(line) || SECRET_SHAPE_BASE_MISSING.test(line) ||
+        (SECRET_SHAPE_PL_PATH.test(line) && SECRET_SHAPE_PL_FATAL.test(line))) {
+      out.push({ file: SECRET_SHAPE_GATE_FILE, names: SECRET_SHAPE_GATE_NAMES, testId: `${SECRET_SHAPE_GATE_FILE} > ${SECRET_SHAPE_GATE_NAMES}`, excerpt: clean(line) });
+    }
   }
   return out;
 }
@@ -997,14 +1020,34 @@ const SECRET_SCAN_FILE = '.github/workflows/ci.yml';
 const SECRET_SCAN_NAMES = '(secret-scan)';
 const SECRET_SCAN_FOUND = /\bleaks found:\s*(\d+)\s*$/;
 const SECRET_SCAN_MAX = 8;
+// The job can also fail before gitleaks prints its verdict: the pinned
+// archive hash check rejects the download (sha256sum's `: FAILED` line
+// names the `gitleaks.tar.gz` checklist target, keeping it attributable
+// inside this job's log -- the WARNING summary alone is never enough),
+// or the commit range the scan covers cannot be resolved and the step
+// refuses closed. Neither shape carries a `leaks found:` line, so
+// without this identity a broken gate leaves every open PR unknown.
+// They group under the same workflow file as
+// `.github/workflows/ci.yml > (secret-scan-gate)`; the group's closed
+// inputs are the workflow and ci-fetch-range.mjs -- the script the
+// merge_group/push scan-base path executes -- so a PR touching either
+// is pr-caused.
+const SECRET_SCAN_GATE_NAMES = '(secret-scan-gate)';
+const SECRET_SCAN_ARCHIVE_FAILED = /(?:^|\/)gitleaks\.tar\.gz: FAILED/;
+const SECRET_SCAN_RANGE_REFUSED = /^secret scan refused an incomplete commit range$/;
 
 function parseSecretScanFailures(log: string): Failure[] {
   const out: Failure[] = [];
   for (const line of lines(log)) {
     if (out.length >= SECRET_SCAN_MAX) break;
     const match = SECRET_SCAN_FOUND.exec(line);
-    if (match === null || Number(match[1]) === 0) continue;
-    out.push({ file: SECRET_SCAN_FILE, names: SECRET_SCAN_NAMES, testId: `${SECRET_SCAN_FILE} > ${SECRET_SCAN_NAMES}`, excerpt: clean(line) });
+    if (match !== null && Number(match[1]) !== 0) {
+      out.push({ file: SECRET_SCAN_FILE, names: SECRET_SCAN_NAMES, testId: `${SECRET_SCAN_FILE} > ${SECRET_SCAN_NAMES}`, excerpt: clean(line) });
+      continue;
+    }
+    if (SECRET_SCAN_ARCHIVE_FAILED.test(line) || SECRET_SCAN_RANGE_REFUSED.test(line)) {
+      out.push({ file: SECRET_SCAN_FILE, names: SECRET_SCAN_GATE_NAMES, testId: `${SECRET_SCAN_FILE} > ${SECRET_SCAN_GATE_NAMES}`, excerpt: clean(line) });
+    }
   }
   return out;
 }
@@ -1039,6 +1082,20 @@ function parseVersionProvenanceFailures(log: string): Failure[] {
   }
   return out;
 }
+
+// Closed input lists for the trust gates' bootstrap failures, consulted
+// through the flatInputs chain by failure names like the lint-guard and
+// test-runner maps. The scanner-verdict groups key on the scanner
+// definition alone (a diff or commit range has no enumerable repo input),
+// but a gate that never reached its verdict fails on the files the step
+// itself executes: the workflow carrying the pin, env wiring and step
+// definition, plus the pinned scanner for secret-shape and the
+// scan-base helper for secret-scan's merge_group/push path. The vitest
+// harness ambient set cannot reach any of them.
+const SECRET_GATE_INPUTS: Record<string, readonly string[]> = {
+  [SECRET_SHAPE_GATE_NAMES]: [SECRET_SHAPE_GATE_FILE, SECRET_SHAPE_FILE],
+  [SECRET_SCAN_GATE_NAMES]: [SECRET_SCAN_FILE, '.github/scripts/ci-fetch-range.mjs'],
+};
 
 // The ci.yml helper gates under .github/scripts/ are single-purpose node
 // invocations whose only failure output is the script's console.error
@@ -2102,7 +2159,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // measure bundle bytes or wrap the suite run, and never read a
       // file's imports, so the dependency set is each gate's closed
       // input list rather than the import closure walk.
-      const flatInputs = LINT_GUARD_INPUTS[failure.names] ?? FIRST_PAINT_INPUTS[failure.names] ?? TEST_RUNNER_INPUTS[failure.names] ?? BUILD_STEP_INPUTS[failure.file];
+      const flatInputs = LINT_GUARD_INPUTS[failure.names] ?? FIRST_PAINT_INPUTS[failure.names] ?? TEST_RUNNER_INPUTS[failure.names] ?? SECRET_GATE_INPUTS[failure.names] ?? BUILD_STEP_INPUTS[failure.file];
       const deps = flatInputs !== undefined ? new Set<string>(flatInputs) : await dependencies(failure.file);
       // Generated artifacts are produced by the clean-tree job, not the test
       // runner: the vitest harness ambient set cannot stale them, so only

@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; script?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -63,7 +63,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : head;
       const receipt = options.bound
         ? `Bound candidate ${options.boundHead ?? sha} to event tree ${'e'.repeat(40)}\n`
@@ -832,6 +832,49 @@ describe('CI baseline evidence', () => {
       expect(parseBaselineFailures(bad), bad).toEqual([]);
     }
   });
+  it('parses trust-gate bootstrap failures under their own identities', () => {
+    const failures = parseBaselineFailures(fixture('trust-gate-shared'));
+    expect(failures.map(f => f.testId)).toEqual([
+      '.github/workflows/ci.yml > (secret-shape-gate)',
+      '.github/workflows/ci.yml > (secret-scan-gate)',
+    ]);
+    expect(failures[0]).toMatchObject({ file: '.github/workflows/ci.yml', names: '(secret-shape-gate)' });
+    expect(failures[0]?.excerpt).toContain('scrub.pl: FAILED');
+    expect(failures[1]).toMatchObject({ file: '.github/workflows/ci.yml', names: '(secret-scan-gate)' });
+    expect(failures[1]?.excerpt).toContain('gitleaks.tar.gz: FAILED');
+    // The fail-closed base refusal, unreadable checklist targets and the
+    // scanner's own fatal diagnostics group under the same gate identities.
+    for (const [line, id] of [
+      ['secret-shape base is missing', '.github/workflows/ci.yml > (secret-shape-gate)'],
+      ['.github/tests/secret-shape/scrub.pl: FAILED open or read', '.github/workflows/ci.yml > (secret-shape-gate)'],
+      ['syntax error at .github/tests/secret-shape/scrub.pl line 12, near "my $x ="', '.github/workflows/ci.yml > (secret-shape-gate)'],
+      ['BEGIN failed--compilation aborted at .github/tests/secret-shape/scrub.pl line 12.', '.github/workflows/ci.yml > (secret-shape-gate)'],
+      ['Execution of .github/tests/secret-shape/scrub.pl aborted due to compilation errors.', '.github/workflows/ci.yml > (secret-shape-gate)'],
+      ['Global symbol "$n" requires explicit package name at .github/tests/secret-shape/scrub.pl line 12.', '.github/workflows/ci.yml > (secret-shape-gate)'],
+      ['secret scan refused an incomplete commit range', '.github/workflows/ci.yml > (secret-scan-gate)'],
+    ] as const) {
+      expect(parseBaselineFailures(line).map(f => f.testId), line).toEqual([id]);
+    }
+    // Timestamped job-log lines parse identically.
+    const stamped = fixture('trust-gate-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped).map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    // The WARNING summary alone, OK check lines, other workflows' pinned
+    // archives, non-fatal perl warnings, diagnostics naming other files
+    // and partial refusals stay unparsed.
+    for (const bad of [
+      'sha256sum: WARNING: 1 computed checksum did NOT match',
+      '.github/tests/secret-shape/scrub.pl: OK',
+      'cargo-audit.tgz: FAILED',
+      '/home/runner/work/_temp/osv-scanner-download: FAILED',
+      'syntax error at scripts/other-tool.pl line 2',
+      'Unquoted string "foo" may clash with future reserved word at .github/tests/secret-shape/scrub.pl line 3.',
+      'Name "x" used only once at .github/tests/secret-shape/scrub.pl line 3.',
+      'secret scan refused',
+      'secret scan refused an incomplete commit range extra',
+    ]) {
+      expect(parseBaselineFailures(bad), bad).toEqual([]);
+    }
+  });
   it('groups trust-gate failures and attributes each gate its own inputs', async () => {
     const contents = {
       '.github/scripts/release-version-provenance.mjs': "import { execFileSync } from 'node:child_process';\nimport { resolve } from 'node:path';\nimport { fileURLToPath } from 'node:url';",
@@ -878,6 +921,38 @@ describe('CI baseline evidence', () => {
     expect(partialById.get('.github/workflows/ci.yml > (secret-scan)')).toBe('shared-baseline');
     // A singleton unaffected failure can never prove a master pass.
     const singleton = await analyzeCiBaseline('owner/repo', github({ trust: true, count: 1, pass: true, contents }).gh);
+    for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('groups trust-gate bootstrap failures under their own closed inputs', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ trustGate: true, contents: {} }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups.map(g => g.testId)).toEqual([
+      '.github/workflows/ci.yml > (secret-scan-gate)',
+      '.github/workflows/ci.yml > (secret-shape-gate)',
+    ]);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    // The workflow definition is an input to both gates.
+    const workflow = await analyzeCiBaseline('owner/repo', github({ trustGate: true, touched: '.github/workflows/ci.yml', contents: {} }).gh);
+    for (const group of workflow.groups) expect(group.action, group.testId).toBe('pr-caused');
+    // Each gate's own executed files are pr-caused for that group only.
+    const shapeCaused = await analyzeCiBaseline('owner/repo', github({ trustGate: true, touched: '.github/tests/secret-shape/scrub.pl', contents: {} }).gh);
+    const shapeById = new Map(shapeCaused.groups.map(g => [g.testId, g.classification]));
+    expect(shapeById.get('.github/workflows/ci.yml > (secret-shape-gate)')).toBe('pr-caused');
+    expect(shapeById.get('.github/workflows/ci.yml > (secret-scan-gate)')).toBe('shared-baseline');
+    const scanCaused = await analyzeCiBaseline('owner/repo', github({ trustGate: true, touched: '.github/scripts/ci-fetch-range.mjs', contents: {} }).gh);
+    const scanById = new Map(scanCaused.groups.map(g => [g.testId, g.classification]));
+    expect(scanById.get('.github/workflows/ci.yml > (secret-scan-gate)')).toBe('pr-caused');
+    expect(scanById.get('.github/workflows/ci.yml > (secret-shape-gate)')).toBe('shared-baseline');
+    // The vitest harness ambient set cannot reach these gates either.
+    for (const touched of ['tsconfig.json', 'vitest.config.ts', 'src/core/status.ts', 'docs/README.md']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ trustGate: true, touched, contents: {} }).gh);
+      for (const group of shared.groups) expect(group.classification, `${touched} -> ${group.testId}`).toBe('shared-baseline');
+    }
+    // A singleton unaffected failure can never prove a master pass.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ trustGate: true, count: 1, pass: true, contents: {} }).gh);
     for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
   });
   it('parses ci.yml helper-gate step failures', () => {
