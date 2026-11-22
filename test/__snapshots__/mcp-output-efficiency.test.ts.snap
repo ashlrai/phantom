@@ -2354,6 +2354,13 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
         "contains": {
           "type": "string",
         },
+        "direction": {
+          "enum": [
+            "inbound",
+            "outbound",
+          ],
+          "type": "string",
+        },
         "limit": {
           "type": "number",
         },

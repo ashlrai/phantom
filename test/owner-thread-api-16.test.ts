@@ -100,6 +100,23 @@ describe('GET /api/verse/comms/owner-thread', () => {
     }
   });
 
+  it('filters by direction and rejects a bad value with 400', async () => {
+    await seed(2);
+    const inbound = await call('GET', '?direction=inbound');
+    expect(inbound.status).toBe(200);
+    expect(inbound.body.messages.map((m: { seq: number; direction: string }) => [m.seq, m.direction])).toEqual([[1, 'inbound'], [2, 'inbound']]);
+    expect(inbound.body.awaitingReply).toEqual(['m1', 'm2']);
+    // The seeded thread holds no outbound rows, so the slice is an honest empty list.
+    const outbound = await call('GET', '?direction=outbound');
+    expect(outbound.status).toBe(200);
+    expect(outbound.body.messages).toEqual([]);
+    expect(outbound.body.awaitingReply).toEqual([]);
+    for (const bad of ['?direction=', '?direction=sideways']) {
+      const rejected = await call('GET', bad);
+      expect(rejected.status, bad).toBe(400);
+    }
+  });
+
   it('answers non-GET with 405', async () => {
     for (const method of ['POST', 'PUT', 'DELETE']) expect((await call(method)).status).toBe(405);
   });
