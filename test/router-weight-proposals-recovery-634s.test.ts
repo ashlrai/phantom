@@ -415,6 +415,8 @@ describe('outcome-quality evidence', () => {
       merge_queue_recuts_known: 0,
       repos_known: 0,
       repos: null,
+      node_outcomes_known: 0,
+      node_verdicts: null,
     });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).toContain('evidence ci_first_pass=0.8(10)');
@@ -584,6 +586,7 @@ describe('outcome-quality evidence', () => {
       merge_queue_check_failures_known: 0, merge_queue_conflicts_known: 0,
       merge_queue_retries_known: 0, merge_queue_recuts_known: 0,
       repos_known: 0, repos: null,
+      node_outcomes_known: 0, node_verdicts: null,
     });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).not.toContain('ci_first_pass=');
@@ -790,7 +793,7 @@ describe('unknown-outcome resolution', () => {
       ],
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('unknown resolution: empty=3 nonzero_exit=5 skipped=0 deferred=0 noop=0 handoffs=0 provider_walls=0 unresolved=4');
+    expect(out).toContain('unknown resolution: empty=3 nonzero_exit=5 skipped=0 deferred=0 noop=0 handoffs=0 provider_walls=0 node_outcomes=0 unresolved=4');
     expect(out).toContain('failure_classes=quota:3,authentication:1');
   });
 
@@ -1040,7 +1043,7 @@ describe('unknown-outcome resolution', () => {
       unknown_unresolved: 4,
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('skipped=3 deferred=0 noop=0 handoffs=0 provider_walls=0 unresolved=4');
+    expect(out).toContain('skipped=3 deferred=0 noop=0 handoffs=0 provider_walls=0 node_outcomes=0 unresolved=4');
     expect(out).toContain('skip_reasons=prompt_empty_same_base_24h:2,code:13:1');
   });
 
@@ -1128,7 +1131,7 @@ describe('unknown-outcome resolution', () => {
       unknown_unresolved: 3,
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('deferred=4 noop=0 handoffs=0 provider_walls=0 unresolved=3');
+    expect(out).toContain('deferred=4 noop=0 handoffs=0 provider_walls=0 node_outcomes=0 unresolved=3');
     expect(out).toContain('defer_reasons=duplicate-request:2,files_and_tests_exist:1,recut-in-flight:1');
   });
 
@@ -1195,7 +1198,7 @@ describe('unknown-outcome resolution', () => {
       unknown_unresolved: 3,
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('skipped=1 deferred=1 noop=6 handoffs=0 provider_walls=0 unresolved=3');
+    expect(out).toContain('skipped=1 deferred=1 noop=6 handoffs=0 provider_walls=0 node_outcomes=0 unresolved=3');
     expect(out).toContain('noop_reasons=already-merged:1,recut-already-merged:1,target_pr_closed:1,target_pr_conflicts_resolved:1,target_pr_merged:1,unlabeled:1');
   });
 
@@ -1375,7 +1378,7 @@ describe('session-handoff advisory evidence', () => {
       unknown_unresolved: 2,
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('handoffs=2 provider_walls=0 unresolved=2 handoff_triggers=rate-limit:2,quota-exhausted:1');
+    expect(out).toContain('handoffs=2 provider_walls=0 node_outcomes=0 unresolved=2 handoff_triggers=rate-limit:2,quota-exhausted:1');
   });
 
   it('keeps handoff tallies real whenever the jobs read succeeded and null when it did not', async () => {
@@ -1464,7 +1467,7 @@ describe('provider-wall hold evidence', () => {
       unknown_unresolved: 1,
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('provider_walls=3 unresolved=1');
+    expect(out).toContain('provider_walls=3 node_outcomes=0 unresolved=1');
     expect(out).toContain('provider_wall_triggers=auth-failure:1,usage-limit:1');
   });
 
@@ -1573,6 +1576,126 @@ describe('slot-throttle (pool) evidence', () => {
     expect(missing.code).toBe(1);
     expect(missing.report).toMatchObject({
       unknown_pool_throttles: null, unknown_pool_kinds: null, unknown_unresolved: null,
+    });
+  });
+});
+
+describe('node-runner verdict evidence', () => {
+  /** A phm-node-runner.v1 finish row in the producer's own shape
+   *  (src/core/drive/nodes/runner.ts): `job` is the per-claim id
+   *  (<jobId>:<token>) and `jobId` the logical queue id the fold keys —
+   *  the attempt id must never mint an outcome of its own. */
+  const nodeRow = (jobId: string, outcome: string, extra: Record<string, unknown> = {}): object => ({
+    schema: 'phm-node-runner.v1', event: 'finish',
+    job: `${jobId}:tok-1`, jobId, node: 'node-a', pack: 'shell-check',
+    outcome, ...extra,
+  });
+
+  it('treats the recorded node verdict as the offloaded job\'s terminal execution verdict', async () => {
+    // Node-pack jobs produce result artifacts, not pull requests, so
+    // merged stays null however the pack ended — but the runner's
+    // finish row is the fleet's recorded answer to "did the work run".
+    // All three verdict words explain the missing merge verdict: a
+    // failed/fenced attempt is the recorded failure signal and a
+    // succeeded attempt is the terminal success the node path exists
+    // to produce, so every one leaves unknown_unresolved.
+    writeLedger([
+      ...merged(20),
+      event('synthetic-node-ok', 'alpha', 'code', 'VERIFIED'),
+      nodeRow('synthetic-node-ok', 'succeeded'),
+      event('synthetic-node-err', 'alpha', 'code', 'VERIFIED'),
+      nodeRow('synthetic-node-err', 'failed'),
+      event('synthetic-node-fence', 'alpha', 'code', 'VERIFIED'),
+      nodeRow('synthetic-node-fence', 'fenced'),
+      // A plain in-flight job with no verdict stays unresolved.
+      event('synthetic-node-open', 'alpha', 'code', 'VERIFIED'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 4, unclassified_outcomes: 0,
+      unknown_node_outcomes: 3,
+      unknown_node_verdicts: [
+        { verdict: 'failed', jobs: 1 },
+        { verdict: 'fenced', jobs: 1 },
+        { verdict: 'succeeded', jobs: 1 },
+      ],
+      unknown_unresolved: 1,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('node_outcomes=3 unresolved=1');
+    expect(out).toContain('node_verdicts=failed:1,fenced:1,succeeded:1');
+  });
+
+  it('tallies node verdicts per known group as advisory evidence without touching weight math', async () => {
+    // A merged job can still carry a node verdict — the job was
+    // attempted on the node pool, then reached its merge verdict
+    // through another path. The evidence shows how much of the
+    // group's held-merge cohort survived node execution; the weight
+    // math still moves on held-merge rate alone.
+    const jobs = Array.from({ length: 20 }, (_, i) => `synthetic-node-k-${i}`);
+    writeLedger(jobs.flatMap((job, i) => [
+      event(job, 'alpha', 'code', 'MERGED'),
+      ...(i < 2 ? [nodeRow(job, 'failed')] : []),
+      ...(i === 2 ? [nodeRow(job, 'succeeded')] : []),
+    ]));
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    const p = report.proposals[0];
+    expect(p).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 20, proposed_weight: 0.6 });
+    expect(p.evidence).toMatchObject({
+      node_outcomes_known: 3,
+      node_verdicts: [
+        { verdict: 'failed', jobs: 2 },
+        { verdict: 'succeeded', jobs: 1 },
+      ],
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('node=3(failed:2,succeeded:1)');
+  });
+
+  it('keeps node tallies real whenever the jobs read succeeded and null when it did not', async () => {
+    // Jobs-ledger rows need no side-ledger join: a readable jobs ledger
+    // with no runner rows reports zero tallies, while an unreadable one
+    // reports null — never an empty list claiming no verdicts recorded.
+    writeLedger(merged(20));
+    const { report } = await runJson();
+    expect(report).toMatchObject({
+      unknown_node_outcomes: 0, unknown_node_verdicts: [], unknown_unresolved: 0,
+    });
+    expect(report.proposals[0].evidence).toMatchObject({ node_outcomes_known: 0, node_verdicts: null });
+
+    rmSync(ledgerPath());
+    const missing = await runJson();
+    expect(missing.code).toBe(1);
+    expect(missing.report).toMatchObject({
+      unknown_node_outcomes: null, unknown_node_verdicts: null, unknown_unresolved: null,
+    });
+  });
+
+  it('never mints a node tally from wrong-schema rows, out-of-vocabulary verdicts or orphan jobIds', async () => {
+    writeLedger([
+      ...merged(20),
+      event('synthetic-node-bad-1', 'alpha', 'code', 'VERIFIED'),
+      // A plain finish row's outcome word is a merge-phase spelling,
+      // never a node verdict — only the phm-node-runner.v1 schema joins.
+      { job: 'synthetic-node-bad-1', lane: 'alpha', work_class: 'code', event: 'finish', outcome: 'succeeded' },
+      event('synthetic-node-bad-2', 'alpha', 'code', 'VERIFIED'),
+      nodeRow('synthetic-node-bad-2', 'completed'),
+      event('synthetic-node-bad-3', 'alpha', 'code', 'VERIFIED'),
+      // A runner row naming a jobId no outcome claims joins nothing —
+      // the per-attempt `job` id never keys an outcome either.
+      nodeRow('synthetic-node-ghost', 'succeeded'),
+      event('synthetic-node-open', 'alpha', 'code', 'VERIFIED'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 4,
+      // The orphan runner row folds as its own unclassified outcome.
+      unclassified_outcomes: 1,
+      unknown_node_outcomes: 0, unknown_node_verdicts: [],
+      unknown_unresolved: 4,
     });
   });
 });
