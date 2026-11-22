@@ -19,9 +19,13 @@ default, `--text` for people, `--since 15m`, `--agent <name|lane>`,
 `--with <name|lane>` for only what that agent and one other said to each
 other, `--kind <ask|reply|handoff|status|blocker>` for only one classified
 kind, `--priority <P0|P1|P2|P3>` for only one envelope band, `--job <id>`
-for only the traffic that names one job, `--limit <n>`)
+for only the traffic that names one job, `--thread <label>` for only the
+`note`/`context` bodies carrying that v2 thread label — the same
+`busBodyThread` match `agents bus inbox --thread`, `agents bus channel
+read --thread`, `comms bus read|watch --thread` and `fleet bus-follow
+--thread` apply — `--limit <n>`)
 or GET `/api/verse/agent-bus/messages` with the same
-`since`, `agent`, `with`, `kind`, `priority`, `job` and `limit` params. Both return `agent-messages.v1`: newest
+`since`, `agent`, `with`, `kind`, `priority`, `job`, `thread` and `limit` params. Both return `agent-messages.v1`: newest
 first, each with `id`, `ts`, `priority` (the envelope's P0–P3 band, the
 same band `comms bus read --priority` filters on), `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line
