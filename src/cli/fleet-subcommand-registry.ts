@@ -259,6 +259,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'lane-target': () => import('./fleet-lane-target.js'),
   'lane-truth': () => import('./fleet-lane-truth.js'),
   'lane-yield': () => import('./fleet-lane-yield.js'),
+  'lanes': () => import('./fleet-lanes.js'),
   'launch-proof': () => import('./fleet-launch-proof.js'),
   'launch-stall': () => import('./fleet-launch-stall.js'),
   'launch-stall-why': () => import('./fleet-launch-stall-why.js'),

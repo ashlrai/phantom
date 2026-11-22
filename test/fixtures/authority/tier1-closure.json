@@ -659,6 +659,8 @@
     "src/core/fleet/lane-badge.ts",
     "src/core/fleet/lane-console.ts",
     "src/core/fleet/lane-dead-signal.ts",
+    "src/core/fleet/lane-held-notice.ts",
+    "src/core/fleet/lane-held.ts",
     "src/core/fleet/lane-launch-target.ts",
     "src/core/fleet/lane-lock.ts",
     "src/core/fleet/lane-models.ts",
