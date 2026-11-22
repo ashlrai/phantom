@@ -35,7 +35,7 @@ ashlr agents bus channel list [--agent <agent>]
 ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--matched] [--after <cursor>] [--limit <1..100>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
-ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--matched] [--frame <cli>]
+ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--channel <name>] [--matched] [--frame <cli>]
 ashlr agents bus wakes [<agent>] [--since <15m|2h|1d|ISO>] [--job <id>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
@@ -88,7 +88,12 @@ cutoff — the phm messages grammar (15m, 2h, 1d, epoch ms or an ISO
 time), resolved to epoch ms — so fresh mail, a room's recent posts and
 new wake hints are one filtered read without a persisted cursor; inbox
 and channel read match receivedAt inclusively, wakes matches hints
-after it.
+after it. --channel on inbox keeps only mail addressed to one registry
+channel's group:<name>:* addresses — channel posts and channel-addressed
+handoffs alike — so an agent in several rooms reads one room's pending
+mail in one filtered read; it composes with --kind to separate a room's
+direct mail from its assignments, and a channel the agent is not a
+member of simply has no mail to show.
 --matched
 on inbox and channel read reports matched, the true pending total across the
 whole retained store the same filters accept; messages still caps at --limit
@@ -181,7 +186,7 @@ const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
   '--frame', '--since', '--root', '--key', '--owner', '--lease-ms', '--token', '--outcome', '--reason',
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
-  '--kind']);
+  '--kind', '--channel']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
 const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--claimable', '--jobs', '--matched']);
 
@@ -503,7 +508,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
       const page = readAgentInbox(agent, { after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit'),
         thread: one('--thread'), from: one('--from'), priority: priorityArg(), kind: kindArg(), job: one('--job'),
-        since: sinceArg(), matched: p.bools.has('--matched') }, options);
+        since: sinceArg(), channel: one('--channel'), matched: p.bools.has('--matched') }, options);
       if (page.status !== 'ok') return finish(page, '');
       // --matched scans the whole store, so the core nextCursor is the store's
       // end — resuming there would skip unshown matches. The honest resume

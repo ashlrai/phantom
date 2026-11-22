@@ -307,6 +307,35 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['inbox', 'nova', '--kind', 'note'])).toMatchObject({ code: 2 });
   });
 
+  it('filters inbox reads by --channel', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'ops', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'dm', '--id', 'ch-dm'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'release post', '--id', 'ch-rel'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'ops', '--from', 'atlas', '--text', 'ops post', '--id', 'ch-ops'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    const release = await run(['inbox', 'nova', '--channel', 'release']);
+    expect(release.code).toBe(0);
+    expect(release.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['ch-rel']);
+    expect((await run(['inbox', 'nova', '--channel', 'ops'])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['ch-ops']);
+    // --channel composes with --kind and --matched: the count honors the filter.
+    expect((await run(['inbox', 'nova', '--channel', 'release', '--kind', 'channel'])).json.messages).toHaveLength(1);
+    const counted = await run(['inbox', 'nova', '--channel', 'release', '--matched']);
+    expect(counted.json.matched).toBe(1);
+    // A name outside the channel grammar is invalid; a well-formed name with
+    // no mail addressed through it reads ok-empty, never an error.
+    expect(await run(['inbox', 'nova', '--channel', 'Bad'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect((await run(['inbox', 'nova', '--channel', 'missing'])).json).toMatchObject({ status: 'ok', messages: [] });
+  });
+
   it('filters inbox reads by --job across feed citations and job-threaded mail', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
