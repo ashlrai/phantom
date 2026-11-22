@@ -38,6 +38,7 @@ import { readMeterDrop } from './fleet-meter-drop.js';
 import { postMeterIncidents } from '../core/fleet/meter-incident.js';
 import { awakeEnabled, holdKeepAwake, type AwakeDeps } from '../core/fleet/keep-awake.js';
 import { recordClockSample } from '../core/fleet/sleep-gaps.js';
+import { orderReadyFile } from '../core/fleet/ready-yield.js';
 import { recordDiskSample } from '../core/fleet/host-disk.js';
 
 const usage = `Usage: ashlr fleet self-tick [--json] [--runs-dir <abs>] [--apply] [--last] [--status]
@@ -118,6 +119,8 @@ interface Dependencies {
   worktreeReap?: import('../core/fleet/worktrees.js').WorktreesDeps;
   /** Stranded-requeue seam for tests; production plans over the real runs dir. */
   strandedRequeue?: typeof import('../core/fleet/stranded-requeue.js').planStrandedRequeue;
+  /** Ready ordering seam; called once inside the planner stage. */
+  orderReady?: typeof orderReadyFile;
   /** Asks sync seam for tests; production syncs the real needs-you ledger. */
   asksSync?: typeof import('../core/fleet/asks-sync.js').syncAsks;
 }
@@ -391,11 +394,13 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       const worktreeReap = await runWorktreeReapStage();
       const asksSync = await runAsksSyncStage();
       const strandedRequeue = await runStrandedRequeueStage();
+      const order = await (deps.orderReady ?? orderReadyFile)(root, apply, now())
+        .catch(() => ({ line: 'order: unknown (queue unavailable or busy)' }));
       const run = await bind(cmdFleetPlannerTick, { now, spawn: deps.spawn })(argv);
       try {
         const parsed: unknown = JSON.parse(run.output);
         if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          return { ...run, output: JSON.stringify({ ...parsed, autofill, emptyStop, worktreeReap, asksSync, strandedRequeue }) };
+          return { ...run, output: JSON.stringify({ ...parsed, autofill, emptyStop, worktreeReap, asksSync, strandedRequeue, order }) };
         }
       } catch { /* the verb's own output stands untouched */ }
       return run;
@@ -500,6 +505,8 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       : 'the run lock could not be taken'}; no step ran`);
   } else {
     const lines = [`fleet self-tick: ${apply ? 'APPLIED' : 'DRY-RUN — no changes made'}`];
+    const order = report.steps.find(s => s.step === 'planner-tick')?.report as { order?: { line: string } } | null;
+    if (order?.order?.line) lines.push(order.order.line);
     for (const step of report.steps) {
       const detail = step.state === 'failed' ? failureReason(step.report, step.error) : summary(step.step, step.report);
       lines.push(`  ${step.step}  ${step.state}  exit=${step.exitCode}${detail ? `  ${safe(detail)}` : ''}`);
