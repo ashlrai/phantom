@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as http from 'node:http';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { readGitRelease, releaseClonePaths } from '../src/core/release/git-backlog.js';
 import { readReleaseBacklog } from '../src/core/release/backlog.js';
@@ -11,6 +12,10 @@ import * as latency from '../src/core/fleet/git-merge-latency.js';
 import * as remote from '../src/core/release/remote-git-backlog.js';
 import * as backlog from '../src/core/release/backlog.js';
 import { cmdLeaderBrief } from '../src/cli/leader-brief.js';
+import { readReleaseRepos, releaseRepoLine } from '../src/core/release/release-repos.js';
+import { cmdRelease } from '../src/cli/release.js';
+import { readAuthHeaders, startServer } from './helpers/authenticated-web-server.js';
+import { makeCfg } from './helpers/h1-fixture.js';
 
 const now = Date.parse('2026-11-22T12:00:00Z'), day = 86_400_000;
 let root: string, clone: string;
@@ -132,4 +137,59 @@ it.each(['tags', 'date'] as const)('aborts a hung remote %s read after five seco
   await vi.advanceTimersByTimeAsync(5000);
   expect(await pending).toMatchObject({ state: 'unknown', commitsSinceTag: null, reason: phase === 'tags' ? 'remote tags unavailable' : 'remote tag date unavailable' });
   expect(signals[0]?.aborted).toBe(true);
+});
+
+it.each(['shallow', 'tagless', 'missing'] as const)('shares remote %s evidence with release status JSON and text', async mode => {
+  if (mode === 'shallow') {
+    tag(); advance(1); git('tag', 'v1.0.1');
+    const shallow = join(root, 'shallow'); execFileSync('git', ['clone', '--depth=1', `file://${clone}`, shallow], { stdio: 'pipe' });
+    vi.stubEnv('PHANTOM_RELEASE_CLONES', JSON.stringify({ phantom: shallow }));
+  } else if (mode === 'missing') vi.stubEnv('PHANTOM_RELEASE_CLONES', '{}');
+  vi.spyOn(remote, 'readRemoteGitRelease').mockImplementation(async (row, at) =>
+    ({ ...remoteRow, repo: row.repo, tagDate: new Date(at - 2 * 3_600_000).toISOString(), commitsSinceTag: 14 }));
+  const rows = await readReleaseRepos({ now });
+  expect(rows).toHaveLength(7); expect(rows.every(row => row.state === 'ok' && row.reason.length > 0)).toBe(true);
+  expect(releaseRepoLine(rows[0]!, now)).toBe('phantom: v2.0.0, 2 hours ago, 14 commits waiting');
+  const out = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
+  expect(await cmdRelease(['status', '--json'])).toBe(0);
+  expect(JSON.parse(String(out.mock.calls.at(-1)![0])).releaseRepos[0]).toMatchObject({ commitsSinceTag: 14, state: 'ok', source: 'remote git' });
+  expect(await cmdRelease(['status', '--text'])).toBe(0);
+  expect(String(out.mock.calls.at(-1)![0])).toContain('phantom: v2.0.0, 2 hours ago, 14 commits waiting');
+});
+
+it('distinguishes a confirmed tagless remote from failed local and remote reads', async () => {
+  const remoteRead = (refs: string) => (row: Parameters<typeof remote.readRemoteGitRelease>[0], at: number) =>
+    remote.readRemoteGitRelease(row, at, async () => { throw new Error('unavailable'); }, async () => refs);
+  const opts = { now, repos: ['phantom'], paths: () => [clone] };
+  const [tagless] = await readReleaseRepos({ ...opts, remote: remoteRead('head\tHEAD') });
+  expect(tagless).toMatchObject({ latestTag: null, commitsSinceTag: null, state: 'due', reason: 'No release yet.' });
+  const [failed] = await readReleaseRepos({ ...opts, remote: remoteRead('head\tHEAD\ntag\trefs/tags/v1.0.0') });
+  expect(failed).toMatchObject({ state: 'unknown', reason: 'Local: no reachable tags; remote: remote tag date unavailable.' });
+});
+
+it.each([[0, 30, 'ok'], [1, 15, 'stale'], [1, 8, 'due'], [21, 0, 'due']])('classifies %i waiting commits after %i days as %s', async (count, age, state) => {
+  tag(); advance(Number(count));
+  const fallback = vi.fn();
+  const [row] = await readReleaseRepos({ now: now + Number(age) * day, repos: ['phantom'], paths: () => [clone], remote: fallback });
+  expect(row).toMatchObject({ state, commitsSinceTag: count, reason: expect.any(String) }); expect(fallback).not.toHaveBeenCalled();
+});
+
+it('serves the CLI commit rows through the existing authenticated releases API', async () => {
+  tag(); advance(1);
+  vi.spyOn(remote, 'readRemoteGitRelease').mockImplementation(async row => ({ ...remoteRow, repo: row.repo }));
+  const listen = vi.spyOn(http.Server.prototype, 'listen');
+  const server = await startServer(makeCfg(), { port: 0, open: false, allowDispatch: false });
+  try {
+    // Drive the real auth boundary and route without opening a client socket.
+    const read = (headers = {}) => new Promise<{ status: number; body: string }>((resolve, reject) => {
+      let status = 0;
+      const req = { method: 'GET', url: '/api/fleet/releases', headers: { host: `127.0.0.1:${server.port}`, ...headers } };
+      const res = { setHeader() {}, writeHead(code: number) { status = code; }, end(body: string) { resolve({ status, body }); } };
+      try { listen.mock.contexts[0]!.emit('request', req, res); } catch (error) { reject(error); }
+    });
+    expect((await read()).status).toBeGreaterThanOrEqual(400);
+    const response = await read(readAuthHeaders(server.port));
+    expect(response.status).toBe(200);
+    expect(JSON.parse(response.body).releaseRepos).toEqual(await readReleaseRepos());
+  } finally { await server.close(); }
 });
