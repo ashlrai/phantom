@@ -508,14 +508,20 @@ export class BusBoard {
    * delivery or task, and `matched`/`truncated` count the filtered sets.
    * Matching runs over scrubbed display text, never the stored envelope
    * JSON or peer labels, so a secret-shaped value stays unfindable.
+   * `sinceMs`, when given, is the epoch-ms cutoff every bus read's
+   * `--since` shares: deliveries keep only posts whose `createdAt` reaches
+   * it, and tasks — which the board records without any timestamp — never
+   * match, the same "unknown stays out" rule the unified inbox applies; a
+   * thread rollup then lists only while it still holds a surviving
+   * delivery, since the rollup itself keeps no time of its own.
    */
-  pendingFor(peers: readonly string[], now?: number, jobId?: string, contains?: string): BusBoardPendingPeers {
+  pendingFor(peers: readonly string[], now?: number, jobId?: string, contains?: string, sinceMs?: number): BusBoardPendingPeers {
     const labels = new Set<string>();
     for (const peer of peers) {
       try { labels.add(this.peer(peer)); } catch { /* not a board peer label; it can match nothing */ }
     }
     return this.transaction(false, (state) => {
-      const digest = this.pendingDigest(state, labels, now ?? Date.now(), jobId, contains);
+      const digest = this.pendingDigest(state, labels, now ?? Date.now(), jobId, contains, sinceMs);
       const known = new Set(digest.members);
       return {
         peers: [...labels].filter((label) => known.has(label)).sort(),
@@ -565,10 +571,15 @@ export class BusBoard {
    * title — scrubbed and normalized like every other bus read's
    * `--contains`; thread rollups keep a thread whose title matches or
    * that still holds a matching delivery or task, and the per-thread
-   * pending counts then measure the matching items only.
+   * pending counts then measure the matching items only. `sinceMs` is the
+   * epoch-ms `--since` cutoff: deliveries keep only posts whose `createdAt`
+   * reaches it and tasks never match — the board records no task
+   * timestamp, so under a time filter the task list is provably empty
+   * rather than padded with undated rows; a thread rollup keeps only while
+   * a surviving delivery remains, the rollup itself carrying no time.
    */
   private pendingDigest(state: BoardState, labels: ReadonlySet<string>, now: number,
-    jobId?: string, contains?: string): BusBoardDigest {
+    jobId?: string, contains?: string, sinceMs?: number): BusBoardDigest {
     const index = this.options.fleet.readClaimIndex();
     const acknowledged = new Set((state.receipts ?? []).map((receipt) => receipt.deliveryId));
     const jobThreads = jobId === undefined ? undefined : new Set(
@@ -588,9 +599,10 @@ export class BusBoard {
 
     const deliveries = state.deliveries.filter((delivery) =>
       labels.has(delivery.recipient) && joinedIds.has(delivery.threadId) && !acknowledged.has(delivery.id) &&
-      textHit(busBoardDeliveryText(delivery)));
+      textHit(busBoardDeliveryText(delivery)) &&
+      (sinceMs === undefined || Date.parse(delivery.createdAt) >= sinceMs));
 
-    const tasks = state.tasks.filter((task) => joinedIds.has(task.threadId) &&
+    const tasks = state.tasks.filter((task) => sinceMs === undefined && joinedIds.has(task.threadId) &&
       (jobId === undefined || task.itemId === jobId) && textHit(task.title)).map((task): BusBoardPendingTask => {
       const entry = index.claims[task.itemId];
       let hold: BusBoardTaskHold = 'unknown';
@@ -620,7 +632,9 @@ export class BusBoard {
       holdCounts.set(task.threadId, counts);
     }
     const threads: BusBoardPendingThread[] = joined
-      .filter((thread) => textHit(thread.title) || deliveryCounts.has(thread.id) || holdCounts.has(thread.id))
+      .filter((thread) => sinceMs !== undefined
+        ? deliveryCounts.has(thread.id)
+        : textHit(thread.title) || deliveryCounts.has(thread.id) || holdCounts.has(thread.id))
       .map((thread) => ({
         id: thread.id, members: [...thread.members],
         content: { trust: 'untrusted' as const, text: thread.title },
