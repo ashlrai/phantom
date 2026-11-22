@@ -37,6 +37,7 @@ cards — unknown stays unknown.
 ```bash
 phm skills list --json
 phm skills list --status verified --limit 10
+phm skills list --outcomes --json
 ```
 
 One obvious path: `list` is read-only and needs no setup. It prints the newest
@@ -93,6 +94,12 @@ outcome tallies — for example how many selections ended `merged`, `rejected`
 or `failed`, and how many merged selections were later `reverted` or
 `regressed`. Lifecycle stages of one use collapse into a single selection,
 and unjoined or conflicting skill rows never enter the tally.
+
+`phm skills list --outcomes` joins the same projection onto the learned-skill
+list: each entry gains an `outcomes` object when its exact revision was
+observed on joined trajectories, and the report carries `outcomeState`
+(`"observed"` or `"withheld"`) so a missing tally is never mistaken for a
+zero. Plain-text output prints the tallies under each skill.
 
 The projection is sample-gated exactly like `skillObservation`: per-skill
 counts publish only after at least `MIN_SKILL_OBSERVED_TRAJECTORIES` (3)
