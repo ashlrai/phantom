@@ -2,11 +2,14 @@
  * item is RECEIVED, ASSIGNED, RUNNING, BLOCKED or VERIFIED only when
  * structured evidence says so. Free text ("routed", "dispatched") is never
  * evidence. Pure: no I/O, no clock (the caller passes `nowIso`). */
+import { scrubSecrets } from '../util/scrub.js';
+
 export type WorkItemState = 'RECEIVED' | 'ASSIGNED' | 'RUNNING' | 'BLOCKED' | 'VERIFIED';
 
 export interface WorkItemEvidence {
   id: string;
   receivedAt?: string;
+  receivedSource?: string;
   owner?: string;
   claimReceipt?: string;
   runningEvidence?: { source: string; at: string };
@@ -14,7 +17,7 @@ export interface WorkItemEvidence {
   verified?: { pr?: number; head?: string; tests?: string; artifact?: string; source: string; at: string };
 }
 
-export interface WorkItemClassification { state: WorkItemState; asOf: string; source: string; missing: string[] }
+export interface WorkItemClassification { state: WorkItemState; owner?: string; asOf: string; source: string; missing: string[] }
 
 /** Running evidence older than this no longer proves the item is running. */
 export const RUNNING_FRESH_MS = 30 * 60 * 1000;
@@ -27,7 +30,7 @@ const stamped = (v: unknown): v is string => text(v) && !Number.isNaN(Date.parse
 export function classifyWorkItem(e: WorkItemEvidence, nowIso: string): WorkItemClassification {
   const v = e.verified;
   if (v && text(v.source) && stamped(v.at)
-    && ((typeof v.pr === 'number' && Number.isInteger(v.pr) && v.pr > 0 && text(v.head)) || text(v.tests) || text(v.artifact))) {
+    && ((typeof v.pr === 'number' && Number.isInteger(v.pr) && v.pr > 0 && text(v.head)) || text(v.artifact))) {
     return { state: 'VERIFIED', asOf: v.at, source: v.source, missing: [] };
   }
   const b = e.blocker;
@@ -47,5 +50,12 @@ export function classifyWorkItem(e: WorkItemEvidence, nowIso: string): WorkItemC
   const stale = hasRunning && (age > RUNNING_FRESH_MS || age < -FUTURE_SKEW_MS) ? ['fresh running evidence'] : [];
   const asOf = stamped(e.receivedAt) ? e.receivedAt : 'unknown';
   if (missing.length === 0) return { state: 'ASSIGNED', asOf, source: `claim:${e.claimReceipt}`, missing: stale };
-  return { state: 'RECEIVED', asOf, source: asOf === 'unknown' ? 'unknown' : 'receivedAt', missing: [...missing, ...stale] };
+  return { state: 'RECEIVED', asOf, source: asOf === 'unknown' ? 'unknown' : e.receivedSource ?? 'receivedAt', missing: [...missing, ...stale] };
+}
+
+/** One scrubbed line, using the evidence's time rather than the read clock. */
+export function formatWorkItemStatusLine(result: WorkItemClassification): string {
+  const safe = (value: string): string => scrubSecrets(value).replace(/[\r\n\p{Cc}\p{Zl}\p{Zp}]/gu, ' ');
+  return [result.state, result.owner ?? 'owner unknown', `as of ${result.asOf}`, `source ${result.source}`,
+    ...(result.missing.length ? [`missing: ${result.missing.map(safe).join(', ')}`] : [])].map(safe).join(' · ');
 }

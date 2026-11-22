@@ -31,7 +31,7 @@ const nonempty = (v: unknown): v is string => typeof v === 'string' && v.trim() 
 
 /** A reply names its request through the `inReplyTo` key that
  * bus-reply-post.ts stamps (`in_reply_to` is accepted for peer-protocol
- * bodies). Only a `verified` object carrying pr+head, tests or an artifact is
+ * bodies). Only a `verified` object carrying pr+head or a named artifact is
  * verification evidence under the reporting contract. */
 function replyVerifiedEvidence(row: BusInboxReceipt, id: string): WorkItemEvidence['verified'] {
   const body = row.envelope.body;
@@ -43,7 +43,7 @@ function replyVerifiedEvidence(row: BusInboxReceipt, id: string): WorkItemEviden
   const head = nonempty(verified['head']) ? verified['head'] : undefined;
   const tests = nonempty(verified['tests']) ? verified['tests'] : undefined;
   const artifact = nonempty(verified['artifact']) ? verified['artifact'] : undefined;
-  if (!((pr !== undefined && head !== undefined) || tests !== undefined || artifact !== undefined)) return undefined;
+  if (!((pr !== undefined && head !== undefined) || artifact !== undefined)) return undefined;
   return { pr, head, tests, artifact, source: `bus-reply:${row.envelope.id}`, at: new Date(row.receivedAt).toISOString() };
 }
 
