@@ -519,7 +519,7 @@ was read and holds no live envelope with that id; `unknown` when the store
 cannot be read. Triage no longer costs one `agents bus show` per hint.
 `fleet_agent_wakes` (the isolated fleet MCP tool) serves the same read with
 the same dimensions as arguments — `agent` required, `since`/`job`/`from`/
-`excludeFrom`/`contains` the same filters — under the identical
+`excludeFrom`/`priority`/`contains` the same filters — under the identical
 `readAgentWakes` validation, so an MCP-connected agent reads its wake
 hints, claim-holder citations and resolved referents without shelling out
 to `phm`; it accepts no caller root or path and passes a refused or
