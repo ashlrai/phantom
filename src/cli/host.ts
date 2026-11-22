@@ -1,5 +1,5 @@
-/** `phm host load`, `phm host top`, `phm host disk` and `phm host memory`: what is loading and using this computer. Thin: the grouping lives in core/fleet/host-load and host-top. */
-import { readHostLoadReport, type HostLoadDeps, type HostLoadReport, type HostLoadTrees } from '../core/fleet/host-load.js';
+/** `phm host`: what is loading and using this computer. Thin: grouping lives in core/fleet. */
+import { readHostLoadReport, readHostOrphans, type HostOrphansDeps, type HostLoadReport, type HostLoadTrees } from '../core/fleet/host-load.js';
 import { describeHostTop, hostDiskWarningLine, hostTopMemory, readHostTopReport, HOST_DISK_FLOOR_GB, type HostTopDeps, type HostTopReport } from '../core/fleet/host-top.js';
 import { formatHostDisk, readHostDisk, type HostDiskDeps, type HostDiskReport } from '../core/fleet/host-disk.js';
 import { formatHostMemory, readHostMemory, type HostMemoryDeps, type HostMemoryReport } from '../core/fleet/host-memory.js';
@@ -13,6 +13,7 @@ const USAGE = `Usage: phm host top [--json] [--groups] [--floor GB]
        phm host load --history [--since 6h] [--json]
        phm host disk [--json] [--history]
        phm host memory [--json]
+       phm host orphans [--json]
 top   What is using this Mac: fleet workers, the local model server, Docker, each desktop app, Phantom, indexing and other,
       with load, memory pressure, swap used, the free-disk trend (GB per hour and hours to the floor) and one suggestion.
       --groups adds the busiest processes in each bucket. --floor sets the GB floor the trend measures to (default ${HOST_DISK_FLOOR_GB});
@@ -31,6 +32,8 @@ disk  How fast free disk is falling and when the lanes freeze: free GB now, GB p
 memory  Is this Mac really short of memory? Free %, swap used, swap growth per minute, swapouts per minute, the 5 largest processes
       by memory and one verdict: real pressure (free memory under 35% or swapouts above 0), swap growing but memory is free
       (likely a false alarm), fine, or unknown. --json is host.memory.v1. Unknown is said as unknown.
+orphans  Processes with parent 1, grouped by command and job, with counts, CPU and watcher information when available.
+      Services can also appear. Unknown jobs and unavailable watcher data say unknown. --json is host.orphans.v1.
 Read-only: nothing is ever stopped, deleted or quit. Exits 0 with a report, 1 when the process list (or free disk, for disk; too few memory readings, for memory) cannot be read, 2 on bad usage.`;
 
 export function formatHostTop(report: HostTopReport, groups = false): string {
@@ -73,10 +76,19 @@ export function formatHostLoad(report: HostLoadReport): string {
   return [...lines, ...report.gaps.map(gap => `Note: ${gap}`)].join('\n');
 }
 
-export async function cmdHost(args: string[], deps: HostLoadDeps & HostTopDeps & HostDiskDeps & HostMemoryDeps & { write?: (text: string) => void; runsDir?: string } = {}): Promise<number> {
+export async function cmdHost(args: string[], deps: HostOrphansDeps & HostTopDeps & HostDiskDeps & HostMemoryDeps & { write?: (text: string) => void } = {}): Promise<number> {
   const write = deps.write ?? ((text: string) => { process.stdout.write(text); });
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) { write(`${USAGE}\n`); return 0; }
   const [verb, ...flags] = args;
+  if (verb === 'orphans') {
+    if (new Set(flags).size !== flags.length || flags.some(flag => flag !== '--json')) { console.error('Usage: phm host orphans [--json]'); return 2; }
+    const report = sanitizePublicJson(await readHostOrphans(deps)) as Awaited<ReturnType<typeof readHostOrphans>>;
+    const lines = [`${report.processes ?? 'Unknown'} processes with parent 1; CPU ${report.cpuPercent ?? 'unknown'}%.`,
+      'Command / Job / Processes / CPU% / Watchers (kqueue descriptors)',
+      ...report.groups.map(group => `${group.command} / ${group.job ?? 'unknown'} / ${group.processes} / ${group.cpuPercent} / ${group.watchers ?? 'unknown'}`), ...report.notes];
+    write(`${flags.includes('--json') ? JSON.stringify(report) : lines.join('\n')}\n`);
+    return report.state === 'unknown' ? 1 : 0;
+  }
   if (verb === 'top') {
     let json = false, groups = false, floor = HOST_DISK_FLOOR_GB, floorGiven = false;
     for (let i = 0; i < flags.length; i++) {
