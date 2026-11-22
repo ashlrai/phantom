@@ -5,9 +5,12 @@
  * dispatch/token gate. GET /api/verse/agent-bus/status inspects retained capacity.
  * GET /api/verse/agent-bus/work-feed is the v2 work projection (`phm fleet
  * work-feed --json`): ok and refused answers return 200 with the projection's
- * own status; unreadable or invalid storage returns 503. Its only parameter is
- * `claims=true`, which adds the same live coordination-hold join the CLIs'
- * `--claims` flag produces.
+ * own status; unreadable or invalid storage returns 503. It accepts `claims=true`
+ * plus the same filter parameters the feed CLIs take — `status`, `job`, `repo`,
+ * `provider`, `tier`, `to`, `owner`, `since`, `contains`, `open` and `claimable`,
+ * each validated by the shared `parseBusWorkFeedQuery` rules and applied through
+ * the same `projectBusWorkFeedView` the CLIs use (`open`/`claimable` imply the
+ * claims join); any other parameter or value is a 400.
  * GET /api/verse/agent-bus/messages[?since=15m&agent=claude&with=leader&kind=ask&priority=P0&job=RQ-1&thread=t-1&contains=parser&limit=50] is the same
  * read as `phm messages` (agent-messages.ts): newest first, scrubbed summaries.
  * `contains` is a case-insensitive substring over each scrubbed summary.
@@ -28,7 +31,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFleetEdges } from '../fleet/fleet-edges.js';
 import { parseBusEnvelope } from '../fleet/bus-envelope.js';
 import { appendBusInbox, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter } from '../fleet/bus-inbox.js';
-import { readBusWorkFeed } from '../agents/bus-work-feed-read.js';
+import { projectBusWorkFeedView, readBusWorkFeed } from '../agents/bus-work-feed-read.js';
+import { parseBusWorkFeedQuery, type BusWorkFeedQueryInput } from '../agents/bus-work-feed-query.js';
 import { parseAgentMessagesQuery, readAgentMessages } from '../fleet/agent-messages.js';
 import { getBusMirrorState, startBusMirrorLoop } from '../fleet/bus-mirror-dispatch.js';
 import { mirrorLeaderPostToInbox } from '../fleet/bus-leader-inbox.js';
@@ -47,6 +51,9 @@ const PATH = '/api/verse/agent-bus';
 const NEEDS_MASON = `${PATH}/needs-mason`;
 const MESSAGES = `${PATH}/messages`;
 const WORK_FEED = `${PATH}/work-feed`;
+/** The query keys the work-feed read accepts — the `claims` hold join plus the
+ * filter set `parseBusWorkFeedQuery` validates into `projectBusWorkFeedView`. */
+const WORK_FEED_PARAMS = ['claims', 'status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'contains', 'open', 'claimable'] as const;
 const NEEDS_MASON_RESOLVE = `${NEEDS_MASON}/resolve`;
 const ASKS = `${NEEDS_MASON}/asks`;
 const ASKS_ANSWER = `${ASKS}/answer`;
@@ -116,7 +123,7 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
     catch { sendJson(res, 400, { error: 'Invalid query.' }); return true; }
     const allowed = method === 'GET' && path === PATH ? ['after', 'limit']
       : method === 'GET' && path === MESSAGES ? ['since', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'contains', 'limit']
-      : method === 'GET' && path === WORK_FEED ? ['claims'] : [];
+      : method === 'GET' && path === WORK_FEED ? [...WORK_FEED_PARAMS] : [];
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1)) {
       sendJson(res, 400, { error: 'Invalid query.' }); return true;
     }
@@ -125,10 +132,15 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
         const result = readFleetEdges();
         sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
       } else if (path === WORK_FEED) {
-        const claims = params.get('claims');
-        if (claims !== null && claims !== 'true') { sendJson(res, 400, { error: 'Invalid query.' }); return true; }
+        const query: BusWorkFeedQueryInput = {};
+        for (const key of WORK_FEED_PARAMS) {
+          const value = params.get(key);
+          if (value !== null) query[key] = value;
+        }
+        const parsed = parseBusWorkFeedQuery(query);
+        if (!parsed.ok) { sendJson(res, 400, { error: parsed.error }); return true; }
         const feed = deps.workFeed ?? readBusWorkFeed;
-        const result = claims === 'true' ? feed({ claims: true }) : feed();
+        const result = projectBusWorkFeedView(parsed.claims ? feed({ claims: true }) : feed(), parsed.filters);
         sendJson(res, result.status === 'ok' || result.status === 'refused' ? 200 : 503, { v: 1, ...result });
       } else if (path === MESSAGES) {
         const parsed = parseAgentMessagesQuery({ since: params.get('since') ?? undefined,
