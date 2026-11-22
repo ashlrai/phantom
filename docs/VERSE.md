@@ -1169,6 +1169,18 @@ the suggested-knowledge queue, recent retros (each expandable to its cause,
 next steps and better prompt), approved knowledge with hit counts, and Leader
 veto lessons. It loads separately, so Growth's first paint never waits on it.
 
+Each approved note also carries **trajectory outcome evidence** once enough
+fleet runs have seen it: how many distinct dispatches it was injected into,
+how many of those resolved to a trajectory record, and — past a small sample
+floor — how those runs ended (merged, failed, reverted and the like). The
+correlation is recorded when a real dispatch starts, keyed by the run's
+trajectory id, so refused previews and quota refusals never count. These are
+descriptive tallies of what happened to runs that saw the note, not proof the
+note caused the outcome — that causal question stays with the cloud lesson
+holdout. When the trajectory journals or the run ledger are degraded,
+truncated or simply absent, the tallies stay unknown rather than reading as
+zero.
+
 **When sweeps run.** `ashlr verse` sweeps in the background: first 5 minutes
 after start, then hourly, skipping a tick while a sweep is running or when the
 last one is under 10 minutes old. It runs only on the live console (not with
