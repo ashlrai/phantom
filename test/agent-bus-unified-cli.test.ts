@@ -1016,6 +1016,44 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['work', 'feed', '--claimable', '--claimable'])).toMatchObject({ code: 2 });
   });
 
+  it('filters the work feed by --contains over title, detail and dispatch text', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-CONTAINS-A', '--title', 'Drain the queue',
+      '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom', '--id', 'feed-ca',
+      '--tier', 'work', '--scope', 'Migrate the drain path', '--acceptance', 'Drain lands green'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-CONTAINS-B', '--title', 'Polish the docs',
+      '--repo', 'ashlrai/other', '--claim', 'repo:ashlrai/other', '--id', 'feed-cb'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'status', '--from', 'atlas', '--job', 'RQ-CONTAINS-B', '--status', 'running',
+      '--detail', 'waiting on drain review', '--id', 'feed-cb-s'])).json).toMatchObject({ status: 'posted' });
+
+    // 'drain' matches the first job's title and dispatch and the second's
+    // newest status detail — every descriptive field the job line renders.
+    const both = await run(['work', 'feed', '--contains', 'DRAIN']);
+    expect(both.code).toBe(0);
+    expect(both.json.jobs.map((job: { id: string }) => job.id)).toEqual(['RQ-CONTAINS-B', 'RQ-CONTAINS-A']);
+    // A phrase only the dispatch scope carries narrows to that one job, and
+    // the filter composes with the structured ones.
+    expect((await run(['work', 'feed', '--contains', 'drain path'])).json.jobs)
+      .toEqual([expect.objectContaining({ id: 'RQ-CONTAINS-A' })]);
+    expect((await run(['work', 'feed', '--contains', 'drain', '--status', 'queued'])).json.jobs)
+      .toEqual([expect.objectContaining({ id: 'RQ-CONTAINS-A' })]);
+    // Whitespace collapses on both sides like every other --contains read.
+    expect((await run(['work', 'feed', '--contains', '  drain\n  lands  '])).json.jobs)
+      .toEqual([expect.objectContaining({ id: 'RQ-CONTAINS-A' })]);
+    // A needle nothing carries is an honest empty view; ids, keys, statuses
+    // and labels are structured fields, never search text.
+    for (const needle of ['bogus-needle', 'RQ-CONTAINS-A', 'running', 'repo:ashlrai/phantom', 'leaders', 'claude']) {
+      expect((await run(['work', 'feed', '--contains', needle])).json).toMatchObject({ status: 'ok', jobs: [] });
+    }
+    // Blank, overlong and duplicate needles are usage errors, never a silent widen.
+    expect(await run(['work', 'feed', '--contains', ''])).toMatchObject({ code: 2 });
+    expect(await run(['work', 'feed', '--contains', '   '])).toMatchObject({ code: 2 });
+    expect(await run(['work', 'feed', '--contains', 'x'.repeat(513)])).toMatchObject({ code: 2 });
+    expect(await run(['work', 'feed', '--contains', 'a', '--contains', 'b'])).toMatchObject({ code: 2 });
+  });
+
   it('filters the work feed to jobs still open for a worker with --open', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-OPEN', '--title', 'Open',

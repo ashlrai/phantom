@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
-import { cmdFleetLaneStarve, FILLER_ID, findStarvedLanes } from '../src/cli/fleet-lane-starve.js';
+import { cmdFleetLaneStarve, findStarvedLanes as cliFindStarvedLanes } from '../src/cli/fleet-lane-starve.js';
+import { FILLER_ID, findStarvedLanes, isParkedReadyRow } from '../src/core/fleet/lane-starve.js';
 
 let dir: string;
 const saved = process.env.ASHLR_RUNS_DIR;
@@ -68,6 +69,32 @@ describe('findStarvedLanes', () => {
     ].join('\n');
     expect(findStarvedLanes(STATUS, ready)).toEqual([
       { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 2, filler: 1, real: 1 },
+    ]);
+  });
+  it('does not count parked rows or comments as runnable work', () => {
+    const ready = [
+      'RQ-X-A123456Q8\tp1\tclaude-api',
+      'PARKED-DEP.claude-api\tRQ-PD1\tclaude-api\twork\tphantom\t/prompt',
+      'RQ-PD2\tphantom\tPARKED-DEP.claude-api\twork\t/prompt',
+      'PARKED-MERGERATE.codex\tRQ-PM1\tcodex\twork\trepo\t/prompt',
+      '# note\tbogus\tclaude-api',
+    ].join('\n');
+    expect(findStarvedLanes(STATUS, ready)).toEqual([
+      { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 1, filler: 1, real: 0 },
+    ]);
+  });
+  it('keeps the CLI reader export compatible', () => {
+    expect(cliFindStarvedLanes).toBe(findStarvedLanes);
+  });
+  it.each(['PARKED-DEP', 'parked-hold', 'PARKEDx'])('recognizes %s in either parked encoding', marker => {
+    expect(isParkedReadyRow([marker, 'job', 'claude-api'])).toBe(true);
+    expect(isParkedReadyRow(['job', 'repo', marker])).toBe(true);
+    expect(isParkedReadyRow(['job', 'repo', 'claude-api'])).toBe(false);
+  });
+  it('reads the job id from status-first rows', () => {
+    const ready = 'READY\tRQ-SF-A123456Q8\tclaude-api\twork\tphantom\t/prompt';
+    expect(findStarvedLanes(STATUS, ready)).toEqual([
+      { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 1, filler: 1, real: 0 },
     ]);
   });
   it('rejects malformed status', () => {

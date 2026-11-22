@@ -46,6 +46,8 @@ export interface StatusDigestSources {
   yieldLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
   /** The top `pools.waste.v1` alert as one line; also raises the Asks card when the fix needs Mason. Null when none. */
   wasteLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
+  /** The most-wasted sign-in blocker, also recorded as an Asks card. */
+  authLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
   /** The `Not live yet` line from `fleet.drift.v1` when merged fleet files are not installed; null when all live or unreadable. */
   notLiveLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
   blocker?: (runsDir: string, nowMs: number, lanes: Array<{ lane: string; running: number; target: number; held: boolean }> | null) => Promise<DigestBlocker>;
@@ -87,6 +89,12 @@ const defaults: StatusDigestSources = {
     const waste = await readPoolsWaste({ runsDir, now: () => nowMs });
     await (await import('../fleet/asks-sync.js')).syncAsks({ runsDir, now: () => nowMs }).catch(() => null);
     return wasteDigestLine(waste);
+  },
+  authLine: async (runsDir, nowMs) => {
+    const { readLaneAuth, raiseLaneAuthAsks, laneAuthDigestLine } = await import('../fleet/lane-auth.js');
+    const auth = await readLaneAuth({ runsDir, now: () => nowMs });
+    await raiseLaneAuthAsks(auth, { runsDir, now: () => nowMs });
+    return laneAuthDigestLine(auth);
   },
   notLiveLine: async runsDir => {
     const { findFleetRepo, fleetDrift, notLiveLine } = await import('../fleet/drift.js');
@@ -211,8 +219,9 @@ export async function gatherStatusDigestInput(runsDir: string, now: Date, overri
   const yieldFact = await fact(() => src.yieldLine?.(runsDir, nowMs) ?? null, 'yield check failed');
   const supply = await fact(() => src.supplyLine?.(runsDir, nowMs) ?? null, 'supply check failed');
   const waste = await fact(() => src.wasteLine?.(runsDir, nowMs) ?? null, 'waste check failed');
+  const auth = await fact(() => src.authLine?.(runsDir, nowMs) ?? null, 'sign-in check failed');
   const notLive = await fact(() => src.notLiveLine?.(runsDir, nowMs) ?? null, 'drift check failed');
   const blocker = await fact(() => src.blocker?.(runsDir, nowMs, lanes.ok ? lanes.value : null) ?? undefined, 'blocker check failed');
   const updatePending = installed.ok && published.ok ? versionNewer(published.value, installed.value) : null;
-  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, ...(mergeTime ? { mergeTime } : {}), lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}), ...(supply.ok && supply.value ? { supplyLine: supply.value } : {}), ...(yieldFact.ok && yieldFact.value ? { yieldLine: yieldFact.value } : {}), ...(waste.ok && waste.value ? { wasteLine: waste.value } : {}), ...(notLive.ok && notLive.value ? { notLiveLine: notLive.value } : {}), ...(blocker.ok && blocker.value ? { blocker: blocker.value } : {}) };
+  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, ...(mergeTime ? { mergeTime } : {}), lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}), ...(supply.ok && supply.value ? { supplyLine: supply.value } : {}), ...(yieldFact.ok && yieldFact.value ? { yieldLine: yieldFact.value } : {}), ...(waste.ok && waste.value ? { wasteLine: waste.value } : {}), ...(auth.ok && auth.value ? { authLine: auth.value } : {}), ...(notLive.ok && notLive.value ? { notLiveLine: notLive.value } : {}), ...(blocker.ok && blocker.value ? { blocker: blocker.value } : {}) };
 }

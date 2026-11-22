@@ -363,6 +363,50 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     expect(error).toHaveBeenCalledTimes(4);
   });
 
+  it('filters jobs by --contains over title, status detail and dispatch text', async () => {
+    append({ ...post, jobId: 'fake-drain', title: 'Drain the queue',
+      dispatch: { tier: 'work', scope: 'Migrate the drain path', acceptance: 'Drain lands green' } }, 1);
+    append({ ...post, jobId: 'fake-polish', title: 'Polish the docs' }, 2);
+    now += 10;
+    append({ kind: 'work.status', jobId: 'fake-polish', status: 'running', detail: 'waiting on drain review' }, 3);
+    const log = output();
+    // 'drain' matches the first job's title and dispatch and the second's
+    // newest status detail — every descriptive field the job line renders.
+    expect(await cmdFleetWorkFeed(['--root', root, '--contains', 'DRAIN'])).toBe(0);
+    expect(log.mock.calls.map(call => String(call[0])).filter(line => line.startsWith('fake-'))).toEqual([
+      expect.stringContaining('fake-polish running'),
+      expect.stringContaining('fake-drain queued'),
+    ]);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=2 receipts=3 feed=ok');
+    log.mockClear();
+    // A phrase only the dispatch scope carries narrows to that one job.
+    expect(await cmdFleetWorkFeed(['--root', root, '--contains', 'drain path', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({
+      status: 'ok', jobs: [{ id: 'fake-drain' }], receipts: 3 });
+    log.mockClear();
+    // Whitespace collapses on both sides like every other --contains read.
+    expect(await cmdFleetWorkFeed(['--root', root, '--contains', '  drain\n  lands  '])).toBe(0);
+    expect(log.mock.calls.map(call => String(call[0])).filter(line => line.startsWith('fake-'))).toEqual([
+      expect.stringContaining('fake-drain queued'),
+    ]);
+    log.mockClear();
+    // A needle nothing carries is an honest empty view; ids, keys, statuses
+    // and labels are structured fields, never search text.
+    for (const needle of ['bogus-needle', 'fake-drain', 'running', 'repo:fake/repo', 'leaders', 'devin']) {
+      expect(await cmdFleetWorkFeed(['--root', root, '--contains', needle])).toBe(0);
+      expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0 receipts=3 feed=ok');
+      log.mockClear();
+    }
+    // Blank, duplicate and overlong needles are usage errors, never a silent widen.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const args of [['--root', root, '--contains', ''], ['--root', root, '--contains', '   '],
+      ['--root', root, '--contains', 'x'.repeat(513)], ['--root', root, '--contains', 'a', '--contains', 'b'],
+      ['--root', root, '--contains']]) {
+      expect(await cmdFleetWorkFeed(args)).toBe(2);
+    }
+    expect(error).toHaveBeenCalledTimes(5);
+  });
+
   it('filters to jobs still open for a worker with --open and implies the claims join', async () => {
     const hold = (key: string, sourceId: string) => {
       expect(acquireCoordination({ root, origin: 'resource', key, owner: 'fake-holder',
