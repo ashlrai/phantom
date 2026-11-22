@@ -39,7 +39,7 @@ ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-f
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--matched] [--frame <cli>]
-ashlr agents bus wakes [<agent>] [--since <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--contains <text>]
+ashlr agents bus wakes [<agent>] [--since <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--contains <text>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
@@ -105,7 +105,12 @@ work.status detail, the same scrubbed one-line text the row reports —
 carries the needle as a case-insensitive substring, so "which wake was
 about X" is one filtered read; a hint whose referent cannot be resolved
 names no provable text and never matches, and matched counts the proven
-matches on the resolved page.
+matches on the resolved page. --priority on wakes keeps only hints in one
+exact P0..P3 band — the same match inbox, channel read and work feed
+--priority apply — decided on the resolved referent's own band: the live
+message a bus.send hint points at or the citing work.status receipt
+behind a claim-holder hint, with an unresolvable referent never matching
+and matched counting the proven matches on the resolved page.
 --since on inbox, channel read and wakes keeps only rows at or after the
 cutoff — the phm messages grammar (15m, 2h, 1d, epoch ms or an ISO
 time), resolved to epoch ms — so fresh mail, a room's recent posts and
@@ -695,7 +700,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const agent = sub ?? self;
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
       const page = readAgentWakes(agent, sinceArg(), options,
-        { job: one('--job'), from: one('--from'), excludeFrom: one('--exclude-from'), contains: one('--contains') });
+        { job: one('--job'), from: one('--from'), excludeFrom: one('--exclude-from'), contains: one('--contains'),
+          priority: priorityArg() });
       if (page.status !== 'ok') return finish(page, '');
       out(json ? JSON.stringify(page) : [
         ...(page.truncated ? [`${page.matched} wake hint(s) matched; the bounded queue tail is truncated — showing the newest ${page.wakes.length}`] : []),

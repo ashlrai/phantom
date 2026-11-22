@@ -1262,7 +1262,7 @@ const CLAIM_HOLDER_WAKE_ID = /^wh-[a-f0-9]{32}$/;
  * possible — never reported as "no status".
  */
 export type AgentWakeClaimHolder =
-  | { statusId: string; jobId: string; status: WorkJob['status']; detail?: string }
+  | { statusId: string; jobId: string; status: WorkJob['status']; detail?: string; priority: BusPriority }
   | 'unresolved'
   | 'unknown';
 
@@ -1323,7 +1323,8 @@ function claimHolderWakeContexts(rows: readonly BusWakeRow[], options: UnifiedBu
       const id = claimHolderWakeId(receipt.envelope.id, owner);
       if (!hints.has(id) || contexts.has(id)) continue;
       contexts.set(id, { statusId: receipt.envelope.id, jobId: parsed.data.jobId,
-        status: parsed.data.status, ...(parsed.data.detail === undefined ? {} : { detail: parsed.data.detail }) });
+        status: parsed.data.status, priority: receipt.envelope.priority,
+        ...(parsed.data.detail === undefined ? {} : { detail: parsed.data.detail }) });
     }
   }
   for (const id of hints.keys()) if (!contexts.has(id)) contexts.set(id, 'unresolved');
@@ -1510,12 +1511,24 @@ export type WakePage = { status: 'ok'; agent: string;
  * about X" is one filtered read; a hint whose referent cannot be
  * resolved names no provable text and never matches, and like `job` the
  * filtered `matched` counts the proven matches on the resolved page.
+ * `filter.priority` keeps only hints in one exact P0..P3 band — the same
+ * match every other bus read's `--priority` applies — decided on the
+ * resolved referent's own priority: the live message a `bus.send` hint
+ * points at, or the citing `work.status` receipt's band behind a
+ * claim-holder `wh-…` hint, with `unresolved`/`unknown` referents never
+ * matching (they name no provable band), `matched` counting the proven
+ * matches on the resolved page, an unreadable bus store answering
+ * `unavailable`, and a band outside P0..P3 answering `invalid`.
  */
 export function readAgentWakes(ref: string, sinceAt: number | undefined, options: UnifiedBusOptions = {},
-  filter: { job?: string; from?: string; excludeFrom?: string; contains?: string } = {}): WakePage {
+  filter: { job?: string; from?: string; excludeFrom?: string; contains?: string; priority?: BusPriority } = {}): WakePage {
   const job = filter.job;
   if (job !== undefined && (typeof job !== 'string' || !THREAD.test(job))) {
     return { status: 'invalid', reason: 'Invalid job id.' };
+  }
+  const priority = filter.priority;
+  if (priority !== undefined && !BUS_PRIORITIES.includes(priority)) {
+    return { status: 'invalid', reason: 'Invalid priority.' };
   }
   const from = filter.from;
   if (from !== undefined && (typeof from !== 'string' || from.length === 0 || from.length > 128)) {
@@ -1551,11 +1564,12 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
   // citation re-derivation and the ordinary hint's referent lookup.
   const scan = wakes.wakes.length === 0 ? undefined
     : scanBusInbox({ root: options.root, now: options.now });
-  // A job or contains verdict needs the resolved referent; when the store
-  // cannot be read every hint's citation and summary are unknown, so the
-  // filtered read fails closed instead of reporting an empty page as "no
-  // wakes for this job" or "no wakes mentioning this".
-  if ((job !== undefined || containsNeedle !== undefined) && scan !== undefined && scan.source === 'unavailable') {
+  // A job, contains or priority verdict needs the resolved referent; when the
+  // store cannot be read every hint's citation, summary and band are unknown,
+  // so the filtered read fails closed instead of reporting an empty page as
+  // "no wakes for this job", "no wakes mentioning this" or "no urgent wakes".
+  if ((job !== undefined || containsNeedle !== undefined || priority !== undefined) &&
+      scan !== undefined && scan.source === 'unavailable') {
     return { status: 'unavailable', reason: 'Bus store is not readable.' };
   }
   const contexts = claimHolderWakeContexts(wakes.wakes, options, scan);
@@ -1570,6 +1584,17 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
         !wakeHintContainsMatch(contexts.get(row.id), resolved.contexts.get(row.id), containsNeedle)) {
       return false;
     }
+    if (priority !== undefined) {
+      // The band is the resolved referent's own priority — the live message a
+      // bus.send hint points at, or the citing work.status receipt behind a
+      // claim-holder wh-… hint. A hint whose referent is unresolved or
+      // unknown names no provable band and never matches.
+      const holder = contexts.get(row.id);
+      const message = resolved.contexts.get(row.id);
+      const band = typeof holder === 'object' ? holder.priority
+        : message?.status === 'resolved' ? message.priority : undefined;
+      if (band !== priority) return false;
+    }
     return true;
   });
   return { status: 'ok', agent: target?.identity.handle ?? ref,
@@ -1581,7 +1606,7 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
         ...(claimHolder === undefined ? {} : { claimHolder }),
         ...(message === undefined ? {} : { message }) };
     }),
-    matched: job === undefined && containsNeedle === undefined ? wakes.matched ?? 0 : shown.length,
+    matched: job === undefined && containsNeedle === undefined && priority === undefined ? wakes.matched ?? 0 : shown.length,
     truncated: wakes.truncated ?? false };
 }
 

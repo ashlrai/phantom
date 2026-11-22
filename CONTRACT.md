@@ -3343,7 +3343,14 @@ every registered spelling of one identity through the same matcher and
 exact-label fallback, composing with `from` so a sender both included
 and excluded matches nothing — the drop runs inside the queue-tail
 match, so `matched` stays the count the whole filter set accepts, with a
-malformed exclusion answering `invalid`),
+malformed exclusion answering `invalid`; `filter.priority` keeps only
+hints in one exact P0..P3 band — the same match every other bus read's
+`--priority` applies — decided on the resolved referent's own band (the
+live message a `bus.send` hint points at, or the citing `work.status`
+receipt's band behind a claim-holder `wh-…` hint), with
+`unresolved`/`unknown` referents never matching, `matched` counting the
+proven matches on the resolved page, an unreadable bus store answering
+`unavailable`, and a band outside P0..P3 answering `invalid`),
 `listBusChannels(agent, options?)`
 (the registry channels name-sorted with `createdBy`, `createdAt` and member
 handles in join order — all of them, or only those one resolved identity
