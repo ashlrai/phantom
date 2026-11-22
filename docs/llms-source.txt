@@ -6,7 +6,7 @@
 
 Mission: chasing open-source RSI (recursive self-improvement). Phantom and its companion tools aim to form a fully autonomous, code-first, agent-native software factory. Agents pick work, open pull requests, merge them and ship releases through the sanctioned workflow; the human owner acts as a passive board member, needed only for passwords, 2FA, device approvals and payments. Agents follow `AGENTS.md` at the repository root. Strategy: [recursive self-improvement and an open fleet](strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md).
 
-Ecosystem: Phantom is the hub. Separately installed companions are phantom-secrets (secrets), ashlr-plugin (token-efficient agent tools), Locus (identity scoping), lexicon (vocabulary), ashlr-md (Markdown review) and ashlr-stack (service provisioning). See [companion setup](COMPANIONS.md) and the [ecosystem map](ECOSYSTEM-MAP.md).
+Ecosystem: Phantom is the hub. Separately installed companions are phantom-secrets (secrets), ashlr-plugin (token-efficient agent tools), Locus (identity scoping), lexicon (vocabulary), ashlr-md (Markdown editing) and ashlr-stack (service provisioning). See [companion setup](COMPANIONS.md) and the [ecosystem map](ECOSYSTEM-MAP.md).
 
 Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent --json`. The copy-paste install, JSON commands, and MCP setup are in [llms-full.txt](llms-full.txt).
 
@@ -36,6 +36,20 @@ Approval cards record consent and do not collect credentials.
 - [Autonomy setup](AUTONOMY-SETUP.md): Dormant macOS autonomy. Status is not activation.
 - [Friction loop doctrine](doctrine/FRICTION-LOOP.md): How autonomy work is chosen — delegate everything, find where delegation stops for a human step, remove the step without removing the protection, and measure the signal after merge.
 
+## Contribute
+
+Outside contributors and their agents follow the same path as the fleet: one focused branch, local checks run once, a pull request from a fork, and `Merge Gate` as the one required hosted check.
+
+- [AGENTS.md](../AGENTS.md): The agent constitution: what agents may do, what stays with the owner, and how to work in this repository.
+- [Contributing](../CONTRIBUTING.md): Full conventions, tests, contracts and the dependency policy.
+- [Contribute with an agent](CONTRIBUTE-WITH-AN-AGENT.md): First pull request from a fork. Clone with `ashlrai/phantom` as `origin`, `npm ci`, make one change, run `node scripts/verify-changed.mjs` once, push to your fork and open the pull request against `master`.
+- [What CI requires](CONTRIBUTE-WITH-AN-AGENT.md#6-what-ci-requires): The jobs `Merge Gate` needs on a pull request; the full suites run on the scheduled `master` run.
+- [Which tests the fast gate runs](CONTRIBUTE-WITH-AN-AGENT.md#which-tests-the-fast-gate-runs): How `.github/scripts/ci-fast-select.mjs` picks tests from the changed paths.
+- [Protected paths](CONTRIBUTE-WITH-AN-AGENT.md#protected-paths-wait-for-the-owner): Diffs under `.github/CODEOWNERS` paths wait for the owner even when `Merge Gate` passes.
+- [Changed-files verification](verify-changed.md): What `node scripts/verify-changed.mjs` runs, its environment variables and typecheck slots.
+- [FAQ](FAQ.md): Short answers about what Phantom is, the mission and how agents work on it.
+- [Glossary](GLOSSARY.md): Shared fleet vocabulary: job, lane, worker, bridge PR, `Merge Gate`, leader and more.
+
 ## CLI
 
 - [Amplify](AMPLIFY.md): `phm amplify status|tick|goal --json` reads objective and fleet vitals; tick journals advisory actions without changing fleet state.
@@ -62,7 +76,7 @@ Approval cards record consent and do not collect credentials.
 - [Full copy-paste reference](llms-full.txt): Install, JSON commands, and MCP setup for Claude, Cursor, and Codex.
 - [Fleet MCP onramp](FLEET-MCP-ONRAMP.md): Read-only fleet MCP server. Add the stdio entry to a client config.
 - [Companions](COMPANIONS.md): Phantom Secrets, Locus, and Lexicon are installed separately. They are not bundled.
-- [Agent toolchain](AGENT-TOOLCHAIN.md): Companion MCP servers declared for agents working in this repo.
+- [Agent toolchain](AGENT-TOOLCHAIN.md): Companion MCP servers declared for agents working in this repo; all optional for outside contributors.
 - [Agent-native quickstart](AGENT-NATIVE-QUICKSTART.md): Use the desktop `/verse/` console as the visibility surface.
 - [Plugins](PLUGINS.md): Extend Phantom without forking.
 
