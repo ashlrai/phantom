@@ -18,7 +18,7 @@
  * GET /api/verse/fleet/control/map-replay[?since=6h&step=5m] is `phm map replay --json`
  * (fleet.map-replay.v1): the fleet one frame per step, for the Map pane's time slider.
  *
- * GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&blocked=1&job=RQ-1&waitingOn=claude] is
+ * GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&blocked=1&job=RQ-1&waitingOn=claude&since=1h] is
  * `phm agents conversations --json` (agents.conversations.v1): threads by reply
  * chain with their state, for the map's thread lines and the Conversations panel.
  */
@@ -27,6 +27,7 @@ import { sendJson } from '../web/api.js';
 import { buildFleetLiveMap, LIVE_MAP_WINDOW_MINUTES, type FleetLiveMap } from '../fleet/live-map.js';
 import { MAP_EDGES_DEFAULT_SINCE, readMapEdges, type MapEdges } from '../fleet/map-edges.js';
 import { readAgentsMessages } from '../fleet/agents-messages.js';
+import { parseSince } from '../fleet/agent-messages.js';
 import { readAgentConversations } from '../fleet/agent-conversations.js';
 import { CONVERSATION_STATES, type ConversationState } from '../fleet/agent-conversation-model.js';
 import { readMapReplay } from '../fleet/map-replay-build.js';
@@ -93,20 +94,22 @@ export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = thrott
     }
     if (path === AGENT_CONVERSATIONS_PATH) {
       const waiting = params.get('waiting'), blocked = params.get('blocked'), agent = params.get('agent'), job = params.get('job'), waitingOn = params.get('waitingOn');
-      const state = params.get('state'), limit = params.get('limit');
-      if ([...params.keys()].some(key => key !== 'agent' && key !== 'waiting' && key !== 'blocked' && key !== 'job' && key !== 'waitingOn' && key !== 'state' && key !== 'limit')
+      const state = params.get('state'), limit = params.get('limit'), since = params.get('since');
+      const sinceMs = since === null ? undefined : parseSince(since);
+      if ([...params.keys()].some(key => key !== 'agent' && key !== 'waiting' && key !== 'blocked' && key !== 'job' && key !== 'waitingOn' && key !== 'state' && key !== 'limit' && key !== 'since')
         || params.getAll('agent').length > 1 || params.getAll('waiting').length > 1 || params.getAll('blocked').length > 1
         || params.getAll('job').length > 1 || params.getAll('waitingOn').length > 1
-        || params.getAll('state').length > 1 || params.getAll('limit').length > 1
+        || params.getAll('state').length > 1 || params.getAll('limit').length > 1 || params.getAll('since').length > 1
         || (waiting !== null && waiting !== '1' && waiting !== '0') || (blocked !== null && blocked !== '1' && blocked !== '0')
         || (state !== null && !(CONVERSATION_STATES as readonly string[]).includes(state))
         || (limit !== null && (!/^[1-9][0-9]*$/.test(limit) || Number(limit) > 1024))
-        || agent === '' || job === '' || waitingOn === '') {
-        sendJson(res, 400, { error: 'Use agent (a name), waiting (1), blocked (1), job (a job id), waitingOn (a name), state (waiting|answered|blocked|done) and limit (1-1024) only, once each.' }); return true;
+        || sinceMs === null
+        || agent === '' || job === '' || waitingOn === '' || since === '') {
+        sendJson(res, 400, { error: 'Use agent (a name), waiting (1), blocked (1), job (a job id), waitingOn (a name), state (waiting|answered|blocked|done), since (15m, 2h, 1d, epoch ms or an ISO time) and limit (1-1024) only, once each.' }); return true;
       }
       try {
         const result = conversations({ agent: agent ?? undefined, waitingOnly: waiting === '1', blockedOnly: blocked === '1', job: job ?? undefined, waitingOn: waitingOn ?? undefined,
-          state: state === null ? undefined : state as ConversationState, limit: limit === null ? undefined : Number(limit) });
+          state: state === null ? undefined : state as ConversationState, since: sinceMs ?? undefined, limit: limit === null ? undefined : Number(limit) });
         sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
       } catch { sendJson(res, 503, { error: 'Agent conversations unavailable.' }); }
       return true;

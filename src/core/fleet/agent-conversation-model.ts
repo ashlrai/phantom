@@ -83,6 +83,13 @@ export interface ConversationQuery {
    * empty list). `answered` and `done` are the states no flag reached
    * before. */
   state?: ConversationState;
+  /** Keep only threads whose last activity (`lastAt`) is at or after this
+   * epoch-ms cutoff — the same inclusive `receivedAt >= since` rule
+   * `phm messages --since` applies. Whole threads, never partial message
+   * lists: a dormant thread whose newest message predates the cutoff drops
+   * out even while it still waits, so pair it with `--waiting`/`--state`
+   * when the question is "what is still outstanding", not "what moved". */
+  since?: number;
   /** Cap the returned threads, newest order kept (longest-waiting first,
    * then newest); absent means every matched thread. `matched` still
    * reports the full filtered count. */
@@ -158,7 +165,9 @@ export function groupConversations(messages: readonly ConversationMessage[], now
  * channels it belongs to, minus threads whose waiting message the agent
  * itself sent), so an unresolvable ref or unreadable registry keeps the
  * literal `waiting.on` match and never widens. Without a predicate only the
- * literal `waiting.on` label matches.
+ * literal `waiting.on` label matches. `since` keeps only the threads whose
+ * `lastAt` reaches the epoch-ms cutoff — activity inside the window, whole
+ * threads like every other filter here.
  */
 export function filterConversations(list: readonly Conversation[], query: ConversationQuery,
   identityOf?: AgentIdentityKeyFor, waitingOnMatch?: (on: string, from: string) => boolean): Conversation[] {
@@ -166,6 +175,7 @@ export function filterConversations(list: readonly Conversation[], query: Conver
   const key = agent !== undefined && identityOf ? identityOf(query.agent!) : undefined;
   const owed = query.waitingOn?.toLowerCase();
   return list.filter(c => (query.job === undefined || c.jobs.includes(query.job))
+    && (query.since === undefined || Date.parse(c.lastAt) >= query.since)
     && (!agent || c.participants.some(p => p.name.toLowerCase() === agent
       || (key !== undefined && identityOf?.(p.name) === key)))
     && (!query.waitingOnly || c.state === 'waiting')
