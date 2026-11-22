@@ -1,12 +1,14 @@
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
+import { join } from 'node:path';
 import { inspectBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
 import { projectBusThread } from './bus-thread-context.js';
 import { readFleetRunsDirState } from './runs-dir-state.js';
 import { dispatchEventsCandidates } from './dispatch-events-path.js';
 import { sanitizePublicJson } from '../util/public-json.js';
 import { scrubSecrets } from '../util/scrub.js';
-import { learnOutcomes, outcomeLearningView } from '../routing/outcome-learning.js';
+import { learnFleetOutcomes, outcomeLearningView } from '../routing/outcome-learning.js';
+import { readLedgerTail, ROUTER_OUTCOME_LEDGER_RELATIVE } from '../router/outcomes.js';
 import { pinnedContextRows } from './library-pins.js';
 
 export interface ContextPackOptions extends BusInboxOptions {
@@ -46,6 +48,15 @@ async function eventsFile(runsDir: string): Promise<{ path: string; text: string
   throw new Error('Outcome log missing. Start the fleet to create queue/dispatch-events.log in the runs directory.');
 }
 
+// dispatch-events.log carries no stamped outcome lines, so the fold needs the
+// jobs ledger — the same bounded tail `phm fleet outcomes` and `phm select` read.
+// A missing or unreadable ledger degrades to dispatch-log evidence only; the
+// pack's sources.metrics health already reports that state.
+async function jobsLedgerTail(runsDir: string): Promise<string | null> {
+  const read = await readLedgerTail(join(runsDir, ROUTER_OUTCOME_LEDGER_RELATIVE));
+  return read.state === 'read' ? read.text : null;
+}
+
 export async function buildContextPack(options: ContextPackOptions): Promise<string> {
   const { job, lane, runsDir } = options;
   const cap = options.maxTokens ?? 2000, count = options.merges ?? 5;
@@ -53,7 +64,11 @@ export async function buildContextPack(options: ContextPackOptions): Promise<str
     throw new Error('Use safe job/lane IDs, --max-tokens 256..2000, and --merges 0..100.');
   }
   const now = (options.now ?? Date.now)();
-  const [state, events] = await Promise.all([readFleetRunsDirState({ runsDir, now: () => now }), eventsFile(runsDir)]);
+  const [state, events, ledger] = await Promise.all([
+    readFleetRunsDirState({ runsDir, now: () => now }),
+    eventsFile(runsDir),
+    jobsLedgerTail(runsDir),
+  ]);
   if (state.sources.status !== 'healthy') throw new Error('Fleet status missing or unreadable. Restore queue/status.json and retry.');
   if (inspectBusInbox(options).source !== 'available') throw new Error('Bus missing or unreadable. Restore private bus storage and retry.');
   const rows: BusInboxReceipt[] = [];
@@ -86,7 +101,7 @@ export async function buildContextPack(options: ContextPackOptions): Promise<str
   const threads = [...selected.values()].sort((a, b) => a.envelope.priority.localeCompare(b.envelope.priority) || b.cursor - a.cursor)
     .map(({ cursor: at, envelope: { id, from, to, priority, body } }) => ({ source: 'bus-inbox', cursor: at, id, from, to, priority, body }));
   const merges = events.text.split(/\r?\n/).filter(line => /\b(?:MERGED|MERGE)\b|\bOUTCOME \S+ merged\b|\bstate=merged\b|"state"\s*:\s*"merged"/.test(line)).reverse().slice(0, count);
-  const learning = outcomeLearningView(learnOutcomes(events.text));
+  const learning = outcomeLearningView(learnFleetOutcomes(events.text, ledger));
   const pins = pinnedContextRows(10, { home: options.home });
   const json = compactContext(job, lane, [
     { name: 'fleet', rows: [{ lastTick: state.lastTick, sources: state.sources, paused: state.paused, lanes: state.lanes.sort((a, b) => a.lane.localeCompare(b.lane)).map(({ lane, running, target, queued, held }) => ({ lane, running, target, queued, held })), finished: learning.finished }] },
