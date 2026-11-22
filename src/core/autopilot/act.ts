@@ -145,7 +145,7 @@ export function loadState(repo: string, n: number): AutopilotState {
     const base = emptyState();
     const r = raw.recut && typeof raw.recut === 'object' ? raw.recut : null;
     const recut = r && typeof r.branch === 'string' && r.branch && typeof r.fromHead === 'string' && r.fromHead
-      ? { branch: r.branch, number: Number.isSafeInteger(r.number) ? r.number! : 0, fromHead: r.fromHead, ...(r.queued === true ? { queued: true } : {}), ...(typeof r.retryAt === 'string' && Number.isFinite(Date.parse(r.retryAt)) ? { retryAt: r.retryAt } : {}) }
+      ? { branch: r.branch, number: Number.isSafeInteger(r.number) ? r.number! : 0, fromHead: r.fromHead, ...(typeof r.headSha === 'string' ? { headSha: r.headSha } : {}), ...(r.queued === true ? { queued: true } : {}), ...(typeof r.retryAt === 'string' && Number.isFinite(Date.parse(r.retryAt)) ? { retryAt: r.retryAt } : {}) }
       : undefined;
     return {
       pushes: Number.isSafeInteger(raw.pushes) ? raw.pushes! : 0,
@@ -307,8 +307,18 @@ async function requeueRecut(opts: TickOptions, obs: Observation, state: Autopilo
   if (recut.retryAt && (opts.now ?? (() => new Date()))().getTime() < Date.parse(recut.retryAt)) return { line: `recut #${recut.number} rate limited; retry after ${recut.retryAt} (attempt ${attempts}/${RECUT_QUEUE_ATTEMPTS})`, queued: false };
   let head: string;
   try {
+    const source = await readPr(opts.repo, opts.number, gh);
+    if (source.state !== 'open' || source.headSha !== recut.fromHead || source.headRef !== obs.pr.headRef
+      || source.baseRef !== obs.pr.baseRef || source.headRepo.toLowerCase() !== opts.repo.toLowerCase() || source.draft || !source.autoMerge)
+      return { line: `source #${opts.number} changed before recut submission; nothing queued`, queued: false };
     const live = await readPr(opts.repo, recut.number, gh);
     if (live.state !== 'open') return null;
+    if (live.headRef !== recut.branch || live.baseRef !== source.baseRef || live.headRepo.toLowerCase() !== opts.repo.toLowerCase()
+      || (recut.headSha && live.headSha !== recut.headSha))
+      return { line: `recut #${recut.number} changed since verification; nothing queued`, queued: false };
+    if (live.draft || live.mergeable === false || live.mergeableState === 'dirty'
+      || !['clean', 'blocked', 'behind', 'unstable', 'has_hooks'].includes(live.mergeableState))
+      return { line: `recut #${recut.number} is draft, conflicting or awaiting mergeability; retry next tick`, queued: false };
     if (await readMergeRequest(opts.repo, recut.number, gh)) {
       recut.queued = true;
       delete recut.retryAt;
@@ -473,7 +483,7 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
     if (outcome.recutBranch) {
       // The replacement branch is pushed; open its PR. The recut is recorded
       // with number 0 first, so a failure here is finished next tick — never re-cut.
-      state.recut = { branch: outcome.recutBranch, number: 0, fromHead: obs.pr.headSha };
+      state.recut = { branch: outcome.recutBranch, number: 0, fromHead: obs.pr.headSha, headSha: outcome.newHead! };
       saveState(opts.repo, opts.number, state);
       const stopped = await stopNow(opts);
       if (stopped) {
