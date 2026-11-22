@@ -14,8 +14,11 @@ HTTP GETs use the server's existing read-session boundary.
 | GET `/api/verse/fleet/work-board` | Recent durable bus requests, newest first, with state, named claim owner, claim receipt, evidence source, missing evidence and `asOf`; no message bodies. |
 | GET `/api/verse/fleet/work-board/orders` | Inbox order states with sanitized owner job/lane, PR, missing evidence, `asOf`, and trace/live/lane availability; no order bodies. |
 
-The board accepts optional `limit` (integer clamped to 1–100, default 20)
-and `thread` (exact channel reference, at most 200 characters) query parameters.
+The board accepts optional `limit` (integer clamped to 1–100, default 20),
+`thread` (exact channel reference, at most 200 characters) and `state`
+(one of RECEIVED, ASSIGNED, RUNNING, BLOCKED, VERIFIED — the response then
+also reports `state` and `matched`, the true filtered total across the whole
+settled scan before the display cap) query parameters.
 It reports `inbox`, `claims` and `truncated`; unavailable evidence is not an
 empty healthy board. The orders GET accepts `since` (integer hours, 1–720),
 returns at most 20 orders, and bounds each evidence read to eight seconds.

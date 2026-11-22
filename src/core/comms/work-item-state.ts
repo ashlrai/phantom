@@ -4,6 +4,9 @@
  * evidence. Pure: no I/O, no clock (the caller passes `nowIso`). */
 export type WorkItemState = 'RECEIVED' | 'ASSIGNED' | 'RUNNING' | 'BLOCKED' | 'VERIFIED';
 
+/** Every state the classifier can report, for CLI/API/MCP argument checks. */
+export const WORK_ITEM_STATES: readonly WorkItemState[] = ['RECEIVED', 'ASSIGNED', 'RUNNING', 'BLOCKED', 'VERIFIED'];
+
 export interface WorkItemEvidence {
   id: string;
   receivedAt?: string;
