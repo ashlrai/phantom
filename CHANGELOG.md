@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.67 |
-| Latest dated changelog release (2026-11-22) | 3.30.67 |
+| Source package | 3.30.68 |
+| Latest dated changelog release (2026-11-22) | 3.30.68 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -168,6 +168,14 @@ Merged after #7384 (#7385 to #7604). Bridge, recovery and release bookkeeping is
 ### Removed
 
 - Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
+
+## [3.30.68] - 2026-11-22
+
+
+### Changes
+
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795346064-N17:** ([#8252](https://github.com/ashlrai/phantom/issues/8252)) ([3701cd2](https://github.com/ashlrai/phantom/commit/3701cd2df43c60257e75c1e61733479048fc1cd1))
+* **RQ-PHX-DOCSLAND780:** RQ-PHX-DOCSLAND780 ([#8251](https://github.com/ashlrai/phantom/issues/8251)) ([b208bac](https://github.com/ashlrai/phantom/commit/b208bac1cbd79eb8c74b4b5da0c3902c69916cfe))
 
 ## [3.30.67] - 2026-11-22
 
