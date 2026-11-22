@@ -75,6 +75,11 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
       (e.provider_wall_triggers !== null && e.provider_wall_triggers.length > 0
         ? `(${e.provider_wall_triggers.map(r => `${r.trigger}:${r.jobs}`).join(',')})` : ''));
   }
+  if (e.pool_known > 0) {
+    parts.push(`pool=${e.pool_known}` +
+      (e.pool_kinds !== null && e.pool_kinds.length > 0
+        ? `(${e.pool_kinds.map(r => `${r.kind}:${r.jobs}`).join(',')})` : ''));
+  }
   if (e.merge_queue_known > 0) {
     parts.push(`merge_queue=${e.merge_queue_known}` +
       (e.merge_queue_blocked_reasons !== null && e.merge_queue_blocked_reasons.length > 0
@@ -146,6 +151,11 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
         : '') +
       (report.unknown_provider_wall_triggers !== null && report.unknown_provider_wall_triggers.length > 0
         ? ` provider_wall_triggers=${report.unknown_provider_wall_triggers.map(c => `${c.trigger}:${c.jobs}`).join(',')}`
+        : '') +
+      (report.unknown_pool_throttles !== null && report.unknown_pool_throttles > 0
+        ? ` pool_throttles=${report.unknown_pool_throttles}` +
+          (report.unknown_pool_kinds !== null && report.unknown_pool_kinds.length > 0
+            ? `(${report.unknown_pool_kinds.map(c => `${c.kind}:${c.jobs}`).join(',')})` : '')
         : '') +
       (report.unknown_merge_queue !== null && report.unknown_merge_queue > 0
         ? ` merge_queue=${report.unknown_merge_queue}` +

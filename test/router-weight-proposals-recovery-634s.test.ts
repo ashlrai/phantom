@@ -373,6 +373,8 @@ describe('outcome-quality evidence', () => {
       handoff_triggers: null,
       provider_wall_known: 0,
       provider_wall_triggers: null,
+      pool_known: 0,
+      pool_kinds: null,
       merge_queue_known: 0,
       merge_queue_blocked_known: 0,
       merge_queue_blocked_reasons: null,
@@ -541,6 +543,7 @@ describe('outcome-quality evidence', () => {
       market_rejected_known: 0, market_rejected_reasons: null,
       handoff_known: 0, handoff_triggers: null,
       provider_wall_known: 0, provider_wall_triggers: null,
+      pool_known: 0, pool_kinds: null,
       merge_queue_known: 0, merge_queue_blocked_known: 0, merge_queue_blocked_reasons: null,
       merge_queue_check_failures_known: 0, merge_queue_conflicts_known: 0,
       merge_queue_retries_known: 0, merge_queue_recuts_known: 0,
@@ -1408,6 +1411,95 @@ describe('provider-wall hold evidence', () => {
     expect(missing.code).toBe(1);
     expect(missing.report).toMatchObject({
       unknown_provider_walls: null, unknown_provider_wall_triggers: null, unknown_unresolved: null,
+    });
+  });
+});
+
+describe('slot-throttle (pool) evidence', () => {
+  /** A pool row in the producer's own shape (contrib/mac/dispatchd.py):
+   *  the per-tick ratelimited() scan appends {event:'pool', lane, job,
+   *  kind, mem_free_pct, swap_gb} once per (job, class). */
+  const pool = (job: string, kind: string, lane = 'alpha', extra: Record<string, unknown> = {}): object => ({
+    event: 'pool', lane, job, kind, mem_free_pct: 40, swap_gb: 2, ...extra,
+  });
+
+  it('tallies pool detections per known group as advisory evidence without touching weight math', async () => {
+    // Six of twenty merged jobs carry recorded slot-throttle detections:
+    // four rate-limit hits and two credits-exhausted walls. The evidence
+    // is diagnostic context — the held-merge weight is computed from
+    // merge verdicts alone.
+    const jobs = Array.from({ length: 20 }, (_, i) => `synthetic-pool-k-${i}`);
+    writeLedger(jobs.flatMap((job, i) => [
+      event(job, 'alpha', 'code', 'MERGED'),
+      ...(i < 4 ? [pool(job, 'rate_limit')] : []),
+      ...(i >= 4 && i < 6 ? [pool(job, 'credits_exhausted')] : []),
+    ]));
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    const p = report.proposals[0];
+    expect(p).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 20, proposed_weight: 0.6 });
+    expect(p.evidence).toMatchObject({
+      pool_known: 6,
+      pool_kinds: [
+        { kind: 'rate_limit', jobs: 4 },
+        { kind: 'credits_exhausted', jobs: 2 },
+      ],
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('pool=6(rate_limit:4,credits_exhausted:2)');
+  });
+
+  it('tallies unknown-cohort throttle detections diagnostically without reducing unresolved', async () => {
+    // The receipt is scan-time evidence, not a terminal verdict: a job
+    // whose run recovered, is still in flight, or finished without a
+    // pool_error all carry it, so it tallies the recorded classes but
+    // never explains the missing merge verdict — every one of these
+    // jobs stays unresolved like a plain in-flight job.
+    writeLedger([
+      ...merged(20),
+      event('synthetic-pool-a', 'alpha', 'code', 'VERIFIED'),
+      pool('synthetic-pool-a', 'rate_limit'),
+      event('synthetic-pool-b', 'alpha', 'code', 'VERIFIED'),
+      pool('synthetic-pool-b', 'usage_limit'),
+      event('synthetic-pool-c', 'alpha', 'code', 'VERIFIED'),
+      pool('synthetic-pool-c', 'model_capacity'),
+      // A plain in-flight job with no detection stays unresolved too.
+      event('synthetic-pool-open', 'alpha', 'code', 'VERIFIED'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 4, unclassified_outcomes: 0,
+      unknown_pool_throttles: 3,
+      unknown_pool_kinds: [
+        { kind: 'model_capacity', jobs: 1 },
+        { kind: 'rate_limit', jobs: 1 },
+        { kind: 'usage_limit', jobs: 1 },
+      ],
+      // All four unknowns stay unresolved — the detections are
+      // diagnostic context, never a terminal verdict.
+      unknown_unresolved: 4,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('unresolved=4 pool_throttles=3(model_capacity:1,rate_limit:1,usage_limit:1)');
+  });
+
+  it('keeps pool tallies real whenever the jobs read succeeded and null when it did not', async () => {
+    // Jobs-ledger rows need no side-ledger join: a readable jobs ledger
+    // with no detections reports zero tallies, while an unreadable one
+    // reports null — never an empty list claiming none were recorded.
+    writeLedger(merged(20));
+    const { report } = await runJson();
+    expect(report).toMatchObject({
+      unknown_pool_throttles: 0, unknown_pool_kinds: [], unknown_unresolved: 0,
+    });
+    expect(report.proposals[0].evidence).toMatchObject({ pool_known: 0, pool_kinds: null });
+
+    rmSync(ledgerPath());
+    const missing = await runJson();
+    expect(missing.code).toBe(1);
+    expect(missing.report).toMatchObject({
+      unknown_pool_throttles: null, unknown_pool_kinds: null, unknown_unresolved: null,
     });
   });
 });

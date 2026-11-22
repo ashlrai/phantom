@@ -521,6 +521,30 @@ launch decision, so rows of every other event leave it standing.
 All three stay `null` when no hold row named the job — the retained
 window recorded no confirmed provider wall, which is unknown, not
 "no wall ever".
+`pool_kind`/`pool_mem_free_pct`/`pool_swap_gb` carry the fleet's
+recorded slot-throttle detection — dispatchd's `pool` receipts
+(jobs.jsonl rows the per-tick `ratelimited()` scan appends when a
+launched job's recent error-log tail matches a provider-limit
+pattern). The receipt is scan-time evidence, not a launch or
+terminal verdict: the detector fires on a log-tail match for any
+job whose `.base` still stands, once per (job, class), so a
+recovered run, an in-flight run and a finished run whose finish row
+never recorded `pool_error` all carry it. `pool_kind` joins only in
+the producer's closed CLS vocabulary (`credits_exhausted`,
+`usage_limit`, `model_capacity`, `rate_limit` — the same classes
+the finish row's `pool_error` and the friction ledger's quota set
+share), `pool_mem_free_pct` the host free-memory percentage (only
+inside [0, 100]) and `pool_swap_gb` the host swap figure (only
+non-negative) the detector captured at detection time. The row
+counts only on the `pool` event name (the `event`/`type`/`kind`
+alias set) with a `kind` inside the vocabulary; a malformed memory
+reading drops to `null` without discarding the class, and a `kind`
+outside it skips the row entirely. The newest recognized pool row
+replaces the triple wholesale; the receipt competes with nothing,
+so rows of every other event leave it standing. All three stay
+`null` when no pool row named the job — the retained window
+recorded no throttle detection, which is unknown, not "no throttle
+ever".
 `empty_tag` is the fleet's recorded WHY for a job that
 ended empty — the `job.empty-tag.v1` rows `phm jobs empty --record`
 appends to `metrics/empty-tags.jsonl` from empty-final-reason's verdict
@@ -691,7 +715,17 @@ hold (the confirmed provider-wall verdict — it only lands on a
 failed or no-work run, so like a `rate-limit` handoff it explains
 the missing merge verdict for both trigger families) and
 `unknown_provider_wall_triggers` tallies the recorded
-`usage-limit`/`auth-failure` families over the same cohort, and
+`usage-limit`/`auth-failure` families over the same cohort,
+`unknown_pool_throttles` counts the unknown-cohort jobs carrying a
+recorded slot-throttle detection (dispatchd's `pool` receipts —
+the per-tick `ratelimited()` scan's provider-limit class for the
+job's recent error-log tail, joined as `pool_kind` in the closed
+`credits_exhausted`/`usage_limit`/`model_capacity`/`rate_limit`
+vocabulary) and `unknown_pool_kinds` tallies the recorded classes
+over the same cohort — scan-time diagnostic context like
+`unknown_market_reasons`, never a reduction of the remainder since
+the detector fires on a log-tail match for any job whose `.base`
+still stands and says nothing about the run's terminal state — and
 `unknown_handoff_triggers` tallies every
 recorded advisory trigger in the cohort (`rate-limit` attempt kills
 and `quota-exhausted` pending-lane verdicts — the producer's other
@@ -812,6 +846,14 @@ recorded mix (the `autobackoff_hold` receipts — the
 outcome-confirmed hold dispatchd appends — covering both the
 usage/quota walls and the auth streaks the session-handoff
 advisory never sees). The same evidence
+block also tallies the fleet's recorded slot-throttle detections —
+`pool_known` counts the known-cohort outcomes carrying a `pool_kind`
+and `pool_kinds` breaks the count down by recorded class
+(`credits_exhausted`, `usage_limit`, `model_capacity`, `rate_limit`),
+so a lane whose outcomes rest partly on provider-throttle-hit runs
+shows the recorded exposure (the `pool` receipts — the per-tick
+`ratelimited()` scan's scan-time detection, covering runs the
+outcome-confirmed hold never sees). The same evidence
 block also tallies the merge queue's recorded per-PR history —
 `merge_queue_known` counts the known-cohort outcomes whose standing PR
 carried merge-events observations and `merge_queue_blocked_known`/
