@@ -680,6 +680,56 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(byId.get('S1')?.exit_code).toBe(0);
   });
 
+  it('keys fleet.session-pool.v1 rows on jobId, never the attempt job', () => {
+    const fold = foldRouterOutcomes([
+      // Session lifecycle rows carry no job fields: session_start and
+      // session_stop stay unattached like every jobless ledger row.
+      '{"schema":"fleet.session-pool.v1","ts":"2026-11-20T10:00:00Z","sessionId":"sess-a","event":"session_start","context":0}',
+      // Task rows carry two ids under the producer's contract: `job` is the
+      // per-attempt id (<sessionId>:<n>) and `jobId` the logical queue id.
+      // Only jobId may key an outcome — the attempt id is session machinery.
+      '{"schema":"fleet.session-pool.v1","ts":"2026-11-20T10:00:01Z","sessionId":"sess-a","event":"launch","context":0,"job":"sess-a:1","jobId":"ready:RQ-NODE-1:1"}',
+      '{"schema":"fleet.session-pool.v1","ts":"2026-11-20T10:05:00Z","sessionId":"sess-a","event":"finish","context":0,"job":"sess-a:1","jobId":"ready:RQ-NODE-1:1","outcome":"completed"}',
+      // A second queue job in the same session gets its own outcome.
+      '{"schema":"fleet.session-pool.v1","ts":"2026-11-20T10:05:01Z","sessionId":"sess-a","event":"launch","context":0,"job":"sess-a:2","jobId":"ready:RQ-NODE-2:1"}',
+      '{"schema":"fleet.session-pool.v1","ts":"2026-11-20T10:09:00Z","sessionId":"sess-a","event":"finish","context":0,"job":"sess-a:2","jobId":"ready:RQ-NODE-2:1","outcome":"lease-expiry"}',
+      '{"schema":"fleet.session-pool.v1","ts":"2026-11-20T10:09:01Z","sessionId":"sess-a","event":"session_stop","context":0}',
+      // A queue job retried by a later session folds into the same outcome —
+      // one outcome per logical queue job, not per session attempt.
+      '{"schema":"fleet.session-pool.v1","ts":"2026-11-20T11:00:00Z","sessionId":"sess-b","event":"launch","context":0,"job":"sess-b:1","jobId":"ready:RQ-NODE-1:1"}',
+      '{"schema":"fleet.session-pool.v1","ts":"2026-11-20T11:04:00Z","sessionId":"sess-b","event":"finish","context":0,"job":"sess-b:1","jobId":"ready:RQ-NODE-1:1","outcome":"completed"}',
+      // A session-pool row carrying the attempt id without jobId has no
+      // logical job identity — the attempt id never keys an outcome.
+      '{"schema":"fleet.session-pool.v1","ts":"2026-11-20T11:05:00Z","sessionId":"sess-b","event":"launch","context":0,"job":"sess-b:2"}',
+      // session_rotate attaches to the just-pulled task's outcome like any
+      // other row but mints no verdict of its own.
+      '{"schema":"fleet.session-pool.v1","ts":"2026-11-20T11:04:30Z","sessionId":"sess-b","event":"session_rotate","context":1,"job":"sess-b:1","jobId":"ready:RQ-NODE-1:1"}',
+      // Rows under any other schema keep the standard job|job_id|jobId|id
+      // precedence — a foreign schema's job field still wins.
+      '{"schema":"other.v9","job":"attempt-9","jobId":"logical-9","event":"finish"}',
+    ].join('\n'));
+    expect(fold.unattached_rows).toBe(3);
+    expect(fold.outcomes.map(o => o.job_id)).toEqual([
+      'ready:RQ-NODE-1:1', 'ready:RQ-NODE-2:1', 'attempt-9',
+    ]);
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    // Node completion is not a merge verdict: 'completed'/'lease-expiry'
+    // finish outcomes and the session_rotate row leave merged null, and no
+    // session-pool field mints productivity or launch verdicts.
+    for (const id of ['ready:RQ-NODE-1:1', 'ready:RQ-NODE-2:1']) {
+      expect(byId.get(id)).toMatchObject({
+        merged: null, reverted: null, lane: null, model: null, work_class: null,
+        empty: null, exit_code: null, failure_class: null, task_outcome: null,
+        skipped: null, deferred: null, noop: null,
+      });
+    }
+    // The retried queue job's rows folded into one outcome; the foreign
+    // schema row kept job-first precedence.
+    expect(byId.get('ready:RQ-NODE-1:1')).toBeDefined();
+    expect(byId.get('attempt-9')).toMatchObject({ merged: null });
+    expect(fold.outcomes.some(o => o.job_id.startsWith('sess-'))).toBe(false);
+  });
+
   it('folds the claim lane-hint blocking codes, newest claim stands', () => {
     const fold = foldRouterOutcomes([
       // B1: solo claim that left its hinted lane — the market's recorded
