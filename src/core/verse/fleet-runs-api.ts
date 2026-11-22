@@ -634,6 +634,13 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       sendJson(res, 200, await read({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now(), notify: true }));
       return true;
     }
+    // The Goals view's Skipped count reads the same jobs.skipped.v1 as `phm jobs skipped --json`.
+    if (path === '/api/verse/fleet/runs/skipped') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const { readSkippedJobs } = await import('../fleet/skipped-jobs.js');
+      sendJson(res, 200, await readSkippedJobs({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now() }));
+      return true;
+    }
     // Home's Running build line reads the same report as `phm self drift --json`.
     if (path === '/api/verse/fleet/runs/drift') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }

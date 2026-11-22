@@ -150,7 +150,10 @@ join), --open keeps queued/rescheduled candidates with claim keys, including
 unknown holds, and implies --claims; --since keeps only jobs whose last activity — the newest accepted
 status receipt time, or the announcement's while no status has moved the
 job — reaches the cutoff (15m, 2h, 1d, epoch ms or an ISO time, the same
-grammar inbox --since takes), while --job keeps one job id. work claim
+grammar inbox --since takes), while --job keeps one job id. A job line
+also cites the newest retained work.result receipt — the outcome a
+worker reported with its receipt id — as evidence only: it never moves
+the job's status, which only the announcer's work.status does. work claim
 takes one of
 a shown job's declared claim keys — queue:<jobId> preferred, --key picks
 another declared key — into the shared coordination table, reporting live

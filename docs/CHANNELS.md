@@ -271,7 +271,14 @@ status detail when one exists instead of a claim act — and `running`/`idle`
 announcements whose declared keys provably lost every live hold, which are
 stalled work only the announcer can move; those list only under complete
 hold coverage, since truncated, unavailable or absent coverage can never
-prove "no hold" — read
+prove "no hold". A retained `work.result` citing the job refines that read:
+an in-flight report (`reserved`/`admitted`) means the peer dispatch pipeline
+still owns the outcome, so the job hides like a held one would, while a
+terminal report (`complete`/`failed`) means the worker answered and only the
+announcer can move the status — the item then cites the result receipt
+(`agents bus show <id>`) and says the report was made instead of reading as
+abandoned; feed-job items of every kind also carry the newest result's
+outcome in their detail — read
 through the same projection as `phm agents bus work feed`), plus a refused
 work feed itself — one high item naming the retained receipt the projection
 blamed (`agents bus show <id>` / `work feed` links, `expiresAt` that

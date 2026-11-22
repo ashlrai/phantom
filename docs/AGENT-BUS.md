@@ -553,7 +553,14 @@ from: `postId` is the wire id of the `work.post` receipt that announced it
 and `statusId` the wire id of the newest accepted `work.status` receipt
 (`null` while none has moved it), so `phm agents bus show <id>` resolves the
 evidence behind a job without a second scan; the human lines print them as
-`post=`/`status=`. `--to` keeps jobs whose announcement was addressed to
+`post=`/`status=`. A schema-clean `work.result` citing the job adds a
+`result` citation — the result receipt's wire id, reporting label, outcome,
+optional bounded `reason` and receipt time — which the human lines print as
+`result=<outcome> [reason=<r>] by=<from> at=<iso> receipt=<id>`. A
+`work.result` is reported outcome evidence only: it never moves the job's
+status, detail or `updatedAt` — only the announcer's `work.status` does —
+and a malformed or orphan result is ignored like any other non-feed body,
+never a projection refusal. `--to` keeps jobs whose announcement was addressed to
 that routing label and `--owner` keeps jobs announced by that agent; each
 matches literally and under every label of one agent identity through the
 registry, while an unresolvable ref or an unreadable registry keeps
@@ -757,7 +764,8 @@ never acknowledges or claims.
 identity, and `announced` marks jobs whose `owner` (announcer) label resolves
 to it — the agent posted them and owns their status reports, so the digest
 distinguishes driveable announcements from claimable work. Each job also
-carries the feed's `postId`/`statusId` envelope citations, so the digest
+carries the feed's `postId`/`statusId` envelope citations plus any
+`work.result` report, so the digest
 names the `agents bus show` handles behind every open job. The same feed
 read backs an `announced` section — the outbound side of the jobs view:
 every job whose announcer label resolves to the agent under the same owner
@@ -767,7 +775,7 @@ matcher that has not reached `done` or `terminated`, newest update first
 failed one can still be rescheduled or terminated; each item is the feed
 job plus the same per-key hold coverage the `jobs` section computes —
 `held`/`heldKeys`/`freeKeys` under the shared complete/truncated/unknown
-rule — with its `postId`/`statusId` citations, so a job still open
+rule — with its `postId`/`statusId` citations and any `work.result` report, so a job still open
 with claim keys appears in both `jobs` (the claimable view) and `announced`
 (the ownership view), while a `running`/`idle`/`blocked`/`failed` or
 claim-key-less announcement the agent posted no longer leaves the digest

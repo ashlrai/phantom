@@ -1,7 +1,8 @@
 /** Read the bounded local work feed. Labels grant no execution authority. */
 import { BUS_INBOX_MAX_MESSAGES, listBusInboxAfter, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { coordinationRowBlocks, listCoordination, type CoordinationOrigin } from './claim-store.js';
-import { projectBusWorkFeed, type WorkFeedOwnerKeyFor, type WorkFeedProviderFor, type WorkFeedRefusalReceipt, type WorkFeedResult } from './bus-work-feed.js';
+import { projectBusWorkFeed, type WorkFeedOwnerKeyFor, type WorkFeedProviderFor, type WorkFeedRefusalReceipt,
+  type WorkFeedResult, type WorkFeedResultCitation } from './bus-work-feed.js';
 import { agentAddressMatcher, agentIdentityKeys, readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { repoSlugSchema } from './bus-v2-schema.js';
@@ -43,6 +44,10 @@ export interface BusWorkFeedJob extends WorkJob {
   postId: string;
   /** Wire id of the newest accepted `work.status` receipt; null while no status has moved the job. */
   statusId: string | null;
+  /** Newest `work.result` receipt citing the job — the outcome a worker/peer
+   * reported (receipt id, reporter label, outcome, optional reason, receipt
+   * time). Evidence only: it never moved the job's status. */
+  result?: WorkFeedResultCitation;
   /** Present only on open-status jobs (`BUS_FEED_OPEN_STATUSES`) when the read joined claims: declared claim keys with no shown live hold — null unless hold coverage is complete. */
   freeKeys?: string[] | null;
   /** Present only on open-status jobs when the read joined claims: declared claim keys with at least one shown live hold — null when the hold set itself is unknown. */
@@ -192,7 +197,8 @@ export function readBusWorkFeed(options: BusWorkFeedReadOptions = {}): BusWorkFe
     jobs: result.feed.jobs.map(job => {
       // The projection records a citation for every job it emits.
       const citation = result.citations.get(job.id)!;
-      return { ...job, postId: citation.post, statusId: citation.status };
+      return { ...job, postId: citation.post, statusId: citation.status,
+        ...(citation.result === undefined ? {} : { result: citation.result }) };
     }),
     receipts: receipts.length, asOf };
   if (!options.claims) return ok;
@@ -355,12 +361,31 @@ export function busWorkJobDispatch(dispatch: WorkDispatch | undefined): string {
     `${acceptance === '' ? '' : ` acceptance="${acceptance}"`}`;
 }
 
+/**
+ * ` result=<outcome> [reason=<r>] by=<from> at=<iso> receipt=<id>` — the
+ * newest `work.result` evidence a feed job carries, display-clipped like
+ * every other feed field; '' when no result is retained. Shared by the feed
+ * job line and `work mine`'s jobs/announced lines so every surface renders
+ * the report identically. An out-of-range receipt time stays `unknown`,
+ * never an invalid timestamp.
+ */
+export function busWorkJobResultSuffix(job: Pick<BusWorkFeedJob, 'result'>): string {
+  const result = job.result;
+  if (result === undefined) return '';
+  const reason = result.reason === undefined ? '' : ` reason=${feedField(result.reason, 64)}`;
+  const from = feedField(result.from, 96);
+  const at = Number.isSafeInteger(result.receivedAt) && Math.abs(result.receivedAt) <= 8_640_000_000_000_000
+    ? new Date(result.receivedAt).toISOString() : 'unknown';
+  return ` result=${result.outcome}${reason} by=${from === '' ? '-' : from} at=${at} receipt=${result.id}`;
+}
+
 /** One human line for a single feed job: the announcement's own title, the
  * newest status's detail when it carries one, the declared dispatch spec when
  * the post carried one, claim keys — display-clipped
- * (JSON keeps the full values) — and the wire ids of the retained envelopes
- * the job cites. Shared by the feed list and `agents bus show`'s job
- * annotation so both render a job identically. */
+ * (JSON keeps the full values) — the newest `work.result` report when one is
+ * retained, and the wire ids of the retained envelopes the job cites. Shared
+ * by the feed list and `agents bus show`'s job annotation so both render a
+ * job identically. */
 export function formatBusWorkFeedJob(job: BusWorkFeedJob): string {
   const title = feedField(job.title, FEED_TITLE_MAX);
   const detail = job.detail === undefined ? '' : feedField(job.detail, FEED_DETAIL_MAX);
@@ -371,7 +396,7 @@ export function formatBusWorkFeedJob(job: BusWorkFeedJob): string {
     `${detail === '' ? '' : ` detail="${detail}"`}` +
     ` owner=${job.owner} to=${job.to} provider=${job.provider} repo=${job.repo}${busWorkJobDispatch(job.dispatch)} keys=${keys}${claimable} ` +
     `updated=${new Date(job.updatedAt).toISOString()} post=${job.postId}` +
-    `${job.statusId === null ? '' : ` status=${job.statusId}`}`;
+    `${job.statusId === null ? '' : ` status=${job.statusId}`}${busWorkJobResultSuffix(job)}`;
 }
 
 /** Human-readable feed lines shared by `fleet work-feed` and `agents bus work feed`. */

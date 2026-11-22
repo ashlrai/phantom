@@ -363,6 +363,53 @@ describe('readBusWorkMine', () => {
     expect(announcedLine('RQ-H-3 blocked')).toContain('held=no');
   });
 
+  it('carries the newest work.result report on announced and open job lines', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+
+    await announce(options, 'atlas', 'RQ-R-1', ['queue:RQ-R-1']);
+    await announce(options, 'atlas', 'RQ-R-2', ['queue:RQ-R-2']);
+    options.clock.now += 1_000;
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-R-1', status: 'running', id: 'ws-r1' }, options))
+      .toMatchObject({ status: 'posted' });
+    // A peer's reported outcome is evidence on the feed job — it never moved
+    // the status, which stays the announcer's 'running'.
+    const postResult = (id: string, jobId: string, outcome: string, reason?: string) => {
+      const envelope: BusEnvelope = { id, from: 'agent:nova', to: 'leaders', priority: 'P2', ttl: 120_000,
+        body: { kind: 'work.result', jobId, claimKey: `queue:${jobId}`,
+          queueId: 'peer-work-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          receiptId: 'pw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          outcome, ...(reason === undefined ? {} : { reason }) } };
+      expect(appendBusInbox(envelope, { root: options.root, now: options.now }).status).toBe('posted');
+    };
+    postResult('res-r1', 'RQ-R-1', 'complete', 'paths-not-allowed');
+    postResult('res-r2', 'RQ-R-2', 'admitted');
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok' || result.announced.status !== 'ok' || result.jobs.status !== 'ok') {
+      throw new Error('unreachable');
+    }
+    const announced = new Map(result.announced.items.map(item => [item.id, item]));
+    expect(announced.get('RQ-R-1')).toMatchObject({ status: 'running',
+      result: { id: 'res-r1', from: 'agent:nova', outcome: 'complete', reason: 'paths-not-allowed' } });
+    expect(announced.get('RQ-R-2')).toMatchObject({ status: 'queued',
+      result: { id: 'res-r2', outcome: 'admitted' } });
+    // The still-open RQ-R-2 also lists in the claimable jobs view with its report.
+    expect(result.jobs.jobs.find(job => job.id === 'RQ-R-2')?.result)
+      .toMatchObject({ id: 'res-r2', outcome: 'admitted' });
+    const text = formatBusWorkMine(result);
+    expect(text.find(line => line.includes('RQ-R-1 running'))).toContain('result=complete');
+    // RQ-R-2 lists twice — the jobs view and the announced view — and both
+    // human lines carry the same result suffix.
+    expect(text.find(line => line.includes('RQ-R-2 queued') && !line.includes('heldkeys=')))
+      .toContain('result=admitted');
+    expect(text.find(line => line.includes('RQ-R-2 queued') && line.includes('heldkeys=')))
+      .toContain('result=admitted');
+  });
+
   it('keeps announced hold coverage unknown when the coordination table is unreadable', async () => {
     const options = setup();
     register(options, 'atlas');
