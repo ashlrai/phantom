@@ -674,7 +674,10 @@ describe('shared resource observation clock', () => {
       vi.setSystemTime(NOW + 46_000);
       await act(async () => { window.dispatchEvent(new Event('focus')); });
       expectRetained(fixture.observedAt);
-      expect(calls).toHaveLength(readsBeforeFocus);
+      // Independent lane/comms readers resume; cached native quota is not refetched.
+      expect(calls.slice(readsBeforeFocus).map(call => [call.method, call.url])).toEqual([
+        ['GET', '/api/verse/observe'], ['GET', '/api/verse/multimodel/context'], ['GET', '/api/verse/fleet/comms-status'],
+      ]);
       expect(JSON.stringify(roster[0])).toBe(fixture.source);
     } finally { vi.useRealTimers(); }
   });
@@ -792,6 +795,7 @@ describe('shared resource observation clock', () => {
     expect(evidence('synthetic-alpha').bar[0]).toBe('retained');
     expect(evidence('synthetic-alpha').card[0]).toBe('retained');
     const bar = screen.getByRole('group', { name: 'Resources at a glance' });
+    fireEvent.click(within(bar).getByRole('button', { name: /Usage sources and budgets/ }));
     const button = within(bar).getByRole('button', { name: /Synthetic Alpha: Last reading/ });
     fireEvent.focus(button);
     expect(screen.getByRole('tooltip')).not.toHaveTextContent(/Usable again|Usable now|running low/i);
@@ -823,11 +827,12 @@ describe('shared resource observation clock', () => {
           windows: [{ id: window.id, usedPercent: 43, resetsAt: null }] },
       })];
       await act(async () => { await runQuery(verseBootstrapQuery.key, () => verseBootstrapQuery.fetch()); });
+      fireEvent.click(within(screen.getByRole('group', { name: 'Resources at a glance' })).getByRole('button', { name: /Usage sources and budgets/ }));
       expect(await screen.findByRole('button', { name: /Synthetic account: Last reading/ })).toHaveTextContent('43% used · last');
       const card = within(cardOf('Synthetic account'));
       expect(card.getByText('Last known usage · current availability unconfirmed.')).toBeInTheDocument();
       expect(card.getByText('synthetic_week: 43% used')).toBeInTheDocument();
-      expect(card.getByTitle(observedAt)).toBeInTheDocument();
+      expect(card.getAllByTitle(observedAt)).toHaveLength(2);
     } finally { clockSpy.mockRestore(); }
   });
 });
