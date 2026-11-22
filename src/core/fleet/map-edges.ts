@@ -56,6 +56,7 @@ const JOB = /^(?:job:)?((?:RQ|FIXUP|LAND|FIX)-[A-Z0-9][A-Z0-9-]{2,80})$/;
 /** The map node and org role a routing label proves; `node` null when the map does not draw it. Shared with `phm agents messages`. */
 export function mapEdgeAgent(ref: AgentRef): MapEdgeAgent {
   const { name } = ref, job = JOB.exec(name)?.[1];
+  if (['executor', 'orchestrator', 'guardian', 'comms'].includes(name)) return { name, role: 'unknown', lane: null, node: `planner:${name}` };
   if (name === 'leader') return { name, role: 'leader', lane: null, node: 'leader' };
   if (ref.lane === name || (ORG_LANES as readonly string[]).includes(name)) return { name, role: 'lane', lane: name, node: `lane:${name}` };
   if (job) return { name, role: 'worker', lane: ref.lane, node: `job:${job}` };

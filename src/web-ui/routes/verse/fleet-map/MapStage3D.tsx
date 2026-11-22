@@ -10,7 +10,7 @@ import { prefersReducedMotion } from '../../../components/charts/motion.js';
 import { LaneHealthBadge } from '../../../components/fleet/LaneHealthBadge.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 import { DEGREES_PER_SECOND, layoutLiveMap3D, projectLayout3D } from './map3d-model.js';
-import { pulsing } from './map-model.js';
+import { MESSAGE_EDGE_TTL_MS, pulsing } from './map-model.js';
 import styles from './fleet-map.module.css';
 
 export const STAGE_H = 480;
@@ -98,7 +98,7 @@ export function MapStage3D({ map, now, onOpen, onOpenEdge, nameOf, showMessages 
         if (message && !showMessages) return null;
         if (!message) return <line key={edge.id} {...ends} className={styles.edge} data-kind={edge.kind} />;
         return <g key={edge.id}>
-          <line {...ends} className={styles.edge} data-kind={edge.kind} data-pulse={pulsing(edge, map, now, reducedMotion) ? 'true' : undefined} style={{ strokeWidth: messageLineWidth(edge.messages) }} />
+          <line {...ends} className={styles.edge} data-kind={edge.kind} data-pulse={pulsing(edge, map, now, reducedMotion) ? 'true' : undefined} style={{ strokeWidth: edge.id.startsWith('live:') ? 5 : messageLineWidth(edge.messages), opacity: edge.id.startsWith('live:') ? 1 - (now - Date.parse(edge.lastMessageAt!)) / MESSAGE_EDGE_TTL_MS : 1 }} />
           <line {...ends} className={styles.hit} data-open-messages={edge.id} onClick={() => onOpenEdge(edge)} onMouseEnter={() => onHover?.(edge.id)} onMouseLeave={() => onHover?.(null)} />
         </g>;
       })}
@@ -112,7 +112,7 @@ export function MapStage3D({ map, now, onOpen, onOpenEdge, nameOf, showMessages 
       title={collapsed.has(label.id) ? 'Show this group' : 'Hide this group'} onClick={() => toggle(label.id)}>{label.text}</button>)}
     {layout.nodes.map(node => <button key={node.id} type="button" className={styles.node3d} data-node={node.id} data-kind={node.kind} data-status={node.status}
       aria-label={nameOf(node)} title={node.detail} onClick={() => onOpen(node)}>
-      {(node.kind === 'lane' || node.kind === 'job') && <ProviderBadge of={node.provider} iconOnly size={12} />}
+      {!['computer', 'resource'].includes(node.kind) && <ProviderBadge of={node.provider} iconOnly size={12} />}
       {node.live && <span className={styles.live} role="img" aria-label="Active in the last 5 minutes" />}
       <strong>{node.label}</strong>
       {node.kind === 'lane' && <LaneHealthBadge health={node.health} />}

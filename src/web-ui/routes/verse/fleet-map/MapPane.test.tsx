@@ -74,7 +74,7 @@ it('shows the empty state with every unknown spelled out', () => {
   expect(screen.getAllByRole('button')).toHaveLength(2);
 });
 
-it('opens the existing detail pane for the node clicked and polls at most every 5 seconds', async () => {
+it('opens the existing detail pane and reads live messages alongside the graph', async () => {
   const fetch = vi.fn(async (input: RequestInfo | URL) => Response.json(String(input).includes('/job/tail') ? {
     schema: 'fleet.job.tail.v1', job: 'RQ-A', events: [
       ...Array.from({ length: 25 }, (_, i) => ({ source: 'log', text: `line ${i}` })), { source: 'event', text: 'launched' }],
@@ -99,7 +99,7 @@ it('opens the existing detail pane for the node clicked and polls at most every 
   expect(DETAIL_PANE.resource).toBe('fleet-usage');
   // One read each of the graph, its message edges, its message cards, its conversations and its replay frames; none repeats inside the poll interval.
   await new Promise(resolve => setTimeout(resolve, 50));
-  expect((fetch.mock.calls as unknown[][]).map(call => String(call[0]).replace(/^.*\/control\//, '')).sort()).toEqual(['/api/fleet/job/tail?id=RQ-A&lines=20', 'agent-conversations', 'agent-messages', 'live-map', 'map-edges', 'map-replay']);
+  expect((fetch.mock.calls as unknown[][]).map(call => String(call[0]).replace(/^.*\/control\//, '')).sort()).toEqual(['/api/fleet/job/tail?id=RQ-A&lines=20', '/api/fleet/map/messages', 'agent-conversations', 'agent-messages', 'live-map', 'map-edges', 'map-replay']);
 });
 
 it('shows a plain message for a known empty fleet', () => {
