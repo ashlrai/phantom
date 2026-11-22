@@ -567,9 +567,10 @@ never recorded raw, and the field is never guessed from the job id
 or PR URL. It stays `null` when no retained row recorded a bounded
 repo — unknown, not "no repo". `empty_tag` joins the same bound of
 `metrics/empty-tags.jsonl`: `foldEmptyTags` collapses `job.empty-tag.v1`
-rows — the `{schema, job, lane, tag}` records `phm jobs empty --record`
-appends from the fleet's final-output verdict (src/core/fleet/
-empty-tags.ts) — to each job's recorded tag in the closed
+rows — the `{schema, job, lane, tag}` records the daemon's
+`empty-tag-sync` off-tick job and `phm jobs empty --record`
+append from the fleet's final-output verdict (src/core/fleet/
+empty-tags.ts, src/core/fleet/empty-tag-sync.ts) — to each job's recorded tag in the closed
 `already_done`/`pool_cap`/`blocked`/`no_change_needed`/`unknown`
 vocabulary, last appended row winning a repeat. Only rows with the exact
 schema, a bounded job id and an in-vocabulary tag count; malformed JSON,

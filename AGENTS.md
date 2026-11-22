@@ -190,6 +190,16 @@ CLOSED-unmerged; a merge later reverted counts as not held). The ledger feeds
 dispatch or resolution evidence stay unwritten, and unknown fields stay null.
 See `src/core/metrics/reward-feed.ts`.
 
+Empty-job tags: on the same self-improvement ticks the resident daemon's
+`empty-tag-sync` off-tick job folds the jobs-ledger tail's windowed empty
+finishes into `<runs>/metrics/empty-tags.jsonl` (`job.empty-tag.v1` rows,
+first write wins, log tail the only classifier input) and the matching
+dupcheck outcome rows — the same records `phm jobs empty --record` appends
+by hand, now on the daemon cadence so the router `empty_tag` join, the
+weight proposals' `unknown_empty_tags` tally and dupcheck skip precision
+stay fed without anyone running the CLI. Best-effort, bounded per pass,
+writes only under the runs dir. See `src/core/fleet/empty-tag-sync.ts`.
+
 Research loop (RQ-SWE5-RESEARCH-LOOP): `phm fleet research-digest --file
 <digest.md> --json` scores a digest's `## Proposals` bullets (impact x
 confidence - effort), dedups them against the queue and shipped work, and
