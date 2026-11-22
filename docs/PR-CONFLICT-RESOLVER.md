@@ -1,5 +1,11 @@
 # Append-union PR conflict resolver
 
+Before recutting a PR, run `phm pr recut-check 123 --json`. Content comparisons
+and a scratch merge preview report `alreadyOnMasterFiles` and `remainingFiles`.
+Only `alreadyOnMaster: true` proves the recut can be skipped. Unknown evidence
+uses `null`, never an empty file list. Exit 0 means checked, 1 means unknown,
+and 2 means bad usage. Omit `--json` for plain words. This only reads the PR.
+
 `phm pr resolve-conflicts --json` inspects conflicting open PRs in
 `ashlrai/phantom`. It defaults to dry-run: temporary git objects and a detached
 worktree are removed after inspection. It does not run repository scripts,

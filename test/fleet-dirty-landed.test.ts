@@ -9,6 +9,8 @@ import { cmdFleetRecutSweep } from '../src/cli/fleet-recut-sweep.js';
 import * as gitOps from '../src/core/verse/git-ops.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
+import { cmdPr } from '../src/cli/pr.js';
+import type { PrRecutCheckReport } from '../src/core/fleet/pr-recut-check.js';
 
 const row = (number: number, headRefOid: string, mergeStateStatus = 'DIRTY', title = `pr ${number}`) => ({
   number, title, mergeable: mergeStateStatus === 'DIRTY' ? 'CONFLICTING' : 'MERGEABLE',
@@ -129,6 +131,14 @@ describe('fleet dirty-landed', () => {
       expect(pr.class).toBe(state === 'landed' ? 'landed' : conflict ? 'needs-recut' : 'partly-landed');
       expect(pr.remainingPaths).toEqual(state === 'landed' ? [] : conflict ? ['a.txt', 'b.txt'] : ['b.txt']);
       if (state === 'landed') expect(pr.reason).toBe('already-present-on-base');
+      let checked = '';
+      const ghOne = vi.fn(async () => ({ ok: true, stdout: JSON.stringify(row(1, head)), stderr: '' }));
+      expect(await cmdPr(['recut-check', '1', '--json'], {
+        recut: { gh: ghOne, remote: dir }, stdout: text => { checked = text; },
+      })).toBe(0);
+      expect(JSON.parse(checked)).toMatchObject({ schema: 'pr.recut-check.v1',
+        alreadyOnMaster: state === 'landed', remainingFiles: pr.remainingPaths,
+        evidence: { head, baseSha: before } });
       const runs = join(dir, 'runs');
       let report = '';
       expect(await cmdFleetRecutSweep(['--json', '--apply', '--runs-dir', runs], {
@@ -188,6 +198,60 @@ describe('fleet dirty-landed', () => {
     expect(report.prs[3]).toMatchObject({ reason: 'head-moved' });
     expect(report.prs[4]).toMatchObject({ reason: 'fetch-failed' });
     expect(report.prs[5]).toMatchObject({ reason: 'row-unreadable' });
+  });
+
+  it.each([1, 2, 3, 4, 5, 6])('PR recut-check reports content evidence or retains uncertain source %s', async n => {
+    const { dir, t1, t2, t3 } = fixture();
+    const source = row(n, [t1, t2, t3, t3, t1, ''][n - 1]!);
+    const gh = vi.fn(async () => ({ ok: true, stdout: JSON.stringify(source), stderr: '' }));
+    let text = '';
+    expect(await cmdPr(['recut-check', String(n), '--repo', 'ashlrai/phantom', '--json'], {
+      recut: { gh, remote: dir }, stdout: value => { text = value; },
+    })).toBe(n <= 3 ? 0 : 1);
+    expect(gh).toHaveBeenCalledWith(['pr', 'view', String(n), '--repo', 'ashlrai/phantom',
+      '--json', 'number,headRefOid,baseRefName']);
+    const report = JSON.parse(text) as PrRecutCheckReport;
+    expect(report.alreadyOnMaster).toBe(n <= 3 ? n === 1 : null);
+    expect(report.alreadyOnMasterFiles).toEqual(n <= 2 ? ['a.txt'] : n === 3 ? [] : null);
+    expect(report.remainingFiles).toEqual(n === 1 ? [] : n === 2 ? ['b.txt'] : n === 3 ? ['c.txt'] : null);
+    if (n > 3) expect(report.next).toContain('keep this recut');
+  });
+
+  it.each(['failed', 'malformed', 'mismatched', 'other-base', 'throws'])('PR recut-check never skips a %s source', async mode => {
+    const gh = vi.fn(async () => {
+      if (mode === 'throws') throw new Error('private error must not be printed');
+      return { ok: mode !== 'failed', stderr: 'private error must not be printed', stdout: mode === 'malformed' ? '{'
+        : JSON.stringify({ ...row(mode === 'mismatched' ? 2 : 1, 'a'.repeat(40)), baseRefName: mode === 'other-base' ? 'other' : 'master' }) };
+    });
+    let text = '';
+    expect(await cmdPr(['recut-check', '1', '--json'], { recut: { gh }, stdout: value => { text = value; } })).toBe(1);
+    expect(JSON.parse(text)).toMatchObject({ alreadyOnMaster: null, alreadyOnMasterFiles: null, remainingFiles: null });
+    expect(text).not.toContain('private error');
+  });
+
+  it.each([[], ['0'], ['-1'], ['1.5'], ['9007199254740992'], ['1', '--apply'], ['1', '--json', '--json'], ['1', '--repo']].map(args => ({ args })))(
+    'PR recut-check rejects invalid arguments $args before reading a source', async ({ args }) => {
+      const gh = vi.fn();
+      expect(await cmdPr(['recut-check', ...args], { recut: { gh }, stdout: () => {} })).toBe(2);
+      expect(gh).not.toHaveBeenCalled();
+    });
+
+  it('PR recut-check gives a plain next step when the source is unavailable', async () => {
+    let text = '';
+    expect(await cmdPr(['recut-check', '1'], { recut: { gh: async () => ({ ok: false, stdout: '', stderr: '' }) },
+      stdout: value => { text = value; } })).toBe(1);
+    expect(text).toContain('keep this recut');
+    expect(text).toContain('Already on master: unknown\nRemaining files: unknown');
+  });
+
+  it.each(['timeout', 'truncated'])('PR recut-check rejects a %s metadata read before inspecting git', async failure => {
+    const run = vi.spyOn(gitOps, 'defaultGitRunner').mockResolvedValue({ code: 0,
+      stdout: JSON.stringify(row(1, 'a'.repeat(40))), stderr: '', missing: false,
+      timedOut: failure === 'timeout', truncated: failure === 'truncated' });
+    let text = '';
+    expect(await cmdPr(['recut-check', '1', '--json'], { stdout: value => { text = value; } })).toBe(1);
+    expect(JSON.parse(text)).toMatchObject({ alreadyOnMaster: null, remainingFiles: null });
+    expect(run).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a criss-cross history with more than one merge base', async () => {
