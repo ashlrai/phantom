@@ -35,6 +35,19 @@ const DOC_MARKDOWN = /\.md$/i;
 const QUARANTINE_TEST_FILE = /(?:^|\/)[^/]+\.(?:test|spec)\.[cm]?[jt]sx?$/;
 const QUARANTINE_LEDGER = 'queue/quarantine.tsv';
 
+/**
+ * Two committed data files carry a grammar their names do not advertise:
+ * Cargo.lock is TOML (cargo metadata/build rejects a malformed lock the
+ * same way it rejects a broken Cargo.toml), and *.tsbuildinfo is the JSON
+ * incremental-build record tsc reads on every typecheck. The verify run's
+ * own build-info files live under the gitignored .ashlr-gate/ tree or the
+ * .git/-resident default cache, so only tsbuildinfo files that are
+ * actually changed source — like the tracked
+ * src/web-ui/tsconfig.minimal.tsbuildinfo — reach selection.
+ */
+const CARGO_LOCK_FILE = /(?:^|\/)Cargo\.lock$/;
+const TSBUILDINFO_FILE = /\.tsbuildinfo$/;
+
 /** Pure selection: keep deleted paths for the web decision, but never lint them. */
 export function selectChangedFiles(changedPaths, existingPaths) {
   const changed = [...new Set(changedPaths)].filter(Boolean).sort();
@@ -44,7 +57,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     pythonFiles: changed.filter((path) => existing.has(path) && /\.py$/.test(path)),
     shellFiles: changed.filter((path) => existing.has(path) && /\.sh$/.test(path)),
     perlFiles: changed.filter((path) => existing.has(path) && /\.pl$/i.test(path)),
-    jsonFiles: changed.filter((path) => existing.has(path) && /\.(?:json|webmanifest)$/.test(path)),
+    jsonFiles: changed.filter((path) => existing.has(path) && (/\.(?:json|webmanifest)$/.test(path) || TSBUILDINFO_FILE.test(path))),
     jsonlFiles: changed.filter((path) => existing.has(path) && /\.jsonl$/.test(path)),
     xmlFiles: changed.filter((path) => existing.has(path) && /\.(?:xml|plist(?:\.in)?|svg)$/.test(path)),
     webTypecheck: changed.some((path) => path.startsWith('src/web-ui/')),
@@ -55,7 +68,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     rustFiles: changed.filter((path) => existing.has(path) && /\.rs$/.test(path)),
     swiftFiles: changed.filter((path) => existing.has(path) && /\.swift$/.test(path)),
     yamlFiles: changed.filter((path) => existing.has(path) && /\.ya?ml$/.test(path)),
-    tomlFiles: changed.filter((path) => existing.has(path) && /\.toml$/.test(path)),
+    tomlFiles: changed.filter((path) => existing.has(path) && (/\.toml$/.test(path) || CARGO_LOCK_FILE.test(path))),
     cssFiles: changed.filter((path) => existing.has(path) && /\.css$/i.test(path)),
     snapFiles: changed.filter((path) => existing.has(path) && /\.snap$/i.test(path)),
     patchFiles: changed.filter((path) => existing.has(path) && /\.(?:patch|diff)$/i.test(path)),
@@ -362,14 +375,17 @@ export function runNodeSyntaxCheck(root, files, spawn = spawnSync) {
 }
 
 /**
- * Strict-parse changed .json and .webmanifest files with JSON.parse — the
- * same grammar tscCachePaths already applies to tsconfig.json and sync-plan's
- * checkSyntax applies to fleet machinery, and the grammar the Web App
- * Manifest spec requires of `application/manifest+json` — so a failure is a
- * real break for package.json, manifests, schemas, registries and the PWA
- * manifest the web UI ships. No external interpreter is needed, so unlike
- * the Python and shell checks there is no preflight or SKIP path; every
- * failing path is named with its parse error.
+ * Strict-parse changed .json, .webmanifest and .tsbuildinfo files with
+ * JSON.parse — the same grammar tscCachePaths already applies to
+ * tsconfig.json and sync-plan's checkSyntax applies to fleet machinery,
+ * the grammar the Web App Manifest spec requires of
+ * `application/manifest+json`, and the format every TypeScript
+ * incremental-build record is written in — so a failure is a real break
+ * for package.json, manifests, schemas, registries, the PWA manifest the
+ * web UI ships and tracked build-info files like
+ * src/web-ui/tsconfig.minimal.tsbuildinfo. No external interpreter is
+ * needed, so unlike the Python and shell checks there is no preflight or
+ * SKIP path; every failing path is named with its parse error.
  */
 export function runJsonSyntaxCheck(root, files, read = readFileSync) {
   const failures = [];
@@ -624,7 +640,7 @@ for (const path of process.argv.slice(1)) {
 process.exit(failed ? 1 : 0);
 `;
 
-/** Syntax-check changed .toml files with the bundled smol-toml parser; false on any parse failure. */
+/** Syntax-check changed .toml files and Cargo.lock manifests with the bundled smol-toml parser; false on any parse failure. */
 export function runTomlSyntaxCheck(root, files, spawn = spawnSync) {
   const result = spawn(process.execPath, ['--input-type=module', '-e', TOML_SYNTAX_CHECK, ...files], {
     cwd: root, encoding: 'utf8', timeout: 120000,
@@ -1290,7 +1306,7 @@ function main() {
     process.exitCode = 1;
   }
   if (selection.jsonFiles.length === 0) {
-    console.log('PASS json syntax check skipped: no json or webmanifest change');
+    console.log('PASS json syntax check skipped: no json, webmanifest or tsbuildinfo change');
   } else if (!runJsonSyntaxCheck(root, selection.jsonFiles)) {
     process.exitCode = 1;
   }
@@ -1340,7 +1356,7 @@ function main() {
     }
   }
   if (selection.tomlFiles.length === 0) {
-    console.log('PASS toml syntax check skipped: no toml change');
+    console.log('PASS toml syntax check skipped: no toml or Cargo.lock change');
   } else {
     const toml = parserPackagePreflight(root, 'smol-toml');
     if (!toml.ok) {
