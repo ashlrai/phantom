@@ -66,6 +66,15 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     return { lane: clean(l.lane), running: l.running, queued: readyRows?.filter(r => r.lane === l.lane).length ?? null,
       target: l.target, held: l.held, emptyRate: finished.length ? finished.filter(r => r.row.empty === true).length / finished.length : null };
   });
+  const mergedPrs = [...new Map(ledgerRows(tail?.text ?? '', now, Infinity, true).rows
+    .filter(({ row }) => ledgerPhase(row) === 'MERGED' || ledgerEventName(row) === 'merged')
+    .flatMap(({ row, at }) => {
+      const url = ledgerPrUrl(row), match = url?.match(/^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)$/);
+      const mergedAt = typeof row.mergedAt === 'string' ? Date.parse(row.mergedAt) : at;
+      return match && Number.isFinite(mergedAt) && mergedAt <= now
+        ? [{ url: url!, repo: match[1]!, number: Number(match[2]), title: typeof row.title === 'string' ? clean(row.title) : '', at: new Date(mergedAt).toISOString() }] : [];
+    }).sort((a, b) => a.at.localeCompare(b.at)).map(pr => [pr.url, pr])).values()]
+    .sort((a, b) => b.at.localeCompare(a.at)).slice(0, 5);
   let live: LiveJobsReport | null = null;
   try { live = JSON.parse(liveText ?? 'null') as LiveJobsReport | null; } catch { sources[LIVE_JOBS_FILE] = 'degraded'; }
   const attention = (Array.isArray(live?.jobs) ? live.jobs : []).filter(j => j && typeof j.id === 'string' && typeof j.lane === 'string' && (j.status === 'stuck' || j.status === 'quiet'))
@@ -77,6 +86,9 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     schema: 'leader.compact-brief.v1', at: new Date(now).toISOString(),
     state: lanes.length || tail || pace?.pools.length || guardian?.length ? 'ready' : 'no data', sources,
     windowHours: 2, emptyWindowHours: 24, lanes,
+    headline: lanes.length && lanes.every(l => l.running !== null)
+      ? `${lanes.reduce((sum, l) => sum + l.running!, 0)} jobs running across ${lanes.length} lanes.` : 'Running job counts are missing.',
+    mergedPrs,
     pools: (pace?.pools ?? []).map(p => ({ pool: clean(p.pool), usedPct: p.usedPct, hoursToReset: p.hoursToReset,
       burnPerHour: p.recentPerHour, safeBurn: p.safeBurnPerHour ?? null, verdict: p.verdict ?? 'unknown' })),
     families: [...groups.values()].sort((a, b) => a.prs / Math.max(1, a.launches) - b.prs / Math.max(1, b.launches) || b.launches - a.launches || a.family.localeCompare(b.family)),
@@ -86,7 +98,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     stopped: stops, omitted: 0,
   };
   // Drop the lowest-priority rows, explicitly counting omissions, until the entire wire payload fits.
-  const lists = [brief.families, brief.stopped, brief.main, brief.pools, brief.lanes, brief.attention];
+  const lists = [brief.families, brief.stopped, brief.main, brief.pools, brief.lanes, brief.attention, brief.mergedPrs];
   while (Buffer.byteLength(JSON.stringify(brief)) >= 8191) {
     const list = lists.find(a => a.length > 1) ?? lists.find(a => a.length);
     if (!list) break;
@@ -94,7 +106,9 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
   }
   return brief;
 }
-export type CompactLeaderBrief = Awaited<ReturnType<typeof readCompactBrief>>;
+type GeneratedBrief = Awaited<ReturnType<typeof readCompactBrief>>;
+/** Older stored snapshots omit the desktop headline and merge list. */
+export type CompactLeaderBrief = Omit<GeneratedBrief, 'headline' | 'mergedPrs'> & Partial<Pick<GeneratedBrief, 'headline' | 'mergedPrs'>>;
 export async function writeCompactBrief(runsDir: string, now = Date.now(), file = join(runsDir, LEADER_COMPACT_FILE)) {
   const brief = await readCompactBrief(runsDir, now);
   await mkdir(join(file, '..'), { recursive: true, mode: 0o700 });

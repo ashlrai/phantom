@@ -1,6 +1,7 @@
 /** Home: the Pulse card (`phm fleet pulse`) on top, then the `phm home` summary as plain cards in two named groups (agents and machines, then usage and delivery): side by side on a wide pane, one after the other on a narrow one. Each card has one action, which opens the existing detailed view (the Pools card is a bar of pool tiles above its action); the Approvals card (`phm approvals`) leads when Mason is needed, the From your leader card (`phm leader replies`) follows it, the Working now card (`phm sessions`) lists each live session, and the Disk card (`phm worktrees`) closes the column.
  * The headline carries a state mark and the time the summary was read; lanes with a target and repos draw their reading (a bar, a mark) beside the same words. */
 import { Children, useId, type ReactNode } from 'react';
+import { FleetNowPanel } from '../../../../../desktop/src/FleetNowPanel.js';
 import type { HomeField, HomeSummary } from '../../../../core/fleet/home.js';
 import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -66,7 +67,7 @@ export function HomePane({ visible }: PaneProps) {
   // Any other payload (an older server, an error body) is not a summary.
   const home = read.data?.schema === 'home.v1' ? read.data : null;
   // Approvals come first and stand on their own API: what only Mason can do should not wait on the health summary.
-  if (!home) return <section className={styles.root} aria-label="Home"><PulseStrip visible={visible} /><PulseCard visible={visible} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p>
+  if (!home) return <section className={styles.root} aria-label="Home"><FleetNowPanel visible={visible} /><PulseStrip visible={visible} /><PulseCard visible={visible} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p>
     <div key="board" className={styles.board}>
       <Column key="agents" title={AGENTS}><ApprovalsCard key="approvals" visible={visible} /><LeaderRepliesCard key="leader-replies" visible={visible} />{working(visible)}<MachinesCard key="machines" visible={visible} className={styles.card} onOpenJob={openPoolJob} /></Column>
       <Column key="resources" title={RESOURCES}><PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} onOpenPools={openPools} /><LaneYieldCard key="yield" visible={visible} /></Column>
@@ -75,6 +76,7 @@ export function HomePane({ visible }: PaneProps) {
   const stale = read.status === 'error';
   const at = readAt(home.asOf);
   return <section className={styles.root} aria-label="Home">
+    <FleetNowPanel visible={visible} />
     <PulseStrip visible={visible} /><PulseCard visible={visible} />
     <p className={styles.headline} data-health={home.health}>{home.headline}</p>
     <p className={styles.asOf} data-stale={stale || undefined} role={stale ? 'status' : undefined}>

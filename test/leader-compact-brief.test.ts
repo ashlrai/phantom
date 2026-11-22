@@ -56,3 +56,12 @@ it('uses actual merge times and keeps only the five oldest stuck jobs', async ()
   expect(b.medianOpenToMergeSeconds).toBe(7200); expect(b.attention.map(j => j.id)).toEqual(['job-6', 'job-5', 'job-4', 'job-3', 'job-2']);
   expect(b.families[0]).toMatchObject({ family: 'old', launches: 0, merges: 1 });
 });
+it('keeps five distinct merged PRs ordered by merge time, including eventless outcomes', async () => {
+  const rows = Array.from({ length: 7 }, (_, i) => ({ state: 'MERGED', ts: new Date(now - 48 * 3_600_000).toISOString(), mergedAt: new Date(now - i * 60_000).toISOString(), url: `https://github.com/ashlrai/phantom/pull/${i + 1}`, title: 'Better view' }));
+  await writeFile(join(dir, 'metrics/jobs.jsonl'), [...rows, rows[0], { event: 'publish', ts: at, url: 'https://github.com/ashlrai/phantom/pull/8' }].map(row => JSON.stringify(row)).join('\n'));
+  const b = await readCompactBrief(dir, now);
+  expect(b.mergedPrs.map(pr => pr.number)).toEqual([1, 2, 3, 4, 5]);
+  expect(b.mergedPrs[0]).toMatchObject({ repo: 'ashlrai/phantom', title: 'Better view', at });
+  expect(b.headline).toBe('Running job counts are missing.');
+  expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(8192);
+});
