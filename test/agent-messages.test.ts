@@ -408,6 +408,38 @@ describe('phm messages projection', () => {
     expect(parseAgentMessagesQuery({ job: 'x'.repeat(129) }).ok).toBe(false);
   });
 
+  it('filters to one v2 thread label — the same busBodyThread match every bus read applies', () => {
+    const root = store();
+    post(root, T0, { id: 't1', from: 'a', to: 'b',
+      body: { kind: 'note', text: 'question on the parser?', thread: 't-parser' } });
+    post(root, T0 + 1_000, { id: 't2', from: 'b', to: 'a',
+      body: { kind: 'context', text: 'the context the thread needs', thread: 't-parser' } });
+    // A different label, a note without the field and a non-note/context body
+    // carrying a thread-shaped field never match.
+    post(root, T0 + 2_000, { id: 't3', from: 'a', to: 'b',
+      body: { kind: 'note', text: 'other thread', thread: 't-other' } });
+    post(root, T0 + 3_000, { id: 't4', from: 'a', to: 'b', body: { kind: 'note', text: 'no label' } });
+    post(root, T0 + 4_000, { id: 't5', from: 'a', to: 'b',
+      body: { kind: 'worker-handoff', taskId: 'RQ-T1', prompt: 'take it', thread: 't-parser' } });
+    const thread = read(root, { thread: 't-parser' });
+    expect(thread.messages.map(m => m.id)).toEqual(['t2', 't1']);
+    expect(thread.matched).toBe(2);
+    // --thread composes with the other filters; an unmatched label is an
+    // empty page, not an error, and matched counts only accepted rows.
+    expect(read(root, { thread: 't-parser', kind: 'ask' }).messages.map(m => m.id)).toEqual(['t1']);
+    expect(read(root, { thread: 't-parser', kind: 'reply' })).toMatchObject({ matched: 0, messages: [] });
+    expect(read(root, { thread: 't-gone' })).toMatchObject({ matched: 0, messages: [] });
+    expect(read(root, { thread: 't-parser', limit: 1 })).toMatchObject({ matched: 2, messages: [{ id: 't2' }] });
+  });
+
+  it('parses --thread as a printable label and refuses anything else', () => {
+    expect(parseAgentMessagesQuery({ thread: 't-parser' })).toEqual({ ok: true, query: { thread: 't-parser' } });
+    expect(parseAgentMessagesQuery({ thread: 't-parser', kind: 'ask', limit: '5' })).toEqual({ ok: true, query: { thread: 't-parser', kind: 'ask', limit: 5 } });
+    expect(parseAgentMessagesQuery({ thread: 'has space' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ thread: '' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ thread: 'x'.repeat(129) }).ok).toBe(false);
+  });
+
   it('serves the same read at GET /api/verse/agent-bus/messages', async () => {
     const calls: unknown[] = [];
     const api = createAgentBusApi({ messages: query => { calls.push(query); return { schema: 'agent-messages.v1', source: 'missing', messages: [], matched: 0, skipped: 0 }; } });
@@ -418,15 +450,16 @@ describe('phm messages projection', () => {
       const handled = await api(ctx, { url, headers: {} } as never, res, url.split('?')[0]!, 'GET');
       return { handled, status: status || (res as { statusCode: number }).statusCode, body };
     };
-    const ok = await send('/api/verse/agent-bus/messages?agent=claude&kind=ask&priority=P0&job=RQ-JOB1&limit=5');
+    const ok = await send('/api/verse/agent-bus/messages?agent=claude&kind=ask&priority=P0&job=RQ-JOB1&thread=t-1&limit=5');
     expect(ok.handled).toBe(true);
     expect(ok.status).toBe(200);
     expect(JSON.parse(ok.body)).toMatchObject({ schema: 'agent-messages.v1' });
-    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', agent: 'claude', job: 'RQ-JOB1', limit: 5 }]);
+    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', job: 'RQ-JOB1', thread: 't-1', agent: 'claude', limit: 5 }]);
     expect((await send('/api/verse/agent-bus/messages?limit=0')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?kind=chatter')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?priority=urgent')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?job=has%20space')).status).toBe(400);
+    expect((await send('/api/verse/agent-bus/messages?thread=has%20space')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?after=1')).status).toBe(400);
   });
 });
