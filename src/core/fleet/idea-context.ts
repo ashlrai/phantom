@@ -51,7 +51,7 @@ export async function enrichIdeas(report: IdeaListReport, root: string, dropId: 
     return source.state === 'healthy' ? source.text : '';
   }));
   // Promise completion order is filesystem-dependent; the wire order is fixed.
-  const signalOrder = ['empty-launches', 'guardian-fixups', 'disk-trend', 'idle-lanes', 'unspent-usage', ...paths.map(([name]) => name)];
+  const signalOrder = ['empty-launches', 'guardian-fixups', 'disk-trend', 'idle-lanes', 'unspent-usage', 'loop-hints', ...paths.map(([name]) => name)];
   report.signals.sort((a, b) => signalOrder.indexOf(a.name) - signalOrder.indexOf(b.name));
   const [vision = '', queue = '', inbox = '', ledger = ''] = sources;
   const queued = new Set(parseIdeas('', queue).map(idea => idea.id));
