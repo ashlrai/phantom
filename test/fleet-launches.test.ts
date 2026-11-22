@@ -41,8 +41,8 @@ describe('buildLaunchRate', () => {
     const report = build(EVEN);
     expect(report).toMatchObject({ schema: 'fleet.launches.v1', metrics: 'ok', plans: 'unknown', starts: 24, starts_per_hour: 1, wasted_starts: 0 });
     expect(report.longest_gap?.minutes).toBe(60);
-    expect(laneOf(report, 'claude')).toMatchObject({ starts: 12, merged: 12, merged_per_start: 1, wasted: false, used_frac: null, reset_hours: null });
-    expect(laneOf(report, 'codex')).toMatchObject({ starts: 12, merged: 6, merged_per_start: 0.5, wasted: false });
+    expect(laneOf(report, 'claude')).toMatchObject({ starts: 12, merged: 12, merged_per_start: 1, starts_per_merged_pr: 1, wasted: false, used_frac: null, reset_hours: null });
+    expect(laneOf(report, 'codex')).toMatchObject({ starts: 12, merged: 6, merged_per_start: 0.5, starts_per_merged_pr: 2, wasted: false });
     expect(report.recommendations).toEqual(['Nothing to change: no lane with 10 or more starts in 24 h merged under 0.1 per start.']);
     expect(report.headline).toBe('24 starts in the last 24 h (1 an hour), 0 wasted, longest gap 1 h');
   });
@@ -50,7 +50,7 @@ describe('buildLaunchRate', () => {
   it('flags a zero-yield lane and sends its rows to the lane with plan to spare', () => {
     const report = build(ZERO_YIELD, PLANS);
     expect(report).toMatchObject({ starts: 20, wasted_starts: 12, plans: 'ok' });
-    expect(laneOf(report, 'zai')).toMatchObject({ starts: 12, merged: 0, merged_per_start: 0, wasted: true, used_frac: 0.5, reset_hours: null });
+    expect(laneOf(report, 'zai')).toMatchObject({ starts: 12, merged: 0, merged_per_start: 0, starts_per_merged_pr: null, wasted: true, used_frac: 0.5, reset_hours: null });
     expect(laneOf(report, 'claude')).toMatchObject({ starts: 8, merged: 4, merged_per_start: 0.5, wasted: false, used_frac: 0.09, reset_hours: 48 });
     expect(report.recommendations[0]).toBe('zai took 12 of 20 starts in 24 h and merged 0; send its rows to claude (9% used, 48 h left).');
     // Without plan readings the target is still named, with its plan shown as unknown.
@@ -141,9 +141,11 @@ describe('phm fleet launches and its route', () => {
     const { code, out } = await run('--runs-dir', runs, '--json');
     expect(code).toBe(0);
     const report = JSON.parse(out) as LaunchRateReport;
-    expect(Object.keys(report)).toEqual(['schema', 'as_of', 'hours', 'metrics', 'plans', 'waste_rule', 'starts', 'starts_per_hour', 'longest_gap', 'wasted_starts', 'lanes', 'headline', 'recommendations']);
+    expect(Object.keys(report)).toEqual(['schema', 'as_of', 'hours', 'metrics', 'plans', 'waste_rule', 'starts', 'starts_per_hour', 'longest_gap', 'wasted_starts', 'lanes', 'relaunches', 'repeat_jobs', 'headline', 'recommendations']);
     expect(report).toMatchObject({ schema: 'fleet.launches.v1', hours: 24, metrics: 'ok', plans: 'ok', waste_rule: { merged_per_start_under: 0.1, min_starts_24h: 10 }, starts: 20, wasted_starts: 12 });
-    expect(Object.keys(report.lanes[0]!)).toEqual(['lane', 'starts', 'merged', 'merged_per_start', 'starts_24h', 'merged_24h', 'merged_per_start_24h', 'wasted', 'used_frac', 'reset_hours']);
+    expect(Object.keys(report.lanes[0]!)).toEqual(['lane', 'starts', 'merged', 'merged_per_start', 'starts_24h', 'merged_24h', 'merged_per_start_24h', 'starts_per_merged_pr', 'wasted', 'used_frac', 'reset_hours']);
+    expect(report.relaunches['RQ-Z0']).toMatchObject({ launches: 1, lanes: ['zai'], minutes_spent: 5, prs: 0, merged: 0 });
+    expect(report.repeat_jobs).toEqual([]);
     expect(Object.keys(report.longest_gap!)).toEqual(['from', 'to', 'minutes']);
     expect(report.recommendations[0]).toBe('zai took 12 of 20 starts in 24 h and merged 0; send its rows to claude (9% used, 48 h left).');
     const text = await run('--runs-dir', runs, '--hours', '6');
