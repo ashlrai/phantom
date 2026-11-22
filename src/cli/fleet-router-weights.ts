@@ -8,12 +8,14 @@
  */
 import { isAbsolute } from 'node:path';
 
+import { readControllerQuality, type ControllerQualityRead, type ControllerQualityReceipt } from '../core/router/controller-quality.js';
 import { readRouterOutcomes, type RouterOutcomeRead } from '../core/router/outcomes.js';
 import { buildRouterWeightProposalReport, type RouterWeightEvidence, type RouterWeightProposalReport } from '../core/router/weight-proposals.js';
 
 export const FLEET_ROUTER_WEIGHTS_USAGE =
   'Usage: phm fleet router-weights [--runs-dir <absolute dir>] [--json]\n' +
-  'Advisory only. Reads <runs-dir>/metrics/jobs.jsonl (default ASHLR_RUNS_DIR, then ~/.ashlr-runs). ' +
+  'Advisory only. Reads <runs-dir>/metrics/jobs.jsonl (default ASHLR_RUNS_DIR, then ~/.ashlr-runs) plus the ' +
+  'fleet controller\'s recorded lane-quality verdicts in <runs-dir>/queue/fleet-controller.json. ' +
   'Proposes bounded weight shifts per work_class/lane from held-merge outcomes (20 known outcomes required, ' +
   'shifts capped at 0.1; merges recorded as reverted never count as held). Writes nothing and changes no ' +
   'live routing. Exit 0 for a read, 1 for an unavailable ledger, 2 for usage.';
@@ -60,8 +62,23 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
   return parts.length === 0 ? '' : ` evidence ${parts.join(' ')}`;
 }
 
+/** One compact text rendering of a validated route.quality.v1 receipt; nulls print as unknown. */
+function qualityReceiptLine(r: ControllerQualityReceipt): string {
+  const num = (v: number | null): string => v === null ? 'unknown' : String(v);
+  const parts = [
+    `weight ${num(r.from)}->${num(r.to)}`,
+    `score=${num(r.score)}`,
+    `resolved=${num(r.resolved)}`,
+  ];
+  if (r.ci_adverse_delta !== null) parts.push(`ci_adverse=${r.ci_adverse_delta}`);
+  parts.push(`reason=${r.reason ?? 'unknown'}`, `mode=${r.mode ?? 'unknown'}`);
+  if (r.decided_at !== null) parts.push(`decided_at=${r.decided_at}`);
+  if (r.target_from !== null || r.target_to !== null) parts.push(`target ${num(r.target_from)}->${num(r.target_to)}`);
+  return `  ${r.lane}: ${parts.join(' ')}`;
+}
+
 function proposalLines(report: RouterWeightProposalReport): string[] {
-  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} empty_tags=${report.empty_tag_state} truncated=${report.truncated} as_of=${report.as_of} ` +
+  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} empty_tags=${report.empty_tag_state} controller_quality=${report.controller_quality_state} truncated=${report.truncated} as_of=${report.as_of} ` +
     'advisory-only: not applied to routing or weights.json';
   if (report.status === 'unavailable') {
     return [header, `unavailable: ledger state=${report.ledger.state}; no proposals were computed`, `ledger ${report.ledger.path}`];
@@ -118,14 +135,32 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
       : report.empty_tag_truncated
         ? ['empty-tag coverage: retained tail only; empty_tag joins cover the newest bytes']
         : []),
+    ...(report.controller_quality_state !== 'read' && report.controller_quality_state !== 'unreported'
+      ? [`controller-quality coverage: fleet-controller.json ${report.controller_quality_state}; no lane-quality verdicts joined`]
+      : []),
   ];
-  return [header, counts, ...resolution, `ledger ${report.ledger.path}`, ...usage, ...coverage, ...rows, ...none];
+  const quality = report.controller_quality_state === 'read'
+    ? [
+        ...(report.controller_quality !== null && report.controller_quality.length === 0
+          ? ['controller quality: no lane-quality verdicts recorded']
+          : []),
+        ...(report.controller_quality !== null && report.controller_quality.length > 0
+          ? ['controller quality verdicts (route.quality.v1, newest per lane, advisory context):',
+             ...report.controller_quality.map(qualityReceiptLine)]
+          : []),
+        ...(report.controller_quality_invalid_rows !== null && report.controller_quality_invalid_rows > 0
+          ? [`controller quality: ${report.controller_quality_invalid_rows} receipt rows failed validation and were not joined`]
+          : []),
+      ]
+    : [];
+  return [header, counts, ...resolution, `ledger ${report.ledger.path}`, ...usage, ...coverage, ...quality, ...rows, ...none];
 }
 
 export async function cmdFleetRouterWeights(
   args: string[],
   read: (opts: { runsDir?: string }) => Promise<RouterOutcomeRead> = readRouterOutcomes,
   now: () => string = () => new Date().toISOString(),
+  readController: (opts: { runsDir?: string }) => Promise<ControllerQualityRead> = readControllerQuality,
 ): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
     console.log(FLEET_ROUTER_WEIGHTS_USAGE);
@@ -137,13 +172,18 @@ export async function cmdFleetRouterWeights(
     return 2;
   }
   let result: RouterOutcomeRead;
+  const runsOpts = parsed.runsDir === undefined ? {} : { runsDir: parsed.runsDir };
   try {
-    result = await read(parsed.runsDir === undefined ? {} : { runsDir: parsed.runsDir });
+    result = await read(runsOpts);
   } catch {
     console.error('Router weight proposals unavailable.');
     return 1;
   }
-  const report = buildRouterWeightProposalReport(result, now());
+  // The controller read is advisory context: a failure degrades to an
+  // 'unreadable' state on the report, never to a command failure.
+  const controller = await readController(runsOpts).catch(
+    (): ControllerQualityRead => ({ state: 'unreadable', path: '', receipts: [], invalid_rows: null }));
+  const report = buildRouterWeightProposalReport(result, now(), { controllerQuality: controller });
   console.log(parsed.json ? JSON.stringify(report) : proposalLines(report).join('\n'));
   return result.state === 'read' ? 0 : 1;
 }
