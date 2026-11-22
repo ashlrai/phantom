@@ -182,6 +182,29 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // way the other side ledgers do: reward_state reports its health and
 // every joined field stays at its jobs-ledger value — unknown, never
 // a guessed outcome.
+// A seventh ledger joins under the same runs dir —
+// <runs>/metrics/launch-cost.jsonl, the bounded append-only
+// fleet.launch-cost.v1 journal (src/core/fleet/launch-cost.ts; the
+// contrib/mac/launch_cost.py producer): the fleet's recorded
+// first-minute process/CPU probe per launch attempt. `foldLaunchCosts`
+// validates each row under the producer's closed contract and the read
+// joins it as launch_cost_status/launch_peak_processes/
+// launch_mean_cpu_pct/launch_peak_cpu_pct — the only per-attempt
+// resource-cost evidence subscription lanes record, since their
+// finish rows carry no cost_usd. The producer keys measured rows by
+// `<job>-<12 lowercase hex claim hash>` (one row per attempt) and
+// unknown probes by the bare job id, so the join resolves each
+// launchId against the folded job window: a launchId that is itself a
+// folded job id keys itself (a job id may legitimately end in a
+// 12-hex segment), a measured/partial row's `-<12hex>` suffix strips
+// to the job it measured, and an unknown-status row prefers an exact
+// job-id match before trying the stripped prefix. Rows resolving
+// outside the jobs window join nothing and never create outcomes;
+// several attempts for one job leave the last appended row standing.
+// `launch_cost_state` reports the ledger's health and
+// `launch_cost_truncated` marks a cut tail; anything but 'read' leaves
+// every launch_cost_* field null — unknown, never a zeroed or guessed
+// resource figure.
 
 /** Newest-bytes bound retained from the append-only jobs ledger. */
 export const ROUTER_OUTCOME_LEDGER_LIMIT = 16 * 1024 * 1024;
@@ -197,6 +220,14 @@ export const ROUTER_MERGE_EVENTS_LEDGER_RELATIVE = join('metrics', 'merge-events
  * runs-dir ledgers it is not joined under runsDir.
  */
 export const ROUTER_REWARD_LEDGER_RELATIVE = join('metrics', 'reward-signals.jsonl');
+/**
+ * The launch-cost ledger's path relative to the runs dir —
+ * `<runs>/metrics/launch-cost.jsonl`, the bounded append-only
+ * fleet.launch-cost.v1 journal src/core/fleet/launch-cost.ts reads for
+ * fleet vitals. Like the other runs-dir side ledgers it is not joined
+ * under the ASHLR home root.
+ */
+export const ROUTER_LAUNCH_COST_LEDGER_RELATIVE = join('metrics', 'launch-cost.jsonl');
 
 export interface RouterOutcome {
   schema: 'router.outcome.v1';
@@ -859,6 +890,34 @@ export interface RouterOutcome {
    * verdict follows.
    */
   merge_queue: MergeQueueEvidence | null;
+  /**
+   * The fleet's recorded first-minute launch resource probe for the
+   * job — metrics/launch-cost.jsonl's fleet.launch-cost.v1 rows
+   * (the contrib/mac/launch_cost.py producer, read for fleet vitals by
+   * src/core/fleet/launch-cost.ts), joined by readRouterOutcomes under
+   * `launch_cost_state`. The producer keys measured rows by
+   * `<job>-<12 lowercase hex claim hash>` — one row per launch
+   * attempt — and unknown probes by the bare job id; the read resolves
+   * each launchId against the folded job window (see the module
+   * comment) and the last appended row for a resolved job stands.
+   * `launch_cost_status` is the standing row's recorded probe verdict —
+   * `measured` (nearly-full 60-second window, at least 12 samples),
+   * `partial` (shorter recorded coverage) or `unknown` (the probe ran
+   * but recorded no metrics — missing custody, an invalid claim or
+   * unavailable process data) — the only per-attempt resource-cost
+   * evidence subscription lanes record, since their finish rows carry
+   * no cost_usd. `launch_peak_processes`, `launch_mean_cpu_pct` and
+   * `launch_peak_cpu_pct` are the row's recorded first-minute figures
+   * (peak process count; mean and peak CPU as percent of one core),
+   * each null unless the standing row recorded it — an `unknown` row
+   * carries none by contract. All four stay null when no launch-cost
+   * row resolved to the job or the ledger was not read — unknown,
+   * never a zeroed or guessed resource figure.
+   */
+  launch_cost_status: 'measured' | 'partial' | 'unknown' | null;
+  launch_peak_processes: number | null;
+  launch_mean_cpu_pct: number | null;
+  launch_peak_cpu_pct: number | null;
   /** The lane+model's pass^k (passPowK) from the latest eval.lane-scores.v1 projection; null when unknown. */
   passk: number | null;
 }
@@ -1696,6 +1755,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       pool_kind: null, pool_mem_free_pct: null, pool_swap_gb: null,
       node_outcome: null, node_id: null, node_pack: null,
       merge_queue: null,
+      launch_cost_status: null, launch_peak_processes: null, launch_mean_cpu_pct: null, launch_peak_cpu_pct: null,
       passk: null,
     };
     o.lane = str(r, 'lane', 'pool', 'arm') ?? o.lane;
@@ -2540,6 +2600,88 @@ export function foldRewardSignals(text: string): Map<string, RewardOutcomeEviden
   return rewards;
 }
 
+/**
+ * The per-launch evidence one fleet.launch-cost.v1 row contributes to an
+ * outcome — the producer's recorded probe verdict plus its first-minute
+ * resource figures. Every figure stays null when the row did not record
+ * it; nothing here is derived.
+ */
+export interface LaunchCostEvidence {
+  /** The row's recorded probe verdict — the producer's closed status vocabulary. */
+  status: 'measured' | 'partial' | 'unknown';
+  /** Recorded first-minute peak process count; null on unknown rows. */
+  peakProcesses: number | null;
+  /** Recorded mean CPU as percent of one core; null on unknown rows. */
+  meanCpuPct: number | null;
+  /** Recorded peak CPU as percent of one core; null on unknown rows. */
+  peakCpuPct: number | null;
+}
+
+/** Same bounded identifier alphabet the producer's lane/launchId fields use (launch-cost.ts id()). */
+const LAUNCH_COST_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+/** The producer's per-attempt launchId suffix — `<job>-<12 lowercase hex claim hash>` (contrib/mac/launch_cost.py). */
+const LAUNCH_ATTEMPT_SUFFIX = /-[0-9a-f]{12}$/;
+const LAUNCH_COST_STATUSES: ReadonlySet<string> = new Set(['measured', 'partial', 'unknown']);
+const launchCostCount = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+
+/**
+ * Folds launch-cost.jsonl text into per-launchId evidence, last appended
+ * row winning a repeat (the ledger is append-only, one row per launch
+ * attempt). A row counts only as fleet.launch-cost.v1 evidence under the
+ * same closed validation src/core/fleet/launch-cost.ts applies: the exact
+ * schema, bounded lane and launchId identifiers, a null-or-parseable
+ * startedAt, windowSeconds 60, bounded sampledSeconds/samples, an
+ * in-vocabulary status, metric figures inside their recorded shapes —
+ * `unknown` rows carry no metrics, `measured`/`partial` rows carry all
+ * three plus a startedAt and at least one sample and peak process,
+ * `measured` rows require nearly-full 60-second coverage with at least
+ * 12 samples, and mean CPU never exceeds peak. Malformed JSON, other
+ * schemas and rows failing any check are skipped — never recorded raw,
+ * never guessed. The map keys on the row's recorded launchId; resolving
+ * it to a job id is the reader's job-window-aware step.
+ */
+export function foldLaunchCosts(text: string): Map<string, LaunchCostEvidence> {
+  const costs = new Map<string, LaunchCostEvidence>();
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const r = value as Row;
+    const lane = str(r, 'lane');
+    const launchId = str(r, 'launchId');
+    const startedAt = r['startedAt'];
+    const sampledSeconds = launchCostCount(r['sampledSeconds']) ? r['sampledSeconds'] as number : null;
+    const samples = r['samples'];
+    const status = str(r, 'status');
+    const metrics = [r['peakProcesses'], r['meanCpuPercentOneCore'], r['peakCpuPercentOneCore']];
+    if (r['schema'] !== 'fleet.launch-cost.v1' || lane === null || !LAUNCH_COST_ID.test(lane) ||
+        launchId === null || !LAUNCH_COST_ID.test(launchId) ||
+        (startedAt !== null && (typeof startedAt !== 'string' || !Number.isFinite(Date.parse(startedAt)))) ||
+        r['windowSeconds'] !== 60 || sampledSeconds === null || sampledSeconds > 60 ||
+        !Number.isSafeInteger(samples) || (samples as number) < 0 ||
+        status === null || !LAUNCH_COST_STATUSES.has(status) ||
+        metrics.some(v => v !== null && !launchCostCount(v)) ||
+        (r['peakProcesses'] !== null && !Number.isSafeInteger(r['peakProcesses'])) ||
+        (status === 'unknown' && metrics.some(v => v !== null)) ||
+        (status !== 'unknown' && (startedAt === null || metrics.some(v => v === null) || (samples as number) < 1 || (r['peakProcesses'] as number) < 1)) ||
+        (status === 'measured' && (sampledSeconds < 59 || (samples as number) < 12)) ||
+        (launchCostCount(r['meanCpuPercentOneCore']) && launchCostCount(r['peakCpuPercentOneCore']) &&
+          (r['meanCpuPercentOneCore'] as number) > (r['peakCpuPercentOneCore'] as number))) continue;
+    costs.set(launchId, {
+      status: status as LaunchCostEvidence['status'],
+      peakProcesses: r['peakProcesses'] === null ? null : r['peakProcesses'] as number,
+      meanCpuPct: r['meanCpuPercentOneCore'] === null ? null : r['meanCpuPercentOneCore'] as number,
+      peakCpuPct: r['peakCpuPercentOneCore'] === null ? null : r['peakCpuPercentOneCore'] as number,
+    });
+  }
+  return costs;
+}
+
 export interface RouterOutcomeRead extends RouterOutcomeFold {
   /** 'read' is the only state with trustworthy outcomes; everything else is an unknown ledger. */
   state: LedgerReadState;
@@ -2614,6 +2756,19 @@ export interface RouterOutcomeRead extends RouterOutcomeFold {
    * recorded rows, just a partial window.
    */
   reward_truncated: boolean;
+  /**
+   * Health of the launch-cost.jsonl tail behind the launch_cost_*
+   * joins. Anything but 'read' means no launch-cost rows joined —
+   * outcomes keep every launch_cost_* field null, never a guessed or
+   * zeroed resource figure.
+   */
+  launch_cost_state: Exclude<LedgerReadState, 'too-large'>;
+  /**
+   * True when the launch-cost tail exceeded the retained bound: joined
+   * evidence covers only the newest bytes, so older launches read
+   * unprobed.
+   */
+  launch_cost_truncated: boolean;
   /**
    * True when the ledger exceeded the retained tail: the fold, and so every
    * count on this read, covers only the newest ROUTER_OUTCOME_LEDGER_LIMIT
@@ -2743,6 +2898,21 @@ function unionRevertKeys(authority: ReadonlySet<string> | undefined, scan: Reado
  * never create outcomes. `reward_state` reports the ledger's health
  * and `reward_truncated` marks a cut tail; anything but 'read' leaves
  * every joined field at its jobs-ledger value.
+ * A seventh ledger joins under the runs dir —
+ * <runsDir>/metrics/launch-cost.jsonl, the bounded fleet.launch-cost.v1
+ * journal: `foldLaunchCosts` validates each row under the producer's
+ * closed contract and the read resolves each launchId to a folded job
+ * id — a launchId that is itself a job id keys itself, a
+ * measured/partial row's `-<12hex>` attempt suffix strips to the job
+ * it measured, and an unknown-status row prefers an exact job-id
+ * match before the stripped prefix — then fills launch_cost_status,
+ * launch_peak_processes, launch_mean_cpu_pct and launch_peak_cpu_pct,
+ * fields no jobs-ledger row supplies. Rows resolving outside the jobs
+ * window join nothing and never create outcomes; the last appended
+ * row for a resolved job stands. `launch_cost_state` reports the
+ * ledger's health and `launch_cost_truncated` marks a cut tail;
+ * anything but 'read' leaves every launch_cost_* field null —
+ * unknown, never a zeroed or guessed resource figure.
  */
 export async function readRouterOutcomes(opts: {
   runsDir?: string;
@@ -2783,6 +2953,9 @@ export async function readRouterOutcomes(opts: {
   const rewardRead = await readLedgerTail(join(ashlarRoot, ROUTER_REWARD_LEDGER_RELATIVE));
   const rewardState = rewardRead.state;
   const rewardTruncated = rewardRead.state === 'read' ? rewardRead.truncated : false;
+  const launchCostRead = await readLedgerTail(join(runsDir, ROUTER_LAUNCH_COST_LEDGER_RELATIVE));
+  const launchCostState = launchCostRead.state;
+  const launchCostTruncated = launchCostRead.state === 'read' ? launchCostRead.truncated : false;
   const revertLedger = await liveRevertOutcomeKeys(opts.ashlarDir);
   if (read.state !== 'read') {
     return { ...empty, state: read.state, path, eval_state: laneScores.state,
@@ -2791,7 +2964,8 @@ export async function readRouterOutcomes(opts: {
       empty_tag_state: emptyTagState, empty_tag_truncated: emptyTagTruncated,
       merge_events_state: mergeEventsState, merge_events_truncated: mergeEventsTruncated,
       revert_ledger_state: revertLedger.state,
-      reward_state: rewardState, reward_truncated: rewardTruncated, truncated: false };
+      reward_state: rewardState, reward_truncated: rewardTruncated,
+      launch_cost_state: launchCostState, launch_cost_truncated: launchCostTruncated, truncated: false };
   }
   const workClasses = marketRead.state === 'read'
     ? foldRouteDecisionWorkClasses(marketRead.text)
@@ -2840,6 +3014,38 @@ export async function readRouterOutcomes(opts: {
       if (tag !== undefined) o.empty_tag = tag;
     }
   }
+  if (launchCostRead.state === 'read') {
+    const costs = foldLaunchCosts(launchCostRead.text);
+    // launchId → job resolution against the folded job window. The
+    // producer keys measured/partial rows `<job>-<12-hex claim hash>`
+    // and unknown probes by the bare job id (its exception path can
+    // leave a suffixed id on an unknown row too). A launchId that is
+    // itself a folded job id keys itself — a job id may legitimately
+    // end in a 12-hex segment — so an unknown-status row prefers the
+    // exact match; a measured/partial row always strips its attempt
+    // suffix to the job it measured. Rows resolving outside the jobs
+    // window key on an id no outcome carries and join nothing.
+    const jobIds = new Set(folded.outcomes.map(o => o.job_id));
+    const byJob = new Map<string, LaunchCostEvidence>();
+    for (const [launchId, ev] of costs) {
+      const stripped = launchId.replace(LAUNCH_ATTEMPT_SUFFIX, '');
+      let job = launchId;
+      if (stripped !== launchId) {
+        job = ev.status === 'unknown'
+          ? (jobIds.has(launchId) ? launchId : jobIds.has(stripped) ? stripped : launchId)
+          : stripped;
+      }
+      byJob.set(job, ev);
+    }
+    for (const o of folded.outcomes) {
+      const ev = byJob.get(o.job_id);
+      if (ev === undefined) continue;
+      o.launch_cost_status = ev.status;
+      o.launch_peak_processes = ev.peakProcesses;
+      o.launch_mean_cpu_pct = ev.meanCpuPct;
+      o.launch_peak_cpu_pct = ev.peakCpuPct;
+    }
+  }
   if (marketRead.state === 'read') {
     const decisions = foldRouteDecisions(marketRead.text);
     for (const o of folded.outcomes) {
@@ -2860,5 +3066,6 @@ export async function readRouterOutcomes(opts: {
     merge_events_state: mergeEventsState, merge_events_truncated: mergeEventsTruncated,
     revert_ledger_state: revertLedger.state,
     reward_state: rewardState, reward_truncated: rewardTruncated,
+    launch_cost_state: launchCostState, launch_cost_truncated: launchCostTruncated,
     truncated: read.truncated };
 }

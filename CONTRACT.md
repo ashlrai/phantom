@@ -514,6 +514,7 @@ decisions only) and `fallback_used` (job receipts). See [gates and inert status]
 `authorityRevertedPrKeys(evidence)`, `foldSpendCosts(text)`,
 `foldRouteDecisionWorkClasses(text)`, `foldRouteDecisions(text)`,
 `foldEmptyTags(text)`, `foldMergeEvents(text)`, `foldRewardSignals(text)`,
+`foldLaunchCosts(text)`,
 `readLedgerFile(path, limit?)`,
 `readLedgerTail(path, maxBytes?)` and
 `readRouterOutcomes({runsDir?, lane?, ashlarDir?, authorityEvidence?})`,
@@ -657,7 +658,38 @@ the delta null — unknown stays unknown, never 0). The read degrades
 independently: `RouterOutcomeRead.reward_state` reports its health
 and `reward_truncated` marks a cut tail; anything but `read` leaves
 every joined field at its jobs-ledger value — unknown, never a
-guessed verdict or cost. `passk` is the
+guessed verdict or cost. A seventh ledger joins under the runs dir —
+`<runsDir>/metrics/launch-cost.jsonl` (`ROUTER_LAUNCH_COST_LEDGER_RELATIVE`),
+the bounded append-only `fleet.launch-cost.v1` journal the
+`launch_cost.py` producer appends and `src/core/fleet/launch-cost.ts`
+reads for fleet vitals: the fleet's recorded first-minute
+process/CPU probe per launch attempt. `foldLaunchCosts` collapses the
+tail to per-`launchId` evidence under the producer's closed contract —
+exact schema, bounded lane/launchId identifiers, a null-or-parseable
+`startedAt`, `windowSeconds` 60, bounded `sampledSeconds`/`samples`,
+the `measured`/`partial`/`unknown` status vocabulary, metric figures
+inside their recorded shapes (`unknown` rows carry none,
+`measured`/`partial` rows carry all three plus a `startedAt` and at
+least one sample and peak process, `measured` rows require
+`sampledSeconds` >= 59 with >= 12 samples, and mean CPU never exceeds
+peak) — last appended row winning a repeat, malformed rows skipped,
+never recorded raw. The producer keys measured rows
+`<job>-<12 lowercase hex claim hash>` — one row per attempt — and
+unknown probes by the bare job id, so the read resolves each
+`launchId` against the folded job window: a launchId that is itself a
+folded job id keys itself (a job id may legitimately end in a 12-hex
+segment), a measured/partial row's suffix strips to the job it
+measured, and an unknown-status row prefers an exact job-id match
+before the stripped prefix. The join fills `launch_cost_status`,
+`launch_peak_processes`, `launch_mean_cpu_pct` and
+`launch_peak_cpu_pct` — fields no jobs-ledger row supplies, the only
+per-attempt resource-cost evidence subscription lanes record — with
+the last appended row for a resolved job standing; rows resolving
+outside the jobs window join nothing and never create outcomes.
+`RouterOutcomeRead.launch_cost_state` reports the ledger's health and
+`launch_cost_truncated` marks a cut tail; anything but `read` leaves
+every `launch_cost_*` field null — unknown, never a zeroed or guessed
+resource figure. `passk` is the
 lane+model's pass^k (`passPowK`) from the published `eval.lane-scores.v1`
 projection (`~/.ashlr/eval/passk/lane-scores.json`, `ASHLR_HOME` honored);
 it is `null` whenever the ledger lacks lane/model, the projection is

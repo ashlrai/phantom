@@ -42,6 +42,26 @@ export function briefFamilyYield(text: string, now: number): BriefFamily[] {
   return [...groups.values()];
 }
 
+/** EMPTY finishes in the last 24 hours, ranked by measured token waste. */
+export function emptyTokenFamilies(text: string, now: number) {
+  const groups = new Map<string, { family: string; tokens: number | null; unknownJobs: number; jobs: number }>();
+  const seen = new Set<string>();
+  for (const { row, id, at } of ledgerRows(text, now, 24).rows) {
+    if (!(row.empty === true || ledgerStateTokens(row).includes('EMPTY_DONE') || row.class === 'empty')) continue;
+    const key = `${id}:${at}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const family = clean(collapseFamily(id)?.family ?? id);
+    const group = groups.get(family) ?? { family, tokens: null, unknownJobs: 0, jobs: 0 };
+    const value = row.tokens_total ?? row.tokens ?? row.total_tokens;
+    group.jobs++;
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) group.tokens = (group.tokens ?? 0) + value;
+    else group.unknownJobs++;
+    groups.set(family, group);
+  }
+  return [...groups.values()].sort((a, b) => (b.tokens ?? -1) - (a.tokens ?? -1) || a.family.localeCompare(b.family));
+}
+
 export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), hostLoadReader = readHostFamilies) {
   const cache = new Map<string, Promise<string>>();
   const sources: Record<string, { state: string; why: string }> = {};
@@ -126,6 +146,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
       headroom: p.headroom, source: p.source, ageHours: p.ageHours,
       why: p.verdict === 'unknown' ? [p.usedPct === null ? 'usage missing or stale' : '', p.hoursToReset === null || p.hoursToReset <= 0 ? 'reset missing or elapsed' : '', p.recentPerHour === null ? 'burn rate missing' : ''].filter(Boolean).join('; ') : 'usage, reset and burn rate known' })),
     families: briefFamilyYield(tail?.text ?? '', now).map(({ family, launches, prs, merges, empty }) => ({ family: clean(family), launches, prs, merges, empty })).sort((a, b) => a.prs / Math.max(1, a.launches) - b.prs / Math.max(1, b.launches) || b.launches - a.launches || a.family.localeCompare(b.family)),
+    emptyTokenFamilies: tail === null ? null : emptyTokenFamilies(tail.text, now),
     attention, liveAt: typeof live?.generatedAt === 'string' ? clean(live.generatedAt) : null, main: (guardian ?? []).map(g => ({ repo: clean(g.repo), state: g.state, stale: g.stale })),
     medianOpenToMergeSeconds: latency.seconds, mergeLatencySource: latency.source, mergeLatencyWhy: latency.why,
     mergeLatency: latency,
@@ -137,8 +158,9 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
   const lists = [brief.families, brief.stopped, brief.main, brief.pools, brief.lanes, brief.attention];
   while (Buffer.byteLength(JSON.stringify(brief)) >= 8191) {
     const list = lists.find(a => a.length > 1) ?? lists.find(a => a.length);
-    if (!list) break;
-    list.pop(); brief.omitted++;
+    if (list) { list.pop(); brief.omitted++; continue; }
+    if (brief.emptyTokenFamilies && brief.emptyTokenFamilies.length > 3) { brief.emptyTokenFamilies.pop(); brief.omitted++; continue; }
+    break;
   }
   return brief;
 }
@@ -154,6 +176,7 @@ export function compactBriefLines(b: CompactLeaderBrief): string[] {
     ...b.lanes.slice(0, 3).map(l => `${l.lane}: ${l.running ?? '?'}/${l.target ?? '?'}, ${l.queued ?? '?'} queued, held ${l.held ?? '?'}, empty ${l.emptyRate === null ? '?' : Math.round(l.emptyRate * 100) + '%'}`),
     ...b.pools.slice(0, 2).map(p => `${p.pool}: ${p.usedPct ?? '?'}%, reset ${p.hoursToReset ?? '?'}h, burn ${p.burnPerHour ?? '?'}/h, safe ${p.safeBurn ?? '?'}/h, ${p.verdict}`),
     ...b.families.slice(0, 2).map(f => `${f.family}: ${f.launches} launches, ${f.prs} PRs, ${f.merges} merges, ${f.empty} empty (2h)`),
+    ...(b.emptyTokenFamilies === null ? ['EMPTY tokens (24h): unknown'] : b.emptyTokenFamilies.slice(0, 3).map(f => `${f.family}: ${f.tokens === null ? 'unknown' : f.tokens} EMPTY tokens (24h), ${f.unknownJobs} jobs with unknown usage`)),
     ...b.stopped.filter(s => s.auto).map(s => `Stopped '${s.family}' for ${Math.ceil((s.until - Date.parse(b.at) / 1000) / 3600)} h: ${s.why}`),
     `Quiet/stuck: ${b.attention.map(j => j.id).join(', ') || (b.sources[LIVE_JOBS_FILE]?.state === 'healthy' ? 'none recorded' : 'unknown')}`,
     `Main: ${b.main.map(g => `${g.repo} ${g.state}${g.stale ? ' stale' : ''}`).join(', ') || 'unknown'}`,
