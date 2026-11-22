@@ -18,7 +18,7 @@ import { execFile } from 'node:child_process';
 import { readLedgerLines, type YieldLineReader } from './ledger-lines.js';
 import { ledgerAtMs, ledgerEventName, ledgerJobId } from './empty-cause.js';
 import { jobKind, yieldTally } from './slot-yield.js';
-import { launchFamily, readFamilyYield, shouldPauseFamily, type LaunchFamilyYield } from './family-yield.js';
+import { familyPauseReason, launchFamily, readFamilyYield, type LaunchFamilyYield } from './family-yield.js';
 import { readLiveStops, stopFilePath, stoppedBy } from './stop-file.js';
 
 export const RECUT_EMPTY_STREAK = 3;
@@ -48,7 +48,8 @@ export interface RecutGateDecision { emit: boolean; code: RecutGateCode; reason:
 
 export function shouldEmitRecut(input: RecutGateInput): RecutGateDecision {
   const n = input.streak ?? RECUT_EMPTY_STREAK;
-  if (shouldPauseFamily(input.yieldStats)) return { emit: false, code: 'family-paused', reason: 'recent workers found no source or made no changes' };
+  const pausedReason = familyPauseReason(input.yieldStats);
+  if (pausedReason) return { emit: false, code: 'family-paused', reason: pausedReason };
   if (input.diffContained === true) return { emit: false, code: 'already-on-master', reason: 'the source change is already on master' };
   if (input.stopRow) {
     return { emit: false, code: 'stop-file', reason: `${input.family} is stopped by the stop file until ${new Date(input.stopRow.until * 1000).toISOString()}${input.stopRow.reason ? ` (${input.stopRow.reason})` : ''}` };
