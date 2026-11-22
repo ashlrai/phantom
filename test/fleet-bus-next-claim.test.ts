@@ -3,8 +3,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appendBusInbox, BUS_INBOX_MAX_READ } from '../src/core/fleet/bus-inbox.js';
-import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
-import { claimNextBusWork } from '../src/core/fleet/bus-next-claim.js';
+import type { BusEnvelope, BusPriority } from '../src/core/fleet/bus-envelope.js';
+import { claimNextBusWork, type BusNextRequest } from '../src/core/fleet/bus-next-claim.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../src/core/fleet/local-store-lock.js';
 import { createAgentChannel, registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
@@ -221,6 +221,68 @@ it('reports held and completed candidates separately from a dry well', () => {
   expect(claimNextBusWork(request())).toEqual({ status: 'empty', candidates: 2, held: 1 });
   // An address with nothing posted is a verified-empty well, not held work.
   expect(claimNextBusWork({ ...request(), to: 'worker-b' })).toEqual({ status: 'empty', candidates: 0, held: 0 });
+});
+
+it('applies contains, since and priority to the claimable scan and its empty totals', () => {
+  const t0 = now;
+  post('old-alpha', { priority: 'P0', body: { kind: 'work', text: 'deploy alpha' } });
+  now += 30_000;
+  post('new-chore', { priority: 'P3', body: { kind: 'work', text: 'unrelated chore' } });
+  post('new-alpha', { priority: 'P1', body: { kind: 'work', text: 'ship ALPHA build' } });
+  const complete = (result: ReturnType<typeof claimNextBusWork>) => {
+    if (result.status !== 'acquired' || !('token' in result)) throw new Error('expected a claim');
+    expect(mutateBusWorkClaim({ action: 'complete', id: result.receipt.envelope.id, token: result.token, root }).status).toBe('completed');
+  };
+
+  // --priority keeps only the exact band: the P1 alpha claims while the
+  // higher-priority old-alpha and lower-priority chore stay outside it.
+  const byPriority = claimNextBusWork({ ...request(), priority: 'P1' });
+  expect(byPriority.status).toBe('acquired');
+  if (byPriority.status === 'acquired') expect(byPriority.receipt.envelope.id).toBe('new-alpha');
+  complete(byPriority);
+
+  // --contains matches the scrubbed rendered summary case-insensitively:
+  // both alpha receipts remain candidates (one completed), so claim order
+  // takes the P0 old-alpha; the chore never enters the filtered scan.
+  const byContains = claimNextBusWork({ ...request(), contains: '  ALPHA  ' });
+  expect(byContains.status).toBe('acquired');
+  if (byContains.status === 'acquired') expect(byContains.receipt.envelope.id).toBe('old-alpha');
+  complete(byContains);
+
+  // --since is the inclusive receivedAt cutoff: old-alpha arrived at t0, the
+  // rest at t0+30s. A P0 band cut off at t0+1 finds nothing; at t0 it finds
+  // the completed receipt again — a candidate that answers 'completed'.
+  expect(claimNextBusWork({ ...request(), priority: 'P0', since: t0 + 1 }))
+    .toEqual({ status: 'empty', candidates: 0, held: 0 });
+  expect(claimNextBusWork({ ...request(), priority: 'P0', since: t0 }))
+    .toEqual({ status: 'empty', candidates: 1, held: 0 });
+
+  // A peer holds the only unclaimed chore; the filtered totals count just it,
+  // and a needle nothing matches reports a verified-empty well.
+  const held = claimNextBusWork({ ...request(), owner: 'peer' });
+  expect(held.status).toBe('acquired');
+  if (held.status === 'acquired') expect(held.receipt.envelope.id).toBe('new-chore');
+  expect(claimNextBusWork({ ...request(), contains: 'chore' }))
+    .toEqual({ status: 'empty', candidates: 1, held: 1 });
+  expect(claimNextBusWork({ ...request(), contains: 'zzz' }))
+    .toEqual({ status: 'empty', candidates: 0, held: 0 });
+});
+
+it('rejects malformed contains, since and priority filters before scanning', () => {
+  post('work');
+  const bad: Partial<BusNextRequest>[] = [
+    { contains: '   ' },
+    { contains: 'x'.repeat(513) },
+    { contains: 42 as unknown as string },
+    { since: -1 },
+    { since: 1.5 },
+    { since: Number.MAX_SAFE_INTEGER + 1 },
+    { since: NaN },
+    { priority: 'P9' as unknown as BusPriority },
+  ];
+  for (const filters of bad) {
+    expect(claimNextBusWork({ ...request(), ...filters })).toEqual({ status: 'invalid' });
+  }
 });
 
 it('reports full claim storage rather than declaring the queue empty', () => {

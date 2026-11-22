@@ -1,8 +1,10 @@
 import { validBusWaitClaimRequest, waitClaimBusWork, type BusWaitClaimRequest } from '../core/fleet/bus-wait-claim.js';
+import { BUS_PRIORITIES } from '../core/fleet/bus-envelope.js';
+import { parseSince } from '../core/fleet/agent-messages.js';
 
-const usage = `Usage: ashlr fleet bus-wait-claim --to <exact-address> --owner <label> --lease-ms <1..3600000> --wait-ms <1..300000> [--root <absolute>] --json
+const usage = `Usage: ashlr fleet bus-wait-claim --to <exact-address> --owner <label> --lease-ms <1..3600000> --wait-ms <1..300000> [--contains <text>] [--since <15m|2h|1d|ISO>] [--priority <P0|P1|P2|P3>] [--root <absolute>] --json
 Local coordination only; labels are not identity or authority.
---to matches work under every label of a registered agent identity and group:<channel>:<topic> addresses of channels it belongs to, minus its own channel posts; an unresolvable --to or unreadable registry keeps exact-label matching.`;
+--to matches work under every label of a registered agent identity and group:<channel>:<topic> addresses of channels it belongs to, minus its own channel posts; an unresolvable --to or unreadable registry keeps exact-label matching. --contains keeps only receipts whose scrubbed one-line summary carries the text, --since only receipts received at or after the cutoff (15m, 2h, 1d, epoch ms or an ISO time), and --priority only one P0..P3 band — the same rules every bus read applies, so the wait claims exactly what the matching read would list.`;
 
 /** Waits for one real claim; message bodies are never executed. */
 export async function cmdFleetBusWaitClaim(args: string[]): Promise<number> {
@@ -15,14 +17,21 @@ export async function cmdFleetBusWaitClaim(args: string[]): Promise<number> {
   for (let i = 0; i < args.length; i++) {
     const key = args[i]!;
     if (key === '--json' && !json) { json = true; continue; }
-    if (!['--to', '--owner', '--lease-ms', '--wait-ms', '--root'].includes(key) || values.has(key)) { invalid = true; break; }
+    if (!['--to', '--owner', '--lease-ms', '--wait-ms', '--root', '--contains', '--since', '--priority'].includes(key) || values.has(key)) { invalid = true; break; }
     const value = args[++i];
     if (!value || value.startsWith('--')) { invalid = true; break; }
     values.set(key, value);
   }
   const number = (key: string) => { const s = values.get(key); return s && /^\d+(?![\s\S])/.test(s) ? Number(s) : NaN; };
-  const request: BusWaitClaimRequest = { to: values.get('--to')!, owner: values.get('--owner')!, root: values.get('--root'), leaseMs: number('--lease-ms'), waitMs: number('--wait-ms') };
-  if (invalid || !json || !validBusWaitClaimRequest(request)) {
+  const sinceRaw = values.get('--since');
+  const since = sinceRaw === undefined ? undefined : parseSince(sinceRaw);
+  const priority = values.get('--priority');
+  const request: BusWaitClaimRequest = { to: values.get('--to')!, owner: values.get('--owner')!, root: values.get('--root'), leaseMs: number('--lease-ms'), waitMs: number('--wait-ms'),
+    contains: values.get('--contains'), since: since ?? undefined,
+    priority: priority as (typeof BUS_PRIORITIES)[number] | undefined };
+  if (invalid || !json || (sinceRaw !== undefined && since === null) ||
+    (priority !== undefined && !(BUS_PRIORITIES as readonly string[]).includes(priority)) ||
+    !validBusWaitClaimRequest(request)) {
     console.log(JSON.stringify({ status: 'invalid' }));
     return 2;
   }
