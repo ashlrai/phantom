@@ -798,6 +798,42 @@ describe('phm agents bus (unified)', () => {
     }
   });
 
+  it('pages the work feed with --limit and reports matched/omitted', async () => {
+    const spy = vi.spyOn(Date, 'now');
+    let clock = 1_800_000_000_000;
+    spy.mockImplementation(() => clock);
+    try {
+      expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+      for (const [job, title] of [['RQ-P1', 'first'], ['RQ-P2', 'second'], ['RQ-P3', 'third']] as const) {
+        clock += 1_000;
+        expect((await run(['work', 'post', '--from', 'atlas', '--job', job, '--title', title,
+          '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom', '--id', `pg-${job}`])).json)
+          .toMatchObject({ status: 'posted' });
+      }
+      // Newest first: the two newest jobs page ahead of the rest.
+      const page = await run(['work', 'feed', '--limit', '2']);
+      expect(page.code).toBe(0);
+      expect(page.json).toMatchObject({ status: 'ok', matched: 3, omitted: 1 });
+      expect(page.json.jobs.map((job: { id: string }) => job.id)).toEqual(['RQ-P3', 'RQ-P2']);
+      // Filters narrow before the slice; a wide page reports zero omitted.
+      const filtered = await run(['work', 'feed', '--limit', '1', '--status', 'queued']);
+      expect(filtered.json).toMatchObject({ matched: 3, omitted: 2 });
+      const wide = await run(['work', 'feed', '--limit', '200']);
+      expect(wide.json).toMatchObject({ matched: 3, omitted: 0 });
+      expect(wide.json.jobs).toHaveLength(3);
+      // Out-of-range and malformed limits are usage errors, never a silent widen.
+      for (const bad of ['0', '201', 'abc', '1.5']) {
+        expect(await run(['work', 'feed', '--limit', bad])).toMatchObject({ code: 2 });
+      }
+      // The human footer names the page.
+      const text: string[] = [];
+      expect(await runAgentsBusUnified(['work', 'feed', '--limit', '2', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
+      expect(text.join('\n')).toContain('matched=3 omitted=1');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('claims a work-feed job key in one step and joins it to the feed holds', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-CLI-CLAIM', '--title', 'Claim me',

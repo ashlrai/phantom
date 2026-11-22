@@ -125,6 +125,38 @@ export const BUS_FEED_OPEN_STATUSES: ReadonlySet<WorkJob['status']> = new Set(['
 /** Longest `--contains` needle the work-feed view accepts; the job text it matches is already bounded far shorter. */
 export const BUS_WORK_FEED_CONTAINS_MAX = 512;
 
+/** Largest `limit` page the feed surfaces accept — the same item bound `fleet_comms_inbox` applies. */
+export const BUS_WORK_FEED_LIMIT_MAX = 200;
+
+/**
+ * The ok feed view after a `limit` page: `matched` counts every job the
+ * filters kept before the slice and `omitted` the jobs beyond the shown
+ * page — the same honest-truncation pair the other bounded fleet reads
+ * report. `jobs` stays newest-first (the view already sorts), and claims
+ * holds regroup under the shown jobs only, so a hold never names a hidden
+ * job. Non-ok results pass through untouched: a refused or unavailable feed
+ * fabricates no page and no counts. `limit` must be an integer in
+ * 1..BUS_WORK_FEED_LIMIT_MAX; every caller validates before slicing.
+ */
+export type BusWorkFeedPaged = Extract<BusWorkFeedReadResult, { status: 'ok' }> & {
+  /** Jobs the filters kept before the page slice. */
+  matched: number;
+  /** Matched jobs beyond the shown page. */
+  omitted: number;
+};
+
+export function sliceBusWorkFeedView(result: BusWorkFeedReadResult, limit: number): BusWorkFeedReadResult | BusWorkFeedPaged {
+  if (result.status !== 'ok') return result;
+  const matched = result.jobs.length;
+  const jobs = result.jobs.slice(0, limit);
+  const shown = new Set(jobs.map(job => job.id));
+  const view: BusWorkFeedPaged = { ...result, jobs, matched, omitted: matched - jobs.length };
+  if (result.claims !== undefined) {
+    view.claims = { ...result.claims, holds: result.claims.holds.filter(hold => shown.has(hold.jobId)) };
+  }
+  return view;
+}
+
 /** Provider of the identity's most recently seen runtime; undefined when it has none. */
 export function runtimeProvider(identity: AgentIdentity): Participant['provider'] | undefined {
   let provider: Participant['provider'] | undefined;
@@ -443,7 +475,7 @@ export function formatBusWorkFeedJob(job: BusWorkFeedJob): string {
 }
 
 /** Human-readable feed lines shared by `fleet work-feed` and `agents bus work feed`. */
-export function formatBusWorkFeed(result: BusWorkFeedReadResult): string[] {
+export function formatBusWorkFeed(result: BusWorkFeedReadResult | BusWorkFeedPaged): string[] {
   const lines: string[] = [];
   if (result.status === 'ok') {
     for (const job of result.jobs) {
@@ -459,6 +491,7 @@ export function formatBusWorkFeed(result: BusWorkFeedReadResult): string[] {
   const claimsNote = result.status === 'ok' && result.claims
     ? ` claims=${result.claims.source}${result.claims.truncated ? ':truncated' : ''}` : '';
   const receiptNote = result.status === 'refused' && result.receipt !== undefined ? ` receipt=${result.receipt.id}` : '';
-  lines.push(`jobs=${result.status === 'ok' ? result.jobs.length : 'unknown'} receipts=${'receipts' in result ? result.receipts : 'unknown'} feed=${feed}${receiptNote} as-of=${result.asOf}${claimsNote}`);
+  const pageNote = result.status === 'ok' && 'matched' in result ? ` matched=${result.matched} omitted=${result.omitted}` : '';
+  lines.push(`jobs=${result.status === 'ok' ? result.jobs.length : 'unknown'} receipts=${'receipts' in result ? result.receipts : 'unknown'} feed=${feed}${receiptNote} as-of=${result.asOf}${claimsNote}${pageNote}`);
   return lines;
 }

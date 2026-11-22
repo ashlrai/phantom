@@ -573,7 +573,7 @@ hold coverage rule and reports incomplete coverage as degraded.
 `phm agents bus work feed [--status <s>] [--job <id>] [--repo <owner/name>]
 [--provider <p>] [--tier <fast|mid|work|frontier>] [--to <label>] [--owner <agent>]
 [--claims] [--open] [--claimable]
-[--since <15m|2h|1d|ISO>] [--contains <text>]`
+[--since <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-200>]`
 reads the
 same projection back — jobs newest-first, optionally filtered by status,
 exact job id, announced repo, provider, declared dispatch tier,
@@ -629,7 +629,13 @@ whitespace collapsed on both sides like every other `--contains` bus
 read — so "which announced jobs mention X" is one filtered read; ids,
 claim keys, statuses and routing labels are structured fields with their
 own filters, never search text, and a secret-shaped value is scrubbed
-before the match even though the stored envelope keeps it. The filters narrow
+before the match even though the stored envelope keeps it. `--limit`
+pages the filtered view newest-first (1–200) and reports `matched` as the
+true filtered total before the cap and `omitted` as the rest — the same
+page `fleet_work_feed`'s `limit` argument (default 50 there) and the
+endpoint's `limit` parameter serve through the shared
+`sliceBusWorkFeedView`, with claims holds regrouped under the shown jobs
+only. The filters narrow
 the fleet view, they never widen
 it. `phm fleet work-feed` accepts the same flags.
 
@@ -1405,6 +1411,14 @@ status detail when the job carries one, the declared dispatch spec
 (`tier=… scope="…" acceptance="…"`) when the post carried one, claim keys and,
 on claim-annotated open jobs, `claimable=yes|no|unknown`,
 scrubbed, single-lined and display-clipped while JSON keeps the full values.
+Every surface can page the filtered view: `--limit` on the two CLIs and
+`limit` on the endpoint take an integer in 1–200 (`BUS_WORK_FEED_LIMIT_MAX`)
+and run the shared `sliceBusWorkFeedView`, which keeps the newest jobs,
+reports `matched` as the true filtered total before the cap and `omitted`
+as the rest — the human footer prints `matched=N omitted=M` — and regroups
+claims holds under the shown jobs only; without a limit parameter the whole
+filtered view answers exactly as before, and `fleet_work_feed` keeps its own
+default of 50.
 `--to <label>` keeps only jobs whose post was addressed to
 that routing label; like `bus next`, `bus-follow`, handoff receive and claim
 `--owner`, the label matches literally and under every label of one agent
@@ -1413,20 +1427,23 @@ registry keeps exact-label matching — the filter narrows the fleet view, it
 never widens it. The
 endpoint needs a current read session and accepts `claims=true` plus the
 same filter parameters the feed CLIs take — `status`, `job`, `repo`,
-`provider`, `tier`, `to`, `owner`, `since`, `contains`, `open` and
-`claimable` — each a single value validated by the shared
+`provider`, `tier`, `to`, `owner`, `since`, `contains`, `open`,
+`claimable` and `limit` — each a single value validated by the shared
 `parseBusWorkFeedQuery` rules (`src/core/agents/bus-work-feed-query.ts`) and
 applied through the same `projectBusWorkFeedView` the CLIs use, so an HTTP
 client gets the identical narrowed, newest-first view: `open`/`claimable`
 imply the claims join like the CLI flags, `to`/`owner` resolve through the
-server-side identity registry with exact-label fallback, and repeated,
+server-side identity registry with exact-label fallback, `limit` pages the
+view through `sliceBusWorkFeedView` reporting `matched`/`omitted`, and
+repeated,
 unknown or malformed parameters or values are a 400. `fleet_work_feed`
 takes the same dimensions as MCP arguments — the three hold joins as JSON
 booleans, every other filter as the string the shared parser validates —
 under the identical `parseBusWorkFeedQuery`/`projectBusWorkFeedView`
-contract, adds a `limit` slice (1–200, default 50, newest first) that
-reports `matched` as the true filtered total before the cap and `omitted`
-as the rest while claims holds regroup under the shown jobs only, accepts
+contract, adds a `limit` slice (1–200, default 50, newest first) through the
+same `sliceBusWorkFeedView` that reports `matched` as the true filtered
+total before the cap and `omitted` as the rest while claims holds regroup
+under the shown jobs only, accepts
 no caller root or path, and passes a refused or unavailable feed through
 untouched. The endpoint answers 200
 for `ok` and `refused` — the projection's own status, reason and blamed

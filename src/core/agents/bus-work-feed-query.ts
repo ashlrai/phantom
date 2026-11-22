@@ -12,7 +12,7 @@
 import { parseSince } from '../fleet/agent-messages.js';
 import {
   busWorkFeedOwnerMatcher, busWorkFeedRepoKey, busWorkFeedToMatcher,
-  BUS_WORK_FEED_CONTAINS_MAX, type BusWorkFeedViewFilters,
+  BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, type BusWorkFeedViewFilters,
 } from './bus-work-feed-read.js';
 import {
   PROVIDERS, providerSchema, WORK_STATUSES, WORK_TIERS,
@@ -33,10 +33,12 @@ export interface BusWorkFeedQueryInput {
   contains?: string;
   open?: string;
   claimable?: string;
+  /** Newest-first page bound applied after the filters; absent means the whole filtered view. */
+  limit?: string;
 }
 
 export type BusWorkFeedQuery =
-  | { ok: true; claims: boolean; filters: BusWorkFeedViewFilters }
+  | { ok: true; claims: boolean; filters: BusWorkFeedViewFilters; limit?: number }
   | { ok: false; error: string };
 
 /** Printable ASCII routing labels, the same constraint the feed CLIs' --to/--owner/--job enforce. */
@@ -52,7 +54,9 @@ const invalid = (error: string): BusWorkFeedQuery => ({ ok: false, error });
  * normalizes through `busWorkFeedRepoKey` (the lowercase `owner/name` claim-key
  * rule), `since` parses through the shared `parseSince` grammar (15m, 2h, 1d,
  * epoch ms or an ISO time), and `contains` takes a non-empty needle of at most
- * `BUS_WORK_FEED_CONTAINS_MAX` characters.
+ * `BUS_WORK_FEED_CONTAINS_MAX` characters. `limit` is the page bound
+ * `sliceBusWorkFeedView` applies after the filters — an integer in
+ * 1..BUS_WORK_FEED_LIMIT_MAX, absent meaning the whole filtered view.
  */
 export function parseBusWorkFeedQuery(
   input: BusWorkFeedQueryInput,
@@ -109,5 +113,15 @@ export function parseBusWorkFeedQuery(
   }
   if (open === true) filters.open = true;
   if (claimable === true) filters.claimable = true;
-  return { ok: true, claims: claims === true || open === true || claimable === true, filters };
+  let limit: number | undefined;
+  if (input.limit !== undefined) {
+    if (!/^[0-9]+$/.test(input.limit)) return invalid(`limit takes an integer from 1 to ${BUS_WORK_FEED_LIMIT_MAX}.`);
+    const parsedLimit = Number(input.limit);
+    if (!Number.isSafeInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > BUS_WORK_FEED_LIMIT_MAX) {
+      return invalid(`limit takes an integer from 1 to ${BUS_WORK_FEED_LIMIT_MAX}.`);
+    }
+    limit = parsedLimit;
+  }
+  return { ok: true, claims: claims === true || open === true || claimable === true, filters,
+    ...(limit === undefined ? {} : { limit }) };
 }

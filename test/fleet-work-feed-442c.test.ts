@@ -363,6 +363,42 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     expect(error).toHaveBeenCalledTimes(4);
   });
 
+  it('pages the feed with --limit and reports matched/omitted honestly', async () => {
+    append(post);                                   // fake-job announced first
+    now += 10;
+    append({ ...post, jobId: 'fake-second' }, 2);
+    now += 10;
+    append({ ...post, jobId: 'fake-third' }, 3);
+    const log = output();
+    // Newest first: the page keeps the view's order and counts the rest.
+    expect(await cmdFleetWorkFeed(['--root', root, '--limit', '2', '--json'])).toBe(0);
+    const wire = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+      jobs: { id: string }[]; matched: number; omitted: number };
+    expect(wire.jobs.map(job => job.id)).toEqual(['fake-third', 'fake-second']);
+    expect(wire).toMatchObject({ matched: 3, omitted: 1 });
+    log.mockClear();
+    // The human footer names the page; holds would regroup under shown jobs too.
+    expect(await cmdFleetWorkFeed(['--root', root, '--limit', '2', '--claims'])).toBe(0);
+    const footer = String(log.mock.calls.at(-1)?.[0]);
+    expect(footer).toContain('jobs=2 receipts=3 feed=ok');
+    expect(footer).toContain('matched=3 omitted=1');
+    // A page wider than the match reports zero omitted; no --limit pages nothing.
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--limit', '200'])).toBe(0);
+    expect(String(log.mock.calls.at(-1)?.[0])).toContain('matched=3 omitted=0');
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root])).toBe(0);
+    expect(String(log.mock.calls.at(-1)?.[0])).not.toContain('matched=');
+    // Out-of-range, malformed and duplicate limits are usage errors, never a silent widen.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const args of [['--root', root, '--limit', '0'], ['--root', root, '--limit', '201'],
+      ['--root', root, '--limit', 'abc'], ['--root', root, '--limit', '1.5'], ['--root', root, '--limit', '-1'],
+      ['--root', root, '--limit', '2', '--limit', '3'], ['--root', root, '--limit']]) {
+      expect(await cmdFleetWorkFeed(args)).toBe(2);
+    }
+    expect(error).toHaveBeenCalledTimes(7);
+  });
+
   it('filters jobs by --contains over title, status detail and dispatch text', async () => {
     append({ ...post, jobId: 'fake-drain', title: 'Drain the queue',
       dispatch: { tier: 'work', scope: 'Migrate the drain path', acceptance: 'Drain lands green' } }, 1);

@@ -13,13 +13,13 @@
  * empty list passed off as fact.
  */
 import {
-  projectBusWorkFeedView, readBusWorkFeed,
-  type BusWorkFeedReadOptions, type BusWorkFeedReadResult, type BusWorkFeedViewFilters,
+  BUS_WORK_FEED_LIMIT_MAX, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView,
+  type BusWorkFeedPaged, type BusWorkFeedReadOptions, type BusWorkFeedReadResult, type BusWorkFeedViewFilters,
 } from '../core/agents/bus-work-feed-read.js';
 import { parseBusWorkFeedQuery, type BusWorkFeedQueryInput } from '../core/agents/bus-work-feed-query.js';
 
-/** Largest `limit` the tool accepts; the same item bound `fleet_comms_inbox` applies. */
-export const FLEET_WORK_FEED_LIMIT_MAX = 200;
+/** Largest `limit` the tool accepts — the shared feed page bound the CLI and HTTP reads use too. */
+export const FLEET_WORK_FEED_LIMIT_MAX = BUS_WORK_FEED_LIMIT_MAX;
 export const FLEET_WORK_FEED_LIMIT_DEFAULT = 50;
 
 const FEED_KEYS = new Set([
@@ -74,28 +74,20 @@ export interface FleetWorkFeedDeps {
 }
 
 /**
- * The filtered feed view sliced to `limit` newest jobs. `matched` counts the
- * jobs the filters kept before the slice and `omitted` the rest — the same
- * honest-truncation pair the other bounded fleet reads report — and the
- * claims join's holds regroup under the shown jobs exactly like
- * `projectBusWorkFeedView` does for its own filter slice, so a hold never
- * names a hidden job. Non-ok results pass through untouched: a refused or
- * unavailable feed fabricates no job list and no counts.
+ * The filtered feed view sliced to `limit` newest jobs through the shared
+ * `sliceBusWorkFeedView`: `matched` counts the jobs the filters kept before
+ * the slice and `omitted` the rest — the same honest-truncation pair the
+ * other bounded fleet reads report — and the claims join's holds regroup
+ * under the shown jobs exactly like `projectBusWorkFeedView` does for its
+ * own filter slice, so a hold never names a hidden job. Non-ok results
+ * pass through untouched: a refused or unavailable feed fabricates no job
+ * list and no counts.
  */
 export async function readFleetWorkFeed(
   args: FleetWorkFeedArgs,
   deps: FleetWorkFeedDeps = {},
-): Promise<BusWorkFeedReadResult | (Extract<BusWorkFeedReadResult, { status: 'ok' }> & { matched: number; omitted: number })> {
-  const result = projectBusWorkFeedView((deps.read ?? readBusWorkFeed)({ claims: args.claims }), args.filters);
-  if (result.status !== 'ok') return result;
-  const matched = result.jobs.length;
-  const jobs = result.jobs.slice(0, args.limit);
-  const shown = new Set(jobs.map(job => job.id));
-  const view: Extract<BusWorkFeedReadResult, { status: 'ok' }> & { matched: number; omitted: number } = {
-    ...result, jobs, matched, omitted: matched - jobs.length,
-  };
-  if (result.claims !== undefined) {
-    view.claims = { ...result.claims, holds: result.claims.holds.filter(hold => shown.has(hold.jobId)) };
-  }
-  return view;
+): Promise<BusWorkFeedReadResult | BusWorkFeedPaged> {
+  return sliceBusWorkFeedView(
+    projectBusWorkFeedView((deps.read ?? readBusWorkFeed)({ claims: args.claims }), args.filters),
+    args.limit);
 }

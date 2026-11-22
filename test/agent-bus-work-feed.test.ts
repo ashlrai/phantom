@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { projectBusWorkFeed } from '../src/core/agents/bus-work-feed.js';
 import { busWorkFeedRepoKey, busWorkJobDispatch, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView,
-  type BusWorkFeedClaims, type BusWorkFeedJob, type BusWorkFeedReadResult } from '../src/core/agents/bus-work-feed-read.js';
+  sliceBusWorkFeedView, type BusWorkFeedClaims, type BusWorkFeedJob, type BusWorkFeedReadResult } from '../src/core/agents/bus-work-feed-read.js';
 import { workFeedSchema, type Participant, WORK_STATUSES } from '../src/core/agents/bus-v2-schema.js';
 import { isClaimableWork } from '../src/core/fleet/bus-envelope.js';
 import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
@@ -398,6 +398,38 @@ describe('work-feed view filters', () => {
   it('passes non-ok reads through untouched', () => {
     const refused: BusWorkFeedReadResult = { status: 'refused', reason: 'duplicate-job', receipts: 2, asOf: 'now' };
     expect(projectBusWorkFeedView(refused, { repo: 'a/b', provider: 'devin', claimable: true, since: 1, contains: 'x' })).toBe(refused);
+  });
+
+  it('pages the filtered view with honest matched/omitted counts and regrouped holds', () => {
+    const jobs = [
+      viewJob({ id: 'new', status: 'done', updatedAt: 300 }),
+      viewJob({ id: 'mid', updatedAt: 200 }),
+      viewJob({ id: 'old', updatedAt: 100 }),
+    ];
+    const claims: BusWorkFeedClaims = { source: 'available', truncated: false, holds: [
+      { jobId: 'new', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:x' },
+      { jobId: 'old', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:y' },
+    ] };
+    // The view sorts newest-first; the page keeps that order and counts honestly.
+    const view = projectBusWorkFeedView(okResult(jobs, claims));
+    const paged = sliceBusWorkFeedView(view, 2);
+    expect(paged.status).toBe('ok');
+    if (paged.status !== 'ok' || !('matched' in paged)) throw new Error('expected a paged ok view');
+    expect(paged.jobs.map(job => job.id)).toEqual(['new', 'mid']);
+    expect(paged.matched).toBe(3);
+    expect(paged.omitted).toBe(1);
+    // Holds regroup under the shown jobs only — the hidden job's hold never lists.
+    expect(paged.claims?.holds.map(hold => hold.jobId)).toEqual(['new']);
+    // A page wider than the match reports zero omitted; non-ok reads pass through.
+    const wide = sliceBusWorkFeedView(view, 200);
+    expect(wide.status === 'ok' && 'matched' in wide && wide.omitted).toBe(0);
+    const refused: BusWorkFeedReadResult = { status: 'refused', reason: 'duplicate-job', receipts: 2, asOf: 'now' };
+    expect(sliceBusWorkFeedView(refused, 1)).toBe(refused);
+    // The human footer names the page when one was taken.
+    expect(formatBusWorkFeed(paged).at(-1)).toContain('matched=3 omitted=1');
+    expect(formatBusWorkFeed(view).at(-1)).not.toContain('matched=');
   });
 });
 
