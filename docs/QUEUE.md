@@ -595,11 +595,21 @@ interval, so never add them to obtain total wait. Blockers start at zero in
 each timing window; old state files start measuring on their next successful read.
 `checks` reflects the reported head check rollup, not merge-group check results.
 `stale` means GitHub reports BEHIND, not that a queued PR needs rebasing.
-These observations do not alter recut, retry, ownership or required-check gates.
+After an hour continuously observed as queued, `repos[].stalled` lists the
+entry. The cycle refreshes its head, holds, ownership, reviews and check status
+before using GitHub's `dequeuePullRequest` and the same head-pinned auto-merge
+path to restart eligible entries. `repos[].recovered` records successful
+re-enrollment requests, not completed merges. Recovery shares enqueue retry
+budgets; a failed re-enrollment is retried on a later cycle. New heads, failed
+reads and backward clocks reset the observation window. Dry runs only report.
+The typed `MergeQueueOptions.stalledMs` controls the timeout; required checks
+and reviews remain enforced by GitHub. Dequeueing loses the entry's position
+and restarts its merge-group checks, so the timeout is deliberately long.
 
 Within each repository, ready PRs enter the queue before branch updates and
 conflict resolution. Each group keeps PR-number order; already queued PRs
-are left alone and auto-merge stays armed. The offline scheduling fixture in
+keep auto-merge armed unless eligible for timed recovery. The offline scheduling
+fixture in
 `test/merge-queue-loop.test.ts` models a 60-second update and a 90-second
 conflict resolution: two ready PRs enroll after 0.1 and 0.2 seconds instead
 of 150.1 and 150.2 seconds, including when the update fails. These are fixture
