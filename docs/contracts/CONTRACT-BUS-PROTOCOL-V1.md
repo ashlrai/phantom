@@ -52,6 +52,13 @@ status.
   unresolvable label or an unreadable identity registry keeps exact-label
   matching. `--id`, `--in-reply-to` and `--priority` keep their exact,
   case-sensitive meaning. Filters combine with AND.
+- `--contains <text>` keeps only envelopes whose scrubbed one-line summary
+  carries the needle as a case-insensitive substring, whitespace collapsed
+  on both sides — the same `busReadContainsMatch` rule `agents bus inbox
+  --contains` and `channel read --contains` apply. Matching runs over the
+  rendered summary, never the raw body, so a secret-shaped value stays
+  unfindable and protocol-v1 payloads stay opaque. The value is bounded
+  free text, up to 512 characters; a blank or longer value exits 2.
 - Filtered reads keep the cursor, limit and checkpoint semantics documented in
   `phm comms bus --help`. Checkpoints bind the new filters into their identity.
 

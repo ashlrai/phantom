@@ -1221,7 +1221,19 @@ inclusive `receivedAt >= since` match `agents bus inbox --since`,
 `channel read --since`, `wakes --since` and `phm messages --since` apply,
 resolved once when the read starts; a `--checkpoint` consumer binds the raw
 `--since` value into its filter identity, so a relative window keeps
-resuming while an absolute change fails closed.
+resuming while an absolute change fails closed. `--contains <text>`
+narrows `comms bus read|watch` and `fleet bus-follow` to envelopes whose
+scrubbed one-line summary carries the needle — the same
+`busReadContainsMatch` rule `agents bus inbox --contains`,
+`channel read --contains`, `phm messages --contains` and the other bus
+reads apply: a case-insensitive substring with whitespace collapsed on
+both sides, matched over the rendered summary and never the raw body, so
+a secret-shaped value stays unfindable and protocol-v1 payloads stay
+opaque to it. The value is bounded free text, up to 512 characters. On
+`bus-follow` filtered rows still advance checkpoints exactly like every
+other filter, and a `comms bus --checkpoint` consumer binds the raw
+`--contains` spelling into its filter identity, so a changed needle fails
+closed.
 
 ### 4. Work feed
 
