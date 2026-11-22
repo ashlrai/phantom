@@ -14,21 +14,28 @@ execution authority. The leader inbox handoff is `createLeaderMailbox` in
 phm comms status --json
 phm comms thread --json
 phm comms thread --channel telegram --since 2h --json
+phm comms thread --contains "deploy window" --json
 phm comms send-owner --text "Synthetic reply" --json
 ```
 
-MCP tools: `ashlr_comms_thread` (read; optional `channel` and `since` narrow
-the same view) and `ashlr_comms_send_owner` (append;
+MCP tools: `ashlr_comms_thread` (read; optional `channel`, `since` and
+`contains` narrow the same view) and `ashlr_comms_send_owner` (append;
 KILL refuses it). `ashlr_comms` includes the same adapter rollup as
 `phm comms status --json`.
 
-The thread read takes `--channel <desktop|telegram|email|imessage|slack>` and
+The thread read takes `--channel <desktop|telegram|email|imessage|slack>`,
 `--since <15m|2h|1d|ISO|epoch-ms>` (the same grammar `phm messages --since`
-uses) to keep one channel's slice or only messages at or after the time. The
-receipt join and the `awaitingReply` mark follow the same slice, so a filtered
-view never reports marks for rows it hid; an unreadable thread still answers
-`unavailable` with `awaitingReply: null` whatever the filter. The desktop
-owner-thread API accepts the same `channel` and `since` query parameters.
+uses) and `--contains <text>` (a case-insensitive substring over the stored
+message text, whitespace collapsed, at most 512 characters — the same
+`--contains` rule every other comms and bus read applies) to keep one
+channel's slice, only messages at or after the time, or only messages that
+carry the text. `contains` is the only text search the thread offers:
+iMessage bodies are redacted on the bus mirror, so this private read is the
+one place they can be found. The receipt join and the `awaitingReply` mark
+follow the same slice, so a filtered view never reports marks for rows it
+hid; an unreadable thread still answers `unavailable` with
+`awaitingReply: null` whatever the filter. The desktop owner-thread API
+accepts the same `channel`, `since` and `contains` query parameters.
 
 The thread read joins the per-channel delivery receipts written at send time:
 `receipts` maps each outbound message id to `{ channel: { state, reason? } }`
