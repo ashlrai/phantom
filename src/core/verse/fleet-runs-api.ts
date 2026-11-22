@@ -1,4 +1,5 @@
 import { readGoals } from '../fleet/goals.js';
+import { readWhyIdle } from '../fleet/why-idle-read.js';
 import { readGoalScorecard } from '../fleet/goal-scorecard.js';
 import { readMetricsPanel } from '../fleet/metrics-panel.js';
 import { defaultLoopReaders, readLoopReleasesCached, type LoopReleases } from '../metrics/loop-collect.js';
@@ -374,6 +375,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     return { ...result, entries: entries.slice(0, query.limit).reverse() };
   }
   async function build(): Promise<FleetRunsV1> {
+    const idleReasons = readWhyIdle(deps.runsDir ?? defaultRunsDir(), now());
     // Filled by the readers below (closures), so a holder rather than narrowed lets.
     const chatSource: { inbox?: InboxEntry[]; acks?: ReturnType<typeof readInboxAckStates>; replies?: OutboxEntry[] } = {};
     const result: FleetRunsV1 = {
@@ -432,6 +434,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       chatSource.replies = entries as OutboxEntry[];
     } catch { result.outbox = []; }
     await sourcesDone;
+    result.whyIdle = await idleReasons;
     // The Leader chat rides on the inbox and replies already read and checked
     // above; with either unread it stays absent (unknown), never empty.
     if (chatSource.inbox && chatSource.acks && chatSource.replies) {

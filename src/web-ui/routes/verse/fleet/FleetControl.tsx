@@ -293,6 +293,7 @@ export function FleetControl({ actions, grantFlow, darkSince = null, setupShownB
       </div>
 
       {dispatchLine ? <p className={styles.muted}>{dispatchLine}</p> : null}
+      {(runsRead.data?.whyIdle ?? []).map(reason => <p key={reason} className={styles.muted}>{reason}</p>)}
 
       {lastKnown ? (
         <p className={styles.muted} role="status">

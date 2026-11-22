@@ -11,6 +11,7 @@ const fixture = {
   v: 1, lastTick: '2026-10-31T11:59:20Z', claudeLane: 'down: quota', switches: ['HOLD'],
   lanes: [{ lane: 'codex', running: 8, target: 24, queued: 4, held: false }],
   mergesLastHour: { count: 2 }, codexPersonal: { usedPct: 46, resetsAt: '2026-10-31T15:00:00Z' },
+  whyIdle: ['Claude on hold: 0 new starts'],
 };
 afterEach(() => { evictAll(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -23,6 +24,7 @@ describe('HomeRuns', () => {
     expect(screen.getByRole('heading', { name: 'Fleet now' })).toBeInTheDocument();
     expect(screen.getByText('Claude lane down')).toBeInTheDocument();
     expect(screen.getByText('tick 40 s ago')).toBeInTheDocument();
+    expect(screen.getByText(fixture.whyIdle[0])).toBeInTheDocument();
     expect(screen.getByText('codex')).toBeInTheDocument();
     expect(screen.getByText('8/24 · 4 queued')).toBeInTheDocument();
     expect(screen.getByText('2 merged last hour')).toBeInTheDocument();
@@ -48,6 +50,8 @@ describe('HomeRuns', () => {
     renderMobile(<HomeRuns />);
     expect(await screen.findByText('Fleet numbers unavailable: Fleet unavailable.')).toBeInTheDocument();
     stubFetch({ 'GET /api/verse/fleet/runs': { v: 1 } });
+    await expect(homeRunsQuery.fetch()).rejects.toThrow('Invalid live runs response.');
+    stubFetch({ 'GET /api/verse/fleet/runs': { ...fixture, whyIdle: [3] } });
     await expect(homeRunsQuery.fetch()).rejects.toThrow('Invalid live runs response.');
   });
   it('polls only while visible', async () => {

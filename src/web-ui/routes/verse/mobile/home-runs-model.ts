@@ -3,6 +3,7 @@ import type { Tone } from './ui-parts.js';
 
 /** The fields Home reads from the fleet endpoint; counts can be unknown. */
 export interface FleetRuns {
+  whyIdle?: string[];
   lastTick: string | null;
   claudeLane: string | null;
   switches: string[];
@@ -17,6 +18,7 @@ const numberOrNull = (v: unknown): v is number | null => v === null || (typeof v
 
 /** Validate the portion of the wire contract Home displays. */
 export function isHomeFleetRuns(v: unknown): v is FleetRuns {
+  if (record(v) && v['whyIdle'] !== undefined && (!Array.isArray(v['whyIdle']) || v['whyIdle'].length > 3 || !v['whyIdle'].every((s: unknown) => typeof s === 'string'))) return false;
   if (!record(v) || v['v'] !== 1 || !stringOrNull(v['lastTick']) || !stringOrNull(v['claudeLane'])
     || !Array.isArray(v['switches']) || !v['switches'].every((s: unknown) => typeof s === 'string')
     || !Array.isArray(v['lanes']) || !v['lanes'].every((lane: unknown) => record(lane)

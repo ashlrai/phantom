@@ -52,6 +52,16 @@ async function control(): Promise<HTMLElement> {
   return region;
 }
 
+it('shows the shared idle explanation beside the desktop running count', async () => {
+  const reason = 'Codex: 3 free spots, 0 ready jobs';
+  stubSurfaceFetch({ routes: { '/api/verse/fleet/runs': {
+    v: 1, lastTick: null, claudeLane: null, switches: [], lanes: [],
+    mergesLastHour: { count: 0 }, codexPersonal: null, whyIdle: [reason],
+  } } });
+  render(<FleetSection />);
+  expect(await within(await control()).findByText(reason)).toBeInTheDocument();
+});
+
 describe('shared native readback', () => {
   const projections = [
     ['verse-fleet-control', '/api/verse/fleet/control'],

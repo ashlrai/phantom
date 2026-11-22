@@ -68,6 +68,8 @@ it('reads the last bounded tick, slot holds and ready supply for the headline', 
     expect.objectContaining({ lane: 'personal', running: 3, target: 20, held: false, queuedReady: 2 }),
     expect.objectContaining({ lane: 'local', running: 1, held: true, pause_new_until: now / 1000 + 60 }),
   ]));
+  expect(b.whyIdle[0]).toContain('Local models paused until');
+  expect(compactBriefLines(b)).toContain(b.whyIdle[0]);
   expect(b.headline).toBe('personal 3/20 running, 2 queued: supply-starved');
   expect(compactBriefLines(b)[0]).toBe(b.headline);
   expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(8192);

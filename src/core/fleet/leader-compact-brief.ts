@@ -16,6 +16,7 @@ import { parseReadyRows } from './ready-row-edit.js';
 import { parseStopFile, stopFilePath, stoppedFamilies } from './stop-file.js';
 import { readSource } from './runs-parked-queue.js';
 import { readHostFamilies } from './host-families.js';
+import { whyIdle } from './why-idle.js';
 
 export const LEADER_COMPACT_FILE = 'queue/leader-brief.json';
 const clean = (s: string) => scrubSecrets(s).replace(/\s+/g, ' ').slice(0, 80);
@@ -107,8 +108,9 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     attention, liveAt: typeof live?.generatedAt === 'string' ? clean(live.generatedAt) : null, main: (guardian ?? []).map(g => ({ repo: clean(g.repo), state: g.state, stale: g.stale })),
     medianOpenToMergeSeconds: latency.seconds, mergeLatencySource: latency.source, mergeLatencyWhy: latency.why,
     hostLoad: { ...hostLoad, families: hostLoad.families.slice(0, 5), omitted: hostLoad.omitted + Math.max(0, hostLoad.families.length - 5) },
-    stopped: stops, omitted: 0,
+    stopped: stops, omitted: 0, whyIdle: [] as string[],
   };
+  brief.whyIdle = whyIdle(brief);
   // Drop the lowest-priority rows, explicitly counting omissions, until the entire wire payload fits.
   const lists = [brief.families, brief.stopped, brief.main, brief.pools, brief.lanes, brief.attention];
   while (Buffer.byteLength(JSON.stringify(brief)) >= 8191) {
@@ -127,7 +129,8 @@ export async function writeCompactBrief(runsDir: string, now = Date.now(), file 
 }
 export function compactBriefLines(b: CompactLeaderBrief): string[] {
   const lines = [b.headline, `Leader: ${b.state} (${b.at}); lanes: ${b.lanes.length}; pools: ${b.pools.length}`,
-    ...b.lanes.slice(0, 3).map(l => `${l.lane}: ${l.running ?? '?'}/${l.target ?? '?'}, ${l.queued ?? '?'} queued, held ${l.held ?? '?'}, empty ${l.emptyRate === null ? '?' : Math.round(l.emptyRate * 100) + '%'}`),
+    ...b.whyIdle,
+    ...b.lanes.slice(0, 3 - b.whyIdle.length).map(l => `${l.lane}: ${l.running ?? '?'}/${l.target ?? '?'}, ${l.queued ?? '?'} queued, held ${l.held ?? '?'}, empty ${l.emptyRate === null ? '?' : Math.round(l.emptyRate * 100) + '%'}`),
     ...b.pools.slice(0, 2).map(p => `${p.pool}: ${p.usedPct ?? '?'}%, reset ${p.hoursToReset ?? '?'}h, burn ${p.burnPerHour ?? '?'}/h, safe ${p.safeBurn ?? '?'}/h, ${p.verdict}`),
     ...b.families.slice(0, 2).map(f => `${f.family}: ${f.launches} launches, ${f.prs} PRs, ${f.merges} merges, ${f.empty} empty (2h)`),
     `Quiet/stuck: ${b.attention.map(j => j.id).join(', ') || (b.sources[LIVE_JOBS_FILE]?.state === 'healthy' ? 'none recorded' : 'unknown')}`,
