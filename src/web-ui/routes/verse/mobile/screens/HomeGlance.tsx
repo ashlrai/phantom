@@ -19,6 +19,7 @@ import type { QueryDef } from '../../../../data/queries.js';
 import { BriefTiles, briefQuery } from '../BriefTiles.js';
 import { TodayCard } from '../TodayCard.js';
 import { AdmissionCard } from '../AdmissionCard.js';
+import { FamilyYieldCard, familyYieldQuery } from '../../fleet-hub/FamilyYieldCard.js';
 import { fleetAdmissionQuery } from '../../fleet-hub/fleet-admission-query.js';
 import { hostLoadQuery } from '../../fleet-host/host-load-query.js';
 import { ApprovalsCard, approvalAsksQuery } from '../../home/ApprovalsCard.js';
@@ -51,6 +52,7 @@ export const homeQuery: QueryDef<HomeSummary | null> = {
   },
 };
 export const refreshHomeGlance = (): Promise<unknown> => Promise.all([
+  refetchQuery(familyYieldQuery.key, () => familyYieldQuery.fetch(), true).catch(() => undefined),
   refetchQuery(fleetAdmissionQuery.key, () => fleetAdmissionQuery.fetch(), true).catch(() => undefined),
   refetchQuery(hostLoadQuery.key, () => hostLoadQuery.fetch(), true).catch(() => undefined),
   refetchQuery(briefQuery.key, () => briefQuery.fetch(), true).catch(() => undefined),
@@ -94,6 +96,7 @@ export function HomeGlance() {
       <PulseStrip />
       <PulseCard />
       <AdmissionCard />
+      <FamilyYieldCard />
       {health ? <p className={styles.health} data-tone={health.tone} role="status" aria-label="Fleet health">{health.text}</p> : (
         <section className={`${ui.card} ${styles.needs}`} role="alert">
           <p className={styles.askText}>Fleet health is unknown. {read.error ? readFailureReason(read.error) : 'Your Mac’s build does not serve it yet. Update Phantom on your Mac.'}</p>

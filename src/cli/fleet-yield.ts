@@ -30,6 +30,7 @@ export function familyYieldLines(report: FamilyYieldReport): string[] {
     ...section(`Stop rows (pattern, until, reason; tab separated, for the job stop file ${STOP_FILE_ENV}):`, report.stops, r => r.line),
     ...section('By lane:', report.lanes, otherLine),
     ...section('By tier:', report.tiers, otherLine),
+    ...section('Lowest share merged:', report.launch_families.slice(0, 5), r => r.sentence),
   ];
 }
 
@@ -45,7 +46,8 @@ stop: ${FAMILY_STOP_MIN_FINISHED}+ finished runs and merged per launch under ${F
 Families sort by tokens spent on runs that did not merge. Missing token counts print as unknown, never zero.
 Each stop family prints one row: anchored pattern, until (epoch seconds, ${FAMILY_STOP_HOURS} h ahead), reason.
 phm jobs yield judges finer job kinds and can write the stop file itself (--stop-file).
-JSON is fleet.family-yield.v1.
+JSON is fleet.family-yield.v1. launch_families groups ids minus trailing digits and one optional letter,
+with launches, published PRs, merges, EMPTY counts, EMPTY-only tokens and merged_per_launch (worst first).
 --by lane: one row per lane instead: launches, finished, PRs opened, merged PRs, empty rate, merged per launch and median minutes to merge. A job merged twice counts once; lanes with no launches are left out. JSON is ${LANE_YIELD_SCHEMA}.`);
     return 0;
   }
