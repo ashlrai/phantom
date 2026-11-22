@@ -76,8 +76,9 @@ stdout with or without `--json`:
 
 Missing is not evidence of a healthy empty inbox. With no verb, `phm comms
 inbox` is instead the unified pending view ([docs/CHANNELS.md](CHANNELS.md#unified-inbox)):
-`--source <name>`, `--severity <info|warn|high>`, `--blocking`, `--job
-<id>` and `--since <15m|2h|1d|ISO>` narrow its items while `sources` keeps
+`--source <name>`, `--kind <name>`, `--severity <info|warn|high>`,
+`--blocking`, `--job <id>`, `--since <15m|2h|1d|ISO>` and `--contains
+<text>` narrow its items while `sources` keeps
 every store's real unfiltered pending count — `null` when a source could
 not be read, never a fabricated 0.
 Read selects the newest

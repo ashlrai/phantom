@@ -215,7 +215,7 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 
 ## Unified inbox
 
-`phm comms inbox [--source <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--json]`
+`phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--json]`
 ([`unified-inbox.ts`](../src/core/comms/unified-inbox.ts)) is the read-only
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
@@ -393,7 +393,11 @@ ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:
-`--source <name>` keeps one source's items, `--severity <info|warn|high>` one
+`--source <name>` keeps one source's items, `--kind <name>` one item kind —
+the item's own classification, finer than `--source` where one source emits
+several kinds (the `bus` source's `bus-work`/`bus-handoff` split, the
+`board` source's `board-delivery`/`board-task` split) — `--severity
+<info|warn|high>` one
 severity band, `--blocking` only items that block, `--job <id>` only items
 that provably name that job — a bus or mailbox body's `busBodyJobMatch`
 citation, a feed job's id, a board task's fleet item or a delivery on a
