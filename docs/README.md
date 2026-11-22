@@ -419,3 +419,5 @@ canonical release guide for required hosted qualification and publication.
 
 - [App restart](https://github.com/ashlrai/phantom/blob/master/docs/APP-RESTART.md): Held restart command, process ownership audit, and remaining zero-downtime acceptance work.
 - [Rebase batch ordering](https://github.com/ashlrai/phantom/blob/master/docs/REBASE-ORDERING.md) — file-overlap clusters group eligible sibling rebase jobs within batch limits.
+
+| Explain why jobs wait to start | [Fleet admission](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-ADMISSION.md) |
