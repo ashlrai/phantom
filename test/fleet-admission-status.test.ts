@@ -45,12 +45,14 @@ it('never treats a positive settle setting alone as waiting, or a full cap as op
   expect(admissionStatus(JSON.stringify({ ...raw, why: 'PRIVATE' }), now).state).toBe('blocked');
   expect(admissionStatus(JSON.stringify({ ...raw, why: 'PRIVATE' }), now).summary).not.toContain('PRIVATE');
   expect(admissionStatus(JSON.stringify({ ...raw, settle_s: 0 }), now).startsPerHourCap).toBeNull();
+  expect(admissionStatus(JSON.stringify({ ...raw, why: 'pool_empty' }), now)).toMatchObject({ state: 'blocked', reason: 'pool empty' });
 });
 
-it('serves the identical reader through default CLI, JSON and the GET-only local API', async () => {
+it.each(['blocked', 'settling', 'pool_empty'])('serves the identical %s reason through default CLI, JSON and the GET-only local API', async state => {
   const dir = await mkdtemp(join(tmpdir(), 'admit-panel-'));
   try {
-    const path = join(dir, 'guard.json'), text = await fixture('blocked');
+    const path = join(dir, 'guard.json');
+    const text = state === 'pool_empty' ? JSON.stringify({ ...JSON.parse(await fixture('open')), why: state }) : await fixture(state);
     await writeFile(path, text);
     vi.stubEnv('ASHLR_ADMISSION_CTL_PATH', path);
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
