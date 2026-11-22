@@ -3,8 +3,9 @@ import { readdirSync } from 'node:fs';
 import { cpus, homedir, loadavg } from 'node:os';
 import { join } from 'node:path';
 import { readStableRegularFile } from '../util/stable-file-read.js';
+import { scrubSecrets } from '../util/scrub.js';
 import { readLoadOwnerInputs, summarizeLoadOwners, type LoadOwnerInputs, type LoadOwners } from './load-owners.js';
-import { findHostLeftovers, readLeftoverEvidence, type LeftoverEvidence } from './host-leftovers.js';
+import { findHostLeftovers, leftoverJob, processTool, readLeftoverEvidence, type LeftoverEvidence } from './host-leftovers.js';
 
 export interface HostLoad {
   load1: number | null; load5: number | null; load15: number | null;
@@ -326,4 +327,57 @@ export async function readHostLoadReport(deps: HostLoadDeps = {}, opts: { byTree
   try { report.owners = summarizeLoadOwners(report, { ...(deps.owners ?? readLoadOwnerInputs)(report), now: (deps.now ?? Date.now)() }); } catch { /* Owners are optional. */ }
   if (opts.byTree) report.trees = attributeProcessTrees(rows, defaultTreeMatchers(attributedRoots));
   return report;
+}
+
+export interface HostOrphanGroup { command: string; job: string | null; processes: number; cpuPercent: number; watchers: number | null }
+export interface HostOrphansReport {
+  schema: 'host.orphans.v1'; state: 'known' | 'partial' | 'unknown';
+  processes: number | null; cpuPercent: number | null; groups: HostOrphanGroup[];
+  watcherKind: 'kqueue-descriptors'; notes: string[];
+}
+export type HostOrphansDeps = HostLoadDeps & { runsDir?: string; watcherPs?: (pids: number[]) => Promise<string | null> };
+
+/** kqueue descriptors are observable on macOS; they are not a count of watched files. No paths or argv. */
+const readWatcherPs = (pids: number[]): Promise<string | null> => new Promise(resolve => {
+  if (process.platform !== 'darwin' || !pids.length) { resolve(null); return; }
+  execFile('/usr/sbin/lsof', ['-nP', '-a', '-p', pids.join(','), '-Fpt'],
+    { timeout: 5000, maxBuffer: 8 * 1024 * 1024, env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LC_ALL: 'C' } },
+    (error, stdout) => resolve(error ? null : stdout));
+});
+
+/** Adopted processes are candidates, not proof of a leak: PID 1 also parents services. Never signals anything. */
+export async function readHostOrphans(deps: HostOrphansDeps = {}): Promise<HostOrphansReport> {
+  let text: string | null = null;
+  try { text = await (deps.ps ?? readHostPs)(false); } catch { /* Unknown process list. */ }
+  const rows = parseProcessList(text), candidates = rows.filter(row => row.pid > 1 && row.ppid === 1);
+  const evidence = deps.leftovers ?? (deps.ps ? undefined : await readLeftoverEvidence(rows, deps.runsDir).catch(() => undefined));
+  let watcherText: string | null = null;
+  if (candidates.length) try { watcherText = await (deps.watcherPs ?? (deps.ps ? async () => null : readWatcherPs))(candidates.map(row => row.pid)); } catch { /* Unknown watchers. */ }
+  const watchers = new Map<number, number>();
+  let pid = 0;
+  for (const line of (watcherText ?? '').split('\n')) {
+    if (/^p\d+$/.test(line)) { pid = Number(line.slice(1)); watchers.set(pid, 0); }
+    else if (line === 'tKQUEUE' && watchers.has(pid)) watchers.set(pid, watchers.get(pid)! + 1);
+  }
+  const groups = new Map<string, HostOrphanGroup>();
+  for (const row of candidates) {
+    const cwd = evidence?.cwds.get(row.pid), job = cwd && evidence ? leftoverJob(cwd, evidence.worktreeRoot) : undefined;
+    const command = processTool(row.command), owner = job ? scrubSecrets(job) : null, key = JSON.stringify([command, owner]);
+    const group = groups.get(key) ?? { command, job: owner, processes: 0, cpuPercent: 0, watchers: 0 };
+    group.processes++; group.cpuPercent += row.cpu;
+    const count = watchers.get(row.pid);
+    group.watchers = group.watchers === null || count === undefined ? null : group.watchers + count;
+    groups.set(key, group);
+  }
+  const round = (n: number) => Math.round(n * 10) / 10;
+  const ranked = [...groups.values()].sort((a, b) => b.cpuPercent - a.cpuPercent || a.command.localeCompare(b.command) || (a.job ?? '').localeCompare(b.job ?? ''));
+  for (const group of ranked) group.cpuPercent = round(group.cpuPercent);
+  const notes = ['Processes with parent 1; services can also appear. This is not proof of a leak.',
+    'Watchers count macOS kqueue descriptors, not watched files. CPU 100% means one busy core.'];
+  if (!rows.length) notes.push('The process list is unavailable.');
+  if (ranked.some(group => group.job === null)) notes.push('Some jobs are unknown; no matching worktree was readable.');
+  if (ranked.some(group => group.watchers === null)) notes.push('Some watcher information is unavailable.');
+  return { schema: 'host.orphans.v1', state: !rows.length ? 'unknown' : notes.length > 2 ? 'partial' : 'known',
+    processes: rows.length ? candidates.length : null, cpuPercent: rows.length ? round(candidates.reduce((sum, row) => sum + row.cpu, 0)) : null,
+    groups: ranked, watcherKind: 'kqueue-descriptors', notes };
 }
