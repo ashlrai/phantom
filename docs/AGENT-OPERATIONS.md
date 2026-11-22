@@ -69,7 +69,9 @@ It passes only when `Secret-shape scan`, `Secret scan (diff)`,
 `Classify PR site lane`, `Check generated files` and `Fast gate (typecheck + affected tests)` succeed
 and every full lane was skipped. `Quick typecheck` and
 `Check authority drift (hermetic)` (CODEOWNERS and Tier-1 import-closure
-drift) also run but are advisory. A direct push to master takes the same gate
+drift) also run but are advisory. Auto-tag and the release gate require
+`Check authority drift (hermetic)` green on the exact commit; fix drift in
+the same pull request. A direct push to master takes the same gate
 without the fast gate. No pull request or merge-queue commit may occupy a macOS
 or Windows runner: the `ci` Ubuntu/Windows matrix, the Mac exhaustive lanes
 (`Mac exhaustive (N/4)`, `Mac exhaustive (isolated)`), the shared-macOS and
@@ -84,13 +86,19 @@ selects are listed in
 
 **Fast test timing.** `npm run test:fast` runs the unit project with the existing isolated-home watchdog. It records Vitest file elapsed times in milliseconds and flags files over 20 seconds with a suggested split. The budget is advisory; test failures still fail the command. Pass Vitest filters after `--` for a focused run. Each run replaces the local report, so focused runs only contain selected files.
 
-**Tests.** Backend suites live in `test/` and are named after the milestone or
-release that introduced them: `test/m<N>.<topic>.test.ts`, invariant suites
-`test/h<N>.*.test.ts`, and `test/<topic>-<release>.test.ts`. Web tests sit next
+**Tests.** Backend suites live in `test/`. Most are named by topic,
+`test/<topic>.test.ts`, often with a request or release suffix
+(`test/authority-codeowners-310b.test.ts`). Older suites carry the milestone
+that introduced them (`test/m<N>.<topic>.test.ts`), and safety-invariant suites
+are `test/h<N>.*.test.ts`. Web tests sit next
 to their components as `src/web-ui/**/*.test.{ts,tsx}`. Tests that do real I/O
 must be listed in `test/config/realio-lane-membership.mjs` (`npm run lint`
 checks this). Every test runs with an isolated `HOME` (`test/setup/home.ts`),
 and writes under the real `~/.ashlr` fail the test.
+
+**Router outcomes.** `phm router outcomes --json` includes recorded merge and
+revert state alongside CI first-pass results, review findings, cost and wall
+time. See the [CLI reference](CLI-REFERENCE.md) for the command's filters.
 
 **Layout.** `src/cli/` holds thin argv dispatchers, one file per command group;
 `src/core/` holds the logic; `src/web-ui/` the React console; `desktop/` the
