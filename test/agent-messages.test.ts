@@ -440,6 +440,46 @@ describe('phm messages projection', () => {
     expect(parseAgentMessagesQuery({ thread: 'x'.repeat(129) }).ok).toBe(false);
   });
 
+  it('filters to messages whose scrubbed summary carries the needle', () => {
+    const root = store();
+    post(root, T0, { id: 'c1', from: 'a', to: 'b', body: { kind: 'note', text: 'the parser fix is ready for review' } });
+    post(root, T0 + 1_000, { id: 'c2', from: 'b', to: 'a', body: { kind: 'note', text: 'ship the renderer tweak instead' } });
+    post(root, T0 + 2_000, { id: 'c3', from: 'a', to: 'b', body: { kind: 'note', text: 'PARSER follow-up landed' } });
+    // Case-insensitive substring over the scrubbed one-line summary the row shows.
+    const hits = read(root, { contains: 'parser' });
+    expect(hits.messages.map(m => m.id)).toEqual(['c3', 'c1']);
+    expect(hits.matched).toBe(2);
+    // Whitespace collapses the same way the summary's does, so stray spacing still finds its line.
+    expect(read(root, { contains: '  RENDERER   tweak ' }).messages.map(m => m.id)).toEqual(['c2']);
+    // --contains composes with the other filters; matched counts only the rows
+    // every filter accepts and limit caps the page, not the count.
+    expect(read(root, { contains: 'parser', agent: 'a' }).messages.map(m => m.id)).toEqual(['c3', 'c1']);
+    expect(read(root, { contains: 'parser', kind: 'reply' })).toMatchObject({ matched: 0, messages: [] });
+    expect(read(root, { contains: 'parser', limit: 1 })).toMatchObject({ matched: 2, messages: [{ id: 'c3' }] });
+    // A needle no summary carries is an empty page, not an error.
+    expect(read(root, { contains: 'nonexistent-needle' })).toMatchObject({ matched: 0, messages: [] });
+  });
+
+  it('never lets --contains reach past the scrubbed summary into the raw body', () => {
+    const root = store();
+    const secret = ['ghp', '_', 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8'].join('');
+    post(root, T0, { id: 'sec', from: 'a', to: 'b', body: { kind: 'note', text: `token ${secret} leaked` } });
+    // The needle matches the scrubbed summary, so the raw secret text is
+    // unfindable even though it sits in the stored body; the redaction marker
+    // it left behind is the only searchable trace.
+    expect(read(root, { contains: secret })).toMatchObject({ matched: 0, messages: [] });
+    expect(read(root, { contains: 'REDACTED' }).messages.map(m => m.id)).toEqual(['sec']);
+  });
+
+  it('parses --contains as bounded free text and refuses empty or oversized needles', () => {
+    expect(parseAgentMessagesQuery({ contains: 'parser fix' })).toEqual({ ok: true, query: { contains: 'parser fix' } });
+    expect(parseAgentMessagesQuery({ contains: 'a', kind: 'ask', limit: '5' })).toEqual({ ok: true, query: { kind: 'ask', contains: 'a', limit: 5 } });
+    expect(parseAgentMessagesQuery({ contains: '' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ contains: '   ' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ contains: 'x'.repeat(513) }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ contains: 'x'.repeat(512) }).ok).toBe(true);
+  });
+
   it('serves the same read at GET /api/verse/agent-bus/messages', async () => {
     const calls: unknown[] = [];
     const api = createAgentBusApi({ messages: query => { calls.push(query); return { schema: 'agent-messages.v1', source: 'missing', messages: [], matched: 0, skipped: 0 }; } });
@@ -450,16 +490,17 @@ describe('phm messages projection', () => {
       const handled = await api(ctx, { url, headers: {} } as never, res, url.split('?')[0]!, 'GET');
       return { handled, status: status || (res as { statusCode: number }).statusCode, body };
     };
-    const ok = await send('/api/verse/agent-bus/messages?agent=claude&kind=ask&priority=P0&job=RQ-JOB1&thread=t-1&limit=5');
+    const ok = await send('/api/verse/agent-bus/messages?agent=claude&kind=ask&priority=P0&job=RQ-JOB1&thread=t-1&contains=parser%20fix&limit=5');
     expect(ok.handled).toBe(true);
     expect(ok.status).toBe(200);
     expect(JSON.parse(ok.body)).toMatchObject({ schema: 'agent-messages.v1' });
-    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', job: 'RQ-JOB1', thread: 't-1', agent: 'claude', limit: 5 }]);
+    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', job: 'RQ-JOB1', thread: 't-1', contains: 'parser fix', agent: 'claude', limit: 5 }]);
     expect((await send('/api/verse/agent-bus/messages?limit=0')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?kind=chatter')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?priority=urgent')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?job=has%20space')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?thread=has%20space')).status).toBe(400);
+    expect((await send('/api/verse/agent-bus/messages?contains=')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?after=1')).status).toBe(400);
   });
 });
