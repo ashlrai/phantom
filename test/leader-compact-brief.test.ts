@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -7,6 +7,7 @@ import { runSelfTick, SELF_TICK_STEP_ORDER, type SelfTickSteps } from '../src/co
 import { cmdLeaderBrief } from '../src/cli/leader-brief.js';
 import { groupHostFamilies } from '../src/core/fleet/host-families.js';
 import * as hostFamilies from '../src/core/fleet/host-families.js';
+import { localIso } from '../src/core/fleet/runs-parked-queue.js';
 let dir: string;
 const now = Date.parse('2026-11-21T12:00:00Z'), at = new Date(now).toISOString();
 beforeEach(async () => {
@@ -55,4 +56,52 @@ it('uses actual merge times and keeps only the five oldest stuck jobs', async ()
   const b = await readCompactBrief(dir, now);
   expect(b.medianOpenToMergeSeconds).toBe(7200); expect(b.attention.map(j => j.id)).toEqual(['job-6', 'job-5', 'job-4', 'job-3', 'job-2']);
   expect(b.families[0]).toMatchObject({ family: 'old', launches: 0, merges: 1 });
+});
+it('reads the last bounded tick, slot holds and ready supply for the headline', async () => {
+  const stamp = localIso(new Date(now)).slice(0, 19).replace('T', ' ');
+  const tick = (running: number) => `${stamp} tick run={"personal":${running},"local":1} q=2 launched=0 reap=0 pause=False wall=1s\n`;
+  await writeFile(join(dir, 'dispatchd.log'), 'plain\n'.repeat(50_000) + tick(9) + tick(3) + 'plain\n');
+  await writeFile(join(dir, 'queue/slots.json'), JSON.stringify({ personal: { target: 20, held: false }, local: { target: 8, held: false, pause_new_until: now / 1000 + 60 } }));
+  await writeFile(join(dir, 'queue/ready.tsv'), 'first\tphantom\tpersonal\twork\tplain\nsecond\tphantom\tpersonal\twork\tplain\nparked\tphantom\tPARKED-DEP.personal\twork\tplain\n');
+  const b = await readCompactBrief(dir, now);
+  expect(b.lanes).toEqual(expect.arrayContaining([
+    expect.objectContaining({ lane: 'personal', running: 3, target: 20, held: false, queuedReady: 2 }),
+    expect.objectContaining({ lane: 'local', running: 1, held: true, pause_new_until: now / 1000 + 60 }),
+  ]));
+  expect(b.headline).toBe('personal 3/20 running, 2 queued: supply-starved');
+  expect(compactBriefLines(b)[0]).toBe(b.headline);
+  expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(8192);
+  await writeFile(join(dir, 'dispatchd.log'), tick(3) + 'plain tick run=broken\n');
+  expect((await readCompactBrief(dir, now)).sources['dispatchd.log']).toMatchObject({ state: 'unknown', why: expect.stringContaining('no valid tick') });
+  await writeFile(join(dir, 'dispatchd.log'), tick(3));
+  const stale = await readCompactBrief(dir, now + 121_000);
+  expect(stale.lanes[0]?.running).toBeNull(); expect(stale.lanes[1]?.held).toBe(false);
+  expect(stale.headline).toBe('No measured supply-starved lane');
+});
+it.each(['file', 'ledger', 'snapshot'])('uses %s opening evidence with actual merge times, deduplicating PRs', async basis => {
+  const url = 'https://github.com/ashlrai/phantom/pull/7', opened = new Date(now - 3_600_000);
+  const merged = { job: 'plain', state: 'MERGED', url, mergedAt: at, ts: at };
+  const rows: object[] = [merged, { ...merged, source: 'metrics-outcomes-reconciler', event: 'publish' }];
+  rows.push({ ...merged, job: 'other', url: 'https://github.com/ashlrai/phantom/pull/8', createdAt: new Date(now - 7_200_000).toISOString() });
+  if (basis === 'file') {
+    await writeFile(join(dir, 'plain.publish'), `RESULT PR ${url}\n`);
+    await utimes(join(dir, 'plain.publish'), opened, opened);
+  } else if (basis === 'ledger') rows.unshift({ event: 'publish', job: 'plain', url, ts: opened.toISOString() });
+  else {
+    await mkdir(join(dir, 'fleet'));
+    await writeFile(join(dir, 'fleet/open-prs.json'), JSON.stringify([{ url, createdAt: opened.toISOString(), mergedAt: at }]));
+  }
+  await writeFile(join(dir, 'metrics/jobs.jsonl'), rows.map(r => JSON.stringify(r)).join('\n'));
+  const b = await readCompactBrief(dir, now);
+  expect(b.medianOpenToMergeSeconds).toBe(5400);
+  expect(b.mergeLatencySource).toContain(basis === 'file' ? '*.publish mtime' : basis === 'ledger' ? 'publication' : 'fleet/open-prs.json');
+  expect(b.mergeLatencyWhy).toContain('2 merged PRs');
+  if (basis !== 'snapshot') expect(b.sources['fleet/open-prs.json']).toMatchObject({ state: 'missing', why: 'file does not exist' });
+});
+it('explains degraded sources and refuses merge observations without mergedAt', async () => {
+  await writeFile(join(dir, 'metrics/jobs.jsonl'), 'plain\n' + JSON.stringify({ event: 'merged', job: 'plain', url: 'https://github.com/ashlrai/phantom/pull/7', ts: at }));
+  const b = await readCompactBrief(dir, now);
+  expect(b.sources['metrics/jobs.jsonl']).toMatchObject({ state: 'degraded', why: expect.stringContaining('invalid') });
+  expect(Object.values(b.sources).every(s => s.why.length > 0)).toBe(true);
+  expect(b.medianOpenToMergeSeconds).toBeNull(); expect(b.mergeLatencyWhy).toContain('no mergedAt paired');
 });
