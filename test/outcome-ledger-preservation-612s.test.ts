@@ -19,6 +19,8 @@ import {
   type MergeQueueEvidence,
   type RouterOutcomeEvidenceRow,
 } from '../src/core/router/outcomes.js';
+import { recordRevertOutcomes, revertOutcomesLedgerPath } from '../src/core/improve/revert-ledger.js';
+import type { RevertOutcomeRecord } from '../src/core/improve/reverted.js';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -1980,6 +1982,76 @@ describe('router outcome authority revert join', () => {
     // null skips the join entirely: same ledger, no authority mark.
     const skipped = await readRouterOutcomes({ runsDir: root, authorityEvidence: null });
     expect(skipped.outcomes.find(o => o.job_id === 'J1')?.reverted).toBeNull();
+  });
+});
+
+describe('router outcome scan-ledger revert join', () => {
+  const scanRecord = (over: Partial<RevertOutcomeRecord> = {}): RevertOutcomeRecord => ({
+    repository: 'ashlrai/phantom', number: 42, pr: 'ashlrai/phantom#42',
+    mergeSha: 'a'.repeat(40), mergedAt: '2026-11-01T00:00:00.000Z',
+    revertedBy: 'c'.repeat(40), revertedAt: '2026-11-01T10:00:00.000Z',
+    revertLatencyMs: 10 * 3_600_000, relandedBy: null, ...over,
+  });
+
+  /** ashlarDir root carrying improve/revert-outcomes.jsonl via the real writer. */
+  function ashlarWithLedger(records: RevertOutcomeRecord[]): string {
+    const root = ashlarDir();
+    const path = revertOutcomesLedgerPath(root);
+    mkdirSync(join(root, 'improve'), { recursive: true });
+    recordRevertOutcomes(records, { path });
+    return root;
+  }
+
+  const jobsLedger = '{"job":"J1","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42","ts":"2026-11-01T00:00:00Z"}\n'
+    + '{"job":"J2","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/7"}\n';
+
+  it('marks an outcome reverted through its unambiguous PR claim from a recorded scan detection', async () => {
+    const root = runsDir(jobsLedger);
+    const ashlar = ashlarWithLedger([scanRecord()]);
+    const read = await readRouterOutcomes({ runsDir: root, ashlarDir: ashlar, authorityEvidence: [] });
+    expect(read.revert_ledger_state).toBe('read');
+    const byId = new Map(read.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')?.reverted).toBe(true);
+    expect(byId.get('J2')?.reverted).toBeNull();
+  });
+
+  it('unions with authority keys and honours reland clearing newest-record-wins', async () => {
+    const root = runsDir(jobsLedger);
+    // A reland record after the revert clears the key: J1 must not mark.
+    const relanded = ashlarWithLedger([scanRecord(), scanRecord({ relandedBy: 'd'.repeat(40) })]);
+    const cleared = await readRouterOutcomes({ runsDir: root, ashlarDir: relanded, authorityEvidence: [] });
+    expect(cleared.revert_ledger_state).toBe('read');
+    expect(cleared.outcomes.find(o => o.job_id === 'J1')?.reverted).toBeNull();
+
+    // Authority evidence for a different PR still joins alongside scan keys.
+    const ev = (kind: string, landingId: string | null, revertsLandingId?: string | null): RouterOutcomeEvidenceRow =>
+      revertsLandingId === undefined ? { kind, landingId } : { kind, landingId, revertsLandingId };
+    const authority = [ev('merge:landed', 'ashlrai/phantom#7@000000000000'), ev('revert:landed', 'ashlrai/phantom#8@111111111111', 'ashlrai/phantom#7@000000000000')];
+    const both = await readRouterOutcomes({ runsDir: root, ashlarDir: ashlarWithLedger([scanRecord()]), authorityEvidence: authority });
+    const byId = new Map(both.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')?.reverted).toBe(true);   // scan ledger
+    expect(byId.get('J2')?.reverted).toBe(true);   // authority ledger
+  });
+
+  it('reports ledger health and contributes no keys when missing, corrupt or oversized', async () => {
+    const root = runsDir(jobsLedger);
+    const missing = await readRouterOutcomes({ runsDir: root, ashlarDir: ashlarDir(), authorityEvidence: [] });
+    expect(missing.revert_ledger_state).toBe('missing');
+    expect(missing.outcomes.find(o => o.job_id === 'J1')?.reverted).toBeNull();
+
+    const corrupt = ashlarDir();
+    mkdirSync(join(corrupt, 'improve'), { recursive: true });
+    writeFileSync(revertOutcomesLedgerPath(corrupt), 'not json\n');
+    const bad = await readRouterOutcomes({ runsDir: root, ashlarDir: corrupt, authorityEvidence: [] });
+    expect(bad.revert_ledger_state).toBe('unreadable');
+    expect(bad.outcomes.find(o => o.job_id === 'J1')?.reverted).toBeNull();
+
+    const huge = ashlarDir();
+    mkdirSync(join(huge, 'improve'), { recursive: true });
+    writeFileSync(revertOutcomesLedgerPath(huge), 'x'.repeat(8 * 1024 * 1024 + 1));
+    const big = await readRouterOutcomes({ runsDir: root, ashlarDir: huge, authorityEvidence: [] });
+    expect(big.revert_ledger_state).toBe('too-large');
+    expect(big.outcomes.find(o => o.job_id === 'J1')?.reverted).toBeNull();
   });
 });
 

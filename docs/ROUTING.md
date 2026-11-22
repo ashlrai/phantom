@@ -636,7 +636,16 @@ outcome reverted when the job's own canonical github.com pull URL claim is
 unambiguous (ambiguous, foreign or non-canonical claims never mark). The
 index join reads `ledgerSnapshot('cached')` lazily, contributes only
 hash-verified rows — a broken chain still marks only its verified prefix —
-and degrades to no join on any read failure. Evidence is sticky-true like
+and degrades to no join on any read failure. A second, independent revert
+source joins under the same claim rule:
+`$ASHLR_HOME/improve/revert-outcomes.jsonl`, the bounded append-only
+ledger `phm fleet reverts --record` writes from its 72h-window
+git-history scan — reverts of fleet PRs that no jobs-ledger or
+authority row ever named. Its newest record per `owner/repo#n` key
+decides, so a later detection whose `relandedBy` is set clears the key,
+and `revert_ledger_state` reports that ledger's health (`read`/`missing`/
+`unreadable`/`too-large`); anything but `read` contributes no keys —
+corrupt evidence never marks a merge reverted. Evidence is sticky-true like
 metrics-ingest, so a recorded revert is never
 contradicted by a later `reverted:false`; it stays `null` when neither
 source records anything either way. It is read-only; a missing
@@ -793,9 +802,9 @@ only, so they are real
 whenever the jobs read succeeded). When the ledger exceeds the retained tail the
 report carries `truncated: true` and every count covers the newest bytes
 only; `market_state`/`market_truncated` report the decision journal's
-health, `empty_tag_state`/`empty_tag_truncated` the tags journal's and
+health, `empty_tag_state`/`empty_tag_truncated` the tags journal's,
 `merge_events_state`/`merge_events_truncated` the merge-events
-journal's
+journal's and `revert_ledger_state` the scan-detected revert ledger's
 the same way. The report also carries the fleet controller's own recorded
 lane-quality verdicts: `controller_quality_state` reports the health of
 `<runs-dir>/queue/fleet-controller.json` (`'unreported'` when the caller
@@ -918,4 +927,17 @@ reverts landed outside the scanned history, are not claimed. Rows missing a
 PR identity or merge commit are skipped and counted, unreadable exports and
 duplicate PRs are counted rather than guessed, and a checkout or ref git
 cannot read marks the report `degraded` instead of implying a clean scan.
-Read-only; it writes nothing and changes no routing by itself.
+Read-only by default; it writes nothing and changes no routing by itself.
+`--record` is the opt-in write: detected `RevertOutcomeRecord`s append to
+`$ASHLR_HOME/improve/revert-outcomes.jsonl` (deduplicated, fail-closed on a
+corrupt ledger). Recorded detections then reach both revert-evidence
+consumers under their usual unambiguous-PR-claim rule:
+`revertedPrKeys` — the set that withholds knowledge notes whose every
+cited PR was reverted — and `readRouterOutcomes`'s `reverted` join, so
+held-merge tallies in `phm fleet router-weights` and `phm node route`
+see reverts that only git history proves. The ledger resolves
+newest-record-per-PR, so a later scan that finds the revert itself was
+reverted clears the key; a non-intact ledger contributes nothing rather
+than marking merges reverted or withholding on corrupt evidence, and
+`RouterOutcomeRead.revert_ledger_state` / the weight report's
+`revert_ledger_state` report its health.

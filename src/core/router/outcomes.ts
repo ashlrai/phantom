@@ -2417,6 +2417,16 @@ export interface RouterOutcomeRead extends RouterOutcomeFold {
    */
   merge_events_truncated: boolean;
   /**
+   * Health of the improve/revert-outcomes.jsonl ledger behind the
+   * scan-detected revert join (`phm fleet reverts --record` detections of
+   * fleet PRs reverted in git history). Anything but 'read' means no
+   * recorded scan reverts were joined — outcomes keep only jobs-ledger,
+   * authority-ledger and explicit revert evidence; 'too-large' means the
+   * ledger exceeded its bound and was refused whole rather than partially
+   * trusted.
+   */
+  revert_ledger_state: LedgerReadState;
+  /**
    * True when the ledger exceeded the retained tail: the fold, and so every
    * count on this read, covers only the newest ROUTER_OUTCOME_LEDGER_LIMIT
    * bytes — a lower bound on the full history, never a claimed total.
@@ -2459,6 +2469,36 @@ async function liveAuthorityEvidence(): Promise<readonly RouterOutcomeEvidenceRo
 }
 
 /**
+ * Recorded `phm fleet reverts --record` detections behind the second revert
+ * join — reverts of fleet PRs that only git history proves, invisible to
+ * the jobs ledger and the authority index. Read lazily like the authority
+ * evidence so fold-only consumers never load the ledger module; the file's
+ * own health is reported on the read, and anything but a fully intact
+ * ledger contributes no keys — corrupt evidence never marks a merge
+ * reverted.
+ */
+async function liveRevertOutcomeKeys(rootDir: string | undefined): Promise<{ state: LedgerReadState; keys: ReadonlySet<string> }> {
+  try {
+    const { readRevertOutcomeRecords, revertOutcomesLedgerPath, standingRevertKeys } = await import('../improve/revert-ledger.js');
+    const read = readRevertOutcomeRecords(revertOutcomesLedgerPath(rootDir));
+    const state: LedgerReadState = read.state === 'missing' ? 'missing'
+      : read.state === 'read' ? 'read'
+      : read.reasons.includes('ledger-too-large') ? 'too-large' : 'unreadable';
+    return { state, keys: state === 'read' ? standingRevertKeys(read.records) : new Set<string>() };
+  } catch {
+    return { state: 'unreadable', keys: new Set<string>() };
+  }
+}
+
+/** Union the authority-ledger and scan-ledger revert key sets; undefined only when neither source produced keys. */
+function unionRevertKeys(authority: ReadonlySet<string> | undefined, scan: ReadonlySet<string>): ReadonlySet<string> | undefined {
+  if (authority === undefined && scan.size === 0) return undefined;
+  const keys = new Set<string>(authority);
+  for (const key of scan) keys.add(key);
+  return keys;
+}
+
+/**
  * Reads the newest ROUTER_OUTCOME_LEDGER_LIMIT bytes of
  * <runsDir>/metrics/jobs.jsonl plus the same bound of
  * <runsDir>/metrics/api-spend.jsonl, <runsDir>/metrics/work-market.jsonl,
@@ -2493,6 +2533,13 @@ async function liveAuthorityEvidence(): Promise<readonly RouterOutcomeEvidenceRo
  * evidence index (`authorityRevertedPrKeys`): a fleet merge the ledger
  * records as reverted marks its outcome through the job's unambiguous PR
  * URL claim, so held-merge tallies see reverts jobs.jsonl never writes.
+ * The same claim rule joins the second revert source —
+ * `improve/revert-outcomes.jsonl`, the detections `phm fleet reverts
+ * --record` appends — whose newest-record-per-PR resolution clears a key
+ * when a later scan finds the revert itself was reverted;
+ * `revert_ledger_state` reports that ledger's health and anything but
+ * 'read' contributes no keys. The scan join is independent of the
+ * `authorityEvidence` option: `null` skips only the authority read.
  */
 export async function readRouterOutcomes(opts: {
   runsDir?: string;
@@ -2500,7 +2547,8 @@ export async function readRouterOutcomes(opts: {
   ashlarDir?: string;
   /**
    * Authority-ledger evidence rows behind the revert join. Absent reads the
-   * live `ledgerSnapshot('cached')` verified index; `null` skips the join;
+   * live `ledgerSnapshot('cached')` verified index; `null` skips the
+   * authority join only — the revert-outcomes ledger join is independent;
    * an explicit array is used as given (tests). Only hash-verified rows ever
    * contribute, so a broken chain still marks only authentic reverts.
    */
@@ -2525,12 +2573,14 @@ export async function readRouterOutcomes(opts: {
   const mergeEventsRead = await readLedgerTail(join(runsDir, ROUTER_MERGE_EVENTS_LEDGER_RELATIVE));
   const mergeEventsState = mergeEventsRead.state;
   const mergeEventsTruncated = mergeEventsRead.state === 'read' ? mergeEventsRead.truncated : false;
+  const revertLedger = await liveRevertOutcomeKeys(opts.ashlarDir);
   if (read.state !== 'read') {
     return { ...empty, state: read.state, path, eval_state: laneScores.state,
       spend_state: spendState, spend_truncated: spendTruncated,
       market_state: marketState, market_truncated: marketTruncated,
       empty_tag_state: emptyTagState, empty_tag_truncated: emptyTagTruncated,
-      merge_events_state: mergeEventsState, merge_events_truncated: mergeEventsTruncated, truncated: false };
+      merge_events_state: mergeEventsState, merge_events_truncated: mergeEventsTruncated,
+      revert_ledger_state: revertLedger.state, truncated: false };
   }
   const workClasses = marketRead.state === 'read'
     ? foldRouteDecisionWorkClasses(marketRead.text)
@@ -2541,7 +2591,9 @@ export async function readRouterOutcomes(opts: {
   const folded = foldRouterOutcomes(read.text, {
     passkFor: laneScoreLookup(laneScores),
     workClassFor: (jobId) => workClasses.get(jobId) ?? null,
-    revertedPrKeys: authorityEvidence === null ? undefined : authorityRevertedPrKeys(authorityEvidence),
+    revertedPrKeys: unionRevertKeys(
+      authorityEvidence === null ? undefined : authorityRevertedPrKeys(authorityEvidence),
+      revertLedger.keys),
     mergeEvents: mergeEventsRead.state === 'read' ? foldMergeEvents(mergeEventsRead.text) : undefined,
   });
   if (spendRead.state === 'read') {
@@ -2577,5 +2629,6 @@ export async function readRouterOutcomes(opts: {
     market_state: marketState, market_truncated: marketTruncated,
     empty_tag_state: emptyTagState, empty_tag_truncated: emptyTagTruncated,
     merge_events_state: mergeEventsState, merge_events_truncated: mergeEventsTruncated,
+    revert_ledger_state: revertLedger.state,
     truncated: read.truncated };
 }
