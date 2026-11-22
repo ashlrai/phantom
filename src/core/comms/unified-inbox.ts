@@ -211,7 +211,8 @@
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
  * heuristic, then expiry, then newest. `options.filter` narrows the returned
- * items by stored source, severity, blocking or job citation while every
+ * items by stored source, severity, blocking, job citation or appearance
+ * time while every
  * per-source report stays unfiltered. Never a model call, never throws, and
  * never mutates: a degraded store reports its source state and the remaining
  * sources still list. Bus work bodies are untrusted data — titles are scrubbed
@@ -337,6 +338,12 @@ export interface UnifiedInboxFilter {
    * `itemId`, conversation-thread, teammate-task and seat node-job
    * citations each source already records in `jobIds`. */
   job?: string;
+  /** Keep only items whose recorded `since` (ISO appearance time) parses to
+   * at or after this epoch-ms cutoff — the same inclusive `>=` match every
+   * bus read `--since` applies. An item whose store keeps no timestamp
+   * (`since` null) or whose recorded time cannot be parsed never matches:
+   * unknown stays out of the match rather than being counted as recent. */
+  since?: number;
 }
 
 export interface UnifiedInbox {
@@ -423,9 +430,9 @@ export interface UnifiedInboxOptions {
   /** Slack journal seam; default reads the same bounded journal `phm fleet slack-trace` and `phm channels slack status` project. */
   readSlackJournal?: typeof readSlackJournal;
   /** Optional narrowing of the returned item list by stored source, severity,
-   * blocking or job citation. `total`/`omitted`/`items` then describe the
-   * matched view and the applied filter echoes on the report; `sources` stays
-   * unfiltered. */
+   * blocking, job citation or appearance time. `total`/`omitted`/`items` then
+   * describe the matched view and the applied filter echoes on the report;
+   * `sources` stays unfiltered. */
   filter?: UnifiedInboxFilter;
 }
 
@@ -1844,7 +1851,8 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const requested = options.filter;
   const filter = requested !== undefined &&
     (requested.source !== undefined || requested.severity !== undefined ||
-      requested.blocking !== undefined || requested.job !== undefined)
+      requested.blocking !== undefined || requested.job !== undefined ||
+      requested.since !== undefined)
     ? requested : undefined;
   const matched = filter === undefined ? ranked : ranked.filter(({ item }) =>
     (filter.source === undefined || item.source === filter.source) &&
@@ -1852,7 +1860,12 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     (filter.blocking === undefined || item.blocking === filter.blocking) &&
     // A job filter keeps only items whose own citation set names the job —
     // an item with no provable job relation stays out of the match.
-    (filter.job === undefined || item.jobIds?.includes(filter.job) === true));
+    (filter.job === undefined || item.jobIds?.includes(filter.job) === true) &&
+    // A since filter keeps only items whose recorded appearance time reaches
+    // the cutoff — an undated or unparseable item cannot prove it appeared
+    // then and stays out of the match rather than being counted as new.
+    (filter.since === undefined ||
+      (item.since !== null && Date.parse(item.since) >= filter.since)));
   const total = matched.length;
   return {
     v: 1,
