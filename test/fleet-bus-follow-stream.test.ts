@@ -529,6 +529,142 @@ it('filters the CLI stream by --contains', async () => {
   expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
 });
 
+it('delivers only the envelope carrying --id while checkpoints advance past the rest', async () => {
+  post('first'); post('wanted'); post('last');
+  const { records, pending, expire } = follow({ id: 'wanted' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['wanted']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
+it('delivers only object bodies whose own inReplyTo matches --in-reply-to', async () => {
+  post('request');
+  post('reply-one', 'worker-a', { body: { inReplyTo: 'request', text: 'ack' } });
+  post('reply-two', 'worker-a', { body: { inReplyTo: 'request', text: 'ack2' } });
+  post('other-parent', 'worker-a', { body: { inReplyTo: 'other', text: 'ack' } });
+  post('non-string', 'worker-a', { body: { inReplyTo: 42, text: 'ack' } });
+  post('string-body', 'worker-a', { body: 'request' });
+  post('array-body', 'worker-a', { body: ['request'] });
+  post('proto-reply', 'fleet.deploy', { body: {
+    protocol: { version: 1, kind: 'result', topic: 'fleet.deploy' }, inReplyTo: 'request' } });
+  const { records, pending, expire } = follow({ inReplyTo: 'request' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['reply-one', 'reply-two', 'proto-reply']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 8 });
+});
+
+it('delivers only protocol-v1 bodies of --kind while v2 and plain bodies never match', async () => {
+  post('plain', 'worker-a', { body: { kind: 'note' } });
+  post('v2-work', 'worker-a', { body: { kind: 'work.post', jobId: 'RQ-K', title: 'x' } });
+  post('task', 'worker-a', { body: { protocol: { version: 1, kind: 'task' } } });
+  post('result', 'worker-a', { body: { protocol: { version: 1, kind: 'result' } } });
+  post('task-two', 'fleet.deploy', { body: { protocol: { version: 1, kind: 'task', topic: 'fleet.deploy' } } });
+  const { records, pending, expire } = follow({ kind: 'task' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['task', 'task-two']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 5 });
+});
+
+it('delivers only protocol bodies whose topic matches --topic exactly or by namespace', async () => {
+  post('deploy', 'fleet.deploy', { body: { protocol: { version: 1, kind: 'task', topic: 'fleet.deploy' } } });
+  post('deploy-canary', 'fleet.deploy.canary', { body: { protocol: { version: 1, kind: 'task', topic: 'fleet.deploy.canary' } } });
+  post('repo-topic', 'repo.phantom', { body: { protocol: { version: 1, kind: 'task', topic: 'repo.phantom' } } });
+  post('no-topic', 'worker-a', { body: { protocol: { version: 1, kind: 'task' } } });
+  post('plain');
+  for (const [topic, expected] of [
+    ['fleet.deploy', ['deploy']],
+    ['fleet.*', ['deploy', 'deploy-canary']],
+    ['fleet.deploy.*', ['deploy-canary']],
+    ['repo.*', ['repo-topic']],
+    ['human.*', []],
+  ] as const) {
+    const { records, pending, expire } = follow({ topic });
+    expire();
+    const result = await pending;
+    expect(result.status).toBe('expired');
+    expect(messages(records).map(row => row.envelope.id)).toEqual([...expected]);
+    expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 5 });
+  }
+});
+
+it('composes --id, --in-reply-to, --kind and --topic with the other filters', async () => {
+  post('noise', 'worker-a', { body: { kind: 'note' } });
+  post('hit', 'fleet.deploy', { body: {
+    protocol: { version: 1, kind: 'task', topic: 'fleet.deploy' }, inReplyTo: 'req-9' } });
+  post('wrong-kind', 'fleet.deploy', { body: {
+    protocol: { version: 1, kind: 'result', topic: 'fleet.deploy' }, inReplyTo: 'req-9' } });
+  post('wrong-reply', 'fleet.deploy', { body: {
+    protocol: { version: 1, kind: 'task', topic: 'fleet.deploy' }, inReplyTo: 'req-8' } });
+  post('wrong-topic', 'repo.phantom', { body: {
+    protocol: { version: 1, kind: 'task', topic: 'repo.phantom' }, inReplyTo: 'req-9' } });
+  const { records, pending, expire } = follow({ id: 'hit', inReplyTo: 'req-9', kind: 'task', topic: 'fleet.*' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['hit']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 5 });
+});
+
+it('rejects invalid --id, --in-reply-to, --kind and --topic before touching the store', async () => {
+  const emitted: string[] = [], list = vi.fn(listBusInboxAfter);
+  const emit = (json: string) => { emitted.push(json); };
+  for (const args of [
+    ['--after', '0', '--duration-ms', '100', '--id', 'bad label', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--id=', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--id', 'x', '--id', 'y', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--in-reply-to', 'bad label', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--in-reply-to=', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--kind', 'bogus', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--kind=', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--kind', 'task', '--kind', 'result', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--topic', 'bad topic', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--topic', 'deploy', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--topic', 'fleet.*.*', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--topic=', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--topic', 'fleet.*', '--topic', 'repo.*', '--root', root, '--json'],
+  ]) {
+    expect(await cmdFleetBusFollow(args, { emit, list })).toBe(2);
+    expect(JSON.parse(emitted.at(-1)!)).toEqual({ status: 'invalid' });
+  }
+  expect(list).not.toHaveBeenCalled();
+  expect(existsSync(join(root, 'bus-inbox'))).toBe(false);
+});
+
+it('filters the CLI stream by --kind and --topic', async () => {
+  post('noise');
+  post('hit', 'fleet.deploy', { body: { protocol: { version: 1, kind: 'task', topic: 'fleet.deploy' } } });
+  post('other-kind', 'fleet.deploy', { body: { protocol: { version: 1, kind: 'result', topic: 'fleet.deploy' } } });
+  post('other-topic', 'repo.phantom', { body: { protocol: { version: 1, kind: 'task', topic: 'repo.phantom' } } });
+  const emitted: string[] = [];
+  const code = await cmdFleetBusFollow(['--after', '0', '--duration-ms', '250', '--interval-ms', '100',
+    '--kind', 'task', '--topic', 'fleet.*', '--root', root, '--json'],
+    { emit: (json: string) => { emitted.push(json); } });
+  expect(code).toBe(0);
+  const rows = emitted.map(line => JSON.parse(line) as BusFollowRecord);
+  expect(messages(rows).map(row => row.envelope.id)).toEqual(['hit']);
+  expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 4 });
+});
+
+it('filters the CLI stream by --id and --in-reply-to', async () => {
+  post('request');
+  post('reply', 'worker-a', { body: { inReplyTo: 'request', text: 'ack' } });
+  post('unrelated', 'worker-a', { body: { inReplyTo: 'other', text: 'ack' } });
+  const emitted: string[] = [];
+  const code = await cmdFleetBusFollow(['--after', '0', '--duration-ms', '250', '--interval-ms', '100',
+    '--in-reply-to', 'request', '--root', root, '--json'],
+    { emit: (json: string) => { emitted.push(json); } });
+  expect(code).toBe(0);
+  const rows = emitted.map(line => JSON.parse(line) as BusFollowRecord);
+  expect(messages(rows).map(row => row.envelope.id)).toEqual(['reply']);
+  expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
 it('owns its help and dispatches through the fleet verb convention', async () => {
   const out = vi.spyOn(console, 'log').mockImplementation(() => {});
   expect(await cmdFleetBusFollow(['--help'])).toBe(0);

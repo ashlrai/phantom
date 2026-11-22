@@ -3,7 +3,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 import { followBusStream, validBusFollowRequest, type BusFollowRecord, type BusFollowRequest } from '../core/fleet/bus-follow-stream.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const usage = 'Usage: ashlr fleet bus-follow --after <nonnegative-safe-cursor> --duration-ms <1..3600000> [--to <agent-or-topic>] [--job <id>] [--from <agent-or-label>] [--exclude-from <agent-or-label>] [--priority P0..P3] [--thread <t>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--interval-ms <100..60000>] [--root <absolute>] --json';
+const usage = 'Usage: ashlr fleet bus-follow --after <nonnegative-safe-cursor> --duration-ms <1..3600000> [--id <id>] [--in-reply-to <id>] [--to <agent-or-topic>] [--job <id>] [--from <agent-or-label>] [--exclude-from <agent-or-label>] [--priority P0..P3] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--thread <t>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--interval-ms <100..60000>] [--root <absolute>] --json';
 
 interface Dependencies {
   /** Receives one scrubbed JSON line per record; resolves when the line is accepted. */
@@ -59,6 +59,9 @@ export async function cmdFleetBusFollow(args: string[], deps: Dependencies = {})
       '--exclude-from drops envelopes sent under every registered spelling of one identity, the same ' +
       'sender-exclusion rule comms bus read --exclude-from and fleet_bus_inbox apply; ' +
       '--priority, --thread and --since narrow on the same envelope fields agents bus inbox filters by; ' +
+      '--id and --in-reply-to keep only the exact envelope id or bodies replying to it, and --kind and ' +
+      '--topic narrow on the protocol-v1 body fields — the same filters comms bus read|watch and ' +
+      'fleet_bus_inbox apply to this store; ' +
       '--contains keeps only envelopes whose scrubbed one-line summary carries the needle — the same ' +
       'case-insensitive text search agents bus inbox --contains and comms bus read --contains apply. ' +
       'Local observation only; routing labels are not authenticated identities and bodies are never executed.');
@@ -68,7 +71,7 @@ export async function cmdFleetBusFollow(args: string[], deps: Dependencies = {})
   let json = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--json' && !json) { json = true; continue; }
-    const match = /^(--after|--duration-ms|--to|--job|--from|--exclude-from|--priority|--thread|--since|--contains|--interval-ms|--root)(?:=(.*))?$/.exec(args[i]!);
+    const match = /^(--after|--duration-ms|--id|--in-reply-to|--to|--job|--from|--exclude-from|--priority|--kind|--topic|--thread|--since|--contains|--interval-ms|--root)(?:=(.*))?$/.exec(args[i]!);
     if (!match || Object.hasOwn(values, match[1]!)) return invalid();
     const value = match[2] ?? args[++i];
     if (value === undefined || value === '' || value.startsWith('--')) return invalid();
@@ -86,7 +89,9 @@ export async function cmdFleetBusFollow(args: string[], deps: Dependencies = {})
     intervalMs: values['--interval-ms'] === undefined ? undefined : number('--interval-ms'),
     to: values['--to'], job: values['--job'], from: values['--from'], excludeFrom: values['--exclude-from'],
     priority: values['--priority'] as BusFollowRequest['priority'],
-    thread: values['--thread'], since: since ?? undefined, contains: values['--contains'], root: values['--root'],
+    kind: values['--kind'] as BusFollowRequest['kind'], topic: values['--topic'],
+    thread: values['--thread'], since: since ?? undefined, contains: values['--contains'],
+    id: values['--id'], inReplyTo: values['--in-reply-to'], root: values['--root'],
   };
   if (!json || !validBusFollowRequest(request)) return invalid();
   const controller = new AbortController(), stop = (): void => controller.abort();

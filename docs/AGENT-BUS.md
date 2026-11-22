@@ -1330,9 +1330,15 @@ identity — the same sender-exclusion rule `comms bus read|watch`'s
 `--exclude-from` and `fleet_bus_inbox`'s `excludeFrom` apply —
 `--priority` keeps one `P0`–`P3`, `--thread` keeps `note`/`context` bodies
 carrying that thread label, and `--since <15m|2h|1d|ISO>` keeps rows received
-at or after the cutoff. As with `--to` and `--job`, filtered rows still
-advance checkpoints, so a narrowed stream resumes on the same cursor an
-unfiltered one would. `--since <15m|2h|1d|ISO>` narrows
+at or after the cutoff. The stream also narrows on the remaining fields the
+bus page reads share: `--id` keeps only the envelope carrying that exact id,
+`--in-reply-to` keeps only object bodies whose own `inReplyTo` equals it —
+the same application convention `comms bus read|watch` and `fleet_bus_inbox`
+apply — and `--kind`/`--topic` keep only protocol-v1 bodies whose
+`protocol.kind`/`protocol.topic` match, `topic` accepting an exact name or a
+namespace prefix like `fleet.*`. As with `--to` and `--job`, filtered rows
+still advance checkpoints, so a narrowed stream resumes on the same cursor
+an unfiltered one would. `--since <15m|2h|1d|ISO>` narrows
 `comms bus read|watch` to rows received at or after the cutoff — the same
 inclusive `receivedAt >= since` match `agents bus inbox --since`,
 `channel read --since`, `wakes --since` and `phm messages --since` apply,
