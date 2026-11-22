@@ -101,7 +101,9 @@ handoff posture reads in one call. It writes nothing: no state transitions,
 releases, journals or notices. `phm comms inbox` lists each eligible seat
 with pending handoff records as a `seat-handoff` item — the same plan read —
 so pending seat work surfaces in the unified pending view without a second
-lookup.
+lookup. `phm agents bus work mine`'s `seats` section reads the same plan
+narrowed to the seats the queried agent denotes, so an agent sees its own
+pending seat handoffs inside the one per-agent digest.
 
 Handoff defaults to a dry-run plan. It refuses active seats; only draining seats
 or idle seats with work may hand off (completed handoffs allow harmless replay).

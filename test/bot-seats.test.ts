@@ -137,7 +137,7 @@ it('CLI handoffs plans the whole roster read-only and reports an empty roster', 
   const out: string[] = [], emit = (text: string) => out.push(text);
   expect(await runBotsCli(['handoffs', '--json'], emit, o.home)).toBe(0);
   expect(JSON.parse(out.pop()!)).toEqual({ schema: 'phantom-bot-handoffs-plan.v1', apply: false,
-    seats: [{ seatId: 'helper', state: 'active', eligible: false, handoffs: [] }] });
+    seats: [{ seatId: 'helper', participantId: 'helper', state: 'active', eligible: false, handoffs: [] }] });
   expect(await readdir(o.root)).toEqual(['seats.json']);
   await rm(join(o.root, 'seats.json'));
   expect(await runBotsCli(['handoffs', '--json'], emit, o.home)).toBe(0);

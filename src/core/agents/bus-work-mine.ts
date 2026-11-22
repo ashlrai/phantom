@@ -10,8 +10,11 @@
  * answer, the conversation threads it is waiting on, the blocked conversation
  * threads it is a party to, the wake hints addressed to
  * it, the next page of mail in its inbox, the pending mail the legacy
- * `phm bus` mailbox still holds for any of its labels and the shared task
- * board's pending digest (`phm bus board pending`) under the same labels.
+ * `phm bus` mailbox still holds for any of its labels, the shared task
+ * board's pending digest (`phm bus board pending`) under the same labels and —
+ * on the async `readBusWorkMineWithSeats` read — the bot-seat handoff work
+ * (`planSeatHandoffs`, the read `phm bots handoffs` and the unified inbox's
+ * seats source serve) the agent's seats still hold.
  * Each section reads the same
  * projection the dedicated verb
  * serves and keeps its honesty rules: an unreadable store, coordination table,
@@ -49,6 +52,7 @@ import { SharedStore } from '../fleet/shared-store.js';
 import { neutralisePageText } from '../verse/browser-act-policy.js';
 import type { AshlrConfig } from '../types.js';
 import { scrubSecrets } from '../util/scrub.js';
+import type { SeatOptions, SeatState } from '../bots/seats.js';
 
 /** Overrides for the shared task board (`phm bus board pending`) the board
  * section reads; production derives the same paths the board CLI uses. */
@@ -73,6 +77,13 @@ export interface BusWorkMineOptions {
   mailboxHome?: string;
   /** Shared task board digest overrides; production derives the board CLI's paths. */
   board?: BusWorkMineBoardOptions;
+  /** Seat-handoff plan read overrides for the `seats` section — consumed by
+   * `readBusWorkMineSeats`/`readBusWorkMineWithSeats`, ignored by the
+   * synchronous section reads. `fleetRoot`, `runs` and `now` default to this
+   * digest's `root`, `runsRoot` and frozen clock so seat work joins the same
+   * coordination table, identity registry and quota evidence the rest of the
+   * digest reads. */
+  seats?: SeatOptions;
   /** Keep only work that names this job id — the same citation rule
    * `agents bus inbox --job` applies (`busBodyJobMatch`: feed `jobId`
    * bodies, worker-handoff `taskId`s, `job:<id>` thread buckets) joined
@@ -476,6 +487,34 @@ export type BusWorkMineBlocked =
       items: BusWorkMineBlockedItem[]; truncated: boolean; skipped: number }
   | { status: 'unavailable'; reason: string };
 
+/** One pending seat handoff record — work a draining or idle-with-work seat still holds. */
+export interface BusWorkMineSeatHandoff {
+  /** Deterministic record id the `phm bots handoff --seat <id> --apply` journal dedupes on. */
+  handoffId: string;
+  /** The held work: a live coordination claim key or a fenced node job id. */
+  work: { kind: 'node-job' | 'bus-claim'; ref: string };
+  /** Branch the held claim row carried; null when it named none. */
+  branch: string | null;
+  /** Pull request a `pr:` claim key names; null otherwise. */
+  pr: string | null;
+}
+
+/** One bot seat the agent denotes that still has pending (unjournaled) handoff work. */
+export interface BusWorkMineSeat {
+  /** Seat config id — the `--seat` handle the handoff verbs take. */
+  seatId: string;
+  /** The bus routing label the seat's claims and messages answer to. */
+  participantId: string;
+  /** Projected lifecycle state at the read instant — the same state `phm bots handoffs` reports. */
+  state: SeatState['state'];
+  /** Pending handoff records in plan order. */
+  handoffs: BusWorkMineSeatHandoff[];
+}
+
+export type BusWorkMineSeats =
+  | { status: 'ok'; matched: number; seats: BusWorkMineSeat[]; truncated: boolean }
+  | { status: 'unavailable'; reason: string };
+
 export type BusWorkMineResult =
   | { status: 'ok'; agent: BusWorkMineAgent; asOf: string;
       /** The job filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
@@ -485,7 +524,12 @@ export type BusWorkMineResult =
       handoffs: BusWorkMineHandoffs; threads: BusWorkMineThreads; awaiting: BusWorkMineAwaiting;
       blocked: BusWorkMineBlocked;
       wakes: BusWorkMineWakes; inbox: BusWorkMineInbox; mailbox: BusWorkMineMailbox;
-      board: BusWorkMineBoard }
+      board: BusWorkMineBoard;
+      /** Seat handoff digest — present only on the async
+       * `readBusWorkMineWithSeats` read the CLI serves; the synchronous
+       * `readBusWorkMine` leaves it absent rather than reporting a section
+       * it never read. */
+      seats?: BusWorkMineSeats }
   | { status: 'invalid'; reason: string };
 
 /** Newest open jobs, newest wake hints and next inbox page a digest shows; totals stay honest via `open`/`matched`/`truncated`. */
@@ -1527,6 +1571,20 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
         ` owner=${task.owner.peerId} until=${new Date(task.owner.leaseUntil).toISOString()}`;
       lines.push(`  [task id=${task.id} thread=${task.threadId} item=${task.itemId} hold=${task.hold}` +
         `${task.claimed ? ' claimed' : ''}${owner}] ${task.title}`);
+    }
+  }
+
+  const seats = result.seats;
+  if (seats !== undefined) {
+    if (seats.status !== 'ok') {
+      lines.push(`seats=unknown ${seats.status}`);
+    } else {
+      lines.push(`seats=${seats.matched} shown=${seats.seats.length}${seats.truncated ? '+truncated' : ''}`);
+      for (const seat of seats.seats) {
+        const refs = seat.handoffs.map(h => `${h.work.kind}:${h.work.ref}`).join(' ');
+        lines.push(`  seat=${seat.seatId} participant=${seat.participantId} state=${seat.state} ` +
+          `handoffs=${seat.handoffs.length}${refs === '' ? '' : ` ${mineField(refs, 400)}`}`);
+      }
     }
   }
   return lines;

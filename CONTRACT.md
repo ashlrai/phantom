@@ -45,7 +45,9 @@ Exports:
 - `planSeatHandoff(id: string, opts?)` is a dry-run projection; active seats are
   refused. `planSeatHandoffs(opts?)` is the fleet-wide dry-run: one snapshot
   returns `{schema:'phantom-bot-handoffs-plan.v1', apply:false, seats}` with one
-  `{seatId, state, eligible, handoffs}` entry per roster seat — ineligible seats
+  `{seatId, participantId, state, eligible, handoffs}` entry per roster seat —
+  `participantId` is the bus routing label the seat's claims and messages
+  answer to — ineligible seats
   report `eligible:false` and no records rather than erroring, and pending
   handoff ids are the same deterministic ids the single-seat plan and apply
   journal. Both plans enforce the same eligibility rule (draining seats always;
@@ -66,8 +68,13 @@ Exports:
   `from`/`to` accept a seat id or participantId (`to: 'owner'` posts an
   owner-thread notice). Unknown seats/secret-shaped text are refused.
 
-`SeatOptions` injects home, runs, clock, quota reader, node store, node-release
-port, owner-thread options, owner notice and bus post. Default coordination and
+`SeatOptions` injects home, runs, clock, fleet root, quota reader, node store,
+node-release
+port, owner-thread options, owner notice and bus post. `fleetRoot` overrides
+the fleet root the coordination table and identity registry read (default
+`<home>/.ashlr/fleet` with `home`, else the shared coordination root) so a
+caller whose bus stores live under a different fleet root joins the same
+table. Default coordination and
 node storage use canonical roots; owner defaults use the same fixed
 settings/runs construction as the comms CLI, mirror onto the seat fleet root
 and retain KILL/pause checks.
@@ -2421,9 +2428,9 @@ no execution authority; the token returns only to its acquirer.
 
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
 `phm agents bus work mine [<agent>] [--job <id>]`. `readBusWorkMine(agent, options?)`
-(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `job?`, `now?: () => number` frozen once
+(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, job?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board}` or `{status:'invalid',
+asOf, job?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, seats?}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule, or a `job` outside the same rule
 (`invalid-job`). `job` echoes the applied filter and is absent on an
@@ -2670,7 +2677,31 @@ directory or lock file; an unreadable board, a disabled event bus or a read
 fault reports `{status:'unavailable', reason:'board-unreadable'}`. Board
 content stays `trust:'untrusted'` shared data: it coordinates attention,
 never grants execution authority.
-`formatBusWorkMine(result)`
+`seats` is the digest's window into bot-seat handoff work, present only on
+the async `readBusWorkMineWithSeats(agent, options?)` read the CLI serves
+(`src/core/agents/bus-work-mine-seats.ts`) — the synchronous
+`readBusWorkMine` leaves it absent rather than reporting a section it never
+read. It reuses the same `planSeatHandoffs` projection `phm bots handoffs`
+and `phm comms inbox --source seats` serve, so the surfaces cannot disagree:
+every roster seat the agent denotes — the literal seat id or its
+`participantId` under any label of the resolved identity, exact-label
+fallback when the ref resolves to no identity or the registry is
+unreadable — that is eligible and still carries pending (not yet
+journaled) handoff records, the first 20 shown with `matched` the true
+total and `truncated` definitive. A `BusWorkMineSeat` carries `seatId` (the
+`--seat` handle `phm bots handoff` takes), `participantId`, the projected
+lifecycle `state` and `handoffs` — each a `BusWorkMineSeatHandoff` with the
+deterministic `handoffId` the apply journal dedupes on, the held `work`
+(`node-job` queue id or `bus-claim` claim key), `branch` and `pr`. Seat
+handoffs are agent work, never owner-blocking, and the read never releases
+or applies. `options.seats` (`SeatOptions`) overrides the plan read's home,
+runs, clock, fleet root, quota reader and node store; `fleetRoot`, `runs`
+and `now` default to the digest's `root`, `runsRoot` and frozen clock so
+seat work joins the same coordination table, identity registry and quota
+evidence. A throwing plan read reports `{status:'unavailable',
+reason:'seat-handoff-plan-unreadable'}`, never an empty plan passed off as
+fact; `busWorkMineSeatsFromPlan(plan, denotes, job?)` is the exported pure
+shaping rule. `formatBusWorkMine(result)`
 renders the shared human lines — titles, the declared dispatch spec and key
 lists scrubbed, single-lined and display-clipped (the same
 `busWorkJobDispatch` tag the feed job line prints); JSON keeps full values.
@@ -2697,6 +2728,9 @@ passes it to `BusBoard.pendingFor`, which scopes the digest to threads
 carrying a task whose `itemId` equals the job id — the fleet item and
 bus job share the id namespace — with that thread's deliveries and
 rollup riding along while `tasks` list only on the per-item citation.
+The `seats` section keeps only `node-job` handoff records whose ref is
+the job id — a `bus-claim` ref is a coordination claim key, not a job
+citation — and seats left with no records drop out of `matched`.
 Every count stays the filtered total — `matched`/`open`/`truncated` all
 measure the filtered sets — and a row whose job relation cannot be
 proven (a scope-key claim, an unreadable feed, an unresolvable message)

@@ -658,6 +658,27 @@ material. Board paths derive exactly like the board CLI, an absent board
 is a verified-empty `ok` (the read never creates its store), and an
 unreadable board reports `unavailable`, never an empty list passed off as
 fact; board content stays untrusted shared data and grants no authority.
+The `seats` section is the digest's window into bot-seat handoff work —
+the same `planSeatHandoffs` read `phm bots handoffs` and `phm comms
+inbox --source seats` serve, so the digest, that verb and the unified
+inbox can never disagree: every roster seat the agent denotes — by the
+literal seat id or by its `participantId` under any of the agent's
+identity labels, never widened on an unreadable registry — that is
+eligible and still carries pending (not yet journaled) handoff records,
+the first 20 shown with `matched` the true total and `truncated`
+definitive. Each seat reports its config `seatId` (the `--seat` handle
+`phm bots handoff` takes), `participantId`, projected lifecycle `state`
+and its `handoffs` — every live claim key or fenced node job the seat
+still holds as a `bus-claim`/`node-job` record carrying the
+deterministic `handoffId` the apply journal dedupes on plus the claim's
+`branch`/`pr` citations. Seat handoffs are agent work, never
+owner-blocking, and the read never releases or applies — the act stays
+`phm bots handoff --seat <id> --apply`. An unreadable seat store,
+coordination table or node store reports `unavailable`, never an empty
+plan passed off as fact. The section rides the async digest read
+(`readBusWorkMineWithSeats`, what the CLI serves); the synchronous
+`readBusWorkMine` leaves `seats` absent rather than reporting a section
+it never read.
 `phm comms inbox`'s `board` source projects the same store fleet-wide
 through `BusBoard.pendingAll` — every thread member as the label set, so
 no agent labels are needed ahead of time — listing each unacknowledged
@@ -709,9 +730,12 @@ pending-work envelopes whose body cites the job (claimable work receipts
 name no job, so `next` is empty under `--job`, while handoffs keep their
 `taskId` hits); threads, awaiting and blocked pass the job into the one
 shared conversations read; wakes and inbox apply their own job filters;
-mailbox mail keeps only bodies citing the job; and the board keeps only
+mailbox mail keeps only bodies citing the job; the board keeps only
 threads carrying a task whose `itemId` is the job id, with that thread's
-deliveries and rollup riding along. Every count stays the filtered
+deliveries and rollup riding along; and the seats section keeps only
+`node-job` handoff records whose ref is the job id — a `bus-claim` ref is
+a coordination claim key, not a job citation. Every count stays the
+filtered
 total, the result echoes `job` in JSON and the human header prints
 `job=<id>`, and a row whose job relation cannot be proven stays out of
 the match rather than padding it. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps

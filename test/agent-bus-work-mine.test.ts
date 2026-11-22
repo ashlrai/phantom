@@ -8,6 +8,9 @@ import { announceWork, readAgentInbox, sendDirectMessage, sendHandoff, sendWakeR
   updateWorkStatus } from '../src/core/agents/bus-unified.js';
 import { busWorkMineAnnouncedAnnotation, busWorkMineJobAnnotation, formatBusWorkMine, readBusWorkMine,
   type BusWorkMineOptions } from '../src/core/agents/bus-work-mine.js';
+import { busWorkMineSeatsFromPlan, readBusWorkMineSeats, readBusWorkMineWithSeats } from '../src/core/agents/bus-work-mine-seats.js';
+import { planSeatHandoffs, type SeatHandoffsPlan, type SeatOptions } from '../src/core/bots/seats.js';
+import { emptyState } from '../src/core/drive/nodes/state.js';
 import type { BusWorkFeedJob } from '../src/core/agents/bus-work-feed-read.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { BusBoard } from '../src/core/fleet/bus-board.js';
@@ -2111,7 +2114,8 @@ describe('phm agents bus work mine', () => {
       threads: { status: 'ok', source: 'missing', matched: 0, items: [], truncated: false },
       wakes: { status: 'ok', wakes: [] },
       inbox: { status: 'ok', messages: [], truncated: false },
-      mailbox: { status: 'ok', matched: 0, messages: [], truncated: false } });
+      mailbox: { status: 'ok', matched: 0, messages: [], truncated: false },
+      seats: { status: 'ok', matched: 0, seats: [], truncated: false } });
   });
 
   it('prints human lines without --json', async () => {
@@ -2141,5 +2145,205 @@ describe('phm agents bus work mine', () => {
     const bad = await run(['work', 'mine', '--job', 'bad job'], env);
     expect(bad.code).toBe(2);
     expect(bad.json).toMatchObject({ status: 'invalid', reason: 'invalid-job' });
+  });
+});
+
+describe('seats section', () => {
+  type Setup = ReturnType<typeof setup>;
+  const botsDir = (home: string) => join(home, '.phantom', 'bots');
+  const seatQuota = (now: number) => ({ status: 'measured' as const, usedPct: 30,
+    asOf: new Date(now).toISOString(), resetAt: null, source: 'test' });
+  const seatRecord = (id: string, participantId: string, nodeId?: string) => ({ id, kind: 'devin-bot',
+    displayName: id, participantId, capabilities: ['code'], quota: { source: 'none' },
+    ...(nodeId === undefined ? {} : { nodeId }) });
+  const draining = (now: number) => ({ state: 'draining', since: new Date(now).toISOString(), exhaustedReset: null });
+
+  function seatHome(): string {
+    const home = mkdtempSync(join(tmpdir(), 'bus-work-mine-seat-'));
+    dirs.push(home);
+    return home;
+  }
+  function writeSeatStore(home: string, seats: unknown[], state?: unknown, journal: unknown[] = []): void {
+    const dir = botsDir(home);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'seats.json'), JSON.stringify({ schema: 'phantom-bot-seats.v1', seats }));
+    if (state !== undefined) writeFileSync(join(dir, 'seat-state.json'), JSON.stringify(state));
+    if (journal.length > 0) writeFileSync(join(dir, 'handoffs.jsonl'),
+      journal.map(row => JSON.stringify(row)).join('\n') + '\n');
+  }
+  function seatOptions(options: Setup, home: string): SeatOptions {
+    return { home, fleetRoot: options.root, runs: options.runsRoot, now: () => options.clock.now,
+      readQuota: async () => seatQuota(options.clock.now) };
+  }
+  const withSeats = (options: Setup, home: string): BusWorkMineOptions =>
+    ({ ...options, seats: seatOptions(options, home) });
+
+  it('leaves seats absent on the synchronous read and reports an empty roster as ok', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    const home = seatHome();
+    writeSeatStore(home, []);
+
+    const sync = readBusWorkMine('atlas', options);
+    expect(sync.status).toBe('ok');
+    if (sync.status !== 'ok') throw new Error('unreachable');
+    expect(sync.seats).toBeUndefined();
+    expect(formatBusWorkMine(sync).some(line => line.startsWith('seats='))).toBe(false);
+
+    const seats = await readBusWorkMineSeats('atlas', withSeats(options, home));
+    expect(seats).toEqual({ status: 'ok', matched: 0, seats: [], truncated: false });
+  });
+
+  it('lists pending seat handoffs only for seats the agent denotes', async () => {
+    const options = setup();
+    const home = seatHome();
+    register(options, 'atlas', 'nova');
+    writeSeatStore(home,
+      [seatRecord('helper', 'atlas'), seatRecord('other', 'nova')],
+      { helper: draining(options.clock.now), other: draining(options.clock.now) });
+    claim(options, 'repo:a/b', 'atlas', 'test:atlas-1', options.clock.now);
+    claim(options, 'repo:c/d', 'nova', 'test:nova-1', options.clock.now);
+
+    const result = await readBusWorkMineWithSeats('atlas', withSeats(options, home));
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.seats).toMatchObject({ status: 'ok', matched: 1, truncated: false });
+    const seats = result.seats?.status === 'ok' ? result.seats.seats : [];
+    expect(seats).toHaveLength(1);
+    expect(seats[0]).toMatchObject({ seatId: 'helper', participantId: 'atlas', state: 'draining' });
+    expect(seats[0]!.handoffs).toHaveLength(1);
+    expect(seats[0]!.handoffs[0]).toMatchObject({
+      work: { kind: 'bus-claim', ref: 'repo:a/b' }, branch: null, pr: null });
+    expect(seats[0]!.handoffs[0]!.handoffId).toMatch(/^[0-9a-f]{64}$/);
+
+    const lines = formatBusWorkMine(result);
+    expect(lines.some(line => line.startsWith('seats=1 '))).toBe(true);
+    expect(lines.some(line => line.includes('seat=helper participant=atlas state=draining'))).toBe(true);
+
+    // The same projection `phm bots handoffs` serves agrees on the pending set.
+    const plan = await planSeatHandoffs(seatOptions(options, home));
+    const pending = plan.seats.find(s => s.seatId === 'helper');
+    expect(pending?.handoffs.map(h => h.work.ref)).toEqual(['repo:a/b']);
+  });
+
+  it('matches a seat by literal seat id when the ref resolves to no identity', async () => {
+    const options = setup();
+    const home = seatHome();
+    register(options, 'atlas');
+    writeSeatStore(home, [seatRecord('helper', 'atlas')], { helper: draining(options.clock.now) });
+    claim(options, 'repo:a/b', 'atlas', 'test:atlas-1', options.clock.now);
+
+    const result = await readBusWorkMineWithSeats('helper', withSeats(options, home));
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.seats).toMatchObject({ status: 'ok', matched: 1 });
+    expect(result.seats?.status === 'ok' ? result.seats.seats[0]?.seatId : null).toBe('helper');
+  });
+
+  it('drops seat handoffs the journal already recorded', async () => {
+    const options = setup();
+    const home = seatHome();
+    register(options, 'atlas');
+    writeSeatStore(home, [seatRecord('helper', 'atlas')], { helper: draining(options.clock.now) });
+    claim(options, 'repo:a/b', 'atlas', 'test:atlas-1', options.clock.now);
+
+    const first = await readBusWorkMineWithSeats('atlas', withSeats(options, home));
+    const handoffId = first.status === 'ok' && first.seats?.status === 'ok'
+      ? first.seats.seats[0]?.handoffs[0]?.handoffId : undefined;
+    expect(handoffId).toMatch(/^[0-9a-f]{64}$/);
+
+    writeSeatStore(home, [seatRecord('helper', 'atlas')], { helper: draining(options.clock.now) },
+      [{ schema: 'phantom-bot-handoff.v1', handoffId, seatId: 'helper',
+        work: { kind: 'bus-claim', ref: 'repo:a/b' }, done: 'unknown', left: 'unknown',
+        branch: null, pr: null, createdAt: new Date(options.clock.now).toISOString() }]);
+    const second = await readBusWorkMineWithSeats('atlas', withSeats(options, home));
+    expect(second.status).toBe('ok');
+    if (second.status !== 'ok') throw new Error('unreachable');
+    expect(second.seats).toEqual({ status: 'ok', matched: 0, seats: [], truncated: false });
+  });
+
+  it('reports the seats section unavailable when the seat store cannot be read', async () => {
+    const options = setup();
+    const home = seatHome();
+    register(options, 'atlas');
+    mkdirSync(botsDir(home), { recursive: true });
+    writeFileSync(join(botsDir(home), 'seats.json'), '{not json');
+
+    const result = await readBusWorkMineWithSeats('atlas', withSeats(options, home));
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.seats).toEqual({ status: 'unavailable', reason: 'seat-handoff-plan-unreadable' });
+  });
+
+  it('matches node-job handoff refs under --job and keeps claim keys out', async () => {
+    const options = setup();
+    const home = seatHome();
+    register(options, 'atlas');
+    writeSeatStore(home, [seatRecord('helper', 'atlas', 'n1')], { helper: draining(options.clock.now) });
+    claim(options, 'repo:a/b', 'atlas', 'test:atlas-1', options.clock.now);
+
+    const nodes = emptyState();
+    nodes.jobs.push({ id: 'J-1', state: 'running',
+      claim: { nodeId: 'n1', session: 1, jobId: 'J-1', token: 5, leaderToken: 2,
+        expiresAt: options.clock.now + 60_000 } });
+    const seats: SeatOptions = { ...seatOptions(options, home),
+      nodesStore: { transaction: fn => fn(nodes, options.clock.now) } };
+
+    const unfiltered = await readBusWorkMineSeats('atlas', { ...options, seats });
+    expect(unfiltered).toMatchObject({ status: 'ok', matched: 1 });
+    if (unfiltered.status !== 'ok') throw new Error('unreachable');
+    expect(unfiltered.seats[0]!.handoffs.map(h => `${h.work.kind}:${h.work.ref}`).sort())
+      .toEqual(['bus-claim:repo:a/b', 'node-job:J-1']);
+
+    const filtered = await readBusWorkMineSeats('atlas', { ...options, seats, job: 'J-1' });
+    expect(filtered).toMatchObject({ status: 'ok', matched: 1 });
+    if (filtered.status !== 'ok') throw new Error('unreachable');
+    expect(filtered.seats[0]!.handoffs.map(h => `${h.work.kind}:${h.work.ref}`)).toEqual(['node-job:J-1']);
+
+    const missed = await readBusWorkMineSeats('atlas', { ...options, seats, job: 'J-404' });
+    expect(missed).toEqual({ status: 'ok', matched: 0, seats: [], truncated: false });
+  });
+
+  it('busWorkMineSeatsFromPlan keeps only denoted eligible seats with pending records', () => {
+    const handoff = (kind: 'node-job' | 'bus-claim', ref: string, id = `${kind}:${ref}`) => ({
+      schema: 'phantom-bot-handoff.v1' as const, handoffId: id, seatId: 's',
+      work: { kind, ref }, done: 'unknown', left: 'unknown', branch: null, pr: null, createdAt: 'x' });
+    const plan: SeatHandoffsPlan = { schema: 'phantom-bot-handoffs-plan.v1', apply: false, seats: [
+      { seatId: 's1', participantId: 'atlas', state: 'draining', eligible: true,
+        handoffs: [handoff('bus-claim', 'repo:a/b'), handoff('node-job', 'J-1'), handoff('bus-claim', 'J-1', 'claim-J-1')] },
+      { seatId: 's2', participantId: 'nova', state: 'draining', eligible: true, handoffs: [handoff('bus-claim', 'repo:c/d')] },
+      { seatId: 's3', participantId: 'atlas', state: 'active', eligible: false, handoffs: [] },
+      { seatId: 's4', participantId: 'atlas', state: 'idle', eligible: true, handoffs: [] },
+    ] };
+    const denotes = (seat: { seatId: string; participantId: string }) => seat.participantId === 'atlas';
+
+    const all = busWorkMineSeatsFromPlan(plan, denotes);
+    expect(all.status).toBe('ok');
+    if (all.status !== 'ok') throw new Error('unreachable');
+    expect(all.matched).toBe(1);
+    expect(all.seats[0]).toMatchObject({ seatId: 's1', participantId: 'atlas', state: 'draining' });
+    expect(all.seats[0]!.handoffs.map(h => `${h.work.kind}:${h.work.ref}`))
+      .toEqual(['bus-claim:repo:a/b', 'node-job:J-1', 'bus-claim:J-1']);
+
+    const byJob = busWorkMineSeatsFromPlan(plan, denotes, 'J-1');
+    expect(byJob).toMatchObject({ status: 'ok', matched: 1, truncated: false });
+    if (byJob.status !== 'ok') throw new Error('unreachable');
+    expect(byJob.seats[0]!.handoffs.map(h => `${h.work.kind}:${h.work.ref}`)).toEqual(['node-job:J-1']);
+
+    expect(busWorkMineSeatsFromPlan(plan, denotes, 'J-404'))
+      .toEqual({ status: 'ok', matched: 0, seats: [], truncated: false });
+  });
+
+  it('caps shown seats while matched keeps the true total', () => {
+    const handoff = (ref: string) => ({ schema: 'phantom-bot-handoff.v1' as const, handoffId: `h-${ref}`,
+      seatId: 's', work: { kind: 'bus-claim' as const, ref }, done: 'unknown', left: 'unknown',
+      branch: null, pr: null, createdAt: 'x' });
+    const plan: SeatHandoffsPlan = { schema: 'phantom-bot-handoffs-plan.v1', apply: false,
+      seats: Array.from({ length: 25 }, (_, i) => ({ seatId: `s${i}`, participantId: 'atlas',
+        state: 'draining' as const, eligible: true, handoffs: [handoff(`k${i}`)] })) };
+    const result = busWorkMineSeatsFromPlan(plan, () => true);
+    expect(result).toMatchObject({ status: 'ok', matched: 25, truncated: true });
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.seats).toHaveLength(20);
   });
 });
