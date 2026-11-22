@@ -13,7 +13,7 @@ export async function paceStops(report: FleetPaceV1, dir: string, config: unknow
       if (typeof loop !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(loop) || seen.has(loop)) throw new Error('Loop names must be unique plain names');
       seen.add(loop);
       const verdict = report.pools.find(p => p.pool === pool)?.verdict;
-      return { pool, loop, action: verdict === 'over' ? 'stop' : verdict === 'ok' ? 'clear' : 'keep' };
+      return { pool, loop, action: verdict === 'spent' ? 'stop' : ['ok', 'over', 'free'].includes(verdict ?? '') ? 'clear' : 'keep' };
     });
   });
   for (const plan of plans) {
@@ -21,7 +21,7 @@ export async function paceStops(report: FleetPaceV1, dir: string, config: unknow
     const path = join(dir, `STOP-${plan.loop}`);
     if (plan.action === 'stop') {
       await mkdir(dir, { recursive: true });
-      try { const file = await open(path, 'wx', 0o600); try { await file.writeFile(`${MARK}${plan.pool} is over pace\n`); } finally { await file.close(); } }
+      try { const file = await open(path, 'wx', 0o600); try { await file.writeFile(`${MARK}${plan.pool} is spent\n`); } finally { await file.close(); } }
       catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; plan.action = 'keep'; }
     } else {
       let file;
