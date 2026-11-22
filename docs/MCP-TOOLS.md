@@ -1,9 +1,8 @@
 # Phantom MCP Native Tools
 
-A catalog of all tools exposed by `mcp-native.ts` — the single source of truth
-for what agents can call through the MCP gateway.  One tool must not exist
-outside this list; every tool name and description comes directly from the
-source definition in `src/core/mcp-native.ts`.
+A catalog of tools exposed by `mcp-native.ts` through the native MCP gateway.
+Every tool name and description comes from `src/core/mcp-native.ts`. The separate
+fleet stdio server has its own [fleet MCP catalog](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MCP-TOOLS.md).
 
 Tools are grouped by their **name prefix** so an agent can quickly scan the
 family it needs (fleet observation, agent/team ops, knowledge, fleet management
