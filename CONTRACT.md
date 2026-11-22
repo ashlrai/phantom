@@ -2702,11 +2702,16 @@ inclusive `>=` rule every `--since` bus read applies), and `claimable:true`
 keeps only jobs whose tri-state `claimable` is
 provably true — a read without the claims join carries no field to match, so
 it answers an honest empty view. `toMatch` is the predicate
-`busWorkFeedToMatcher(to, {root?})` builds over a job's `to` label and
-`ownerMatch` the predicate `busWorkFeedOwnerMatcher(owner, {root?})` builds
-over its `owner` (announcer) label — each matching literally and under every
-label of one agent identity (an unresolvable ref or unreadable registry keeps
-exact-label matching). `contains` is the `--contains` needle normalized once
+`busWorkFeedPendingToMatcher(to, {root?})` builds, called with a job's `to`
+address and its `owner` (announcement sender) label — the pending-work
+addressed-to-agent rule `bus next`, `bus-follow`, handoff receive and
+`agents bus inbox` share: the literal label, every label of one agent
+identity, and `group:<channel>:<topic>` addresses of registry channels the
+identity belongs to, minus channel posts the identity sent itself.
+`ownerMatch` is the predicate `busWorkFeedOwnerMatcher(owner, {root?})`
+builds over a job's `owner` (announcer) label — matching literally and
+under every label of one agent identity (an unresolvable ref or unreadable
+registry keeps exact-label matching for both). `contains` is the `--contains` needle normalized once
 (lowercase, whitespace collapsed, trimmed) and matched as a case-insensitive
 substring over the job's descriptive text — the announcement title, the
 newest status detail and the declared dispatch scope/acceptance, each
@@ -2869,8 +2874,13 @@ origin covers a scope key, not mail, and carries no `message`. `jobs` reports th
 envelope citations and any `work.result` report — plus `addressed`, `announced`, `freeKeys`,
 `heldKeys`, `claimable`): `addressed` marks a `to` label resolving to the
 agent's identity and `announced` an `owner` label resolving to it (the agent
-posted the job and owns its status reports) — both through the same
-identity-label contract the feed `--to`/`--owner` filters use;
+posted the job and owns its status reports) — both through the identity-label
+contract `busWorkFeedToMatcher`/`busWorkFeedOwnerMatcher` apply (an
+unresolvable ref or unreadable registry keeps exact-label matching); the
+feed `--to` filter applies the wider pending-work addressed rule
+`busWorkFeedPendingToMatcher`, which also covers `group:<channel>:<topic>`
+announcements of registry channels the identity belongs to, minus the
+agent's own channel posts;
 `holds` is `complete`/`truncated`/`unknown` from the feed's
 claims join, and `claimable` is `true` only on a provably free key, `false`
 only when every declared key is provably held, `null` when coverage is

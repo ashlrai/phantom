@@ -10,7 +10,7 @@ import {
   updateWorkStatus, INBOX_KINDS, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { PROVIDERS, providerSchema, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob } from '../core/agents/bus-v2-schema.js';
-import { busWorkFeedOwnerMatcher, busWorkFeedRepoKey, busWorkFeedToMatcher, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
+import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope } from '../core/agents/bus-claims.js';
@@ -164,8 +164,10 @@ registered identities, so wakes (and the work mine wakes section) keep
 exact-label matching for a ref that resolves to no identity — JSON reports
 scope: label and only hints whose to is that label verbatim match. work feed and claim list are
 read-only and need no identity; work feed --to keeps jobs announced to that
-routing label and --owner keeps jobs announced by that agent, each under
-every label of one agent identity, --repo keeps jobs announced for one
+agent — the literal routing label, every label of one agent identity, and
+group:<channel>:<topic> addresses of registry channels the identity belongs
+to, minus that identity's own channel posts — while --owner keeps jobs
+announced by that agent under every label of one agent identity, --repo keeps jobs announced for one
 owner/name repo (case-insensitive, the claim-key rule), --provider keeps
 jobs announced for one provider, --tier keeps only jobs whose announcement
 declared that dispatch tier — a job carrying no dispatch spec declares none
@@ -745,7 +747,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         { status: status as WorkJob['status'] | undefined, jobId, repo,
           provider: providerRaw as WorkJob['provider'] | undefined, tier,
           open: open || undefined, claimable: claimable ? true : undefined, since: sinceArg(), contains,
-          toMatch: to === undefined ? undefined : busWorkFeedToMatcher(to, { root: options.root }),
+          toMatch: to === undefined ? undefined : busWorkFeedPendingToMatcher(to, { root: options.root }),
           ownerMatch: owner === undefined ? undefined : busWorkFeedOwnerMatcher(owner, { root: options.root }) });
       const paged = limit === undefined ? result : sliceBusWorkFeedView(result, limit);
       out(json ? JSON.stringify(paged) : formatBusWorkFeed(paged).join('\n'));

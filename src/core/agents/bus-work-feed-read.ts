@@ -3,7 +3,7 @@ import { BUS_INBOX_MAX_MESSAGES, listBusInboxAfter, type BusInboxReceipt } from 
 import { coordinationRowBlocks, listCoordination, type CoordinationOrigin } from './claim-store.js';
 import { projectBusWorkFeed, type WorkFeedOwnerKeyFor, type WorkFeedProviderFor, type WorkFeedRefusalReceipt,
   type WorkFeedResult, type WorkFeedResultCitation } from './bus-work-feed.js';
-import { agentAddressMatcher, agentIdentityKeys, readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
+import { agentAddressMatcher, agentIdentityKeys, agentPendingAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { repoSlugSchema } from './bus-v2-schema.js';
 import type { Participant, WorkDispatch, WorkJob } from './bus-v2-schema.js';
@@ -285,6 +285,23 @@ export function busWorkFeedOwnerMatcher(owner: string, options: { root?: string 
 }
 
 /**
+ * The feed `--to` filter's addressed-to-agent matcher under the pending-work
+ * rule every other addressed surface shares — `bus next`, the `work mine`
+ * digest's next/handoffs/wakes/inbox sections and `agents bus inbox`: the
+ * literal label, every label of the identity it resolves to, and
+ * `group:<channel>:<topic>` addresses of registry channels that identity
+ * belongs to, minus channel posts the identity sent itself (`owner` is the
+ * announcement's sender label). A `to` ref that resolves to no identity, or
+ * an unreadable registry, keeps exact-label matching, so unknown identity
+ * state never widens the filter. The returned predicate takes a job's `to`
+ * address and its `owner` (the announcement sender) label.
+ */
+export function busWorkFeedPendingToMatcher(to: string, options: { root?: string } = {}): (address: string, owner: string) => boolean {
+  const read = readAgentRegistry({ root: options.root });
+  return agentPendingAddressMatcher(to, read.status === 'ok' ? read.registry : undefined);
+}
+
+/**
  * Normalize a `--repo` feed filter to the lowercase `owner/name` key claim
  * keys compare under — the same repo-slug shape `work.post`/`workJob` enforce;
  * undefined when the value is not a repo slug, so a bad filter is a usage
@@ -317,8 +334,8 @@ export interface BusWorkFeedViewFilters {
    * same inclusive `>=` rule every `--since` bus read applies.
    */
   since?: number;
-  /** Announcement-address predicate from `busWorkFeedToMatcher`. */
-  toMatch?: (to: string) => boolean;
+  /** Announcement-address predicate from `busWorkFeedPendingToMatcher`; called with the job's `to` address and `owner` (announcement sender) label. */
+  toMatch?: (to: string, owner: string) => boolean;
   /** Announcer predicate over `job.owner` from `busWorkFeedOwnerMatcher`. */
   ownerMatch?: (owner: string) => boolean;
   /**
@@ -339,7 +356,7 @@ export interface BusWorkFeedViewFilters {
  * Client-side `--status`/`--job`/`--repo`/`--provider`/`--tier`/`--claimable`/`--since`/
  * `--to`/`--owner`/`--contains` filters and newest-first ordering shared by
  * the feed CLIs;
- * the matchers are the `busWorkFeedToMatcher`/`busWorkFeedOwnerMatcher`
+ * the matchers are the `busWorkFeedPendingToMatcher`/`busWorkFeedOwnerMatcher`
  * predicates. `since` keeps jobs whose `updatedAt` — the newest status
  * receipt time, or the announcement's while no status has moved the job —
  * reaches the cutoff, so "which jobs moved lately" is one filtered read
@@ -371,7 +388,7 @@ export function projectBusWorkFeedView(result: BusWorkFeedReadResult, filters: B
       && (filters.open !== true || (BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length > 0
         && (coverage !== 'complete' || job.claimKeys.some(key => !heldByJob.get(job.id)?.has(key)))))
       && (filters.since === undefined || job.updatedAt >= filters.since)
-      && (filters.toMatch === undefined || filters.toMatch(job.to))
+      && (filters.toMatch === undefined || filters.toMatch(job.to, job.owner))
       && (filters.ownerMatch === undefined || filters.ownerMatch(job.owner))
       && (containsNeedle === undefined || busWorkFeedJobSearchText(job).includes(containsNeedle)))
     .sort((a, b) => b.updatedAt - a.updatedAt);

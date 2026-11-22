@@ -3,8 +3,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { projectBusWorkFeed } from '../src/core/agents/bus-work-feed.js';
-import { busWorkFeedRepoKey, busWorkJobDispatch, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView,
+import { busWorkFeedPendingToMatcher, busWorkFeedRepoKey, busWorkJobDispatch, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView,
   sliceBusWorkFeedView, type BusWorkFeedClaims, type BusWorkFeedJob, type BusWorkFeedReadResult } from '../src/core/agents/bus-work-feed-read.js';
+import { createAgentChannel, registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { workFeedSchema, type Participant, WORK_STATUSES } from '../src/core/agents/bus-v2-schema.js';
 import { isClaimableWork } from '../src/core/fleet/bus-envelope.js';
 import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
@@ -393,6 +394,48 @@ describe('work-feed view filters', () => {
     const view = projectBusWorkFeedView(okResult(jobs, claims), { contains: 'drain', status: 'queued' });
     expect(ids(view)).toEqual(['title', 'scope', 'accept']);
     expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['title']);
+  });
+
+  it('matches --to under the pending-work addressed rule: identity labels plus member channels', () => {
+    const root = mkdtempSync(join(tmpdir(), 'bus-feed-to-'));
+    try {
+      for (const handle of ['atlas', 'nova', 'orion']) {
+        expect(registerAgentIdentity({ handle }, { root }).status).toBe('created');
+      }
+      expect(createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, { root }).status).toBe('created');
+      expect(createAgentChannel({ name: 'ops', createdBy: 'orion' }, { root }).status).toBe('created');
+      const result = okResult([
+        viewJob({ id: 'chan', to: 'group:release:general', owner: 'agent:atlas', updatedAt: 400 }),
+        viewJob({ id: 'direct', to: 'agent:nova', owner: 'agent:atlas', updatedAt: 300 }),
+        viewJob({ id: 'ops', to: 'group:ops:deploy', owner: 'agent:atlas', updatedAt: 200 }),
+        viewJob({ id: 'bare', to: 'nova', owner: 'agent:atlas', updatedAt: 100 }),
+      ]);
+      const shown = (agent: string, at: string = root): string[] => {
+        const view = projectBusWorkFeedView(result, { toMatch: busWorkFeedPendingToMatcher(agent, { root: at }) });
+        if (view.status !== 'ok') throw new Error('expected an ok view');
+        return view.jobs.map(job => job.id).sort();
+      };
+      // nova is a release member: the channel announcement, the agent:-label
+      // post and the bare-label post all reach her; the ops-channel post does not.
+      expect(shown('nova')).toEqual(['bare', 'chan', 'direct']);
+      // atlas posted every job herself: her own channel posts are not pending
+      // work addressed to her, and she belongs to no ops channel — nothing shows.
+      expect(shown('atlas')).toEqual([]);
+      // orion belongs to ops only: atlas's ops-channel post reaches him.
+      expect(shown('orion')).toEqual(['ops']);
+      // A literal group address still filters exactly, and an unresolvable
+      // ref keeps exact-label matching — 'ghost' addresses nothing here.
+      expect(shown('group:release:general')).toEqual(['chan']);
+      expect(shown('ghost')).toEqual([]);
+      // An unreadable registry never widens: 'nova' falls back to the literal
+      // label, so only the bare 'nova' address matches, not 'agent:nova'.
+      const bad = mkdtempSync(join(tmpdir(), 'bus-feed-to-bad-'));
+      try {
+        mkdirSync(join(bad, 'agent-identities'), { mode: 0o700 });
+        writeFileSync(join(bad, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+        expect(shown('nova', bad)).toEqual(['bare']);
+      } finally { rmSync(bad, { recursive: true, force: true }); }
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
   it('passes non-ok reads through untouched', () => {

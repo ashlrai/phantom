@@ -11,7 +11,7 @@
  */
 import { parseSince } from '../fleet/agent-messages.js';
 import {
-  busWorkFeedOwnerMatcher, busWorkFeedRepoKey, busWorkFeedToMatcher,
+  busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey,
   BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, type BusWorkFeedViewFilters,
 } from './bus-work-feed-read.js';
 import {
@@ -80,7 +80,7 @@ export function parseBusWorkFeedQuery(
     if (value === undefined) continue;
     if (!LABEL.test(value)) return invalid(`${key} takes a printable routing label of 1-128 characters.`);
     if (key === 'job') filters.jobId = value;
-    else if (key === 'to') filters.toMatch = busWorkFeedToMatcher(value, { root: options.root });
+    else if (key === 'to') filters.toMatch = busWorkFeedPendingToMatcher(value, { root: options.root });
     else filters.ownerMatch = busWorkFeedOwnerMatcher(value, { root: options.root });
   }
   if (input.repo !== undefined) {
