@@ -120,7 +120,7 @@ exit code is non-zero if any of them failed.
 
 | Step | Runs when | If it fails |
 | --- | --- | --- |
-| File selection | Always | `origin/master` must exist and share history with your branch: `git fetch origin master`, or `git fetch --unshallow origin` in a shallow clone. |
+| File selection | Always | Without a merge base with `origin/master` (missing remote branch or shallow clone) it prints `WARN no merge base` and checks only uncommitted changes against `HEAD`, so committed work goes unchecked. Run `git fetch origin master`, or `git fetch --unshallow origin` in a shallow clone, then `node scripts/verify-changed.mjs --force`. |
 | Empty test check | Always | Every new test file needs at least one test. |
 | Fleet registry | A `src/cli/fleet-*.ts` file changed | Run `node scripts/gen-fleet-registry.mjs` and commit the result. |
 | Authority drift | The diff touches `src/`, `test/`, `scripts/` or `.github/CODEOWNERS` | Review the drift, run `npm run authority:regen` and list each new Tier-1 root in the pull request body. When `origin/master` changed drift-relevant paths since you branched, the step reruns as `authority drift on current master` on your changed files laid over `origin/master`; if that fails, rebase onto `origin/master`, then regenerate. |
@@ -140,9 +140,9 @@ exit code is non-zero if any of them failed.
 | Snapshot syntax check | A Vitest `.snap` file changed | Fix the `path:line` parse error node's script parser reports, often a hand edit or a leftover merge-conflict marker; ESLint and the type check never read `.snap` files. The parser runs in-process, so the step never prints `SKIP`. |
 | Patch syntax check | A `.patch` or `.diff` file changed | Fix the parse error `git apply --stat` reports; it checks the unified-diff grammar without requiring the patch to apply in this checkout, so staged proposals against other revisions still verify. Git is already required to collect the changed set, so the step never prints `SKIP`. |
 | Quarantine ledger | A `*.test.*` or `*.spec.*` file or `queue/quarantine.tsv` changed | An added skip marker or `.only`, or a stale or expired ledger row; see [Skipping a flaky test](#skipping-a-flaky-test). |
-| Type check | Always (`tsgo`, falling back to `tsc`); the web project too when `src/web-ui/` changed | Fix the reported errors. With many parallel worktrees, `FAIL tsc slot wait` means no type-check slot freed in time (`PHANTOM_TSC_TIMEOUT_SECONDS`, default 900). |
 | Real-I/O lane lint | Always | A changed test that spawns processes or does real I/O must be listed in `test/config/realio-lane-membership.mjs` (a protected path), or carry a comment near the match saying why it is safe in the fast lane. Files you did not change only print a `WARN`. |
 | Verse sync-I/O lint | Always | No new synchronous filesystem or child-process call in a Verse route file (`src/core/verse/**/*-api.ts`) unless a `// sync-io-ok: <reason>` comment explains it. |
+| Type check | Backend project when the diff touches a root `tsconfig*.json`, `src/` (outside `src/web-ui/` and `src/raycast/`), `test/` or `scripts/`; web project when it touches `src/web-ui/`; both when `package.json` or `package-lock.json` changed. Docs-only diffs skip it. Runs incrementally with `tsgo`, falling back to `tsc` | Fix the reported errors. With many parallel worktrees, `FAIL tsc slot wait` means no type-check slot freed in time (`PHANTOM_TSC_TIMEOUT_SECONDS`, default 900). |
 
 `SKIP eslint`, `SKIP docs check` or `SKIP css syntax check` with "run npm ci to restore it" means the
 install is incomplete; run `npm ci` and then `node scripts/verify-changed.mjs --force`.
