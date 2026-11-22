@@ -20,6 +20,24 @@ export async function recordQueueVisit(visit: QueueVisit, path = queueJournalPat
   await appendFile(path, JSON.stringify({ id, station, pool, arrivedAt, startedAt, completedAt }) + '\n', { mode: 0o600 });
 }
 
+/**
+ * Append many validated snapshots in one write — the daemon visit-sync
+ * catch-up path, where a per-visit `recordQueueVisit` would mean one
+ * open/close per row. Same line shape, validation and file mode; returns the
+ * number appended (0 for an empty batch, which writes nothing).
+ */
+export async function appendQueueVisits(visits: readonly QueueVisit[], path = queueJournalPath()): Promise<number> {
+  if (visits.length === 0) return 0;
+  const lines = visits.map((visit) => {
+    if (!isQueueVisit(visit)) throw new Error('Invalid queue visit');
+    const { id, station, pool, arrivedAt, startedAt, completedAt } = visit;
+    return JSON.stringify({ id, station, pool, arrivedAt, startedAt, completedAt });
+  });
+  await mkdir(dirname(path), { recursive: true });
+  await appendFile(path, `${lines.join('\n')}\n`, { mode: 0o600 });
+  return lines.length;
+}
+
 export async function readQueueVisits(path = queueJournalPath()): Promise<QueueVisit[]> {
   let content: string;
   try { content = await readFile(path, 'utf8'); }
