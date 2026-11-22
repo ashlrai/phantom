@@ -1,6 +1,10 @@
 # Contributing to Phantom
 
-Phantom (source repository `ashlrai/phantom`, formerly `ashlr-hub`) is the local kernel for Ashlr Universe, built contract-first in TypeScript with a React operations console. This guide covers source development and local verification, not provider commissioning or production publication. See the [documentation map](docs/README.md) for the current runtime and operator guides.
+Phantom (`@ashlr/phantom`, source repository `ashlrai/phantom`, formerly `ashlr-hub`) is an open-source workbench for running coding agents, coordinating a fleet and reviewing their work. It is built contract-first in TypeScript with a React operations console. This guide covers source development and local verification, not provider commissioning or production publication. See the [documentation map](docs/README.md) for the current runtime and operator guides.
+
+**Mission:** chasing open-source RSI (recursive self-improvement). Phantom and its separately installed companions (Phantom Secrets, Ashlr Plugin, Locus, Lexicon, Ashlr MD, Ashlr Stack) aim to form a fully autonomous, code-first, agent-native software factory. See [the mission](README.md#mission) and [the ecosystem](README.md#the-phantom-ecosystem).
+
+**Who contributes:** mostly coding agents, including Phantom's own fleet, with the human owner as a passive board member needed only for passwords, 2FA, device approvals and payments. Agents follow [AGENTS.md](AGENTS.md), which sets what they may do (branch, open pull requests, merge and dispatch releases through the sanctioned workflow) and the kept limits. Humans and outside contributors are welcome and use the same checks below. Either way, keep one coherent change per pull request and verify it as described in [Definition of green](#definition-of-green).
 
 **First contribution?** Coding agents build most of Phantom, and outside
 contributors take the same path as the fleet: one focused branch pushed to a
