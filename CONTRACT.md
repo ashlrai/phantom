@@ -517,15 +517,23 @@ stays null. Rows with a missing or non-finite `ts`, an absent or
 non-route-identifier `work_class`, or a wrong schema/event are
 skipped. The same newest-decision collapse also supplies the market's
 recorded routing verdict: `foldRouteDecisions` returns each job's
-latest `route_decision` row as `{lane, preferred, override, reasons}`
-and the read joins it under the same `market_state` health as
+latest `route_decision` row as `{lane, preferred, override, reasons,
+rejected}` and the read joins it under the same `market_state` health as
 `work_class` — `market_lane` is the recorded `chosen_lane`,
 `market_preferred` the recorded `preferred_lane`, `market_override`
-the override's recorded reason (`override.reason`), and
-`market_reasons` the recorded `reason_codes` list (deduplicated,
-bounded reason-code shape, capped). A missing field stays `null`;
+the override's recorded reason (`override.reason`), `market_reasons`
+the recorded `reason_codes` list (deduplicated,
+bounded reason-code shape, capped), and `market_rejected` the recorded
+`rejected_lanes` list — each entry `{lane, reasons}` where `lane` is
+the rejected lane's bounded identifier and `reasons` its recorded
+`reason_codes` under the same dedup/bound/cap rules (`null` when
+missing or all-unrecognizable, `[]` when recorded empty). A missing
+field stays `null`;
 a non-array or all-unrecognizable `reason_codes` reads as unrecorded
-(`null`), while a recorded empty list stays `[]`. Rows naming jobs
+(`null`), while a recorded empty list stays `[]`; a `rejected_lanes`
+member that is absent or whose every entry is malformed reads as
+unrecorded (`null`), while a recorded empty list stays `[]`. Rows
+naming jobs
 outside the jobs window never create outcomes. The market read degrades
 independently too:
 `RouterOutcomeRead.market_state` reports its health and

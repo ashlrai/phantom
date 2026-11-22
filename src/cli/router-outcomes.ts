@@ -13,7 +13,8 @@
  * size (diff_files/diff_lines), the batch member's recorded
  * task_outcome word, the dispatch claim's recorded lane override
  * (lane_hint/lane_override), the work market's recorded routing verdict
- * (market_lane/market_preferred/market_override/market_reasons, joined
+ * (market_lane/market_preferred/market_override/market_reasons/
+ * market_rejected, joined
  * from the same route_decision rows as work_class), the skip gate's
  * recorded launch decline
  * (skipped/skip_reason/skip_code), the fleet's recorded keep-queued
@@ -157,6 +158,7 @@ function outcomeLine(o: RouterOutcome): string {
     `lane_hint_blocked_by=${o.lane_hint_blocked_by === null ? 'unknown' : `[${o.lane_hint_blocked_by.join(',')}]`}`,
     `market_lane=${text(o.market_lane)}`, `market_preferred=${text(o.market_preferred)}`, `market_override=${text(o.market_override)}`,
     `market_reasons=${o.market_reasons === null ? 'unknown' : `[${o.market_reasons.join(',')}]`}`,
+    `market_rejected=${o.market_rejected === null ? 'unknown' : `[${o.market_rejected.map(e => e.reasons === null ? e.lane : `${e.lane}:${e.reasons.join('+')}`).join(';')}]`}`,
   ].join(' ');
 }
 
