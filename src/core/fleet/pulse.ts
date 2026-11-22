@@ -106,7 +106,7 @@ const releaseRepo = (repo: string): string => repo.includes('/') ? repo : `ashlr
 const RELEASE_TTL_MS = 15 * 60_000;
 let releaseCache: { key: string; at: number; read: Promise<PulseRelease[]> } | null = null;
 /** Latest published release per repo, reused for 15 minutes: Home polls, GitHub should not be asked every minute. */
-function readReleases(repos: string[], now: number, run?: ReleaseRunner): Promise<PulseRelease[]> {
+export function readReleases(repos: string[], now: number, run?: ReleaseRunner): Promise<PulseRelease[]> {
   const key = repos.join(',');
   if (!run && releaseCache?.key === key && now - releaseCache.at < RELEASE_TTL_MS) return releaseCache.read;
   const read = Promise.all(repos.map(async repo => {
