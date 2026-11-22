@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -63,7 +63,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : head;
       const receipt = options.bound
         ? `Bound candidate ${options.boundHead ?? sha} to event tree ${'e'.repeat(40)}\n`
@@ -673,6 +673,58 @@ describe('CI baseline evidence', () => {
     }
     expect(parseBaselineFailures(auditReport(lodash))).toEqual([]);
   });
+  it('parses dependency-audit OSV fallback tables as per-package failures', () => {
+    const failures = parseBaselineFailures(fixture('audit-osv'));
+    expect(failures.map(f => f.testId)).toEqual([
+      'package-lock.json > (dependency-audit) lodash',
+      'package-lock.json > (dependency-audit) minimist',
+      'src/raycast/package-lock.json > (dependency-audit) tar',
+    ]);
+    expect(failures[0]).toMatchObject({ file: 'package-lock.json', names: '(dependency-audit) lodash' });
+    expect(failures[0]?.excerpt).toContain('lodash ecosystem=npm version=4.17.20 fixed=4.17.21 cvss=7.5');
+    expect(failures[0]?.excerpt).toContain('https://osv.dev/GHSA-35jh-r3h4-6jhm');
+    // The vuln group's second alias id continues on a blank-cell row and
+    // joins the same package's advisory list.
+    expect(failures[0]?.excerpt).toContain('https://osv.dev/CVE-2025-99999');
+    // The ` (dev)` suffix comes off to match the npm report identity.
+    expect(failures[1]).toMatchObject({ file: 'package-lock.json', names: '(dependency-audit) minimist' });
+    expect(failures[2]).toMatchObject({ file: 'src/raycast/package-lock.json', names: '(dependency-audit) tar' });
+    // Timestamped job-log lines parse identically.
+    const stamped = fixture('audit-osv').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped).map(f => f.testId)).toEqual(failures.map(f => f.testId));
+  });
+  it('scopes dependency-audit OSV rows to the echoed step and lockfile', () => {
+    const invoke = 'bash scripts/npm-audit-with-osv-fallback.sh "root full graph" package-lock.json';
+    const row = (pkg: string, source = 'package-lock.json') => `| https://osv.dev/GHSA-aaaa-bbbb-cccc | 7.5  | npm       | ${pkg.padEnd(10)} | 1.0.0   | 1.0.1         | ${source.padEnd(18)} |`;
+    const table = (rows: string[]) => [
+      '+------+-------+-----------+------------+---------+---------------+--------------------+',
+      '| OSV URL | CVSS | Ecosystem | Package    | Version | Fixed Version | Source             |',
+      '+------+-------+-----------+------------+---------+---------------+--------------------+',
+      ...rows,
+      '+------+-------+-----------+------------+---------+---------------+--------------------+',
+    ].join('\n');
+    // No step echo: the table's lockfile is unattributed and stays unparsed.
+    expect(parseBaselineFailures(table([row('lodash')]))).toEqual([]);
+    // A Source cell naming another file is not this step's lockfile.
+    expect(parseBaselineFailures([invoke, table([row('lodash', 'other-lock.json')])].join('\n'))).toEqual([]);
+    // A near-miss header, a rounded-unicode table and malformed rows stay unparsed.
+    const nearMiss = table([row('lodash')]).replace('OSV URL', 'OSV LINK ');
+    expect(parseBaselineFailures([invoke, nearMiss].join('\n'))).toEqual([]);
+    const rounded = [invoke, '╭──────╮', '│ OSV URL │ CVSS │', '╰──────╯', row('lodash')].join('\n');
+    expect(parseBaselineFailures(rounded)).toEqual([]);
+    const badPackage = `| https://osv.dev/GHSA-aaaa-bbbb-cccc | 7.5  | npm       | bad name!! | 1.0.0   | 1.0.1         | package-lock.json |`;
+    expect(parseBaselineFailures([invoke, table([badPackage])].join('\n'))).toEqual([]);
+    // OSV rows need no exception list: the scanner applied IgnoredVulns
+    // itself, so they still emit when the npm fixpoint cannot run.
+    expect(parseBaselineFailures([invoke, table([row('lodash')])].join('\n'), undefined, null).map(f => f.testId))
+      .toEqual(['package-lock.json > (dependency-audit) lodash']);
+    // Multiple advisories on one package merge into a single group.
+    const two = table([row('lodash'), row('lodash').replace('GHSA-aaaa-bbbb-cccc', 'GHSA-dddd-eeee-ffff')]);
+    const merged = parseBaselineFailures([invoke, two].join('\n'));
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.excerpt).toContain('https://osv.dev/GHSA-aaaa-bbbb-cccc');
+    expect(merged[0]?.excerpt).toContain('https://osv.dev/GHSA-dddd-eeee-ffff');
+  });
   it('groups dependency-audit failures and attributes lockfile inputs', async () => {
     const contents = { '.github/dependency-audit-exceptions.json': '[]' };
     const report = await analyzeCiBaseline('owner/repo', github({ audit: true, contents }).gh);
@@ -719,6 +771,36 @@ describe('CI baseline evidence', () => {
       expect(broken.groups).toEqual([]);
       expect(broken.freshness.every(p => p.state === 'unknown')).toBe(true);
     }
+  });
+  it('groups dependency-audit OSV fallback failures and attributes lockfile inputs', async () => {
+    const contents = { '.github/dependency-audit-exceptions.json': '[]' };
+    const report = await analyzeCiBaseline('owner/repo', github({ auditOsv: true, contents }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(3);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    expect(report.groups.map(g => g.testId)).toEqual([
+      'package-lock.json > (dependency-audit) lodash',
+      'package-lock.json > (dependency-audit) minimist',
+      'src/raycast/package-lock.json > (dependency-audit) tar',
+    ]);
+    // The same closed lockfile input set decides touched for OSV rows.
+    const caused = await analyzeCiBaseline('owner/repo', github({ auditOsv: true, touched: 'package-lock.json', contents }).gh);
+    const causedById = new Map(caused.groups.map(g => [g.testId, g.action]));
+    expect(causedById.get('package-lock.json > (dependency-audit) lodash')).toBe('pr-caused');
+    expect(causedById.get('package-lock.json > (dependency-audit) minimist')).toBe('pr-caused');
+    expect(causedById.get('src/raycast/package-lock.json > (dependency-audit) tar')).toBe('queue-master-fix');
+    const raycast = await analyzeCiBaseline('owner/repo', github({ auditOsv: true, touched: 'src/raycast/package-lock.json', contents }).gh);
+    const raycastById = new Map(raycast.groups.map(g => [g.testId, g.action]));
+    expect(raycastById.get('src/raycast/package-lock.json > (dependency-audit) tar')).toBe('pr-caused');
+    expect(raycastById.get('package-lock.json > (dependency-audit) lodash')).toBe('queue-master-fix');
+    // The scanner applied the step's IgnoredVulns config itself, so OSV
+    // rows still group when master's exception file is unreadable -- the
+    // npm fixpoint is the only audit shape that needs it.
+    const broken = await analyzeCiBaseline('owner/repo', github({ auditOsv: true, contents: { '.github/dependency-audit-exceptions.json': 'not json' } }).gh);
+    expect(broken.groups.map(g => g.testId)).toEqual(report.groups.map(g => g.testId));
   });
   it('parses pack-smoke and hosted-artifact refusals as gate failures', () => {
     const failures = parseBaselineFailures(fixture('pack-shared'));
