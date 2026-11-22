@@ -48,9 +48,11 @@ const DOCS = [
   'docs/CONTRIBUTE-WITH-AN-AGENT.md',
   // Community and policy pages the contributor path links to: where to get
   // help and report bugs, how to report vulnerabilities, and the authority
-  // agents work under.
+  // agents work under, plus the FAQ and glossary newcomers read first.
   'SUPPORT.md',
   'SECURITY.md',
+  'docs/FAQ.md',
+  'docs/GLOSSARY.md',
   'CONSTITUTION.md',
   'docs/STANDING-AUTHORITY.md',
   'docs/AGENTS-MD-AUDIT.md',
