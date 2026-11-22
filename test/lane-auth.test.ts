@@ -1,6 +1,6 @@
 /** Fixture tests for lanes.auth.v1 (`phm fleet lane-auth`): synthetic jobs and presence, no real home, no credential values. */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetLaneAuth } from '../src/cli/fleet-lane-auth.js';
@@ -154,17 +154,40 @@ describe('Asks card and reader', () => {
 });
 
 describe('fleet lane-auth command', () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
   it('is reachable through the generated registry and renders JSON and text', async () => {
     expect((await FLEET_SUBCOMMAND_LOADERS['lane-auth']!()).cmdFleetLaneAuth).toBe(cmdFleetLaneAuth);
     const report = build({ gemini: 'absent' }, [], { gemini: 85 });
-    const read = vi.fn(async () => report), raise = vi.fn(async () => []);
+    const read = vi.fn<typeof readLaneAuth>(async () => report), raise = vi.fn<typeof raiseLaneAuthAsks>(async () => []);
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await cmdFleetLaneAuth(['--json'], { read, raise })).toBe(0);
     expect(JSON.parse(log.mock.calls[0]![0])).toEqual(report);
-    expect(raise).toHaveBeenCalledWith(report);
+    expect(raise).toHaveBeenCalledWith(report, { runsDir: read.mock.calls[0]?.[0]?.runsDir });
     expect(await cmdFleetLaneAuth([], { read, raise })).toBe(0);
     expect(log.mock.calls[1]![0]).toContain('gemini: missing_signin');
+  });
+  it('uses the selected runs directory for both the report and Asks cards', async () => {
+    vi.stubEnv('ASHLR_RUNS_DIR', ' /fixture/lane-auth-runs ');
+    const report = build({ gemini: 'absent' }, [], { gemini: 85 });
+    const auth = await import('../src/core/fleet/lane-auth.js');
+    const read = vi.spyOn(auth, 'readLaneAuth').mockResolvedValue(report);
+    const raise = vi.spyOn(auth, 'raiseLaneAuthAsks').mockResolvedValue([]);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const command = await FLEET_SUBCOMMAND_LOADERS['lane-auth']!();
+    expect(await (command.cmdFleetLaneAuth as typeof cmdFleetLaneAuth)(['--json'])).toBe(0);
+    expect(read).toHaveBeenCalledWith({ runsDir: '/fixture/lane-auth-runs' });
+    expect(raise).toHaveBeenCalledWith(report, { runsDir: '/fixture/lane-auth-runs' });
+    expect(JSON.parse(log.mock.calls[0]![0] as string)).toEqual(report);
+  });
+  it.each(['', '   ', undefined])('uses the home default when ASHLR_RUNS_DIR is %j', async runsDir => {
+    vi.stubEnv('ASHLR_RUNS_DIR', runsDir);
+    const report = build({});
+    const read = vi.fn<typeof readLaneAuth>(async () => report), raise = vi.fn<typeof raiseLaneAuthAsks>(async () => []);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdFleetLaneAuth([], { read, raise })).toBe(0);
+    const expected = join(homedir(), '.ashlr-runs');
+    expect(read).toHaveBeenCalledWith({ runsDir: expected });
+    expect(raise).toHaveBeenCalledWith(report, { runsDir: expected });
   });
   it('handles help and rejects invalid or duplicate flags before reading', async () => {
     const read = vi.fn(async () => build({}));
@@ -173,6 +196,7 @@ describe('fleet lane-auth command', () => {
     expect(await cmdFleetLaneAuth(['--help'], { read })).toBe(0);
     expect(await cmdFleetLaneAuth(['--json', '--json'], { read })).toBe(2);
     expect(await cmdFleetLaneAuth(['--apply'], { read })).toBe(2);
+    expect(await cmdFleetLaneAuth(['--bad'], { read })).toBe(2);
     expect(read).not.toHaveBeenCalled();
   });
 });
