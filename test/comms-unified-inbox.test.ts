@@ -2281,6 +2281,84 @@ describe('readUnifiedInbox view filters', () => {
   });
 });
 
+describe('readUnifiedInbox kind filter', () => {
+  // The same board store the board describe derives: boardRoot = busRoot here.
+  const boardStore = () => new BusBoard({
+    root: busRoot,
+    fleet: new SharedStore(join(busRoot, 'bus-queue'), 60_000),
+    cfg: { foundry: {} } as AshlrConfig,
+  });
+  const seedKinds = async () => {
+    postWork('kind-work');                                                        // bus / bus-work
+    const handoffId = postV2Body({ kind: 'worker-handoff', taskId: 'RQ-KIND-H', prompt: 'fake handoff' },
+      { to: 'agent:worker-9' });                                                  // bus / bus-handoff
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');    // needs-you / needs-you
+    const store = boardStore();
+    const threadId = store.createThread('alice', 'Rollout').id;
+    store.joinThread('bob', threadId);
+    await store.post('alice', threadId, 'fake board post');                       // board / board-delivery x2
+    store.createTask('alice', threadId, 'item-kind', 'Fake kind task');           // board / board-task
+    return { handoffId };
+  };
+
+  it('keeps only items of the filtered kind while source reports stay unfiltered', async () => {
+    const { handoffId } = await seedKinds();
+    const all = await read();
+    expect(new Set(all.items.map(i => i.kind)))
+      .toEqual(new Set(['bus-work', 'bus-handoff', 'needs-you', 'board-delivery', 'board-task']));
+
+    // The bus source's own split: work and handoffs are one source but two kinds.
+    const handoffs = await read({ filter: { kind: 'bus-handoff' } });
+    expect(handoffs.filter).toEqual({ kind: 'bus-handoff' });
+    expect(handoffs.items.map(i => i.id)).toEqual([`bus-handoff:${handoffId}`]);
+    expect(handoffs.items[0]!.source).toBe('bus');
+    // Per-source reports stay the unfiltered store truth.
+    expect(handoffs.sources.bus.pending).toBe(2);
+    expect(handoffs.sources.board.pending).toBe(3);
+    expect(handoffs.sources['needs-you'].pending).toBe(1);
+
+    const work = await read({ filter: { kind: 'bus-work' } });
+    expect(work.items.map(i => i.id)).toEqual(['bus:kind-work']);
+
+    // The board source's own split: deliveries and tasks are one source but two kinds.
+    const tasks = await read({ filter: { kind: 'board-task' } });
+    expect(tasks.items.map(i => i.kind)).toEqual(['board-task']);
+    expect(tasks.sources.board.pending).toBe(3);
+    const deliveries = await read({ filter: { kind: 'board-delivery' } });
+    expect(deliveries.items).toHaveLength(2);
+    expect(deliveries.items.every(i => i.kind === 'board-delivery')).toBe(true);
+
+    // A 1:1 kind filters across sources exactly like its source does.
+    const needs = await read({ filter: { kind: 'needs-you' } });
+    expect(needs.items.map(i => i.kind)).toEqual(['needs-you']);
+    expect(needs.sources.bus.pending).toBe(2);
+  });
+
+  it('ANDs kind with the other view dimensions', async () => {
+    const { handoffId } = await seedKinds();
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- Rotate the deploy secret for the example app\n');
+
+    // kind + agreeing source keeps the rows; disagreeing is an honest empty.
+    const busHandoffs = await read({ filter: { kind: 'bus-handoff', source: 'bus' } });
+    expect(busHandoffs.items.map(i => i.id)).toEqual([`bus-handoff:${handoffId}`]);
+    const none = await read({ filter: { kind: 'bus-handoff', source: 'needs-you' } });
+    expect(none.total).toBe(0);
+    expect(none.items).toEqual([]);
+    expect(none.sources.bus.pending).toBe(2);
+
+    // kind + severity: the P2 handoff is info; the P0 sibling check stays exact.
+    const info = await read({ filter: { kind: 'bus-handoff', severity: 'info' } });
+    expect(info.items.map(i => i.id)).toEqual([`bus-handoff:${handoffId}`]);
+    const high = await read({ filter: { kind: 'bus-handoff', severity: 'high' } });
+    expect(high.total).toBe(0);
+
+    // kind + blocking: the hard-limit needs-you line is the only blocking item of its kind.
+    const blockingNeeds = await read({ filter: { kind: 'needs-you', blocking: true } });
+    expect(blockingNeeds.items).toHaveLength(1);
+    expect(blockingNeeds.items[0]!.blocking).toBe(true);
+  });
+});
+
 describe('readUnifiedInbox job filter', () => {
   const jobNote = (text: string, thread: string) =>
     postV2Body({ kind: 'note', text, thread }, { from: 'agent:asker', to: 'agent:reviewer' });
@@ -2633,7 +2711,7 @@ describe('phm comms inbox cli', () => {
   it('keeps read/post and help while refusing malformed unified invocations', async () => {
     const { command, lines } = setupCli();
     expect(await command(['--help'])).toBe(0);
-    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--json]');
+    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--json]');
     for (const args of [['--json', '--json'], ['unified'], ['--limit', '5'], ['bogus', '--json']]) {
       expect(await command(args)).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
@@ -2770,6 +2848,39 @@ describe('phm comms inbox cli', () => {
     expect(report.items).toEqual([]);
   });
 
+  it('filters the unified JSON view by --kind', async () => {
+    const { command, json } = setupCli();
+    postWork('cli-kind-work');
+    const handoffId = postV2Body({ kind: 'worker-handoff', taskId: 'RQ-CLI-K', prompt: 'fake handoff' },
+      { to: 'agent:worker-9' });
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    expect(await command(['--kind', 'bus-handoff', '--json'])).toBe(0);
+    let report = json();
+    expect(report.filter).toEqual({ kind: 'bus-handoff' });
+    expect(report.items.map(i => i.id)).toEqual([`bus-handoff:${handoffId}`]);
+    expect(report.items[0]!.source).toBe('bus');
+    // The per-source counts stay the unfiltered store truth.
+    expect(report.sources.bus.pending).toBe(2);
+    expect(report.sources['needs-you'].pending).toBe(1);
+
+    // --kind ANDs with --source: agreeing keeps the rows, disagreeing is an honest empty.
+    expect(await command(['--kind', 'bus-work', '--source', 'bus', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ kind: 'bus-work', source: 'bus' });
+    expect(report.items.map(i => i.id)).toEqual(['bus:cli-kind-work']);
+    expect(await command(['--kind', 'bus-handoff', '--source', 'needs-you', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+
+    // A kind that is also a source name is not a kind — sources and kinds are distinct dimensions.
+    expect(await command(['--kind', 'bus', '--json'])).toBe(2);
+    expect(await command(['--kind', 'needs-you', '--json'])).toBe(0);
+    report = json();
+    expect(report.items.map(i => i.kind)).toEqual(['needs-you']);
+  });
+
   it('labels the human footer with the applied filter and unfiltered counts', async () => {
     const { command, lines } = setupCli();
     writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
@@ -2787,6 +2898,11 @@ describe('phm comms inbox cli', () => {
     expect(lines().join('\n')).toContain('1 pending matching job=RQ-CLI-H');
     expect(await command(['--job', 'RQ-NOPE'])).toBe(0);
     expect(lines().at(-1)).toBe('Nothing pending matching job=RQ-NOPE.');
+    // --kind labels the kind verbatim in the same footer slot.
+    expect(await command(['--kind', 'bus-work'])).toBe(0);
+    expect(lines().join('\n')).toContain('2 pending matching kind=bus-work');
+    expect(await command(['--kind', 'bus-handoff'])).toBe(0);
+    expect(lines().at(-1)).toBe('Nothing pending matching kind=bus-handoff.');
     // --contains labels the needle verbatim in the same footer slot; the
     // feed job's title carries the job id, so it is the one match.
     expect(await command(['--contains', 'RQ-CLI-H'])).toBe(0);
@@ -2816,6 +2932,8 @@ describe('phm comms inbox cli', () => {
       ['--since'], ['--since', '--json'], ['--since', 'bogus'], ['--since', '-5m'],
       ['--since', '15m', '--since', '15m'], ['--json', '--since'],
       ['--since', '15m', '--job'],
+      ['--kind'], ['--kind', 'bogus'], ['--kind', 'bus'], ['--kind', 'bus-work', '--kind', 'bus-handoff'],
+      ['--kind', '--json'], ['--json', '--kind'], ['--kind', 'read'],
       ['--contains'], ['--contains', ''], ['--contains', '   '], ['--contains', '--json'],
       ['--contains', 'x'.repeat(513)], ['--contains', 'a', '--contains', 'b'],
       ['--contains', 'deploy', '--job'], ['--json', '--contains'],
