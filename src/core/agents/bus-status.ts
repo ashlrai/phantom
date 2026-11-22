@@ -3,8 +3,10 @@
  * coordination table, the message-id claim journal, the v2 work feed, the
  * shared task board and fleet queue `work mine`'s board section reads, the
  * owner-chat share receipts ledger `inbox` consults for `agent-chat-owner`
- * envelopes, the legacy `phm bus` mailbox `work mine` still reads and the
- * claim-store drift verdict comparing the claim journal with the
+ * envelopes, the legacy `phm bus` mailbox `work mine` still reads, the
+ * bot-seat store `work mine`'s seats section, `id list`'s seat participants
+ * and the unified inbox seats source read, and
+ * the claim-store drift verdict comparing the claim journal with the
  * coordination table it is dual-written to. Each
  * section reports its own real state; a section that cannot be read reports
  * unavailable or null, never zero, and the whole read never throws. Read-only:
@@ -23,6 +25,7 @@ import type { AshlrConfig } from '../types.js';
 import { listCoordination } from './claim-store.js';
 import { readBusWakes } from '../fleet/bus-wake-queue.js';
 import { readAgentRegistry } from './bus-identity.js';
+import { inspectSeatStore } from '../bots/seats.js';
 import { readBusWorkFeed, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import { ownerChatRoot, ownerReceiptDir, readOwnerChatReceipts } from './chat-owner-receipts.js';
 import type { BusWorkMineBoardOptions } from './bus-work-mine.js';
@@ -35,6 +38,11 @@ export interface UnifiedBusStatusOptions {
   /** Shared task board and fleet queue overrides; production derives the same
    * paths `phm bus board` and `work mine` use. */
   board?: BusWorkMineBoardOptions;
+  /** Seat store home override — the same `SeatOptions.home` `work mine`'s
+   * seats section resolves; default the process home. Only the file probe
+   * runs here: quota evidence, live claims and node jobs stay with the
+   * async `planSeatHandoffs` read. */
+  seats?: { home?: string };
   now?: () => number;
 }
 
@@ -150,6 +158,21 @@ export interface UnifiedBusStatus {
      * and the inbox; null when the queue was not probed (invalid shared-queue
      * config or non-absolute override). */
     claims: 'readable' | 'unreadable' | null;
+  };
+  /** Bot-seat store (`<home>/.phantom/bots`) behind `work mine`'s seats
+   * section, `id list`'s seat participants and the unified inbox seats
+   * source — probed by `inspectSeatStore`, the file half of the same
+   * `snapshot()` `planSeatHandoffs` reads, so a sick roster or journal is
+   * named here instead of leaving status green while those reads report
+   * unavailable. `source` plus retained counts: `seats` roster rows,
+   * `states` seat-state entries, `handoffs` journaled records — 0 on a
+   * verified-missing store, null for a file that cannot be read or
+   * validated, never a plan verdict, seat contents or quota evidence. */
+  seats: {
+    source: 'missing' | 'available' | 'unavailable';
+    seats: number | null;
+    states: number | null;
+    handoffs: number | null;
   };
 }
 
@@ -307,5 +330,12 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     board = { source: 'unavailable', threads: null, tasks: null, pendingDeliveries: null, claims: null };
   }
 
-  return { asOf, store, registry, wakes, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board };
+  let seats: UnifiedBusStatus['seats'];
+  try {
+    seats = inspectSeatStore(options.seats?.home);
+  } catch {
+    seats = { source: 'unavailable', seats: null, states: null, handoffs: null };
+  }
+
+  return { asOf, store, registry, wakes, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats };
 }

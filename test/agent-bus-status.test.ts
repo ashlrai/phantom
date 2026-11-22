@@ -23,7 +23,8 @@ function setup(at = 1_000): UnifiedBusStatusOptions & { clock: { now: number } }
   const base = mkdtempSync(join(tmpdir(), 'agent-bus-status-'));
   dirs.push(base);
   const clock = { now: at };
-  return { root: join(base, 'fleet'), runsRoot: join(base, 'runs'), now: () => clock.now, clock };
+  return { root: join(base, 'fleet'), runsRoot: join(base, 'runs'), now: () => clock.now, clock,
+    seats: { home: join(base, 'seat-home') } };
 }
 
 describe('readUnifiedBusStatus', () => {
@@ -51,6 +52,8 @@ describe('readUnifiedBusStatus', () => {
     // queue claim index reads as an empty-but-readable store.
     expect(status.board).toEqual({ source: 'missing', threads: 0, tasks: 0,
       pendingDeliveries: 0, claims: 'readable' });
+    // A verifiably absent seat store holds no roster, states or records.
+    expect(status.seats).toEqual({ source: 'missing', seats: 0, states: 0, handoffs: 0 });
     expect(Number.isNaN(Date.parse(status.asOf))).toBe(false);
   });
 
@@ -364,6 +367,73 @@ describe('board section', () => {
   });
 });
 
+describe('seats section', () => {
+  const botsDir = (options: UnifiedBusStatusOptions) => join(options.seats!.home!, '.phantom', 'bots');
+  const seatRecord = { id: 'helper', kind: 'devin-bot', displayName: 'helper',
+    participantId: 'atlas', capabilities: ['code'], quota: { source: 'none' } };
+  const handoffRecord = { schema: 'phantom-bot-handoff.v1', handoffId: 'h-1', seatId: 'helper',
+    work: { kind: 'bus-claim', ref: 'repo:a/b' }, done: 'unknown', left: 'unknown',
+    branch: null, pr: null, createdAt: '2026-01-01T00:00:00.000Z' };
+
+  it('counts roster, state and journal rows and never creates the store', () => {
+    const options = setup();
+    const dir = botsDir(options);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'seats.json'), JSON.stringify({ schema: 'phantom-bot-seats.v1', seats: [seatRecord] }));
+    writeFileSync(join(dir, 'seat-state.json'), JSON.stringify({ helper: { state: 'draining', since: '2026-01-01T00:00:00.000Z', exhaustedReset: null } }));
+    writeFileSync(join(dir, 'handoffs.jsonl'), JSON.stringify(handoffRecord) + '\n');
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.seats).toEqual({ source: 'available', seats: 1, states: 1, handoffs: 1 });
+    expect(status.store.source).toBe('missing');
+
+    // Read-only: a fresh probe over a never-written home reports missing and
+    // leaves no bots directory behind.
+    const fresh = setup();
+    expect(readUnifiedBusStatus(fresh).seats).toEqual({ source: 'missing', seats: 0, states: 0, handoffs: 0 });
+    expect(existsSync(join(fresh.seats!.home!, '.phantom'))).toBe(false);
+  });
+
+  it('keeps readable files counted while a corrupt roster degrades the section', () => {
+    const options = setup();
+    const dir = botsDir(options);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'seats.json'), '{not json', { mode: 0o600 });
+    writeFileSync(join(dir, 'seat-state.json'), JSON.stringify({ helper: {} }));
+    writeFileSync(join(dir, 'handoffs.jsonl'), JSON.stringify(handoffRecord) + '\n');
+
+    const status = readUnifiedBusStatus(options);
+    // The same corrupt roster that makes planSeatHandoffs throw is named
+    // here; the two healthy files still report their real counts.
+    expect(status.seats).toEqual({ source: 'unavailable', seats: null, states: 1, handoffs: 1 });
+    expect(status.feed.status).toBe('ok');
+  });
+
+  it('reports an unsafe bots path as unavailable with every count null', () => {
+    const options = setup();
+    mkdirSync(join(options.seats!.home!, '.phantom'), { recursive: true });
+    writeFileSync(join(options.seats!.home!, '.phantom', 'bots'), 'not a directory', { mode: 0o600 });
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.seats).toEqual({ source: 'unavailable', seats: null, states: null, handoffs: null });
+    expect(status.store.source).toBe('missing');
+  });
+
+  it('nulls only the file whose contents the snapshot cannot use', () => {
+    const options = setup();
+    const dir = botsDir(options);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'seats.json'), JSON.stringify({ schema: 'phantom-bot-seats.v1', seats: [seatRecord] }));
+    // `null` parses as JSON but snapshot() cannot index it by seat id — the
+    // same failure that makes the plan read throw.
+    writeFileSync(join(dir, 'seat-state.json'), 'null', { mode: 0o600 });
+    writeFileSync(join(dir, 'handoffs.jsonl'), 'null\n' + JSON.stringify(handoffRecord) + '\n');
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.seats).toEqual({ source: 'unavailable', seats: 1, states: null, handoffs: null });
+  });
+});
+
 describe('phm agents bus status', () => {
   it('prints one honest line per section in human mode and the object as JSON', async () => {
     const options = setup();
@@ -383,6 +453,7 @@ describe('phm agents bus status', () => {
     expect(json.ownerChat).toEqual({ source: 'missing', receipts: 0 });
     expect(json.board).toEqual({ source: 'missing', threads: 0, tasks: 0,
       pendingDeliveries: 0, claims: 'readable' });
+    expect(json.seats).toEqual({ source: 'missing', seats: 0, states: 0, handoffs: 0 });
 
     const text: string[] = [];
     expect(await runAgentsBusUnified(['status', '--root', options.root!], t => text.push(t), () => {}, {})).toBe(0);
@@ -394,6 +465,7 @@ describe('phm agents bus status', () => {
     expect(lines.join('\n')).toContain('mailbox missing pending=0');
     expect(lines.join('\n')).toContain('ownerChat missing receipts=0');
     expect(lines.join('\n')).toContain('board missing threads=0 tasks=0 pending=0 claims=readable');
+    expect(lines.join('\n')).toContain('seats missing seats=0 states=0 handoffs=0');
     expect(lines.join('\n')).toContain('wakes missing hints=0 truncated=false');
   });
 });
