@@ -29,6 +29,8 @@ import type { LaneFacts } from './autofill-lanes.js';
 import { gapLaneRoom, GAP_LANE_ORDER, pickPacedLane, type GapLaneRoom } from './gap-lane-room.js';
 import { aheadWords, type PaceVerdict } from './pace-verdict.js';
 import { readFleetQueue } from './runs-parked-queue.js';
+import { readSupplyRank } from './supply-floor.js';
+import { jobFamily } from './slot-yield.js';
 
 export const JOB_GAPS_SCHEMA = 'jobs.gaps.v1';
 export const MAX_GAPS_PER_JOB = 12;
@@ -48,7 +50,7 @@ const WHY_MAX = 240;
 const SAME_WORK = 0.6;
 const MERGE_WINDOW_DAYS = 14;
 
-export type GapDropReason = 'open-idea' | 'queued' | 'ingested' | 'recent-merge' | 'duplicate-gap' | 'proposed-24h' | 'not-actionable' | 'likely-done';
+export type GapDropReason = 'open-idea' | 'queued' | 'ingested' | 'recent-merge' | 'duplicate-gap' | 'proposed-24h' | 'not-actionable' | 'likely-done' | 'stopped-family';
 /** Where a gap came from: a no-change job, or a job that finished with a PR. */
 export type GapSource = 'no-change' | 'published';
 export interface GapCandidate { title: string; repo: string | null; sourceJob: string; why: string; /** Absent on reports written before published jobs were read: no-change. */ source?: GapSource }
@@ -72,7 +74,8 @@ export interface GapQueueInputs {
 export async function readGapQueueInputs(runsDir: string, room: GapLaneRoom | null): Promise<GapQueueInputs> {
   const q = await readFleetQueue({ runsDir }).catch(() => null);
   const readyRows = q && q.sources.ready !== 'degraded' ? q.ready : null;
-  const parkedRows = room?.stuck ?? 0;
+  const deadRows = room?.live && q ? q.byLane.filter(row => !room.live!.has(row.lane)).reduce((sum, row) => sum + row.ready, 0) : 0;
+  const parkedRows = (room?.stuck ?? 0) + deadRows;
   const launchableRows = readyRows === null ? null : Math.max(0, readyRows - parkedRows);
   return { readyRows, parkedRows, launchableRows, limit: DROP_JOB_QUEUE_LIMIT, lanesSource: room ? 'lane readings' : 'unavailable', full: launchableRows !== null && launchableRows >= DROP_JOB_QUEUE_LIMIT };
 }
@@ -411,6 +414,14 @@ export async function readJobGaps(hours: number, opts: { propose?: boolean } & J
     if (hit) report.dropped.push(hit);
     else if (twin) report.dropped.push({ ...gap, reason: 'duplicate-gap', matched: twin.title });
     else report.candidates.push(gap);
+  }
+  if (opts.propose) {
+    const rank = await readSupplyRank(runsDir, now);
+    const score = (g: GapCandidate) => rank({ id: `RQ-PHX-${gapJobId(g.title)}`, family: jobFamily(g.sourceJob) });
+    report.candidates = report.candidates.filter(g => {
+      if (score(g) !== null) return true;
+      report.dropped.push({ ...g, reason: 'stopped-family', matched: 'stopped, retired or family yield below 25%' }); return false;
+    }).sort((a, b) => score(b)! - score(a)!);
   }
   for (const c of report.candidates) report.bySource[c.source ?? 'no-change']++;
   if (opts.propose) {

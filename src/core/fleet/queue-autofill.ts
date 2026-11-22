@@ -15,7 +15,7 @@ import type { GenerationDecision } from '../queue/generator-yield.js';
 export const QUEUE_AUTOFILL_SCHEMA = 'queue.autofill.v1' as const;
 
 /** `goal` is the plain task; `prompt` is what the queue gets: the Step-0 line, the ship-partial rule, then the goal. */
-export interface AutofillDraft { id: string; repo: string; tier: string; goal: string; prompt: string; acceptance: string; why: string; source: AutofillSource }
+export interface AutofillDraft { id: string; repo: string; tier: string; goal: string; prompt: string; acceptance: string; why: string; source: AutofillSource; family?: string; yield?: number }
 export interface AutofillSkip { goal: string; reason: string }
 export interface QueueAutofillReport {
   schema: typeof QUEUE_AUTOFILL_SCHEMA;
@@ -48,6 +48,8 @@ export interface AutofillInput {
   shippedIdeas?: readonly string[];
   /** Job families `phm jobs empty --by-family` marks `stop`; their candidates are skipped. */
   stoppedFamilies?: ReadonlySet<string>;
+  /** PRs per launch; null refuses a stopped, retired or low-yield candidate. */
+  candidateRank?: (candidate: AutofillCandidate) => number | null;
   /** Declared lane capabilities that replace the built-in list (tests, live config). */
   capabilities?: LaneCapabilityOverrides;
 }
@@ -74,16 +76,19 @@ export function planAutofill(input: AutofillInput): QueueAutofillReport {
   const drafted: AutofillDraft[] = [];
   for (const goal of input.shippedIdeas ?? []) trace.push({ job: `idea-${titleHash(goal)}`, src: 'autofill:idea', event: 'rejected', reason: 'already_queued_or_completed' });
   for (const goal of input.proposed.droppedGoals ?? []) trace.push({ job: `bet-${titleHash(goal)}`, src: 'autofill:bet', event: 'rejected', reason: 'already_completed' });
-  for (const c of [...(input.first ?? []), ...input.proposed.proposals.map(betCandidate)]) {
+  const candidates = [...(input.first ?? []), ...input.proposed.proposals.map(betCandidate)];
+  if (input.candidateRank) candidates.sort((a, b) => (input.candidateRank!(b) ?? -2) - (input.candidateRank!(a) ?? -2));
+  for (const c of candidates) {
     const reject = (reason: GenerationDecision['reason']) => trace.push({ job: c.id, src: `autofill:${c.source}`, event: 'rejected', reason });
     const queuedAs = ids.has(c.id) ? c.id : hashes.get(titleHash(c.goal));
     if (queuedAs) { reject('duplicate'); skipped.push({ goal: clip(c.goal), reason: `Already queued as ${queuedAs}.` }); continue; }
+    if (input.candidateRank?.(c) === null) { reject('stopped_family'); skipped.push({ goal: clip(c.goal), reason: 'Stopped, retired or family yield below 25% after four launches.' }); continue; }
     if (input.stoppedFamilies?.has(c.family)) { reject('stopped_family'); skipped.push({ goal: clip(c.goal), reason: `Family ${c.family} is stopped: most of its jobs end empty.` }); continue; }
     // A lane declared to lack a capability (claude has no gh) is never handed a job that needs it; unknown is not a refusal.
     const lacks = laneLacks(lane, inferRequiredCapabilities(`${c.goal}\n${c.acceptance}`), false, input.capabilities);
     if (lacks) { reject('missing_capability'); skipped.push({ goal: clip(c.goal), reason: `Lane ${lane} cannot use ${lacks}, and this job needs it.` }); continue; }
     if (drafted.length >= gap) break;
-    drafted.push({ id: c.id, repo: c.repo, tier: 'work', goal: c.goal, prompt: stepZeroPrompt(c.goal), acceptance: c.acceptance, why: c.why, source: c.source });
+    drafted.push({ id: c.id, repo: c.repo, tier: 'work', goal: c.goal, prompt: stepZeroPrompt(c.goal), acceptance: c.acceptance, why: c.why, source: c.source, family: c.family, yield: input.candidateRank?.(c) ?? undefined });
     trace.push({ job: c.id, src: `autofill:${c.source}`, event: 'drafted' });
     ids.add(c.id); hashes.set(titleHash(c.goal), c.id);
   }

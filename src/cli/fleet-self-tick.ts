@@ -277,11 +277,16 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     try {
       const { runAutofillTick } = await import('../core/fleet/autofill-run.js');
       const { HELP_ENTRIES } = await import('./help.js');
-      return await runAutofillTick({
+      const options = {
         runsDir: root, apply, now, root: process.cwd(), entries: HELP_ENTRIES,
         readLanes: async () => (await import('../core/fleet/live-lane-facts.js')).readLiveLaneFacts(root),
         ...deps.autofill,
-      });
+      };
+      const view = await options.readLanes().catch(() => null);
+      const supply = await (await import('../core/fleet/supply-floor.js')).runSupplyFloor(options, view);
+      for (const row of supply) if (!json) output(row.line);
+      return { ...await runAutofillTick({ ...options, readLanes: async () => view && ({ lanes: view.lanes.map(f => ({ ...f,
+        queued: f.queued === null ? null : f.queued + (supply.find(row => row.lane === f.lane)?.added ?? 0) })) }) }), supply };
     } catch (error) {
       return { reason: 'autofill failed', error: error instanceof Error ? error.message.slice(0, 120) : 'unknown error' };
     }

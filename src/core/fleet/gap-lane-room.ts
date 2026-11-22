@@ -15,6 +15,7 @@ export interface GapLaneOpen { lane: string; free: number; running: number; targ
 /** A lane with queued rows that cannot launch yet. */
 export interface GapLaneWaiting { lane: string; rows: number; why: 'held' | 'out of usage' | 'no free slot'; backAt: string | null }
 export interface GapLaneRoom {
+  live?: ReadonlySet<string>;
   open: GapLaneOpen[];
   waiting: GapLaneWaiting[];
   /** Queued rows that cannot launch now (the sum of `waiting`); the queue-full check subtracts them. */
@@ -25,7 +26,7 @@ export interface GapLaneRoom {
 export const GAP_LANE_ORDER = ['claude', 'codex-local', 'codex-personal'] as const;
 
 export function gapLaneRoom(lanes: readonly LaneFacts[], nowMs: number): GapLaneRoom {
-  const room: GapLaneRoom = { open: [], waiting: [], stuck: 0 };
+  const room: GapLaneRoom = { open: [], waiting: [], stuck: 0, live: new Set(lanes.map(f => f.lane)) };
   for (const f of lanes) {
     const spent = f.remainingPct !== null && 100 - f.remainingPct >= POOL_USED_UP_PCT;
     const back = f.resetAt ? Date.parse(f.resetAt) : NaN;
@@ -82,7 +83,7 @@ export function pickPacedLane(room: GapLaneRoom, needsGh: boolean, pace: Readonl
   if (!pace || pace.size === 0) return { lane: plain, heldWhy: null, from: null };
   const order = needsGh ? ['codex-personal'] : [...GAP_LANE_ORDER];
   const open = order.filter(lane => room.open.some(o => o.lane === lane && o.free > 0));
-  const ahead = open.filter(lane => pace.get(lane)?.state === 'ahead');
+  const ahead = open.filter(lane => pace.get(lane)?.state === 'ahead' || pace.get(lane)?.verdict === 'over');
   const usable = open.filter(lane => !ahead.includes(lane));
   const rank = (lane: string): number => (pace.get(lane)?.state === 'behind' ? 0 : 1);
   usable.sort((a, b) => rank(a) - rank(b));
