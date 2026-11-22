@@ -2,7 +2,8 @@
 import { performance } from 'node:perf_hooks';
 import { isAbsolute } from 'node:path';
 import { BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxPage } from './bus-inbox.js';
-import { BUS_PRIORITIES, type BusEnvelope, type BusPriority } from './bus-envelope.js';
+import { BUS_PRIORITIES, BUS_PROTOCOL_KINDS, isTopicPattern, protocolOf, topicMatches,
+  type BusEnvelope, type BusPriority, type BusProtocolKind } from './bus-envelope.js';
 import { agentAddressMatcher, agentPendingAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
 import { busBodyJobMatch, busReadContains, busReadContainsMatch, labelIdentityOf } from '../agents/bus-unified.js';
 import { busBodyThread } from '../agents/bus-v2-schema.js';
@@ -77,6 +78,34 @@ export interface BusFollowRequest {
    * text, validated by `busReadContains`; checkpoints still advance past
    * filtered rows exactly like every other filter. */
   contains?: string;
+  /** Optional exact envelope-id filter: only the receipt carrying this id
+   * emits — the same exact, case-sensitive match `comms bus
+   * read|watch --id` and `fleet_bus_inbox`'s `id` apply. Ids are transport
+   * data, never authenticated identity; checkpoints still advance past
+   * filtered rows exactly like every other filter. */
+  id?: string;
+  /** Optional reply-correlation filter: only envelopes whose object body
+   * carries `inReplyTo` equal to this id emit — the same own-property,
+   * case-sensitive match `comms bus read|watch --in-reply-to` and
+   * `fleet_bus_inbox`'s `inReplyTo` apply. An application convention, not
+   * an envelope field or authenticated identity; checkpoints still advance
+   * past filtered rows exactly like every other filter. */
+  inReplyTo?: string;
+  /** Optional protocol-v1 body-kind filter: only envelopes whose body
+   * carries `protocol.kind` equal to this kind emit — the same
+   * `protocolOf(body)?.kind` match `comms bus read|watch --kind` and
+   * `fleet_bus_inbox`'s `kind` apply. Bodies without a `protocol` object
+   * never match; checkpoints still advance past filtered rows exactly like
+   * every other filter. */
+  kind?: BusProtocolKind;
+  /** Optional protocol-v1 topic filter: only envelopes whose body carries
+   * `protocol.topic` matching this name or namespace prefix emit — the same
+   * `topicMatches` rule `comms bus read|watch --topic` and `fleet_bus_inbox`'s
+   * `topic` apply, so `fleet.*` matches `fleet.deploy` but never a
+   * malformed topic. Bodies without a protocol topic never match;
+   * checkpoints still advance past filtered rows exactly like every other
+   * filter. */
+  topic?: string;
   intervalMs?: number;
   /** Selects an existing local store; never creates or mutates inbox files. */
   root?: string;
@@ -93,6 +122,10 @@ export function validBusFollowRequest(request: BusFollowRequest): boolean {
     (request.thread === undefined || label(request.thread)) &&
     (request.since === undefined || (Number.isSafeInteger(request.since) && request.since >= 0)) &&
     busReadContains(request.contains) !== null &&
+    (request.id === undefined || label(request.id)) &&
+    (request.inReplyTo === undefined || label(request.inReplyTo)) &&
+    (request.kind === undefined || (BUS_PROTOCOL_KINDS as readonly string[]).includes(request.kind)) &&
+    (request.topic === undefined || isTopicPattern(request.topic)) &&
     (request.intervalMs === undefined || (Number.isSafeInteger(request.intervalMs) &&
       request.intervalMs >= BUS_FOLLOW_MIN_INTERVAL_MS && request.intervalMs <= BUS_FOLLOW_MAX_INTERVAL_MS)) &&
     (request.root === undefined || (isAbsolute(request.root) && !request.root.includes('\0')));
@@ -187,10 +220,18 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
       let accepted = true;
       for (const row of page.messages) {
         if (!addressedTo(row.envelope.to, row.envelope.from)) continue;
+        if (request.id !== undefined && row.envelope.id !== request.id) continue;
+        if (request.inReplyTo !== undefined) {
+          const body = row.envelope.body;
+          if (body === null || typeof body !== 'object' || Array.isArray(body) ||
+            !Object.hasOwn(body, 'inReplyTo') || body.inReplyTo !== request.inReplyTo) continue;
+        }
         if (request.job !== undefined && !busBodyJobMatch(row.envelope.body, request.job)) continue;
         if (fromMatch !== undefined && !fromMatch(row.envelope.from)) continue;
         if (excludeFromMatch !== undefined && excludeFromMatch(row.envelope.from)) continue;
         if (request.priority !== undefined && row.envelope.priority !== request.priority) continue;
+        if (request.kind !== undefined && protocolOf(row.envelope.body)?.kind !== request.kind) continue;
+        if (request.topic !== undefined && !topicMatches(request.topic, protocolOf(row.envelope.body)?.topic ?? '')) continue;
         if (request.thread !== undefined && busBodyThread(row.envelope.body) !== request.thread) continue;
         if (request.since !== undefined && row.receivedAt < request.since) continue;
         if (containsNeedle !== undefined && !busReadContainsMatch(row.envelope.body, containsNeedle)) continue;

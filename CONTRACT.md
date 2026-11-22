@@ -3400,7 +3400,15 @@ identity exactly as `readAgentInbox`/`readAgentChannel`
 `agent:` address, stable id or
 alias (exact match first, then lowercase), so a filter naming any spelling
 of one identity matches every label of that identity while an unresolvable
-label keeps exact-label matching. Claim tokens and `work.result`
+label keeps exact-label matching. `followBusStream` (`fleet bus-follow`)
+applies the same narrowing the bus page reads share, so the stream and
+`comms bus read|watch`/`fleet_bus_inbox` can never disagree about what a
+filter keeps: besides the routing, job, priority, thread, since and
+contains dimensions above it also takes `id`/`inReplyTo` — the exact
+envelope-id and own-property reply-correlation matches — and `kind`/`topic` —
+the protocol-v1 `protocolOf(body)?.kind` and `topicMatches` rules — each
+skipping non-matching rows while checkpoints still advance past them.
+Claim tokens and `work.result`
 queueId/receiptId never appear in a summary.
 `parseUnifiedInboxQuery` (`src/core/comms/unified-inbox-query.ts`) is the
 shared validation `GET /api/verse/comms/inbox`
