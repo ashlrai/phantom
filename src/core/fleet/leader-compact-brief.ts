@@ -16,6 +16,7 @@ import { parseReadyRows } from './ready-row-edit.js';
 import { parseStopFile, stopFilePath, stoppedFamilies } from './stop-file.js';
 import { readSource } from './runs-parked-queue.js';
 import { readHostFamilies } from './host-families.js';
+import { mergeLatencyLine } from './git-merge-latency.js';
 
 export const LEADER_COMPACT_FILE = 'queue/leader-brief.json';
 const clean = (s: string) => scrubSecrets(s).replace(/\s+/g, ' ').slice(0, 80);
@@ -60,7 +61,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     try { return JSON.parse(text ?? 'null'); } catch { sourceState(name, 'degraded', 'invalid JSON'); return null; }
   };
   const slotRoot = objectRow(json(slotsText, 'queue/slots.json')), slots = objectRow(slotRoot.lanes ?? slotRoot);
-  const latency = await compactMergeLatency(runsDir, tail?.text ?? '', now, json(prsText, 'fleet/open-prs.json'));
+  const latency = await compactMergeLatency(runsDir, tail?.text ?? '', now, json(prsText, 'fleet/open-prs.json'), sources['fleet/open-prs.json']?.state === 'missing');
   const rows = ledgerRows(tail?.text ?? '', now, 24).rows.sort((a, b) => a.at - b.at);
   const groups = new Map<string, Counts>(), seen = new Set<string>();
   for (const { row, id, at } of rows.filter(r => r.at >= now - 2 * 3_600_000)) {
@@ -106,6 +107,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     families: [...groups.values()].sort((a, b) => a.prs / Math.max(1, a.launches) - b.prs / Math.max(1, b.launches) || b.launches - a.launches || a.family.localeCompare(b.family)),
     attention, liveAt: typeof live?.generatedAt === 'string' ? clean(live.generatedAt) : null, main: (guardian ?? []).map(g => ({ repo: clean(g.repo), state: g.state, stale: g.stale })),
     medianOpenToMergeSeconds: latency.seconds, mergeLatencySource: latency.source, mergeLatencyWhy: latency.why,
+    mergeLatency: latency,
     hostLoad: { ...hostLoad, families: hostLoad.families.slice(0, 5), omitted: hostLoad.omitted + Math.max(0, hostLoad.families.length - 5) },
     stopped: stops, omitted: 0,
   };
@@ -132,7 +134,7 @@ export function compactBriefLines(b: CompactLeaderBrief): string[] {
     ...b.families.slice(0, 2).map(f => `${f.family}: ${f.launches} launches, ${f.prs} PRs, ${f.merges} merges, ${f.empty} empty (2h)`),
     `Quiet/stuck: ${b.attention.map(j => j.id).join(', ') || (b.sources[LIVE_JOBS_FILE]?.state === 'healthy' ? 'none recorded' : 'unknown')}`,
     `Main: ${b.main.map(g => `${g.repo} ${g.state}${g.stale ? ' stale' : ''}`).join(', ') || 'unknown'}`,
-    `Median merge (24h): ${b.medianOpenToMergeSeconds ?? '?'}s (${b.mergeLatencySource ?? b.mergeLatencyWhy})`, `Stopped: ${b.sources.stops?.state === 'healthy' ? b.stopped.length : 'unknown'}; omitted: ${b.omitted}`,
+    mergeLatencyLine(b.mergeLatency), `Stopped: ${b.sources.stops?.state === 'healthy' ? b.stopped.length : 'unknown'}; omitted: ${b.omitted}`,
     `Sources: ${Object.values(b.sources).filter(s => s.state !== 'healthy').length} missing, degraded or bounded`];
   while (lines.length < 10) lines.push('No further data.');
   return lines;

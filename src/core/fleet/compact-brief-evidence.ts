@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { parseLedgerTs } from '../metrics/loop.js';
 import { ledgerEventName, ledgerPhase, ledgerPrUrl, ledgerRows } from './empty-cause.js';
 import { localTimestamp, readSource } from './runs-parked-queue.js';
+import { readGitMergeLatency } from './git-merge-latency.js';
 
 export const objectRow = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 export function dispatchTick(text: string, now: number): { running: Record<string, number>; why: string } {
@@ -19,7 +20,7 @@ export function dispatchTick(text: string, now: number): { running: Record<strin
   } catch { return { running: {}, why: 'no valid tick in the bounded log tail' }; }
 }
 
-export async function compactMergeLatency(root: string, ledger: string, now: number, prs: unknown) {
+export async function compactMergeLatency(root: string, ledger: string, now: number, prs: unknown, gitFallback = prs === null, repoRoot?: string) {
   const snapshot = (Array.isArray(prs) ? prs : []).map(value => objectRow(value)).filter(pr => pr.mergedAt && pr.createdAt)
     .map(pr => JSON.stringify({ ...pr, event: 'merged', ts: pr.mergedAt, briefSource: 'fleet/open-prs.json' }));
   const rows = ledgerRows([ledger, ...snapshot].join('\n'), now, 24 * 8, true).rows;
@@ -52,7 +53,12 @@ export async function compactMergeLatency(root: string, ledger: string, now: num
     if (start !== null && start <= end) { samples.push((end - start) / 1000); bases.add(basis); }
   }
   samples.sort((a, b) => a - b);
+  if (gitFallback) {
+    const git = await readGitMergeLatency(root, ledger, now, repoRoot);
+    if (git.paired || !samples.length) return { ...git, source: 'git', why: git.reason ?? `${git.paired} merged PRs in 24h from local git; bounded ledger and at most 200 publication files` };
+  }
   const middle = Math.floor(samples.length / 2);
-  return { seconds: samples.length ? Math.round(samples.length % 2 ? samples[middle]! : (samples[middle - 1]! + samples[middle]!) / 2) : null,
+  return { p90Seconds: samples[Math.ceil(samples.length * 0.9) - 1] ?? null, paired: samples.length, stillOpen: null, oldestOpenAgeSeconds: null,
+    seconds: samples.length ? Math.round(samples.length % 2 ? samples[middle]! : (samples[middle - 1]! + samples[middle]!) / 2) : null,
     source: samples.length ? [...bases].join('; ') : null, why: samples.length ? `${samples.length} merged PRs in 24h; at most 200 inspected` : 'no mergedAt paired with PR creation or publication evidence in the bounded ledger' };
 }

@@ -51,10 +51,12 @@ it('reads squash and merge PRs once from the default branch within 24h, using on
 });
 
 it('includes both window boundaries even across commits with skewed timestamps', () => {
+  commit('before window (#9)', '2026-11-20T17:59:59Z');
   commit('start (#10)', '2026-11-20T18:00:00Z');
   commit('skewed old date', '2026-11-19T12:00:00Z');
   commit('end (#11)', '2026-11-21T18:00:00Z');
   expect(readMergedPrFeed({ repoRoot, now }).prs.map(pr => pr.number)).toEqual([11, 10]);
+  expect(readMergedPrFeed({ repoRoot, now, since: now - 172_800_000 }).prs.map(pr => pr.number)).toEqual([11, 10, 9]);
 });
 
 it('distinguishes an empty window from missing refs, missing repositories, and shallow history', () => {
