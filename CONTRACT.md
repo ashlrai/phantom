@@ -500,10 +500,10 @@ History reads only the bounded 256 KiB regular-file tail, newest last, max three
 matching rows or null. `explainRoutes` adds nullable `fallback_chain` (non-fusion
 decisions only) and `fallback_used` (job receipts). See [gates and inert status](docs/ROUTING.md#failover-chains).
 
-`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?, revertedPrKeys?})`,
+`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?, revertedPrKeys?, mergeEvents?})`,
 `authorityRevertedPrKeys(evidence)`, `foldSpendCosts(text)`,
 `foldRouteDecisionWorkClasses(text)`, `foldRouteDecisions(text)`,
-`foldEmptyTags(text)`,
+`foldEmptyTags(text)`, `foldMergeEvents(text)`,
 `readLedgerFile(path, limit?)`,
 `readLedgerTail(path, maxBytes?)` and
 `readRouterOutcomes({runsDir?, lane?, ashlarDir?, authorityEvidence?})`,
@@ -570,7 +570,38 @@ naming jobs outside the jobs window never create outcomes. The tags read
 degrades independently: `RouterOutcomeRead.empty_tag_state` reports its
 health and `empty_tag_truncated` marks a cut tail; anything but `read`
 leaves every `empty_tag` null — unknown, never a guessed cause, and a
-recorded `unknown` tag stays distinct from missing evidence. `passk` is the
+recorded `unknown` tag stays distinct from missing evidence.
+`merge_queue` joins the same bound of `metrics/merge-events.jsonl` —
+the fleet merge-latency observation journal the host merge observer and
+`phm fleet merge-retry` append (src/cli/fleet-merge-latency.ts's closed
+event vocabulary: `opened`/`queued`/`checks_passed`/`conflict`/
+`recut_requested`/`retry_requested`/`retry_failed`/`merged`/`closed`/
+`auto_merge_enabled`/`auto_merge_disabled`/`eligible`/`blocked`/
+`check_observed`, keyed `repo`+`pr`). `foldMergeEvents` collapses the
+rows to per-PR `owner/repo#n` evidence — the same prKey shape
+`pullRequestKey` and `authorityRevertedPrKeys` produce — under the same
+validation the merge-latency reader applies: a `blocked` row needs a
+recorded in-vocabulary `reason` (`queue`/`required_checks`/`conflict`/
+`review`/`other`), a `check_observed` row a recorded `conclusion`
+(`success`/`failure`/`pending`, with `required` only as a boolean when
+present), and every type outside the state/terminal set
+(`auto_merge_*`/`merged`/`closed`) a parseable `at`; anything else is
+skipped, never guessed. The evidence records `events` (qualifying row
+count), `blocked_reasons` (distinct recorded blockers, first-seen
+order), `conflicts`, `check_failures` and `required_check_failures`
+(failed `check_observed` rows, split on recorded `required: true`),
+`retries`/`retry_failures` (distinct `at`+`head_sha` pairs, the sibling
+reader's replay-dedupe), `recuts` and `auto_merge` (the last recorded
+toggle in append order, `enabled`/`disabled`/`null`). The fold's
+`mergeEvents` option joins each outcome's `merge_queue` through the
+job's newest unambiguous canonical PR claim — the same claim rule the
+authority revert join applies, so a contested or foreign URL never
+resolves — and merge-events rows for PRs no outcome claims unambiguously
+join nothing and never create outcomes. The read degrades
+independently: `RouterOutcomeRead.merge_events_state` reports its
+health and `merge_events_truncated` marks a cut tail; anything but
+`read` leaves every `merge_queue` null — unknown, never a guessed
+queue history. `passk` is the
 lane+model's pass^k (`passPowK`) from the published `eval.lane-scores.v1`
 projection (`~/.ashlr/eval/passk/lane-scores.json`, `ASHLR_HOME` honored);
 it is `null` whenever the ledger lacks lane/model, the projection is

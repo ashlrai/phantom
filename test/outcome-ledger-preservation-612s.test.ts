@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   authorityRevertedPrKeys,
   foldEmptyTags,
+  foldMergeEvents,
   foldRouteDecisionWorkClasses,
   foldRouteDecisions,
   foldRouterOutcomes,
@@ -15,6 +16,7 @@ import {
   readLedgerTail,
   readRouterOutcomes,
   ROUTER_OUTCOME_LEDGER_LIMIT,
+  type MergeQueueEvidence,
   type RouterOutcomeEvidenceRow,
 } from '../src/core/router/outcomes.js';
 
@@ -52,6 +54,18 @@ function writeEmptyTags(root: string, rows: object[]): void {
   mkdirSync(join(root, 'metrics'), { recursive: true });
   writeFileSync(emptyTagsPath(root), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
 }
+
+const mergeEventsPath = (root: string) => join(root, 'metrics', 'merge-events.jsonl');
+
+function writeMergeEvents(root: string, rows: object[]): void {
+  mkdirSync(join(root, 'metrics'), { recursive: true });
+  writeFileSync(mergeEventsPath(root), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+}
+
+/** A merge-events.jsonl observation row in the fleet merge-latency shape (repo#pr keyed). */
+const mergeEvent = (pr: number, type: string, extra: Record<string, unknown> = {}): object => ({
+  repo: 'ashlrai/phantom', pr, type, at: '2026-11-21T00:00:00Z', ...extra,
+});
 
 /** A job.empty-tag.v1 row in the shape `phm jobs empty --record` appends (src/core/fleet/empty-tags.ts). */
 const emptyTag = (job: string, tag: string, extra: Record<string, unknown> = {}): object => ({
@@ -225,6 +239,7 @@ describe('router outcome ledger (612S preservation)', () => {
       market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
       market_rejected: null,
       handoff_trigger: null, handoff_lane: null, handoff_target: null,
+      merge_queue: null,
       passk: null,
     }]);
   });
@@ -1623,6 +1638,166 @@ describe('router outcome empty-tag join', () => {
     const result = await readRouterOutcomes({ runsDir: root });
     expect(result).toMatchObject({ state: 'read', empty_tag_state: 'read', empty_tag_truncated: true });
     expect(result.outcomes[0]?.empty_tag).toBeNull();
+  });
+});
+
+describe('router outcome merge-events join', () => {
+  it('folds merge-events rows to per-PR evidence under the merge-latency validation', () => {
+    const events = foldMergeEvents([
+      // Malformed and non-object rows never count.
+      'not json', '[1,2]', '42', '',
+      // Bad repo/pr/type shapes skip.
+      JSON.stringify({ repo: 'no-slash', pr: 1, type: 'queued', at: '2026-11-21T00:00:00Z' }),
+      JSON.stringify({ repo: 'a/b', pr: 0, type: 'queued', at: '2026-11-21T00:00:00Z' }),
+      JSON.stringify({ repo: 'a/b', pr: 1.5, type: 'queued', at: '2026-11-21T00:00:00Z' }),
+      JSON.stringify({ repo: 'a/b', pr: 1, type: 'sideways', at: '2026-11-21T00:00:00Z' }),
+      // blocked needs an in-vocabulary reason; check_observed a recorded
+      // conclusion and a boolean-or-absent required.
+      JSON.stringify({ repo: 'a/b', pr: 1, type: 'blocked', at: '2026-11-21T00:00:00Z' }),
+      JSON.stringify({ repo: 'a/b', pr: 1, type: 'blocked', reason: 'sideways', at: '2026-11-21T00:00:00Z' }),
+      JSON.stringify({ repo: 'a/b', pr: 1, type: 'check_observed', conclusion: 'green', at: '2026-11-21T00:00:00Z' }),
+      JSON.stringify({ repo: 'a/b', pr: 1, type: 'check_observed', conclusion: 'failure', required: 'yes', at: '2026-11-21T00:00:00Z' }),
+      // Every type outside the state/terminal set needs a parseable at.
+      JSON.stringify({ repo: 'a/b', pr: 1, type: 'queued' }),
+      JSON.stringify({ repo: 'a/b', pr: 1, type: 'queued', at: 'not a time' }),
+      // Untimed state/terminal rows still count as recorded observations;
+      // repo case canonicalizes to the same prKey pullRequestKey produces.
+      JSON.stringify({ repo: 'AshlrAI/Phantom', pr: 7, type: 'auto_merge_enabled' }),
+      JSON.stringify({ repo: 'AshlrAI/Phantom', pr: 7, type: 'auto_merge_disabled' }),
+      JSON.stringify({ repo: 'AshlrAI/Phantom', pr: 7, type: 'merged' }),
+      // The qualifying rows for PR 7.
+      ...[
+        mergeEvent(7, 'opened'),
+        mergeEvent(7, 'queued'),
+        mergeEvent(7, 'blocked', { reason: 'required_checks' }),
+        mergeEvent(7, 'blocked', { reason: 'review' }),
+        mergeEvent(7, 'blocked', { reason: 'required_checks' }),   // repeat reason: distinct once
+        mergeEvent(7, 'check_observed', { conclusion: 'failure', required: true }),
+        mergeEvent(7, 'check_observed', { conclusion: 'failure' }), // unrelated failure still counts
+        mergeEvent(7, 'check_observed', { conclusion: 'success', required: true }),
+        mergeEvent(7, 'conflict'),
+        mergeEvent(7, 'retry_requested', { head_sha: 'ABC123' }),
+        mergeEvent(7, 'retry_requested', { head_sha: 'abc123' }),   // same at+head: replay dedupes
+        mergeEvent(7, 'retry_requested', { head_sha: 'def456', at: '2026-11-21T01:00:00Z' }),
+        mergeEvent(7, 'retry_failed', { head_sha: 'abc123' }),
+        mergeEvent(7, 'recut_requested', { head_sha: 'abc123' }),
+        mergeEvent(7, 'recut_requested', { head_sha: 'abc123' }),   // recuts count rows, not dedupe
+      ],
+    ].map(r => typeof r === 'string' ? r : JSON.stringify(r)).join('\n'));
+    // The three untimed terminals plus the fifteen timed rows for PR 7 qualify.
+    expect(events.get('ashlrai/phantom#7')).toEqual({
+      events: 18,
+      blocked_reasons: ['required_checks', 'review'],
+      conflicts: 1,
+      check_failures: 2,
+      required_check_failures: 1,
+      retries: 2,
+      retry_failures: 1,
+      recuts: 2,
+      auto_merge: 'disabled',
+    } satisfies MergeQueueEvidence);
+    expect(events.size).toBe(1);
+  });
+
+  it('joins merge_queue through each job\'s newest unambiguous canonical PR claim only', () => {
+    const mq: MergeQueueEvidence = {
+      events: 3, blocked_reasons: ['queue'], conflicts: 0, check_failures: 0,
+      required_check_failures: 0, retries: 0, retry_failures: 0, recuts: 0, auto_merge: null,
+    };
+    const mqNewer: MergeQueueEvidence = { ...mq, events: 9, blocked_reasons: ['conflict'] };
+    const events = new Map([
+      ['ashlrai/phantom#42', mq],
+      ['ashlrai/phantom#77', mqNewer],
+    ]);
+    const fold = foldRouterOutcomes([
+      // J1 claims PR 42 unambiguously -> joins.
+      '{"job":"J1","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42","ts":"2026-11-01T00:00:00Z"}',
+      // J2 and J3 contest PR 43 -> ambiguous, never joins.
+      '{"job":"J2","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/43"}',
+      '{"job":"J3","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/43"}',
+      // J4's claim is not the canonical github.com pull shape -> never joins.
+      '{"job":"J4","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42/files"}',
+      // J5 claims PR 88 first, then PR 77 — the newest standing claim is
+      // what joins, so it picks up #77's evidence, not the earlier claim's.
+      '{"job":"J5","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/88"}',
+      '{"job":"J5","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/77","ts":"2026-11-02T00:00:00Z"}',
+      // J6 claims a PR with no recorded events -> merge_queue stays null.
+      '{"job":"J6","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/99"}',
+    ].join('\n'), { mergeEvents: events });
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')?.merge_queue).toEqual(mq);
+    expect(byId.get('J1')?.merge_queue).not.toBe(mq); // defensive copy, not the map's object
+    expect(byId.get('J5')?.merge_queue).toEqual(mqNewer);
+    for (const id of ['J2', 'J3', 'J4', 'J6']) {
+      expect(byId.get(id)?.merge_queue).toBeNull();
+    }
+    // Absent option: no join at all.
+    const bare = foldRouterOutcomes('{"job":"J1","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42"}');
+    expect(bare.outcomes[0]?.merge_queue).toBeNull();
+  });
+
+  it('joins recorded merge-queue evidence onto outcomes and never creates outcomes for event-only PRs', async () => {
+    const root = runsDir([
+      '{"job":"J1","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J2","lane":"alpha","phase":"CLOSED","pr_url":"https://github.com/ashlrai/phantom/pull/43","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J3","lane":"beta","phase":"VERIFIED","ts":"2026-11-01T00:00:00Z"}',
+    ].join('\n'));
+    writeMergeEvents(root, [
+      mergeEvent(42, 'queued'),
+      mergeEvent(42, 'blocked', { reason: 'required_checks' }),
+      mergeEvent(42, 'check_observed', { conclusion: 'failure', required: true }),
+      mergeEvent(42, 'merged'),
+      mergeEvent(43, 'conflict'),
+      mergeEvent(43, 'auto_merge_enabled'),
+      // PR 44 has observations but no jobs outcome claims it: joins nothing.
+      mergeEvent(44, 'blocked', { reason: 'review' }),
+    ]);
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'read', merge_events_state: 'read', merge_events_truncated: false });
+    const byId = new Map(result.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')?.merge_queue).toEqual({
+      events: 4, blocked_reasons: ['required_checks'], conflicts: 0,
+      check_failures: 1, required_check_failures: 1,
+      retries: 0, retry_failures: 0, recuts: 0, auto_merge: null,
+    });
+    expect(byId.get('J2')?.merge_queue).toEqual({
+      events: 2, blocked_reasons: [], conflicts: 1,
+      check_failures: 0, required_check_failures: 0,
+      retries: 0, retry_failures: 0, recuts: 0, auto_merge: 'enabled',
+    });
+    // No claim, no join — unknown stays null, never a guessed queue history.
+    expect(byId.get('J3')?.merge_queue).toBeNull();
+    expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3']);
+  });
+
+  it('keeps merge_queue null and reports merge_events_state when the ledger is absent or refused', async () => {
+    const missing = await readRouterOutcomes({ runsDir: runsDir('{"job":"J1","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42"}\n') });
+    expect(missing).toMatchObject({ state: 'read', merge_events_state: 'missing', merge_events_truncated: false });
+    expect(missing.outcomes[0]?.merge_queue).toBeNull();
+
+    const root = runsDir('{"job":"J1","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42"}\n');
+    const target = join(root, 'real-merge-events.jsonl');
+    writeFileSync(target, JSON.stringify(mergeEvent(42, 'queued')) + '\n');
+    symlinkSync(target, mergeEventsPath(root));
+    const linked = await readRouterOutcomes({ runsDir: root });
+    expect(linked).toMatchObject({ state: 'read', merge_events_state: 'unreadable' });
+    expect(linked.outcomes[0]?.merge_queue).toBeNull();
+  });
+
+  it('still reports merge-events health when the jobs ledger itself is missing', async () => {
+    const root = runsDir();
+    writeMergeEvents(root, [mergeEvent(42, 'queued')]);
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'missing', merge_events_state: 'read', merge_events_truncated: false, outcomes: [] });
+  });
+
+  it('flags a cut merge-events tail so joined evidence reads as newest-bytes coverage', async () => {
+    const root = runsDir('{"job":"J1","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42"}\n');
+    writeFileSync(mergeEventsPath(root), '');
+    truncateSync(mergeEventsPath(root), ROUTER_OUTCOME_LEDGER_LIMIT + 1);
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'read', merge_events_state: 'read', merge_events_truncated: true });
+    expect(result.outcomes[0]?.merge_queue).toBeNull();
   });
 });
 

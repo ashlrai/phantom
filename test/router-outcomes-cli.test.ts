@@ -46,6 +46,7 @@ function outcome(job_id: string, over: Partial<RouterOutcome> = {}): RouterOutco
     market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
     market_rejected: null,
     handoff_trigger: null, handoff_lane: null, handoff_target: null,
+    merge_queue: null,
     passk: null,
     ...over,
   };
@@ -57,6 +58,7 @@ function read(over: Partial<RouterOutcomeRead> = {}): RouterOutcomeRead {
     spend_state: 'missing', spend_truncated: false,
     market_state: 'missing', market_truncated: false,
     empty_tag_state: 'missing', empty_tag_truncated: false,
+    merge_events_state: 'missing', merge_events_truncated: false,
     outcomes: [], malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0, session_rows: 0, truncated: false,
     ...over,
   };
@@ -166,12 +168,32 @@ describe('phm router outcomes', () => {
       malformed_rows: 3, unattached_rows: 1, ambiguous_urls: 2, session_rows: 4,
     }), 100);
     const lines = routerOutcomeLines(report);
-    expect(lines[0]).toBe('router outcomes state=read eval=missing spend=missing market=missing empty_tags=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2 session_rows=4');
+    expect(lines[0]).toBe('router outcomes state=read eval=missing spend=missing market=missing empty_tags=missing merge_events=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2 session_rows=4');
     expect(lines[1]).toBe(`ledger ${report.path}`);
     expect(lines[3]).toContain('lane_hint_blocked_by=[quota_exhausted,saturated] market_lane=beta market_preferred=alpha market_override=resource_fit market_reasons=[no_runnable_lane,global_admission] market_rejected=[alpha:quota_exhausted+held;beta]');
     expect(lines[3]).toContain('handoff_trigger=rate-limit handoff_lane=codex-personal handoff_target=unknown');
     expect(lines[2]).toContain('B lane=unknown model=unknown tier=unknown work_class=docs lane_hint=unknown lane_override=unknown merged=true reverted=unknown');
-    expect(lines[2]).toContain('task_outcome=unknown skipped=unknown skip_reason=unknown skip_code=unknown deferred=unknown defer_reason=unknown defer_repeat_of=unknown noop=unknown noop_reason=unknown noop_repeat_of=unknown lane_hint_blocked_by=unknown market_lane=unknown market_preferred=unknown market_override=unknown market_reasons=unknown market_rejected=unknown handoff_trigger=unknown handoff_lane=unknown handoff_target=unknown');
+    expect(lines[2]).toContain('task_outcome=unknown skipped=unknown skip_reason=unknown skip_code=unknown deferred=unknown defer_reason=unknown defer_repeat_of=unknown noop=unknown noop_reason=unknown noop_repeat_of=unknown lane_hint_blocked_by=unknown market_lane=unknown market_preferred=unknown market_override=unknown market_reasons=unknown market_rejected=unknown handoff_trigger=unknown handoff_lane=unknown handoff_target=unknown merge_queue=unknown');
+  });
+
+  it('renders merge_queue evidence and reports merge-events ledger health', async () => {
+    const mq = {
+      events: 5, blocked_reasons: ['required_checks', 'conflict'], conflicts: 1,
+      check_failures: 2, required_check_failures: 1, retries: 1, retry_failures: 0,
+      recuts: 0, auto_merge: 'enabled' as const,
+    };
+    const report = buildRouterOutcomesReport(read({
+      outcomes: [outcome('A', { merge_queue: mq })], merge_events_state: 'read', merge_events_truncated: true,
+    }), 100);
+    expect(report).toMatchObject({ merge_events_state: 'read', merge_events_truncated: true });
+    const lines = routerOutcomeLines(report);
+    expect(lines[0]).toContain('merge_events=read');
+    expect(lines).toContain('merge-event coverage: retained tail only; merge_queue joins cover the newest bytes');
+    expect(lines[3]).toContain('merge_queue=events:5,blocked:[required_checks,conflict],conflicts:1,check_failures:2,required_check_failures:1,retries:1,retry_failures:0,recuts:0,auto_merge:enabled');
+
+    const h = harness(canned(read({ outcomes: [outcome('A')], merge_events_state: 'unreadable' })));
+    expect(await cmdRouterOutcomes(['--json'], h.readFn)).toBe(0);
+    expect(JSON.parse(h.out())).toMatchObject({ merge_events_state: 'unreadable', merge_events_truncated: false });
   });
 
   it('surfaces truncated coverage in JSON and text without changing exit 0', async () => {

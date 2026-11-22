@@ -157,6 +157,31 @@ export interface RouterWeightEvidence {
    */
   handoff_known: number;
   handoff_triggers: { trigger: string; jobs: number }[] | null;
+  /**
+   * Group outcomes (the known cohort) carrying recorded merge-queue
+   * evidence — the merge-events.jsonl observations joined as
+   * `merge_queue` for the job's standing PR. `merge_queue_blocked_known`
+   * counts those whose recorded merge queue blocked the PR at least
+   * once, and `merge_queue_blocked_reasons` tallies the distinct
+   * recorded blocker codes over the same cohort — each job contributes
+   * each reason once — most jobs first, so a lane whose held merges
+   * rest on queue friction shows the blocking mix (`required_checks`,
+   * `review`, `conflict`, `queue`, `other`) behind its merge latency.
+   * `merge_queue_check_failures_known`, `merge_queue_conflicts_known`,
+   * `merge_queue_retries_known` and `merge_queue_recuts_known` count the
+   * same cohort's outcomes whose PR recorded at least one failed check
+   * observation, merge conflict, merge-retry request or recut request —
+   * post-publish queue-side friction, advisory context like every other
+   * evidence field, never weight input. All stay 0 or null when no
+   * outcome recorded merge-queue evidence — never zero-filled means.
+   */
+  merge_queue_known: number;
+  merge_queue_blocked_known: number;
+  merge_queue_blocked_reasons: { reason: string; jobs: number }[] | null;
+  merge_queue_check_failures_known: number;
+  merge_queue_conflicts_known: number;
+  merge_queue_retries_known: number;
+  merge_queue_recuts_known: number;
 }
 
 export interface RouterWeightProposalOptions {
@@ -342,6 +367,32 @@ export interface RouterWeightProposalSet {
    * rate-limit share is counted in `unknown_handoffs`.
    */
   unknown_handoff_triggers: { trigger: string; jobs: number }[];
+  /**
+   * Jobs inside the unknown cohort carrying recorded merge-queue
+   * evidence — the merge-events.jsonl observations joined as
+   * `merge_queue` for the job's standing PR, so a job still awaiting
+   * its merge verdict reads with the queue-side history the fleet
+   * recorded for its PR. `unknown_merge_queue_blocked` counts those
+   * whose recorded merge queue blocked the PR at least once, and
+   * `unknown_merge_queue_blocked_reasons` tallies the distinct
+   * recorded blocker codes — each job contributes each reason once —
+   * most jobs first. `unknown_merge_queue_check_failures`,
+   * `unknown_merge_queue_conflicts`, `unknown_merge_queue_retries`
+   * and `unknown_merge_queue_recuts` count the same cohort's jobs
+   * whose PR recorded at least one failed check observation, merge
+   * conflict, merge-retry request or recut request. Queue-side
+   * diagnostic context like `unknown_market_reasons`: it explains
+   * what the merge queue was doing with the PR and never reduces
+   * `unknown_unresolved` — a job still awaiting a merge verdict
+   * stays unresolved however the queue treated it.
+   */
+  unknown_merge_queue: number;
+  unknown_merge_queue_blocked: number;
+  unknown_merge_queue_blocked_reasons: { reason: string; jobs: number }[];
+  unknown_merge_queue_check_failures: number;
+  unknown_merge_queue_conflicts: number;
+  unknown_merge_queue_retries: number;
+  unknown_merge_queue_recuts: number;
   unknown_unresolved: number;
   /**
    * Top recorded `usage_missing` labels across every folded outcome —
@@ -388,6 +439,13 @@ interface WeightEvidenceTally {
   rejectedReasons: Map<string, number>;
   handoff: number;
   handoffTriggers: Map<string, number>;
+  mergeQueue: number;
+  mergeQueueBlocked: number;
+  mergeQueueBlockedReasons: Map<string, number>;
+  mergeQueueCheckFailures: number;
+  mergeQueueConflicts: number;
+  mergeQueueRetries: number;
+  mergeQueueRecuts: number;
 }
 
 const freshTally = (): WeightEvidenceTally => ({
@@ -402,12 +460,17 @@ const freshTally = (): WeightEvidenceTally => ({
   laneOverrides: 0, overrideReasons: new Map(),
   marketRejected: 0, rejectedReasons: new Map(),
   handoff: 0, handoffTriggers: new Map(),
+  mergeQueue: 0, mergeQueueBlocked: 0, mergeQueueBlockedReasons: new Map(),
+  mergeQueueCheckFailures: 0, mergeQueueConflicts: 0, mergeQueueRetries: 0,
+  mergeQueueRecuts: 0,
 });
 
 /** Top recorded lane-hint blocking codes kept per group, most jobs first. */
 const MAX_BLOCKED_REASONS = 8;
 /** Top recorded market rejection codes kept per group, most jobs first. */
 const MAX_REJECTED_REASONS = 8;
+/** Top recorded merge-queue blocker codes kept per group, most jobs first. */
+const MAX_MERGE_QUEUE_REASONS = 8;
 
 /**
  * The batch-member task_outcome words that end the attempt without a
@@ -474,6 +537,17 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
         .map(([trigger, jobs]) => ({ trigger, jobs }))
         .sort((a, b) => b.jobs - a.jobs || a.trigger.localeCompare(b.trigger))
         .slice(0, MAX_HANDOFF_TRIGGERS),
+  merge_queue_known: t.mergeQueue,
+  merge_queue_blocked_known: t.mergeQueueBlocked,
+  merge_queue_blocked_reasons: t.mergeQueueBlocked === 0 ? null
+    : [...t.mergeQueueBlockedReasons.entries()]
+        .map(([reason, jobs]) => ({ reason, jobs }))
+        .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
+        .slice(0, MAX_MERGE_QUEUE_REASONS),
+  merge_queue_check_failures_known: t.mergeQueueCheckFailures,
+  merge_queue_conflicts_known: t.mergeQueueConflicts,
+  merge_queue_retries_known: t.mergeQueueRetries,
+  merge_queue_recuts_known: t.mergeQueueRecuts,
 });
 
 /**
@@ -523,6 +597,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   const marketReasons = new Map<string, number>();
   const marketRejectedReasons = new Map<string, number>();
   const handoffTriggersUnknown = new Map<string, number>();
+  const mergeQueueBlockedReasonsUnknown = new Map<string, number>();
   const usageMissing = new Map<string, number>();
   const usageSources = new Map<string, number>();
   let unknownSkipped = 0;
@@ -530,6 +605,12 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   let unknownNoop = 0;
   let unknownMarketRejected = 0;
   let unknownHandoffs = 0;
+  let unknownMergeQueue = 0;
+  let unknownMergeQueueBlocked = 0;
+  let unknownMergeQueueCheckFailures = 0;
+  let unknownMergeQueueConflicts = 0;
+  let unknownMergeQueueRetries = 0;
+  let unknownMergeQueueRecuts = 0;
   for (const o of outcomes) {
     // Usage provenance is capture evidence, not merge evidence: every folded
     // outcome tallies its recorded labels — classified or not.
@@ -626,6 +707,26 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
         handoffTriggersUnknown.set(o.handoff_trigger, (handoffTriggersUnknown.get(o.handoff_trigger) ?? 0) + 1);
         if (o.handoff_trigger === 'rate-limit') unknownHandoffs++;
       }
+      // The merge-queue join is queue-side diagnostic like the market
+      // verdicts: each job's standing PR carried recorded merge-events
+      // observations — blocked reasons, check failures, conflicts,
+      // retries, recuts — explaining what the merge queue was doing
+      // while the merge verdict stayed unrecorded. It never feeds the
+      // unresolved remainder: a job still awaiting a merge verdict
+      // stays unresolved however the queue treated its PR.
+      if (o.merge_queue !== null) {
+        unknownMergeQueue++;
+        if (o.merge_queue.blocked_reasons.length > 0) {
+          unknownMergeQueueBlocked++;
+          for (const reason of o.merge_queue.blocked_reasons) {
+            mergeQueueBlockedReasonsUnknown.set(reason, (mergeQueueBlockedReasonsUnknown.get(reason) ?? 0) + 1);
+          }
+        }
+        if (o.merge_queue.check_failures > 0) unknownMergeQueueCheckFailures++;
+        if (o.merge_queue.conflicts > 0) unknownMergeQueueConflicts++;
+        if (o.merge_queue.retries > 0) unknownMergeQueueRetries++;
+        if (o.merge_queue.recuts > 0) unknownMergeQueueRecuts++;
+      }
       if (!empty && !nonzeroExit && o.failure_class === null && !requeued && !declined && !deferred && !noop && o.handoff_trigger !== 'rate-limit') unknownUnresolved++;
       continue;
     }
@@ -681,6 +782,19 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
       t.handoff++;
       t.handoffTriggers.set(o.handoff_trigger, (t.handoffTriggers.get(o.handoff_trigger) ?? 0) + 1);
     }
+    if (o.merge_queue !== null) {
+      t.mergeQueue++;
+      if (o.merge_queue.blocked_reasons.length > 0) {
+        t.mergeQueueBlocked++;
+        for (const reason of o.merge_queue.blocked_reasons) {
+          t.mergeQueueBlockedReasons.set(reason, (t.mergeQueueBlockedReasons.get(reason) ?? 0) + 1);
+        }
+      }
+      if (o.merge_queue.check_failures > 0) t.mergeQueueCheckFailures++;
+      if (o.merge_queue.conflicts > 0) t.mergeQueueConflicts++;
+      if (o.merge_queue.retries > 0) t.mergeQueueRetries++;
+      if (o.merge_queue.recuts > 0) t.mergeQueueRecuts++;
+    }
     groups.set(key, g);
     known++;
   }
@@ -735,6 +849,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     .map(([trigger, jobs]) => ({ trigger, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.trigger.localeCompare(b.trigger))
     .slice(0, MAX_HANDOFF_TRIGGERS);
+  const topMergeQueueBlockedReasons = [...mergeQueueBlockedReasonsUnknown.entries()]
+    .map(([reason, jobs]) => ({ reason, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
+    .slice(0, 10);
   const topUsageMissing = [...usageMissing.entries()]
     .map(([usage_missing, jobs]) => ({ usage_missing, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.usage_missing.localeCompare(b.usage_missing))
@@ -755,6 +873,13 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     unknown_market_rejected_reasons: topMarketRejectedReasons,
     unknown_handoffs: unknownHandoffs,
     unknown_handoff_triggers: topHandoffTriggers,
+    unknown_merge_queue: unknownMergeQueue,
+    unknown_merge_queue_blocked: unknownMergeQueueBlocked,
+    unknown_merge_queue_blocked_reasons: topMergeQueueBlockedReasons,
+    unknown_merge_queue_check_failures: unknownMergeQueueCheckFailures,
+    unknown_merge_queue_conflicts: unknownMergeQueueConflicts,
+    unknown_merge_queue_retries: unknownMergeQueueRetries,
+    unknown_merge_queue_recuts: unknownMergeQueueRecuts,
     unknown_unresolved: unknownUnresolved,
     usage_missing: topUsageMissing, usage_sources: topUsageSources };
 }
@@ -785,6 +910,16 @@ export interface RouterWeightProposalReport {
   empty_tag_state: RouterOutcomeRead['empty_tag_state'];
   /** True when the empty-tags tail was cut; joined tags cover only the newest bytes. */
   empty_tag_truncated: boolean;
+  /**
+   * Health of the merge-events.jsonl tail behind merge_queue joins and
+   * the unknown_merge_queue_* tallies. Anything but 'read' means no
+   * merge-queue evidence joined — the tallies are then null (coverage
+   * unknown), never an empty list claiming no merge friction was
+   * recorded.
+   */
+  merge_events_state: RouterOutcomeRead['merge_events_state'];
+  /** True when the merge-events tail was cut; joined evidence covers only the newest bytes. */
+  merge_events_truncated: boolean;
   /** 'unavailable' when the ledger was not read; counts are then null, never zero. */
   status: 'proposed' | 'insufficient-evidence' | 'unavailable';
   bounds: { min_samples: number; max_shift: number };
@@ -899,6 +1034,32 @@ export interface RouterWeightProposalReport {
    * ledger was not read; empty when none recorded.
    */
   unknown_handoff_triggers: { trigger: string; jobs: number }[] | null;
+  /**
+   * Jobs inside the unknown cohort carrying recorded merge-queue
+   * evidence — see RouterWeightProposalSet. Queue-side diagnostic
+   * context only; never reduces unknown_unresolved. Null when the
+   * ledger was not read or the merge-events ledger was not read
+   * (merge-queue coverage unknown); 0 is a real measurement when the
+   * tail was read.
+   */
+  unknown_merge_queue: number | null;
+  /** Of unknown_merge_queue, jobs whose recorded merge queue blocked the PR at least once. */
+  unknown_merge_queue_blocked: number | null;
+  /**
+   * Top recorded merge-queue blocker codes inside the unknown cohort,
+   * by jobs — each job contributes each reason once. Null when the
+   * ledger was not read or merge-events was not read; empty when read
+   * but no unknown-cohort outcome carried a blocked reason.
+   */
+  unknown_merge_queue_blocked_reasons: { reason: string; jobs: number }[] | null;
+  /** Of unknown_merge_queue, jobs whose PR recorded at least one failed check observation. */
+  unknown_merge_queue_check_failures: number | null;
+  /** Of unknown_merge_queue, jobs whose PR recorded at least one merge conflict. */
+  unknown_merge_queue_conflicts: number | null;
+  /** Of unknown_merge_queue, jobs whose PR recorded at least one merge-retry request. */
+  unknown_merge_queue_retries: number | null;
+  /** Of unknown_merge_queue, jobs whose PR recorded at least one recut request. */
+  unknown_merge_queue_recuts: number | null;
   unknown_unresolved: number | null;
   /**
    * Top recorded `usage_missing` labels across every folded outcome —
@@ -941,6 +1102,7 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     source: ROUTER_WEIGHT_PROPOSAL_SOURCE, ledger: { state: read.state, path: read.path }, truncated: read.truncated,
     market_state: read.market_state, market_truncated: read.market_truncated,
     empty_tag_state: read.empty_tag_state, empty_tag_truncated: read.empty_tag_truncated,
+    merge_events_state: read.merge_events_state, merge_events_truncated: read.merge_events_truncated,
     controller_quality_state: (controller?.state ?? 'unreported') as RouterWeightProposalReport['controller_quality_state'],
     controller_quality: controller?.state === 'read' ? controller.receipts : null,
     controller_quality_invalid_rows: controller?.state === 'read' ? controller.invalid_rows : null,
@@ -953,6 +1115,10 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
       unknown_noop_reasons: null, unknown_market_reasons: null,
       unknown_market_rejected: null, unknown_market_rejected_reasons: null,
       unknown_handoffs: null, unknown_handoff_triggers: null,
+      unknown_merge_queue: null, unknown_merge_queue_blocked: null,
+      unknown_merge_queue_blocked_reasons: null,
+      unknown_merge_queue_check_failures: null, unknown_merge_queue_conflicts: null,
+      unknown_merge_queue_retries: null, unknown_merge_queue_recuts: null,
       unknown_unresolved: null,
       usage_missing: null, usage_sources: null, proposals: [] };
   }
@@ -986,6 +1152,18 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     // tallies are real whenever the jobs read succeeded.
     unknown_handoffs: set.unknown_handoffs,
     unknown_handoff_triggers: set.unknown_handoff_triggers,
+    // Merge-queue evidence joins through the same bounded
+    // merge-events.jsonl tail: anything but 'read' means no merge_queue
+    // joined, so the tallies would claim "no merge friction recorded"
+    // when they only know "merge-events unread" — report null, the same
+    // rule unknown_market_reasons and unknown_empty_tags use.
+    unknown_merge_queue: read.merge_events_state === 'read' ? set.unknown_merge_queue : null,
+    unknown_merge_queue_blocked: read.merge_events_state === 'read' ? set.unknown_merge_queue_blocked : null,
+    unknown_merge_queue_blocked_reasons: read.merge_events_state === 'read' ? set.unknown_merge_queue_blocked_reasons : null,
+    unknown_merge_queue_check_failures: read.merge_events_state === 'read' ? set.unknown_merge_queue_check_failures : null,
+    unknown_merge_queue_conflicts: read.merge_events_state === 'read' ? set.unknown_merge_queue_conflicts : null,
+    unknown_merge_queue_retries: read.merge_events_state === 'read' ? set.unknown_merge_queue_retries : null,
+    unknown_merge_queue_recuts: read.merge_events_state === 'read' ? set.unknown_merge_queue_recuts : null,
     unknown_unresolved: set.unknown_unresolved,
     usage_missing: set.usage_missing, usage_sources: set.usage_sources,
     proposals: set.proposals };
