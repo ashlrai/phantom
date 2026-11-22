@@ -18,6 +18,8 @@ export const AGENT_MESSAGE_KINDS = ['ask', 'reply', 'handoff', 'status', 'blocke
 export type AgentMessageKind = typeof AGENT_MESSAGE_KINDS[number];
 export const AGENT_MESSAGES_MAX_LIMIT = 1024;
 export const AGENT_MESSAGES_DEFAULT_LIMIT = 50;
+/** Longest `--contains` needle accepted; the summary it matches is already clipped far shorter. */
+export const AGENT_MESSAGES_CONTAINS_MAX = 512;
 /** Conversation key prefix for messages about one job (`job:<jobId>`). */
 export const JOB_THREAD_PREFIX = 'job:';
 /** A job id or thread label is the same printable label every bus read accepts. */
@@ -50,8 +52,8 @@ export interface AgentMessages {
   /** Damaged bus rows skipped while reading. */
   skipped: number;
 }
-/** `with` narrows `agent` to the two-way talk between that agent and one other; `kind` keeps one classified kind; `priority` keeps one envelope band; `job` keeps the traffic that names one job; `thread` keeps only note/context bodies carrying that v2 thread label — a row-level filter `readAgentMessages` applies before projection, the same `busBodyThread` match every other bus read's `--thread` applies. */
-export interface AgentMessagesQuery { since?: number; agent?: string; with?: string; kind?: AgentMessageKind; priority?: BusPriority; job?: string; thread?: string; limit?: number }
+/** `with` narrows `agent` to the two-way talk between that agent and one other; `kind` keeps one classified kind; `priority` keeps one envelope band; `job` keeps the traffic that names one job; `thread` keeps only note/context bodies carrying that v2 thread label — a row-level filter `readAgentMessages` applies before projection, the same `busBodyThread` match every other bus read's `--thread` applies; `contains` keeps only messages whose scrubbed one-line summary carries the needle as a case-insensitive substring — the fleet-wide text search no other bus read offers. */
+export interface AgentMessagesQuery { since?: number; agent?: string; with?: string; kind?: AgentMessageKind; priority?: BusPriority; job?: string; thread?: string; contains?: string; limit?: number }
 
 type Body = Record<string, unknown>;
 const record = (value: unknown): Body | null =>
@@ -239,10 +241,17 @@ export function filterAgentMessages(messages: readonly AgentMessage[], query: Ag
   const is = (ref: AgentRef, name: string, key: string | undefined) =>
     ref.name.toLowerCase() === name || ref.lane === name || (key !== undefined && identityOf?.(ref.name) === key);
   const jobThread = query.job === undefined ? null : `${JOB_THREAD_PREFIX}${query.job}`;
+  // --contains is a case-insensitive substring over the scrubbed one-line
+  // summary — the text the read actually shows, so a match is always visible
+  // in the row it selects. Whitespace collapses the same way the summary's
+  // does, so a phrase typed with stray spacing still finds its line.
+  const needle = query.contains === undefined ? undefined
+    : query.contains.toLowerCase().replace(/\s+/g, ' ').trim();
   return messages.filter(m => (query.since === undefined || Date.parse(m.ts) >= query.since)
     && (query.kind === undefined || m.kind === query.kind)
     && (query.priority === undefined || m.priority === query.priority)
     && (query.job === undefined || m.job === query.job || m.jobState?.jobId === query.job || m.conversation === jobThread)
+    && (needle === undefined || needle === '' || m.summary.toLowerCase().includes(needle))
     && (!agent || (peer ? (is(m.from, agent, agentKey) && is(m.to, peer, peerKey)) || (is(m.from, peer, peerKey) && is(m.to, agent, agentKey)) : is(m.from, agent, agentKey) || is(m.to, agent, agentKey))));
 }
 
@@ -257,7 +266,11 @@ export function filterAgentMessages(messages: readonly AgentMessage[], query: Ag
  * `jobState`, the same live feed state `agents bus
  * inbox`/`show`/`work mine` resolve, from one claims-joined feed read per
  * call, only when a scanned row cites a job. A feed that cannot be read
- * annotates `unavailable` (or its own state), never a guessed job.
+ * annotates `unavailable` (or its own state), never a guessed job. `contains`
+ * is the fleet-wide text search no other bus read offers: a case-insensitive
+ * substring over each message's scrubbed one-line `summary`, applied in
+ * `filterAgentMessages` so `matched` still counts only the rows every filter
+ * accepts.
  */
 export function readAgentMessages(query: AgentMessagesQuery = {}, options: BusInboxOptions = {}): AgentMessages {
   const scan = scanBusInbox(options);
@@ -306,7 +319,7 @@ export function parseSince(value: string, now = Date.now()): number | null {
 }
 
 /** Shared validation for CLI flags and API query params. */
-export function parseAgentMessagesQuery(input: { since?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; thread?: string; limit?: string }, now = Date.now()):
+export function parseAgentMessagesQuery(input: { since?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; thread?: string; contains?: string; limit?: string }, now = Date.now()):
   { ok: true; query: AgentMessagesQuery } | { ok: false; error: string } {
   const query: AgentMessagesQuery = {};
   if (input.kind !== undefined) {
@@ -333,6 +346,15 @@ export function parseAgentMessagesQuery(input: { since?: string; agent?: string;
       return { ok: false, error: '--thread takes a thread label (printable, 1-128 chars).' };
     }
     query.thread = input.thread;
+  }
+  if (input.contains !== undefined) {
+    // Free text for a substring match, not a label: any printable content is
+    // fine, bounded so a pathological needle cannot scan forever. Whitespace
+    // is kept verbatim — the matcher collapses it the same way summaries do.
+    if (typeof input.contains !== 'string' || input.contains.trim() === '' || input.contains.length > AGENT_MESSAGES_CONTAINS_MAX) {
+      return { ok: false, error: `--contains takes a non-empty search text of at most ${AGENT_MESSAGES_CONTAINS_MAX} characters.` };
+    }
+    query.contains = input.contains;
   }
   if (input.since !== undefined) {
     const since = parseSince(input.since, now);

@@ -615,6 +615,23 @@ describe('stalled work-feed jobs in the bus source', () => {
     expect(inbox.sources.bus.state).toBe('degraded');
   });
 
+  it('keeps queued candidates visible when hold coverage is absent or truncated', async () => {
+    postJob('RQ-CANDIDATE');
+    for (const claims of [undefined, { source: 'available' as const, truncated: true, holds: [{
+      jobId: 'RQ-CANDIDATE', claimKey: 'queue:RQ-CANDIDATE', owner: 'fake-holder',
+      leaseUntil: now + 60_000, origin: 'resource' as const, sourceId: 'fake-hold',
+    }] }]) {
+      const inbox = await read({ readFeed: () => ({
+        status: 'ok', receipts: 1, asOf: new Date(now).toISOString(), claims,
+        jobs: [{ id: 'RQ-CANDIDATE', title: 'fake candidate', owner: 'agent:peer', to: 'leaders',
+          provider: 'codex-cmp', repo: 'ashlrai/phantom', status: 'queued', updatedAt: now,
+          claimKeys: ['queue:RQ-CANDIDATE'], postId: 'v2-1', statusId: null }],
+      }) });
+      expect(inbox.sources.bus).toEqual({ state: 'degraded', pending: 1 });
+      expect(inbox.items.find(i => i.id === 'bus-feed:RQ-CANDIDATE')?.detail).toContain('claim holds unknown');
+    }
+  });
+
   it('keeps stalls hidden under truncated hold coverage', async () => {
     // The bus store must be readable for the feed section to run at all.
     postJob('RQ-TRUNC'); postStatus('RQ-TRUNC', 'running');
@@ -632,7 +649,7 @@ describe('stalled work-feed jobs in the bus source', () => {
       }),
     });
     expect(inbox.items.filter(i => i.id.startsWith('bus-feed:'))).toHaveLength(0);
-    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.sources.bus).toEqual({ state: 'degraded', pending: 0 });
   });
 });
 

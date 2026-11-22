@@ -4,8 +4,8 @@ import { busWorkFeedOwnerMatcher, busWorkFeedRepoKey, busWorkFeedToMatcher, form
 import { PROVIDERS, providerSchema, WORK_STATUSES, type WorkJob } from '../core/agents/bus-v2-schema.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
-const usage = `Usage: ashlr fleet work-feed [--root <absolute>] [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <${PROVIDERS.join('|')}>] [--to <label>] [--owner <agent>] [--claims] [--claimable] [--since <15m|2h|1d|ISO>] [--json] [--help]
-Read-only bus v2 work feed; --claims joins live coordination holds and --claimable keeps only open jobs whose declared claim keys provably include a free one (it implies the claims join). --repo keeps jobs announced for that owner/name repo (case-insensitive, the claim-key rule), --provider keeps jobs announced for that provider, --to keeps jobs whose announcement was addressed to that routing label and --owner keeps jobs announced by that agent, each under every label of one agent identity; --job keeps one job id; --since keeps only jobs whose last activity — the newest accepted status receipt time, or the announcement's while no status has moved the job — reaches the cutoff (15m, 2h, 1d, epoch ms or an ISO time). Unknown feed or hold state stays unknown.`;
+const usage = `Usage: ashlr fleet work-feed [--root <absolute>] [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <${PROVIDERS.join('|')}>] [--to <label>] [--owner <agent>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--json] [--help]
+Read-only bus v2 work feed; --open keeps open-status candidates with claim keys, including unknown holds, and implies --claims; --claims joins live coordination holds and --claimable keeps only open jobs whose declared claim keys provably include a free one (it implies the claims join). --repo keeps jobs announced for that owner/name repo (case-insensitive, the claim-key rule), --provider keeps jobs announced for that provider, --to keeps jobs whose announcement was addressed to that routing label and --owner keeps jobs announced by that agent, each under every label of one agent identity; --job keeps one job id; --since keeps only jobs whose last activity — the newest accepted status receipt time, or the announcement's while no status has moved the job — reaches the cutoff (15m, 2h, 1d, epoch ms or an ISO time). Unknown feed or hold state stays unknown.`;
 
 const LABEL = /^[\x21-\x7e]{1,128}(?![\s\S])/;
 
@@ -14,11 +14,12 @@ export async function cmdFleetWorkFeed(args: string[]): Promise<number> {
   let root: string | undefined, status: WorkJob['status'] | undefined, to: string | undefined,
     owner: string | undefined, jobId: string | undefined, repo: string | undefined,
     provider: WorkJob['provider'] | undefined, sinceRaw: string | undefined,
-    json = false, claims = false, claimable = false;
+    json = false, claims = false, claimable = false, open = false;
   for (let i = 0; i < args.length; i++) {
     const key = args[i]!;
     if (key === '--json' && !json) { json = true; continue; }
     if (key === '--claims' && !claims) { claims = true; continue; }
+    if (key === '--open' && !open) { open = true; continue; }
     if (key === '--claimable' && !claimable) { claimable = true; continue; }
     if (!['--root', '--status', '--to', '--owner', '--job', '--repo', '--provider', '--since'].includes(key)) { console.error(usage); return 2; }
     const value = args[++i];
@@ -46,8 +47,8 @@ export async function cmdFleetWorkFeed(args: string[]): Promise<number> {
   // take — 15m, 2h, 1d, epoch ms or an ISO time — resolved once at read start.
   const since = sinceRaw === undefined ? undefined : parseSince(sinceRaw);
   if (sinceRaw !== undefined && since === null) { console.error(usage); return 2; }
-  const result = projectBusWorkFeedView(readBusWorkFeed({ root, claims: claims || claimable }), {
-    status, jobId, repo, provider, claimable: claimable || undefined, since: since ?? undefined,
+  const result = projectBusWorkFeedView(readBusWorkFeed({ root, claims: claims || claimable || open }), {
+    status, jobId, repo, provider, open: open || undefined, claimable: claimable || undefined, since: since ?? undefined,
     toMatch: to === undefined ? undefined : busWorkFeedToMatcher(to, { root }),
     ownerMatch: owner === undefined ? undefined : busWorkFeedOwnerMatcher(owner, { root }),
   });

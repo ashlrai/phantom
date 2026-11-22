@@ -2404,10 +2404,19 @@ human feed line prints `claimable=yes|no|unknown` on annotated jobs.
 `BUS_FEED_OPEN_STATUSES` is the exported set of feed statuses that still mean
 open for a worker (`queued`, `rescheduled`); the comms inbox pending-work view
 and `claimBusWorkJob` share it so "claimable" means one thing.
+
+`--open` on `phm fleet work-feed` and `phm agents bus work feed` implies
+`--claims` and keeps queued/rescheduled jobs with declared claim keys. Complete
+hold coverage excludes jobs whose every key is held; unavailable, absent or
+truncated coverage keeps candidates visible with their existing claim
+annotations. `--claimable` still requires proof of a free key. Both filters
+compose with the existing feed filters. The unified inbox uses the same complete
+hold coverage rule and reports incomplete coverage as degraded.
+
 `coordinationRowBlocks(row, key)` in `src/core/agents/claim-store.ts` is the
 exported read-only overlap predicate; acquisition and observation now share one
 structural overlap rule. `projectBusWorkFeedView(result, filters?)` applies the
-client-side feed filters (`{status?, jobId?, repo?, provider?, claimable?,
+client-side feed filters (`{status?, jobId?, repo?, provider?, claimable?, open?,
 since?, toMatch?, ownerMatch?}`),
 newest-first order and per-job hold regrouping; `repo` is the lowercase
 `owner/name` key `busWorkFeedRepoKey(repo)` normalizes a `--repo` argument to
