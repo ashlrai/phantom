@@ -509,6 +509,7 @@
 /test/fleet-stray-slots-gate-sole3.test.ts @masonwyatt23
 /test/fleet-superseded-read.test.ts @masonwyatt23
 /test/fleet-vitals-leader-liveness.test.ts @masonwyatt23
+/test/fleet-vitals-local-gate.test.ts @masonwyatt23
 /test/fleet-write-budget-cli.test.ts @masonwyatt23
 /test/fleet/merge-confidence.test.ts @masonwyatt23
 /test/friction-planner.test.ts @masonwyatt23
