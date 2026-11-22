@@ -65,7 +65,7 @@ it('emits one ordered JSON array for a valid mixed batch', async () => {
   const result = await runEvidence(JSON.stringify([
     { id: 'SYNTHETIC-RECEIVED', receivedAt: '2026-11-12T22:29:00Z' },
     { id: 'SYNTHETIC-BLOCKED', blocker: { dependency: 'fixture', source: 'test', at: '2026-11-12T22:40:00Z' } },
-    { id: 'SYNTHETIC-VERIFIED', verified: { tests: 'passed', source: 'test', at: '2026-11-12T22:50:00Z' } },
+    { id: 'SYNTHETIC-VERIFIED', verified: { artifact: 'fake-test-report.xml', tests: 'passed', source: 'test', at: '2026-11-12T22:50:00Z' } },
   ]), true);
   expect(result.code).toBe(0);
   expect(result.err).not.toHaveBeenCalled();

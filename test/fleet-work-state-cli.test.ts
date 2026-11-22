@@ -22,7 +22,7 @@ async function fixture(body: unknown) {
 const ITEMS = [
   { id: 'RQ-FAKE-1', receivedAt: '2026-11-12T22:29:00Z', owner: 'owner-a' },
   { id: 'RQ-FAKE-2', owner: 'owner-a', claimReceipt: 'claim-1', receivedAt: '2026-11-12T22:30:00Z' },
-  { id: 'RQ-FAKE-3', verified: { tests: '2 passed', source: 'vitest', at: '2026-11-12T23:00:00Z' } },
+  { id: 'RQ-FAKE-3', verified: { artifact: 'fake-test-report.xml', tests: '2 passed', source: 'vitest', at: '2026-11-12T23:00:00Z' } },
 ];
 
 it('is registered and prints one line per item', async () => {

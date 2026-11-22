@@ -40,10 +40,10 @@ it('BLOCKED needs a named dependency', () => {
   }
 });
 
-it('VERIFIED needs a source and pr+head, tests or artifact', () => {
+it('VERIFIED needs a source and pr+head or a named artifact', () => {
   const verified = { pr: 1, head: 'abc123', source: 'gh', at: ago(1) };
   expect(classifyWorkItem({ ...base, verified }, NOW)).toEqual({ state: 'VERIFIED', asOf: ago(1), source: 'gh', missing: [] });
-  expect(classifyWorkItem({ ...base, verified: { tests: '3 passed', source: 'vitest', at: ago(1) } }, NOW).state).toBe('VERIFIED');
+  expect(classifyWorkItem({ ...base, verified: { tests: '3 passed', source: 'vitest', at: ago(1) } }, NOW).state).toBe('RECEIVED');
   expect(classifyWorkItem({ ...base, verified: { artifact: 'out.txt', source: 'fs', at: ago(1) } }, NOW).state).toBe('VERIFIED');
   expect(classifyWorkItem({ ...base, verified: { ...verified, source: '' } }, NOW).state).toBe('RECEIVED');
   expect(classifyWorkItem({ ...base, verified: { pr: 1, source: 'gh', at: ago(1) } }, NOW).state).toBe('RECEIVED');

@@ -49,21 +49,21 @@ describe('work board result', { timeout: 60_000 }, () => {
     expect('result' in byId.get('fake-plain-333')!).toBe(false);
   });
 
-  it('keeps tests-only and artifact-only verification with null pr/head', () => {
+  it('requires a named artifact when verification has no PR/head', () => {
     request('fake-tests-333');
     reply('fake-tests-333', 'fake-reply-t', { verified: { tests: '12 passed' } });
     request('fake-art-333');
     reply('fake-art-333', 'fake-reply-a', { verified: { artifact: 'fake-artifact.log' } });
     const byId = new Map(listWorkBoard({ root, now }).items.map(i => [i.id, i]));
-    expect(byId.get('fake-tests-333')!.result)
-      .toEqual({ kind: 'verified', pr: null, head: null, tests: '12 passed', artifact: null });
+    expect(byId.get('fake-tests-333')!.state).toBe('RECEIVED');
+    expect(byId.get('fake-tests-333')!.result).toBeUndefined();
     expect(byId.get('fake-art-333')!.result)
       .toEqual({ kind: 'verified', pr: null, head: null, tests: null, artifact: 'fake-artifact.log' });
   });
 
   it('caps verified strings at 200 chars', () => {
     request('fake-long-333');
-    reply('fake-long-333', 'fake-reply-l', { verified: { tests: 'x'.repeat(500) } });
+    reply('fake-long-333', 'fake-reply-l', { verified: { tests: 'x'.repeat(500), artifact: 'fake-test-report.xml' } });
     const item = listWorkBoard({ root, now }).items.find(i => i.id === 'fake-long-333')!;
     expect(item.result).toMatchObject({ kind: 'verified' });
     expect((item.result as { tests: string }).tests).toHaveLength(200);

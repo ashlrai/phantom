@@ -41,7 +41,8 @@ it('preserves freshness boundaries and higher priority evidence', () => {
   const blocker = { dependency: 'fake-dependency', source: 'fake-ledger', at: now };
   expect(classifyWorkItem({ ...base, blocker }, now).state).toBe('BLOCKED');
   for (const evidence of [{ tests: 'passed' }, { artifact: 'fake-artifact' }, { pr: 1, head: 'fake-head' }]) {
-    expect(classifyWorkItem({ ...base, blocker, verified: { ...evidence, source: 'fake-source', at: now } }, now).state).toBe('VERIFIED');
+    expect(classifyWorkItem({ ...base, blocker, verified: { ...evidence, source: 'fake-source', at: now } }, now).state)
+      .toBe('tests' in evidence ? 'BLOCKED' : 'VERIFIED');
   }
 });
 

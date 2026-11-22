@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
 import { formatAsOf } from '../comms/as-of-label.js';
 import { listWorkBoard, type WorkBoardItem } from '../comms/work-board.js';
+import { formatWorkItemStatusLine } from '../comms/work-item-state.js';
 import { readPrivateFileCapped } from '../verse/preferences.js';
 import { scrubSecrets } from '../util/scrub.js';
 import {
@@ -109,6 +110,7 @@ export interface SlackWorkStatus {
   truncated: boolean;
   items: Array<Pick<WorkBoardItem, 'id' | 'channelRef' | 'state' | 'owner' | 'claimReceipt'> & {
     pr: number | null; head: string | null; dependency: string | null;
+    statusLine?: string;
   }>;
 }
 
@@ -127,6 +129,7 @@ export function readSlackWorkStatus(options: { runsDir?: string; busRoot?: strin
   return { asOf, readAt: now.toISOString(), inbox: board.inbox, truncated: board.truncated, items: board.items
     .filter(item => item.channel === 'slack' && item.channelRef !== null && parseSlackThreadRef(item.channelRef))
     .map(item => ({ id: item.id, channelRef: item.channelRef, state: item.state,
+      statusLine: formatWorkItemStatusLine({ ...item, owner: item.owner ?? undefined }).replace(/[<>&]/g, '?'),
       owner: safeWorkText(item.owner), claimReceipt: safeWorkText(item.claimReceipt),
       pr: item.result?.kind === 'verified' ? item.result.pr : null,
       head: item.result?.kind === 'verified' ? safeWorkText(item.result.head) : null,
@@ -155,7 +158,8 @@ export function slackWorkStatusLine(work: SlackWorkStatus, body: Record<string, 
   const detail = item?.state === 'VERIFIED' ? `PR ${item.pr ?? 'unknown'}; head ${item.head ?? 'unknown'}`
     : item?.state === 'BLOCKED' ? `dependency ${item.dependency ?? 'unknown'}`
       : `owner ${item?.owner ?? 'unknown'}; claim ${item?.claimReceipt ?? 'unknown'}`;
-  return `${item?.state ?? 'UNKNOWN'}; ${detail}; ${slackFleetAsOf(work)}`;
+  return item?.statusLine ? `${item.statusLine} · ${scrubSecrets(detail)}`
+    : `${item?.state ?? 'UNKNOWN'}; ${detail}; ${slackFleetAsOf(work)}`;
 }
 
 function slackIdentityCount(config: AgentNetworkConfig): number {
