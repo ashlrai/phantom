@@ -16,6 +16,13 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.66](https://github.com/ashlrai/phantom/compare/v3.30.65...v3.30.66) (2026-11-22)
+
+
+### Changes
+
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795343255-N17:** ([#8224](https://github.com/ashlrai/phantom/issues/8224)) ([a8d95a9](https://github.com/ashlrai/phantom/commit/a8d95a989737c3130f8b0b030120b78d255b25e8))
+
 ## [Unreleased]
 
 ### Since v3.30.40
