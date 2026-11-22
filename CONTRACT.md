@@ -3127,12 +3127,19 @@ item's `jobIds` (feed jobs by their id, bus/mailbox bodies by their
 citations, board tasks by `itemId` with deliveries riding their thread's
 citations, conversations by `thread.jobs`, teammate tasks by `jobId`, seat
 handoffs by `node-job` refs) for `comms inbox --job` to match against,
-absent when no job relation is provable; and `comms inbox --contains`
-(`UnifiedInboxFilter.contains`, bounded by `UNIFIED_INBOX_CONTAINS_MAX`)
-keeps only items whose scrubbed `title`/`detail` — the text the row shows,
-never the `act` command links — carries the needle as a case-insensitive
-whitespace-collapsed substring, the same `--contains` contract every other
-bus read applies; and
+absent when no job relation is provable; `busReadContains(value)` and
+`busReadContainsMatch(body, needle)` — bounded by `BUS_READ_CONTAINS_MAX` —
+are the shared `--contains` validation and match every bus read applies:
+`readAgentInbox`, `readAgentChannel`, `comms bus read`/`watch --contains`
+and `followBusStream` (`fleet bus-follow --contains`) all run the same
+case-insensitive whitespace-collapsed substring over the scrubbed
+one-line summary, never the raw body, so a secret-shaped value stays
+unfindable and protocol-v1 payloads stay opaque; and `comms inbox
+--contains` (`UnifiedInboxFilter.contains`, bounded by
+`UNIFIED_INBOX_CONTAINS_MAX`) keeps only items whose scrubbed
+`title`/`detail` — the text the row shows, never the `act` command links —
+carries the needle as a case-insensitive whitespace-collapsed substring;
+and
 `jobAnnotationFromFeed(feed, jobId)` maps one already-read
 `BusWorkFeedReadResult` to the `BusEnvelopeLookupJob` every citing read
 shares — the inbox page, `readBusEnvelopeById`, wake referents and the

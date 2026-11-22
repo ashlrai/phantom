@@ -4,7 +4,7 @@ import { isAbsolute } from 'node:path';
 import { BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxPage } from './bus-inbox.js';
 import { BUS_PRIORITIES, type BusEnvelope, type BusPriority } from './bus-envelope.js';
 import { agentAddressMatcher, agentPendingAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
-import { busBodyJobMatch, labelIdentityOf } from '../agents/bus-unified.js';
+import { busBodyJobMatch, busReadContains, busReadContainsMatch, labelIdentityOf } from '../agents/bus-unified.js';
 import { busBodyThread } from '../agents/bus-v2-schema.js';
 
 export const BUS_FOLLOW_MAX_DURATION_MS = 3_600_000;
@@ -59,6 +59,15 @@ export interface BusFollowRequest {
    * never emit, the same inclusive `receivedAt >= since` match
    * `agents bus inbox --since` resolves its grammar to once per read. */
   since?: number;
+  /** Optional text filter: the same `busReadContainsMatch` rule
+   * `agents bus inbox --contains`, `channel read --contains`,
+   * `comms bus read|watch --contains` and `phm messages --contains`
+   * apply — a case-insensitive substring over the envelope's scrubbed
+   * one-line summary, never the raw body, so a secret-shaped value stays
+   * unfindable and protocol-v1 payloads stay opaque to it. Bounded free
+   * text, validated by `busReadContains`; checkpoints still advance past
+   * filtered rows exactly like every other filter. */
+  contains?: string;
   intervalMs?: number;
   /** Selects an existing local store; never creates or mutates inbox files. */
   root?: string;
@@ -73,6 +82,7 @@ export function validBusFollowRequest(request: BusFollowRequest): boolean {
     (request.priority === undefined || BUS_PRIORITIES.includes(request.priority)) &&
     (request.thread === undefined || label(request.thread)) &&
     (request.since === undefined || (Number.isSafeInteger(request.since) && request.since >= 0)) &&
+    busReadContains(request.contains) !== null &&
     (request.intervalMs === undefined || (Number.isSafeInteger(request.intervalMs) &&
       request.intervalMs >= BUS_FOLLOW_MIN_INTERVAL_MS && request.intervalMs <= BUS_FOLLOW_MAX_INTERVAL_MS)) &&
     (request.root === undefined || (isAbsolute(request.root) && !request.root.includes('\0')));
@@ -146,6 +156,8 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
     : agentPendingAddressMatcher(request.to, registryRead.status === 'ok' ? registryRead.registry : undefined);
   const fromMatch = request.from === undefined ? undefined
     : agentAddressMatcher(registryRead.status === 'ok' ? labelIdentityOf(registryRead.registry) : undefined, request.from);
+  // The request passed validBusFollowRequest, so the needle is normalized text or absent.
+  const containsNeedle = busReadContains(request.contains) ?? undefined;
   const emit = async (record: BusFollowRecord): Promise<boolean> => {
     try { await deps.emit(record); return true; } catch { return false; }
   };
@@ -168,6 +180,7 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
         if (request.priority !== undefined && row.envelope.priority !== request.priority) continue;
         if (request.thread !== undefined && busBodyThread(row.envelope.body) !== request.thread) continue;
         if (request.since !== undefined && row.receivedAt < request.since) continue;
+        if (containsNeedle !== undefined && !busReadContainsMatch(row.envelope.body, containsNeedle)) continue;
         if (!(await emit({ type: 'message', cursor: row.cursor, receivedAt: row.receivedAt, envelope: row.envelope }))) {
           status = aborted() ? 'cancelled' : 'output-unavailable';
           accepted = false;
