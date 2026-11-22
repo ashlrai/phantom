@@ -2244,10 +2244,12 @@ async function cmdFleetDoctor(jsonMode: boolean): Promise<number> {
 
   const { fleetReadiness } = await import('../core/fleet/engine-readiness.js');
   const results = fleetReadiness(cfg ?? undefined);
+  const { readGuardianDoctorCheck } = await import('../core/fleet/guardian-doctor.js');
+  const guardian = await readGuardianDoctorCheck();
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify(results) + '\n');
-    return 0;
+    process.stdout.write(JSON.stringify([...results, guardian]) + '\n');
+    return guardian.level === 'red' ? 1 : 0;
   }
 
   const readyCount = results.filter((r) => r.ready).length;
@@ -2316,7 +2318,7 @@ async function cmdFleetDoctor(jsonMode: boolean): Promise<number> {
   // Summary line
   const notReadyEngines = results.filter((r) => !r.ready).map((r) => r.engine);
   if (readyCount === total) {
-    console.log('  ' + green(`${readyCount}/${total} engines ready.`) + dim(' All systems go.'));
+    console.log('  ' + green(`${readyCount}/${total} engines ready.`) + dim(guardian.level === 'ok' ? ' All systems go.' : ''));
   } else {
     const needsAction = notReadyEngines.join(', ');
     console.log(
@@ -2331,7 +2333,8 @@ async function cmdFleetDoctor(jsonMode: boolean): Promise<number> {
 
   // Exit 1 when any engine is definitively not ready (authed:false + installed)
   const hardBlocked = results.some((r) => !r.ready && r.installed && r.authed === false);
-  return hardBlocked ? 1 : 0;
+  console.log(`${guardian.level} guardian: ${guardian.reason} Next: ${guardian.nextStep}`);
+  return hardBlocked || guardian.level === 'red' ? 1 : 0;
 }
 
 // ---------------------------------------------------------------------------
