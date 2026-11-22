@@ -1467,7 +1467,9 @@ through `src/core/agents/claim-store.ts`, so overlap is decided in one table.
 A second live claim on an overlapping key is rejected. A team lease's `path`
 is a prefix claim — it covers the path and everything beneath it — so it
 overlaps a bus `path:` glob that matches any path in that subtree, in either
-acquire order. Queued path claims stay
+acquire order. Characters such as `[` or `{` are literal under `globMatches`,
+never wildcards, so a team path like `src/[id]` stays a concrete prefix claim.
+Queued path claims stay
 a read-only view of queue prompt files and can be merged onto that board with
 `claimBoard()`. `phm agents roster` reads this table through `readRosterClaims`.
 A message-id lease is shown under its bus message id, so a roster session and

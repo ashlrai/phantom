@@ -39,6 +39,22 @@ describe('coordinationRowBlocks', () => {
     expect(coordinationRowBlocks(team, 'path:fake/repo:src2/**')).toBe(false);
   });
 
+  it('keeps prefix coverage when a team path holds literal bracket or brace characters', () => {
+    // `[`/`{` are literal under globMatches — `src/[id]` is a concrete
+    // directory name (Next.js-style route segments), not a glob, so the
+    // team prefix claim still covers everything beneath it.
+    const bracket = row({ origin: 'team', key: 'team:fake/repo::src/[id]', repo: 'fake/repo', path: 'src/[id]' });
+    expect(coordinationRowBlocks(bracket, 'path:fake/repo:src/[id]/**')).toBe(true);
+    expect(coordinationRowBlocks(bracket, 'path:fake/repo:src/[id]/page.tsx')).toBe(true);
+    expect(coordinationRowBlocks(bracket, 'path:fake/repo:**/page.tsx')).toBe(true);
+    expect(coordinationRowBlocks(bracket, 'path:fake/repo:src/[id]')).toBe(true);
+    expect(coordinationRowBlocks(bracket, 'path:fake/repo:docs/**')).toBe(false);
+    expect(coordinationRowBlocks(bracket, 'path:fake/repo:src/[id]x/**')).toBe(false);
+    const brace = row({ origin: 'team', key: 'team:fake/repo::src/{gen}', repo: 'fake/repo', path: 'src/{gen}' });
+    expect(coordinationRowBlocks(brace, 'path:fake/repo:src/{gen}/out.ts')).toBe(true);
+    expect(coordinationRowBlocks(brace, 'path:fake/repo:src/other/**')).toBe(false);
+  });
+
   it('blocks wildcard path claims that share a concrete path', () => {
     const held = row({ key: 'path:fake/repo:**/*.ts' });
     expect(coordinationRowBlocks(held, 'path:fake/repo:src/*.ts')).toBe(true);

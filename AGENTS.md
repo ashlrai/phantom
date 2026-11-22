@@ -76,7 +76,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - Shared work market (RQ-SHARED-QUEUE-1): jobs carry `needs`, `min_tier`, `max_tier`, `max_cost_class`, `data_class`, `work_class`, `exclusive`, priority and impact; `pool`/`lane` are `preferred_lane` hints. Dispatch selects a capable, healthy executor with quota and capacity, ranking resource posture (burn, balanced, preserve) ahead of the hint; a claim that leaves its hint records `lane_override` in `metrics/jobs.jsonl`. `phm fleet unfed --json` reports per-resource utilization and lanes left with free slots while rows waited elsewhere. An unknown hint is open; explicit local execution stays local. Inspect `metrics/work-market.jsonl` for `work-market.v1` reason codes and `phm route explain --json` for hysteresis receipts. Source changes require Security review and re-pin before `contrib/mac/install.sh`; never install over the live pinned dispatcher. See [queue market](docs/QUEUE.md).
 - Queue tiers: router-queue `tier=` must be `frontier`, `work`, `mid` or `fast`. `queuegen` and `router-lint` refuse any other value (`standard` means `work`), because dispatchd skips unknown tiers silently. See [docs/QUEUE.md](docs/QUEUE.md#tier-values).
 - Session scope: frontier plans up to 40 files / 600 changed lines across related concerns; work 15 / 200, mid 8 / 120, fast 2 / 80. One mergeable PR per job; explicit narrower named-file limits win. See [tier-scaled scope](docs/QUEUE.md#tier-scaled-session-scope), [lane tool parity](docs/AGENT-TOOLCHAIN.md#lane-tool-parity-audit-rq-delegate-scope-1), and [org responsibilities](docs/AGENT-NETWORK.md#assign-responsibilities-without-expanding-authority). Restock dry-run JSON reports `scope_budgets`; live script installation still needs Security review and re-pinning.
-- Layout: `src/cli/` command dispatchers, `src/core/` logic, `src/web-ui/` console, `test/` backend suites (`m<N>.<topic>.test.ts`), `docs/` guides indexed by `docs/README.md`.
+- Layout: `src/cli/` command dispatchers, `src/core/` logic, `src/web-ui/` console, `test/` backend suites (`<topic>.test.ts`; older ones `m<N>.<topic>.test.ts`), `docs/` guides indexed by `docs/README.md`.
 - Mac dispatcher: `contrib/mac/dispatchd.py` is the single source for the live `~/.ashlr-runs/bin/dispatchd.py`. Change it here, never on the host. `contrib/mac/install.sh` diffs and installs it (plus `install-gate.py` and `launch-gate.sh`) with timestamped backups, but only after Security has reviewed and re-pinned the files; agents preview with `contrib/mac/install.sh --dry-run --json` and never run it against the live directory. Copy-paste install, once pinned: `contrib/mac/install.sh --json`. See [contrib/mac/README.md](contrib/mac/README.md#installing-the-dispatcher).
 - Fleet machinery: `fleet/manifest.json` (`fleet.machinery.v1`) inventories every `~/.ashlr-runs/bin` file by class. `managed` installs via `python3 fleet/sync.py`, `manual`/`pinned` are report-only (pinned GATES v3 files stay ops-side). Agents preview with `fleet/sync.py --json` or `--bin <scratch>` and never `--apply` live. Migration plan: [docs/MACHINERY-MIGRATION.md](docs/MACHINERY-MIGRATION.md).
 - Agent Bus v2: the provider contract (participants, body kinds, claim keys and overlap rules, work feed) is in [docs/AGENT-BUS.md](docs/AGENT-BUS.md#v2); `ashlr agents bus contract --json` prints its schema version and kinds. Claims coordinate and grant no execution authority. Schemas: `src/core/agents/bus-v2-schema.ts`.
@@ -198,11 +198,13 @@ default; `--apply --queue <ready.md>` appends only the reviewed subset, and
 `--approve <id,...>` narrows it. See [the research loop](docs/RESEARCH-LOOP.md)
 and the [Spawn fleet synthesis](docs/strategy/spawn-fleet-model.md).
 
-Merge queue drift protection: the Quick typecheck job runs the CODEOWNERS and
-Tier-1 import closure checks on every PR and merge queue candidate, including
-docs-only changes. A new Tier-1 test needs its generated CODEOWNERS entry in the
-same PR; changed Tier-1 imports need a reviewed closure snapshot update. Drift
-fails the existing Merge Gate even when the full authority shards do not run.
+Merge queue drift protection: the `Check authority drift (hermetic)` job runs
+the CODEOWNERS and Tier-1 import closure checks on every PR and merge queue
+candidate, including docs-only changes. A new Tier-1 test needs its generated
+CODEOWNERS entry in the same PR (`npm run authority:regen`); changed Tier-1
+imports need a reviewed closure snapshot update. The job is advisory for
+`Merge Gate`, so drift does not block the merge, but Auto-tag and the release
+gate require it green on the exact commit; fix drift in the same PR.
 
 Route hysteresis: ready.tsv pool proposals pass through dispatchd's persisted
 60-minute residency, immutable launch pool and two-moves/six-hours cap. Only

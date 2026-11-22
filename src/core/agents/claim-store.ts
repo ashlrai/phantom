@@ -127,7 +127,10 @@ function pathsOverlap(teamPath: string, glob: string): boolean {
   const left = normPath(teamPath);
   const right = normPath(glob);
   if (!left || !right || left.split('/').includes('..') || right.split('/').includes('..')) return false;
-  const wild = (value: string) => /[*?[{]/.test(value);
+  // `globMatches` wildcards are `*`/`?` only — `[`, `{` and friends are
+  // literal characters, so a team path like `src/[id]` is still a concrete
+  // prefix claim and must keep its `/**` subtree coverage below.
+  const wild = (value: string) => /[*?]/.test(value);
   if (!wild(left) && !wild(right)) return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
   const sampleRepo = 'o/n';
   const leftKey = `path:${sampleRepo}:${left}`;

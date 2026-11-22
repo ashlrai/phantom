@@ -49,6 +49,9 @@ describe('claim keys and overlap', () => {
   it('computes literal prefixes and globs', () => {
     expect(literalPrefix('src/core/*.ts')).toBe('src/core/');
     expect(literalPrefix('docs/a.md')).toBe('docs/a.md');
+    // `[`/`{` are literal under globMatches, never wildcard characters.
+    expect(literalPrefix('src/[id]/*.tsx')).toBe('src/[id]/');
+    expect(literalPrefix('src/{gen}/**')).toBe('src/{gen}/');
     expect(globMatches('src/*.ts', 'src/a.ts')).toBe(true);
     expect(globMatches('src/*.ts', 'src/a/b.ts')).toBe(false);
     expect(globMatches('src/**', 'src/a/b.ts')).toBe(true);

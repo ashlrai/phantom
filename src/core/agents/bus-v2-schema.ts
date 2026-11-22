@@ -86,9 +86,11 @@ export function parseClaimKey(key: string): ParsedClaimKey | undefined {
 
 export const claimKeySchema = z.string().refine((k) => parseClaimKey(k) !== undefined, 'invalid claim key');
 
-/** Literal prefix of a glob: everything before the first wildcard character. */
+/** Literal prefix of a glob: everything before the first wildcard character.
+ * `globMatches` treats only `*` and `?` as wildcards — `[`, `{` and the rest
+ * are literal, so they never end the prefix. */
 export function literalPrefix(glob: string): string {
-  const i = glob.search(/[*?[{]/);
+  const i = glob.search(/[*?]/);
   return i === -1 ? glob : glob.slice(0, i);
 }
 
