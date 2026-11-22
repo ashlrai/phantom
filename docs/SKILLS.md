@@ -22,7 +22,14 @@ sibling outcome readers share — job ids `job|job_id|jobId|id`, lanes
 `lane|pool|arm`, events `event|type|kind` (`published` folds to `publish`),
 terminal phases `phase|state|outcome|status|result|conclusion`, and
 `merged`/`closed`/`revert`/`reverted` event names when no phase field
-resolves. A merged, non-reverted job that needed a retry, a
+resolves. Reverted covers the ledger's own revert spellings plus the
+standing revert set the daemon supplies (`revertedPrKeys` — outcome-ledger,
+cloud-task and `phm fleet reverts --record` detections): a merged job whose
+standing verdict row's pull URL is claimed by exactly that job and whose
+`owner/repo#n` key stands in the set counts as reverted, the same
+unambiguous-claim rule the outcome learners apply, so a merge git history
+proved did not hold never seeds a "recovery" draft. A merged,
+non-reverted job that needed a retry, a
 recut, or recovered a failure class seen on three earlier failed jobs seeds
 one bounded draft card.
 

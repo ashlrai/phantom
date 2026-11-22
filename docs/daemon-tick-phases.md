@@ -56,7 +56,8 @@ the outward mutation fence. On the same self-improvement cadence a
 reward-signal ledger (`src/core/metrics/reward-feed.ts`); it is best-effort,
 never throws, and writes only under `~/.ashlr/metrics`. A `skill-nudge`
 off-tick job on the same cadence folds the same tail into candidate shadow
-skill cards (`src/core/fleet/skill-nudge.ts`); it writes only candidate
+skill cards (`src/core/fleet/skill-nudge.ts`), discounting merges the
+standing revert set proves did not hold; it writes only candidate
 records under `~/.ashlr/skills`. An `empty-tag-sync` off-tick job on the
 same cadence folds the tail's windowed empty finishes into
 `metrics/empty-tags.jsonl` and the matching dupcheck outcome rows
