@@ -120,7 +120,8 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     attention, liveAt: typeof live?.generatedAt === 'string' ? clean(live.generatedAt) : null, main: (guardian ?? []).map(g => ({ repo: clean(g.repo), state: g.state, stale: g.stale })),
     medianOpenToMergeSeconds: latency.seconds, mergeLatencySource: latency.source, mergeLatencyWhy: latency.why,
     mergeLatency: latency,
-    hostLoad: { ...hostLoad, families: hostLoad.families.slice(0, 5), omitted: hostLoad.omitted + Math.max(0, hostLoad.families.length - 5) },
+    hostLoad: { ...hostLoad, leftovers: hostLoad.leftovers ? { ...hostLoad.leftovers, items: undefined } : undefined,
+      families: hostLoad.families.slice(0, 5), omitted: hostLoad.omitted + Math.max(0, hostLoad.families.length - 5) },
     stopped: stops, omitted: 0,
   };
   // Drop the lowest-priority rows, explicitly counting omissions, until the entire wire payload fits.
@@ -151,5 +152,6 @@ export function compactBriefLines(b: CompactLeaderBrief): string[] {
     mergeLatencyLine(b.mergeLatency), `Stopped: ${b.sources.stops?.state === 'healthy' ? b.stopped.length : 'unknown'}; omitted: ${b.omitted}`,
     `Sources: ${Object.values(b.sources).filter(s => s.state !== 'healthy').length} missing, degraded or bounded`];
   while (lines.length < 10) lines.push('No further data.');
+  if (b.hostLoad.leftovers && b.hostLoad.leftovers.cpuPercent > 50) lines.push(`${b.hostLoad.leftovers.processes} leftover processes from finished jobs use ${b.hostLoad.leftovers.cpuPercent}% CPU (the fleet cleans these every 5 min)`);
   return lines;
 }
