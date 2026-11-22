@@ -447,11 +447,11 @@ require a new milestone document when an existing canonical contract is enough.
 The following invariants are enforced by named adversarial tests. A PR that weakens any of them will not be accepted — and the fleet's own self-improvement harness (M54) is also blocked from doing so:
 
 1. **Proposal-only floor.** The daemon source may import no merge/apply primitive. Auto-merge is a separate gated module, default off. Test: `test/h1.daemon-gates.test.ts` (source-scan grep-guard) + `test/m48.automerge-pass.test.ts`.
-2. **Enrollment gate.** Only enrolled repos receive autonomous work. Test: `test/h6.*`.
-3. **Kill-switch always halts.** `~/.ashlr/KILL` present must stop every backend and every repo. Test: `test/m48.*` kill-all.
-4. **Sandboxed-with-diff-capture only.** In the autonomous loop, external engines run only through `runEngineSandboxed`. No raw-external path. Sandbox-creation failure is terminal, never a silent fallback. Test: `test/m45.*` no-raw-fallback test.
-5. **Git push blocked from sandbox.** The pre-push hook + credential strip must fail every push from a worktree. Test: `test/m45.*` pre-push test.
-6. **Only the diff is consumed.** No transcript, no live-tree write escapes the sandbox. Test: `test/m45.*` diff-only test.
+2. **Enrollment gate.** Only enrolled repos receive autonomous work. Tests: `test/h4.sandbox-enrollment-kill.test.ts` (invariant 3) and `test/h1.daemon-gates.test.ts` (empty enrollment makes a tick a no-op); `test/h6.audit-completeness.test.ts` checks that every enrollment change is audited.
+3. **Kill-switch always halts.** `~/.ashlr/KILL` present must stop every backend and every repo. Tests: `test/h4.sandbox-enrollment-kill.test.ts` (invariant 4: the kill check runs before the enrollment check and `allowAnyRepo` cannot override it), plus `test/h1.daemon-gates.test.ts` and `test/m48.fleet-supervisor.test.ts` (a tick halts with reason `kill-switch` before any dispatch).
+4. **Sandboxed-with-diff-capture only.** In the autonomous loop, external engines run only through `runEngineSandboxed`. No raw-external path. Sandbox-creation failure is terminal, never a silent fallback. Tests: `test/h4.sandbox-enrollment-kill.test.ts` (invariant 2: a sandbox that cannot be created aborts to zero tasks) and `test/m45.foundry.test.ts` (a failing engine run is contained and leaves no sandbox behind).
+5. **Git push blocked from sandbox.** The pre-push hook + credential strip must fail every push from a worktree. Test: `test/m45.foundry.test.ts` (the pre-push containment proof, plus the `buildContainedEnv` credential checks).
+6. **Only the diff is consumed.** No transcript, no live-tree write escapes the sandbox. Tests: `test/h1.daemon-gates.test.ts` (a tick leaves the enrolled repo's working tree byte-identical), `test/h1.chain.test.ts` and `test/h1.apply-guardrails.test.ts` (a captured diff lands only on a new proposal branch; a refused apply mutates nothing).
 7. **Immutable signed provenance.** `{engineModel, engineTier}` is write-once and HMAC-signed. The merge gate must verify the HMAC. Test: `test/m47.*`, `test/m47_1.*`.
 8. **Merge requires explicit policy and verification.** Default tier mode requires frontier provenance and a matching `mergeAuthority` entry. Opt-in verification/evidence modes have their own stricter gates; no producer verdict, test result or documentation change grants authority by itself. See the [safety model](docs/HUB-REFERENCE.md#safety-model) and `test/m47.*`, `test/m153.*`, `test/m307.*`.
 9. **Self-improvement cannot self-disarm.** Self-target diffs must pass the suite flag-off and flag-on. Safety-test-weakening diffs refused. Test: `test/m54.*`.
@@ -525,7 +525,11 @@ src/
 │   └── ...        # config, git, classify, index-engine, providers, doctor, mcp, …
 ├── web-ui/        # React console, feature-local DOM tests, Vite entrypoints
 ├── raycast/       # Separate package (React/Raycast extension)
-└── tui/           # Terminal UI renderer
+├── tui/           # Terminal UI renderer
+├── mcp/           # MCP servers (context, docs) and fleet MCP tools
+├── fleet/         # Bridge session record/replay and merge-confidence risk scoring
+├── shared/        # Schemas shared by backend and console (e.g. team directory)
+└── doctor/, planning/ # Tool version probes; task triviality classifier
 test/              # Vitest suites organized by milestone
 docs/
 ├── README.md      # Canonical documentation map
