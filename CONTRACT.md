@@ -486,7 +486,8 @@ decisions only) and `fallback_used` (job receipts). See [gates and inert status]
 
 `router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?, revertedPrKeys?})`,
 `authorityRevertedPrKeys(evidence)`, `foldSpendCosts(text)`,
-`foldRouteDecisionWorkClasses(text)`, `foldEmptyTags(text)`,
+`foldRouteDecisionWorkClasses(text)`, `foldRouteDecisions(text)`,
+`foldEmptyTags(text)`,
 `readLedgerFile(path, limit?)`,
 `readLedgerTail(path, maxBytes?)` and
 `readRouterOutcomes({runsDir?, lane?, ashlarDir?, authorityEvidence?})`,
@@ -514,10 +515,22 @@ outcomes whose jobs rows recorded no class, so an explicit
 jobs-ledger `work_class` always wins and a job with no decision row
 stays null. Rows with a missing or non-finite `ts`, an absent or
 non-route-identifier `work_class`, or a wrong schema/event are
-skipped. The market read degrades independently too:
+skipped. The same newest-decision collapse also supplies the market's
+recorded routing verdict: `foldRouteDecisions` returns each job's
+latest `route_decision` row as `{lane, preferred, override, reasons}`
+and the read joins it under the same `market_state` health as
+`work_class` — `market_lane` is the recorded `chosen_lane`,
+`market_preferred` the recorded `preferred_lane`, `market_override`
+the override's recorded reason (`override.reason`), and
+`market_reasons` the recorded `reason_codes` list (deduplicated,
+bounded reason-code shape, capped). A missing field stays `null`;
+a non-array or all-unrecognizable `reason_codes` reads as unrecorded
+(`null`), while a recorded empty list stays `[]`. Rows naming jobs
+outside the jobs window never create outcomes. The market read degrades
+independently too:
 `RouterOutcomeRead.market_state` reports its health and
 `market_truncated` marks a cut tail; anything but `read` leaves
-classes ledger-recorded only. `empty_tag` joins the same bound of
+classes and verdict fields ledger-recorded only. `empty_tag` joins the same bound of
 `metrics/empty-tags.jsonl`: `foldEmptyTags` collapses `job.empty-tag.v1`
 rows — the `{schema, job, lane, tag}` records `phm jobs empty --record`
 appends from the fleet's final-output verdict (src/core/fleet/

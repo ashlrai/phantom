@@ -1028,6 +1028,73 @@ describe('unknown-outcome resolution', () => {
     expect(out).toContain('deferred=4 unresolved=3');
     expect(out).toContain('defer_reasons=duplicate-request:2,files_and_tests_exist:1,recut-in-flight:1');
   });
+
+  it('tallies the market\'s recorded route_decision reasons inside the unknown cohort', async () => {
+    // work-market.jsonl route_decision rows are the market's per-job routing
+    // verdict; the newest row's reason_codes explain why the market was or
+    // was not routing each unresolved job — queue-side diagnostic context
+    // that never reduces the unresolved remainder or touches weight math.
+    const unrouted = (job: string, codes: string[], ts = 3_000): object => ({
+      schema: 'work-market.v1', event: 'route_decision', job,
+      chosen_lane: null, preferred_lane: 'alpha', work_class: 'code',
+      override: null, rejected_lanes: [], reason_codes: codes, ts,
+    });
+    writeLedger([
+      ...merged(20),
+      ...[0, 1].map(i => event(`synthetic-mkt-norun-${i}`, 'alpha', 'code', 'VERIFIED')),
+      event('synthetic-mkt-admit', 'alpha', 'code', 'VERIFIED'),
+      event('synthetic-mkt-hyst', 'alpha', 'code', 'VERIFIED'),
+      event('synthetic-mkt-open', 'alpha', 'code', 'VERIFIED'),   // no decision row
+    ]);
+    writeMarket([
+      unrouted('synthetic-mkt-norun-0', ['no_runnable_lane']),
+      unrouted('synthetic-mkt-norun-1', ['no_runnable_lane']),
+      unrouted('synthetic-mkt-admit', ['no_runnable_lane', 'global_admission']),
+      { schema: 'work-market.v1', event: 'route_decision', job: 'synthetic-mkt-hyst',
+        chosen_lane: 'alpha', preferred_lane: 'alpha', work_class: 'code', override: null,
+        rejected_lanes: [], reason_codes: ['hysteresis_minimum_residency', 'preferred_lane'], ts: 3_000 },
+      // A newer decision supersedes the older verdict for the same job.
+      unrouted('synthetic-mkt-norun-0', ['saturated'], 4_000),
+      // Known-cohort and market-only jobs never join the unknown tally.
+      { schema: 'work-market.v1', event: 'route_decision', job: 'synthetic-MERGED-alpha-code-0',
+        chosen_lane: 'alpha', preferred_lane: 'alpha', work_class: 'code', override: null,
+        rejected_lanes: [], reason_codes: ['preferred_lane'], ts: 3_000 },
+      unrouted('synthetic-mkt-nooutcome', ['no_runnable_lane']),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 5, unclassified_outcomes: 0,
+      market_state: 'read', market_truncated: false,
+      unknown_market_reasons: [
+        { reason: 'no_runnable_lane', jobs: 2 },
+        { reason: 'global_admission', jobs: 1 },
+        { reason: 'hysteresis_minimum_residency', jobs: 1 },
+        { reason: 'preferred_lane', jobs: 1 },
+        { reason: 'saturated', jobs: 1 },
+      ],
+      // Market verdicts are diagnostic: every unresolved job stays
+      // unresolved however the market routed it.
+      unknown_unresolved: 5,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('market_reasons=no_runnable_lane:2');
+    expect(out).toContain('unresolved=5');
+  });
+
+  it('reports unknown_market_reasons null when the market ledger was not read', async () => {
+    // No work-market.jsonl: decision coverage is unknown, so the tally is
+    // null — never an empty list claiming no market reasons were recorded.
+    writeLedger([...merged(20), event('synthetic-mkt-open', 'alpha', 'code', 'VERIFIED')]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      status: 'proposed', market_state: 'missing', market_truncated: false,
+      unknown_market_reasons: null,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).not.toContain('market_reasons=');
+  });
 });
 
 describe('missing, unreadable and oversized input', () => {

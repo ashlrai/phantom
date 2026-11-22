@@ -8,6 +8,7 @@ import {
   authorityRevertedPrKeys,
   foldEmptyTags,
   foldRouteDecisionWorkClasses,
+  foldRouteDecisions,
   foldRouterOutcomes,
   foldSpendCosts,
   readLedgerFile,
@@ -219,7 +220,9 @@ describe('router outcome ledger (612S preservation)', () => {
       exit_code: null, failure_class: null, empty_class: null, empty_tag: null,
       task_outcome: null, lane_hint_blocked_by: null,
       skipped: null, skip_reason: null, skip_code: null,
-      deferred: null, defer_reason: null, defer_repeat_of: null, passk: null,
+      deferred: null, defer_reason: null, defer_repeat_of: null,
+      market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
+      passk: null,
     }]);
   });
 
@@ -1232,6 +1235,97 @@ describe('router outcome work_class join', () => {
     const result = await readRouterOutcomes({ runsDir: root });
     expect(result).toMatchObject({ state: 'read', market_state: 'read', market_truncated: true });
     expect(result.outcomes[0]?.work_class).toBeNull();
+  });
+});
+
+describe('router outcome market decision join', () => {
+  it('folds route_decision rows to each job\'s newest recorded routing verdict', () => {
+    const decisions = foldRouteDecisions([
+      JSON.stringify(decision('J1', 'bulk', 100, {
+        chosen_lane: 'alpha', preferred_lane: 'beta',
+        override: { from: 'beta', to: 'alpha', reason: 'resource_fit', preferred_lane_blocked_by: ['quota_exhausted'] },
+        reason_codes: ['preferred_lane', 'healthy_capacity'],
+      })),
+      JSON.stringify(decision('J1', 'bulk', 200, {
+        chosen_lane: 'gamma', preferred_lane: null, override: null,
+        reason_codes: ['no_runnable_lane', 'no_runnable_lane', 'Hysteresis_X', 'bad code!'],
+      })),   // newer decision wins; dupes drop, unbounded codes skip
+      JSON.stringify(decision('J1', 'bulk', 150, { chosen_lane: 'delta' })),  // older: ignored
+      JSON.stringify(decision('J2', 'bulk', 100, { chosen_lane: null, preferred_lane: null, reason_codes: [] })),
+      JSON.stringify(decision('J3', 'bulk', 100, { chosen_lane: 'alpha!', reason_codes: ['!!!'] })),
+      JSON.stringify({ schema: 'work-market.v1', event: 'posture', ts: 300, lanes: {} }),
+      JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job: 'J4', ts: 100, chosen_lane: 'alpha' }), // minimal row: absent fields stay null
+      JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job: 'J5', ts: 'not-a-number', chosen_lane: 'alpha' }),
+      JSON.stringify(decision('J6', 'bulk', 100, { schema: 'other.v9' })),
+      'not json',
+      '',
+    ].join('\n'));
+    expect(decisions.get('J1')).toEqual({
+      lane: 'gamma', preferred: null, override: null,
+      reasons: ['no_runnable_lane'],
+    });
+    // A recorded empty reason_codes list stays []; chosen/preferred null inside a real decision.
+    expect(decisions.get('J2')).toEqual({ lane: null, preferred: null, override: null, reasons: [] });
+    // Malformed lane and all-unrecognizable codes read as unrecorded, never raw.
+    expect(decisions.get('J3')).toEqual({ lane: null, preferred: 'alpha', override: null, reasons: null });
+    // Minimal rows still record what parses; absent fields and bad ts/wrong schema skip or stay null.
+    expect(decisions.get('J4')).toEqual({ lane: 'alpha', preferred: null, override: null, reasons: null });
+    expect(decisions.has('J5')).toBe(false);
+    expect(decisions.has('J6')).toBe(false);
+    expect(decisions.size).toBe(4);
+  });
+
+  it('joins the newest decision verdict onto outcomes without creating market-only jobs', async () => {
+    const root = runsDir([
+      '{"job":"J1","lane":"alpha","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J2","lane":"beta","phase":"CLOSED","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J3","phase":"VERIFIED","ts":"2026-11-01T00:00:00Z"}',
+    ].join('\n'));
+    writeMarket(root, [
+      decision('J1', 'bulk', 100, {
+        chosen_lane: 'alpha', preferred_lane: 'beta',
+        override: { from: 'beta', to: 'alpha', reason: 'resource_fit' },
+        reason_codes: ['healthy_capacity', 'resource_fit'],
+      }),
+      decision('J1', 'bulk', 200, {   // newer decision stands
+        chosen_lane: null, preferred_lane: 'beta', override: null,
+        reason_codes: ['no_runnable_lane', 'global_admission'],
+      }),
+      decision('J2', 'bulk', 100, { chosen_lane: 'beta', preferred_lane: 'beta', reason_codes: ['preferred_lane'] }),
+      decision('J-UNDECIDED', 'bulk', 100, { chosen_lane: 'alpha', reason_codes: ['preferred_lane'] }),
+    ]);
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'read', market_state: 'read', market_truncated: false });
+    const byId = new Map(result.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')).toMatchObject({
+      market_lane: null, market_preferred: 'beta', market_override: null,
+      market_reasons: ['no_runnable_lane', 'global_admission'],
+    });
+    expect(byId.get('J2')).toMatchObject({
+      market_lane: 'beta', market_preferred: 'beta', market_override: null,
+      market_reasons: ['preferred_lane'],
+    });
+    // J3 has no decision row: every market field stays null — unknown, never guessed.
+    expect(byId.get('J3')).toMatchObject({
+      market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
+    });
+    expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3']);
+  });
+
+  it('keeps market verdict fields null when the market ledger is absent or refused', async () => {
+    const missing = await readRouterOutcomes({ runsDir: runsDir('{"job":"J1","phase":"MERGED"}\n') });
+    expect(missing).toMatchObject({ state: 'read', market_state: 'missing' });
+    expect(missing.outcomes[0]).toMatchObject({
+      market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
+    });
+
+    const root = runsDir('{"job":"J1","phase":"MERGED"}\n');
+    const target = join(root, 'real-market.jsonl');
+    writeFileSync(target, JSON.stringify(decision('J1', 'bulk', 100, { chosen_lane: 'alpha' })) + '\n');
+    symlinkSync(target, marketPath(root));
+    const linked = await readRouterOutcomes({ runsDir: root });
+    expect(linked).toMatchObject({ state: 'read', market_state: 'unreadable' });
+    expect(linked.outcomes[0]?.market_lane).toBeNull();
   });
 });
 

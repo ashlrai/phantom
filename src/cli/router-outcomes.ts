@@ -12,7 +12,10 @@
  * ACU spend and usage provenance labels), the finish row's recorded diff
  * size (diff_files/diff_lines), the batch member's recorded
  * task_outcome word, the dispatch claim's recorded lane override
- * (lane_hint/lane_override), the skip gate's recorded launch decline
+ * (lane_hint/lane_override), the work market's recorded routing verdict
+ * (market_lane/market_preferred/market_override/market_reasons, joined
+ * from the same route_decision rows as work_class), the skip gate's
+ * recorded launch decline
  * (skipped/skip_reason/skip_code), the fleet's recorded keep-queued
  * verdict (deferred/defer_reason/defer_repeat_of), the fleet's recorded
  * empty tag
@@ -152,6 +155,8 @@ function outcomeLine(o: RouterOutcome): string {
     `skipped=${text(o.skipped)}`, `skip_reason=${text(o.skip_reason)}`, `skip_code=${text(o.skip_code)}`,
     `deferred=${text(o.deferred)}`, `defer_reason=${text(o.defer_reason)}`, `defer_repeat_of=${text(o.defer_repeat_of)}`,
     `lane_hint_blocked_by=${o.lane_hint_blocked_by === null ? 'unknown' : `[${o.lane_hint_blocked_by.join(',')}]`}`,
+    `market_lane=${text(o.market_lane)}`, `market_preferred=${text(o.market_preferred)}`, `market_override=${text(o.market_override)}`,
+    `market_reasons=${o.market_reasons === null ? 'unknown' : `[${o.market_reasons.join(',')}]`}`,
   ].join(' ');
 }
 
