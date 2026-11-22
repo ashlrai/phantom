@@ -28,6 +28,9 @@
  * provider-wall lane hold
  * (provider_wall_trigger/provider_wall_pattern/provider_wall_lane,
  * folded from autobackoff_hold receipts), the fleet's recorded
+ * slot-throttle detection
+ * (pool_kind/pool_mem_free_pct/pool_swap_gb, folded from pool
+ * receipts), the fleet's recorded
  * empty tag
  * (empty_tag, joined from metrics/empty-tags.jsonl), the merge queue's
  * recorded per-PR observations
@@ -188,6 +191,7 @@ function outcomeLine(o: RouterOutcome): string {
     `market_rejected=${o.market_rejected === null ? 'unknown' : `[${o.market_rejected.map(e => e.reasons === null ? e.lane : `${e.lane}:${e.reasons.join('+')}`).join(';')}]`}`,
     `handoff_trigger=${text(o.handoff_trigger)}`, `handoff_lane=${text(o.handoff_lane)}`, `handoff_target=${text(o.handoff_target)}`,
     `provider_wall_trigger=${text(o.provider_wall_trigger)}`, `provider_wall_pattern=${text(o.provider_wall_pattern)}`, `provider_wall_lane=${text(o.provider_wall_lane)}`,
+    `pool_kind=${text(o.pool_kind)}`, `pool_mem_free_pct=${text(o.pool_mem_free_pct)}`, `pool_swap_gb=${text(o.pool_swap_gb)}`,
     `merge_queue=${mergeQueue}`,
   ].join(' ');
 }
