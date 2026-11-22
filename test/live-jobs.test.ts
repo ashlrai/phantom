@@ -22,7 +22,7 @@ it('classifies boundary ages and dead or missing processes, preserving redacted 
   for (const [id, age, pid] of [['fresh', 9, 12], ['quiet', 10, 12], ['hour', 60, 12], ['old', 61, 12], ['gone', 1, 13], ['missing', 1, null]] as const) await job(id, age, pid);
   const redact = vi.spyOn(logs, 'scrubJobLogLine').mockImplementation(line => line === 'working' ? 'hidden' : line);
   const report = await read();
-  expect(Object.fromEntries(report.jobs.map(j => [j.id, j.status]))).toEqual({ fresh: 'moving', quiet: 'quiet', hour: 'quiet', old: 'stuck', gone: 'stuck', missing: 'stuck' });
+  expect(Object.fromEntries(report.jobs.map(j => [j.id, j.status]))).toEqual({ fresh: 'moving', quiet: 'quiet', hour: 'quiet', old: 'stuck', gone: 'stuck', missing: 'unknown' });
   expect(report.jobs[0]).toMatchObject({ repo: 'phantom', lane: 'local', elapsed: 7200, lastLine: 'hidden', started: '2026-11-21T10:00:00.000Z' });
   expect(redact).toHaveBeenCalledWith('working');
   expect(report.jobs.filter(j => !j.processLive).map(j => j.id)).toEqual(['gone', 'missing']);
@@ -30,7 +30,7 @@ it('classifies boundary ages and dead or missing processes, preserving redacted 
 it('keeps missing evidence unknown and excludes finished attempts', async () => {
   await job('bare', 1); await rm(join(dir, 'bare.log')); await rm(join(dir, 'bare.launch')); await rm(join(dir, 'queue/run/bare.dispatched'));
   await job('done', 1); await writeFile(join(dir, 'queue/run/done.fin'), 'finished');
-  expect((await read()).jobs).toMatchObject([{ id: 'bare', started: 'unknown', elapsed: 'unknown', lastLine: 'unknown', lastLogWrite: 'unknown', status: 'stuck' }]);
+  expect((await read()).jobs).toMatchObject([{ id: 'bare', started: 'unknown', elapsed: 'unknown', lastLine: 'unknown', lastLogWrite: 'unknown', status: 'unknown' }]);
   expect(await readLiveJobs({ runsDir: join(dir, 'absent') })).toMatchObject({ known: false, jobs: [] });
 });
 it('writes a private sibling temp then renames, retaining the previous file on failure', async () => {
