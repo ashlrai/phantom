@@ -377,6 +377,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'red-candidates': () => import('./fleet-red-candidates.js'),
   'red-fix': () => import('./fleet-red-fix.js'),
   'red-merges': () => import('./fleet-red-merges.js'),
+  'relaunches': () => import('./fleet-relaunches.js'),
   'release': () => import('./fleet-release.js'),
   'release-advance': () => import('./fleet-release-advance.js'),
   'release-advance-batch': () => import('./fleet-release-advance-batch.js'),

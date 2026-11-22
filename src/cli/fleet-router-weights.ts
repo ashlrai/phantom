@@ -70,6 +70,11 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
       (e.handoff_triggers !== null && e.handoff_triggers.length > 0
         ? `(${e.handoff_triggers.map(r => `${r.trigger}:${r.jobs}`).join(',')})` : ''));
   }
+  if (e.provider_wall_known > 0) {
+    parts.push(`provider_wall=${e.provider_wall_known}` +
+      (e.provider_wall_triggers !== null && e.provider_wall_triggers.length > 0
+        ? `(${e.provider_wall_triggers.map(r => `${r.trigger}:${r.jobs}`).join(',')})` : ''));
+  }
   if (e.merge_queue_known > 0) {
     parts.push(`merge_queue=${e.merge_queue_known}` +
       (e.merge_queue_blocked_reasons !== null && e.merge_queue_blocked_reasons.length > 0
@@ -106,7 +111,7 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
   const counts = `known=${report.known_outcomes} unknown=${report.unknown_outcomes} unclassified=${report.unclassified_outcomes} ` +
     `min_samples=${report.bounds.min_samples} max_shift=${report.bounds.max_shift}`;
   const resolution = report.unknown_unresolved === null ? [] : [
-    `unknown resolution: empty=${report.unknown_empty} nonzero_exit=${report.unknown_nonzero_exit} skipped=${report.unknown_skipped} deferred=${report.unknown_deferred} noop=${report.unknown_noop} handoffs=${report.unknown_handoffs} unresolved=${report.unknown_unresolved}` +
+    `unknown resolution: empty=${report.unknown_empty} nonzero_exit=${report.unknown_nonzero_exit} skipped=${report.unknown_skipped} deferred=${report.unknown_deferred} noop=${report.unknown_noop} handoffs=${report.unknown_handoffs} provider_walls=${report.unknown_provider_walls} unresolved=${report.unknown_unresolved}` +
       (report.unknown_failure_classes !== null && report.unknown_failure_classes.length > 0
         ? ` failure_classes=${report.unknown_failure_classes.map(c => `${c.failure_class}:${c.jobs}`).join(',')}`
         : '') +
@@ -138,6 +143,9 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
         : '') +
       (report.unknown_handoff_triggers !== null && report.unknown_handoff_triggers.length > 0
         ? ` handoff_triggers=${report.unknown_handoff_triggers.map(c => `${c.trigger}:${c.jobs}`).join(',')}`
+        : '') +
+      (report.unknown_provider_wall_triggers !== null && report.unknown_provider_wall_triggers.length > 0
+        ? ` provider_wall_triggers=${report.unknown_provider_wall_triggers.map(c => `${c.trigger}:${c.jobs}`).join(',')}`
         : '') +
       (report.unknown_merge_queue !== null && report.unknown_merge_queue > 0
         ? ` merge_queue=${report.unknown_merge_queue}` +

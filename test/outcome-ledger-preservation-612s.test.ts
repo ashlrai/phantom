@@ -239,6 +239,7 @@ describe('router outcome ledger (612S preservation)', () => {
       market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
       market_rejected: null,
       handoff_trigger: null, handoff_lane: null, handoff_target: null,
+      provider_wall_trigger: null, provider_wall_pattern: null, provider_wall_lane: null,
       merge_queue: null,
       passk: null,
     }]);
@@ -2009,6 +2010,137 @@ describe('router outcome session-handoff advisory fold', () => {
       merged: null, handoff_trigger: 'rate-limit', handoff_lane: 'alpha', handoff_target: null,
     });
     expect(byId.get('J1')?.handoff_trigger).toBeNull();
+    expect(fold.malformed_rows).toBe(2);
+  });
+});
+
+describe('router outcome provider-wall hold fold', () => {
+  /** An autobackoff_hold row in the producer's own shape (contrib/mac/dispatchd.py):
+   *  the usage/quota scanner's hold carries pattern/until/src and the auth
+   *  scanner's streak hold adds auth_failures. */
+  const hold = (job: string, pattern: string, extra: Record<string, unknown> = {}): object => ({
+    event: 'autobackoff_hold', lane: 'alpha', job, pattern,
+    until: '2026-11-02T00:00:00-05:00', src: 'cli_line', ...extra,
+  });
+
+  it('folds usage-limit and auth-failure holds with their lane', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"J1","lane":"alpha","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+      JSON.stringify(hold('J1', 'codex_usage_limit')),
+      '{"job":"J2","lane":"claude","phase":"VERIFIED","ts":"2026-11-01T00:00:00Z"}',
+      JSON.stringify(hold('J2', 'claude_auth_401', { lane: 'claude', src: 'default', auth_failures: 3 })),
+      '{"job":"J3","phase":"MERGED"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')).toMatchObject({
+      provider_wall_trigger: 'usage-limit', provider_wall_pattern: 'codex_usage_limit', provider_wall_lane: 'alpha',
+    });
+    expect(byId.get('J2')).toMatchObject({
+      provider_wall_trigger: 'auth-failure', provider_wall_pattern: 'claude_auth_401', provider_wall_lane: 'claude',
+    });
+    // J3 has no hold row: unknown stays null, never a guessed verdict.
+    expect(byId.get('J3')).toMatchObject({
+      provider_wall_trigger: null, provider_wall_pattern: null, provider_wall_lane: null,
+    });
+  });
+
+  it('derives the trigger from the producer tables and the auth_failures marker', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"J1","phase":"MERGED"}',
+      // A devin weekly-quota id sits in the usage table.
+      JSON.stringify(hold('J1', 'devin_weekly_quota')),
+      '{"job":"J2","phase":"MERGED"}',
+      // auth_failures marks the auth scanner's streak holds outright —
+      // even a pattern id outside both mirrored tables.
+      JSON.stringify(hold('J2', 'some_new_pattern', { auth_failures: 2 })),
+      '{"job":"J3","phase":"MERGED"}',
+      // An unrecognized pattern still records the bounded hold with
+      // trigger null rather than guessing a family.
+      JSON.stringify(hold('J3', 'some_new_pattern')),
+      // claude_oauth_expired sits in the producer's usage table.
+      '{"job":"J4","phase":"MERGED"}',
+      JSON.stringify(hold('J4', 'claude_oauth_expired')),
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')).toMatchObject({ provider_wall_trigger: 'usage-limit', provider_wall_pattern: 'devin_weekly_quota' });
+    expect(byId.get('J2')).toMatchObject({ provider_wall_trigger: 'auth-failure', provider_wall_pattern: 'some_new_pattern' });
+    expect(byId.get('J3')).toMatchObject({ provider_wall_trigger: null, provider_wall_pattern: 'some_new_pattern' });
+    expect(byId.get('J4')).toMatchObject({ provider_wall_trigger: 'usage-limit', provider_wall_pattern: 'claude_oauth_expired' });
+  });
+
+  it('lets the newest recognized hold replace the triple and ignores skip receipts and other events', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"J1","phase":"MERGED"}',
+      JSON.stringify(hold('J1', 'codex_usage_limit', { lane: 'alpha' })),
+      // The helper-unavailable skip receipts record no verdict — a scan
+      // that could not classify the run never holds and never joins.
+      JSON.stringify({ event: 'autobackoff_skip', lane: 'alpha', job: 'J1', pattern: 'codex_usage_limit', src: 'helper_unavailable' }),
+      JSON.stringify({ event: 'authbackoff_skip', lane: 'alpha', job: 'J1', pattern: 'claude_auth_401', src: 'helper_unavailable' }),
+      // A finish row is attempt evidence but not a hold verdict — the
+      // standing hold survives it.
+      '{"job":"J1","event":"finish","exit_code":1,"ts":"2026-11-02T00:00:00Z"}',
+      JSON.stringify(hold('J1', 'claude_auth_401', { lane: 'beta', auth_failures: 2, src: 'default' })),
+    ].join('\n'));
+    expect(fold.outcomes[0]).toMatchObject({
+      provider_wall_trigger: 'auth-failure', provider_wall_pattern: 'claude_auth_401', provider_wall_lane: 'beta',
+    });
+  });
+
+  it('skips rows outside the event/pattern bounds without touching the verdict', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"J1","phase":"MERGED"}',
+      JSON.stringify(hold('J1', 'codex_usage_limit', { lane: 'alpha' })),
+      // A different event name, a pattern with spaces and an overlong
+      // pattern are all unrecognized — the standing verdict survives.
+      JSON.stringify({ ...hold('J1', 'codex_usage_limit'), event: 'autobackoff' }),
+      JSON.stringify(hold('J1', 'not a pattern!')),
+      JSON.stringify(hold('J1', 'x'.repeat(200))),
+      // An event-alias row (type instead of event) still counts.
+      JSON.stringify({ ...hold('J2', 'devin_usage_limit'), event: undefined, type: 'autobackoff_hold' }),
+      '{"job":"J2","phase":"VERIFIED"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')).toMatchObject({
+      provider_wall_trigger: 'usage-limit', provider_wall_pattern: 'codex_usage_limit', provider_wall_lane: 'alpha',
+    });
+    expect(byId.get('J2')).toMatchObject({ provider_wall_trigger: 'usage-limit', provider_wall_pattern: 'devin_usage_limit' });
+  });
+
+  it('drops a malformed lane to null while keeping the recorded hold', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"J1","phase":"MERGED"}',
+      // A lane with a space fails the bounded lane-id shape; the hold's
+      // pattern and trigger still join.
+      JSON.stringify(hold('J1', 'codex_usage_limit', { lane: 'not a lane!' })),
+      // A non-string lane is equally unrecorded.
+      '{"job":"J2","phase":"MERGED"}',
+      JSON.stringify(hold('J2', 'devin_acu_exhausted', { lane: 42 })),
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')).toMatchObject({
+      provider_wall_trigger: 'usage-limit', provider_wall_pattern: 'codex_usage_limit', provider_wall_lane: null,
+    });
+    expect(byId.get('J2')).toMatchObject({
+      provider_wall_trigger: 'usage-limit', provider_wall_pattern: 'devin_acu_exhausted', provider_wall_lane: null,
+    });
+  });
+
+  it('lets a hold-only job stand as its own outcome and tolerates malformed rows', () => {
+    // The hold lives in the primary jobs ledger, so its job is a real
+    // ledger job: the outcome exists with merged unknown and the wall
+    // verdict attached — the same standing every lifecycle row gets.
+    const fold = foldRouterOutcomes([
+      JSON.stringify(hold('J-ONLY', 'codex_auth_failure', { auth_failures: 2 })),
+      '{"job":"J1","phase":"MERGED"}',
+      'not json',
+      '[1,2]',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J-ONLY')).toMatchObject({
+      merged: null, provider_wall_trigger: 'auth-failure',
+      provider_wall_pattern: 'codex_auth_failure', provider_wall_lane: 'alpha',
+    });
+    expect(byId.get('J1')?.provider_wall_trigger).toBeNull();
     expect(fold.malformed_rows).toBe(2);
   });
 });

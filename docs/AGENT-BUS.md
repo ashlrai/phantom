@@ -506,8 +506,17 @@ statuses never fan out. The result's `claimHoldersWoken` counts the hints
 present after the call — absent when the fan-out did not run, `null` when the
 live claim table could not be read (unknown holders are never reported as
 none), and a hint that cannot be written is best-effort, never a failed send.
+
+`--open` on `phm fleet work-feed` and `phm agents bus work feed` implies
+`--claims` and keeps queued/rescheduled jobs with declared claim keys. Complete
+hold coverage excludes jobs whose every key is held; unavailable, absent or
+truncated coverage keeps candidates visible with their existing claim
+annotations. `--claimable` still requires proof of a free key. Both filters
+compose with the existing feed filters. The unified inbox uses the same complete
+hold coverage rule and reports incomplete coverage as degraded.
+
 `phm agents bus work feed [--status <s>] [--job <id>] [--repo <owner/name>]
-[--provider <p>] [--to <label>] [--owner <agent>] [--claims] [--claimable]
+[--provider <p>] [--to <label>] [--owner <agent>] [--claims] [--open] [--claimable]
 [--since <15m|2h|1d|ISO>]`
 reads the
 same projection back — jobs newest-first, optionally filtered by status,

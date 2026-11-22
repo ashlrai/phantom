@@ -24,6 +24,7 @@ const outcome = (job: string, lane: string | null, merged: boolean | null, rever
   market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
   market_rejected: null,
   handoff_trigger: null, handoff_lane: null, handoff_target: null,
+  provider_wall_trigger: null, provider_wall_pattern: null, provider_wall_lane: null,
   merge_queue: null,
   passk: null,
 });
