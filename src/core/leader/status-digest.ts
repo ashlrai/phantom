@@ -47,6 +47,8 @@ export interface StatusDigestInput {
   blocker?: DigestBlocker;
   /** `supply_low: Claude (0 queued, 16% left): add work` when a pool at risk of waste has under an hour of work queued; absent otherwise. */
   supplyLine?: string;
+  /** Worst source yield over 24 hours; absent when no source can be judged. */
+  yieldLine?: string;
   /** The top waste alert (`pools.waste.v1`): "Gemini: 85% will go unused in 5 h. Sign in to Gemini once: run gemini in a terminal."; absent when none. */
   wasteLine?: string;
   /** `Not live yet: 2 merged fleet files (...)` when merged fleet scripts differ from the installed copies; absent when all are live or the check cannot run. */
@@ -114,6 +116,7 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
   if (input.gapLine && blocker?.kind !== 'asleep') lines.push(input.gapLine);
   if (input.diskLine && blocker?.kind !== 'disk_low') lines.push(input.diskLine);
   if (input.supplyLine) lines.push(input.supplyLine);
+  if (input.yieldLine) lines.push(input.yieldLine);
   if (input.notLiveLine) lines.push(input.notLiveLine);
   const runs = input.nodeRuns;
   if (runs) lines.push(nodeRunsLine(runs));

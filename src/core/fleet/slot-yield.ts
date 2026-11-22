@@ -161,10 +161,15 @@ interface Run {
   finished: boolean; empty: boolean; aborted: boolean;
   wall: number | null; tokens: number | null;
   prs: Set<string>; merged: boolean; reverted: boolean;
+  /** Epoch ms of the credited merge; null when its timestamp is unusable. */
+  mergedAt: number | null;
+  /** Launch source tag, falling back to producer. */
+  src: string | null;
 }
 
 const word = (value: unknown): string =>
   typeof value === 'string' && /^[\w.:@/-]{1,80}$/.test(value.trim()) ? value.trim() : 'unknown';
+const srcTag = (value: unknown): string | null => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.trim()) ? value.trim() : null;
 const count = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 
@@ -388,17 +393,21 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
   if (!Number.isFinite(hours) || hours <= 0) throw new RangeError('Hours must be positive.');
   const start = now - hours * 3_600_000;
   const byJob = new Map<string, Run[]>();
-  const outcomes = new Map<string, string>();
+  const outcomes = new Map<string, { state: string; at: number | null }>();
   const revertedJobs = new Set<string>();
   const skips = new Map<string, { repo: string; rows: number }>();
   /** Credit each resolved job once. Safe to repeat. A recorded revert is never a held merge. */
   const settle = (): Run[] => {
-    for (const [job, state] of outcomes) {
+    for (const [job, { state, at }] of outcomes) {
       const runs = byJob.get(job)!;
       const withPr = runs.filter(r => r.prs.size > 0);
       const run = withPr[withPr.length - 1] ?? runs[runs.length - 1]!;
       if (state === 'MERGED') {
-        if (revertedJobs.has(job)) run.reverted = true; else run.merged = true;
+        if (revertedJobs.has(job)) run.reverted = true;
+        else {
+          run.merged = true;
+          run.mergedAt = at !== null && at >= run.at && at <= now ? at : null;
+        }
       } else if (REVERT_OUTCOMES.has(state)) run.reverted = true;
     }
     return [...byJob.values()].flat();
@@ -424,7 +433,7 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
       const runs = byJob.get(job);
       if (event === 'launch') {
         if (at === null || at > now) return;
-        const run: Run = { job, lane: word(firstString(row, LANE_KEYS)), tier: word(row.tier), repo: word(row.repo), model: typeof row.model === 'string' && row.model.trim() ? row.model.trim().slice(0, 80) : null, at, last: at, finished: false, empty: false, aborted: false, wall: null, tokens: null, prs: new Set(), merged: false, reverted: false };
+        const run: Run = { job, lane: word(firstString(row, LANE_KEYS)), tier: word(row.tier), repo: word(row.repo), model: typeof row.model === 'string' && row.model.trim() ? row.model.trim().slice(0, 80) : null, at, last: at, finished: false, empty: false, aborted: false, wall: null, tokens: null, prs: new Set(), merged: false, reverted: false, mergedAt: null, src: srcTag(row.src) ?? srcTag(row.producer) };
         if (runs) runs.push(run); else byJob.set(job, [run]);
         return;
       }
@@ -457,7 +466,7 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
         else if (kind.startsWith('abort')) run.aborted = true;
       }
       const state = outcomeState(row, event, phase);
-      if (state !== null) outcomes.set(job, state);
+      if (state !== null) outcomes.set(job, { state, at });
     },
     runs: settle,
     jobYield: () => jobYieldParts(settle(), skips, hours).report,
