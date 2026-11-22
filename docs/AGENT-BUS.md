@@ -429,7 +429,8 @@ compact `job=<id>:<state>` marker rides inside the frame's bracket and on
 the human line the same way `held` does, and `work mine`'s inbox section
 carries the same field.
 `phm agents bus wakes <agent> [--since <15m|2h|1d|ISO>] [--job <id>]
-[--from <agent>] [--contains <text>]` lists wake hints for the agent and its
+[--from <agent>] [--exclude-from <agent>] [--contains <text>]` lists wake
+hints for the agent and its
 channels. `--since` keeps only hints after the cutoff — the same `phm
 messages` grammar the inbox and channel read take, resolved to epoch ms —
 so a wake-driven agent reads just the hints newer than its last check.
@@ -441,7 +442,12 @@ exact-label matching; the matched label is the hint row's own `from` —
 the triggering envelope's sender on a `bus.send` hint, the posting
 identity's `agent:<handle>` on a claim-holder `wh-…` hint — so "which
 agent keeps waking me" is one filtered read that composes with `--since`
-and `--job`. A ref that resolves to no registered identity keeps exact-label
+and `--job`. `--exclude-from` drops hints sent under every registered
+spelling of one identity through the same matcher and exact-label
+fallback `--from` applies — composing with `--from` so a sender both
+included and excluded matches nothing — so "everyone's wakes except the
+noisy bot's" is one filtered read, and `matched` stays the count the
+whole filter set accepts. A ref that resolves to no registered identity keeps exact-label
 matching instead — the page reports `scope: 'label'` (vs `'identity'`),
 `agent` the queried label verbatim, and only hints whose `to` is that label
 match — so hints queued under a bare coordination or routing label, like the

@@ -38,7 +38,7 @@ ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-f
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--matched] [--frame <cli>]
-ashlr agents bus wakes [<agent>] [--since <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--contains <text>]
+ashlr agents bus wakes [<agent>] [--since <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--contains <text>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
@@ -112,7 +112,11 @@ matching every label of that identity, the same rule inbox --from and
 channel read --from apply, with an unresolvable ref keeping exact-label
 matching; a bus.send hint's sender is the triggering envelope's from, a
 claim-holder wh-… hint's the posting identity's agent:<handle>, so
-"which agent keeps waking me" is one filtered read. --channel on inbox
+"which agent keeps waking me" is one filtered read. --exclude-from on
+wakes drops hints sent under every registered spelling of one identity —
+the same matcher and exact-label fallback --from applies — composing
+with --from so a sender both included and excluded matches nothing, so
+"everyone's wakes except the noisy bot's" is one filtered read. --channel on inbox
 keeps only mail addressed to one registry
 channel's group:<name>:* addresses — channel posts and channel-addressed
 handoffs alike — so an agent in several rooms reads one room's pending
@@ -656,7 +660,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const agent = sub ?? self;
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
       const page = readAgentWakes(agent, sinceArg(), options,
-        { job: one('--job'), from: one('--from'), contains: one('--contains') });
+        { job: one('--job'), from: one('--from'), excludeFrom: one('--exclude-from'), contains: one('--contains') });
       if (page.status !== 'ok') return finish(page, '');
       out(json ? JSON.stringify(page) : [
         ...(page.truncated ? [`${page.matched} wake hint(s) matched; the bounded queue tail is truncated — showing the newest ${page.wakes.length}`] : []),
