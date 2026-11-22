@@ -226,7 +226,7 @@ describe('router outcome ledger (612S preservation)', () => {
   it('keeps unknown measurements null and does not infer merge from VERIFIED, CI, or a PR URL', () => {
     const fold = foldRouterOutcomes('{"job":"U1","phase":"VERIFIED","pr_url":"https://github.com/o/r/pull/3","ci_first_pass":"yes","cost_usd":-1}\n');
     expect(fold.outcomes).toEqual([{
-      schema: 'router.outcome.v1', job_id: 'U1', lane: null, model: null, tier: null, work_class: null,
+      schema: 'router.outcome.v1', job_id: 'U1', lane: null, model: null, tier: null, work_class: null, repo: null,
       lane_hint: null, lane_override: null,
       merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
       tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
@@ -655,6 +655,32 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(byId.get('U6')).toMatchObject({ acus: null, usage_missing: null, diff_files: null });
     expect(byId.get('U7')?.acus).toBe(1.25);
     expect(byId.get('U8')).toMatchObject({ acus: 2, usage_missing: 'claude-result-not-in-log' });
+  });
+
+  it('folds the recorded repo cell newest-explicit-wins in the bounded repo shape', () => {
+    const fold = foldRouterOutcomes([
+      // dispatchd writes the ready line's repo cell on its queue rows.
+      '{"job":"R1","event":"enqueue","repo":"phantom"}',
+      '{"job":"R1","event":"claim","lane":"alpha","repo":"lexicon"}',
+      // A later row without repo leaves the standing record alone.
+      '{"job":"R1","event":"finish","lane":"alpha","phase":"MERGED"}',
+      // owner/repo pairs and mixed-case segments join in the same shape.
+      '{"job":"R2","event":"launch","repo":"ashlrai/phantom"}',
+      '{"job":"R3","event":"task_outcome","outcome":"done","repo":"EXAMPLE/PHANTOM"}',
+      // Absolute paths, whitespace, deeper paths and non-strings are
+      // skipped — the earlier bounded value stands, never recorded raw.
+      '{"job":"R1","event":"outcome","repo":"/Users/someone/Desktop/github/dev-tools/ashlr-hub"}',
+      '{"job":"R1","event":"outcome","repo":"not a repo!"}',
+      '{"job":"R1","event":"outcome","repo":"a/b/c"}',
+      '{"job":"R1","event":"outcome","repo":42}',
+      // A job whose rows never recorded repo stays null — unknown.
+      '{"job":"R4","event":"claim","lane":"beta"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('R1')).toMatchObject({ repo: 'lexicon', merged: true });
+    expect(byId.get('R2')?.repo).toBe('ashlrai/phantom');
+    expect(byId.get('R3')?.repo).toBe('EXAMPLE/PHANTOM');
+    expect(byId.get('R4')?.repo).toBeNull();
   });
 
   it('skips RQ-BATCH-* session rows and folds member task_outcome words', () => {

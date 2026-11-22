@@ -2,7 +2,8 @@
  * `ashlr router outcomes` — read-only per-job outcome records folded from the
  * host metrics ledgers (metrics/jobs.jsonl joined with metrics/api-spend.jsonl
  * for cost_usd, metrics/work-market.jsonl for work_class and
- * metrics/empty-tags.jsonl for empty_tag) by src/core/router/outcomes.ts:
+ * metrics/empty-tags.jsonl for empty_tag) by src/core/router/outcomes.ts,
+ * with the dispatcher's recorded repo cell folded as `repo`:
  * merge and revert state, CI
  * first pass, review findings, cost, wall time, recorded merge latency
  * (ttm_s), recorded queue-admission wait (queue_wait_s), recorded CI
@@ -181,7 +182,7 @@ function outcomeLine(o: RouterOutcome): string {
       `auto_merge:${mq.auto_merge ?? 'unknown'}`;
   return [
     o.job_id,
-    `lane=${text(o.lane)}`, `model=${text(o.model)}`, `tier=${text(o.tier)}`, `work_class=${text(o.work_class)}`,
+    `lane=${text(o.lane)}`, `model=${text(o.model)}`, `tier=${text(o.tier)}`, `work_class=${text(o.work_class)}`, `repo=${text(o.repo)}`,
     `lane_hint=${text(o.lane_hint)}`, `lane_override=${text(o.lane_override)}`,
     `merged=${text(o.merged)}`, `reverted=${text(o.reverted)}`, `ci_first_pass=${text(o.ci_first_pass)}`, `review=${review}`,
     `cost_usd=${text(o.cost_usd)}`, `acus=${text(o.acus)}`, `wall_s=${text(o.wall_s)}`, `ttm_s=${text(o.ttm_s)}`, `queue_wait_s=${text(o.queue_wait_s)}`, `ci_wall_s=${text(o.ci_wall_s)}`, `publish_wait_s=${text(o.publish_wait_s)}`, `tokens_total=${text(o.tokens_total)}`, `passk=${text(o.passk)}`,

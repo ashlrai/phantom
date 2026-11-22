@@ -9,7 +9,7 @@ import type { RouterOutcome } from '../src/core/router/outcomes.js';
 const GIB = 1024 ** 3, MIB = 1024 ** 2;
 
 const outcome = (job: string, lane: string | null, merged: boolean | null, reverted: boolean | null = null): RouterOutcome => ({
-  schema: 'router.outcome.v1', job_id: job, lane, model: null, tier: null, work_class: null,
+  schema: 'router.outcome.v1', job_id: job, lane, model: null, tier: null, work_class: null, repo: null,
   lane_hint: null, lane_override: null,
   merged, reverted, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
   tokens_total: null, acus: null, tokens_in: null, tokens_out: null,

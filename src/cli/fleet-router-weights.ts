@@ -89,6 +89,9 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
         : `(check_failures:${e.merge_queue_check_failures_known},conflicts:${e.merge_queue_conflicts_known},` +
           `retries:${e.merge_queue_retries_known},recuts:${e.merge_queue_recuts_known})`));
   }
+  if (e.repos_known > 0 && e.repos !== null) {
+    parts.push(`repos=${e.repos_known}(${e.repos.map(r => `${r.repo}:${r.jobs}`).join(',')})`);
+  }
   return parts.length === 0 ? '' : ` evidence ${parts.join(' ')}`;
 }
 
@@ -183,6 +186,9 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
         (report.usage_missing.length > 0 ? ` missing=${report.usage_missing.map(c => `${c.usage_missing}:${c.jobs}`).join(',')}` : '') +
         (report.usage_sources.length > 0 ? ` sources=${report.usage_sources.map(c => `${c.usage_source}:${c.jobs}`).join(',')}` : '')]
     : [];
+  const repoMix = report.repos !== null && report.repos.length > 0
+    ? [`repo mix: ${report.repos.map(c => `${c.repo}:${c.jobs}`).join(',')}`]
+    : [];
   const coverage = [
     ...(report.truncated ? ['coverage: retained tail only; older ledger rows were not read'] : []),
     ...(report.market_state !== 'read'
@@ -221,7 +227,7 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
           : []),
       ]
     : [];
-  return [header, counts, ...resolution, `ledger ${report.ledger.path}`, ...usage, ...coverage, ...quality, ...rows, ...none];
+  return [header, counts, ...resolution, `ledger ${report.ledger.path}`, ...usage, ...repoMix, ...coverage, ...quality, ...rows, ...none];
 }
 
 export async function cmdFleetRouterWeights(

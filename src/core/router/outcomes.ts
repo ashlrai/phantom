@@ -20,7 +20,13 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // the market's recorded routing verdict as market_lane/market_preferred/
 // market_override/market_reasons — decision-side intent and reason codes
 // (no_runnable_lane, hysteresis_*, global_admission) distinct from the
-// claim rows' launch record. The ledgers are append-only and unbounded, so each
+// claim rows' launch record. jobs.jsonl queue rows also carry the
+// dispatcher's recorded repo cell (`repo` — a bare fleet name or an
+// owner/repo pair), which folds as `repo` newest-explicit-wins in the
+// bounded repo-label shape: the repo the job targeted reaches
+// router.outcome.v1 instead of stopping at the ledger, so per-repo
+// outcome mixes can be read beside the per-lane and per-class ones. The
+// ledgers are append-only and unbounded, so each
 // read retains a tail window: an oversized ledger reports truncated:true (or
 // spend_truncated/market_truncated for the joined sources) and folds only
 // the retained rows, never a refused read. jobs.jsonl finish rows carry
@@ -176,6 +182,20 @@ export interface RouterOutcome {
    * ledger recorded one — unknown stays null, never derived.
    */
   work_class: string | null;
+  /**
+   * The repo the job targeted, recorded on jobs.jsonl rows as `repo` —
+   * dispatchd writes the ready line's repo cell on its queue rows
+   * (enqueue/claim/launch/skip/defer/outcome/task_outcome alike). The
+   * value joins only in the bounded repo-label shape — a bare fleet
+   * name (`phantom`, `lexicon`, `ashlr-md`) or an `owner/repo` pair —
+   * and the newest recognized value wins like lane/model/tier: a row
+   * without `repo` or with a value outside the shape leaves the
+   * standing record, so absolute paths, whitespace and deeper paths
+   * are skipped, never recorded raw, and never guessed from the job
+   * id or PR URL. Null when no retained row recorded a bounded repo —
+   * unknown, not "no repo".
+   */
+  repo: string | null;
   /**
    * The dispatch claim's recorded lane override — the pair a `claim` or
    * `batch_claim` row writes when the launch left its hinted lane.
@@ -926,6 +946,19 @@ const usageLabel = (r: Row, ...keys: string[]): string | null => {
 };
 
 /**
+ * The recorded repo label — a bare fleet name or an `owner/repo` pair,
+ * each segment a bounded identifier (`phantom`, `ashlr-md`,
+ * `ashlrai/phantom` all fit; absolute paths, whitespace and deeper
+ * paths do not). dispatchd's repo cell is a repo name, not a path, so
+ * anything outside the shape is skipped rather than recorded raw.
+ */
+const REPO_LABEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$/;
+const repoLabel = (r: Row): string | null => {
+  const v = str(r, 'repo');
+  return v !== null && REPO_LABEL.test(v) ? v : null;
+};
+
+/**
  * The finish row's recorded empty-diff classification. dispatchd writes
  * `empty_class` from launch_precheck.classify_empty — a closed three-value
  * vocabulary (EMPTY_NO_DIFF/EMPTY_ERROR/EMPTY_UNKNOWN), so unlike
@@ -1583,6 +1616,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     }
     const o: RouterOutcome = outcomes.get(j) ?? {
       schema: 'router.outcome.v1', job_id: j, lane: null, model: null, tier: null, work_class: null,
+      repo: null,
       lane_hint: null, lane_override: null,
       merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
       tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
@@ -1609,6 +1643,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     o.model = str(r, 'model') ?? o.model;
     o.tier = str(r, 'tier') ?? o.tier;
     o.work_class = str(r, 'work_class') ?? o.work_class;
+    o.repo = repoLabel(r) ?? o.repo;
     // The claim rows are the job's routing decisions: the newest one
     // stands, so a later claim that ran on its hint clears an earlier
     // override, and every non-claim row leaves the pair alone. A

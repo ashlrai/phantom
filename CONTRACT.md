@@ -554,7 +554,18 @@ outside the jobs window never create outcomes. The market read degrades
 independently too:
 `RouterOutcomeRead.market_state` reports its health and
 `market_truncated` marks a cut tail; anything but `read` leaves
-classes and verdict fields ledger-recorded only. `empty_tag` joins the same bound of
+classes and verdict fields ledger-recorded only. `repo` is the repo
+the job targeted, recorded on jobs rows as `repo` — dispatchd writes
+the ready line's repo cell on its queue rows (enqueue/claim/launch/
+skip/defer/outcome/task_outcome alike). It joins only in the bounded
+repo-label shape — a bare fleet name (`phantom`, `lexicon`) or an
+`owner/repo` pair, each segment a bounded identifier — with the
+newest recognized value winning like `lane`/`model`/`tier`: a row
+without `repo` or with a value outside the shape leaves the standing
+record, so absolute paths, whitespace and deeper paths are skipped,
+never recorded raw, and the field is never guessed from the job id
+or PR URL. It stays `null` when no retained row recorded a bounded
+repo — unknown, not "no repo". `empty_tag` joins the same bound of
 `metrics/empty-tags.jsonl`: `foldEmptyTags` collapses `job.empty-tag.v1`
 rows — the `{schema, job, lane, tag}` records `phm jobs empty --record`
 appends from the fleet's final-output verdict (src/core/fleet/

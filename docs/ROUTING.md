@@ -319,7 +319,13 @@ it), the token breakdown `tokens_in`/`tokens_out`/`tokens_cache_read`/
 capture-gap reason) — plus the finish row's recorded diff size
 (`diff_files`/`diff_lines`; `diff_lines` stays `null` when untracked
 files made the line total unmeasurable),
-`work_class`, the finish-row productivity verdicts (`empty`,
+`work_class`, the recorded repo cell (`repo` — the dispatcher's
+repo name on its queue rows, joining only in the bounded
+bare-name-or-`owner/repo` shape with the newest recognized value
+winning like `lane`/`model`/`tier`; absolute paths, whitespace and
+deeper paths are skipped, never recorded raw, and the field stays
+`null` when no retained row recorded one), the finish-row
+productivity verdicts (`empty`,
 `exit_code`, `failure_class` — the recorded failure
 classification, resolved `failure_class` → `failure_reason` →
 `pool_error` on a finish row so non-devin lanes' causes join too, or
@@ -838,7 +844,11 @@ recorded
 `tokens_total` (token
 usage), mean recorded `diff_files`/`diff_lines` (change size), the count
 of outcomes carrying a `usage_missing` capture-gap label, mean
-advisory `passk`, and the dispatch lane-override tally —
+advisory `passk`, the recorded repo mix — `repos_known` counts the
+known-cohort outcomes carrying a recorded `repo` and `repos` breaks
+the count down by repo label (most jobs first), so a group's merge
+rate built wholly on one repo reads differently than one spread
+across the fleet — and the dispatch lane-override tally —
 `lane_overrides_known` counts the known-cohort outcomes whose newest
 claim left its recorded lane hint and `lane_override_reasons` breaks
 the count down by recorded reason (`resource_fit`,
@@ -849,10 +859,13 @@ figure with its own coverage count, and `null` (never zero) when the ledger
 recorded nothing for that signal. The report also tallies usage
 provenance across every folded outcome — known, unknown and
 unclassified alike, since capture completeness is not merge evidence:
-`usage_missing` lists the top recorded capture-gap reasons and
-`usage_sources` the top recorded measurement paths, so an operator sees
-where usage telemetry is actually broken rather than only that token
-coverage is thin. Each proposal's evidence block also tallies the
+`usage_missing` lists the top recorded capture-gap reasons,
+`usage_sources` the top recorded measurement paths and `repos` the
+top recorded repo labels — all across every folded outcome, known,
+unknown and unclassified alike, since capture completeness and repo
+identity are not merge evidence — so an operator sees where usage
+telemetry is actually broken and which repos the retained window's
+outcomes came from rather than only that token coverage is thin. Each proposal's evidence block also tallies the
 dispatch lane-hint blocking codes — `lane_blocked_known` counts the
 known-cohort outcomes whose standing claim recorded a non-empty
 `lane_hint_blocked_by` (the market's recorded `[]` "nothing blocked
