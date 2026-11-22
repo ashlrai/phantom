@@ -357,14 +357,16 @@ pressure stay separate; diagnostic values never change admission or worker count
 Hosted CI includes exhaustive Ubuntu shards, named Windows portability contracts,
 four exhaustive Mac partitions, a separate Mac lane for all isolated suites
 (two at a time, each in its own home with one worker; locally they stay serial
-unless `ASHLR_TEST_CI_ISOLATED_CONCURRENCY=2`), macOS queue coverage and native
-broker checks. None of these lanes runs on a pull request, in the merge queue
-or on a `master` push; there `Merge Gate` runs the secret scans, the
-generated-files check and the fast gate. The full Ubuntu, Windows and Mac lanes
-run on the six-hour scheduled `master` run, on manual dispatch and on the
-reusable workflow call. The scheduled run rotates the exhaustive Mac work over
-seven daily slices; a dispatch defaults to the complete set. Local tests
-and hosted checks prove different environments. Inspect each actual run and report unavailable or
+unless `ASHLR_TEST_CI_ISOLATED_CONCURRENCY=2`), macOS queue coverage, native
+broker checks and the Windows service authority lane. None of these lanes runs
+on a pull request, in the merge queue or on a `master` push; there `Merge Gate`
+runs the secret scans, the generated-files check and the fast gate. The full
+Ubuntu, Windows and Mac lanes run on the six-hour scheduled `master` run and
+on manual dispatch. The scheduled run rotates the exhaustive Mac work over
+seven daily slices; a dispatch defaults to the complete set. The reusable
+release call retains the Ubuntu/Windows matrix but defers the macOS and
+Windows service lanes to the scheduled run. Failures there are fixed forward.
+Local tests and hosted checks prove different environments. Inspect each actual run and report unavailable or
 skipped coverage separately; do not weaken checks to make a release pass.
 
 The optional [qualified build handoff](docs/RELEASING.md#qualified-ci-build-handoff)
@@ -485,7 +487,7 @@ Comms transports live in `src/core/integrations/` (`telegram.ts`, `imessage.ts`)
 - Keep commits focused and atomic; one logical change per commit.
 - Use a concise, imperative subject with a conventional type prefix (e.g. `feat: add genome embedding rerank fallback`), with a body explaining the "why" when it is not obvious.
 - Follow [Conventional Commits](https://www.conventionalcommits.org/) syntax: `type(scope): imperative summary`, for example `docs(contributing): describe the first pull request path`.
-- Pull requests land as squash commits, so the pull request title becomes the subject on `master`. release-please groups `master` subjects into `CHANGELOG.md` sections by type (see `release-please-config.json`): `feat` (Features), `fix` (Fixes), `bridge` (Changes), `perf` (Performance), `refactor` and `chore` (Maintenance), `docs` (Documentation), `test` (Tests), `ci` (CI) and `build` (Build). Fleet agents use the `bridge(<job>):` type; outside contributors pick the type that fits the change.
+- Pull requests land as squash commits, so the pull request title becomes the subject on `master`. release-please groups `master` subjects into `CHANGELOG.md` sections by type (see `release-please-config.json`): `feat` (Features), `fix` (Fixes), `bridge` (Changes), `perf` (Performance), `refactor` and `chore` (Maintenance), `docs` (Documentation), `test` (Tests), `ci` (CI) and `build` (Build). Fleet agents use the `bridge(<job>):` type; outside contributors pick the type that fits the change. A subject without a recognized type is left out of the changelog.
 - A commit must preserve the [local verification gates](#definition-of-green), including web and documentation checks when those surfaces change.
 - Do not commit `dist/` (it is git-ignored) or machine-specific paths.
 - Milestone commits follow the pattern: `feat: M<N> <short description>` and update the milestone row in the relevant `docs/SPEC-V*.md`.
