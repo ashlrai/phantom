@@ -1,10 +1,11 @@
-/** Read-only release backlog: bounded GitHub reads/cache, then local git for missing evidence. */
+/** Read-only release backlog: bounded GitHub/cache reads, then local and remote tag evidence. */
 import { execFile } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { CADENCE_REPOS } from './cadence.js';
 import { readLocalGitRelease, type GitReleaseRow } from './git-backlog.js';
+import { readRemoteGitRelease } from './remote-git-backlog.js';
 
 export const BACKLOG_TTL = 600_000;
 export interface BacklogRow {
@@ -40,7 +41,18 @@ async function readRepo(repo: string, opts: BacklogOptions, now: number): Promis
   try {
     try {
       const cached = record(JSON.parse(await readFile(file, 'utf8')));
-      if (cached.schema !== 1 || cached.repo !== repo || typeof cached.at !== 'number' || now < cached.at || now - cached.at >= BACKLOG_TTL) throw new Error('Expired');
+      if (cached.repo !== repo || typeof cached.at !== 'number' || now < cached.at || now - cached.at >= BACKLOG_TTL) throw new Error('Expired');
+      const git = record(cached.git);
+      if (cached.schema === 2 && git.repo === repo && git.source === 'remote git' &&
+        (git.latestTag === null || typeof git.latestTag === 'string') && (git.tagDate === null || validDate(git.tagDate)) &&
+        (git.commitsSinceTag === null || Number.isSafeInteger(git.commitsSinceTag) && Number(git.commitsSinceTag) >= 0) &&
+        (typeof git.reason === 'string' || git.reason === null) &&
+        (git.state === 'unknown' || (git.state === 'ok' || git.state === 'due') && typeof git.latestTag === 'string' && git.latestTag.length > 0 && validDate(git.tagDate) && git.commitsSinceTag !== null && git.reason === null)) {
+        const evidence = git as unknown as GitReleaseRow;
+        const verdict = evidence.state === 'unknown' ? 'unknown' : evidence.commitsSinceTag! > 20 || now - Date.parse(evidence.tagDate!) > 7 * 86_400_000 ? 'due' : 'ok';
+        return { ...unknown, latestTag: evidence.latestTag, releasedAt: evidence.tagDate, mergedCommits: evidence.commitsSinceTag, verdict, git: { ...evidence, state: verdict } };
+      }
+      if (cached.schema !== 1) throw new Error('Invalid cache');
       data = facts(cached.data);
     } catch {
       if (opts.cacheOnly) return unknown;
@@ -93,8 +105,16 @@ export async function readReleaseBacklog(opts: BacklogOptions = {}) {
   const now = opts.now ?? Date.now();
   const repos = await Promise.all(CADENCE_REPOS.map(async repo => {
     const row = await readRepo(repo, opts, now);
-    if (row.verdict !== 'unknown') return row;
-    const git = await readLocalGitRelease(repo, now);
+    if (row.verdict !== 'unknown' || row.git) return row;
+    let git = await readLocalGitRelease(repo, now);
+    if (!opts.cacheOnly && ['shallow local clone', 'no reachable tags'].includes(git.reason ?? '')) {
+      git = await readRemoteGitRelease(git, now, opts.get);
+      try {
+        const dir = join(opts.stateDir ?? join(homedir(), '.ashlr', 'state'), 'release-backlog');
+        await mkdir(dir, { recursive: true, mode: 0o700 });
+        await writeFile(join(dir, `${repo}.json`), JSON.stringify({ schema: 2, repo, at: now, git }), { mode: 0o600 });
+      } catch { /* Remote evidence remains usable without a cache. */ }
+    }
     return { ...row, git, latestTag: git.latestTag, releasedAt: git.tagDate, mergedCommits: git.commitsSinceTag, verdict: git.state };
   }));
   const counts = { ok: 0, due: 0, stale: 0, unknown: 0 };
@@ -102,5 +122,5 @@ export async function readReleaseBacklog(opts: BacklogOptions = {}) {
   return { schema: 'phantom.release-backlog.v1' as const, checkedAt: new Date(now).toISOString(), counts, repos };
 }
 export function backlogLines(report: Awaited<ReturnType<typeof readReleaseBacklog>>): string[] {
-  return report.repos.map(r => `${r.repo}: ${r.verdict}; ${r.latestTag ?? 'unknown'} (${r.releasedAt ?? 'unknown'}); ${r.mergedCommits ?? 'unknown'} commits; oldest ${r.oldestUnreleasedAgeDays === null ? r.mergedCommits === 0 ? 'none' : 'unknown' : `${r.oldestUnreleasedAgeDays.toFixed(1)} days`}${r.git ? `; local git${r.git.reason ? `: ${r.git.reason}` : ''}` : ''}`);
+  return report.repos.map(r => `${r.repo}: ${r.verdict}; ${r.latestTag ?? 'unknown'} (${r.releasedAt ?? 'unknown'}); ${r.mergedCommits ?? 'unknown'} commits; oldest ${r.oldestUnreleasedAgeDays === null ? r.mergedCommits === 0 ? 'none' : 'unknown' : `${r.oldestUnreleasedAgeDays.toFixed(1)} days`}${r.git ? `; ${r.git.source ?? 'local git'}${r.git.reason ? `: ${r.git.reason}` : ''}` : ''}`);
 }
