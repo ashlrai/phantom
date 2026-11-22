@@ -2910,7 +2910,7 @@ with a `reason`); they never throw for bad input or storage faults.
 `postLabelMessage`, `sendHandoff`, `sendWakeRequest`, `announceWork`,
 `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
-carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?, priority?, kind?, job?, matched?, since?, channel?}, options?)`
+carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?, priority?, kind?, job?, matched?, since?, channel?, contains?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
 keeping exact-label matching, `priority` keeps only envelopes stamped
@@ -2928,7 +2928,11 @@ through `taskId`, or a `note`/`context` body carrying the
 `job:<id>` v2 thread label, the same bucket the messages and conversations
 projections group under `job:<id>`; `since` keeps only mail received at
 or after that epoch-ms cutoff — the same inclusive `receivedAt >= since`
-match `phm messages --since` applies; `matched: true` scans the whole retained store
+match `phm messages --since` applies; `contains` keeps only mail whose
+scrubbed one-line summary — the same text the frame renders per row —
+carries the needle as a case-insensitive substring, matching the rendered
+summary rather than the raw body so a secret-shaped value stays
+unfindable; `matched: true` scans the whole retained store
 and returns `matched`, the count of every filter-matched row, while
 `messages` still caps at `limit`; `group.presence` heartbeats are observations
 with their own read and never appear as mail of any kind; claimable work and
@@ -2985,7 +2989,7 @@ handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or
 `available`, `agent` the resolved handle or null, and an unknown ref or
 unreadable registry answers `unknown-agent`/`unavailable`, never an empty
-list), `readAgentChannel(name, {topic, from, thread, priority, job, matched, since, after, limit}, options?)`
+list), `readAgentChannel(name, {topic, from, thread, priority, job, matched, since, contains, after, limit}, options?)`
 (one oldest-first page of a registry channel's live posts addressed to
 `group:<name>:*` — or one topic — with `group.presence` heartbeats
 excluded; `from` filters by sender through identity-label matching,
@@ -2997,7 +3001,10 @@ body declaring that `jobId`, a `worker-handoff` assigning that fleet job id
 through `taskId`, or a `note`/`context` body carrying the `job:<id>` v2
 thread label; `since` keeps only posts received at or after that epoch-ms
 cutoff — the same `receivedAt >= since` match `readAgentInbox`'s `since`
-applies; `matched: true` scans the whole retained store and returns `matched`, the
+applies; `contains` keeps only posts whose scrubbed one-line summary —
+the same text the inbox frame renders per row — carries the needle as a
+case-insensitive substring, the same rendered-summary rule
+`readAgentInbox`'s `contains` applies; `matched: true` scans the whole retained store and returns `matched`, the
 count of every filter-matched post, while `messages` still caps at
 `limit`; claimable work and worker-handoff posts additionally carry
 `held`/`holder` — the same hold evidence `readAgentInbox` and

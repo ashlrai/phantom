@@ -231,7 +231,7 @@ resolved identity belongs to. A missing registry is a verified-empty list
 list — and membership is a routing label set (who may post), not proof of
 presence or authority. `phm agents bus channel read <name> [--topic <t>]
 [--from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>]
-[--since <15m|2h|1d|ISO>] [--matched]
+[--since <15m|2h|1d|ISO>] [--contains <text>] [--matched]
 [--after <cursor>] [--limit <n>]` pages the room's posts
 oldest-first — every live envelope addressed to `group:<name>:*` (or one
 `--topic`), minus `group.presence` heartbeats, which are observations with
@@ -242,7 +242,15 @@ keeps only posts stamped with that exact band — the same match
 `comms bus read --priority` applies, and `--since` keeps only posts
 received at or after the cutoff — the `phm messages` grammar (`15m`,
 `2h`, `1d`, epoch ms or an ISO time) resolved to epoch ms, matched
-inclusively on `receivedAt` like `phm messages --since`. `--job` keeps only the room's posts
+inclusively on `receivedAt` like `phm messages --since`. `--contains`
+keeps only posts whose scrubbed one-line summary — the same text the
+inbox `--frame` renders per row — carries the needle as a
+case-insensitive substring, whitespace collapsed on both sides, so "has
+anyone posted about X in this room" is one filtered read; matching runs
+over the rendered summary, never the raw body, so a secret-shaped value
+stays unfindable even though it sits in the stored envelope — the same
+guarantee `phm messages --contains` gives the timeline projection.
+`--job` keeps only the room's posts
 that name one job — a `work.post`, `work.status`, `work.result` or `wake`
 body declaring that `jobId`, a `worker-handoff` assigning that fleet job
 id through `taskId`, or a `note`/`context` body carrying the `job:<id>`
@@ -307,7 +315,7 @@ untrusted data: a wake is a hint to read the inbox and grants no authority.
 
 **Inbox.** `phm agents bus inbox <agent> [--thread <t>] [--from <agent>]
 [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>]
-[--since <15m|2h|1d|ISO>] [--channel <name>]`
+[--since <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>]`
 returns one page of
 DMs, handoffs,
 posts in the agent's channels (minus its own and minus `group.presence`
@@ -346,7 +354,14 @@ handoffs alike, matched on the delivery address rather than the reported
 kind — so an agent in several rooms reads one room's pending mail in one
 filtered read; it composes with `--kind` to separate a room's direct mail
 from its assignments, and a channel the agent is not a member of simply
-has no mail to show.
+has no mail to show. `--contains` keeps only mail whose scrubbed
+one-line summary — the same text the `--frame` read renders per row —
+carries the needle as a case-insensitive substring, whitespace collapsed
+on both sides, so "did anyone send me mail about X" is one filtered read
+instead of a page through the backlog; matching runs over the rendered
+summary, never the raw body, so a secret-shaped value stays unfindable
+even though it sits in the stored envelope — the same guarantee `phm
+messages --contains` gives the timeline projection.
 `--matched` additionally reports `matched`, the true pending total — every
 row the same filters accept across the whole retained store, the same count
 `work mine`'s inbox section reports — while `messages` still caps at

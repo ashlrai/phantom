@@ -982,6 +982,44 @@ export function busBodyFallbackSummary(body: unknown): string {
   return busFallbackClip(scrubSecrets(JSON.stringify(body) ?? 'null'));
 }
 
+/** Longest `--contains` needle the inbox and channel reads accept; the summaries it matches are already bounded far shorter. */
+const BUS_READ_CONTAINS_MAX = 512;
+
+/**
+ * The `--contains` text search `agents bus inbox` and `agents bus channel
+ * read` share: a case-insensitive substring over the same scrubbed
+ * one-line summary the frame and `show` surfaces render for the row —
+ * `busBodySummary` for typed bodies, the bounded scrubbed JSON fallback
+ * otherwise — with whitespace collapsed on both sides so a phrase typed
+ * across a line break still finds its message. Matching the rendered
+ * summary, never the raw body, keeps a secret-shaped value unfindable even
+ * though it sits in the stored envelope, and a match is always visible in
+ * the row it selects — the same guarantee `phm messages --contains` gives
+ * the timeline projection. `needle` arrives already normalized by
+ * `busReadContainsNeedle`.
+ */
+function busReadContainsMatch(body: unknown, needle: string): boolean {
+  return (busBodySummary(body) ?? busBodyFallbackSummary(body))
+    .toLowerCase().replace(/\s+/g, ' ').includes(needle);
+}
+
+/** The normalized form of a validated `--contains` value: lowercase, whitespace collapsed, trimmed. */
+function busReadContainsNeedle(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * `--contains` validation shared by the inbox and channel reads: bounded
+ * non-blank free text, not a label — printable content of any kind is fine.
+ * Answers the normalized needle, or undefined when the filter is absent;
+ * callers report `invalid` on the `null` sentinel.
+ */
+function busReadContains(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || value.trim() === '' || value.length > BUS_READ_CONTAINS_MAX) return null;
+  return busReadContainsNeedle(value);
+}
+
 interface Addressing { identity: AgentIdentity; labels: Set<string>; channels: Map<string, string> }
 
 function addressing(reg: AgentRegistry, ref: string): Addressing | undefined {
@@ -1062,7 +1100,13 @@ export function busBodyJobMatch(body: unknown, job: string): boolean {
  * reported kind, so `--channel` composes with `--kind` to read just one
  * room's direct mail or just its assignments; DMs and label-addressed mail
  * never match, and a channel the agent is not a member of simply has no
- * mail to show. Returned highest
+ * mail to show. `contains` keeps only mail whose scrubbed one-line
+ * summary — the same text the frame renders per row — carries the needle
+ * as a case-insensitive substring, so "did anyone send me mail about X"
+ * is one filtered read instead of a page through the backlog; matching
+ * runs over the rendered summary, never the raw body, so a secret-shaped
+ * value stays unfindable even though it sits in the stored envelope.
+ * Returned highest
  * priority first; `nextCursor` covers every scanned row, so callers persist
  * it only after handling the page. Claimable work and worker-handoff items
  * additionally carry `held`/`holder` — the same hold evidence `bus show`
@@ -1080,7 +1124,8 @@ export function busBodyJobMatch(body: unknown, job: string): boolean {
  * `messages` still returns only the first `limit` of them.
  */
 export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string;
-    matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string; since?: number; channel?: string } = {},
+    matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string; since?: number; channel?: string;
+    contains?: string } = {},
   options: UnifiedBusOptions = {}): InboxPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
   const countMatched = page.matched === true;
@@ -1108,6 +1153,10 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   }
   if (channelFilter !== undefined && (typeof channelFilter !== 'string' || !agentChannelNameSchema.safeParse(channelFilter).success)) {
     return { status: 'invalid', reason: 'Invalid channel name.' };
+  }
+  const containsNeedle = busReadContains(page.contains);
+  if (containsNeedle === null) {
+    return { status: 'invalid', reason: 'Invalid contains filter.' };
   }
   const read = readAgentRegistry(options);
   if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
@@ -1151,7 +1200,8 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
         (fromMatch === undefined || fromMatch(envelope.from)) &&
         (priority === undefined || envelope.priority === priority) &&
         (since === undefined || row.receivedAt >= since) &&
-        (channelFilter === undefined || channel === channelFilter) ? kind : null;
+        (channelFilter === undefined || channel === channelFilter) &&
+        (containsNeedle === undefined || busReadContainsMatch(envelope.body, containsNeedle)) ? kind : null;
       if (matchedKind !== null && envelope.origin_bridge === 'agent-chat-owner') {
         try { ownerReceipts ??= readOwnerChatReceipts(ownerChatRoot(options.root)); }
         catch { return { status: 'unavailable', reason: 'Owner share receipts unavailable.' }; }
@@ -1587,6 +1637,14 @@ export interface ChannelReadOptions {
    * filtered read without a persisted cursor.
    */
   since?: number;
+  /**
+   * Text filter: only posts whose scrubbed one-line summary — the same
+   * text the inbox frame renders per row — carries the needle as a
+   * case-insensitive substring. Matching runs over the rendered summary,
+   * never the raw body, so a secret-shaped value stays unfindable even
+   * though it sits in the stored envelope.
+   */
+  contains?: string;
   after?: number;
   limit?: number;
 }
@@ -1612,7 +1670,12 @@ export type ChannelReadPage =
  * inbox --job` applies, so a channel transcript answers one job's posts
  * without paging the whole room. `since` keeps only posts received at or
  * after that epoch-ms cutoff — the same `receivedAt >= since` match
- * `inbox --since` applies. `nextCursor`
+ * `inbox --since` applies. `contains` keeps only posts whose scrubbed
+ * one-line summary — the same text the inbox frame renders per row —
+ * carries the needle as a case-insensitive substring, the same
+ * `busReadContainsMatch` rule `inbox --contains` applies, so "has anyone
+ * posted about X in this room" is one filtered read; matching runs over
+ * the rendered summary, never the raw body. `nextCursor`
  * covers every scanned row, so callers persist it only after handling the
  * page; `page.matched` asks for the true pending total the way
  * `readAgentInbox` does — the scan then covers the whole retained store,
@@ -1645,6 +1708,10 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
   }
   if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
     return { status: 'invalid', reason: 'Invalid since.' };
+  }
+  const containsNeedle = busReadContains(page.contains);
+  if (containsNeedle === null) {
+    return { status: 'invalid', reason: 'Invalid contains filter.' };
   }
   let exact: string | undefined;
   if (page.topic !== undefined) {
@@ -1680,7 +1747,8 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
         (thread === undefined || busBodyThread(body) === thread) &&
         (priority === undefined || envelope.priority === priority) &&
         (job === undefined || busBodyJobMatch(body, job)) &&
-        (since === undefined || row.receivedAt >= since);
+        (since === undefined || row.receivedAt >= since) &&
+        (containsNeedle === undefined || busReadContainsMatch(body, containsNeedle));
       if (accepted) {
         matched += 1;
         if (!countMatched || messages.length < limit) {
