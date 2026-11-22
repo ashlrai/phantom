@@ -15,7 +15,7 @@ import { LIVE_JOBS_FILE, type LiveJobsSnapshot } from './live-jobs.js';
 import { parseReadyRows } from './ready-row-edit.js';
 import { parseStopFile, stopFilePath, stoppedFamilies } from './stop-file.js';
 import { readSource } from './runs-parked-queue.js';
-import { readHostFamilies } from './host-families.js';
+import { ioWaitLine, readHostFamilies } from './host-families.js';
 import { readReleaseBacklog } from '../release/backlog.js';
 import { mergeLatencyLine } from './git-merge-latency.js';
 import { activeFamilyStops, type BriefFamily } from './family-auto-stop.js';
@@ -181,7 +181,7 @@ export function compactBriefLines(b: CompactLeaderBrief): string[] {
     `Quiet/stuck: ${b.attention.map(j => j.id).join(', ') || (b.sources[LIVE_JOBS_FILE]?.state === 'healthy' ? 'none recorded' : 'unknown')}`,
     `Main: ${b.main.map(g => `${g.repo} ${g.state}${g.stale ? ' stale' : ''}`).join(', ') || 'unknown'}`,
     `Release: ${b.release.due} due, ${b.release.stale} stale, ${b.release.unknown} unknown`,
-    mergeLatencyLine(b.mergeLatency), b.hostLoad.blame, `Stopped: ${b.sources.stops?.state === 'healthy' ? b.stopped.length : 'unknown'}; omitted: ${b.omitted}`,
+    mergeLatencyLine(b.mergeLatency), b.hostLoad.blame, ioWaitLine(b.hostLoad), `Stopped: ${b.sources.stops?.state === 'healthy' ? b.stopped.length : 'unknown'}; omitted: ${b.omitted}`,
     `Sources: ${Object.values(b.sources).filter(s => s.state !== 'healthy').length} missing, degraded or bounded`];
   while (lines.length < 10) lines.push('No further data.');
   if (b.hostLoad.leftovers && b.hostLoad.leftovers.cpuPercent > 50) lines.push(`${b.hostLoad.leftovers.processes} leftover processes from finished jobs use ${b.hostLoad.leftovers.cpuPercent}% CPU (the fleet cleans these every 5 min)`);
