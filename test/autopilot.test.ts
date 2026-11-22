@@ -475,11 +475,19 @@ describe('autopilot tick (real git, fake GitHub)', () => {
 
   it('requeues a queued lane\'s recut through the merge queue, pinned to the new head, exactly once', async () => {
     const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`, { queued: true });
+    git(f.clone, 'checkout', '-q', '--detach', f.base);
+    writeFileSync(join(f.clone, 'latest.js'), 'module.exports = 2;\n');
+    git(f.clone, 'add', 'latest.js');
+    git(f.clone, 'commit', '-qm', 'default branch advances before recovery');
+    git(f.clone, 'push', '-q', 'origin', 'HEAD:main');
+    const latest = git(f.clone, 'rev-parse', 'HEAD');
     const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [] as string[][], ownedPrefixes: ['improve/'], gh: f.gh as Gh, guards: () => ({ killSwitch: false, paused: false }) };
 
     const r = await tick(opts);
     expect(r, r.detail.join(' | ')).toMatchObject({ plan: 'recut', result: 'recut' });
     const recutSha = git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut').split('\t')[0];
+    git(f.clone, 'fetch', '-q', 'origin', 'improve/sum-recut');
+    expect(git(f.clone, 'rev-parse', 'FETCH_HEAD^')).toBe(latest);
     // The sanctioned entry: auto-merge with the head pinned — required checks and branch protection still decide.
     expect(f.calls.filter((c) => c.startsWith('pr merge'))).toEqual([`pr merge 42 --repo o/r --squash --auto --match-head-commit ${recutSha}`]);
     expect(f.calls.some((c) => c.startsWith('pr merge') && !c.includes('--auto'))).toBe(false);
@@ -492,6 +500,43 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     expect(r2).toMatchObject({ plan: 'wait' });
     expect(f.calls.filter((c) => c.startsWith('pr merge'))).toHaveLength(1);
     expect(f.calls.filter((c) => c.includes('POST repos/o/r/pulls'))).toHaveLength(1);
+  });
+
+  it.each([
+    ['source head', 7, { head: { ref: 'improve/sum', sha: 'd'.repeat(40), repo: { full_name: 'o/r' } } }],
+    ['source closed', 7, { state: 'closed' }],
+    ['source disarmed', 7, { auto_merge: null }],
+    ['replacement head', 42, { head: { ref: 'improve/sum-recut', sha: 'd'.repeat(40), repo: { full_name: 'o/r' } } }],
+    ['replacement base', 42, { base: { ref: 'other', sha: BASE } }],
+    ['replacement conflict', 42, { mergeable: false, mergeable_state: 'blocked' }],
+    ['replacement dirty', 42, { mergeable: true, mergeable_state: 'dirty' }],
+    ['replacement unknown', 42, { mergeable: null, mergeable_state: 'unknown' }],
+    ['replacement draft', 42, { draft: true }],
+  ])('defers %s at the auto-merge handoff and resumes without duplicate recuts', async (_name, number, patch) => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`, { queued: true });
+    let opened = false, changed = true;
+    const gh: Gh = async args => {
+      const raw = await f.gh(args);
+      if (args[1] === '-X' && args[2] === 'POST' && args[3] === 'repos/o/r/pulls') opened = true;
+      if (opened && changed && args.at(-1)?.endsWith(`/pulls/${number}`))
+        return JSON.stringify({ ...JSON.parse(raw), ...patch });
+      if (!changed && args.at(-1)?.endsWith('/pulls/42')) return JSON.stringify({ ...JSON.parse(raw), mergeable_state: 'blocked' });
+      return raw;
+    };
+    const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [] as string[][], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }) };
+    expect(await tick(opts)).toMatchObject({ plan: 'recut', result: 'recut' });
+    await tick(opts);
+    expect(f.calls.filter(c => c.startsWith('pr merge'))).toEqual([]);
+    const state = JSON.parse(readFileSync(join(f.root, 'home', 'autopilot', 'state', 'o__r__7.json'), 'utf8'));
+    expect(state.recut.headSha).toBe(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut').split('\t')[0]);
+    expect(state.attempts['recut-queue:improve/sum-recut']).toBeUndefined();
+    changed = false;
+    expect(await tick(opts)).toMatchObject({ result: 'requeued' });
+    await tick(opts);
+    expect(f.calls.filter(c => c.includes('POST repos/o/r/pulls'))).toHaveLength(1);
+    expect(f.calls.filter(c => c.startsWith('pr merge'))).toEqual([
+      `pr merge 42 --repo o/r --squash --auto --match-head-commit ${state.recut.headSha}`,
+    ]);
   });
 
   it('leaves an unqueued lane\'s recut unqueued: it opens a replacement PR but never merges or queues it', async () => {
