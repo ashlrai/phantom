@@ -1,6 +1,7 @@
 /** Read-only host memory + memguard projection. No repair or dispatch authority. */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { readFleetStartStatus } from '../fleet/admission-status.js';
 import { readFleetMemoryFiles, type FleetMemoryFiles } from '../fleet/memory-files.js';
 import { memoryView, type FleetMemoryView } from '../fleet/memory-view.js';
 import { readEngineAdmission, type EngineAdmissionView } from '../fleet/engine-admission-view.js';
@@ -62,6 +63,11 @@ export function createFleetMemoryApi(deps: FleetMemoryApiDeps = {}): ApiModule {
   const readAdmission = deps.readAdmission ?? readEngineAdmission;
   const now = deps.now ?? Date.now;
   return async (_ctx, _req, res, path, method) => {
+    if (path === '/api/verse/fleet/admission') {
+      if (method !== 'GET') { sendJson(res, 405, { v: 1, error: 'method not allowed' }); return true; }
+      sendJson(res, 200, await readFleetStartStatus({ runsDir: deps.runsDir, now: now() }));
+      return true;
+    }
     if (path === VERSE_FLEET_DISK_FORECAST_PATH) {
       if (method !== 'GET') { sendJson(res, 405, { v: 1, error: 'method not allowed' }); return true; }
       let sources: [string | null, string | null] = [null, null];

@@ -20,6 +20,7 @@ import { busTile } from './hub-bus-tile.js';
 import { phoneTile } from './hub-phone-tile.js';
 import { hubBacklogQuery } from './hub-backlog-queries.js';
 import { backlogTile } from './hub-backlog-tile.js';
+import { fleetAdmissionQuery } from './fleet-admission-query.js';
 import styles from './fleet-hub.module.css';
 
 export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
@@ -28,6 +29,9 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
   const sectionVisible = useSectionVisible();
   const documentVisible = useDocumentVisible();
   const read = useQuery(opsRunsQuery, { enabled: visible && sectionVisible && documentVisible, freshMs: 0 });
+  const admission = useQuery(fleetAdmissionQuery, { enabled: visible && sectionVisible && documentVisible, freshMs: 0 });
+  const refreshAdmission = useRefetch(fleetAdmissionQuery);
+  usePollWhileVisible(refreshAdmission, 5_000, { enabled: visible, refreshOnShow: false });
   const refetch = useRefetch(opsRunsQuery);
   usePollWhileVisible(refetch, 5_000, { enabled: visible, refreshOnShow: false });
   const backlogRead = useQuery(hubBacklogQuery, { enabled: visible && sectionVisible && documentVisible, freshMs: 60_000 });
@@ -85,6 +89,10 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
         <span className={styles.count}>Next: {row.unblock}</span>
       </li>)}</ul>
     </section> : null}
+    <section className={styles.lastOrder} aria-label="Job starts">
+      <strong>Job starts</strong>
+      <span>{admission.status === 'error' ? 'starts unknown: could not refresh admission' : admission.data?.summary ?? 'starts unknown: waiting for admission reading'}</span>
+    </section>
     <RunningJobsList enabled={visible && sectionVisible && documentVisible} />
     <button type="button" className={styles.primary} onClick={() => openDockPane('company')}>Company overview</button>
     <button type="button" className={styles.primary} disabled={workspaceIds.length === 0} onClick={() => openFleetWorkspace(workspaceIds)}>Open fleet workspace</button>
