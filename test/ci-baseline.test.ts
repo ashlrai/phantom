@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -63,7 +63,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : head;
       const receipt = options.bound
         ? `Bound candidate ${options.boundHead ?? sha} to event tree ${'e'.repeat(40)}\n`
@@ -1051,8 +1051,9 @@ describe('CI baseline evidence', () => {
     expect(failures[2]?.excerpt).toContain('tests needs the plan file');
     expect(failures[3]).toMatchObject({ file: '.github/scripts/ci-mcp-selection.mjs', names: '(mcp-selection)' });
     expect(failures[3]?.excerpt).toContain('MCP test selection failed: merge base unavailable');
-    // The non-whitelisted ci-fast-select step produced no gate group; its
-    // companion TAP failure is the only evidence and stays TAP-owned.
+    // The whitelisted ci-fast-select step's companion TAP failure suppresses
+    // its gate group; the TAP failure is the only evidence and stays
+    // TAP-owned.
     expect(failures.some(f => f.file === '.github/scripts/ci-fast-select.mjs')).toBe(false);
     // Timestamped job-log lines parse identically.
     const stamped = fixture('script-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
@@ -1067,6 +1068,19 @@ describe('CI baseline evidence', () => {
       '##[error]Process completed with exit code 1.',
     ].join('\n');
     expect(parseBaselineFailures(leaky)[0]?.excerpt).not.toContain(secret);
+  });
+  it('attributes ci-fast-select script crashes its companion test does not own', () => {
+    // The fast-gate "Select affected tests" step pairs the script with its
+    // node --test companion: a passing companion leaves the script's own
+    // infrastructure exit (plan-file write, module load) as the only
+    // evidence, and it groups under the gate script.
+    const failures = parseBaselineFailures(fixture('script-fast-select'), 'owner/repo');
+    expect(failures.map(f => f.testId)).toEqual(['.github/scripts/ci-fast-select.mjs > (fast-select)']);
+    expect(failures[0]).toMatchObject({ file: '.github/scripts/ci-fast-select.mjs', names: '(fast-select)' });
+    expect(failures[0]?.excerpt).toContain('fast-gate-plan.json');
+    // Timestamped job-log lines parse identically.
+    const stamped = fixture('script-fast-select').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped, 'owner/repo').map(f => f.testId)).toEqual(failures.map(f => f.testId));
   });
   it('keeps unattributable ci.yml step failures unparsed', () => {
     const step = (script: string[], output: string[], error = '##[error]Process completed with exit code 1.') =>
@@ -1159,6 +1173,46 @@ describe('CI baseline evidence', () => {
     // A singleton unaffected failure can never prove a master pass.
     const singleton = await analyzeCiBaseline('owner/repo', github({ script: true, count: 1, pass: true, contents }).gh);
     for (const group of singleton.groups.slice(0, 3)) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('groups ci-fast-select crashes and attributes workflow, script and import inputs', async () => {
+    const contents = {
+      '.github/scripts/ci-fast-select.mjs': "import { execFileSync } from 'node:child_process';\nimport { appendFileSync, readFileSync, writeFileSync } from 'node:fs';\nimport { changedPaths } from './ci-changed-paths.mjs';\nimport { DOCS_ONLY_PATH_PATTERNS } from './ci-site-lane.mjs';\nimport { REAL_IO_TEST_FILES } from '../../test/config/realio-lane-membership.mjs';\nimport { SERIAL_CPU_TEST_FILES } from '../../test/config/serial-cpu-lane-membership.mjs';",
+      '.github/scripts/ci-changed-paths.mjs': "import { execFileSync } from 'node:child_process';",
+      '.github/scripts/ci-site-lane.mjs': "import { execFileSync } from 'node:child_process';",
+      'test/config/realio-lane-membership.mjs': 'export const REAL_IO_TEST_FILES = [];\n',
+      'test/config/serial-cpu-lane-membership.mjs': 'export const SERIAL_CPU_TEST_FILES = [];\n',
+    };
+    const report = await analyzeCiBaseline('owner/repo', github({ fastSelect: true, contents }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(1);
+    expect(report.groups[0]).toMatchObject({
+      testId: '.github/scripts/ci-fast-select.mjs > (fast-select)',
+      classification: 'shared-baseline',
+      action: 'queue-master-fix',
+      master: 'fail',
+      prs: [1, 2],
+    });
+    // The workflow step definition, the gate script itself and its import
+    // closure -- including the lane-membership data files outside
+    // .github/ -- are inputs: touching any of them is pr-caused.
+    for (const touched of [
+      '.github/workflows/ci.yml',
+      '.github/scripts/ci-fast-select.mjs',
+      '.github/scripts/ci-changed-paths.mjs',
+      'test/config/realio-lane-membership.mjs',
+    ]) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ fastSelect: true, touched, contents }).gh);
+      expect(caused.groups[0]?.action, touched).toBe('pr-caused');
+    }
+    // The vitest harness ambient set cannot reach this gate, and unrelated
+    // changes share the baseline.
+    for (const touched of ['tsconfig.json', 'vitest.config.ts', 'src/core/status.ts', 'docs/README.md']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ fastSelect: true, touched, contents }).gh);
+      expect(shared.groups[0]?.classification, `${touched} -> fast-select`).toBe('shared-baseline');
+    }
+    // A singleton unaffected failure can never prove a master pass.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ fastSelect: true, count: 1, pass: true, contents }).gh);
+    expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown' });
   });
   it('parses memory benchmark floor violations as gate failures', () => {
     const failures = parseBaselineFailures(fixture('membench-shared'));
