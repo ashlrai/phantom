@@ -2528,6 +2528,75 @@ describe('readUnifiedInbox since filter', () => {
   });
 });
 
+describe('readUnifiedInbox contains filter', () => {
+  it('keeps only items whose scrubbed title or detail carries the needle', async () => {
+    postWork('flt-c1');                        // bus title 'fake work flt-c1'
+    postJob('RQ-C1', { title: 'fix the flaky Deploy gate' });
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- Rotate the deploy secret for the example app\n');
+    recordTeammateText({ rowid: 90, handle: '+1555fake', text: 'can someone check the deploy?' }, runsDir, new Date(now - 60_000));
+
+    const all = await read();
+    expect(all.total).toBe(4);
+    expect(all.filter).toBeUndefined();
+
+    // Case-insensitive substring over title AND detail across every source:
+    // the needs-you line, the feed job title and the teammate text all say
+    // "deploy"; the plain bus envelope does not.
+    const deploy = await read({ filter: { contains: 'DEPLOY' } });
+    expect(deploy.filter).toEqual({ contains: 'DEPLOY' });
+    expect(deploy.total).toBe(3);
+    const deployIds = deploy.items.map(i => i.id);
+    expect(deployIds).toContain('bus-feed:RQ-C1');
+    expect(deployIds).toContain('imessage:teammate-90');
+    expect(deployIds.filter(id => id.startsWith('needs-you:'))).toHaveLength(1);
+    expect(deploy.items.some(i => i.id === 'bus:flt-c1')).toBe(false);
+    // Per-source reports stay the unfiltered store truth.
+    expect(deploy.sources.bus.pending).toBe(2);
+    expect(deploy.sources['needs-you'].pending).toBe(1);
+    expect(deploy.sources.imessage.pending).toBe(1);
+
+    // The detail half of the row is searchable too: the needs-you item's
+    // detail carries its 'hard limit' verdict, which its title never shows.
+    const verdict = await read({ filter: { contains: 'hard limit' } });
+    expect(verdict.items.map(i => i.source)).toEqual(['needs-you']);
+
+    // Whitespace collapses on both sides, so a phrase typed with stray
+    // spacing or line breaks still finds its item.
+    const spaced = await read({ filter: { contains: '  deploy\n secret  ' } });
+    expect(spaced.items.map(i => i.source)).toEqual(['needs-you']);
+
+    // The act deep links are commands, never item content: every item here
+    // links `phm fleet needs-resolve` or `phm comms thread`, yet a needle
+    // naming only command text matches nothing.
+    const commandText = await read({ filter: { contains: 'needs-resolve' } });
+    expect(commandText.total).toBe(0);
+    expect(commandText.items).toEqual([]);
+
+    // A needle that normalizes to nothing imposes no text constraint — the
+    // same empty-needle rule `phm messages --contains` applies.
+    const blank = await read({ filter: { contains: '   ' } });
+    expect(blank.filter).toEqual({ contains: '   ' });
+    expect(blank.total).toBe(4);
+  });
+
+  it('ANDs the needle with the other view dimensions', async () => {
+    postWork('flt-c2');
+    postJob('RQ-C2', { title: 'deploy the fix' });
+    recordTeammateText({ rowid: 91, handle: '+1555fake', text: 'deploy went out?' }, runsDir, new Date(now - 60_000));
+
+    const busOnly = await read({ filter: { contains: 'deploy', source: 'bus' } });
+    expect(busOnly.items.map(i => i.id)).toEqual(['bus-feed:RQ-C2']);
+
+    const imessageOnly = await read({ filter: { contains: 'deploy', source: 'imessage' } });
+    expect(imessageOnly.items.map(i => i.id)).toEqual(['imessage:teammate-91']);
+
+    const none = await read({ filter: { contains: 'deploy', source: 'needs-you' } });
+    expect(none.total).toBe(0);
+    expect(none.items).toEqual([]);
+    expect(none.sources.bus.pending).toBe(2);
+  });
+});
+
 describe('phm comms inbox cli', () => {
   const setupCli = () => {
     const command = createCommsInboxCommand({ runsDir, busRoot });
@@ -2564,7 +2633,7 @@ describe('phm comms inbox cli', () => {
   it('keeps read/post and help while refusing malformed unified invocations', async () => {
     const { command, lines } = setupCli();
     expect(await command(['--help'])).toBe(0);
-    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--json]');
+    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--json]');
     for (const args of [['--json', '--json'], ['unified'], ['--limit', '5'], ['bogus', '--json']]) {
       expect(await command(args)).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
@@ -2667,6 +2736,40 @@ describe('phm comms inbox cli', () => {
     expect(report.items).toEqual([]);
   });
 
+  it('filters the unified JSON view by --contains text', async () => {
+    const { command, json } = setupCli();
+    postWork('cli-contains-bus');
+    postJob('RQ-CLI-C', { title: 'rotate the deploy credentials' });
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    recordTeammateText({ rowid: 92, handle: '+1555fake', text: 'deploy window at noon?' }, runsDir, new Date(now - 60_000));
+
+    expect(await command(['--contains', 'DEPLOY', '--json'])).toBe(0);
+    let report = json();
+    expect(report.filter).toEqual({ contains: 'DEPLOY' });
+    expect(report.items.map(i => i.id).sort())
+      .toEqual(['bus-feed:RQ-CLI-C', 'imessage:teammate-92']);
+    // The per-source counts stay the unfiltered store truth.
+    expect(report.sources.bus.pending).toBe(2);
+    expect(report.sources.imessage.pending).toBe(1);
+    expect(report.sources['needs-you'].pending).toBe(1);
+
+    // Phrases with spaces are one needle; the match is a case-insensitive
+    // substring over the scrubbed title/detail the row shows.
+    expect(await command(['--contains', 'deploy window', '--json'])).toBe(0);
+    report = json();
+    expect(report.items.map(i => i.id)).toEqual(['imessage:teammate-92']);
+
+    // --contains ANDs with the other view filters.
+    expect(await command(['--contains', 'deploy', '--source', 'bus', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ contains: 'deploy', source: 'bus' });
+    expect(report.items.map(i => i.id)).toEqual(['bus-feed:RQ-CLI-C']);
+    expect(await command(['--contains', 'deploy', '--source', 'needs-you', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+  });
+
   it('labels the human footer with the applied filter and unfiltered counts', async () => {
     const { command, lines } = setupCli();
     writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
@@ -2684,6 +2787,12 @@ describe('phm comms inbox cli', () => {
     expect(lines().join('\n')).toContain('1 pending matching job=RQ-CLI-H');
     expect(await command(['--job', 'RQ-NOPE'])).toBe(0);
     expect(lines().at(-1)).toBe('Nothing pending matching job=RQ-NOPE.');
+    // --contains labels the needle verbatim in the same footer slot; the
+    // feed job's title carries the job id, so it is the one match.
+    expect(await command(['--contains', 'RQ-CLI-H'])).toBe(0);
+    expect(lines().join('\n')).toContain('1 pending matching contains=RQ-CLI-H');
+    expect(await command(['--contains', 'no-such-text'])).toBe(0);
+    expect(lines().at(-1)).toBe('Nothing pending matching contains=no-such-text.');
     // --since labels the resolved cutoff, not the relative spelling; the
     // undated needs-you line stays out of the match.
     expect(await command(['--since', '15m'])).toBe(0);
@@ -2707,6 +2816,9 @@ describe('phm comms inbox cli', () => {
       ['--since'], ['--since', '--json'], ['--since', 'bogus'], ['--since', '-5m'],
       ['--since', '15m', '--since', '15m'], ['--json', '--since'],
       ['--since', '15m', '--job'],
+      ['--contains'], ['--contains', ''], ['--contains', '   '], ['--contains', '--json'],
+      ['--contains', 'x'.repeat(513)], ['--contains', 'a', '--contains', 'b'],
+      ['--contains', 'deploy', '--job'], ['--json', '--contains'],
     ]) {
       expect(await command(args), args.join(' ')).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });

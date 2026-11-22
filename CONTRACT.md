@@ -3080,7 +3080,12 @@ item's `jobIds` (feed jobs by their id, bus/mailbox bodies by their
 citations, board tasks by `itemId` with deliveries riding their thread's
 citations, conversations by `thread.jobs`, teammate tasks by `jobId`, seat
 handoffs by `node-job` refs) for `comms inbox --job` to match against,
-absent when no job relation is provable; and
+absent when no job relation is provable; and `comms inbox --contains`
+(`UnifiedInboxFilter.contains`, bounded by `UNIFIED_INBOX_CONTAINS_MAX`)
+keeps only items whose scrubbed `title`/`detail` — the text the row shows,
+never the `act` command links — carries the needle as a case-insensitive
+whitespace-collapsed substring, the same `--contains` contract every other
+bus read applies; and
 `jobAnnotationFromFeed(feed, jobId)` maps one already-read
 `BusWorkFeedReadResult` to the `BusEnvelopeLookupJob` every citing read
 shares — the inbox page, `readBusEnvelopeById`, wake referents and the

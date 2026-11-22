@@ -215,7 +215,7 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 
 ## Unified inbox
 
-`phm comms inbox [--source <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--json]`
+`phm comms inbox [--source <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--json]`
 ([`unified-inbox.ts`](../src/core/comms/unified-inbox.ts)) is the read-only
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
@@ -403,7 +403,11 @@ and `--since <15m|2h|1d|ISO>` only items whose recorded `since` appearance
 time reaches the cutoff, the same inclusive `>=` match every bus read
 `--since` applies; an item whose store keeps no timestamp (`since` null) or
 whose recorded time cannot be parsed never matches, so unknown never counts
-as new. The dimensions AND together. `total`, `omitted` and `items` then
+as new; and `--contains <text>` only items whose scrubbed `title` or
+`detail` carries the text as a case-insensitive substring with whitespace
+collapsed — the same text the row shows, so a match is always visible in
+the row it selects, while the `act` deep links (commands, never item
+content) stay out of the match. The dimensions AND together. `total`, `omitted` and `items` then
 describe
 the matched view and the report echoes the applied `filter`, while `sources`
 keeps every store's real unfiltered pending count — `null` when a source
