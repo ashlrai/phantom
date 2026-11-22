@@ -59,6 +59,14 @@ async function seedAllSignals(): Promise<void> {
     { pool: 'claude', pctUsed: 40, resetAt: new Date(NOW + 10 * 3_600_000).toISOString(), observedAt: iso(1), burnRatePctPerHour: 2 },
     { pool: 'codex', pctUsed: 10, resetAt: new Date(NOW + 100 * 3_600_000).toISOString(), observedAt: iso(1) },
   ].map(row => JSON.stringify(row)).join('\n'));
+  // A readable hints report with no actionable content: the signal is ok, no idea.
+  await put('metrics/selection-hints.json', JSON.stringify({
+    schema: 'metrics.selection-hints.v1', at: iso(1), advisory: true,
+    lanes: [], nodes_with_spare: [],
+    top_constraint: { name: 'unknown', evidence: 'loop times missing; see loop report reasons' },
+    loop_wait: { missing: 'loop stage times not collected' },
+    bets_share: { missing: 'bets share not computed' },
+  }));
 }
 
 const read = () => readIdeaList({ runsDir: root, usageLogPaths: [join(root, 'queue', 'usage-readings.log')], now: NOW });
@@ -122,10 +130,95 @@ describe('ideas list ranking', () => {
     const signals: BottleneckSignals = {
       emptyLaunches: { ok: false, reason: 'x' }, guardianFixups: { ok: false, reason: 'x' }, disk: { ok: false, reason: 'x' }, idleLanes: { ok: false, reason: 'x' },
       unspentUsage: { ok: true, data: [{ pool: 'claude', usedPct: 30, hoursToReset: 6, readingAgeHours: 0.5, projectedLeftPct: null }] },
+      loopHints: { ok: false, reason: 'x' },
     };
     const [idea] = rankBottlenecks(signals, NOW).ideas;
     expect(idea!.evidence.projectedLeftAtResetPct).toBeNull();
     expect(idea!.task).not.toMatch(/will expire at the current pace/);
+  });
+});
+
+describe('loop-hints signal', () => {
+  const hintsDoc = (over: Record<string, unknown> = {}) => JSON.stringify({
+    schema: 'metrics.selection-hints.v1', at: iso(2), advisory: true,
+    lanes: [{ lane: 'claude', merged_per_lane_hour: 1.5, merged_6h: 9, held: false }],
+    nodes_with_spare: [{ node: 'studio', spare: 2 }],
+    top_constraint: { name: 'merge', evidence: '5 PRs opened and 0 merged in 6h' },
+    loop_wait: { headline: 'Biggest wait: PR to merged, p50 95 min', slowest: { stage: 'pr_to_merged', p50_minutes: 95 }, since: iso(24), jobs_truncated: false },
+    bets_share: { reserved: 1, usable: 1 },
+    ...over,
+  });
+
+  it('turns the loop diagnosis into ranked ideas with the report stamp as evidence', async () => {
+    await seedAllSignals();
+    await put('metrics/selection-hints.json', hintsDoc());
+    const report = await read();
+    expect(report.signals.find(signal => signal.name === 'loop-hints')).toMatchObject({ status: 'ok', reason: null });
+    const byId = new Map(report.ideas.map(idea => [idea.id, idea]));
+    expect(byId.get('loop-constraint:merge')).toMatchObject({
+      signal: 'loop-hints', payoff: { score: 75 },
+      evidence: { constraint: 'merge', constraintEvidence: '5 PRs opened and 0 merged in 6h', hintsAt: iso(2), hintsAgeHours: 2 },
+    });
+    expect(byId.get('loop-wait:pr-to-merged')).toMatchObject({
+      signal: 'loop-hints', payoff: { score: 48 },
+      evidence: { stage: 'pr_to_merged', p50Minutes: 95, since: iso(24), jobsTruncated: 'false', hintsAgeHours: 2 },
+    });
+    expect(byId.get('loop-wait:pr-to-merged')!.title).toBe("The self-improvement loop's slowest stage is PR to merged (p50 95 min)");
+  });
+
+  it('emits no idea for unnamed or unknown constraints and stages under the wait floor', async () => {
+    await put('metrics/selection-hints.json', hintsDoc({
+      top_constraint: { name: 'unknown', evidence: 'loop times missing; see loop report reasons' },
+      loop_wait: { headline: 'x', slowest: { stage: 'queued_to_launched', p50_minutes: 30 }, since: iso(24), jobs_truncated: null },
+    }));
+    const report = await read();
+    expect(report.signals.find(signal => signal.name === 'loop-hints')).toMatchObject({ status: 'ok' });
+    expect(report.ideas.filter(idea => idea.signal === 'loop-hints')).toEqual([]);
+  });
+
+  it('turns a measurement constraint into an idea but leaves unknown constraint names alone', async () => {
+    await put('metrics/selection-hints.json', hintsDoc({ top_constraint: { name: 'measurement', evidence: 'jobs.jsonl unreadable: throughput unknown' } }));
+    let report = await read();
+    expect(report.ideas.map(idea => idea.id)).toEqual(['loop-constraint:measurement', 'loop-wait:pr-to-merged']);
+    await put('metrics/selection-hints.json', hintsDoc({
+      top_constraint: { name: 'unknown', evidence: 'loop times missing; see loop report reasons' },
+      loop_wait: { missing: 'loop stage times not collected' },
+    }));
+    report = await read();
+    expect(report.signals.find(signal => signal.name === 'loop-hints')).toMatchObject({ status: 'ok' });
+    expect(report.ideas.filter(idea => idea.signal === 'loop-hints')).toEqual([]);
+  });
+
+  it('reports the signal unknown on missing, malformed, stale or wrong-schema files and invents nothing', async () => {
+    let report = await read();
+    expect(report.signals.find(signal => signal.name === 'loop-hints')).toMatchObject({ status: 'unknown', reason: 'metrics/selection-hints.json not found' });
+    await put('metrics/selection-hints.json', '{not json');
+    report = await read();
+    expect(report.signals.find(signal => signal.name === 'loop-hints')).toMatchObject({ status: 'unknown', reason: 'metrics/selection-hints.json is not valid JSON' });
+    await put('metrics/selection-hints.json', hintsDoc({ schema: 'metrics.other.v1' }));
+    report = await read();
+    expect(report.signals.find(signal => signal.name === 'loop-hints')).toMatchObject({ status: 'unknown' });
+    expect(report.ideas.filter(idea => idea.signal === 'loop-hints')).toEqual([]);
+    await put('metrics/selection-hints.json', hintsDoc({ at: iso(100) }));
+    report = await read();
+    expect(report.signals.find(signal => signal.name === 'loop-hints')).toMatchObject({ status: 'unknown', reason: 'metrics/selection-hints.json is older than 72 hours' });
+    await put('metrics/selection-hints.json', hintsDoc({ at: iso(-3) }));
+    report = await read();
+    expect(report.signals.find(signal => signal.name === 'loop-hints')).toMatchObject({ status: 'unknown', reason: 'metrics/selection-hints.json is stamped in the future' });
+    await put('metrics/selection-hints.json', hintsDoc({ advisory: false }));
+    report = await read();
+    expect(report.signals.find(signal => signal.name === 'loop-hints')).toMatchObject({ status: 'unknown' });
+  });
+
+  it('treats a Missing loop_wait and absent constraint fields as unknown detail, not zero', async () => {
+    await put('metrics/selection-hints.json', hintsDoc({
+      top_constraint: { name: 'idea-to-merge' },
+      loop_wait: { missing: 'loop stage times not collected' },
+    }));
+    const report = await read();
+    const idea = report.ideas.find(candidate => candidate.id === 'loop-constraint:idea-to-merge');
+    expect(idea).toMatchObject({ payoff: { score: 50 }, evidence: { constraintEvidence: null } });
+    expect(report.ideas.some(candidate => candidate.id.startsWith('loop-wait:'))).toBe(false);
   });
 });
 
@@ -149,6 +242,7 @@ describe('stable JSON', () => {
     const lane = (name: string) => ({ lane: name, status: 'red' as const, running: 0, target: 1, queued: 1 });
     const signals: BottleneckSignals = {
       emptyLaunches: { ok: false, reason: 'x' }, guardianFixups: { ok: false, reason: 'x' }, disk: { ok: false, reason: 'x' }, unspentUsage: { ok: false, reason: 'x' },
+      loopHints: { ok: false, reason: 'x' },
       idleLanes: { ok: true, data: [lane('zeta'), lane('alpha')] },
     };
     expect(rankBottlenecks(signals, NOW).ideas.map(idea => idea.id)).toEqual(['idle-lanes:alpha', 'idle-lanes:zeta']);
