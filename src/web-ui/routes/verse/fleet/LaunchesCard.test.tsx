@@ -14,7 +14,7 @@ const REPORT: LaunchRateReport = {
   schema: 'fleet.launches.v1', as_of: '2026-11-18T20:00:00.000Z', hours: 24, metrics: 'ok', plans: 'ok',
   waste_rule: { merged_per_start_under: 0.1, min_starts_24h: 10 },
   starts: 60, starts_per_hour: 2.5, wasted_starts: 21, longest_gap: { from: '2026-11-18T10:00:00.000Z', to: '2026-11-18T12:10:00.000Z', minutes: 130 },
-  lanes: [], headline: '60 starts in the last 24 h (2.5 an hour), 21 wasted, longest gap 2 h 10 m',
+  lanes: [], relaunches: {}, repeat_jobs: [], headline: '60 starts in the last 24 h (2.5 an hour), 21 wasted, longest gap 2 h 10 m',
   recommendations: ['zai took 21 of 60 starts in 24 h and merged 0; send its rows to claude (9% used, 48 h left).', 'second'],
 };
 
