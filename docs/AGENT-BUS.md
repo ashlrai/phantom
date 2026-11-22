@@ -213,15 +213,19 @@ resolved identity belongs to. A missing registry is a verified-empty list
 (`source: missing`), an unreadable one is `unavailable` — never an empty
 list — and membership is a routing label set (who may post), not proof of
 presence or authority. `phm agents bus channel read <name> [--topic <t>]
-[--from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--matched]
+[--from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>]
+[--since <15m|2h|1d|ISO>] [--matched]
 [--after <cursor>] [--limit <n>]` pages the room's posts
 oldest-first — every live envelope addressed to `group:<name>:*` (or one
 `--topic`), minus `group.presence` heartbeats, which are observations with
 their own read, not messages; `--from` narrows by sender through the same
 identity-label matching `comms bus read` uses, `--thread` narrows to
-`note`/`context` bodies carrying that v2 thread label, and `--priority`
+`note`/`context` bodies carrying that v2 thread label, `--priority`
 keeps only posts stamped with that exact band — the same match
-`comms bus read --priority` applies. `--job` keeps only the room's posts
+`comms bus read --priority` applies, and `--since` keeps only posts
+received at or after the cutoff — the `phm messages` grammar (`15m`,
+`2h`, `1d`, epoch ms or an ISO time) resolved to epoch ms, matched
+inclusively on `receivedAt` like `phm messages --since`. `--job` keeps only the room's posts
 that name one job — a `work.post`, `work.status`, `work.result` or `wake`
 body declaring that `jobId`, a `worker-handoff` assigning that fleet job
 id through `taskId`, or a `note`/`context` body carrying the `job:<id>`
@@ -285,7 +289,8 @@ no announced job and reads no feed before posting. Like every send it is
 untrusted data: a wake is a hint to read the inbox and grants no authority.
 
 **Inbox.** `phm agents bus inbox <agent> [--thread <t>] [--from <agent>]
-[--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>]`
+[--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>]
+[--since <15m|2h|1d|ISO>]`
 returns one page of
 DMs, handoffs,
 posts in the agent's channels (minus its own and minus `group.presence`
@@ -313,7 +318,11 @@ through `taskId`, or a `note`/`context` body carrying the
 `job:<id>` v2 thread label, the same bucket the messages and conversations
 projections group under `job:<id>` — so an agent on one job reads its
 pending mail without paging the whole inbox and eyeballing each row's
-`job` annotation.
+`job` annotation. `--since` keeps only mail received at or after the
+cutoff — the same `phm messages` grammar (`15m`, `2h`, `1d`, epoch ms or
+an ISO time) resolved to epoch ms, matched inclusively on `receivedAt` —
+so fresh mail is one filtered read without a persisted cursor, and it
+composes with every other inbox filter including `--matched`.
 `--matched` additionally reports `matched`, the true pending total — every
 row the same filters accept across the whole retained store, the same count
 `work mine`'s inbox section reports — while `messages` still caps at
@@ -354,8 +363,10 @@ feed's own `refused`/`unavailable` state) without a `show` per item; the
 compact `job=<id>:<state>` marker rides inside the frame's bracket and on
 the human line the same way `held` does, and `work mine`'s inbox section
 carries the same field.
-`phm agents bus wakes <agent> [--job <id>]` lists wake hints for the agent and its
-channels. A ref that resolves to no registered identity keeps exact-label
+`phm agents bus wakes <agent> [--since <15m|2h|1d|ISO>] [--job <id>]` lists wake hints for the agent and its
+channels. `--since` keeps only hints after the cutoff — the same `phm
+messages` grammar the inbox and channel read take, resolved to epoch ms —
+so a wake-driven agent reads just the hints newer than its last check. A ref that resolves to no registered identity keeps exact-label
 matching instead — the page reports `scope: 'label'` (vs `'identity'`),
 `agent` the queried label verbatim, and only hints whose `to` is that label
 match — so hints queued under a bare coordination or routing label, like the
