@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.66 |
-| Latest dated changelog release (2026-11-22) | 3.30.66 |
+| Source package | 3.30.67 |
+| Latest dated changelog release (2026-11-22) | 3.30.67 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -15,23 +15,6 @@ Versions map to milestone series: **2.1.0** = v2.1 "Harden & Prove" (H1–H8),
 hub (M1–M20). Entries below detail each milestone; dates are merge dates into `master`.
 
 ---
-
-## [3.30.67](https://github.com/ashlrai/phantom/compare/v3.30.66...v3.30.67) (2026-11-22)
-
-
-### Changes
-
-* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795344379-N17:** ([#8236](https://github.com/ashlrai/phantom/issues/8236)) ([c0252c6](https://github.com/ashlrai/phantom/commit/c0252c671e4fe7e43b4054e815a3407e7a3ad122))
-* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795345519-N17:** ([#8242](https://github.com/ashlrai/phantom/issues/8242)) ([c7240a7](https://github.com/ashlrai/phantom/commit/c7240a7c1a0118c827ce2329467e21c0ea47bfb5))
-* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795343732-N17:** ([#8230](https://github.com/ashlrai/phantom/issues/8230)) ([86ba8b9](https://github.com/ashlrai/phantom/commit/86ba8b9ce9caf9e3e055fe452c1a1cfa7ff83de1))
-* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795344796-N17:** ([#8241](https://github.com/ashlrai/phantom/issues/8241)) ([81a4fd5](https://github.com/ashlrai/phantom/commit/81a4fd5ebfab4ea358eec3f0e5ec11f097f1babc))
-* **RQ-MERGELATENCYN25Q8:** RQ-MERGELATENCYN25Q8 ([#8240](https://github.com/ashlrai/phantom/issues/8240)) ([6eb59ba](https://github.com/ashlrai/phantom/commit/6eb59ba41290b326d8729bfb00c107eddea299bb))
-* **RQ-PHX-CONSOLELAND777:** RQ-PHX-CONSOLELAND777 ([#8239](https://github.com/ashlrai/phantom/issues/8239)) ([144ce92](https://github.com/ashlrai/phantom/commit/144ce92c96b4f651a8c43a0566e974ac84b8554b))
-* **RQ-PHX-DOCSLAND776:** RQ-PHX-DOCSLAND776 ([#8231](https://github.com/ashlrai/phantom/issues/8231)) ([2c60d40](https://github.com/ashlrai/phantom/commit/2c60d408b477615f7975ec4b5bf8e06276c8cb68))
-* **RQ-PHX-FLEETCORELAND776:** RQ-PHX-FLEETCORELAND776 ([#8235](https://github.com/ashlrai/phantom/issues/8235)) ([1a7fe31](https://github.com/ashlrai/phantom/commit/1a7fe31696de3e27e3905d4a86968eca15ae3208))
-* **RQ-PHX-LEADERLAND776:** RQ-PHX-LEADERLAND776 ([#8237](https://github.com/ashlrai/phantom/issues/8237)) ([d934fb6](https://github.com/ashlrai/phantom/commit/d934fb67c38b2d1f220fc203ef9ab20bc74bdedc))
-* **RQ-PHX-LIVESNAPSHOTBRIEFRECOVER776S:** Live snapshot brief recovery ([#8232](https://github.com/ashlrai/phantom/issues/8232)) ([36b72ac](https://github.com/ashlrai/phantom/commit/36b72ac4775a690bcb9c86fe1b99b65e5aa3ebfb))
-* **RQ-PHX-SLACKITEMEVIDENCERECOVER776S:** Slack item evidence recovery ([#8233](https://github.com/ashlrai/phantom/issues/8233)) ([7d86fd8](https://github.com/ashlrai/phantom/commit/7d86fd814ca80533283cd902819626b6d26fcaf2))
 
 ## [Unreleased]
 
@@ -185,6 +168,23 @@ Merged after #7384 (#7385 to #7604). Bridge, recovery and release bookkeeping is
 ### Removed
 
 - Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
+
+## [3.30.67] - 2026-11-22
+
+
+### Changes
+
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795344379-N17:** ([#8236](https://github.com/ashlrai/phantom/issues/8236)) ([c0252c6](https://github.com/ashlrai/phantom/commit/c0252c671e4fe7e43b4054e815a3407e7a3ad122))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795345519-N17:** ([#8242](https://github.com/ashlrai/phantom/issues/8242)) ([c7240a7](https://github.com/ashlrai/phantom/commit/c7240a7c1a0118c827ce2329467e21c0ea47bfb5))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795343732-N17:** ([#8230](https://github.com/ashlrai/phantom/issues/8230)) ([86ba8b9](https://github.com/ashlrai/phantom/commit/86ba8b9ce9caf9e3e055fe452c1a1cfa7ff83de1))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795344796-N17:** ([#8241](https://github.com/ashlrai/phantom/issues/8241)) ([81a4fd5](https://github.com/ashlrai/phantom/commit/81a4fd5ebfab4ea358eec3f0e5ec11f097f1babc))
+* **RQ-MERGELATENCYN25Q8:** RQ-MERGELATENCYN25Q8 ([#8240](https://github.com/ashlrai/phantom/issues/8240)) ([6eb59ba](https://github.com/ashlrai/phantom/commit/6eb59ba41290b326d8729bfb00c107eddea299bb))
+* **RQ-PHX-CONSOLELAND777:** RQ-PHX-CONSOLELAND777 ([#8239](https://github.com/ashlrai/phantom/issues/8239)) ([144ce92](https://github.com/ashlrai/phantom/commit/144ce92c96b4f651a8c43a0566e974ac84b8554b))
+* **RQ-PHX-DOCSLAND776:** RQ-PHX-DOCSLAND776 ([#8231](https://github.com/ashlrai/phantom/issues/8231)) ([2c60d40](https://github.com/ashlrai/phantom/commit/2c60d408b477615f7975ec4b5bf8e06276c8cb68))
+* **RQ-PHX-FLEETCORELAND776:** RQ-PHX-FLEETCORELAND776 ([#8235](https://github.com/ashlrai/phantom/issues/8235)) ([1a7fe31](https://github.com/ashlrai/phantom/commit/1a7fe31696de3e27e3905d4a86968eca15ae3208))
+* **RQ-PHX-LEADERLAND776:** RQ-PHX-LEADERLAND776 ([#8237](https://github.com/ashlrai/phantom/issues/8237)) ([d934fb6](https://github.com/ashlrai/phantom/commit/d934fb67c38b2d1f220fc203ef9ab20bc74bdedc))
+* **RQ-PHX-LIVESNAPSHOTBRIEFRECOVER776S:** Live snapshot brief recovery ([#8232](https://github.com/ashlrai/phantom/issues/8232)) ([36b72ac](https://github.com/ashlrai/phantom/commit/36b72ac4775a690bcb9c86fe1b99b65e5aa3ebfb))
+* **RQ-PHX-SLACKITEMEVIDENCERECOVER776S:** Slack item evidence recovery ([#8233](https://github.com/ashlrai/phantom/issues/8233)) ([7d86fd8](https://github.com/ashlrai/phantom/commit/7d86fd814ca80533283cd902819626b6d26fcaf2))
 
 ## [3.30.66] - 2026-11-22
 
