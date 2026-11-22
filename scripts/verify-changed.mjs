@@ -45,6 +45,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     shellFiles: changed.filter((path) => existing.has(path) && /\.sh$/.test(path)),
     perlFiles: changed.filter((path) => existing.has(path) && /\.pl$/i.test(path)),
     jsonFiles: changed.filter((path) => existing.has(path) && /\.(?:json|webmanifest)$/.test(path)),
+    jsonlFiles: changed.filter((path) => existing.has(path) && /\.jsonl$/.test(path)),
     xmlFiles: changed.filter((path) => existing.has(path) && /\.(?:xml|plist(?:\.in)?|svg)$/.test(path)),
     webTypecheck: changed.some((path) => path.startsWith('src/web-ui/')),
     authorityDrift: changed.some(affectsAuthorityDrift),
@@ -384,6 +385,53 @@ export function runJsonSyntaxCheck(root, files, read = readFileSync) {
     return false;
   }
   console.log('PASS json syntax check');
+  return true;
+}
+
+/**
+ * Strict-parse changed .jsonl files one line at a time with JSON.parse — the
+ * line-delimited JSON grammar every jobs ledger, fixture corpus, benchmark
+ * record and bridge-evidence file in the repo is written in, and the grammar
+ * each ledger's own readers apply per line. A line must be one complete JSON
+ * value; blank lines — including the empty tail a trailing newline leaves —
+ * carry no record and are skipped, matching how the ledgers' readers filter
+ * them. Any JSON value parses (the grammar admits scalars and arrays, not
+ * only objects). Like the .json check there is no preflight or SKIP path;
+ * each failing path is named with its 1-based line number and parse error,
+ * capped at eight errors per file so one corrupt ledger cannot flood the log.
+ */
+export function runJsonlSyntaxCheck(root, files, read = readFileSync) {
+  const failures = [];
+  for (const path of files) {
+    let text;
+    try {
+      text = read(resolve(root, path), 'utf8');
+    } catch (error) {
+      failures.push(`${path}: ${error.message}`);
+      continue;
+    }
+    let reported = 0;
+    let extra = 0;
+    for (const [index, line] of text.split('\n').entries()) {
+      if (!line.trim()) continue;
+      try {
+        JSON.parse(line);
+      } catch (error) {
+        if (reported < 8) {
+          failures.push(`${path}:${index + 1}: ${error.message}`);
+          reported += 1;
+        } else {
+          extra += 1;
+        }
+      }
+    }
+    if (extra) failures.push(`${path}: ${extra} more malformed line${extra === 1 ? '' : 's'}`);
+  }
+  if (failures.length) {
+    for (const failure of failures) console.error(`FAIL jsonl syntax check: ${failure}`);
+    return false;
+  }
+  console.log('PASS jsonl syntax check');
   return true;
 }
 
@@ -1244,6 +1292,11 @@ function main() {
   if (selection.jsonFiles.length === 0) {
     console.log('PASS json syntax check skipped: no json or webmanifest change');
   } else if (!runJsonSyntaxCheck(root, selection.jsonFiles)) {
+    process.exitCode = 1;
+  }
+  if (selection.jsonlFiles.length === 0) {
+    console.log('PASS jsonl syntax check skipped: no jsonl change');
+  } else if (!runJsonlSyntaxCheck(root, selection.jsonlFiles)) {
     process.exitCode = 1;
   }
   if (selection.xmlFiles.length === 0) {
