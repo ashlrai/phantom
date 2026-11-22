@@ -854,7 +854,19 @@ vocabulary) and `unknown_pool_kinds` tallies the recorded classes
 over the same cohort — scan-time diagnostic context like
 `unknown_market_reasons`, never a reduction of the remainder since
 the detector fires on a log-tail match for any job whose `.base`
-still stands and says nothing about the run's terminal state — and
+still stands and says nothing about the run's terminal state —
+`unknown_node_outcomes` counts the unknown-cohort jobs carrying the
+node runner's recorded execution verdict (`phm-node-runner.v1`
+finish rows joined as `node_outcome` — the offloaded node-pack job's
+terminal verdict in the closed `succeeded`/`fenced`/`failed`
+vocabulary; node-pack jobs produce result artifacts, not pull
+requests, so `merged` stays null however the pack ended and the
+verdict is the job's own answer to "did the work run" — a
+`failed`/`fenced` attempt is the recorded failure signal and a
+`succeeded` attempt is the terminal success the node path exists to
+produce, so all three explain the missing merge verdict) and
+`unknown_node_verdicts` tallies the recorded verdict words over the
+same cohort (most jobs first) — and
 `unknown_handoff_triggers` tallies every
 recorded advisory trigger in the cohort (`rate-limit` attempt kills
 and `quota-exhausted` pending-lane verdicts — the producer's other
@@ -878,8 +890,9 @@ stayed unrecorded, never a reduction of the remainder — and
 `unknown_unresolved` is
 the remainder with no
 recorded failure signal, no requeue word, no standing skip
-decline, keep-queued verdict, terminal no-op verdict or
-rate-limit handoff verdict (finished
+decline, keep-queued verdict, terminal no-op verdict,
+rate-limit handoff verdict or node-runner execution verdict
+(finished
 cleanly awaiting a
 verdict, still in flight, or carrying only transient launch receipts). These are counts over the retained window; when the ledger was
 not read they are `null`, never zero — and `unknown_empty_tags` is
@@ -890,7 +903,8 @@ absent tag journal means tag coverage is unknown rather than zero;
 market ledger itself was not read, and the `unknown_merge_queue*`
 tallies are `null` whenever the merge-events ledger itself was not
 read (`unknown_noop`/
-`unknown_noop_reasons` and the handoff tallies read jobs-ledger rows
+`unknown_noop_reasons` and the handoff, provider-wall, pool-throttle
+and node-runner tallies read jobs-ledger rows
 only, so they are real
 whenever the jobs read succeeded). When the ledger exceeds the retained tail the
 report carries `truncated: true` and every count covers the newest bytes
@@ -1003,6 +1017,14 @@ so a lane whose outcomes rest partly on provider-throttle-hit runs
 shows the recorded exposure (the `pool` receipts — the per-tick
 `ratelimited()` scan's scan-time detection, covering runs the
 outcome-confirmed hold never sees). The same evidence
+block also tallies the node runner's recorded execution verdicts —
+`node_outcomes_known` counts the known-cohort outcomes carrying a
+`node_outcome` and `node_verdicts` breaks the count down by recorded
+verdict word (`succeeded`/`fenced`/`failed` — the
+`phm-node-runner.v1` finish rows; a verdict here means the job
+reached its merge verdict through another path after a node attempt,
+so the tally shows how much of the group's held-merge evidence
+survived node-pool execution). The same evidence
 block also tallies the merge queue's recorded per-PR history —
 `merge_queue_known` counts the known-cohort outcomes whose standing PR
 carried merge-events observations and `merge_queue_blocked_known`/

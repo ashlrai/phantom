@@ -91,6 +91,11 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
       (e.pool_kinds !== null && e.pool_kinds.length > 0
         ? `(${e.pool_kinds.map(r => `${r.kind}:${r.jobs}`).join(',')})` : ''));
   }
+  if (e.node_outcomes_known > 0) {
+    parts.push(`node=${e.node_outcomes_known}` +
+      (e.node_verdicts !== null && e.node_verdicts.length > 0
+        ? `(${e.node_verdicts.map(r => `${r.verdict}:${r.jobs}`).join(',')})` : ''));
+  }
   if (e.merge_queue_known > 0) {
     parts.push(`merge_queue=${e.merge_queue_known}` +
       (e.merge_queue_blocked_reasons !== null && e.merge_queue_blocked_reasons.length > 0
@@ -130,7 +135,7 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
   const counts = `known=${report.known_outcomes} unknown=${report.unknown_outcomes} unclassified=${report.unclassified_outcomes} ` +
     `min_samples=${report.bounds.min_samples} max_shift=${report.bounds.max_shift}`;
   const resolution = report.unknown_unresolved === null ? [] : [
-    `unknown resolution: empty=${report.unknown_empty} nonzero_exit=${report.unknown_nonzero_exit} skipped=${report.unknown_skipped} deferred=${report.unknown_deferred} noop=${report.unknown_noop} handoffs=${report.unknown_handoffs} provider_walls=${report.unknown_provider_walls} unresolved=${report.unknown_unresolved}` +
+    `unknown resolution: empty=${report.unknown_empty} nonzero_exit=${report.unknown_nonzero_exit} skipped=${report.unknown_skipped} deferred=${report.unknown_deferred} noop=${report.unknown_noop} handoffs=${report.unknown_handoffs} provider_walls=${report.unknown_provider_walls} node_outcomes=${report.unknown_node_outcomes} unresolved=${report.unknown_unresolved}` +
       (report.unknown_failure_classes !== null && report.unknown_failure_classes.length > 0
         ? ` failure_classes=${report.unknown_failure_classes.map(c => `${c.failure_class}:${c.jobs}`).join(',')}`
         : '') +
@@ -170,6 +175,9 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
         ? ` pool_throttles=${report.unknown_pool_throttles}` +
           (report.unknown_pool_kinds !== null && report.unknown_pool_kinds.length > 0
             ? `(${report.unknown_pool_kinds.map(c => `${c.kind}:${c.jobs}`).join(',')})` : '')
+        : '') +
+      (report.unknown_node_verdicts !== null && report.unknown_node_verdicts.length > 0
+        ? ` node_verdicts=${report.unknown_node_verdicts.map(c => `${c.verdict}:${c.jobs}`).join(',')}`
         : '') +
       (report.unknown_merge_queue !== null && report.unknown_merge_queue > 0
         ? ` merge_queue=${report.unknown_merge_queue}` +
