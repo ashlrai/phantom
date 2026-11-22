@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; script?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; trust?: boolean; script?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -63,7 +63,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : head;
       const receipt = options.bound
         ? `Bound candidate ${options.boundHead ?? sha} to event tree ${'e'.repeat(40)}\n`
@@ -1074,6 +1074,114 @@ describe('CI baseline evidence', () => {
     // A singleton unaffected failure can never prove a master pass.
     const singleton = await analyzeCiBaseline('owner/repo', github({ membench: true, count: 1, pass: true, contents }).gh);
     expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('parses npm run build helper and vite build failures', () => {
+    const failures = parseBaselineFailures(fixture('build-shared'), 'ashlrai/phantom');
+    expect(failures.map(f => f.testId)).toEqual([
+      'src/web-ui/components/charts/MetricChart.tsx > (build)',
+      'src/web-ui/app/VerseConsoleApp.tsx > (build)',
+    ]);
+    expect(failures[0]).toMatchObject({ file: 'src/web-ui/components/charts/MetricChart.tsx', names: '(build)' });
+    expect(failures[0]?.excerpt).toContain("Could not resolve './missing-chart.js'");
+    // The absolute importer resolved through the /phantom/phantom/ checkout marker.
+    expect(failures[1]).toMatchObject({ file: 'src/web-ui/app/VerseConsoleApp.tsx', names: '(build)' });
+    // The PARSE_ERROR diagnostic names its file only inside the code frame
+    // and stays unparsed; timestamped lines parse identically.
+    const stamped = fixture('build-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped, 'ashlrai/phantom').map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    const helper = parseBaselineFailures(fixture('build-helper-shared'), 'ashlrai/phantom');
+    expect(helper.map(f => f.testId)).toEqual(['scripts/build-release-dependency-inventory.mjs > (build)']);
+    expect(helper[0]?.excerpt).toContain('release dependency inventory npm pack:');
+  });
+  it('keeps passing and unattributable build output unparsed', () => {
+    for (const bad of [
+      'authority-surface: 321 files, 87 packages, 0 missing roots, 4 unresolved — digest abc123',
+      'authority-surface: roots not built yet: dist/core/x.js',
+      '[copy-assets] copied /a -> /b',
+      '✓ built in 45.67s',
+      'error during build:',
+      'Build failed with 1 error:',
+      '[PARSE_ERROR] Unexpected token',
+      'file:///home/runner/work/repo/repo/scripts/ci-fetch-range.mjs:12',
+      'file:///home/runner/work/repo/repo/scripts/check-documentation.mjs:3',
+      "[UNRESOLVED_IMPORT] Could not resolve './x' in node_modules/pkg/index.js",
+      "[UNRESOLVED_IMPORT] Could not resolve './x' in /other/layout/src/x.ts",
+      'npm error Lifecycle script `build` failed with error:',
+      'release dependency inventory',
+      'release dependency inventory:',
+    ]) {
+      expect(parseBaselineFailures(bad, 'owner/repo'), bad.slice(0, 60)).toEqual([]);
+    }
+    // Each helper signature groups under its own script or the vite importer.
+    for (const [log, id] of [
+      ['authority-surface: authority closure exceeds 4096 files', 'scripts/authority-surface.mjs > (build)'],
+      ['authority-surface: dist/authority-surface.json is stale (abc123)', 'scripts/authority-surface.mjs > (build)'],
+      ['[copy-assets] source not found: /x/y', 'scripts/copy-assets.mjs > (build)'],
+      ['file:///home/runner/work/repo/repo/scripts/build-preparation-builtin.mjs:139', 'scripts/build-preparation-builtin.mjs > (build)'],
+      ['file:///home/runner/work/repo/repo/scripts/build-identity.mjs:77', 'scripts/build-identity.mjs > (build)'],
+      ['file:///home/runner/work/repo/repo/scripts/sync-candidate-version.mjs:9', 'scripts/sync-candidate-version.mjs > (build)'],
+      ['release dependency inventory: npm runtime closure exceeds traversal depth', 'scripts/build-release-dependency-inventory.mjs > (build)'],
+      ['npm pack file report is missing', 'scripts/build-release-dependency-inventory.mjs > (build)'],
+      ['[vite]: Rolldown failed to resolve import "left-pad" from "src/web-ui/main.tsx".', 'src/web-ui/main.tsx > (build)'],
+      ["[UNRESOLVED_IMPORT] Could not resolve './x.js' in src/web-ui/x.ts", 'src/web-ui/x.ts > (build)'],
+    ] as const) {
+      expect(parseBaselineFailures(log, 'owner/repo').map(f => f.testId), log.slice(0, 60)).toEqual([id]);
+    }
+  });
+  it('groups build-step failures and attributes importer closures and helper inputs', async () => {
+    const report = await analyzeCiBaseline('ashlrai/phantom', github({ build: true }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups.map(g => g.testId)).toEqual([
+      'src/web-ui/app/VerseConsoleApp.tsx > (build)',
+      'src/web-ui/components/charts/MetricChart.tsx > (build)',
+    ]);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    // The importer file itself is PR-caused for its own group only; the
+    // vitest harness ambient set cannot reach a build failure, so harness
+    // and unrelated changes share the baseline.
+    for (const [touched, id] of [
+      ['src/web-ui/components/charts/MetricChart.tsx', 'src/web-ui/components/charts/MetricChart.tsx > (build)'],
+      ['src/web-ui/app/VerseConsoleApp.tsx', 'src/web-ui/app/VerseConsoleApp.tsx > (build)'],
+      ['package.json', 'src/web-ui/components/charts/MetricChart.tsx > (build)'],
+    ] as const) {
+      const caused = await analyzeCiBaseline('ashlrai/phantom', github({ build: true, touched }).gh);
+      const byId = new Map(caused.groups.map(g => [g.testId, g.action]));
+      expect(byId.get(id), touched).toBe('pr-caused');
+    }
+    for (const touched of ['vitest.config.ts', 'tsconfig.json', 'src/core/status.ts', 'docs/README.md']) {
+      const shared = await analyzeCiBaseline('ashlrai/phantom', github({ build: true, touched }).gh);
+      for (const group of shared.groups) expect(group.classification, `${touched} -> ${group.testId}`).toBe('shared-baseline');
+    }
+    // The dep-inventory helper's closed input list decides touched: its
+    // script, the npm pack manifests and the src modules its dist imports
+    // compile from are PR-caused; unrelated changes share the baseline.
+    const helperReport = await analyzeCiBaseline('ashlrai/phantom', github({ buildHelper: true }).gh);
+    expect(helperReport.groups).toHaveLength(1);
+    expect(helperReport.groups[0]).toMatchObject({
+      testId: 'scripts/build-release-dependency-inventory.mjs > (build)',
+      classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2],
+    });
+    for (const touched of [
+      'scripts/build-release-dependency-inventory.mjs',
+      'package.json',
+      'package-lock.json',
+      'src/core/daemon/runtime-release-dependency-inventory.ts',
+      'src/core/util/private-storage.ts',
+    ]) {
+      const caused = await analyzeCiBaseline('ashlrai/phantom', github({ buildHelper: true, touched }).gh);
+      expect(caused.groups[0]?.action, touched).toBe('pr-caused');
+    }
+    for (const touched of ['vitest.config.ts', 'src/core/status.ts', 'docs/README.md']) {
+      const shared = await analyzeCiBaseline('ashlrai/phantom', github({ buildHelper: true, touched }).gh);
+      expect(shared.groups[0]?.classification, `${touched} -> shared`).toBe('shared-baseline');
+    }
+    // A singleton unaffected failure can never prove a master pass, and a
+    // parenthesized build identity can never resolve as a flake.
+    const singleton = await analyzeCiBaseline('ashlrai/phantom', github({ build: true, count: 1, pass: true }).gh);
+    for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
   });
   it('parses eslint stylish output as per-file lint failures', () => {
     const failures = parseBaselineFailures(fixture('lint-shared'), 'owner/repo');
