@@ -1804,6 +1804,118 @@ describe('readBusWorkMine', () => {
     expect(readBusWorkMine('atlas', { ...options, job: '' }))
       .toEqual({ status: 'invalid', reason: 'invalid-job' });
   });
+
+  it('rejects a contains value outside the bounded free-text rule', () => {
+    const options = setup();
+    register(options, 'atlas');
+    for (const contains of ['', '   ', 'x'.repeat(513)]) {
+      expect(readBusWorkMine('atlas', { ...options, contains }))
+        .toEqual({ status: 'invalid', reason: 'invalid-contains' });
+    }
+  });
+
+  it('filters the digest to rows whose displayed text carries the needle', async () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+
+    // Feed: a frobnicate job announced to atlas, an unrelated chore and a
+    // second frobnicate job atlas announced itself — the needle matches
+    // title text in both the open and announced views.
+    const posted = await announceWork({ from: 'nova', jobId: 'RQ-C-1', title: 'Frobnicate the widget',
+      repo: 'a/b', claimKeys: ['queue:RQ-C-1'], to: 'agent:atlas', id: 'post-RQ-C-1' }, options);
+    expect(posted.status).toBe('posted');
+    await announceWork({ from: 'atlas', jobId: 'RQ-C-2', title: 'Water the plants',
+      repo: 'a/b', claimKeys: ['queue:RQ-C-2'], id: 'post-RQ-C-2' }, options);
+    await announceWork({ from: 'atlas', jobId: 'RQ-C-3', title: 'Frobnicate the dashboard',
+      repo: 'a/b', claimKeys: ['queue:RQ-C-3'], id: 'post-RQ-C-3' }, options);
+    // Claims: one overlapping RQ-C-1's declared key (its announced title
+    // carries the needle), one unrelated scope key, and a message claim
+    // leasing the RQ-C-1 announcement itself.
+    claim(options, 'queue:RQ-C-1', 'atlas', 'test:atlas-c1', options.clock.now);
+    claim(options, 'repo:a/c', 'atlas', 'test:atlas-x', options.clock.now);
+    takeWork(options, 'post-RQ-C-1', 'atlas');
+    // Claimable work and handoffs: only the frobnicate rows match.
+    postClaimable(options, 'w-frob', { body: { kind: 'work', text: 'frobnicate the review' } });
+    postClaimable(options, 'w-other', { body: { kind: 'work', text: 'tidy the shed' } });
+    expect(await sendHandoff({ from: 'nova', to: 'atlas', taskId: 'RQ-H-1',
+      prompt: 'frobnicate the handoff', id: 'ho-frob' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendHandoff({ from: 'nova', to: 'atlas', taskId: 'RQ-H-2',
+      prompt: 'water the plants', id: 'ho-other' }, options)).toMatchObject({ status: 'posted' });
+    // Threads: a frobnicate ask waits on atlas, an unrelated ask does not,
+    // and atlas's own frobnicate ask waits on nova.
+    expect(await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'frobnicate question?',
+      thread: 't-frob', id: 'ask-frob' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'unrelated question?',
+      thread: 't-other', id: 'ask-other' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'frobnicate status?',
+      thread: 't-await', id: 'ask-await' }, options)).toMatchObject({ status: 'posted' });
+    // Wakes: a frobnicate reason and an other-topic reason.
+    expect(await sendWakeRequest({ from: 'nova', to: 'atlas', reason: 'frobnicate ping',
+      id: 'wk-frob' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendWakeRequest({ from: 'nova', to: 'atlas', reason: 'tidy ping',
+      id: 'wk-other' }, options)).toMatchObject({ status: 'posted' });
+
+    // Padded and uppercased input normalizes to the same needle every
+    // --contains read shares.
+    const result = readBusWorkMine('atlas', { ...options, contains: '  FROBNICATE ' });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.contains).toBe('  FROBNICATE ');
+    expect(formatBusWorkMine(result)[0]).toContain('contains="  FROBNICATE "');
+
+    // Claims keep the blocked job's title match and the leased message's
+    // summary match; the unrelated scope claim names no provable text.
+    expect(result.claims.status).toBe('ok');
+    if (result.claims.status !== 'ok') throw new Error('unreachable');
+    expect(result.claims.claims.map(row => row.key).sort())
+      .toEqual(['queue:RQ-C-1', 'queue:post-RQ-C-1']);
+
+    // Feed sections match the job search text: the two frobnicate titles.
+    expect(result.jobs).toMatchObject({ status: 'ok', open: 2 });
+    if (result.jobs.status !== 'ok') throw new Error('unreachable');
+    expect(result.jobs.jobs.map(entry => entry.id).sort()).toEqual(['RQ-C-1', 'RQ-C-3']);
+    expect(result.announced).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.announced.status !== 'ok') throw new Error('unreachable');
+    expect(result.announced.items.map(entry => entry.id)).toEqual(['RQ-C-3']);
+
+    // next and handoffs keep only the envelopes whose body summary matches.
+    expect(result.next).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.next.status !== 'ok') throw new Error('unreachable');
+    expect(result.next.items.map(item => item.id)).toEqual(['w-frob']);
+    expect(result.handoffs).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(result.handoffs.items.map(item => item.id)).toEqual(['ho-frob']);
+
+    // Waiting threads: the frobnicate ask, the frobnicate handoff and the
+    // job:RQ-C-1 bucket the frobnicate announcement sits in — all still
+    // owe atlas a reply; the unrelated ask drops out.
+    expect(result.threads).toMatchObject({ status: 'ok', matched: 3 });
+    if (result.threads.status !== 'ok') throw new Error('unreachable');
+    const byId = new Map(result.threads.items.map(item => [item.id, item]));
+    expect([...byId.keys()].sort()).toEqual(['ho-frob', 'job:RQ-C-1', 't-frob']);
+    expect(byId.get('job:RQ-C-1')).toMatchObject({ kind: 'ask', waitingOn: 'atlas' });
+    expect(result.awaiting).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.awaiting.status !== 'ok') throw new Error('unreachable');
+    expect(result.awaiting.items.map(item => item.id)).toEqual(['t-await']);
+    expect(result.blocked).toMatchObject({ status: 'ok', matched: 0 });
+
+    // Wakes resolve each hint's referent: the frobnicate handoff prompt
+    // and wake reason match; the other-topic hint and unresolvable-free
+    // page stay honest.
+    expect(result.wakes).toMatchObject({ status: 'ok', matched: 2 });
+    if (result.wakes.status !== 'ok') throw new Error('unreachable');
+    expect(result.wakes.wakes.map(wake => wake.id).sort()).toEqual(['ho-frob', 'wk-frob']);
+
+    // Inbox applies the same body-summary rule: the announcement, ask,
+    // handoff, wake and claimable post that name the needle.
+    expect(result.inbox.status).toBe('ok');
+    if (result.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.inbox.matched).toBe(5);
+    expect(result.inbox.messages.map(message => message.id).sort())
+      .toEqual(['ask-frob', 'ho-frob', 'post-RQ-C-1', 'w-frob', 'wk-frob']);
+  });
 });
 
 describe('mailbox section', () => {
@@ -1923,6 +2035,21 @@ describe('mailbox section', () => {
     expect(result.mailbox.messages.map(message => message.id).sort())
       .toEqual(['m-job-handoff', 'm-job-thread']);
   });
+
+  it('filters pending mail by the displayed body summary like every --contains read', () => {
+    const options = setup();
+    register(options, 'atlas');
+    sendMail(options, 'm-frob', 'atlas',
+      { body: { text: 'frobnicate the legacy note' } });
+    sendMail(options, 'm-other', 'atlas',
+      { body: { text: 'tidy the shed' } });
+
+    const result = readBusWorkMine('atlas', { ...options, contains: 'FROBNICATE' });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok' || result.mailbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.mailbox).toMatchObject({ matched: 1, truncated: false });
+    expect(result.mailbox.messages.map(message => message.id)).toEqual(['m-frob']);
+  });
 });
 
 describe('board section', () => {
@@ -2027,6 +2154,42 @@ describe('board section', () => {
     expect(literal.peers).toEqual(['atlas']);
     expect(literal.deliveries.matched).toBe(1);
     expect(literal.deliveries.items[0]!.summary).toBe('bare label mail');
+  });
+
+  it('narrows deliveries, tasks and thread rollups by displayed text while peers stay known', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    const store = board(options);
+    // The bare 'atlas' label joins the matching thread; 'agent:atlas'
+    // joins only the quiet one — so peers staying complete proves the text
+    // filter never narrows board membership.
+    const matching = store.createThread('nova', 'Frobnicate coordination').id;
+    store.joinThread('atlas', matching);
+    await store.post('nova', matching, 'frobnicate the plan');
+    await store.post('nova', matching, 'unrelated chatter');
+    store.createTask('nova', matching, 'item-frob', 'Frobnicate task');
+    store.createTask('nova', matching, 'item-other', 'Water plants');
+    const quiet = store.createThread('nova', 'Watering rota').id;
+    store.joinThread('agent:atlas', quiet);
+
+    const boardSection = section(readBusWorkMine('atlas', { ...options, contains: 'frobnicate' }));
+    expect(boardSection.status).toBe('ok');
+    if (boardSection.status !== 'ok') throw new Error('unreachable');
+    // Peers report board membership inside the thread scope — the text
+    // filter never narrows who the board knows, even though agent:atlas's
+    // only thread carries nothing the needle names.
+    expect(boardSection.peers.sort()).toEqual(['agent:atlas', 'atlas']);
+    // Only the frobnicate post matches; the bare 'atlas' label is the
+    // agent's sole member of that thread, so one delivery survives.
+    expect(boardSection.deliveries).toMatchObject({ matched: 1, truncated: false });
+    expect(boardSection.deliveries.items[0]).toMatchObject({ summary: 'frobnicate the plan' });
+    expect(boardSection.tasks).toMatchObject({ matched: 1, truncated: false });
+    expect(boardSection.tasks.items[0]).toMatchObject({ itemId: 'item-frob', title: 'Frobnicate task' });
+    // The matching thread's rollup survives on its own title and counts
+    // only the matching items; the quiet thread drops out entirely.
+    expect(boardSection.threads).toHaveLength(1);
+    expect(boardSection.threads[0]).toMatchObject({ id: matching, pendingDeliveries: 1 });
+    expect(boardSection.threads[0]!.tasks).toEqual({ open: 1, held: 0, ambiguous: 0, unknown: 0 });
   });
 
   it('reports an unreadable board and an unreadable queue honestly', async () => {
@@ -2424,6 +2587,21 @@ describe('seats section', () => {
     expect(byJob.seats[0]!.handoffs.map(h => `${h.work.kind}:${h.work.ref}`)).toEqual(['node-job:J-1']);
 
     expect(busWorkMineSeatsFromPlan(plan, denotes, 'J-404'))
+      .toEqual({ status: 'ok', matched: 0, seats: [], truncated: false });
+
+    // --contains matches the held-work fields a record carries: refs,
+    // branch and pr — never seat id, participant or state.
+    const branchy: SeatHandoffsPlan = { schema: 'phantom-bot-handoffs-plan.v1', apply: false,
+      seats: [{ seatId: 's1', participantId: 'atlas', state: 'draining', eligible: true,
+        handoffs: [
+          { ...handoff('node-job', 'J-9', 'h-frob'), branch: 'feat/frobnicate-widget' },
+          { ...handoff('node-job', 'J-8', 'h-other'), branch: 'fix/tidy-shed' },
+        ] }] };
+    const byText = busWorkMineSeatsFromPlan(branchy, denotes, undefined, ' frobnicate ');
+    expect(byText).toMatchObject({ status: 'ok', matched: 1, truncated: false });
+    if (byText.status !== 'ok') throw new Error('unreachable');
+    expect(byText.seats[0]!.handoffs.map(h => h.handoffId)).toEqual(['h-frob']);
+    expect(busWorkMineSeatsFromPlan(branchy, denotes, undefined, 'atlas'))
       .toEqual({ status: 'ok', matched: 0, seats: [], truncated: false });
   });
 

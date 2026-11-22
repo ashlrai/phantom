@@ -2195,6 +2195,76 @@ describe('wake hint job filter', () => {
   });
 });
 
+describe('wake hint contains filter', () => {
+  it('keeps only hints whose resolved referent text carries the needle', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    // A handoff prompt and a wake reason name the needle; plain mail and
+    // an other-topic hint do not.
+    expect(await sendHandoff({ from: 'atlas', to: 'nova', taskId: 'RQ-T-1',
+      prompt: 'frobnicate the widget', id: 'wk-handoff' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendWakeRequest({ from: 'atlas', to: 'nova', reason: 'frobnicate ping',
+      id: 'wk-frob' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendWakeRequest({ from: 'atlas', to: 'nova', reason: 'tidy ping',
+      id: 'wk-other' }, options)).toMatchObject({ status: 'posted' });
+    // A hand-enqueued hint with no live envelope names no provable text.
+    enqueueBusWake({ kind: 'bus.send', id: 'wk-ghost', from: 'agent:atlas', to: 'agent:nova' },
+      { root: options.runsRoot });
+
+    // Padded, uppercased input normalizes like every --contains read.
+    const page = readAgentWakes('nova', undefined, options, { contains: '  FROBNICATE ' });
+    expect(page).toMatchObject({ status: 'ok', matched: 2, truncated: false });
+    if (page.status !== 'ok') throw new Error('unreachable');
+    expect(page.wakes.map(row => row.id).sort()).toEqual(['wk-frob', 'wk-handoff']);
+    // matched counts the proven matches on the resolved page, and the
+    // unfiltered read still reports the true total.
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok', matched: 4 });
+    expect(readAgentWakes('nova', undefined, options, { contains: 'absent-text' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    expect(readAgentWakes('nova', undefined, options, { contains: '' }))
+      .toMatchObject({ status: 'invalid' });
+    expect(readAgentWakes('nova', undefined, options, { contains: 'x'.repeat(513) }))
+      .toMatchObject({ status: 'invalid' });
+  });
+
+  it('matches claim-holder hints on the citing status detail', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-HO-1', title: 'ho', repo: 'ashlrai/phantom',
+      claimKeys: ['queue:RQ-HO-1'] }, options)).toMatchObject({ status: 'posted' });
+    expect(acquireCoordination({ root: options.root, origin: 'resource', key: 'queue:RQ-HO-1',
+      owner: 'agent:nova', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000, sourceId: 'ho-src',
+      now: options.clock.now, started: new Date(options.clock.now).toISOString() }).status).toBe('acquired');
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-HO-1', status: 'done',
+      detail: 'frobnicate finished', id: 'w-ho' }, options))
+      .toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    expect(await sendWakeRequest({ from: 'atlas', to: 'nova', reason: 'tidy ping',
+      id: 'wk-other' }, options)).toMatchObject({ status: 'posted' });
+
+    const page = readAgentWakes('nova', undefined, options, { contains: 'frobnicate' });
+    expect(page).toMatchObject({ status: 'ok', matched: 1 });
+    if (page.status !== 'ok') throw new Error('unreachable');
+    expect(page.wakes).toHaveLength(1);
+    expect(page.wakes[0]).toMatchObject({ claimHolder: { jobId: 'RQ-HO-1', status: 'done' } });
+    expect(page.wakes[0]!.id).toMatch(/^wh-[a-f0-9]{32}$/);
+  });
+
+  it('fails closed when the bus store cannot resolve referents', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    expect(await sendWakeRequest({ from: 'atlas', to: 'nova', reason: 'frobnicate ping',
+      id: 'wk-frob' }, options)).toMatchObject({ status: 'posted' });
+    // An unreadable bus store makes every referent unknown, so the
+    // contains verdict cannot be proven — unavailable, never an empty page.
+    mkdirSync(join(options.root!, 'bus-inbox'), { recursive: true });
+    writeFileSync(join(options.root!, 'bus-inbox', 'messages.json'), 'not json', { mode: 0o600 });
+    expect(readAgentWakes('nova', undefined, options, { contains: 'frobnicate' }))
+      .toMatchObject({ status: 'unavailable' });
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok' });
+  });
+});
+
 describe('wake hint sender filter', () => {
   it('keeps only hints whose recorded from label resolves to one agent', async () => {
     const options = setup();

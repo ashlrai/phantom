@@ -1479,10 +1479,16 @@ export type WakePage = { status: 'ok'; agent: string;
  * a `bus.send` hint, the `agent:<handle>` of the identity whose terminal
  * `work.status` generated a claim-holder `wh-…` hint — so "which agent
  * keeps waking me" is one filtered read that composes with `--since` and
- * `--job`.
+ * `--job`. `filter.contains` keeps only hints whose resolved referent text
+ * carries the needle — a `bus.send` hint's live message summary or a
+ * claim-holder hint's citing `work.status` detail, the same scrubbed
+ * one-line text the row reports — so "which wake was about X" is one
+ * filtered read; a hint whose referent cannot be resolved names no
+ * provable text and never matches, and like `job` the filtered `matched`
+ * counts the proven matches on the resolved page.
  */
 export function readAgentWakes(ref: string, sinceAt: number | undefined, options: UnifiedBusOptions = {},
-  filter: { job?: string; from?: string } = {}): WakePage {
+  filter: { job?: string; from?: string; contains?: string } = {}): WakePage {
   const job = filter.job;
   if (job !== undefined && (typeof job !== 'string' || !THREAD.test(job))) {
     return { status: 'invalid', reason: 'Invalid job id.' };
@@ -1490,6 +1496,10 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
   const from = filter.from;
   if (from !== undefined && (typeof from !== 'string' || from.length === 0 || from.length > 128)) {
     return { status: 'invalid', reason: 'Invalid sender filter.' };
+  }
+  const containsNeedle = busReadContains(filter.contains);
+  if (containsNeedle === null) {
+    return { status: 'invalid', reason: 'Invalid contains filter.' };
   }
   const read = readAgentRegistry(options);
   if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
@@ -1509,18 +1519,26 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
   // citation re-derivation and the ordinary hint's referent lookup.
   const scan = wakes.wakes.length === 0 ? undefined
     : scanBusInbox({ root: options.root, now: options.now });
-  // A job verdict needs the resolved referent; when the store cannot be read
-  // every hint's citation is unknown, so the filtered read fails closed
-  // instead of reporting an empty page as "no wakes for this job".
-  if (job !== undefined && scan !== undefined && scan.source === 'unavailable') {
+  // A job or contains verdict needs the resolved referent; when the store
+  // cannot be read every hint's citation and summary are unknown, so the
+  // filtered read fails closed instead of reporting an empty page as "no
+  // wakes for this job" or "no wakes mentioning this".
+  if ((job !== undefined || containsNeedle !== undefined) && scan !== undefined && scan.source === 'unavailable') {
     return { status: 'unavailable', reason: 'Bus store is not readable.' };
   }
   const contexts = claimHolderWakeContexts(wakes.wakes, options, scan);
   const resolved = wakeMessageContexts(wakes.wakes, scan, read.registry, options, job);
-  const shown = job === undefined ? wakes.wakes : wakes.wakes.filter(row => {
-    const holder = contexts.get(row.id);
-    if (typeof holder === 'object') return holder.jobId === job;
-    return resolved.jobMatches.has(row.id);
+  const shown = wakes.wakes.filter(row => {
+    if (job !== undefined) {
+      const holder = contexts.get(row.id);
+      const jobMatch = typeof holder === 'object' ? holder.jobId === job : resolved.jobMatches.has(row.id);
+      if (!jobMatch) return false;
+    }
+    if (containsNeedle !== undefined &&
+        !wakeHintContainsMatch(contexts.get(row.id), resolved.contexts.get(row.id), containsNeedle)) {
+      return false;
+    }
+    return true;
   });
   return { status: 'ok', agent: target?.identity.handle ?? ref,
     scope: target === undefined ? 'label' : 'identity',
@@ -1531,8 +1549,26 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
         ...(claimHolder === undefined ? {} : { claimHolder }),
         ...(message === undefined ? {} : { message }) };
     }),
-    matched: job === undefined ? wakes.matched ?? 0 : shown.length,
+    matched: job === undefined && containsNeedle === undefined ? wakes.matched ?? 0 : shown.length,
     truncated: wakes.truncated ?? false };
+}
+
+/**
+ * The `--contains` verdict for one wake hint, decided on the same resolved
+ * evidence the row reports: a `bus.send` hint matches when its live referent
+ * message's scrubbed one-line summary — the same text `agentWakeMessageSuffix`
+ * renders — carries the needle, and a claim-holder `wh-…` hint matches when
+ * the citing `work.status` receipt's detail carries it. A hint whose referent
+ * is `unresolved` or `unknown` names no provable text and never matches,
+ * the same rule the `job` filter applies; ids, labels and statuses stay
+ * structured fields, never search text.
+ */
+function wakeHintContainsMatch(claimHolder: AgentWakeClaimHolder | undefined,
+  message: AgentWakeMessage | undefined, needle: string): boolean {
+  if (message?.status === 'resolved' &&
+      message.summary.toLowerCase().replace(/\s+/g, ' ').includes(needle)) return true;
+  return typeof claimHolder === 'object' && claimHolder.detail !== undefined &&
+    scrubSecrets(claimHolder.detail).toLowerCase().replace(/\s+/g, ' ').includes(needle);
 }
 
 export interface ChannelListEntry {
