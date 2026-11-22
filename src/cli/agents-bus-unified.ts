@@ -18,6 +18,7 @@ import { formatBusWorkMine } from '../core/agents/bus-work-mine.js';
 import { readBusWorkMineWithSeats } from '../core/agents/bus-work-mine-seats.js';
 import { readUnifiedBusStatus } from '../core/agents/bus-status.js';
 import { claimNextBusWork, type BusNextResult } from '../core/fleet/bus-next-claim.js';
+import { mutateBusWorkClaim, type BusClaimRequest, type BusClaimResult as BusMessageClaimResult } from '../core/fleet/bus-work-claims.js';
 import { scrubSecrets } from '../core/util/scrub.js';
 import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
@@ -44,6 +45,8 @@ ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner
 ashlr agents bus claim renew --key <claimKey> --token <64hex> --lease-ms <1..3600000>
 ashlr agents bus claim release --key <claimKey> --token <64hex> --outcome released|completed
 ashlr agents bus claim list [--key <claimKey>] [--owner <label>] [--jobs]
+ashlr agents bus claim message acquire --id <envelope-id> --lease-ms <1..3600000> [--owner <label>]
+ashlr agents bus claim message renew|release|complete --id <envelope-id> --token <64hex>
 ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--claim <key>]... [--to <label>]
     [--provider <p>] [--tier <fast|mid|work|frontier> --scope <text> --acceptance <text>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
@@ -181,7 +184,9 @@ of the resolved identity or a member channel's group:<channel>:<topic>
 address, minus the agent's own channel posts. <agent> defaults to
 PHM_AGENT_ID and --owner to PHM_AGENT_ID then the agent ref; acquired
 returns the live receipt with its fencing token and lease expiry — the
-token feeds the message-claim verbs on comms bus — while empty reports
+token feeds the message-claim verbs claim message renew|release|complete
+on this surface (the same journal comms bus claim spends) — while empty
+reports
 the observed {candidates, held} scan totals so a dry well reads
 differently from held work. Claims coordinate scope only; bodies are
 never executed. status is a read-only probe of the store, registry, wake queue, coordination
@@ -198,6 +203,8 @@ const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread
   '--kind', '--channel']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
 const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--claimable', '--jobs', '--matched']);
+const MESSAGE_CLAIM_ACTIONS = ['acquire', 'renew', 'release', 'complete'] as const;
+const MESSAGE_CLAIM_OK = new Set(['acquired', 'renewed', 'released', 'completed']);
 
 class UsageError extends Error {}
 
@@ -276,6 +283,15 @@ function workJobClaimHuman(result: BusWorkJobClaimResult): string {
       `until ${new Date(result.holder.leaseUntil).toISOString()}${claimScopeSuffix(result.scope)}`;
   }
   return `${result.status}: ${result.reason}${result.job === undefined ? '' : ` (${claimJobLabel(result.job)})`}`;
+}
+
+/** `claim message` human lines: the envelope id leads; the fencing token prints only on acquire. */
+function messageClaimHuman(result: BusMessageClaimResult, id: string): string {
+  if (result.status === 'acquired' || result.status === 'renewed') {
+    return `${result.status} ${id} leaseUntil=${new Date(result.leaseUntil!).toISOString()}` +
+      `${result.status === 'acquired' ? ` token=${result.token}` : ''}`;
+  }
+  return `${result.status} ${id}`;
 }
 
 /** work claim exit codes mirror claim acquire: acquired 0, invalid 2, every other refusal 1. */
@@ -683,6 +699,27 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})${holderNote}` : '');
     }
     if (verb === 'claim') {
+      if (sub === 'message') {
+        noExtra(3);
+        const action = arg;
+        if (action === undefined || !(MESSAGE_CLAIM_ACTIONS as readonly string[]).includes(action)) {
+          throw new UsageError('claim message requires acquire, renew, release or complete.');
+        }
+        const id = required('--id');
+        let request: BusClaimRequest;
+        if (action === 'acquire') {
+          const owner = one('--owner') ?? self;
+          if (!owner) throw new UsageError('--owner is required when PHM_AGENT_ID is not set.');
+          const leaseMs = integer(one('--lease-ms'), '--lease-ms');
+          if (leaseMs === undefined) throw new UsageError('--lease-ms is required.');
+          request = { action, id, owner, leaseMs, root: options.root };
+        } else {
+          request = { action: action as BusClaimRequest['action'], id, token: required('--token'), root: options.root };
+        }
+        const result = mutateBusWorkClaim(request);
+        out(json ? JSON.stringify({ ...result, id }) : messageClaimHuman(result, id));
+        return MESSAGE_CLAIM_OK.has(result.status) ? 0 : result.status === 'invalid' ? 2 : 1;
+      }
       noExtra(2);
       if (sub === 'list') {
         const result = listBusClaims({ root: options.root, key: one('--key'), owner: one('--owner'), jobs: p.bools.has('--jobs') });
