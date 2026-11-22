@@ -1344,6 +1344,15 @@ reverse of `work feed --claims`, with the same retained receipt citations
 so a blocked job names its `agents bus show` handles),
 and the JSON `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
+`fleet_bus_claims` (the isolated fleet MCP tool) serves the same
+`listBusClaims` read with `key`, `owner`, `origin` and `jobs` as its only
+arguments — the same `parseClaimKey` grammar, printable-label owner bound,
+`COORDINATION_ORIGINS` class filter and feed join the CLI flags share, under
+the identical validation — so an MCP-connected agent reads the claim table's
+own projection without shelling out. Every coordination and feed root stays
+server-owned, `source` keeps `missing` verified-empty and `unavailable` an
+unreadable table (never an invented empty list), and the tool never acquires,
+renews, releases or completes a claim.
 
 Example (replace `FAKE-TOKEN`):
 `curl -X POST -H "Authorization: Bearer FAKE-TOKEN" -H "Content-Type: application/json" http://localhost:8787/api/verse/agent-bus -d '{"id":"claim-0001","from":"dot-main","to":"leaders","priority":"P2","ttl":3600000,"body":{"kind":"work.claim","op":"acquire","claimKey":"path:ashlrai/phantom:docs/**","owner":"dot-main","leaseMs":600000}}'`
