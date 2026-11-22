@@ -480,7 +480,8 @@ present after the call — absent when the fan-out did not run, `null` when the
 live claim table could not be read (unknown holders are never reported as
 none), and a hint that cannot be written is best-effort, never a failed send.
 `phm agents bus work feed [--status <s>] [--job <id>] [--repo <owner/name>]
-[--provider <p>] [--to <label>] [--owner <agent>] [--claims] [--claimable]`
+[--provider <p>] [--to <label>] [--owner <agent>] [--claims] [--claimable]
+[--since <15m|2h|1d|ISO>]`
 reads the
 same projection back — jobs newest-first, optionally filtered by status,
 exact job id, announced repo, provider, announcement address or announcing
@@ -508,7 +509,12 @@ registry, while an unresolvable ref or an unreadable registry keeps
 exact-label matching. `--repo` keeps jobs announced for one `owner/name`
 repo, compared case-insensitively under the same rule claim keys use, and
 `--provider` keeps jobs announced for one provider; a malformed `--repo` or
-`--provider` is a usage error, never a silent empty view. The filters narrow
+`--provider` is a usage error, never a silent empty view. `--since` keeps
+only jobs whose last activity reaches the cutoff — `updatedAt`, the receipt
+time of the newest accepted `work.status`, or the `work.post` receipt time
+while no status has moved the job — matched inclusively like every other
+`--since` bus read, so "which jobs moved lately" is one filtered read
+instead of paging terminal jobs that have sat unchanged. The filters narrow
 the fleet view, they never widen
 it. `phm fleet work-feed` accepts the same flags.
 

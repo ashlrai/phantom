@@ -265,6 +265,13 @@ export interface BusWorkFeedViewFilters {
   provider?: Participant['provider'];
   /** Keep only open jobs whose declared claim keys provably include a free key; needs the claims join to mean anything. */
   claimable?: true;
+  /**
+   * Keep only jobs whose last activity is at or after this epoch-ms cutoff —
+   * `job.updatedAt`, the receipt time of the newest accepted `work.status`,
+   * or the `work.post` receipt time while no status has moved the job. The
+   * same inclusive `>=` rule every `--since` bus read applies.
+   */
+  since?: number;
   /** Announcement-address predicate from `busWorkFeedToMatcher`. */
   toMatch?: (to: string) => boolean;
   /** Announcer predicate over `job.owner` from `busWorkFeedOwnerMatcher`. */
@@ -272,9 +279,13 @@ export interface BusWorkFeedViewFilters {
 }
 
 /**
- * Client-side `--status`/`--job`/`--repo`/`--provider`/`--claimable`/`--to`/
- * `--owner` filters and newest-first ordering shared by the feed CLIs; the
- * matchers are the `busWorkFeedToMatcher`/`busWorkFeedOwnerMatcher` predicates.
+ * Client-side `--status`/`--job`/`--repo`/`--provider`/`--claimable`/`--since`/
+ * `--to`/`--owner` filters and newest-first ordering shared by the feed CLIs;
+ * the matchers are the `busWorkFeedToMatcher`/`busWorkFeedOwnerMatcher`
+ * predicates. `since` keeps jobs whose `updatedAt` — the newest status
+ * receipt time, or the announcement's while no status has moved the job —
+ * reaches the cutoff, so "which jobs moved lately" is one filtered read
+ * instead of paging terminal jobs that have sat unchanged.
  * With claims, holds regroup under the jobs still shown so a filtered view
  * never lists a hold for a hidden job. `--claimable` keeps only jobs whose
  * tri-state `claimable` is provably true — unknown coverage never counts as
@@ -290,6 +301,7 @@ export function projectBusWorkFeedView(result: BusWorkFeedReadResult, filters: B
       && (filters.repo === undefined || job.repo.toLowerCase() === filters.repo)
       && (filters.provider === undefined || job.provider === filters.provider)
       && (filters.claimable !== true || job.claimable === true)
+      && (filters.since === undefined || job.updatedAt >= filters.since)
       && (filters.toMatch === undefined || filters.toMatch(job.to))
       && (filters.ownerMatch === undefined || filters.ownerMatch(job.owner)))
     .sort((a, b) => b.updatedAt - a.updatedAt);

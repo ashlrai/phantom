@@ -259,9 +259,33 @@ describe('work-feed view filters', () => {
     expect(ids(projectBusWorkFeedView(okResult([viewJob({ id: 'a' })]), { claimable: true }))).toEqual([]);
   });
 
+  it('keeps jobs whose last activity reaches the --since cutoff and regroups holds', () => {
+    const jobs = [
+      viewJob({ id: 'old', updatedAt: 100 }),
+      viewJob({ id: 'edge', updatedAt: 200 }),
+      viewJob({ id: 'new', status: 'done', updatedAt: 300 }),
+    ];
+    const result = okResult(jobs);
+    // Inclusive like every --since bus read: updatedAt == cutoff still shows.
+    expect(ids(projectBusWorkFeedView(result, { since: 200 }))).toEqual(['new', 'edge']);
+    expect(ids(projectBusWorkFeedView(result, { since: 201 }))).toEqual(['new']);
+    expect(ids(projectBusWorkFeedView(result, { since: 400 }))).toEqual([]);
+    expect(ids(projectBusWorkFeedView(result, { since: 200, status: 'done' }))).toEqual(['new']);
+    // Holds regroup under the jobs still shown: a hidden job's hold never lists.
+    const claims: BusWorkFeedClaims = { source: 'available', truncated: false, holds: [
+      { jobId: 'old', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:x' },
+      { jobId: 'new', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:y' },
+    ] };
+    const view = projectBusWorkFeedView(okResult(jobs, claims), { since: 200 });
+    expect(ids(view)).toEqual(['new', 'edge']);
+    expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['new']);
+  });
+
   it('passes non-ok reads through untouched', () => {
     const refused: BusWorkFeedReadResult = { status: 'refused', reason: 'duplicate-job', receipts: 2, asOf: 'now' };
-    expect(projectBusWorkFeedView(refused, { repo: 'a/b', provider: 'devin', claimable: true })).toBe(refused);
+    expect(projectBusWorkFeedView(refused, { repo: 'a/b', provider: 'devin', claimable: true, since: 1 })).toBe(refused);
   });
 });
 

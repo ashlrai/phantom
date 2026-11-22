@@ -2271,12 +2271,16 @@ and `claimBusWorkJob` share it so "claimable" means one thing.
 exported read-only overlap predicate; acquisition and observation now share one
 structural overlap rule. `projectBusWorkFeedView(result, filters?)` applies the
 client-side feed filters (`{status?, jobId?, repo?, provider?, claimable?,
-toMatch?, ownerMatch?}`),
+since?, toMatch?, ownerMatch?}`),
 newest-first order and per-job hold regrouping; `repo` is the lowercase
 `owner/name` key `busWorkFeedRepoKey(repo)` normalizes a `--repo` argument to
 (undefined for a non-slug, so callers reject it as usage) and matches a job's
 announced repo case-insensitively, `provider` keeps jobs announced for that
-provider, and `claimable:true` keeps only jobs whose tri-state `claimable` is
+provider, `since` is an epoch-ms cutoff that keeps jobs whose `updatedAt` —
+the newest accepted `work.status` receipt time, or the `work.post` receipt
+time while no status has moved the job — is at or after it (the same
+inclusive `>=` rule every `--since` bus read applies), and `claimable:true`
+keeps only jobs whose tri-state `claimable` is
 provably true — a read without the claims join carries no field to match, so
 it answers an honest empty view. `toMatch` is the predicate
 `busWorkFeedToMatcher(to, {root?})` builds over a job's `to` label and
@@ -2290,13 +2294,16 @@ and display-clipped (JSON keeps the full values; `detail=`, `status=` and the
 dispatch fields appear only when present, `post=` always) — a refused read's
 footer adds `receipt=<id>` when the projection blamed a retained envelope —
 both feed CLIs use them, and both accept `--to <label>`, `--owner
-<agent>`, `--job <id>`, `--repo <owner/name>`, `--provider <p>` and
-`--claimable` beside `--status`; `--claimable` implies the claims join.
+<agent>`, `--job <id>`, `--repo <owner/name>`, `--provider <p>`,
+`--claimable` and `--since <15m|2h|1d|ISO>` beside `--status`; `--claimable`
+implies the claims join and `--since` parses through the shared `parseSince`
+grammar, refusing unparseable values as usage errors.
 `phm fleet work-feed [--claims]
 [--to <label>] [--owner <agent>] [--job <id>] [--repo <owner/name>]
-[--provider <p>] [--claimable]` and
+[--provider <p>] [--claimable] [--since <15m|2h|1d|ISO>]` and
 `phm agents bus work feed [--status] [--claims] [--claimable] [--to <label>]
-[--owner <agent>] [--job <id>] [--repo <owner/name>] [--provider <p>]` print the same
+[--owner <agent>] [--job <id>] [--repo <owner/name>] [--provider <p>]
+[--since <15m|2h|1d|ISO>]` print the same
 projection — hold lines plus a `claims=` footer — and non-ok reads print
 `jobs=unknown` rather than a fabricated count.
 

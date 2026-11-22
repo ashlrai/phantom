@@ -293,6 +293,51 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     expect(log.mock.calls.some(call => String(call[0]).includes('claimable=unknown'))).toBe(true);
   });
 
+  it('filters jobs by --since on last activity and refuses bad cutoffs', async () => {
+    // The default fixture ttl is 1s; these receipts must outlive the minute-scale gaps.
+    const appendLive = (body: unknown, cursor: number) => {
+      expect(appendBusInbox({ id: `fake-live-${cursor}`, from: 'fake-agent', to: 'leaders',
+        priority: 'P2', ttl: 86_400_000, body }, { root, now: () => now }).status).toBe('posted');
+    };
+    appendLive(post, 1);                            // fake-job announced at now
+    now += 120_000;
+    appendLive({ ...post, jobId: 'fake-new' }, 2);  // fake-new announced two minutes later
+    const log = output();
+    // An epoch-ms cutoff between the two announcement times keeps only the newer job.
+    expect(await cmdFleetWorkFeed(['--root', root, '--since', String(now - 60_000)])).toBe(0);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith('fake-new queued'))).toBe(true);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith(`${post.jobId} queued`))).toBe(false);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=1 receipts=2 feed=ok');
+    log.mockClear();
+    // The phm messages grammar resolves the same way: 1m back still drops the stale job.
+    expect(await cmdFleetWorkFeed(['--root', root, '--since', '1m'])).toBe(0);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith('fake-new queued'))).toBe(true);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith(`${post.jobId} queued`))).toBe(false);
+    log.mockClear();
+    // A status moves the older job's last activity to now — it re-enters the window.
+    now += 10_000;
+    appendLive({ kind: 'work.status', jobId: post.jobId, status: 'running' }, 3);
+    expect(await cmdFleetWorkFeed(['--root', root, '--since', '1m'])).toBe(0);
+    const active = log.mock.calls.map(call => String(call[0])).filter(line => line.includes('queued') || line.includes('running'));
+    expect(active.some(line => line.startsWith(`${post.jobId} running`))).toBe(true);
+    expect(active.some(line => line.startsWith('fake-new queued'))).toBe(true);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=2 receipts=3 feed=ok');
+    log.mockClear();
+    // A future cutoff keeps none; epoch 0 keeps everything.
+    expect(await cmdFleetWorkFeed(['--root', root, '--since', String(now + 3_600_000)])).toBe(0);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0 receipts=3 feed=ok');
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--since', '0'])).toBe(0);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=2 receipts=3 feed=ok');
+    // Unparseable and duplicate cutoffs are usage errors, never silently widened.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const args of [['--root', root, '--since', 'bogus'], ['--root', root, '--since', '1m', '--since', '2m'],
+      ['--root', root, '--since'], ['--root', root, '--since', '--json']]) {
+      expect(await cmdFleetWorkFeed(args)).toBe(2);
+    }
+    expect(error).toHaveBeenCalledTimes(4);
+  });
+
   it('rejects relative roots and invalid flags with usage on stderr and exit 2', async () => {
     const log = output();
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);

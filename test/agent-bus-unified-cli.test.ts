@@ -638,6 +638,40 @@ describe('phm agents bus (unified)', () => {
     expect(claimJobsText.join('\n')).toContain('feed=ok');
   });
 
+  it('filters the work feed by --since on last activity', async () => {
+    const spy = vi.spyOn(Date, 'now');
+    let clock = 1_800_000_000_000;
+    spy.mockImplementation(() => clock);
+    try {
+      expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+      expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-SINCE-OLD', '--title', 'old',
+        '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom', '--id', 'sf-old'])).json)
+        .toMatchObject({ status: 'posted' });
+      clock += 120_000;
+      expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-SINCE-NEW', '--title', 'new',
+        '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom', '--id', 'sf-new'])).json)
+        .toMatchObject({ status: 'posted' });
+      const ids = (feed: { json: { jobs: { id: string }[] } }) => feed.json.jobs.map(job => job.id);
+      // A cutoff between the two announcement times keeps only the newer job.
+      const between = await run(['work', 'feed', '--since', String(clock - 60_000)]);
+      expect(between.code).toBe(0);
+      expect(ids(between)).toEqual(['RQ-SINCE-NEW']);
+      // The shared grammar resolves the same way: 1m back still drops the stale job.
+      expect(ids(await run(['work', 'feed', '--since', '1m']))).toEqual(['RQ-SINCE-NEW']);
+      // A status moves the older job's last activity to now — it re-enters the window.
+      clock += 10_000;
+      expect((await run(['work', 'status', '--from', 'atlas', '--job', 'RQ-SINCE-OLD', '--status', 'running',
+        '--id', 'sf-old-s'])).json).toMatchObject({ status: 'posted' });
+      expect(ids(await run(['work', 'feed', '--since', '1m']))).toEqual(['RQ-SINCE-OLD', 'RQ-SINCE-NEW']);
+      // A future cutoff keeps none; an unparseable one is a usage error.
+      const future = await run(['work', 'feed', '--since', String(clock + 3_600_000)]);
+      expect(future.json).toMatchObject({ status: 'ok', jobs: [] });
+      expect(await run(['work', 'feed', '--since', 'bogus'])).toMatchObject({ code: 2 });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('claims a work-feed job key in one step and joins it to the feed holds', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-CLI-CLAIM', '--title', 'Claim me',
