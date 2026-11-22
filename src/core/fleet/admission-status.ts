@@ -44,10 +44,10 @@ export function admissionStatus(text: string | null, now = Date.now()): FleetSta
   if (settle_s === null || last_admit === null || last_admit > ts || total_running === null || max_total_running === null ||
       typeof raw.why !== 'string') return unknown('incomplete admission file');
   const nextStartSeconds = Math.max(0, Math.ceil(last_admit + settle_s - now / 1000));
-  const why = ['over_host', 'over_owned', 'over_total', 'settle', 'settling', 'open', 'ok', 'admit', ''].includes(raw.why) ? raw.why : null;
-  const blocked = why === null || ['over_host', 'over_owned', 'over_total'].includes(why) || total_running >= max_total_running;
+  const why = ['over_host', 'over_owned', 'over_total', 'pool_empty', 'settle', 'settling', 'open', 'ok', 'admit', ''].includes(raw.why) ? raw.why : null;
+  const blocked = why === null || ['over_host', 'over_owned', 'over_total', 'pool_empty'].includes(why) || total_running >= max_total_running;
   const state = blocked ? 'blocked' : nextStartSeconds > 0 ? 'settling' : 'open';
-  const reason = why === 'over_host' ? 'host busy' : why === 'over_owned' ? 'fleet load high'
+  const reason = why === 'over_host' ? 'host busy' : why === 'over_owned' ? 'fleet load high' : why === 'pool_empty' ? 'pool empty'
     : total_running >= max_total_running || why === 'over_total' ? 'running limit reached'
       : why === null ? 'guard reports a wait' : state === 'settling' ? 'waiting between starts' : 'guard allows a start';
   const wait = nextStartSeconds > 0 ? ` · ${blocked ? 'pacing window' : 'next start'} in ~${nextStartSeconds < 60 ? `${nextStartSeconds} sec` : `${Math.ceil(nextStartSeconds / 60)} min`}` : '';
