@@ -16,6 +16,7 @@ import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, 
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope } from '../core/agents/bus-claims.js';
 import { formatBusWorkMine, readBusWorkMine } from '../core/agents/bus-work-mine.js';
 import { readUnifiedBusStatus } from '../core/agents/bus-status.js';
+import { claimNextBusWork, type BusNextResult } from '../core/fleet/bus-next-claim.js';
 import { scrubSecrets } from '../core/util/scrub.js';
 import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import { seatParticipants } from '../core/bots/seats.js';
@@ -49,6 +50,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--to <label>] [--owner <agent>] [--claims] [--claimable]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work mine [<agent>] [--job <id>]
+ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
@@ -150,8 +152,18 @@ citations, next and handoffs by body citation (claimable work names none,
 so next is empty under --job), threads/awaiting/blocked by
 the conversations job query, wakes and inbox by their own job filters,
 mailbox by body citation, and the board by its job-carrying-thread rule —
-with every count the filtered total.
-status is a read-only probe of the store, registry, wake queue, coordination
+with every count the filtered total. work next claims the next claimable
+work envelope addressed to the agent — the same kind:'work'/protocol-task
+receipts work mine's next section lists, walked in bus-next order
+(priority band, then cursor) under the same addressed-to rule: any label
+of the resolved identity or a member channel's group:<channel>:<topic>
+address, minus the agent's own channel posts. <agent> defaults to
+PHM_AGENT_ID and --owner to PHM_AGENT_ID then the agent ref; acquired
+returns the live receipt with its fencing token and lease expiry — the
+token feeds the message-claim verbs on comms bus — while empty reports
+the observed {candidates, held} scan totals so a dry well reads
+differently from held work. Claims coordinate scope only; bodies are
+never executed. status is a read-only probe of the store, registry, wake queue, coordination
 table, message-id claim journal, work feed, owner-chat share receipts, the
 legacy mailbox, the shared task board with its fleet queue and the claim-drift
 verdict comparing the claim journal with the coordination table; a section that
@@ -248,6 +260,19 @@ function workJobClaimHuman(result: BusWorkJobClaimResult): string {
 /** work claim exit codes mirror claim acquire: acquired 0, invalid 2, every other refusal 1. */
 function workJobClaimExitCode(result: BusWorkJobClaimResult): number {
   return result.status === 'acquired' ? 0 : result.status === 'invalid' ? 2 : 1;
+}
+
+/** `work next` human lines: the claimed receipt's id, lease and token, then its routing and scrubbed summary. */
+function workNextHuman(result: BusNextResult, owner: string): string {
+  if ('receipt' in result) {
+    const { envelope } = result.receipt;
+    const summary = busBodyFallbackSummary(envelope.body);
+    return `acquired ${envelope.id} owner=${owner} leaseUntil=${new Date(result.leaseUntil).toISOString()} ` +
+      `token=${result.token}\n  ${envelope.priority} from ${envelope.from} -> ${envelope.to}` +
+      `${summary === '' ? '' : `: ${summary}`}`;
+  }
+  if ('candidates' in result) return `empty candidates=${result.candidates} held=${result.held}`;
+  return result.status;
 }
 
 /** One human line for the live feed state `show` resolved beside a work envelope. */
@@ -579,6 +604,18 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       out(json ? JSON.stringify(result) : formatBusWorkMine(result).join('\n'));
       return 0;
+    }
+    if (verb === 'work' && sub === 'next') {
+      noExtra(3);
+      const agent = arg ?? self;
+      if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
+      const owner = one('--owner') ?? self ?? agent;
+      const leaseMs = integer(one('--lease-ms'), '--lease-ms');
+      if (leaseMs === undefined) throw new UsageError('--lease-ms is required.');
+      const result = claimNextBusWork({ to: agent, owner, leaseMs, root: options.root });
+      out(json ? JSON.stringify(result) : workNextHuman(result, owner));
+      return result.status === 'acquired' || result.status === 'empty' ? 0 :
+        result.status === 'invalid' ? 2 : 1;
     }
     if (verb === 'work' && (sub === 'post' || sub === 'status')) {
       noExtra(2);
