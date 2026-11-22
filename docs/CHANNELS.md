@@ -219,7 +219,12 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 ([`unified-inbox.ts`](../src/core/comms/unified-inbox.ts)) is the read-only
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
-— unresolved `NEEDS-MASON.md` items, needs-you answers whose planner-inbox
+— unresolved `NEEDS-MASON.md` items classified by the same
+`classifyNeedsYou` verdict `phm needs-you` reports (only a hard-limit item —
+secrets, money, an outside send, destroyed data, a sign-in, or unclear
+wording — blocks Mason; an auto item is ordinary work the fleet clears with
+`phm needs-you resolve --auto`, so it lists non-blocking), needs-you answers
+whose planner-inbox
 relay is not confirmed — the same `readNeedsMasonReplyDeliveries` receipts
 `phm fleet needs` reports as `replyDeliveries`, so the two surfaces can never
 disagree; each pending receipt lists as a warn whose retry resolves the same

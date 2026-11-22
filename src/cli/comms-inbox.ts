@@ -11,7 +11,9 @@ import { parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox
 const HELP = `phm comms inbox [--source <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--json]
 phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
-With no verb, lists every pending comms item — unresolved needs-you lines, needs-you
+With no verb, lists every pending comms item — unresolved needs-you lines
+(hard-limit items block Mason; auto items are fleet work cleared by
+phm needs-you resolve --auto), needs-you
 answers not confirmed in the planner inbox or with unreadable delivery receipts,
 unanswered iMessage
 teammate texts, unsettled Dot/Instinct teammate tasks, owner-thread messages awaiting a recorded reply, recorded owner
