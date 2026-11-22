@@ -539,11 +539,13 @@ compose with the existing feed filters. The unified inbox uses the same complete
 hold coverage rule and reports incomplete coverage as degraded.
 
 `phm agents bus work feed [--status <s>] [--job <id>] [--repo <owner/name>]
-[--provider <p>] [--to <label>] [--owner <agent>] [--claims] [--open] [--claimable]
+[--provider <p>] [--tier <fast|mid|work|frontier>] [--to <label>] [--owner <agent>]
+[--claims] [--open] [--claimable]
 [--since <15m|2h|1d|ISO>] [--contains <text>]`
 reads the
 same projection back — jobs newest-first, optionally filtered by status,
-exact job id, announced repo, provider, announcement address, announcing
+exact job id, announced repo, provider, declared dispatch tier,
+announcement address, announcing
 agent or descriptive text and joined with the
 live coordination holds — so the
 whole post/status/feed loop stays on this surface without dropping to
@@ -575,7 +577,13 @@ registry, while an unresolvable ref or an unreadable registry keeps
 exact-label matching. `--repo` keeps jobs announced for one `owner/name`
 repo, compared case-insensitively under the same rule claim keys use, and
 `--provider` keeps jobs announced for one provider; a malformed `--repo` or
-`--provider` is a usage error, never a silent empty view. `--since` keeps
+`--provider` is a usage error, never a silent empty view. `--tier` keeps
+only jobs whose `work.post` declared that dispatch tier — the same
+`fast`/`mid`/`work`/`frontier` values `work post --tier` writes and the job
+line renders as `tier=<t>`; a job carrying no dispatch spec declares no
+tier and never matches, so the filter answers "which announced jobs are for
+my tier" in one read and an unrecognized value is a usage error like every
+other feed filter. `--since` keeps
 only jobs whose last activity reaches the cutoff — `updatedAt`, the receipt
 time of the newest accepted `work.status`, or the `work.post` receipt time
 while no status has moved the job — matched inclusively like every other

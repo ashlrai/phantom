@@ -272,6 +272,8 @@ export interface BusWorkFeedViewFilters {
   repo?: string;
   /** Keep only jobs announced for this provider. */
   provider?: Participant['provider'];
+  /** Keep only jobs whose announcement declared this dispatch tier; a job with no dispatch spec declares none and never matches. */
+  tier?: WorkDispatch['tier'];
   /** Keep only open jobs whose declared claim keys provably include a free key; needs the claims join to mean anything. */
   claimable?: true;
   /** Open-status candidates with declared keys; incomplete hold coverage keeps candidates visible. */
@@ -302,7 +304,7 @@ export interface BusWorkFeedViewFilters {
 }
 
 /**
- * Client-side `--status`/`--job`/`--repo`/`--provider`/`--claimable`/`--since`/
+ * Client-side `--status`/`--job`/`--repo`/`--provider`/`--tier`/`--claimable`/`--since`/
  * `--to`/`--owner`/`--contains` filters and newest-first ordering shared by
  * the feed CLIs;
  * the matchers are the `busWorkFeedToMatcher`/`busWorkFeedOwnerMatcher`
@@ -332,6 +334,7 @@ export function projectBusWorkFeedView(result: BusWorkFeedReadResult, filters: B
       && (filters.jobId === undefined || job.id === filters.jobId)
       && (filters.repo === undefined || job.repo.toLowerCase() === filters.repo)
       && (filters.provider === undefined || job.provider === filters.provider)
+      && (filters.tier === undefined || job.dispatch?.tier === filters.tier)
       && (filters.claimable !== true || job.claimable === true)
       && (filters.open !== true || (BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length > 0
         && (coverage !== 'complete' || job.claimKeys.some(key => !heldByJob.get(job.id)?.has(key)))))

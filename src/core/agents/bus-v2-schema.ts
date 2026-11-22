@@ -19,6 +19,8 @@ export const PARTICIPANT_STATUSES = ['active', 'idle', 'offline', 'disabled'] as
 export const WORK_STATUSES = [
   'queued', 'running', 'idle', 'rescheduled', 'blocked', 'done', 'failed', 'terminated',
 ] as const;
+/** The dispatch tiers a `work.post` may declare, lightest first — the same values the queue tiers use. */
+export const WORK_TIERS = ['fast', 'mid', 'work', 'frontier'] as const;
 export const BODY_KINDS = [
   'note', 'context', 'work.post', 'work.claim', 'work.status', 'work.result', 'work.release', 'wake',
 ] as const;
@@ -252,7 +254,7 @@ export const contextBodySchema = z.object({
 }).strict();
 /** The optional dispatch spec a work.post may carry; the feed job keeps it verbatim. */
 export const workDispatchSchema = z.object({
-  tier: z.enum(['fast', 'mid', 'work', 'frontier']),
+  tier: z.enum(WORK_TIERS),
   scope: text.max(4000), acceptance: text.max(2000),
 }).strict();
 export type WorkDispatch = z.infer<typeof workDispatchSchema>;
@@ -344,6 +346,7 @@ export function busV2ContractSummary() {
     wakeKinds: [...WAKE_KINDS],
     bodyKinds: [...BODY_KINDS],
     workStatuses: [...WORK_STATUSES],
+    workTiers: [...WORK_TIERS],
     claimKeyForms: ['repo:<owner/name>', 'path:<owner/name>:<glob>', 'queue:<queue id>', 'pr:<owner/name>#<n>'],
     claimLeaseMs: { min: CLAIM_MIN_LEASE_MS, max: CLAIM_MAX_LEASE_MS },
     claimsGrantExecutionAuthority: false,

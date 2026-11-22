@@ -1016,6 +1016,36 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['work', 'feed', '--claimable', '--claimable'])).toMatchObject({ code: 2 });
   });
 
+  it('filters the work feed by declared dispatch tier', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-TIER-A', '--title', 'Quick fix',
+      '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom', '--id', 'feed-ta',
+      '--tier', 'fast', '--scope', 'Small fix', '--acceptance', 'Green'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-TIER-B', '--title', 'Big move',
+      '--repo', 'ashlrai/other', '--claim', 'repo:ashlrai/other', '--id', 'feed-tb',
+      '--tier', 'frontier', '--scope', 'Big scope', '--acceptance', 'Shipped'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-TIER-C', '--title', 'Plain job',
+      '--repo', 'ashlrai/third', '--claim', 'repo:ashlrai/third', '--id', 'feed-tc'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    // --tier keeps only jobs whose work.post declared that dispatch tier.
+    expect((await run(['work', 'feed', '--tier', 'fast'])).json.jobs)
+      .toEqual([expect.objectContaining({ id: 'RQ-TIER-A', dispatch: expect.objectContaining({ tier: 'fast' }) })]);
+    expect((await run(['work', 'feed', '--tier', 'frontier'])).json.jobs)
+      .toEqual([expect.objectContaining({ id: 'RQ-TIER-B' })]);
+    // A job carrying no dispatch spec declares no tier and never matches.
+    expect((await run(['work', 'feed', '--tier', 'mid'])).json).toMatchObject({ status: 'ok', jobs: [] });
+    // The filter composes with the other structured filters.
+    expect((await run(['work', 'feed', '--tier', 'fast', '--repo', 'ashlrai/other'])).json.jobs).toEqual([]);
+    expect((await run(['work', 'feed', '--tier', 'fast', '--status', 'queued'])).json.jobs)
+      .toEqual([expect.objectContaining({ id: 'RQ-TIER-A' })]);
+    // Bad tier values and duplicates are usage errors, never silent empty views.
+    expect(await run(['work', 'feed', '--tier', 'bogus'])).toMatchObject({ code: 2 });
+    expect(await run(['work', 'feed', '--tier', 'fast', '--tier', 'mid'])).toMatchObject({ code: 2 });
+  });
+
   it('filters the work feed by --contains over title, detail and dispatch text', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-CONTAINS-A', '--title', 'Drain the queue',

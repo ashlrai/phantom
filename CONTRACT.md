@@ -2549,13 +2549,15 @@ hold coverage rule and reports incomplete coverage as degraded.
 `coordinationRowBlocks(row, key)` in `src/core/agents/claim-store.ts` is the
 exported read-only overlap predicate; acquisition and observation now share one
 structural overlap rule. `projectBusWorkFeedView(result, filters?)` applies the
-client-side feed filters (`{status?, jobId?, repo?, provider?, claimable?, open?,
+client-side feed filters (`{status?, jobId?, repo?, provider?, tier?, claimable?, open?,
 since?, toMatch?, ownerMatch?, contains?}`),
 newest-first order and per-job hold regrouping; `repo` is the lowercase
 `owner/name` key `busWorkFeedRepoKey(repo)` normalizes a `--repo` argument to
 (undefined for a non-slug, so callers reject it as usage) and matches a job's
 announced repo case-insensitively, `provider` keeps jobs announced for that
-provider, `since` is an epoch-ms cutoff that keeps jobs whose `updatedAt` —
+provider, `tier` keeps only jobs whose `work.post` declared that dispatch
+tier from `WORK_TIERS` — a job carrying no dispatch spec declares none and
+never matches — `since` is an epoch-ms cutoff that keeps jobs whose `updatedAt` —
 the newest accepted `work.status` receipt time, or the `work.post` receipt
 time while no status has moved the job — is at or after it (the same
 inclusive `>=` rule every `--since` bus read applies), and `claimable:true`
