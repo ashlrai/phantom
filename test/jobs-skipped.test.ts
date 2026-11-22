@@ -48,6 +48,20 @@ describe('summarizeSkips', () => {
     expect(skippedJobsText(r)).toEqual(['unknown — the jobs ledger could not be read.']);
   });
 
+  it('counts the live skipped_empty+code spelling and ignores empty-gate and dry-run rows', () => {
+    const r = summarizeSkips(ledger(
+      JSON.stringify({ event: 'skipped_empty', job: 'RQ-LIVE1', repo: 'phantom', lane: 'claude', code: 10, ts: at(5) }),
+      JSON.stringify({ event: 'skipped_empty', job: 'RQ-LIVE2', repo: 'phantom', lane: 'claude', code: 14, ts: at(6) }),
+      JSON.stringify({ event: 'skipped_empty', job: 'RQ-GATE1', repo: 'phantom', lane: 'claude', reason: 'task_empty_repeat_24h', ts: at(7) }),
+      JSON.stringify({ event: 'skipped_empty', job: 'RQ-DRY1', repo: 'phantom', lane: 'claude', code: 10, applied: false, ts: at(8) }),
+      JSON.stringify({ event: 'skipped_empty', job: 'RQ-STR1', repo: 'phantom', lane: 'claude', code: 'dup', ts: at(9) }),
+      JSON.stringify({ event: 'precheck_parked', job: 'RQ-PARK1', repo: 'phantom', lane: 'claude', code: 13, ts: at(10) }),
+    ), NOW);
+    expect(r.total).toBe(2);
+    expect(r.by_code.map(g => [g.code, g.count])).toEqual([[10, 1], [14, 1]]);
+    expect(r.by_code[0]!.meaning).toBe(SKIP_CODE_MEANING[10]);
+  });
+
   it('says plainly when nothing was skipped', () => {
     expect(skippedJobsText(summarizeSkips(ledger(), NOW))).toEqual(['No jobs were skipped in the last 24 hours.']);
   });
