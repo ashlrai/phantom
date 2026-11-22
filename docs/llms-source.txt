@@ -92,6 +92,9 @@ Outside contributors and their agents follow the same path as the fleet: one foc
 - [Cloud lane](CLOUD.md): Claude Code cloud sessions from chat, Command, or CLI.
 - [Add a computer in 60 seconds](add-a-computer.md): install, join, choose capabilities, verify, and leave.
 - Node router: `phm node join|pull|plan|status --json`, guide in `docs/NODE-ROUTER.md`. Nodes advertise caps, jobs carry an owner scope and a fenced lease, auth stays local.
+- [Team org](AGENT-NETWORK.md#team-org): `phm org show|join|plan --json`; declarative org.toml of members, agents, machines, lanes and contributed shares; opt-in per lane, plan within contributed limits, nothing private pooled. Join also requires `--member <id> --machine <id>` and the contributed `--lane <lane>[=<share>]` selections.
+- [Team invite, join and remove](TEAM.md#invite-join-and-remove-a-teammate): human-terminal commands `phm team invite <gh-user>`, `phm team join <invite>`, `phm team remove <gh-user> --json`; membership only, no credentials, each node keeps its own local auth, removal drains claims. Agent processes are refused; agents request access through the team MCP tools.
+- Dispatcher admission: `phm pool admission --json` reads starvation signals and the admission decision; read-only. Fresh dispatcher snapshots are preferred; missing or stale snapshots use legacy probes. Unavailable evidence stays unknown.
 - [Drive](DRIVE.md): Mac queue supervisor. Serial ticks, worker reaping, and READY job admission.
 - [Daemon tick phases](daemon-tick-phases.md): Bounded resident tick stages — per-phase status/duration/error and tick outcomes via `phm daemon status --json | jq .tick.phases`.
 - [Disk maintenance](DISK-MAINT.md): `phm disk-maint [--apply] [--json]` reclaims rebuildable bytes by class; `phm disk-maint schedule` installs the daily job. Dry run by default; the protect-list (`~/.codex*`, model weights, Docker, client trees, secrets) is unconditional.
