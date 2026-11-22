@@ -31,6 +31,17 @@ it('reads a fixture file, joins missing repo fields and counts rows and distinct
     expect((await fleetWaste(() => readFile(path, 'utf8'), 0.25, now)).totals?.no_pr).toBe(0);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+it('counts the live skipped_empty+code spelling as precheck skips and ignores empty-gate declines', async () => {
+  const report = await fleetWaste(read(
+    row('skipped_empty', 'LIVE1', 1, { lane: 'claude', repo: 'other', code: 10 }),
+    row('skipped_empty', 'LIVE2', 2, { lane: 'claude', repo: 'other', code: 14 }),
+    row('skipped_empty', 'GATE1', 1, { lane: 'claude', repo: 'other', reason: 'task_empty_repeat_24h' }),
+    row('skipped_empty', 'DRY1', 1, { lane: 'claude', repo: 'other', code: 10, applied: false }),
+    row('precheck_parked', 'PARK1', 1, { lane: 'claude', repo: 'other', code: 13 }),
+  ), 6, now);
+  expect(report.totals).toMatchObject({ precheck_skip: { '10': 1, '14': 1 }, empty: 0, pool_error: 0, no_pr: 0 });
+  expect(report.top_prefixes).toEqual([{ prefix: 'LIVE', count: 2 }]);
+});
 it('keeps five prefixes, counts overlapping finish reasons once and ignores invalid timestamps', async () => {
   const report = await fleetWaste(read(...'ABCDEFG'.split('').map(c => row('finish', `${c}1`, 1, { empty: true, pool_error: 'error' })),
     row('finish', 'A2', 1, { empty: true }), row('finish', 'BAD1', 1, { ts: 'bad', empty: true }),
