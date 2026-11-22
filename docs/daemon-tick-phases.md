@@ -53,7 +53,8 @@ Reflection is a separate single-flight off-tick job in resident ticks; it
 writes only learning reports and append-only genome entries and does not take
 the outward mutation fence. On the same self-improvement cadence a
 `reward-sync` off-tick job folds the jobs-ledger tail into the append-only
-reward-signal ledger (`src/core/metrics/reward-feed.ts`); it is best-effort,
+reward-signal ledger (`src/core/metrics/reward-feed.ts`), discounting merges
+the standing revert set proves did not hold; it is best-effort,
 never throws, and writes only under `~/.ashlr/metrics`. A `skill-nudge`
 off-tick job on the same cadence folds the same tail into candidate shadow
 skill cards (`src/core/fleet/skill-nudge.ts`), discounting merges the

@@ -186,7 +186,10 @@ nothing merges, routes or releases credit.
 Reward signals: on self-improvement ticks the resident daemon's `reward-sync`
 off-tick job folds the jobs-ledger tail into `~/.ashlr/metrics/reward-signals.jsonl`:
 one scrubbed row per job whose PR lifecycle resolved (MERGED, or
-CLOSED-unmerged; a merge later reverted counts as not held). The ledger feeds
+CLOSED-unmerged; a merge later reverted counts as not held — row-level revert
+evidence, or the standing `owner/repo#n` revert set the daemon resolves from
+the outcome ledger, cloud tasks and `phm fleet reverts --record` when the
+merge's PR claim is unambiguous). The ledger feeds
 `phm router-calibration` and the eval harness; first write wins, jobs without
 dispatch or resolution evidence stay unwritten, and unknown fields stay null.
 See `src/core/metrics/reward-feed.ts`.
