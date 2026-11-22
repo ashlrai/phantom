@@ -5,8 +5,9 @@
  * owner-chat share receipts ledger `inbox` consults for `agent-chat-owner`
  * envelopes, the legacy `phm bus` mailbox `work mine` still reads, the
  * bot-seat store `work mine`'s seats section, `id list`'s seat participants
- * and the unified inbox seats source read, and
- * the claim-store drift verdict comparing the claim journal with the
+ * and the unified inbox seats source read, the agentnet peer work-dispatch
+ * journal `consumePeerWork` and the unified inbox peer-dispatch source read,
+ * and the claim-store drift verdict comparing the claim journal with the
  * coordination table it is dual-written to. Each
  * section reports its own real state; a section that cannot be read reports
  * unavailable or null, never zero, and the whole read never throws. Read-only:
@@ -28,6 +29,8 @@ import { readAgentRegistry } from './bus-identity.js';
 import { inspectSeatStore } from '../bots/seats.js';
 import { readBusWorkFeed, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import { ownerChatRoot, ownerReceiptDir, readOwnerChatReceipts } from './chat-owner-receipts.js';
+import { readWorkDispatchJournal } from '../agentnet/work-dispatch-journal.js';
+import { realHome } from '../real-home.js';
 import type { BusWorkMineBoardOptions } from './bus-work-mine.js';
 
 export interface UnifiedBusStatusOptions {
@@ -173,6 +176,23 @@ export interface UnifiedBusStatus {
     seats: number | null;
     states: number | null;
     handoffs: number | null;
+  };
+  /** Agentnet peer work-dispatch journal (`<busRoot>/agentnet/work-dispatch.json`)
+   * behind `phm agentnet peers dispatch` and the unified inbox peer-dispatch
+   * source — read by `readWorkDispatchJournal`, the same reader
+   * `consumePeerWork` uses, under the same root it resolves
+   * (`agentnetPaths().busRoot` = `realHome()/.ashlr/fleet`, or the probe's
+   * `root` override), so a corrupt journal is named here instead of leaving
+   * status green while dispatch refuses and the inbox reports unavailable.
+   * Counts only, never peer names, claim keys or bodies. */
+  peerDispatch: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Retained dispatch receipts; 0 on a verified-missing journal, null when unreadable. */
+    receipts: number | null;
+    /** Receipts whose recorded `sent` outcome differs from `outcome` — the
+     * unpublished backlog `consumePeerWork` would publish and the unified
+     * inbox peer-dispatch source lists; same null rule as `receipts`. */
+    unpublished: number | null;
   };
 }
 
@@ -337,5 +357,22 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     seats = { source: 'unavailable', seats: null, states: null, handoffs: null };
   }
 
-  return { asOf, store, registry, wakes, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats };
+  // `consumePeerWork` writes the journal under `agentnetPaths().busRoot` —
+  // `realHome()/.ashlr/fleet`, deliberately not `ashlrHome()` — unless a
+  // `busRoot` override selects another root; the probe resolves the same way
+  // and reports unavailable rather than guessing when no real home exists.
+  let peerDispatch: UnifiedBusStatus['peerDispatch'];
+  try {
+    const home = realHome();
+    const busRoot = options.root ?? (home === null ? undefined : join(home, '.ashlr', 'fleet'));
+    const journal = busRoot === undefined ? undefined : readWorkDispatchJournal(busRoot);
+    peerDispatch = journal === undefined || journal.status === 'unavailable'
+      ? { source: 'unavailable', receipts: null, unpublished: null }
+      : { source: journal.status, receipts: journal.receipts.length,
+          unpublished: journal.receipts.filter(receipt => receipt.sent !== receipt.outcome).length };
+  } catch {
+    peerDispatch = { source: 'unavailable', receipts: null, unpublished: null };
+  }
+
+  return { asOf, store, registry, wakes, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch };
 }

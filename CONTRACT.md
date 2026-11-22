@@ -3326,7 +3326,7 @@ when the claims join computed it) the same way. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
-read-only probe over the ten dependencies the unified verbs touch — the
+read-only probe over the eleven dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
 null when unreadable), the wake queue (`state`, the observed hint count
 before the row cap — 0 on a verified-missing queue, null when unreadable —
@@ -3354,7 +3354,13 @@ section resolves — `source` plus retained `seats` roster-row, `states`
 seat-state-entry and `handoffs` journaled-record counts, 0 on a
 verified-missing store, null for a file that cannot be read or validated —
 the same failure that makes `planSeatHandoffs` throw, never a plan verdict,
-seat contents or quota evidence), and — as a verdict over the claim journal and
+seat contents or quota evidence), the agentnet peer work-dispatch journal
+(`readWorkDispatchJournal` under the same root `consumePeerWork` resolves —
+`agentnetPaths().busRoot` = `realHome()/.ashlr/fleet`, or the probe's `root`
+override — `source` plus retained `receipts` and `unpublished` counts, the
+latter applying the consumer's own `sent !== outcome` rule; 0 on a
+verified-missing journal, null when unreadable, never peer names, claim keys
+or bodies), and — as a verdict over the claim journal and
 coordination table rather than another dependency — the claim-store drift
 comparison (`readClaimStoreDrift` run over the probe's own two reads, the
 same `fleet.claim-drift.v1` read `ashlr fleet claim-drift` serves:

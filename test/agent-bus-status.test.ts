@@ -54,6 +54,8 @@ describe('readUnifiedBusStatus', () => {
       pendingDeliveries: 0, claims: 'readable' });
     // A verifiably absent seat store holds no roster, states or records.
     expect(status.seats).toEqual({ source: 'missing', seats: 0, states: 0, handoffs: 0 });
+    // A verifiably absent dispatch journal holds no receipts: 0 is proven.
+    expect(status.peerDispatch).toEqual({ source: 'missing', receipts: 0, unpublished: 0 });
     expect(Number.isNaN(Date.parse(status.asOf))).toBe(false);
   });
 
@@ -434,6 +436,61 @@ describe('seats section', () => {
   });
 });
 
+describe('peerDispatch section', () => {
+  const queueId = (c: string) => `peer-work-${c.repeat(32)}`;
+  const receiptId = (c: string) => `pw-${c.repeat(32)}`;
+  const receipt = (over: Record<string, unknown> = {}) => ({
+    kind: 'work.result', jobId: 'RQ-PEER-1', claimKey: `queue:${queueId('a')}`,
+    queueId: queueId('a'), receiptId: receiptId('b'), outcome: 'admitted',
+    peer: 'peer-a', consumer: 'dispatch', digest: 'c'.repeat(64),
+    at: 1_000, ...over,
+  });
+  /** The journal `consumePeerWork` writes under `<busRoot>/agentnet/` — the same path the probe resolves from `root`. */
+  const writeJournal = (options: UnifiedBusStatusOptions, receipts: unknown[]) => {
+    const dir = join(options.root!, 'agentnet');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'work-dispatch.json'), JSON.stringify({ version: 1, receipts }), { mode: 0o600 });
+  };
+
+  it('counts retained receipts and the unpublished backlog without creating the store', () => {
+    const options = setup();
+    writeJournal(options, [
+      // sent trails outcome — still owed to the peer.
+      receipt({ sent: 'reserved' }),
+      // sent absent entirely — never published.
+      receipt({ outcome: 'complete', queueId: queueId('d'), receiptId: receiptId('e'), claimKey: `queue:${queueId('d')}` }),
+      // Latest outcome already published — history, not pending.
+      receipt({ outcome: 'failed', reason: 'repo-denied', sent: 'failed', queueId: queueId('f'), receiptId: receiptId('0'), claimKey: `queue:${queueId('f')}` }),
+      // Outcome and sent agree — nothing owed.
+      receipt({ outcome: 'reserved', sent: 'reserved', queueId: queueId('1'), receiptId: receiptId('2'), claimKey: `queue:${queueId('1')}` }),
+    ]);
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.peerDispatch).toEqual({ source: 'available', receipts: 4, unpublished: 2 });
+    expect(status.store.source).toBe('missing');
+
+    // Read-only: a fresh probe over a never-written root reports missing and
+    // leaves no agentnet directory behind.
+    const fresh = setup();
+    expect(readUnifiedBusStatus(fresh).peerDispatch).toEqual({ source: 'missing', receipts: 0, unpublished: 0 });
+    expect(existsSync(join(fresh.root!, 'agentnet'))).toBe(false);
+  });
+
+  it('keeps a corrupt journal unavailable with null counts while the rest of the bus stays readable', () => {
+    const options = setup();
+    const dir = join(options.root!, 'agentnet');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'work-dispatch.json'), '{not json', { mode: 0o600 });
+
+    const status = readUnifiedBusStatus(options);
+    // The same corrupt journal that makes consumePeerWork throw and the
+    // unified inbox report unavailable is named here; nulls, never zeros.
+    expect(status.peerDispatch).toEqual({ source: 'unavailable', receipts: null, unpublished: null });
+    expect(status.store.source).toBe('missing');
+    expect(status.feed.status).toBe('ok');
+  });
+});
+
 describe('phm agents bus status', () => {
   it('prints one honest line per section in human mode and the object as JSON', async () => {
     const options = setup();
@@ -454,6 +511,7 @@ describe('phm agents bus status', () => {
     expect(json.board).toEqual({ source: 'missing', threads: 0, tasks: 0,
       pendingDeliveries: 0, claims: 'readable' });
     expect(json.seats).toEqual({ source: 'missing', seats: 0, states: 0, handoffs: 0 });
+    expect(json.peerDispatch).toEqual({ source: 'missing', receipts: 0, unpublished: 0 });
 
     const text: string[] = [];
     expect(await runAgentsBusUnified(['status', '--root', options.root!], t => text.push(t), () => {}, {})).toBe(0);
@@ -466,6 +524,7 @@ describe('phm agents bus status', () => {
     expect(lines.join('\n')).toContain('ownerChat missing receipts=0');
     expect(lines.join('\n')).toContain('board missing threads=0 tasks=0 pending=0 claims=readable');
     expect(lines.join('\n')).toContain('seats missing seats=0 states=0 handoffs=0');
+    expect(lines.join('\n')).toContain('peerDispatch missing receipts=0 unpublished=0');
     expect(lines.join('\n')).toContain('wakes missing hints=0 truncated=false');
   });
 });
