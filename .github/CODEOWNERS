@@ -602,6 +602,7 @@
 /test/improve-revert-ledger.test.ts @masonwyatt23
 /test/improve-revert-scan.test.ts @masonwyatt23
 /test/improve-reverted.test.ts @masonwyatt23
+/test/ingest-doctor-owner-preservation-769s.test.ts @masonwyatt23
 /test/int4-confine-engines-310b.test.ts @masonwyatt23
 /test/intent-fleet-merge-observe-preservation-231s.test.ts @masonwyatt23
 /test/intent-import-closure.test.ts @masonwyatt23
@@ -1252,6 +1253,7 @@
 /test/router-queue-utf8-input-31k7.test.ts @masonwyatt23
 /test/router-queue.test.ts @masonwyatt23
 /test/router-task-arms.test.ts @masonwyatt23
+/test/router-typed-decisions.test.ts @masonwyatt23
 /test/router-typing.test.ts @masonwyatt23
 /test/router-weight-proposals-recovery-634s.test.ts @masonwyatt23
 /test/routing-arms.test.ts @masonwyatt23
