@@ -221,6 +221,7 @@ describe('router outcome ledger (612S preservation)', () => {
       task_outcome: null, lane_hint_blocked_by: null,
       skipped: null, skip_reason: null, skip_code: null,
       deferred: null, defer_reason: null, defer_repeat_of: null,
+      noop: null, noop_reason: null, noop_repeat_of: null,
       market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
       market_rejected: null,
       passk: null,
@@ -808,8 +809,10 @@ describe('router outcome ledger (612S preservation)', () => {
       '{"job":"D5","event":"recut_admission","repo":"phantom","reason":"recut-in-flight","action":"defer","repeatOf":"RQ-RECUT-5"}',
       '{"job":"D5","event":"recut_admission","repo":"phantom","reason":"recut-no-current-coverage","action":"ready","repeatOf":null}',
       // D6: recut defer, then the recut already merged — 'skip' resolves the
-      // verdict the same way (the paired DONE-NOOP outcome row never
-      // touches it either).
+      // verdict the same way, and the paired DONE-NOOP outcome row then
+      // records the fleet's terminal no-op verdict (no reason/cover on
+      // this row, so both join null) without touching the resolved
+      // deferral.
       '{"job":"D6","event":"recut_admission","repo":"phantom","reason":"recut-in-flight","action":"defer","repeatOf":"RQ-RECUT-6"}',
       '{"job":"D6","event":"recut_admission","repo":"phantom","reason":"recut-already-merged","action":"skip","repeatOf":"RQ-PHX-RECUT6L1"}',
       '{"job":"D6","event":"outcome","state":"DONE-NOOP","repo":"phantom"}',
@@ -842,7 +845,8 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(byId.get('D3')).toMatchObject({ deferred: true, defer_reason: 'files_and_tests_exist', defer_repeat_of: null });
     expect(byId.get('D4')).toMatchObject({ deferred: false, defer_reason: null, defer_repeat_of: null });
     expect(byId.get('D5')).toMatchObject({ deferred: false, defer_reason: null, defer_repeat_of: null });
-    expect(byId.get('D6')).toMatchObject({ deferred: false, defer_reason: null, defer_repeat_of: null });
+    expect(byId.get('D6')).toMatchObject({ deferred: false, defer_reason: null, defer_repeat_of: null,
+      noop: true, noop_reason: null, noop_repeat_of: null });
     expect(byId.get('D7')).toMatchObject({ deferred: false, defer_reason: null, defer_repeat_of: null, skipped: true, skip_reason: 'prompt_empty_same_base_24h' });
     expect(byId.get('D8')).toMatchObject({ deferred: false, defer_reason: null, defer_repeat_of: null });
     // Malformed labels and covers join null while the verdict stands; the
@@ -851,6 +855,94 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(byId.get('D10')).toMatchObject({ deferred: true, defer_reason: 'duplicate-request', defer_repeat_of: 'RQ-OWNER-10', empty: true });
     expect(byId.get('D11')).toMatchObject({ deferred: true, defer_reason: 'recut-in-flight', defer_repeat_of: 'RQ-RECUT-11' });
     expect(byId.get('D12')).toMatchObject({ deferred: null, defer_reason: null, defer_repeat_of: null });
+  });
+
+  it('folds the terminal no-op verdicts, newest launch decision supersedes', () => {
+    const fold = foldRouterOutcomes([
+      // N1: dispatchd's admission verdict — already merged, reason joins.
+      '{"job":"N1","event":"outcome","state":"DONE-NOOP","repo":"phantom","reason":"already-merged","launched":false}',
+      // N2: restock's precheck retirement — the lowercase dialect resolves
+      // the same phase and the reason joins through empty_reason.
+      '{"job":"N2","event":"outcome","state":"done-noop","reason":"","empty_reason":"precheck_retired"}',
+      // N3: the defensive empty-family spellings all mint the verdict —
+      // phase/state/outcome keys and EMPTY/EMPTY_DONE/SKIPPED-EMPTY/NOOP.
+      '{"job":"N3","phase":"EMPTY","reason":"target_pr_closed"}',
+      '{"job":"N4","state":"EMPTY_DONE","noop_reason":"target_pr_merged"}',
+      '{"job":"N5","outcome":"SKIPPED-EMPTY","empty_reason":"target_pr_conflicts_resolved"}',
+      '{"job":"N6","state":"NOOP","reason":"recut-already-merged","repeatOf":"RQ-PHX-RECUT6L1"}',
+      // N7: the reason keys join in order — reason wins over the aliases.
+      '{"job":"N7","event":"outcome","state":"DONE-NOOP","reason":"already-merged","empty_reason":"target_pr_closed","noop_reason":"target_pr_merged"}',
+      // N8: a malformed reason and cover join null, never recorded raw,
+      // while the verdict itself still stands.
+      '{"job":"N8","event":"outcome","state":"DONE-NOOP","reason":"not a bounded label!","repeatOf":"bad cover!"}',
+      // N9: the newest no-op row replaces reason and cover wholesale.
+      '{"job":"N9","event":"outcome","state":"DONE-NOOP","reason":"already-merged","repeatOf":"RQ-OLD-1"}',
+      '{"job":"N9","event":"outcome","state":"EMPTY","reason":"target_pr_closed"}',
+      // N10: a standing decline resolves when the terminal verdict lands —
+      // the fleet's newest recorded decision is "no work needed".
+      '{"job":"N10","event":"skipped_empty","lane":"alpha","reason":"prompt_empty_same_base_24h"}',
+      '{"job":"N10","event":"outcome","state":"DONE-NOOP","reason":"already-merged"}',
+      // N11: a standing deferral resolves the same way.
+      '{"job":"N11","event":"dispatch_deferred","repo":"phantom","reason":"duplicate-request","repeatOf":"RQ-OWNER-11"}',
+      '{"job":"N11","event":"outcome","state":"DONE-NOOP","reason":"target_pr_merged"}',
+      // N12: a no-op verdict with no prior receipts leaves skip/defer
+      // unknown — null means no receipt was ever recorded.
+      '{"job":"N12","event":"outcome","state":"DONE-NOOP","reason":"target_pr_closed"}',
+      // N13: every newer launch-decision receipt supersedes the verdict —
+      // dispatch, skip-gate decline, keep-queued receipt, recut verdict.
+      '{"job":"N13","event":"outcome","state":"DONE-NOOP","reason":"already-merged"}',
+      '{"job":"N13","event":"claim","lane":"alpha"}',
+      '{"job":"N14","event":"outcome","state":"DONE-NOOP","reason":"already-merged"}',
+      '{"job":"N14","event":"skipped_empty","lane":"alpha","reason":"prompt_empty_same_base_24h"}',
+      '{"job":"N15","event":"outcome","state":"DONE-NOOP","reason":"already-merged"}',
+      '{"job":"N15","event":"dispatch_deferred","repo":"phantom","reason":"duplicate-request"}',
+      '{"job":"N16","event":"outcome","state":"DONE-NOOP","reason":"already-merged"}',
+      '{"job":"N16","event":"recut_admission","repo":"phantom","reason":"recut-in-flight","action":"defer","repeatOf":"RQ-RECUT-16"}',
+      // N17: a launch row supersedes like claim does.
+      '{"job":"N17","event":"outcome","state":"DONE-NOOP","reason":"already-merged"}',
+      '{"job":"N17","event":"launch","lane":"alpha"}',
+      // N18: a skip then a no-op then a dispatch — the newest decision wins
+      // and the earlier verdicts stay resolved, not resurrected.
+      '{"job":"N18","event":"skipped_empty","lane":"alpha","code":13}',
+      '{"job":"N18","event":"outcome","state":"DONE-NOOP","reason":"already-merged"}',
+      '{"job":"N18","event":"batch_claim","lane":"alpha"}',
+      // N19: finish/publish/outcome rows of other phases and non-decision
+      // events never touch the standing verdict; a task_outcome 'skipped'
+      // word resolves to SKIPPED — outside the empty family — and mints
+      // nothing.
+      '{"job":"N19","event":"outcome","state":"DONE-NOOP","reason":"already-merged"}',
+      '{"job":"N19","event":"finish","lane":"alpha","empty":true,"exit_code":0}',
+      '{"job":"N19","event":"publish","pr_url":"https://github.com/o/r/pull/31"}',
+      '{"job":"N19","event":"enqueue"}',
+      '{"job":"N20","event":"task_outcome","batch":"RQ-BATCH-n20","lane":"alpha","outcome":"skipped"}',
+      '{"job":"N20","event":"outcome","outcome":"done"}',
+      // N21: a MERGED phase is the merge lifecycle's verdict, never a
+      // no-op — and it leaves merged resolution exactly as before.
+      '{"job":"N21","event":"outcome","state":"DONE-NOOP","reason":"already-merged"}',
+      '{"job":"N21","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('N1')).toMatchObject({ merged: null, noop: true, noop_reason: 'already-merged', noop_repeat_of: null });
+    expect(byId.get('N2')).toMatchObject({ noop: true, noop_reason: 'precheck_retired', noop_repeat_of: null });
+    expect(byId.get('N3')).toMatchObject({ noop: true, noop_reason: 'target_pr_closed' });
+    expect(byId.get('N4')).toMatchObject({ noop: true, noop_reason: 'target_pr_merged' });
+    expect(byId.get('N5')).toMatchObject({ noop: true, noop_reason: 'target_pr_conflicts_resolved' });
+    expect(byId.get('N6')).toMatchObject({ noop: true, noop_reason: 'recut-already-merged', noop_repeat_of: 'RQ-PHX-RECUT6L1' });
+    expect(byId.get('N7')).toMatchObject({ noop: true, noop_reason: 'already-merged' });
+    expect(byId.get('N8')).toMatchObject({ noop: true, noop_reason: null, noop_repeat_of: null });
+    expect(byId.get('N9')).toMatchObject({ noop: true, noop_reason: 'target_pr_closed', noop_repeat_of: null });
+    expect(byId.get('N10')).toMatchObject({ noop: true, skipped: false, skip_reason: null, skip_code: null });
+    expect(byId.get('N11')).toMatchObject({ noop: true, deferred: false, defer_reason: null, defer_repeat_of: null });
+    expect(byId.get('N12')).toMatchObject({ noop: true, skipped: null, deferred: null });
+    expect(byId.get('N13')).toMatchObject({ noop: false, noop_reason: null, noop_repeat_of: null });
+    expect(byId.get('N14')).toMatchObject({ noop: false, skipped: true, skip_reason: 'prompt_empty_same_base_24h' });
+    expect(byId.get('N15')).toMatchObject({ noop: false, deferred: true, defer_reason: 'duplicate-request' });
+    expect(byId.get('N16')).toMatchObject({ noop: false, deferred: true, defer_reason: 'recut-in-flight' });
+    expect(byId.get('N17')).toMatchObject({ noop: false });
+    expect(byId.get('N18')).toMatchObject({ noop: false, skipped: false, skip_reason: null, skip_code: null });
+    expect(byId.get('N19')).toMatchObject({ noop: true, empty: true });
+    expect(byId.get('N20')).toMatchObject({ noop: null, task_outcome: 'skipped' });
+    expect(byId.get('N21')).toMatchObject({ noop: true, merged: true });
   });
 
   it('never lets a session row claim a PR URL or resolve an outcome', () => {
