@@ -51,6 +51,8 @@ export interface StatusDigestInput {
   yieldLine?: string;
   /** The top waste alert (`pools.waste.v1`): "Gemini: 85% will go unused in 5 h. Sign in to Gemini once: run gemini in a terminal."; absent when none. */
   wasteLine?: string;
+  /** Sign-in state and the fix for the blocked lane with the most unused plan. */
+  authLine?: string;
   /** `Not live yet: 2 merged fleet files (...)` when merged fleet scripts differ from the installed copies; absent when all are live or the check cannot run. */
   notLiveLine?: string;
 }
@@ -88,6 +90,7 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
   const lines = [
     ...(blocker ? [blocker.sentence] : []),
     ...(input.wasteLine ? [input.wasteLine] : []),
+    ...(input.authLine ? [input.authLine] : []),
     `App: installed ${show(input.installedVersion, v => v)} · published ${show(input.publishedVersion, v => v)}${pending}`,
     `Merges: ${show(input.mergesLastHour, n => `${n} in the last hour`)} · ${show(input.mergesLast24h, n => `${n} in the last 24h`)}`,
     ...(input.mergeTime ? [`Time to merge: ${show(input.mergeTime, t => t.medianSeconds === null ? `unknown (${t.merged} merged, none with GitHub's own created and merged times recorded)` : `median ${spanText(t.medianSeconds)} open to merge (${t.known} of ${t.merged} PRs known)`)}`] : []),
