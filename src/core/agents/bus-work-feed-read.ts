@@ -265,6 +265,8 @@ export interface BusWorkFeedViewFilters {
   provider?: Participant['provider'];
   /** Keep only open jobs whose declared claim keys provably include a free key; needs the claims join to mean anything. */
   claimable?: true;
+  /** Open-status candidates with declared keys; incomplete hold coverage keeps candidates visible. */
+  open?: true;
   /**
    * Keep only jobs whose last activity is at or after this epoch-ms cutoff —
    * `job.updatedAt`, the receipt time of the newest accepted `work.status`,
@@ -290,17 +292,22 @@ export interface BusWorkFeedViewFilters {
  * never lists a hold for a hidden job. `--claimable` keeps only jobs whose
  * tri-state `claimable` is provably true — unknown coverage never counts as
  * claimable, and a read without the claims join has no field to match, so it
- * answers an honest empty view. Non-ok results pass through untouched;
+ * answers an honest empty view. `--open` keeps queued/rescheduled candidates
+ * with declared keys; only complete holds can exclude a fully held job.
+ * Non-ok results pass through untouched;
  * nothing is fabricated for a refused or unavailable read.
  */
 export function projectBusWorkFeedView(result: BusWorkFeedReadResult, filters: BusWorkFeedViewFilters = {}): BusWorkFeedReadResult {
   if (result.status !== 'ok') return result;
+  const { coverage, heldByJob } = busWorkFeedHoldIndex(result.claims);
   const jobs = result.jobs
     .filter(job => (filters.status === undefined || job.status === filters.status)
       && (filters.jobId === undefined || job.id === filters.jobId)
       && (filters.repo === undefined || job.repo.toLowerCase() === filters.repo)
       && (filters.provider === undefined || job.provider === filters.provider)
       && (filters.claimable !== true || job.claimable === true)
+      && (filters.open !== true || (BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length > 0
+        && (coverage !== 'complete' || job.claimKeys.some(key => !heldByJob.get(job.id)?.has(key)))))
       && (filters.since === undefined || job.updatedAt >= filters.since)
       && (filters.toMatch === undefined || filters.toMatch(job.to))
       && (filters.ownerMatch === undefined || filters.ownerMatch(job.owner)))

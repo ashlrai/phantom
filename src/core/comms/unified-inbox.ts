@@ -245,7 +245,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
+import { busWorkFeedHoldIndex, BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
 import { busBodyFallbackSummary, busBodyJobIds, busBodySummary } from '../agents/bus-unified.js';
 import { coordinationRowBlocks, listCoordination } from '../agents/claim-store.js';
 import { readPendingProposals, readTeamApprovals, type ProposalApprovalItem, type TeamApprovalItem } from '../approvals/surface.js';
@@ -927,20 +927,8 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
   }
   if (feed.status !== 'ok') return { state: 'degraded', items: [] };
 
-  const holdsKnown = feed.claims?.source !== 'unavailable';
-  // Complete hold coverage is what "no live claim" proofs need: a missing
-  // table is verified-empty and an untruncated available read shows every
-  // hold, while unavailable, truncated or absent claims can never prove a
-  // declared key is unheld.
-  const holdsComplete = feed.claims !== undefined && feed.claims.source !== 'unavailable' && !feed.claims.truncated;
-  const heldKeys = new Map<string, Set<string>>();
-  if (feed.claims) {
-    for (const hold of feed.claims.holds) {
-      const set = heldKeys.get(hold.jobId) ?? new Set<string>();
-      set.add(hold.claimKey);
-      heldKeys.set(hold.jobId, set);
-    }
-  }
+  const { coverage, heldByJob: heldKeys } = busWorkFeedHoldIndex(feed.claims);
+  const holdsKnown = coverage === 'complete';
 
   const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
   for (const job of feed.jobs) {
@@ -976,7 +964,7 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
     // declared keys have no claim scope to prove unheld, and incomplete
     // coverage can never prove "no hold", so both stay hidden rather than
     // listed as fact.
-    if ((job.status === 'running' || job.status === 'idle') && job.claimKeys.length > 0 && holdsComplete) {
+    if ((job.status === 'running' || job.status === 'idle') && job.claimKeys.length > 0 && holdsKnown) {
       const held = heldKeys.get(job.id);
       if (held === undefined || held.size === 0) {
         const report = statuses.get(job.id);

@@ -987,6 +987,39 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['work', 'feed', '--claimable', '--claimable'])).toMatchObject({ code: 2 });
   });
 
+  it('filters the work feed to jobs still open for a worker with --open', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-OPEN', '--title', 'Open',
+      '--repo', 'ashlrai/phantom', '--claim', 'queue:RQ-OPEN', '--id', 'open-1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-HELD', '--title', 'Held',
+      '--repo', 'ashlrai/phantom', '--claim', 'queue:RQ-HELD', '--id', 'open-2'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-DONE', '--title', 'Done',
+      '--repo', 'ashlrai/phantom', '--claim', 'queue:RQ-DONE', '--id', 'open-3'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'status', '--from', 'atlas', '--job', 'RQ-DONE', '--status', 'done',
+      '--id', 'open-3s'])).json).toMatchObject({ status: 'posted' });
+    // Hold every claim key of RQ-HELD so no worker can take it.
+    expect((await run(['claim', 'acquire', '--key', 'queue:RQ-HELD', '--lease-ms', '600000',
+      '--owner', 'atlas', '--id', 'open-claim'])).json).toMatchObject({ status: 'acquired' });
+
+    const feed = await run(['work', 'feed']);
+    expect(feed.json.jobs.map((job: { id: string }) => job.id).sort()).toEqual(['RQ-DONE', 'RQ-HELD', 'RQ-OPEN']);
+    // --open implies the claims join and keeps only the claimable queued job.
+    const open = await run(['work', 'feed', '--open']);
+    expect(open.code).toBe(0);
+    expect(open.json.status).toBe('ok');
+    expect(open.json.jobs.map((job: { id: string }) => job.id)).toEqual(['RQ-OPEN']);
+    expect(open.json.claims).toMatchObject({ source: 'available' });
+    expect(open.json.claims.holds).toEqual([]);
+    // The held job's lease regroups only under --claims without --open.
+    const claimed = await run(['work', 'feed', '--claims']);
+    expect(claimed.json.claims.holds).toEqual([expect.objectContaining({ jobId: 'RQ-HELD', claimKey: 'queue:RQ-HELD' })]);
+    // --open composes with --status as an intersection.
+    expect((await run(['work', 'feed', '--open', '--status', 'done'])).json.jobs).toEqual([]);
+  });
+
   it('filters claim list by owner through the identity registry', async () => {
     expect((await run(['id', 'register', 'atlas', '--alias', 'lane-atlas'])).json)
       .toMatchObject({ status: 'created' });

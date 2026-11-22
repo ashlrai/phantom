@@ -52,7 +52,7 @@ ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--clai
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
-ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--to <label>] [--owner <agent>] [--claims] [--claimable] [--since <15m|2h|1d|ISO>]
+ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--to <label>] [--owner <agent>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work mine [<agent>] [--job <id>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>]
@@ -140,7 +140,8 @@ every label of one agent identity, --repo keeps jobs announced for one
 owner/name repo (case-insensitive, the claim-key rule), --provider keeps
 jobs announced for one provider, --claimable keeps only open jobs whose
 declared claim keys provably include a free key (it implies the claims
-join), --since keeps only jobs whose last activity — the newest accepted
+join), --open keeps queued/rescheduled candidates with claim keys, including
+unknown holds, and implies --claims; --since keeps only jobs whose last activity — the newest accepted
 status receipt time, or the announcement's while no status has moved the
 job — reaches the cutoff (15m, 2h, 1d, epoch ms or an ISO time, the same
 grammar inbox --since takes), while --job keeps one job id. work claim
@@ -209,7 +210,7 @@ const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
   '--kind', '--channel']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
-const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--claimable', '--jobs', '--matched']);
+const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--open', '--claimable', '--jobs', '--matched']);
 const MESSAGE_CLAIM_ACTIONS = ['acquire', 'renew', 'release', 'complete'] as const;
 const MESSAGE_CLAIM_OK = new Set(['acquired', 'renewed', 'released', 'completed']);
 
@@ -622,11 +623,12 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         throw new UsageError(`--provider must be one of ${PROVIDERS.join(', ')}.`);
       }
       const claimable = p.bools.has('--claimable');
+      const open = p.bools.has('--open');
       const result = projectBusWorkFeedView(
-        readBusWorkFeed({ root: options.root, claims: p.bools.has('--claims') || claimable }),
+        readBusWorkFeed({ root: options.root, claims: p.bools.has('--claims') || claimable || open }),
         { status: status as WorkJob['status'] | undefined, jobId, repo,
           provider: providerRaw as WorkJob['provider'] | undefined,
-          claimable: claimable ? true : undefined, since: sinceArg(),
+          open: open || undefined, claimable: claimable ? true : undefined, since: sinceArg(),
           toMatch: to === undefined ? undefined : busWorkFeedToMatcher(to, { root: options.root }),
           ownerMatch: owner === undefined ? undefined : busWorkFeedOwnerMatcher(owner, { root: options.root }) });
       out(json ? JSON.stringify(result) : formatBusWorkFeed(result).join('\n'));

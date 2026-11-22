@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { busWorkFeedJobHold, readBusWorkFeed, type BusWorkFeedJob } from '../src/core/agents/bus-work-feed-read.js';
+import { busWorkFeedJobHold, projectBusWorkFeedView, readBusWorkFeed, type BusWorkFeedJob, type BusWorkFeedReadResult } from '../src/core/agents/bus-work-feed-read.js';
 import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
@@ -338,16 +338,123 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     expect(error).toHaveBeenCalledTimes(4);
   });
 
+  it('filters to jobs still open for a worker with --open and implies the claims join', async () => {
+    const hold = (key: string, sourceId: string) => {
+      expect(acquireCoordination({ root, origin: 'resource', key, owner: 'fake-holder',
+        leaseMs: 60_000, leaseUntil: now + 60_000, sourceId, now }).status).toBe('acquired');
+    };
+    // queued with every key free -> open
+    append({ ...post, jobId: 'fake-open', claimKeys: ['queue:RQ-OPEN', 'repo:fake/repo'] });
+    // queued with its only key held -> closed
+    append({ ...post, jobId: 'fake-held', claimKeys: ['queue:RQ-HELD'] }, 2);
+    hold('queue:RQ-HELD', 'work:fake-held');
+    // queued with one of two keys held -> still open on the free key
+    append({ ...post, jobId: 'fake-part', claimKeys: ['queue:RQ-PART-A', 'queue:RQ-PART-B'] }, 3);
+    hold('queue:RQ-PART-A', 'work:fake-part');
+    // queued with no claim keys -> nothing to acquire
+    append({ ...post, jobId: 'fake-nokeys', claimKeys: [] }, 4);
+    // running and done are not open statuses even with free keys
+    append({ ...post, jobId: 'fake-running' }, 5);
+    append({ kind: 'work.status', jobId: 'fake-running', status: 'running' }, 6);
+    append({ ...post, jobId: 'fake-done' }, 7);
+    append({ kind: 'work.status', jobId: 'fake-done', status: 'done' }, 8);
+    // rescheduled is still open for a worker
+    append({ ...post, jobId: 'fake-resched' }, 9);
+    append({ kind: 'work.status', jobId: 'fake-resched', status: 'rescheduled' }, 10);
+
+    const log = output();
+    expect(await cmdFleetWorkFeed(['--root', root, '--open', '--json'])).toBe(0);
+    const view = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
+    expect(view.status).toBe('ok');
+    // --open implied the claims join even though --claims was not passed.
+    expect(view.claims).toMatchObject({ source: 'available', truncated: false });
+    expect(view.jobs.map((job: { id: string }) => job.id).sort())
+      .toEqual(['fake-open', 'fake-part', 'fake-resched']);
+    // Holds regroup under shown jobs only: the hidden fake-held lease is dropped,
+    // the partial fake-part lease stays.
+    expect(view.claims.holds).toEqual([expect.objectContaining({ jobId: 'fake-part', claimKey: 'queue:RQ-PART-A' })]);
+    expect(JSON.stringify(view)).not.toContain('token');
+
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--open'])).toBe(0);
+    const lines = log.mock.calls.map(call => String(call[0]));
+    expect(lines.some(line => line.startsWith('fake-open queued'))).toBe(true);
+    expect(lines.some(line => line.startsWith('fake-part queued'))).toBe(true);
+    expect(lines.some(line => line.startsWith('fake-resched rescheduled'))).toBe(true);
+    expect(lines.some(line => line.startsWith('fake-held'))).toBe(false);
+    expect(lines.some(line => line.startsWith('fake-running'))).toBe(false);
+    expect(lines.at(-1)).toContain('claims=available');
+
+    // --open composes with --status as an intersection.
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--open', '--status', 'rescheduled', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0])).jobs.map((job: { id: string }) => job.id))
+      .toEqual(['fake-resched']);
+    expect(await cmdFleetWorkFeed(['--root', root, '--open', '--status', 'done', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0])).jobs).toEqual([]);
+  });
+
+  it('keeps open candidates rather than proving them closed when holds are unknown', async () => {
+    append({ ...post, jobId: 'fake-open', claimKeys: ['queue:RQ-OPEN'] });
+    append({ ...post, jobId: 'fake-held', claimKeys: ['queue:RQ-HELD'] }, 2);
+    expect(acquireCoordination({ root, origin: 'resource', key: 'queue:RQ-HELD', owner: 'fake-holder',
+      leaseMs: 60_000, leaseUntil: now + 60_000, sourceId: 'work:fake-held', now }).status).toBe('acquired');
+    append({ ...post, jobId: 'fake-nokeys', claimKeys: [] }, 3);
+    const log = output();
+
+    // An unreadable coordination table means holds are unknown: every open-status
+    // job with claim keys stays a candidate, including the fully held one.
+    mkdirSync(join(root, 'coordination'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(root, 'coordination', 'claims.json'), 'invalid JSON');
+    expect(await cmdFleetWorkFeed(['--root', root, '--open', '--json'])).toBe(0);
+    const blind = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
+    expect(blind.claims).toMatchObject({ source: 'unavailable', holds: [] });
+    expect(blind.jobs.map((job: { id: string }) => job.id).sort()).toEqual(['fake-held', 'fake-open']);
+    expect(blind.jobs.every((job: { claimable: unknown }) => job.claimable === null)).toBe(true);
+    expect(await cmdFleetWorkFeed(['--root', root, '--open', '--claimable', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0])).jobs).toEqual([]);
+
+    // A verified-empty table is known state, not unknown: every declared key is
+    // free. Removing the directory drops the hold itself, so the same jobs list
+    // — but now proven open rather than candidates, as claims.source shows.
+    rmSync(join(root, 'coordination'), { recursive: true, force: true });
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--open', '--json'])).toBe(0);
+    const empty = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
+    expect(empty.claims).toMatchObject({ source: 'missing', holds: [] });
+    expect(empty.jobs.map((job: { id: string }) => job.id).sort()).toEqual(['fake-held', 'fake-open']);
+  });
+
+  it('treats truncated or absent hold joins as unknown candidates for --open', () => {
+    const job = (id: string, status: BusWorkFeedJob['status'], claimKeys: string[]): BusWorkFeedJob =>
+      ({ id, title: id, to: 'leaders', postId: id, statusId: null, owner: 'fake-agent', provider: 'devin', repo: 'fake/repo', claimKeys, status, updatedAt: now });
+    const base: BusWorkFeedReadResult = { status: 'ok', receipts: 2, asOf: new Date(now).toISOString(),
+      jobs: [job('fake-a', 'queued', ['queue:RQ-A']), job('fake-b', 'queued', ['queue:RQ-B'])] };
+    const ids = (result: BusWorkFeedReadResult) => result.status === 'ok' ? result.jobs.map(j => j.id) : [];
+    // A truncated hold list cannot prove a job closed: both stay candidates.
+    const truncated = projectBusWorkFeedView({ ...base, claims: { source: 'available', truncated: true,
+      holds: [{ jobId: 'fake-a', claimKey: 'queue:RQ-A', owner: 'fake-holder', leaseUntil: now + 1,
+        origin: 'resource', sourceId: 'work:x' }] } }, { open: true });
+    expect(ids(truncated)).toEqual(['fake-a', 'fake-b']);
+    // No claims join at all is likewise unknown, never proven free or closed.
+    expect(ids(projectBusWorkFeedView(base, { open: true }))).toEqual(['fake-a', 'fake-b']);
+    // A verified-empty table proves every key free: both are open, not candidates.
+    const missing = projectBusWorkFeedView({ ...base, claims: { source: 'missing', truncated: false, holds: [] } },
+      { open: true });
+    expect(ids(missing)).toEqual(['fake-a', 'fake-b']);
+    expect(missing.status === 'ok' && missing.claims?.source).toBe('missing');
+  });
+
   it('rejects relative roots and invalid flags with usage on stderr and exit 2', async () => {
     const log = output();
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     for (const args of [['--root', 'relative/path'], ['--status', 'unknown'], ['--root'],
-      ['--status', 'queued', '--status', 'done'], ['--json', '--json'], ['--claims', '--claims'], ['--bogus'],
+      ['--status', 'queued', '--status', 'done'], ['--json', '--json'], ['--claims', '--claims'], ['--open', '--open'], ['--bogus'],
       ['--to'], ['--to', 'two words'], ['--to', 'a\nb'], ['--to', 'x', '--to', 'y']]) {
       expect(await cmdFleetWorkFeed(args)).toBe(2);
     }
     expect(log).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledTimes(11);
+    expect(error).toHaveBeenCalledTimes(12);
     expect(error.mock.calls[0]?.[0]).toContain('Usage: ashlr fleet work-feed');
     expect(await cmdFleetWorkFeed(['--help'])).toBe(0);
   });
