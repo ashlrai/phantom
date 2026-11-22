@@ -933,7 +933,12 @@ own read state — `missing`/`available`/`unavailable` for claims,
 `ok`/`refused`/`unavailable`/`retryable`/`invalid` for the feed,
 `unavailable`/`retryable`/`invalid` for the claimable-envelope walk — so one
 unreadable dependency degrades only its own section. Exit 0 on a completed
-read, 2 on an invalid agent ref.
+read, 2 on an invalid agent ref. `fleet_agent_work` (the isolated fleet
+MCP tool) serves the same `readBusWorkMineWithSeats` projection — `agent`
+required, `job`/`since`/`contains` the same filters — under the same
+validation, so an MCP-connected agent reads its whole pending digest
+without shelling out to `phm`; it accepts no caller root or path and
+passes a refused or degraded section through untouched.
 
 **Pending-work claim.** `phm agents bus work next [<agent>] --lease-ms
 <1..3600000> [--owner <label>] [--contains <text>] [--since
