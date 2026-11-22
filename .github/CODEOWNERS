@@ -482,6 +482,8 @@
 /test/fleet-merge-recover.test.ts @masonwyatt23
 /test/fleet-merge-retry.test.ts @masonwyatt23
 /test/fleet-merge-state-class.test.ts @masonwyatt23
+/test/fleet-merge-status-preservation-754s.test.ts @masonwyatt23
+/test/fleet-merge-status.test.ts @masonwyatt23
 /test/fleet-post-merge-verify-31.test.ts @masonwyatt23
 /test/fleet-release-gate-start-05srq2.test.ts @masonwyatt23
 /test/fleet-release-gate-start-original-243s.test.ts @masonwyatt23
