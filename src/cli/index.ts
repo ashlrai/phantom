@@ -3133,6 +3133,7 @@ async function main(): Promise<void> {
       }
 
       case 'release': {
+        if (rest[0] === 'backlog') { process.exitCode = await (await import('./release-backlog.js')).cmdReleaseBacklog(rest.slice(1)); break; }
         const cmdRelease = await loadReleaseCmd();
         process.exitCode = await cmdRelease(rest);
         break;

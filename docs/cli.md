@@ -34,7 +34,7 @@ Topic summary and discovery hints.
     swarm           Swarm - specs + multi-agent fleets (spec, …)
     memory          Memory - shared genome (memory, recall, learn, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, radar, knowledge, …)
-    autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (bots, subagent, metrics, …)
+    autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (release, bots, subagent, …)
     observability   Observability - cost, telemetry, audit (jobs, mobile, shipped, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
@@ -72,7 +72,7 @@ Every command, grouped by topic.
     config path                                                                                                          Print the path to config.json.
     doctor merge-path --repo owner/name                                                                                  Read-only required-check sentinel for recent PR heads.
     doctor worktree [--repair] [--json]                                                                                  Can this checkout typecheck and lint? Reports node_modules, tsgo and eslint, with the one command that fixes each. Also shows the source checkout (branch, commits behind, lockfile) and its repair log; --repair runs npm ci in this worktree only.
-    doctor build [--json] [--fetch]                                                                                                Is the phm running on this host the code the fleet merged? The running commit (embedded at build time, else HEAD of the directory phm runs from), its branch, and how many commits it is behind origin/master (local ref, no network by default, so a host that never fetches reads current while master moves), then one verdict line. --fetch first refreshes origin's master ref and says so when that fails. Unknown stays unknown, with the reason. Reads only; never pulls or rebuilds.
+    doctor build [--json] [--fetch]                                                                                      Is the phm running on this host the code the fleet merged? The running commit (embedded at build time, else HEAD of the directory phm runs from), its branch, and how many commits it is behind origin/master (local ref, no network by default, so a host that never fetches reads current while master moves), then one verdict line. --fetch first refreshes origin's master ref and says so when that fails. Unknown stays unknown, with the reason. Reads only; never pulls or rebuilds.
     doctor supply [--json]                                                                                               Is self-supply landing jobs? Per source in the host ingest log: last ingest and jobs in 24 h; rejected drops by reason; whether the self-tick gap hook is on; the live build line and the last self-tick line; gap candidates now by source (no-change vs published); self-held lanes (3+ held launches, no finish in 60 min); the top EMPTY reason in 24 h; one verdict line. Gap jobs show as source gap. Missing files read as unknown with the path.
     doctor                                                                                                               One-glance health check: config, phantom, providers, ecosystem.
     init [--yes]                                                                                                         Idempotent onboarding: ensure config, detect phantom + models, set editor.
@@ -159,6 +159,7 @@ Every command, grouped by topic.
     wiki status [repo]                 Wiki freshness: generated at <commit>, N pages stale.
 
   Autonomy - enrollment, backlog, daemon, inbox, goals
+    release backlog [--json]                                                                                                                                      Show unshipped commits across seven repos: due at 20 commits or 3 days, stale at 7 days. Read-only GitHub reads cached for 10 minutes; unknown stays unknown.
     bots list|show|create --dry-run|explain|seats|handoffs|handoff --seat <id> [--apply] [--json]                                                                 Provider-neutral bot metadata, seat quota and draining handoffs. handoffs plans every seat; handoff --seat is dry-run unless --apply.
     subagent spawn|list|result [opts]                                                                                                                             Plan bounded cross-provider children; apply stores held records only, never dispatches.
     metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]                                                                                            Estimate idle slot-minutes and flag long-running jobs from local snapshots.
