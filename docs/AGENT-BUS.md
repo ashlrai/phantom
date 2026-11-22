@@ -538,7 +538,13 @@ citation (`to` holder label, `statusId`, `jobId`, `status`, optional
 `detail`). A hint with no retained row or no reproducing receipt reports
 `not-found`, an unreadable wake queue `unavailable` — never a guessed
 receipt. Envelope ids are caller-chosen printable tokens, so a real
-receipt always wins over hint interpretation.
+receipt always wins over hint interpretation. `fleet_bus_show` (the
+isolated fleet MCP tool) serves the same read with `id` as its only
+argument — the same printable routing-label rule — so an MCP-connected
+agent resolves the `post=`/`status=`/`receipt=`/handoff and wake-hint
+citations the other bus reads emit without shelling out to `phm`; it
+accepts no caller root or path and passes every lookup status through
+untouched.
 
 **Work announcements.** `phm agents bus work post --job <id> --title <text>
 --repo <owner/name> [--claim <key>]... [--provider <p>] [--tier <fast|mid|work|frontier>
