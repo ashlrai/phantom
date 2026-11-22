@@ -782,6 +782,78 @@ describe('phm agents bus (unified)', () => {
     expect(emptyText.join('\n')).toContain('empty candidates=2 held=2');
   });
 
+  it('claims one envelope id and renews, releases and completes its message claim', async () => {
+    expect(appendBusInbox({ id: 'mc-work', from: 'agent:nova', to: 'agent:atlas', priority: 'P2',
+      ttl: 3_600_000, body: { kind: 'work', text: 'named work' } }, { root }).status).toBe('posted');
+    expect(appendBusInbox({ id: 'mc-note', from: 'agent:nova', to: 'agent:atlas', priority: 'P1',
+      ttl: 3_600_000, body: { kind: 'note', text: 'not claimable by next' } }, { root }).status).toBe('posted');
+
+    // claim message targets one retained envelope id directly — including a
+    // note work next would never scan — through the same claim journal.
+    const acquired = await run(['claim', 'message', 'acquire', '--id', 'mc-note', '--lease-ms', '60000'],
+      { PHM_AGENT_ID: 'atlas' });
+    expect(acquired.code).toBe(0);
+    expect(acquired.json).toMatchObject({ status: 'acquired', id: 'mc-note' });
+    const token = acquired.json.token as string;
+    expect(token).toMatch(/^[a-f0-9]{64}$/);
+    expect(acquired.json.leaseUntil).toBeGreaterThan(Date.now());
+
+    // A live lease answers conflict to every other claimant of the same id.
+    expect(await run(['claim', 'message', 'acquire', '--id', 'mc-note', '--owner', 'peer', '--lease-ms', '60000']))
+      .toMatchObject({ code: 1, json: { status: 'conflict', id: 'mc-note' } });
+
+    // Renew keeps the stored lease length; a wrong token is fenced out.
+    expect(await run(['claim', 'message', 'renew', '--id', 'mc-note', '--token', token], { PHM_AGENT_ID: 'atlas' }))
+      .toMatchObject({ code: 0, json: { status: 'renewed', id: 'mc-note', leaseUntil: expect.any(Number) } });
+    expect(await run(['claim', 'message', 'complete', '--id', 'mc-note', '--token', '0'.repeat(64)]))
+      .toMatchObject({ code: 1, json: { status: 'mismatched-token' } });
+
+    // Release frees the id; a fresh acquire gets a new fencing token.
+    expect(await run(['claim', 'message', 'release', '--id', 'mc-note', '--token', token]))
+      .toMatchObject({ code: 0, json: { status: 'released', id: 'mc-note' } });
+    const again = await run(['claim', 'message', 'acquire', '--id', 'mc-note', '--lease-ms', '60000'],
+      { PHM_AGENT_ID: 'atlas' });
+    expect(again.json).toMatchObject({ status: 'acquired', id: 'mc-note' });
+    expect(again.json.token).not.toBe(token);
+
+    // Complete retires the claim; later verbs on it answer 'completed'.
+    expect(await run(['claim', 'message', 'complete', '--id', 'mc-note', '--token', again.json.token]))
+      .toMatchObject({ code: 0, json: { status: 'completed', id: 'mc-note' } });
+    expect(await run(['claim', 'message', 'renew', '--id', 'mc-note', '--token', again.json.token]))
+      .toMatchObject({ code: 0, json: { status: 'completed' } });
+
+    // An id with no retained receipt answers missing — never a fabricated claim.
+    expect(await run(['claim', 'message', 'acquire', '--id', 'mc-ghost', '--lease-ms', '60000'],
+      { PHM_AGENT_ID: 'atlas' })).toMatchObject({ code: 1, json: { status: 'missing' } });
+
+    // Usage errors exit 2; an over-cap lease is an invalid result, not a claim.
+    expect(await run(['claim', 'message'])).toMatchObject({ code: 2 });
+    expect(await run(['claim', 'message', 'bogus', '--id', 'mc-work'])).toMatchObject({ code: 2 });
+    expect(await run(['claim', 'message', 'acquire', '--lease-ms', '60000'], { PHM_AGENT_ID: 'atlas' }))
+      .toMatchObject({ code: 2 });
+    expect(await run(['claim', 'message', 'acquire', '--id', 'mc-work'], { PHM_AGENT_ID: 'atlas' }))
+      .toMatchObject({ code: 2 });
+    expect(await run(['claim', 'message', 'acquire', '--id', 'mc-work', '--lease-ms', '60000'], {}))
+      .toMatchObject({ code: 2 });
+    expect(await run(['claim', 'message', 'renew', '--id', 'mc-work'], { PHM_AGENT_ID: 'atlas' }))
+      .toMatchObject({ code: 2 });
+    expect(await run(['claim', 'message', 'acquire', '--id', 'mc-work', '--lease-ms', '3600001'],
+      { PHM_AGENT_ID: 'atlas' })).toMatchObject({ code: 2, json: { status: 'invalid' } });
+
+    // Human output names the envelope id, lease and the acquire-only token.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['claim', 'message', 'acquire', '--id', 'mc-work', '--lease-ms', '60000',
+      '--root', root], t => text.push(t), () => {}, { PHM_AGENT_ID: 'atlas' })).toBe(0);
+    expect(text.join('\n')).toContain('acquired mc-work');
+    expect(text.join('\n')).toContain('token=');
+    const renewText: string[] = [];
+    const workToken = /token=([a-f0-9]{64})/.exec(text.join('\n'))![1]!;
+    expect(await runAgentsBusUnified(['claim', 'message', 'renew', '--id', 'mc-work', '--token', workToken,
+      '--root', root], t => renewText.push(t), () => {}, {})).toBe(0);
+    expect(renewText.join('\n')).toContain('renewed mc-work');
+    expect(renewText.join('\n')).not.toContain('token=');
+  });
+
   it('filters the work feed by announcement address under one agent identity', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

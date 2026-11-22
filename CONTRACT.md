@@ -2473,6 +2473,11 @@ scope already held is visible in the claim result itself. `source` is
 holds are unknown, never an empty free set. A feed that cannot be read refuses
 rather than claiming against a guessed job. `phm agents bus work claim --job <id> --lease-ms <ms> [--key]
 [--owner] [--id]` prints it, exit 0 acquired, 2 invalid, 1 otherwise.
+`phm agents bus claim message acquire|renew|release|complete --id <envelope-id>`
+is the same message-id claim journal `fleet bus-claim`/`comms bus claim` drive:
+`acquire` takes `--lease-ms` and `--owner` (default `PHM_AGENT_ID`), the other
+verbs take `--token`; the result echoes the id, exit 0 on
+acquired/renewed/released/completed, 2 on invalid, 1 otherwise.
 `work.claim` acquire/renew run through `acquireCoordination`/`renewCoordination`
 and `work.release` through `settleCoordination` on the one coordination table
 with `origin:'resource'`; lease source ids are `agentbus:<opId>:<sha256-16 of

@@ -780,8 +780,9 @@ minus the identity's own channel posts; `<agent>` defaults to
 explicit `--owner` records the claim label independently exactly as
 `fleet bus-next --to`/`--owner` do. `acquired` returns the live receipt
 with its fencing `token` and `leaseUntil` for its acquirer only — the
-same token `phm comms bus claim renew|release|complete --id
-<envelope-id>` spends — while `empty` reports the observed
+same token `phm agents bus claim message renew|release|complete --id
+<envelope-id>` spends on this surface (`phm comms bus claim` is the
+legacy spelling) — while `empty` reports the observed
 `{candidates, held}` scan totals so a dry well reads differently from
 held work, and every other store state keeps its own status. Exit 0 on
 `acquired`/`empty`, 2 on invalid arguments, 1 otherwise. The claim
@@ -1097,8 +1098,13 @@ Example (replace `FAKE-TOKEN`):
 `curl -X POST -H "Authorization: Bearer FAKE-TOKEN" -H "Content-Type: application/json" http://localhost:8787/api/verse/agent-bus -d '{"id":"claim-0001","from":"dot-main","to":"leaders","priority":"P2","ttl":3600000,"body":{"kind":"work.claim","op":"acquire","claimKey":"path:ashlrai/phantom:docs/**","owner":"dot-main","leaseMs":600000}}'`
 
 The v1 message-id claim (`ashlr fleet bus-claim acquire|renew|release|complete
---id --owner --lease-ms`, or `phm comms bus claim …`; `phm agents bus work next`
-claims the next one on the unified surface) keeps working for
+--id --owner --lease-ms`, or `phm comms bus claim …`; on the unified surface
+`phm agents bus work next` claims the next one and `phm agents bus claim
+message acquire|renew|release|complete --id <envelope-id>` drives the whole
+lifecycle for one named receipt — `acquire` takes `--lease-ms` and an
+`--owner` defaulting to `PHM_AGENT_ID`, the other verbs take `--token`, and
+the result echoes the id with exit 0 on acquired/renewed/released/completed,
+2 on invalid, 1 otherwise) keeps working for
 single-message work. Resource claims
 are the v2 layer above it. `bus next`/`bus-next --to` — and `agents bus
 work next [<agent>]`, which defaults the address to the agent itself —
