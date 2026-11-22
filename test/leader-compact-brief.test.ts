@@ -76,7 +76,7 @@ it('shows active automatic stops in plain words and carries them in the self-tic
 });
 it('uses actual merge times and keeps only the five oldest stuck jobs', async () => {
   await writeFile(join(dir, 'metrics/jobs.jsonl'), JSON.stringify({ event: 'outcome', job: 'old', state: 'MERGED', ts: at, url: 'https://github.com/ashlrai/phantom/pull/7', createdAt: '2026-11-21T10:00:00Z', mergedAt: at }));
-  await writeFile(join(dir, 'queue/live-jobs.json'), JSON.stringify({ jobs: Array.from({ length: 8 }, (_, i) => ({ id: `job-${i}`, lane: 'local', status: i === 7 ? 'quiet' : 'stuck', elapsed: i })) }));
+  await writeFile(join(dir, 'queue/live-jobs.json'), JSON.stringify({ known: true, running: Array.from({ length: 8 }, (_, i) => ({ id: `job-${i}`, lane: 'local', state: i === 7 ? 'quiet' : 'stuck', elapsed: i })) }));
   const b = await readCompactBrief(dir, now);
   expect(b.medianOpenToMergeSeconds).toBe(7200); expect(b.attention.map(j => j.id)).toEqual(['job-6', 'job-5', 'job-4', 'job-3', 'job-2']);
   expect(b.families[0]).toMatchObject({ family: 'old', launches: 0, merges: 1 });
