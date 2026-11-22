@@ -36,6 +36,7 @@ import {
   readGitLockHealth,
   SANDBOX_ORPHAN_WARN_THRESHOLD,
 } from './readiness.js';
+import { checkIngestDrift, INGEST_MISSING, type IngestDriftReport } from './fleet/ingest-drift.js';
 import { describeStaleGitLocks } from './sandbox/stale-git-locks.js';
 import { evalBudget } from './observability/budget-alert.js';
 import { findDoctorExecutable } from '../doctor/executable.js';
@@ -620,6 +621,27 @@ export function checkReceiptVerify(
     return check('receipt-verify', title, 'warn', `newest receipt ${s.latest.runId} does NOT verify (${s.latest.reason ?? 'unknown'})`, `phm receipt timeline ${s.latest.runId}`);
   } catch (err) {
     return check('receipt-verify', title, 'warn', `Could not read receipts: ${err instanceof Error ? err.name : 'error'}`);
+  }
+}
+
+/**
+ * Host ingest drift. Our drop-job contract copies three things from
+ * `~/.ashlr-runs/bin/orch-ingest.py`; this says whether they still match.
+ * Detail is exactly `match`, `drift: <field>` or `unknown: <reason>`. A host
+ * with no ingest file is simply unknown (pass); a drift or an unrecognised
+ * file warns. Read-only.
+ */
+export function checkIngestDriftDoctor(report: () => IngestDriftReport = checkIngestDrift): DoctorCheck {
+  const title = 'Host ingest contract';
+  try {
+    const { verdict } = report();
+    if (verdict === 'match') return check('ingest-drift', title, 'pass', verdict);
+    if (verdict.startsWith('drift:')) {
+      return check('ingest-drift', title, 'warn', verdict, 'Review the host contract change before updating the shared drop-job contract');
+    }
+    return check('ingest-drift', title, verdict === INGEST_MISSING ? 'pass' : 'warn', verdict);
+  } catch {
+    return check('ingest-drift', title, 'warn', 'unknown: could not compare');
   }
 }
 
@@ -1563,6 +1585,7 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
     throw new Error('worktree storage module unavailable');
   })));
   checks.push(checkGitLocks());
+  checks.push(checkIngestDriftDoctor());
 
   // --- M33: plugin layer (read-only; discovery never executes plugin code) ---
   checks.push(pluginsCheck);
