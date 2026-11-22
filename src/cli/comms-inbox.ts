@@ -20,7 +20,8 @@ unanswered iMessage
 teammate texts, unsettled Dot/Instinct teammate tasks, owner-thread messages awaiting a recorded reply, recorded owner
 replies whose channel fanout is not fully delivered, drafts awaiting approval,
 pending bus work (unclaimed envelopes, open, unclaimable or stalled feed jobs and worker handoffs), pending legacy phm bus mailbox mail across every recipient label, pending shared task board deliveries and unheld tasks across every peer, agent
-conversation threads waiting on a reply or blocked, bot seats with pending handoffs, comms
+conversation threads waiting on a reply or blocked, bot seats with pending handoffs, unpublished peer work-dispatch
+results, comms
 questions/approvals awaiting an answer, inbound .eml files awaiting the email
 drop pass, .reply.eml artifacts stuck in the
 email outbox, pending team approvals, inbox proposals awaiting review and
@@ -34,7 +35,7 @@ split) — --severity one severity band, --blocking only items that
 block, --job only items that provably name one job id — a bus or mailbox
 body's job citation, a feed job's id, a board task's fleet item or a
 delivery on a job-carrying thread, a conversation thread's jobs, a teammate
-task's job or a seat's node-job handoff — and --since only items whose
+task's job, a seat's node-job handoff or a peer-dispatch receipt's job — and --since only items whose
 recorded appearance time reaches the cutoff (15m, 2h, 1d, epoch ms or an
 ISO time; an item whose store keeps no timestamp never matches, so unknown
 never counts as new); --contains keeps only items whose scrubbed title or

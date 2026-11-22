@@ -1437,7 +1437,11 @@ cursor has advanced; peer work.status
 does not prove completion — it is the announcing peer's own feed report, sent
 through `peers post` under the same owner rule as `updateWorkStatus`, and it
 carries no claim token or queue evidence. Uncertain reservations remain visible
-and retryable.
+and retryable. The unified comms inbox's `peer-dispatch` source lists the same
+journal's receipts whose `sent` trails `outcome` — results a peer still awaits
+that no other surface enumerates (the dispatch feed page reports only the
+current proposals) — each deep-linking `phm agentnet peers dispatch --apply`;
+an absent journal reports `missing`, an unreadable one `unavailable`.
 Comms-disabled or revoked peers receive no sends. Results stay on the local bus;
 Slack delivery is not part of this consumer.
 
