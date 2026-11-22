@@ -184,7 +184,7 @@ describe('native MCP tool inventory', () => {
     expect(ownerCommsBytes).toBeLessThanOrEqual(1600);
     const agentComms = addedTools.filter(tool => tool.name.startsWith('ashlr_comms_agent_'));
     const agentCommsBytes = agentComms.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
-    expect(agentCommsBytes).toBeLessThanOrEqual(746);
+    expect(agentCommsBytes).toBeLessThanOrEqual(767);
     // phantom_fleet_needs measured 380 bytes with its comma; no headroom.
     const needs = addedTools.find(tool => tool.name === 'phantom_fleet_needs')!;
     const needsBytes = Buffer.byteLength(JSON.stringify(needs)) + 1;

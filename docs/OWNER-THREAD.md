@@ -13,12 +13,22 @@ execution authority. The leader inbox handoff is `createLeaderMailbox` in
 ```sh
 phm comms status --json
 phm comms thread --json
+phm comms thread --channel telegram --since 2h --json
 phm comms send-owner --text "Synthetic reply" --json
 ```
 
-MCP tools: `ashlr_comms_thread` (read) and `ashlr_comms_send_owner` (append;
+MCP tools: `ashlr_comms_thread` (read; optional `channel` and `since` narrow
+the same view) and `ashlr_comms_send_owner` (append;
 KILL refuses it). `ashlr_comms` includes the same adapter rollup as
 `phm comms status --json`.
+
+The thread read takes `--channel <desktop|telegram|email|imessage|slack>` and
+`--since <15m|2h|1d|ISO|epoch-ms>` (the same grammar `phm messages --since`
+uses) to keep one channel's slice or only messages at or after the time. The
+receipt join and the `awaitingReply` mark follow the same slice, so a filtered
+view never reports marks for rows it hid; an unreadable thread still answers
+`unavailable` with `awaitingReply: null` whatever the filter. The desktop
+owner-thread API accepts the same `channel` and `since` query parameters.
 
 The thread read joins the per-channel delivery receipts written at send time:
 `receipts` maps each outbound message id to `{ channel: { state, reason? } }`

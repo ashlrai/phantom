@@ -575,17 +575,40 @@ function awaitingReplyIds(state: ThreadState): string[] {
   return awaitingReplyMessages(state).map(message => message.id);
 }
 
-export function readOwnerThread(options: OwnerThreadOptions, limit = 200):
+/** Optional read slice for `readOwnerThread`: one channel and/or a recorded-time floor. */
+export interface OwnerThreadReadFilter {
+  /** Keep only messages recorded on this channel. */
+  channel?: OwnerChannel;
+  /** Epoch ms; keeps messages whose `at` parses at or after it. An unparseable `at` never satisfies a `since` filter. */
+  since?: number;
+}
+
+/**
+ * The ordered owner thread, capped to the newest `limit` messages that pass
+ * `filter` (receipt joins and the awaiting-reply mark follow the same slice,
+ * so a filtered view never shows marks for rows it hid). An unreadable thread
+ * still reports `unavailable` with `awaitingReply: null` — unknown stays
+ * unknown, never an empty filtered list passed off as fact.
+ */
+export function readOwnerThread(options: OwnerThreadOptions, limit = 200, filter?: OwnerThreadReadFilter):
   | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: OwnerThreadMessage[]; receipts: OwnerThreadReceipts; awaitingReply: string[] }
   | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: []; receipts: OwnerThreadReceipts; awaitingReply: null; unavailable: true } {
   const cap = Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 200) : 200;
+  const inView = (message: OwnerThreadMessage): boolean => {
+    if (filter?.channel !== undefined && message.channel !== filter.channel) return false;
+    if (filter?.since !== undefined) {
+      const at = Date.parse(message.at);
+      if (!Number.isFinite(at) || at < filter.since) return false;
+    }
+    return true;
+  };
   try {
     const state = readState(options);
-    const messages = state.messages.slice(-cap);
+    const messages = state.messages.filter(inView).slice(-cap);
     return {
       schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages,
       receipts: readReceipts(options.runsDir, messages.filter(m => m.direction === 'outbound').map(m => m.id)),
-      awaitingReply: awaitingReplyIds(state),
+      awaitingReply: awaitingReplyMessages(state).filter(inView).map(message => message.id),
     };
   } catch {
     return { schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages: [], receipts: {}, awaitingReply: null, unavailable: true };

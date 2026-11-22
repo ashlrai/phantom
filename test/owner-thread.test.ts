@@ -451,6 +451,53 @@ describe('owner thread', () => {
       expect(reply.deliveries?.find(row => row.channel === 'desktop')?.status).toBe('halted');
     } finally { vi.unstubAllEnvs(); }
   });
+
+  it('filters the thread read by channel and since, keeping marks inside the slice', async () => {
+    const { options } = fixture();
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'tg question', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
+    await acceptOwnerInbound({ channel: 'email', senderId: 'email:owner@example.com', text: 'em ping', idempotencyKey: 'email-msg-0001', at: 1_700_000_100_000 }, options);
+    await sendOwnerReply({ text: 'answer', replyTo: 'telegram-msg-1', idempotencyKey: 'reply-owner-01' }, options);
+    // m1 telegram inbound, m2 email inbound, m3 outbound reply on telegram at the fixture clock.
+    const email = readOwnerThread(options, 200, { channel: 'email' });
+    expect(email.messages.map(message => [message.seq, message.channel])).toEqual([[2, 'email']]);
+    expect(email.awaitingReply).toEqual(['m2']);
+    expect(email.receipts).toEqual({});
+    const telegram = readOwnerThread(options, 200, { channel: 'telegram' });
+    expect(telegram.messages.map(message => message.channel)).toEqual(['telegram', 'telegram']);
+    expect(telegram.awaitingReply).toEqual([]);
+    expect(Object.keys(telegram.receipts)).toEqual(['m3']);
+    const recent = readOwnerThread(options, 200, { since: 1_700_000_050_000 });
+    expect(recent.messages.map(message => message.seq)).toEqual([2]);
+    expect(recent.awaitingReply).toEqual(['m2']);
+  });
+
+  it('serves channel and since filters on the thread CLI and rejects bad values', async () => {
+    const { options } = fixture();
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'tg', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
+    await acceptOwnerInbound({ channel: 'email', senderId: 'email:owner@example.com', text: 'em', idempotencyKey: 'email-msg-0001', at: 1_700_000_100_000 }, options);
+    const lines: string[] = [];
+    const write = console.log;
+    console.log = (line?: unknown) => { lines.push(String(line)); };
+    try {
+      expect(await cmdCommsOwner(['thread', '--channel', 'email', '--json'], options)).toBe(0);
+      expect(await cmdCommsOwner(['thread', '--since', '2023-11-14T22:14:00Z', '--json'], options)).toBe(0);
+      expect(await cmdCommsOwner(['thread', '--channel', 'bogus'], options)).toBe(2);
+      expect(await cmdCommsOwner(['thread', '--since', 'garbage'], options)).toBe(2);
+    } finally { console.log = write; }
+    const byChannel = JSON.parse(lines[0] ?? '{}') as { messages: Array<{ channel: string }> };
+    const bySince = JSON.parse(lines[1] ?? '{}') as { messages: Array<{ seq: number }> };
+    expect(byChannel.messages.map(message => message.channel)).toEqual(['email']);
+    expect(bySince.messages.map(message => message.seq)).toEqual([2]);
+  });
+
+  it('keeps an unreadable thread unavailable under a filter', () => {
+    const { options } = fixture();
+    mkdirSync(join(options.runsDir, 'leader'), { recursive: true });
+    writeFileSync(join(options.runsDir, 'leader', 'owner-thread.json'), 'not json', { mode: 0o600 });
+    const view = readOwnerThread(options, 200, { channel: 'telegram', since: 1 });
+    expect('unavailable' in view).toBe(true);
+    expect(view.awaitingReply).toBeNull();
+  });
 });
 
 function writeForgedHome(root: string, email: string, slackId: string, handle: string): void {

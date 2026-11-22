@@ -51,6 +51,7 @@ import { EVIDENCE_SCHEMAS, recordEvidence, validEvidenceArgs } from './intent/mc
 import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 import { desktopOperatorTools } from './desktop/operator-mcp.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, type OwnerThreadSettings } from './comms/owner-channel.js';
+import type { OwnerThreadReadFilter } from './comms/owner-thread.js';
 
 // Handler-only dependencies are imported lazily inside each handler so
 // `tools/list` pays for schemas and the safety gate only — not the ~300-file
@@ -1424,14 +1425,37 @@ const TOOLS: NativeToolImpl[] = [
 
   {
     name: 'ashlr_comms_thread',
-    description: 'Read the single owner thread (desktop, Telegram, email, iMessage, Slack) with per-channel delivery receipts. No credentials. Read-only.',
-    inputSchema: { type: 'object', properties: { limit: { type: 'number' } } },
+    description: 'Read the single owner thread (desktop, Telegram, email, iMessage, Slack) with per-channel delivery receipts. channel keeps one channel\'s lines; since keeps messages at or after 15m, 2h, 1d, epoch ms or an ISO time. No credentials. Read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number' },
+        channel: { type: 'string', enum: ['desktop', 'telegram', 'email', 'imessage', 'slack'] },
+        since: { type: 'string' },
+      },
+    },
     safety: 'read',
     handler: async args => {
       const { readOwnerThread } = await import('./comms/owner-thread.js');
       const { loadOwnerThreadSettings } = await import('./comms/owner-channel.js');
+      const { isOwnerChannel } = await import('./comms/leader-mailbox.js');
+      const { parseSince } = await import('./fleet/agent-messages.js');
       const limit = typeof args.limit === 'number' ? args.limit : 50;
-      return readOwnerThread(ownerThreadRuntime(loadOwnerThreadSettings(fixedOwnerConfigDir())), limit);
+      const filter: OwnerThreadReadFilter = {};
+      if (args.channel !== undefined) {
+        if (typeof args.channel !== 'string' || !isOwnerChannel(args.channel)) {
+          return { error: 'invalid channel — must be one of: desktop, telegram, email, imessage, slack' };
+        }
+        filter.channel = args.channel;
+      }
+      if (args.since !== undefined) {
+        if (typeof args.since !== 'string') return { error: 'invalid since — takes 15m, 2h, 1d, epoch ms or an ISO time' };
+        const since = parseSince(args.since);
+        if (since === null) return { error: 'invalid since — takes 15m, 2h, 1d, epoch ms or an ISO time' };
+        filter.since = since;
+      }
+      return readOwnerThread(ownerThreadRuntime(loadOwnerThreadSettings(fixedOwnerConfigDir())), limit,
+        filter.channel === undefined && filter.since === undefined ? undefined : filter);
     },
   },
   {

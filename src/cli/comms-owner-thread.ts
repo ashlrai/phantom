@@ -5,6 +5,8 @@
 import { rejectUnknownOptions } from './args.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings } from '../core/comms/owner-channel.js';
 import { liveOwnerTransports } from '../core/comms/owner-live-transport.js';
+import { OWNER_CHANNELS, isOwnerChannel, type OwnerChannel } from '../core/comms/leader-mailbox.js';
+import { parseSince } from '../core/fleet/agent-messages.js';
 import {
   readOwnerCommsStatus,
   readOwnerThread,
@@ -13,7 +15,7 @@ import {
   type OwnerThreadOptions,
 } from '../core/comms/owner-thread.js';
 
-const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--json]';
+const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--channel <desktop|telegram|email|imessage|slack>] [--since <15m|2h|1d|ISO|epoch-ms>] [--json]';
 const SEND_USAGE = 'usage: phm comms send-owner --text <message> [--reply-to <key>] [--idempotency-key <key>] [--json]';
 
 const HELLO_USAGE = 'usage: phm comms owner hello [--json]';
@@ -58,7 +60,7 @@ export async function cmdCommsOwnerStatus(json: boolean, options = ownerThreadOp
 export async function cmdCommsOwner(args: string[], options = ownerThreadOptions()): Promise<number> {
   const verb = args[0];
   if (verb === 'thread') {
-    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json'], values: ['--limit'] });
+    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json'], values: ['--limit', '--channel', '--since'] });
     if (bad) { console.error(bad.message); console.error(THREAD_USAGE); return 2; }
     const limitRaw = args[args.indexOf('--limit') + 1];
     const limit = args.includes('--limit') ? Number(limitRaw) : 200;
@@ -66,7 +68,29 @@ export async function cmdCommsOwner(args: string[], options = ownerThreadOptions
       console.error(THREAD_USAGE);
       return 2;
     }
-    const view = readOwnerThread(options, limit);
+    let channel: OwnerChannel | undefined;
+    if (args.includes('--channel')) {
+      const raw = args[args.indexOf('--channel') + 1];
+      if (raw === undefined || !isOwnerChannel(raw)) {
+        console.error(`--channel takes one of ${OWNER_CHANNELS.join(', ')}.`);
+        console.error(THREAD_USAGE);
+        return 2;
+      }
+      channel = raw;
+    }
+    let since: number | undefined;
+    if (args.includes('--since')) {
+      const raw = args[args.indexOf('--since') + 1];
+      const parsed = raw === undefined ? null : parseSince(raw);
+      if (parsed === null) {
+        console.error('--since takes 15m, 2h, 1d, epoch ms or an ISO time.');
+        console.error(THREAD_USAGE);
+        return 2;
+      }
+      since = parsed;
+    }
+    const filter = channel !== undefined || since !== undefined ? { ...(channel !== undefined ? { channel } : {}), ...(since !== undefined ? { since } : {}) } : undefined;
+    const view = readOwnerThread(options, limit, filter);
     const json = args.includes('--json');
     const awaiting = new Set(view.awaitingReply ?? []);
     emit(json, view, view.messages.map(message => {
