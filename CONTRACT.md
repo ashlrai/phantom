@@ -2451,7 +2451,7 @@ no execution authority; the token returns only to its acquirer.
 `phm agents bus work mine [<agent>] [--job <id>]`. `readBusWorkMine(agent, options?)`
 (`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, job?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, seats?}` or `{status:'invalid',
+asOf, job?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule, or a `job` outside the same rule
 (`invalid-job`). `job` echoes the applied filter and is absent on an
@@ -2698,6 +2698,22 @@ directory or lock file; an unreadable board, a disabled event bus or a read
 fault reports `{status:'unavailable', reason:'board-unreadable'}`. Board
 content stays `trust:'untrusted'` shared data: it coordinates attention,
 never grants execution authority.
+`channels` is the digest's window into the registry channels the agent
+belongs to — the routing context behind every `group:<channel>:<topic>`
+item the next, handoffs, threads, inbox and board sections match, so
+channel-addressed work no longer needs a separate `agents bus channel
+list` read to learn which rooms the agent sits in. It reuses the same
+`readAgentRegistry` load every other section resolves addressing through
+— no second store walk — as `{status:'ok', source, channels}` or
+`{status:'unavailable', reason}`. `source` follows the registry read:
+`missing` is a verified-empty membership, `available` lists real
+memberships name-sorted; an unreadable registry reports `unavailable`,
+never an empty list passed off as fact. Each `BusWorkMineChannel` carries
+the channel `name` and its registered `memberCount` — the digest carries
+no member list (`channel list` does); membership says who may post,
+never presence, attention or authority. An agent ref that resolves to no
+identity has no handle and provably belongs to no channel, so `channels`
+is then empty, not unknown.
 `seats` is the digest's window into bot-seat handoff work, present only on
 the async `readBusWorkMineWithSeats(agent, options?)` read the CLI serves
 (`src/core/agents/bus-work-mine-seats.ts`) — the synchronous

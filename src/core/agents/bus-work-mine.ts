@@ -515,6 +515,26 @@ export type BusWorkMineSeats =
   | { status: 'ok'; matched: number; seats: BusWorkMineSeat[]; truncated: boolean }
   | { status: 'unavailable'; reason: string };
 
+/** One registry channel the agent belongs to — membership says who may post, never presence or authority. */
+export interface BusWorkMineChannel {
+  name: string;
+  /** Registered member count; the digest carries no member list — `agents bus channel list` does. */
+  memberCount: number;
+}
+
+/**
+ * The registry channels the agent belongs to — the routing context behind
+ * every `group:<channel>:<topic>` item the other sections match. `source`
+ * follows the registry read: `missing` is a verified-empty membership (the
+ * agent provably belongs to no channel), `available` lists real memberships;
+ * an unreadable registry is `unavailable`, never an empty list. An agent ref
+ * that resolves to no identity has no handle and so provably belongs to no
+ * channel — `channels` is then empty, not unknown.
+ */
+export type BusWorkMineChannels =
+  | { status: 'ok'; source: 'missing' | 'available'; channels: BusWorkMineChannel[] }
+  | { status: 'unavailable'; reason: string };
+
 export type BusWorkMineResult =
   | { status: 'ok'; agent: BusWorkMineAgent; asOf: string;
       /** The job filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
@@ -525,6 +545,7 @@ export type BusWorkMineResult =
       blocked: BusWorkMineBlocked;
       wakes: BusWorkMineWakes; inbox: BusWorkMineInbox; mailbox: BusWorkMineMailbox;
       board: BusWorkMineBoard;
+      channels: BusWorkMineChannels;
       /** Seat handoff digest — present only on the async
        * `readBusWorkMineWithSeats` read the CLI serves; the synchronous
        * `readBusWorkMine` leaves it absent rather than reporting a section
@@ -1347,10 +1368,22 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
   const inbox = inboxSection(agent, options, nowMs);
   const mailbox = mailboxSection(agent, identity, options, nowMs);
   const board = boardSection(agent, identity, options, nowMs);
+  // Channel memberships come from the same registry read the other sections
+  // resolve addressing through — no second store walk. A `missing` registry
+  // is verified-empty; `unavailable` stays unknown, never an empty list. An
+  // unregistered ref has no handle and provably belongs to no channel.
+  const channels: BusWorkMineChannels = read.status !== 'ok'
+    ? { status: 'unavailable', reason: read.reason }
+    : { status: 'ok', source: read.source,
+        channels: (registry?.channels ?? [])
+          .filter(channel => identity !== undefined && channel.members.includes(identity.handle))
+          .map(channel => ({ name: channel.name, memberCount: channel.members.length }))
+          .sort((a, b) => a.name.localeCompare(b.name)) };
 
   return { status: 'ok', agent: who, asOf,
     ...(options.job === undefined ? {} : { job: options.job }),
-    claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board };
+    claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board,
+    channels };
 }
 
 /** Human suffix naming the message an `origin:'message'` claim leases; '' on every other claim. */
@@ -1572,6 +1605,14 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
       lines.push(`  [task id=${task.id} thread=${task.threadId} item=${task.itemId} hold=${task.hold}` +
         `${task.claimed ? ' claimed' : ''}${owner}] ${task.title}`);
     }
+  }
+
+  const channels = result.channels;
+  if (channels.status !== 'ok') {
+    lines.push(`channels=unknown ${channels.status}`);
+  } else {
+    const names = channels.channels.map(channel => `${channel.name}(${channel.memberCount})`).join(',');
+    lines.push(`channels=${channels.channels.length} source=${channels.source}${names === '' ? '' : ` ${names}`}`);
   }
 
   const seats = result.seats;
