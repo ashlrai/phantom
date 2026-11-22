@@ -8,10 +8,12 @@ import { cmdLeaderBrief } from '../src/cli/leader-brief.js';
 import { groupHostFamilies } from '../src/core/fleet/host-families.js';
 import * as hostFamilies from '../src/core/fleet/host-families.js';
 import { localIso } from '../src/core/fleet/runs-parked-queue.js';
+import * as backlog from '../src/core/release/backlog.js';
 import * as gitLatency from '../src/core/fleet/git-merge-latency.js';
 let dir: string;
 const now = Date.parse('2026-11-21T12:00:00Z'), at = new Date(now).toISOString();
 beforeEach(async () => {
+  vi.spyOn(backlog, 'readReleaseBacklog').mockResolvedValue({ schema: 'phantom.release-backlog.v1', checkedAt: at, counts: { ok: 1, due: 2, stale: 3, unknown: 1 }, repos: [] });
   vi.spyOn(gitLatency, 'readGitMergeLatency').mockResolvedValue(gitLatency.mergeLatencyFromGit([], [], now / 1000));
   vi.spyOn(hostFamilies, 'readHostFamilies').mockResolvedValue(groupHostFamilies(null));
   dir = await mkdtemp(join(tmpdir(), 'leader-brief-'));
@@ -34,6 +36,7 @@ it('bounds 500 jobs, ranks zero PRs in six launches first, and reads status and 
   await writeFile(join(dir, 'stops.tsv'), `^empty.*$\t${now / 1000 + 60}\tquiet\n`);
   const host = groupHostFamilies(Array.from({ length: 8 }, (_, i) => `${100 + i} 1 5 1024 00:01 worker /repo/wt/RQ-WORK-${i}`).join('\n'));
   const b = await readCompactBrief(dir, now, async () => host);
+  expect(compactBriefLines(b)).toContain('Release: 2 due, 3 stale, 1 unknown');
   expect(b.hostLoad.families).toHaveLength(5); expect(b.hostLoad.omitted).toBe(3);
   expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(8192);
   expect(b.families[0]).toMatchObject({ family: 'empty-*', launches: 6, prs: 0, empty: 6 });
