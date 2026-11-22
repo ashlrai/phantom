@@ -16,6 +16,7 @@ import { parseReadyRows } from './ready-row-edit.js';
 import { parseStopFile, stopFilePath, stoppedFamilies } from './stop-file.js';
 import { readSource } from './runs-parked-queue.js';
 import { readHostFamilies } from './host-families.js';
+import { parseTickCost } from './tick-cost.js';
 
 export const LEADER_COMPACT_FILE = 'queue/leader-brief.json';
 const clean = (s: string) => scrubSecrets(s).replace(/\s+/g, ' ').slice(0, 80);
@@ -100,6 +101,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     schema: 'leader.compact-brief.v1', at: new Date(now).toISOString(), headline,
     state: lanes.length || tail || pace?.pools.length || guardian?.length ? 'ready' : 'no data', sources,
     windowHours: 2, emptyWindowHours: 24, lanes,
+    tickWallP95: parseTickCost(log?.text ?? null, now, 2, log?.truncated ?? false).tickWallP95,
     pools: (pace?.pools ?? []).map(p => ({ pool: clean(p.pool), usedPct: p.usedPct, hoursToReset: p.hoursToReset,
       burnPerHour: p.recentPerHour, safeBurn: p.safeBurnPerHour ?? null, verdict: p.verdict ?? 'unknown',
       why: p.verdict === 'unknown' ? [p.usedPct === null ? 'usage missing or stale' : '', p.hoursToReset === null || p.hoursToReset <= 0 ? 'reset missing or elapsed' : '', p.recentPerHour === null ? 'burn rate missing' : ''].filter(Boolean).join('; ') : 'usage, reset and burn rate known' })),

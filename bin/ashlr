@@ -15,4 +15,11 @@ try { enableCompileCache?.(); } catch { /* cache unavailable — run uncached */
 const here = dirname(fileURLToPath(import.meta.url));
 // Use a file:// URL, not a raw path: on Windows `import('C:\\...')` throws
 // ERR_UNSUPPORTED_ESM_URL_SCHEME (the drive letter parses as a protocol).
-import(pathToFileURL(resolve(here, '../dist/cli/index.js')).href);
+const args = process.argv.slice(2);
+if (args[0] === 'daemon' && args[1] === 'status' && args.includes('--fast') &&
+    args.slice(2).every(arg => arg === '--fast' || arg === '--json')) {
+  const { cmdDaemonStatusFast } = await import(pathToFileURL(resolve(here, '../dist/cli/daemon-status-fast.js')).href);
+  process.exitCode = await cmdDaemonStatusFast(args.includes('--json'));
+} else {
+  import(pathToFileURL(resolve(here, '../dist/cli/index.js')).href);
+}
