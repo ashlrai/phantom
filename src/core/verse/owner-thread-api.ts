@@ -11,6 +11,7 @@ import type { LeaderBriefV1 } from '../fleet/leader-job-brief.js';
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings, type OwnerThreadSettings } from '../comms/owner-channel.js';
+import { OWNER_CHANNELS, isOwnerChannel, type OwnerChannel } from '../comms/leader-mailbox.js';
 import { acceptOwnerInbound, readOwnerCommsStatus, readOwnerThread, type OwnerThreadOptions, type OwnerThreadResult } from '../comms/owner-thread.js';
 
 export const VERSE_OWNER_THREAD_PATH = '/api/verse/comms/owner-thread';
@@ -123,8 +124,28 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
       return true;
     }
     let limit: number | null;
+    let channel: OwnerChannel | undefined;
+    let since: number | undefined;
     try {
-      limit = parseLimit(new URL(req.url ?? path, 'http://localhost').searchParams.get('limit'));
+      const params = new URL(req.url ?? path, 'http://localhost').searchParams;
+      limit = parseLimit(params.get('limit'));
+      const channelRaw = params.get('channel');
+      if (channelRaw !== null) {
+        if (!isOwnerChannel(channelRaw)) {
+          sendJson(res, 400, { error: `channel must be one of: ${OWNER_CHANNELS.join(', ')}.` });
+          return true;
+        }
+        channel = channelRaw;
+      }
+      const sinceRaw = params.get('since');
+      if (sinceRaw !== null) {
+        const parsed = parseSince(sinceRaw);
+        if (parsed === null) {
+          sendJson(res, 400, { error: 'since takes 15m, 2h, 1d, epoch ms or an ISO time.' });
+          return true;
+        }
+        since = parsed;
+      }
     } catch {
       limit = null;
     }
@@ -134,7 +155,10 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
     }
     try {
       const options = runtime(deps);
-      const thread = readOwnerThread(options, limit);
+      const filter = channel !== undefined || since !== undefined
+        ? { ...(channel !== undefined ? { channel } : {}), ...(since !== undefined ? { since } : {}) }
+        : undefined;
+      const thread = readOwnerThread(options, limit, filter);
       const { adapters, kill, paused } = readOwnerCommsStatus(options);
       sendJson(res, 200, {
         ...thread,

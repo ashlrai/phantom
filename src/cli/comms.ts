@@ -593,7 +593,7 @@ function printCommsHelp(): void {
   console.log('    email-cycle                  process the enabled saved email drop configuration');
   console.log('    setup-email                  print drop paths and Mail.app / forwarder setup');
   console.log('    status [--json]              config + pending/outstanding + watermark; --json is the owner-thread adapter rollup');
-  console.log('    thread [--limit n] [--json]  the single owner thread, oldest first');
+  console.log('    thread [--limit n] [--channel c] [--since t] [--json]  the single owner thread, oldest first');
   console.log('    send-owner --text <message>  fan a leader reply out to the owner channel and the desktop thread');
   console.log('    send-test                    post + send a test report to verify the channel');
   console.log('    cycle                        run one send-pending + poll-replies pass');
