@@ -28,7 +28,7 @@ const JOBS: Record<string, { rows: unknown[]; mtimeHours?: number }> = {
 interface Host { jobs?: typeof JOBS; keep?: string; pinsValid?: boolean; dirty?: Set<string> }
 
 /** Fully readable fake host; every reader, the clean check, the remover and the log are spies. */
-function host({ jobs = JOBS, keep = 'RQ-KEPT\n', pinsValid = true, dirty = new Set(['RQ-DIRTY']) }: Host = {}) {
+export function host({ jobs = JOBS, keep = 'RQ-KEPT\n', pinsValid = true, dirty = new Set(['RQ-DIRTY']) }: Host = {}) {
   const names = ['guardian-claude', ...Object.keys(jobs)];
   const files: Record<string, string> = { [`${RUNS}/queue/status.json`]: '{}', [`${RUNS}/queue/keep.txt`]: keep };
   const fs: WtAuditFs = {
@@ -50,6 +50,7 @@ function host({ jobs = JOBS, keep = 'RQ-KEPT\n', pinsValid = true, dirty = new S
     measure: vi.fn(() => ({ bytes: 2e9, complete: true })),
     remove: vi.fn(async () => undefined),
     logRemoval: vi.fn(async () => undefined),
+    readReapLog: vi.fn(async () => ({ state: 'missing' as const, text: '' })),
   } satisfies WorktreesDeps;
   return deps;
 }
@@ -111,7 +112,7 @@ describe('phm worktrees list', () => {
     const first = JSON.stringify(await readWorktrees('list', host()));
     expect(JSON.stringify(await readWorktrees('list', host()))).toBe(first);
     const parsed = JSON.parse(first) as WorktreesReport;
-    expect(Object.keys(parsed)).toEqual(['schema', 'generatedAt', 'sourcesOk', 'warnAt', 'counts', 'reclaimableBytes', 'reclaimableComplete', 'mode', 'rows']);
+    expect(Object.keys(parsed)).toEqual(['schema', 'generatedAt', 'sourcesOk', 'warnAt', 'counts', 'reclaimableBytes', 'reclaimableComplete', 'mode', 'rows', 'reaper']);
     expect(Object.keys(parsed.rows[0]!)).toEqual(['job', 'repo', 'state', 'ageHours', 'bytes', 'clean', 'exitOnly', 'stale', 'safe', 'hold']);
     expect(parsed).toMatchObject({ schema: 'worktrees.v1', generatedAt: '2026-11-17T12:00:00.000Z', warnAt: 40, mode: 'list' });
   });
