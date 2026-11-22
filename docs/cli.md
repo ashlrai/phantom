@@ -124,7 +124,7 @@ Every command, grouped by topic.
     eval [--limit N]                                                      Local-agent eval harness: adaptive prompts OFF vs ON, steps/done/tokens (M44).
     eval attention [--window 1d|7d|30d]                                   Metadata-only fleet attention report: context pressure, retrieval, yield, routing, and traces.
     eval checkpoints --file <fixture.json> [--json]                       Compare scripted context retention and input-token estimates; requires PHANTOM_CHECKPOINTS=1.
-    skills list [--status <s>] [--limit N] [--json]                       List skills learned from merged PRs (newest revision each; counts are real or "unknown").
+    skills list [--status <s>] [--limit N] [--outcomes] [--json]          List skills learned from merged PRs (newest revision each; counts are real or "unknown"). --outcomes joins sample-gated trajectory outcome tallies per revision.
     skills list --all [--json]                                            Every skill fleet agents have: Claude Code, Codex and learned (the Skills pane).
     eval prompts --dataset <jobs.jsonl>                                   Per-class prompt-variant A/B replay; promotes a variant only on a significant lift.
     skills audit <pack-path> [--json]                                     Read-only quarantine audit for external skill structure, trigger routing, collisions, and behavioral fixtures.
