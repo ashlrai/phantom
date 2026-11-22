@@ -44,6 +44,7 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
 import concurrency, batcher, batch_sessions, work_market, postrun_pr, rebase_order
 from session_handoff import handoff_advice
 from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target, repair_target, repair_freshness, merged_jobs, request_hash, update_launch_state, RecutAdmission
+from launch_precheck import is_land_job, land_freshness
 import fleet_controller as fc
 # ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
 # ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
@@ -2140,7 +2141,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 and not market_specs[m].get("needs") and not market_specs[m].get("exclusive")
                 and not market_specs[m].get("min_tier") and not market_specs[m].get("max_cost_class")
                 and not market_specs[m].get("max_tier") and not market_specs[m].get("data_class")
-                and f[2] in LANES and batcher.batchable_id(m) and not drain_target(m, f[1]) and f[2] in batcher.BATCH_LANES and f[2] in BS_CFG["lanes"]
+                and f[2] in LANES and batcher.batchable_id(m) and not is_land_job(m) and not drain_target(m, f[1]) and f[2] in batcher.BATCH_LANES and f[2] in BS_CFG["lanes"]
                 and (lead or m not in seen) and not retired(m)
                 and not (result(m) or "").startswith("RESULT PR") and not disk_reuse_only
                 and m not in ACTIVE_LAUNCHES and m not in alive and m not in reaping and m not in publishing and m not in keep and m not in park_state
@@ -2302,12 +2303,13 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         # Defer it instead of accidentally launching unverified work.
         if j in park_state and (pc_n >= PC_MAX or over_budget()):
             rest.append(line); continue
-        if repair_target(j, repo):
-            # Repairs must cross the freshness boundary before claiming or batching.
+        if repair_target(j, repo) or is_land_job(j):
+            # Repairs and LAND sources cross freshness before claiming or batching.
             if pc_n >= PC_MAX or over_budget():
                 rest.append(line); continue
             pc_n += 1
-            reason = repair_freshness(j, repo, rd(pf), H, _run)
+            freshness = land_freshness if is_land_job(j) else repair_freshness
+            reason = freshness(j, repo, rd(pf), H, _run)
             if reason:
                 metric(dict(event="outcome", state="DONE-NOOP", job=j, repo=repo, lane=lane,
                             reason=reason, launched=False))

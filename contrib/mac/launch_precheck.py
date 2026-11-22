@@ -190,7 +190,58 @@ def admission_rank(job, tier, lane, groups):
                 reason="observed_merge_rate_24h" if known else "unknown_outcomes" if results else "unknown_sample", outcome="ready")
 
 
+def is_land_job(job):
+    return bool(re.fullmatch(r"(?:RQ-)?(?:PHX-)?[A-Z]*LAND(?:[-_0-9].*)?", job))
+
+
+def land_sources(job, repo, prompt):
+    """Only LAND identities and their verbatim task line name source PRs.
+
+    Wrapper/context references never count. Missing, foreign or oversized source
+    sets stay unknown; a partial set must never prove the whole job obsolete.
+    """
+    if not is_land_job(job): return ()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", repo): return ()
+    tasks = [t for t in prompt.splitlines() if t.startswith(job + " (") and "):" in t]
+    if len(tasks) != 1: return ()
+    task = tasks[0]
+    urls = re.findall(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/([1-9][0-9]*)\b", task)
+    qualified = re.findall(r"(?<![\w/])((?:[\w.-]+/)?[a-z0-9-]+)#([1-9][0-9]*)\b", task)
+    if any(owner != "ashlrai/" + repo for owner, _ in urls) or any(r not in (repo, "ashlrai/" + repo) for r, _ in qualified): return ()
+    sources = {int(n) for _, n in urls + qualified}
+    sources.update(int(n) for n in re.findall(r"(?<!\w)#([1-9][0-9]*)\b", task))
+    sources.update(int(n) for n in re.findall(r"\bpr=([1-9][0-9]*)\b", task.split("):", 1)[0]))
+    target = re.fullmatch(r"(?:RQ-)?LAND-(?:(?:RECUT-)?" + re.escape(repo) + r"-|PR)([1-9][0-9]*)", job)
+    if target: sources.add(int(target[1]))
+    return tuple(sorted(sources)) if len(sources) <= 8 else ()
+
+
+def land_freshness(job, repo, prompt, home, runner=None):
+    """Read every source through scoped identity; only all terminal proves a skip.
+
+    No merge/check mutation, subprocess text or inference from an absent PR.
+    """
+    sources = land_sources(job, repo, prompt)
+    if not sources: return None
+    runner = runner or run
+    try:
+        for number in sources:
+            result = runner(["locus", "exec", "--", "gh", "pr", "view", str(number),
+                             "--repo", "ashlrai/" + repo, "--json", "number,state"], 3, cwd=home)
+            if result.returncode or len(result.stdout) > 65536: return None
+            pr = json.loads(result.stdout)
+            if (not isinstance(pr, dict) or type(pr.get("number")) is not int
+                    or pr["number"] != number or pr.get("state") not in ("MERGED", "CLOSED")): return None
+        return "source_prs_terminal"
+    except Exception:
+        return None
+
+
 def terminal_target(job, repo, prompt, states):
+    sources = land_sources(job, repo, prompt)
+    if is_land_job(job):
+        return "source_prs_terminal" if sources and all(states.get(f"https://github.com/ashlrai/{repo}/pull/{n}")
+                                              in ("MERGED", "CLOSED") for n in sources) else None
     # Only explicit task-envelope targets or the refix producer's exact ID count;
     # incidental PR references in prose must never retire new work.
     task = next((t for t in prompt.splitlines() if t.startswith(job + " (")), "")
@@ -359,6 +410,9 @@ def precheck(job, repo, prompt, home, runs, runner=run):
             receipt = re.fullmatch(
                 rf"SKIP {re.escape(job)} code=10 reason=(id_merged_pr_[1-9][0-9]*|pr_[1-9][0-9]*_(?:MERGED|CLOSED))\n?",
                 r.stdout)
+            if receipt and is_land_job(job) and receipt.group(1).startswith("pr_"):
+                reason = land_freshness(job, repo, prompt, home, runner)
+                return (10, reason) if reason else None
             return (10, receipt.group(1)) if receipt else (13, "unproven_completion")
         if r.returncode == 13:
             # Only retain known, exact receipts: subprocess output is untrusted and
@@ -368,6 +422,7 @@ def precheck(job, repo, prompt, home, runs, runner=run):
                 r.stdout)
             return (13, receipt.group(1) if receipt else "invalid_or_unknown_receipt")
         if r.returncode in (11, 12):
+            if r.returncode == 11 and is_land_job(job): return None
             m = re.search(r"reason=(\S+)", r.stdout)
             return (r.returncode, m.group(1) if m else "?")
     except Exception:

@@ -1930,6 +1930,48 @@ if __name__ == '__main__':
     unittest.main()
 
 
+class LandSourceTests(unittest.TestCase):
+    fixture = DispatchPriorityTests.fixture
+    claims = DispatchPriorityTests.claims
+    run_tick = DispatchPriorityTests.run_tick
+
+    def test_sources_resolve_before_worktree_or_claim_even_with_batching_enabled(self):
+        for states in (("MERGED", "MERGED"), ("CLOSED", "CLOSED"), ("MERGED", "CLOSED"),
+                       ("MERGED", "OPEN"), ("OPEN", "CLOSED"), ("MERGED", "unavailable")):
+            with self.subTest(states=states):
+                home, env = self.fixture()
+                root = home / '.ashlr-runs'
+                (root / 'queue/BATCH_OFF').unlink()
+                (root / 'bin/batch-launch.sh').write_text('#!/bin/bash\nexit 0\n')
+                job = 'RQ-PHX-CONSOLELAND791'
+                queue_job(home, job, 'codex-cmp')
+                prompt = f'{job} (repo=phantom, pr=41): Recut sources #41 and #42 in src/web-ui/land.ts.'
+                (root / f'queue/prompts/{job}.md').write_text(prompt)
+                queue_job(home, 'RQ-PHX-CONSOLE-OTHER', 'codex-cmp')
+                (root / 'queue/prompts/RQ-PHX-CONSOLE-OTHER.md').write_text('Update src/web-ui/other.ts')
+                # The legacy helper only sees the first source; its receipt is insufficient.
+                (root / 'bin/precheck.sh').write_text(f'echo SKIP {job} code=10 reason=pr_41_MERGED\nexit 10\n')
+                locus = home / 'stubbin/locus'
+                locus.write_text('#!/usr/bin/env python3\nimport json, sys\n'
+                    f'states = {dict(zip(("41", "42"), states))!r}\n'
+                    'assert sys.argv[1:6] == ["exec", "--", "gh", "pr", "view"]\n'
+                    'n = sys.argv[6]; state = states[n]\n'
+                    'if state == "unavailable": sys.exit(1)\n'
+                    'print(json.dumps(dict(number=int(n), state=state)))\n')
+                locus.chmod(0o755)
+                self.run_tick(home, env)
+                terminal = all(s in ('MERGED', 'CLOSED') for s in states)
+                self.assertEqual(job in self.claims(home), not terminal)
+                rows = [json.loads(r) for r in (root / 'metrics/jobs.jsonl').read_text().splitlines()]
+                skips = [r for r in rows if r.get('reason') == 'source_prs_terminal']
+                self.assertEqual(len(skips), int(terminal))
+                if terminal:
+                    self.assertFalse(skips[0]['launched'])
+                    self.assertFalse((home / f'Projects/ashlrai/wt/{job}').exists())
+                    self.assertFalse(dispatched(home, job))
+                self.assertNotIn('BATCH ', events(home))
+
+
 class DiffMetricsTests(unittest.TestCase):
     def measure(self, scenario, base_override=None, lane='codex-cmp', log='finished\n', rc=None):
         tmp = build(slots=held_lanes())
