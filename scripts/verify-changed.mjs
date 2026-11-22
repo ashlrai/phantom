@@ -187,6 +187,99 @@ export function emptyChangedTests(existingChangedPaths, read = (p) => readFileSy
   });
 }
 
+/**
+ * Paths the conflict-marker scan must not read: test/fixtures payloads are
+ * inputs that legitimately embed marker text — a fixture simulating a
+ * conflicted merge is valid test data, not a leftover resolution. Every
+ * other changed file still on disk is a candidate; binary and oversized
+ * files are filtered by content in the runner, not by name here.
+ */
+const CONFLICT_SCAN_EXEMPT = /^test\/fixtures\//;
+
+/**
+ * Bucket changed, existing files the conflict-marker scan reads. Unlike the
+ * extension buckets this is content-scoped — every changed file is a
+ * candidate because a leftover marker breaks grammars the per-type checks
+ * never see (markdown, TSV, HTML, extensionless data) and hides inside the
+ * strings, comments and template literals the typed checks do parse.
+ * Deleted paths and fixture payloads stay out; the rest pass through sorted.
+ */
+export function selectConflictScanFiles(changedPaths, existingPaths) {
+  const existing = new Set(existingPaths);
+  return [...new Set(changedPaths)].filter(Boolean).sort()
+    .filter((path) => existing.has(path) && !CONFLICT_SCAN_EXEMPT.test(path));
+}
+
+/**
+ * Git writes unresolved-conflict markers at column 0 only: `<<<<<<<` and
+ * `>>>>>>>` (each optionally carrying a label) plus the diff3 `|||||||`
+ * base marker. `=======` is deliberately absent — a seven-equals line is a
+ * legal setext heading, and every real conflict already carries the
+ * angle/pipe markers. Runs longer than seven characters match too: eight
+ * `<` is marker-shaped, never legitimate syntax.
+ */
+const CONFLICT_MARKER_LINE = /^(?:<{7}|>{7}|\|{7})/;
+
+/**
+ * Marker hits in `text` as `{ line, marker }` pairs — 1-based line number
+ * plus the seven-character token only, never the label a branch name could
+ * ride on. Only column 0 counts: git never indents its markers, and an
+ * indented marker inside a docstring, block scalar or code sample is
+ * content, not a resolution leftover. A leading BOM is stripped so the
+ * first line still scans.
+ */
+export function conflictMarkers(text) {
+  if (typeof text !== 'string') return [];
+  const hits = [];
+  const lines = text.replace(/^\uFEFF/, '').split('\n');
+  for (const [index, line] of lines.entries()) {
+    const marker = line.match(CONFLICT_MARKER_LINE)?.[0];
+    if (marker) hits.push({ line: index + 1, marker: marker.slice(0, 7) });
+  }
+  return hits;
+}
+
+/**
+ * Scan changed files for leftover git merge-conflict markers — the one
+ * breakage class no per-type syntax check reliably polices, since markers
+ * hide inside strings, comments and template literals the typed parsers
+ * accept, and land untouched in file types with no grammar at all
+ * (markdown, TSV, HTML, extensionless data). Binary files — a NUL byte in
+ * the first 8 KiB, the same sniff git applies — and files over 64 MiB of
+ * bulk data are skipped: they carry no line grammar a marker could
+ * corrupt. Every scannable file is read whole as UTF-8; each marker line
+ * reports `path:line: <marker>` capped at eight hits per file like the
+ * JSONL check. Like the JSON checks there is no preflight or SKIP path; an
+ * unreadable file fails closed.
+ */
+export function runConflictMarkerCheck(root, files, read = readFileSync) {
+  const failures = [];
+  for (const path of files) {
+    const full = resolve(root, path);
+    let data;
+    try {
+      if (statSync(full).size > 64 * 1024 * 1024) continue;
+      data = read(full);
+    } catch (error) {
+      failures.push(`${path}: ${error.message}`);
+      continue;
+    }
+    const buffer = Buffer.isBuffer(data) ? data
+      : ArrayBuffer.isView(data) ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+      : Buffer.from(String(data), 'utf8');
+    if (buffer.subarray(0, 8192).includes(0)) continue;
+    const hits = conflictMarkers(buffer.toString('utf8'));
+    for (const hit of hits.slice(0, 8)) failures.push(`${path}:${hit.line}: ${hit.marker}`);
+    if (hits.length > 8) failures.push(`${path}: ${hits.length - 8} more marker lines`);
+  }
+  if (failures.length) {
+    for (const failure of failures) console.error(`FAIL conflict marker check: ${failure}`);
+    return false;
+  }
+  console.log('PASS conflict marker check');
+  return true;
+}
+
 /** Merge-base of HEAD and origin/master — the diff anchor base-scoped checks share. */
 export function masterMergeBase(root, exec = execFileSync) {
   return exec('git', ['merge-base', 'HEAD', 'origin/master'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
@@ -1178,6 +1271,7 @@ function main() {
   let shellFiles = [];
   let perlFiles = [];
   let nodeFiles = [];
+  let conflictFiles = [];
   try {
     changed = collectChangedPaths(root, comparison);
     const existing = changed.filter((path) => {
@@ -1189,6 +1283,7 @@ function main() {
       }
     });
     selection = selectChangedFiles(changed, existing);
+    conflictFiles = selectConflictScanFiles(changed, existing);
     projects = typecheckProjects(changed);
     const scope = projects.backend && projects.web ? 'backend and web' : projects.backend ? 'backend only' : projects.web ? 'web only' : 'typecheck skipped';
     console.log(`verify: ${new Set(changed).size} changed files (${comparison?.mode ?? 'merge-base'}), ${scope}${projects.backend || projects.web ? ', incremental' : changed.length ? ': no project change' : ': no changes'}`);
@@ -1383,6 +1478,11 @@ function main() {
   if (selection.patchFiles.length === 0) {
     console.log('PASS patch syntax check skipped: no patch or diff change');
   } else if (!runPatchSyntaxCheck(root, selection.patchFiles)) {
+    process.exitCode = 1;
+  }
+  if (conflictFiles.length === 0) {
+    console.log('PASS conflict marker check skipped: no changed file to scan');
+  } else if (!runConflictMarkerCheck(root, conflictFiles)) {
     process.exitCode = 1;
   }
   if (selection.quarantineCheck) {
