@@ -20,6 +20,7 @@ import { aheadWords, readPaceByPool, type PaceVerdict } from './pace-verdict.js'
 import { gapLaneRoom, parkedWords } from './gap-lane-room.js';
 import { judgeLanes, type LaneFacts, type LaneVerdict } from './autofill-lanes.js';
 import { planAutofill, type QueueAutofillReport } from './queue-autofill.js';
+import { readSupplyRank } from './supply-floor.js';
 
 export const AUTOFILL_EVENT_SCHEMA = 'queue.autofill.event.v1' as const;
 export const AUTOFILL_STATUS_SCHEMA = 'queue.autofill.status.v1' as const;
@@ -46,6 +47,8 @@ export interface AutofillEvent {
 }
 
 export interface RunAutofillOptions {
+  now?: number;
+  existing?: readonly { id: string; scope: string }[];
   lane: string;
   counts: LaneCounts;
   /** Wanted ready jobs; defaults to the lane's slot target. */
@@ -87,7 +90,7 @@ export async function runQueueAutofill(o: RunAutofillOptions): Promise<QueueAuto
   const want = o.min ?? o.counts.target;
   if (want === null || want === undefined) return { error: 'no-target' };
   const store = new QueueStore(o.dir);
-  const existing = (await store.read().catch(() => ({ jobs: [] }))).jobs;
+  const existing = [...(await store.read().catch(() => ({ jobs: [] }))).jobs, ...(o.existing ?? [])];
   const { gatherCandidates, MAX_PROPOSE_COUNT, proposeBets, readRepoName } = await import('./bets-propose.js');
   const { helpItems, readApiRoutes, readDocHeadings, readPanes } = await import('./bets-check.js');
   const repo = readRepoName(o.root);
@@ -98,7 +101,8 @@ export async function runQueueAutofill(o: RunAutofillOptions): Promise<QueueAuto
     : { proposals: [], droppedGoals: [] };
   const gapOpen = o.counts.queued !== null && want > o.counts.queued;
   const sources = gapOpen ? await readFirstSources(o, repo) : { first: [], shippedIdeas: [], stoppedFamilies: undefined };
-  let report = planAutofill({ lane: o.lane, min: want, ...o.counts, existing, proposed, ...sources });
+  const candidateRank = await readSupplyRank(o.runsDir ?? runsDirOf({}), o.now ?? Date.now());
+  let report = planAutofill({ lane: o.lane, min: want, ...o.counts, existing, proposed, ...sources, candidateRank });
   if (o.limit !== undefined && report.drafted.length > o.limit) {
     const over = report.drafted.slice(o.limit);
     report = {
@@ -315,8 +319,8 @@ export async function runAutofillTick(o: AutofillTickOptions): Promise<AutofillT
   // A pool ahead of pace gets no new rows; a pool behind pace is fed first (the hourly cap is shared). Unknown changes nothing.
   const starved = verdicts.filter(v => v.starved).map(v => v.lane);
   const paceOf = (lane: string): PaceVerdict['state'] | undefined => pace.get(lane)?.state;
-  const aheadLanes = starved.filter(lane => paceOf(lane) === 'ahead');
-  const lanes = starved.filter(lane => paceOf(lane) !== 'ahead').sort((a, b) => Number(paceOf(b) === 'behind') - Number(paceOf(a) === 'behind'));
+  const aheadLanes = starved.filter(lane => paceOf(lane) === 'ahead' || pace.get(lane)?.verdict === 'over');
+  const lanes = starved.filter(lane => !aheadLanes.includes(lane)).sort((a, b) => Number(paceOf(b) === 'behind') - Number(paceOf(a) === 'behind'));
   for (const lane of aheadLanes) {
     const others = lanes.length ? `rows go to ${lanes.join(', ')} instead` : 'no other pool has a free slot, so nothing was added';
     (report.paceNotes ??= []).push(`${aheadWords(pace.get(lane)!)}: ${others}`);
