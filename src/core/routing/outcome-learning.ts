@@ -37,8 +37,10 @@ export interface OutcomeCellView {
   /**
    * Attempts whose merge was recorded as reverted — the merge did not hold.
    * Counted in `attempts` as a failure, never in `merges` or `goodMerges`;
-   * only the jobs-ledger dialect produces them (the dispatch log has no
-   * revert signal). Zero when no revert evidence was recorded.
+   * only the jobs-ledger dialect produces them — in-ledger revert evidence
+   * plus merges the improve/revert-outcomes.jsonl scan ledger stands as
+   * reverted through the verdict row's unambiguous PR claim (the dispatch
+   * log has no revert signal). Zero when no revert evidence was recorded.
    */
   reverted: number;
   merges: number;
@@ -192,6 +194,10 @@ const IDENT = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
 /** batcher.RETRY — per-line batch outcomes that requeue the member without a publish, so the attempt is dead. */
 const BATCH_RETRY_OUTCOMES: ReadonlySet<string> = new Set(['failed', 'deferred', 'unreported']);
+/** PR URL spellings the jobs ledger and its reconciler rows carry (router/outcomes.ts reads the same set). */
+const PR_URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr'] as const;
+/** A github.com pull URL in the canonical shape dispatchd and the fleet writers emit (same grammar router/outcomes.ts applies). */
+const GITHUB_PULL_URL = /^https:\/\/github\.com\/([^/?#\s]+)\/([^/?#\s]+)\/pull\/([1-9]\d*)\/?$/i;
 const CLOCK = /^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/;
 const STAMP = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) (\S+)(?: (.*))?$/;
 const RESOURCE_WORDS: Readonly<Record<string, string>> = {
@@ -588,6 +594,55 @@ export function learnOutcomes(text: string, censor?: CensorOptions): OutcomeLear
   return fold(parsed.events, parsed.malformed, censor);
 }
 
+/** First non-empty PR URL spelling on a ledger row; null when none is recorded. */
+function rowPrUrl(row: Record<string, unknown>): string | null {
+  for (const key of PR_URL_KEYS) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+/** `owner/repo#n` (lowercase repo) for a pull URL; null when the URL is not that shape. */
+function pullRequestKey(url: string): string | null {
+  const match = GITHUB_PULL_URL.exec(url);
+  return match ? `${match[1]!.toLowerCase()}/${match[2]!.toLowerCase()}#${match[3]}` : null;
+}
+
+/**
+ * PR URL → claiming job, kept only when exactly one job claims the URL —
+ * the same unambiguous-claim rule the router outcome fold applies, so a
+ * contested or foreign URL never resolves to a job. Batch session ids are
+ * infrastructure and never claim. Built only when the caller supplied
+ * standing revert keys; the scan itself is a best-effort evidence pass
+ * (malformed lines are the main pass's count, not this one's).
+ */
+function prUrlClaims(lines: readonly string[]): Map<string, string> {
+  const claims = new Map<string, Set<string>>();
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed === '') continue;
+    let row: Record<string, unknown>;
+    try {
+      const value: unknown = JSON.parse(trimmed);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      row = value as Record<string, unknown>;
+    } catch { continue; }
+    if (isNodePoolLedgerRow(row)) continue;
+    const job = ledgerJobId(row);
+    const url = rowPrUrl(row);
+    if (job === null || job.startsWith(BATCH_SESSION_PREFIX) || url === null) continue;
+    const set = claims.get(url) ?? new Set<string>();
+    set.add(job);
+    claims.set(url, set);
+  }
+  const urlToJob = new Map<string, string>();
+  for (const [url, jobs] of claims) {
+    if (jobs.size === 1) urlToJob.set(url, [...jobs][0]!);
+  }
+  return urlToJob;
+}
+
 /**
  * The jobs-ledger dialect: dispatchd's `launch` rows are the assigns — `lane`
  * is the resource and `tier` keys job type, the only work-shape field the
@@ -650,6 +705,19 @@ export function learnOutcomes(text: string, censor?: CensorOptions): OutcomeLear
  * launch resolves `reverted` too: the revert proves a merge existed and
  * did not hold, so the attempt is a recorded failure rather than missing
  * data for the censor horizon.
+ *
+ * A second revert source joins when the caller supplies the standing keys
+ * resolved from `improve/revert-outcomes.jsonl` (`phm fleet reverts
+ * --record` detections — reverts only git history proves, which the jobs
+ * ledger and dispatch log never record): a MERGED verdict whose own PR URL
+ * is claimed by exactly that job (`prUrlClaims`, the same unambiguous-claim
+ * rule the router outcome fold applies) and whose `owner/repo#n` key stands
+ * in the set resolves `reverted` instead of a held merge. The check reads
+ * the verdict row's own URL, so a relaunch's merge of a different PR is a
+ * fresh held merge exactly like the in-ledger era rule, and a contested or
+ * foreign claim never discounts. Keys that are absent, empty or unmatched
+ * change nothing — git-only reverts the ledger never wrote still count as
+ * the merges they were.
  */
 function ledgerAssign(row: Record<string, unknown>): AssignEvent | null {
   const job = ledgerJobId(row);
@@ -663,7 +731,7 @@ function ledgerAssign(row: Record<string, unknown>): AssignEvent | null {
   return { kind: 'assign', job, repo, resource, model, jobType, atMs };
 }
 
-function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed: number } {
+function parseJobsLedgerEvents(text: string, revertedPrKeys?: ReadonlySet<string> | null): { events: ParsedEvent[]; malformed: number } {
   const events: ParsedEvent[] = [];
   let malformed = 0;
   const usageByJob = new Map<string, number>();
@@ -676,6 +744,11 @@ function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed
   const batchClaims = new Map<string, { bid: string; assign: AssignEvent }>();
   const batchMembers = new Map<string, Set<string>>();
   const lines = text.split(/\r?\n/);
+  // PR URL → job claims for the standing-revert join, built only when the
+  // caller supplied keys; null keeps the fold on its in-ledger evidence alone.
+  const urlToJob = revertedPrKeys === undefined || revertedPrKeys === null || revertedPrKeys.size === 0
+    ? null
+    : prUrlClaims(lines);
   // Newest ledger line carrying positive revert evidence per job id. Every
   // spelling hasRevertEvidence accepts contains 'revert', so the regex
   // keeps this pass from parsing rows that cannot carry the evidence.
@@ -816,7 +889,21 @@ function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed
     // still spent its recorded usage — never as a held merge. Revert
     // evidence older than the verdict belongs to an earlier merge era and
     // leaves this one standing.
-    const heldMerge = state === 'MERGED' && (maxRevertLine.get(job) ?? -1) < lineNo;
+    // The standing revert-outcomes join marks only through this verdict
+    // row's own unambiguous PR claim: urlToJob.get(u) === job means the
+    // job is the URL's single claimant, so a reverted pull can never mark
+    // a foreign or contested merge — and because the claim names this
+    // verdict's own PR, a relaunch's merge of a different PR stays held
+    // exactly like the in-ledger era rule.
+    let prReverted = false;
+    if (urlToJob !== null) {
+      const verdictUrl = rowPrUrl(row);
+      if (verdictUrl !== null && urlToJob.get(verdictUrl) === job) {
+        const key = pullRequestKey(verdictUrl);
+        prReverted = key !== null && revertedPrKeys?.has(key) === true;
+      }
+    }
+    const heldMerge = state === 'MERGED' && !prReverted && (maxRevertLine.get(job) ?? -1) < lineNo;
     events.push({
       kind: 'outcome', job,
       state: state === 'MERGED' ? (heldMerge ? 'merged' : 'reverted') : 'closed',
@@ -844,18 +931,28 @@ function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed
  * event log's ASSIGN/OUTCOME dialect and the jobs ledger's launch/finish/
  * reconciler rows. Either text may be null when its file was unreadable; a
  * null source contributes nothing. Events fold in the order given.
+ *
+ * `revertedPrKeys` is the optional standing revert set (`owner/repo#n`)
+ * resolved from `improve/revert-outcomes.jsonl` — the detections
+ * `phm fleet reverts --record` appends for merges only git history proves.
+ * When supplied, a MERGED verdict whose own PR URL is unambiguously claimed
+ * by its job and whose key stands reverted resolves `reverted`, the same
+ * discount in-ledger revert evidence applies; absent, empty or unmatched
+ * keys change nothing, so git-only reverts the jobs ledger never wrote
+ * still count against the cell instead of reading as held merges.
  */
 export function learnFleetOutcomes(
   dispatchLog: string | null,
   jobsLedger: string | null,
   censor?: CensorOptions,
+  revertedPrKeys?: ReadonlySet<string> | null,
 ): OutcomeLearning {
   const dispatch = dispatchLog === null
     ? { events: [] as ParsedEvent[], malformed: 0 }
     : parseEvents(dispatchLog);
   const ledger = jobsLedger === null
     ? { events: [] as ParsedEvent[], malformed: 0 }
-    : parseJobsLedgerEvents(jobsLedger);
+    : parseJobsLedgerEvents(jobsLedger, revertedPrKeys);
   return fold([...dispatch.events, ...ledger.events], dispatch.malformed + ledger.malformed, censor);
 }
 

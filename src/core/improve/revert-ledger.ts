@@ -171,3 +171,15 @@ export function standingRevertKeys(records: readonly RevertOutcomeRecord[]): Set
   for (const [key, record] of last) if (record.relandedBy === null) keys.add(key);
   return keys;
 }
+
+/**
+ * Standing revert keys read straight from the ledger path — the one-call
+ * form for consumers that join by PR identity (the router outcome fold,
+ * outcome learning). Anything but a fully intact 'read' contributes an
+ * empty set: a missing ledger means no recorded detections, and corrupt or
+ * oversized evidence never discounts a merge.
+ */
+export function readStandingRevertKeys(path = revertOutcomesLedgerPath()): ReadonlySet<string> {
+  const read = readRevertOutcomeRecords(path);
+  return read.state === 'read' ? standingRevertKeys(read.records) : new Set<string>();
+}

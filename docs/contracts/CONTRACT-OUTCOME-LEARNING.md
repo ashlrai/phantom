@@ -80,6 +80,22 @@ existed and did not hold, so the attempt is a recorded failure rather than
 missing data for the censor horizon. The dispatch-log dialect has no revert
 signal and is unchanged.
 
+A second revert source joins when the caller supplies the standing keys
+resolved from `$ASHLR_HOME/improve/revert-outcomes.jsonl` — the detections
+`phm fleet reverts --record` appends for merges only git history proves,
+which the jobs ledger and dispatch log never record. `learnFleetOutcomes`
+takes them as an optional fourth argument (`revertedPrKeys`,
+`owner/repo#n`); both CLI callers (`phm fleet outcomes`, `phm select`)
+resolve them through `readStandingRevertKeys`, which contributes an empty
+set unless the ledger reads whole — corrupt evidence never discounts a
+merge. A `MERGED` verdict whose own PR URL is claimed by exactly that job
+(the same unambiguous-claim rule the router outcome fold applies) and
+whose key stands in the set resolves `reverted` instead of a held merge.
+Because the check reads the verdict row's own URL, a recut relaunch's
+merge of a different PR stays held exactly like the in-ledger era rule,
+and a contested or foreign claim never discounts. Absent, empty or
+unmatched keys change nothing.
+
 ## How it routes
 
 `routeLearnedJob` draws a Thompson sample from a Beta success posterior and a

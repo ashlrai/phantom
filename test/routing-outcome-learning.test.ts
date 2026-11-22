@@ -494,6 +494,46 @@ describe('outcome learning', () => {
       expect(cell).toMatchObject({ attempts: 1, merges: 0, goodMerges: 0, reverted: 1 });
     });
 
+    it('discounts merges the standing revert-outcomes keys name through each verdict\'s own PR claim', () => {
+      const ledger = [
+        // J-S1 merged pull/41 — a git-only revert the jobs ledger never
+        // recorded; only the supplied standing keys can discount it.
+        JSON.stringify({ event: 'launch', job: 'J-S1', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T00:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-S1', lane: 'devin', tokens_total: 500, wall_s: 200 }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-S1', prUrl: 'https://github.com/ashlrai/phantom/pull/41', outcome: 'MERGED', mergedAt: '2026-11-01T01:00:00+00:00', ts: '2026-11-01T01:01:00+00:00' }),
+        // J-S2 merged pull/42 with no revert record: stays held.
+        JSON.stringify({ event: 'launch', job: 'J-S2', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T02:00:00+00:00' }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-S2', prUrl: 'https://github.com/ashlrai/phantom/pull/42', outcome: 'MERGED', mergedAt: '2026-11-01T03:00:00+00:00', ts: '2026-11-01T03:01:00+00:00' }),
+        // J-S3 and J-S4 both claim pull/43: a contested claim never discounts.
+        JSON.stringify({ event: 'launch', job: 'J-S3', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T04:00:00+00:00' }),
+        JSON.stringify({ event: 'launch', job: 'J-S4', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T04:30:00+00:00' }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-S3', prUrl: 'https://github.com/ashlrai/phantom/pull/43', outcome: 'MERGED', mergedAt: '2026-11-01T05:00:00+00:00', ts: '2026-11-01T05:01:00+00:00' }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-S4', prUrl: 'https://github.com/ashlrai/phantom/pull/43', outcome: 'CLOSED', closedAt: '2026-11-01T05:30:00+00:00', ts: '2026-11-01T05:31:00+00:00' }),
+        // J-S5's first merge (pull/44) was reverted; its recut relaunch
+        // merged pull/45 — a different PR, so the second merge stays held.
+        JSON.stringify({ event: 'launch', job: 'J-S5', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T06:00:00+00:00' }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-S5', prUrl: 'https://github.com/ashlrai/phantom/pull/44', outcome: 'MERGED', mergedAt: '2026-11-01T07:00:00+00:00', ts: '2026-11-01T07:01:00+00:00' }),
+        JSON.stringify({ event: 'launch', job: 'J-S5', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T08:00:00+00:00' }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-S5', prUrl: 'https://github.com/ashlrai/phantom/pull/45', outcome: 'MERGED', mergedAt: '2026-11-01T09:00:00+00:00', ts: '2026-11-01T09:01:00+00:00' }),
+      ].join('\n');
+      const keys = new Set(['ashlrai/phantom#41', 'ashlrai/phantom#43', 'ashlrai/phantom#44']);
+      const view = outcomeLearningView(learnFleetOutcomes(null, ledger, undefined, keys));
+      expect(view.finished).toBe(6);
+      expect(view.malformed).toBe(0);
+      const cell = view.cells.find((c) => c.resource === 'devin' && c.jobType === 'work');
+      // J-S1 and J-S5's first merge did not hold; J-S2, the contested J-S3
+      // merge and J-S5's relaunch merge stay held; J-S4 closed unmerged.
+      expect(cell).toMatchObject({ attempts: 6, merges: 3, goodMerges: 3, reverted: 2, censored: 0 });
+      // Without the keys the same ledger reads every merge as held.
+      const plain = outcomeLearningView(learnFleetOutcomes(null, ledger));
+      expect(plain.cells.find((c) => c.resource === 'devin' && c.jobType === 'work'))
+        .toMatchObject({ attempts: 6, merges: 5, goodMerges: 5, reverted: 0 });
+      // An empty key set is the same as no join at all.
+      const empty = outcomeLearningView(learnFleetOutcomes(null, ledger, undefined, new Set()));
+      expect(empty.cells.find((c) => c.resource === 'devin' && c.jobType === 'work'))
+        .toMatchObject({ attempts: 6, merges: 5, reverted: 0 });
+    });
+
     it('skips node-pool producer rows instead of counting them malformed or minting attempts', () => {
       const ledger = [
         // fleet.session-pool.v1 lifecycle rows: `job` is the per-attempt id
@@ -547,6 +587,37 @@ describe('outcome learning', () => {
       } finally {
         if (priorRunsDir === undefined) delete process.env['ASHLR_RUNS_DIR'];
         else process.env['ASHLR_RUNS_DIR'] = priorRunsDir;
+      }
+    });
+
+    it('reads standing revert keys from the improve ledger through the CLI', async () => {
+      home = mkdtempSync(join(tmpdir(), 'outcome-revert-'));
+      const ledgerPath = join(home, 'jobs.jsonl');
+      writeFileSync(ledgerPath, [
+        JSON.stringify({ event: 'launch', job: 'J-W1', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T00:00:00+00:00' }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-W1', prUrl: 'https://github.com/ashlrai/phantom/pull/51', outcome: 'MERGED', mergedAt: '2026-11-01T01:00:00+00:00', ts: '2026-11-01T01:01:00+00:00' }),
+      ].join('\n'));
+      const ashlr = process.env['ASHLR_HOME'];
+      expect(ashlr).toBeTruthy();
+      mkdirSync(join(ashlr!, 'improve'), { recursive: true });
+      const revertLedger = join(ashlr!, 'improve', 'revert-outcomes.jsonl');
+      writeFileSync(revertLedger, `${JSON.stringify({
+        v: 1, at: '2026-11-02T00:00:00.000Z',
+        record: {
+          repository: 'ashlrai/phantom', number: 51, pr: 'ashlrai/phantom#51',
+          mergeSha: 'a'.repeat(40), mergedAt: '2026-11-01T01:00:00+00:00',
+          revertedBy: 'b'.repeat(40), revertedAt: '2026-11-01T05:00:00+00:00',
+          revertLatencyMs: 14_400_000, relandedBy: null,
+        },
+      })}\n`);
+      try {
+        const res = await run(['--ledger', ledgerPath, '--json']);
+        expect(res.code).toBe(0);
+        const view = JSON.parse(res.out) as { cells: Array<{ attempts?: number; merges?: number; reverted?: number }> };
+        expect(view.cells).toHaveLength(1);
+        expect(view.cells[0]).toMatchObject({ attempts: 1, merges: 0, reverted: 1 });
+      } finally {
+        rmSync(revertLedger, { force: true });
       }
     });
   });
