@@ -34,6 +34,7 @@ export interface RemoteRequest {
 export type RemoteReadRoute = string;
 
 const READ_ROUTES = new Set<RemoteReadRoute>([
+  '/api/fleet/releases',
   '/api/verse/bootstrap',
   '/api/verse/version',
   '/api/verse/activity',
