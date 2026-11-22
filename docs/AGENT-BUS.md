@@ -1264,6 +1264,9 @@ the fields the inbox reads filter by: `--from` keeps envelopes sent under any
 registered spelling of one identity — the same `agentAddressMatcher` rule
 `agents bus inbox --from` applies, resolved once at stream start, with an
 unresolvable sender or unreadable registry keeping exact-label matching —
+`--exclude-from` drops envelopes sent under any registered spelling of one
+identity — the same sender-exclusion rule `comms bus read|watch`'s
+`--exclude-from` and `fleet_bus_inbox`'s `excludeFrom` apply —
 `--priority` keeps one `P0`–`P3`, `--thread` keeps `note`/`context` bodies
 carrying that thread label, and `--since <15m|2h|1d|ISO>` keeps rows received
 at or after the cutoff. As with `--to` and `--job`, filtered rows still

@@ -3292,7 +3292,10 @@ shares — the inbox page, `readBusEnvelopeById`, wake referents and the
 already-read `AgentRegistry` into the label→identity-key lookup every
 sender filter shares — `readAgentInbox`/`readAgentChannel` `from`,
 `comms bus read`/`watch --from` and `followBusStream` (`fleet bus-follow
---from`) — resolving a label through handle, `agent:` address, stable id or
+--from` and `--exclude-from`, the latter dropping every label of the named
+identity exactly as `comms bus read`/`watch --exclude-from` and
+`fleet_bus_inbox`'s `excludeFrom` do) — resolving a label through handle,
+`agent:` address, stable id or
 alias (exact match first, then lowercase), so a filter naming any spelling
 of one identity matches every label of that identity while an unresolvable
 label keeps exact-label matching. Claim tokens and `work.result`
