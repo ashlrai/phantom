@@ -494,6 +494,39 @@ describe('outcome learning', () => {
       expect(cell).toMatchObject({ attempts: 1, merges: 0, goodMerges: 0, reverted: 1 });
     });
 
+    it('skips node-pool producer rows instead of counting them malformed or minting attempts', () => {
+      const ledger = [
+        // fleet.session-pool.v1 lifecycle rows: `job` is the per-attempt id
+        // (`<sessionId>:<n>`) and `jobId` the logical ready:* queue id —
+        // neither is a dispatchd assign, so none of these rows may count
+        // malformed or open an attempt. A `launch` row carries the
+        // dispatchd event name but none of the assign fields.
+        JSON.stringify({ schema: 'fleet.session-pool.v1', ts: '2026-11-01T00:00:00+00:00', sessionId: 'sess-a', event: 'session_start', context: 0 }),
+        JSON.stringify({ schema: 'fleet.session-pool.v1', ts: '2026-11-01T00:00:01+00:00', sessionId: 'sess-a', event: 'launch', context: 0, job: 'sess-a:1', jobId: 'ready:RQ-NODE-1:1' }),
+        JSON.stringify({ schema: 'fleet.session-pool.v1', ts: '2026-11-01T00:05:00+00:00', sessionId: 'sess-a', event: 'finish', context: 0, job: 'sess-a:1', jobId: 'ready:RQ-NODE-1:1', outcome: 'completed' }),
+        JSON.stringify({ schema: 'fleet.session-pool.v1', ts: '2026-11-01T00:05:01+00:00', sessionId: 'sess-a', event: 'session_rotate', context: 1, job: 'sess-a:1', jobId: 'ready:RQ-NODE-1:1' }),
+        JSON.stringify({ schema: 'fleet.session-pool.v1', ts: '2026-11-01T00:05:02+00:00', sessionId: 'sess-a', event: 'launch', context: 1, job: 'sess-a:2', jobId: 'ready:RQ-NODE-2:1' }),
+        JSON.stringify({ schema: 'fleet.session-pool.v1', ts: '2026-11-01T00:09:00+00:00', sessionId: 'sess-a', event: 'finish', context: 1, job: 'sess-a:2', jobId: 'ready:RQ-NODE-2:1', outcome: 'lease-expiry' }),
+        JSON.stringify({ schema: 'fleet.session-pool.v1', ts: '2026-11-01T00:09:01+00:00', sessionId: 'sess-a', event: 'session_stop', context: 1 }),
+        // phm-node-runner.v1 finish receipts: the runner's closed verdict
+        // vocabulary, `job` the per-claim id (`<jobId>:<token>`). Execution
+        // evidence the cell fold cannot use — no repo/lane/model/tier — and
+        // must neither count malformed nor key usage on the claim id.
+        JSON.stringify({ schema: 'phm-node-runner.v1', ts: '2026-11-01T00:10:00+00:00', event: 'finish', job: 'ready:RQ-NODE-1:1:4', jobId: 'ready:RQ-NODE-1:1', node: 'muse', pack: 'shell-check', token: 4, leaderToken: 3, outcome: 'succeeded', outputBytes: 4242 }),
+        JSON.stringify({ schema: 'phm-node-runner.v1', ts: '2026-11-01T00:11:00+00:00', event: 'finish', job: 'ready:RQ-NODE-2:1:7', jobId: 'ready:RQ-NODE-2:1', node: 'mini', pack: 'omlx-chat', token: 7, leaderToken: 3, outcome: 'failed' }),
+        JSON.stringify({ schema: 'phm-node-runner.v1', ts: '2026-11-01T00:12:00+00:00', event: 'finish', job: 'ready:RQ-NODE-3:1:2', jobId: 'ready:RQ-NODE-3:1', node: 'studio', pack: 'codex-file', token: 2, leaderToken: 5, outcome: 'fenced' }),
+        // A real dispatchd attempt still folds beside them.
+        JSON.stringify({ event: 'launch', job: 'J-N', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T01:00:00+00:00' }),
+        JSON.stringify({ event: 'finish', job: 'J-N', lane: 'devin', tokens_total: 700, wall_s: 300 }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-N', prUrl: 'https://github.com/ashlrai/phantom/pull/31', outcome: 'MERGED', mergedAt: '2026-11-01T02:00:00+00:00', ts: '2026-11-01T02:01:00+00:00' }),
+      ].join('\n');
+      const view = outcomeLearningView(learnFleetOutcomes(null, ledger));
+      expect(view.finished).toBe(1);
+      expect(view.malformed).toBe(0);
+      expect(view.cells).toHaveLength(1);
+      expect(view.cells[0]).toMatchObject({ resource: 'devin', jobType: 'work', attempts: 1, merges: 1, goodMerges: 1 });
+    });
+
     it('serves the ledger view through --ledger and the default runs path', async () => {
       home = mkdtempSync(join(tmpdir(), 'outcome-ledger-'));
       const ledgerPath = join(home, 'jobs.jsonl');
