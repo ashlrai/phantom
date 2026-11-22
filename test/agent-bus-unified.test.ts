@@ -2111,6 +2111,76 @@ describe('wake hint job filter', () => {
   });
 });
 
+describe('wake hint sender filter', () => {
+  it('keeps only hints whose recorded from label resolves to one agent', async () => {
+    const options = setup();
+    register(options, 'nova', 'orion');
+    expect(registerAgentIdentity({ handle: 'atlas', aliases: ['lane-atlas'] }, options).status).toBe('created');
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'a', id: 'w-atlas', priority: 'P0' }, options))
+      .toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'orion', to: 'nova', text: 'b', id: 'w-orion', priority: 'P0' }, options))
+      .toMatchObject({ status: 'posted' });
+    // Hints queued under a bare sender label no identity claims.
+    enqueueBusWake({ kind: 'bus.send', id: 'w-ghost', from: 'ghost-sender', to: 'agent:nova' }, { root: options.runsRoot });
+    enqueueBusWake({ kind: 'bus.send', id: 'w-label', from: 'agent:atlas', to: 'ghost-sender' }, { root: options.runsRoot });
+
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok', matched: 3 });
+    // The handle, agent: address, stable id and alias all name atlas's identity.
+    for (const from of ['atlas', 'agent:atlas', stableAgentId('atlas'), 'lane-atlas']) {
+      const page = readAgentWakes('nova', undefined, options, { from });
+      expect(page).toMatchObject({ status: 'ok', matched: 1, truncated: false });
+      if (page.status !== 'ok') throw new Error('unreachable');
+      expect(page.wakes.map(row => row.id)).toEqual(['w-atlas']);
+    }
+    expect(readAgentWakes('nova', undefined, options, { from: 'orion' }))
+      .toMatchObject({ status: 'ok', matched: 1 });
+    // An unresolvable ref keeps exact-label matching: only the literal
+    // ghost-sender row matches, never a widened identity set.
+    const ghost = readAgentWakes('nova', undefined, options, { from: 'ghost-sender' });
+    expect(ghost).toMatchObject({ status: 'ok', matched: 1 });
+    if (ghost.status !== 'ok') throw new Error('unreachable');
+    expect(ghost.wakes.map(row => row.id)).toEqual(['w-ghost']);
+    expect(readAgentWakes('nova', undefined, options, { from: 'ghost' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    // The sender filter composes with the job filter and still applies
+    // under label scope — 'ghost-sender' is no registered identity, so its
+    // read matches `to` literally while `from` keeps its own rule.
+    expect(readAgentWakes('nova', undefined, options, { from: 'atlas', job: 'RQ-NONE' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    const label = readAgentWakes('ghost-sender', undefined, options);
+    expect(label).toMatchObject({ status: 'ok', scope: 'label', matched: 1 });
+    expect(readAgentWakes('ghost-sender', undefined, options, { from: 'atlas' }))
+      .toMatchObject({ status: 'ok', scope: 'label', matched: 1 });
+    expect(readAgentWakes('ghost-sender', undefined, options, { from: 'orion' }))
+      .toMatchObject({ status: 'ok', scope: 'label', matched: 0, wakes: [] });
+    expect(readAgentWakes('nova', undefined, options, { from: '' }))
+      .toMatchObject({ status: 'invalid' });
+    expect(readAgentWakes('nova', undefined, options, { from: 'x'.repeat(129) }))
+      .toMatchObject({ status: 'invalid' });
+  });
+
+  it('matches claim-holder hints by the posting identity', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-HO-1', title: 'ho', repo: 'ashlrai/phantom',
+      claimKeys: ['queue:RQ-HO-1'] }, options)).toMatchObject({ status: 'posted' });
+    expect(acquireCoordination({ root: options.root, origin: 'resource', key: 'queue:RQ-HO-1',
+      owner: 'agent:nova', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000, sourceId: 'ho-src',
+      now: options.clock.now, started: new Date(options.clock.now).toISOString() }).status).toBe('acquired');
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-HO-1', status: 'done', id: 'w-ho' }, options))
+      .toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    // The wh- hint's recorded from is the posting identity's agent:<handle>,
+    // so the status poster's own filters match it and nobody else's do.
+    const atlas = readAgentWakes('nova', undefined, options, { from: 'atlas' });
+    expect(atlas).toMatchObject({ status: 'ok', matched: 1 });
+    if (atlas.status !== 'ok') throw new Error('unreachable');
+    expect(atlas.wakes[0]).toMatchObject({ id: expect.stringMatching(/^wh-[a-f0-9]{32}$/), from: 'agent:atlas' });
+    expect(readAgentWakes('nova', undefined, options, { from: 'orion' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+  });
+});
+
 describe('CLI session adapters', () => {
   it('covers claude, codex, devin, cursor and grok, mapping to v2 providers', () => {
     const providers = new Set<string>(busV2ContractSummary().providers);

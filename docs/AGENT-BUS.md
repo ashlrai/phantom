@@ -374,10 +374,20 @@ feed's own `refused`/`unavailable` state) without a `show` per item; the
 compact `job=<id>:<state>` marker rides inside the frame's bracket and on
 the human line the same way `held` does, and `work mine`'s inbox section
 carries the same field.
-`phm agents bus wakes <agent> [--since <15m|2h|1d|ISO>] [--job <id>]` lists wake hints for the agent and its
+`phm agents bus wakes <agent> [--since <15m|2h|1d|ISO>] [--job <id>]
+[--from <agent>]` lists wake hints for the agent and its
 channels. `--since` keeps only hints after the cutoff — the same `phm
 messages` grammar the inbox and channel read take, resolved to epoch ms —
-so a wake-driven agent reads just the hints newer than its last check. A ref that resolves to no registered identity keeps exact-label
+so a wake-driven agent reads just the hints newer than its last check.
+`--from` keeps only hints whose recorded sender label matches one agent —
+a handle, `agent:<handle>`, stable id or alias resolving every label of
+that identity through the same `agentAddressMatcher` rule `inbox --from`
+and `channel read --from` apply, with an unresolvable ref keeping
+exact-label matching; the matched label is the hint row's own `from` —
+the triggering envelope's sender on a `bus.send` hint, the posting
+identity's `agent:<handle>` on a claim-holder `wh-…` hint — so "which
+agent keeps waking me" is one filtered read that composes with `--since`
+and `--job`. A ref that resolves to no registered identity keeps exact-label
 matching instead — the page reports `scope: 'label'` (vs `'identity'`),
 `agent` the queried label verbatim, and only hints whose `to` is that label
 match — so hints queued under a bare coordination or routing label, like the

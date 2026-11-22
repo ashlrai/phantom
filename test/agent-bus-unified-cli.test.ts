@@ -84,6 +84,30 @@ describe('phm agents bus (unified)', () => {
     expect(adapters.json.adapters.map((a: { cli: string }) => a.cli)).toEqual(['claude', 'codex', 'devin', 'cursor', 'grok']);
   });
 
+  it('filters wakes by sender identity', async () => {
+    expect((await run(['id', 'register', 'atlas', '--alias', 'lane-atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'orion'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'a', '--priority', 'P0', '--id', 'wf-atlas'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['dm', '--from', 'orion', '--to', 'nova', '--text', 'b', '--priority', 'P0', '--id', 'wf-orion'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+
+    expect((await run(['wakes', 'nova'])).json).toMatchObject({ matched: 2 });
+    // Handle, alias and agent: address all name the same sender identity.
+    for (const from of ['atlas', 'lane-atlas', 'agent:atlas']) {
+      const page = await run(['wakes', 'nova', '--from', from]);
+      expect(page.json).toMatchObject({ matched: 1, truncated: false });
+      expect(page.json.wakes.map((w: { id: string }) => w.id)).toEqual(['wf-atlas']);
+    }
+    expect((await run(['wakes', 'nova', '--from', 'orion'])).json.wakes.map((w: { id: string }) => w.id))
+      .toEqual(['wf-orion']);
+    // An unresolvable sender keeps exact-label matching — nothing widens.
+    expect((await run(['wakes', 'nova', '--from', 'ghost'])).json)
+      .toMatchObject({ matched: 0, wakes: [] });
+    expect(await run(['wakes', 'nova', '--from='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('lists channels for discovery and filters by agent', async () => {
     // Before any registry exists the list is verified-empty, not an error.
     expect(await run(['channel', 'list'])).toMatchObject({ code: 0,

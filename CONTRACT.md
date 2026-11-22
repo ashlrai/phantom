@@ -2927,7 +2927,15 @@ a `worker-handoff` `taskId` or a `job:<id>` thread label) or on the
 `jobId` a claim-holder hint's citing status carries, with `unresolved`/
 `unknown` referents never matching, `matched` counting the proven matches
 on the resolved page, an unreadable bus store answering `unavailable`
-rather than an empty page, and a malformed job id answering `invalid`),
+rather than an empty page, and a malformed job id answering `invalid`;
+`filter.from` keeps only hints whose recorded `from` label matches one
+agent through the same `agentAddressMatcher` identity-label rule
+`readAgentInbox`'s `from` applies — a handle, `agent:<handle>`, stable id
+or alias matching every label of that identity, an unresolvable ref
+keeping exact-label matching — over the hint row's own `from` (the
+triggering envelope's sender on a `bus.send` hint, the posting identity's
+`agent:<handle>` on a claim-holder `wh-…` hint), with a malformed sender
+filter answering `invalid`),
 `listBusChannels(agent, options?)`
 (the registry channels name-sorted with `createdBy`, `createdAt` and member
 handles in join order — all of them, or only those one resolved identity
