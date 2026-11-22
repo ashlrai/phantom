@@ -3261,7 +3261,12 @@ or alias matching every label of that identity, an unresolvable ref
 keeping exact-label matching — over the hint row's own `from` (the
 triggering envelope's sender on a `bus.send` hint, the posting identity's
 `agent:<handle>` on a claim-holder `wh-…` hint), with a malformed sender
-filter answering `invalid`),
+filter answering `invalid`; `filter.excludeFrom` drops hints sent under
+every registered spelling of one identity through the same matcher and
+exact-label fallback, composing with `from` so a sender both included
+and excluded matches nothing — the drop runs inside the queue-tail
+match, so `matched` stays the count the whole filter set accepts, with a
+malformed exclusion answering `invalid`),
 `listBusChannels(agent, options?)`
 (the registry channels name-sorted with `createdBy`, `createdAt` and member
 handles in join order — all of them, or only those one resolved identity

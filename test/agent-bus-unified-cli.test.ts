@@ -106,6 +106,22 @@ describe('phm agents bus (unified)', () => {
     expect((await run(['wakes', 'nova', '--from', 'ghost'])).json)
       .toMatchObject({ matched: 0, wakes: [] });
     expect(await run(['wakes', 'nova', '--from='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+
+    // --exclude-from drops one sender's hints under every label of its
+    // identity; a sender both included and excluded matches nothing.
+    expect((await run(['wakes', 'nova'])).json).toMatchObject({ matched: 2 });
+    for (const excludeFrom of ['atlas', 'lane-atlas', 'agent:atlas']) {
+      const page = await run(['wakes', 'nova', '--exclude-from', excludeFrom]);
+      expect(page.json).toMatchObject({ matched: 1, truncated: false });
+      expect(page.json.wakes.map((w: { id: string }) => w.id)).toEqual(['wf-orion']);
+    }
+    expect((await run(['wakes', 'nova', '--exclude-from', 'ghost'])).json)
+      .toMatchObject({ matched: 2 });
+    expect((await run(['wakes', 'nova', '--from', 'atlas', '--exclude-from', 'atlas'])).json)
+      .toMatchObject({ matched: 0, wakes: [] });
+    expect((await run(['wakes', 'nova', '--from', 'atlas', '--exclude-from', 'orion'])).json.wakes
+      .map((w: { id: string }) => w.id)).toEqual(['wf-atlas']);
+    expect(await run(['wakes', 'nova', '--exclude-from='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
   });
 
   it('lists channels for discovery and filters by agent', async () => {

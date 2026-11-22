@@ -1492,16 +1492,22 @@ export type WakePage = { status: 'ok'; agent: string;
  * a `bus.send` hint, the `agent:<handle>` of the identity whose terminal
  * `work.status` generated a claim-holder `wh-…` hint — so "which agent
  * keeps waking me" is one filtered read that composes with `--since` and
- * `--job`. `filter.contains` keeps only hints whose resolved referent text
- * carries the needle — a `bus.send` hint's live message summary or a
- * claim-holder hint's citing `work.status` detail, the same scrubbed
- * one-line text the row reports — so "which wake was about X" is one
- * filtered read; a hint whose referent cannot be resolved names no
- * provable text and never matches, and like `job` the filtered `matched`
- * counts the proven matches on the resolved page.
+ * `--job`. `filter.excludeFrom` drops hints sent under every registered
+ * spelling of one identity through the same matcher — an unresolvable ref
+ * keeping exact-label matching — composing with `from` so a sender both
+ * included and excluded matches nothing, the same rule
+ * `readAgentInbox`/`readAgentChannel`'s `excludeFrom` apply; the drop
+ * happens inside the queue-tail match, so `matched` stays the count the
+ * whole filter set accepts. `filter.contains` keeps only hints whose
+ * resolved referent text carries the needle — a `bus.send` hint's live
+ * message summary or a claim-holder hint's citing `work.status` detail,
+ * the same scrubbed one-line text the row reports — so "which wake was
+ * about X" is one filtered read; a hint whose referent cannot be
+ * resolved names no provable text and never matches, and like `job` the
+ * filtered `matched` counts the proven matches on the resolved page.
  */
 export function readAgentWakes(ref: string, sinceAt: number | undefined, options: UnifiedBusOptions = {},
-  filter: { job?: string; from?: string; contains?: string } = {}): WakePage {
+  filter: { job?: string; from?: string; excludeFrom?: string; contains?: string } = {}): WakePage {
   const job = filter.job;
   if (job !== undefined && (typeof job !== 'string' || !THREAD.test(job))) {
     return { status: 'invalid', reason: 'Invalid job id.' };
@@ -1509,6 +1515,11 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
   const from = filter.from;
   if (from !== undefined && (typeof from !== 'string' || from.length === 0 || from.length > 128)) {
     return { status: 'invalid', reason: 'Invalid sender filter.' };
+  }
+  const excludeFrom = filter.excludeFrom;
+  if (excludeFrom !== undefined &&
+      (typeof excludeFrom !== 'string' || excludeFrom.length === 0 || excludeFrom.length > 128)) {
+    return { status: 'invalid', reason: 'Invalid sender-exclusion filter.' };
   }
   const containsNeedle = busReadContains(filter.contains);
   if (containsNeedle === null) {
@@ -1522,8 +1533,11 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
   }
   const fromMatch = from === undefined ? undefined
     : agentAddressMatcher(labelIdentityOf(read.registry), from);
+  const excludeFromMatch = excludeFrom === undefined ? undefined
+    : agentAddressMatcher(labelIdentityOf(read.registry), excludeFrom);
   const wakes = readBusWakes({ root: options.runsRoot, sinceAt, match: wake =>
     (fromMatch === undefined || fromMatch(wake.from)) &&
+    (excludeFromMatch === undefined || !excludeFromMatch(wake.from)) &&
     (target !== undefined
       ? target.labels.has(wake.to) || (channelOf(wake.to, target.channels) !== null && !target.labels.has(wake.from))
       : wake.to === ref) });
