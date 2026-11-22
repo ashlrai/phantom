@@ -111,6 +111,20 @@ for the advisory checks and full-suite schedule. A passing local check does
 not replace these hosted results or the owner review for
 [CODEOWNERS](.github/CODEOWNERS) paths.
 
+### Updating a pull request
+
+Keep the [pull request template](.github/PULL_REQUEST_TEMPLATE.md) current with
+the exact checks you ran and any checks you could not complete.
+
+If you add or rename a document under `docs/`, run
+`node scripts/generate-docs-llms.mjs` and include its output in the same pull
+request. The generated-file check fails when that index is stale; the focused
+generator avoids unrelated changes from `npm run docs:sync`.
+
+If `master` moves and your branch conflicts, rebase onto `origin/master`,
+rerun the local checks and update the pull request from your fork. Keep the
+checks and any remaining limitations in the pull request description current.
+
 ---
 
 ## Prerequisites
