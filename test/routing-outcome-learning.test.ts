@@ -380,6 +380,21 @@ describe('outcome learning', () => {
       expect(cell?.mergeRate).toBeCloseTo(1 / 3);
     });
 
+    it('keeps jobs-ledger token readings out of the allowance-unit fields', () => {
+      const ledgerView = outcomeLearningView(learnFleetOutcomes(null, LEDGER));
+      const ledgerCell = ledgerView.cells.find((c) => c.resource === 'devin' && c.jobType === 'work');
+      // tokens_total is a different unit: it feeds usage/meanUsage but never
+      // the allowance fields a dispatch-unit consumer like the selector reads.
+      expect(ledgerCell).toMatchObject({ usageAllowance: 0, usageAllowanceKnown: 0 });
+      expect(ledgerCell!.usage).toBeGreaterThan(0);
+      const mixed = outcomeLearningView(learnFleetOutcomes(LOG, LEDGER));
+      const dispatchCell = mixed.cells.find((c) => c.resource === 'devin' && c.model === 'swe-2-max' && c.jobType === 'code');
+      // Every dispatch-log outcome carries a measured allowance reading, so
+      // the allowance sum equals the cell's usage sum and known equals attempts.
+      expect(dispatchCell).toMatchObject({ usageAllowanceKnown: dispatchCell!.attempts });
+      expect(dispatchCell!.usageAllowance).toBeCloseTo(dispatchCell!.usage);
+    });
+
     it('keeps dispatch-log learning identical when the ledger is absent', () => {
       const viaFleet = learnFleetOutcomes(LOG, null);
       const viaPlain = learnOutcomes(LOG);

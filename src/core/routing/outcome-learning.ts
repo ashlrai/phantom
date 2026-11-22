@@ -48,6 +48,16 @@ export interface OutcomeCellView {
   dirty: number;
   fixups: number;
   usage: number;
+  /**
+   * Sum of the measured usage readings in the dispatch log's allowance unit
+   * (the `usage=` field, roughly 0.04-1.2 per job). Jobs-ledger
+   * `tokens_total` readings are a different unit and never land here, and
+   * neither do the imputed charges reconcileUsage and the censor add for
+   * attempts that carried no reading.
+   */
+  usageAllowance: number;
+  /** Attempts that contributed a measured allowance-unit usage reading. */
+  usageAllowanceKnown: number;
   mergeRate: number;
   goodMergeRate: number;
   breakageRate: number;
@@ -164,6 +174,13 @@ interface OutcomeEvent {
   state: 'merged' | 'closed' | 'dirty' | 'fixup' | 'reverted';
   /** Measured allowance spent. Null when the outcome carried no usage reading — never zeroed. */
   usage: number | null;
+  /**
+   * Unit of the usage reading. Absent means the dispatch log's allowance
+   * unit; 'tokens' marks jobs-ledger `tokens_total` readings, which run in
+   * the thousands and must never feed consumers calibrated to the
+   * allowance unit.
+   */
+  usageUnit?: 'allowance' | 'tokens';
   minutes: number | null;
   breakage: number;
 }
@@ -367,7 +384,7 @@ function blankCell(resource: string, model: string, jobType: string, repo: strin
   return {
     resource, model, jobType, repo,
     attempts: 0, censored: 0, reverted: 0, merges: 0, goodMerges: 0, breakages: 0, dirty: 0, fixups: 0,
-    usage: 0, mergeMinutes: 0, timedMerges: 0, usageAttempts: 0,
+    usage: 0, usageAllowance: 0, usageAllowanceKnown: 0, mergeMinutes: 0, timedMerges: 0, usageAttempts: 0,
     mergeRate: 0, goodMergeRate: 0, breakageRate: 0, dirtyRate: 0, fixupRate: 0,
     meanUsage: 0, meanMinutesToMerge: null,
   };
@@ -441,6 +458,10 @@ function fold(events: readonly ParsedEvent[], malformed: number, censor?: Censor
     if (event.usage !== null) {
       cell.usage += event.usage;
       cell.usageAttempts += 1;
+      if (event.usageUnit !== 'tokens') {
+        cell.usageAllowance += event.usage;
+        cell.usageAllowanceKnown += 1;
+      }
     }
     switch (event.state) {
       case 'merged':
@@ -663,7 +684,7 @@ function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed
   }
   const closeAttempt = (job: string, state: 'closed' | 'reverted' = 'closed'): void => {
     openJobs.delete(job);
-    events.push({ kind: 'outcome', job, state, usage: usageByJob.get(job) ?? null, minutes: null, breakage: 0 });
+    events.push({ kind: 'outcome', job, state, usage: usageByJob.get(job) ?? null, usageUnit: 'tokens', minutes: null, breakage: 0 });
   };
   for (const [lineNo, line] of lines.entries()) {
     const trimmed = line.trim();
@@ -737,7 +758,7 @@ function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed
         // finish whose diff still publishes.
         if (row['empty'] === true && openJobs.has(job)) {
           openJobs.delete(job);
-          events.push({ kind: 'outcome', job, state: 'closed', usage, minutes: null, breakage: 0 });
+          events.push({ kind: 'outcome', job, state: 'closed', usage, usageUnit: 'tokens', minutes: null, breakage: 0 });
         }
       }
       continue;
@@ -785,6 +806,7 @@ function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed
       kind: 'outcome', job,
       state: state === 'MERGED' ? (heldMerge ? 'merged' : 'reverted') : 'closed',
       usage: usageByJob.get(job) ?? null,
+      usageUnit: 'tokens',
       minutes, breakage: 0,
     });
   }
@@ -936,6 +958,8 @@ function evidenceFor(learning: OutcomeLearning, resource: string, model: string,
     sum.dirty += cell.dirty;
     sum.fixups += cell.fixups;
     sum.usage += cell.usage;
+    sum.usageAllowance += cell.usageAllowance;
+    sum.usageAllowanceKnown += cell.usageAllowanceKnown;
     if (cell.meanMinutesToMerge !== null) {
       sum.mergeMinutes += cell.meanMinutesToMerge * cell.merges;
       sum.timedMerges += cell.merges;

@@ -232,8 +232,9 @@ stays a fresh held merge.
 ### Selector
 
 `phm select --json` ranks candidates in `~/.ashlr-runs/selector/candidates.jsonl`
-by value x leverage / (time + usage), using the outcome log for what a candidate
-leaves out. It prints the top five as `READY` lines, appends them with their
+by value x leverage / (time + usage), using outcome learning over the dispatch
+log and `metrics/jobs.jsonl` for what a candidate leaves out (`--events` and
+`--ledger` override the sources). It prints the top five as `READY` lines, appends them with their
 predicted value to `~/.ashlr-runs/selector/picks.jsonl`, and never funds an id
 twice. `--dry-run` writes nothing. `phm select schedule --write` installs the
 hourly launchd agent on the Mac. See
