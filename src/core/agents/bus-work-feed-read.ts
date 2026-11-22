@@ -375,7 +375,7 @@ function feedField(value: string, max: number): string {
  * row it selects, and a secret-shaped value is scrubbed before the match
  * even though the stored envelope keeps it.
  */
-function busWorkFeedJobSearchText(job: BusWorkFeedJob): string {
+export function busWorkFeedJobSearchText(job: BusWorkFeedJob): string {
   return [
     feedField(job.title, FEED_TITLE_MAX),
     job.detail === undefined ? '' : feedField(job.detail, FEED_DETAIL_MAX),
