@@ -450,7 +450,8 @@ compact `job=<id>:<state>` marker rides inside the frame's bracket and on
 the human line the same way `held` does, and `work mine`'s inbox section
 carries the same field.
 `phm agents bus wakes <agent> [--since <15m|2h|1d|ISO>] [--job <id>]
-[--from <agent>] [--exclude-from <agent>] [--contains <text>]` lists wake
+[--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
+[--contains <text>]` lists wake
 hints for the agent and its
 channels. `--since` keeps only hints after the cutoff — the same `phm
 messages` grammar the inbox and channel read take, resolved to epoch ms —
@@ -494,7 +495,15 @@ case-insensitive substring, so "which wake was about X" is one filtered
 read; a hint whose referent is `unresolved` or `unknown` names no
 provable text and never matches, an unreadable bus store makes the
 filtered read `unavailable`, and `matched` counts the proven matches on
-the resolved page. Claim-holder
+the resolved page. `--priority` keeps only the hints in one exact
+P0..P3 band — the same match `inbox --priority`, `channel read
+--priority` and `work feed --priority` apply — decided on the resolved
+referent's own band: the live message a `bus.send` hint points at, or
+the citing `work.status` receipt's band behind a claim-holder `wh-…`
+hint (carried on the row's `claimHolder.priority`); a hint whose
+referent is `unresolved` or `unknown` names no provable band and never
+matches, an unreadable bus store makes the filtered read `unavailable`,
+and `matched` counts the proven matches on the resolved page. Claim-holder
 hints (`wh-…` ids) carry no envelope id of their own, so the read re-derives
 each one's citation against the live `work.status` receipts that could have
 generated it: a match annotates the row with `claimHolder` naming the status

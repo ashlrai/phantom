@@ -2507,6 +2507,93 @@ describe('wake hint sender filter', () => {
   });
 });
 
+describe('wake hint priority filter', () => {
+  it('keeps only hints whose resolved referent carries the band', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'page me',
+      id: 'wk-p0', priority: 'P0', wake: true }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'fyi',
+      id: 'wk-p3', priority: 'P3', wake: true }, options)).toMatchObject({ status: 'posted' });
+    // A hand-enqueued hint with no live envelope names no provable band.
+    enqueueBusWake({ kind: 'bus.send', id: 'wk-ghost', from: 'agent:atlas', to: 'agent:nova' },
+      { root: options.runsRoot });
+
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok', matched: 3 });
+    const p0 = readAgentWakes('nova', undefined, options, { priority: 'P0' });
+    expect(p0).toMatchObject({ status: 'ok', matched: 1, truncated: false });
+    if (p0.status !== 'ok') throw new Error('unreachable');
+    expect(p0.wakes.map(row => row.id)).toEqual(['wk-p0']);
+    expect(p0.wakes[0]).toMatchObject({ message: { status: 'resolved', priority: 'P0' } });
+    expect(readAgentWakes('nova', undefined, options, { priority: 'P3' }))
+      .toMatchObject({ status: 'ok', matched: 1 });
+    expect(readAgentWakes('nova', undefined, options, { priority: 'P1' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    // matched counts the proven matches on the resolved page; the
+    // unfiltered read still reports the true total.
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok', matched: 3 });
+    // The band composes with the job and contains filters.
+    expect(readAgentWakes('nova', undefined, options, { priority: 'P0', contains: 'absent-text' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    expect(readAgentWakes('nova', undefined, options, { priority: 'P0', job: 'RQ-NONE' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    expect(readAgentWakes('nova', undefined, options, { priority: 'P0', contains: 'page' }))
+      .toMatchObject({ status: 'ok', matched: 1 });
+    expect(readAgentWakes('nova', undefined, options, { priority: 'P9' as never }))
+      .toMatchObject({ status: 'invalid' });
+  });
+
+  it('matches claim-holder hints on the citing status band', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-HO-1', title: 'ho', repo: 'ashlrai/phantom',
+      claimKeys: ['queue:RQ-HO-1'] }, options)).toMatchObject({ status: 'posted' });
+    expect(acquireCoordination({ root: options.root, origin: 'resource', key: 'queue:RQ-HO-1',
+      owner: 'agent:nova', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000, sourceId: 'ho-src',
+      now: options.clock.now, started: new Date(options.clock.now).toISOString() }).status).toBe('acquired');
+    // updateWorkStatus posts at P2 by default — the claim-holder hint's
+    // band is the citing status receipt's own priority.
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-HO-1', status: 'done', id: 'w-ho' }, options))
+      .toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'page',
+      id: 'wk-p0', priority: 'P0', wake: true }, options)).toMatchObject({ status: 'posted' });
+
+    const holder = readAgentWakes('nova', undefined, options, { priority: 'P2' });
+    expect(holder).toMatchObject({ status: 'ok', matched: 1 });
+    if (holder.status !== 'ok') throw new Error('unreachable');
+    expect(holder.wakes[0]).toMatchObject({ claimHolder: { jobId: 'RQ-HO-1', status: 'done', priority: 'P2' } });
+    expect(holder.wakes[0]!.id).toMatch(/^wh-[a-f0-9]{32}$/);
+    const p0 = readAgentWakes('nova', undefined, options, { priority: 'P0' });
+    expect(p0).toMatchObject({ status: 'ok', matched: 1 });
+    if (p0.status !== 'ok') throw new Error('unreachable');
+    expect(p0.wakes.map(row => row.id)).toEqual(['wk-p0']);
+    expect(readAgentWakes('nova', undefined, options, { priority: 'P1' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+  });
+
+  it('never matches unresolved referents and fails closed on an unreadable store', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    enqueueBusWake({ kind: 'bus.send', id: 'wk-ghost', from: 'agent:atlas', to: 'agent:nova' },
+      { root: options.runsRoot });
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'page',
+      id: 'wk-p0', priority: 'P0', wake: true }, options)).toMatchObject({ status: 'posted' });
+    const page = readAgentWakes('nova', undefined, options, { priority: 'P0' });
+    expect(page).toMatchObject({ status: 'ok', matched: 1 });
+    if (page.status !== 'ok') throw new Error('unreachable');
+    expect(page.wakes.map(row => row.id)).toEqual(['wk-p0']);
+    // An unreadable bus store makes every referent's band unknown, so the
+    // filtered read is unavailable — never an empty page passed off as
+    // "no urgent wakes".
+    mkdirSync(join(options.root!, 'bus-inbox'), { recursive: true });
+    writeFileSync(join(options.root!, 'bus-inbox', 'messages.json'), 'not json', { mode: 0o600 });
+    expect(readAgentWakes('nova', undefined, options, { priority: 'P0' }))
+      .toMatchObject({ status: 'unavailable' });
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok' });
+  });
+});
+
 describe('CLI session adapters', () => {
   it('covers claude, codex, devin, cursor and grok, mapping to v2 providers', () => {
     const providers = new Set<string>(busV2ContractSummary().providers);
