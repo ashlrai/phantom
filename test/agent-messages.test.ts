@@ -441,6 +441,48 @@ describe('phm messages projection', () => {
     expect(parseAgentMessagesQuery({ thread: 'x'.repeat(129) }).ok).toBe(false);
   });
 
+  it('filters to one bus channel — the group:<name>:* prefix every topic of the room shares', () => {
+    const root = store();
+    // Room traffic under two topics, agent mail, and a different room's posts.
+    post(root, T0, { id: 'ch1', from: 'agent:claude-1', to: 'group:eng:general',
+      body: { kind: 'note', text: 'deploy window this afternoon?' } });
+    post(root, T0 + 1_000, { id: 'ch2', from: 'agent:codex-2', to: 'group:eng:releases',
+      body: { kind: 'note', text: 'release notes drafted', replyTo: 'ch1' } });
+    post(root, T0 + 2_000, { id: 'ch3', from: 'agent:claude-1', to: 'agent:codex-2',
+      body: { kind: 'note', text: 'direct mail stays out of the room read' } });
+    post(root, T0 + 3_000, { id: 'ch4', from: 'agent:grok-3', to: 'group:ops:alerts',
+      body: { kind: 'note', text: 'other room traffic' } });
+    // A channel-prefixed label that is not a group address never matches, and
+    // a room name that is a prefix of another never widens the match.
+    post(root, T0 + 4_000, { id: 'ch5', from: 'agent:claude-1', to: 'group:eng',
+      body: { kind: 'note', text: 'bare group label, no topic' } });
+    post(root, T0 + 5_000, { id: 'ch6', from: 'agent:claude-1', to: 'group:eng-extra:general',
+      body: { kind: 'note', text: 'similarly named room' } });
+    const room = read(root, { channel: 'eng' });
+    expect(room.messages.map(m => m.id)).toEqual(['ch2', 'ch1']);
+    expect(room.matched).toBe(2);
+    // --channel composes with the other filters; an unmatched room is an
+    // empty page, not an error, and matched counts only accepted rows.
+    expect(read(root, { channel: 'eng', kind: 'ask' }).messages.map(m => m.id)).toEqual(['ch1']);
+    expect(read(root, { channel: 'eng', contains: 'release' }).messages.map(m => m.id)).toEqual(['ch2']);
+    expect(read(root, { channel: 'eng', agent: 'codex-2' }).messages.map(m => m.id)).toEqual(['ch2']);
+    expect(read(root, { channel: 'gone' })).toMatchObject({ matched: 0, messages: [] });
+    expect(read(root, { channel: 'eng', limit: 1 })).toMatchObject({ matched: 2, messages: [{ id: 'ch2' }] });
+    // The same read through the API query carries the filter untouched.
+    const parsed = parseAgentMessagesQuery({ channel: 'eng', kind: 'reply' });
+    expect(parsed).toEqual({ ok: true, query: { channel: 'eng', kind: 'reply' } });
+  });
+
+  it('parses --channel as the strict channel-name grammar and refuses anything else', () => {
+    expect(parseAgentMessagesQuery({ channel: 'eng' })).toEqual({ ok: true, query: { channel: 'eng' } });
+    expect(parseAgentMessagesQuery({ channel: 'team_2-x', kind: 'ask', limit: '5' })).toEqual({ ok: true, query: { channel: 'team_2-x', kind: 'ask', limit: 5 } });
+    expect(parseAgentMessagesQuery({ channel: 'Eng' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ channel: 'has space' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ channel: '' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ channel: 'x'.repeat(33) }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ channel: '-lead' }).ok).toBe(false);
+  });
+
   it('filters to messages whose scrubbed summary carries the needle', () => {
     const root = store();
     post(root, T0, { id: 'c1', from: 'a', to: 'b', body: { kind: 'note', text: 'the parser fix is ready for review' } });

@@ -10,7 +10,7 @@ import { busBodyThread, PROVIDERS } from '../agents/bus-v2-schema.js';
 import { busBodyJobId, busBodySummary, busInboxJobMarker, jobAnnotationFromFeed,
   type BusEnvelopeLookupJob } from '../agents/bus-unified.js';
 import { readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
-import { agentIdentityKeys, BUS_CLIS, type AgentIdentityKeyFor } from '../agents/bus-identity.js';
+import { agentChannelNameSchema, agentIdentityKeys, BUS_CLIS, type AgentIdentityKeyFor } from '../agents/bus-identity.js';
 import { BUS_PRIORITIES, type BusPriority } from './bus-envelope.js';
 import { scanBusInbox, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
 
@@ -52,8 +52,8 @@ export interface AgentMessages {
   /** Damaged bus rows skipped while reading. */
   skipped: number;
 }
-/** `with` narrows `agent` to the two-way talk between that agent and one other; `kind` keeps one classified kind; `priority` keeps one envelope band; `job` keeps the traffic that names one job; `thread` keeps only note/context bodies carrying that v2 thread label — a row-level filter `readAgentMessages` applies before projection, the same `busBodyThread` match every other bus read's `--thread` applies; `contains` keeps only messages whose scrubbed one-line summary carries the needle as a case-insensitive substring — the fleet-wide text search no other bus read offers; `excludeFrom` drops mail sent under every registered spelling of one identity — the same sender-exclusion rule `comms bus read|watch --exclude-from`, `fleet bus-follow --exclude-from`, `fleet_bus_inbox`'s `excludeFrom` and `agents bus inbox`/`channel read`'s `excludeFrom` apply, deciding on each row's `from` only, so a flooding sender never reaches the page while every other sender's traffic still does. */
-export interface AgentMessagesQuery { since?: number; agent?: string; with?: string; kind?: AgentMessageKind; priority?: BusPriority; job?: string; thread?: string; contains?: string; excludeFrom?: string; limit?: number }
+/** `with` narrows `agent` to the two-way talk between that agent and one other; `kind` keeps one classified kind; `priority` keeps one envelope band; `job` keeps the traffic that names one job; `thread` keeps only note/context bodies carrying that v2 thread label — a row-level filter `readAgentMessages` applies before projection, the same `busBodyThread` match every other bus read's `--thread` applies; `contains` keeps only messages whose scrubbed one-line summary carries the needle as a case-insensitive substring — the fleet-wide text search no other bus read offers; `excludeFrom` drops mail sent under every registered spelling of one identity — the same sender-exclusion rule `comms bus read|watch --exclude-from`, `fleet bus-follow --exclude-from`, `fleet_bus_inbox`'s `excludeFrom` and `agents bus inbox`/`channel read`'s `excludeFrom` apply, deciding on each row's `from` only, so a flooding sender never reaches the page while every other sender's traffic still does. `channel` keeps only the envelopes addressed to `group:<channel>:*` — the room's whole traffic under every topic, the same address prefix `agents bus inbox --channel` and `channel read` match — a row-level filter `readAgentMessages` applies before projection on the raw `to` label, so mail to agents and other rooms never reaches the page while every post in the named room still does; the value is the strict channel-name grammar, never a guessed match. */
+export interface AgentMessagesQuery { since?: number; agent?: string; with?: string; kind?: AgentMessageKind; priority?: BusPriority; job?: string; thread?: string; contains?: string; excludeFrom?: string; channel?: string; limit?: number }
 
 type Body = Record<string, unknown>;
 const record = (value: unknown): Body | null =>
@@ -281,14 +281,20 @@ export function filterAgentMessages(messages: readonly AgentMessage[], query: Ag
  */
 export function readAgentMessages(query: AgentMessagesQuery = {}, options: BusInboxOptions = {}): AgentMessages {
   const scan = scanBusInbox(options);
-  // --thread is a row-level filter applied before projection: it keeps only
-  // note/context bodies carrying that v2 thread label — the same
-  // `busBodyThread` match `agents bus inbox --thread`, `channel read
-  // --thread`, `comms bus read|watch --thread` and `fleet bus-follow
-  // --thread` apply — so every other body kind and a note without the field
-  // never matches, and `matched` counts only the rows it accepts.
-  const rows = query.thread === undefined ? scan.rows
-    : scan.rows.filter(row => busBodyThread(row.envelope.body) === query.thread);
+  // --thread and --channel are row-level filters applied before projection:
+  // the first keeps only note/context bodies carrying that v2 thread label —
+  // the same `busBodyThread` match `agents bus inbox --thread`, `channel
+  // read --thread`, `comms bus read|watch --thread` and `fleet bus-follow
+  // --thread` apply — and the second keeps only envelopes addressed to
+  // `group:<channel>:*`, the room prefix `agents bus inbox --channel` and
+  // `channel read` match, decided on the raw `to` label so every topic of
+  // the named room lists while agent mail and other rooms never reach the
+  // page. Every other body kind and a note without the field never matches
+  // either filter, and `matched` counts only the rows they accept.
+  const channelPrefix = query.channel === undefined ? undefined : `group:${query.channel}:`;
+  const rows = scan.rows.filter(row =>
+    (query.thread === undefined || busBodyThread(row.envelope.body) === query.thread) &&
+    (channelPrefix === undefined || row.envelope.to.startsWith(channelPrefix)));
   const identityOf = query.agent === undefined && query.with === undefined && query.excludeFrom === undefined ? undefined
     : agentIdentityKeys({ root: options.root });
   const jobIds = new Set<string>();
@@ -326,7 +332,7 @@ export function parseSince(value: string, now = Date.now()): number | null {
 }
 
 /** Shared validation for CLI flags and API query params. */
-export function parseAgentMessagesQuery(input: { since?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; thread?: string; contains?: string; excludeFrom?: string; limit?: string }, now = Date.now()):
+export function parseAgentMessagesQuery(input: { since?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; thread?: string; contains?: string; excludeFrom?: string; channel?: string; limit?: string }, now = Date.now()):
   { ok: true; query: AgentMessagesQuery } | { ok: false; error: string } {
   const query: AgentMessagesQuery = {};
   if (input.kind !== undefined) {
@@ -353,6 +359,15 @@ export function parseAgentMessagesQuery(input: { since?: string; agent?: string;
       return { ok: false, error: '--thread takes a thread label (printable, 1-128 chars).' };
     }
     query.thread = input.thread;
+  }
+  if (input.channel !== undefined) {
+    // The same strict channel-name grammar `agents bus channel create` and
+    // `agents bus inbox --channel` enforce, so a value that cannot name a
+    // registry room is a usage error rather than a silently empty page.
+    if (!agentChannelNameSchema.safeParse(input.channel).success) {
+      return { ok: false, error: '--channel takes a bus channel name (a-z, 0-9, _ -; 1-32 chars).' };
+    }
+    query.channel = input.channel;
   }
   if (input.contains !== undefined) {
     // Free text for a substring match, not a label: any printable content is

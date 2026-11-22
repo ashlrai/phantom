@@ -23,11 +23,16 @@ for only the traffic that names one job, `--thread <label>` for only the
 `note`/`context` bodies carrying that v2 thread label — the same
 `busBodyThread` match `agents bus inbox --thread`, `agents bus channel
 read --thread`, `comms bus read|watch --thread` and `fleet bus-follow
---thread` apply — `--contains <text>` for only the messages whose scrubbed
+--thread` apply — `--channel <name>` for only the posts addressed to
+`group:<name>:*` — the room's whole traffic under every topic, the same
+address prefix `agents bus inbox --channel` and `channel read` match,
+decided on the raw `to` label before projection — `--contains <text>` for
+only the messages whose scrubbed
 summary carries that text, `--exclude-from <name|lane>` for only the mail
 one sender did not write, `--limit <n>`)
 or GET `/api/verse/agent-bus/messages` with the same
-`since`, `agent`, `with`, `kind`, `priority`, `job`, `thread`, `contains`,
+`since`, `agent`, `with`, `kind`, `priority`, `job`, `thread`, `channel`,
+`contains`,
 `excludeFrom` and `limit` params. Both return `agent-messages.v1`: newest
 first, each with `id`, `ts`, `priority` (the envelope's P0–P3 band, the
 same band `comms bus read --priority` filters on), `from` and `to` (name and lane, lane `null` when
