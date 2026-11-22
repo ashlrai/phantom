@@ -103,7 +103,10 @@ with pending handoff records as a `seat-handoff` item — the same plan read —
 so pending seat work surfaces in the unified pending view without a second
 lookup. `phm agents bus work mine`'s `seats` section reads the same plan
 narrowed to the seats the queried agent denotes, so an agent sees its own
-pending seat handoffs inside the one per-agent digest.
+pending seat handoffs inside the one per-agent digest. The isolated fleet
+MCP server serves the same whole-roster plan as `fleet_seat_handoffs` —
+no arguments, server-owned roots, `apply` always false — so MCP-connected
+agents read the same handoff posture the CLI prints.
 
 Handoff defaults to a dry-run plan. It refuses active seats; only draining seats
 or idle seats with work may hand off (completed handoffs allow harmless replay).
