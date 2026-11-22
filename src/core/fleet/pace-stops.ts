@@ -13,7 +13,7 @@ export async function paceStops(report: FleetPaceV1, dir: string, config: unknow
       if (typeof loop !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(loop) || seen.has(loop)) throw new Error('Loop names must be unique plain names');
       seen.add(loop);
       const verdict = report.pools.find(p => p.pool === pool)?.verdict;
-      return { pool, loop, action: verdict === 'over' ? 'stop' : verdict === 'ok' ? 'clear' : 'keep' };
+      return { pool, loop, action: verdict === 'over' || verdict === 'spent' ? 'stop' : verdict === 'ok' ? 'clear' : 'keep' };
     });
   });
   for (const plan of plans) {

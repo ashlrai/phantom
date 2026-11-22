@@ -43,7 +43,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
   ]);
   sources.ledger = tail === null ? 'missing' : tail.truncated ? 'bounded tail' : 'healthy';
   sources.guardian = guardian?.length ? 'healthy' : 'missing';
-  sources.pace = pace?.pools.length ? 'healthy' : 'missing';
+  sources.pace = pace?.pools.some(p => p.observedAt || p.usedPct !== null) ? 'healthy' : 'missing';
   sources.stops = stopText === null ? 'unknown' : 'healthy';
   sources.hostLoad = hostLoad.state === 'known' ? 'healthy' : 'unknown';
   const rows = ledgerRows(tail?.text ?? '', now, 24).rows.sort((a, b) => a.at - b.at);
@@ -75,10 +75,10 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     .map(s => ({ family: clean(s.family), until: s.until }));
   const brief = {
     schema: 'leader.compact-brief.v1', at: new Date(now).toISOString(),
-    state: lanes.length || tail || pace?.pools.length || guardian?.length ? 'ready' : 'no data', sources,
+    state: lanes.length || tail || sources.pace === 'healthy' || guardian?.length ? 'ready' : 'no data', sources,
     windowHours: 2, emptyWindowHours: 24, lanes,
     pools: (pace?.pools ?? []).map(p => ({ pool: clean(p.pool), usedPct: p.usedPct, hoursToReset: p.hoursToReset,
-      burnPerHour: p.recentPerHour, safeBurn: p.safeBurnPerHour ?? null, verdict: p.verdict ?? 'unknown' })),
+      burnPerHour: p.recentPerHour, safeBurn: p.safeBurnPerHour ?? null, verdict: p.verdict === 'stale' || p.verdict === 'spent' ? p.line ?? p.verdict : p.verdict ?? 'unknown', headroom: p.headroom, source: p.source, ageHours: p.ageHours })),
     families: [...groups.values()].sort((a, b) => a.prs / Math.max(1, a.launches) - b.prs / Math.max(1, b.launches) || b.launches - a.launches || a.family.localeCompare(b.family)),
     attention, liveAt: typeof live?.generatedAt === 'string' ? clean(live.generatedAt) : null, main: (guardian ?? []).map(g => ({ repo: clean(g.repo), state: g.state, stale: g.stale })),
     medianOpenToMergeSeconds: buildMergeLatency({ ledger: tail?.text ?? null, now, hours: 24, by: 'repo', metricsPath: '' }).open_to_merge?.p50_s ?? null,
