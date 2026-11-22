@@ -774,7 +774,20 @@ off before they run out. The report shows it as `adaptiveCap`. An operator
 change batches related ready tasks into one agent session. See
 [adaptive concurrency and batching](../contrib/mac/README.md#adaptive-concurrency-and-batching).
 
-`ashlr fleet admission [--json]` reads that stored verdict from `queue/status.json`
+`ashlr fleet admission` shows one line explaining job starts from
+`~/.ashlr-runs/queue/admission-ctl.json`. The Fleet overview's **Job starts** card
+uses the same reader through `GET /api/verse/fleet/admission`. `--json` returns
+the typed measurements, `nextStartSeconds` and `startsPerHourCap` (`3600 / settle_s`;
+null for zero settle, which imposes no pacing cap). Missing, invalid or older-than-five-minute
+observations are unknown. Host blocks show the pacing window separately: its
+expiry does not promise a launch while the host remains busy. Exit codes are
+0 open, 1 blocked or settling, 2 unknown or bad arguments.
+`ASHLR_ADMISSION_CTL_PATH` overrides the admission file; `ASHLR_RUNS_DIR`
+overrides its default runs directory. This is a read-only observation of the
+launch guard; lane holds and other dispatcher gates can still prevent work.
+
+`ashlr fleet admission --details [--json]` preserves the earlier lane report
+and JSON shape. It reads that stored verdict from `queue/status.json`
 and says why each lane is waiting: held, at target, admission closed (the
 dispatcher is not admitting — load gate tripped or paused), blocked by the global
 cap, or ok. `global.closed` is the fleet verdict (cap, gate or pause) and
@@ -787,7 +800,7 @@ These lane reports count availability against the **launch target**: the lane's
 configured `target` tightened by the `effective_target` the fleet controller
 publishes after load shedding (`min(target, effective_target)`, the configured
 target when the shed is absent or unreadable). A lane running at its shed ceiling
-has no phantom room, so `fleet admission`, `fleet lane-idle`, `fleet lane-share`,
+has no phantom room, so `fleet admission --details`, `fleet lane-idle`, `fleet lane-share`,
 `fleet lane-starve`, `fleet starved`, `fleet launchable`, `fleet idle-lanes`,
 `fleet trim` and the idle-lane checks in `fleet doctor` and the bottleneck ideas
 all measure "under target", "full" and "starved" against it. `fleet trim`'s
