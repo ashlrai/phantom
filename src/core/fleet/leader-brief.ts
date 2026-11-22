@@ -10,6 +10,7 @@ import { listGoalsDetailed } from '../goals/store.js';
 import { progressOf } from '../goals/advance.js';
 import { formatProductDisplayText } from '../vision/leader-display-text.js';
 import { readFleetRunsDirState } from './runs-dir-state.js';
+import { readMergedPrFeed, type MergedPrFeed } from './merged-pr-feed.js';
 
 /**
  * One goal as the brief needs it. Declared structurally rather than importing
@@ -20,11 +21,13 @@ import { readFleetRunsDirState } from './runs-dir-state.js';
 export interface BriefGoal { objective: string; status: string; fractionDone: number | null }
 
 export interface BriefInputs {
+  mergedPrs?: MergedPrFeed;
   merges24h: number | null; openPrs: number | null;
   installed: string | null; latest: string | null; needsMason: number | null;
   goals: BriefGoal[] | null; lanes: string[] | null;
 }
 export interface LeaderBrief {
+  mergedPrs: MergedPrFeed | null;
   at: string; merges24h: number | null; openPrs: number | null;
   release: { installed: string | null; latest: string | null; behind: boolean | null };
   needsMason: number | null; goals: Array<{ objective: string; percentText: string }>;
@@ -67,27 +70,25 @@ export function buildLeaderBrief(input: BriefInputs, now: number | Date): Leader
   const release = { installed, latest, behind: installed && latest ? versionNewer(latest, installed) : null };
   const lines = [
     `Merges (24h): ${merges24h ?? 'unknown'}; open PRs: ${openPrs ?? 'unknown'}`,
+    ...(input.mergedPrs ? [`Source: local git default branch (${input.mergedPrs.state})${input.mergedPrs.reason ? `: ${input.mergedPrs.reason}` : ''}`] : []),
     `Release: installed ${installed ?? 'unknown'}; latest published ${latest ?? 'unknown'}`,
     `Needs Mason: ${needsMason ?? 'unknown'}`,
     `Goals: ${input.goals === null ? 'unknown' : goals.length ? goals.map(g => `${g.objective} (${g.percentText})`).join('; ') : 'none'}`,
     `Lanes: ${input.lanes === null ? 'unknown' : lanes.length ? lanes.join('; ') : 'none'}`,
   ];
-  return { at: new Date(now).toISOString(), merges24h, openPrs, release, needsMason, goals, lanes, text: lines.join('\n').slice(0, MAX_TEXT) };
+  return { at: new Date(now).toISOString(), mergedPrs: input.mergedPrs ?? null, merges24h, openPrs, release, needsMason, goals, lanes, text: lines.join('\n').slice(0, MAX_TEXT) };
 }
 
 type Reader<T> = () => T | Promise<T>;
 export interface BriefReaders {
-  fleet: Reader<{ merges24h: number | null; openPrs: number | null }>;
+  fleet: Reader<{ merges24h: number | null; openPrs: number | null; mergedPrs?: MergedPrFeed }>;
   installed: Reader<string | null>; latest: Reader<string | null>;
   needsMason: Reader<number | null>; goals: Reader<BriefGoal[] | null>; lanes: Reader<string[] | null>;
 }
-const defaults: BriefReaders = {
-  async fleet() {
-    const { buildFleetLiveSnapshot } = await import('../verse/fleet-live-api.js');
-    const { snapshot } = await buildFleetLiveSnapshot();
-    // The ledger's open-PR projection is limited to fleet-observed events and
-    // cannot establish the total number of open PRs.
-    return { merges24h: snapshot.merged24h?.length ?? null, openPrs: null };
+const defaults = (repoRoot: string | undefined, now: number): BriefReaders => ({
+  fleet() {
+    const mergedPrs = readMergedPrFeed({ repoRoot, now });
+    return { mergedPrs, merges24h: mergedPrs.state === 'ok' ? mergedPrs.prs.length : null, openPrs: null };
   },
   installed: readInstalledBundleVersion,
   latest: async () => (await discoverLatestRelease('ashlrai/phantom', defaultReleasePublicReader())).version,
@@ -106,13 +107,14 @@ const defaults: BriefReaders = {
     const usage = subscriptionUsage('codex');
     return [`codex usage ${usage ? `${usage.usedPercent}% ${usage.windowLabel}` : 'unknown'}`, ...state.lanes.map(l => `${l.lane} ${l.running}/${l.target}`)];
   },
-};
+});
 
-export async function readLeaderBrief(opts: { readers?: Partial<BriefReaders>; now?: () => number } = {}): Promise<LeaderBrief> {
-  const readers = { ...defaults, ...opts.readers };
+export async function readLeaderBrief(opts: { readers?: Partial<BriefReaders>; now?: () => number; repoRoot?: string } = {}): Promise<LeaderBrief> {
+  const now = (opts.now ?? Date.now)();
+  const readers = { ...defaults(opts.repoRoot, now), ...opts.readers };
   const safe = async <T>(read: Reader<T>): Promise<T | null> => { try { return await read(); } catch { return null; } };
   const [fleet, installed, latest, needsMason, goals, lanes] = await Promise.all([
     safe(readers.fleet), safe(readers.installed), safe(readers.latest), safe(readers.needsMason), safe(readers.goals), safe(readers.lanes),
   ]);
-  return buildLeaderBrief({ merges24h: fleet?.merges24h ?? null, openPrs: fleet?.openPrs ?? null, installed, latest, needsMason, goals, lanes }, (opts.now ?? Date.now)());
+  return buildLeaderBrief({ mergedPrs: fleet?.mergedPrs, merges24h: fleet?.merges24h ?? null, openPrs: fleet?.openPrs ?? null, installed, latest, needsMason, goals, lanes }, now);
 }
