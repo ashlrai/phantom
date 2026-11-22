@@ -50,6 +50,7 @@ function outcome(job_id: string, over: Partial<RouterOutcome> = {}): RouterOutco
     pool_kind: null, pool_mem_free_pct: null, pool_swap_gb: null,
     node_outcome: null, node_id: null, node_pack: null,
     merge_queue: null,
+    launch_cost_status: null, launch_peak_processes: null, launch_mean_cpu_pct: null, launch_peak_cpu_pct: null,
     passk: null,
     ...over,
   };
@@ -64,6 +65,7 @@ function read(over: Partial<RouterOutcomeRead> = {}): RouterOutcomeRead {
     merge_events_state: 'missing', merge_events_truncated: false,
     revert_ledger_state: 'missing',
     reward_state: 'missing', reward_truncated: false,
+    launch_cost_state: 'missing', launch_cost_truncated: false,
     outcomes: [], malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0, session_rows: 0, truncated: false,
     ...over,
   };
@@ -173,14 +175,14 @@ describe('phm router outcomes', () => {
       malformed_rows: 3, unattached_rows: 1, ambiguous_urls: 2, session_rows: 4,
     }), 100);
     const lines = routerOutcomeLines(report);
-    expect(lines[0]).toBe('router outcomes state=read eval=missing spend=missing market=missing empty_tags=missing merge_events=missing revert_ledger=missing reward=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2 session_rows=4');
+    expect(lines[0]).toBe('router outcomes state=read eval=missing spend=missing market=missing empty_tags=missing merge_events=missing revert_ledger=missing reward=missing launch_cost=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2 session_rows=4');
     expect(lines[1]).toBe(`ledger ${report.path}`);
     expect(lines[3]).toContain('work_class=unknown repo=ashlrai/phantom lane_hint=unknown');
     expect(lines[3]).toContain('lane_hint_blocked_by=[quota_exhausted,saturated] market_lane=beta market_preferred=alpha market_override=resource_fit market_reasons=[no_runnable_lane,global_admission] market_rejected=[alpha:quota_exhausted+held;beta]');
     expect(lines[3]).toContain('handoff_trigger=rate-limit handoff_lane=codex-personal handoff_target=unknown');
     expect(lines[3]).toContain('provider_wall_trigger=auth-failure provider_wall_pattern=claude_auth_401 provider_wall_lane=claude');
     expect(lines[2]).toContain('B lane=unknown model=unknown tier=unknown work_class=docs repo=unknown lane_hint=unknown lane_override=unknown merged=true reverted=unknown');
-    expect(lines[2]).toContain('task_outcome=unknown skipped=unknown skip_reason=unknown skip_code=unknown deferred=unknown defer_reason=unknown defer_repeat_of=unknown noop=unknown noop_reason=unknown noop_repeat_of=unknown lane_hint_blocked_by=unknown market_lane=unknown market_preferred=unknown market_override=unknown market_reasons=unknown market_rejected=unknown handoff_trigger=unknown handoff_lane=unknown handoff_target=unknown provider_wall_trigger=unknown provider_wall_pattern=unknown provider_wall_lane=unknown pool_kind=unknown pool_mem_free_pct=unknown pool_swap_gb=unknown node_outcome=unknown node_id=unknown node_pack=unknown merge_queue=unknown');
+    expect(lines[2]).toContain('task_outcome=unknown skipped=unknown skip_reason=unknown skip_code=unknown deferred=unknown defer_reason=unknown defer_repeat_of=unknown noop=unknown noop_reason=unknown noop_repeat_of=unknown lane_hint_blocked_by=unknown market_lane=unknown market_preferred=unknown market_override=unknown market_reasons=unknown market_rejected=unknown handoff_trigger=unknown handoff_lane=unknown handoff_target=unknown provider_wall_trigger=unknown provider_wall_pattern=unknown provider_wall_lane=unknown pool_kind=unknown pool_mem_free_pct=unknown pool_swap_gb=unknown node_outcome=unknown node_id=unknown node_pack=unknown launch_cost_status=unknown launch_peak_processes=unknown launch_mean_cpu_pct=unknown launch_peak_cpu_pct=unknown merge_queue=unknown');
   });
 
   it('renders merge_queue evidence and reports merge-events ledger health', async () => {
@@ -256,6 +258,28 @@ describe('phm router outcomes', () => {
     const h = harness(canned(read({ outcomes: [outcome('A')], reward_state: 'unreadable' })));
     expect(await cmdRouterOutcomes(['--json'], h.readFn)).toBe(0);
     expect(JSON.parse(h.out())).toMatchObject({ reward_state: 'unreadable', reward_truncated: false });
+  });
+
+  it('surfaces launch-cost ledger health and cut-tail coverage in JSON and text', async () => {
+    const report = buildRouterOutcomesReport(read({
+      outcomes: [outcome('A', {
+        launch_cost_status: 'measured', launch_peak_processes: 4,
+        launch_mean_cpu_pct: 12.5, launch_peak_cpu_pct: 40,
+      })],
+      launch_cost_state: 'read', launch_cost_truncated: true,
+    }), 100);
+    expect(report).toMatchObject({ launch_cost_state: 'read', launch_cost_truncated: true });
+    const lines = routerOutcomeLines(report);
+    expect(lines[0]).toContain('launch_cost=read');
+    expect(lines).toContain('launch-cost coverage: retained tail only; launch_cost joins cover the newest bytes');
+    expect(lines[3]).toContain('launch_cost_status=measured');
+    expect(lines[3]).toContain('launch_peak_processes=4');
+    expect(lines[3]).toContain('launch_mean_cpu_pct=12.5');
+    expect(lines[3]).toContain('launch_peak_cpu_pct=40');
+
+    const h = harness(canned(read({ outcomes: [outcome('A')], launch_cost_state: 'unreadable' })));
+    expect(await cmdRouterOutcomes(['--json'], h.readFn)).toBe(0);
+    expect(JSON.parse(h.out())).toMatchObject({ launch_cost_state: 'unreadable', launch_cost_truncated: false });
   });
 
   it('surfaces empty-tag ledger health and cut-tail coverage in JSON and text', async () => {

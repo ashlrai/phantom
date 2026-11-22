@@ -323,8 +323,9 @@ reads the newest bounded tail of `<runs-dir>/metrics/jobs.jsonl` (default
 `ASHLR_RUNS_DIR`, then `~/.ashlr-runs`; 16 MiB retained) joined with the
 same bound of `<runs-dir>/metrics/api-spend.jsonl`,
 `<runs-dir>/metrics/work-market.jsonl`,
-`<runs-dir>/metrics/empty-tags.jsonl` and
-`<runs-dir>/metrics/merge-events.jsonl`, plus the reward-signal
+`<runs-dir>/metrics/empty-tags.jsonl`,
+`<runs-dir>/metrics/merge-events.jsonl` and
+`<runs-dir>/metrics/launch-cost.jsonl`, plus the reward-signal
 substrate under the ASHLR home root
 (`<ashlr>/metrics/reward-signals.jsonl`, `ASHLR_HOME` honored), and
 reports one
@@ -692,7 +693,33 @@ vocabulary and `reward_truncated` marks a cut tail, in which case
 joined evidence covers only the newest bytes; anything but `read`
 leaves every joined field at its jobs-ledger value — unknown, never
 a guessed verdict or cost — and reward rows naming jobs outside the
-jobs window never create outcomes. `reverted`
+jobs window never create outcomes. The launch-cost ledger joins under
+the runs dir — `<runs>/metrics/launch-cost.jsonl`, the bounded
+append-only `fleet.launch-cost.v1` journal the `launch_cost.py`
+producer appends and `src/core/fleet/launch-cost.ts` reads for fleet
+vitals: the fleet's recorded first-minute process/CPU probe per launch
+attempt. `foldLaunchCosts` validates each row under the producer's
+closed contract (exact schema, bounded lane/launchId identifiers, the
+recorded status vocabulary, metric figures inside their shapes —
+`unknown` rows carry none, `measured` rows require nearly-full
+60-second coverage with at least 12 samples, and mean CPU never
+exceeds peak) and the read resolves each `launchId` to a folded job
+id: the producer keys measured rows `<job>-<12 lowercase hex claim
+hash>` — one row per attempt — and unknown probes by the bare job id,
+so a launchId that is itself a folded job id keys itself (a job id may
+legitimately end in a 12-hex segment), a measured/partial row's suffix
+strips to the job it measured, and an unknown-status row prefers an
+exact job-id match before the stripped prefix. The join fills
+`launch_cost_status` (`measured`/`partial`/`unknown` — the probe ran
+but recorded nothing on `unknown`), `launch_peak_processes`,
+`launch_mean_cpu_pct` and `launch_peak_cpu_pct`, the only per-attempt
+resource-cost evidence subscription lanes record since their finish
+rows carry no `cost_usd`; the last appended row for a resolved job
+stands and rows resolving outside the jobs window join nothing and
+never create outcomes. The report's `launch_cost_state` mirrors the
+jobs `state` vocabulary and `launch_cost_truncated` marks a cut
+tail; anything but `read` leaves every `launch_cost_*` field null —
+unknown, never a zeroed or guessed resource figure. `reverted`
 folds explicit revert evidence — a `reverted` boolean, a revert event name
 or terminal REVERT/REVERTED state, or a parseable `reverted_at`/`revertedAt`
 stamp — plus the authority ledger's verified evidence index: a
@@ -870,8 +897,9 @@ report carries `truncated: true` and every count covers the newest bytes
 only; `market_state`/`market_truncated` report the decision journal's
 health, `empty_tag_state`/`empty_tag_truncated` the tags journal's,
 `merge_events_state`/`merge_events_truncated` the merge-events
-journal's, `revert_ledger_state` the scan-detected revert ledger's and
-`reward_state`/`reward_truncated` the reward-signal substrate's
+journal's, `revert_ledger_state` the scan-detected revert ledger's,
+`reward_state`/`reward_truncated` the reward-signal substrate's and
+`launch_cost_state`/`launch_cost_truncated` the launch-cost journal's
 the same way. The report also carries the fleet controller's own recorded
 lane-quality verdicts: `controller_quality_state` reports the health of
 `<runs-dir>/queue/fleet-controller.json` (`'unreported'` when the caller
@@ -891,7 +919,15 @@ findings, mean `cost_usd`, mean recorded `acus` (the Devin lane's billed
 spend — a different unit, never mixed with USD), mean recorded
 `pool_pct_used` (the reward-signal ledger's subscription-pool
 percentage points consumed — the only per-job subscription-quota cost
-figure, a third unit never mixed with either), mean `wall_s`, mean
+figure, a third unit never mixed with either), the launch-cost probe
+evidence — `launch_cost_known` counts the known-cohort outcomes
+carrying a recorded `launch_cost_status`, `launch_cost_measured`
+counts the `measured` rows inside that cohort (full-window coverage,
+not `partial`), and `launch_peak_processes_mean`,
+`launch_cpu_pct_mean`/`launch_cpu_pct_peak_mean` report the mean
+recorded first-minute peak process count and mean/peak CPU (percent
+of one core) — a fourth unit never mixed with the cost figures —
+mean `wall_s`, mean
 recorded `ttm_s` (merge latency), mean recorded `queue_wait_s` (the
 job's queue-admission wait from its arrival stamp to first dispatch —
 the same boundaries job-latency's queue_wait phase pairs), mean

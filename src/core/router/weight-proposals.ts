@@ -108,6 +108,26 @@ export interface RouterWeightEvidence {
   pool_pct_used_known: number;
   /** Mean recorded pool_pct_used over pool_pct_used_known; null when none recorded. */
   pool_pct_used_mean: number | null;
+  /**
+   * Group outcomes carrying a recorded launch-cost probe verdict —
+   * launch-cost.jsonl's fleet.launch-cost.v1 rows joined as
+   * `launch_cost_status`: the fleet's first-minute process/CPU
+   * measurement for the job's launch attempt (`measured` full window,
+   * `partial` shorter coverage, `unknown` probe ran but recorded
+   * nothing). `launch_cost_measured` counts the `measured` rows inside
+   * the same cohort — the subset whose figures are full-window
+   * evidence rather than partial coverage. `launch_peak_processes_mean`,
+   * `launch_cpu_pct_mean` and `launch_cpu_pct_peak_mean` are the mean
+   * recorded first-minute peak process count and mean/peak CPU
+   * (percent of one core) over the outcomes that recorded each figure;
+   * null when none did — a different unit than cost_usd, acus and
+   * pool_pct_used, never summed with them.
+   */
+  launch_cost_known: number;
+  launch_cost_measured: number;
+  launch_peak_processes_mean: number | null;
+  launch_cpu_pct_mean: number | null;
+  launch_cpu_pct_peak_mean: number | null;
   /** Group outcomes with a recorded finish-row `diff_files` count. */
   diff_files_known: number;
   /** Mean recorded diff_files over diff_files_known; null when none recorded. */
@@ -534,6 +554,10 @@ interface WeightEvidenceTally {
   passkSum: number; passkKnown: number;
   acusSum: number; acusKnown: number;
   poolPctSum: number; poolPctKnown: number;
+  launchCost: number; launchCostMeasured: number;
+  launchPeakSum: number; launchPeakKnown: number;
+  launchCpuSum: number; launchCpuKnown: number;
+  launchCpuPeakSum: number; launchCpuPeakKnown: number;
   diffFilesSum: number; diffFilesKnown: number;
   diffLinesSum: number; diffLinesKnown: number;
   usageMissingKnown: number;
@@ -565,8 +589,11 @@ const freshTally = (): WeightEvidenceTally => ({
   publishWaitSum: 0, publishWaitKnown: 0,
   laneBlocked: 0, blockedReasons: new Map(),
   tokensSum: 0, tokensKnown: 0, passkSum: 0, passkKnown: 0,
-  acusSum: 0, acusKnown: 0, poolPctSum: 0, poolPctKnown: 0, diffFilesSum: 0, diffFilesKnown: 0,
-  diffLinesSum: 0, diffLinesKnown: 0, usageMissingKnown: 0,
+  acusSum: 0, acusKnown: 0, poolPctSum: 0, poolPctKnown: 0,
+  launchCost: 0, launchCostMeasured: 0,
+  launchPeakSum: 0, launchPeakKnown: 0, launchCpuSum: 0, launchCpuKnown: 0,
+  launchCpuPeakSum: 0, launchCpuPeakKnown: 0,
+  diffFilesSum: 0, diffFilesKnown: 0, diffLinesSum: 0, diffLinesKnown: 0, usageMissingKnown: 0,
   laneOverrides: 0, overrideReasons: new Map(),
   marketRejected: 0, rejectedReasons: new Map(),
   handoff: 0, handoffTriggers: new Map(),
@@ -634,6 +661,11 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   acus_mean: t.acusKnown === 0 ? null : round6(t.acusSum / t.acusKnown),
   pool_pct_used_known: t.poolPctKnown,
   pool_pct_used_mean: t.poolPctKnown === 0 ? null : round6(t.poolPctSum / t.poolPctKnown),
+  launch_cost_known: t.launchCost,
+  launch_cost_measured: t.launchCostMeasured,
+  launch_peak_processes_mean: t.launchPeakKnown === 0 ? null : round6(t.launchPeakSum / t.launchPeakKnown),
+  launch_cpu_pct_mean: t.launchCpuKnown === 0 ? null : round6(t.launchCpuSum / t.launchCpuKnown),
+  launch_cpu_pct_peak_mean: t.launchCpuPeakKnown === 0 ? null : round6(t.launchCpuPeakSum / t.launchCpuPeakKnown),
   diff_files_known: t.diffFilesKnown,
   diff_files_mean: t.diffFilesKnown === 0 ? null : round6(t.diffFilesSum / t.diffFilesKnown),
   diff_lines_known: t.diffLinesKnown,
@@ -939,6 +971,13 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     if (o.passk !== null) { t.passkKnown++; t.passkSum += o.passk; }
     if (o.acus !== null) { t.acusKnown++; t.acusSum += o.acus; }
     if (o.pool_pct_used !== null) { t.poolPctKnown++; t.poolPctSum += o.pool_pct_used; }
+    if (o.launch_cost_status !== null) {
+      t.launchCost++;
+      if (o.launch_cost_status === 'measured') t.launchCostMeasured++;
+      if (o.launch_peak_processes !== null) { t.launchPeakKnown++; t.launchPeakSum += o.launch_peak_processes; }
+      if (o.launch_mean_cpu_pct !== null) { t.launchCpuKnown++; t.launchCpuSum += o.launch_mean_cpu_pct; }
+      if (o.launch_peak_cpu_pct !== null) { t.launchCpuPeakKnown++; t.launchCpuPeakSum += o.launch_peak_cpu_pct; }
+    }
     if (o.diff_files !== null) { t.diffFilesKnown++; t.diffFilesSum += o.diff_files; }
     if (o.diff_lines !== null) { t.diffLinesKnown++; t.diffLinesSum += o.diff_lines; }
     if (o.usage_missing !== null) t.usageMissingKnown++;
@@ -1147,6 +1186,16 @@ export interface RouterWeightProposalReport {
   reward_state: RouterOutcomeRead['reward_state'];
   /** True when the reward tail was cut; joined evidence covers only the newest bytes. */
   reward_truncated: boolean;
+  /**
+   * Health of the launch-cost.jsonl tail behind the launch_cost_*
+   * outcome joins and the per-group launch-cost evidence. Anything but
+   * 'read' means no launch-cost rows joined — every group's
+   * launch_cost_known reads 0 and the means stay null, never a
+   * zeroed or guessed resource figure.
+   */
+  launch_cost_state: RouterOutcomeRead['launch_cost_state'];
+  /** True when the launch-cost tail was cut; joined evidence covers only the newest bytes. */
+  launch_cost_truncated: boolean;
   /** 'unavailable' when the ledger was not read; counts are then null, never zero. */
   status: 'proposed' | 'insufficient-evidence' | 'unavailable';
   bounds: { min_samples: number; max_shift: number };
@@ -1371,6 +1420,7 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     merge_events_state: read.merge_events_state, merge_events_truncated: read.merge_events_truncated,
     revert_ledger_state: read.revert_ledger_state,
     reward_state: read.reward_state, reward_truncated: read.reward_truncated,
+    launch_cost_state: read.launch_cost_state, launch_cost_truncated: read.launch_cost_truncated,
     controller_quality_state: (controller?.state ?? 'unreported') as RouterWeightProposalReport['controller_quality_state'],
     controller_quality: controller?.state === 'read' ? controller.receipts : null,
     controller_quality_invalid_rows: controller?.state === 'read' ? controller.invalid_rows : null,
