@@ -52,8 +52,8 @@ export interface AgentMessages {
   /** Damaged bus rows skipped while reading. */
   skipped: number;
 }
-/** `with` narrows `agent` to the two-way talk between that agent and one other; `kind` keeps one classified kind; `priority` keeps one envelope band; `job` keeps the traffic that names one job; `thread` keeps only note/context bodies carrying that v2 thread label — a row-level filter `readAgentMessages` applies before projection, the same `busBodyThread` match every other bus read's `--thread` applies; `contains` keeps only messages whose scrubbed one-line summary carries the needle as a case-insensitive substring — the fleet-wide text search no other bus read offers. */
-export interface AgentMessagesQuery { since?: number; agent?: string; with?: string; kind?: AgentMessageKind; priority?: BusPriority; job?: string; thread?: string; contains?: string; limit?: number }
+/** `with` narrows `agent` to the two-way talk between that agent and one other; `kind` keeps one classified kind; `priority` keeps one envelope band; `job` keeps the traffic that names one job; `thread` keeps only note/context bodies carrying that v2 thread label — a row-level filter `readAgentMessages` applies before projection, the same `busBodyThread` match every other bus read's `--thread` applies; `contains` keeps only messages whose scrubbed one-line summary carries the needle as a case-insensitive substring — the fleet-wide text search no other bus read offers; `excludeFrom` drops mail sent under every registered spelling of one identity — the same sender-exclusion rule `comms bus read|watch --exclude-from`, `fleet bus-follow --exclude-from`, `fleet_bus_inbox`'s `excludeFrom` and `agents bus inbox`/`channel read`'s `excludeFrom` apply, deciding on each row's `from` only, so a flooding sender never reaches the page while every other sender's traffic still does. */
+export interface AgentMessagesQuery { since?: number; agent?: string; with?: string; kind?: AgentMessageKind; priority?: BusPriority; job?: string; thread?: string; contains?: string; excludeFrom?: string; limit?: number }
 
 type Body = Record<string, unknown>;
 const record = (value: unknown): Body | null =>
@@ -223,7 +223,12 @@ export function projectAgentMessages(rows: readonly BusInboxReceipt[],
  * `agent`/`with` match a routing label or lane exactly as before; when
  * `identityOf` resolves both sides to the same registered identity, the labels
  * count as one agent, so a handle, alias and `agent:` address never split a
- * filter. An unresolvable side changes nothing. `job` keeps a message that
+ * filter. `excludeFrom` drops a message whose sender (`from`) matches the ref
+ * by the same name/lane/identity-key rule — sender only, never the recipient —
+ * the same sender-exclusion every other bus read applies, so a flooding
+ * sender's traffic never reaches the page while every other sender's does; it
+ * composes with `agent`/`with` — the excluded identity's own rows drop while
+ * rows merely addressed to it stay. An unresolvable side changes nothing. `job` keeps a message that
  * names the job through any channel the row itself reports: its `job` link,
  * a live `jobState` citation (`jobId` on a feed-citing body or `taskId` on a
  * worker-handoff) or membership in the `job:<id>` conversation bucket —
@@ -235,9 +240,10 @@ export function projectAgentMessages(rows: readonly BusInboxReceipt[],
 export function filterAgentMessages(messages: readonly AgentMessage[], query: AgentMessagesQuery,
   identityOf?: AgentIdentityKeyFor): AgentMessage[] {
   const want = (value: string | undefined) => value ? agentName(value).toLowerCase() : null;
-  const agent = want(query.agent), peer = want(query.with);
+  const agent = want(query.agent), peer = want(query.with), exclude = want(query.excludeFrom);
   const agentKey = identityOf && query.agent ? identityOf(agentName(query.agent)) : undefined;
   const peerKey = identityOf && query.with ? identityOf(agentName(query.with)) : undefined;
+  const excludeKey = identityOf && query.excludeFrom ? identityOf(agentName(query.excludeFrom)) : undefined;
   const is = (ref: AgentRef, name: string, key: string | undefined) =>
     ref.name.toLowerCase() === name || ref.lane === name || (key !== undefined && identityOf?.(ref.name) === key);
   const jobThread = query.job === undefined ? null : `${JOB_THREAD_PREFIX}${query.job}`;
@@ -252,6 +258,7 @@ export function filterAgentMessages(messages: readonly AgentMessage[], query: Ag
     && (query.priority === undefined || m.priority === query.priority)
     && (query.job === undefined || m.job === query.job || m.jobState?.jobId === query.job || m.conversation === jobThread)
     && (needle === undefined || needle === '' || m.summary.toLowerCase().includes(needle))
+    && (exclude === null || !is(m.from, exclude, excludeKey))
     && (!agent || (peer ? (is(m.from, agent, agentKey) && is(m.to, peer, peerKey)) || (is(m.from, peer, peerKey) && is(m.to, agent, agentKey)) : is(m.from, agent, agentKey) || is(m.to, agent, agentKey))));
 }
 
@@ -282,7 +289,7 @@ export function readAgentMessages(query: AgentMessagesQuery = {}, options: BusIn
   // never matches, and `matched` counts only the rows it accepts.
   const rows = query.thread === undefined ? scan.rows
     : scan.rows.filter(row => busBodyThread(row.envelope.body) === query.thread);
-  const identityOf = query.agent === undefined && query.with === undefined ? undefined
+  const identityOf = query.agent === undefined && query.with === undefined && query.excludeFrom === undefined ? undefined
     : agentIdentityKeys({ root: options.root });
   const jobIds = new Set<string>();
   for (const row of rows) {
@@ -319,7 +326,7 @@ export function parseSince(value: string, now = Date.now()): number | null {
 }
 
 /** Shared validation for CLI flags and API query params. */
-export function parseAgentMessagesQuery(input: { since?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; thread?: string; contains?: string; limit?: string }, now = Date.now()):
+export function parseAgentMessagesQuery(input: { since?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; thread?: string; contains?: string; excludeFrom?: string; limit?: string }, now = Date.now()):
   { ok: true; query: AgentMessagesQuery } | { ok: false; error: string } {
   const query: AgentMessagesQuery = {};
   if (input.kind !== undefined) {
@@ -368,6 +375,10 @@ export function parseAgentMessagesQuery(input: { since?: string; agent?: string;
   if (input.with !== undefined) {
     if (!query.agent || !/^[\x21-\x7e]{1,128}$/.test(input.with)) return { ok: false, error: '--with takes the other agent and needs --agent.' };
     query.with = input.with;
+  }
+  if (input.excludeFrom !== undefined) {
+    if (!/^[\x21-\x7e]{1,128}$/.test(input.excludeFrom)) return { ok: false, error: '--exclude-from takes an agent name or lane.' };
+    query.excludeFrom = input.excludeFrom;
   }
   if (input.limit !== undefined) {
     const limit = Number(input.limit);

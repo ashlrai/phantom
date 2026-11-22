@@ -11,9 +11,11 @@
  * each validated by the shared `parseBusWorkFeedQuery` rules and applied through
  * the same `projectBusWorkFeedView` the CLIs use (`open`/`claimable` imply the
  * claims join); any other parameter or value is a 400.
- * GET /api/verse/agent-bus/messages[?since=15m&agent=claude&with=leader&kind=ask&priority=P0&job=RQ-1&thread=t-1&contains=parser&limit=50] is the same
+ * GET /api/verse/agent-bus/messages[?since=15m&agent=claude&with=leader&kind=ask&priority=P0&job=RQ-1&thread=t-1&contains=parser&excludeFrom=grok&limit=50] is the same
  * read as `phm messages` (agent-messages.ts): newest first, scrubbed summaries.
- * `contains` is a case-insensitive substring over each scrubbed summary.
+ * `contains` is a case-insensitive substring over each scrubbed summary;
+ * `excludeFrom` drops the messages one sender wrote, by the same
+ * sender-exclusion rule the other bus reads apply.
  * GETs require a current read session. Responses wrap store outcomes with v: 1;
  * missing storage reads as an empty page, while status reports source: missing.
  * Unavailable storage returns 503. Expired rows advance nextCursor but are omitted.
@@ -122,7 +124,7 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
     try { params = new URL(req.url ?? path, 'http://localhost').searchParams; }
     catch { sendJson(res, 400, { error: 'Invalid query.' }); return true; }
     const allowed = method === 'GET' && path === PATH ? ['after', 'limit']
-      : method === 'GET' && path === MESSAGES ? ['since', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'contains', 'limit']
+      : method === 'GET' && path === MESSAGES ? ['since', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'contains', 'excludeFrom', 'limit']
       : method === 'GET' && path === WORK_FEED ? [...WORK_FEED_PARAMS] : [];
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1)) {
       sendJson(res, 400, { error: 'Invalid query.' }); return true;
@@ -147,7 +149,8 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
           agent: params.get('agent') ?? undefined, with: params.get('with') ?? undefined,
           kind: params.get('kind') ?? undefined, priority: params.get('priority') ?? undefined,
           job: params.get('job') ?? undefined, thread: params.get('thread') ?? undefined,
-          contains: params.get('contains') ?? undefined, limit: params.get('limit') ?? undefined });
+          contains: params.get('contains') ?? undefined, excludeFrom: params.get('excludeFrom') ?? undefined,
+          limit: params.get('limit') ?? undefined });
         if (!parsed.ok) { sendJson(res, 400, { error: parsed.error }); return true; }
         const result = (deps.messages ?? readAgentMessages)(parsed.query);
         sendJson(res, result.source === 'unavailable' ? 503 : 200, result);

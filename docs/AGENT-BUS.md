@@ -24,10 +24,11 @@ for only the traffic that names one job, `--thread <label>` for only the
 `busBodyThread` match `agents bus inbox --thread`, `agents bus channel
 read --thread`, `comms bus read|watch --thread` and `fleet bus-follow
 --thread` apply — `--contains <text>` for only the messages whose scrubbed
-summary carries that text, `--limit <n>`)
+summary carries that text, `--exclude-from <name|lane>` for only the mail
+one sender did not write, `--limit <n>`)
 or GET `/api/verse/agent-bus/messages` with the same
-`since`, `agent`, `with`, `kind`, `priority`, `job`, `thread`, `contains`
-and `limit` params. Both return `agent-messages.v1`: newest
+`since`, `agent`, `with`, `kind`, `priority`, `job`, `thread`, `contains`,
+`excludeFrom` and `limit` params. Both return `agent-messages.v1`: newest
 first, each with `id`, `ts`, `priority` (the envelope's P0–P3 band, the
 same band `comms bus read --priority` filters on), `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line
@@ -83,7 +84,16 @@ message that names no job never passes. `--agent` and `--with` match through
 the agent identity registry beside the store: a handle, alias or `agent:`
 address of one registered identity counts as that agent, so its labels never
 split the filter. With no readable registry the match stays on the literal
-label — an unreadable registry never widens a read. `--contains` is the
+label — an unreadable registry never widens a read. `--exclude-from` is the
+same identity match pointed at the sender only: a handle, alias or `agent:`
+address of one registered identity drops every message that identity wrote,
+under any of its labels, while messages merely addressed to it still list —
+the same sender-exclusion rule `comms bus read|watch --exclude-from`,
+`fleet bus-follow --exclude-from`, `fleet_bus_inbox`'s `excludeFrom` and
+`agents bus inbox`/`channel read`'s `excludeFrom` apply, so a flooding
+sender's traffic is one filtered read instead of a page through the
+backlog; it composes with every other filter and `matched` counts only the
+rows it accepts. `--contains` is the
 fleet-wide text search no other bus read offers: a case-insensitive
 substring over each message's scrubbed one-line `summary` — the text the
 row actually shows, so a match is always visible in the row it selects —
