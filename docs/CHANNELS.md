@@ -429,7 +429,15 @@ describe
 the matched view and the report echoes the applied `filter`, while `sources`
 keeps every store's real unfiltered pending count — `null` when a source
 could not be read, never a fabricated 0 — a filtered view never
-reports a busy or degraded source as empty. `phm comms inbox read` and
+reports a busy or degraded source as empty. `GET /api/verse/comms/inbox` —
+the desktop and agent read of the same report — accepts the same dimensions
+as query parameters (`source`, `kind`, `severity`, `blocking=true|false`,
+`job`, `since`, `contains`, each at most once, plus `limit` 1–200 default
+50), validated by `parseUnifiedInboxQuery` — the same value rules `phm
+comms inbox` and `fleet_comms_inbox` apply — and echoes the applied
+`filter` on the response exactly like
+`fleet_comms_inbox` does; an unknown, repeated or malformed parameter is a
+400, never a silently ignored filter. `phm comms inbox read` and
 `post` keep their original meaning for Mason's local inbox file.
 
 ## Gmail triage building block

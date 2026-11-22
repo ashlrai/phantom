@@ -3348,6 +3348,16 @@ alias (exact match first, then lowercase), so a filter naming any spelling
 of one identity matches every label of that identity while an unresolvable
 label keeps exact-label matching. Claim tokens and `work.result`
 queueId/receiptId never appear in a summary.
+`parseUnifiedInboxQuery` (`src/core/comms/unified-inbox-query.ts`) is the
+shared validation `GET /api/verse/comms/inbox`
+(`src/core/verse/comms-inbox-api.ts`) applies to its query — `limit`
+(1–200, default 50) plus the `UnifiedInboxFilter` dimensions `source`,
+`kind`, `severity`, `blocking` (`true`/`false`), `job`, `since` and
+`contains`, each at most once — so the HTTP read narrows by exactly the
+rules `phm comms inbox` and `fleet_comms_inbox` apply and passes the
+resulting `filter` to `readUnifiedInbox`, echoing the report's applied
+`filter` on the response; an unknown, repeated or malformed parameter or
+value is a 400, never a silently ignored filter.
 Every send is one `appendBusInbox` post; wakes go through `createBusWakeHook`.
 `announceWork(WorkAnnouncementInput)` posts a schema-checked v2 `work.post` to
 `DEFAULT_WORK_ADDRESS` (`leaders`, overridable per send) at P2 with a 7-day
