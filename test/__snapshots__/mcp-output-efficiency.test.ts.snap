@@ -2351,6 +2351,9 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
           ],
           "type": "string",
         },
+        "contains": {
+          "type": "string",
+        },
         "limit": {
           "type": "number",
         },

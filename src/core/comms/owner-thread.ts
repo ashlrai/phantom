@@ -575,31 +575,50 @@ function awaitingReplyIds(state: ThreadState): string[] {
   return awaitingReplyMessages(state).map(message => message.id);
 }
 
-/** Optional read slice for `readOwnerThread`: one channel and/or a recorded-time floor. */
+/** Longest `--contains` needle the thread read accepts; the message text it matches is already bounded far shorter. */
+export const OWNER_THREAD_CONTAINS_MAX = 512;
+
+/** Optional read slice for `readOwnerThread`: one channel, a recorded-time floor and/or a text needle. */
 export interface OwnerThreadReadFilter {
   /** Keep only messages recorded on this channel. */
   channel?: OwnerChannel;
   /** Epoch ms; keeps messages whose `at` parses at or after it. An unparseable `at` never satisfies a `since` filter. */
   since?: number;
+  /**
+   * Case-insensitive substring over the stored message text, whitespace
+   * collapsed on both sides — the same `--contains` rule every other comms
+   * and bus read applies. This is the only text search the thread offers:
+   * iMessage bodies are redacted on the bus mirror, so the private thread is
+   * the one place they can be found.
+   */
+  contains?: string;
 }
 
 /**
  * The ordered owner thread, capped to the newest `limit` messages that pass
  * `filter` (receipt joins and the awaiting-reply mark follow the same slice,
- * so a filtered view never shows marks for rows it hid). An unreadable thread
- * still reports `unavailable` with `awaitingReply: null` — unknown stays
- * unknown, never an empty filtered list passed off as fact.
+ * so a filtered view never shows marks for rows it hid). `contains` keeps
+ * only messages whose stored text carries the needle as a case-insensitive
+ * substring with whitespace collapsed on both sides — intake already refuses
+ * secret-shaped text, so the match runs over the same scrubbed content the
+ * row prints. An unreadable thread still reports `unavailable` with
+ * `awaitingReply: null` — unknown stays unknown, never an empty filtered
+ * list passed off as fact.
  */
 export function readOwnerThread(options: OwnerThreadOptions, limit = 200, filter?: OwnerThreadReadFilter):
   | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: OwnerThreadMessage[]; receipts: OwnerThreadReceipts; awaitingReply: string[] }
   | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: []; receipts: OwnerThreadReceipts; awaitingReply: null; unavailable: true } {
   const cap = Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 200) : 200;
+  const needle = filter?.contains === undefined ? undefined
+    : filter.contains.toLowerCase().replace(/\s+/g, ' ').trim();
   const inView = (message: OwnerThreadMessage): boolean => {
     if (filter?.channel !== undefined && message.channel !== filter.channel) return false;
     if (filter?.since !== undefined) {
       const at = Date.parse(message.at);
       if (!Number.isFinite(at) || at < filter.since) return false;
     }
+    if (needle !== undefined && needle !== '' &&
+        !message.text.toLowerCase().replace(/\s+/g, ' ').includes(needle)) return false;
     return true;
   };
   try {

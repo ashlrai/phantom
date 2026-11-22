@@ -88,6 +88,18 @@ describe('GET /api/verse/comms/owner-thread', () => {
     }
   });
 
+  it('filters by contains and rejects a bad needle with 400', async () => {
+    await seed(3);
+    const r = await call('GET', '?contains=line%202');
+    expect(r.status).toBe(200);
+    expect(r.body.messages.map((m: { seq: number }) => m.seq)).toEqual([2]);
+    expect(r.body.awaitingReply).toEqual(['m2']);
+    for (const bad of ['?contains=', `?contains=${'x'.repeat(513)}`]) {
+      const rejected = await call('GET', bad);
+      expect(rejected.status, bad.slice(0, 40)).toBe(400);
+    }
+  });
+
   it('answers non-GET with 405', async () => {
     for (const method of ['POST', 'PUT', 'DELETE']) expect((await call(method)).status).toBe(405);
   });

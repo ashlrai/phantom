@@ -8,6 +8,7 @@ import { liveOwnerTransports } from '../core/comms/owner-live-transport.js';
 import { OWNER_CHANNELS, isOwnerChannel, type OwnerChannel } from '../core/comms/leader-mailbox.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 import {
+  OWNER_THREAD_CONTAINS_MAX,
   readOwnerCommsStatus,
   readOwnerThread,
   sendOwnerHello,
@@ -15,7 +16,7 @@ import {
   type OwnerThreadOptions,
 } from '../core/comms/owner-thread.js';
 
-const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--channel <desktop|telegram|email|imessage|slack>] [--since <15m|2h|1d|ISO|epoch-ms>] [--json]';
+const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--channel <desktop|telegram|email|imessage|slack>] [--since <15m|2h|1d|ISO|epoch-ms>] [--contains <text>] [--json]';
 const SEND_USAGE = 'usage: phm comms send-owner --text <message> [--reply-to <key>] [--idempotency-key <key>] [--json]';
 
 const HELLO_USAGE = 'usage: phm comms owner hello [--json]';
@@ -60,7 +61,7 @@ export async function cmdCommsOwnerStatus(json: boolean, options = ownerThreadOp
 export async function cmdCommsOwner(args: string[], options = ownerThreadOptions()): Promise<number> {
   const verb = args[0];
   if (verb === 'thread') {
-    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json'], values: ['--limit', '--channel', '--since'] });
+    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json'], values: ['--limit', '--channel', '--since', '--contains'] });
     if (bad) { console.error(bad.message); console.error(THREAD_USAGE); return 2; }
     const limitRaw = args[args.indexOf('--limit') + 1];
     const limit = args.includes('--limit') ? Number(limitRaw) : 200;
@@ -89,7 +90,22 @@ export async function cmdCommsOwner(args: string[], options = ownerThreadOptions
       }
       since = parsed;
     }
-    const filter = channel !== undefined || since !== undefined ? { ...(channel !== undefined ? { channel } : {}), ...(since !== undefined ? { since } : {}) } : undefined;
+    let contains: string | undefined;
+    if (args.includes('--contains')) {
+      const raw = args[args.indexOf('--contains') + 1];
+      // Free text, not a label: printable content of any kind is fine,
+      // bounded like every other comms read's --contains; a flag-looking
+      // or blank value is a missing needle, not a search.
+      if (raw === undefined || raw.startsWith('--') || raw.trim() === '' || raw.length > OWNER_THREAD_CONTAINS_MAX) {
+        console.error(`--contains takes a non-empty search text of at most ${OWNER_THREAD_CONTAINS_MAX} characters.`);
+        console.error(THREAD_USAGE);
+        return 2;
+      }
+      contains = raw;
+    }
+    const filter = channel !== undefined || since !== undefined || contains !== undefined
+      ? { ...(channel !== undefined ? { channel } : {}), ...(since !== undefined ? { since } : {}), ...(contains !== undefined ? { contains } : {}) }
+      : undefined;
     const view = readOwnerThread(options, limit, filter);
     const json = args.includes('--json');
     const awaiting = new Set(view.awaitingReply ?? []);

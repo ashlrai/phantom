@@ -498,6 +498,46 @@ describe('owner thread', () => {
     expect('unavailable' in view).toBe(true);
     expect(view.awaitingReply).toBeNull();
   });
+
+  it('filters the thread read by contains text, keeping marks inside the slice', async () => {
+    const { options } = fixture();
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'Deploy the API\nplease', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
+    await acceptOwnerInbound({ channel: 'email', senderId: 'email:owner@example.com', text: 'deploy window moved', idempotencyKey: 'email-msg-0001', at: 1_700_000_100_000 }, options);
+    await acceptOwnerInbound({ channel: 'slack', senderId: 'U0123456789', text: 'lunch?', idempotencyKey: 'slack-msg-0003', at: 1_700_000_200_000 }, options);
+    await sendOwnerReply({ text: 'deploy answer', replyTo: 'telegram-msg-1', idempotencyKey: 'reply-owner-01' }, options);
+    // m1 telegram inbound, m2 email inbound, m3 slack inbound, m4 outbound reply on telegram.
+    const hits = readOwnerThread(options, 200, { contains: 'DEPLOY' });
+    expect(hits.messages.map(message => message.seq)).toEqual([1, 2, 4]);
+    // m1 is answered by m4; m2 still waits and m3 is hidden — the mark follows the same slice.
+    expect(hits.awaitingReply).toEqual(['m2']);
+    const outbound = hits.messages.find(message => message.direction === 'outbound')!;
+    expect(Object.keys(hits.receipts[outbound.id] ?? {}).sort()).toEqual(['desktop', 'telegram']);
+    // Whitespace collapses on both sides: a phrase broken by the newline still matches.
+    expect(readOwnerThread(options, 200, { contains: 'api  please' }).messages.map(message => message.seq)).toEqual([1]);
+    // A needle nothing carries is an honest empty slice, and the filter composes with channel.
+    expect(readOwnerThread(options, 200, { contains: 'no-such-text' }).messages).toEqual([]);
+    const emailOnly = readOwnerThread(options, 200, { channel: 'email', contains: 'deploy' });
+    expect(emailOnly.messages.map(message => message.seq)).toEqual([2]);
+    expect(emailOnly.awaitingReply).toEqual(['m2']);
+  });
+
+  it('serves contains on the thread CLI and rejects bad needles', async () => {
+    const { options } = fixture();
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'first deploy', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
+    await acceptOwnerInbound({ channel: 'email', senderId: 'email:owner@example.com', text: 'second ping', idempotencyKey: 'email-msg-0001', at: 1_700_000_100_000 }, options);
+    const lines: string[] = [];
+    const write = console.log;
+    console.log = (line?: unknown) => { lines.push(String(line)); };
+    try {
+      expect(await cmdCommsOwner(['thread', '--contains', 'DEPLOY', '--json'], options)).toBe(0);
+      expect(await cmdCommsOwner(['thread', '--contains', ''], options)).toBe(2);
+      expect(await cmdCommsOwner(['thread', '--contains'], options)).toBe(2);
+      expect(await cmdCommsOwner(['thread', '--contains', 'x'.repeat(513)], options)).toBe(2);
+      expect(await cmdCommsOwner(['thread', '--contains', '--json'], options)).toBe(2);
+    } finally { console.log = write; }
+    const view = JSON.parse(lines[0] ?? '{}') as { messages: Array<{ text: string }> };
+    expect(view.messages.map(message => message.text)).toEqual(['first deploy']);
+  });
 });
 
 function writeForgedHome(root: string, email: string, slackId: string, handle: string): void {
