@@ -332,18 +332,21 @@ export async function commsStatus(runsDir: string): Promise<{
   /** Pending inbox messages still awaiting triage; null when the inbox file
    * cannot be read — an unreadable store is unknown, never an empty inbox. */
   inbox: number | null;
-  drafts: number;
-  sendsLogged: number;
-  adapters: string[];
+  /** Pending drafts; null when the drafts log cannot be read. */
+  drafts: number | null;
+  /** Completed sends logged; null when the send log cannot be read. */
+  sendsLogged: number | null;
+  /** Registered channel adapters; null when the registry cannot be read. */
+  adapters: string[] | null;
 }> {
   const [inbox, drafts, sends] = await Promise.all([
     readInbox(runsDir).then(read => read.messages.length).catch(() => null),
-    listDrafts(runsDir).catch(() => []),
-    readSendLog(runsDir).catch(() => []),
+    listDrafts(runsDir).then(rows => rows.filter(draft => draft.status === 'pending').length).catch(() => null),
+    readSendLog(runsDir).then(rows => rows.length).catch(() => null),
   ]);
-  let adapters: string[] = [];
+  let adapters: string[] | null = null;
   try { adapters = listChannelRegistry().filter(row => row.adapterRegistered).map(row => row.id); }
-  catch { adapters = []; }
+  catch { adapters = null; }
   return {
     ok: true,
     schema: 'comms-agent.status.v1',
@@ -351,8 +354,8 @@ export async function commsStatus(runsDir: string): Promise<{
     kill: readKillState(),
     paused: readPauseState(),
     inbox,
-    drafts: drafts.filter(draft => draft.status === 'pending').length,
-    sendsLogged: sends.length,
+    drafts,
+    sendsLogged: sends,
     adapters,
   };
 }

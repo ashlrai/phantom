@@ -55,7 +55,9 @@ than picking one. `--dir` selects an isolated runs directory.
 messages still awaiting a reply — unanswered mail only, since a delivered
 reply resolves its message into the archive — or `null` when the inbox file
 cannot be read — an unreadable store is unknown, never reported as an empty
-inbox.
+inbox. `drafts`, `sendsLogged` and `adapters` follow the same rule: a real
+count or list, or `null` when the drafts log, send log or channel registry
+cannot be read.
 
 MCP tools: `ashlr_comms_agent_status`, `ashlr_comms_agent_drafts`, and
 `ashlr_comms_agent_run`.
