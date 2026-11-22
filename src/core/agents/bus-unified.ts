@@ -1052,7 +1052,10 @@ export function busBodyJobMatch(body: unknown, job: string): boolean {
  * declaring that `jobId`, a `worker-handoff` assigning that fleet job id
  * through `taskId`, or a `note`/`context` body carrying the
  * `job:<id>` v2 thread label — the same bucket the messages and
- * conversations projections group under `job:<id>`. Returned highest
+ * conversations projections group under `job:<id>`. `since` keeps only mail
+ * received at or after that epoch-ms cutoff — the same inclusive
+ * `receivedAt >= since` match `phm messages --since` applies, so fresh mail
+ * is one filtered read without a persisted cursor. Returned highest
  * priority first; `nextCursor` covers every scanned row, so callers persist
  * it only after handling the page. Claimable work and worker-handoff items
  * additionally carry `held`/`holder` — the same hold evidence `bus show`
@@ -1070,11 +1073,11 @@ export function busBodyJobMatch(body: unknown, job: string): boolean {
  * `messages` still returns only the first `limit` of them.
  */
 export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string;
-    matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string } = {},
+    matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string; since?: number } = {},
   options: UnifiedBusOptions = {}): InboxPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
   const countMatched = page.matched === true;
-  const kindFilter = page.kind, jobFilter = page.job;
+  const kindFilter = page.kind, jobFilter = page.job, since = page.since;
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
     return { status: 'invalid', reason: 'after must be >= 0 and limit 1-100.' };
   }
@@ -1092,6 +1095,9 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   }
   if (jobFilter !== undefined && (typeof jobFilter !== 'string' || !THREAD.test(jobFilter))) {
     return { status: 'invalid', reason: 'Invalid job id.' };
+  }
+  if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
+    return { status: 'invalid', reason: 'Invalid since.' };
   }
   const read = readAgentRegistry(options);
   if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
@@ -1133,7 +1139,8 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
         (thread === undefined || busBodyThread(envelope.body) === thread) &&
         (jobFilter === undefined || busBodyJobMatch(envelope.body, jobFilter)) &&
         (fromMatch === undefined || fromMatch(envelope.from)) &&
-        (priority === undefined || envelope.priority === priority) ? kind : null;
+        (priority === undefined || envelope.priority === priority) &&
+        (since === undefined || row.receivedAt >= since) ? kind : null;
       if (matchedKind !== null && envelope.origin_bridge === 'agent-chat-owner') {
         try { ownerReceipts ??= readOwnerChatReceipts(ownerChatRoot(options.root)); }
         catch { return { status: 'unavailable', reason: 'Owner share receipts unavailable.' }; }
@@ -1545,6 +1552,13 @@ export interface ChannelReadOptions {
    * filters accept while `messages` still returns only the first `limit`.
    */
   matched?: boolean;
+  /**
+   * Time filter: only posts received at or after this epoch-ms cutoff — the
+   * same inclusive `receivedAt >= since` match `agents bus inbox --since`
+   * and `phm messages --since` apply, so a room's recent traffic is one
+   * filtered read without a persisted cursor.
+   */
+  since?: number;
   after?: number;
   limit?: number;
 }
@@ -1568,7 +1582,9 @@ export type ChannelReadPage =
  * narrows to posts stamped with that exact P0..P3 band, and `job` narrows
  * to posts that name one job — the same `busBodyJobMatch` rule `agents bus
  * inbox --job` applies, so a channel transcript answers one job's posts
- * without paging the whole room. `nextCursor`
+ * without paging the whole room. `since` keeps only posts received at or
+ * after that epoch-ms cutoff — the same `receivedAt >= since` match
+ * `inbox --since` applies. `nextCursor`
  * covers every scanned row, so callers persist it only after handling the
  * page; `page.matched` asks for the true pending total the way
  * `readAgentInbox` does — the scan then covers the whole retained store,
@@ -1583,7 +1599,7 @@ export type ChannelReadPage =
  */
 export function readAgentChannel(name: string, page: ChannelReadOptions = {}, options: UnifiedBusOptions = {}): ChannelReadPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority, job = page.job;
-  const countMatched = page.matched === true;
+  const countMatched = page.matched === true, since = page.since;
   if (typeof name !== 'string' || !agentChannelNameSchema.safeParse(name).success) {
     return { status: 'invalid', reason: 'Invalid channel name.' };
   }
@@ -1598,6 +1614,9 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
   }
   if (job !== undefined && (typeof job !== 'string' || !THREAD.test(job))) {
     return { status: 'invalid', reason: 'Invalid job id.' };
+  }
+  if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
+    return { status: 'invalid', reason: 'Invalid since.' };
   }
   let exact: string | undefined;
   if (page.topic !== undefined) {
@@ -1632,7 +1651,8 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
         (fromMatch === undefined || fromMatch(envelope.from)) &&
         (thread === undefined || busBodyThread(body) === thread) &&
         (priority === undefined || envelope.priority === priority) &&
-        (job === undefined || busBodyJobMatch(body, job));
+        (job === undefined || busBodyJobMatch(body, job)) &&
+        (since === undefined || row.receivedAt >= since);
       if (accepted) {
         matched += 1;
         if (!countMatched || messages.length < limit) {

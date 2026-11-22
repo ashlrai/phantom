@@ -236,6 +236,43 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['channel', 'read', 'release', '--priority', 'high'])).toMatchObject({ code: 2 });
   });
 
+  it('filters inbox, channel read and wakes by --since', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    // A P0 DM always queues a wake hint alongside the mail.
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'fresh', '--priority', 'P0', '--id', 's-dm'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'room', '--id', 's-ch'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    // The phm messages grammar resolves: a recent window keeps the fresh
+    // rows, a cutoff in the future keeps none, epoch ms still works.
+    const inbox = await run(['inbox', 'nova', '--since', '15m']);
+    expect(inbox.code).toBe(0);
+    expect(inbox.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id).sort())
+      .toEqual(['s-ch', 's-dm']);
+    const channel = await run(['channel', 'read', 'release', '--since', '1h']);
+    expect(channel.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['s-ch']);
+    const future = String(Date.now() + 3_600_000);
+    expect((await run(['inbox', 'nova', '--since', future])).json).toMatchObject({ status: 'ok', messages: [] });
+    expect((await run(['channel', 'read', 'release', '--since', future])).json).toMatchObject({ status: 'ok', messages: [] });
+    expect((await run(['inbox', 'nova', '--since', '0'])).json.messages.length).toBe(2);
+
+    // wakes takes the same grammar now: the queued hint is inside 15m and
+    // outside a future cutoff.
+    const wakes = await run(['wakes', 'nova', '--since', '15m']);
+    expect(wakes.code).toBe(0);
+    expect(wakes.json.wakes.length).toBeGreaterThan(0);
+    expect((await run(['wakes', 'nova', '--since', future])).json.wakes).toEqual([]);
+
+    // Anything outside the grammar is a usage error on every read.
+    expect(await run(['inbox', 'nova', '--since', 'bogus'])).toMatchObject({ code: 2 });
+    expect(await run(['channel', 'read', 'release', '--since', 'bogus'])).toMatchObject({ code: 2 });
+    expect(await run(['wakes', 'nova', '--since', 'bogus'])).toMatchObject({ code: 2 });
+  });
+
   it('filters inbox reads by --kind', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
