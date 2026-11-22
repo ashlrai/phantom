@@ -48,7 +48,7 @@ describe('phm comms-agent', () => {
 
     const status = capture();
     expect(await cmdCommsAgent(['status', '--dir', runsDir, '--json'])).toBe(0);
-    const snapshot = JSON.parse(status.lines.at(-1) ?? '{}') as { role: { id: string; lane: null; grokRequired: boolean }; inbox: number | null; sendsLogged: number };
+    const snapshot = JSON.parse(status.lines.at(-1) ?? '{}') as { role: { id: string; lane: null; grokRequired: boolean }; inbox: number | null; sendsLogged: number | null };
     expect(snapshot.role.id).toBe('comms');
     expect(snapshot.role.lane).toBeNull();
     expect(snapshot.role.grokRequired).toBe(false);
@@ -68,6 +68,22 @@ describe('phm comms-agent', () => {
     expect(await cmdCommsAgent(['status', '--dir', runsDir, '--json'])).toBe(0);
     const snapshot = JSON.parse(status.lines.at(-1) ?? '{}') as { inbox: number | null };
     expect(snapshot.inbox).toBeNull();
+    status.restore();
+  });
+
+  it('status reports drafts and sendsLogged null when their logs cannot be read', async () => {
+    const runsDir = temp();
+    // A directory where a regular file belongs is unreadable, not empty:
+    // status must say unknown, never a fabricated 0.
+    mkdirSync(join(runsDir, 'comms-agent', 'drafts.jsonl'), { recursive: true });
+    mkdirSync(join(runsDir, 'comms-agent', 'send-log.jsonl'), { recursive: true });
+    const status = capture();
+    expect(await cmdCommsAgent(['status', '--dir', runsDir, '--json'])).toBe(0);
+    const snapshot = JSON.parse(status.lines.at(-1) ?? '{}') as { inbox: number | null; drafts: number | null; sendsLogged: number | null };
+    expect(snapshot.drafts).toBeNull();
+    expect(snapshot.sendsLogged).toBeNull();
+    // A missing inbox file is verified empty, so inbox still reports a real 0.
+    expect(snapshot.inbox).toBe(0);
     status.restore();
   });
 
