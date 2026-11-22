@@ -658,6 +658,21 @@ material. Board paths derive exactly like the board CLI, an absent board
 is a verified-empty `ok` (the read never creates its store), and an
 unreadable board reports `unavailable`, never an empty list passed off as
 fact; board content stays untrusted shared data and grants no authority.
+The `channels` section is the digest's window into the registry channels
+the agent belongs to — the routing context behind every
+`group:<channel>:<topic>` item the next, handoffs, threads, inbox and
+board sections match, so channel-addressed work no longer needs a
+separate `agents bus channel list` read to learn which rooms the agent
+sits in. Each entry names the channel and its registered `memberCount`
+(the digest carries no member list — `channel list` does); membership
+says who may post, never presence, attention or authority. The read
+reuses the same registry load every other section resolves addressing
+through — no second store walk — so a `missing` registry is a
+verified-empty membership, `available` lists real memberships sorted by
+name, and an unreadable registry reports `unavailable`, never an empty
+list passed off as fact. An agent ref that resolves to no identity has no
+handle and provably belongs to no channel, so `channels` is then empty,
+not unknown.
 The `seats` section is the digest's window into bot-seat handoff work —
 the same `planSeatHandoffs` read `phm bots handoffs` and `phm comms
 inbox --source seats` serve, so the digest, that verb and the unified

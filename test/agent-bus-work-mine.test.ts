@@ -951,6 +951,52 @@ describe('readBusWorkMine', () => {
     expect(narrowed.handoffs.matched).toBe(0);
   });
 
+  it('reports the registry channels the agent belongs to and keeps an unreadable registry unknown', () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova', 'ghost');
+    // eng: atlas + nova. ops: nova only. ghost belongs to neither.
+    expect(createAgentChannel({ name: 'eng', createdBy: 'atlas', members: ['nova'] }, options).status)
+      .toBe('created');
+    expect(createAgentChannel({ name: 'ops', createdBy: 'nova' }, options).status).toBe('created');
+
+    const atlas = readBusWorkMine('atlas', options);
+    expect(atlas.status).toBe('ok');
+    if (atlas.status !== 'ok') throw new Error('unreachable');
+    expect(atlas.channels).toEqual({ status: 'ok', source: 'available',
+      channels: [{ name: 'eng', memberCount: 2 }] });
+
+    const nova = readBusWorkMine('nova', options);
+    expect(nova.status).toBe('ok');
+    if (nova.status !== 'ok') throw new Error('unreachable');
+    expect(nova.channels).toEqual({ status: 'ok', source: 'available',
+      channels: [{ name: 'eng', memberCount: 2 }, { name: 'ops', memberCount: 1 }] });
+
+    // A registered agent in no channel and an unregistered ref both provably
+    // belong to none — empty, never unknown.
+    for (const ref of ['ghost', 'nobody']) {
+      const result = readBusWorkMine(ref, options);
+      expect(result.status).toBe('ok');
+      if (result.status !== 'ok') throw new Error('unreachable');
+      expect(result.channels).toEqual({ status: 'ok', source: 'available', channels: [] });
+    }
+
+    // No registry at all is a verified-empty membership.
+    const empty = setup(Date.now());
+    const missing = readBusWorkMine('atlas', empty);
+    expect(missing.status).toBe('ok');
+    if (missing.status !== 'ok') throw new Error('unreachable');
+    expect(missing.channels).toEqual({ status: 'ok', source: 'missing', channels: [] });
+
+    // An unreadable registry is unknown, never an empty membership list.
+    writeFileSync(join(options.root, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+    const narrowed = readBusWorkMine('atlas', options);
+    expect(narrowed.status).toBe('ok');
+    if (narrowed.status !== 'ok') throw new Error('unreachable');
+    expect(narrowed.channels).toEqual({ status: 'unavailable',
+      reason: 'Agent identity registry is unreadable.' });
+    expect(formatBusWorkMine(narrowed).some(line => line === 'channels=unknown unavailable')).toBe(true);
+  });
+
   it('caps shown handoffs at twenty with the true total', () => {
     const options = setup();
     register(options, 'atlas');
