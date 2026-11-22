@@ -219,6 +219,7 @@ import {
   TICK_PHASE_SKILL_NUDGE_MS,
   TICK_PHASE_EMPTY_TAG_SYNC_MS,
   TICK_PHASE_VISIT_SYNC_MS,
+  TICK_PHASE_SWAPOUT_SYNC_MS,
   TICK_BUDGET_MS,
 } from './tick-phases.js';
 import { launchOffTickJob, cancelOffTickJobs, offTickJobsSnapshot } from './off-tick-jobs.js';
@@ -4798,6 +4799,18 @@ export async function tick(
         const { runCiRerunMaintenance } = await import('../fleet/ci-rerun.js');
         await runCiRerunMaintenance({ repos: ci.repos!, maxPerHour: ci.maxPerHour, signal });
       }, { deadlineMs: TICK_PHASE_CI_RERUN_MS, parentSignal: opts.signal, log: phaseLog });
+    }
+    // Host memory samples: fold the bridge's latest memstat.json reading
+    // into metrics/swapout-rate.jsonl — the tuning ledger MEMORY_GUARD's
+    // constants name but nothing wrote. One small file plus a bounded
+    // ledger tail per resident tick; dedup by sampled_at keeps appends at
+    // the bridge's own cadence. Best-effort and single-flight; writes only
+    // under the runs dir.
+    if (offTickMaintenance && !stopRequested()) {
+      launchOffTickJob('swapout-sync', async signal => {
+        const { syncSwapoutSamples } = await import('../fleet/swapout-sync.js');
+        await syncSwapoutSamples({ signal });
+      }, { deadlineMs: TICK_PHASE_SWAPOUT_SYNC_MS, parentSignal: opts.signal, log: phaseLog });
     }
     if (
       stopRequested() ||
