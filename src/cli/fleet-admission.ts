@@ -1,5 +1,4 @@
 import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fleetAdmissionVerdict } from '../core/fleet/admission-verdict.js';
 import { laneLaunchTarget } from '../core/fleet/lane-launch-target.js';
@@ -7,6 +6,9 @@ import { parseAdmissionCtl, type LoadAdmission } from '../core/fleet/load-owners
 import { readJobsTail } from '../core/fleet/report-ledger.js';
 import { settleAdvice } from '../core/fleet/settle-advice.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
+import { readTail, runsRoot } from '../core/metrics/loop-collect.js';
+import { objectRow } from '../core/fleet/compact-brief-evidence.js';
+import { summarizeAdmission } from '../core/fleet/admission-summary.js';
 
 /** A lane parked by a fleet-wide block is red once it has this many jobs queued. */
 export const FLEET_ADMISSION_RED_QUEUED = 5;
@@ -40,6 +42,7 @@ export interface FleetAdmissionLane {
 }
 
 export interface FleetAdmissionReport {
+  admission?: ReturnType<typeof summarizeAdmission>;
   schema: typeof FLEET_ADMISSION_SCHEMA;
   readOnly: true;
   status: FleetAdmissionStatus;
@@ -52,7 +55,7 @@ export interface FleetAdmissionReport {
 export type FleetAdmissionReader = (path: string) => Promise<string>;
 
 const USAGE = `Usage: ashlr fleet admission [--json]
-Read the global cap and why each lane is waiting. Read-only.
+Read the global cap, measured launch pace and why each lane is waiting. Read-only.
 Shows the launch guard's settle seconds, host load and owned load separately.
 Load-only settle advice uses the last 24 hours of metrics/fleet-controller.jsonl; incomplete history stays unknown. No limits or settings change.
 A lane is admission closed when it has queued work, is under its launch target (the configured target tightened by the controller's effective_target shed), and the dispatcher is not admitting (load gate or pause).
@@ -172,6 +175,7 @@ function formatFleetAdmission(report: FleetAdmissionReport): string {
   const global = report.global;
   const guard = report.launchGuard, advice = report.settleAdvice;
   const lines = [
+    ...(report.admission ? [report.admission.answer] : []),
     `Admission: ${report.status}`,
     `Global cap ${global.cap}, running ${global.running} (${global.at_cap ? 'at the cap' : 'under the cap'})${global.non_cap_closed ? ', admission closed' : ''}, load ${global.load1}, admit reason: ${global.admit_reason ?? 'none'}`,
     `Launch guard: ${guard.state}; reason: ${guard.why ?? 'unknown'}; settle: ${guard.settleSeconds ?? 'unknown'} seconds; host load: ${guard.load1 ?? 'unknown'}; owned load: ${guard.ownedLoad1 ?? 'unknown'}.`,
@@ -187,8 +191,14 @@ function formatFleetAdmission(report: FleetAdmissionReport): string {
 /** Read-only. The injected reader is the only filesystem operation. */
 export async function cmdFleetAdmission(
   args: string[],
-  reader: FleetAdmissionReader = async path => path.endsWith('fleet-controller.jsonl')
-    ? (await readJobsTail(path)).text ?? '' : readFile(path, 'utf8'),
+  reader: FleetAdmissionReader = async path => {
+    if (path.endsWith('dispatchd.log')) {
+      const log = await readTail(path, 256 * 1024);
+      if (!log) throw new Error('Log unavailable');
+      return log.text;
+    }
+    return path.endsWith('fleet-controller.jsonl') ? (await readJobsTail(path)).text ?? '' : readFile(path, 'utf8');
+  },
   now = Date.now(),
 ): Promise<number> {
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
@@ -200,12 +210,16 @@ export async function cmdFleetAdmission(
     return 2;
   }
   try {
-    const root = join(homedir(), '.ashlr-runs');
+    const root = runsRoot();
     const optional = (path: string) => reader(join(root, path)).catch(() => null);
-    const [status, guard, history] = await Promise.all([
+    const [status, guard, history, log, slots] = await Promise.all([
       reader(join(root, 'queue/status.json')), optional('queue/admission-ctl.json'), optional('metrics/fleet-controller.jsonl'),
+      optional('dispatchd.log'), optional('queue/slots.json'),
     ]);
     const report = sanitizePublicJson(explainFleetAdmission(JSON.parse(status), guard, history, now)) as FleetAdmissionReport;
+    let targets: Record<string, unknown> = {};
+    try { const root = objectRow(JSON.parse(slots ?? 'null')); targets = objectRow(root.lanes ?? root); } catch { /* targets unknown */ }
+    report.admission = summarizeAdmission(guard, log, now, targets);
     console.log(args.includes('--json') ? JSON.stringify(report) : formatFleetAdmission(report));
     return report.status === 'red' ? 1 : 0;
   } catch {
