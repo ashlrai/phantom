@@ -95,7 +95,20 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // miss when a walled run exits cleanly. The advisory is evidence about
 // an attempt, not a launch decision, so it competes with nothing: the
 // newest recognized advisory row replaces the triple wholesale and
-// every other event leaves it alone.
+// every other event leaves it alone. jobs.jsonl `autobackoff_hold`
+// rows — dispatchd's confirmed provider-wall lane holds, the
+// usage/quota and auth backoff scanners' hold receipts appended
+// through the same `metric()` path — fold as
+// provider_wall_trigger/provider_wall_pattern/provider_wall_lane: the
+// fleet's recorded verdict that the job's finished run log tail
+// matched a provider error pattern and the lane was held, covering
+// the auth-failure walls the session-handoff advisory never sees and
+// the usage walls whose hold landed where no advisory did (an
+// outcome-unreadable run, a still-standing earlier hold). Like the
+// advisory it is attempt evidence, not a launch decision: the newest
+// recognized hold row replaces the triple wholesale and every other
+// event leaves it alone; the skip receipts (helper-unavailable scans
+// that recorded no verdict) never join.
 // `merge_queue` joins a fifth bounded ledger, <runs>/metrics/merge-events.jsonl:
 // the fleet merge-latency observation journal (repo+pr keyed rows the
 // host merge observer and `phm fleet merge-retry` append — opened,
@@ -626,6 +639,40 @@ export interface RouterOutcome {
   handoff_lane: string | null;
   handoff_target: string | null;
   /**
+   * The fleet's recorded provider-wall lane hold for the job —
+   * dispatchd's `autobackoff_hold` receipts (jobs.jsonl rows the
+   * usage/quota and auth backoff scanners append through `metric()`
+   * when a finished run's log tail matched a provider error pattern
+   * and the lane was held; the contrib/mac/dispatchd.py producer
+   * mirrored here). A hold only lands on a failed or no-work run —
+   * the auth scanner additionally requires a streak of
+   * `auth_failures` — so the receipt is the fleet's confirmed
+   * provider-wall verdict for the attempt, covering the auth walls
+   * the session-handoff advisory never sees and the usage walls
+   * whose hold landed where no advisory did. `provider_wall_trigger`
+   * joins in the fold's closed two-label derivation — `usage-limit`
+   * for the usage/quota scanner's pattern family, `auth-failure` for
+   * the auth scanner's (a recorded `auth_failures` count marks the
+   * auth streak holds outright) — `provider_wall_pattern` records
+   * the producer's pattern id in the bounded identifier-label shape
+   * and `provider_wall_lane` the held lane in the bounded lane-id
+   * shape. The row counts only on the `autobackoff_hold` event name
+   * (the `event`/`type`/`kind` alias set) with a bounded pattern id —
+   * the payload field every producer hold row carries; an
+   * unrecognized pattern still records the hold with trigger null
+   * rather than skipping the receipt, a malformed lane drops to null
+   * without discarding it, and the `autobackoff_skip`/`authbackoff_skip`
+   * helper-unavailable receipts — scans that recorded no verdict —
+   * never join. The newest recognized hold row stands like the other
+   * newest-explicit fields — the triple replaces wholesale — and rows
+   * of every other event never touch it. All stay null when no hold
+   * row named the job: the retained window recorded no confirmed
+   * provider wall, which is unknown, not "no wall ever".
+   */
+  provider_wall_trigger: string | null;
+  provider_wall_pattern: string | null;
+  provider_wall_lane: string | null;
+  /**
    * The job's recorded merge-queue evidence — the merge-events.jsonl
    * observations for the job's newest unambiguous canonical PR claim
    * (`owner/repo#n`, the same prKey the authority revert join uses),
@@ -1046,6 +1093,45 @@ const HANDOFF_SCHEMA = 'session-failover.v1';
 const HANDOFF_EVENT = 'session_handoff_advisory';
 const HANDOFF_TRIGGERS: ReadonlySet<string> = new Set(['rate-limit', 'quota-exhausted']);
 
+/**
+ * The autobackoff lane-hold receipt's event name and the producer's
+ * pattern-id tables, mirrored from contrib/mac/dispatchd.py: the
+ * usage/quota scanner's `AB_RX` ids classify `usage-limit` walls and
+ * the auth scanner's `AB_AUTH_RX` ids classify `auth-failure` walls —
+ * the router keeps its own copy of both tables so a producer-side
+ * rename can never leak an unbounded label into router.outcome.v1.
+ * `claude_oauth_expired` sits in the usage table producer-side (the
+ * usage scanner's own OAuth-expiry line), so it classifies
+ * `usage-limit` here exactly as the producer's scan order implies.
+ * A recorded `auth_failures` count marks the auth scanner's streak
+ * holds outright — the producer writes it on every auth hold and
+ * never on a usage hold — so the derivation stays honest even if a
+ * pattern id is renamed; a pattern outside both tables still records
+ * the bounded id with trigger null rather than guessing a family.
+ */
+const WALL_HOLD_EVENT = 'autobackoff_hold';
+const WALL_TRIGGER_USAGE = 'usage-limit';
+const WALL_TRIGGER_AUTH = 'auth-failure';
+const USAGE_WALL_PATTERNS: ReadonlySet<string> = new Set([
+  'codex_usage_limit', 'codex_credits_exhausted', 'codex_rate_limit_429',
+  'claude_usage_limit', 'claude_rate_limit_error', 'claude_credit_balance',
+  'claude_oauth_expired',
+  'devin_acu_exhausted', 'devin_usage_limit', 'devin_weekly_quota',
+]);
+const AUTH_WALL_PATTERNS: ReadonlySet<string> = new Set([
+  'codex_auth_failure', 'devin_auth_failure',
+  'claude_auth_401', 'claude_not_logged_in', 'claude_auth_error',
+]);
+const wallTrigger = (r: Row, pattern: string): string | null => {
+  const authFailures = r['auth_failures'];
+  if (typeof authFailures === 'number' && Number.isFinite(authFailures) && authFailures >= 0) {
+    return WALL_TRIGGER_AUTH;
+  }
+  if (AUTH_WALL_PATTERNS.has(pattern)) return WALL_TRIGGER_AUTH;
+  if (USAGE_WALL_PATTERNS.has(pattern)) return WALL_TRIGGER_USAGE;
+  return null;
+};
+
 // Revert evidence uses the same field vocabulary the fleet ledger readers
 // already honor: event names (event/type/kind), terminal state fields
 // (phase/state/outcome/status/result/conclusion) and the reverted_at /
@@ -1358,6 +1444,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
       market_rejected: null,
       handoff_trigger: null, handoff_lane: null, handoff_target: null,
+      provider_wall_trigger: null, provider_wall_pattern: null, provider_wall_lane: null,
       merge_queue: null,
       passk: null,
     };
@@ -1571,6 +1658,32 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
         o.handoff_trigger = trigger;
         o.handoff_lane = lane !== null && LANE_BLOCKED_HINT.test(lane) ? lane : null;
         o.handoff_target = target !== null && LANE_BLOCKED_HINT.test(target) ? target : null;
+      }
+    }
+    // The autobackoff lane-hold receipt is the fleet's confirmed
+    // provider-wall verdict for the job — the usage/quota and auth
+    // backoff scanners' hold decision recorded beside the
+    // session-handoff advisory. It is likewise attempt evidence, not
+    // a launch decision, so it competes with nothing: the newest
+    // recognized hold row replaces the triple wholesale and every
+    // other event leaves it alone. The row counts only on the
+    // autobackoff_hold event name with a bounded pattern id — the
+    // payload field every producer hold row carries; the trigger
+    // derives from the producer's mirrored pattern tables (a recorded
+    // auth_failures count marks the auth streak holds outright), the
+    // lane joins independently in the bounded lane-id shape, and an
+    // unrecognized pattern still records the hold with trigger null
+    // rather than skipping the receipt — a producer-side pattern
+    // addition degrades to bounded evidence, never a guessed family.
+    // The autobackoff_skip/authbackoff_skip helper-unavailable
+    // receipts record no verdict and never join.
+    if (str(r, ...EVENT_NAME_KEYS)?.toLowerCase() === WALL_HOLD_EVENT) {
+      const pattern = str(r, 'pattern');
+      if (pattern !== null && LEDGER_LABEL.test(pattern)) {
+        const lane = str(r, 'lane');
+        o.provider_wall_trigger = wallTrigger(r, pattern);
+        o.provider_wall_pattern = pattern;
+        o.provider_wall_lane = lane !== null && LANE_BLOCKED_HINT.test(lane) ? lane : null;
       }
     }
     outcomes.set(j, o);
