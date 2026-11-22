@@ -6,7 +6,7 @@
 
 Mission: chasing open-source RSI (recursive self-improvement). Phantom and its companion tools aim to form a fully autonomous, code-first, agent-native software factory. Agents pick work, open pull requests, merge them and ship releases through the sanctioned workflow; the human owner acts as a passive board member, needed only for passwords, 2FA, device approvals and payments. Agents follow `AGENTS.md` at the repository root. Strategy: [recursive self-improvement and an open fleet](strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md).
 
-Ecosystem: Phantom is the hub. Separately installed companions are phantom-secrets (secrets), ashlr-plugin (token-efficient agent tools), Locus (identity scoping), lexicon (vocabulary), ashlr-md (Markdown review) and ashlr-stack (service provisioning). See [companion setup](COMPANIONS.md) and the [ecosystem map](ECOSYSTEM-MAP.md).
+Ecosystem: Phantom is the hub. Separately installed companions are phantom-secrets (secrets), ashlr-plugin (token-efficient agent tools), Locus (identity scoping), lexicon (vocabulary), ashlr-md (Markdown editing) and ashlr-stack (service provisioning). See [companion setup](COMPANIONS.md) and the [ecosystem map](ECOSYSTEM-MAP.md).
 
 Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent --json`. The copy-paste install, JSON commands, and MCP setup are in [llms-full.txt](llms-full.txt).
 
@@ -36,6 +36,20 @@ Approval cards record consent and do not collect credentials.
 - [Autonomy setup](AUTONOMY-SETUP.md): Dormant macOS autonomy. Status is not activation.
 - [Friction loop doctrine](doctrine/FRICTION-LOOP.md): How autonomy work is chosen — delegate everything, find where delegation stops for a human step, remove the step without removing the protection, and measure the signal after merge.
 
+## Contribute
+
+Outside contributors and their agents follow the same path as the fleet: one focused branch, local checks run once, a pull request from a fork, and `Merge Gate` as the one required hosted check.
+
+- [AGENTS.md](../AGENTS.md): The agent constitution: what agents may do, what stays with the owner, and how to work in this repository.
+- [Contributing](../CONTRIBUTING.md): Full conventions, tests, contracts and the dependency policy.
+- [Contribute with an agent](CONTRIBUTE-WITH-AN-AGENT.md): First pull request from a fork. Clone with `ashlrai/phantom` as `origin`, `npm ci`, make one change, run `node scripts/verify-changed.mjs` once, push to your fork and open the pull request against `master`.
+- [What CI requires](CONTRIBUTE-WITH-AN-AGENT.md#6-what-ci-requires): The jobs `Merge Gate` needs on a pull request; the full suites run on the scheduled `master` run.
+- [Which tests the fast gate runs](CONTRIBUTE-WITH-AN-AGENT.md#which-tests-the-fast-gate-runs): How `.github/scripts/ci-fast-select.mjs` picks tests from the changed paths.
+- [Protected paths](CONTRIBUTE-WITH-AN-AGENT.md#protected-paths-wait-for-the-owner): Diffs under `.github/CODEOWNERS` paths wait for the owner even when `Merge Gate` passes.
+- [Changed-files verification](verify-changed.md): What `node scripts/verify-changed.mjs` runs, its environment variables and typecheck slots.
+- [FAQ](FAQ.md): Short answers about what Phantom is, the mission and how agents work on it.
+- [Glossary](GLOSSARY.md): Shared fleet vocabulary: job, lane, worker, bridge PR, `Merge Gate`, leader and more.
+
 ## CLI
 
 - [Amplify](AMPLIFY.md): `phm amplify status|tick|goal --json` reads objective and fleet vitals; tick journals advisory actions without changing fleet state.
@@ -62,7 +76,7 @@ Approval cards record consent and do not collect credentials.
 - [Full copy-paste reference](llms-full.txt): Install, JSON commands, and MCP setup for Claude, Cursor, and Codex.
 - [Fleet MCP onramp](FLEET-MCP-ONRAMP.md): Read-only fleet MCP server. Add the stdio entry to a client config.
 - [Companions](COMPANIONS.md): Phantom Secrets, Locus, and Lexicon are installed separately. They are not bundled.
-- [Agent toolchain](AGENT-TOOLCHAIN.md): Companion MCP servers declared for agents working in this repo.
+- [Agent toolchain](AGENT-TOOLCHAIN.md): Companion MCP servers declared for agents working in this repo; all optional for outside contributors.
 - [Agent-native quickstart](AGENT-NATIVE-QUICKSTART.md): Use the desktop `/verse/` console as the visibility surface.
 - [Plugins](PLUGINS.md): Extend Phantom without forking.
 
@@ -136,7 +150,6 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Company context](COMPANY-CONTEXT.md): Save a sourced note, then read the current digest:
 - [Composer Commands](COMPOSER-COMMANDS.md): The Phantom desktop console's prompt box (the chat input at the bottom of the composer) accepts slash commands — type / at the start of your message to invoke one. Each command...
 - [Fleet constraint audit (RQ-CONSTRAINT-AUDIT-1)](CONSTRAINT-AUDIT.md): Status: audit plus one low-risk relaxation, 2026-11-16. Source baseline is 6015103469. This is the action layer over the constraints ledger (RQ-RETHINK-CONSTRAINTS-1). The ledge...
-- [Contribute with an agent](CONTRIBUTE-WITH-AN-AGENT.md): Phantom is built mostly by coding agents, with the human owner as a passive board member. Outside contributors use the same path as the fleet: one focused branch, local checks r...
 - [Coordinate work across the fleet](COORDINATION.md): Mason's orders are to coordinate rather than collide (23:06, October 31) and avoid wasted work, including a DIRTY PR (19:28). This page describes what the current master provide...
 - [Phantom core spec](CORE-SPEC.md): Phantom has six core parts and one leader that drives them. Everything else is a plugin or an adapter. A feature that does not serve one of the six parts does not belong in the...
 - [Chief-of-staff desktop API](COS-DESKTOP-API.md): Local Hub routes that let the desktop app queue a chief-of-staff task, list recent tasks, read a task's status and approve the drafted reply. Intake itself is described in COS.m...
@@ -166,7 +179,6 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Recorded fleet execution feedback](EXECUTION-FEEDBACK.md): Execution feedback connects terminal producer records to the existing retrospective sweep and Leader evidence. Reading it runs no provider, model, repair, or dispatch. It does n...
 - [Execution Identity V1](EXECUTION-IDENTITY-V1.md): Execution Identity V1 is the default-off, shadow-only contract for representing more than one execution account or runtime behind one Ashlr engine. It separates the mechanism th...
 - [Fable 5.2 orchestration](FABLE-ORCHESTRATOR.md): RQ-FABLE-ORCH-REG-2 implements the repository portion of EO RQ-FABLE-ORCHESTRATOR-1, following registration #4506.
-- [Frequently Asked Questions](FAQ.md): Phantom is an open-source workbench for running coding agents, coordinating a fleet, and reviewing their work, by Ashlr.AI. Bring your signed-in coding CLIs and local models int...
 - [Run and inspect signed firm graphs](FIRM-DEMO.md): This source-build demo exercises the new graph kernel without contacting a model, running candidate code, switching accounts, changing HOME or activating a daemon.
 - [Runtime-dynamic fleet config](FLEET-CONFIG.md): Change fleet limits without restarting dispatchd or any reader. Source: dynconfig.ts, CLI phm fleet config.
 - [Fleet graphs and coordination](FLEET-COORDINATION.md): Use the installed command's help to check availability. These surfaces exist in the current source; a source checkout does not establish publication or operation on a particular...
@@ -180,7 +192,6 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Manual fleet usage pacing](FLEET-USAGE-PACING.md): This offline command reads ~/.ashlr/fleet.json. Configure an explicit reset instant with a timezone before adding readings:
 - [Fleet Verbs](FLEET-VERBS.md): ashlr fleet <verb> supports convention-based verbs in src/cli/fleet-<verb>.ts exporting cmdFleet<Verb>. The dispatcher resolves safe names and loads them through the generated r...
 - [cfg.foundry — Polyglot Backend Configuration](FOUNDRY-CONFIG.md): This document describes every field in the foundry block of ~/.ashlr/config.json.
-- [Phantom glossary](GLOSSARY.md): Phantom's fleet uses a shared vocabulary so every leader, worker, and the desktop console talk about the same things.
 - [Governed-client gateway opt-in: design note](GOVERNED-GATEWAY-DESIGN.md): Status: decisions recorded 2026-10-19 02:15 ET (Engineering Orchestrator, under Mason's delegation; see section 8). Slice A, the pure validator and config types, is #879: not wi...
 - [Choosing graph context](GRAPH-CONTEXT-CHOICES.md): Use the graph that answers the question you actually have:
 - [Read the local knowledge graph over HTTP](GRAPH-HTTP.md): Use startGraphServer from @ashlr/phantom or @ashlr/phantom/core to start an independent read-only listener. It does not start the dashboard, dispatch work, enroll repositories,...
@@ -509,7 +520,6 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Session economics: batching, sub-agents and swarm sizing](strategy/SESSION-ECON.md): RQ-SESSION-ECON-1 · checked 2026-11-14 · source baseline 96a5a9be22a.
 - [StackSync EOS fleet capacity plan](strategy/STACKSYNC.md): Status: inventory and proposal only, 2026-11-14; RQ-STACKSYNC-WIRE-1.
 - [Strategy: the Spawn fleet model vs Phantom's architecture](strategy/spawn-fleet-model.md): Job: RQ-SWE5-RESEARCH-LOOP (pool claude, tier frontier, repo phantom).
-- [Changed-files verification (scripts/verify-changed.mjs)](verify-changed.md): Run the local pre-merge check from the repository root:
 <!-- docs-index:end -->
 
 - [Route hysteresis](ROUTE-HYSTERESIS.md): 60-minute pool residency, immutable launched jobs, two moves per six hours, ROUTE_HOLD and phm route explain --json.
