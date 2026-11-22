@@ -88,6 +88,10 @@ import { parseFleetDiskForecastArgs, readFleetDiskForecast } from './fleet-disk-
 import { parseFleetGmailArchivePlanLatestArgs, readFleetGmailArchivePlanLatest, type FleetGmailArchivePlanLatestArgs } from './fleet-gmail-archive-plan-latest.js';
 import { parseFleetGmailTriageLatestArgs, readFleetGmailTriageLatest } from './fleet-gmail-triage-latest.js';
 import { parseFleetCommsInboxArgs, readFleetCommsInbox, type FleetCommsInboxArgs } from './fleet-comms-inbox.js';
+import { FLEET_WORK_FEED_LIMIT_DEFAULT, FLEET_WORK_FEED_LIMIT_MAX, parseFleetWorkFeedArgs,
+  readFleetWorkFeed, type FleetWorkFeedArgs } from './fleet-work-feed.js';
+import { BUS_WORK_FEED_CONTAINS_MAX } from '../core/agents/bus-work-feed-read.js';
+import { PROVIDERS, WORK_STATUSES, WORK_TIERS } from '../core/agents/bus-v2-schema.js';
 import { UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_KINDS, UNIFIED_INBOX_SOURCES } from '../core/comms/unified-inbox.js';
 import { BUS_PRIORITIES } from '../core/fleet/bus-envelope.js';
 import { BUS_PROTOCOL_KINDS } from '../core/fleet/bus-protocol.js';
@@ -283,6 +287,7 @@ export interface FleetReaders {
   bus?: (limit: number) => Promise<unknown>;
   hostRuns?: () => Promise<unknown>;
   busInbox?: (input: FleetBusInboxArgs) => Promise<unknown>;
+  workFeed?: (input: FleetWorkFeedArgs) => Promise<unknown>;
   workBoard?: (input: FleetWorkBoardArgs) => Promise<unknown>;
   runtime?: () => Promise<unknown>;
   peerLedger?: (input: FleetPeerLedgerArgs) => unknown;
@@ -434,6 +439,30 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
           job: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep envelopes naming this job id — the same rule `phm comms bus read --job` applies.' },
           since: { type: 'string', description: 'Keep rows received at or after the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the same grammar `phm comms bus read --since` takes.' },
           contains: { type: 'string', minLength: 1, maxLength: BUS_READ_CONTAINS_MAX, description: 'Case-insensitive substring over each envelope\'s scrubbed one-line summary.' },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_work_feed',
+      description: 'Read the bus v2 work feed — the same readBusWorkFeed + projectBusWorkFeedView projection `phm fleet work-feed`, `phm agents bus work feed` and GET /api/verse/agent-bus/work-feed serve. status, job, repo, provider, tier, to, owner, since and contains narrow the job list under the same parseBusWorkFeedQuery rules the CLI flags and the HTTP endpoint share; claims joins live coordination holds onto each job, and open/claimable keep open-status candidates — open and claimable imply the claims join. to and owner match a routing label literally and under every label of one agent identity through the server-side registry, with exact-label matching kept when a ref resolves to nothing. limit caps returned jobs newest-first (1–200, default 50); matched reports the true filtered total before the cap and omitted the rest, and claims holds regroup under the shown jobs only. Read-only: routing labels are data, never authenticated identity; claims coordinate scope and grant no execution, claim or dispatch authority; an unreadable store, registry or hold table stays unavailable or unknown, never an empty feed; no caller root, path or cwd is accepted, and the tool never writes.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: FLEET_WORK_FEED_LIMIT_MAX, default: FLEET_WORK_FEED_LIMIT_DEFAULT },
+          claims: { type: 'boolean', description: 'Join live coordination holds onto each job (claims.source missing/available/unavailable; holds never leave the store).' },
+          open: { type: 'boolean', description: 'Keep queued/rescheduled jobs that declare claim keys, including unknown holds; implies claims.' },
+          claimable: { type: 'boolean', description: 'Keep only open jobs whose declared claim keys provably include a free one; implies claims.' },
+          status: { type: 'string', enum: [...WORK_STATUSES], description: 'Keep jobs in this feed status.' },
+          job: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep the job with this exact id.' },
+          repo: { type: 'string', pattern: '^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$', description: 'Keep jobs announced for this owner/name repo (case-insensitive, the claim-key rule).' },
+          provider: { type: 'string', enum: [...PROVIDERS], description: 'Keep jobs announced for this provider.' },
+          tier: { type: 'string', enum: [...WORK_TIERS], description: 'Keep jobs whose announcement declared this dispatch tier; a job with no dispatch spec declares none and never matches.' },
+          to: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep jobs whose announcement was addressed to this routing label.' },
+          owner: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep jobs announced by this agent.' },
+          since: { type: 'string', description: 'Keep jobs whose last activity — the newest status receipt time, or the announcement\'s while no status has moved the job — reaches the cutoff: 15m, 2h, 1d, epoch ms or an ISO time.' },
+          contains: { type: 'string', minLength: 1, maxLength: BUS_WORK_FEED_CONTAINS_MAX, description: 'Case-insensitive substring over each job\'s scrubbed title, newest status detail and declared dispatch scope/acceptance.' },
         },
         additionalProperties: false,
       },
@@ -1068,7 +1097,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_empties' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_slack_evidence' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_imessage_tasks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
+    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_empties' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_work_feed' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_slack_evidence' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_imessage_tasks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -1084,6 +1113,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const limit = args['limit'] ?? 20;
     const emptyHours = args['hours'] === undefined ? 24 : args['hours'];
     const inbox = name === 'fleet_bus_inbox' ? parseFleetBusInboxArgs(args) : null;
+    const workFeedArgs = name === 'fleet_work_feed' ? parseFleetWorkFeedArgs(args) : null;
     const workBoard = name === 'fleet_work_board' ? parseFleetWorkBoardArgs(args) : null;
     const reviewPick = name === 'fleet_review_pick' ? parseFleetReviewPickArgs(args) : null;
     const orderState = name === 'fleet_order_state' ? parseFleetOrderStateArgs(args) : null;
@@ -1178,6 +1208,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_reset_release_await' ? resetReleaseAwait === null :
         name === 'fleet_reset_follow' ? resetFollow === null :
         name === 'fleet_bus_inbox' ? inbox === null :
+        name === 'fleet_work_feed' ? workFeedArgs === null :
         name === 'fleet_reset_history' ? history === null :
         Object.keys(args).some(key => !limited || key !== 'limit') ||
         (limited && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > maxLimit)) ||
@@ -1254,6 +1285,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_intent_read' ? await (readers.intentRead ?? readFleetIntent)(intentRead as FleetIntentReadArgs)
         : name === 'fleet_release_candidate' ? await (readers.releaseCandidate ?? readFleetReleaseCandidate)(releaseCandidate as FleetReleaseCandidateArgs)
         : name === 'fleet_work_board' ? await (readers.workBoard ?? readFleetWorkBoard)(workBoard as FleetWorkBoardArgs)
+        : name === 'fleet_work_feed' ? await (readers.workFeed ?? readFleetWorkFeed)(workFeedArgs as FleetWorkFeedArgs)
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
       // and may consume JSON quotes if applied to already serialized bytes.

@@ -1353,7 +1353,8 @@ refusals name none. Legacy and unrelated bodies stay opaque. This projection
 is neither a historical ledger nor an authentication check; labels grant no
 authority.
 
-`phm fleet work-feed --json`, `phm agents bus work feed` and GET
+`phm fleet work-feed --json`, `phm agents bus work feed`, `fleet_work_feed`
+(the isolated fleet MCP tool) and GET
 `/api/verse/agent-bus/work-feed` serve the same `BusWorkFeedReadResult` as
 `{v:1, status, jobs?, receipts, asOf}`; the two CLIs share one status filter,
 one announcement-address filter, newest-first order, hold regrouping and
@@ -1377,7 +1378,15 @@ applied through the same `projectBusWorkFeedView` the CLIs use, so an HTTP
 client gets the identical narrowed, newest-first view: `open`/`claimable`
 imply the claims join like the CLI flags, `to`/`owner` resolve through the
 server-side identity registry with exact-label fallback, and repeated,
-unknown or malformed parameters or values are a 400. It answers 200
+unknown or malformed parameters or values are a 400. `fleet_work_feed`
+takes the same dimensions as MCP arguments — the three hold joins as JSON
+booleans, every other filter as the string the shared parser validates —
+under the identical `parseBusWorkFeedQuery`/`projectBusWorkFeedView`
+contract, adds a `limit` slice (1–200, default 50, newest first) that
+reports `matched` as the true filtered total before the cap and `omitted`
+as the rest while claims holds regroup under the shown jobs only, accepts
+no caller root or path, and passes a refused or unavailable feed through
+untouched. The endpoint answers 200
 for `ok` and `refused` — the projection's own status, reason and blamed
 receipt stay in the body — while `unavailable`, `retryable` and `invalid`
 storage answer 503. A missing store reads as an empty `ok` feed. Status
