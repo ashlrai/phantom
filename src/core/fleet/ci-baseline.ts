@@ -477,6 +477,7 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   '.github/scripts/ci-site-lane.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-mac-rotation.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-dep-graph.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-fast-select.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-fast-inputs.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-green-reuse.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-mcp-selection.mjs': ['.github/workflows/ci.yml'],
@@ -1224,8 +1225,8 @@ const SECRET_GATE_INPUTS: Record<string, readonly string[]> = {
 // is a `node --test` invocation or a whitelisted gate script, all gate
 // lines naming the same file. Mixed bash, heredocs, `uses:` actions,
 // non-whitelisted scripts (ci-pack-smoke and release-version-provenance
-// already have dedicated parsers; ci-fast-select never exits nonzero)
-// and other commands stay unattributed. When the step then fails, a
+// already have dedicated parsers) and other commands stay
+// unattributed. When the step then fails, a
 // `not ok` or vitest FAIL line in its own output means the companion
 // test runner owns the failure and the gate group is suppressed;
 // otherwise the gate script is the identity -- the file, its import
@@ -1243,6 +1244,12 @@ const CI_SCRIPT_GATES: Record<string, string> = {
   'ci-site-lane.mjs': '(site-lane)',
   'ci-mac-rotation.mjs': '(mac-rotation)',
   'ci-dep-graph.mjs': '(dep-graph)',
+  // ci-fast-select pairs its node --test companion in one step: a
+  // companion `not ok` still suppresses this group, but the script's
+  // selection-failure fallback does not cover infrastructure exits
+  // (plan-file writes, module load, the fallback planner itself), and
+  // without the group those crashes leave every open PR unknown.
+  'ci-fast-select.mjs': '(fast-select)',
   'ci-fast-inputs.mjs': '(fast-inputs)',
   'ci-green-reuse.mjs': '(green-reuse)',
   'ci-mcp-selection.mjs': '(mcp-selection)',
