@@ -16,6 +16,7 @@ import { parseReadyRows } from './ready-row-edit.js';
 import { parseStopFile, stopFilePath, stoppedFamilies } from './stop-file.js';
 import { readSource } from './runs-parked-queue.js';
 import { readHostFamilies } from './host-families.js';
+import { summarizeAdmission } from './admission-summary.js';
 
 export const LEADER_COMPACT_FILE = 'queue/leader-brief.json';
 const clean = (s: string) => scrubSecrets(s).replace(/\s+/g, ' ').slice(0, 80);
@@ -36,7 +37,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     return cache.get(file)!;
   };
   const quiet = async <T>(p: Promise<T>): Promise<T | null> => p.catch(() => null);
-  const [snapshot, tail, pace, guardian, liveText, stopText, ready, hostLoad, log, slotsText, prsText] = await Promise.all([
+  const [snapshot, tail, pace, guardian, liveText, stopText, ready, hostLoad, log, slotsText, prsText, admissionText] = await Promise.all([
     quiet(readChiefOfStaffSnapshot('auto', { runsDir, now: () => new Date(now), read })),
     readTail(join(runsDir, 'metrics/jobs.jsonl'), 8 * 1024 * 1024),
     quiet(readFleetPace({ runsDir, now: () => now })), quiet(readGuardianGlance(runsDir, now)),
@@ -45,6 +46,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     hostLoadReader(),
     readTail(join(runsDir, 'dispatchd.log'), 256 * 1024),
     quiet(read(join(runsDir, 'queue/slots.json'))), quiet(read(join(runsDir, 'fleet/open-prs.json'))),
+    quiet(read(join(runsDir, 'queue/admission-ctl.json'))),
   ]);
   for (const [name, state] of Object.entries(snapshot?.sources ?? {})) if (state !== 'unavailable') sourceState(name, state,
     state === 'healthy' ? 'parsed local snapshot' : name === 'queue/status.json' ? 'last_tick missing, invalid or older than 60s'
@@ -99,7 +101,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
   const brief = {
     schema: 'leader.compact-brief.v1', at: new Date(now).toISOString(), headline,
     state: lanes.length || tail || pace?.pools.length || guardian?.length ? 'ready' : 'no data', sources,
-    windowHours: 2, emptyWindowHours: 24, lanes,
+    windowHours: 2, emptyWindowHours: 24, lanes, admission: summarizeAdmission(admissionText, log?.text ?? null, now, slots),
     pools: (pace?.pools ?? []).map(p => ({ pool: clean(p.pool), usedPct: p.usedPct, hoursToReset: p.hoursToReset,
       burnPerHour: p.recentPerHour, safeBurn: p.safeBurnPerHour ?? null, verdict: p.verdict ?? 'unknown',
       why: p.verdict === 'unknown' ? [p.usedPct === null ? 'usage missing or stale' : '', p.hoursToReset === null || p.hoursToReset <= 0 ? 'reset missing or elapsed' : '', p.recentPerHour === null ? 'burn rate missing' : ''].filter(Boolean).join('; ') : 'usage, reset and burn rate known' })),
@@ -110,7 +112,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     stopped: stops, omitted: 0,
   };
   // Drop the lowest-priority rows, explicitly counting omissions, until the entire wire payload fits.
-  const lists = [brief.families, brief.stopped, brief.main, brief.pools, brief.lanes, brief.attention];
+  const lists = [brief.families, brief.stopped, brief.main, brief.pools, brief.lanes, brief.attention, brief.admission.perLane];
   while (Buffer.byteLength(JSON.stringify(brief)) >= 8191) {
     const list = lists.find(a => a.length > 1) ?? lists.find(a => a.length);
     if (!list) break;
@@ -126,7 +128,7 @@ export async function writeCompactBrief(runsDir: string, now = Date.now(), file 
   return brief;
 }
 export function compactBriefLines(b: CompactLeaderBrief): string[] {
-  const lines = [b.headline, `Leader: ${b.state} (${b.at}); lanes: ${b.lanes.length}; pools: ${b.pools.length}`,
+  const lines = [b.headline, b.admission.answer, `Leader: ${b.state} (${b.at}); lanes: ${b.lanes.length}; pools: ${b.pools.length}`,
     ...b.lanes.slice(0, 3).map(l => `${l.lane}: ${l.running ?? '?'}/${l.target ?? '?'}, ${l.queued ?? '?'} queued, held ${l.held ?? '?'}, empty ${l.emptyRate === null ? '?' : Math.round(l.emptyRate * 100) + '%'}`),
     ...b.pools.slice(0, 2).map(p => `${p.pool}: ${p.usedPct ?? '?'}%, reset ${p.hoursToReset ?? '?'}h, burn ${p.burnPerHour ?? '?'}/h, safe ${p.safeBurn ?? '?'}/h, ${p.verdict}`),
     ...b.families.slice(0, 2).map(f => `${f.family}: ${f.launches} launches, ${f.prs} PRs, ${f.merges} merges, ${f.empty} empty (2h)`),

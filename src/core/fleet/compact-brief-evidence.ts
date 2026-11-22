@@ -6,17 +6,22 @@ import { ledgerEventName, ledgerPhase, ledgerPrUrl, ledgerRows } from './empty-c
 import { localTimestamp, readSource } from './runs-parked-queue.js';
 
 export const objectRow = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-export function dispatchTick(text: string, now: number): { running: Record<string, number>; why: string } {
-  const line = text.split('\n').filter(l => l.includes(' tick run=')).at(-1);
-  const match = line?.match(/^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) tick run=(\{.*\}) q=\d+ launched=\d+ reap=\d+ pause=(?:True|False) wall=\d+s\s*$/);
+export function parseDispatchTick(line: string) {
+  const match = line.match(/^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) tick run=(\{.*\}) q=(\d+) launched=(\d+) reap=(\d+) pause=(?:True|False) wall=(\d+(?:\.\d+)?)s(?: why=([\w-]+))?\s*$/);
   try {
     if (!match) throw new Error();
-    const age = now - localTimestamp(match[1]!).ms;
-    if (!Number.isFinite(age) || age < 0 || age > 120_000) return { running: {}, why: 'latest tick is stale or in the future' };
+    const at = localTimestamp(match[1]!).ms;
     const running = objectRow(JSON.parse(match[2]!));
-    if (!Object.keys(running).length || Object.values(running).some(n => !Number.isSafeInteger(n) || Number(n) < 0)) throw new Error();
-    return { running: running as Record<string, number>, why: 'latest tick in the bounded log tail' };
-  } catch { return { running: {}, why: 'no valid tick in the bounded log tail' }; }
+    if (!Number.isFinite(at) || Object.values(running).some(n => !Number.isSafeInteger(n) || Number(n) < 0)
+      || !match.slice(3, 6).every(n => Number.isSafeInteger(Number(n))) || !Number.isFinite(Number(match[6]))) throw new Error();
+    return { at, running: running as Record<string, number>, launched: Number(match[4]), wall: Number(match[6]), why: match[7] ?? null };
+  } catch { return null; }
+}
+export function dispatchTick(text: string, now: number): { running: Record<string, number>; why: string } {
+  const tick = parseDispatchTick(text.split('\n').filter(l => l.includes(' tick run=')).at(-1) ?? '');
+  if (!tick) return { running: {}, why: 'no valid tick in the bounded log tail' };
+  if (now - tick.at < 0 || now - tick.at > 120_000) return { running: {}, why: 'latest tick is stale or in the future' };
+  return { running: tick.running, why: 'latest tick in the bounded log tail' };
 }
 
 export async function compactMergeLatency(root: string, ledger: string, now: number, prs: unknown) {

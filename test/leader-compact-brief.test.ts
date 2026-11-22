@@ -61,6 +61,7 @@ it('reads the last bounded tick, slot holds and ready supply for the headline', 
   const stamp = localIso(new Date(now)).slice(0, 19).replace('T', ' ');
   const tick = (running: number) => `${stamp} tick run={"personal":${running},"local":1} q=2 launched=0 reap=0 pause=False wall=1s\n`;
   await writeFile(join(dir, 'dispatchd.log'), 'plain\n'.repeat(50_000) + tick(9) + tick(3) + 'plain\n');
+  await writeFile(join(dir, 'queue/admission-ctl.json'), JSON.stringify({ why: 'over_host', settle_s: 300 }));
   await writeFile(join(dir, 'queue/slots.json'), JSON.stringify({ personal: { target: 20, held: false }, local: { target: 8, held: false, pause_new_until: now / 1000 + 60 } }));
   await writeFile(join(dir, 'queue/ready.tsv'), 'first\tphantom\tpersonal\twork\tplain\nsecond\tphantom\tpersonal\twork\tplain\nparked\tphantom\tPARKED-DEP.personal\twork\tplain\n');
   const b = await readCompactBrief(dir, now);
@@ -69,6 +70,8 @@ it('reads the last bounded tick, slot holds and ready supply for the headline', 
     expect.objectContaining({ lane: 'local', running: 1, held: true, pause_new_until: now / 1000 + 60 }),
   ]));
   expect(b.headline).toBe('personal 3/20 running, 2 queued: supply-starved');
+  expect(b.admission).toMatchObject({ settleSeconds: 300, perLane: expect.arrayContaining([{ lane: 'personal', running: 3, target: 20, gap: 17 }]) });
+  expect(compactBriefLines(b)).toContain(b.admission.answer);
   expect(compactBriefLines(b)[0]).toBe(b.headline);
   expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(8192);
   await writeFile(join(dir, 'dispatchd.log'), tick(3) + 'plain tick run=broken\n');
@@ -104,4 +107,11 @@ it('explains degraded sources and refuses merge observations without mergedAt', 
   expect(b.sources['metrics/jobs.jsonl']).toMatchObject({ state: 'degraded', why: expect.stringContaining('invalid') });
   expect(Object.values(b.sources).every(s => s.why.length > 0)).toBe(true);
   expect(b.medianOpenToMergeSeconds).toBeNull(); expect(b.mergeLatencyWhy).toContain('no mergedAt paired');
+});
+it('keeps admission and the entire brief below eight KiB with many lane gaps', async () => {
+  const lanes = Object.fromEntries(Array.from({ length: 150 }, (_, i) => [`work-${i}`, { target: 20 }]));
+  await writeFile(join(dir, 'queue/slots.json'), JSON.stringify(lanes));
+  const b = await readCompactBrief(dir, now);
+  expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(8192);
+  expect(b.omitted).toBeGreaterThan(0);
 });
