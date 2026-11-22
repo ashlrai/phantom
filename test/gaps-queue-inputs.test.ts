@@ -10,8 +10,8 @@ import { runAutofillTick } from '../src/core/fleet/autofill-run.js';
 const NOW = Date.parse('2026-11-21T14:00:00Z');
 const BACK = '2026-11-22T20:30:00Z';
 let root: string, wt: string;
-beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'gapq-')); wt = join(root, 'wt'); await mkdir(join(root, 'queue', 'prompts'), { recursive: true }); });
-afterEach(async () => { await rm(root, { recursive: true, force: true }); vi.restoreAllMocks(); });
+beforeEach(async () => { vi.stubEnv('ASHLR_GAPS_MAX', ''); root = await mkdtemp(join(tmpdir(), 'gapq-')); wt = join(root, 'wt'); await mkdir(join(root, 'queue', 'prompts'), { recursive: true }); });
+afterEach(async () => { await rm(root, { recursive: true, force: true }); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 const none = { openIdeas: async () => [], queuedWork: async () => [], mergedTitles: async () => [] };
 async function seedGaps(n: number): Promise<void> {

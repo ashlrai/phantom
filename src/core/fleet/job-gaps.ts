@@ -36,7 +36,7 @@ export const JOB_GAPS_SCHEMA = 'jobs.gaps.v1';
 export const MAX_GAPS_PER_JOB = 12;
 /** Most new gaps queued across repos in a rolling hour. */
 export const MAX_GAPS_PER_HOUR = 3;
-/** Most new drop jobs one tick writes in all (env ASHLR_GAPS_MAX, or `--max`). */
+/** Fallback per-call limit when lane readings are unavailable and no explicit max is set. */
 export const DEFAULT_MAX_NEW_DROPS = 3;
 /** Log lines read from the end of a published job's log. */
 export const PUBLISHED_LOG_TAIL_LINES = 80;
@@ -81,6 +81,8 @@ export async function readGapQueueInputs(runsDir: string, room: GapLaneRoom | nu
 }
 
 export interface JobGapsReport {
+  /** Per-call ceiling before the independent rolling-hour guard; set with `propose`. */
+  proposalLimit?: number;
   /** Count inputs for the queue-full check; set with `propose`. */
   queue?: GapQueueInputs;
   /** Ready rows that cannot launch now (lane held, pool spent or every slot busy); set with `propose` and lane readings. They do not make the queue full. */
@@ -267,7 +269,7 @@ export interface JobGapsDeps {
   ingestedTitles?: (runsDir: string) => Promise<string[]>;
   /** Titles this proposer queued in the last 24 h (metrics/gap-proposed.jsonl). Unreadable = unknown, not empty. */
   proposedTitles?: (runsDir: string) => Promise<string[]>;
-  /** Most new drop jobs this call writes. Defaults to ASHLR_GAPS_MAX, then 3. */
+  /** Most new drop jobs this call writes. Overrides ASHLR_GAPS_MAX; otherwise uses measured lane capacity (up to 40), or 3 without readings. */
   maxNew?: number;
   /** Lane readings. With them a gap goes to a lane with room, and rows that cannot launch do not count as a full queue. Without them: claude, or codex-personal for gh work. */
   lanes?: readonly LaneFacts[];
@@ -428,12 +430,13 @@ export async function readJobGaps(hours: number, opts: { propose?: boolean } & J
     const room = opts.lanes ? gapLaneRoom(opts.lanes, now) : opts.pace?.size ? unboundedRoom() : null;
     const paceNotes: string[] = [];
     report.queue = await readGapQueueInputs(runsDir, room);
+    report.proposalLimit = opts.maxNew ?? maxNewFromEnv(process.env, opts.lanes ? DROP_JOB_QUEUE_LIMIT : DEFAULT_MAX_NEW_DROPS);
     const lockPath = join(runsDir, 'metrics', 'gap-propose.lock');
     const lock = await openFile(lockPath, 'wx', 0o600).catch(() => null);
     try {
       const history = lock ? await readGapProposals(runsDir, now) : null;
       const hourly = history?.state === 'known' ? history.proposals.filter(p => now - Date.parse(p.at) < 3_600_000).length : history?.why === 'missing' ? 0 : null;
-      report.proposed = await proposeGaps(report.candidates, runsDir, opts.write, opts.maxNew ?? maxNewFromEnv(), now, room, opts.pace, paceNotes, report.queue, hourly);
+      report.proposed = await proposeGaps(report.candidates, runsDir, opts.write, report.proposalLimit, now, room, opts.pace, paceNotes, report.queue, hourly);
     } finally { if (lock) { await lock.close(); await unlink(lockPath); } }
     if (paceNotes.length) report.paceNotes = paceNotes;
     if (room) report.parked = room.stuck;
@@ -444,16 +447,17 @@ export async function readJobGaps(hours: number, opts: { propose?: boolean } & J
 /** Repos that have a drop queue: every repo key the drop job header allows. */
 export const DROP_QUEUE_REPOS: readonly string[] = DROP_JOB_REPOS;
 
+/** Valid environment limits override the measured-capacity or unavailable-readings fallback. */
+export function maxNewFromEnv(env: NodeJS.ProcessEnv = process.env, fallback = DEFAULT_MAX_NEW_DROPS): number {
+  const n = Number(env.ASHLR_GAPS_MAX);
+  return Number.isInteger(n) && n >= 0 && n <= 40 && env.ASHLR_GAPS_MAX?.trim() ? n : fallback;
+}
+
 /**
  * Writes each survivor as a drop job (the queue `phm ideas queue` writes to) with its own repo in the header.
  * Unknown repos are listed as skipped with the reason; all repos share the rolling hourly cap.
  * A gap with no known repo goes to phantom, as before.
  */
-export function maxNewFromEnv(env: NodeJS.ProcessEnv = process.env): number {
-  const n = Number(env.ASHLR_GAPS_MAX);
-  return Number.isInteger(n) && n >= 0 && n <= 40 && env.ASHLR_GAPS_MAX?.trim() ? n : DEFAULT_MAX_NEW_DROPS;
-}
-
 async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: JobGapsDeps['write'], maxNew: number, now: number, room: GapLaneRoom | null, pace: ReadonlyMap<string, PaceVerdict> | undefined, paceNotes: string[], queue: GapQueueInputs, hourly: number | null): Promise<ProposedGap[]> {
   let launchable = queue.launchableRows;
   const moved = new Map<string, number>();
