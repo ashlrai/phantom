@@ -1336,6 +1336,98 @@ function parseCiScriptGateFailures(log: string): Failure[] {
   return out;
 }
 
+// The `Install dependencies` steps run a bare `npm ci` (with or without
+// --ignore-scripts/--no-audit/--no-fund): when the manifest pair or the
+// lockfile is broken on master, every fresh PR fails the same step before
+// any test runs, and npm's own `npm error <detail>` block is the only
+// evidence -- no vitest FAIL, TAP `not ok`, tsc diagnostic or report
+// shape names it, so without step attribution those PRs read unknown and
+// queue no fix. The same `##[group]Run` step tracking as the helper gates
+// applies, but a step qualifies only when every script line is a pure
+// `npm ci` invocation: `npm ci && npm run build` preambles, `npm install`
+// toolchain fetches, `uses:` actions, mixed bash and `npm run` script
+// steps (whose `npm error Lifecycle script` blocks this parser must not
+// claim) stay unattributed. The step fails only on npm's own diagnosis --
+// a runner kill or spawn death with no `npm error` line stays unknown.
+// Each failure groups under `package-lock.json > (install)`: the
+// manifest/lockfile pair plus shrinkwrap/.npmrc variants and the ci.yml
+// step definition are the closed input list a master fix restores (the
+// only workflow whose root install runs on analyzed refs with a
+// verifiable checkout), consulted through flatInputs like the other
+// gate maps, so these groups classify shared-baseline, pr-caused or
+// unknown -- never probable-flake.
+const INSTALL_STEP_FILE = 'package-lock.json';
+const INSTALL_STEP_NAMES = '(install)';
+const INSTALL_STEP_MAX = 8;
+const INSTALL_NPM_CI = /^npm\s+ci(?:\s+--?\S+)*$/;
+const INSTALL_NPM_ERROR = /^npm\s+(?:error|ERR!)\s+\S/;
+const INSTALL_STEP_INPUTS: Record<string, readonly string[]> = {
+  [INSTALL_STEP_NAMES]: ['package.json', 'package-lock.json', 'npm-shrinkwrap.json', '.npmrc', '.github/workflows/ci.yml'],
+};
+
+function parseInstallFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  // idle: no step context. script: collecting a Run block's script lines.
+  // meta: past the shell:/env: marker inside the block. output: scanning a
+  // step's output for npm's own error lines.
+  let phase: 'idle' | 'script' | 'meta' | 'output' = 'idle';
+  let disqualified = false;
+  let installCandidate = false;
+  let install = false;
+  const npmErrors: string[] = [];
+  const reset = () => {
+    phase = 'idle'; disqualified = false; installCandidate = false; install = false;
+    npmErrors.length = 0;
+  };
+  const resolveInstall = () => { install = installCandidate && !disqualified; };
+  for (const line of lines(log)) {
+    if (out.length >= INSTALL_STEP_MAX) break;
+    if (line.startsWith('##[group]')) {
+      // Any group boundary ends the current step: a new Run block starts
+      // script collection, anything else leaves the step unattributed.
+      reset();
+      const run = CI_STEP_GROUP.exec(line);
+      if (run !== null) {
+        phase = 'script';
+        const first = run[1];
+        if (first !== undefined && first !== '') {
+          if (INSTALL_NPM_CI.test(first)) installCandidate = true; else disqualified = true;
+        }
+      }
+      continue;
+    }
+    if (phase === 'script') {
+      if (CI_STEP_END.test(line)) {
+        resolveInstall();
+        phase = 'output';
+        continue;
+      }
+      if (CI_STEP_META.test(line)) { phase = 'meta'; continue; }
+      if (line === '') continue;
+      if (INSTALL_NPM_CI.test(line)) installCandidate = true; else disqualified = true;
+      continue;
+    }
+    if (phase === 'meta') {
+      if (CI_STEP_END.test(line)) {
+        resolveInstall();
+        phase = 'output';
+      }
+      continue;
+    }
+    if (phase === 'output') {
+      if (CI_STEP_FAILED.test(line)) {
+        if (install && npmErrors.length > 0) {
+          out.push({ file: INSTALL_STEP_FILE, names: INSTALL_STEP_NAMES, testId: `${INSTALL_STEP_FILE} > ${INSTALL_STEP_NAMES}`, excerpt: clean(npmErrors.join('\n')) });
+        }
+        reset();
+        continue;
+      }
+      if (INSTALL_NPM_ERROR.test(line) && npmErrors.length < 8) npmErrors.push(line);
+    }
+  }
+  return out;
+}
+
 // The `ci` job's "Memory benchmark regression gate" step on the ubuntu
 // authority 3/3 shard runs `npm run --silent bench:memory -- --check >
 // /dev/null`: the redirect discards the script's pretty-printed JSON
@@ -1856,6 +1948,10 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     if (result.length >= 100) break;
     result.push(failure);
   }
+  for (const failure of parseInstallFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
   for (const failure of parseMemoryBenchmarkFailures(log)) {
     if (result.length >= 100) break;
     result.push(failure);
@@ -2276,12 +2372,13 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     freshness.push({ pr: pr.number, head: pr.headRefOid, state: known ? 'fresh' : 'unknown', ...(!known ? { reason: 'unreadable-log-or-unverified-checkout' } : {}) });
     if (!known) continue;
     for (const failure of found) {
-      // Lint-guard, first-paint and test-runner failures are per-file/
-      // per-arm/per-runner like eslint: the checkers grep source text,
-      // measure bundle bytes or wrap the suite run, and never read a
-      // file's imports, so the dependency set is each gate's closed
-      // input list rather than the import closure walk.
-      const flatInputs = LINT_GUARD_INPUTS[failure.names] ?? FIRST_PAINT_INPUTS[failure.names] ?? TEST_RUNNER_INPUTS[failure.names] ?? SECRET_GATE_INPUTS[failure.names] ?? BUILD_STEP_INPUTS[failure.file];
+      // Lint-guard, first-paint, test-runner and install-step failures are
+      // per-file/per-arm/per-runner/per-manifest like eslint: the checkers
+      // grep source text, measure bundle bytes, wrap the suite run or read
+      // the dependency manifests, and never read a file's imports, so the
+      // dependency set is each gate's closed input list rather than the
+      // import closure walk.
+      const flatInputs = LINT_GUARD_INPUTS[failure.names] ?? FIRST_PAINT_INPUTS[failure.names] ?? TEST_RUNNER_INPUTS[failure.names] ?? SECRET_GATE_INPUTS[failure.names] ?? INSTALL_STEP_INPUTS[failure.names] ?? BUILD_STEP_INPUTS[failure.file];
       const deps = flatInputs !== undefined ? new Set<string>(flatInputs) : await dependencies(failure.file);
       // Generated artifacts are produced by the clean-tree job, not the test
       // runner: the vitest harness ambient set cannot stale them, so only

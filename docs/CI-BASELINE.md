@@ -440,6 +440,24 @@ groups classify `shared-baseline`, `pr-caused` or `unknown` -- never
 analyzer's evidence never sees (macOS/Windows lanes, release
 pipelines, merge-group-only attribution) are not listed.
 
+The `Install dependencies` steps run a bare `npm ci` (with or without
+`--ignore-scripts`/`--no-audit`/`--no-fund`), so a broken manifest or
+lockfile on master fails every fresh PR before any test runs and npm's
+own `npm error <detail>` block is the only evidence. The analyzer
+tracks the same `##[group]Run` step boundaries, but a step qualifies
+only when every script line is a pure `npm ci` invocation: `npm ci &&
+npm run build` preambles, `npm install` toolchain fetches, `uses:`
+actions, mixed bash, `npm run` script steps (whose `npm error Lifecycle
+script` blocks must not be claimed) and steps that die without an
+`npm error` line stay unattributed. Failures group under
+`package-lock.json > (install)`; the dependency set is the closed input
+list -- `package.json`, `package-lock.json`, `npm-shrinkwrap.json`,
+`.npmrc` and `.github/workflows/ci.yml`, the only workflow whose root
+install runs on analyzed refs with a verifiable checkout -- with no
+vitest harness ambient set, so a PR touching any of them is
+`pr-caused` and the rest classify `shared-baseline`, `pr-caused` or
+`unknown` -- never `probable-flake`.
+
 The test runners' own watchdog verdicts get the same treatment.
 `scripts/test-ci.mjs` wraps every `npm run test:ci` invocation -- the
 fast-gate affected-test shards (through `ci-fast-run.mjs`), the quick

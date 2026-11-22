@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -63,7 +63,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.install ? 'install-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : head;
       const receipt = options.bound
         ? `Bound candidate ${options.boundHead ?? sha} to event tree ${'e'.repeat(40)}\n`
@@ -1212,6 +1212,91 @@ describe('CI baseline evidence', () => {
     }
     // A singleton unaffected failure can never prove a master pass.
     const singleton = await analyzeCiBaseline('owner/repo', github({ fastSelect: true, count: 1, pass: true, contents }).gh);
+    expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('attributes npm ci install failures to the dependency manifests', () => {
+    // A broken manifest/lockfile on master fails every PR's "Install
+    // dependencies" step before any test runs; npm's own error block is
+    // the only evidence and groups under the lockfile identity.
+    const failures = parseBaselineFailures(fixture('install-shared'), 'owner/repo');
+    expect(failures.map(f => f.testId)).toEqual(['package-lock.json > (install)']);
+    expect(failures[0]).toMatchObject({ file: 'package-lock.json', names: '(install)' });
+    expect(failures[0]?.excerpt).toContain('npm error code ERESOLVE');
+    expect(failures[0]?.excerpt).toContain('ERESOLVE unable to resolve dependency tree');
+    // Timestamped job-log lines parse identically.
+    const stamped = fixture('install-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped, 'owner/repo').map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    const secret = 'ghp_' + 'a'.repeat(36);
+    const leaky = [
+      '##[group]Run npm ci',
+      'npm ci',
+      'shell: /usr/bin/bash -e {0}',
+      '##[endgroup]',
+      `npm error code ERESOLVE`,
+      `npm error token ${secret} rejected`,
+      '##[error]Process completed with exit code 1.',
+    ].join('\n');
+    expect(parseBaselineFailures(leaky)[0]?.excerpt).not.toContain(secret);
+  });
+  it('keeps non-install npm failures and compound install steps unparsed', () => {
+    const step = (script: string[], output: string[], error = '##[error]Process completed with exit code 1.') =>
+      ['##[group]Run ' + script[0], ...script.slice(1), 'shell: /usr/bin/bash -e {0}', '##[endgroup]', ...output, error].join('\n');
+    for (const bad of [
+      // An npm run script failure prints npm error blocks too, but the
+      // step is not a pure npm ci invocation.
+      step(['npm run build'], ['npm error Lifecycle script `build` failed with error:', 'npm error code 1']),
+      // Compound `npm ci && npm run build` preambles stay unattributed:
+      // the same step could have failed at either command.
+      step(['npm ci && npm run build'], ['npm error code ERESOLVE']),
+      step(['npm ci', 'npm run build'], ['npm error code ERESOLVE']),
+      // npm install toolchain fetches are not the repo dependency install.
+      step(['npm install --global npm@11.19.0'], ['npm error code EUSAGE']),
+      // A mixed step with a node --test companion is not a pure install.
+      step(['npm ci', 'node --test .github/tests/x.test.mjs'], ['npm error code ERESOLVE']),
+      // A successful install and a cancelled one emit nothing.
+      step(['npm ci'], ['added 1200 packages in 30s'], ''),
+      step(['npm ci'], ['npm error code ERESOLVE'], '##[error]The operation was canceled.'),
+      // An install step that dies without npm's own diagnosis stays unknown.
+      step(['npm ci'], ['Killed', 'Out of memory'], '##[error]Process completed with exit code 137.'),
+      // npm ci flags with separate values and non-flag arguments disqualify.
+      step(['npm ci --cache /tmp/x'], ['npm error code ERESOLVE']),
+      step(['npm ci extra'], ['npm error code ERESOLVE']),
+    ]) {
+      expect(parseBaselineFailures(bad), bad.slice(0, 60)).toEqual([]);
+    }
+    // A bare `npm ci` step (no flags) and flag variants still qualify.
+    for (const script of ['npm ci', 'npm ci --ignore-scripts --no-audit --no-fund', 'npm ci --force=false --legacy-peer-deps=false --strict-peer-deps']) {
+      const ok = step([script], ['npm error code ERESOLVE']);
+      expect(parseBaselineFailures(ok).map(f => f.testId), script).toEqual(['package-lock.json > (install)']);
+    }
+  });
+  it('groups dependency-install failures and attributes manifest and workflow inputs', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ install: true }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(1);
+    expect(report.groups[0]).toMatchObject({
+      testId: 'package-lock.json > (install)',
+      classification: 'shared-baseline',
+      action: 'queue-master-fix',
+      master: 'fail',
+      prs: [1, 2],
+    });
+    expect(report.groups[0]?.brief).toContain('package-lock.json > (install)');
+    // The manifest pair, its shrinkwrap/.npmrc variants and the ci.yml
+    // install step are inputs: touching any of them is pr-caused.
+    for (const touched of ['package.json', 'package-lock.json', 'npm-shrinkwrap.json', '.npmrc', '.github/workflows/ci.yml']) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ install: true, touched }).gh);
+      expect(caused.groups[0]?.action, touched).toBe('pr-caused');
+    }
+    // The vitest harness ambient set cannot reach this gate, workflows
+    // that never run a verifiable root install on analyzed refs are not
+    // inputs, and unrelated changes share the baseline.
+    for (const touched of ['tsconfig.json', 'vitest.config.ts', 'src/core/status.ts', 'docs/README.md', '.github/workflows/dependency-audit.yml', '.github/workflows/pr-topology.yml']) {
+      const shared = await analyzeCiBaseline('owner/repo', github({ install: true, touched }).gh);
+      expect(shared.groups[0]?.classification, `${touched} -> install`).toBe('shared-baseline');
+    }
+    // A singleton unaffected failure can never prove a master pass.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ install: true, count: 1, pass: true }).gh);
     expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown' });
   });
   it('parses memory benchmark floor violations as gate failures', () => {
