@@ -982,23 +982,26 @@ export function busBodyFallbackSummary(body: unknown): string {
   return busFallbackClip(scrubSecrets(JSON.stringify(body) ?? 'null'));
 }
 
-/** Longest `--contains` needle the inbox and channel reads accept; the summaries it matches are already bounded far shorter. */
-const BUS_READ_CONTAINS_MAX = 512;
+/** Longest `--contains` needle the bus reads accept; the summaries it matches are already bounded far shorter. */
+export const BUS_READ_CONTAINS_MAX = 512;
 
 /**
- * The `--contains` text search `agents bus inbox` and `agents bus channel
- * read` share: a case-insensitive substring over the same scrubbed
- * one-line summary the frame and `show` surfaces render for the row —
- * `busBodySummary` for typed bodies, the bounded scrubbed JSON fallback
- * otherwise — with whitespace collapsed on both sides so a phrase typed
- * across a line break still finds its message. Matching the rendered
- * summary, never the raw body, keeps a secret-shaped value unfindable even
- * though it sits in the stored envelope, and a match is always visible in
- * the row it selects — the same guarantee `phm messages --contains` gives
- * the timeline projection. `needle` arrives already normalized by
- * `busReadContainsNeedle`.
+ * The `--contains` text search every bus read shares: a case-insensitive
+ * substring over the same scrubbed one-line summary the inbox frame and
+ * `show` surfaces render for the row — `busBodySummary` for typed bodies,
+ * the bounded scrubbed JSON fallback otherwise — with whitespace collapsed
+ * on both sides so a phrase typed across a line break still finds its
+ * message. Matching the rendered summary, never the raw body, keeps a
+ * secret-shaped value unfindable even though it sits in the stored
+ * envelope, and a match is always visible in the row it selects — the same
+ * guarantee `phm messages --contains` gives the timeline projection.
+ * `agents bus inbox`, `agents bus channel read`, `comms bus read`/`watch`
+ * and `fleet bus-follow` apply this one rule, so a `--contains` read can
+ * never disagree about what names a match; protocol-v1 payloads stay opaque
+ * to the summary, so payload text is not searchable on any surface.
+ * `needle` arrives already normalized by `busReadContainsNeedle`.
  */
-function busReadContainsMatch(body: unknown, needle: string): boolean {
+export function busReadContainsMatch(body: unknown, needle: string): boolean {
   return (busBodySummary(body) ?? busBodyFallbackSummary(body))
     .toLowerCase().replace(/\s+/g, ' ').includes(needle);
 }
@@ -1009,12 +1012,12 @@ function busReadContainsNeedle(value: string): string {
 }
 
 /**
- * `--contains` validation shared by the inbox and channel reads: bounded
- * non-blank free text, not a label — printable content of any kind is fine.
- * Answers the normalized needle, or undefined when the filter is absent;
- * callers report `invalid` on the `null` sentinel.
+ * `--contains` validation shared by every bus read: bounded non-blank free
+ * text, not a label — printable content of any kind is fine. Answers the
+ * normalized needle, or undefined when the filter is absent; callers report
+ * `invalid` on the `null` sentinel.
  */
-function busReadContains(value: unknown): string | null | undefined {
+export function busReadContains(value: unknown): string | null | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'string' || value.trim() === '' || value.length > BUS_READ_CONTAINS_MAX) return null;
   return busReadContainsNeedle(value);

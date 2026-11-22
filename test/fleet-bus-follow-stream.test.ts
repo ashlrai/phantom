@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appendBusInbox, listBusInboxAfter, type BusInboxPage } from '../src/core/fleet/bus-inbox.js';
 import { followBusStream, type BusFollowRecord } from '../src/core/fleet/bus-follow-stream.js';
+import { BUS_READ_CONTAINS_MAX } from '../src/core/agents/bus-unified.js';
 import { createAgentChannel, registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
 import { cmdFleetBusFollow } from '../src/cli/fleet-bus-follow.js';
 import { cmdFleet } from '../src/cli/fleet-entry.js';
@@ -269,6 +270,12 @@ it('bus-follow rejects invalid arguments before touching the store', async () =>
     ['--after', '0', '--duration-ms', '100', '--thread', 'bad label', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--since', 'not-a-time', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--since', '-5', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--contains', '', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--contains=', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--contains', '   ', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--contains', 'x'.repeat(BUS_READ_CONTAINS_MAX + 1), '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--contains', 'alpha', '--contains', 'beta', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--contains', '--json', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--root', 'relative', '--json'],
     ['--after', '0', '--duration-ms', '100', '--root', root, '--to', '--json']]) {
     expect(await cmdFleetBusFollow(args, { emit, list })).toBe(2);
@@ -401,6 +408,60 @@ it('filters the CLI stream by --from, --priority, --thread and --since', async (
   expect(code).toBe(0);
   const rows = emitted.map(line => JSON.parse(line) as BusFollowRecord);
   expect(messages(rows).map(row => row.envelope.id)).toEqual(['hit']);
+  expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
+it('delivers only envelopes whose summary carries --contains while checkpoints advance', async () => {
+  post('alpha-note', 'worker-a', { body: { kind: 'note', text: 'Review the   ALPHA\nrollout' } });
+  post('beta-note', 'worker-a', { body: { kind: 'note', text: 'unrelated beta chatter' } });
+  post('alpha-status', 'worker-a', { body: { kind: 'work.status', jobId: 'RQ-S', status: 'running', detail: 'alpha gate holds' } });
+  post('alpha-reply', 'worker-a', { body: { inReplyTo: 'alpha-note', text: 'Alpha ack' } });
+  post('alpha-secret', 'worker-a', { body: { kind: 'note', text: 'alpha key sk-' + 'FAKE0000000000000000' } });
+  post('alpha-proto', 'fleet.deploy', { body: {
+    protocol: { version: 1, kind: 'task', topic: 'fleet.deploy', payload_ref: 'artifact:run-9/plan.md' },
+    correlation_id: 'corr-1', payload: { text: 'alpha-payload' } } });
+  for (const [needle, expected] of [
+    ['ALPHA', ['alpha-note', 'alpha-status', 'alpha-reply', 'alpha-secret']],
+    ['the alpha rollout', ['alpha-note']],
+    ['fleet.deploy', ['alpha-proto']],
+    ['artifact:run-9/plan.md', ['alpha-proto']],
+    // The protocol payload and the scrubbed secret value stay unfindable.
+    ['alpha-payload', []],
+    ['sk-' + 'fake0000000000000000', []],
+    ['corr-1', []],
+  ] as const) {
+    const { records, pending, expire } = follow({ contains: needle });
+    expire();
+    const result = await pending;
+    expect(result.status).toBe('expired');
+    expect(messages(records).map(row => row.envelope.id)).toEqual([...expected]);
+    expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 6 });
+  }
+});
+
+it('composes --contains with the other bus-follow filters', async () => {
+  post('hit', 'worker-a', { from: 'agent:worker-a', priority: 'P0', body: { kind: 'note', thread: 't-c', text: 'alpha rollout' } });
+  post('wrong-text', 'worker-a', { from: 'agent:worker-a', priority: 'P0', body: { kind: 'note', thread: 't-c', text: 'beta rollout' } });
+  post('wrong-priority', 'worker-a', { from: 'agent:worker-a', priority: 'P2', body: { kind: 'note', thread: 't-c', text: 'alpha rollout' } });
+  const { records, pending, expire } = follow({ from: 'agent:worker-a', priority: 'P0', thread: 't-c', contains: 'alpha' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['hit']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
+it('filters the CLI stream by --contains', async () => {
+  post('noise', 'worker-a', { body: { kind: 'note', text: 'nothing relevant' } });
+  post('hit', 'worker-a', { body: { kind: 'note', text: 'deploy the ALPHA build' } });
+  post('hit-two', 'worker-a', { body: { kind: 'work.status', jobId: 'RQ-C', status: 'done', detail: 'alpha shipped' } });
+  const emitted: string[] = [];
+  const code = await cmdFleetBusFollow(['--after', '0', '--duration-ms', '250', '--interval-ms', '100',
+    '--contains=alpha', '--root', root, '--json'],
+    { emit: (json: string) => { emitted.push(json); } });
+  expect(code).toBe(0);
+  const rows = emitted.map(line => JSON.parse(line) as BusFollowRecord);
+  expect(messages(rows).map(row => row.envelope.id)).toEqual(['hit', 'hit-two']);
   expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
 });
 

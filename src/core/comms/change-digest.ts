@@ -26,6 +26,8 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readPrivateFileCapped } from '../verse/preferences.js';
+import { defaultRunsDir } from '../fleet/landed-closes-read.js';
+import { readBlockedHourLine } from '../fleet/load-history.js';
 
 // ---------------------------------------------------------------------------
 // Facts
@@ -64,6 +66,8 @@ export interface DigestFacts {
   /** Fleet running/queued from the runs dir; null = unknown. */
   fleet: { running: number | null; queued: number | null; blocked?: number | null } | null;
   evidence?: { sinceMs: number; asOfMs: number; truncated: boolean };
+  /** Blocked-by-load evidence, when the last hour exceeds ten minutes. */
+  loadLine?: string | null;
 }
 
 export interface DigestSources {
@@ -78,6 +82,7 @@ export interface DigestSources {
   capacity?: () => { seats: Array<Record<string, unknown>> } | null;
   memos?: () => Array<{ id: string; at: string; status: string; move: { statement: string } | null; bottleneck: { statement: string } | null }>;
   autonomy?: () => { on: boolean; mode: string | null };
+  loadLine?: () => string | null;
 }
 
 const LEDGER_KINDS = ['merge:landed', 'pr:opened', 'revert:landed', 'revert:failed'] as const;
@@ -120,6 +125,7 @@ async function resolveSources(overrides: DigestSources): Promise<Required<Digest
     capacity: () => null,
     memos: () => [],
     autonomy: () => ({ on: false, mode: null }),
+    loadLine: () => readBlockedHourLine(defaultRunsDir(), Date.now()),
     fleetTruth: async (sinceMs, nowMs) => {
       const { getFleetTruth } = await import('../fleet/fleet-truth.js');
       return getFleetTruth(sinceMs, { nowMs, fresh: true, githubOnly: true });
@@ -370,7 +376,8 @@ export async function collectDigestFacts(sinceMs: number, overrides: DigestSourc
   }
 
   const autonomy = call(() => src.autonomy(), { on: false, mode: null });
-  return { events, seats, autonomy, mergeCountUnavailable, fleet, evidence };
+  const loadLine = call(() => src.loadLine(), null);
+  return { events, seats, autonomy, mergeCountUnavailable, fleet, evidence, loadLine };
 }
 
 // ---------------------------------------------------------------------------
@@ -419,6 +426,7 @@ function section(title: string, events: DigestEvent[]): string[] {
 
 function digestEvidenceLines(facts: DigestFacts): string[] {
   const lines: string[] = [];
+  if (facts.loadLine) lines.push(facts.loadLine);
   if (facts.fleet) {
     lines.push(`Dispatch: ${facts.fleet.running ?? 'unknown'} running, ${facts.fleet.queued ?? 'unknown'} ready, ${facts.fleet.blocked ?? 'unknown'} blocked`);
   }
