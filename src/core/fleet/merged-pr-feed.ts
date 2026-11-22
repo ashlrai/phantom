@@ -13,9 +13,9 @@ export interface MergedPrFeed {
 }
 
 /** Commit time is local merge evidence, not an independently verified GitHub timestamp. */
-export function readMergedPrFeed(options: { repoRoot?: string; now?: number } = {}): MergedPrFeed {
+export function readMergedPrFeed(options: { repoRoot?: string; now?: number; since?: number } = {}): MergedPrFeed {
   const repoRoot = options.repoRoot ?? join(homedir(), 'Projects', 'ashlrai', 'phantom');
-  const now = options.now ?? Date.now(), since = now - 86_400_000;
+  const now = options.now ?? Date.now(), since = options.since ?? now - 86_400_000;
   const result: MergedPrFeed = { source: { kind: 'git', repoRoot, ref: null },
     since: new Date(since).toISOString(), until: new Date(now).toISOString(), state: 'unavailable', reason: null, prs: [] };
   const git = (args: string[]) => execFileSync('git', ['-C', repoRoot, ...args], {

@@ -8,9 +8,11 @@ import { cmdLeaderBrief } from '../src/cli/leader-brief.js';
 import { groupHostFamilies } from '../src/core/fleet/host-families.js';
 import * as hostFamilies from '../src/core/fleet/host-families.js';
 import { localIso } from '../src/core/fleet/runs-parked-queue.js';
+import * as gitLatency from '../src/core/fleet/git-merge-latency.js';
 let dir: string;
 const now = Date.parse('2026-11-21T12:00:00Z'), at = new Date(now).toISOString();
 beforeEach(async () => {
+  vi.spyOn(gitLatency, 'readGitMergeLatency').mockResolvedValue(gitLatency.mergeLatencyFromGit([], [], now / 1000));
   vi.spyOn(hostFamilies, 'readHostFamilies').mockResolvedValue(groupHostFamilies(null));
   dir = await mkdtemp(join(tmpdir(), 'leader-brief-'));
   vi.stubEnv('ASHLR_RUNS_DIR', dir); vi.stubEnv('ASHLR_JOBS_STOP_FILE', join(dir, 'stops.tsv'));
@@ -103,5 +105,5 @@ it('explains degraded sources and refuses merge observations without mergedAt', 
   const b = await readCompactBrief(dir, now);
   expect(b.sources['metrics/jobs.jsonl']).toMatchObject({ state: 'degraded', why: expect.stringContaining('invalid') });
   expect(Object.values(b.sources).every(s => s.why.length > 0)).toBe(true);
-  expect(b.medianOpenToMergeSeconds).toBeNull(); expect(b.mergeLatencyWhy).toContain('no mergedAt paired');
+  expect(b.medianOpenToMergeSeconds).toBeNull(); expect(b.mergeLatencyWhy).toContain('no publications paired');
 });
