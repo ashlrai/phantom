@@ -1,13 +1,16 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cmdMason } from '../src/cli/mason-thread.js';
+import { cmdFleetSelfTick } from '../src/cli/fleet-self-tick.js';
+import { SELF_TICK_STEP_ORDER } from '../src/core/fleet/self-tick.js';
 import { cmdFleetMasonDigest } from '../src/cli/fleet-mason-digest.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import { setLiveOverride } from '../src/core/fleet/dynconfig.js';
 import { emptyOwnerSettings } from '../src/core/comms/owner-channel.js';
 import {
-  buildMasonDigest, MASON_DIGEST_SCHEMA, tickMasonDigest, type MasonDigestInputs, type MasonDigestReaders,
+  buildMasonDigest, MASON_DIGEST_SCHEMA, readMasonDigestOff, tickMasonDigest, type MasonDigestInputs, type MasonDigestReaders,
 } from '../src/core/comms/mason-digest.js';
 import type { SpendRow } from '../src/core/usage/spend.js';
 
@@ -128,6 +131,36 @@ describe('tickMasonDigest', () => {
     expect((await tick(busy(), NOW, { post: refuse })).state).toBe('unavailable');
     expect((await tick(busy(), NOW + 60_000)).state).toBe('posted');
   });
+
+  it('reads the real mutable kill switch and refuses corrupt live config', async () => {
+    const { setLiveOverride } = await import('../src/core/fleet/dynconfig.js');
+    expect(await readMasonDigestOff(runsDir)).toBe(false);
+    await setLiveOverride({ key: 'mason.digest.off', value: 1, reason: 'disable fixture digest', by: 'test' }, { runsDir });
+    expect(await readMasonDigestOff(runsDir)).toBe(true);
+    writeFileSync(join(runsDir, 'queue/live-config.json'), '{broken');
+    expect(await readMasonDigestOff(runsDir)).toBeNull();
+  });
+
+  it('runs inside order-notices on apply, preserves step order, and dedupes the next tick', async () => {
+    const steps = Object.fromEntries(SELF_TICK_STEP_ORDER.filter(step => step !== 'order-notices')
+      .map(step => [step, async () => ({ exitCode: 0, output: '{}' })]));
+    mkdirSync(join(runsDir, 'metrics'), { recursive: true });
+    writeFileSync(join(runsDir, 'metrics/jobs.jsonl'), '');
+    const states: string[] = [];
+    for (const apply of [false, true, true]) {
+      let output = '';
+      expect(await cmdFleetSelfTick(['--json', '--runs-dir', runsDir, ...(apply ? ['--apply'] : [])], {
+        home: runsDir, now: () => NOW, steps, output: text => { output = text; },
+        masonDigest: { readOff: async () => false, readers: readers(busy()), post, owner: { runsDir, settings: emptyOwnerSettings() } },
+        diskSample: async () => null,
+      })).toBe(0);
+      const report = JSON.parse(output);
+      expect(report.steps.map((step: { step: string }) => step.step)).toEqual(SELF_TICK_STEP_ORDER);
+      states.push(report.steps.find((step: { step: string }) => step.step === 'order-notices').report.masonDigest.state);
+    }
+    expect(states).toEqual(['dry-run', 'posted', 'rate-limited']);
+    expect(post).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('phm fleet mason-digest', () => {
@@ -165,6 +198,38 @@ describe('phm fleet mason-digest', () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await cmdFleetMasonDigest(['--since', '9999h'], { now: NOW, runsDir, readers })).toBe(2);
     expect(await cmdFleetMasonDigest(['--send'], { now: NOW, runsDir, readers })).toBe(2);
+    expect(err).toHaveBeenCalled();
+  });
+});
+
+describe('phm mason digest', () => {
+  let runsDir: string;
+  const logs: string[] = [];
+  beforeEach(() => { runsDir = mkdtempSync(join(tmpdir(), 'digest-cli-')); logs.length = 0; vi.spyOn(console, 'log').mockImplementation((m: unknown) => { logs.push(String(m)); }); });
+  afterEach(() => { vi.restoreAllMocks(); rmSync(runsDir, { recursive: true, force: true }); });
+  const inputs = busy();
+  const readers: Partial<MasonDigestReaders> = { throughput: async () => inputs.throughput!, slots: async () => inputs.slots, releases: async () => inputs.releases!, spend: async () => inputs.spend!, asks: () => inputs.asks };
+
+  it('dry run prints the lines and posts nothing', async () => {
+    const post = vi.fn(async () => ({ status: 'accepted' as const }));
+    expect(await cmdMason(['digest'], {}, { now: NOW, runsDir, readers, post })).toBe(0);
+    expect(logs[0]).toContain('Merged: 3 PRs in the last hour');
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('--json carries the schema id and --post reports the post', async () => {
+    const post = vi.fn(async () => ({ status: 'accepted' as const }));
+    expect(await cmdMason(['digest', '--json', '--post'], {}, { now: NOW, runsDir, readers, post })).toBe(0);
+    const out = JSON.parse(logs[0]!);
+    expect(out.schema).toBe('phantom.mason.digest.v1');
+    expect(out.post.state).toBe('posted');
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a bad window and unknown flags', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await cmdMason(['digest', '--since', '9999h'], {}, { now: NOW, runsDir, readers })).toBe(2);
+    expect(await cmdMason(['digest', '--send'], {}, { now: NOW, runsDir, readers })).toBe(2);
     expect(err).toHaveBeenCalled();
   });
 });
