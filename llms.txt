@@ -30,6 +30,26 @@ phm docs --agent --json
 - [Contributing](CONTRIBUTING.md): conventions, tests and contracts
 - [Website index](site/llms.txt): landing page, use-case guides and comparison
 
+## Contribute
+
+Outside contributors and their agents use the same path as the fleet: one focused branch, local checks run once, a pull request from a fork, and the one required hosted check, `Merge Gate`.
+
+- [Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md): clone to auto-merge in eight steps; step 6 lists the jobs behind `Merge Gate` and which tests the fast gate picks from your diff, step 7 covers the merge queue, failures that are not yours and the protected paths that wait for the owner
+- [verify-changed reference](docs/verify-changed.md): each step, its environment variables and the pass record
+
+Clone upstream as `origin` (`verify-changed` diffs against `origin/master`) and push to your fork:
+
+```sh
+git clone https://github.com/ashlrai/phantom.git && cd phantom
+git remote add fork https://github.com/<you>/phantom.git
+npm ci                                   # or npm run install:worktree for parallel worktrees
+node scripts/verify-changed.mjs          # once, in the foreground
+npm run test:ci -- test/<file>.test.ts   # affected suites, isolated HOME
+npm run check:docs                       # when markdown changed
+git push fork <topic-branch>
+gh pr create --repo ashlrai/phantom --base master --head <you>:<topic-branch>
+```
+
 ## Ecosystem
 
 Companions install separately; each has its own capabilities and authorization boundaries. The repo's `.mcp.json` declares `phantom-secrets`, `locus`, `lexicon`, `stack`, `context7` and `ashlr`; registration does not prove readiness (see the [toolchain guide](docs/AGENT-TOOLCHAIN.md)).
