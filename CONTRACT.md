@@ -517,6 +517,7 @@ decisions only) and `fallback_used` (job receipts). See [gates and inert status]
 `router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?, revertedPrKeys?, mergeEvents?})`,
 `authorityRevertedPrKeys(evidence)`, `foldSpendCosts(text)`,
 `foldRouteDecisionWorkClasses(text)`, `foldRouteDecisions(text)`,
+`foldMarketHandoffAdvisories(text)`,
 `foldEmptyTags(text)`, `foldMergeEvents(text)`, `foldRewardSignals(text)`,
 `foldLaunchCosts(text)`,
 `readLedgerFile(path, limit?)`,
@@ -565,7 +566,16 @@ a non-array or all-unrecognizable `reason_codes` reads as unrecorded
 member that is absent or whose every entry is malformed reads as
 unrecorded (`null`), while a recorded empty list stays `[]`. Rows
 naming jobs
-outside the jobs window never create outcomes. The market read degrades
+outside the jobs window never create outcomes. The market ledger's
+`session_handoff_advisory` rows join under the same health through
+`foldMarketHandoffAdvisories` — each job's newest recorded advisory
+(by finite epoch `ts`) supersedes the jobs-ledger
+`handoff_trigger`/`handoff_lane`/`handoff_target` triple only when
+its `ts` is strictly newer than the standing jobs-ledger advisory's
+parseable timestamp; a market advisory fills the triple when no jobs
+advisory exists, an unorderable jobs advisory leaves the jobs verdict
+standing, and advisory rows naming jobs outside the jobs window join
+nothing. The market read degrades
 independently too:
 `RouterOutcomeRead.market_state` reports its health and
 `market_truncated` marks a cut tail; anything but `read` leaves
@@ -973,11 +983,14 @@ walled run can exit cleanly and still produce nothing publishable —
 and `quota-exhausted`, the pending-job verdict dispatchd writes
 through `market_metric()` to metrics/work-market.jsonl when the
 job's lane measured zero quota, carrying the market's chosen lane as
-`target` (that market-side copy is a different ledger's row — the
-same decision's rejection evidence already folds through the
-route_decision joins — while this fold keeps the producer's full
+`target` — the market-side copy joins back through the
+`foldMarketHandoffAdvisories` read under the `market_state` health,
+superseding the jobs-ledger triple only when its recorded `ts` is
+strictly newer than the standing jobs-ledger advisory's (no jobs
+advisory fills the triple; an unorderable jobs advisory leaves the
+jobs verdict standing). This fold keeps the producer's full
 vocabulary so a quota-exhausted row landing in the jobs window
-still joins under the same rules). The row counts only on the exact
+still joins under the same rules. The row counts only on the exact
 `session-failover.v1`
 schema and `session_handoff_advisory` event name (the
 `event`/`type`/`kind` alias set) with a `trigger` inside the

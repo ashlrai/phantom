@@ -9,6 +9,7 @@ import {
   foldCrossReviews,
   foldEmptyTags,
   foldLaunchCosts,
+  foldMarketHandoffAdvisories,
   foldMergeEvents,
   foldRewardSignals,
   foldRouteDecisionWorkClasses,
@@ -1723,6 +1724,105 @@ describe('router outcome market decision join', () => {
     expect(linked).toMatchObject({ state: 'read', market_state: 'unreadable' });
     expect(linked.outcomes[0]?.market_lane).toBeNull();
     expect(linked.outcomes[0]?.market_rejected).toBeNull();
+  });
+});
+
+describe('router outcome market handoff advisory join', () => {
+  /** A session-failover.v1 advisory row in the market_metric() shape —
+   *  dispatchd appends quota-exhausted verdicts to work-market.jsonl
+   *  stamped with epoch-seconds ts (contrib/mac/session_handoff.py). */
+  const marketAdvisory = (job: string, trigger: string, ts: number, extra: Record<string, unknown> = {}): object => ({
+    schema: 'session-failover.v1', event: 'session_handoff_advisory', advisory: true,
+    job, lane: 'alpha', trigger, target: null, ts, ...extra,
+  });
+
+  it('folds each job\'s newest advisory by recorded ts under the closed vocabulary', () => {
+    const advisories = foldMarketHandoffAdvisories([
+      JSON.stringify(marketAdvisory('J1', 'quota-exhausted', 100, { lane: 'alpha', target: 'devin' })),
+      JSON.stringify(marketAdvisory('J1', 'quota-exhausted', 200, { lane: 'beta', target: 'gamma' })), // newer stands
+      JSON.stringify(marketAdvisory('J1', 'quota-exhausted', 150, { lane: 'delta' })),                 // older ignored
+      JSON.stringify(marketAdvisory('J2', 'rate-limit', 100, { lane: 'codex-cmp' })),
+      // Malformed lane/target drop to null while the trigger still joins.
+      JSON.stringify(marketAdvisory('J6', 'quota-exhausted', 100, { lane: 'bad lane!', target: 42 })),
+      // Wrong schema, wrong event, out-of-vocabulary trigger, non-finite
+      // ts and an empty job id are all unrecognized — never recorded.
+      JSON.stringify(marketAdvisory('J3', 'quota-exhausted', 100, { schema: 'session-failover.v2' })),
+      JSON.stringify({ ...marketAdvisory('J3', 'quota-exhausted', 100), event: 'session_handoff' }),
+      JSON.stringify(marketAdvisory('J3', 'provider-error', 100)),
+      JSON.stringify(marketAdvisory('J4', 'quota-exhausted', NaN)),
+      JSON.stringify(marketAdvisory('', 'quota-exhausted', 100)),
+      'not json',
+    ].join('\n'));
+    expect(advisories.get('J1')).toEqual({ trigger: 'quota-exhausted', lane: 'beta', target: 'gamma', ts: 200 });
+    expect(advisories.get('J2')).toEqual({ trigger: 'rate-limit', lane: 'codex-cmp', target: null, ts: 100 });
+    expect(advisories.get('J6')).toEqual({ trigger: 'quota-exhausted', lane: null, target: null, ts: 100 });
+    expect(advisories.has('J3')).toBe(false);
+    expect(advisories.has('J4')).toBe(false);
+    expect(advisories.size).toBe(3);
+  });
+
+  it('joins market advisories onto outcomes only when they are the newest recorded verdict', async () => {
+    const root = runsDir([
+      '{"job":"J1","lane":"alpha","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J2","lane":"beta","phase":"CLOSED","ts":"2026-11-01T00:00:00Z"}',
+      // J3's standing jobs-ledger advisory (rate-limit, 2026-11-02) is
+      // older than the market quota-exhausted verdict below.
+      JSON.stringify({ schema: 'session-failover.v1', event: 'session_handoff_advisory', job: 'J3', lane: 'jobs-lane', trigger: 'rate-limit', target: null, ts: '2026-11-02T00:00:00Z' }),
+      '{"job":"J3","phase":"VERIFIED","ts":"2026-11-01T00:00:00Z"}',
+      // J4's standing jobs-ledger advisory carries no parseable ts, so
+      // the market verdict cannot be ordered against it.
+      JSON.stringify({ schema: 'session-failover.v1', event: 'session_handoff_advisory', job: 'J4', lane: 'jobs-lane', trigger: 'rate-limit', target: null }),
+      '{"job":"J4","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+      // J5's standing jobs-ledger advisory (2026-11-03) is newer than
+      // the market row's epoch ts (1000s ≈ 1970).
+      JSON.stringify({ schema: 'session-failover.v1', event: 'session_handoff_advisory', job: 'J5', lane: 'jobs-lane', trigger: 'rate-limit', target: 'jobs-target', ts: '2026-11-03T00:00:00Z' }),
+      '{"job":"J5","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+    ].join('\n'));
+    writeMarket(root, [
+      // J1 recorded no jobs advisory: the market verdict fills the triple.
+      marketAdvisory('J1', 'quota-exhausted', 2000000000, { lane: 'alpha', target: 'devin' }),
+      // J2 likewise has no jobs advisory — the market verdict fills it.
+      marketAdvisory('J2', 'quota-exhausted', 1000, { lane: 'beta', target: 'gamma' }),
+      // J3's market advisory (epoch ~2033) postdates the jobs advisory.
+      marketAdvisory('J3', 'quota-exhausted', 2000000000, { lane: 'market-lane', target: 'market-target' }),
+      // J4's market advisory is newer in wall time but the jobs
+      // advisory's missing ts makes ordering impossible — jobs stands.
+      marketAdvisory('J4', 'quota-exhausted', 2000000000, { lane: 'market-lane', target: 'market-target' }),
+      // J5's market advisory (epoch ~1970) predates the jobs advisory.
+      marketAdvisory('J5', 'quota-exhausted', 1000, { lane: 'market-lane', target: 'market-target' }),
+      // A market advisory naming a job with no jobs outcome joins nothing.
+      marketAdvisory('J-UNADVISED', 'quota-exhausted', 2000000000, { lane: 'alpha', target: 'devin' }),
+    ]);
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'read', market_state: 'read', market_truncated: false });
+    const byId = new Map(result.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')).toMatchObject({ handoff_trigger: 'quota-exhausted', handoff_lane: 'alpha', handoff_target: 'devin' });
+    expect(byId.get('J2')).toMatchObject({ handoff_trigger: 'quota-exhausted', handoff_lane: 'beta', handoff_target: 'gamma' });
+    expect(byId.get('J3')).toMatchObject({ handoff_trigger: 'quota-exhausted', handoff_lane: 'market-lane', handoff_target: 'market-target' });
+    expect(byId.get('J4')).toMatchObject({ handoff_trigger: 'rate-limit', handoff_lane: 'jobs-lane', handoff_target: null });
+    expect(byId.get('J5')).toMatchObject({ handoff_trigger: 'rate-limit', handoff_lane: 'jobs-lane', handoff_target: 'jobs-target' });
+    expect(byId.has('J-UNADVISED')).toBe(false);
+  });
+
+  it('keeps the jobs-ledger advisory standing when the market ledger is absent or refused', async () => {
+    const root = runsDir([
+      JSON.stringify({ schema: 'session-failover.v1', event: 'session_handoff_advisory', job: 'J1', lane: 'alpha', trigger: 'rate-limit', target: null, ts: '2026-11-01T00:00:00Z' }),
+      '{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+    ].join('\n'));
+    const missing = await readRouterOutcomes({ runsDir: root });
+    expect(missing).toMatchObject({ state: 'read', market_state: 'missing' });
+    expect(missing.outcomes[0]).toMatchObject({ handoff_trigger: 'rate-limit', handoff_lane: 'alpha', handoff_target: null });
+
+    const linked = runsDir([
+      JSON.stringify({ schema: 'session-failover.v1', event: 'session_handoff_advisory', job: 'J1', lane: 'alpha', trigger: 'rate-limit', target: null, ts: '2026-11-01T00:00:00Z' }),
+      '{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+    ].join('\n'));
+    const target = join(linked, 'real-market.jsonl');
+    writeFileSync(target, JSON.stringify(marketAdvisory('J1', 'quota-exhausted', 2000000000, { lane: 'beta', target: 'gamma' })) + '\n');
+    symlinkSync(target, marketPath(linked));
+    const refused = await readRouterOutcomes({ runsDir: linked });
+    expect(refused).toMatchObject({ state: 'read', market_state: 'unreadable' });
+    expect(refused.outcomes[0]).toMatchObject({ handoff_trigger: 'rate-limit', handoff_lane: 'alpha', handoff_target: null });
   });
 });
 
