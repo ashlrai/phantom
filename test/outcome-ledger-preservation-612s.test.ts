@@ -8,6 +8,7 @@ import {
   authorityRevertedPrKeys,
   foldEmptyTags,
   foldMergeEvents,
+  foldRewardSignals,
   foldRouteDecisionWorkClasses,
   foldRouteDecisions,
   foldRouterOutcomes,
@@ -90,6 +91,26 @@ function ashlarDir(scores?: unknown): string {
   }
   return root;
 }
+
+const rewardSignalsPath = (root: string) => join(root, 'metrics', 'reward-signals.jsonl');
+
+/** An ASHLR-home temp root carrying metrics/reward-signals.jsonl rows (reward-signal v1 shape). */
+function rewardLedger(rows: object[]): string {
+  const root = mkdtempSync(join(tmpdir(), 'ledger-612s-reward-'));
+  roots.push(root);
+  mkdirSync(join(root, 'metrics'), { recursive: true });
+  writeFileSync(rewardSignalsPath(root), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+  return root;
+}
+
+/** A reward-signals.jsonl v1 row in the shape the reward-sync feed appends (src/core/metrics/reward-signal.ts). */
+const rewardRow = (jobId: string, merged: boolean, extra: Record<string, unknown> = {}): object => ({
+  v: 1, jobId, pool: 'codex-cmp', repo: 'ashlrai/phantom', merged,
+  dispatchedAt: '2026-11-01T00:00:00.000Z', mergedAt: merged ? '2026-11-01T01:00:00.000Z' : null,
+  timeToMergeMs: merged ? 3_600_000 : null, ciWallMs: 600_000,
+  cost: { pool: 'codex-cmp', pctUsedStart: 10, pctUsedEnd: 12.5, pctUsedDelta: 2.5, costUsd: 0.75 },
+  recordedAt: '2026-11-01T02:00:00.000Z', ...extra,
+});
 
 const laneScores = (lanes: unknown[]) => ({
   schema: 'eval.lane-scores.v1', generatedAt: '2026-11-19T00:00:00Z', reportId: 'r1', k: 3, trials: 9, lanes,
@@ -242,7 +263,7 @@ describe('router outcome ledger (612S preservation)', () => {
       market_rejected: null,
       handoff_trigger: null, handoff_lane: null, handoff_target: null,
       provider_wall_trigger: null, provider_wall_pattern: null, provider_wall_lane: null,
-      pool_kind: null, pool_mem_free_pct: null, pool_swap_gb: null,
+      pool_kind: null, pool_mem_free_pct: null, pool_swap_gb: null, pool_pct_used: null,
       node_outcome: null, node_id: null, node_pack: null,
       merge_queue: null,
       passk: null,
@@ -1896,6 +1917,112 @@ describe('router outcome merge-events join', () => {
     const result = await readRouterOutcomes({ runsDir: root });
     expect(result).toMatchObject({ state: 'read', merge_events_state: 'read', merge_events_truncated: true });
     expect(result.outcomes[0]?.merge_queue).toBeNull();
+  });
+});
+
+describe('router outcome reward-signals join', () => {
+  it('foldRewardSignals keeps only v1 rows and collapses repeats last-wins', () => {
+    const rewards = foldRewardSignals([
+      JSON.stringify(rewardRow('J1', true)),
+      'not json',
+      JSON.stringify({ ...rewardRow('J2', false), v: 2 }),
+      JSON.stringify({ ...rewardRow('J3', true), jobId: 'bad id!' }),
+      JSON.stringify({ ...rewardRow('J4', true), merged: 'yes' }),
+      JSON.stringify({ ...rewardRow('J5', true), dispatchedAt: 'not a date' }),
+      JSON.stringify(rewardRow('J1', false, { timeToMergeMs: null, mergedAt: null })),
+      JSON.stringify(rewardRow('J6', true, {
+        cost: { pool: 'codex-cmp', pctUsedStart: 10, pctUsedEnd: 12.5, pctUsedDelta: 140, costUsd: -1 },
+        repo: '../escape', timeToMergeMs: 500, ciWallMs: null,
+      })),
+    ].join('\n'));
+    expect([...rewards.keys()].sort()).toEqual(['J1', 'J6']);
+    // The second J1 row wins the repeat: closed-unmerged verdict, no merge span.
+    expect(rewards.get('J1')).toEqual({
+      merged: false, ttm_s: null, ci_wall_s: 600, cost_usd: 0.75,
+      repo: 'ashlrai/phantom', pool_pct_used: 2.5,
+    });
+    // Out-of-shape consumed fields drop to null without discarding the row.
+    expect(rewards.get('J6')).toEqual({
+      merged: true, ttm_s: 0.5, ci_wall_s: null, cost_usd: null,
+      repo: null, pool_pct_used: null,
+    });
+  });
+
+  it('fills only fields the jobs fold left null and never contradicts a recorded verdict', async () => {
+    const root = runsDir([
+      // J1: no merge verdict, no repo, no cost — the reward row fills them all.
+      '{"job":"J1","lane":"alpha","phase":"VERIFIED","ts":"2026-11-01T00:00:00Z"}',
+      // J2: the jobs ledger already recorded the merge and its own ttm/cost —
+      // the reward row's conflicting verdict and figures never win.
+      '{"job":"J2","lane":"alpha","phase":"MERGED","ts":"2026-11-01T00:00:00Z","mergedAt":"2026-11-01T01:00:00Z","ttm_s":120,"cost_usd":2,"repo":"fleet-name"}',
+      // J3: the jobs ledger recorded CLOSED — the reward row's merged:true loses,
+      // and ttm_s stays null because the standing verdict is not a merge.
+      '{"job":"J3","lane":"beta","phase":"CLOSED","ts":"2026-11-01T00:00:00Z"}',
+      // J4: closed verdict plus a reward merged:false — still no merge span.
+      '{"job":"J4","lane":"beta","phase":"VERIFIED","ts":"2026-11-01T00:00:00Z"}',
+    ].join('\n'));
+    const ashlar = rewardLedger([
+      rewardRow('J1', true),
+      rewardRow('J2', false, { timeToMergeMs: 999_000, ciWallMs: 1 }),
+      rewardRow('J3', true),
+      rewardRow('J4', false, { timeToMergeMs: 5_000 }),
+      // JX has a reward row but no jobs outcome: it never creates one.
+      rewardRow('JX', true),
+    ]);
+    const result = await readRouterOutcomes({ runsDir: root, ashlarDir: ashlar });
+    expect(result).toMatchObject({ state: 'read', reward_state: 'read', reward_truncated: false });
+    const byId = new Map(result.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')).toMatchObject({
+      merged: true, ttm_s: 3600, ci_wall_s: 600, cost_usd: 0.75,
+      repo: 'ashlrai/phantom', pool_pct_used: 2.5,
+    });
+    expect(byId.get('J2')).toMatchObject({
+      merged: true, ttm_s: 120, cost_usd: 2, repo: 'fleet-name', pool_pct_used: 2.5,
+    });
+    expect(byId.get('J3')).toMatchObject({ merged: false, ttm_s: null, pool_pct_used: 2.5 });
+    expect(byId.get('J4')).toMatchObject({ merged: false, ttm_s: null });
+    expect(byId.has('JX')).toBe(false);
+    expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3', 'J4']);
+  });
+
+  it('lets api-spend cost evidence win over the reward row, reward cost only as last resort', async () => {
+    const root = runsDir('{"job":"J1","lane":"alpha","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}\n');
+    writeSpend(root, '{"job":"J1","cost_usd":1.5,"ts":"2026-11-01T00:30:00Z"}\n');
+    const result = await readRouterOutcomes({ runsDir: root, ashlarDir: rewardLedger([rewardRow('J1', true)]) });
+    expect(result.outcomes[0]).toMatchObject({ cost_usd: 1.5, pool_pct_used: 2.5 });
+  });
+
+  it('keeps jobs-ledger values and reports reward_state when the ledger is absent, refused or the jobs read failed', async () => {
+    const missing = await readRouterOutcomes({ runsDir: runsDir('{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}\n') });
+    expect(missing).toMatchObject({ state: 'read', reward_state: 'missing', reward_truncated: false });
+    expect(missing.outcomes[0]).toMatchObject({ merged: true, pool_pct_used: null });
+
+    const root = runsDir('{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}\n');
+    const ashlar = mkdtempSync(join(tmpdir(), 'ledger-612s-reward-link-'));
+    roots.push(ashlar);
+    mkdirSync(join(ashlar, 'metrics'), { recursive: true });
+    const target = join(ashlar, 'real-reward-signals.jsonl');
+    writeFileSync(target, JSON.stringify(rewardRow('J1', true)) + '\n');
+    symlinkSync(target, rewardSignalsPath(ashlar));
+    const linked = await readRouterOutcomes({ runsDir: root, ashlarDir: ashlar });
+    expect(linked).toMatchObject({ state: 'read', reward_state: 'unreadable' });
+    expect(linked.outcomes[0]).toMatchObject({ merged: true, pool_pct_used: null });
+
+    // The reward read still reports its health when the jobs ledger is missing.
+    const noJobs = runsDir();
+    const withReward = await readRouterOutcomes({ runsDir: noJobs, ashlarDir: rewardLedger([rewardRow('J1', true)]) });
+    expect(withReward).toMatchObject({ state: 'missing', reward_state: 'read', reward_truncated: false, outcomes: [] });
+  });
+
+  it('flags a cut reward tail so joined evidence reads as newest-bytes coverage', async () => {
+    const root = runsDir('{"job":"J1","phase":"VERIFIED","ts":"2026-11-01T00:00:00Z"}\n');
+    const ashlar = rewardLedger([rewardRow('J1', true)]);
+    writeFileSync(rewardSignalsPath(ashlar), '');
+    truncateSync(rewardSignalsPath(ashlar), ROUTER_OUTCOME_LEDGER_LIMIT + 1);
+    const result = await readRouterOutcomes({ runsDir: root, ashlarDir: ashlar });
+    expect(result).toMatchObject({ state: 'read', reward_state: 'read', reward_truncated: true });
+    // A cut tail that parses no valid rows in its retained window joins nothing.
+    expect(result.outcomes[0]).toMatchObject({ merged: null, pool_pct_used: null });
   });
 });
 

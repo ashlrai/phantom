@@ -5,15 +5,15 @@ import { ToastProvider } from '../../../components/primitives/Toast.js';
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
 import { evictAll } from '../../../data/cache.js';
 import { UpdateStatusRow } from './UpdateStatusRow.js';
+import { installUpdateFetch } from './update-row.test-support.js';
 
 const facts = { v: 1, sourceState: 'healthy', installedVersion: '1.0.0', headSha: 'abcdef123456', headAt: null, originSha: null, branch: 'master', behind: 2, ahead: 0, dirty: false, lastFetchAt: null, processStartedAt: null, uptimeSeconds: 120, canFastForward: true };
 beforeEach(() => { evictAll(); clearMutationToken(); });
 afterEach(() => { cleanup(); clearMutationToken(); vi.unstubAllGlobals(); });
 function setup(post: () => Promise<Response>) {
-  const fetcher = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => init?.method === 'POST' ? post() : Promise.resolve(new Response(JSON.stringify(facts))));
-  vi.stubGlobal('fetch', fetcher);
+  const { statusRequests } = installUpdateFetch(init => init?.method === 'POST' ? post() : Promise.resolve(Response.json(facts)));
   render(<ToastProvider><UpdateStatusRow /></ToastProvider>);
-  return fetcher;
+  return statusRequests;
 }
 const selfUpdateCalls = (fetcher: ReturnType<typeof setup>) => fetcher.mock.calls.filter(([url]) => String(url).includes('/ops/self-update'));
 it('fetches origin before refreshing the query and shows progress', async () => {

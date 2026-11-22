@@ -324,7 +324,10 @@ reads the newest bounded tail of `<runs-dir>/metrics/jobs.jsonl` (default
 same bound of `<runs-dir>/metrics/api-spend.jsonl`,
 `<runs-dir>/metrics/work-market.jsonl`,
 `<runs-dir>/metrics/empty-tags.jsonl` and
-`<runs-dir>/metrics/merge-events.jsonl`, and reports one
+`<runs-dir>/metrics/merge-events.jsonl`, plus the reward-signal
+substrate under the ASHLR home root
+(`<ashlr>/metrics/reward-signals.jsonl`, `ASHLR_HOME` honored), and
+reports one
 `router.outcome.v1` record per job in that window, newest
 first: merge and revert state, CI first pass, review findings, cost, wall
 time, recorded merge latency (`ttm_s` — the jobs-ledger `ttm_s`/`ttmS`
@@ -654,7 +657,41 @@ evidence; a job whose calls reported no cost stays `null` — unknown,
 never zero — and `cost_estimated` calls still count because they report a
 USD figure. The spend read degrades independently: the report's
 `spend_state` mirrors the jobs `state` vocabulary and `spend_truncated`
-marks a cut spend tail, in which case joined costs are lower bounds. `reverted`
+marks a cut spend tail, in which case joined costs are lower bounds.
+The reward-signal ledger joins under the ASHLR home root — the same
+root the eval passk projection resolves — because it persists resolved
+per-job outcome evidence far longer than the bounded jobs tail: the
+daemon's reward-sync feed and supervising bridges append one `v:1` row
+per terminal job (`jobId`, resolved `merged` verdict,
+`dispatchedAt`/`mergedAt`/`recordedAt` stamps, derived
+`timeToMergeMs`, `ciWallMs`, and a `cost` block carrying the metered
+pool readings). `foldRewardSignals` collapses the bounded tail to
+each job's recorded evidence and the read fills only what the jobs
+fold left null — `merged`, `ttm_s` (only while the standing verdict is
+a merge, the same gate the jobs-ledger dialect applies), `ci_wall_s`,
+`cost_usd` (after the api-spend join) and `repo` — so verdicts and
+cost figures the retained jobs window dropped rejoin from the
+substrate without ever contradicting a recorded jobs-ledger value;
+the reward row's `merged:false` covers its closed-unmerged and
+reverted resolutions alike (the v1 schema has no revert dimension —
+`reverted` still joins independently). `pool_pct_used` is the row's
+recorded subscription-pool percentage points consumed
+(`cost.pctUsedDelta`) — the only per-job subscription-quota cost
+figure, since subscription lanes record no `cost_usd` and `acus`
+covers only the Devin lane's ACU spend; it is a different unit than
+either and never summed with them, and it stays `null` when the pool
+window reset or readings were missing (the producer leaves the delta
+null — unknown stays unknown, never 0). Only rows with `v:1`, a
+bounded `jobId`, a boolean `merged` verdict and parseable
+`dispatchedAt`/`recordedAt` stamps count; consumed fields join under
+their own bounded shapes and malformed values drop to `null` without
+discarding the row. The read degrades independently like the other
+side ledgers: the report's `reward_state` mirrors the jobs `state`
+vocabulary and `reward_truncated` marks a cut tail, in which case
+joined evidence covers only the newest bytes; anything but `read`
+leaves every joined field at its jobs-ledger value — unknown, never
+a guessed verdict or cost — and reward rows naming jobs outside the
+jobs window never create outcomes. `reverted`
 folds explicit revert evidence — a `reverted` boolean, a revert event name
 or terminal REVERT/REVERTED state, or a parseable `reverted_at`/`revertedAt`
 stamp — plus the authority ledger's verified evidence index: a
@@ -831,7 +868,8 @@ report carries `truncated: true` and every count covers the newest bytes
 only; `market_state`/`market_truncated` report the decision journal's
 health, `empty_tag_state`/`empty_tag_truncated` the tags journal's,
 `merge_events_state`/`merge_events_truncated` the merge-events
-journal's and `revert_ledger_state` the scan-detected revert ledger's
+journal's, `revert_ledger_state` the scan-detected revert ledger's and
+`reward_state`/`reward_truncated` the reward-signal substrate's
 the same way. The report also carries the fleet controller's own recorded
 lane-quality verdicts: `controller_quality_state` reports the health of
 `<runs-dir>/queue/fleet-controller.json` (`'unreported'` when the caller
@@ -848,7 +886,10 @@ here as advisory context only — the weight math still moves on
 held-merge rate alone and nothing in the report applies them. Each proposal also carries an `evidence` block folded
 from the same known cohort: the group's CI first-pass rate, summed review
 findings, mean `cost_usd`, mean recorded `acus` (the Devin lane's billed
-spend — a different unit, never mixed with USD), mean `wall_s`, mean
+spend — a different unit, never mixed with USD), mean recorded
+`pool_pct_used` (the reward-signal ledger's subscription-pool
+percentage points consumed — the only per-job subscription-quota cost
+figure, a third unit never mixed with either), mean `wall_s`, mean
 recorded `ttm_s` (merge latency), mean recorded `queue_wait_s` (the
 job's queue-admission wait from its arrival stamp to first dispatch —
 the same boundaries job-latency's queue_wait phase pairs), mean
