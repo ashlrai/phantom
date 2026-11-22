@@ -346,7 +346,14 @@ and session-aggregate usage — are infrastructure evidence counted in the
 report's `session_rows`, never outcomes and never PR-URL claims, while
 members fold through their own `batch_claim`/`task_outcome`/publish rows.
 Member finish verdicts and usage stay `null` rather than split from the
-session aggregate. `work_class` is the class a jobs row recorded when
+session aggregate. Node session-pool rows (`fleet.session-pool.v1`)
+resolve job identity by the producer's contract: `job` is the unique
+per-attempt id (`<sessionId>:<n>`) and `jobId` the logical queue id the
+attempt worked, so only `jobId` keys an outcome — the attempt id never
+mints a phantom outcome, `session_start`/`session_stop` carry no job
+fields and stay unattached, and a queue job's `session_rotate`/`launch`/
+`finish` rows fold into one outcome whether one session or a later
+retry ran them. `work_class` is the class a jobs row recorded when
 one exists; otherwise it is the job's newest `work-market.v1`
 `route_decision` class — the market's own classification of the job,
 written for every evaluated job — and stays `null` when neither ledger

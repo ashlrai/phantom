@@ -36,7 +36,12 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // outcomes or URL claims, and a member's task_outcome row supplies its
 // recorded end-of-session word — members get no per-member finish row, so
 // their finish verdicts and usage stay null rather than split from the
-// session's aggregates. Finish rows also carry dispatchd's job_usage block
+// session's aggregates. Node session-pool rows (fleet.session-pool.v1)
+// resolve job identity by the producer's own contract: `job` is the
+// per-attempt id and `jobId` the logical queue id, so only `jobId` keys an
+// outcome — the attempt id never mints a phantom outcome, and a queue
+// job's launch/finish rows fold together whether one session or a later
+// retry ran them. Finish rows also carry dispatchd's job_usage block
 // (acus — the Devin lane's billed spend, the token breakdown, and the
 // usage_source/usage_missing provenance labels) plus job_diff_metrics'
 // diff_files/diff_lines: the fold keeps each recorded figure
@@ -730,6 +735,20 @@ const emptyClass = (r: Row): string | null => {
  * same so a session never mints a phantom outcome or a PR-URL claim.
  */
 const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
+/**
+ * The node session pool's ledger schema (src/core/fleet/session-pool.ts,
+ * CONTRACT.md RQ-CMP-ORG-RUNTIME-1). Its task rows carry two ids under the
+ * producer's own contract: `job` is the unique per-attempt id
+ * (`<sessionId>:<n>` — session machinery, never a job identity) and `jobId`
+ * the logical queue id the attempt worked (`ready:<job>:<attempt>`, the
+ * node bridge's routerJobId). Only `jobId` may key an outcome: the
+ * standard dialect would otherwise mint one phantom outcome per attempt
+ * and never attach the attempt's launch/finish rows to the queue job
+ * they actually ran. `session_start`/`session_stop` carry no job fields
+ * and stay unattached either way; `session_rotate` carries the
+ * just-pulled task's ids like `launch`/`finish` do.
+ */
+const SESSION_POOL_SCHEMA = 'fleet.session-pool.v1';
 
 /**
  * The batch member's recorded end-of-session word — the `task_outcome`
@@ -1086,7 +1105,12 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       malformed++;
     }
   }
-  const jobId = (r: Row) => str(r, 'job', 'job_id', 'jobId', 'id');
+  // fleet.session-pool.v1 rows resolve their job identity differently:
+  // `job` is the per-attempt id and `jobId` the logical queue id, so the
+  // attempt id must never key an outcome (see SESSION_POOL_SCHEMA).
+  const jobId = (r: Row) => r['schema'] === SESSION_POOL_SCHEMA
+    ? str(r, 'jobId')
+    : str(r, 'job', 'job_id', 'jobId', 'id');
   const prUrl = (r: Row) => str(r, 'url', 'pr_url', 'prUrl', 'pr');
 
   // A PR URL resolves to a job only when exactly one job claims it. Batch

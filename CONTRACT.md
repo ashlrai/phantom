@@ -635,6 +635,18 @@ word under `outcome`; unrecognized spellings and every other row's
 finish row, so their finish verdicts and usage stay `null` rather than
 split from the session aggregate; `task_outcome` is the member's only
 recorded productivity verdict and stays `null` for solo jobs.
+Node session-pool rows (`fleet.session-pool.v1`,
+src/core/fleet/session-pool.ts) resolve their job identity by the
+producer's own contract: `job` is the unique per-attempt id
+(`<sessionId>:<n>` — session machinery, never a job identity) and
+`jobId` the logical queue id the attempt worked, so only `jobId` keys
+an outcome under the same `job`/`job_id`/`jobId`/`id` dialect every
+other row uses — the attempt id never mints a phantom outcome, a
+queue job's launch/finish rows fold into one outcome whether one
+session or a later retry ran them, and rows carrying `job` without
+`jobId` stay unattached. `session_start`/`session_stop` carry no job
+fields and never mint outcomes; `session_rotate`, `launch` and `finish`
+carry the just-pulled task's ids and fold under the same rule.
 `lane_hint_blocked_by` is the dispatch claim's recorded lane-hint
 blocking codes — the third field of the claim's lane-override record.
 A solo `claim` row that left its hinted lane spreads the work market's
