@@ -8,7 +8,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { z } from 'zod';
-import { acquireCoordination, coordinationRowBlocks, listCoordination, renewCoordination, settleCoordination, type CoordinationView } from './claim-store.js';
+import { acquireCoordination, COORDINATION_ORIGINS, coordinationRowBlocks, listCoordination, renewCoordination, settleCoordination, type CoordinationOrigin, type CoordinationView } from './claim-store.js';
 import { CLAIM_MAX_LEASE_MS, parseClaimKey, workClaimBodySchema, workReleaseBodySchema, type WorkJob } from './bus-v2-schema.js';
 import { readAgentRegistry, resolveAgent } from './bus-identity.js';
 import { BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
@@ -34,6 +34,14 @@ export interface BusClaimsListOptions {
    * ref, or an unreadable registry, matches the exact owner label only.
    */
   owner?: string;
+  /**
+   * When set, only live claims of this origin class — `resource` for v2
+   * work.claim leases, `message` for bus message-id claims, `team` for
+   * team leases and `board` for board task claims. Queue path
+   * observations are never live and never list. Anything outside
+   * `COORDINATION_ORIGINS` answers `invalid`.
+   */
+  origin?: CoordinationOrigin;
   /**
    * When true, join each returned claim with the announced work-feed jobs its
    * keys block (the reverse of `work feed --claims`). Read-only; an
@@ -200,8 +208,12 @@ export type BusClaimsFeedState = 'ok' | 'refused' | 'unavailable' | 'retryable' 
  * With `owner`, the list narrows to one holder: a ref that resolves through
  * the identity registry matches every label of that identity, while an
  * unresolvable ref or unreadable registry falls back to the exact owner label.
- * With `jobs`, each claim also names the announced feed jobs it blocks and
- * `feed` reports the read state; a non-ok feed leaves `jobs` absent.
+ * With `origin`, the list narrows to one claim class — the same rows the
+ * claim's own `origin` field reports — so "which message-id claims do I
+ * hold" is one filtered read instead of paging every team's leases and
+ * board claims. With `jobs`, each claim also names the announced feed jobs
+ * it blocks and `feed` reports the read state; a non-ok feed leaves
+ * `jobs` absent.
  */
 export type BusClaimsListResult =
   | { status: 'ok'; source: 'missing' | 'available'; claims: BusClaimsListClaim[]; asOf: string;
@@ -217,6 +229,8 @@ export function listBusClaims(options: BusClaimsListOptions = {}): BusClaimsList
   if (key !== undefined && parseClaimKey(key) === undefined) return { status: 'invalid', asOf };
   const owner = options.owner;
   if (owner !== undefined && !OWNER_LABEL.test(owner)) return { status: 'invalid', asOf };
+  const origin = options.origin;
+  if (origin !== undefined && !COORDINATION_ORIGINS.includes(origin)) return { status: 'invalid', asOf };
   const listed = listCoordination(options.root, now);
   if (listed.source === 'unavailable') return { status: 'unavailable', asOf };
   let live = listed.claims.filter(row => row.live);
@@ -238,6 +252,7 @@ export function listBusClaims(options: BusClaimsListOptions = {}): BusClaimsList
       live = live.filter(row => ownerId(row.owner) === identity);
     }
   }
+  if (origin !== undefined) live = live.filter(row => row.origin === origin);
   const claims = key === undefined ? live : live.filter(row => coordinationRowBlocks(row, key));
   let feed: BusClaimsFeedState | undefined;
   let annotated: BusClaimsListClaim[] = claims;

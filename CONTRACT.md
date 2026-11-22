@@ -2699,11 +2699,12 @@ undefined for non-claim bodies so opaque mail still appends),
 `BusClaimJobRef` claim views share — id, announcer, status, title, newest
 detail and the `postId`/`statusId` receipt citations.
 `listBusClaims(BusClaimsListOptions)` (`root?`, `now?`, `key?`, `owner?`,
-`jobs?`) is the
+`origin?`, `jobs?`) is the
 read-side companion: it returns the live coordination claims as
 `CoordinationView` rows (fencing tokens never leave the store) with `source`
 of `missing` (verified empty), `available` or `unavailable` (holds unknown,
-not free), plus `asOf`. A malformed `key` or `owner` answers `invalid`; a set
+not free), plus `asOf`. A malformed `key`, `owner` or `origin` answers
+`invalid`; a set
 `key` narrows the list through the same `coordinationRowBlocks` overlap rule
 an acquire applies, previewing the claims that would block it. A set `owner`
 narrows to one holder: a handle, `agent:<handle>`, stable id or alias that
@@ -2711,14 +2712,18 @@ resolves through the identity registry matches every label of that identity;
 an unresolvable ref or unreadable registry falls back to the exact owner
 label, and the result's `owner` field (`ref`, resolved `identity` or null,
 `registry` state) reports which mode applied so a label match is never
-mistaken for identity proof. With `jobs:true` each claim gains an optional
+mistaken for identity proof. A set `origin` narrows to one claim class —
+`resource`, `message`, `team` or `board`, the `CoordinationOrigin` values
+`COORDINATION_ORIGINS` lists (queue path observations are never live and
+never list). With `jobs:true` each claim
+gains an optional
 `jobs` list of the announced work-feed jobs its keys block (`{id, owner,
 status, title, detail?, postId, statusId}` per job — `postId`/`statusId`
 the retained `work.post`/`work.status` receipt wire ids `agents bus show`
 reads, the reverse of the feed's `--claims` hold join) and the
 result's `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
-`phm agents bus claim list [--key] [--owner] [--jobs]`
+`phm agents bus claim list [--key] [--owner] [--origin] [--jobs]`
 prints it.
 `claimBusWorkJob(BusWorkJobClaimOptions)` (`job`, `owner`, `leaseMs`, the
 `BusClaimOptions` `root?`/`now?`, and optional `key?`/`id?`) is the job-level

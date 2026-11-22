@@ -21,7 +21,8 @@ const TEAM_MAX_LEASE_MS = 24 * 60 * 60 * 1000;
 const RESOURCE_MAX_LEASE_MS = 3_600_000;
 const LABEL = /^[\x21-\x7e]{1,256}$/;
 
-export type CoordinationOrigin = 'resource' | 'message' | 'team' | 'board';
+export const COORDINATION_ORIGINS = ['resource', 'message', 'team', 'board'] as const;
+export type CoordinationOrigin = (typeof COORDINATION_ORIGINS)[number];
 export type CoordinationState = 'live' | 'released' | 'completed';
 
 interface StoredClaim {
@@ -185,7 +186,7 @@ function validLease(origin: CoordinationOrigin, leaseMs: number): boolean {
 }
 
 function validAcquire(input: CoordinationAcquire, now: number): boolean {
-  if (!['resource', 'message', 'team', 'board'].includes(input.origin)) return false;
+  if (!COORDINATION_ORIGINS.includes(input.origin)) return false;
   if (!LABEL.test(input.key) || !LABEL.test(input.owner) || !LABEL.test(input.sourceId)) return false;
   if (!validLease(input.origin, input.leaseMs) || !integer(input.leaseUntil) || input.leaseUntil <= now) return false;
   if (input.leaseUntil - now > input.leaseMs) return false;
@@ -225,7 +226,7 @@ function directoryFor(root: string): string {
 function claimOk(row: unknown): row is StoredClaim {
   if (!row || typeof row !== 'object') return false;
   const value = row as StoredClaim;
-  return (['resource', 'message', 'team', 'board'] as const).includes(value.origin) &&
+  return COORDINATION_ORIGINS.includes(value.origin) &&
     (['live', 'released', 'completed'] as const).includes(value.state) &&
     LABEL.test(value.key) && LABEL.test(value.owner) && /^[a-f0-9]{64}$/.test(value.token) &&
     LABEL.test(value.sourceId) && validLease(value.origin, value.leaseMs) && integer(value.leaseUntil) &&

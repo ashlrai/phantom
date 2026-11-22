@@ -1239,15 +1239,18 @@ from now and may not exceed the acquired length. `phm agents bus claim
 acquire|renew|release` runs the same core path locally with `--key`,
 `--lease-ms`, `--owner` (defaults to `PHM_AGENT_ID`), `--token`, `--outcome`
 and optional `--id`; exit 0 on success, 2 on invalid arguments, 1 otherwise.
-`phm agents bus claim list [--key <claimKey>] [--owner <label>] [--jobs]` is
+`phm agents bus claim list [--key <claimKey>] [--owner <label>] [--origin <resource|message|team|board>] [--jobs]` is
 the read
 side: it prints the live coordination claims (owner, origin, lease end, source
 id — never tokens) across every origin, narrowed by `--key` to those that
-would block an acquire through the same overlap rule, or by `--owner` to one
+would block an acquire through the same overlap rule, by `--owner` to one
 holder — a handle, `agent:<handle>`, stable id or alias resolved through the
 identity registry, falling back to the exact owner label when the ref does
 not resolve or the registry is unreadable (the JSON `owner` field reports the
-`ref`, resolved `identity` or null, and `registry` state). A missing table
+`ref`, resolved `identity` or null, and `registry` state) — or by `--origin`
+to one claim class (`resource` work leases, `message` message-id claims,
+`team` leases, `board` claims; queue path observations are never live and
+never list). A missing table
 reads as a verified-empty list; an unreadable one stays `unavailable`, never
 zero. With `--jobs` each claim also names the announced work-feed jobs its
 keys block (`{id, owner, status, title, detail?, postId, statusId}` — the
