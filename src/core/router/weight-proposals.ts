@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import type { ControllerQualityRead, ControllerQualityReceipt, ControllerQualityState } from './controller-quality.js';
 import type { RouterOutcome, RouterOutcomeRead } from './outcomes.js';
 
 // Advisory router-weight proposals from recorded outcomes. Recovered from the pure proposal slice of
@@ -134,6 +135,13 @@ export interface RouterWeightProposalOptions {
   maxShift?: number;
   /** Current weights. Absent (work_class, lane) pairs start at ROUTER_WEIGHT_BASELINE. */
   baselines?: readonly RouterWeightBaseline[];
+  /**
+   * Fleet-controller lane-quality read (`queue/fleet-controller.json`
+   * quality_receipts, see controller-quality.ts). Absent or null leaves
+   * controller_quality_state 'unreported' — distinct from a missing state
+   * file — and controller_quality null.
+   */
+  controllerQuality?: ControllerQualityRead | null;
 }
 
 export interface RouterWeightProposal {
@@ -662,6 +670,23 @@ export interface RouterWeightProposalReport {
    * empty when no outcome recorded a measurement path.
    */
   usage_sources: { usage_source: string; jobs: number }[] | null;
+  /**
+   * Health of the fleet controller's recorded lane-quality verdicts
+   * (`route.quality.v1` receipts in `queue/fleet-controller.json`, read via
+   * controller-quality.ts). 'unreported' means the caller supplied no read —
+   * distinct from 'missing' (no state file) and 'invalid' (the file parsed
+   * but quality_receipts did not match the recorded contract).
+   */
+  controller_quality_state: ControllerQualityState | 'unreported';
+  /**
+   * Newest validated route.quality.v1 receipt per lane — the verdicts the
+   * controller is currently enforcing (or shadowing) for routing. Null
+   * unless controller_quality_state==='read'; an empty array then means the
+   * controller recorded no verdicts, a real measurement.
+   */
+  controller_quality: ControllerQualityReceipt[] | null;
+  /** Receipt rows rejected during validation; null unless state==='read'. */
+  controller_quality_invalid_rows: number | null;
   proposals: RouterWeightProposal[];
 }
 
@@ -669,10 +694,15 @@ export interface RouterWeightProposalReport {
 export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: string, opts: RouterWeightProposalOptions = {}): RouterWeightProposalReport {
   if (!z.iso.datetime().safeParse(asOf).success) throw new RangeError('as_of must be an ISO-8601 UTC timestamp');
   const bounds = { min_samples: opts.minSamples ?? ROUTER_WEIGHT_DEFAULT_MIN_SAMPLES, max_shift: opts.maxShift ?? ROUTER_WEIGHT_DEFAULT_MAX_SHIFT };
+  const controller = opts.controllerQuality ?? null;
   const head = { schema: 'router.weight-proposals.v1' as const, advisory_only: true as const, as_of: asOf,
     source: ROUTER_WEIGHT_PROPOSAL_SOURCE, ledger: { state: read.state, path: read.path }, truncated: read.truncated,
     market_state: read.market_state, market_truncated: read.market_truncated,
-    empty_tag_state: read.empty_tag_state, empty_tag_truncated: read.empty_tag_truncated, bounds };
+    empty_tag_state: read.empty_tag_state, empty_tag_truncated: read.empty_tag_truncated,
+    controller_quality_state: (controller?.state ?? 'unreported') as RouterWeightProposalReport['controller_quality_state'],
+    controller_quality: controller?.state === 'read' ? controller.receipts : null,
+    controller_quality_invalid_rows: controller?.state === 'read' ? controller.invalid_rows : null,
+    bounds };
   if (read.state !== 'read') {
     return { ...head, status: 'unavailable', known_outcomes: null, unknown_outcomes: null, unclassified_outcomes: null,
       unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null, unknown_empty_classes: null,
