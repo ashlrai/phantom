@@ -639,11 +639,23 @@ collapses them per PR to `events` (qualifying row count),
 `blocked_reasons` (distinct recorded blockers in first-seen order),
 `conflicts`, `check_failures` and `required_check_failures` (failed
 check observations split on recorded `required: true`),
+`checks_passed` (recorded all-required-green boundary rows) and
+`check_observations` (recorded check observations of any conclusion —
+the coverage `check_failures` counts the failure subset of),
 `retries`/`retry_failures` (distinct `at`+`head_sha` pairs, so a
 replayed append counts once), `recuts` and `auto_merge` (the last
 recorded toggle in append order). The evidence is post-publish
 queue-side context — it never replaces the jobs ledger's merge
-verdict and never feeds routing by itself. The read degrades
+verdict and never feeds routing by itself. The same joined check
+record also resolves `ci_first_pass`
+fill-only when no jobs row recorded a verdict: any recorded check
+failure — required or unrelated — reads `false` even beside a later
+`checks_passed` boundary or a merge (a rerun or a new head got it
+green, which is not a first pass); with zero recorded failures a
+`checks_passed` boundary or a recorded merge beside observed check
+activity reads `true`; pending-only observations, no check rows at
+all and unmerged PRs without the boundary stay `null` — unknown,
+never guessed from absent evidence. The read degrades
 independently like the other side ledgers: the report's
 `merge_events_state` mirrors the jobs `state` vocabulary and
 `merge_events_truncated` marks a cut merge-events tail, in which case

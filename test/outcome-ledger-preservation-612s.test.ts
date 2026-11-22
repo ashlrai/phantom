@@ -1837,6 +1837,8 @@ describe('router outcome merge-events join', () => {
         mergeEvent(7, 'check_observed', { conclusion: 'failure', required: true }),
         mergeEvent(7, 'check_observed', { conclusion: 'failure' }), // unrelated failure still counts
         mergeEvent(7, 'check_observed', { conclusion: 'success', required: true }),
+        mergeEvent(7, 'check_observed', { conclusion: 'pending' }),
+        mergeEvent(7, 'checks_passed'),
         mergeEvent(7, 'conflict'),
         mergeEvent(7, 'retry_requested', { head_sha: 'ABC123' }),
         mergeEvent(7, 'retry_requested', { head_sha: 'abc123' }),   // same at+head: replay dedupes
@@ -1846,13 +1848,15 @@ describe('router outcome merge-events join', () => {
         mergeEvent(7, 'recut_requested', { head_sha: 'abc123' }),   // recuts count rows, not dedupe
       ],
     ].map(r => typeof r === 'string' ? r : JSON.stringify(r)).join('\n'));
-    // The three untimed terminals plus the fifteen timed rows for PR 7 qualify.
+    // The three untimed terminals plus the seventeen timed rows for PR 7 qualify.
     expect(events.get('ashlrai/phantom#7')).toEqual({
-      events: 18,
+      events: 20,
       blocked_reasons: ['required_checks', 'review'],
       conflicts: 1,
       check_failures: 2,
       required_check_failures: 1,
+      checks_passed: 1,
+      check_observations: 4,
       retries: 2,
       retry_failures: 1,
       recuts: 2,
@@ -1864,7 +1868,8 @@ describe('router outcome merge-events join', () => {
   it('joins merge_queue through each job\'s newest unambiguous canonical PR claim only', () => {
     const mq: MergeQueueEvidence = {
       events: 3, blocked_reasons: ['queue'], conflicts: 0, check_failures: 0,
-      required_check_failures: 0, retries: 0, retry_failures: 0, recuts: 0, auto_merge: null,
+      required_check_failures: 0, checks_passed: 0, check_observations: 0,
+      retries: 0, retry_failures: 0, recuts: 0, auto_merge: null,
     };
     const mqNewer: MergeQueueEvidence = { ...mq, events: 9, blocked_reasons: ['conflict'] };
     const events = new Map([
@@ -1920,16 +1925,85 @@ describe('router outcome merge-events join', () => {
     expect(byId.get('J1')?.merge_queue).toEqual({
       events: 4, blocked_reasons: ['required_checks'], conflicts: 0,
       check_failures: 1, required_check_failures: 1,
+      checks_passed: 0, check_observations: 1,
       retries: 0, retry_failures: 0, recuts: 0, auto_merge: null,
     });
     expect(byId.get('J2')?.merge_queue).toEqual({
       events: 2, blocked_reasons: [], conflicts: 1,
       check_failures: 0, required_check_failures: 0,
+      checks_passed: 0, check_observations: 0,
       retries: 0, retry_failures: 0, recuts: 0, auto_merge: 'enabled',
     });
     // No claim, no join — unknown stays null, never a guessed queue history.
     expect(byId.get('J3')?.merge_queue).toBeNull();
+    // The joined check record resolves ci_first_pass fill-only: J1's
+    // recorded check failure reads false; J2 recorded no check rows.
+    expect(byId.get('J1')?.ci_first_pass).toBe(false);
+    expect(byId.get('J2')?.ci_first_pass).toBeNull();
     expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3']);
+  });
+
+  it('derives ci_first_pass fill-only from the joined merge-queue check record', async () => {
+    const root = runsDir([
+      // J1: clean checks_passed boundary, no failures -> true.
+      '{"job":"J1","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/51","ts":"2026-11-01T00:00:00Z"}',
+      // J2: a recorded failure beside a later checks_passed -> false; a
+      // rerun or new head got it green, which is not a first pass.
+      '{"job":"J2","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/52","ts":"2026-11-01T00:00:00Z"}',
+      // J3: merged with observed check activity but no boundary row ->
+      // the merge fallback reads true.
+      '{"job":"J3","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/53","ts":"2026-11-01T00:00:00Z"}',
+      // J4: pending-only observations on an unmerged PR -> null.
+      '{"job":"J4","lane":"alpha","phase":"CLOSED","pr_url":"https://github.com/ashlrai/phantom/pull/54","ts":"2026-11-01T00:00:00Z"}',
+      // J5: the jobs row's own verdict wins over contradicting queue evidence.
+      '{"job":"J5","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/55","ci_first_pass":true,"ts":"2026-11-01T00:00:00Z"}',
+      // J6: merged but the observer recorded no check rows -> null.
+      '{"job":"J6","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/56","ts":"2026-11-01T00:00:00Z"}',
+      // J7: closed unmerged with a checks_passed boundary -> true; CI
+      // cleanliness is merge-independent.
+      '{"job":"J7","lane":"alpha","phase":"CLOSED","pr_url":"https://github.com/ashlrai/phantom/pull/57","ts":"2026-11-01T00:00:00Z"}',
+    ].join('\n'));
+    writeMergeEvents(root, [
+      mergeEvent(51, 'check_observed', { conclusion: 'success', required: true }),
+      mergeEvent(51, 'checks_passed'),
+      mergeEvent(52, 'check_observed', { conclusion: 'failure', required: true }),
+      mergeEvent(52, 'check_observed', { conclusion: 'success', required: true }),
+      mergeEvent(52, 'checks_passed'),
+      mergeEvent(53, 'check_observed', { conclusion: 'pending', required: true }),
+      mergeEvent(53, 'merged'),
+      mergeEvent(54, 'check_observed', { conclusion: 'pending' }),
+      mergeEvent(54, 'closed'),
+      mergeEvent(55, 'check_observed', { conclusion: 'failure' }),
+      mergeEvent(55, 'checks_passed'),
+      mergeEvent(56, 'merged'),
+      mergeEvent(57, 'checks_passed'),
+      mergeEvent(57, 'closed'),
+    ]);
+    const result = await readRouterOutcomes({ runsDir: root });
+    const byId = new Map(result.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')?.ci_first_pass).toBe(true);
+    expect(byId.get('J2')?.ci_first_pass).toBe(false);
+    expect(byId.get('J3')?.ci_first_pass).toBe(true);
+    expect(byId.get('J4')?.ci_first_pass).toBeNull();
+    expect(byId.get('J5')?.ci_first_pass).toBe(true);
+    expect(byId.get('J6')?.ci_first_pass).toBeNull();
+    expect(byId.get('J7')?.ci_first_pass).toBe(true);
+  });
+
+  it('lets a reward-resolved merge verdict reach the ci_first_pass fallback', async () => {
+    // The jobs tail dropped J1's merge verdict; the reward substrate
+    // resolves merged:true, and the post-reward pass applies the same
+    // fill-only derivation so observed check activity reads true.
+    const root = runsDir('{"job":"J1","lane":"alpha","phase":"VERIFIED","pr_url":"https://github.com/ashlrai/phantom/pull/61","ts":"2026-11-01T00:00:00Z"}\n');
+    writeMergeEvents(root, [
+      mergeEvent(61, 'check_observed', { conclusion: 'success', required: true }),
+      mergeEvent(61, 'merged'),
+    ]);
+    const ashlar = rewardLedger([rewardRow('J1', true)]);
+    const result = await readRouterOutcomes({ runsDir: root, ashlarDir: ashlar });
+    const [o] = result.outcomes;
+    expect(o?.merged).toBe(true);
+    expect(o?.ci_first_pass).toBe(true);
   });
 
   it('keeps merge_queue null and reports merge_events_state when the ledger is absent or refused', async () => {

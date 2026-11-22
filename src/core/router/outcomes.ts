@@ -161,7 +161,11 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // router.outcome.v1 instead of stopping at the merge-latency report.
 // Rows for PRs no jobs outcome claims unambiguously join nothing, and
 // a missing or cut merge-events tail leaves every merge_queue null —
-// unknown, never a guessed queue history.
+// unknown, never a guessed queue history. The same check record also
+// resolves `ci_first_pass` fill-only when no jobs row recorded a
+// verdict: any recorded check failure reads false, a `checks_passed`
+// boundary or a recorded merge beside observed check activity reads
+// true, and anything else stays null.
 // `merged`, `ttm_s`, `ci_wall_s`, `cost_usd`, `repo` and the new
 // `pool_pct_used` additionally join a sixth ledger,
 // <ashlr>/metrics/reward-signals.jsonl — the reward-signal substrate
@@ -326,6 +330,13 @@ export interface RouterOutcome {
    * recorded revert is never contradicted by a later reverted:false.
    */
   reverted: boolean | null;
+  /**
+   * The job's recorded CI first-pass verdict — a jobs-row boolean wins;
+   * otherwise the joined merge-queue check record resolves it fill-only
+   * (any recorded check failure reads false, a `checks_passed` boundary
+   * or a recorded merge beside observed check activity reads true, and
+   * everything else stays null — unknown, never guessed).
+   */
   ci_first_pass: boolean | null;
   review_findings: { fixed: number; rejected: number; ignored: number } | null;
   /**
@@ -1623,8 +1634,12 @@ export interface RouterOutcomeFoldOptions {
    * `foldMergeEvents` over metrics/merge-events.jsonl. The fold joins each
    * outcome's newest unambiguous canonical PR claim (the same claim rule
    * `revertedPrKeys` applies) to its summary as `merge_queue`; a job with
-   * no unambiguous claim or no recorded events keeps null. Absent means no
-   * merge-events join — every merge_queue stays null.
+   * no unambiguous claim or no recorded events keeps null. The joined
+   * check record also resolves `ci_first_pass` fill-only — any recorded
+   * check failure reads false, a `checks_passed` boundary or a recorded
+   * merge beside observed check activity reads true, anything else
+   * stays null. Absent means no merge-events join — every merge_queue
+   * stays null and ci_first_pass keeps its jobs-row value.
    */
   mergeEvents?: ReadonlyMap<string, MergeQueueEvidence>;
   /**
@@ -2117,7 +2132,16 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       if (prKey === undefined) continue;
       if (opts.mergeEvents !== undefined) {
         const evidence = opts.mergeEvents.get(prKey);
-        if (evidence !== undefined) o.merge_queue = { ...evidence, blocked_reasons: [...evidence.blocked_reasons] };
+        if (evidence !== undefined) {
+          o.merge_queue = { ...evidence, blocked_reasons: [...evidence.blocked_reasons] };
+          // Fill-only: a jobs-row ci_first_pass verdict always wins; the
+          // merge-queue check record resolves what the jobs rows left
+          // unknown. merged is the fold-time jobs verdict — reward-signal
+          // fills landing later get the same pass in readRouterOutcomes.
+          if (o.ci_first_pass === null) {
+            o.ci_first_pass = mergeQueueCiFirstPass(o.merge_queue, o.merged === true);
+          }
+        }
       }
       if (opts.crossReviews !== undefined) {
         const review = opts.crossReviews.get(prKey);
@@ -2425,6 +2449,20 @@ export interface MergeQueueEvidence {
   /** Of those, rows recorded `required: true`. */
   required_check_failures: number;
   /**
+   * Recorded `checks_passed` rows — the observer's boundary verdict
+   * that every required check is known to have passed (the
+   * merge-latency queue-to-merge stage boundary). Counts rows, not
+   * distinct heads.
+   */
+  checks_passed: number;
+  /**
+   * Recorded `check_observed` rows of any conclusion — the observer's
+   * check coverage for the PR. `check_failures` counts the failure
+   * subset of this set; pending and success observations count only
+   * here.
+   */
+  check_observations: number;
+  /**
    * Distinct recorded `retry_requested` rows — deduplicated by
    * `at`+`head_sha` exactly like the merge-latency reader's retry
    * verdict, so a replayed append counts once.
@@ -2488,9 +2526,12 @@ const MERGE_UNTIMED_TYPES: ReadonlySet<string> = new Set([
  * recorded shapes — anything else is skipped, never guessed. `blocked`
  * reasons join distinct in first-seen order; retry rows dedupe by
  * `at`+`head_sha` like the sibling's retry verdict; `auto_merge` is the
- * last recorded toggle in append order. Rows for PRs no jobs outcome
- * claims unambiguously join nothing — the map itself never creates
- * outcomes.
+ * last recorded toggle in append order. `checks_passed` counts the
+ * recorded all-required-green boundary rows and `check_observations`
+ * the recorded `check_observed` rows of any conclusion — the coverage
+ * `check_failures` counts the failure subset of. Rows for PRs no jobs
+ * outcome claims unambiguously join nothing — the map itself never
+ * creates outcomes.
  */
 export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
   interface Acc {
@@ -2500,6 +2541,8 @@ export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
     conflicts: number;
     checkFailures: number;
     requiredCheckFailures: number;
+    checkObservations: number;
+    checksPassed: number;
     retryKeys: Set<string>;
     retryFailedKeys: Set<string>;
     recuts: number;
@@ -2544,7 +2587,8 @@ export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
     const key = `${repo.toLowerCase()}#${pr}`;
     const acc = prs.get(key) ?? {
       events: 0, blocked: [], blockedSeen: new Set<string>(), conflicts: 0,
-      checkFailures: 0, requiredCheckFailures: 0,
+      checkFailures: 0, requiredCheckFailures: 0, checkObservations: 0,
+      checksPassed: 0,
       retryKeys: new Set<string>(), retryFailedKeys: new Set<string>(),
       recuts: 0, autoMerge: null,
     };
@@ -2554,10 +2598,12 @@ export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
       acc.blocked.push(reason);
     }
     if (type === 'conflict') acc.conflicts++;
+    if (conclusion !== null) acc.checkObservations++;
     if (conclusion === 'failure') {
       acc.checkFailures++;
       if (required) acc.requiredCheckFailures++;
     }
+    if (type === 'checks_passed') acc.checksPassed++;
     if (type === 'retry_requested' || type === 'retry_failed') {
       const head = typeof row['head_sha'] === 'string' ? row['head_sha'].toLowerCase() : '';
       const dedupe = `${at}|${head}`;
@@ -2575,11 +2621,37 @@ export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
     conflicts: a.conflicts,
     check_failures: a.checkFailures,
     required_check_failures: a.requiredCheckFailures,
+    checks_passed: a.checksPassed,
+    check_observations: a.checkObservations,
     retries: a.retryKeys.size,
     retry_failures: a.retryFailedKeys.size,
     recuts: a.recuts,
     auto_merge: a.autoMerge,
   }]));
+}
+
+/**
+ * The recorded CI first-pass verdict merge-queue evidence supports —
+ * fill-only for outcomes whose jobs rows recorded none. Any recorded
+ * `check_observed` failure means CI was observed red at least once, so
+ * the verdict is false even when a later `checks_passed` boundary or a
+ * merge stands — a rerun or a new head got it green, which is not a
+ * first pass. With zero recorded failures, a `checks_passed` boundary
+ * is the observer's own all-required-checks-green verdict, and a
+ * recorded merge beside observed check activity is the ledger's proof
+ * the checks reached green — either reads true. Pending-only
+ * observations, no check rows at all, and unmerged PRs without the
+ * boundary carry no verdict: unknown stays null, never guessed from
+ * absent evidence. `merged` is the outcome's standing merge verdict at
+ * call time — the fold passes its jobs-ledger verdict and
+ * readRouterOutcomes reruns the same fill-only pass after the
+ * reward-signal join so a reward-only merge verdict reaches the
+ * fallback too.
+ */
+function mergeQueueCiFirstPass(evidence: MergeQueueEvidence, merged: boolean): boolean | null {
+  if (evidence.check_failures > 0) return false;
+  if (evidence.checks_passed > 0 || (merged && evidence.check_observations > 0)) return true;
+  return null;
 }
 
 /**
@@ -3185,6 +3257,14 @@ export async function readRouterOutcomes(opts: {
       if (o.cost_usd === null) o.cost_usd = reward.cost_usd;
       if (o.repo === null) o.repo = reward.repo;
       o.pool_pct_used = reward.pool_pct_used;
+    }
+    // The reward fill can resolve merged after the fold's merge-queue
+    // pass already ran — rerun the same fill-only ci_first_pass
+    // derivation so a reward-only merge verdict reaches the fallback.
+    for (const o of folded.outcomes) {
+      if (o.ci_first_pass === null && o.merge_queue !== null) {
+        o.ci_first_pass = mergeQueueCiFirstPass(o.merge_queue, o.merged === true);
+      }
     }
   }
   if (emptyTagRead.state === 'read') {
