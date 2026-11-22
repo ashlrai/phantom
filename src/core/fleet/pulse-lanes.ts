@@ -82,7 +82,7 @@ export function buildPulseLanes(inputs: PulseLanesInputs, now: number): PulseLan
 }
 
 /** Running jobs and slot targets per lane from the lane snapshot; null when it cannot be read. */
-async function readSlots(): Promise<LaneSlotRead[] | null> {
+export async function readSlots(): Promise<LaneSlotRead[] | null> {
   const { getFleetLaneSnapshot } = await import('./lane-console.js');
   const snapshot = await getFleetLaneSnapshot();
   return snapshot.lanes.map(view => ({ lane: view.lane, running: view.liveJobs, capacity: view.slotTarget }));
