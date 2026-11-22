@@ -650,3 +650,19 @@ allowance, native context allocation or verified funding observations.
 Run `ashlr fleet leader-facts --json` to refresh `~/.ashlr-runs/leader/facts.json` before a leader pass. The `leader.facts.v1` snapshot joins leader-tagged router queue lines to jobs with a dated ledger event in the last 48 hours, then reads PR state, 24-hour merge counts, and latest release tags from GitHub. Repositories are those represented by the selected jobs. `null` means unknown; source status reports missing or damaged local evidence. Jobs with no dated ledger evidence have unknown age and are retained. Recent Q8 PRs can also be discovered from GitHub when queue history is absent. The file is replaced atomically; this command does not merge or publish anything.
 
 The resident daemon refreshes this snapshot at startup and every 15 minutes. GitHub search also discovers recent Q8 PRs independently of local history; `sources.github` is `partial` when search or a PR lookup fails or the search reaches its page limit. The schedule requires the resident daemon to be running.
+
+The compact brief (`leader.compact-brief.v1`) reads cached GitHub release evidence,
+then local git tags for each missing repository. Its `release` counts include this
+fallback; `releaseRepos` gives the tag, tag date, commits since the tag, state,
+source and unknown reason. Local git is due over 20 commits or over seven days;
+otherwise it is ok. Missing clones, tags or default-branch refs and shallow
+history stay unknown. Tags describe local release state, not publication proof.
+The same evidence appears in `phm fleet release-backlog --json` under `repos[].git`.
+
+Default clone paths are `~/Projects/ashlrai/wt/guardian-<repo>`, then
+`~/.ashlr-runs/phm-live` for Phantom, then `~/Projects/ashlrai/<repo>`.
+Set `PHANTOM_RELEASE_CLONES` to a JSON object such as
+`{"phantom":"/path/to/phantom","locus":"/path/to/locus"}` to replace that list;
+unlisted repositories stay unknown with reason `no local clone`. Reads use
+`origin/HEAD` (or `origin/master`, then `origin/main` if unset), never fetch, and
+have a five-second budget per clone. Local refs reflect their last fleet refresh.
