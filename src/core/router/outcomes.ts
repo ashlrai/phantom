@@ -3,6 +3,7 @@ import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
+import { ashlrHome } from '../cloud/store.js';
 import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 
 // Read-only recorded job outcomes from the newest ROUTER_OUTCOME_LEDGER_LIMIT
@@ -161,6 +162,26 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // Rows for PRs no jobs outcome claims unambiguously join nothing, and
 // a missing or cut merge-events tail leaves every merge_queue null —
 // unknown, never a guessed queue history.
+// `merged`, `ttm_s`, `ci_wall_s`, `cost_usd`, `repo` and the new
+// `pool_pct_used` additionally join a sixth ledger,
+// <ashlr>/metrics/reward-signals.jsonl — the reward-signal substrate
+// (`v:1` rows the daemon's reward-sync feed and supervising bridges
+// append: resolved merge verdicts, dispatch-to-merge and CI-wall
+// milliseconds, metered pool cost) that persists resolved per-job
+// outcome evidence far longer than the bounded jobs tail. The join
+// fills only fields the jobs fold left null — a recorded jobs-ledger
+// verdict or measurement always wins, and ttm_s fills only while the
+// standing merge verdict is a merge — so the substrate recovers
+// verdicts and cost evidence the retained window dropped without ever
+// contradicting the ledger. `pool_pct_used` is the row's recorded
+// subscription-pool percentage points consumed (cost.pctUsedDelta) —
+// the only per-job subscription-quota cost figure, since subscription
+// lanes record no cost_usd and acus covers only the Devin lane's ACU
+// spend; it is a different unit than either and never summed with
+// them. A missing, unreadable or cut reward tail degrades the same
+// way the other side ledgers do: reward_state reports its health and
+// every joined field stays at its jobs-ledger value — unknown, never
+// a guessed outcome.
 
 /** Newest-bytes bound retained from the append-only jobs ledger. */
 export const ROUTER_OUTCOME_LEDGER_LIMIT = 16 * 1024 * 1024;
@@ -169,6 +190,13 @@ export const ROUTER_SPEND_LEDGER_RELATIVE = join('metrics', 'api-spend.jsonl');
 export const ROUTER_MARKET_LEDGER_RELATIVE = join('metrics', 'work-market.jsonl');
 export const ROUTER_EMPTY_TAGS_LEDGER_RELATIVE = join('metrics', 'empty-tags.jsonl');
 export const ROUTER_MERGE_EVENTS_LEDGER_RELATIVE = join('metrics', 'merge-events.jsonl');
+/**
+ * The reward-signal ledger's path relative to the ASHLR home root —
+ * `<ashlr>/metrics/reward-signals.jsonl`, the same root the eval
+ * passk projection resolves under (ASHLR_HOME honored). Unlike the
+ * runs-dir ledgers it is not joined under runsDir.
+ */
+export const ROUTER_REWARD_LEDGER_RELATIVE = join('metrics', 'reward-signals.jsonl');
 
 export interface RouterOutcome {
   schema: 'router.outcome.v1';
@@ -193,7 +221,8 @@ export interface RouterOutcome {
    * standing record, so absolute paths, whitespace and deeper paths
    * are skipped, never recorded raw, and never guessed from the job
    * id or PR URL. Null when no retained row recorded a bounded repo —
-   * unknown, not "no repo".
+   * unknown, not "no repo". The reward-signal ledger's recorded `repo`
+   * fills it when the jobs fold left it null (same bounded shape).
    */
   repo: string | null;
   /**
@@ -227,7 +256,13 @@ export interface RouterOutcome {
    * when no phase field resolves — or merged:true; false on CLOSED evidence
    * likewise or merged:false; else null. A resolved phase stays
    * authoritative over the event name, and mergedAt/closedAt stay the
-   * preferred stamps on terminal rows.
+   * preferred stamps on terminal rows. The reward-signal ledger's
+   * resolved verdict fills it when the jobs fold recorded none — the
+   * substrate persists resolved merge evidence the bounded tail drops;
+   * a recorded jobs-ledger verdict always wins, and the reward row's
+   * merged:false covers its closed-unmerged and reverted resolutions
+   * alike (the v1 schema has no revert dimension — `reverted` still
+   * joins independently).
    */
   merged: boolean | null;
   /**
@@ -244,11 +279,26 @@ export interface RouterOutcome {
   /**
    * USD cost recorded for the job: an explicit cost field on a jobs.jsonl row
    * (cost_usd|usd|cost) wins; otherwise the sum of api-spend.jsonl call costs
-   * naming the job. Null when neither source reported a cost — a job whose
-   * calls carried no cost is unknown, never zero. May include
-   * collector-estimated costs (cost_estimated rows still report a USD figure).
+   * naming the job; the reward-signal row's recorded `cost.costUsd` is the
+   * last resort when neither reported one. Null when no source reported a
+   * cost — a job whose calls carried no cost is unknown, never zero. May
+   * include collector-estimated costs (cost_estimated rows still report a
+   * USD figure).
    */
   cost_usd: number | null;
+  /**
+   * Recorded subscription-pool percentage points the job consumed — the
+   * reward-signal row's `cost.pctUsedDelta`, the only per-job
+   * subscription-quota cost figure: subscription lanes record no
+   * cost_usd and acus covers only the Devin lane's ACU spend. Joins
+   * only from <ashlr>/metrics/reward-signals.jsonl in the bounded
+   * [0, 100] percentage-point shape; null when the reward ledger was
+   * not read, no row named the job, or the row's pool window reset or
+   * readings were missing (the producer leaves the delta null —
+   * unknown stays unknown, never zero). A different unit than
+   * cost_usd and acus: never summed with either.
+   */
+  pool_pct_used: number | null;
   wall_s: number | null;
   /**
    * Recorded usage total in tokens — the finish row's `tokens_total`/
@@ -287,8 +337,13 @@ export interface RouterOutcome {
    * merge verdict (the same newest-timestamp rule `merged` uses), only when
    * that verdict is a merge, and a later winning verdict replaces it
    * wholesale — a close clears it and a newer merge row without the field
-   * leaves it null rather than keeping a stale figure. Null when no
-   * standing merge recorded one; never derived from wall_s or timestamps.
+   * leaves it null rather than keeping a stale figure. The
+   * reward-signal row's recorded `timeToMergeMs` fills it when the
+   * jobs fold recorded none and the standing merge verdict is a merge
+   * — the feed's mergedAt−dispatchedAt, the same dispatch-to-merge
+   * measure eval-report derives when the ledger lacks ttm_s. Null
+   * when no standing merge recorded one; never derived from wall_s
+   * or timestamps.
    */
   ttm_s: number | null;
   /**
@@ -317,7 +372,11 @@ export interface RouterOutcome {
    * complete stamp must not precede the start. Anything else — a missing
    * boundary, reversed stamps or repeated pairs — leaves the job absent
    * here so its outcome keeps null: unknown stays unknown, never a
-   * partial guess and never another phase's duration.
+   * partial guess and never another phase's duration. The
+   * reward-signal row's recorded `ciWallMs` fills it when the jobs
+   * fold recorded none — the feed computes it under the same
+   * exactly-one-boundary-pair rule, so a persisted row carries the
+   * same evidence the retained tail may have dropped.
    */
   ci_wall_s: number | null;
   /**
@@ -1618,7 +1677,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       schema: 'router.outcome.v1', job_id: j, lane: null, model: null, tier: null, work_class: null,
       repo: null,
       lane_hint: null, lane_override: null,
-      merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
+      merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, pool_pct_used: null, wall_s: null,
       tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
       tokens_cache_read: null, tokens_cache_write: null,
       usage_source: null, usage_missing: null,
@@ -2401,6 +2460,86 @@ export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
   }]));
 }
 
+/**
+ * The per-job evidence one reward-signal row contributes to an outcome —
+ * the resolved merge verdict plus the recorded measurements the jobs fold
+ * may have lost to tail truncation. Every figure stays null when the row
+ * did not record it; nothing here is derived.
+ */
+export interface RewardOutcomeEvidence {
+  /** The row's resolved merge verdict — reward-signal v1 requires the boolean. */
+  merged: boolean;
+  /** Recorded dispatch-to-merge seconds (timeToMergeMs/1000); null unless merged with a recorded span. */
+  ttm_s: number | null;
+  /** Recorded CI wall seconds (ciWallMs/1000); null when unrecorded. */
+  ci_wall_s: number | null;
+  /** Recorded USD estimate (cost.costUsd); null when unrecorded. */
+  cost_usd: number | null;
+  /** Recorded repo in the bounded repo-label shape; null when absent or outside it. */
+  repo: string | null;
+  /**
+   * Recorded subscription-pool percentage points consumed across the job
+   * window (cost.pctUsedDelta), bounded to the [0, 100] percentage-point
+   * shape; null when the pool window reset, readings were missing, or
+   * the recorded value was malformed — unknown stays unknown, never 0.
+   */
+  pool_pct_used: number | null;
+}
+
+/** Same job-id alphabet the reward writer accepts (JOB_ID in metrics/reward-signal.ts). */
+const REWARD_JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+/** Percentage points consumed can never exceed the [0, 100] pool reading range. */
+const rewardPctUsed = (v: unknown): number | null =>
+  typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100 ? v : null;
+
+/**
+ * Folds reward-signals.jsonl text into per-job evidence, last appended row
+ * winning a repeat (the ledger is first-write-wins per jobId, so repeats are
+ * rare). A row counts only as reward-signal v1 evidence: `v:1`, a bounded
+ * `jobId`, a boolean `merged` verdict and the row's `dispatchedAt`/
+ * `recordedAt` stamps — the fields every producer row carries. Consumed
+ * fields join under their own bounded shapes: milliseconds become seconds,
+ * `costUsd`/`pctUsedDelta`/`repo` keep their recorded-value-or-null rule,
+ * and malformed values drop to null without discarding the row. Malformed
+ * JSON, other schemas and rows missing the identity fields are skipped —
+ * never recorded raw, never guessed.
+ */
+export function foldRewardSignals(text: string): Map<string, RewardOutcomeEvidence> {
+  const rewards = new Map<string, RewardOutcomeEvidence>();
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const r = value as Row;
+    const jobId = str(r, 'jobId');
+    const dispatchedAt = r['dispatchedAt'];
+    const recordedAt = r['recordedAt'];
+    if (r['v'] !== 1 || jobId === null || !REWARD_JOB_ID.test(jobId) ||
+        typeof r['merged'] !== 'boolean' ||
+        typeof dispatchedAt !== 'string' || !Number.isFinite(Date.parse(dispatchedAt)) ||
+        typeof recordedAt !== 'string' || !Number.isFinite(Date.parse(recordedAt))) continue;
+    const cost = r['cost'];
+    const costRow = cost !== null && typeof cost === 'object' && !Array.isArray(cost) ? cost as Row : null;
+    const ttmMs = num(r['timeToMergeMs']);
+    const ciWallMs = num(r['ciWallMs']);
+    const repo = str(r, 'repo');
+    rewards.set(jobId, {
+      merged: r['merged'],
+      ttm_s: ttmMs === null ? null : ttmMs / 1000,
+      ci_wall_s: ciWallMs === null ? null : ciWallMs / 1000,
+      cost_usd: costRow === null ? null : num(costRow['costUsd']),
+      repo: repo !== null && REPO_LABEL.test(repo) ? repo : null,
+      pool_pct_used: costRow === null ? null : rewardPctUsed(costRow['pctUsedDelta']),
+    });
+  }
+  return rewards;
+}
+
 export interface RouterOutcomeRead extends RouterOutcomeFold {
   /** 'read' is the only state with trustworthy outcomes; everything else is an unknown ledger. */
   state: LedgerReadState;
@@ -2461,6 +2600,20 @@ export interface RouterOutcomeRead extends RouterOutcomeFold {
    * trusted.
    */
   revert_ledger_state: LedgerReadState;
+  /**
+   * Health of the reward-signals.jsonl tail under the ASHLR home root
+   * behind the reward-signal joins (`merged`/`ttm_s`/`ci_wall_s`/
+   * `cost_usd`/`repo` fills and `pool_pct_used`). Anything but 'read'
+   * means no reward rows joined — outcomes keep their jobs-ledger
+   * values, never a guessed verdict or cost.
+   */
+  reward_state: Exclude<LedgerReadState, 'too-large'>;
+  /**
+   * True when the reward-signals tail exceeded the retained bound:
+   * joined evidence covers only the newest bytes — still real
+   * recorded rows, just a partial window.
+   */
+  reward_truncated: boolean;
   /**
    * True when the ledger exceeded the retained tail: the fold, and so every
    * count on this read, covers only the newest ROUTER_OUTCOME_LEDGER_LIMIT
@@ -2575,6 +2728,21 @@ function unionRevertKeys(authority: ReadonlySet<string> | undefined, scan: Reado
  * `revert_ledger_state` reports that ledger's health and anything but
  * 'read' contributes no keys. The scan join is independent of the
  * `authorityEvidence` option: `null` skips only the authority read.
+ * A sixth ledger joins under the ASHLR home root — the same root
+ * `ashlarDir` resolves for the eval passk projection (ASHLR_HOME
+ * honored): `<ashlr>/metrics/reward-signals.jsonl`, the reward-signal
+ * substrate's per-job resolved-outcome rows. `foldRewardSignals`
+ * collapses them to each job's recorded verdict and measurements, and
+ * the read fills only fields the jobs fold left null — `merged`,
+ * `ttm_s` (only while the standing verdict is a merge), `ci_wall_s`,
+ * `cost_usd` (after the api-spend join), `repo` and `pool_pct_used`,
+ * the row's recorded subscription-pool percentage points consumed —
+ * so persisted reward evidence recovers verdicts and cost figures the
+ * bounded jobs tail dropped without ever overriding a recorded
+ * jobs-ledger value. Reward rows naming jobs outside the jobs window
+ * never create outcomes. `reward_state` reports the ledger's health
+ * and `reward_truncated` marks a cut tail; anything but 'read' leaves
+ * every joined field at its jobs-ledger value.
  */
 export async function readRouterOutcomes(opts: {
   runsDir?: string;
@@ -2608,6 +2776,13 @@ export async function readRouterOutcomes(opts: {
   const mergeEventsRead = await readLedgerTail(join(runsDir, ROUTER_MERGE_EVENTS_LEDGER_RELATIVE));
   const mergeEventsState = mergeEventsRead.state;
   const mergeEventsTruncated = mergeEventsRead.state === 'read' ? mergeEventsRead.truncated : false;
+  // The reward ledger lives under the ASHLR home root, not runsDir —
+  // resolved exactly like passk's lane-scores projection so both
+  // ashlarDir-rooted reads agree on the root (ASHLR_HOME honored).
+  const ashlarRoot = opts.ashlarDir ?? ashlrHome();
+  const rewardRead = await readLedgerTail(join(ashlarRoot, ROUTER_REWARD_LEDGER_RELATIVE));
+  const rewardState = rewardRead.state;
+  const rewardTruncated = rewardRead.state === 'read' ? rewardRead.truncated : false;
   const revertLedger = await liveRevertOutcomeKeys(opts.ashlarDir);
   if (read.state !== 'read') {
     return { ...empty, state: read.state, path, eval_state: laneScores.state,
@@ -2615,7 +2790,8 @@ export async function readRouterOutcomes(opts: {
       market_state: marketState, market_truncated: marketTruncated,
       empty_tag_state: emptyTagState, empty_tag_truncated: emptyTagTruncated,
       merge_events_state: mergeEventsState, merge_events_truncated: mergeEventsTruncated,
-      revert_ledger_state: revertLedger.state, truncated: false };
+      revert_ledger_state: revertLedger.state,
+      reward_state: rewardState, reward_truncated: rewardTruncated, truncated: false };
   }
   const workClasses = marketRead.state === 'read'
     ? foldRouteDecisionWorkClasses(marketRead.text)
@@ -2637,6 +2813,24 @@ export async function readRouterOutcomes(opts: {
       if (o.cost_usd !== null) continue;
       const sum = costs.get(o.job_id);
       if (sum !== undefined) o.cost_usd = sum;
+    }
+  }
+  if (rewardRead.state === 'read') {
+    const rewards = foldRewardSignals(rewardRead.text);
+    for (const o of folded.outcomes) {
+      const reward = rewards.get(o.job_id);
+      if (reward === undefined) continue;
+      // Fill-only join: a recorded jobs-ledger verdict or measurement
+      // always wins; the reward row's resolved evidence fills what the
+      // fold left unknown. ttm_s is merge evidence, so it fills only
+      // while the standing verdict is a merge — the same gate the
+      // jobs-ledger dialect applies.
+      if (o.merged === null) o.merged = reward.merged;
+      if (o.merged === true && o.ttm_s === null) o.ttm_s = reward.ttm_s;
+      if (o.ci_wall_s === null) o.ci_wall_s = reward.ci_wall_s;
+      if (o.cost_usd === null) o.cost_usd = reward.cost_usd;
+      if (o.repo === null) o.repo = reward.repo;
+      o.pool_pct_used = reward.pool_pct_used;
     }
   }
   if (emptyTagRead.state === 'read') {
@@ -2665,5 +2859,6 @@ export async function readRouterOutcomes(opts: {
     empty_tag_state: emptyTagState, empty_tag_truncated: emptyTagTruncated,
     merge_events_state: mergeEventsState, merge_events_truncated: mergeEventsTruncated,
     revert_ledger_state: revertLedger.state,
+    reward_state: rewardState, reward_truncated: rewardTruncated,
     truncated: read.truncated };
 }

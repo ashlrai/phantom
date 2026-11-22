@@ -503,7 +503,7 @@ decisions only) and `fallback_used` (job receipts). See [gates and inert status]
 `router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?, workClassFor?, revertedPrKeys?, mergeEvents?})`,
 `authorityRevertedPrKeys(evidence)`, `foldSpendCosts(text)`,
 `foldRouteDecisionWorkClasses(text)`, `foldRouteDecisions(text)`,
-`foldEmptyTags(text)`, `foldMergeEvents(text)`,
+`foldEmptyTags(text)`, `foldMergeEvents(text)`, `foldRewardSignals(text)`,
 `readLedgerFile(path, limit?)`,
 `readLedgerTail(path, maxBytes?)` and
 `readRouterOutcomes({runsDir?, lane?, ashlarDir?, authorityEvidence?})`,
@@ -612,7 +612,41 @@ join nothing and never create outcomes. The read degrades
 independently: `RouterOutcomeRead.merge_events_state` reports its
 health and `merge_events_truncated` marks a cut tail; anything but
 `read` leaves every `merge_queue` null — unknown, never a guessed
-queue history. `passk` is the
+queue history. A sixth ledger joins under the ASHLR home root — the
+same root `ashlarDir` resolves for the eval passk projection
+(`ASHLR_HOME` honored): `<ashlr>/metrics/reward-signals.jsonl`, the
+reward-signal substrate's per-job resolved-outcome rows
+(`v:1` records the daemon's reward-sync feed and supervising bridges
+append; src/core/metrics/reward-signal.ts).
+`foldRewardSignals` collapses the tail to each job's recorded
+`{merged, ttm_s, ci_wall_s, cost_usd, repo, pool_pct_used}` evidence —
+last appended row winning a repeat, only rows with `v:1`, a bounded
+`jobId`, a boolean `merged` verdict and parseable `dispatchedAt`/
+`recordedAt` stamps counting, consumed fields joining under their own
+bounded shapes (milliseconds become seconds, `costUsd`/`pctUsedDelta`/
+`repo` keep their recorded-value-or-null rule, and `pctUsedDelta`
+joins only inside the [0, 100] percentage-point shape). The read fills
+only fields the jobs fold left null — `merged`, `ttm_s` (only while
+the standing verdict is a merge, the same gate the jobs-ledger dialect
+applies), `ci_wall_s`, `cost_usd` (after the api-spend join), `repo` —
+so persisted reward evidence recovers verdicts and cost figures the
+bounded jobs tail dropped without ever overriding a recorded
+jobs-ledger value; the reward row's `merged:false` covers its
+closed-unmerged and reverted resolutions alike (the v1 schema has no
+revert dimension — `reverted` still joins independently). Reward rows
+naming jobs outside the jobs window never create outcomes.
+`pool_pct_used` is the row's recorded subscription-pool percentage
+points consumed (`cost.pctUsedDelta`) — the only per-job
+subscription-quota cost figure, since subscription lanes record no
+`cost_usd` and `acus` covers only the Devin lane's ACU spend; it is a
+different unit than either and never summed with them, staying `null`
+when the reward ledger was not read, no row named the job, or the
+row's pool window reset or readings were missing (the producer leaves
+the delta null — unknown stays unknown, never 0). The read degrades
+independently: `RouterOutcomeRead.reward_state` reports its health
+and `reward_truncated` marks a cut tail; anything but `read` leaves
+every joined field at its jobs-ledger value — unknown, never a
+guessed verdict or cost. `passk` is the
 lane+model's pass^k (`passPowK`) from the published `eval.lane-scores.v1`
 projection (`~/.ashlr/eval/passk/lane-scores.json`, `ASHLR_HOME` honored);
 it is `null` whenever the ledger lacks lane/model, the projection is

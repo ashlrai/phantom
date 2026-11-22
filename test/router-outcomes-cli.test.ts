@@ -33,7 +33,7 @@ function outcome(job_id: string, over: Partial<RouterOutcome> = {}): RouterOutco
   return {
     schema: 'router.outcome.v1', job_id, lane: 'alpha', model: 'm1', tier: 'work', work_class: null, repo: null,
     lane_hint: null, lane_override: null,
-    merged: true, reverted: null, ci_first_pass: true, review_findings: null, cost_usd: 1.5, wall_s: 600,
+    merged: true, reverted: null, ci_first_pass: true, review_findings: null, cost_usd: 1.5, pool_pct_used: null, wall_s: 600,
     tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
     tokens_cache_read: null, tokens_cache_write: null,
     usage_source: null, usage_missing: null,
@@ -63,6 +63,7 @@ function read(over: Partial<RouterOutcomeRead> = {}): RouterOutcomeRead {
     empty_tag_state: 'missing', empty_tag_truncated: false,
     merge_events_state: 'missing', merge_events_truncated: false,
     revert_ledger_state: 'missing',
+    reward_state: 'missing', reward_truncated: false,
     outcomes: [], malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0, session_rows: 0, truncated: false,
     ...over,
   };
@@ -172,7 +173,7 @@ describe('phm router outcomes', () => {
       malformed_rows: 3, unattached_rows: 1, ambiguous_urls: 2, session_rows: 4,
     }), 100);
     const lines = routerOutcomeLines(report);
-    expect(lines[0]).toBe('router outcomes state=read eval=missing spend=missing market=missing empty_tags=missing merge_events=missing revert_ledger=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2 session_rows=4');
+    expect(lines[0]).toBe('router outcomes state=read eval=missing spend=missing market=missing empty_tags=missing merge_events=missing revert_ledger=missing reward=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2 session_rows=4');
     expect(lines[1]).toBe(`ledger ${report.path}`);
     expect(lines[3]).toContain('work_class=unknown repo=ashlrai/phantom lane_hint=unknown');
     expect(lines[3]).toContain('lane_hint_blocked_by=[quota_exhausted,saturated] market_lane=beta market_preferred=alpha market_override=resource_fit market_reasons=[no_runnable_lane,global_admission] market_rejected=[alpha:quota_exhausted+held;beta]');
@@ -240,6 +241,21 @@ describe('phm router outcomes', () => {
     const h = harness(canned(read({ outcomes: [outcome('A')], market_state: 'unreadable' })));
     expect(await cmdRouterOutcomes(['--json'], h.readFn)).toBe(0);
     expect(JSON.parse(h.out())).toMatchObject({ market_state: 'unreadable', market_truncated: false });
+  });
+
+  it('surfaces reward ledger health and cut-tail coverage in JSON and text', async () => {
+    const report = buildRouterOutcomesReport(read({
+      outcomes: [outcome('A', { pool_pct_used: 2.5 })], reward_state: 'read', reward_truncated: true,
+    }), 100);
+    expect(report).toMatchObject({ reward_state: 'read', reward_truncated: true });
+    const lines = routerOutcomeLines(report);
+    expect(lines[0]).toContain('reward=read');
+    expect(lines).toContain('reward coverage: retained tail only; reward-signal joins cover the newest bytes');
+    expect(lines[3]).toContain('pool_pct_used=2.5');
+
+    const h = harness(canned(read({ outcomes: [outcome('A')], reward_state: 'unreadable' })));
+    expect(await cmdRouterOutcomes(['--json'], h.readFn)).toBe(0);
+    expect(JSON.parse(h.out())).toMatchObject({ reward_state: 'unreadable', reward_truncated: false });
   });
 
   it('surfaces empty-tag ledger health and cut-tail coverage in JSON and text', async () => {

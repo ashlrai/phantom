@@ -1,7 +1,8 @@
 /**
  * `phm fleet router-weights [--runs-dir <absolute dir>] [--json]` — advisory per-work-class router-weight
  * proposals from recorded outcomes (metrics/jobs.jsonl joined with the bounded side ledgers
- * api-spend/work-market/empty-tags/merge-events). Read-only: never writes weights.json and never
+ * api-spend/work-market/empty-tags/merge-events plus the reward-signal substrate under the
+ * ASHLR home root). Read-only: never writes weights.json and never
  * changes routing. Logic lives in src/core/router/weight-proposals.ts; this file parses argv and renders.
  * Exit: 0 for a bounded read (proposals or an insufficient-evidence refusal); 1 when the ledger is missing,
  * unreadable, not a file or oversized (reported as unavailable, never as an empty success); 2 for usage.
@@ -15,7 +16,8 @@ import { buildRouterWeightProposalReport, type RouterWeightEvidence, type Router
 export const FLEET_ROUTER_WEIGHTS_USAGE =
   'Usage: phm fleet router-weights [--runs-dir <absolute dir>] [--json]\n' +
   'Advisory only. Reads <runs-dir>/metrics/jobs.jsonl (default ASHLR_RUNS_DIR, then ~/.ashlr-runs) plus the bounded ' +
-  'side ledgers (api-spend/work-market/empty-tags/merge-events) and the fleet controller\'s recorded lane-quality ' +
+  'side ledgers (api-spend/work-market/empty-tags/merge-events) plus the reward-signal ledger ' +
+  '(<ashlr>/metrics/reward-signals.jsonl) and the fleet controller\'s recorded lane-quality ' +
   'verdicts in <runs-dir>/queue/fleet-controller.json. ' +
   'Proposes bounded weight shifts per work_class/lane from held-merge outcomes (20 known outcomes required, ' +
   'shifts capped at 0.1; merges recorded as reverted never count as held). Writes nothing and changes no ' +
@@ -45,6 +47,7 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
   }
   if (e.cost_usd_mean !== null) parts.push(`cost_usd=${e.cost_usd_mean}(${e.cost_known})`);
   if (e.acus_mean !== null) parts.push(`acus=${e.acus_mean}(${e.acus_known})`);
+  if (e.pool_pct_used_mean !== null) parts.push(`pool_pct_used=${e.pool_pct_used_mean}(${e.pool_pct_used_known})`);
   if (e.wall_s_mean !== null) parts.push(`wall_s=${e.wall_s_mean}(${e.wall_known})`);
   if (e.ttm_s_mean !== null) parts.push(`ttm_s=${e.ttm_s_mean}(${e.ttm_known})`);
   if (e.queue_wait_s_mean !== null) parts.push(`queue_wait_s=${e.queue_wait_s_mean}(${e.queue_wait_known})`);
@@ -111,7 +114,7 @@ function qualityReceiptLine(r: ControllerQualityReceipt): string {
 }
 
 function proposalLines(report: RouterWeightProposalReport): string[] {
-  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} empty_tags=${report.empty_tag_state} merge_events=${report.merge_events_state} controller_quality=${report.controller_quality_state} truncated=${report.truncated} as_of=${report.as_of} ` +
+  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} empty_tags=${report.empty_tag_state} merge_events=${report.merge_events_state} reward=${report.reward_state} controller_quality=${report.controller_quality_state} truncated=${report.truncated} as_of=${report.as_of} ` +
     'advisory-only: not applied to routing or weights.json';
   if (report.status === 'unavailable') {
     return [header, `unavailable: ledger state=${report.ledger.state}; no proposals were computed`, `ledger ${report.ledger.path}`];
@@ -209,6 +212,11 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
     ...(report.revert_ledger_state !== 'read'
       ? [`revert-ledger coverage: revert-outcomes.jsonl ${report.revert_ledger_state}; no scan-detected reverts joined`]
       : []),
+    ...(report.reward_state !== 'read'
+      ? [`reward coverage: reward-signals.jsonl ${report.reward_state}; no reward-signal evidence joined`]
+      : report.reward_truncated
+        ? ['reward coverage: retained tail only; reward-signal joins cover the newest bytes']
+        : []),
     ...(report.controller_quality_state !== 'read' && report.controller_quality_state !== 'unreported'
       ? [`controller-quality coverage: fleet-controller.json ${report.controller_quality_state}; no lane-quality verdicts joined`]
       : []),

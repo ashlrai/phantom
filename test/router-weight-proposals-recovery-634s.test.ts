@@ -46,6 +46,19 @@ const emptyTagsPath = (): string => join(runs, 'metrics', 'empty-tags.jsonl');
 const writeEmptyTags = (rows: object[]): void => writeFileSync(emptyTagsPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
 const mergeEventsPath = (): string => join(runs, 'metrics', 'merge-events.jsonl');
 const writeMergeEvents = (rows: object[]): void => writeFileSync(mergeEventsPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+const rewardSignalsPath = (): string => join(root, 'ashlr', 'metrics', 'reward-signals.jsonl');
+const writeRewardSignals = (rows: object[]): void => {
+  mkdirSync(join(root, 'ashlr', 'metrics'), { recursive: true });
+  writeFileSync(rewardSignalsPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+};
+/** A reward-signals.jsonl v1 row in the shape the reward-sync feed appends. */
+const rewardRow = (jobId: string, merged: boolean, pctUsedDelta: number | null): object => ({
+  v: 1, jobId, pool: 'codex-cmp', repo: 'ashlrai/phantom', merged,
+  dispatchedAt: '2026-11-01T00:00:00.000Z', mergedAt: merged ? '2026-11-01T01:00:00.000Z' : null,
+  timeToMergeMs: merged ? 3_600_000 : null, ciWallMs: 600_000,
+  cost: { pool: 'codex-cmp', pctUsedStart: 10, pctUsedEnd: pctUsedDelta === null ? null : 10 + pctUsedDelta, pctUsedDelta, costUsd: null },
+  recordedAt: '2026-11-01T02:00:00.000Z',
+});
 
 /** A merge-events.jsonl observation row in the fleet merge-latency shape (repo#pr keyed). */
 const mergeEvent = (pr: number, type: string, extra: Record<string, unknown> = {}): object => ({
@@ -360,6 +373,8 @@ describe('outcome-quality evidence', () => {
       passk_mean: 0.71,
       acus_known: 0,
       acus_mean: null,
+      pool_pct_used_known: 0,
+      pool_pct_used_mean: null,
       diff_files_known: 0,
       diff_files_mean: null,
       diff_lines_known: 0,
@@ -538,6 +553,7 @@ describe('outcome-quality evidence', () => {
       tokens_known: 0, tokens_total_mean: null,
       passk_known: 0, passk_mean: null,
       acus_known: 0, acus_mean: null,
+      pool_pct_used_known: 0, pool_pct_used_mean: null,
       diff_files_known: 0, diff_files_mean: null,
       diff_lines_known: 0, diff_lines_mean: null,
       usage_missing_known: 0,
@@ -1670,6 +1686,64 @@ describe('merge-queue evidence', () => {
     expect(out).toContain('merge_events=missing');
     expect(out).toContain('merge-event coverage: merge-events.jsonl missing');
     expect(out).not.toContain('merge_queue=');
+  });
+});
+
+describe('reward-signal evidence', () => {
+  it('lets reward rows resolve merge verdicts the jobs window dropped and supplies pool_pct_used', async () => {
+    // 15 jobs-ledger merges plus 5 jobs whose terminal verdicts only the
+    // reward substrate still records — the retained jobs tail dropped
+    // their outcome rows, the reward ledger persisted them.
+    writeLedger([...merged(15), ...unknown(5)]);
+    writeRewardSignals([
+      rewardRow('synthetic-VERIFIED-alpha-code-0', true, 1),
+      rewardRow('synthetic-VERIFIED-alpha-code-1', true, 2),
+      rewardRow('synthetic-VERIFIED-alpha-code-2', true, 3),
+      rewardRow('synthetic-VERIFIED-alpha-code-3', false, 4),
+      rewardRow('synthetic-VERIFIED-alpha-code-4', false, null),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      reward_state: 'read', reward_truncated: false,
+      known_outcomes: 20, unknown_outcomes: 0, unclassified_outcomes: 0,
+    });
+    expect(report.proposals).toHaveLength(1);
+    const p = report.proposals[0];
+    // 18 held merges of 20 known: the reward verdicts moved five jobs
+    // out of the unknown cohort and into real merge evidence.
+    expect(p).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 20, status: 'proposed', proposed_weight: 0.6 });
+    expect(p.evidence).toMatchObject({
+      pool_pct_used_known: 4, pool_pct_used_mean: 2.5,
+      ttm_known: 3, ttm_s_mean: 3600,
+      ci_wall_known: 5, ci_wall_s_mean: 600,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('reward=read');
+    expect(out).toContain('pool_pct_used=2.5(4)');
+  });
+
+  it('keeps the jobs-ledger verdict over a contradicting reward row while its pool figure still joins', async () => {
+    writeLedger(merged(20));
+    writeRewardSignals([rewardRow('synthetic-MERGED-alpha-code-0', false, 5)]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({ reward_state: 'read', reward_truncated: false, known_outcomes: 20 });
+    const p = report.proposals[0];
+    // The recorded jobs merge stands: still 20 held merges, still the cap.
+    expect(p).toMatchObject({ known_n: 20, proposed_weight: 0.6 });
+    expect(p.evidence).toMatchObject({ pool_pct_used_known: 1, pool_pct_used_mean: 5 });
+  });
+
+  it('reports reward coverage missing and pool_pct evidence null when the ledger was not read', async () => {
+    writeLedger(merged(20));
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({ reward_state: 'missing', reward_truncated: false });
+    expect(report.proposals[0].evidence).toMatchObject({ pool_pct_used_known: 0, pool_pct_used_mean: null });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('reward=missing');
+    expect(out).toContain('reward coverage: reward-signals.jsonl missing');
   });
 });
 

@@ -98,6 +98,16 @@ export interface RouterWeightEvidence {
   acus_known: number;
   /** Mean recorded acus over acus_known; null when none recorded. */
   acus_mean: number | null;
+  /**
+   * Group outcomes with a recorded subscription-pool percentage-point
+   * figure — the reward-signals ledger's `cost.pctUsedDelta`, the only
+   * per-job subscription-quota cost evidence (subscription lanes record
+   * no cost_usd and acus covers only the Devin lane's ACU spend). A
+   * different unit than both: the three means never mix.
+   */
+  pool_pct_used_known: number;
+  /** Mean recorded pool_pct_used over pool_pct_used_known; null when none recorded. */
+  pool_pct_used_mean: number | null;
   /** Group outcomes with a recorded finish-row `diff_files` count. */
   diff_files_known: number;
   /** Mean recorded diff_files over diff_files_known; null when none recorded. */
@@ -523,6 +533,7 @@ interface WeightEvidenceTally {
   tokensSum: number; tokensKnown: number;
   passkSum: number; passkKnown: number;
   acusSum: number; acusKnown: number;
+  poolPctSum: number; poolPctKnown: number;
   diffFilesSum: number; diffFilesKnown: number;
   diffLinesSum: number; diffLinesKnown: number;
   usageMissingKnown: number;
@@ -554,7 +565,7 @@ const freshTally = (): WeightEvidenceTally => ({
   publishWaitSum: 0, publishWaitKnown: 0,
   laneBlocked: 0, blockedReasons: new Map(),
   tokensSum: 0, tokensKnown: 0, passkSum: 0, passkKnown: 0,
-  acusSum: 0, acusKnown: 0, diffFilesSum: 0, diffFilesKnown: 0,
+  acusSum: 0, acusKnown: 0, poolPctSum: 0, poolPctKnown: 0, diffFilesSum: 0, diffFilesKnown: 0,
   diffLinesSum: 0, diffLinesKnown: 0, usageMissingKnown: 0,
   laneOverrides: 0, overrideReasons: new Map(),
   marketRejected: 0, rejectedReasons: new Map(),
@@ -621,6 +632,8 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   passk_mean: t.passkKnown === 0 ? null : round6(t.passkSum / t.passkKnown),
   acus_known: t.acusKnown,
   acus_mean: t.acusKnown === 0 ? null : round6(t.acusSum / t.acusKnown),
+  pool_pct_used_known: t.poolPctKnown,
+  pool_pct_used_mean: t.poolPctKnown === 0 ? null : round6(t.poolPctSum / t.poolPctKnown),
   diff_files_known: t.diffFilesKnown,
   diff_files_mean: t.diffFilesKnown === 0 ? null : round6(t.diffFilesSum / t.diffFilesKnown),
   diff_lines_known: t.diffLinesKnown,
@@ -925,6 +938,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     if (o.tokens_total !== null) { t.tokensKnown++; t.tokensSum += o.tokens_total; }
     if (o.passk !== null) { t.passkKnown++; t.passkSum += o.passk; }
     if (o.acus !== null) { t.acusKnown++; t.acusSum += o.acus; }
+    if (o.pool_pct_used !== null) { t.poolPctKnown++; t.poolPctSum += o.pool_pct_used; }
     if (o.diff_files !== null) { t.diffFilesKnown++; t.diffFilesSum += o.diff_files; }
     if (o.diff_lines !== null) { t.diffLinesKnown++; t.diffLinesSum += o.diff_lines; }
     if (o.usage_missing !== null) t.usageMissingKnown++;
@@ -1123,6 +1137,16 @@ export interface RouterWeightProposalReport {
    * jobs-ledger, authority-ledger and explicit revert evidence.
    */
   revert_ledger_state: RouterOutcomeRead['revert_ledger_state'];
+  /**
+   * Health of the reward-signals.jsonl tail behind the reward-signal
+   * joins — resolved merge verdicts recovered for jobs the bounded
+   * jobs tail dropped plus pool_pct_used evidence. Anything but
+   * 'read' means no reward rows joined; pool_pct_used then reads null
+   * for every group, never a zeroed figure.
+   */
+  reward_state: RouterOutcomeRead['reward_state'];
+  /** True when the reward tail was cut; joined evidence covers only the newest bytes. */
+  reward_truncated: boolean;
   /** 'unavailable' when the ledger was not read; counts are then null, never zero. */
   status: 'proposed' | 'insufficient-evidence' | 'unavailable';
   bounds: { min_samples: number; max_shift: number };
@@ -1346,6 +1370,7 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     empty_tag_state: read.empty_tag_state, empty_tag_truncated: read.empty_tag_truncated,
     merge_events_state: read.merge_events_state, merge_events_truncated: read.merge_events_truncated,
     revert_ledger_state: read.revert_ledger_state,
+    reward_state: read.reward_state, reward_truncated: read.reward_truncated,
     controller_quality_state: (controller?.state ?? 'unreported') as RouterWeightProposalReport['controller_quality_state'],
     controller_quality: controller?.state === 'read' ? controller.receipts : null,
     controller_quality_invalid_rows: controller?.state === 'read' ? controller.invalid_rows : null,
