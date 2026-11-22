@@ -29,6 +29,22 @@ beforeEach(() => { out = []; vi.spyOn(console, 'log').mockImplementation((m: str
 afterEach(() => vi.restoreAllMocks());
 
 describe('fleet doctor', () => {
+  it('finishes all hung checks within one deadline and identifies the timed-out status probe', async () => {
+    vi.useFakeTimers();
+    try {
+      const hang = (): Promise<never> => new Promise(() => {});
+      const pending = runFleetDoctor(healthy({ leader: { readEvents: hang }, readJobs: hang, readWaste: hang,
+        heartbeat: { queueStatus: hang, supervisorStatuses: async () => [] },
+        readLaneStatus: hang, readKeptStatus: hang, worktreeFs: { listDirs: hang, mtimeMs: hang } }));
+      await vi.advanceTimersByTimeAsync(2_500);
+      const report = await pending;
+      expect(report.level).toBe('red');
+      expect(report.checks[1]).toEqual({ name: 'heartbeat', level: 'red', reason: 'queue status probe timed out' });
+      expect(report.checks.filter(c => c.reason === 'probe timed out after 2500 ms')).toHaveLength(7);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('prints one ok line per check and exits 0 when healthy', async () => {
     expect(await cmdFleetDoctor([], healthy())).toBe(0);
     expect(out).toHaveLength(8);
