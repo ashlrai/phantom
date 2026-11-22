@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { lstatSync, readFileSync } from 'node:fs';
 import { lstat, mkdir, open, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -85,13 +86,14 @@ function ownerOptions(o: SeatOptions): OwnerThreadOptions {
   const runsDir = o.runs ?? (o.home ? runs(o) : fixedOwnerRunsDir());
   return { runsDir, settings, transports: liveOwnerTransports(settings, runsDir), busRoot: fleet(o) };
 }
+const SEAT_FILE_MAX_BYTES = 4 * 1024 * 1024;
 async function safe(o: SeatOptions, file: string) {
   for (const path of [join(o.home ?? homedir(), '.phantom'), root(o)]) {
     try { if (!(await lstat(path)).isDirectory()) throw new Error('Unsafe bot directory.'); }
     catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
   }
   const path = join(root(o), file);
-  try { const stat = await lstat(path); if (!stat.isFile() || stat.size > 4 * 1024 * 1024) throw new Error('Unsafe seat file.'); }
+  try { const stat = await lstat(path); if (!stat.isFile() || stat.size > SEAT_FILE_MAX_BYTES) throw new Error('Unsafe seat file.'); }
   catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
   return path;
 }
@@ -99,15 +101,22 @@ async function read(o: SeatOptions, file: string): Promise<string | null> {
   const path = await safe(o, file);
   try { return await readFile(path, 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e; }
 }
-async function roster(o: SeatOptions) {
-  const text = await read(o, 'seats.json');
-  if (text === null) return [];
+const seatRosterFileSchema = z.object({ schema: z.literal('phantom-bot-seats.v1'), seats: z.array(seatSchema) }).strict();
+/** Parse and validate seats.json text — shared by the async roster read and
+ * the synchronous store probe so the two can never disagree on what counts
+ * as a valid roster. Throws exactly where roster() threw. */
+function parseSeatRoster(text: string): BotSeat[] {
   assertMetadata(text);
-  const result = z.object({ schema: z.literal('phantom-bot-seats.v1'), seats: z.array(seatSchema) }).strict().safeParse(JSON.parse(text));
+  const result = seatRosterFileSchema.safeParse(JSON.parse(text));
   if (!result.success) throw new Error('Invalid seat configuration.');
   const seats = result.data.seats;
   if (new Set(seats.map(s => s.id)).size !== seats.length || new Set(seats.map(s => s.participantId)).size !== seats.length) throw new Error('Duplicate seat identity.');
   return seats;
+}
+async function roster(o: SeatOptions) {
+  const text = await read(o, 'seats.json');
+  if (text === null) return [];
+  return parseSeatRoster(text);
 }
 const provider = (s: BotSeat): Participant['provider'] => s.kind === 'other' ? s.provider! : ({ 'devin-bot': 'devin', 'grok-bot': 'grokbot', 'openai-bot': 'openai-dot', local: 'local' } as const)[s.kind];
 function participant(seat: BotSeat, state: SeatState): Participant {
@@ -202,6 +211,116 @@ export async function seatMayClaim(id: string, o: SeatOptions = {}): Promise<boo
 }
 export async function seatParticipants(o: SeatOptions = {}): Promise<Participant[]> {
   return (await listSeats(o)).seats.map(s => s.participant);
+}
+
+/** What `inspectSeatStore` reports about the three files under
+ * `<home>/.phantom/bots` — retained counts only, never seat contents. */
+export interface SeatStoreInspection {
+  /** 'missing' when the bots directory itself is absent — a verified-empty
+   * store whose counts are real zeros; 'unavailable' when the directory or
+   * any present file fails the same checks `safe()`/`read()` apply, the same
+   * failure that makes `planSeatHandoffs` throw; 'available' when the
+   * directory exists and every present file read cleanly. */
+  source: 'missing' | 'available' | 'unavailable';
+  /** Roster rows in seats.json; null when that file could not be read or
+   * fails `parseSeatRoster` validation — the failure `roster()` throws on. */
+  seats: number | null;
+  /** seat-state.json state-map entries; null when the file could not be
+   * read or parses to `null`, the one JSON value `snapshot()` cannot index
+   * by seat id. */
+  states: number | null;
+  /** Retained handoffs.jsonl records; null when the journal could not be
+   * read or holds a line `snapshot()` cannot parse — `null` parses but
+   * throws on the `.seatId`/`.handoffId` lookups downstream. */
+  handoffs: number | null;
+}
+
+type SeatFileInspection = { kind: 'absent' } | { kind: 'unsafe' } | { kind: 'text'; text: string };
+
+/** The synchronous twin of `safe()`+`read()` for one seat file: the same
+ * regular-file and size rules, the same ENOENT-tolerant absence — reported
+ * instead of thrown so the probe can name exactly which file is sick. */
+function inspectSeatFile(dir: string, name: string): SeatFileInspection {
+  const path = join(dir, name);
+  let stat;
+  try { stat = lstatSync(path); }
+  catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? { kind: 'absent' } : { kind: 'unsafe' };
+  }
+  if (!stat.isFile() || stat.size > SEAT_FILE_MAX_BYTES) return { kind: 'unsafe' };
+  try { return { kind: 'text', text: readFileSync(path, 'utf8') }; }
+  catch { return { kind: 'unsafe' }; }
+}
+
+/**
+ * Read-only probe of the seat store `planSeatHandoffs`, `listSeats` and the
+ * unified bus's seats surfaces share — the synchronous counterpart of the
+ * file half of `snapshot()`. Never throws and never writes: an absent bots
+ * directory is a verified-empty store (real zeros); a directory or file
+ * failing the `safe()` checks, or a file whose contents `roster()`/
+ * `snapshot()` would reject, reports `unavailable` with that file's count
+ * null while the other files still report what they really hold. Seat
+ * contents, live claims and quota evidence are never read here — this
+ * names store health only.
+ */
+export function inspectSeatStore(home?: string): SeatStoreInspection {
+  const unavailable: SeatStoreInspection = { source: 'unavailable', seats: null, states: null, handoffs: null };
+  const phantomDir = join(home ?? homedir(), '.phantom');
+  const dir = join(phantomDir, 'bots');
+  // The same directory rule safe() enforces on every read: each existing
+  // level must be a real directory — a file or symlink where a directory
+  // belongs makes every file under it unsafe.
+  let dirPresent = false;
+  for (const path of [phantomDir, dir]) {
+    let stat;
+    try { stat = lstatSync(path); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      return unavailable;
+    }
+    if (!stat.isDirectory()) return unavailable;
+    if (path === dir) dirPresent = true;
+  }
+  if (!dirPresent) return { source: 'missing', seats: 0, states: 0, handoffs: 0 };
+
+  let degraded = false;
+
+  const seatsFile = inspectSeatFile(dir, 'seats.json');
+  let seats: number | null = 0;
+  if (seatsFile.kind === 'unsafe') { seats = null; degraded = true; }
+  else if (seatsFile.kind === 'text') {
+    try { seats = parseSeatRoster(seatsFile.text).length; }
+    catch { seats = null; degraded = true; }
+  }
+
+  const statesFile = inspectSeatFile(dir, 'seat-state.json');
+  let states: number | null = 0;
+  if (statesFile.kind === 'unsafe') { states = null; degraded = true; }
+  else if (statesFile.kind === 'text') {
+    try {
+      const parsed: unknown = JSON.parse(statesFile.text);
+      // snapshot() indexes the parsed value by seat id: `null` throws, and
+      // any other non-map JSON reads as empty — only a plain object's keys
+      // are real state rows.
+      if (parsed === null) throw new Error('Invalid seat state.');
+      states = typeof parsed === 'object' && !Array.isArray(parsed) ? Object.keys(parsed).length : 0;
+    } catch { states = null; degraded = true; }
+  }
+
+  const handoffsFile = inspectSeatFile(dir, 'handoffs.jsonl');
+  let handoffs: number | null = 0;
+  if (handoffsFile.kind === 'unsafe') { handoffs = null; degraded = true; }
+  else if (handoffsFile.kind === 'text') {
+    try {
+      const lines = handoffsFile.text.split('\n').filter(Boolean);
+      for (const line of lines) {
+        if (JSON.parse(line) === null) throw new Error('Invalid handoff record.');
+      }
+      handoffs = lines.length;
+    } catch { handoffs = null; degraded = true; }
+  }
+
+  return { source: degraded ? 'unavailable' : 'available', seats, states, handoffs };
 }
 function handoff(seatId: string, kind: SeatHandoff['work']['kind'], ref: string, identity: string, now: string, claim?: CoordinationView): SeatHandoff {
   return { schema: 'phantom-bot-handoff.v1', handoffId: createHash('sha256').update(JSON.stringify([seatId, kind, ref, identity])).digest('hex'), seatId,

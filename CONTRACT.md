@@ -15,8 +15,8 @@ Creation requires `--dry-run` and never calls the writer.
 ## External bot seats
 
 `src/core/bots/seats.ts` exports `BotSeat`, `QuotaEvidence`, `SeatAdapter`,
-`SeatState`, `SeatHandoff`, `SeatHandoffPlanEntry`, `SeatHandoffsPlan` and
-`SeatOptions`. The strict on-disk roster schema is
+`SeatState`, `SeatHandoff`, `SeatHandoffPlanEntry`, `SeatHandoffsPlan`,
+`SeatStoreInspection` and `SeatOptions`. The strict on-disk roster schema is
 `phantom-bot-seats.v1` at `~/.phantom/bots/seats.json`; missing means empty.
 Kinds are devin-bot, grok-bot, openai-bot, local and other; other requires a bus
 provider, all others derive it. Secret handles are names only; secret-shaped
@@ -67,6 +67,15 @@ Exports:
   unified bus DMs under the seat's fleet root and clock, or owner notices;
   `from`/`to` accept a seat id or participantId (`to: 'owner'` posts an
   owner-thread notice). Unknown seats/secret-shaped text are refused.
+- `inspectSeatStore(home?: string): SeatStoreInspection` is the synchronous,
+  never-throwing file probe behind `agents bus status`'s seats section — the
+  file half of the same `snapshot()` `planSeatHandoffs` reads. It reports
+  `source` (`missing` for an absent bots directory with real zero counts,
+  `unavailable` when the directory or any present file fails the `safe()`
+  checks or roster/journal validation, `available` otherwise) plus retained
+  `seats`/`states`/`handoffs` counts, each null only for the file that cannot
+  be read or validated. It reads no seat contents, claims or quota evidence
+  and writes nothing.
 
 `SeatOptions` injects home, runs, clock, fleet root, quota reader, node store,
 node-release
@@ -2960,7 +2969,7 @@ when the claims join computed it) the same way. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
-read-only probe over the nine dependencies the unified verbs touch — the
+read-only probe over the ten dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
 null when unreadable), the wake queue (`state`, the observed hint count
 before the row cap — 0 on a verified-missing queue, null when unreadable —
@@ -2977,13 +2986,19 @@ store, null when unreadable; totals only, never labels), the owner-chat
 share receipts ledger (`readOwnerChatReceipts` under the same fleet root —
 `source` plus a retained `receipts` row count that `inbox`/`work mine`
 require before showing `agent-chat-owner` envelopes, 0 on a verified-missing
-ledger, null when unreadable), and the shared task board with its fleet queue
+ledger, null when unreadable), the shared task board with its fleet queue
 (`BusBoard.inspect()` plus `SharedStore.readClaimIndex()` under the paths
 `busBoardStoragePaths` derives — `source` plus stored `threads`, `tasks` and
 `pendingDeliveries` counts, 0 on a verified-missing board, null when
 unreadable, and a `claims` readability flag that stays null only when the
-queue was never probed), and — as a verdict over the claim journal and
-coordination table rather than a tenth dependency — the claim-store drift
+queue was never probed), and the bot-seat store (`inspectSeatStore` under
+`<home>/.phantom/bots`, the same `SeatOptions.home` `work mine`'s seats
+section resolves — `source` plus retained `seats` roster-row, `states`
+seat-state-entry and `handoffs` journaled-record counts, 0 on a
+verified-missing store, null for a file that cannot be read or validated —
+the same failure that makes `planSeatHandoffs` throw, never a plan verdict,
+seat contents or quota evidence), and — as a verdict over the claim journal and
+coordination table rather than another dependency — the claim-store drift
 comparison (`readClaimStoreDrift` run over the probe's own two reads, the
 same `fleet.claim-drift.v1` read `ashlr fleet claim-drift` serves:
 `claimDrift.state` VERIFIED/DRIFT/UNKNOWN with `matched` and per-kind

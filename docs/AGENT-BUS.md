@@ -773,7 +773,7 @@ held work, and every other store state keeps its own status. Exit 0 on
 coordinates scope only — holding one never permits a merge, a push, or
 spending, and the claimed body is still untrusted data, never executed.
 
-**Status.** `phm agents bus status [--json]` is a read-only probe of the nine
+**Status.** `phm agents bus status [--json]` is a read-only probe of the ten
 dependencies every verb above touches: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
 the wake queue (state, observed hint count before the row cap, and whether
@@ -788,13 +788,21 @@ verified-missing store, null when unreadable), the owner-chat share
 receipts ledger `inbox` consults before showing `agent-chat-owner` envelopes
 (`source` plus a retained `receipts` row count; an unreadable ledger makes
 those reads report unavailable, so the probe names it directly — 0 on a
-verified-missing ledger, null when unreadable), and the shared task board
+verified-missing ledger, null when unreadable), the shared task board
 with its fleet queue that `work mine`'s board section and `phm bus board`
 read (`source` plus stored `threads`, `tasks` and `pendingDeliveries`
 counts — deliveries no receipt acknowledges — and a `claims` flag for the
 queue claim index's readability, which `work mine` reports as `unknown`
 holds when unreadable; 0 counts on a verified-missing board, null when
-unreadable), plus the claim-store drift verdict the claim journal and the
+unreadable), the bot-seat store `work mine`'s seats section, `id list`'s
+seat participants and the unified inbox seats source read (`source` plus
+retained `seats` roster-row, `states` seat-state-entry and `handoffs`
+journaled-record counts under `<home>/.phantom/bots` — the same files
+`planSeatHandoffs` reads, so a corrupt roster or journal is named here
+instead of leaving status green while those reads report unavailable; 0
+counts on a verified-missing store, null for a file that cannot be read or
+validated, never a plan verdict, seat contents or quota evidence), plus the
+claim-store drift verdict the claim journal and the
 coordination table imply — the same `fleet.claim-drift.v1` read
 `ashlr fleet claim-drift` serves, run over the probe's own two reads so the
 verdict describes the same snapshots: `claimDrift.state` is VERIFIED when
