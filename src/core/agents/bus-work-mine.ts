@@ -34,7 +34,8 @@ import type { AgentMessageKind } from '../fleet/agent-messages.js';
 import { conversationScope, readAgentConversations, type AgentConversations, type ConversationScope } from '../fleet/agent-conversations.js';
 import { plainAge } from '../fleet/agent-conversation-model.js';
 import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobHold, busWorkFeedOwnerMatcher, busWorkFeedToMatcher,
-  busWorkJobDispatch, readBusWorkFeed, type BusWorkFeedHoldCoverage, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
+  busWorkJobDispatch, busWorkJobResultSuffix, readBusWorkFeed, type BusWorkFeedHoldCoverage, type BusWorkFeedJob,
+  type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import { agentWakeClaimHolderSuffix, agentWakeMessageSuffix, busBodyFallbackSummary, busBodyJobIds, busBodyJobId, busBodyJobMatch,
   busBodySummary, busInboxJobMarker, jobAnnotationFromFeed, readAgentInbox, readAgentWakes,
   type AgentWakeRow, type BusEnvelopeLookupJob, type InboxKind } from './bus-unified.js';
@@ -1446,7 +1447,7 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
         `${detail === '' ? '' : ` detail="${detail}"`} ` +
         `claimable=${claimable} addressed=${job.addressed} announced=${job.announced} owner=${job.owner} repo=${job.repo}${busWorkJobDispatch(job.dispatch)} ` +
         `free=${keys(job.freeKeys)} held=${keys(job.heldKeys)} post=${job.postId}` +
-        `${job.statusId === null ? '' : ` status=${job.statusId}`}`);
+        `${job.statusId === null ? '' : ` status=${job.statusId}`}${busWorkJobResultSuffix(job)}`);
     }
   }
 
@@ -1469,7 +1470,7 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
         `owner=${job.owner} to=${job.to} provider=${job.provider} repo=${job.repo}${busWorkJobDispatch(job.dispatch)} keys=${keys} ` +
         `held=${held} free=${keyList(job.freeKeys)} heldkeys=${keyList(job.heldKeys)} ` +
         `updated=${new Date(job.updatedAt).toISOString()} post=${job.postId}` +
-        `${job.statusId === null ? '' : ` status=${job.statusId}`}`);
+        `${job.statusId === null ? '' : ` status=${job.statusId}`}${busWorkJobResultSuffix(job)}`);
     }
   }
 

@@ -245,7 +245,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { busWorkFeedHoldIndex, BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
+import { busWorkFeedHoldIndex, BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedJob, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
 import { busBodyFallbackSummary, busBodyJobIds, busBodySummary } from '../agents/bus-unified.js';
 import { coordinationRowBlocks, listCoordination } from '../agents/claim-store.js';
 import { readPendingProposals, readTeamApprovals, type ProposalApprovalItem, type TeamApprovalItem } from '../approvals/surface.js';
@@ -930,6 +930,17 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
   const { coverage, heldByJob: heldKeys } = busWorkFeedHoldIndex(feed.claims);
   const holdsKnown = coverage === 'complete';
 
+  // ` · result <outcome>[ (reason)] reported by <from>` — the newest
+  // work.result evidence a feed job carries in inbox detail; '' when none
+  // is retained. Evidence only: it never moved the job's status.
+  const resultNote = (job: BusWorkFeedJob): string => {
+    const result = job.result;
+    if (result === undefined) return '';
+    return ` · result ${result.outcome}` +
+      (result.reason === undefined ? '' : ` (${oneLine(result.reason, 64)})`) +
+      ` reported by ${oneLine(result.from, 96)}`;
+  };
+
   const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
   for (const job of feed.jobs) {
     const post = posts.get(job.id);
@@ -946,7 +957,7 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
         blocking: false,
         title: oneLine(job.title, TITLE_MAX) || `bus work ${job.id}`,
         detail: cap(`owner ${job.owner} · ${job.provider} · ${job.repo} · ${job.status}` +
-          (report?.detail ? ` — ${report.detail}` : ''), DETAIL_MAX),
+          (report?.detail ? ` — ${report.detail}` : '') + resultNote(job), DETAIL_MAX),
         since: iso(job.updatedAt),
         expiresAt: post ? iso(post.expiresAt) : null,
         jobIds: [job.id],
@@ -960,14 +971,23 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
     // A running/idle announcement whose declared keys all lost their live
     // holds is stalled work: the status reports progress but complete hold
     // coverage proves nobody holds the job's scope, and only the announcer
-    // can move it — a worker cannot claim a non-open status. Jobs with no
-    // declared keys have no claim scope to prove unheld, and incomplete
-    // coverage can never prove "no hold", so both stay hidden rather than
-    // listed as fact.
+    // can move it — a worker cannot claim a non-open status. A live dispatch
+    // report is work coverage too: 'reserved'/'admitted' mean the peer
+    // pipeline still owns the job's outcome, so the job hides like a held
+    // one would. A terminal report ('complete'/'failed') is different — the
+    // worker answered and only the announcer can move the status, so the
+    // item cites the result receipt instead of reading as abandoned. Jobs
+    // with no declared keys have no claim scope to prove unheld, and
+    // incomplete coverage can never prove "no hold", so both stay hidden
+    // rather than listed as fact.
     if ((job.status === 'running' || job.status === 'idle') && job.claimKeys.length > 0 && holdsKnown) {
       const held = heldKeys.get(job.id);
       if (held === undefined || held.size === 0) {
+        const jobResult = job.result;
+        if (jobResult !== undefined && (jobResult.outcome === 'reserved' || jobResult.outcome === 'admitted')) continue;
         const report = statuses.get(job.id);
+        const terminalResult = jobResult !== undefined && (jobResult.outcome === 'complete' || jobResult.outcome === 'failed')
+          ? jobResult : undefined;
         items.push({
           id: `bus-feed:${job.id}`,
           source: 'bus',
@@ -977,11 +997,17 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
           title: oneLine(job.title, TITLE_MAX) || `bus work ${job.id}`,
           detail: cap(`owner ${job.owner} · ${job.provider} · ${job.repo} · ${job.status}` +
             (report?.detail ? ` — ${report.detail}` : (job.detail === undefined ? '' : ` — ${oneLine(job.detail, 140)}`)) +
-            ' · no live claim on its declared keys; only the announcer can move it', DETAIL_MAX),
+            ' · no live claim on its declared keys; ' +
+            (terminalResult === undefined
+              ? 'only the announcer can move it'
+              : `work.result ${terminalResult.outcome} reported by ${oneLine(terminalResult.from, 96)}` +
+                (terminalResult.reason === undefined ? '' : ` (${oneLine(terminalResult.reason, 64)})`) +
+                ' — only the announcer can move it'), DETAIL_MAX),
           since: iso(job.updatedAt),
           expiresAt: post ? iso(post.expiresAt) : null,
           jobIds: [job.id],
           act: [
+            ...(jobResult === undefined ? [] : [`phm agents bus show ${jobResult.id}`]),
             ...(report === undefined ? [] : [`phm agents bus show ${report.id}`]),
             `phm agents bus work feed --job ${job.id} --claims`,
           ],
@@ -1003,6 +1029,7 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
         title: oneLine(job.title, TITLE_MAX) || `bus work ${job.id}`,
         detail: cap(`owner ${job.owner} · ${job.provider} · ${job.repo} · ${job.status}` +
           (job.detail === undefined ? '' : ` — ${oneLine(job.detail, 140)}`) +
+          resultNote(job) +
           ' · declares no claim keys; nothing can claim it', DETAIL_MAX),
         since: iso(post?.receivedAt ?? job.updatedAt),
         expiresAt: post ? iso(post.expiresAt) : null,
@@ -1029,7 +1056,8 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
       title: title || `bus work ${job.id}`,
       detail: cap(`owner ${job.owner} · ${job.provider} · ${job.repo} · ${job.status}` +
         (job.detail === undefined ? '' : ` — ${oneLine(job.detail, 140)}`) +
-        (holdsKnown ? ` · ${heldCount}/${job.claimKeys.length} claim keys held` : ' · claim holds unknown'), DETAIL_MAX),
+        (holdsKnown ? ` · ${heldCount}/${job.claimKeys.length} claim keys held` : ' · claim holds unknown') +
+        resultNote(job), DETAIL_MAX),
       since: iso(post?.receivedAt ?? job.updatedAt),
       expiresAt: post ? iso(post.expiresAt) : null,
       jobIds: [job.id],

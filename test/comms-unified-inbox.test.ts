@@ -651,6 +651,50 @@ describe('stalled work-feed jobs in the bus source', () => {
     expect(inbox.items.filter(i => i.id.startsWith('bus-feed:'))).toHaveLength(0);
     expect(inbox.sources.bus).toEqual({ state: 'degraded', pending: 0 });
   });
+
+  it('distinguishes a reported work.result from abandoned stalled work', async () => {
+    const workResult = (jobId: string, outcome: string, reason?: string) =>
+      postV2Body({ kind: 'work.result', jobId, claimKey: `queue:${jobId}`,
+        queueId: 'peer-work-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        receiptId: 'pw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        outcome, ...(reason === undefined ? {} : { reason }) }, { from: 'agent:worker-9' });
+    // A terminal report means the worker answered: the item cites the result
+    // receipt and says the report was made, instead of reading as abandoned.
+    postJob('RQ-DONE-REPORTED');
+    const doneStatus = postV2Body({ kind: 'work.status', jobId: 'RQ-DONE-REPORTED', status: 'running' });
+    const doneResult = workResult('RQ-DONE-REPORTED', 'complete', 'paths-not-allowed');
+    // An in-flight report means the dispatch pipeline still owns the outcome:
+    // the job hides like a held one would.
+    postJob('RQ-INFLIGHT'); postStatus('RQ-INFLIGHT', 'running');
+    workResult('RQ-INFLIGHT', 'admitted');
+    // A failed report relabels the same way complete does.
+    postJob('RQ-FAILED-REPORTED'); postStatus('RQ-FAILED-REPORTED', 'idle');
+    workResult('RQ-FAILED-REPORTED', 'failed', 'repo-not-allowed');
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'bus');
+    expect(items.map(i => i.id).sort()).toEqual(['bus-feed:RQ-DONE-REPORTED', 'bus-feed:RQ-FAILED-REPORTED']);
+    const done = items.find(i => i.id === 'bus-feed:RQ-DONE-REPORTED')!;
+    expect(done.detail).toContain('work.result complete reported by agent:worker-9 (paths-not-allowed)');
+    expect(done.detail).toContain('only the announcer can move it');
+    expect(done.act).toEqual([`phm agents bus show ${doneResult}`, `phm agents bus show ${doneStatus}`,
+      'phm agents bus work feed --job RQ-DONE-REPORTED --claims']);
+    const failed = items.find(i => i.id === 'bus-feed:RQ-FAILED-REPORTED')!;
+    expect(failed.detail).toContain('work.result failed reported by agent:worker-9 (repo-not-allowed)');
+  });
+
+  it('annotates claimable feed jobs with any reported work.result outcome', async () => {
+    postJob('RQ-REPORTED-OPEN');
+    postV2Body({ kind: 'work.result', jobId: 'RQ-REPORTED-OPEN', claimKey: 'queue:RQ-REPORTED-OPEN',
+      queueId: 'peer-work-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      receiptId: 'pw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', outcome: 'admitted' },
+      { from: 'agent:worker-9' });
+    const inbox = await read();
+    const item = inbox.items.find(i => i.id === 'bus-feed:RQ-REPORTED-OPEN')!;
+    // An open job still lists as claimable — the report is evidence a claimant
+    // sees, never a reason to hide provably free work.
+    expect(item.detail).toContain('result admitted reported by agent:worker-9');
+    expect(item.act[0]).toContain('claim acquire');
+  });
 });
 
 describe('worker-handoff assignments in the bus source', () => {
