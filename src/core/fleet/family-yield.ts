@@ -104,8 +104,18 @@ export function shouldPauseFamily(stats: { recent_finishes: readonly FamilyFinis
   return Number.isSafeInteger(n) && n > 0 && last.length === n
     && last.every(r => r.empty && (r.reason === 'no_eligible_source' || r.reason === 'no_diff'));
 }
-export const pausedFamily = (rows: readonly LaunchFamilyYield[], id: string): boolean =>
-  shouldPauseFamily(rows.find(row => row.family === launchFamily(id)));
+export function familyPauseReason(stats: { recent_finishes: readonly FamilyFinish[] } | undefined): string | null {
+  if (!shouldPauseFamily(stats)) return null;
+  const last = stats!.recent_finishes.slice().sort((a, b) => b.at - a.at).slice(0, 4);
+  const cause = last.every(r => r.reason === 'no_eligible_source') ? 'no eligible source PR or source PR already merged'
+    : last.every(r => r.reason === 'no_diff') ? 'workers finished with no changes' : 'workers found no source or made no changes';
+  return `4 of last 4 empty, ${cause}`;
+}
+export function pausedFamily(rows: readonly LaunchFamilyYield[], id: string, log = console.error): boolean {
+  const family = launchFamily(id), reason = familyPauseReason(rows.find(row => row.family === family));
+  if (reason) log(`skip ${family.replace(/^RQ-(?:PHX-)?/, '')}: ${reason}`);
+  return reason !== null;
+}
 export const readLaunchFamilies = async (root = runsRoot(), now = Date.now()): Promise<LaunchFamilyYield[]> =>
   (await readFamilyYield(join(root, 'metrics/jobs.jsonl'), 24, now)).launch_families;
 export type LaunchFamilyYield = Pick<FamilyYieldRow, 'family' | 'launches' | 'prs' | 'merged' | 'empty' | 'merged_per_launch'> & {
@@ -115,6 +125,7 @@ export type LaunchFamilyYield = Pick<FamilyYieldRow, 'family' | 'launches' | 'pr
   empty_reasons: Record<YieldEmptyReason, number>;
   recent_finishes: FamilyFinish[];
   paused: boolean;
+  pausedReason: string | null;
 };
 
 function launchFamilies(runs: readonly YieldRun[]): LaunchFamilyYield[] {
@@ -128,12 +139,12 @@ function launchFamilies(runs: readonly YieldRun[]): LaunchFamilyYield[] {
     const empty_reasons = Object.fromEntries(Object.keys(YIELD_EMPTY_LABELS).map(k => [k, 0])) as Record<YieldEmptyReason, number>;
     for (const run of empty) empty_reasons[run.empty_reason ?? 'unknown']++;
     const top = (Object.keys(empty_reasons) as YieldEmptyReason[]).sort((a, b) => empty_reasons[b] - empty_reasons[a])[0]!;
-    const recent_finishes = group.filter(r => r.finished).map(r => ({ empty: r.empty && !r.merged && r.prs.size === 0, reason: r.empty_reason ?? 'unknown', at: r.at })).sort((a, b) => b.at - a.at);
+    const recent_finishes = group.filter(r => r.finished || r.merged).map(r => ({ empty: r.empty && !r.merged && r.prs.size === 0, reason: r.empty_reason ?? 'unknown', at: r.at })).sort((a, b) => b.at - a.at);
     const tokens = knownSum(empty.map(r => r.tokens)), partial = empty.some(r => r.tokens === null);
     const amount = tokens === null ? 'unknown tokens' : `${partial ? 'at least ' : ''}${new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(tokens)} tokens`;
     return { family, launches: row.launches, prs: row.prs, merged: row.merged, empty: row.empty,
       merged_per_launch: row.merged_per_launch, empty_tokens: tokens, empty_tokens_partial: partial,
-      empty_reasons, recent_finishes, paused: shouldPauseFamily({ recent_finishes }),
+      empty_reasons, recent_finishes, paused: shouldPauseFamily({ recent_finishes }), pausedReason: familyPauseReason({ recent_finishes }),
       sentence: `${family.replace(/^RQ-(?:PHX-)?/, '')}: ${row.merged} of ${row.launches} merged, ${amount} on empty runs${row.empty ? `; ${row.empty} of ${row.launches} empty, mostly '${YIELD_EMPTY_LABELS[top]}'` : ''}` };
   }).sort((a, b) => a.merged_per_launch - b.merged_per_launch || (b.empty_tokens ?? -1) - (a.empty_tokens ?? -1)
     || b.launches - a.launches || a.family.localeCompare(b.family));

@@ -8,6 +8,7 @@ import math
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
 import urllib.request
 
@@ -68,7 +69,10 @@ def plan(prs, queue, maximum, pool=None, paused=()):
     for pr in sorted(prs, key=lambda p: (p['created_at'], p['repo'], p['number'])):
         repo, number = pr['repo'], pr['number']
         job = f'RQ-RCF{REPOS[repo]}{number}Q8'
-        if re.sub(r'\d+[A-Za-z]?$', '', job) in paused:
+        family = re.sub(r'\d+[A-Za-z]?$', '', job)
+        if family in paused:
+            reason = paused.get(family) if isinstance(paused, dict) else None
+            print(f'skip {family}: {reason or "recent workers found no source or made no changes"}', file=sys.stderr)
             continue
         if (pr.get('state') != 'open' or pr.get('mergeable_state') != 'dirty'
                 or (repo, number) in covered or re.search(r'\b' + job + r'\b', queue)):
@@ -108,7 +112,7 @@ def run(prs, queue, maximum, apply, timeout, pool=None):
         try:
             report = json.loads(subprocess.run(['phm', 'fleet', 'yield', '--json', '--metrics',
                 str(queue.parent.parent / 'metrics/jobs.jsonl')], capture_output=True, timeout=15, check=True, text=True).stdout)
-            paused = {r['family'] for r in report.get('launch_families', []) if r.get('paused') is True}
+            paused = {r['family']: r.get('pausedReason') for r in report.get('launch_families', []) if r.get('paused') is True}
         except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
             paused = set()  # Missing yield evidence never suppresses work.
         lines = plan(prs, text, maximum, pool, paused)

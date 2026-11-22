@@ -296,7 +296,7 @@ describe('EMPTY reason pause', () => {
   }).flat();
   it('groups letter siblings and pauses only the last N proven empty finished launches', () => {
     const lines = history(), stats = familyYield(lines, now, 24).launch_families[0]!;
-    expect(stats).toMatchObject({ family: 'RQ-PHX-CONSOLELAND', paused: true, empty_reasons: { no_diff: 2, no_eligible_source: 2, unknown: 0 } });
+    expect(stats).toMatchObject({ family: 'RQ-PHX-CONSOLELAND', paused: true, pausedReason: '4 of last 4 empty, workers found no source or made no changes', empty_reasons: { no_diff: 2, no_eligible_source: 2, unknown: 0 } });
     expect(shouldPauseFamily(stats, 5)).toBe(false);
     expect(shouldPauseFamily(undefined)).toBe(false);
     expect(shouldPauseFamily(stats, 0)).toBe(false);
@@ -311,15 +311,30 @@ describe('EMPTY reason pause', () => {
     const dir = mkdtempSync(join(tmpdir(), 'family-pause-'));
     try {
       mkdirSync(join(dir, 'metrics'));
-      const lines = ['CONSOLELAND', 'RECUT', 'REDFIX'].flatMap(name => history(name));
+      const names = ['CONSOLELAND', 'FLEETCORELAND', 'CONSOLEBACKLOG', 'REDRECUT', 'LAUNCHRETRYGREEN', 'RECUT', 'REDFIX'];
+      const lines = names.flatMap(name => history(name));
       lines.push(launch('RQ-LOG1', 2), finish('RQ-LOG1', 1, { empty: true }));
       writeFileSync(join(dir, 'metrics/jobs.jsonl'), lines.join('\n'));
       writeFileSync(join(dir, 'RQ-LOG1.log'), 'No eligible PR');
       const report = await readFamilyYield(join(dir, 'metrics/jobs.jsonl'), 24, now);
       expect(report.launch_families.find(r => r.family === 'RQ-LOG')?.empty_reasons.no_eligible_source).toBe(1);
-      for (const id of ['CONSOLELAND800', 'RECUT800', 'REDFIX800']) {
+      const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+      expect(await cmdFleetYield(['--json', '--metrics', join(dir, 'metrics/jobs.jsonl')], undefined, now)).toBe(0);
+      expect(JSON.parse(String(output.mock.calls[0]![0])).launch_families).toContainEqual(expect.objectContaining({
+        family: 'RQ-PHX-CONSOLELAND', paused: true, pausedReason: '4 of last 4 empty, workers found no source or made no changes',
+      }));
+      const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+      for (const id of names.flatMap(name => [`${name}800`, `${name}800B`])) {
         await expect(writeDropJob(dir, { id, lane: 'codex-personal', tier: 'work', body: 'Find a source PR and finish it.' }, () => new Date(now))).rejects.toThrow('family paused');
       }
+      expect(log).toHaveBeenCalledWith('skip CONSOLELAND: 4 of last 4 empty, workers found no source or made no changes');
+      const input = { id: 'HEALTHYLAND800', lane: 'codex-personal', tier: 'work', body: 'Finish the eligible source PR.' };
+      expect((await writeDropJob(dir, input, () => new Date(now))).file).toContain('HEALTHYLAND800.md');
+      lines.push(launch('RQ-PHX-CONSOLELAND799B', 1), merged('RQ-PHX-CONSOLELAND799B', 0.25));
+      writeFileSync(join(dir, 'metrics/jobs.jsonl'), lines.join('\n'));
+      expect((await readFamilyYield(join(dir, 'metrics/jobs.jsonl'), 24, now)).launch_families.find(r => r.family === 'RQ-PHX-CONSOLELAND'))
+        .toMatchObject({ paused: false, pausedReason: null });
+      expect((await writeDropJob(dir, { ...input, id: 'CONSOLELAND800B' }, () => new Date(now))).file).toContain('CONSOLELAND800B.md');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
