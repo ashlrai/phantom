@@ -26,7 +26,12 @@ the estimator can report them. The journal currently has no automatic retention.
 and the live `- READY` rows of `queue/router-queue.md` into visits and appends
 new or progressed snapshots to the journal. Dry run by default; `--apply`
 writes, `--json` prints a `queue.visits-sync.v1` report, and `--jobs`,
-`--queue`, `--journal` override the default paths. Re-running is idempotent:
+`--queue`, `--journal` override the default paths. The resident daemon runs
+the same fold (`syncQueueVisits` in `src/core/queue/visit-sync.ts`) as a
+`visit-sync` off-tick job on the self-improvement cadence, so the journal
+stays fed without a manual pass; it reads the newest bounded tail of the jobs
+ledger like the sibling evidence syncs and reports its health in the tick's
+off-tick job list. Re-running is idempotent:
 a visit appends again only when it gains a transition, and a candidate less
 complete than the journal's latest snapshot is refused.
 
