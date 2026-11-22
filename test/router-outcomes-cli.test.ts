@@ -46,6 +46,7 @@ function outcome(job_id: string, over: Partial<RouterOutcome> = {}): RouterOutco
     market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
     market_rejected: null,
     handoff_trigger: null, handoff_lane: null, handoff_target: null,
+    provider_wall_trigger: null, provider_wall_pattern: null, provider_wall_lane: null,
     merge_queue: null,
     passk: null,
     ...over,
@@ -162,7 +163,7 @@ describe('phm router outcomes', () => {
   it('renders text lines with unknown for null fields and review counts when present', async () => {
     const report = buildRouterOutcomesReport(read({
       outcomes: [
-        outcome('A', { merged: null, reverted: true, cost_usd: null, wall_s: null, passk: null, task_outcome: 'done', lane_hint_blocked_by: ['quota_exhausted', 'saturated'], market_lane: 'beta', market_preferred: 'alpha', market_override: 'resource_fit', market_reasons: ['no_runnable_lane', 'global_admission'], market_rejected: [{ lane: 'alpha', reasons: ['quota_exhausted', 'held'] }, { lane: 'beta', reasons: null }], handoff_trigger: 'rate-limit', handoff_lane: 'codex-personal', handoff_target: null, review_findings: { fixed: 2, rejected: 1, ignored: 0 } }),
+        outcome('A', { merged: null, reverted: true, cost_usd: null, wall_s: null, passk: null, task_outcome: 'done', lane_hint_blocked_by: ['quota_exhausted', 'saturated'], market_lane: 'beta', market_preferred: 'alpha', market_override: 'resource_fit', market_reasons: ['no_runnable_lane', 'global_admission'], market_rejected: [{ lane: 'alpha', reasons: ['quota_exhausted', 'held'] }, { lane: 'beta', reasons: null }], handoff_trigger: 'rate-limit', handoff_lane: 'codex-personal', handoff_target: null, provider_wall_trigger: 'auth-failure', provider_wall_pattern: 'claude_auth_401', provider_wall_lane: 'claude', review_findings: { fixed: 2, rejected: 1, ignored: 0 } }),
         outcome('B', { lane: null, model: null, tier: null, work_class: 'docs' }),
       ],
       malformed_rows: 3, unattached_rows: 1, ambiguous_urls: 2, session_rows: 4,
@@ -172,8 +173,9 @@ describe('phm router outcomes', () => {
     expect(lines[1]).toBe(`ledger ${report.path}`);
     expect(lines[3]).toContain('lane_hint_blocked_by=[quota_exhausted,saturated] market_lane=beta market_preferred=alpha market_override=resource_fit market_reasons=[no_runnable_lane,global_admission] market_rejected=[alpha:quota_exhausted+held;beta]');
     expect(lines[3]).toContain('handoff_trigger=rate-limit handoff_lane=codex-personal handoff_target=unknown');
+    expect(lines[3]).toContain('provider_wall_trigger=auth-failure provider_wall_pattern=claude_auth_401 provider_wall_lane=claude');
     expect(lines[2]).toContain('B lane=unknown model=unknown tier=unknown work_class=docs lane_hint=unknown lane_override=unknown merged=true reverted=unknown');
-    expect(lines[2]).toContain('task_outcome=unknown skipped=unknown skip_reason=unknown skip_code=unknown deferred=unknown defer_reason=unknown defer_repeat_of=unknown noop=unknown noop_reason=unknown noop_repeat_of=unknown lane_hint_blocked_by=unknown market_lane=unknown market_preferred=unknown market_override=unknown market_reasons=unknown market_rejected=unknown handoff_trigger=unknown handoff_lane=unknown handoff_target=unknown merge_queue=unknown');
+    expect(lines[2]).toContain('task_outcome=unknown skipped=unknown skip_reason=unknown skip_code=unknown deferred=unknown defer_reason=unknown defer_repeat_of=unknown noop=unknown noop_reason=unknown noop_repeat_of=unknown lane_hint_blocked_by=unknown market_lane=unknown market_preferred=unknown market_override=unknown market_reasons=unknown market_rejected=unknown handoff_trigger=unknown handoff_lane=unknown handoff_target=unknown provider_wall_trigger=unknown provider_wall_pattern=unknown provider_wall_lane=unknown merge_queue=unknown');
   });
 
   it('renders merge_queue evidence and reports merge-events ledger health', async () => {

@@ -830,6 +830,40 @@ so rows of every other event — including later `finish`/`claim`
 receipts — leave it standing. All three stay `null` when no advisory
 row named the job: the retained window recorded no provider-wall
 verdict, which is unknown, not "no wall ever".
+`provider_wall_trigger`/`provider_wall_pattern`/`provider_wall_lane`
+are the fleet's recorded provider-wall lane hold — dispatchd's
+`autobackoff_hold` receipts (jobs.jsonl rows the usage/quota and
+auth backoff scanners append through `metric()` when a finished
+run's log tail matched a provider error pattern and the lane was
+held). A hold only lands on a failed or no-work run — the auth
+scanner additionally requires its `auth_failures` streak — so the
+receipt is the fleet's confirmed provider-wall verdict for the
+attempt, covering the auth walls the session-handoff advisory never
+sees and the usage walls whose hold landed where no advisory did
+(an outcome-unreadable run, a still-standing earlier hold). The row
+counts only on the `autobackoff_hold` event name (the
+`event`/`type`/`kind` alias set, case-folded like the sibling
+verdict folds) with a `pattern` id in the bounded
+identifier-label shape — the payload field every producer hold row
+carries; `provider_wall_trigger` joins in the fold's closed
+two-label derivation (`usage-limit` for the usage/quota scanner's
+pattern family, `auth-failure` for the auth scanner's — a recorded
+`auth_failures` count marks the auth streak holds outright, and the
+router keeps its own copy of the producer's `AB_RX`/`AB_AUTH_RX`
+pattern tables so a producer-side rename can never leak an
+unbounded label), `provider_wall_pattern` records the bounded
+pattern id verbatim, and `provider_wall_lane` the held lane in the
+bounded lane-id shape. An unrecognized pattern still records the
+hold with trigger `null` rather than skipping the receipt or
+guessing a family; a malformed lane drops to `null` without
+discarding the hold; the `autobackoff_skip`/`authbackoff_skip`
+helper-unavailable receipts — scans that recorded no verdict —
+never join. The newest recognized hold row replaces the triple
+wholesale; the hold is attempt evidence, not a launch decision,
+so rows of every other event — including later `finish`/`claim`
+receipts — leave it standing. All three stay `null` when no hold
+row named the job: the retained window recorded no confirmed
+provider wall, which is unknown, not "no wall ever".
 `merged` reads the jobs-ledger outcome dialect the sibling fleet readers
 share: a terminal phase across
 `phase`/`state`/`outcome`/`status`/`result`/`conclusion`, or a `merged` /
