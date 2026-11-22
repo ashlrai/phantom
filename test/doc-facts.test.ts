@@ -157,6 +157,24 @@ const DOCS = [
   'docs/WORKER.md',
   'docs/WORKTREE-PRUNE.md',
   'docs/WORLD.md',
+  // Fleet operating guides, held out until completion offered the fleet verbs
+  // they document. COS.md and IMESSAGE.md wait on `fleet cos` and
+  // `fleet imessage-acks`, whose --help does not yet pass
+  // test/cli-help-no-side-effects.
+  'docs/BRIEF-SEND.md',
+  'docs/DISK-MAINT.md',
+  'docs/FLEET-EMPTIES.md',
+  'docs/FLEET-MERGE-LATENCY.md',
+  'docs/FLEET-MERGE-PLAN.md',
+  'docs/FLEET-REBASE-PLAN.md',
+  'docs/FLEET-REBASE-STATUS.md',
+  'docs/GROK-ULTRA-RUNWAY.md',
+  'docs/MACHINERY-MIGRATION.md',
+  'docs/REBASE-ORDERING.md',
+  'docs/RESOURCE-EVIDENCE.md',
+  'docs/VERSE.md',
+  'docs/fleet-health.md',
+  'docs/fleet/pr-hygiene.md',
 ];
 
 /** Every `--flag` spelled anywhere in src/ (code, help text, comments). */
