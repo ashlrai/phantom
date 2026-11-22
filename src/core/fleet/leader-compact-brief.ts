@@ -11,7 +11,7 @@ import { readGuardianGlance } from './guardian-glance.js';
 import { readFleetPace } from './pace-verdict.js';
 import { compactMergeLatency, dispatchTick, objectRow } from './compact-brief-evidence.js';
 import { parseLedgerTs } from '../metrics/loop.js';
-import { LIVE_JOBS_FILE, type LiveJobsReport } from './live-jobs.js';
+import { LIVE_JOBS_FILE, type LiveJobsSnapshot } from './live-jobs.js';
 import { parseReadyRows } from './ready-row-edit.js';
 import { parseStopFile, stopFilePath, stoppedFamilies } from './stop-file.js';
 import { readSource } from './runs-parked-queue.js';
@@ -91,11 +91,11 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
   const hungry = lanes.filter(l => l.held === false && l.running !== null && l.target !== null && l.queuedReady !== null
     && l.running < l.target / 2 && l.queuedReady < l.target - l.running).sort((a, b) => (b.target! - b.running!) - (a.target! - a.running!))[0];
   const headline = hungry ? `${hungry.lane} ${hungry.running}/${hungry.target} running, ${hungry.queuedReady} queued: supply-starved` : 'No measured supply-starved lane';
-  let live: LiveJobsReport | null = null;
-  try { live = JSON.parse(liveText ?? 'null') as LiveJobsReport | null; } catch { sourceState(LIVE_JOBS_FILE, 'degraded', 'invalid JSON'); }
-  const attention = (Array.isArray(live?.jobs) ? live.jobs : []).filter(j => j && typeof j.id === 'string' && typeof j.lane === 'string' && (j.status === 'stuck' || j.status === 'quiet'))
-    .sort((a, b) => Number(b.status === 'stuck') - Number(a.status === 'stuck') || (Number(b.elapsed) || 0) - (Number(a.elapsed) || 0))
-    .slice(0, 5).map(j => ({ id: clean(j.id), lane: clean(j.lane), status: j.status, elapsed: j.elapsed }));
+  const live = objectRow(json(liveText, LIVE_JOBS_FILE)) as Partial<LiveJobsSnapshot>;
+  if (sources[LIVE_JOBS_FILE]?.state === 'healthy' && (live.known !== true || !Array.isArray(live.running))) sourceState(LIVE_JOBS_FILE, 'unknown', 'live job observations unavailable');
+  const attention = (live.known === true && Array.isArray(live.running) ? live.running : []).filter(j => j && typeof j.id === 'string' && typeof j.lane === 'string' && (j.state === 'stuck' || j.state === 'quiet'))
+    .sort((a, b) => Number(b.state === 'stuck') - Number(a.state === 'stuck') || (Number(b.elapsed) || 0) - (Number(a.elapsed) || 0))
+    .slice(0, 5).map(j => ({ id: clean(j.id), lane: clean(j.lane), status: j.state, elapsed: j.elapsed }));
   const stops = stopText === null ? [] : stoppedFamilies(parseStopFile(stopText), now).filter(s => s.until > now / 1000)
     .map(s => ({ family: clean(s.family), until: s.until }));
   const brief = {

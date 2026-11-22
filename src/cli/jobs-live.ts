@@ -2,7 +2,7 @@ import { parseArgs } from 'node:util';
 import { readLiveJobs, writeLiveJobs } from '../core/fleet/live-jobs.js';
 const usage = 'Usage: phm jobs live [--json] [--write <file>]';
 export async function cmdJobsLive(args: string[], read = readLiveJobs): Promise<number> {
-  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(`${usage}\nRunning jobs: moving (log under 10 min), quiet (10–60 min), stuck (over 60 min or missing process). Elapsed is seconds. Unknown evidence stays unknown. --write atomically saves the same JSON.`); return 0; }
+  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(`${usage}\nRun markers: moving (log under 10 min), quiet (10–60 min), stuck (over 60 min or confirmed missing process). Stale means older than 48 hours with a confirmed missing process; ignored by the brief. Unknown process evidence stays unknown. Elapsed is seconds. --write atomically saves a compact snapshot without log text.`); return 0; }
   let values;
   try { ({ values } = parseArgs({ args, options: { json: { type: 'boolean' }, write: { type: 'string' } }, allowPositionals: false })); }
   catch { console.error(usage); return 2; }
