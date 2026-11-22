@@ -541,6 +541,72 @@ describe('kind-filtered inbox reads', () => {
   });
 });
 
+describe('channel-filtered inbox reads', () => {
+  it('keeps only mail delivered through one channel and composes with the other filters', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    createAgentChannel({ name: 'ops', createdBy: 'atlas', members: ['nova'] }, options);
+    // Mail of every delivery kind nova can receive.
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'dm', id: 'cf-dm' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'release post', id: 'cf-rel' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'ops', text: 'ops post', priority: 'P1', id: 'cf-ops' }, options);
+    await sendHandoff({ from: 'atlas', to: 'nova', taskId: 'RQ-CF-1', prompt: 'take it', id: 'cf-ho' }, options);
+    // A worker-handoff addressed to the room's group address is release mail
+    // too — the filter matches the delivery address, not the reported kind.
+    expect(appendBusInbox({ id: 'cf-ho-ch', from: 'agent:atlas', to: 'group:release:deploy', priority: 'P2', ttl: 60_000,
+      body: { kind: 'worker-handoff', taskId: 'RQ-CF-2', prompt: 'room assignment' } }, options).status).toBe('posted');
+    // Label-addressed legacy mail never matches a channel filter.
+    expect(appendBusInbox({ id: 'cf-leg', from: 'agent:atlas', to: 'nova', priority: 'P3', ttl: 60_000,
+      body: { kind: 'note', text: 'legacy' } }, options).status).toBe('posted');
+
+    const release = readAgentInbox('nova', { channel: 'release' }, options);
+    if (release.status !== 'ok') throw new Error(`unexpected ${release.status}`);
+    expect(release.messages.map(m => `${m.kind}:${m.envelope.id}`).sort())
+      .toEqual(['channel:cf-rel', 'handoff:cf-ho-ch'].sort());
+    expect(readAgentInbox('nova', { channel: 'ops' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'cf-ops' } }] });
+    // --kind separates the room's direct mail from its assignments.
+    expect(readAgentInbox('nova', { channel: 'release', kind: 'channel' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'cf-rel' } }] });
+    expect(readAgentInbox('nova', { channel: 'release', kind: 'handoff' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'handoff', envelope: { id: 'cf-ho-ch' } }] });
+    // It composes with --from, and --matched counts only the accepted rows.
+    const narrowed = readAgentInbox('nova', { channel: 'release', from: 'atlas' }, options);
+    expect(narrowed.status === 'ok' && narrowed.messages.map(m => m.envelope.id).sort())
+      .toEqual(['cf-ho-ch', 'cf-rel']);
+    const counted = readAgentInbox('nova', { channel: 'ops', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(1);
+    // The unfiltered page still sees everything the filter skipped.
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages).toHaveLength(6);
+  });
+
+  it('refuses an invalid channel name and reads a non-member channel as empty', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    createAgentChannel({ name: 'other', createdBy: 'atlas' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'release post', id: 'cn-rel' }, options);
+    // 'other' exists but nova is not a member, so its posts never reach nova's
+    // inbox — the channel filter cannot widen membership.
+    await postChannelMessage({ from: 'atlas', channel: 'other', text: 'other post', id: 'cn-oth' }, options);
+
+    expect(readAgentInbox('nova', { channel: 'Bad Name' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentInbox('nova', { channel: '../x' }, options)).toMatchObject({ status: 'invalid' });
+    const other = readAgentInbox('nova', { channel: 'other' }, options);
+    expect(other).toMatchObject({ status: 'ok', messages: [] });
+    if (other.status !== 'ok') throw new Error(`unexpected ${other.status}`);
+    expect(other.nextCursor).toBeGreaterThan(0);
+    expect(readAgentInbox('nova', { channel: 'release' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'cn-rel' } }] });
+    // The unfiltered page sees only the release post — 'other' mail was never nova's.
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages.map(m => m.envelope.id)).toEqual(['cn-rel']);
+  });
+});
+
 describe('job-filtered inbox reads', () => {
   it('keeps only mail that names one job across feed citations and job-threaded note/context', async () => {
     const options = setup();

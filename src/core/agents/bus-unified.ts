@@ -1055,7 +1055,14 @@ export function busBodyJobMatch(body: unknown, job: string): boolean {
  * conversations projections group under `job:<id>`. `since` keeps only mail
  * received at or after that epoch-ms cutoff — the same inclusive
  * `receivedAt >= since` match `phm messages --since` applies, so fresh mail
- * is one filtered read without a persisted cursor. Returned highest
+ * is one filtered read without a persisted cursor. `channel` keeps only mail
+ * addressed to `group:<name>:*` of one registry channel the agent belongs
+ * to — channel posts (`kind:'channel'`) and channel-addressed handoffs
+ * (`kind:'handoff'`) alike, matched on the delivery address rather than the
+ * reported kind, so `--channel` composes with `--kind` to read just one
+ * room's direct mail or just its assignments; DMs and label-addressed mail
+ * never match, and a channel the agent is not a member of simply has no
+ * mail to show. Returned highest
  * priority first; `nextCursor` covers every scanned row, so callers persist
  * it only after handling the page. Claimable work and worker-handoff items
  * additionally carry `held`/`holder` — the same hold evidence `bus show`
@@ -1073,11 +1080,11 @@ export function busBodyJobMatch(body: unknown, job: string): boolean {
  * `messages` still returns only the first `limit` of them.
  */
 export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string;
-    matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string; since?: number } = {},
+    matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string; since?: number; channel?: string } = {},
   options: UnifiedBusOptions = {}): InboxPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
   const countMatched = page.matched === true;
-  const kindFilter = page.kind, jobFilter = page.job, since = page.since;
+  const kindFilter = page.kind, jobFilter = page.job, since = page.since, channelFilter = page.channel;
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
     return { status: 'invalid', reason: 'after must be >= 0 and limit 1-100.' };
   }
@@ -1098,6 +1105,9 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   }
   if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
     return { status: 'invalid', reason: 'Invalid since.' };
+  }
+  if (channelFilter !== undefined && (typeof channelFilter !== 'string' || !agentChannelNameSchema.safeParse(channelFilter).success)) {
+    return { status: 'invalid', reason: 'Invalid channel name.' };
   }
   const read = readAgentRegistry(options);
   if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
@@ -1140,7 +1150,8 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
         (jobFilter === undefined || busBodyJobMatch(envelope.body, jobFilter)) &&
         (fromMatch === undefined || fromMatch(envelope.from)) &&
         (priority === undefined || envelope.priority === priority) &&
-        (since === undefined || row.receivedAt >= since) ? kind : null;
+        (since === undefined || row.receivedAt >= since) &&
+        (channelFilter === undefined || channel === channelFilter) ? kind : null;
       if (matchedKind !== null && envelope.origin_bridge === 'agent-chat-owner') {
         try { ownerReceipts ??= readOwnerChatReceipts(ownerChatRoot(options.root)); }
         catch { return { status: 'unavailable', reason: 'Owner share receipts unavailable.' }; }
