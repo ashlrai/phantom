@@ -647,6 +647,7 @@
     "src/core/fleet/judge-decision-metadata.ts",
     "src/core/fleet/judge-trace.ts",
     "src/core/fleet/landed-closes-read.ts",
+    "src/core/fleet/landed-from-git.ts",
     "src/core/fleet/lane-badge.ts",
     "src/core/fleet/lane-console.ts",
     "src/core/fleet/lane-dead-signal.ts",
