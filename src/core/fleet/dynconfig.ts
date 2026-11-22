@@ -53,6 +53,8 @@ export function mutableKeySpec(key: string): KeySpec | null {
   if (key === 'hard_cap') return INT(512);
   // Autofill kill switch: 1 stops self-tick from filling starved lanes (cap and events live in autofill-run.ts).
   if (key === 'autofill.off') return INT(1);
+  // Owner digest kill switch, also used by the recovered tick helper.
+  if (key === 'mason.digest.off') return INT(1);
   // Empty-family stop kill switch: 1 stops self-tick from retiring READY jobs of empty-heavy families (empty-family-apply.ts).
   if (key === 'empty_stop.off') return INT(1);
   if (key === 'local.worker_gb') return { integer: false, min: 0.5, max: 512 };
@@ -61,7 +63,7 @@ export function mutableKeySpec(key: string): KeySpec | null {
   return m && LANE_ID.test(m[1]!) ? INT(64) : null;
 }
 export const MUTABLE_KEY_PATTERNS: readonly string[] = [
-  'hard_cap', 'autofill.off', 'empty_stop.off', 'lanes.<lane>.target', 'lanes.<lane>.floor', 'lanes.<lane>.ceiling', 'lanes.<lane>.hard_cap',
+  'hard_cap', 'autofill.off', 'mason.digest.off', 'empty_stop.off', 'lanes.<lane>.target', 'lanes.<lane>.floor', 'lanes.<lane>.ceiling', 'lanes.<lane>.hard_cap',
   'compact.lanes.raise_freeze_below_gb', 'compact.lanes.halve_below_gb', 'local.worker_gb',
 ];
 

@@ -41,6 +41,9 @@ full walkthrough and recovery steps.
    Keep one coherent change per pull request: logic in `src/core/`, thin
    handlers in `src/cli/`, `.js` import extensions, hermetic tests, and contract
    files updated with any exported signature ([conventions](#conventions)).
+   Fleet agents open pull requests around the clock, so search open pull
+   requests and issues for your area first, and open an issue before a larger
+   feature ([Make one change](docs/CONTRIBUTE-WITH-AN-AGENT.md#3-make-one-change)).
 
 4. **Verify locally**, once, in the foreground:
 
@@ -55,23 +58,32 @@ full walkthrough and recovery steps.
    `npm run gate` runs build, static checks and related tests together if you
    prefer one command. Never weaken a test to make a check pass.
 
-5. **Commit and open the pull request.** Use a short conventional subject
-   (`docs(readme): ...`, `fix(cli): ...`), push the branch to `fork`, and open
-   the pull request against `master`. The [pull request template](.github/PULL_REQUEST_TEMPLATE.md)
-   includes the safety checklist for changes to the autonomous path.
+5. **Commit and open the pull request.** Push the branch to `fork` and open
+   the pull request against `master`
+   (`gh pr create --repo ashlrai/phantom --base master --head <you>:<topic-branch>`).
+   Pull requests land as squash commits, so the pull request title becomes the
+   commit subject on `master`: give it a conventional prefix
+   (`docs(readme): ...`, `fix(cli): ...`) so release-please files it under the
+   right `CHANGELOG.md` section. The [pull request template](.github/PULL_REQUEST_TEMPLATE.md)
+   asks for the commands you ran and includes the safety checklist for changes
+   to the autonomous path.
 
 6. **What hosted CI requires.** Pull requests and merge-queue commits run only
-   the Ubuntu fast gate: secret scans, typecheck plus affected tests,
-   generated-file and authority-drift checks. `Merge Gate` is the one required
-   check. macOS, Windows and exhaustive suites run on master's six-hour
+   the Ubuntu fast gate. `Merge Gate` is the one required check, and it passes
+   when the two secret scans, lane classification, the generated-file check
+   and the fast gate (typecheck plus affected tests) succeed. Quick typecheck
+   and the authority-drift check also run but are advisory. macOS, Windows and exhaustive suites run on master's six-hour
    schedule after merge; a red full run opens a fix-forward issue for the
    failing commit. See [What CI requires](docs/CONTRIBUTE-WITH-AN-AGENT.md#6-what-ci-requires)
    for details. GitHub may hold workflow runs on a first-time contributor's
    fork pull request until a maintainer approves them.
 
-7. **How it merges.** Pull requests land through GitHub's merge queue, which
-   reruns the fast gate on the combined commit; a maintainer or the fleet
-   queues yours once `Merge Gate` is green. Paths listed in
+7. **How it merges.** Pull requests land through GitHub's merge queue with
+   auto-merge, and the queue reruns the fast gate on the combined commit. You
+   cannot arm auto-merge from a fork, so a maintainer or fleet agent arms it
+   for you; once armed, the pull request merges as soon as `Merge Gate` passes
+   in the queue. If it fails while `master`'s own run is red too, see
+   [When a check fails for a reason outside your change](docs/CONTRIBUTE-WITH-AN-AGENT.md#when-a-check-fails-for-a-reason-outside-your-change). Paths listed in
    [CODEOWNERS](.github/CODEOWNERS) (CI configuration, authority and safety
    surfaces) also need the owner's review. If authority drift fails, run
    `npm run authority:regen` and list each new Tier-1 root in the pull

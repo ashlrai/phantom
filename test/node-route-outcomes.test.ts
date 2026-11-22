@@ -26,6 +26,7 @@ const outcome = (job: string, lane: string | null, merged: boolean | null, rever
   handoff_trigger: null, handoff_lane: null, handoff_target: null,
   provider_wall_trigger: null, provider_wall_pattern: null, provider_wall_lane: null,
   pool_kind: null, pool_mem_free_pct: null, pool_swap_gb: null,
+  node_outcome: null, node_id: null, node_pack: null,
   merge_queue: null,
   passk: null,
 });
