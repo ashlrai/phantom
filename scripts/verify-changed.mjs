@@ -48,6 +48,17 @@ const QUARANTINE_LEDGER = 'queue/quarantine.tsv';
 const CARGO_LOCK_FILE = /(?:^|\/)Cargo\.lock$/;
 const TSBUILDINFO_FILE = /\.tsbuildinfo$/;
 
+/**
+ * src/raycast and examples/universe-site own their toolchains: eslint.config.js
+ * ignores both trees and no root tsconfig includes them, so a changed script
+ * there escapes lint, typecheck and the shebang buckets — shipped authored
+ * code (a Raycast extension, the public showcase) no check ever parses.
+ * workplans/ and undefined/ stay out: the same ignore list exempts them as
+ * scratch, not shipped source.
+ */
+const DETACHED_SCRIPT_TREE = /^(?:src\/raycast|examples\/universe-site)\//;
+const DETACHED_SCRIPT_FILE = /\.(?:[cm]?[jt]sx?)$/;
+
 /** Pure selection: keep deleted paths for the web decision, but never lint them. */
 export function selectChangedFiles(changedPaths, existingPaths) {
   const changed = [...new Set(changedPaths)].filter(Boolean).sort();
@@ -72,6 +83,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     cssFiles: changed.filter((path) => existing.has(path) && /\.css$/i.test(path)),
     snapFiles: changed.filter((path) => existing.has(path) && /\.snap$/i.test(path)),
     patchFiles: changed.filter((path) => existing.has(path) && /\.(?:patch|diff)$/i.test(path)),
+    detachedScriptFiles: changed.filter((path) => existing.has(path) && DETACHED_SCRIPT_TREE.test(path) && DETACHED_SCRIPT_FILE.test(path)),
   };
 }
 
@@ -876,6 +888,66 @@ export function runPatchSyntaxCheck(root, files, spawn = spawnSync) {
   return true;
 }
 
+/**
+ * Scripts under src/raycast and examples/universe-site are authored code no
+ * other check reads: eslint.config.js ignores both trees (each owns its
+ * toolchain), no root tsconfig includes them, and the dotted basenames never
+ * reach the shebang buckets. Their consumers are each tree's own tsc, node
+ * and vite, so the grammar step here is the TypeScript parser itself — the
+ * same parse `tsc --noEmit` and the bundlers apply, minus type resolution
+ * the absent per-tree node_modules could never satisfy. `typescript` is a
+ * bundled devDependency parsed in a child node process like the yaml/toml
+ * checks, so the preflight reports SKIP when node_modules is absent.
+ * createSourceFile + parseDiagnostics is a pure parse — no emit, so
+ * declaration files and every script extension ([cm]?[jt]sx?) report only
+ * real syntax errors; each file reports at most 8 diagnostics.
+ */
+const DETACHED_SCRIPT_CHECK = `import { readFileSync } from 'node:fs';
+import pkg from 'typescript';
+const ts = pkg;
+const kindOf = (path) => {
+  const ext = path.toLowerCase().match(/\\.([cm]?[jt]sx?)$/)?.[1] ?? '';
+  if (ext === 'tsx') return ts.ScriptKind.TSX;
+  if (ext === 'jsx') return ts.ScriptKind.JSX;
+  if (ext.includes('j')) return ts.ScriptKind.JS;
+  return ts.ScriptKind.TS;
+};
+let failed = false;
+for (const path of process.argv.slice(1)) {
+  const errors = [];
+  try {
+    const sf = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.ESNext, true, kindOf(path));
+    for (const d of sf.parseDiagnostics ?? []) {
+      const pos = typeof d.start === 'number' ? sf.getLineAndCharacterOfPosition(d.start) : null;
+      const where = pos ? ':' + (pos.line + 1) + ':' + (pos.character + 1) : '';
+      errors.push(path + where + ': ' + ts.flattenDiagnosticMessageText(d.messageText, ' '));
+    }
+  } catch (error) {
+    errors.push(path + ': ' + String(error && error.message ? error.message : error).split('\\n')[0]);
+  }
+  for (const e of errors.slice(0, 8)) console.error(e);
+  if (errors.length > 8) console.error(path + ': ' + (errors.length - 8) + ' more errors');
+  if (errors.length) failed = true;
+}
+process.exit(failed ? 1 : 0);
+`;
+
+/** Parse changed scripts under the independently-owned trees with the bundled typescript parser; false on any parse failure. */
+export function runDetachedScriptCheck(root, files, spawn = spawnSync) {
+  const result = spawn(process.execPath, ['--input-type=module', '-e', DETACHED_SCRIPT_CHECK, ...files], {
+    cwd: root, encoding: 'utf8', timeout: 120000,
+  });
+  if (result.status !== 0) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL detached script syntax check');
+    return false;
+  }
+  console.log('PASS detached script syntax check');
+  return true;
+}
+
 /** Shared root for the typecheck cache and slots; worktrees resolve to the git common dir. */
 export function tscSharedRoot(root, env = process.env, exec = execFileSync) {
   return env.PHANTOM_TSC_CACHE_DIR
@@ -1399,6 +1471,16 @@ function main() {
     console.log('PASS node syntax check skipped: no node-shebang script changed');
   } else if (!runNodeSyntaxCheck(root, nodeFiles)) {
     process.exitCode = 1;
+  }
+  if (selection.detachedScriptFiles.length === 0) {
+    console.log('PASS detached script syntax check skipped: no script change under src/raycast/ or examples/universe-site/');
+  } else {
+    const detached = parserPackagePreflight(root, 'typescript');
+    if (!detached.ok) {
+      console.log(`SKIP detached script syntax check: ${detached.reason}`);
+    } else if (!runDetachedScriptCheck(root, selection.detachedScriptFiles)) {
+      process.exitCode = 1;
+    }
   }
   if (selection.jsonFiles.length === 0) {
     console.log('PASS json syntax check skipped: no json, webmanifest or tsbuildinfo change');
