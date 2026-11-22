@@ -201,6 +201,42 @@ describe('channel reads', () => {
     expect(novaInbox.messages.map(m => m.envelope.id).sort()).toEqual(['ch-1', 'dm-1']);
   });
 
+  it('drops one sender\'s posts under every label of its identity', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'relay', aliases: ['lane-relay'] }, options);
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova', 'relay'] }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'first', id: 'ch-1' }, options);
+    await postChannelMessage({ from: 'relay', channel: 'release', text: 'second', id: 'ch-2' }, options);
+    await postChannelMessage({ from: 'nova', channel: 'release', text: 'third', id: 'ch-3' }, options);
+
+    // Every ref of one identity drops its posts; every other sender still reads.
+    for (const ref of ['relay', 'lane-relay', 'agent:relay', stableAgentId('relay')]) {
+      const page = readAgentChannel('release', { excludeFrom: ref }, options);
+      expect(page.status === 'ok' && page.messages.map(m => m.envelope.id)).toEqual(['ch-1', 'ch-3']);
+    }
+    // A sender both included and excluded matches nothing; the exclusion
+    // composes with --from on a different sender and with --matched.
+    expect(readAgentChannel('release', { from: 'relay', excludeFrom: 'relay' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    const atlasOnly = readAgentChannel('release', { from: 'atlas', excludeFrom: 'relay' }, options);
+    expect(atlasOnly.status === 'ok' && atlasOnly.messages.map(m => m.envelope.id)).toEqual(['ch-1']);
+    const counted = readAgentChannel('release', { excludeFrom: 'relay', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(2);
+    // An unresolvable ref keeps exact-label matching: nothing is dropped.
+    const ghost = readAgentChannel('release', { excludeFrom: 'ghost' }, options);
+    expect(ghost.status === 'ok' && ghost.messages).toHaveLength(3);
+    // Excluded rows still advance the cursor over the whole scan.
+    const dropped = readAgentChannel('release', { excludeFrom: 'relay', limit: 1 }, options);
+    if (dropped.status !== 'ok') throw new Error(`unexpected ${dropped.status}`);
+    expect(dropped.messages.map(m => m.envelope.id)).toEqual(['ch-1']);
+    expect(dropped.nextCursor).toBeGreaterThan(0);
+    // The same validation the sender filter applies.
+    expect(readAgentChannel('release', { excludeFrom: '' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { excludeFrom: 'x'.repeat(129) }, options)).toMatchObject({ status: 'invalid' });
+  });
+
   it('reports unknown channels and unreadable state instead of empty history', () => {
     const options = setup();
     // A missing registry means no channel exists — verified empty is not a page.
@@ -397,6 +433,44 @@ describe('sender-filtered inbox reads', () => {
     // The unfiltered page still sees everything the filter skipped.
     const all = readAgentInbox('nova', {}, options);
     expect(all.status === 'ok' && all.messages.length).toBe(6);
+  });
+
+  it('drops one sender\'s mail under every label of its identity', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'relay', aliases: ['lane-relay'] }, options);
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova', 'relay'] }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'atlas dm', id: 'dm-a1' }, options);
+    await sendDirectMessage({ from: 'relay', to: 'nova', text: 'relay dm', id: 'dm-r1' }, options);
+    await sendDirectMessage({ from: 'relay', to: 'nova', text: 'threaded', thread: 'rq-7', id: 'dm-r2' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'atlas post', id: 'ch-a1' }, options);
+    await postChannelMessage({ from: 'relay', channel: 'release', text: 'relay post', id: 'ch-r1' }, options);
+
+    // Every ref of one identity drops its DMs, threaded mail and channel posts.
+    for (const ref of ['relay', 'lane-relay', 'agent:relay', stableAgentId('relay')]) {
+      const page = readAgentInbox('nova', { excludeFrom: ref }, options);
+      if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+      expect(page.messages.map(m => m.envelope.id).sort()).toEqual(['ch-a1', 'dm-a1']);
+    }
+    // A sender both included and excluded matches nothing.
+    expect(readAgentInbox('nova', { from: 'relay', excludeFrom: 'relay' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    // The exclusion composes with the other filters.
+    const threaded = readAgentInbox('nova', { excludeFrom: 'atlas', thread: 'rq-7' }, options);
+    expect(threaded.status === 'ok' && threaded.messages.map(m => m.envelope.id)).toEqual(['dm-r2']);
+    const counted = readAgentInbox('nova', { excludeFrom: 'relay', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(2);
+    // An unresolvable ref keeps exact-label matching: nothing is dropped.
+    const ghost = readAgentInbox('nova', { excludeFrom: 'ghost' }, options);
+    expect(ghost.status === 'ok' && ghost.messages).toHaveLength(5);
+    // A filter that drops rows still reports a cursor covering the scan.
+    const dropped = readAgentInbox('nova', { excludeFrom: 'relay', limit: 1 }, options);
+    if (dropped.status !== 'ok') throw new Error(`unexpected ${dropped.status}`);
+    expect(dropped.nextCursor).toBeGreaterThan(0);
+    // The same validation the sender filter applies.
+    expect(readAgentInbox('nova', { excludeFrom: '' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentInbox('nova', { excludeFrom: 'x'.repeat(129) }, options)).toMatchObject({ status: 'invalid' });
   });
 
   it('validates the sender filter and still scans the whole store for nextCursor', async () => {

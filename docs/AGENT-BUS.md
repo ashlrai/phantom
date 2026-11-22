@@ -230,13 +230,21 @@ resolved identity belongs to. A missing registry is a verified-empty list
 (`source: missing`), an unreadable one is `unavailable` — never an empty
 list — and membership is a routing label set (who may post), not proof of
 presence or authority. `phm agents bus channel read <name> [--topic <t>]
-[--from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>]
+[--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3]
+[--job <id>]
 [--since <15m|2h|1d|ISO>] [--contains <text>] [--matched]
 [--after <cursor>] [--limit <n>]` pages the room's posts
 oldest-first — every live envelope addressed to `group:<name>:*` (or one
 `--topic`), minus `group.presence` heartbeats, which are observations with
 their own read, not messages; `--from` narrows by sender through the same
-identity-label matching `comms bus read` uses, `--thread` narrows to
+identity-label matching `comms bus read` uses, `--exclude-from` drops
+posts sent under any registered spelling of one identity — the same
+sender-exclusion rule `comms bus read|watch`'s `--exclude-from`,
+`fleet bus-follow`'s `--exclude-from` and `fleet_bus_inbox`'s `excludeFrom`
+apply, with an unresolvable ref keeping exact-label matching, so a room's
+noisy member never reaches the transcript while every other sender still
+does — and it composes with `--from` so a sender both included and
+excluded matches nothing, `--thread` narrows to
 `note`/`context` bodies carrying that v2 thread label, `--priority`
 keeps only posts stamped with that exact band — the same match
 `comms bus read --priority` applies, and `--since` keeps only posts
@@ -314,7 +322,8 @@ no announced job and reads no feed before posting. Like every send it is
 untrusted data: a wake is a hint to read the inbox and grants no authority.
 
 **Inbox.** `phm agents bus inbox <agent> [--thread <t>] [--from <agent>]
-[--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>]
+[--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy]
+[--job <id>]
 [--since <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>]`
 returns one page of
 DMs, handoffs,
@@ -330,6 +339,13 @@ the same coverage `work mine` handoffs and `handoff-receive` apply;
 carrying that v2 thread label, and `--from` narrows by sender through the
 same identity-label matching `channel read` uses (a handle, `agent:<handle>`,
 stable id or alias; an unresolvable ref keeps exact-label matching).
+`--exclude-from` drops mail sent under any registered spelling of one
+identity — the same sender-exclusion rule `comms bus read|watch`'s
+`--exclude-from`, `fleet bus-follow`'s `--exclude-from` and
+`fleet_bus_inbox`'s `excludeFrom` apply, with an unresolvable ref keeping
+exact-label matching — so a flooding sender never reaches the page while
+every other sender still does; it composes with `--from` so a sender both
+included and excluded matches nothing, and with every other inbox filter.
 `--priority` keeps only mail stamped with that exact P0..P3 band — the same
 match `comms bus read --priority` applies — so urgent mail is one filtered
 read, not a page through the backlog. `--kind` keeps only one delivery kind —
@@ -627,7 +643,7 @@ free set. Exit 0 acquired,
 2 invalid, 1 otherwise. Claims still coordinate scope only — holding one
 never permits a merge, a push, or spending.
 
-**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>]` is the read-only
+**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>]` is the read-only
 digest that answers "what is pending for this agent" in one call: the live
 coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block — the reverse of `work feed --claims`,
@@ -858,7 +874,25 @@ filter; and seats keep only handoff records whose held-work
 ref/branch/pr carries it. `channels` is registry context, not pending
 work, and stays unfiltered; every count stays the filtered total, the
 result echoes `contains` in JSON and the human header prints it, and a
-row whose text cannot be proven never matches. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
+row whose text cannot be proven never matches. `--since <when>` narrows
+the whole digest the same way — "what is new for this agent since my
+last check" — under the same `15m`/`2h`/`1d`/epoch-ms/ISO grammar and
+inclusive `>=` rule the bus `--since` reads share (the wakes read's own
+strictly-after boundary included, since the section delegates to it), so
+a polling agent reads the delta instead of re-reading the whole pending
+set; each section keys on the timestamp its own store keeps: claims match
+the lease's recorded `started` (a null start never matches — unknown stays
+out), feed jobs and announced jobs match `updatedAt`, `next`/`handoffs`
+and inbox mail match the envelope receipt, mailbox mail matches
+acceptance, threads/awaiting/blocked and wakes inherit their own reads'
+since rules on latest activity, board deliveries match `createdAt`
+while board tasks — which keep no timestamp — never match, and seats
+stay unfiltered — a pending handoff record's `createdAt` stamps the
+plan read instant, not the held work's age, so no per-record recency
+exists to filter on. A pending item older than the
+cutoff is still pending but is not new; `channels` and `seats` stay
+unfiltered, every count stays the filtered total, the result echoes
+`since` as ISO in JSON and the human header prints it. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
 exact-label claim matching, reports `identity: null`, answers `unknown-agent`
 for inbox rather than an empty list, and reads wakes under `scope: 'label'`
 — the same literal-`to` matching `agents bus wakes` applies — so pending
@@ -1264,6 +1298,9 @@ the fields the inbox reads filter by: `--from` keeps envelopes sent under any
 registered spelling of one identity — the same `agentAddressMatcher` rule
 `agents bus inbox --from` applies, resolved once at stream start, with an
 unresolvable sender or unreadable registry keeping exact-label matching —
+`--exclude-from` drops envelopes sent under any registered spelling of one
+identity — the same sender-exclusion rule `comms bus read|watch`'s
+`--exclude-from` and `fleet_bus_inbox`'s `excludeFrom` apply —
 `--priority` keeps one `P0`–`P3`, `--thread` keeps `note`/`context` bodies
 carrying that thread label, and `--since <15m|2h|1d|ISO>` keeps rows received
 at or after the cutoff. As with `--to` and `--job`, filtered rows still

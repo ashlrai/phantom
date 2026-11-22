@@ -34,10 +34,10 @@ ashlr agents bus channel create <name> [--from <agent>] [--member <agent>]...
 ashlr agents bus channel join|leave <name> [--agent <agent>]
 ashlr agents bus channel post <name> --text <text> [--from <agent>] [--topic <t>] [--ref <ref>]... [--priority ..] [--wake|--no-wake]
 ashlr agents bus channel list [--agent <agent>]
-ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--matched] [--after <cursor>] [--limit <1..100>]
+ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--matched] [--after <cursor>] [--limit <1..100>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
-ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--matched] [--frame <cli>]
+ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--matched] [--frame <cli>]
 ashlr agents bus wakes [<agent>] [--since <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--contains <text>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
@@ -54,7 +54,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--contains <text>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
-ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>]
+ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
@@ -68,7 +68,14 @@ still a registered identity under the same scrub and wake rules.
 --thread on dm, post, channel post, inbox and channel read is the v2 conversation
 label carried by note/context bodies; reads match that field only. --from on
 inbox and channel read narrows to one sender — a handle, agent:<handle>,
-stable id or alias; an unresolvable ref keeps exact-label matching. --priority
+stable id or alias; an unresolvable ref keeps exact-label matching.
+--exclude-from on inbox and channel read drops mail sent under every
+registered spelling of one identity — the same sender-exclusion rule
+comms bus read|watch --exclude-from, fleet bus-follow --exclude-from and
+fleet_bus_inbox apply — so a room's noisy member or a flooding sender
+never reaches the page while every other sender still does; it composes
+with --from (a sender both included and excluded matches nothing) and
+every other filter. --priority
 on inbox and channel read keeps only one exact P0..P3 band — the same match
 comms bus read --priority applies — so urgent mail is one filtered read, not
 a page through the backlog. --kind on inbox keeps only one delivery kind —
@@ -222,7 +229,22 @@ pendingFor, and seats match the held-work ref/branch/pr a handoff
 record carries — while ids, claim keys as keys, statuses and routing
 labels keep their own filters and channels, registry context rather
 than pending work, stays unfiltered; a row whose text cannot be proven
-never matches and every count stays the filtered total. work next claims the next claimable
+never matches and every count stays the filtered total. --since on work
+mine keeps only pending items whose recorded time reaches the cutoff —
+15m, 2h, 1d, epoch ms or an ISO time, the same grammar inbox --since
+takes — so a polling agent reads the delta since its last check instead
+of the whole pending set: claims match the lease's recorded started (a
+null start never matches), feed jobs and announced jobs match
+updatedAt, next/handoffs/inbox match the envelope receipt, mailbox
+matches acceptance, threads/awaiting/blocked and wakes inherit their own
+reads' since rules on latest activity, board deliveries match createdAt
+while board tasks — which keep no timestamp — never match, and seats
+stay unfiltered — a pending handoff record's createdAt stamps the plan
+read instant, not the held work's age, so no per-record recency exists
+to filter on; a pending item older than the
+cutoff is still pending but is not new, channels and seats stay
+unfiltered, and
+every count stays the filtered total. work next claims the next claimable
 work envelope addressed to the agent — the same kind:'work'/protocol-task
 receipts work mine's next section lists, walked in bus-next order
 (priority band, then cursor) under the same addressed-to rule: any label
@@ -246,7 +268,7 @@ const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
   '--frame', '--since', '--root', '--key', '--owner', '--lease-ms', '--token', '--outcome', '--reason',
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
-  '--kind', '--channel', '--contains']);
+  '--kind', '--channel', '--contains', '--exclude-from']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
 const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--open', '--claimable', '--jobs', '--matched']);
 const MESSAGE_CLAIM_ACTIONS = ['acquire', 'renew', 'release', 'complete'] as const;
@@ -539,8 +561,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
       }
       if (sub === 'read') {
-        const result = readAgentChannel(arg, { topic: one('--topic'), from: one('--from'), thread: one('--thread'),
-          priority: priorityArg(), job: one('--job'), since: sinceArg(), contains: one('--contains'),
+        const result = readAgentChannel(arg, { topic: one('--topic'), from: one('--from'), excludeFrom: one('--exclude-from'),
+          thread: one('--thread'), priority: priorityArg(), job: one('--job'), since: sinceArg(), contains: one('--contains'),
           matched: p.bools.has('--matched'),
           after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit') }, options);
         if (result.status !== 'ok') return finish(result, '');
@@ -583,8 +605,9 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const agent = sub ?? self;
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
       const page = readAgentInbox(agent, { after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit'),
-        thread: one('--thread'), from: one('--from'), priority: priorityArg(), kind: kindArg(), job: one('--job'),
-        since: sinceArg(), channel: one('--channel'), contains: one('--contains'), matched: p.bools.has('--matched') }, options);
+        thread: one('--thread'), from: one('--from'), excludeFrom: one('--exclude-from'), priority: priorityArg(),
+        kind: kindArg(), job: one('--job'), since: sinceArg(), channel: one('--channel'), contains: one('--contains'),
+        matched: p.bools.has('--matched') }, options);
       if (page.status !== 'ok') return finish(page, '');
       // --matched scans the whole store, so the core nextCursor is the store's
       // end — resuming there would skip unshown matches. The honest resume
@@ -707,9 +730,11 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
       const job = one('--job');
       const contains = one('--contains');
+      const since = sinceArg();
       const result = await readBusWorkMineWithSeats(agent,
         { ...options, ...(job === undefined ? {} : { job }),
-          ...(contains === undefined ? {} : { contains }) });
+          ...(contains === undefined ? {} : { contains }),
+          ...(since === undefined ? {} : { since }) });
       if (result.status !== 'ok') {
         out(json ? JSON.stringify(result) : `${result.status}: ${result.reason}`);
         return 2;

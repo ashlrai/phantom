@@ -147,6 +147,9 @@ exit code is non-zero if any of them failed.
 
 `SKIP eslint`, `SKIP docs check` or `SKIP css syntax check` with "run npm ci to restore it" means the
 install is incomplete; run `npm ci` and then `node scripts/verify-changed.mjs --force`.
+Do not rely on the "Merge Gate lints on CI" hint in that line: on a pull
+request Merge Gate runs no ESLint (see step 6), so a skipped local lint means
+the change merges unlinted.
 
 ### Skipping a flaky test
 
@@ -179,7 +182,8 @@ what changed, the exact commands you ran, and anything you skipped. Nobody
 pushes directly to `master`. Pull requests land as squash commits, so your pull
 request title becomes the commit subject on `master`; give it a conventional
 type prefix such as `fix:` or `docs:` so release-please files it under the
-right `CHANGELOG.md` section.
+right `CHANGELOG.md` section (see
+[Commit style](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md#commit-style)).
 
 Fleet agents push only to forks as well. Their publisher pushes a
 `codex-bridge/<job>` branch, opens the pull request titled
@@ -206,7 +210,8 @@ when these jobs succeed:
 
 Quick typecheck and `Check authority drift (hermetic)` also run but are
 advisory. The full backend, Windows and macOS
-suites do not run on pull requests; they run on the six-hour scheduled
+suites, `npm run lint` and `npm run check:docs` do not run on pull requests;
+they run on the six-hour scheduled
 `master` run, and failures there are fixed forward. Read the actual check run
 for your commit; a workflow file is not evidence that it passed. GitHub may
 ask a maintainer to approve workflow runs for a first-time contributor.

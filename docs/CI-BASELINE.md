@@ -371,6 +371,31 @@ Clean scans (`0 allowed=<n>`, `no leaks found`, `leaks found: 0`), the
 provenance pass lines, unrelated `::error::` annotations and unrelated
 lines stay unparsed.
 
+Either scanner step can also fail before it prints a verdict, which used
+to leave every open PR unknown because no count or summary line exists.
+The `secret-shape` step's pinned-hash check prints
+`.github/tests/secret-shape/scrub.pl: FAILED` (or `FAILED open or read`)
+when the workflow pin and the script disagree, `secret-shape base is
+missing` when the candidate base cannot be resolved, and perl's own fatal
+diagnostics (`syntax error`, `aborted due to compilation errors`,
+`BEGIN failed`, `requires explicit package name`, `Undefined subroutine`,
+`Can't call method`, `Search pattern not terminated`,
+`Unrecognized character`) when the script dies -- all grouped under
+`.github/workflows/ci.yml > (secret-shape-gate)`. The `secret-scan` job's
+pinned-archive check prints `<path>/gitleaks.tar.gz: FAILED` on a hash
+mismatch and the scan step prints `secret scan refused an incomplete
+commit range` when the range cannot be resolved -- grouped under
+`.github/workflows/ci.yml > (secret-scan-gate)`. sha256sum's WARNING
+summary line alone, `: OK` check lines, archives other workflows pin
+(`cargo-audit.tgz`, `osv-scanner-download`), non-fatal perl warnings and
+partial refusal text stay unparsed. A gate-bootstrap group's dependency
+set is the closed list of repo files its step executes -- the workflow
+itself plus `scrub.pl` for secret-shape and `ci-fetch-range.mjs` for
+secret-scan's merge-group/push scan-base path -- with no vitest harness
+ambient set, so a PR touching any of them is `pr-caused` and the rest
+classify `shared-baseline`, `pr-caused` or `unknown` -- never
+`probable-flake`.
+
 The ci.yml helper gates under `.github/scripts/` fail with only the
 script's `console.error` line plus the runner's
 `##[error]Process completed with exit code` step marker -- no vitest,

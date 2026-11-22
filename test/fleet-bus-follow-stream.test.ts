@@ -266,6 +266,9 @@ it('bus-follow rejects invalid arguments before touching the store', async () =>
     ['--after', '0', '--duration-ms', '100', '--job=', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--job', 'RQ-1', '--job', 'RQ-2', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--from', 'bad label', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--exclude-from', 'bad label', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--exclude-from=', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--exclude-from', 'worker-a', '--exclude-from', 'worker-b', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--priority', 'P9', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--thread', 'bad label', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--since', 'not-a-time', '--root', root, '--json'],
@@ -341,6 +344,67 @@ it('keeps exact-label --from matching when the identity registry is unreadable',
   expect(result.status).toBe('expired');
   expect(messages(records).map(row => row.envelope.id)).toEqual(['exact']);
   expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
+it('drops envelopes sent under every registered spelling of --exclude-from', async () => {
+  expect(registerAgentIdentity({ handle: 'worker-a', aliases: ['wa-alias'] }, { root }).status).toBe('created');
+  post('noise');
+  post('bare', 'worker-a', { from: 'worker-a' });
+  post('address', 'worker-a', { from: 'agent:worker-a' });
+  post('alias', 'worker-a', { from: 'wa-alias' });
+  post('id', 'worker-a', { from: stableAgentId('worker-a') });
+  post('other', 'worker-a', { from: 'worker-b' });
+  for (const excludeFrom of ['worker-a', 'agent:worker-a', 'wa-alias', stableAgentId('worker-a')]) {
+    const { records, pending, expire } = follow({ excludeFrom });
+    expire();
+    const result = await pending;
+    expect(result.status).toBe('expired');
+    expect(messages(records).map(row => row.envelope.id)).toEqual(['noise', 'other']);
+    expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 6 });
+  }
+});
+
+it('keeps exact-label --exclude-from matching when the identity registry is unreadable', async () => {
+  expect(registerAgentIdentity({ handle: 'worker-a', aliases: ['wa-alias'] }, { root }).status).toBe('created');
+  post('exact', 'worker-a', { from: 'agent:worker-a' });
+  post('alias', 'worker-a', { from: 'wa-alias' });
+  post('bare', 'worker-a', { from: 'worker-a' });
+  post('other', 'worker-a', { from: 'worker-b' });
+  writeFileSync(join(root, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+  const { records, pending, expire } = follow({ excludeFrom: 'agent:worker-a' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['alias', 'bare', 'other']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 4 });
+});
+
+it('composes --exclude-from with --to', async () => {
+  expect(registerAgentIdentity({ handle: 'worker-a' }, { root }).status).toBe('created');
+  expect(registerAgentIdentity({ handle: 'worker-b' }, { root }).status).toBe('created');
+  post('kept', 'worker-a', { from: 'agent:worker-a' });
+  post('dropped-sender', 'worker-a', { from: 'agent:worker-b' });
+  post('dropped-recipient', 'worker-b', { from: 'agent:worker-b' });
+  const { records, pending, expire } = follow({ to: 'worker-a', excludeFrom: 'agent:worker-b' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['kept']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
+it('filters the CLI stream by --exclude-from', async () => {
+  post('noise');
+  post('drop', 'worker-a', { from: 'agent:worker-a' });
+  post('keep', 'worker-a', { from: 'worker-b' });
+  const emitted: string[] = [];
+  const code = await cmdFleetBusFollow(['--after', '0', '--duration-ms', '250', '--interval-ms', '100',
+    '--exclude-from', 'agent:worker-a', '--root', root, '--json'],
+    { emit: (json: string) => { emitted.push(json); } });
+  expect(code).toBe(0);
+  const rows = emitted.map(line => JSON.parse(line) as BusFollowRecord);
+  expect(messages(rows).map(row => row.envelope.id)).toEqual(['noise', 'keep']);
+  expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
 });
 
 it('delivers only envelopes at --priority while checkpoints advance past the rest', async () => {
