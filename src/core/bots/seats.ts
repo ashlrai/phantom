@@ -65,6 +65,11 @@ export interface SeatHandoff {
 }
 export interface SeatOptions {
   home?: string; runs?: string; now?: () => number; nodesStore?: NodesStore;
+  /** Fleet root the coordination table and identity registry read; default
+   * `<home>/.ashlr/fleet` when `home` is set, else the shared coordination
+   * root (`<ashlrHome>/fleet`). Set it when the caller's bus/claim stores
+   * live under a different fleet root so seat work joins the same table. */
+  fleetRoot?: string;
   readQuota?: (seat: BotSeat) => Promise<QuotaEvidence>;
   ownerOptions?: OwnerThreadOptions;
   ownerNotice?: (input: { text: string; idempotencyKey: string }) => Promise<unknown>;
@@ -73,7 +78,7 @@ export interface SeatOptions {
 }
 const root = (o: SeatOptions) => join(o.home ?? homedir(), '.phantom', 'bots');
 const runs = (o: SeatOptions) => o.runs ?? (o.home ? join(o.home, '.ashlr-runs') : process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'));
-const fleet = (o: SeatOptions) => o.home ? join(o.home, '.ashlr', 'fleet') : coordinationRoot();
+const fleet = (o: SeatOptions) => o.fleetRoot ?? (o.home ? join(o.home, '.ashlr', 'fleet') : coordinationRoot());
 function ownerOptions(o: SeatOptions): OwnerThreadOptions {
   if (o.ownerOptions) return o.ownerOptions;
   const settings = loadOwnerThreadSettings(o.home ? join(o.home, '.ashlr') : fixedOwnerConfigDir());
@@ -232,6 +237,8 @@ export async function planSeatHandoff(id: string, o: SeatOptions = {}) {
 /** One roster seat's slice of the fleet handoff plan. */
 export interface SeatHandoffPlanEntry {
   seatId: string;
+  /** The bus routing label the seat's claims and messages answer to. */
+  participantId: string;
   /** Projected lifecycle state at the read instant — the same state listSeats reports. */
   state: SeatState['state'];
   /** Same eligibility rule planSeatHandoff/applySeatHandoff enforce; false means apply would refuse this seat. */
@@ -262,7 +269,7 @@ export async function planSeatHandoffs(o: SeatOptions = {}): Promise<SeatHandoff
     const handoffs = eligible
       ? seatHandoffRecords(seat.id, work, data.now).filter(h => !data.history.some(old => old.handoffId === h.handoffId))
       : [];
-    return { seatId: seat.id, state: state.state, eligible, handoffs };
+    return { seatId: seat.id, participantId: seat.participantId, state: state.state, eligible, handoffs };
   });
   assertMetadata(JSON.stringify({ schema: 'phantom-bot-handoffs-plan.v1', apply: false,
     seats: seats.map(({ handoffs, ...rest }) => ({ ...rest, handoffs: handoffs.map(({ handoffId: _id, ...h }) => h) })) }));

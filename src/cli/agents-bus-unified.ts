@@ -14,7 +14,8 @@ import { busWorkFeedOwnerMatcher, busWorkFeedRepoKey, busWorkFeedToMatcher, form
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope } from '../core/agents/bus-claims.js';
-import { formatBusWorkMine, readBusWorkMine } from '../core/agents/bus-work-mine.js';
+import { formatBusWorkMine } from '../core/agents/bus-work-mine.js';
+import { readBusWorkMineWithSeats } from '../core/agents/bus-work-mine-seats.js';
 import { readUnifiedBusStatus } from '../core/agents/bus-status.js';
 import { claimNextBusWork, type BusNextResult } from '../core/fleet/bus-next-claim.js';
 import { scrubSecrets } from '../core/util/scrub.js';
@@ -157,7 +158,11 @@ has answered yet, each naming who owes the reply — its
 pending wake hints, the next page of mail addressed
 to it, pending legacy phm bus mailbox mail addressed to any of its
 labels and the shared task board's pending digest (phm bus board pending)
-under the same labels — capped sections carry matched (or open for jobs) as their true
+under the same labels, plus the bot-seat handoff work the agent's seats
+still hold — the same planSeatHandoffs read phm bots handoffs serves,
+listing only eligible seats with pending records under any of the agent's
+labels or a literal seat/participant ref — capped sections carry matched
+(or open for jobs) as their true
 pending total — where every section reports its own read state and unknown
 stays unknown. --job on work mine narrows the whole digest to one job id —
 the same citation rule inbox --job applies plus the feed-id and board
@@ -166,8 +171,9 @@ declared-key overlap with an announced job or a leased body's job
 citations, next and handoffs by body citation (claimable work names none,
 so next is empty under --job), threads/awaiting/blocked by
 the conversations job query, wakes and inbox by their own job filters,
-mailbox by body citation, and the board by its job-carrying-thread rule —
-with every count the filtered total. work next claims the next claimable
+mailbox by body citation, the board by its job-carrying-thread rule, and
+the seats section by node-job handoff refs — with every count the
+filtered total. work next claims the next claimable
 work envelope addressed to the agent — the same kind:'work'/protocol-task
 receipts work mine's next section lists, walked in bus-next order
 (priority band, then cursor) under the same addressed-to rule: any label
@@ -622,7 +628,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const agent = arg ?? self;
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
       const job = one('--job');
-      const result = readBusWorkMine(agent, { ...options, ...(job === undefined ? {} : { job }) });
+      const result = await readBusWorkMineWithSeats(agent, { ...options, ...(job === undefined ? {} : { job }) });
       if (result.status !== 'ok') {
         out(json ? JSON.stringify(result) : `${result.status}: ${result.reason}`);
         return 2;
