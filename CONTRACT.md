@@ -2590,7 +2590,10 @@ and `status`, `job`, `repo`, `provider`, `tier`, `to`, `owner`, `since` and
 `contains` narrow the answer through the same `projectBusWorkFeedView` the
 CLIs use — jobs answer newest-first, `to`/`owner` resolve through the
 server-side identity registry with exact-label fallback, and `repo`,
-`since` and `contains` share the CLI normalization. Every parameter is a
+`since` and `contains` share the CLI normalization. `limit` (1–200,
+`BUS_WORK_FEED_LIMIT_MAX`) pages the filtered view through the shared
+`sliceBusWorkFeedView`, reporting `matched`/`omitted`; absent, the whole
+filtered view answers. Every parameter is a
 single value validated by the shared `parseBusWorkFeedQuery`
 (`src/core/agents/bus-work-feed-query.ts`) rules; repeated, unknown or
 malformed parameters or values are a 400, and no caller-supplied root or
@@ -2668,7 +2671,12 @@ newest status detail and the declared dispatch scope/acceptance, each
 scrubbed, single-lined and clipped at the same bounds `formatBusWorkFeedJob`
 renders — so ids, claim keys, statuses and routing labels stay structured
 fields with their own filters, never search text, and a secret-shaped value
-is scrubbed before the match. `formatBusWorkFeed(result)` renders the shared human
+is scrubbed before the match. `sliceBusWorkFeedView(result, limit)` pages an
+ok view newest-first to `limit` jobs (1–`BUS_WORK_FEED_LIMIT_MAX`, 200),
+reporting `matched` as the true filtered total before the slice and
+`omitted` as the rest while claims holds regroup under the shown jobs only;
+non-ok results pass through untouched, and `BusWorkFeedPaged` is the ok
+result plus those two counts. `formatBusWorkFeed(result)` renders the shared human
 lines — each job as `<id> <status> "<title>" detail="<why>" owner=… to=… provider=… repo=… [tier=… scope="…" acceptance="…"] keys=<claim keys> claimable=… updated=… post=<postId> [status=<statusId>] [result=<outcome> [reason=<r>] by=<from> at=<iso> receipt=<id>]`
 with title, detail, the optional dispatch spec and keys scrubbed, single-lined
 and display-clipped (JSON keeps the full values; `detail=`, `status=`, the
@@ -2676,21 +2684,24 @@ dispatch fields and the result suffix appear only when present, `post=`
 always) — the result suffix is `busWorkJobResultSuffix(job)`, the shared
 helper `work mine`'s jobs and announced lines also append so every surface
 renders the newest `work.result` report identically — a refused read's
-footer adds `receipt=<id>` when the projection blamed a retained envelope —
+footer adds `receipt=<id>` when the projection blamed a retained envelope,
+and a paged read's footer adds `matched=N omitted=M` —
 both feed CLIs use them, and both accept `--to <label>`, `--owner
 <agent>`, `--job <id>`, `--repo <owner/name>`, `--provider <p>`,
-`--claimable`, `--since <15m|2h|1d|ISO>` and `--contains <text>` beside
+`--claimable`, `--since <15m|2h|1d|ISO>`, `--contains <text>` and
+`--limit <1-200>` beside
 `--status`; `--claimable`
 implies the claims join, `--since` parses through the shared `parseSince`
-grammar, and `--contains` takes a non-empty needle of at most
+grammar, `--limit` runs `sliceBusWorkFeedView` after the filters (absent,
+the whole filtered view answers), and `--contains` takes a non-empty needle of at most
 `BUS_WORK_FEED_CONTAINS_MAX` (512) characters, refusing unparseable or
 overlong values as usage errors.
 `phm fleet work-feed [--claims]
 [--to <label>] [--owner <agent>] [--job <id>] [--repo <owner/name>]
-[--provider <p>] [--claimable] [--since <15m|2h|1d|ISO>]` and
+[--provider <p>] [--claimable] [--since <15m|2h|1d|ISO>] [--limit <1-200>]` and
 `phm agents bus work feed [--status] [--claims] [--claimable] [--to <label>]
 [--owner <agent>] [--job <id>] [--repo <owner/name>] [--provider <p>]
-[--since <15m|2h|1d|ISO>]` print the same
+[--since <15m|2h|1d|ISO>] [--limit <1-200>]` print the same
 projection — hold lines plus a `claims=` footer — and non-ok reads print
 `jobs=unknown` rather than a fabricated count.
 

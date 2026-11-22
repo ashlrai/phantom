@@ -10,7 +10,9 @@
  * `provider`, `tier`, `to`, `owner`, `since`, `contains`, `open` and `claimable`,
  * each validated by the shared `parseBusWorkFeedQuery` rules and applied through
  * the same `projectBusWorkFeedView` the CLIs use (`open`/`claimable` imply the
- * claims join); any other parameter or value is a 400.
+ * claims join); `limit` pages the filtered view through the shared
+ * `sliceBusWorkFeedView` (1..200, reporting `matched`/`omitted`), and any other
+ * parameter or value is a 400.
  * GET /api/verse/agent-bus/messages[?since=15m&agent=claude&with=leader&kind=ask&priority=P0&job=RQ-1&thread=t-1&contains=parser&excludeFrom=grok&limit=50] is the same
  * read as `phm messages` (agent-messages.ts): newest first, scrubbed summaries.
  * `contains` is a case-insensitive substring over each scrubbed summary;
@@ -33,7 +35,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFleetEdges } from '../fleet/fleet-edges.js';
 import { parseBusEnvelope } from '../fleet/bus-envelope.js';
 import { appendBusInbox, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter } from '../fleet/bus-inbox.js';
-import { projectBusWorkFeedView, readBusWorkFeed } from '../agents/bus-work-feed-read.js';
+import { projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../agents/bus-work-feed-read.js';
 import { parseBusWorkFeedQuery, type BusWorkFeedQueryInput } from '../agents/bus-work-feed-query.js';
 import { parseAgentMessagesQuery, readAgentMessages } from '../fleet/agent-messages.js';
 import { getBusMirrorState, startBusMirrorLoop } from '../fleet/bus-mirror-dispatch.js';
@@ -53,9 +55,10 @@ const PATH = '/api/verse/agent-bus';
 const NEEDS_MASON = `${PATH}/needs-mason`;
 const MESSAGES = `${PATH}/messages`;
 const WORK_FEED = `${PATH}/work-feed`;
-/** The query keys the work-feed read accepts — the `claims` hold join plus the
- * filter set `parseBusWorkFeedQuery` validates into `projectBusWorkFeedView`. */
-const WORK_FEED_PARAMS = ['claims', 'status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'contains', 'open', 'claimable'] as const;
+/** The query keys the work-feed read accepts — the `claims` hold join, the
+ * filter set `parseBusWorkFeedQuery` validates into `projectBusWorkFeedView`,
+ * and the `limit` page bound `sliceBusWorkFeedView` applies after it. */
+const WORK_FEED_PARAMS = ['claims', 'status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'contains', 'open', 'claimable', 'limit'] as const;
 const NEEDS_MASON_RESOLVE = `${NEEDS_MASON}/resolve`;
 const ASKS = `${NEEDS_MASON}/asks`;
 const ASKS_ANSWER = `${ASKS}/answer`;
@@ -143,7 +146,8 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
         if (!parsed.ok) { sendJson(res, 400, { error: parsed.error }); return true; }
         const feed = deps.workFeed ?? readBusWorkFeed;
         const result = projectBusWorkFeedView(parsed.claims ? feed({ claims: true }) : feed(), parsed.filters);
-        sendJson(res, result.status === 'ok' || result.status === 'refused' ? 200 : 503, { v: 1, ...result });
+        const paged = parsed.limit === undefined ? result : sliceBusWorkFeedView(result, parsed.limit);
+        sendJson(res, paged.status === 'ok' || paged.status === 'refused' ? 200 : 503, { v: 1, ...paged });
       } else if (path === MESSAGES) {
         const parsed = parseAgentMessagesQuery({ since: params.get('since') ?? undefined,
           agent: params.get('agent') ?? undefined, with: params.get('with') ?? undefined,

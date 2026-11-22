@@ -10,7 +10,7 @@ import {
   updateWorkStatus, INBOX_KINDS, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { PROVIDERS, providerSchema, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob } from '../core/agents/bus-v2-schema.js';
-import { busWorkFeedOwnerMatcher, busWorkFeedRepoKey, busWorkFeedToMatcher, BUS_WORK_FEED_CONTAINS_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
+import { busWorkFeedOwnerMatcher, busWorkFeedRepoKey, busWorkFeedToMatcher, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope } from '../core/agents/bus-claims.js';
@@ -53,7 +53,7 @@ ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--clai
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
-ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--contains <text>]
+ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>]
@@ -181,7 +181,11 @@ work feed keeps only jobs whose title, newest status detail or declared
 dispatch scope/acceptance carries the needle as a case-insensitive
 substring over the same scrubbed display-clipped text the job line renders
 — ids, keys, statuses and labels stay structured fields with their own
-filters, and a secret-shaped value stays unfindable. A job line
+filters, and a secret-shaped value stays unfindable. --limit pages the
+filtered view newest-first (1..200) and reports matched as the true
+filtered total before the cap and omitted as the rest, with claims holds
+regrouped under the shown jobs only — the same page fleet_work_feed's
+limit argument and work-feed?limit= serve. A job line
 also cites the newest retained work.result receipt — the outcome a
 worker reported with its receipt id — as evidence only: it never moves
 the job's status, which only the announcer's work.status does. work claim
@@ -716,6 +720,11 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (contains !== undefined && (contains.trim() === '' || contains.length > BUS_WORK_FEED_CONTAINS_MAX)) {
         throw new UsageError(`--contains takes a non-empty search text of at most ${BUS_WORK_FEED_CONTAINS_MAX} characters.`);
       }
+      const limitRaw = one('--limit');
+      const limit = limitRaw === undefined ? undefined : integer(limitRaw, '--limit');
+      if (limit !== undefined && (limit < 1 || limit > BUS_WORK_FEED_LIMIT_MAX)) {
+        throw new UsageError(`--limit must be an integer from 1 to ${BUS_WORK_FEED_LIMIT_MAX}.`);
+      }
       const claimable = p.bools.has('--claimable');
       const open = p.bools.has('--open');
       const result = projectBusWorkFeedView(
@@ -725,8 +734,9 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           open: open || undefined, claimable: claimable ? true : undefined, since: sinceArg(), contains,
           toMatch: to === undefined ? undefined : busWorkFeedToMatcher(to, { root: options.root }),
           ownerMatch: owner === undefined ? undefined : busWorkFeedOwnerMatcher(owner, { root: options.root }) });
-      out(json ? JSON.stringify(result) : formatBusWorkFeed(result).join('\n'));
-      return result.status === 'ok' ? 0 : 1;
+      const paged = limit === undefined ? result : sliceBusWorkFeedView(result, limit);
+      out(json ? JSON.stringify(paged) : formatBusWorkFeed(paged).join('\n'));
+      return paged.status === 'ok' ? 0 : 1;
     }
     if (verb === 'work' && sub === 'claim') {
       noExtra(2);

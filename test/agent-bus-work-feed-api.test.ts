@@ -56,7 +56,8 @@ describe('GET /api/verse/agent-bus/work-feed', () => {
     for (const method of ['POST', 'PUT', 'DELETE'] as const) {
       expect((await request(FEED, { method })).status, method).toBe(404);
     }
-    for (const query of ['?after=0', '?limit=10', '?claims=1', '?claims=false', '?claims', '?claims=true&claims=true',
+    for (const query of ['?after=0', '?limit=0', '?limit=201', '?limit=abc', '?limit=', '?limit=1.5', '?limit=-1',
+      '?claims=1', '?claims=false', '?claims', '?claims=true&claims=true',
       '?status=bogus', '?status=QUEUED', '?job=', '?repo=not-a-repo', '?provider=bogus', '?provider=DEVIN',
       '?tier=bogus', '?tier=FAST', '?to=', '?owner=', '?since=not-a-time', '?contains=', '?open=false', '?claimable=1',
       '?status=queued&status=done', '?bogus=1']) {
@@ -196,6 +197,21 @@ describe('GET /api/verse/agent-bus/work-feed filters', () => {
   it('serves jobs newest-first, the same order the feed CLIs print', async () => {
     const { wire } = await feedRequest('');
     expect(ids(wire)).toEqual(['job-b', 'job-a']);
+  });
+
+  it('pages the filtered view with limit and reports matched/omitted', async () => {
+    const { wire } = await feedRequest('?limit=1');
+    expect(ids(wire)).toEqual(['job-b']);
+    expect(wire).toMatchObject({ matched: 2, omitted: 1 });
+    // A page wider than the match reports zero omitted; filters narrow before the slice.
+    const wide = await feedRequest('?limit=200&status=done');
+    expect(ids(wide.wire)).toEqual(['job-b']);
+    expect(wide.wire).toMatchObject({ matched: 1, omitted: 0 });
+    // Without limit the whole filtered view answers, with no page fields.
+    const full = await feedRequest('');
+    expect(ids(full.wire)).toEqual(['job-b', 'job-a']);
+    expect(full.wire).not.toHaveProperty('matched');
+    expect(full.wire).not.toHaveProperty('omitted');
   });
 
   it('implies the claims join for open and claimable and keeps only provably open or claimable jobs', async () => {
