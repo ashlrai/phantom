@@ -304,7 +304,20 @@ export type UnifiedInboxSeverity = 'info' | 'warn' | 'high';
 const UNIFIED_INBOX_SEVERITIES: readonly UnifiedInboxSeverity[] = ['info', 'warn', 'high'];
 export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeverity =>
   (UNIFIED_INBOX_SEVERITIES as readonly string[]).includes(value);
-export type UnifiedInboxKind = 'needs-you' | 'needs-you-delivery' | 'teammate-text' | 'teammate-task' | 'owner-message' | 'owner-reply-undelivered' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'mailbox-message' | 'board-delivery' | 'board-task' | 'agent-thread' | 'seat-handoff' | 'gmail-over-target' | 'linkedin-message' | 'comms-request' | 'email-inbound' | 'email-stuck' | 'team-approval' | 'inbox-proposal' | 'slack-request';
+/** Every pending-item kind the unified view can report. Most kinds are 1:1
+ * with their source; the `bus` source splits into `bus-work`/`bus-handoff`
+ * and the `board` source into `board-delivery`/`board-task`, so `kind` is
+ * the finer classification `--kind` filters on. */
+export const UNIFIED_INBOX_KINDS = [
+  'needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message',
+  'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'mailbox-message',
+  'board-delivery', 'board-task', 'agent-thread', 'seat-handoff', 'gmail-over-target',
+  'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
+  'inbox-proposal', 'slack-request',
+] as const;
+export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
+export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
+  (UNIFIED_INBOX_KINDS as readonly string[]).includes(value);
 
 export interface UnifiedInboxItem extends AttentionItem {
   /** Stable, namespaced: `<source>:<ref>` (e.g. `drafts:d-0123…`). */
@@ -356,6 +369,11 @@ export interface UnifiedInboxSourceReport {
 export interface UnifiedInboxFilter {
   /** Keep only items this source contributed. */
   source?: UnifiedInboxSource;
+  /** Keep only items of this kind — the item's own classification, finer
+   * than `source` where one source emits several kinds (the `bus` source's
+   * `bus-work`/`bus-handoff` split, the `board` source's
+   * `board-delivery`/`board-task` split). */
+  kind?: UnifiedInboxKind;
   /** Keep only items at this severity band. */
   severity?: UnifiedInboxSeverity;
   /** Keep only blocking items when true, only non-blocking when false. */
@@ -1993,7 +2011,8 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   ranked.sort(compareRanked);
   const requested = options.filter;
   const filter = requested !== undefined &&
-    (requested.source !== undefined || requested.severity !== undefined ||
+    (requested.source !== undefined || requested.kind !== undefined ||
+      requested.severity !== undefined ||
       requested.blocking !== undefined || requested.job !== undefined ||
       requested.since !== undefined || requested.contains !== undefined)
     ? requested : undefined;
@@ -2007,6 +2026,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     : filter.contains.toLowerCase().replace(/\s+/g, ' ').trim();
   const matched = filter === undefined ? ranked : ranked.filter(({ item }) =>
     (filter.source === undefined || item.source === filter.source) &&
+    (filter.kind === undefined || item.kind === filter.kind) &&
     (filter.severity === undefined || item.severity === filter.severity) &&
     (filter.blocking === undefined || item.blocking === filter.blocking) &&
     // A job filter keeps only items whose own citation set names the job —

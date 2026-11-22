@@ -3157,6 +3157,13 @@ unfindable and protocol-v1 payloads stay opaque; and `comms inbox
 `UNIFIED_INBOX_CONTAINS_MAX`) keeps only items whose scrubbed
 `title`/`detail` — the text the row shows, never the `act` command links —
 carries the needle as a case-insensitive whitespace-collapsed substring;
+`UnifiedInboxFilter.kind` (`comms inbox --kind`, validated by
+`isUnifiedInboxKind` over `UNIFIED_INBOX_KINDS`) keeps only items of that
+stored kind — the item's own classification, finer than `source` where one
+source emits several kinds (the `bus` source's `bus-work`/`bus-handoff`
+split, the `board` source's `board-delivery`/`board-task` split) — and
+ANDs with every other view dimension while the per-source `pending`
+reports stay the unfiltered store truth;
 and
 `jobAnnotationFromFeed(feed, jobId)` maps one already-read
 `BusWorkFeedReadResult` to the `BusEnvelopeLookupJob` every citing read
