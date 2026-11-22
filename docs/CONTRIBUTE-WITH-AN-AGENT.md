@@ -352,6 +352,25 @@ The shape of the work carries over: one focused branch pushed to your fork, the
 repository's own checks run once, a pull request with a conventional title.
 The specifics on this page do not: `scripts/verify-changed.mjs`, `npm run test:ci`,
 the `Merge Gate` job list, the fast-gate selection and the protected-path list
-belong to Phantom. Take each repository's commands, required checks and
-`CODEOWNERS` from its own files. The fleet publisher and
+belong to Phantom. Each repository's `CONTRIBUTING.md` has its own "contribute
+with an agent" section. This table summarizes the parts that differ most:
+
+| Repository | Toolchain | Check before you push | Required check |
+| --- | --- | --- | --- |
+| [phantom-secrets](https://github.com/ashlrai/phantom-secrets/blob/main/CONTRIBUTING.md#contribute-with-an-agent) | Rust (pinned by `rust-toolchain.toml`), Node.js, Perl | `scripts/fast-check.sh upstream/main`, then the full Cargo test, fmt and clippy gate (pull request CI does not run the Rust tests) | `CI Gate` |
+| [locus](https://github.com/ashlrai/locus/blob/main/CONTRIBUTING.md#contribute-with-an-agent) | Rust stable | `bash scripts/fast-check.sh` | `CI Gate` |
+| [ashlr-plugin](https://github.com/ashlrai/ashlr-plugin/blob/main/CONTRIBUTING.md#contribute-from-a-fork-with-your-own-agent) | Bun 1.4.4 or newer, Node.js | `bun scripts/premerge-local.ts upstream/main`, plus the secret-shape scan | `CI Gate` |
+| [lexicon](https://github.com/ashlrai/lexicon/blob/main/CONTRIBUTING.md#contribute-with-an-agent) | Node.js 20 or newer | its `typecheck`, `build` and `check:crypto` npm scripts, then `npm test` | `CI Gate` |
+| [ashlr-md](https://github.com/ashlrai/ashlr-md/blob/main/CONTRIBUTING.md#contribute-with-an-agent) | Rust, Bun, Node.js, Python 3, Perl | `scripts/ci-local.sh upstream/main`, plus the fast-job steps it skips | `Check (Linux)` |
+| [ashlr-stack](https://github.com/ashlrai/ashlr-stack/blob/main/CONTRIBUTING.md#contribute-with-an-agent) | Bun 1.4.4 or newer, Node.js 20 or newer | `bash scripts/fast-check.sh` and `scripts/affected-tests origin/main` | `CI Gate` |
+
+Two differences from Phantom trip agents up. First, the remotes are the other
+way round: those guides clone your fork as `origin` and add `ashlrai/<repo>`
+as `upstream`, so local checks compare against `upstream/main` (or a fork
+`main` you keep in sync with it), not `origin/master` as in
+[step 2](#2-clone-and-install). Follow each repository's own layout. Second,
+GitHub lets only accounts with write access arm auto-merge, so on a fork pull
+request a maintainer or fleet agent arms it once the required check is green.
+Take each repository's exact commands, required checks and `CODEOWNERS` from
+its own files; they win if this table is older. The fleet publisher and
 `phm publish orphans`/`phm publish resume` cover all seven repositories.
