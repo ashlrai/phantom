@@ -158,6 +158,22 @@ export interface RouterWeightEvidence {
   handoff_known: number;
   handoff_triggers: { trigger: string; jobs: number }[] | null;
   /**
+   * Group outcomes (the known cohort) carrying the fleet's recorded
+   * provider-wall lane hold — dispatchd's `autobackoff_hold` receipts
+   * joined as `provider_wall_*`: the confirmed verdict that the job's
+   * finished run log tail matched a provider usage/quota or auth
+   * pattern and the lane was held. `provider_wall_triggers` tallies
+   * the fold's derived trigger labels (`usage-limit`, `auth-failure`)
+   * over the same cohort, most jobs first — jobs whose recorded
+   * pattern stayed outside the producer's mirrored tables count in
+   * `provider_wall_known` but contribute no trigger label. A lane
+   * whose merges rest partly on provider-walled runs shows the
+   * recorded mix here. Null when no outcome recorded a hold — never
+   * zero-filled.
+   */
+  provider_wall_known: number;
+  provider_wall_triggers: { trigger: string; jobs: number }[] | null;
+  /**
    * Group outcomes (the known cohort) carrying recorded merge-queue
    * evidence — the merge-events.jsonl observations joined as
    * `merge_queue` for the job's standing PR. `merge_queue_blocked_known`
@@ -368,6 +384,26 @@ export interface RouterWeightProposalSet {
    */
   unknown_handoff_triggers: { trigger: string; jobs: number }[];
   /**
+   * Jobs inside the unknown cohort carrying the fleet's recorded
+   * provider-wall lane hold — dispatchd's `autobackoff_hold` receipts
+   * joined as `provider_wall_*`. A hold only lands on a failed or
+   * no-work run (the auth scanner additionally requires its
+   * `auth_failures` streak), so like a `rate-limit` handoff it is the
+   * fleet's recorded receipt that the attempt died on a provider wall
+   * — it explains the missing merge verdict and leaves
+   * `unknown_unresolved` for both trigger families. Reads jobs-ledger
+   * rows only, so the tally is real whenever the jobs read succeeded.
+   */
+  unknown_provider_walls: number;
+  /**
+   * Top recorded provider-wall trigger labels inside the unknown
+   * cohort, by jobs — the fold's derived `usage-limit`/`auth-failure`
+   * families; jobs whose pattern stayed outside the producer's
+   * mirrored tables contribute to `unknown_provider_walls` but no
+   * label here. Diagnostic context only.
+   */
+  unknown_provider_wall_triggers: { trigger: string; jobs: number }[];
+  /**
    * Jobs inside the unknown cohort carrying recorded merge-queue
    * evidence — the merge-events.jsonl observations joined as
    * `merge_queue` for the job's standing PR, so a job still awaiting
@@ -439,6 +475,8 @@ interface WeightEvidenceTally {
   rejectedReasons: Map<string, number>;
   handoff: number;
   handoffTriggers: Map<string, number>;
+  providerWall: number;
+  providerWallTriggers: Map<string, number>;
   mergeQueue: number;
   mergeQueueBlocked: number;
   mergeQueueBlockedReasons: Map<string, number>;
@@ -460,6 +498,7 @@ const freshTally = (): WeightEvidenceTally => ({
   laneOverrides: 0, overrideReasons: new Map(),
   marketRejected: 0, rejectedReasons: new Map(),
   handoff: 0, handoffTriggers: new Map(),
+  providerWall: 0, providerWallTriggers: new Map(),
   mergeQueue: 0, mergeQueueBlocked: 0, mergeQueueBlockedReasons: new Map(),
   mergeQueueCheckFailures: 0, mergeQueueConflicts: 0, mergeQueueRetries: 0,
   mergeQueueRecuts: 0,
@@ -483,6 +522,8 @@ const TASK_OUTCOME_RETRY: ReadonlySet<string> = new Set(['failed', 'deferred', '
 const MAX_OVERRIDE_REASONS = 8;
 /** Top recorded handoff trigger labels kept per group and in the unknown cohort, most jobs first. */
 const MAX_HANDOFF_TRIGGERS = 8;
+/** Top recorded provider-wall trigger labels kept per group and in the unknown cohort, most jobs first. */
+const MAX_PROVIDER_WALL_TRIGGERS = 8;
 
 const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   ci_first_pass_known: t.ciKnown,
@@ -537,6 +578,12 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
         .map(([trigger, jobs]) => ({ trigger, jobs }))
         .sort((a, b) => b.jobs - a.jobs || a.trigger.localeCompare(b.trigger))
         .slice(0, MAX_HANDOFF_TRIGGERS),
+  provider_wall_known: t.providerWall,
+  provider_wall_triggers: t.providerWall === 0 ? null
+    : [...t.providerWallTriggers.entries()]
+        .map(([trigger, jobs]) => ({ trigger, jobs }))
+        .sort((a, b) => b.jobs - a.jobs || a.trigger.localeCompare(b.trigger))
+        .slice(0, MAX_PROVIDER_WALL_TRIGGERS),
   merge_queue_known: t.mergeQueue,
   merge_queue_blocked_known: t.mergeQueueBlocked,
   merge_queue_blocked_reasons: t.mergeQueueBlocked === 0 ? null
@@ -558,7 +605,8 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
  * also reports the group's other recorded outcome signals (CI verdicts, review findings, cost, wall
  * time, merge latency, queue-admission wait, CI wall, publish-station
  * wait, pass^k, dispatch lane
- * overrides, lane-hint blocking codes and session-handoff advisories)
+ * overrides, lane-hint blocking codes, session-handoff advisories and
+ * provider-wall lane holds)
  * as advisory evidence over
  * the same known cohort. Recorded lane-hint blocking codes
  * (`lane_hint_blocked_by`) tally per group as
@@ -566,7 +614,10 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
  * the hinted lane could not take the work. Recorded session-handoff
  * advisories (`handoff_trigger`) tally per group as
  * `handoff_known`/`handoff_triggers` — the provider-wall verdicts the
- * fleet recorded on the group's jobs.
+ * fleet recorded on the group's jobs — and the confirmed
+ * autobackoff lane holds (`provider_wall_*`) tally as
+ * `provider_wall_known`/`provider_wall_triggers`, the hold receipts
+ * covering the auth walls advisories never see.
  */
 export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: RouterWeightProposalOptions = {}): RouterWeightProposalSet {
   const minSamples = opts.minSamples ?? ROUTER_WEIGHT_DEFAULT_MIN_SAMPLES;
@@ -597,6 +648,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   const marketReasons = new Map<string, number>();
   const marketRejectedReasons = new Map<string, number>();
   const handoffTriggersUnknown = new Map<string, number>();
+  const providerWallTriggersUnknown = new Map<string, number>();
   const mergeQueueBlockedReasonsUnknown = new Map<string, number>();
   const usageMissing = new Map<string, number>();
   const usageSources = new Map<string, number>();
@@ -605,6 +657,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   let unknownNoop = 0;
   let unknownMarketRejected = 0;
   let unknownHandoffs = 0;
+  let unknownProviderWalls = 0;
   let unknownMergeQueue = 0;
   let unknownMergeQueueBlocked = 0;
   let unknownMergeQueueCheckFailures = 0;
@@ -707,6 +760,20 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
         handoffTriggersUnknown.set(o.handoff_trigger, (handoffTriggersUnknown.get(o.handoff_trigger) ?? 0) + 1);
         if (o.handoff_trigger === 'rate-limit') unknownHandoffs++;
       }
+      // The fleet's autobackoff lane hold is the confirmed provider-wall
+      // verdict: it only lands on a failed or no-work run (the auth
+      // scanner additionally requires its auth_failures streak), so —
+      // like a rate-limit handoff — it explains the missing merge
+      // verdict for both trigger families and leaves unknown_unresolved.
+      // A hold whose pattern stayed outside the producer's mirrored
+      // tables still counts: the receipt is the verdict, the family
+      // label is only its classification.
+      if (o.provider_wall_pattern !== null) {
+        unknownProviderWalls++;
+        if (o.provider_wall_trigger !== null) {
+          providerWallTriggersUnknown.set(o.provider_wall_trigger, (providerWallTriggersUnknown.get(o.provider_wall_trigger) ?? 0) + 1);
+        }
+      }
       // The merge-queue join is queue-side diagnostic like the market
       // verdicts: each job's standing PR carried recorded merge-events
       // observations — blocked reasons, check failures, conflicts,
@@ -727,7 +794,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
         if (o.merge_queue.retries > 0) unknownMergeQueueRetries++;
         if (o.merge_queue.recuts > 0) unknownMergeQueueRecuts++;
       }
-      if (!empty && !nonzeroExit && o.failure_class === null && !requeued && !declined && !deferred && !noop && o.handoff_trigger !== 'rate-limit') unknownUnresolved++;
+      if (!empty && !nonzeroExit && o.failure_class === null && !requeued && !declined && !deferred && !noop && o.handoff_trigger !== 'rate-limit' && o.provider_wall_pattern === null) unknownUnresolved++;
       continue;
     }
     const key = JSON.stringify([o.work_class, o.lane]);
@@ -781,6 +848,12 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     if (o.handoff_trigger !== null) {
       t.handoff++;
       t.handoffTriggers.set(o.handoff_trigger, (t.handoffTriggers.get(o.handoff_trigger) ?? 0) + 1);
+    }
+    if (o.provider_wall_pattern !== null) {
+      t.providerWall++;
+      if (o.provider_wall_trigger !== null) {
+        t.providerWallTriggers.set(o.provider_wall_trigger, (t.providerWallTriggers.get(o.provider_wall_trigger) ?? 0) + 1);
+      }
     }
     if (o.merge_queue !== null) {
       t.mergeQueue++;
@@ -849,6 +922,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     .map(([trigger, jobs]) => ({ trigger, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.trigger.localeCompare(b.trigger))
     .slice(0, MAX_HANDOFF_TRIGGERS);
+  const topProviderWallTriggers = [...providerWallTriggersUnknown.entries()]
+    .map(([trigger, jobs]) => ({ trigger, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.trigger.localeCompare(b.trigger))
+    .slice(0, MAX_PROVIDER_WALL_TRIGGERS);
   const topMergeQueueBlockedReasons = [...mergeQueueBlockedReasonsUnknown.entries()]
     .map(([reason, jobs]) => ({ reason, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
@@ -873,6 +950,8 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     unknown_market_rejected_reasons: topMarketRejectedReasons,
     unknown_handoffs: unknownHandoffs,
     unknown_handoff_triggers: topHandoffTriggers,
+    unknown_provider_walls: unknownProviderWalls,
+    unknown_provider_wall_triggers: topProviderWallTriggers,
     unknown_merge_queue: unknownMergeQueue,
     unknown_merge_queue_blocked: unknownMergeQueueBlocked,
     unknown_merge_queue_blocked_reasons: topMergeQueueBlockedReasons,
@@ -1035,6 +1114,21 @@ export interface RouterWeightProposalReport {
    */
   unknown_handoff_triggers: { trigger: string; jobs: number }[] | null;
   /**
+   * Jobs inside the unknown cohort carrying the fleet's recorded
+   * provider-wall lane hold — see RouterWeightProposalSet. Reads
+   * jobs-ledger rows only, so the tally is real whenever the jobs
+   * read succeeded. Null when the ledger was not read; 0 is a real
+   * measurement.
+   */
+  unknown_provider_walls: number | null;
+  /**
+   * Top recorded provider-wall trigger labels inside the unknown
+   * cohort, by jobs — `usage-limit`/`auth-failure` (see
+   * RouterWeightProposalSet). Null when the ledger was not read;
+   * empty when none recorded.
+   */
+  unknown_provider_wall_triggers: { trigger: string; jobs: number }[] | null;
+  /**
    * Jobs inside the unknown cohort carrying recorded merge-queue
    * evidence — see RouterWeightProposalSet. Queue-side diagnostic
    * context only; never reduces unknown_unresolved. Null when the
@@ -1115,6 +1209,7 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
       unknown_noop_reasons: null, unknown_market_reasons: null,
       unknown_market_rejected: null, unknown_market_rejected_reasons: null,
       unknown_handoffs: null, unknown_handoff_triggers: null,
+      unknown_provider_walls: null, unknown_provider_wall_triggers: null,
       unknown_merge_queue: null, unknown_merge_queue_blocked: null,
       unknown_merge_queue_blocked_reasons: null,
       unknown_merge_queue_check_failures: null, unknown_merge_queue_conflicts: null,
@@ -1147,11 +1242,14 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     unknown_market_reasons: read.market_state === 'read' ? set.unknown_market_reasons : null,
     unknown_market_rejected: read.market_state === 'read' ? set.unknown_market_rejected : null,
     unknown_market_rejected_reasons: read.market_state === 'read' ? set.unknown_market_rejected_reasons : null,
-    // Session-handoff advisories are jobs-ledger rows like the skip,
-    // keep-queued and no-op verdicts — no side-ledger join — so the
-    // tallies are real whenever the jobs read succeeded.
+    // Session-handoff advisories and autobackoff lane holds are
+    // jobs-ledger rows like the skip, keep-queued and no-op verdicts —
+    // no side-ledger join — so the tallies are real whenever the jobs
+    // read succeeded.
     unknown_handoffs: set.unknown_handoffs,
     unknown_handoff_triggers: set.unknown_handoff_triggers,
+    unknown_provider_walls: set.unknown_provider_walls,
+    unknown_provider_wall_triggers: set.unknown_provider_wall_triggers,
     // Merge-queue evidence joins through the same bounded
     // merge-events.jsonl tail: anything but 'read' means no merge_queue
     // joined, so the tallies would claim "no merge friction recorded"

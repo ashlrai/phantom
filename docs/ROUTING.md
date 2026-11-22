@@ -492,6 +492,35 @@ attempt evidence, not a launch decision, so rows of every other
 event leave it standing. All three stay `null` when no advisory row
 named the job — the retained window recorded no provider-wall
 verdict, which is unknown, not "no wall ever".
+`provider_wall_trigger`/`provider_wall_pattern`/`provider_wall_lane`
+carry the fleet's recorded provider-wall lane hold — dispatchd's
+`autobackoff_hold` receipts (jobs.jsonl rows the usage/quota and
+auth backoff scanners append when a finished run's log tail matched
+a provider error pattern and the lane was held). A hold only lands
+on a failed or no-work run — the auth scanner additionally requires
+its `auth_failures` streak — so the receipt is the fleet's confirmed
+provider-wall verdict for the attempt, covering the auth walls the
+session-handoff advisory never sees and the usage walls whose hold
+landed where no advisory did. The row counts only on the
+`autobackoff_hold` event name (the `event`/`type`/`kind` alias set)
+with a `pattern` id in the bounded identifier-label shape — the
+payload field every producer hold row carries; the trigger joins in
+the fold's closed two-label derivation (`usage-limit` for the
+usage/quota scanner's pattern family, `auth-failure` for the auth
+scanner's — a recorded `auth_failures` count marks the auth streak
+holds outright, and the router keeps its own copy of the producer's
+`AB_RX`/`AB_AUTH_RX` pattern tables so a producer-side rename can
+never leak an unbounded label), the pattern records the bounded id
+verbatim, and the lane joins in the bounded lane-id shape. An
+unrecognized pattern still records the hold with trigger `null`
+rather than guessing a family; the `autobackoff_skip`/
+`authbackoff_skip` helper-unavailable receipts — scans that
+recorded no verdict — never join. The newest recognized hold row
+replaces the triple wholesale; the hold is attempt evidence, not a
+launch decision, so rows of every other event leave it standing.
+All three stay `null` when no hold row named the job — the retained
+window recorded no confirmed provider wall, which is unknown, not
+"no wall ever".
 `empty_tag` is the fleet's recorded WHY for a job that
 ended empty — the `job.empty-tag.v1` rows `phm jobs empty --record`
 appends to `metrics/empty-tags.jsonl` from empty-final-reason's verdict
@@ -656,7 +685,14 @@ whose recorded session-handoff advisory is a `rate-limit` verdict
 appends to jobs.jsonl — that the run died on a provider
 usage-limit wall and produced no usable work, the same kind of
 recorded failure signal `failure_class` carries, so it explains the
-missing merge verdict) and `unknown_handoff_triggers` tallies every
+missing merge verdict), `unknown_provider_walls` counts the
+unknown-cohort jobs carrying a recorded `autobackoff_hold` lane
+hold (the confirmed provider-wall verdict — it only lands on a
+failed or no-work run, so like a `rate-limit` handoff it explains
+the missing merge verdict for both trigger families) and
+`unknown_provider_wall_triggers` tallies the recorded
+`usage-limit`/`auth-failure` families over the same cohort, and
+`unknown_handoff_triggers` tallies every
 recorded advisory trigger in the cohort (`rate-limit` attempt kills
 and `quota-exhausted` pending-lane verdicts — the producer's other
 closed-vocabulary trigger, which dispatchd writes to the market
@@ -767,6 +803,15 @@ known-cohort outcomes carrying a `handoff_trigger` and
 `handoff_triggers` breaks the count down by recorded trigger
 (`rate-limit`, `quota-exhausted`), so a lane whose merges rest partly
 on provider-wall-hit runs shows the recorded mix. The same evidence
+block also tallies the fleet's recorded provider-wall lane holds —
+`provider_wall_known` counts the known-cohort outcomes carrying a
+`provider_wall_pattern` and `provider_wall_triggers` breaks the
+count down by recorded `usage-limit`/`auth-failure` family, so a
+lane whose merges rest partly on provider-walled runs shows the
+recorded mix (the `autobackoff_hold` receipts — the
+outcome-confirmed hold dispatchd appends — covering both the
+usage/quota walls and the auth streaks the session-handoff
+advisory never sees). The same evidence
 block also tallies the merge queue's recorded per-PR history —
 `merge_queue_known` counts the known-cohort outcomes whose standing PR
 carried merge-events observations and `merge_queue_blocked_known`/

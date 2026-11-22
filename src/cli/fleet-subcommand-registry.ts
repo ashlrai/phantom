@@ -101,6 +101,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'comms-readiness': () => import('./fleet-comms-readiness.js'),
   'config': () => import('./fleet-config.js'),
   'conflict-risk': () => import('./fleet-conflict-risk.js'),
+  'connect': () => import('./fleet-connect.js'),
   'context-checked-run': () => import('./fleet-context-checked-run.js'),
   'context-deliver': () => import('./fleet-context-deliver.js'),
   'context-drain': () => import('./fleet-context-drain.js'),
