@@ -297,6 +297,35 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['wakes', 'nova', '--since', 'bogus'])).toMatchObject({ code: 2 });
   });
 
+  it('filters inbox and channel reads by --contains', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'review the RQ-88 rollout', '--id', 'c-dm'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'lunch plans', '--id', 'c-dm2'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'deploy window RQ-88', '--id', 'c-ch'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    // Case-insensitive substring over the scrubbed summary on both reads.
+    const inbox = await run(['inbox', 'nova', '--contains', 'rq-88']);
+    expect(inbox.code).toBe(0);
+    expect(inbox.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id).sort())
+      .toEqual(['c-ch', 'c-dm']);
+    const channel = await run(['channel', 'read', 'release', '--contains', 'RQ-88']);
+    expect(channel.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['c-ch']);
+    // It composes with the other filters and --matched counts accepted rows.
+    const counted = await run(['inbox', 'nova', '--contains', 'rq-88', '--matched']);
+    expect(counted.json.matched).toBe(2);
+    expect((await run(['inbox', 'nova', '--contains', 'rq-88', '--kind', 'dm'])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['c-dm']);
+    // A blank or oversized needle fails closed on both reads.
+    expect(await run(['inbox', 'nova', '--contains='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['channel', 'read', 'release', '--contains', '   '])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('filters inbox reads by --kind', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

@@ -607,6 +607,90 @@ describe('channel-filtered inbox reads', () => {
   });
 });
 
+describe('contains-filtered reads', () => {
+  it('narrows inbox and channel pages to rows whose summary carries the needle', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'please review the RQ-77 rollout', id: 'ct-dm1' }, options);
+    await sendDirectMessage({ from: 'orion', to: 'nova', text: 'unrelated chatter', id: 'ct-dm2' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'deploy window moved to RQ-77', id: 'ct-ch1' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'lunch plans', id: 'ct-ch2' }, options);
+    // A multi-line note still matches a phrase typed across the break.
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'first line\nsecond RQ-77 mention', id: 'ct-dm3' }, options);
+
+    // Case-insensitive substring over the scrubbed summary; channel posts
+    // addressed to a member channel count as that agent's mail.
+    const hits = readAgentInbox('nova', { contains: 'rq-77' }, options);
+    if (hits.status !== 'ok') throw new Error(`unexpected ${hits.status}`);
+    expect(hits.messages.map(m => m.envelope.id).sort()).toEqual(['ct-ch1', 'ct-dm1', 'ct-dm3']);
+    // Whitespace collapses on both sides, so a phrase typed loosely still finds its mail.
+    expect(readAgentInbox('nova', { contains: '  RQ-77   ROLLOUT ' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'ct-dm1' } }] });
+    // It composes with the other filters and --matched counts only accepted rows.
+    const narrowed = readAgentInbox('nova', { contains: 'rq-77', from: 'orion' }, options);
+    expect(narrowed).toMatchObject({ status: 'ok', messages: [] });
+    const counted = readAgentInbox('nova', { contains: 'rq-77', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(3);
+    // A needle nothing carries is an honest empty page, not an error.
+    expect(readAgentInbox('nova', { contains: 'no-such-text' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+
+    const room = readAgentChannel('release', { contains: 'rq-77' }, options);
+    if (room.status !== 'ok') throw new Error(`unexpected ${room.status}`);
+    expect(room.messages.map(m => m.envelope.id)).toEqual(['ct-ch1']);
+    const roomAll = readAgentChannel('release', { contains: 'rq-77', matched: true }, options);
+    if (roomAll.status !== 'ok') throw new Error(`unexpected ${roomAll.status}`);
+    expect(roomAll.matched).toBe(1);
+    expect(readAgentChannel('release', { contains: 'lunch' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'ct-ch2' } }] });
+  });
+
+  it('matches typed-body summaries and never the raw secret-bearing body', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    // A work.status body summarizes as its status/detail line, not raw JSON.
+    expect(appendBusInbox({ id: 'ct-st', from: 'agent:atlas', to: 'agent:nova', priority: 'P2', ttl: 60_000,
+      body: { kind: 'work.status', jobId: 'RQ-CT-1', status: 'blocked', detail: 'waiting on credentials' } },
+      { root: options.root, now: options.now }).status).toBe('posted');
+    // A note carrying a GitHub-token-shaped value, planted straight into the
+    // store the way a pre-guard or foreign-writer row would sit: the send
+    // verbs refuse credential-shaped text, but retained envelopes can still
+    // hold it, and the summary scrubs it — so the needle finds nothing even
+    // though the stored envelope carries the value.
+    const token = `ghp_${'a'.repeat(36)}`;
+    expect(appendBusInbox({ id: 'ct-sec', from: 'agent:atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
+      body: { kind: 'note', text: `token is ${token} ok` } },
+      { root: options.root, now: options.now }).status).toBe('posted');
+
+    // The composed `work.status <job>: <status> — <detail>` line is what
+    // matches — job id, state and detail all searchable, raw JSON never.
+    expect(readAgentInbox('nova', { contains: 'credentials' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'ct-st' } }] });
+    expect(readAgentInbox('nova', { contains: 'work.status rq-ct-1' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'ct-st' } }] });
+    expect(readAgentInbox('nova', { contains: token }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    expect(readAgentInbox('nova', { contains: 'ghp_' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    // The unfiltered page still sees both rows.
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages).toHaveLength(2);
+  });
+
+  it('refuses an invalid contains filter on both reads', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    for (const bad of ['', '   ', 'x'.repeat(513), 42 as never]) {
+      expect(readAgentInbox('nova', { contains: bad }, options)).toMatchObject({ status: 'invalid' });
+      expect(readAgentChannel('release', { contains: bad }, options)).toMatchObject({ status: 'invalid' });
+    }
+    expect(readAgentInbox('nova', { contains: 'x'.repeat(512) }, options)).toMatchObject({ status: 'ok' });
+  });
+});
+
 describe('job-filtered inbox reads', () => {
   it('keeps only mail that names one job across feed citations and job-threaded note/context', async () => {
     const options = setup();
