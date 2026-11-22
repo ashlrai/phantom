@@ -16,6 +16,18 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.70](https://github.com/ashlrai/phantom/compare/v3.30.69...v3.30.70) (2026-11-22)
+
+
+### Changes
+
+* **FIXUP-CI-phantom-dependency-audit-409866:** FIXUP-CI-phantom-dependency-audit-409866 ([#8305](https://github.com/ashlrai/phantom/issues/8305)) ([9386682](https://github.com/ashlrai/phantom/commit/938668222402726bf765536764e24bafc7a11e6c))
+* **RQ-ADMITPANELN24SQ8:** RQ-ADMITPANELN24SQ8 ([#8308](https://github.com/ashlrai/phantom/issues/8308)) ([3e12053](https://github.com/ashlrai/phantom/commit/3e1205312ff293e94fba79f63d9995c4dea89b05))
+* **RQ-CL-DOCS-1795358301:** ([#8304](https://github.com/ashlrai/phantom/issues/8304)) ([8177294](https://github.com/ashlrai/phantom/commit/81772944d1cef58584207fc3a8d8450f9e1ed322))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795359832-N17:** ([#8307](https://github.com/ashlrai/phantom/issues/8307)) ([3e82149](https://github.com/ashlrai/phantom/commit/3e82149cfaad8462ca835932f45c556a97e284a2))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795358229-N17:** ([#8303](https://github.com/ashlrai/phantom/issues/8303)) ([231be0f](https://github.com/ashlrai/phantom/commit/231be0f548f7ff6228067e4148a85ece319f3ff3))
+* **RQ-IOLOADBLAMEN24SQ8:** RQ-IOLOADBLAMEN24SQ8 ([#8306](https://github.com/ashlrai/phantom/issues/8306)) ([0ce0f0a](https://github.com/ashlrai/phantom/commit/0ce0f0a185075b34b450a5d2a06ad332e8b82938))
+
 ## [Unreleased]
 
 ### Since v3.30.40
