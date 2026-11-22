@@ -32,6 +32,7 @@ export interface OrgTreeJob {
   /** What the job is doing, in plain words. */
   doing: string;
   startedAt: string | null;
+  prUrl: string | null;
   /** Newest dispatcher event naming the job, else its start. `kind` is the dispatcher's word (LAUNCH, PUBLISH_START) or `started`. */
   lastEvent: { at: string; kind: string } | null;
   /** Newest of the last event and, when a worker process was seen, the time the tree was built. */
