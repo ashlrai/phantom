@@ -109,6 +109,26 @@ describe('conversations from messages', () => {
     expect(filterConversations(list, { state: 'answered', agent: 'claude' }).map(c => c.id)).toEqual(['a']);
   });
 
+  it('since keeps whole threads whose last activity reaches the cutoff', () => {
+    const list = buildConversations([
+      say('a', 'leader', 'claude', 0, { kind: 'ask' }),
+      say('b', 'claude', 'leader', 1, { kind: 'reply', replyTo: 'a' }),
+      say('c', 'grok', 'zai', 4, { kind: 'ask' }),
+      say('d', 'zai', 'grok', 5, { kind: 'reply', replyTo: 'c' }),
+    ], NOW);
+    // 'a' last spoke at minute 1, 'c' at minute 5; NOW is minute 30.
+    const recent = filterConversations(list, { since: T0 + 3 * MIN });
+    expect(recent.map(c => c.id)).toEqual(['c']);
+    // The whole thread stays — its minute-4 opener is not trimmed by the cutoff.
+    expect(recent[0]!.messageCount).toBe(2);
+    // Inclusive: lastAt equal to the cutoff stays; one minute later drops.
+    expect(filterConversations(list, { since: T0 + 5 * MIN }).map(c => c.id)).toEqual(['c']);
+    expect(filterConversations(list, { since: T0 + 6 * MIN })).toEqual([]);
+    // It composes with the other filters like every flag here.
+    expect(filterConversations(list, { since: T0 + 3 * MIN, state: 'answered' }).map(c => c.id)).toEqual(['c']);
+    expect(filterConversations(list, { since: T0 + 3 * MIN, agent: 'leader' })).toEqual([]);
+  });
+
   it('an identity resolver matches every label of one agent, an unresolvable side stays strict', () => {
     const list = buildConversations([say('a', 'one', 'two', 0, { kind: 'ask' }), say('b', 'three', 'four', 1, { kind: 'status' })], NOW);
     const same = (label: string) => ['one', 'two', 'query-label'].includes(label) ? 'agt_same' : undefined;
@@ -370,6 +390,21 @@ describe('phm agents conversations --json', () => {
     expect(formatAgentConversationsText(all)).toContain('2 conversations');
   });
 
+  it('a since read keeps only threads active since the cutoff', () => {
+    const root = bus(CHAT);
+    // m1's thread last spoke at T0+1m, m3's wait at T0+2m; NOW is T0+30m.
+    const recent = readAgentConversations({ since: T0 + 90_000 }, { root, now: () => NOW });
+    expect(recent.conversations!.map(c => c.id)).toEqual(['m3']);
+    expect(recent.matched).toBe(1);
+    // `waiting` still counts the whole bus, filtered or not.
+    expect(recent.waiting).toBe(1);
+    // A cutoff past both threads is an honest empty page, not an error.
+    expect(readAgentConversations({ since: T0 + 3 * MIN }, { root, now: () => NOW }))
+      .toMatchObject({ matched: 0, conversations: [] });
+    // It composes with --state: m3 waits, so the answered-only page is empty.
+    expect(readAgentConversations({ since: T0 + 90_000, state: 'answered' }, { root, now: () => NOW }).conversations).toEqual([]);
+  });
+
   it('an empty bus is source missing with no conversations', () => {
     expect(readAgentConversations({}, { root: bus(), now: () => NOW })).toEqual({ schema: 'agents.conversations.v1', version: 1,
       generatedAt: '2026-11-18T12:30:00.000Z', source: 'missing', conversations: [], matched: 0, waiting: 0, skipped: 0 });
@@ -525,6 +560,27 @@ describe('phm agents conversations --json', () => {
     expect(errors.length).toBeGreaterThanOrEqual(4);
   });
 
+  it('the CLI --since filters by last activity and refuses a bad cutoff', async () => {
+    const root = bus(CHAT), lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    // 25m before NOW (T0+30m) is T0+5m — both threads went quiet before it.
+    expect(await run(['--since', '25m', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations).toEqual([]);
+    // 28m before NOW is exactly T0+2m — m3's wait landed on the cutoff.
+    expect(await run(['--since', '28m', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['m3']);
+    // An ISO cutoff between the two last-activity times splits them the same way.
+    expect(await run(['--since', '2026-11-18T12:01:30.000Z', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['m3']);
+    // --since composes with the other filters like every flag here.
+    expect(await run(['--since', '28m', '--waiting', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['m3']);
+    // Bad values are usage errors, never a silent default.
+    expect(await run(['--since', 'bogus'])).toBe(2);
+    expect(await run(['--since'])).toBe(2);
+    expect(errors.length).toBeGreaterThanOrEqual(2);
+  });
+
   it('the API serves the same read behind a read session and checks its query', async () => {
     const root = bus(CHAT);
     const serve = (module: ReturnType<typeof createFleetLiveMapApi>) =>
@@ -554,6 +610,14 @@ describe('phm agents conversations --json', () => {
     expect(capped.status).toBe(200);
     expect(capped.body.conversations.map((c: { id: string }) => c.id)).toEqual(['m3']);
     expect(capped.body.matched).toBe(2);
+    // since keeps threads active inside the window; bad values are refused.
+    const recent = await call(`${AGENT_CONVERSATIONS_PATH}?since=${T0 + 90_000}`);
+    expect(recent.status).toBe(200);
+    expect(recent.body.conversations.map((c: { id: string }) => c.id)).toEqual(['m3']);
+    expect(recent.body.matched).toBe(1);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?since=bogus`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?since=`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?since=1&since=2`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?state=open`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?state=`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?limit=0`)).status).toBe(400);
