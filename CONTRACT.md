@@ -2728,15 +2728,17 @@ while reuse on another key cannot relocate it. Claims coordinate only and grant
 no execution authority; the token returns only to its acquirer.
 
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
-`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>]`. `readBusWorkMine(agent, options?)`
-(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `contains?`, `now?: () => number` frozen once
+`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>]`. `readBusWorkMine(agent, options?)`
+(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `contains?`, `since?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, job?, contains?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
+asOf, job?, contains?, since?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule, a `job` outside the same rule
-(`invalid-job`), or a `contains` outside the shared bounded free-text
-rule every bus `--contains` read applies (`invalid-contains`). `job` and
-`contains` echo the applied filters and are absent on an
+(`invalid-job`), a `contains` outside the shared bounded free-text
+rule every bus `--contains` read applies (`invalid-contains`), or a
+`since` that is not a safe non-negative epoch-ms integer
+(`invalid-since`). `job`, `contains` and `since` echo the applied
+filters — `since` as ISO — and are absent on an
 unfiltered read. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
 `claims` reuses
@@ -2948,7 +2950,7 @@ proven, not fabricated) and an unreadable one reports
 `{status:'unavailable', reason}`.
 `board` is the digest's window into the shared task board
 (`src/core/fleet/bus-board.ts`, the store `phm bus board pending` reads)
-that the unified bus never carried: `BusBoard.pendingFor(labels, now, jobId?, contains?)` runs
+that the unified bus never carried: `BusBoard.pendingFor(labels, now, jobId?, contains?, sinceMs?)` runs
 the board's own locked snapshot plus one shared-queue claim-index read under
 the union of every label the agent answers to, so an agent on the board no
 longer needs a separate `--peer` read per label. `peers` names the queried
@@ -2977,7 +2979,11 @@ defaults to `loadConfigReadOnlyStrict`, a malformed shared-queue config or a
 relative override reports `unavailable`). A board never used — no
 `state.json` — is a verified-empty `ok` and the read never creates its
 directory or lock file; an unreadable board, a disabled event bus or a read
-fault reports `{status:'unavailable', reason:'board-unreadable'}`. Board
+fault reports `{status:'unavailable', reason:'board-unreadable'}`. Under
+`sinceMs` the digest keeps only deliveries whose `createdAt` reaches the
+cutoff — tasks, which the board records without any timestamp, never
+match — and a thread rollup lists only while it still holds a surviving
+delivery, the rollup itself carrying no time. Board
 content stays `trust:'untrusted'` shared data: it coordinates attention,
 never grants execution authority.
 `channels` is the digest's window into the registry channels the agent
@@ -3020,11 +3026,14 @@ seat work joins the same coordination table, identity registry and quota
 evidence. A throwing plan read reports `{status:'unavailable',
 reason:'seat-handoff-plan-unreadable'}`, never an empty plan passed off as
 fact; `busWorkMineSeatsFromPlan(plan, denotes, job?, contains?)` is the exported pure
-shaping rule. `formatBusWorkMine(result)`
+shaping rule. The section takes no `since`: a pending handoff record's
+`createdAt` stamps the plan read instant, not the held work's age, so no
+per-record recency exists to filter on — every listed record is current
+evidence and the section stays whole like `channels`. `formatBusWorkMine(result)`
 renders the shared human lines — titles, the declared dispatch spec and key
 lists scrubbed, single-lined and display-clipped (the same
 `busWorkJobDispatch` tag the feed job line prints); JSON keeps full values.
-Exit 0 on a completed read, 2 on an invalid agent, job or contains.
+Exit 0 on a completed read, 2 on an invalid agent, job, contains or since.
 
 `options.job` narrows the whole digest to one job id under the same
 `busBodyJobMatch` citation rule the inbox/channel `job` filters apply —
@@ -3082,6 +3091,35 @@ carries the needle — the only descriptive fields a seat record holds.
 `channels` is registry context, not pending work, and stays unfiltered
 like it does under `job`. Every count stays the filtered total, and a
 row whose text cannot be proven never matches.
+
+`options.since` narrows the whole digest to pending items whose recorded
+time reaches the epoch-ms cutoff — the shared `--since` grammar and the
+inclusive `>=` match every bus read applies (the wakes read's own
+strictly-after boundary included, since the section delegates to it), so
+a polling agent reads the delta since
+its last check instead of re-reading the whole pending set; each section
+keys on the timestamp its own store keeps: `claims` match the lease's
+recorded `started` ISO (a null start is unknown and never matches),
+`jobs`/`announced` match the feed job's `updatedAt`, `next`/`handoffs`
+match the envelope `receivedAt` inside the shared pending-work walk (a
+since-filtered handoff still sees its answer in the reply-citation
+scan), `threads`/`awaiting`/`blocked` pass `since` into the one shared
+conversations read (thread `lastAt`, the same query
+`agents conversations --since` serves), `wakes` pass it as `sinceAt` to
+`readAgentWakes` — the same boundary `agents bus wakes --since` serves —
+`inbox` passes it to `readAgentInbox`, `mailbox` ANDs
+`acceptedAt >= since` into `BusMailbox.pendingFor`'s `match` predicate,
+`board` passes it to `BusBoard.pendingFor` (deliveries match `createdAt`,
+tasks never match for want of a recorded time, and a thread rollup lists
+only while a surviving delivery remains), and `seats` stays unfiltered —
+a pending handoff record's `createdAt` stamps the plan read instant, not
+the held work's age, so no per-record recency exists to filter on.
+`channels` is registry
+context, not pending work, and stays unfiltered like it does under
+`job`/`contains`. A pending item older than the cutoff is still pending
+but is not new; every count stays the filtered total, and an item whose
+store keeps no timestamp never matches — the same "unknown stays out"
+rule the unified inbox's `--since` applies.
 
 ### Unified agent bus (RQ-BUS-UNIFY-1)
 

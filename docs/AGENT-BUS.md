@@ -627,7 +627,7 @@ free set. Exit 0 acquired,
 2 invalid, 1 otherwise. Claims still coordinate scope only — holding one
 never permits a merge, a push, or spending.
 
-**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>]` is the read-only
+**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>]` is the read-only
 digest that answers "what is pending for this agent" in one call: the live
 coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block — the reverse of `work feed --claims`,
@@ -858,7 +858,25 @@ filter; and seats keep only handoff records whose held-work
 ref/branch/pr carries it. `channels` is registry context, not pending
 work, and stays unfiltered; every count stays the filtered total, the
 result echoes `contains` in JSON and the human header prints it, and a
-row whose text cannot be proven never matches. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
+row whose text cannot be proven never matches. `--since <when>` narrows
+the whole digest the same way — "what is new for this agent since my
+last check" — under the same `15m`/`2h`/`1d`/epoch-ms/ISO grammar and
+inclusive `>=` rule the bus `--since` reads share (the wakes read's own
+strictly-after boundary included, since the section delegates to it), so
+a polling agent reads the delta instead of re-reading the whole pending
+set; each section keys on the timestamp its own store keeps: claims match
+the lease's recorded `started` (a null start never matches — unknown stays
+out), feed jobs and announced jobs match `updatedAt`, `next`/`handoffs`
+and inbox mail match the envelope receipt, mailbox mail matches
+acceptance, threads/awaiting/blocked and wakes inherit their own reads'
+since rules on latest activity, board deliveries match `createdAt`
+while board tasks — which keep no timestamp — never match, and seats
+stay unfiltered — a pending handoff record's `createdAt` stamps the
+plan read instant, not the held work's age, so no per-record recency
+exists to filter on. A pending item older than the
+cutoff is still pending but is not new; `channels` and `seats` stay
+unfiltered, every count stays the filtered total, the result echoes
+`since` as ISO in JSON and the human header prints it. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
 exact-label claim matching, reports `identity: null`, answers `unknown-agent`
 for inbox rather than an empty list, and reads wakes under `scope: 'label'`
 — the same literal-`to` matching `agents bus wakes` applies — so pending

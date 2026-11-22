@@ -54,7 +54,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--contains <text>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
-ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>]
+ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
@@ -222,7 +222,22 @@ pendingFor, and seats match the held-work ref/branch/pr a handoff
 record carries — while ids, claim keys as keys, statuses and routing
 labels keep their own filters and channels, registry context rather
 than pending work, stays unfiltered; a row whose text cannot be proven
-never matches and every count stays the filtered total. work next claims the next claimable
+never matches and every count stays the filtered total. --since on work
+mine keeps only pending items whose recorded time reaches the cutoff —
+15m, 2h, 1d, epoch ms or an ISO time, the same grammar inbox --since
+takes — so a polling agent reads the delta since its last check instead
+of the whole pending set: claims match the lease's recorded started (a
+null start never matches), feed jobs and announced jobs match
+updatedAt, next/handoffs/inbox match the envelope receipt, mailbox
+matches acceptance, threads/awaiting/blocked and wakes inherit their own
+reads' since rules on latest activity, board deliveries match createdAt
+while board tasks — which keep no timestamp — never match, and seats
+stay unfiltered — a pending handoff record's createdAt stamps the plan
+read instant, not the held work's age, so no per-record recency exists
+to filter on; a pending item older than the
+cutoff is still pending but is not new, channels and seats stay
+unfiltered, and
+every count stays the filtered total. work next claims the next claimable
 work envelope addressed to the agent — the same kind:'work'/protocol-task
 receipts work mine's next section lists, walked in bus-next order
 (priority band, then cursor) under the same addressed-to rule: any label
@@ -707,9 +722,11 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
       const job = one('--job');
       const contains = one('--contains');
+      const since = sinceArg();
       const result = await readBusWorkMineWithSeats(agent,
         { ...options, ...(job === undefined ? {} : { job }),
-          ...(contains === undefined ? {} : { contains }) });
+          ...(contains === undefined ? {} : { contains }),
+          ...(since === undefined ? {} : { since }) });
       if (result.status !== 'ok') {
         out(json ? JSON.stringify(result) : `${result.status}: ${result.reason}`);
         return 2;
