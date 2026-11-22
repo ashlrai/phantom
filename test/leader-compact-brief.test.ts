@@ -35,7 +35,7 @@ it('bounds 500 jobs, ranks zero PRs in six launches first, and reads status and 
   expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(8192);
   expect(b.families[0]).toMatchObject({ family: 'empty-*', launches: 6, prs: 0, empty: 6 });
   expect(b.lanes[0]).toMatchObject({ running: 2, queued: 1, target: 4, held: false, emptyRate: 0 });
-  expect(b.pools[0]).toMatchObject({ usedPct: 40, burnPerHour: 2, safeBurn: 5.5, verdict: 'ok' });
+  expect(b.pools.find(p => p.pool === 'local')).toMatchObject({ usedPct: 40, burnPerHour: 2, safeBurn: 5.5, verdict: 'ok' });
   expect(b.stopped[0]).toMatchObject({ until: now / 1000 + 60 }); expect(b.omitted).toBeGreaterThan(0);
   expect(compactBriefLines(b).length).toBeGreaterThanOrEqual(10); expect(compactBriefLines(b).length).toBeLessThanOrEqual(15);
 });
