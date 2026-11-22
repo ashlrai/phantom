@@ -52,7 +52,7 @@ it('bounds 500 jobs, ranks zero PRs in six launches first, and reads status and 
   expect(b.lanes[0]).toMatchObject({ running: 2, queued: 1, target: 4, held: false, emptyRate: 0 });
   expect(b.pools.find(p => p.pool === 'local')).toMatchObject({ usedPct: 40, burnPerHour: 2, safeBurn: 6, verdict: 'ok' });
   expect(b.stopped[0]).toMatchObject({ until: now / 1000 + 60 }); expect(b.omitted).toBeGreaterThan(0);
-  expect(compactBriefLines(b).length).toBeGreaterThanOrEqual(10); expect(compactBriefLines(b).length).toBeLessThanOrEqual(16);
+  expect(compactBriefLines(b).length).toBeGreaterThanOrEqual(10); expect(compactBriefLines(b).length).toBeLessThanOrEqual(19);
 });
 it('returns no data on an empty directory and writes a private snapshot each tick', async () => {
   expect(await readCompactBrief(dir, now)).toMatchObject({ state: 'no data', lanes: [], medianOpenToMergeSeconds: null });
@@ -144,4 +144,26 @@ it.each([
   } else {
     expect(brief.hostLoadWarning).toBeNull(); expect(compactBriefLines(brief).join('\n')).not.toContain('starts slowed');
   }
+});
+
+it('ranks 24-hour EMPTY token waste and preserves unknown usage', async () => {
+  const rows = [
+    { job: 'alpha-1', tokens_total: 100 }, { job: 'alpha-2', tokens_total: 50 },
+    { job: 'alpha-3' }, { job: 'beta-1', tokens: 80 }, { job: 'gamma-1', total_tokens: 0 },
+    { job: 'delta-1' },
+  ].map(row => ({ ...row, event: 'finish', empty: true, ts: at }));
+  rows.push({ job: 'beta-2', tokens_total: 900, event: 'finish', empty: true, ts: new Date(now - 25 * 3600_000).toISOString() });
+  await writeFile(join(dir, 'metrics/jobs.jsonl'), rows.map(r => JSON.stringify(r)).join('\n'));
+  const brief = await readCompactBrief(dir, now);
+  expect(brief.emptyTokenFamilies).toEqual([
+    { family: 'alpha-*', tokens: 150, unknownJobs: 1, jobs: 3 },
+    { family: 'beta-*', tokens: 80, unknownJobs: 0, jobs: 1 },
+    { family: 'gamma-*', tokens: 0, unknownJobs: 0, jobs: 1 },
+    { family: 'delta-*', tokens: null, unknownJobs: 1, jobs: 1 },
+  ]);
+  expect(compactBriefLines(brief)).toEqual(expect.arrayContaining([
+    'alpha-*: 150 EMPTY tokens (24h), 1 jobs with unknown usage',
+    'beta-*: 80 EMPTY tokens (24h), 0 jobs with unknown usage',
+    'gamma-*: 0 EMPTY tokens (24h), 0 jobs with unknown usage',
+  ]));
 });
