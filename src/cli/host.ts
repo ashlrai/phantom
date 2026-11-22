@@ -3,10 +3,14 @@ import { readHostLoadReport, type HostLoadDeps, type HostLoadReport, type HostLo
 import { describeHostTop, hostDiskWarningLine, hostTopMemory, readHostTopReport, HOST_DISK_FLOOR_GB, type HostTopDeps, type HostTopReport } from '../core/fleet/host-top.js';
 import { formatHostDisk, readHostDisk, type HostDiskDeps, type HostDiskReport } from '../core/fleet/host-disk.js';
 import { formatHostMemory, readHostMemory, type HostMemoryDeps, type HostMemoryReport } from '../core/fleet/host-memory.js';
+import { defaultRunsDir } from '../core/fleet/landed-closes-read.js';
+import { formatLoadHistory, readLoadHistory, summarizeLoadHistory } from '../core/fleet/load-history.js';
+import { parseSince } from '../core/fleet/agent-messages.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const USAGE = `Usage: phm host top [--json] [--groups] [--floor GB]
        phm host load [--json] [--by-tree]
+       phm host load --history [--since 6h] [--json]
        phm host disk [--json] [--history]
        phm host memory [--json]
 top   What is using this Mac: fleet workers, the local model server, Docker, each desktop app, Phantom, indexing and other,
@@ -23,6 +27,10 @@ disk  How fast free disk is falling and when the lanes freeze: free GB now, GB p
 memory  Is this Mac really short of memory? Free %, swap used, swap growth per minute, swapouts per minute, the 5 largest processes
       by memory and one verdict: real pressure (free memory under 35% or swapouts above 0), swap growing but memory is free
       (likely a false alarm), fine, or unknown. --json is host.memory.v1. Unknown is said as unknown.
+--history  Why launches were blocked, after the fact: per hour the peak load, minutes blocked and the top 3 contributors, and one line
+      such as "Most blocked time today: Docker (41%), then local model server (22%)." The self-tick takes a snapshot when the
+      dispatcher blocks for host load (at most one per 10 minutes; kept 7 days, 2,000 rows). --since takes 1h to 7d (default 6h).
+      --json is schema host.load.history.v1; with no snapshot it says unknown.
 Read-only: nothing is ever stopped, deleted or quit. Exits 0 with a report, 1 when the process list (or free disk, for disk; too few memory readings, for memory) cannot be read, 2 on bad usage.`;
 
 export function formatHostTop(report: HostTopReport, groups = false): string {
@@ -65,7 +73,7 @@ export function formatHostLoad(report: HostLoadReport): string {
   return [...lines, ...report.gaps.map(gap => `Note: ${gap}`)].join('\n');
 }
 
-export async function cmdHost(args: string[], deps: HostLoadDeps & HostTopDeps & HostDiskDeps & HostMemoryDeps & { write?: (text: string) => void } = {}): Promise<number> {
+export async function cmdHost(args: string[], deps: HostLoadDeps & HostTopDeps & HostDiskDeps & HostMemoryDeps & { write?: (text: string) => void; runsDir?: string } = {}): Promise<number> {
   const write = deps.write ?? ((text: string) => { process.stdout.write(text); });
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) { write(`${USAGE}\n`); return 0; }
   const [verb, ...flags] = args;
@@ -97,6 +105,25 @@ export async function cmdHost(args: string[], deps: HostLoadDeps & HostTopDeps &
     const disk = sanitizePublicJson(await readHostDisk(deps, flags.includes('--history'))) as HostDiskReport;
     write(`${flags.includes('--json') ? JSON.stringify(disk) : formatHostDisk(disk).join('\n')}\n`);
     return disk.freeGb === null ? 1 : 0;
+  }
+  if (verb === 'load' && flags.includes('--history')) {
+    let json = false, since = '6h', sinceGiven = false;
+    for (let i = 0; i < flags.length; i++) {
+      const flag = flags[i]!;
+      if (flag === '--history' && flags.indexOf(flag) === i) continue;
+      if (flag === '--json' && !json) json = true;
+      else if (flag === '--since' && !sinceGiven) { sinceGiven = true; since = flags[++i] ?? ''; }
+      else { console.error('Usage: phm host load --history [--since 6h] [--json]'); return 2; }
+    }
+    const now = (deps.now ?? Date.now)();
+    const from = parseSince(since, now);
+    const hours = from === null ? NaN : (now - from) / 3_600_000;
+    if (!/^[1-9]\d{0,6}[mhd]$/.test(since) || hours < 1 / 60 || hours > 24 * 7) { console.error('--since takes 1h to 7d, for example 6h.'); return 2; }
+    let rows: ReturnType<typeof readLoadHistory> = [];
+    try { rows = readLoadHistory(deps.runsDir ?? defaultRunsDir()); } catch { /* Unknown history. */ }
+    const history = summarizeLoadHistory(rows, now, Math.round(hours * 100) / 100);
+    write(`${json ? JSON.stringify(sanitizePublicJson(history)) : formatLoadHistory(history)}\n`);
+    return 0;
   }
   if (verb !== 'load' || new Set(flags).size !== flags.length || flags.some(flag => flag !== '--json' && flag !== '--by-tree')) { console.error(USAGE.split('\n')[1]); return 2; }
   const report = sanitizePublicJson(await readHostLoadReport(deps, { byTree: flags.includes('--by-tree') })) as HostLoadReport;
