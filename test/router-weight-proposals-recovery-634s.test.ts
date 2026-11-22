@@ -360,6 +360,8 @@ describe('outcome-quality evidence', () => {
       usage_missing_known: 0,
       lane_overrides_known: 0,
       lane_override_reasons: null,
+      market_rejected_known: 0,
+      market_rejected_reasons: null,
     });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).toContain('evidence ci_first_pass=0.8(10)');
@@ -518,6 +520,7 @@ describe('outcome-quality evidence', () => {
       diff_lines_known: 0, diff_lines_mean: null,
       usage_missing_known: 0,
       lane_overrides_known: 0, lane_override_reasons: null,
+      market_rejected_known: 0, market_rejected_reasons: null,
     });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).not.toContain('ci_first_pass=');
@@ -1049,16 +1052,29 @@ describe('unknown-outcome resolution', () => {
     writeMarket([
       unrouted('synthetic-mkt-norun-0', ['no_runnable_lane']),
       unrouted('synthetic-mkt-norun-1', ['no_runnable_lane']),
-      unrouted('synthetic-mkt-admit', ['no_runnable_lane', 'global_admission']),
+      { ...unrouted('synthetic-mkt-admit', ['no_runnable_lane', 'global_admission']),
+        rejected_lanes: [{ lane: 'beta', reason_codes: ['lower_rank'] }] },
       { schema: 'work-market.v1', event: 'route_decision', job: 'synthetic-mkt-hyst',
         chosen_lane: 'alpha', preferred_lane: 'alpha', work_class: 'code', override: null,
         rejected_lanes: [], reason_codes: ['hysteresis_minimum_residency', 'preferred_lane'], ts: 3_000 },
-      // A newer decision supersedes the older verdict for the same job.
-      unrouted('synthetic-mkt-norun-0', ['saturated'], 4_000),
-      // Known-cohort and market-only jobs never join the unknown tally.
+      // A newer decision supersedes the older verdict for the same job —
+      // including its per-lane rejection record: 'saturated' on two lanes
+      // still counts once for the job.
+      { ...unrouted('synthetic-mkt-norun-0', ['saturated'], 4_000),
+        rejected_lanes: [
+          { lane: 'devin', reason_codes: ['quota_exhausted', 'held'] },
+          { lane: 'codex-cmp', reason_codes: ['saturated', 'quota_exhausted'] },
+          { lane: 'claude' },
+        ] },
+      // Known-cohort and market-only jobs never join the unknown tally;
+      // the known job's rejections land in its group's advisory evidence.
       { schema: 'work-market.v1', event: 'route_decision', job: 'synthetic-MERGED-alpha-code-0',
         chosen_lane: 'alpha', preferred_lane: 'alpha', work_class: 'code', override: null,
-        rejected_lanes: [], reason_codes: ['preferred_lane'], ts: 3_000 },
+        rejected_lanes: [
+          { lane: 'devin', reason_codes: ['quota_exhausted'] },
+          { lane: 'codex-cmp', reason_codes: ['quota_exhausted', 'saturated'] },
+        ],
+        reason_codes: ['preferred_lane'], ts: 3_000 },
       unrouted('synthetic-mkt-nooutcome', ['no_runnable_lane']),
     ]);
     const { code, report } = await runJson();
@@ -1073,12 +1089,33 @@ describe('unknown-outcome resolution', () => {
         { reason: 'preferred_lane', jobs: 1 },
         { reason: 'saturated', jobs: 1 },
       ],
+      // Two unknown jobs recorded rejections; each contributes each code
+      // once however many lanes carried it — the null-reasons lane adds
+      // nothing and the recorded-empty lists stay out entirely.
+      unknown_market_rejected: 2,
+      unknown_market_rejected_reasons: [
+        { reason: 'held', jobs: 1 },
+        { reason: 'lower_rank', jobs: 1 },
+        { reason: 'quota_exhausted', jobs: 1 },
+        { reason: 'saturated', jobs: 1 },
+      ],
       // Market verdicts are diagnostic: every unresolved job stays
       // unresolved however the market routed it.
       unknown_unresolved: 5,
     });
+    // The known cohort's group evidence tallies the same record: one job
+    // rejected by two lanes still counts each code once.
+    expect(report.proposals[0].evidence).toMatchObject({
+      market_rejected_known: 1,
+      market_rejected_reasons: [
+        { reason: 'quota_exhausted', jobs: 1 },
+        { reason: 'saturated', jobs: 1 },
+      ],
+    });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).toContain('market_reasons=no_runnable_lane:2');
+    expect(out).toContain('market_rejected=2(held:1,lower_rank:1,quota_exhausted:1,saturated:1)');
+    expect(out).toContain('market_rejected=1(quota_exhausted:1,saturated:1)');
     expect(out).toContain('unresolved=5');
   });
 
@@ -1091,9 +1128,14 @@ describe('unknown-outcome resolution', () => {
     expect(report).toMatchObject({
       status: 'proposed', market_state: 'missing', market_truncated: false,
       unknown_market_reasons: null,
+      // No readable market ledger: rejection coverage is unknown too —
+      // null, never an empty tally claiming nothing was rejected.
+      unknown_market_rejected: null,
+      unknown_market_rejected_reasons: null,
     });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).not.toContain('market_reasons=');
+    expect(out).not.toContain('market_rejected=');
   });
 });
 

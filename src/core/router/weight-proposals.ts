@@ -126,6 +126,21 @@ export interface RouterWeightEvidence {
    */
   lane_overrides_known: number;
   lane_override_reasons: { reason: string; jobs: number }[] | null;
+  /**
+   * Group outcomes (the known cohort) whose newest work-market
+   * route_decision recorded a non-empty `rejected_lanes` list — the
+   * market's per-lane rejection record joined as `market_rejected`.
+   * `market_rejected_reasons` tallies the recorded rejection codes over
+   * the same cohort — each job contributes each code once however many
+   * lanes rejected it for it (`quota_exhausted`, `saturated`, `held`,
+   * `provider_backoff`, `cost_class_*`, the `unavailable` verdicts,
+   * `hysteresis_*`, `lower_rank`) — most jobs first, so a cohort whose
+   * decisions kept bouncing off capacity or rank shows the blocking
+   * mix behind its routing. Null when no outcome recorded rejections —
+   * never zero-filled.
+   */
+  market_rejected_known: number;
+  market_rejected_reasons: { reason: string; jobs: number }[] | null;
 }
 
 export interface RouterWeightProposalOptions {
@@ -245,6 +260,28 @@ export interface RouterWeightProposalSet {
    * awaiting a merge verdict stays unresolved however it was routed.
    */
   unknown_market_reasons: { reason: string; jobs: number }[];
+  /**
+   * Jobs inside the unknown cohort whose newest work-market
+   * route_decision recorded a non-empty `rejected_lanes` list — the
+   * market's per-lane rejection record joined as `market_rejected`,
+   * the per-lane why behind `no_runnable_lane`/`global_admission`
+   * verdicts that `unknown_market_reasons` names only in aggregate.
+   * Queue-side diagnostic context like `unknown_market_reasons`:
+   * it explains which lanes the market turned the job away from and
+   * never reduces `unknown_unresolved`.
+   */
+  unknown_market_rejected: number;
+  /**
+   * Top recorded market rejection codes inside the unknown cohort, by
+   * jobs — each job contributes each code once however many lanes
+   * rejected it for it (the same per-job-per-code rule the unfed
+   * rejection accounting applies). Null-reasons entries contribute
+   * nothing; a `market_rejected` of `[]` or `null` contributes
+   * nothing — recorded-empty and missing evidence stay distinct
+   * upstream. Diagnostic context only, never a reduction of
+   * `unknown_unresolved`.
+   */
+  unknown_market_rejected_reasons: { reason: string; jobs: number }[];
   unknown_unresolved: number;
   /**
    * Top recorded `usage_missing` labels across every folded outcome —
@@ -287,6 +324,8 @@ interface WeightEvidenceTally {
   usageMissingKnown: number;
   laneOverrides: number;
   overrideReasons: Map<string, number>;
+  marketRejected: number;
+  rejectedReasons: Map<string, number>;
 }
 
 const freshTally = (): WeightEvidenceTally => ({
@@ -299,10 +338,13 @@ const freshTally = (): WeightEvidenceTally => ({
   acusSum: 0, acusKnown: 0, diffFilesSum: 0, diffFilesKnown: 0,
   diffLinesSum: 0, diffLinesKnown: 0, usageMissingKnown: 0,
   laneOverrides: 0, overrideReasons: new Map(),
+  marketRejected: 0, rejectedReasons: new Map(),
 });
 
 /** Top recorded lane-hint blocking codes kept per group, most jobs first. */
 const MAX_BLOCKED_REASONS = 8;
+/** Top recorded market rejection codes kept per group, most jobs first. */
+const MAX_REJECTED_REASONS = 8;
 
 /**
  * The batch-member task_outcome words that end the attempt without a
@@ -355,6 +397,12 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
         .map(([reason, jobs]) => ({ reason, jobs }))
         .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
         .slice(0, MAX_OVERRIDE_REASONS),
+  market_rejected_known: t.marketRejected,
+  market_rejected_reasons: t.marketRejected === 0 ? null
+    : [...t.rejectedReasons.entries()]
+        .map(([reason, jobs]) => ({ reason, jobs }))
+        .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
+        .slice(0, MAX_REJECTED_REASONS),
 });
 
 /**
@@ -397,10 +445,12 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   const emptyTags = new Map<string, number>();
   const deferReasons = new Map<string, number>();
   const marketReasons = new Map<string, number>();
+  const marketRejectedReasons = new Map<string, number>();
   const usageMissing = new Map<string, number>();
   const usageSources = new Map<string, number>();
   let unknownSkipped = 0;
   let unknownDeferred = 0;
+  let unknownMarketRejected = 0;
   for (const o of outcomes) {
     // Usage provenance is capture evidence, not merge evidence: every folded
     // outcome tallies its recorded labels — classified or not.
@@ -458,6 +508,21 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
           marketReasons.set(code, (marketReasons.get(code) ?? 0) + 1);
         }
       }
+      // The market's per-lane rejection record is the same kind of
+      // queue-side diagnostic: each job contributes each recorded
+      // rejection code once however many lanes rejected it for it.
+      // It never feeds the unresolved remainder.
+      if (o.market_rejected !== null && o.market_rejected.length > 0) {
+        unknownMarketRejected++;
+        const rejectedCodes = new Set<string>();
+        for (const entry of o.market_rejected) {
+          if (entry.reasons === null) continue;
+          for (const code of entry.reasons) rejectedCodes.add(code);
+        }
+        for (const code of rejectedCodes) {
+          marketRejectedReasons.set(code, (marketRejectedReasons.get(code) ?? 0) + 1);
+        }
+      }
       if (!empty && !nonzeroExit && o.failure_class === null && !requeued && !declined && !deferred) unknownUnresolved++;
       continue;
     }
@@ -497,6 +562,17 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     if (o.lane_override !== null) {
       t.laneOverrides++;
       t.overrideReasons.set(o.lane_override, (t.overrideReasons.get(o.lane_override) ?? 0) + 1);
+    }
+    if (o.market_rejected !== null && o.market_rejected.length > 0) {
+      t.marketRejected++;
+      const rejectedCodes = new Set<string>();
+      for (const entry of o.market_rejected) {
+        if (entry.reasons === null) continue;
+        for (const code of entry.reasons) rejectedCodes.add(code);
+      }
+      for (const code of rejectedCodes) {
+        t.rejectedReasons.set(code, (t.rejectedReasons.get(code) ?? 0) + 1);
+      }
     }
     groups.set(key, g);
     known++;
@@ -540,6 +616,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     .map(([reason, jobs]) => ({ reason, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
     .slice(0, 10);
+  const topMarketRejectedReasons = [...marketRejectedReasons.entries()]
+    .map(([reason, jobs]) => ({ reason, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
+    .slice(0, 10);
   const topUsageMissing = [...usageMissing.entries()]
     .map(([usage_missing, jobs]) => ({ usage_missing, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.usage_missing.localeCompare(b.usage_missing))
@@ -555,6 +635,8 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     unknown_skip_reasons: topSkipReasons, unknown_empty_tags: topEmptyTags,
     unknown_deferred: unknownDeferred, unknown_defer_reasons: topDeferReasons,
     unknown_market_reasons: topMarketReasons,
+    unknown_market_rejected: unknownMarketRejected,
+    unknown_market_rejected_reasons: topMarketRejectedReasons,
     unknown_unresolved: unknownUnresolved,
     usage_missing: topUsageMissing, usage_sources: topUsageSources };
 }
@@ -657,6 +739,20 @@ export interface RouterWeightProposalReport {
    * carried market reasons.
    */
   unknown_market_reasons: { reason: string; jobs: number }[] | null;
+  /**
+   * Jobs inside the unknown cohort whose newest route_decision recorded
+   * a non-empty rejected_lanes list — see RouterWeightProposalSet.
+   * Null when the ledger was not read; 0 is a real measurement.
+   */
+  unknown_market_rejected: number | null;
+  /**
+   * Top recorded market rejection codes inside the unknown cohort, by
+   * jobs — each job contributes each code once however many lanes
+   * rejected it for it (see RouterWeightProposalSet). Null when the
+   * ledger was not read; empty when read but no unknown-cohort outcome
+   * carried rejection codes.
+   */
+  unknown_market_rejected_reasons: { reason: string; jobs: number }[] | null;
   unknown_unresolved: number | null;
   /**
    * Top recorded `usage_missing` labels across every folded outcome —
@@ -708,6 +804,7 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
       unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null, unknown_empty_classes: null,
       unknown_task_outcomes: null, unknown_skipped: null, unknown_skip_reasons: null, unknown_empty_tags: null,
       unknown_deferred: null, unknown_defer_reasons: null, unknown_market_reasons: null,
+      unknown_market_rejected: null, unknown_market_rejected_reasons: null,
       unknown_unresolved: null,
       usage_missing: null, usage_sources: null, proposals: [] };
   }
@@ -724,11 +821,14 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     // empty jobs tagged" when it only knows "tags unread" — report null.
     unknown_empty_tags: read.empty_tag_state === 'read' ? set.unknown_empty_tags : null,
     unknown_deferred: set.unknown_deferred, unknown_defer_reasons: set.unknown_defer_reasons,
-    // Market reasons join through the same work-market.jsonl tail as
-    // work_class: anything but 'read' means no decision verdicts joined,
-    // so the tally would claim "no market reasons recorded" when it only
-    // knows "market unread" — report null, the same rule empty_tags uses.
+    // Market reasons and the per-lane rejection record join through the
+    // same work-market.jsonl tail as work_class: anything but 'read'
+    // means no decision verdicts joined, so the tallies would claim "no
+    // market reasons/rejections recorded" when they only know "market
+    // unread" — report null, the same rule empty_tags uses.
     unknown_market_reasons: read.market_state === 'read' ? set.unknown_market_reasons : null,
+    unknown_market_rejected: read.market_state === 'read' ? set.unknown_market_rejected : null,
+    unknown_market_rejected_reasons: read.market_state === 'read' ? set.unknown_market_rejected_reasons : null,
     unknown_unresolved: set.unknown_unresolved,
     usage_missing: set.usage_missing, usage_sources: set.usage_sources,
     proposals: set.proposals };

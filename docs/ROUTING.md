@@ -359,9 +359,15 @@ recorded routing verdict — `market_lane` (the row's `chosen_lane`,
 `null` inside a recorded decision that routed nowhere),
 `market_preferred` (`preferred_lane`), `market_override` (the override
 object's recorded `reason` — `resource_fit`/`unknown_preference`/
-`preferred_lane_fallback`) and `market_reasons` (the row's
+`preferred_lane_fallback`), `market_reasons` (the row's
 `reason_codes`, deduplicated in the bounded reason-code shape and
-capped) — under the same `market_state` health and newest-decision
+capped) and `market_rejected` (the row's `rejected_lanes` — the
+market's per-lane rejection record, each entry `{lane, reasons}`
+joining under the same bounded shapes: a recorded empty list stays
+`[]`, a missing or all-malformed `rejected_lanes` reads as
+unrecorded `null`, and an entry's `reason_codes` keeps the same
+empty-versus-unrecorded distinction) — under the same `market_state`
+health and newest-decision
 rule: a missing field stays `null`, a recorded empty reason list
 stays `[]`, and decision rows naming jobs outside the jobs window
 never create outcomes. `lane_hint_blocked_by` carries the dispatch claim's
@@ -532,7 +538,16 @@ unknown-cohort job's newest `route_decision` row — queue-side
 diagnostic context for why the market was or was not routing the job
 (`no_runnable_lane`, `global_admission`, `hysteresis_*`,
 `preferred_lane`/`healthy_capacity`), never a launch decision and
-never a reduction of the unresolved remainder — and
+never a reduction of the unresolved remainder —
+`unknown_market_rejected` counts the unknown-cohort jobs whose newest
+decision recorded a non-empty `rejected_lanes` list and
+`unknown_market_rejected_reasons` tallies the recorded per-lane
+rejection codes over the same cohort (each job contributes each code
+once however many lanes rejected it for it — the per-lane why behind
+`no_runnable_lane`/`global_admission` verdicts, like
+`quota_exhausted`, `saturated`, `held`, `provider_backoff`,
+`cost_class_*`, the `unavailable` verdicts, `hysteresis_*` and
+`lower_rank`) — and
 `unknown_unresolved` is
 the remainder with no
 recorded failure signal, no requeue word and no standing skip
@@ -541,8 +556,9 @@ verdict, still in flight, or carrying only transient launch receipts). These are
 not read they are `null`, never zero — and `unknown_empty_tags` is
 `null` whenever the empty-tags ledger itself was not read, since an
 absent tag journal means tag coverage is unknown rather than zero;
-`unknown_market_reasons` is `null` the same way whenever the market
-ledger itself was not read. When the ledger exceeds the retained tail the
+`unknown_market_reasons`, `unknown_market_rejected` and
+`unknown_market_rejected_reasons` are `null` the same way whenever the
+market ledger itself was not read. When the ledger exceeds the retained tail the
 report carries `truncated: true` and every count covers the newest bytes
 only; `market_state`/`market_truncated` report the decision journal's
 health and `empty_tag_state`/`empty_tag_truncated` the tags journal's
@@ -601,7 +617,14 @@ it" verdict does not count) and `lane_blocked_reasons` breaks the
 count down by recorded code (`quota_exhausted`, `saturated`, `held`,
 `lower_rank`, `hysteresis_*`), so a lane whose hinted work keeps
 losing to capacity or rank shows the blocking mix behind its off-hint
-share. The weight math still moves on
+share. The same evidence block also tallies the market's per-lane
+rejection record — `market_rejected_known` counts the known-cohort
+outcomes whose newest `route_decision` recorded a non-empty
+`rejected_lanes` list and `market_rejected_reasons` breaks the count
+down by recorded rejection code (each job contributes each code once
+however many lanes rejected it for it), so a group whose decisions
+kept bouncing off capacity or rank shows the blocking mix behind its
+routing. The weight math still moves on
 held-merge rate alone; the evidence is context for whoever applies a
 proposal, and text output renders it as `name=value(known)` suffixes only
 for signals with coverage. The report is advisory-only: it writes nothing, never

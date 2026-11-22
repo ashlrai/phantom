@@ -59,6 +59,11 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
   if (e.lane_overrides_known > 0 && e.lane_override_reasons !== null) {
     parts.push(`lane_overrides=${e.lane_overrides_known}(${e.lane_override_reasons.map(r => `${r.reason}:${r.jobs}`).join(',')})`);
   }
+  if (e.market_rejected_known > 0) {
+    parts.push(`market_rejected=${e.market_rejected_known}` +
+      (e.market_rejected_reasons !== null && e.market_rejected_reasons.length > 0
+        ? `(${e.market_rejected_reasons.map(r => `${r.reason}:${r.jobs}`).join(',')})` : ''));
+  }
   return parts.length === 0 ? '' : ` evidence ${parts.join(' ')}`;
 }
 
@@ -107,6 +112,11 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
         : '') +
       (report.unknown_market_reasons !== null && report.unknown_market_reasons.length > 0
         ? ` market_reasons=${report.unknown_market_reasons.map(c => `${c.reason}:${c.jobs}`).join(',')}`
+        : '') +
+      (report.unknown_market_rejected !== null && report.unknown_market_rejected > 0
+        ? ` market_rejected=${report.unknown_market_rejected}` +
+          (report.unknown_market_rejected_reasons !== null && report.unknown_market_rejected_reasons.length > 0
+            ? `(${report.unknown_market_rejected_reasons.map(c => `${c.reason}:${c.jobs}`).join(',')})` : '')
         : ''),
   ];
   const rows = report.proposals.map(p => {

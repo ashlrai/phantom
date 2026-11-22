@@ -222,6 +222,7 @@ describe('router outcome ledger (612S preservation)', () => {
       skipped: null, skip_reason: null, skip_code: null,
       deferred: null, defer_reason: null, defer_repeat_of: null,
       market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
+      market_rejected: null,
       passk: null,
     }]);
   });
@@ -1262,17 +1263,80 @@ describe('router outcome market decision join', () => {
     ].join('\n'));
     expect(decisions.get('J1')).toEqual({
       lane: 'gamma', preferred: null, override: null,
-      reasons: ['no_runnable_lane'],
+      reasons: ['no_runnable_lane'], rejected: [],
     });
-    // A recorded empty reason_codes list stays []; chosen/preferred null inside a real decision.
-    expect(decisions.get('J2')).toEqual({ lane: null, preferred: null, override: null, reasons: [] });
+    // A recorded empty reason_codes/rejected_lanes list stays []; chosen/preferred null inside a real decision.
+    expect(decisions.get('J2')).toEqual({ lane: null, preferred: null, override: null, reasons: [], rejected: [] });
     // Malformed lane and all-unrecognizable codes read as unrecorded, never raw.
-    expect(decisions.get('J3')).toEqual({ lane: null, preferred: 'alpha', override: null, reasons: null });
+    expect(decisions.get('J3')).toEqual({ lane: null, preferred: 'alpha', override: null, reasons: null, rejected: [] });
     // Minimal rows still record what parses; absent fields and bad ts/wrong schema skip or stay null.
-    expect(decisions.get('J4')).toEqual({ lane: 'alpha', preferred: null, override: null, reasons: null });
+    // J4 wrote no rejected_lanes member at all: unrecorded (null), distinct from J2's recorded [].
+    expect(decisions.get('J4')).toEqual({ lane: 'alpha', preferred: null, override: null, reasons: null, rejected: null });
     expect(decisions.has('J5')).toBe(false);
     expect(decisions.has('J6')).toBe(false);
     expect(decisions.size).toBe(4);
+  });
+
+  it('folds rejected_lanes per lane under the bounded shapes, newest decision stands', () => {
+    const decisions = foldRouteDecisions([
+      // R1: the market's per-lane rejection record — ineligible codes,
+      // hysteresis holds and lower_rank all join in recorded order.
+      JSON.stringify(decision('R1', 'bulk', 100, {
+        chosen_lane: null, reason_codes: ['no_runnable_lane'],
+        rejected_lanes: [
+          { lane: 'devin', reason_codes: ['quota_exhausted', 'held'] },
+          { lane: 'codex-cmp', reason_codes: ['saturated', 'provider_backoff'] },
+          { lane: 'claude', reason_codes: ['lower_rank'] },
+        ],
+      })),
+      // R2: malformed entries skip — bad lane shapes, non-objects, a
+      // missing lane — while well-formed neighbors still join; a
+      // reasons list that is recorded-empty stays [] and one whose
+      // codes are all unrecognizable reads as unrecorded (null).
+      JSON.stringify(decision('R2', 'bulk', 100, {
+        rejected_lanes: [
+          { lane: 'alpha!', reason_codes: ['quota_exhausted'] },
+          'not-an-object',
+          { reason_codes: ['saturated'] },
+          { lane: 'beta', reason_codes: [] },
+          { lane: 'gamma', reason_codes: ['NOT_A_CODE', 42, null] },
+          { lane: 'delta' },
+          { lane: 'epsilon', reason_codes: 'quota_exhausted' },
+        ],
+      })),
+      // R3: the newest decision stands even when its rejected_lanes is
+      // unrecordable — a non-array value reads as unrecorded (null) and
+      // supersedes the older row's valid list; a non-empty list whose
+      // every entry is malformed reads the same way.
+      JSON.stringify(decision('R3', 'bulk', 100, {
+        rejected_lanes: [{ lane: 'alpha', reason_codes: ['held'] }],
+      })),
+      JSON.stringify(decision('R3', 'bulk', 200, { rejected_lanes: 'quota_exhausted' })),
+      JSON.stringify(decision('R3', 'bulk', 300, { rejected_lanes: [{ lane: 'bad lane!' }] })),
+      // R4: over-bound entries cap; duplicate codes dedupe per entry.
+      JSON.stringify(decision('R4', 'bulk', 100, {
+        rejected_lanes: [
+          ...Array.from({ length: 40 }, (_, i) => ({ lane: `lane-${i}`, reason_codes: ['held'] })),
+        ],
+      })),
+      JSON.stringify(decision('R5', 'bulk', 100, {
+        rejected_lanes: [{ lane: 'alpha', reason_codes: ['held', 'held', 'saturated'] }],
+      })),
+    ].join('\n'));
+    expect(decisions.get('R1')?.rejected).toEqual([
+      { lane: 'devin', reasons: ['quota_exhausted', 'held'] },
+      { lane: 'codex-cmp', reasons: ['saturated', 'provider_backoff'] },
+      { lane: 'claude', reasons: ['lower_rank'] },
+    ]);
+    expect(decisions.get('R2')?.rejected).toEqual([
+      { lane: 'beta', reasons: [] },
+      { lane: 'gamma', reasons: null },
+      { lane: 'delta', reasons: null },
+      { lane: 'epsilon', reasons: null },
+    ]);
+    expect(decisions.get('R3')?.rejected).toBeNull();
+    expect(decisions.get('R4')?.rejected).toHaveLength(32);
+    expect(decisions.get('R5')?.rejected).toEqual([{ lane: 'alpha', reasons: ['held', 'saturated'] }]);
   });
 
   it('joins the newest decision verdict onto outcomes without creating market-only jobs', async () => {
@@ -1290,6 +1354,10 @@ describe('router outcome market decision join', () => {
       decision('J1', 'bulk', 200, {   // newer decision stands
         chosen_lane: null, preferred_lane: 'beta', override: null,
         reason_codes: ['no_runnable_lane', 'global_admission'],
+        rejected_lanes: [
+          { lane: 'devin', reason_codes: ['quota_exhausted', 'held'] },
+          { lane: 'codex-cmp', reason_codes: ['saturated'] },
+        ],
       }),
       decision('J2', 'bulk', 100, { chosen_lane: 'beta', preferred_lane: 'beta', reason_codes: ['preferred_lane'] }),
       decision('J-UNDECIDED', 'bulk', 100, { chosen_lane: 'alpha', reason_codes: ['preferred_lane'] }),
@@ -1300,14 +1368,21 @@ describe('router outcome market decision join', () => {
     expect(byId.get('J1')).toMatchObject({
       market_lane: null, market_preferred: 'beta', market_override: null,
       market_reasons: ['no_runnable_lane', 'global_admission'],
+      market_rejected: [
+        { lane: 'devin', reasons: ['quota_exhausted', 'held'] },
+        { lane: 'codex-cmp', reasons: ['saturated'] },
+      ],
     });
     expect(byId.get('J2')).toMatchObject({
       market_lane: 'beta', market_preferred: 'beta', market_override: null,
       market_reasons: ['preferred_lane'],
+      // The fixture wrote rejected_lanes: [] — a recorded empty set, not unknown.
+      market_rejected: [],
     });
     // J3 has no decision row: every market field stays null — unknown, never guessed.
     expect(byId.get('J3')).toMatchObject({
       market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
+      market_rejected: null,
     });
     expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3']);
   });
@@ -1317,6 +1392,7 @@ describe('router outcome market decision join', () => {
     expect(missing).toMatchObject({ state: 'read', market_state: 'missing' });
     expect(missing.outcomes[0]).toMatchObject({
       market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
+      market_rejected: null,
     });
 
     const root = runsDir('{"job":"J1","phase":"MERGED"}\n');
@@ -1326,6 +1402,7 @@ describe('router outcome market decision join', () => {
     const linked = await readRouterOutcomes({ runsDir: root });
     expect(linked).toMatchObject({ state: 'read', market_state: 'unreadable' });
     expect(linked.outcomes[0]?.market_lane).toBeNull();
+    expect(linked.outcomes[0]?.market_rejected).toBeNull();
   });
 });
 

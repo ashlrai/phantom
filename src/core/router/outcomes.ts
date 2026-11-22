@@ -63,7 +63,12 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // fleet-side; it attaches to the job's outcome regardless of the standing
 // finish verdict, stays null when no tag row named the job, and rows for
 // jobs outside the jobs window never create outcomes — the same join rule
-// spend costs and market classes follow.
+// spend costs and market classes follow. The same newest route_decision row
+// also carries the market's per-lane rejection record — `rejected_lanes`,
+// every lane the market would not run the job on with its reason_codes —
+// which folds as market_rejected: the per-lane why behind a
+// no_runnable_lane/global_admission verdict that market_reasons only names
+// in aggregate.
 
 /** Newest-bytes bound retained from the append-only jobs ledger. */
 export const ROUTER_OUTCOME_LEDGER_LIMIT = 16 * 1024 * 1024;
@@ -469,6 +474,25 @@ export interface RouterOutcome {
    * row named the job or the market ledger was not read.
    */
   market_reasons: string[] | null;
+  /**
+   * The market decision's recorded rejected lanes — the newest
+   * `route_decision` row's `rejected_lanes` list: every lane the market
+   * would not run the job on, each entry's `reason_codes` carrying the
+   * recorded why (ineligible codes like `quota_exhausted`, `saturated`,
+   * `held`, `provider_backoff`, `cost_class_*` and the `unavailable`
+   * verdicts; `hysteresis_*` holds; `lower_rank` for eligible lanes
+   * ranked below the chosen one). This is the per-lane detail behind a
+   * `no_runnable_lane`/`global_admission` verdict that `market_reasons`
+   * names only in aggregate, and it joins whether or not a lane was
+   * chosen. Entries join only in the bounded lane-id shape with reasons
+   * in the bounded reason-code shape — malformed entries are skipped,
+   * never recorded raw; a recorded empty list stays `[]` while a
+   * missing or all-unrecognizable list reads as unrecorded (`null`),
+   * the same distinction `market_reasons` keeps. `null` when no
+   * decision row named the job or the market ledger was not read —
+   * unknown, never a guessed rejection set.
+   */
+  market_rejected: { lane: string; reasons: string[] | null }[] | null;
   /** The lane+model's pass^k (passPowK) from the latest eval.lane-scores.v1 projection; null when unknown. */
   passk: number | null;
 }
@@ -1098,6 +1122,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       skipped: null, skip_reason: null, skip_code: null,
       deferred: null, defer_reason: null, defer_repeat_of: null,
       market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
+      market_rejected: null,
       passk: null,
     };
     o.lane = str(r, 'lane', 'pool', 'arm') ?? o.lane;
@@ -1348,20 +1373,84 @@ export function foldRouteDecisionWorkClasses(text: string): Map<string, string> 
 }
 
 /**
+ * One rejected lane inside a route_decision's `rejected_lanes` record —
+ * the market's per-lane why for not running the job there. `reasons` is
+ * the entry's `reason_codes` under the same bounded-code rule
+ * `reason_codes` follows on the decision itself: a recorded empty list
+ * stays `[]`, a missing or all-unrecognizable list reads as unrecorded
+ * (`null`).
+ */
+export interface MarketRejectedLane {
+  lane: string;
+  reasons: string[] | null;
+}
+
+/**
  * One job's newest work-market route_decision verdict — the decision-side
  * routing record the outcome's market_* fields carry. `lane` is the
  * market's `chosen_lane` (null inside a recorded decision when it routed
  * nowhere), `preferred` its `preferred_lane` hint, `override` the
- * `override.reason` code when the market picked off-hint, and `reasons`
- * its `reason_codes` list. Every field stays null when the row recorded
- * none — unknown, never guessed.
+ * `override.reason` code when the market picked off-hint, `reasons` its
+ * `reason_codes` list, and `rejected` its `rejected_lanes` per-lane
+ * rejection record. Every field stays null when the row recorded none —
+ * unknown, never guessed.
  */
 export interface MarketRouteDecision {
   lane: string | null;
   preferred: string | null;
   override: string | null;
   reasons: string[] | null;
+  rejected: MarketRejectedLane[] | null;
 }
+
+/** Bound on recorded rejected lanes per decision — the dispatcher's lane set never approaches it. */
+const MARKET_REJECTED_MAX = 32;
+
+/**
+ * A recorded reason-code list under the bounded reason-code shape:
+ * entries deduplicated in recorded order and capped; a recorded empty
+ * list stays `[]`, a missing, non-array or all-unrecognizable list
+ * reads as unrecorded (`null`) — the same distinction
+ * lane_hint_blocked_by and market_reasons keep.
+ */
+const boundedReasonList = (v: unknown): string[] | null => {
+  if (!Array.isArray(v)) return null;
+  if (v.length === 0) return [];
+  const collected: string[] = [];
+  const seen = new Set<string>();
+  for (const code of v) {
+    if (collected.length >= LANE_BLOCKED_MAX) break;
+    if (typeof code === 'string' && LANE_BLOCKED_CODE.test(code) && !seen.has(code)) {
+      seen.add(code);
+      collected.push(code);
+    }
+  }
+  return collected.length === 0 ? null : collected;
+};
+
+/**
+ * The decision row's `rejected_lanes` record — the market's per-lane
+ * rejection list. Each entry joins only as an object whose `lane`
+ * matches the bounded lane-id shape; its `reason_codes` joins under
+ * the same bounded-code rule `reason_codes` follows (recorded empty
+ * stays `[]`, missing or all-unrecognizable reads `null`). A recorded
+ * empty list stays `[]`, a missing or non-array value reads as
+ * unrecorded (`null`), and a non-empty list whose every entry is
+ * malformed reads as unrecorded too — never a guessed rejection set.
+ */
+const marketRejectedLanes = (v: unknown): MarketRejectedLane[] | null => {
+  if (!Array.isArray(v)) return null;
+  if (v.length === 0) return [];
+  const collected: MarketRejectedLane[] = [];
+  for (const entry of v) {
+    if (collected.length >= MARKET_REJECTED_MAX) break;
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const lane = (entry as Row)['lane'];
+    if (typeof lane !== 'string' || !LANE_BLOCKED_HINT.test(lane)) continue;
+    collected.push({ lane, reasons: boundedReasonList((entry as Row)['reason_codes']) });
+  }
+  return collected.length === 0 ? null : collected;
+};
 
 /**
  * Folds work-market.jsonl route_decision rows into each job's newest
@@ -1373,12 +1462,16 @@ export interface MarketRouteDecision {
  * epoch-seconds ts alone, and each field joins only when it parses in
  * its bounded shape. `chosen_lane`/`preferred_lane` join in the bounded
  * lane-id shape the claim folds use, `override.reason` in the bounded
- * lowercase reason-code shape, and `reason_codes` entries deduplicated
+ * lowercase reason-code shape, `reason_codes` entries deduplicated
  * in recorded order and capped — a recorded empty list stays `[]`
  * while a missing or all-unrecognizable list reads as unrecorded
- * (`null`), the same distinction lane_hint_blocked_by keeps. Rows with
- * a missing or non-finite ts, a wrong schema/event, or a malformed job
- * id are skipped, never guessed; a job absent from the map keeps every
+ * (`null`), the same distinction lane_hint_blocked_by keeps — and
+ * `rejected_lanes` entries joining per lane under the same shapes: a
+ * recorded empty list stays `[]`, a missing or all-unrecognizable
+ * list reads as unrecorded (`null`), and a non-empty list whose every
+ * entry is malformed reads as unrecorded too. Rows with a missing or
+ * non-finite ts, a wrong schema/event, or a malformed job id are
+ * skipped, never guessed; a job absent from the map keeps every
  * market_* field null.
  */
 export function foldRouteDecisions(text: string): Map<string, MarketRouteDecision> {
@@ -1406,24 +1499,8 @@ export function foldRouteDecisions(text: string): Map<string, MarketRouteDecisio
     const override = row['override'];
     const overrideReason = override !== null && typeof override === 'object' && !Array.isArray(override)
       ? (override as Row)['reason'] : undefined;
-    const rawReasons = row['reason_codes'];
-    let reasons: string[] | null = null;
-    if (Array.isArray(rawReasons)) {
-      if (rawReasons.length === 0) {
-        reasons = [];
-      } else {
-        const collected: string[] = [];
-        const seen = new Set<string>();
-        for (const code of rawReasons) {
-          if (collected.length >= LANE_BLOCKED_MAX) break;
-          if (typeof code === 'string' && LANE_BLOCKED_CODE.test(code) && !seen.has(code)) {
-            seen.add(code);
-            collected.push(code);
-          }
-        }
-        reasons = collected.length === 0 ? null : collected;
-      }
-    }
+    const reasons = boundedReasonList(row['reason_codes']);
+    const rejected = marketRejectedLanes(row['rejected_lanes']);
     latest.set(job, {
       ts,
       decision: {
@@ -1431,6 +1508,7 @@ export function foldRouteDecisions(text: string): Map<string, MarketRouteDecisio
         preferred: typeof preferred === 'string' && LANE_BLOCKED_HINT.test(preferred) ? preferred : null,
         override: typeof overrideReason === 'string' && LANE_BLOCKED_CODE.test(overrideReason) ? overrideReason : null,
         reasons,
+        rejected,
       },
     });
   }
@@ -1584,8 +1662,9 @@ async function liveAuthorityEvidence(): Promise<readonly RouterOutcomeEvidenceRo
  * job.empty-tag.v1 row named — a missing joined ledger never zeroes,
  * guesses or blocks the jobs fold. The market ledger's newest
  * route_decision rows additionally join each outcome's
- * market_lane/market_preferred/market_override/market_reasons verdict
- * fields under the same market_state health and newest-decision rule
+ * market_lane/market_preferred/market_override/market_reasons/
+ * market_rejected verdict fields under the same market_state health
+ * and newest-decision rule
  * work_class follows — decision rows naming jobs outside the jobs
  * window never create outcomes. `reverted` additionally joins the
  * authority ledger's verified
@@ -1662,6 +1741,7 @@ export async function readRouterOutcomes(opts: {
       o.market_preferred = decision.preferred;
       o.market_override = decision.override;
       o.market_reasons = decision.reasons;
+      o.market_rejected = decision.rejected;
     }
   }
   const outcomes = opts.lane === undefined ? folded.outcomes : folded.outcomes.filter(o => o.lane === opts.lane);
