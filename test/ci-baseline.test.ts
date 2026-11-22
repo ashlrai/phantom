@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -65,10 +65,26 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
       const isMaster = endpoint.includes('/jobs/10/');
       const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.install ? 'install-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : head;
-      const receipt = options.bound
-        ? `Bound candidate ${options.boundHead ?? sha} to event tree ${'e'.repeat(40)}\n`
-        : `/usr/bin/git log -1 --format=%H\n${sha}\n`;
-      return success(`${receipt}${fixture(name)}`);
+      let prefix: string;
+      if (options.checkoutRef !== undefined) {
+        // Unbound gate jobs (secret-shape, quick, clean-tree, fast-gate,
+        // dependency-audit, ...) never run ci-source-binding.mjs; the only
+        // head proof their logs carry is the runner's `with: ref:` echo of
+        // the checkout step's resolved input.
+        const echo = (ref: string) => `##[group]Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\nwith:\n  ref: ${ref}\n  fetch-depth: 0\n  persist-credentials: false\n##[endgroup]\n`;
+        const other = 'f'.repeat(40);
+        prefix = options.checkoutRef === 'self' ? echo(sha)
+          : options.checkoutRef === 'other' ? echo(other)
+          : options.checkoutRef === 'branch' ? echo('master')
+          : options.checkoutRef === 'mixed' ? echo(sha) + echo(other)
+          : options.checkoutRef === 'twice' ? echo(sha) + echo(sha)
+          : `##[group]Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\nwith:\n  fetch-depth: 0\n  persist-credentials: false\nenv:\n  ref: ${sha}\n##[endgroup]\n`;
+      } else {
+        prefix = options.bound
+          ? `Bound candidate ${options.boundHead ?? sha} to event tree ${'e'.repeat(40)}\n`
+          : `/usr/bin/git log -1 --format=%H\n${sha}\n`;
+      }
+      return success(`${prefix}${fixture(name)}`);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
       const conclusion = isMaster && options.pass ? 'success' : 'failure';
@@ -152,6 +168,31 @@ describe('CI baseline evidence', () => {
     const mismatch = await analyzeCiBaseline('owner/repo', github({ bound: true, boundHead: 'f'.repeat(40) }).gh);
     expect(mismatch.groups).toEqual([]);
     expect(mismatch.freshness.every(p => p.state === 'unknown')).toBe(true);
+  });
+  it('verifies unbound gate jobs through the checkout ref echo', async () => {
+    // secret-shape, quick, clean-tree, authority-drift, fast-gate,
+    // secret-scan and the dependency-audit job never run
+    // ci-source-binding.mjs; the runner's `with: ref:` echo of the
+    // checkout step is their only head proof. Before this path their
+    // parseable failures poisoned every run to unknown.
+    const report = await analyzeCiBaseline('owner/repo', github({ tsc: true, checkoutRef: 'self' }).gh);
+    expect(report.groups.length).toBeGreaterThan(0);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    const flake = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true, checkoutRef: 'self' }).gh);
+    expect(flake.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed', master: 'pass' });
+    const twice = await analyzeCiBaseline('owner/repo', github({ tsc: true, checkoutRef: 'twice' }).gh);
+    expect(twice.groups.length).toBeGreaterThan(0);
+    expect(twice.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+  });
+  it('rejects checkout ref echoes that cannot prove the head', async () => {
+    // A disagreeing SHA, a non-SHA ref, a second checkout of anything else,
+    // or a `ref:` that only appears under `env:` all leave the job
+    // unverifiable, so parseable evidence still poisons the run.
+    for (const checkoutRef of ['other', 'branch', 'mixed', 'envonly'] as const) {
+      const report = await analyzeCiBaseline('owner/repo', github({ tsc: true, checkoutRef }).gh);
+      expect(report.groups).toEqual([]);
+      expect(report.freshness.every(p => p.state === 'unknown')).toBe(true);
+    }
   });
   it('does not infer independence with unresolved imports', async () => {
     const report = await analyzeCiBaseline('owner/repo', github({ imports: "import helper from '#helper';" }).gh);

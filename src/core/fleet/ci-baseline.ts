@@ -43,6 +43,73 @@ const FILE_PASS_LINE = /^[✓✔√]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/[
 //   Bound candidate <sha> to event merge <sha> of base <sha>...
 const BOUND_LINE = /^Bound candidate ([a-f0-9]{40}) to event (?:tree|merge) [a-f0-9]{40}/;
 
+// Gate jobs that never run ci-source-binding.mjs (secret-shape, quick,
+// clean-tree, authority-drift, fast-gate, secret-scan, the whole
+// dependency-audit job) still prove their checkout through the runner's
+// own echo of the checkout step's resolved inputs:
+//
+//   ##[group]Run actions/checkout@<pinned>
+//   with:
+//     ref: <resolved sha>
+//     ...
+//   ##[endgroup]
+//
+// Every analyzed `ref:` expression (`pull_request.head.sha`,
+// `merge_group.head_sha`, `github.sha`) resolves to the run's head SHA, so
+// the echo verifies exactly like the binding receipt -- but only when the
+// log records at least one checkout and every checkout step pins `ref:` to
+// that head. A checkout pinned to a branch, tag or PR ref resolves to a
+// non-SHA value and never verifies; an unpinned checkout falls back to the
+// event default (the merge commit on pull_request), and a second checkout
+// of anything else makes the workspace ambiguous, so either leaves the
+// job unverifiable.
+const CHECKOUT_GROUP = /^##\[group\]Run actions\/checkout@\S/;
+const CHECKOUT_GROUP_END = '##[endgroup]';
+const CHECKOUT_WITH = 'with:';
+const CHECKOUT_ENV = 'env:';
+const CHECKOUT_REF = /^ref:\s*([a-f0-9]{40})$/;
+
+function checkoutRefsVerify(output: string[], head: string): boolean {
+  let groups = 0;
+  let bad = false;
+  let inCheckout = false;
+  let inWith = false;
+  let ref: string | null = null;
+  const close = () => {
+    if (!inCheckout) return;
+    groups++;
+    if (ref !== head) bad = true;
+    inCheckout = false;
+    inWith = false;
+    ref = null;
+  };
+  for (const line of output) {
+    if (CHECKOUT_GROUP.test(line)) {
+      close();
+      inCheckout = true;
+      continue;
+    }
+    if (!inCheckout) continue;
+    if (line === CHECKOUT_GROUP_END) {
+      close();
+      continue;
+    }
+    if (line === CHECKOUT_WITH) {
+      inWith = true;
+      continue;
+    }
+    if (inWith && line === CHECKOUT_ENV) {
+      inWith = false;
+      continue;
+    }
+    if (!inWith) continue;
+    const found = CHECKOUT_REF.exec(line);
+    if (found !== null) ref = found[1]!;
+  }
+  close();
+  return groups > 0 && !bad;
+}
+
 // TypeScript diagnostics (tsc/tsgo non-pretty output, identical in CI) name a
 // repo-relative file, position and diagnostic code:
 //   src/core/foo.ts(41,9): error TS2322: Type 'string' is not assignable ...
@@ -2020,6 +2087,14 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       const bound = output.find(line => BOUND_LINE.test(line));
       if (bound !== undefined) {
         if (BOUND_LINE.exec(bound)![1] !== head) return null;
+        result.push({ conclusion: job.conclusion, text: r.stdout });
+        continue;
+      }
+      // Gate jobs that never run ci-source-binding.mjs prove the checkout
+      // through the runner's resolved `with: ref:` echo instead; it
+      // verifies only when every checkout step in the log pins `ref:` to
+      // the head.
+      if (checkoutRefsVerify(output, head)) {
         result.push({ conclusion: job.conclusion, text: r.stdout });
         continue;
       }
