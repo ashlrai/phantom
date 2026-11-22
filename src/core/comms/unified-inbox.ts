@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates twenty local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates twenty-one local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), classified by the same
@@ -140,6 +140,25 @@
  *               unreadable roster, coordination table, node store or quota
  *               read is 'unavailable', never an empty plan passed off as
  *               fact. Act: `phm bots handoff --seat`, `phm bots handoffs`.
+ *   peer-dispatch  unpublished peer work results — the private
+ *               `agentnet/work-dispatch.json` journal's `work.result`
+ *               receipts whose latest recorded outcome was never confirmed
+ *               sent to the proposing peer (`sent` trails `outcome`, or was
+ *               never written — the same `sent !== outcome` rule
+ *               `consumePeerWork`'s publish pass and the peer-bus admission
+ *               check apply, so a peer cannot see a result the journal does
+ *               not prove was published). The proposing peer waits on the
+ *               bus for that result and no other surface lists the backlog —
+ *               `peers dispatch` reports only the current feed page — so each
+ *               receipt lists as a warn whose act is the
+ *               `phm agentnet peers dispatch --apply` pass that publishes it.
+ *               `since`/`expiresAt` stay null: the journal stamps receipt
+ *               creation, not the last outcome move, so the pending age is
+ *               unknown — never invented. `jobIds` carries the peer-announced
+ *               job id, so `--job` finds the result under the same job it
+ *               belongs to. An absent journal is 'missing' (dispatch never
+ *               ran); an unreadable one 'unavailable', never an empty plan
+ *               passed off as fact.
  *   gmail       one item per inbox in the saved Gmail archive plan whose unread
  *               count is over its target (`phm fleet gmail-archive-plan`). A
  *               read of the saved plan only: no mail is read, moved or deleted.
@@ -242,7 +261,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { busWorkFeedHoldIndex, BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedJob, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
@@ -277,6 +296,11 @@ import { isSlackChannelId, isSlackTs } from '../agents/slack-network.js';
 import { JOB_THREAD_PREFIX } from '../fleet/agent-messages.js';
 import { classifyNeedsYou } from '../needs-you/classify.js';
 import { planSeatHandoffs, type SeatHandoffsPlan } from '../bots/seats.js';
+import type { WorkDispatchJournal } from '../agentnet/work-dispatch-journal.js';
+import { workResultBodySchema } from '../agents/bus-v2-schema.js';
+import { realHome } from '../real-home.js';
+import { readStableRegularFile } from '../util/stable-file-read.js';
+import { z } from 'zod';
 import { DEFAULT_TEAM } from '../teams/tools.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { classifyTeammateIntent, readTeammateTexts, type TeammateText } from './imessage-teammate-inbox.js';
@@ -294,7 +318,7 @@ const SUGGESTED_LEASE_MS = 600_000;
 export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
   'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'seats',
-  'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
+  'peer-dispatch', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -311,7 +335,7 @@ export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeve
 export const UNIFIED_INBOX_KINDS = [
   'needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message',
   'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'mailbox-message',
-  'board-delivery', 'board-task', 'agent-thread', 'seat-handoff', 'gmail-over-target',
+  'board-delivery', 'board-task', 'agent-thread', 'seat-handoff', 'peer-dispatch-result', 'gmail-over-target',
   'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
   'inbox-proposal', 'slack-request',
 ] as const;
@@ -339,9 +363,9 @@ export interface UnifiedInboxItem extends AttentionItem {
    * `busBodyJobIds` body citation, a feed job's own id, a board task's
    * `itemId` (a delivery carries the itemIds of the tasks on its thread,
    * the job-carrying-thread rule `BusBoard.pendingFor` applies), a
-   * conversation thread's `jobs`, a teammate task's `jobId`, or the node-job
-   * refs a seat handoff drains (`bus-claim` refs are claim keys, not job
-   * ids). Absent when the item names no job — unknown stays out of a
+   * conversation thread's `jobs`, a teammate task's `jobId`, a seat handoff's
+   * node-job refs, or a peer-dispatch receipt's peer-announced `jobId`.
+   * Absent when the item names no job — unknown stays out of a
    * `--job` match rather than being guessed in.
    */
   readonly jobIds?: readonly string[];
@@ -486,6 +510,8 @@ export interface UnifiedInboxOptions {
   readOwnerUndelivered?: (options: { runsDir: string }) => OwnerUndeliveredReplies;
   readConversations?: typeof readAgentConversations;
   readSeatHandoffs?: typeof planSeatHandoffs;
+  /** Peer-dispatch journal seam; default reads `agentnet/work-dispatch.json` under the bus root like `phm agentnet peers dispatch`. */
+  readPeerDispatch?: (options: { busRoot?: string }) => WorkDispatchJournal;
   readRequests?: typeof readCommsRequests;
   /** Test seam: the request TTL `expiresAt` uses; default resolves cfg.comms.requestTtlHours like dispatch. */
   requestTtlMs?: number;
@@ -1565,6 +1591,116 @@ async function seatItems(read: NonNullable<UnifiedInboxOptions['readSeatHandoffs
   return { report: { state: 'healthy', pending: items.length }, items };
 }
 
+/**
+ * The peer work-dispatch journal schema, restated locally: the canonical
+ * reader (`src/core/agentnet/work-dispatch-journal.ts`) sits outside the
+ * Tier-1 authority import closure and this file cannot import it without
+ * growing that closure, so the v1 shape is mirrored here against the shared
+ * `workResultBodySchema` — a bus-v2 contract change still moves both reads —
+ * with `version` literal 1, so a v2 journal reports 'unavailable' in both
+ * places. Field constraints match the canonical schema exactly.
+ */
+const peerDispatchCallsign = z.string().regex(/^[a-z][a-z0-9-]{0,31}(?![\s\S])/).refine(v => scrubSecrets(v) === v);
+const peerDispatchReceiptSchema = workResultBodySchema.extend({
+  peer: peerDispatchCallsign, consumer: peerDispatchCallsign,
+  digest: z.string().regex(/^[a-f0-9]{64}$/), at: z.number().int().nonnegative(),
+  queueDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  sent: workResultBodySchema.shape.outcome.optional(),
+}).strict();
+const peerDispatchJournalSchema = z.object({ version: z.literal(1),
+  receipts: z.array(peerDispatchReceiptSchema).max(512) }).strict();
+
+/**
+ * The journal's bus root: `agentnetPaths().busRoot` is
+ * `join(realHome(), '.ashlr', 'fleet')` — the root `consumePeerWork` writes
+ * `work-dispatch.json` under — restated here for the same closure reason as
+ * the schema above. A missing real home throws, which the caller reports as
+ * 'unavailable' rather than guessing a path.
+ */
+function peerDispatchBusRoot(busRoot: string | undefined): string {
+  if (busRoot !== undefined) return busRoot;
+  const home = realHome();
+  if (!home) throw new Error('peer-home-unavailable');
+  return join(home, '.ashlr', 'fleet');
+}
+
+/**
+ * Read `<busRoot>/agentnet/work-dispatch.json` with the same private-file
+ * gate `readPeerJson` applies — regular file, single link, mode 0600, owned
+ * by this uid, bounded stable read anchored at the bus root — then the same
+ * v1 schema parse, so this source and `phm agentnet peers dispatch` agree on
+ * what the journal says. Missing means dispatch never ran; anything else
+ * unreadable or invalid is 'unavailable', never an empty backlog passed off
+ * as fact.
+ */
+function readPeerDispatchJournal(options: { busRoot?: string }): WorkDispatchJournal {
+  const busRoot = peerDispatchBusRoot(options.busRoot);
+  const file = join(busRoot, 'agentnet', 'work-dispatch.json');
+  if (!existsSync(file)) return { status: 'missing', receipts: [] };
+  try {
+    const stat = lstatSync(file);
+    if (!stat.isFile() || stat.nlink !== 1 ||
+        (process.platform !== 'win32' && (stat.mode & 0o777) !== 0o600) ||
+        (process.getuid !== undefined && stat.uid !== process.getuid())) {
+      throw new Error('peer-storage-unavailable');
+    }
+    const read = readStableRegularFile(file, {
+      anchorPath: busRoot, maxFileBytes: 512 * 1024, remainingBytes: 512 * 1024,
+    });
+    if (!read.ok) throw new Error('peer-storage-unavailable');
+    return { status: 'available',
+      receipts: peerDispatchJournalSchema.parse(JSON.parse(read.text)).receipts };
+  } catch { return { status: 'unavailable', receipts: [] }; }
+}
+
+/**
+ * Peer work results the journal recorded but never confirmed published —
+ * receipts whose `sent` trails `outcome` (or was never written). The peer
+ * admission check refuses a `work.result` envelope the journal does not
+ * prove this host published with that exact outcome, so each lagging
+ * receipt is a result the proposing peer is still waiting on and no other
+ * surface lists: the dispatch feed page shows only the current proposals.
+ * Publishing is agent work — `phm agentnet peers dispatch --apply` runs the
+ * same publish pass `consumePeerWork` caps at eight receipts a run — so
+ * items are warn and non-blocking. `since` stays null because the journal
+ * stamps receipt creation, not the last outcome move, so the pending age is
+ * unknown; `expiresAt` stays null for the same reason — the result waits
+ * until the next apply pass, never a guessed deadline. The receipt's
+ * peer-announced `jobId` is the job citation `--job` matches on. An absent
+ * journal is 'missing' (dispatch never ran); an unreadable one
+ * 'unavailable', never an empty backlog passed off as fact.
+ */
+function peerDispatchItems(read: NonNullable<UnifiedInboxOptions['readPeerDispatch']>,
+  options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let journal: WorkDispatchJournal;
+  try { journal = read({ busRoot: options.busRoot }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (journal.status === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  if (journal.status === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  // `consumePeerWork` derives queueId and receiptId from one key, so a real
+  // journal never repeats a receipt id; a hand-edited one could, and one
+  // pending thing must stay one item.
+  const seen = new Set<string>();
+  const items = journal.receipts
+    .filter(receipt => receipt.sent !== receipt.outcome && !seen.has(receipt.receiptId) && seen.add(receipt.receiptId))
+    .map((receipt): Omit<UnifiedInboxItem, 'priority'> => ({
+      id: `peer-dispatch:${receipt.receiptId}`,
+      source: 'peer-dispatch',
+      kind: 'peer-dispatch-result',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`peer ${receipt.peer} awaits ${receipt.outcome} result for ${receipt.jobId}`, TITLE_MAX),
+      detail: oneLine(`consumer ${receipt.consumer} · queue ${receipt.queueId} · receipt ${receipt.receiptId}` +
+        ` · last sent ${receipt.sent ?? 'none'}` +
+        (receipt.reason === undefined ? '' : ` · reason ${receipt.reason}`), DETAIL_MAX) || null,
+      since: null,
+      expiresAt: null,
+      ...jobIdsField([receipt.jobId]),
+      act: ['phm agentnet peers dispatch --apply'],
+    }));
+  return { report: { state: 'healthy', pending: items.length }, items };
+}
+
 function gmailItems(read: typeof readGmailArchivePlanLatest, runsDir: string | undefined): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   const dir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
   let latest: ReturnType<typeof readGmailArchivePlanLatest> = null;
@@ -1967,6 +2103,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const board = boardItems(options.readBoard ?? readBoardPending, options);
   const conversations = conversationItems(options.readConversations ?? readAgentConversations, options, now, bus.covered);
   const seats = await seatItems(options.readSeatHandoffs ?? planSeatHandoffs, now);
+  const peerDispatch = peerDispatchItems(options.readPeerDispatch ?? readPeerDispatchJournal, options);
   const gmail = gmailItems(options.readGmailPlans ?? readGmailArchivePlanLatest, options.runsDir);
   const linkedin = linkedInItems(options.readLinkedIn ?? readLinkedInDrop, options.runsDir, now);
   const requests = requestItems(options.readRequests ?? readCommsRequests, now, options.requestTtlMs);
@@ -1993,6 +2130,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     board: board.report,
     conversations: conversations.report,
     seats: seats.report,
+    'peer-dispatch': peerDispatch.report,
     gmail: gmail.report,
     linkedin: linkedin.report,
     requests: requests.report,
@@ -2002,7 +2140,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     proposals: proposals.report,
     slack: slack.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...seats.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...seats.items, ...peerDispatch.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

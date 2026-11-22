@@ -125,6 +125,7 @@ describe('readUnifiedInbox sources', () => {
         board: { state: 'missing', pending: 0 },
         conversations: { state: 'missing', pending: 0 },
         seats: { state: 'missing', pending: 0 },
+        'peer-dispatch': { state: 'missing', pending: 0 },
         'email-inbox': { state: 'missing', pending: 0 },
         'email-outbox': { state: 'missing', pending: 0 },
         'team-approvals': { state: 'healthy', pending: 0 },
@@ -1805,6 +1806,104 @@ describe('readUnifiedInbox slack requests', () => {
     expect(inbox.sources.slack).toEqual({ state: 'unavailable', pending: null });
     expect(inbox.items.filter(i => i.source === 'slack')).toHaveLength(0);
     expect(inbox.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+});
+
+describe('readUnifiedInbox peer dispatch', () => {
+  const queueId = (c: string) => `peer-work-${c.repeat(32)}`;
+  const receiptId = (c: string) => `pw-${c.repeat(32)}`;
+  const receipt = (over: Record<string, unknown> = {}) => ({
+    kind: 'work.result', jobId: 'RQ-PEER-1', claimKey: `queue:${queueId('a')}`,
+    queueId: queueId('a'), receiptId: receiptId('b'), outcome: 'admitted',
+    peer: 'peer-a', consumer: 'dispatch', digest: 'c'.repeat(64),
+    at: now - 3_600_000, ...over,
+  });
+  /** The journal `consumePeerWork` writes under `<busRoot>/agentnet/` — the default reader's real path. */
+  const writeJournal = (receipts: unknown[]) => {
+    const dir = join(busRoot, 'agentnet');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'work-dispatch.json'), JSON.stringify({ version: 1, receipts }), { mode: 0o600 });
+  };
+
+  it('lists receipts whose latest outcome was never confirmed sent, and keeps sent ones out', async () => {
+    writeJournal([
+      // sent trails outcome — the peer still waits on the newer result.
+      receipt({ sent: 'reserved' }),
+      // sent absent entirely — never published.
+      receipt({ outcome: 'complete', queueId: queueId('d'), receiptId: receiptId('e'), claimKey: `queue:${queueId('d')}` }),
+      // Latest outcome already published — history, not pending.
+      receipt({ outcome: 'failed', reason: 'repo-denied', sent: 'failed', queueId: queueId('f'), receiptId: receiptId('0'), claimKey: `queue:${queueId('f')}` }),
+      // Outcome and sent agree — nothing owed.
+      receipt({ outcome: 'reserved', sent: 'reserved', queueId: queueId('1'), receiptId: receiptId('2'), claimKey: `queue:${queueId('1')}` }),
+    ]);
+    const inbox = await read();
+    expect(inbox.sources['peer-dispatch']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'peer-dispatch');
+    expect(items).toHaveLength(2);
+    const byId = new Map(items.map(i => [i.id, i]));
+    expect(byId.get(`peer-dispatch:${receiptId('b')}`)).toMatchObject({
+      kind: 'peer-dispatch-result',
+      severity: 'warn', blocking: false,
+      title: 'peer peer-a awaits admitted result for RQ-PEER-1',
+      detail: `consumer dispatch · queue ${queueId('a')} · receipt ${receiptId('b')} · last sent reserved`,
+      since: null, expiresAt: null, jobIds: ['RQ-PEER-1'],
+      act: ['phm agentnet peers dispatch --apply'],
+    });
+    expect(byId.get(`peer-dispatch:${receiptId('e')}`)).toMatchObject({
+      title: 'peer peer-a awaits complete result for RQ-PEER-1',
+      detail: `consumer dispatch · queue ${queueId('d')} · receipt ${receiptId('e')} · last sent none`,
+    });
+    // Journal fields are callsigns, ids and outcome codes — never message text.
+    expect(JSON.stringify(items)).not.toContain('fake work');
+  });
+
+  it('keeps one item per receipt id even if a hand-edited journal repeats one', async () => {
+    writeJournal([receipt({ sent: 'reserved' }), receipt({ sent: 'reserved' })]);
+    const inbox = await read();
+    expect(inbox.sources['peer-dispatch']).toEqual({ state: 'healthy', pending: 1 });
+    expect(inbox.items.filter(i => i.source === 'peer-dispatch')).toHaveLength(1);
+  });
+
+  it('reports the journal state honestly: missing, unreadable, throwing seam', async () => {
+    const missing = await read();
+    expect(missing.sources['peer-dispatch']).toEqual({ state: 'missing', pending: 0 });
+
+    const dir = join(busRoot, 'agentnet');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'work-dispatch.json'), '{not json', { mode: 0o600 });
+    const degraded = await read();
+    expect(degraded.sources['peer-dispatch']).toEqual({ state: 'unavailable', pending: null });
+    expect(degraded.items.filter(i => i.source === 'peer-dispatch')).toHaveLength(0);
+
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    rmSync(join(dir, 'work-dispatch.json'));
+    const throwing = await read({
+      readPeerDispatch: () => { throw new Error('boom'); },
+    });
+    expect(throwing.sources['peer-dispatch']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+
+  it('filters by source, kind, job citation and contains like every other source', async () => {
+    writeJournal([
+      receipt({ sent: 'reserved' }),
+      receipt({ jobId: 'RQ-OTHER', sent: 'reserved', queueId: queueId('3'), receiptId: receiptId('4'), claimKey: `queue:${queueId('3')}` }),
+    ]);
+    const inbox = await read({ filter: { source: 'peer-dispatch' } });
+    expect(inbox.total).toBe(2);
+    expect(inbox.items.every(i => i.source === 'peer-dispatch' && i.kind === 'peer-dispatch-result')).toBe(true);
+    expect(inbox.sources['peer-dispatch']).toEqual({ state: 'healthy', pending: 2 });
+
+    const byJob = await read({ filter: { job: 'RQ-PEER-1' } });
+    expect(byJob.items.map(i => i.id)).toEqual([`peer-dispatch:${receiptId('b')}`]);
+    expect(byJob.items[0]!.jobIds).toEqual(['RQ-PEER-1']);
+
+    const byKind = await read({ filter: { kind: 'peer-dispatch-result', source: 'peer-dispatch' } });
+    expect(byKind.total).toBe(2);
+    const byText = await read({ filter: { contains: 'awaits complete' } });
+    expect(byText.items).toEqual([]);
+    const byPeer = await read({ filter: { contains: 'peer peer-a' } });
+    expect(byPeer.items.map(i => i.id).sort()).toEqual([`peer-dispatch:${receiptId('4')}`, `peer-dispatch:${receiptId('b')}`].sort());
   });
 });
 
