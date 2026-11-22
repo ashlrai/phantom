@@ -765,6 +765,38 @@ stays `null` when no jobs row recorded one — never derived from cost or
 event names. The fold is read-only and advisory: it
 never routes, ranks, tunes or writes.
 
+`router/controller-quality.ts` exports `readControllerQuality({runsDir?})`,
+`CONTROLLER_QUALITY_STATE_RELATIVE`, `CONTROLLER_QUALITY_RECEIPT_SCHEMA`
+and the `ControllerQualityRead`/`ControllerQualityReceipt`/
+`ControllerQualityState` types. It reads the fleet controller's recorded
+lane-quality verdicts — the `route.quality.v1` receipts dispatchd's
+`outcome_quality` pass stores as `quality_receipts` inside the atomic
+`<runsDir>/queue/fleet-controller.json` state document — under the same
+bounded regular-file rules as `readLedgerFile` (1 MiB limit, symlinks
+refused). `runsDir` resolves like `readRouterOutcomes` (ASHLR_RUNS_DIR,
+then `~/.ashlr-runs`) and must be absolute when given. The read state is
+the shared `LedgerReadState` plus `'invalid'`: non-JSON content, a
+non-object document, or a `quality_receipts` member that is not an array
+reports `invalid`; a missing member means the controller never recorded
+verdicts and reads as `read` with an empty list — a real measurement,
+distinct from an absent or broken file. Each receipt must carry the v1
+schema, a lane-shaped id and a finite `ts` to join at all; `score`,
+`ci_adverse_delta`, `from`/`to` join only inside their recorded ranges,
+`resolved`/`target_from`/`target_to`/`decided_at` only as bounded counts
+or timestamps, `report_at` only as bounded text, and `reason`/`mode` only
+inside the producer's closed vocabularies — anything else joins as `null`,
+never echoed raw. When the file records a lane twice the newest `ts` wins
+(ties go to the later row) and the result is sorted by lane, capped at 64
+distinct lanes; `invalid_rows` counts rejected rows. The read feeds the
+advisory `router.weight-proposals.v1` report: `buildRouterWeightProposalReport`
+accepts `opts.controllerQuality` and reports `controller_quality_state`
+(`'unreported'` when no read was supplied — distinct from `missing`),
+`controller_quality` (the receipts, `null` unless state is `read`) and
+`controller_quality_invalid_rows`. `phm fleet router-weights` performs the
+read itself (a controller-read failure degrades to `unreadable`, never a
+command failure) and renders the verdicts as advisory context alongside
+the proposals. Nothing here routes, weights or applies anything.
+
 `explainRoutes(root, nowSeconds)` returns nullable `posture` from the bounded
 256 KiB tail of `metrics/work-market.jsonl` (regular files only, no symlink
 following). Its `lanes` map contains `posture`, `postureReason`, nullable

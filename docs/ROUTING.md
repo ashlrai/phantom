@@ -546,7 +546,20 @@ ledger itself was not read. When the ledger exceeds the retained tail the
 report carries `truncated: true` and every count covers the newest bytes
 only; `market_state`/`market_truncated` report the decision journal's
 health and `empty_tag_state`/`empty_tag_truncated` the tags journal's
-the same way. Each proposal also carries an `evidence` block folded
+the same way. The report also carries the fleet controller's own recorded
+lane-quality verdicts: `controller_quality_state` reports the health of
+`<runs-dir>/queue/fleet-controller.json` (`'unreported'` when the caller
+supplied no read — distinct from `missing`, and `invalid` when the state
+document parsed but its `quality_receipts` member did not match the
+recorded contract), and `controller_quality` lists the newest validated
+`route.quality.v1` receipt per lane — the weight adjustment, post-merge
+quality score, resolved-merge count, CI-adverse delta, closed-vocabulary
+reason and controller mode (`enforce`/`shadow`) the dispatcher last
+recorded for each lane, with unrecognized fields joining as `null` and
+rejected rows counted in `controller_quality_invalid_rows`. These are the
+verdicts the controller is actively enforcing for live routing, surfaced
+here as advisory context only — the weight math still moves on
+held-merge rate alone and nothing in the report applies them. Each proposal also carries an `evidence` block folded
 from the same known cohort: the group's CI first-pass rate, summed review
 findings, mean `cost_usd`, mean recorded `acus` (the Devin lane's billed
 spend — a different unit, never mixed with USD), mean `wall_s`, mean

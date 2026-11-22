@@ -1232,6 +1232,7 @@
 /test/router-arms-replay.test.ts @masonwyatt23
 /test/router-calibration.test.ts @masonwyatt23
 /test/router-catalog-refresh.test.ts @masonwyatt23
+/test/router-controller-quality.test.ts @masonwyatt23
 /test/router-current-claude-models.test.ts @masonwyatt23
 /test/router-decision-reader-recovery-646s.test.ts @masonwyatt23
 /test/router-eval-harness.test.ts @masonwyatt23

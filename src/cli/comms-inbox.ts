@@ -4,11 +4,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { readUnifiedInbox, isUnifiedInboxSeverity, isUnifiedInboxSource,
   type UnifiedInbox, type UnifiedInboxFilter, type UnifiedInboxSeverity, type UnifiedInboxSource } from '../core/comms/unified-inbox.js';
 import { createChannelReceiver } from '../core/fleet/channel-envelope.js';
+import { parseSince } from '../core/fleet/agent-messages.js';
 import { INBOX_MAX_CHARS, readInboxEntries } from '../core/fleet/mason-inbox.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
-const HELP = `phm comms inbox [--source <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--json]
+const HELP = `phm comms inbox [--source <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--json]
 phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 With no verb, lists every pending comms item — unresolved needs-you lines
@@ -26,10 +27,13 @@ Slack requests whose bus append failed —
 one prioritized list whose
 items carry the deep-link commands that act on them. The bare view's --source keeps
 one source's items, --severity one severity band, --blocking only items that
-block and --job only items that provably name one job id — a bus or mailbox
+block, --job only items that provably name one job id — a bus or mailbox
 body's job citation, a feed job's id, a board task's fleet item or a
 delivery on a job-carrying thread, a conversation thread's jobs, a teammate
-task's job or a seat's node-job handoff; the dimensions AND together, and the
+task's job or a seat's node-job handoff — and --since only items whose
+recorded appearance time reaches the cutoff (15m, 2h, 1d, epoch ms or an
+ISO time; an item whose store keeps no timestamp never matches, so unknown
+never counts as new); the dimensions AND together, and the
 per-source counts still report every
 store's real pending total, so a filtered view never hides a busy or degraded
 source. --json prints the same view as JSON.
@@ -139,13 +143,14 @@ type CommandOptions = {
 /** The `--job` value rule every bus read surface shares: a printable label, 1-128 chars. */
 const JOB_ID = /^[\x21-\x7e]{1,128}$/;
 
-/** Human one-line description of an applied view filter, e.g. `source=bus severity=warn blocking job=RQ-1`. */
+/** Human one-line description of an applied view filter, e.g. `source=bus severity=warn blocking job=RQ-1 since=2026-11-07T11:45:00.000Z`. */
 function describeUnifiedFilter(filter: UnifiedInboxFilter): string {
   return [
     ...(filter.source === undefined ? [] : [`source=${filter.source}`]),
     ...(filter.severity === undefined ? [] : [`severity=${filter.severity}`]),
     ...(filter.blocking === undefined ? [] : ['blocking']),
     ...(filter.job === undefined ? [] : [`job=${filter.job}`]),
+    ...(filter.since === undefined ? [] : [`since=${new Date(filter.since).toISOString()}`]),
   ].join(' ');
 }
 
@@ -181,6 +186,7 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
     if (args.length === 0 || args[0] !== 'read' && args[0] !== 'post') {
       let json = false, blocking = false;
       let source: UnifiedInboxSource | undefined, severity: UnifiedInboxSeverity | undefined, job: string | undefined;
+      let sinceMs: number | undefined;
       const seen = new Set<string>();
       for (let i = 0; i < args.length; i++) {
         const arg = args[i]!;
@@ -203,13 +209,24 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
           if (value === undefined || value.startsWith('--') || !JOB_ID.test(value)) return invalid();
           seen.add(arg); job = value; continue;
         }
+        if (arg === '--since' && !seen.has(arg)) {
+          const value = args[++i];
+          // A flag-looking value is a missing value — the same rule --job applies.
+          if (value === undefined || value.startsWith('--')) return invalid();
+          const ms = parseSince(value);
+          // The same --since rule `comms bus read`/`watch` apply: an
+          // unparseable, unsafe or negative cutoff refuses the invocation.
+          if (ms === null || !Number.isSafeInteger(ms) || ms < 0) return invalid();
+          seen.add(arg); sinceMs = ms; continue;
+        }
         return invalid();
       }
       const filter: UnifiedInboxFilter | undefined =
-        source === undefined && severity === undefined && !blocking && job === undefined ? undefined
+        source === undefined && severity === undefined && !blocking && job === undefined && sinceMs === undefined ? undefined
           : { ...(source === undefined ? {} : { source }),
               ...(severity === undefined ? {} : { severity }),
               ...(job === undefined ? {} : { job }),
+              ...(sinceMs === undefined ? {} : { since: sinceMs }),
               ...(blocking ? { blocking: true } : {}) };
       const report = await readUnifiedInbox({ runsDir: options.runsDir, busRoot: options.busRoot,
         ...(filter === undefined ? {} : { filter }) });
