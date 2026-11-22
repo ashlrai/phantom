@@ -746,7 +746,10 @@ bounded walk and claim order (the first 20 shown, `matched` the true total;
 an assignment the addressee already answered drops out once a live reply
 routed recipient -> sender cites the handoff id through `inReplyTo`/`replyTo` —
 the citation `agents bus dm|post|channel post --reply-to` stamps on a v2
-`note`/`context` body —
+`note`/`context` body; "recipient -> sender" resolves through the identity
+registry, so the reply may travel under any label of either identity and a
+channel-addressed handoff is answered by any member of that channel (an
+unreadable registry keeps literal-label matching) —
 the same durable evidence `agents conversations` credits when it marks the
 thread answered),
 each carrying the envelope `id` those verbs take as `--id`, the raw `to`
@@ -1272,7 +1275,9 @@ and `channel post` records the v2 `inReplyTo` citation — the envelope id the
 message answers — the same field `postBusReply`, `comms bus post --reply-to`
 and the fleet reply verbs stamp; `agents conversations` threads on it and the
 `work mine` handoff/awaiting sections credit a routed recipient -> sender
-citation as the answer, so an agent can close an ask or assignment without
+citation as the answer — resolved through the identity registry, so any
+label of the two identities (or a member of the addressed channel) counts —
+so an agent can close an ask or assignment without
 dropping to the fleet reply verbs. The citation names a routing id, never
 proof the target existed or was received.
 

@@ -925,6 +925,88 @@ describe('readBusWorkMine', () => {
     expect(result.handoffs.items.map(item => item.id)).toEqual(['ho-unans']);
   });
 
+  it('drops a worker-handoff answered under another label of the same identities', async () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', aliases: ['atlas-work'],
+      runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', aliases: ['nova-lane'],
+      runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+    // A raw handoff addressed to atlas's alias label — receivable through the
+    // same identity resolution handoff-receive applies.
+    const posted = appendBusInbox({ id: 'ho-alias-ans', from: 'agent:nova', to: 'atlas-work',
+      priority: 'P1', ttl: 120_000,
+      body: { kind: 'worker-handoff', taskId: 'RQ-H-AL', prompt: 'alias addressed task' } },
+      { root: options.root, now: options.now });
+    expect(posted.status).toBe('posted');
+    const before = readBusWorkMine('atlas', options);
+    if (before.status !== 'ok' || before.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(before.handoffs.matched).toBe(1);
+    // The assignee answers under different labels of the same identities —
+    // bare handle `atlas` replying to nova's lane alias is still the routed
+    // recipient -> sender citation, so the assignment drops.
+    const reply = appendBusInbox({ id: 'ho-alias-reply', from: 'atlas', to: 'nova-lane',
+      priority: 'P2', ttl: 120_000,
+      body: { kind: 'note', inReplyTo: 'ho-alias-ans', text: 'done under lane labels' } },
+      { root: options.root, now: options.now });
+    expect(reply.status).toBe('posted');
+    const after = readBusWorkMine('atlas', options);
+    if (after.status !== 'ok' || after.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(after.handoffs).toMatchObject({ status: 'ok', matched: 0, items: [], truncated: false });
+    // An unreadable registry narrows the check back to literal labels: the
+    // same reply no longer proves the answer, so the alias-addressed handoff
+    // is pending again under its literal label.
+    writeFileSync(join(options.root, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+    const narrowed = readBusWorkMine('atlas-work', options);
+    if (narrowed.status !== 'ok' || narrowed.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(narrowed.handoffs.matched).toBe(1);
+    expect(narrowed.handoffs.items[0]).toMatchObject({ id: 'ho-alias-ans' });
+  });
+
+  it('drops a channel-addressed worker-handoff a channel member answered', async () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova', 'pip', 'ghost');
+    // eng: atlas + nova + pip. ghost belongs to no channel.
+    expect(createAgentChannel({ name: 'eng', createdBy: 'atlas', members: ['nova', 'pip'] }, options).status)
+      .toBe('created');
+    const posted = appendBusInbox({ id: 'ho-chan', from: 'agent:nova', to: 'group:eng:general',
+      priority: 'P1', ttl: 120_000,
+      body: { kind: 'worker-handoff', taskId: 'RQ-H-CH', prompt: 'room addressed task' } },
+      { root: options.root, now: options.now });
+    expect(posted.status).toBe('posted');
+    // Pending for every member until a member's own-label reply cites it.
+    for (const ref of ['atlas', 'pip']) {
+      const digest = readBusWorkMine(ref, options);
+      if (digest.status !== 'ok' || digest.handoffs.status !== 'ok') throw new Error('unreachable');
+      expect(digest.handoffs.items.map(item => item.id)).toEqual(['ho-chan']);
+    }
+    // pip — a member, not the assigner — answers under its own label routed
+    // to nova's agent: address: still recipient(room) -> sender.
+    const reply = appendBusInbox({ id: 'ho-chan-reply', from: 'agent:pip', to: 'agent:nova',
+      priority: 'P2', ttl: 120_000,
+      body: { kind: 'note', inReplyTo: 'ho-chan', text: 'room has it' } },
+      { root: options.root, now: options.now });
+    expect(reply.status).toBe('posted');
+    const after = readBusWorkMine('atlas', options);
+    if (after.status !== 'ok' || after.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(after.handoffs).toMatchObject({ status: 'ok', matched: 0, items: [] });
+    // A non-member's citation is no answer: a second room handoff answered
+    // only by ghost stays pending for the members.
+    const second = appendBusInbox({ id: 'ho-chan-2', from: 'agent:nova', to: 'group:eng:general',
+      priority: 'P1', ttl: 120_000,
+      body: { kind: 'worker-handoff', taskId: 'RQ-H-CH2', prompt: 'second room task' } },
+      { root: options.root, now: options.now });
+    expect(second.status).toBe('posted');
+    const outsider = appendBusInbox({ id: 'ho-chan-2-bye', from: 'agent:ghost', to: 'agent:nova',
+      priority: 'P2', ttl: 120_000,
+      body: { kind: 'note', inReplyTo: 'ho-chan-2', text: 'not mine to answer' } },
+      { root: options.root, now: options.now });
+    expect(outsider.status).toBe('posted');
+    const kept = readBusWorkMine('atlas', options);
+    if (kept.status !== 'ok' || kept.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(kept.handoffs.items.map(item => item.id)).toEqual(['ho-chan-2']);
+  });
+
   it('includes claimable work and handoffs posted to channels the agent belongs to, minus its own posts', async () => {
     const options = setup(Date.now());
     register(options, 'atlas', 'nova', 'ghost');

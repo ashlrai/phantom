@@ -25,6 +25,7 @@ import { markTeammateTextsAnswered, recordTeammateText } from '../src/core/comms
 import { writeEmailDropConfig, type EmailDropConfig } from '../src/core/comms/email-drop-config.js';
 import { EMAIL_OUTBOX_MAX_BYTES } from '../src/core/comms/email-outbox.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { createAgentChannel, registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { createBusMailbox, type BusMailboxPendingMessage } from '../src/core/fleet/bus-mailbox.js';
 import { BusBoard, type BusBoardPendingPeers, type BusBoardPendingTask, type BusBoardTaskHold } from '../src/core/fleet/bus-board.js';
 import type { BusBoardDelivery } from '../src/core/fleet/bus-delivery.js';
@@ -773,6 +774,43 @@ describe('worker-handoff assignments in the bus source', () => {
     postV2Body({ kind: 'note', inReplyTo: id, text: 'fyi' }, { from: 'agent:bystander', to: 'leaders' });
     const inbox = await read();
     expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual([`bus-handoff:${id}`]);
+  });
+
+  it('drops a handoff answered under another label of the same identities', async () => {
+    registerAgentIdentity({ handle: 'worker-9', aliases: ['w9-lane'] }, { root: busRoot });
+    registerAgentIdentity({ handle: 'peer', aliases: ['peer-alias'] }, { root: busRoot });
+    const id = postV2Body(handoff('RQ-HANDOFF-9', 'fake alias-answered handoff'), { to: 'agent:worker-9' });
+    expect((await read()).items.map(i => i.id)).toContain(`bus-handoff:${id}`);
+    // The assignee's lane alias answers the assigner's alias — the same two
+    // identities under different routing labels, still recipient -> sender.
+    postV2Body({ kind: 'note', inReplyTo: id, text: 'done on the lane' },
+      { from: 'w9-lane', to: 'peer-alias' });
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'bus')).toHaveLength(0);
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('drops a channel-addressed handoff a channel member answered', async () => {
+    registerAgentIdentity({ handle: 'worker-9' }, { root: busRoot });
+    registerAgentIdentity({ handle: 'peer' }, { root: busRoot });
+    registerAgentIdentity({ handle: 'member-1' }, { root: busRoot });
+    registerAgentIdentity({ handle: 'outsider' }, { root: busRoot });
+    expect(createAgentChannel({ name: 'ops', createdBy: 'peer', members: ['worker-9', 'member-1'] },
+      { root: busRoot }).status).toBe('created');
+    const id = postV2Body(handoff('RQ-HANDOFF-10', 'fake room handoff'), { to: 'group:ops:general' });
+    // member-1 — a room member, not the assigner — answers under its own
+    // label routed to the assigner: the room is the assignee set.
+    postV2Body({ kind: 'note', inReplyTo: id, text: 'room took it' },
+      { from: 'agent:member-1', to: 'agent:peer' });
+    const answered = await read();
+    expect(answered.items.filter(i => i.source === 'bus')).toHaveLength(0);
+    // A registered non-member's citation is no answer: the next room handoff
+    // stays pending.
+    const second = postV2Body(handoff('RQ-HANDOFF-11', 'fake room handoff two'), { to: 'group:ops:general' });
+    postV2Body({ kind: 'note', inReplyTo: second, text: 'not mine to answer' },
+      { from: 'agent:outsider', to: 'agent:peer' });
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual([`bus-handoff:${second}`]);
   });
 });
 
