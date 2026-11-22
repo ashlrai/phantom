@@ -142,6 +142,31 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     expect(String(log.mock.calls[0]?.[0])).not.toContain('detail=');
   });
 
+  it('carries the newest work.result citation onto the job and its human line', async () => {
+    append(post);
+    now += 10;
+    append({ kind: 'work.status', jobId: post.jobId, status: 'running' }, 2);
+    now += 10;
+    append({ kind: 'work.result', jobId: post.jobId, claimKey: 'repo:fake/repo',
+      queueId: 'peer-work-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      receiptId: 'pw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      outcome: 'complete', reason: 'paths-not-allowed' }, 3, 'fake-worker');
+    const result = readBusWorkFeed({ root });
+    // The report is evidence on the citation — the job's status stays the
+    // announcer's 'running', never the result's 'complete'.
+    expect(result).toMatchObject({ status: 'ok', jobs: [{ id: post.jobId, status: 'running',
+      result: { id: 'fake-message-3', from: 'fake-worker', outcome: 'complete',
+        reason: 'paths-not-allowed' } }] });
+    const log = output();
+    expect(await cmdFleetWorkFeed(['--root', root])).toBe(0);
+    expect(String(log.mock.calls[0]?.[0])).toContain(
+      'result=complete reason=paths-not-allowed by=fake-worker');
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--json'])).toBe(0);
+    const wire = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as { jobs: { result?: { id: string } }[] };
+    expect(wire.jobs[0]?.result?.id).toBe('fake-message-3');
+  });
+
   it('refuses a status from a different owner and exits 1 in text and JSON', async () => {
     append(post);
     append({ kind: 'work.status', jobId: post.jobId, status: 'done' }, 2, 'fake-other');

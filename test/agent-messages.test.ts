@@ -185,8 +185,9 @@ describe('phm messages projection', () => {
     expect(byId.get('j6')!.jobState).toEqual({ jobId: 'RQ-GONE9', feed: 'ok', job: null });
     // work.claim executes as an operation: its jobId is a parameter, not a citation.
     expect(byId.get('j4')).not.toHaveProperty('jobState');
-    // The human line prints the same job marker the inbox frame uses.
-    expect(formatAgentMessagesText(read(root))).toContain('job=RQ-FEED1:running');
+    // The human line prints the same job marker the inbox frame uses — the
+    // feed job's newest work.result outcome rides along as evidence.
+    expect(formatAgentMessagesText(read(root))).toContain('job=RQ-FEED1:running result=admitted');
   });
 
   it('annotates worker-handoff taskIds with the same live job state', () => {

@@ -2373,11 +2373,18 @@ reject ASCII controls including DEL. Claims grant no execution authority.
 `projectBusWorkFeed(receipts: readonly unknown[], participants?: readonly Participant[], providerFor?: WorkFeedProviderFor, ownerKeyFor?: WorkFeedOwnerKeyFor)`
 in `src/core/agents/bus-work-feed.ts` returns `WorkFeedResult`: either
 `{status:'ok', feed:{v:2,jobs:WorkJob[]}, citations:ReadonlyMap<string,WorkFeedCitation>}`
-or `{status:'refused',reason, receipt?}`. `WorkFeedCitation` is `{post, status}` — the
+or `{status:'refused',reason, receipt?}`. `WorkFeedCitation` is `{post, status, result?}` — the
 wire ids of the retained `work.post` receipt that announced the job and of
 the newest accepted `work.status` receipt (`status` is null while none has
-moved it), keyed by job id, so every job cites the envelopes its state came
-from; `agents bus show <id>` resolves them. `receipt` is a
+moved it), plus — when a schema-clean `work.result` citing the job is
+retained — `result`, a `WorkFeedResultCitation` (`{id, from, outcome,
+reason?, receivedAt}`: the result receipt's wire id, reporting label,
+outcome, optional bounded reason code and receipt time), keyed by job id,
+so every job cites the envelopes its state came from; `agents bus show
+<id>` resolves them. A `work.result` is reported outcome evidence only —
+it never moves the job's status, detail or `updatedAt`, which only the
+announcer's `work.status` does — and a malformed or orphan result is
+ignored like any other non-feed body, never a projection refusal. `receipt` is a
 `WorkFeedRefusalReceipt` (`{id, receivedAt, ttl}` — the wire id, receipt time
 and TTL of the retained envelope whose processing refused the projection),
 present on the body-level refusals (`invalid-body`, `missing-provider`,
@@ -2411,8 +2418,10 @@ pages the bounded bus inbox without writes and returns ok/refused/unavailable/
 retryable/invalid with receipt count and `asOf`; a `refused` result carries
 the projection's `receipt` (`WorkFeedRefusalReceipt`) when it named one. On `ok` each job is a
 `BusWorkFeedJob` (`WorkJob` plus `postId` — the announcing `work.post`
-envelope's wire id — and `statusId` — the newest accepted `work.status`
-envelope's wire id, null while none has moved the job), so feed consumers can
+envelope's wire id — `statusId` — the newest accepted `work.status`
+envelope's wire id, null while none has moved the job — and `result?` —
+the citation's `WorkFeedResultCitation` when a `work.result` citing the
+job is retained), so feed consumers can
 `agents bus show` the receipts behind a job without a second scan; filters
 keep the citation fields with their job. `runtimeProvider(identity)` is the exported newest-runtime provider
 lookup both the feed hints and `announceWork` share. Omitted post providers fall back
@@ -2468,10 +2477,13 @@ it answers an honest empty view. `toMatch` is the predicate
 over its `owner` (announcer) label — each matching literally and under every
 label of one agent identity (an unresolvable ref or unreadable registry keeps
 exact-label matching). `formatBusWorkFeed(result)` renders the shared human
-lines — each job as `<id> <status> "<title>" detail="<why>" owner=… to=… provider=… repo=… [tier=… scope="…" acceptance="…"] keys=<claim keys> claimable=… updated=… post=<postId> [status=<statusId>]`
+lines — each job as `<id> <status> "<title>" detail="<why>" owner=… to=… provider=… repo=… [tier=… scope="…" acceptance="…"] keys=<claim keys> claimable=… updated=… post=<postId> [status=<statusId>] [result=<outcome> [reason=<r>] by=<from> at=<iso> receipt=<id>]`
 with title, detail, the optional dispatch spec and keys scrubbed, single-lined
-and display-clipped (JSON keeps the full values; `detail=`, `status=` and the
-dispatch fields appear only when present, `post=` always) — a refused read's
+and display-clipped (JSON keeps the full values; `detail=`, `status=`, the
+dispatch fields and the result suffix appear only when present, `post=`
+always) — the result suffix is `busWorkJobResultSuffix(job)`, the shared
+helper `work mine`'s jobs and announced lines also append so every surface
+renders the newest `work.result` report identically — a refused read's
 footer adds `receipt=<id>` when the projection blamed a retained envelope —
 both feed CLIs use them, and both accept `--to <label>`, `--owner
 <agent>`, `--job <id>`, `--repo <owner/name>`, `--provider <p>`,
@@ -2597,7 +2609,7 @@ and an inbox read that is not `ok` reports `{status:'unavailable'|
 origin covers a scope key, not mail, and carries no `message`. `jobs` reports the open feed jobs
 (`BUS_FEED_OPEN_STATUSES`, at least one claim key, newest 50 of `open`) as
 `BusWorkMineJob` (`BusWorkFeedJob` — so it carries the feed's `postId`/`statusId`
-envelope citations — plus `addressed`, `announced`, `freeKeys`,
+envelope citations and any `work.result` report — plus `addressed`, `announced`, `freeKeys`,
 `heldKeys`, `claimable`): `addressed` marks a `to` label resolving to the
 agent's identity and `announced` an `owner` label resolving to it (the agent
 posted the job and owns its status reports) — both through the same
@@ -2617,7 +2629,7 @@ listed because only the announcer may move a job and a failed one can still
 be rescheduled or terminated. Each item is a `BusWorkMineAnnouncedJob` —
 `BusWorkFeedJob` plus the same per-key hold coverage the jobs section
 computes, so it carries the feed's `postId`/`statusId` envelope citations
-and `held`/`heldKeys`/`freeKeys`: `held` is `true` when a declared key has a
+and any `work.result` report, plus `held`/`heldKeys`/`freeKeys`: `held` is `true` when a declared key has a
 shown live hold, `false` when complete coverage proves none is held or the
 job declares no keys, `null` when coverage cannot prove either way (a
 `running`/`idle` announcement with `held:false` has no live claim on its
@@ -3114,7 +3126,8 @@ legacy mail.
 `frameBusInbox(cli, messages)` renders each body through `busBodySummary`,
 falling back to `busBodyFallbackSummary` for unrecognized bodies; items
 carrying `held` show it inside the line's bracket, and items carrying `job`
-show the shared `busInboxJobMarker` (`job=<id>:<state>` plus `claimable=`
+show the shared `busInboxJobMarker` (`job=<id>:<state>` plus `result=<outcome>`
+when the feed job cites a `work.result`, and `claimable=`
 when the claims join computed it) the same way. Identities
 are routing names and grant no authority.
 

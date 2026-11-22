@@ -1410,7 +1410,8 @@ export function busInboxJobMarker(job: BusEnvelopeLookupJob): string {
     if (job.job === null) return `job=${job.jobId}:absent`;
     const claimable = job.job.claimable === undefined ? ''
       : ` claimable=${job.job.claimable === null ? 'unknown' : job.job.claimable ? 'yes' : 'no'}`;
-    return `job=${job.jobId}:${job.job.status}${claimable}`;
+    const result = job.job.result === undefined ? '' : ` result=${job.job.result.outcome}`;
+    return `job=${job.jobId}:${job.job.status}${result}${claimable}`;
   }
   if (job.feed === 'refused') return `job=${job.jobId}:refused:${job.reason}`;
   return `job=${job.jobId}:${job.feed}`;

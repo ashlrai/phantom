@@ -108,6 +108,46 @@ describe('retained v2 work projection', () => {
       ['other', { post: 'm-5', status: null }],
     ]));
   });
+  it('cites the newest schema-clean work.result as evidence without moving the job', () => {
+    const workResult = (cursor: number, jobId: string, outcome: string,
+      extra: Record<string, unknown> = {}, from = 'agent:worker') =>
+      receipt({ kind: 'work.result', jobId, claimKey: 'repo:a/b',
+        queueId: 'peer-work-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        receiptId: 'pw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', outcome, ...extra }, cursor, from);
+    const projected = projectBusWorkFeed([
+      workResult(1, 'job', 'complete'),                        // orphan — no job yet
+      receipt(post, 2),
+      workResult(3, 'job', 'admitted'),
+      workResult(4, 'job', 'complete', { reason: 'paths-not-allowed' }),  // newest wins
+      workResult(5, 'ghost', 'failed'),                        // orphan — ignored
+      receipt({ kind: 'work.result', jobId: 'job', claimKey: 'repo:a/b' }, 6),  // malformed — skipped
+      receipt({ kind: 'work.result', jobId: 'job', claimKey: 'repo:a/b',
+        queueId: 'peer-work-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        receiptId: 'pw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', outcome: 'failed',
+        unexpected: true }, 7),                                 // strict schema — skipped
+    ]);
+    if (projected.status !== 'ok') throw new Error('fixture refused');
+    expect(projected.feed.jobs).toHaveLength(1);
+    // The result is evidence only: the job stays queued at the post's receipt
+    // time — status, detail and updatedAt all belong to work.status alone.
+    expect(projected.feed.jobs[0]).toMatchObject({ id: 'job', status: 'queued', updatedAt: 200 });
+    expect(projected.citations.get('job')).toEqual({ post: 'm-2', status: null,
+      result: { id: 'm-4', from: 'agent:worker', outcome: 'complete',
+        reason: 'paths-not-allowed', receivedAt: 400 } });
+  });
+  it('keeps the announcer status authoritative when a result lands after it', () => {
+    const projected = projectBusWorkFeed([
+      receipt(post, 1),
+      receipt({ kind: 'work.status', jobId: 'job', status: 'running', detail: 'halfway' }, 2),
+      receipt({ kind: 'work.result', jobId: 'job', claimKey: 'repo:a/b',
+        queueId: 'peer-work-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        receiptId: 'pw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', outcome: 'complete' }, 3, 'agent:worker'),
+    ]);
+    if (projected.status !== 'ok') throw new Error('fixture refused');
+    expect(projected.feed.jobs[0]).toMatchObject({ status: 'running', detail: 'halfway', updatedAt: 200 });
+    expect(projected.citations.get('job')).toEqual({ post: 'm-1', status: 'm-2',
+      result: { id: 'm-3', from: 'agent:worker', outcome: 'complete', receivedAt: 300 } });
+  });
   it('resolves omitted providers only through explicit participant metadata', () => {
     const { provider: _provider, ...withoutProvider } = post;
     expect(projectBusWorkFeed([receipt(withoutProvider)])).toEqual({ status: 'refused', reason: 'missing-provider',
@@ -310,6 +350,18 @@ describe('work-feed job line rendering', () => {
     expect(line).not.toContain('scope=');
     expect(line).not.toContain('acceptance=');
     expect(busWorkJobDispatch(undefined)).toBe('');
+  });
+
+  it('renders the newest work.result report on the job line and feed', () => {
+    const job = feedJob({ status: 'running',
+      result: { id: 'm-9', from: 'agent:worker', outcome: 'complete',
+        reason: 'paths-not-allowed', receivedAt: 100 } });
+    expect(formatBusWorkFeedJob(job)).toContain(
+      'result=complete reason=paths-not-allowed by=agent:worker at=1970-01-01T00:00:00.100Z receipt=m-9');
+    expect(formatBusWorkFeed({ status: 'ok', jobs: [job], receipts: 1, asOf: 'now' }).join('\n'))
+      .toContain('receipt=m-9');
+    // No retained result: the suffix stays absent entirely, never a placeholder.
+    expect(formatBusWorkFeedJob(feedJob())).not.toContain('result=');
   });
 
   it('clips and single-lines dispatch text like every other feed field', () => {

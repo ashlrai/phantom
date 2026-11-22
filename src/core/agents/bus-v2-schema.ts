@@ -269,6 +269,9 @@ export const workResultBodySchema = z.object({
   outcome: z.enum(['reserved', 'admitted', 'complete', 'failed']),
   reason: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/).optional(),
 }).strict();
+/** The outcome codes a `work.result` body reports — reported evidence a
+ * worker/peer posted, never a feed job status. */
+export type WorkResultOutcome = z.infer<typeof workResultBodySchema>['outcome'];
 export const workClaimBodySchema = z.discriminatedUnion('op', [
   z.object({ kind: z.literal('work.claim'), op: z.literal('acquire'), jobId: jobId.optional(),
     claimKey: claimKeySchema, owner: label, leaseMs }).strict(),
