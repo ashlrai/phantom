@@ -178,17 +178,13 @@ export function masterMergeBase(root, exec = execFileSync) {
   return exec('git', ['merge-base', 'HEAD', 'origin/master'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 }
 
-/** A missing shared history changes the diff anchor, never the verification verdict. */
+/** Without shared history, verify only this worker's index and working tree. */
 export function verificationBase(root, exec = execFileSync) {
   try {
     return { base: masterMergeBase(root, exec), mode: 'merge-base' };
   } catch {
     const git = (...args) => exec('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    try {
-      return { base: git('rev-parse', '--verify', 'origin/master^{commit}'), mode: 'origin/master' };
-    } catch {
-      return { base: git('rev-parse', '--verify', 'HEAD^{commit}'), mode: 'HEAD' };
-    }
+    return { base: git('rev-parse', '--verify', 'HEAD^{commit}'), mode: 'status' };
   }
 }
 
@@ -197,14 +193,31 @@ export function collectChangedPaths(root, comparison = verificationBase(root)) {
   const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
   const { base, mode } = comparison;
   // NUL delimiters preserve whitespace/newlines; disabling renames includes both sides.
+  if (mode !== 'merge-base') return [...new Set([
+    ...git('status', '--porcelain', '--no-renames', '--untracked-files=all', '-z').split('\0').filter(Boolean).map((entry) => entry.slice(3)),
+    ...git('diff', '--name-only', '--no-renames', '-z', 'HEAD', '--').split('\0'),
+  ].filter(Boolean))];
   return [
-    ...git('diff', '--name-only', '--no-renames', '-z', base, ...(mode === 'merge-base' ? ['HEAD'] : []), '--').split('\0'),
+    ...git('diff', '--name-only', '--no-renames', '-z', base, 'HEAD', '--').split('\0'),
     ...git('diff', '--cached', '--name-only', '--no-renames', '-z', '--').split('\0'),
     ...git('diff', '--name-only', '--no-renames', '-z', '--').split('\0'),
-    ...(mode === 'HEAD'
-      ? git('status', '--porcelain', '--no-renames', '--untracked-files=all', '-z').split('\0').filter((entry) => entry.startsWith('?? ')).map((entry) => entry.slice(3))
-      : git('ls-files', '--others', '--exclude-standard', '-z').split('\0')),
+    ...git('ls-files', '--others', '--exclude-standard', '-z').split('\0'),
   ].filter(Boolean);
+}
+
+/** Select projects conservatively for source, validation tooling and shared compiler inputs. */
+export function typecheckProjects(changed) {
+  const shared = changed.some((path) => /^package(?:-lock)?\.json$/.test(path));
+  return {
+    backend: shared || changed.some((path) => /^(?:tsconfig[^/]*\.json$|src\/(?!web-ui\/|raycast\/)|test\/|scripts\/)/.test(path)),
+    web: shared || changed.some((path) => path.startsWith('src/web-ui/')),
+  };
+}
+
+/** Explicit worktree-local caches stay separate even when node_modules is shared. */
+export function typecheckArgs(root, config = 'tsconfig.json') {
+  const project = config === 'tsconfig.json' ? 'backend' : 'web';
+  return ['--noEmit', '-p', config, '--incremental', '--tsBuildInfoFile', resolve(root, '.ashlr-gate/verify', `${project}.tsbuildinfo`)];
 }
 
 /** Preflight check that a local eslint install is complete. */
@@ -716,10 +729,8 @@ export function tscSharedRoot(root, env = process.env, exec = execFileSync) {
 export function tscCachePaths(root, env = process.env, exec = execFileSync) {
   const config = readFileSync(resolve(root, 'tsconfig.json'));
   const lock = readFileSync(resolve(root, 'package-lock.json'));
-  const buildInfo = JSON.parse(config.toString()).compilerOptions?.tsBuildInfoFile;
-  if (typeof buildInfo !== 'string' || !buildInfo) throw new Error('tsconfig.json must specify tsBuildInfoFile');
   const hash = createHash('sha256').update(String(lock.length)).update(':').update(lock).update(config).digest('hex');
-  return { local: resolve(root, buildInfo), shared: resolve(root, tscSharedRoot(root, env, exec), `${hash}.tsbuildinfo`) };
+  return { local: typecheckArgs(root).at(-1), shared: resolve(root, tscSharedRoot(root, env, exec), `${hash}.tsbuildinfo`) };
 }
 
 /** Slot dirs sit beside the cache so PHANTOM_TSC_CACHE_DIR relocates the whole shared root. */
@@ -893,7 +904,7 @@ export function copyBuildInfo(source, destination) {
 export function runNativeTypecheck(root, timeout, spawn = spawnSync, exists = existsSync, config = 'tsconfig.json') {
   const binary = resolve(root, 'node_modules/.bin/tsgo');
   if (!exists(binary)) return null;
-  const result = spawn(binary, ['--noEmit', '-p', config], {
+  const result = spawn(binary, typecheckArgs(root, config), {
     cwd: root, stdio: 'inherit', timeout: timeout * 1000, killSignal: 'SIGKILL',
   });
   if (result.error?.code === 'ETIMEDOUT') return false;
@@ -908,7 +919,7 @@ export function runNativeTypecheck(root, timeout, spawn = spawnSync, exists = ex
 export function runWebTypecheck(root, timeout, run, spawn = spawnSync, exists = existsSync) {
   const config = 'src/web-ui/tsconfig.json';
   const native = runNativeTypecheck(root, timeout, spawn, exists, config);
-  if (native === null) return run('web typecheck', 'node_modules/typescript/bin/tsc', ['--noEmit', '-p', config], timeout);
+  if (native === null) return run('web typecheck', 'node_modules/typescript/bin/tsc', typecheckArgs(root, config), timeout);
   console.log(`${native ? 'PASS' : 'FAIL'} web typecheck`);
   return native;
 }
@@ -1082,7 +1093,7 @@ function main() {
   let dedupe = null;
   try {
     comparison = verificationBase(root);
-    if (comparison.mode !== 'merge-base') console.log(`WARN no merge base: using ${comparison.mode === 'HEAD' ? 'working-tree changes against HEAD' : 'origin/master two-tree diff'}`);
+    if (comparison.mode !== 'merge-base') console.log('WARN no merge base: using working-tree status and diff against HEAD');
     const input = verifyDedupeInput(root, execFileSync, existsSync, readFileSync, comparison);
     dedupe = { dir: verifyPassedDir(root), input, key: verifyDedupeKey(input) };
     if (!verifyForceRequested(process.argv.slice(2))) {
@@ -1098,6 +1109,7 @@ function main() {
   }
   let selection;
   let changed;
+  let projects;
   let pythonFiles = [];
   let shellFiles = [];
   let perlFiles = [];
@@ -1113,6 +1125,9 @@ function main() {
       }
     });
     selection = selectChangedFiles(changed, existing);
+    projects = typecheckProjects(changed);
+    const scope = projects.backend && projects.web ? 'backend and web' : projects.backend ? 'backend only' : projects.web ? 'web only' : 'typecheck skipped';
+    console.log(`verify: ${new Set(changed).size} changed files (${comparison?.mode ?? 'merge-base'}), ${scope}${projects.backend || projects.web ? ', incremental' : changed.length ? ': no project change' : ': no changes'}`);
     const shebangScripts = selectShebangScripts(changed, existing, (path) => readFirstLine(root, path));
     pythonFiles = [...new Set([...selection.pythonFiles, ...shebangScripts.python])];
     shellFiles = [...new Set([...selection.shellFiles, ...shebangScripts.shell])];
@@ -1311,28 +1326,33 @@ function main() {
   } else {
     console.log('PASS quarantine ledger skipped: no test file or quarantine ledger change');
   }
-  try {
+  if (!runRealioCheck(root, changed)) process.exitCode = 1;
+  run('verse sync-I/O lint', 'scripts/check-verse-sync-io.mjs');
+  if (projects.backend || projects.web) try {
     const timeout = Number(process.env.PHANTOM_TSC_TIMEOUT_SECONDS ?? 900);
     if (!Number.isFinite(timeout) || !Number.isInteger(timeout * 1000) || timeout * 1000 < 1 || timeout * 1000 > 2_147_483_647) {
       throw new Error('PHANTOM_TSC_TIMEOUT_SECONDS must be a positive number of seconds within the supported timeout range');
     }
     const held = withTscSlot(tscSlotsDir(root), { count: tscSlotCount(), maxWaitMs: timeout * 1000 }, () => {
-      const native = runNativeTypecheck(root, timeout);
-      if (native !== null) {
-        console.log(`${native ? 'PASS' : 'FAIL'} tsgo --noEmit`);
-        if (!native) process.exitCode = 1;
-      } else {
-        const cache = tscCachePaths(root);
-        try {
-          copyBuildInfo(cache.shared, cache.local);
-        } catch (error) {
-          if (error.code !== 'ENOENT') throw error;
+      mkdirSync(resolve(root, '.ashlr-gate/verify'), { recursive: true });
+      if (projects.backend) {
+        const native = runNativeTypecheck(root, timeout);
+        if (native !== null) {
+          console.log(`${native ? 'PASS' : 'FAIL'} tsgo --noEmit`);
+          if (!native) process.exitCode = 1;
+        } else {
+          const cache = tscCachePaths(root);
+          try {
+            copyBuildInfo(cache.shared, cache.local);
+          } catch (error) {
+            if (error.code !== 'ENOENT') throw error;
+          }
+          if (run('tsc --noEmit', 'node_modules/typescript/bin/tsc', typecheckArgs(root), timeout)) {
+            copyBuildInfo(cache.local, cache.shared);
+          }
         }
-        if (run('tsc --noEmit', 'node_modules/typescript/bin/tsc', ['--noEmit', '-p', 'tsconfig.json'], timeout)) {
-          copyBuildInfo(cache.local, cache.shared);
-        }
-      }
-      if (selection.webTypecheck) {
+      } else console.log('PASS backend typecheck skipped: no backend change');
+      if (projects.web) {
         if (!runWebTypecheck(root, timeout, run)) process.exitCode = 1;
       } else {
         console.log('PASS web typecheck skipped: no changed path under src/web-ui/');
@@ -1346,8 +1366,6 @@ function main() {
     console.error(`FAIL tsc cache: ${error.message}`);
     process.exitCode = 1;
   }
-  if (!runRealioCheck(root, changed)) process.exitCode = 1;
-  run('verse sync-I/O lint', 'scripts/check-verse-sync-io.mjs');
   if (dedupe && !process.exitCode) {
     try {
       recordVerifyPassed(dedupe.dir, dedupe.input, { key: dedupe.key });

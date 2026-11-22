@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   collectChangedPaths, readVerifyPassed, recordVerifyPassed, selectChangedFiles, verifyDedupeInput, verifyDedupeKey,
@@ -13,10 +13,11 @@ let template: string;
 
 // Same fixture shape as verify-changed-tsc-cache.test.ts: a real git repo with
 // stub guard scripts and a fake tsc that proves it ran by writing observed.txt.
-function fixture() {
+function fixture(checks = false) {
   const root = mkdtempSync(join(tmpdir(), 'verify-dedupe-'));
   fixtures.push(root);
   cpSync(template, root, { recursive: true });
+  if (checks) writeFileSync(join(root, 'scripts/check-realio-lane-membership.mjs'), '\n');
   return root;
 }
 
@@ -26,21 +27,21 @@ beforeAll(() => {
   mkdirSync(join(root, 'scripts'), { recursive: true });
   mkdirSync(join(root, 'node_modules/typescript/bin'), { recursive: true });
   writeFileSync(join(root, 'scripts/verify-changed.mjs'), readFileSync(resolve('scripts/verify-changed.mjs')));
-  for (const name of ['check-realio-lane-membership.mjs', 'check-verse-sync-io.mjs']) {
+  for (const name of ['test-ci.mjs', 'check-realio-lane-membership.mjs', 'check-verse-sync-io.mjs']) {
     writeFileSync(join(root, 'scripts', name), '');
   }
   // Byproducts of a verify run stay out of the tree hash, like real ignored artifacts.
-  writeFileSync(join(root, '.gitignore'), 'node_modules/\nobserved.txt\nshared/\nmarkers/\n');
+  writeFileSync(join(root, '.gitignore'), '.ashlr-gate/\nnode_modules/\nobserved.txt\nshared/\nmarkers/\n');
   writeFileSync(join(root, 'package-lock.json'), '{"lockfileVersion":3}');
-  writeFileSync(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { tsBuildInfoFile: 'node_modules/.cache/backend.tsbuildinfo' } }));
+  writeFileSync(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { tsBuildInfoFile: '.ashlr-gate/verify/backend.tsbuildinfo' } }));
   writeFileSync(join(root, 'node_modules/typescript/package.json'), '{"name":"typescript","version":"0.0.0-test"}');
   writeFileSync(join(root, 'node_modules/typescript/bin/tsc'), `
     const fs = require('node:fs');
     const path = require('node:path');
     if (process.env.FAKE_MODE === 'fail') process.exit(2);
     fs.writeFileSync('observed.txt', 'compiled');
-    fs.mkdirSync(path.dirname('node_modules/.cache/backend.tsbuildinfo'), { recursive: true });
-    fs.writeFileSync('node_modules/.cache/backend.tsbuildinfo', 'compiled');
+    fs.mkdirSync(path.dirname('.ashlr-gate/verify/backend.tsbuildinfo'), { recursive: true });
+    fs.writeFileSync('.ashlr-gate/verify/backend.tsbuildinfo', 'compiled');
   `);
   const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
   git('init', '-q');
@@ -182,8 +183,35 @@ describe('verifyPassedDir', () => {
 });
 
 describe('verify-changed dedupe end-to-end', () => {
+  it.each(['clean', 'backend', 'web'])('scopes status verification for %s changes', (project) => {
+    const root = fixture(true);
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+    git('checkout', '--', 'scripts/check-realio-lane-membership.mjs');
+    git('update-ref', '-d', 'refs/remotes/origin/master');
+    mkdirSync(join(root, 'node_modules/.bin'), { recursive: true });
+    writeFileSync(join(root, 'node_modules/.bin/tsgo'), '#!/usr/bin/env node\nconst fs = require("node:fs"); const calls = fs.existsSync("observed.txt") ? JSON.parse(fs.readFileSync("observed.txt")) : []; calls.push(process.argv.slice(2)); fs.writeFileSync("observed.txt", JSON.stringify(calls));\n', { mode: 0o755 });
+    if (project !== 'clean') {
+      const file = project === 'web' ? 'src/web-ui/view.ts' : 'src/backend.ts';
+      mkdirSync(dirname(join(root, file)), { recursive: true });
+      writeFileSync(join(root, file), 'export {};\n');
+      if (project === 'backend') git('add', file);
+    }
+    const result = run(root);
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    if (project === 'clean') {
+      expect(result.stdout).toContain('verify: 0 changed files (status), typecheck skipped: no changes');
+      expect(existsSync(join(root, 'observed.txt'))).toBe(false);
+    } else {
+      expect(result.stdout).toContain(`verify: 1 changed files (status), ${project} only, incremental`);
+      expect(JSON.parse(readFileSync(join(root, 'observed.txt'), 'utf8'))).toEqual([[
+        '--noEmit', '-p', project === 'web' ? 'src/web-ui/tsconfig.json' : 'tsconfig.json',
+        '--incremental', '--tsBuildInfoFile', join(realpathSync(root), `.ashlr-gate/verify/${project}.tsbuildinfo`),
+      ]]);
+    }
+  });
+
   it.each(['unrelated', 'missing'])('checks dirty files with %s origin/master and keeps dedupe', (mode) => {
-    const root = fixture();
+    const root = fixture(true);
     const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
     mkdirSync(join(root, 'src'));
     mkdirSync(join(root, 'node_modules/eslint/bin'), { recursive: true });
@@ -196,7 +224,7 @@ describe('verify-changed dedupe end-to-end', () => {
     git('add', '.');
     git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'sample');
     if (mode === 'unrelated') {
-      const orphan = git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit-tree', 'HEAD^{tree}', '-m', 'separate');
+      const orphan = git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit-tree', 'HEAD^^{tree}', '-m', 'separate');
       git('update-ref', 'refs/remotes/origin/master', orphan);
       writeFileSync(join(root, '.git/shallow'), `${git('rev-parse', 'HEAD')}\n`);
     } else git('update-ref', '-d', 'refs/remotes/origin/master');
@@ -207,11 +235,11 @@ describe('verify-changed dedupe end-to-end', () => {
     const result = run(root);
     expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(result.stdout).not.toContain('FAIL file selection');
-    expect(result.stdout).toContain(mode === 'unrelated' ? 'origin/master two-tree diff' : 'working-tree changes against HEAD');
+    expect(result.stdout).toContain('working-tree status and diff against HEAD');
     expect(result.stdout).toContain('PASS authority drift');
     expect(result.stdout).toContain('PASS quarantine ledger');
     expect(JSON.parse(readFileSync(join(root, 'node_modules/selected.txt'), 'utf8'))).toEqual(['--no-warn-ignored', '--', './src/sample.test.ts']);
-    expect(JSON.parse(readFileSync(join(root, 'node_modules/quarantine.txt'), 'utf8'))).toEqual(['--base', git('rev-parse', mode === 'unrelated' ? 'origin/master' : 'HEAD')]);
+    expect(JSON.parse(readFileSync(join(root, 'node_modules/quarantine.txt'), 'utf8'))).toEqual(['--base', git('rev-parse', 'HEAD')]);
     expect(run(root).stdout).toContain('SKIP verify-changed');
     writeFileSync(join(root, 'new space.ts'), 'export {};\n');
     expect(collectChangedPaths(root)).toContain('new space.ts');
@@ -219,7 +247,7 @@ describe('verify-changed dedupe end-to-end', () => {
   });
 
   it('records a pass marker and skips an identical rerun without invoking checks', () => {
-    const root = fixture();
+    const root = fixture(true);
     const first = run(root);
     expect(first.status).toBe(0);
     expect(first.stdout).toContain('PASS verify dedupe: recorded tree');
@@ -238,7 +266,7 @@ describe('verify-changed dedupe end-to-end', () => {
   }, 120_000);
 
   it('reruns when the tree, the merge-base or the checker install moves', () => {
-    const root = fixture();
+    const root = fixture(true);
     const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
     expect(run(root).status).toBe(0);
     writeFileSync(join(root, 'notes.md'), 'edit\n');
@@ -263,7 +291,7 @@ describe('verify-changed dedupe end-to-end', () => {
   }, 120_000);
 
   it('keeps --force and PHANTOM_VERIFY_FORCE as bypass flags that still record', () => {
-    const root = fixture();
+    const root = fixture(true);
     expect(run(root).status).toBe(0);
     rmSync(join(root, 'observed.txt'));
     const forced = run(root, ['--force']);
@@ -278,7 +306,7 @@ describe('verify-changed dedupe end-to-end', () => {
   }, 120_000);
 
   it('never records a failing run and treats a corrupt marker as a miss', () => {
-    const root = fixture();
+    const root = fixture(true);
     expect(run(root, [], { FAKE_MODE: 'fail' }).status).not.toBe(0);
     expect(existsSync(markerDir(root))).toBe(false);
     expect(run(root).status).toBe(0);
@@ -290,7 +318,7 @@ describe('verify-changed dedupe end-to-end', () => {
   }, 120_000);
 
   it('honors PHANTOM_VERIFY_PASSED_DIR relocation', () => {
-    const root = fixture();
+    const root = fixture(true);
     const elsewhere = join(root, 'markers');
     expect(run(root, [], { PHANTOM_VERIFY_PASSED_DIR: elsewhere }).status).toBe(0);
     expect(readdirSync(elsewhere)).toHaveLength(1);
