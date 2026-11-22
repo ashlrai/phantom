@@ -57,12 +57,39 @@ export interface FamilyYieldRow {
 /** One ready-to-use job stop file row: `<pattern>\t<until>\t<reason>`. */
 export interface FamilyStopRow { family: string; pattern: string; until: number; reason: string; line: string }
 
+/** Exact recurring name; unlike stop-policy families, internal digits and areas stay distinct. */
+export const launchFamily = (id: string): string => id.replace(/\d+[A-Za-z]?$/, '');
+export type LaunchFamilyYield = Pick<FamilyYieldRow, 'family' | 'launches' | 'prs' | 'merged' | 'empty' | 'merged_per_launch'> & {
+  empty_tokens: number | null;
+  empty_tokens_partial: boolean;
+  sentence: string;
+};
+
+function launchFamilies(runs: readonly YieldRun[]): LaunchFamilyYield[] {
+  const groups = new Map<string, YieldRun[]>();
+  for (const run of runs) {
+    const family = launchFamily(run.job), group = groups.get(family) ?? [];
+    group.push(run); groups.set(family, group);
+  }
+  return [...groups].map(([family, group]): LaunchFamilyYield => {
+    const row = familyRow(family, group), empty = group.filter(r => r.empty);
+    const tokens = knownSum(empty.map(r => r.tokens)), partial = empty.some(r => r.tokens === null);
+    const amount = tokens === null ? 'unknown tokens' : `${partial ? 'at least ' : ''}${new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(tokens)} tokens`;
+    return { family, launches: row.launches, prs: row.prs, merged: row.merged, empty: row.empty,
+      merged_per_launch: row.merged_per_launch, empty_tokens: tokens, empty_tokens_partial: partial,
+      sentence: `${family.replace(/^RQ-(?:PHX-)?/, '')}: ${row.merged} of ${row.launches} merged, ${amount} on empty runs` };
+  }).sort((a, b) => a.merged_per_launch - b.merged_per_launch || (b.empty_tokens ?? -1) - (a.empty_tokens ?? -1)
+    || b.launches - a.launches || a.family.localeCompare(b.family));
+}
+
 /** `known: false` means the metrics file could not be read: totals are null and every list is empty. */
 export interface FamilyYieldReport {
   schema: typeof FAMILY_YIELD_SCHEMA;
   version: 1;
   window_hours: number;
   known: boolean;
+  /** Precise launch families, lowest merged-per-launch first, then most EMPTY tokens. */
+  launch_families: LaunchFamilyYield[];
   launches: number | null;
   merged: number | null;
   /** Launches whose merge was recorded as reverted; null when the read is unknown. */
@@ -175,6 +202,7 @@ export function familyYieldFromRuns(runs: readonly YieldRun[], now: number, hour
   });
   return {
     schema: FAMILY_YIELD_SCHEMA, version: 1, window_hours: hours, known: true,
+    launch_families: launchFamilies(runs),
     launches: runs.length, merged: runs.filter(r => r.merged).length, reverted: runs.filter(r => r.reverted).length,
     wasted_tokens: knownSum(rows.map(r => r.wasted_tokens)),
     wasted_tokens_partial: rows.some(r => r.wasted_tokens_partial || r.wasted_tokens === null),
@@ -192,6 +220,7 @@ export function familyYield(lines: Iterable<string>, now: number, hours: number)
 
 export function unknownFamilyYield(hours: number): FamilyYieldReport {
   return { schema: FAMILY_YIELD_SCHEMA, version: 1, window_hours: hours, known: false, launches: null, merged: null, reverted: null,
+    launch_families: [],
     wasted_tokens: null, wasted_tokens_partial: null, families: [], single: [], stops: [], lanes: [], tiers: [] };
 }
 

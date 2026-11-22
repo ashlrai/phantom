@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { collapseFamily, familyVerdict, familyYield, type FamilyYieldRow } from '../src/core/fleet/family-yield.js';
+import { collapseFamily, familyVerdict, familyYield, launchFamily, type FamilyYieldRow } from '../src/core/fleet/family-yield.js';
 import { cmdFleetYield, familyYieldLines } from '../src/cli/fleet-yield.js';
 
 const now = Date.parse('2026-11-18T18:00:00Z');
@@ -160,7 +160,7 @@ describe('phm fleet yield --json', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await cmdFleetYield(['--hours', '24', '--json', '--metrics', path], undefined, now)).toBe(0);
     const json = JSON.parse(String(log.mock.calls[0]![0])) as Record<string, unknown>;
-    expect(Object.keys(json).sort()).toEqual(['families', 'known', 'lanes', 'launches', 'merged', 'reverted', 'schema', 'single', 'stops', 'tiers',
+    expect(Object.keys(json).sort()).toEqual(['families', 'known', 'lanes', 'launch_families', 'launches', 'merged', 'reverted', 'schema', 'single', 'stops', 'tiers',
       'version', 'wasted_tokens', 'wasted_tokens_partial', 'window_hours']);
     const rows = json.families as Record<string, unknown>[];
     expect(Object.keys(rows[0]!).sort()).toEqual(['empty', 'family', 'finished', 'jobs', 'last_seen', 'launches', 'merged', 'merged_per_launch',
@@ -173,5 +173,39 @@ describe('phm fleet yield --json', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await cmdFleetYield(['--json', '--metrics', join(tmpdir(), 'family-yield-missing', 'jobs.jsonl')], undefined, now)).toBe(0);
     expect(JSON.parse(String(log.mock.calls[0]![0]))).toMatchObject({ known: false, launches: null, merged: null, wasted_tokens: null, families: [] });
+  });
+});
+
+
+describe('precise launch families', () => {
+  it.each([
+    ['RQ-PHX-SCRIPTSLAND793B', 'RQ-PHX-SCRIPTSLAND'], ['RQ-PHX-SCRIPTSLAND793', 'RQ-PHX-SCRIPTSLAND'],
+    ['RQ-AREA2LAND793B', 'RQ-AREA2LAND'], ['RQ-PHX-SCRIPTSLAND793BB', 'RQ-PHX-SCRIPTSLAND793BB'],
+    ['RQ-NO-NUMBER', 'RQ-NO-NUMBER'],
+  ])('groups %s as %s', (id, expected) => expect(launchFamily(id)).toBe(expected));
+
+  it('counts launches, unique published PRs, merges and EMPTY-only tokens in the 24 h cohort', () => {
+    const a = 'RQ-PHX-SCRIPTSLAND793B', b = 'RQ-PHX-SCRIPTSLAND793', c = 'RQ-PHX-SCRIPTSLAND794';
+    const report = familyYield([
+      launch(a, 3), finish(a, 2, { empty: true, tokens_total: 1_500_000 }),
+      launch(b, 3), finish(b, 2, { tokens_total: 50 }), pr(b, 1), pr(b, 1), merged(b, 1), merged(b, 1),
+      launch(c, 3), finish(c, 2, { tokens_total: 900 }), // unmerged PR work is not EMPTY waste
+      launch('RQ-OLD9', 25), launch('RQ-FUTURE9', -1),
+    ], now, 24);
+    expect(report.launch_families).toEqual([expect.objectContaining({ family: 'RQ-PHX-SCRIPTSLAND', launches: 3,
+      prs: 1, merged: 1, empty: 1, merged_per_launch: 1 / 3, empty_tokens: 1_500_000, empty_tokens_partial: false,
+      sentence: 'SCRIPTSLAND: 1 of 3 merged, 1.5M tokens on empty runs' })]);
+  });
+
+  it('ranks the worst rates first and preserves unknown and partial EMPTY usage', () => {
+    const report = familyYield([launch('RQ-UNKNOWN1', 3), finish('RQ-UNKNOWN1', 2, { empty: true }),
+      launch('RQ-PARTIAL1', 3), finish('RQ-PARTIAL1', 2, { empty: true, tokens_total: 20 }),
+      launch('RQ-PARTIAL2', 3), finish('RQ-PARTIAL2', 2, { empty: true }),
+      launch('RQ-GOOD1', 3), pr('RQ-GOOD1', 9), merged('RQ-GOOD1', 1)], now, 24);
+    expect(report.launch_families.map(r => r.family)).toEqual(['RQ-PARTIAL', 'RQ-UNKNOWN', 'RQ-GOOD']);
+    expect(report.launch_families[0]).toMatchObject({ empty_tokens: 20, empty_tokens_partial: true });
+    expect(report.launch_families[0]!.sentence).toContain('at least 20 tokens');
+    expect(report.launch_families[1]).toMatchObject({ empty_tokens: null, empty_tokens_partial: true });
+    expect(report.launch_families[2]).toMatchObject({ empty_tokens: 0, empty_tokens_partial: false });
   });
 });
