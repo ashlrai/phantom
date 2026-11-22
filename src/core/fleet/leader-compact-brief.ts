@@ -99,6 +99,14 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
   const hungry = lanes.filter(l => l.held === false && l.running !== null && l.target !== null && l.queuedReady !== null
     && l.running < l.target / 2 && l.queuedReady < l.target - l.running).sort((a, b) => (b.target! - b.running!) - (a.target! - a.running!))[0];
   const headline = hungry ? `${hungry.lane} ${hungry.running}/${hungry.target} running, ${hungry.queuedReady} queued: supply-starved` : 'No measured supply-starved lane';
+  const status = objectRow(json(await quiet(read(join(runsDir, 'queue/status.json'))), 'queue/status.json'));
+  const admission = objectRow(status.admission), load = admission.load1, limit = admission.load_max;
+  const fleetLoad = typeof load === 'number' && hostLoad.totalCpuPercent > 0 ? load * hostLoad.fleetCpuPercent / hostLoad.totalCpuPercent : null;
+  const busy = hostLoad.families.filter(r => r.job === null && r.family !== 'leftover from finished jobs' && r.cpuPercent > 0).slice(0, 2).map(r => r.family).join(' and ');
+  const hostLoadWarning = snapshot?.sources['queue/status.json'] === 'healthy' && admission.disabled === false
+    && typeof load === 'number' && Number.isFinite(load) && typeof limit === 'number' && Number.isFinite(limit) && limit > 0
+    && hostLoad.state === 'known' && load > limit && fleetLoad !== null && load - fleetLoad > fleetLoad
+    ? `Mac busy with ${busy || 'unknown processes'} (load ${Math.round(load)}, fleet about ${Math.round(fleetLoad)}, CPU-share estimate): starts slowed` : null;
   let live: LiveJobsReport | null = null;
   try { live = JSON.parse(liveText ?? 'null') as LiveJobsReport | null; } catch { sourceState(LIVE_JOBS_FILE, 'degraded', 'invalid JSON'); }
   const attention = (Array.isArray(live?.jobs) ? live.jobs : []).filter(j => j && typeof j.id === 'string' && typeof j.lane === 'string' && (j.status === 'stuck' || j.status === 'quiet'))
@@ -109,7 +117,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
   stops.push(...activeFamilyStops(familyStopText ?? '', now).map(s => ({ ...s, family: clean(s.family) })));
   const brief = {
     release: (await readReleaseBacklog({ now, cacheOnly: true })).counts,
-    schema: 'leader.compact-brief.v1', at: new Date(now).toISOString(), headline,
+    schema: 'leader.compact-brief.v1', at: new Date(now).toISOString(), headline, hostLoadWarning,
     state: lanes.length || tail || hasPace || guardian?.length ? 'ready' : 'no data', sources,
     windowHours: 2, emptyWindowHours: 24, lanes,
     pools: (pace?.pools ?? []).map(p => ({ pool: clean(p.pool), usedPct: p.usedPct, hoursToReset: p.hoursToReset,
@@ -141,7 +149,7 @@ export async function writeCompactBrief(runsDir: string, now = Date.now(), file 
   return brief;
 }
 export function compactBriefLines(b: CompactLeaderBrief): string[] {
-  const lines = [b.headline, `Leader: ${b.state} (${b.at}); lanes: ${b.lanes.length}; pools: ${b.pools.length}`,
+  const lines = [b.headline, ...(b.hostLoadWarning ? [b.hostLoadWarning] : []), `Leader: ${b.state} (${b.at}); lanes: ${b.lanes.length}; pools: ${b.pools.length}`,
     ...b.lanes.slice(0, 3).map(l => `${l.lane}: ${l.running ?? '?'}/${l.target ?? '?'}, ${l.queued ?? '?'} queued, held ${l.held ?? '?'}, empty ${l.emptyRate === null ? '?' : Math.round(l.emptyRate * 100) + '%'}`),
     ...b.pools.slice(0, 2).map(p => `${p.pool}: ${p.usedPct ?? '?'}%, reset ${p.hoursToReset ?? '?'}h, burn ${p.burnPerHour ?? '?'}/h, safe ${p.safeBurn ?? '?'}/h, ${p.verdict}`),
     ...b.families.slice(0, 2).map(f => `${f.family}: ${f.launches} launches, ${f.prs} PRs, ${f.merges} merges, ${f.empty} empty (2h)`),

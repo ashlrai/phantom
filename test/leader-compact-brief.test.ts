@@ -129,3 +129,19 @@ it('explains degraded sources and refuses merge observations without mergedAt', 
   expect(Object.values(b.sources).every(s => s.why.length > 0)).toBe(true);
   expect(b.medianOpenToMergeSeconds).toBeNull(); expect(b.mergeLatencyWhy).toContain('no publications paired');
 });
+
+it.each([
+  [45, 36, 1, false, 0, true], [36, 36, 1, false, 0, false], [20, 36, 1, false, 0, false],
+  [45, 36, 100, false, 0, false], [45, 36, 101, false, 0, false], [45, 36, 1, true, 0, false],
+  [45, 36, 1, false, 120_000, false],
+])('shows external load slowing starts only with fresh enabled load-gate evidence (%s, %s, %s)', async (load1, load_max, fleet, disabled, age, visible) => {
+  await writeFile(join(dir, 'queue/status.json'), JSON.stringify({ last_tick: new Date(now - age).toISOString(), admission: { load1, load_max, disabled } }));
+  const host = groupHostFamilies(`10 1 ${fleet} 1024 00:01 worker /repo/wt/plain\n20 1 60 1024 00:01 docker\n30 1 40 1024 00:01 chrome`);
+  const brief = await readCompactBrief(dir, now, async () => host);
+  if (visible) {
+    expect(brief.hostLoadWarning).toBe('Mac busy with docker and chrome (load 45, fleet about 0, CPU-share estimate): starts slowed');
+    expect(compactBriefLines(brief)[1]).toBe(brief.hostLoadWarning);
+  } else {
+    expect(brief.hostLoadWarning).toBeNull(); expect(compactBriefLines(brief).join('\n')).not.toContain('starts slowed');
+  }
+});

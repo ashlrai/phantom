@@ -89,7 +89,7 @@ it('bounds CLI JSON and text, rejects bad flags, and keeps read failures private
     expect(await cmdFleetHostload(['--json'], ps)).toBe(0);
     const json = String(out.mock.calls.at(-1)![0]);
     expect(Buffer.byteLength(json)).toBeLessThan(4096); expect(JSON.parse(json).omitted).toBe(100);
-    expect(await cmdFleetHostload([], ps)).toBe(0); expect(String(out.mock.calls.at(-1)![0]).split('\n')).toHaveLength(8);
+    expect(await cmdFleetHostload([], ps)).toBe(0); expect(String(out.mock.calls.at(-1)![0]).split('\n')).toHaveLength(9);
     expect(await cmdFleetHostload(['--bad'], ps)).toBe(2);
     expect(await cmdFleetHostload(['--json'], async () => { throw new Error('privateword'); })).toBe(1);
     expect(String(out.mock.calls.at(-1)![0])).not.toContain('privateword');
@@ -139,4 +139,39 @@ it('keeps live jobs out of leftovers and honors finish rows, missing claims and 
     expect(host.families.find(r => r.family === 'leftover from finished jobs')).toMatchObject({ processes: 1, cpuPercent: 30 });
     expect((await readLeftoverJobStates(['live'], join(dir, 'absent'))).get('live')).toBeNull();
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+it.each([
+  ['Docker/virtualization', '/Applications/Docker.app/Contents/MacOS/Docker'], ['Docker/virtualization', '/usr/bin/qemu'],
+  ['Spotlight/indexing', '/System/mds'], ['Spotlight/indexing', '/usr/libexec/mdworker_shared'], ['git', '/usr/bin/git'],
+  ['Node/Vite', '/usr/bin/node'], ['Node/Vite', '/repo/node_modules/.bin/vite'],
+  ['language servers', 'node /repo/typescript/tsserver.js'], ['language servers', 'node /repo/eslintServer.js'],
+  ['Codex/Claude helpers', '/usr/bin/codex'], ['Codex/Claude helpers', '/usr/bin/claude'],
+  ['browsers', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'], ['browsers', '/usr/libexec/com.apple.WebKit.WebContent'],
+  ['browsers', '/Applications/Safari.app/Contents/MacOS/Safari'], ['Python', '/usr/bin/python3'], ['unknown', '/usr/bin/plain'],
+])('classifies %s by executable or server path', (family, command) => {
+  const report = groupHostFamilies(`10 1 12 2048 00:01 ${command} hiddenword`);
+  expect(report.families).toMatchObject([{ job: null, processes: 1, cpuPercent: 12, rssMb: 2 }]);
+  expect(report.unknownCommands).toHaveLength(family === 'unknown' ? 1 : 0);
+  expect(JSON.stringify(report)).not.toMatch(/hiddenword|\/usr|\/Applications|\/repo/);
+});
+
+it('aggregates unknown basenames and caps the CPU-sorted list at five without arguments', () => {
+  const rows = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot'].map((name, i) => `${10 + i} 1 ${10 + i} 1024 00:01 /bin/${name} hiddenword`);
+  rows.push('20 1 20 2048 00:01 /other/alpha privateword');
+  const report = groupHostFamilies(rows.join('\n'));
+  expect(report.unknownCommands.map(r => r.name)).toEqual(['alpha', 'foxtrot', 'echo', 'delta', 'charlie']);
+  expect(report.unknownCommands[0]).toEqual({ name: 'alpha', processes: 2, cpuPercent: 30, rssMb: 3 });
+  expect(JSON.stringify(report)).not.toMatch(/hiddenword|privateword|\/bin|\/other/);
+});
+
+it('keeps fleet ownership ahead of app families and never uses an argument as a display name', () => {
+  const report = groupHostFamilies(`10 1 5 1024 00:01 /Applications/Docker.app/Contents/MacOS/Docker
+11 10 6 1024 00:01 helper hiddenword
+20 10 8 1024 00:01 worker /repo/wt/plain
+21 20 9 1024 00:01 python3 privateword
+30 1 2 1024 00:01 /bin/plain /repo/Hidden.app/Contents/MacOS/Hidden hiddenword`);
+  expect(report.families.find(r => r.family === 'Docker')).toMatchObject({ processes: 2, cpuPercent: 11 });
+  expect(report.families.find(r => r.family === 'fleet worker')).toMatchObject({ processes: 2, cpuPercent: 17 });
+  expect(JSON.stringify(report)).not.toMatch(/Hidden|hiddenword|privateword|\/repo/);
 });

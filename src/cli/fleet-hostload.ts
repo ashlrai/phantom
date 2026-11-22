@@ -11,7 +11,8 @@ export async function cmdFleetHostload(args: string[], ps?: () => Promise<string
     console.error(USAGE); return 2;
   }
   const report = await readHostFamilies(ps);
-  console.log(args.includes('--json') ? JSON.stringify(report) : report.families.map(r =>
-    `${r.family}${r.job ? ` ${r.job}` : ''}: ${r.processes} processes, ${r.cpuPercent}% CPU, ${r.rssMb} MB RSS`).join('\n') || 'Host load: unknown');
+  const lines = report.families.map(r => `${r.family}${r.job ? ` ${r.job}` : ''}: ${r.processes} processes, ${r.cpuPercent}% CPU, ${r.rssMb} MB RSS`);
+  if (report.unknownCommands.length) lines.push(`Unknown commands: ${report.unknownCommands.map(r => `${r.name} (${r.processes} processes, ${r.cpuPercent}% CPU, ${r.rssMb} MB RSS)`).join('; ')}`);
+  console.log(args.includes('--json') ? JSON.stringify(report) : lines.join('\n') || 'Host load: unknown');
   return report.state === 'known' ? 0 : 1;
 }
