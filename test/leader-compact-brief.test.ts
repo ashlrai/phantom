@@ -45,13 +45,14 @@ it('bounds 500 jobs, ranks zero PRs in six launches first, and reads status and 
   const host = groupHostFamilies(Array.from({ length: 8 }, (_, i) => `${100 + i} 1 5 1024 00:01 worker /repo/wt/RQ-WORK-${i}`).join('\n'));
   const b = await readCompactBrief(dir, now, async () => host);
   expect(compactBriefLines(b)).toContain('Release: 2 due, 3 stale, 1 unknown');
-  expect(b.hostLoad.families).toHaveLength(5); expect(b.hostLoad.omitted).toBe(3);
+  expect(compactBriefLines(b)).toContain(host.blame);
+  expect(b.hostLoad.families).toHaveLength(8); expect(b.hostLoad.omitted).toBe(0);
   expect(Buffer.byteLength(JSON.stringify(b))).toBeLessThan(8192);
   expect(b.families[0]).toMatchObject({ family: 'empty-*', launches: 6, prs: 0, empty: 6 });
   expect(b.lanes[0]).toMatchObject({ running: 2, queued: 1, target: 4, held: false, emptyRate: 0 });
   expect(b.pools.find(p => p.pool === 'local')).toMatchObject({ usedPct: 40, burnPerHour: 2, safeBurn: 6, verdict: 'ok' });
   expect(b.stopped[0]).toMatchObject({ until: now / 1000 + 60 }); expect(b.omitted).toBeGreaterThan(0);
-  expect(compactBriefLines(b).length).toBeGreaterThanOrEqual(10); expect(compactBriefLines(b).length).toBeLessThanOrEqual(15);
+  expect(compactBriefLines(b).length).toBeGreaterThanOrEqual(10); expect(compactBriefLines(b).length).toBeLessThanOrEqual(16);
 });
 it('returns no data on an empty directory and writes a private snapshot each tick', async () => {
   expect(await readCompactBrief(dir, now)).toMatchObject({ state: 'no data', lanes: [], medianOpenToMergeSeconds: null });

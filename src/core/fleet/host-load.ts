@@ -125,9 +125,9 @@ export function defaultTreeMatchers(jobRoots: readonly HostLoadJobRoot[] | null)
  * Pure: puts every process under one root, the topmost ancestor (or itself) that a matcher names; fleet roots win
  * over apps. Anything else, including a process whose parent is missing from the list, goes under "unattributed",
  * so the rows always add up to the whole list. A repeated pid counts once (the first row); a parent loop stops at
- * the first repeat.
+ * the first repeat. Callers may name unmatched rows by executable instead of combining them as unattributed.
  */
-export function attributeProcessTrees(rowsIn: readonly ProcessRow[], matchers: readonly TreeRootMatcher[]): HostLoadTrees {
+export function attributeProcessTrees(rowsIn: readonly ProcessRow[], matchers: readonly TreeRootMatcher[], unattributedName?: (row: ProcessRow) => string): HostLoadTrees {
   const rows = new Map<number, ProcessRow>();
   for (const row of rowsIn) if (!rows.has(row.pid)) rows.set(row.pid, row);
   const match = (row: ProcessRow, fleet: boolean) =>
@@ -142,7 +142,7 @@ export function attributeProcessTrees(rowsIn: readonly ProcessRow[], matchers: r
       if (fleetHit) { found = fleetHit; foundAt = at; foundFleet = true; }
       else if (!foundFleet) { const appHit = match(at, false); if (appHit) { found = appHit; foundAt = at; } }
     }
-    const name = found?.name ?? UNATTRIBUTED;
+    const name = found?.name ?? unattributedName?.(row) ?? UNATTRIBUTED;
     const tree = trees.get(name) ?? { fleet: found?.fleet ?? false, rootPids: new Set<number>(), members: [] };
     if (found) tree.rootPids.add(foundAt.pid);
     tree.members.push(row);

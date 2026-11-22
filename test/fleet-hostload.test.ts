@@ -3,7 +3,10 @@ import { cmdFleetHostload } from '../src/cli/fleet-hostload.js';
 import { groupHostFamilies, readHostFamilies } from '../src/core/fleet/host-families.js';
 import { cmdFleetLeftovers } from '../src/cli/fleet-leftovers.js';
 import { readHostLoadReport } from '../src/core/fleet/host-load.js';
-import type { LeftoverEvidence } from '../src/core/fleet/host-leftovers.js';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { readLeftoverJobStates, type LeftoverEvidence } from '../src/core/fleet/host-leftovers.js';
 
 const fixture = `PID PPID %CPU RSS ELAPSED COMMAND
 10 1 2 1024 01:00 worker /repo/wt/RQ-WORK privateword
@@ -28,10 +31,10 @@ it('attributes test children to workers and Claude loops, and keeps only family 
   expect(by('claude loop')).toMatchObject({ job: 'RQ-CL-DOCS-123', processes: 2, cpuPercent: 43 });
   expect(by('main guardian')).toMatchObject({ job: 'guardian-main', cpuPercent: 4 });
   expect(by('local model')).toMatchObject({ processes: 2, cpuPercent: 60 });
-  expect(by('desktop apps')).toMatchObject({ processes: 2, cpuPercent: 10 });
+  expect(by('Editor')).toMatchObject({ processes: 2, cpuPercent: 10 });
   expect(by('other')).toMatchObject({ processes: 3, cpuPercent: 10 });
   expect(report.families.filter(r => r.family === 'typecheck/test').map(r => r.job)).toEqual(['RQ-CHECK', null]);
-  expect(JSON.stringify(report)).not.toMatch(/privateword|plainarg|hiddenword|Applications|command|Editor|tsgo/);
+  expect(JSON.stringify(report)).not.toMatch(/privateword|plainarg|hiddenword|Applications|command|tsgo/);
 });
 
 const leftoverTable = `PID PPID %CPU RSS ELAPSED COMMAND
@@ -90,6 +93,50 @@ it('bounds CLI JSON and text, rejects bad flags, and keeps read failures private
     expect(await cmdFleetHostload(['--bad'], ps)).toBe(2);
     expect(await cmdFleetHostload(['--json'], async () => { throw new Error('privateword'); })).toBe(1);
     expect(String(out.mock.calls.at(-1)![0])).not.toContain('privateword');
-    expect(await readHostFamilies(async () => null)).toEqual({ state: 'unknown', families: [], omitted: 0 });
+    expect(await readHostFamilies(async () => null)).toMatchObject({ state: 'unknown', families: [], omitted: 0, blame: expect.stringContaining('unknown') });
   } finally { out.mockRestore(); err.mockRestore(); }
+});
+
+it('names busy executable families, folds app helpers and Spotlight, and blames the top two', () => {
+  const table = [
+    [10, 1, 100, '/System/mds'], [11, 1, 50, '/System/mdworker'], [12, 1, 40, '/System/mdworker_shared'],
+    [20, 1, 20, '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'],
+    [21, 1, 100, '/Applications/Google Chrome.app/Contents/Frameworks/Helper.app/Contents/MacOS/Helper'],
+    [30, 1, 25, '/bin/node'], [31, 1, 25, '/bin/node'], [40, 1, 10, 'worker'],
+    [50, 1, 19.9, '/bin/git'], [51, 1, 0.1, '/bin/git'], [60, 1, 30, '/bin/python3'],
+    [70, 1, 20, 'kernel_task'], [71, 1, 20, 'WindowServer'], [72, 1, 20, 'backupd'],
+    [73, 1, 20, 'Code Helper'], [74, 1, 5, 'idle'],
+  ].map(([pid, ppid, cpu, exe]) => `${pid} ${ppid} ${cpu} 1024 00:01 ${String(exe).padEnd(1024)} ${exe} ${pid === 40 ? '/repo/wt/work' : 'hiddenword /Applications/Decoy.app/Contents/plain'}`).join('\n');
+  const host = groupHostFamilies(`PID PPID %CPU RSS ELAPSED ${'COMM'.padEnd(1024)} COMMAND\n${table}`, undefined, { load1: 25, cores: 18 });
+  expect(host.families.slice(0, 3)).toEqual([
+    { family: 'Spotlight', job: null, processes: 3, cpuPercent: 190, rssMb: 3 },
+    { family: 'Google Chrome', job: null, processes: 2, cpuPercent: 120, rssMb: 2 },
+    { family: 'node', job: null, processes: 2, cpuPercent: 50, rssMb: 2 },
+  ]);
+  expect(host.families.find(r => r.family === 'git')).toMatchObject({ processes: 2, cpuPercent: 20, rssMb: 2 });
+  expect(host.families).toHaveLength(8); expect(host.omitted).toBe(3);
+  expect(host.blame).toBe('load1 25 on 18 cores: Spotlight 190%, Google Chrome 120%, fleet 10%');
+  expect(JSON.stringify(host)).not.toMatch(/hiddenword|Applications|Decoy|Contents|command/);
+  expect(groupHostFamilies('10 1 19 1024 00:01 node plain\n11 1 19 1024 00:01 git plain').families)
+    .toEqual([{ family: 'other', job: null, processes: 2, cpuPercent: 38, rssMb: 2 }]);
+});
+
+it('keeps live jobs out of leftovers and honors finish rows, missing claims and relaunches', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'host-jobs-'));
+  try {
+    await mkdir(join(dir, 'queue/run'), { recursive: true }); await mkdir(join(dir, 'metrics'));
+    for (const job of ['live', 'done', 'again']) await writeFile(join(dir, `queue/run/${job}.pid`), '90\n');
+    await writeFile(join(dir, 'queue/run/bad.pid'), 'plain');
+    await writeFile(join(dir, 'queue/run/gone.pid'), '91');
+    await writeFile(join(dir, 'metrics/jobs.jsonl'), [null, { event: 'launch', job: 'live' },
+      { type: 'finish', job_id: 'done' }, { event: 'finish', job: 'again' }, { event: 'launch', job: 'again' }].map(r => JSON.stringify(r)).join('\n'));
+    const liveJobs = await readLeftoverJobStates(['live', 'done', 'again', 'gone', 'missing', 'bad'], dir, pid => pid === 90);
+    expect(Object.fromEntries(liveJobs)).toEqual({ live: true, done: false, again: true, gone: false, missing: false, bad: null });
+    const host = groupHostFamilies('10 1 40 1024 00:01 node plain\n11 1 30 1024 00:01 node plain', {
+      worktreeRoot: '/root', cwds: new Map([[10, '/root/live'], [11, '/root/done']]), liveJobs,
+    });
+    expect(host.leftovers?.items.map(r => r.pid)).toEqual([11]);
+    expect(host.families.find(r => r.family === 'leftover from finished jobs')).toMatchObject({ processes: 1, cpuPercent: 30 });
+    expect((await readLeftoverJobStates(['live'], join(dir, 'absent'))).get('live')).toBeNull();
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });
