@@ -441,6 +441,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'skill-calibration': () => import('./fleet-skill-calibration.js'),
   'skip-forecast': () => import('./fleet-skip-forecast.js'),
   'skip-reasons': () => import('./fleet-skip-reasons.js'),
+  'skipped': () => import('./fleet-skipped.js'),
   'skips': () => import('./fleet-skips.js'),
   'slack-evidence': () => import('./fleet-slack-evidence.js'),
   'slack-trace': () => import('./fleet-slack-trace.js'),
