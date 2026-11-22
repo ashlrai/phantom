@@ -90,6 +90,31 @@ describe('static ecosystem page', () => {
     expect(document.getElementById('history-path')?.getAttribute('d')).toMatch(/^M /);
   });
 
+  it('links each ecosystem repository card to that repository\'s contribution guide', () => {
+    const document = new JSDOM(html).window.document;
+    // The seven ecosystem repos. AshlrCode and Morphkit have no verified agent-contribution section yet.
+    const expected: Record<string, RegExp> = {
+      phantom: /^https:\/\/github\.com\/ashlrai\/phantom\/blob\/master\/docs\/CONTRIBUTE-WITH-AN-AGENT\.md$/,
+      'phantom-secrets': /^https:\/\/github\.com\/ashlrai\/phantom-secrets\/blob\/main\/CONTRIBUTING\.md#contribute-/,
+      locus: /^https:\/\/github\.com\/ashlrai\/locus\/blob\/main\/CONTRIBUTING\.md#contribute-/,
+      lexicon: /^https:\/\/github\.com\/ashlrai\/lexicon\/blob\/main\/CONTRIBUTING\.md#contribute-/,
+      'ashlr-plugin': /^https:\/\/github\.com\/ashlrai\/ashlr-plugin\/blob\/main\/CONTRIBUTING\.md#contribute-/,
+      'ashlr-md': /^https:\/\/github\.com\/ashlrai\/ashlr-md\/blob\/main\/CONTRIBUTING\.md#contribute-/,
+      'ashlr-stack': /^https:\/\/github\.com\/ashlrai\/ashlr-stack\/blob\/main\/CONTRIBUTING\.md#contribute-/,
+    };
+    for (const [repo, pattern] of Object.entries(expected)) {
+      const card = document.querySelector(`.project[data-repo="${repo}"], .project[data-companion="${repo}"]`);
+      expect(card, repo).not.toBeNull();
+      const links = card!.querySelectorAll('a.contribute');
+      expect(links, repo).toHaveLength(1);
+      expect(links[0]!.getAttribute('href'), repo).toMatch(pattern);
+    }
+    // The Phantom links resolve in this checkout: the guide has the section 8 heading they point at.
+    const guide = readFileSync(resolve(root, 'docs/CONTRIBUTE-WITH-AN-AGENT.md'), 'utf8');
+    expect(guide).toMatch(/^## 8\. The other ecosystem repositories$/m);
+    expect(html).toContain('docs/CONTRIBUTE-WITH-AN-AGENT.md#8-the-other-ecosystem-repositories');
+  });
+
   it('fails visibly when the snapshot is unavailable', () => {
     const dom = mount(false);
     expect(dom.window.document.getElementById('data-notice')?.textContent).toMatch(/unavailable/);
