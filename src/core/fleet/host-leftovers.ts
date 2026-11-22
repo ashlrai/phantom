@@ -5,6 +5,8 @@ import { homedir } from 'node:os';
 import { basename, join, relative } from 'node:path';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { readTail } from '../metrics/loop-collect.js';
+import { ledgerEventName, ledgerJobId } from './empty-cause.js';
 import type { ProcessRow } from './host-load.js';
 
 export interface LeftoverEvidence { worktreeRoot: string; cwds: ReadonlyMap<number, string>; liveJobs: ReadonlyMap<string, boolean | null> }
@@ -41,19 +43,37 @@ export async function readLeftoverEvidence(rows: readonly ProcessRow[], runsDir 
       else if (line.startsWith('n/')) cwds.set(pid, line.slice(1));
     }
   }
-  const liveJobs = new Map<string, boolean | null>(), pids = new Set(rows.map(r => r.pid));
+  return { worktreeRoot, cwds, liveJobs: await readLeftoverJobStates([...cwds.values()].flatMap(cwd => leftoverJob(cwd, worktreeRoot) ?? []), runsDir) };
+}
+
+/** A finish row wins; otherwise check the claim PID directly, outside the ps snapshot. */
+export async function readLeftoverJobStates(jobs: readonly string[], runsDir: string, alive = (pid: number): boolean | null => {
+  try { process.kill(pid, 0); return true; } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ESRCH' ? false : (error as NodeJS.ErrnoException).code === 'EPERM' ? true : null;
+  }
+}): Promise<Map<string, boolean | null>> {
+  if (!jobs.length) return new Map();
+  const liveJobs = new Map<string, boolean | null>(), finished = new Set<string>();
+  const tail = await readTail(join(runsDir, 'metrics/jobs.jsonl'), 8 * 1024 * 1024);
+  for (const line of (tail?.text ?? '').split('\n')) try {
+    const row: unknown = JSON.parse(line);
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+    const id = ledgerJobId(row as Record<string, unknown>), event = ledgerEventName(row as Record<string, unknown>);
+    if (id && event === 'finish') finished.add(id);
+    else if (id && event === 'launch') finished.delete(id);
+  } catch { /* Invalid rows provide no finish evidence. */ }
   let claimsKnown = false;
   try { const stat = lstatSync(join(runsDir, 'queue/run')); claimsKnown = stat.isDirectory() && !stat.isSymbolicLink(); } catch { /* unknown claims */ }
-  for (const cwd of cwds.values()) {
-    const job = leftoverJob(cwd, worktreeRoot);
-    if (!job || liveJobs.has(job)) continue;
+  for (const job of new Set(jobs)) {
+    if (finished.has(job)) { liveJobs.set(job, false); continue; }
     if (!claimsKnown) { liveJobs.set(job, null); continue; }
     const file = join(runsDir, 'queue/run', `${job}.pid`);
     try {
       lstatSync(file);
       const result = readStableRegularFile(file, { anchorPath: runsDir, maxFileBytes: 128, remainingBytes: 128 });
-      liveJobs.set(job, result.ok && /^\d+\s*$/.test(result.text) ? pids.has(Number(result.text.trim())) : null);
+      const pid = result.ok && /^\d+\s*$/.test(result.text) ? Number(result.text.trim()) : 0;
+      liveJobs.set(job, Number.isSafeInteger(pid) && pid > 1 ? alive(pid) : null);
     } catch (error) { liveJobs.set(job, (error as NodeJS.ErrnoException).code === 'ENOENT' ? false : null); }
   }
-  return { worktreeRoot, cwds, liveJobs };
+  return liveJobs;
 }
