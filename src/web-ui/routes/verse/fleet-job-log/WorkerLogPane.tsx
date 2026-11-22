@@ -13,7 +13,7 @@ import { steerPrefill } from '../fleet/job-sheet-actions.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { describeJob } from '../../../../core/fleet/job-tail-words.js';
-import { JOB_ID_RE, jobOptions, metaLine, pollMs, prLabel, publishFacts, safePrUrl, stateTone } from './worker-log-model.js';
+import { JOB_ID_RE, jobOptions, pollMs, publishFacts, safePrUrl, sessionFacts, stateTone, stepJob, stepLabel } from './worker-log-model.js';
 import { jobDetailQuery } from './worker-log-queries.js';
 import { workerLogMarkdown } from './worker-log-markdown.js';
 import { takeRequestedWorkerLogJob, useRequestedWorkerLogJob } from './worker-log-selection.js';
@@ -114,18 +114,30 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
   const verdict = backlog.status === 'error' ? null : backlogVerdict(url, backlog.data, now);
   const backlogUnavailable = pr !== null && (backlog.data === null || backlog.data?.source === 'gh-failed' || backlog.status === 'error');
   const { testLine, sensitive } = publishFacts(detail.data?.publish);
-  const meta = detail.data ? metaLine(detail.data, Date.now()).split(' · ') : [];
+  // The detail does not carry the repo; the running-worker row does, and so does a published PR link.
+  const facts = detail.data ? sessionFacts(detail.data, runs.data?.workers.find(worker => worker.job === job)?.repo ?? pr?.repo, now) : [];
+  const step = (dir: 1 | -1) => { const next = stepJob(options, job, dir); if (next !== null) setSelection(next); };
+  const canStep = stepJob(options, job, 1) !== null;
   // Same plain words as `phm job tail` (core/fleet/job-tail-words.ts).
   const words = detail.data ? describeJob({ ...detail.data, job: detail.data.job ?? job }, Date.now()) : null;
   const state = detail.data?.state ?? 'unknown';
 
-  return <div className={styles.pane} aria-label="Worker log">
+  // [ and ] walk the running sessions from anywhere in the pane except a field, where they are typing.
+  return <div className={styles.pane} aria-label="Worker log" tabIndex={-1} onKeyDown={event => {
+    if ((event.key !== '[' && event.key !== ']') || event.metaKey || event.ctrlKey || event.altKey || (event.target as HTMLElement).closest('input, select, textarea')) return;
+    event.preventDefault(); step(event.key === ']' ? 1 : -1);
+  }}>
     <div className={styles.controls}>
       <label>Worker <select aria-label="Worker" value={valid ? job : ''} onChange={event => setSelection(event.target.value)}>
         {!valid && <option value="">Select a worker</option>}
         {retained && <option value={job}>{job}</option>}
         {options.map(option => <option key={option.job} value={option.job}>{option.label}</option>)}
       </select></label>
+      <span className={styles.step} role="group" aria-label="Step through sessions">
+        <button type="button" aria-label="Previous session" title="Previous session ([)" aria-keyshortcuts="[" disabled={!canStep} onClick={() => step(-1)}>‹</button>
+        {valid && <span>{stepLabel(options, job)}</span>}
+        <button type="button" aria-label="Next session" title="Next session (])" aria-keyshortcuts="]" disabled={!canStep} onClick={() => step(1)}>›</button>
+      </span>
       <label>Job ID <input aria-label="Job ID" value={job} onChange={event => setSelection(event.target.value)} aria-invalid={job !== '' && !valid} aria-describedby={job !== '' && !valid ? 'worker-log-id-hint' : undefined} /></label>
       <label className={styles.follow}><input type="checkbox" checked={follow} onChange={event => setFollow(event.target.checked)} /> Follow</label>
       <label>Find in log <input type="search" aria-label="Find in log" value={search} onChange={event => { setSearch(event.target.value); setSelectedMatch(null); }} onKeyDown={event => {
@@ -153,10 +165,18 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
     {valid && <JobWindowCard job={job} detail={detail.data} enabled={active} pollMs={pollMs(detail.data)} />}
     {valid && <JobNoteBox job={job} open={jobStopEligible(state)} enabled={active} />}
     {valid && detail.data && <>
-      <div className={styles.meta}><StatusBadge status={state} tone={stateTone(state)}>{state}</StatusBadge>
-        {' '}<StatusBadge status="output" tone={livenessTone(liveness?.lastGrowthAt ?? null, state, now)}>{livenessText(liveness?.lastGrowthAt ?? null, state, now)}</StatusBadge>
-        {meta.slice(1).map((part, index) => <span key={`${part}-${index}`}> · {url && index === meta.length - 2 && part === prLabel(url) ? <a href={url} target="_blank" rel="noreferrer">{part}</a> : part}</span>)}
-      </div>
+      <section className={styles.session} aria-label="Session">
+        <div className={styles.sessionTop}>
+          <h3 className={styles.sessionId}>{job}</h3>
+          <StatusBadge status={state} tone={stateTone(state)}>{state}</StatusBadge>
+          <StatusBadge status="output" tone={livenessTone(liveness?.lastGrowthAt ?? null, state, now)}>{livenessText(liveness?.lastGrowthAt ?? null, state, now)}</StatusBadge>
+        </div>
+        <dl className={styles.facts}>{facts.map(fact => <div key={fact.label}>
+          <dt>{fact.label}</dt>
+          {fact.value === null ? <dd data-unknown>{fact.missing}</dd>
+            : <dd>{fact.href ? <a href={fact.href} target="_blank" rel="noreferrer">{fact.value}</a> : fact.at ? <time dateTime={fact.at} title={new Date(fact.at).toLocaleString()}>{fact.value}</time> : fact.value}</dd>}
+        </div>)}</dl>
+      </section>
       {backlogUnavailable && <p role="status">merge backlog unavailable</p>}
       {verdict && <p className={styles.meta}>{verdict.text}</p>}
       {(testLine !== null || sensitive !== null) && <section aria-label="Publish" className={styles.meta}>
