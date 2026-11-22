@@ -770,6 +770,54 @@ describe('job-filtered channel reads', () => {
   });
 });
 
+describe('since-filtered reads', () => {
+  it('keeps only mail received at or after the cutoff on inbox and channel reads', async () => {
+    const options = setup(10_000);
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'old dm', id: 'sn-old-dm' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'old post', id: 'sn-old-ch' }, options);
+    options.clock.now = 20_000;
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'new dm', id: 'sn-new-dm' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'new post', id: 'sn-new-ch' }, options);
+    options.clock.now = 30_000;
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'edge dm', id: 'sn-edge-dm' }, options);
+
+    // The cutoff is inclusive: a row stamped exactly at it still matches,
+    // and the channel post reaches nova's inbox as channel mail too.
+    const inbox = readAgentInbox('nova', { since: 20_000 }, options);
+    if (inbox.status !== 'ok') throw new Error(`unexpected ${inbox.status}`);
+    expect(inbox.messages.map(m => m.envelope.id)).toEqual(['sn-new-dm', 'sn-new-ch', 'sn-edge-dm']);
+    const channel = readAgentChannel('release', { since: 20_000 }, options);
+    if (channel.status !== 'ok') throw new Error(`unexpected ${channel.status}`);
+    expect(channel.messages.map(m => m.envelope.id)).toEqual(['sn-new-ch']);
+
+    // --matched counts only the rows the cutoff accepts, and a cutoff past
+    // every row still scans the whole store for nextCursor.
+    const counted = readAgentInbox('nova', { since: 20_000, matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(3);
+    const empty = readAgentInbox('nova', { since: 30_001 }, options);
+    if (empty.status !== 'ok') throw new Error(`unexpected ${empty.status}`);
+    expect(empty.messages).toEqual([]);
+    expect(empty.nextCursor).toBeGreaterThan(0);
+
+    // It composes with the other page filters.
+    expect(readAgentInbox('nova', { since: 20_000, from: 'ghost' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    expect(readAgentInbox('nova', { since: 20_000, kind: 'dm' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'sn-new-dm' } }, { envelope: { id: 'sn-edge-dm' } }] });
+    expect(readAgentChannel('release', { since: 20_000, topic: 'deploy' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+
+    // Invalid cutoffs are refused, never silently widened or emptied.
+    expect(readAgentInbox('nova', { since: -1 }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentInbox('nova', { since: 1.5 }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { since: Number.NaN }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { since: Number.MAX_SAFE_INTEGER + 1 }, options)).toMatchObject({ status: 'invalid' });
+  });
+});
+
 describe('envelope lookup by id', () => {
   it('resolves a retained envelope of any kind by its wire id', async () => {
     const options = setup();

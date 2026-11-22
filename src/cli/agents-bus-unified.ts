@@ -19,6 +19,7 @@ import { readUnifiedBusStatus } from '../core/agents/bus-status.js';
 import { claimNextBusWork, type BusNextResult } from '../core/fleet/bus-next-claim.js';
 import { scrubSecrets } from '../core/util/scrub.js';
 import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
+import { parseSince } from '../core/fleet/agent-messages.js';
 import { seatParticipants } from '../core/bots/seats.js';
 
 export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'post', 'channel', 'handoff', 'wake', 'inbox', 'wakes', 'show', 'adapters', 'claim', 'work', 'status']);
@@ -31,11 +32,11 @@ ashlr agents bus channel create <name> [--from <agent>] [--member <agent>]...
 ashlr agents bus channel join|leave <name> [--agent <agent>]
 ashlr agents bus channel post <name> --text <text> [--from <agent>] [--topic <t>] [--ref <ref>]... [--priority ..] [--wake|--no-wake]
 ashlr agents bus channel list [--agent <agent>]
-ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--matched] [--after <cursor>] [--limit <1..100>]
+ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--matched] [--after <cursor>] [--limit <1..100>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
-ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--matched] [--frame <cli>]
-ashlr agents bus wakes [<agent>] [--since <epoch ms>] [--job <id>]
+ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--matched] [--frame <cli>]
+ashlr agents bus wakes [<agent>] [--since <15m|2h|1d|ISO>] [--job <id>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
@@ -82,6 +83,12 @@ the citing status's jobId on a claim-holder hint — so job-scoped triage
 reads one filtered hint list; matched then counts the proven matches on
 the resolved page, an unreadable bus store reports unavailable rather
 than an empty page, and truncated still marks queue-tail or row-cap cuts.
+--since on inbox, channel read and wakes keeps only rows at or after the
+cutoff — the phm messages grammar (15m, 2h, 1d, epoch ms or an ISO
+time), resolved to epoch ms — so fresh mail, a room's recent posts and
+new wake hints are one filtered read without a persisted cursor; inbox
+and channel read match receivedAt inclusively, wakes matches hints
+after it.
 --matched
 on inbox and channel read reports matched, the true pending total across the
 whole retained store the same filters accept; messages still caps at --limit
@@ -330,6 +337,16 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       return value as InboxKind | undefined;
     };
+    // Read-side --since takes the phm messages grammar — 15m, 2h, 1d, epoch
+    // ms or an ISO time — resolved to epoch ms; anything else is a usage
+    // error here and an 'invalid' result inside the core read.
+    const sinceArg = (): number | undefined => {
+      const raw = one('--since');
+      if (raw === undefined) return undefined;
+      const ms = parseSince(raw);
+      if (ms === null) throw new UsageError('--since takes 15m, 2h, 1d, epoch ms or an ISO time.');
+      return ms;
+    };
     const [verb, sub, arg, ...extra] = p.positionals;
     const finish = (result: { status: string; reason?: string }, human: string): number => {
       const ok = !('reason' in result) || result.reason === undefined;
@@ -443,7 +460,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       if (sub === 'read') {
         const result = readAgentChannel(arg, { topic: one('--topic'), from: one('--from'), thread: one('--thread'),
-          priority: priorityArg(), job: one('--job'), matched: p.bools.has('--matched'),
+          priority: priorityArg(), job: one('--job'), since: sinceArg(), matched: p.bools.has('--matched'),
           after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit') }, options);
         if (result.status !== 'ok') return finish(result, '');
         // --matched scans the whole store, so the core nextCursor is the store's
@@ -486,7 +503,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
       const page = readAgentInbox(agent, { after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit'),
         thread: one('--thread'), from: one('--from'), priority: priorityArg(), kind: kindArg(), job: one('--job'),
-        matched: p.bools.has('--matched') }, options);
+        since: sinceArg(), matched: p.bools.has('--matched') }, options);
       if (page.status !== 'ok') return finish(page, '');
       // --matched scans the whole store, so the core nextCursor is the store's
       // end — resuming there would skip unshown matches. The honest resume
@@ -534,7 +551,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       noExtra(2);
       const agent = sub ?? self;
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
-      const page = readAgentWakes(agent, integer(one('--since'), '--since'), options, { job: one('--job') });
+      const page = readAgentWakes(agent, sinceArg(), options, { job: one('--job') });
       if (page.status !== 'ok') return finish(page, '');
       out(json ? JSON.stringify(page) : [
         ...(page.truncated ? [`${page.matched} wake hint(s) matched; the bounded queue tail is truncated — showing the newest ${page.wakes.length}`] : []),
