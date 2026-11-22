@@ -55,6 +55,15 @@ per-member `finish` row so their usage is charged like any unread outcome. A
 `launch_failed`/`launch_terminal` row naming the session id closes every
 member attempt it opened.
 
+Node-pool producer rows are a different jobs-ledger dialect and never
+count here: `fleet.session-pool.v1` and `phm-node-runner.v1` rows carry
+the per-attempt id in `job` and the logical `ready:*` queue id in
+`jobId`, and none carries the repo/lane/model/tier assign fields a cell
+needs — so they skip like other operational rows instead of counting
+malformed (a session-pool `launch` reuses the dispatchd event name) or
+keying usage on a phantom claim id. The router outcome fold consumes
+the same rows keyed on `jobId`; see `readRouterOutcomes`.
+
 Revert evidence discounts merges exactly the way the reward feed and slot
 yield already read it (`hasRevertEvidence`: `reverted:true`, a parseable
 `reverted_at`/`revertedAt` stamp, or a `revert`/`reverted` event or state

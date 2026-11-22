@@ -65,7 +65,11 @@ emits policy. Plain output is Markdown. Nothing schedules or sends a brief.
   stays unknown. `claim` rows pair with their `launch` (`launch_dedupe`) and
   never open attempts. `RQ-BATCH-*` session ids are dispatch infrastructure:
   their launch/finish rows never form attempts, matching the agent-activity
-  verified-completion convention.
+  verified-completion convention. Node-pool producer rows
+  (`fleet.session-pool.v1`, `phm-node-runner.v1`) are a different jobs-ledger
+  dialect — `job` is a per-attempt/claim id and `jobId` the logical `ready:*`
+  queue id, with no attempt fields — so they never form attempts either; the
+  router outcome fold consumes them keyed on `jobId`.
 - `byLane` and `byModelTier` contain `{jobs, finished, finishRate, prRate,
   emptyRate, medianDuration, estCost, samples, evidenceRefs}`. Model-tier names
   are JSON tuples; absent metadata stays null (lane bucket `unknown`).
