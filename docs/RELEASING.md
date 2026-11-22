@@ -597,6 +597,34 @@ the repo's own release workflow. Fetch the clones first for current numbers. A
 missing clone or an unreadable tag date is `unknown`. A shallow clone is counted
 only when its history reaches back to the latest tag.
 
+### Compare publication with later merges
+
+```sh
+phm fleet publication-evidence --repo phantom
+phm fleet publication-evidence --repo phantom --json
+```
+
+This read-only report separates the latest published stable release, drafts,
+prereleases and PRs merged into the default branch after the stable release's
+publication time. Omit `--repo` to inspect all enrolled repositories. It reads
+GitHub through `gh` and local clones under `~/Projects/ashlrai`; use
+`--root /absolute/path/to/clones` to choose another parent directory. Local
+`origin/HEAD` must identify each clone's default branch. Fetch clones first
+for current refs; the report does not fetch them.
+
+JSON uses `phantom.publication-evidence.v1`. Each repository has `published`,
+`drafts`, `prereleases`, `mergedAfterPublication`, `lag`, `reason`, `next` and
+separate `localTag` facts. `next` suggests `no new merged PRs`, `write changelog`,
+`review release` or `unknown`. These are suggestions; the command changes no
+files and starts no release.
+
+Merged-after-publication is a timing count, not proof of which commits an
+artifact contains or what is installed. Missing or incomplete evidence stays
+unknown, including capped GitHub results, a missing stable baseline or an
+unknown default branch. Local tag commit counts also stay unknown in shallow
+clones. A successful read can contain unknown fields; inspect `lag` and
+`reason` before using the count.
+
 ### Draft release notes
 
 Run `phm release notes` inside a repository for Markdown since its latest

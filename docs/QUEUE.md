@@ -703,6 +703,53 @@ a whole old or new snapshot. Files use mode 0600 and newly created directories
 use 0700. The existing dispatchd directory's permissions are not changed.
 Corrupt snapshots fail closed instead of becoming empty queues.
 
+## Check ready work against free slots
+
+Use these read-only reports when a lane has room but jobs are not starting:
+
+```sh
+phm fleet lane-starve
+phm fleet lane-starve --json
+phm fleet launchable
+phm fleet launchable --json
+```
+
+`lane-starve` lists lanes below their launch target with queued work. Its
+`ready` count splits into `filler` and `real` rows. Parked rows are excluded
+whether the `PARKED` marker is in the first column or the lane column.
+`queued` comes from the status snapshot, so it can differ from `ready`.
+
+`launchable` compares each lane's `free` slots with ready rows whose prompt
+file exists. It also excludes parked rows, jobs marked `drop` or `defer` in
+`skipped-empty.tsv`, and filler while `FILLER_HOLD` exists. Both commands use
+the launch target described below and read `~/.ashlr-runs/queue`; set
+`ASHLR_RUNS_DIR` to inspect another runs directory.
+
+`lane-starve` exits 1 when it finds a starved lane; `launchable` exits 1 when
+any lane has more free slots than launchable rows. Both exit 0 otherwise and
+2 for invalid arguments or unreadable required data. Their JSON schemas are
+`fleet.lane-starve.v1` and `fleet.launchable.v1`. Neither report launches work
+or removes a hold.
+
+## Inspect the processes using this computer
+
+```sh
+phm fleet hostload
+phm fleet hostload --json
+```
+
+This read-only report shows up to eight process families, ordered by CPU,
+with child builds and tests counted with their parent job. It also lists up
+to five unrecognized executable names with process counts, CPU and RSS memory;
+command arguments stay private. JSON includes `families`, `unknownCommands`,
+`fleetCpuPercent` and `totalCpuPercent`. CPU uses the process convention where
+100% is one core, so totals can exceed 100% on a multicore computer.
+
+An unknown executable is a classification gap, not proof that it belongs to
+the fleet. If process data cannot be read, `state` is `unknown` and the command
+exits 1; a known reading exits 0. Use the admission report below to see whether
+load is blocking new jobs.
+
 ## Load-aware admission
 
 `phm pool admission [--json]` is a read-only report of the dispatchd load gate:
