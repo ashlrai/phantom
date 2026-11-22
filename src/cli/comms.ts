@@ -586,7 +586,7 @@ function printCommsHelp(): void {
   console.log('  Compatible alias: ashlr comms <command>');
   console.log('');
   console.log('    bus post|read|watch|next|claim  durable local agent message plane (bus --help)');
-  console.log('    inbox [--source <n>] [--severity <band>] [--blocking] [--job <id>] [--json]');
+  console.log('    inbox [--source <n>] [--severity <band>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--json]');
   console.log('                               unified pending view: needs-you, teammate texts, drafts, unclaimed bus work, comms requests');
   console.log('    inbox read|post              Mason inbox for local operators (inbox --help)');
   console.log('    email-drop <dir> --from <a>  ingest .eml files from a drop folder (allowlisted From only)');

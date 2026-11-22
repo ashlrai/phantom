@@ -215,7 +215,7 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 
 ## Unified inbox
 
-`phm comms inbox [--source <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--json]`
+`phm comms inbox [--source <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--json]`
 ([`unified-inbox.ts`](../src/core/comms/unified-inbox.ts)) is the read-only
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
@@ -374,12 +374,17 @@ that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:
 `--source <name>` keeps one source's items, `--severity <info|warn|high>` one
-severity band, `--blocking` only items that block and `--job <id>` only items
+severity band, `--blocking` only items that block, `--job <id>` only items
 that provably name that job — a bus or mailbox body's `busBodyJobMatch`
 citation, a feed job's id, a board task's fleet item or a delivery on a
 job-carrying thread, a conversation thread's jobs, a teammate task's job or a
-seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job);
-the dimensions AND together. `total`, `omitted` and `items` then describe
+seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job) —
+and `--since <15m|2h|1d|ISO>` only items whose recorded `since` appearance
+time reaches the cutoff, the same inclusive `>=` match every bus read
+`--since` applies; an item whose store keeps no timestamp (`since` null) or
+whose recorded time cannot be parsed never matches, so unknown never counts
+as new. The dimensions AND together. `total`, `omitted` and `items` then
+describe
 the matched view and the report echoes the applied `filter`, while `sources`
 keeps every store's real unfiltered pending count — a filtered view never
 reports a busy or degraded source as empty. `phm comms inbox read` and
