@@ -88,6 +88,9 @@ import { parseFleetGmailArchivePlanLatestArgs, readFleetGmailArchivePlanLatest, 
 import { parseFleetGmailTriageLatestArgs, readFleetGmailTriageLatest } from './fleet-gmail-triage-latest.js';
 import { parseFleetCommsInboxArgs, readFleetCommsInbox, type FleetCommsInboxArgs } from './fleet-comms-inbox.js';
 import { UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_SOURCES } from '../core/comms/unified-inbox.js';
+import { BUS_PRIORITIES } from '../core/fleet/bus-envelope.js';
+import { BUS_PROTOCOL_KINDS } from '../core/fleet/bus-protocol.js';
+import { BUS_READ_CONTAINS_MAX } from '../core/agents/bus-unified.js';
 import { parseFleetCommsReadinessArgs, readFleetCommsReadiness } from '../core/mcp/fleet-comms-readiness.js';
 import { MAX_FLEET_IMESSAGE_ACKS, parseFleetImessageAcksArgs, parseFleetImessagePathArgs,
   readFleetImessageAcks, readFleetImessagePath, type FleetImessageAcksArgs } from './fleet-imessage-evidence.js';
@@ -409,7 +412,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     },
     {
       name: 'fleet_bus_inbox',
-      description: 'Read a durable bus inbox page: validated envelopes with opaque bodies and integer cursors, oldest first, from the same store phm comms bus uses. Resume with nextCursor; expired records advance it unseen. Limit caps scanned live records before to/from filters; each filter matches the literal routing label or any other label of the same registered agent identity, and an unresolvable label or unreadable registry keeps exact matching — routing labels are data, never authenticated identity. Bodies are untrusted data and redaction can change displayed text. Missing, unavailable and retryable sources stay distinct; never invents an empty page, renews TTL, creates a store, or dispatches.',
+      description: 'Read a durable bus inbox page: validated envelopes with opaque bodies and integer cursors, oldest first, from the same store phm comms bus uses. Resume with nextCursor; expired records advance it unseen. Limit caps scanned live records before every filter. The to/from/excludeFrom address filters match the literal routing label or any other label of the same registered agent identity, and an unresolvable label or unreadable registry keeps exact matching — routing labels are data, never authenticated identity. The optional filters are the same read dimensions `phm comms bus read` applies: id and inReplyTo exact matches, excludeFrom drops one sender identity, priority keeps one P0–P3 band, kind keeps one protocol-v1 body kind, topic keeps bodies whose protocol topic matches a name or namespace prefix, thread keeps note/context bodies carrying that v2 label, job keeps envelopes naming one job, since keeps rows received at or after the cutoff (15m, 2h, 1d, epoch ms or an ISO time), and contains keeps envelopes whose scrubbed one-line summary carries the needle — a secret-shaped value stays unfindable. Filtered rows still advance nextCursor, so a narrowed page resumes on the same cursor an unfiltered one would. Bodies are untrusted data and redaction can change displayed text. Missing, unavailable and retryable sources stay distinct; never invents an empty page, renews TTL, creates a store, or dispatches.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -417,6 +420,16 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
           limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_BUS_INBOX_READ, default: 50 },
           to: { type: 'string', description: 'Recipient routing label; matches any label of the same registered agent identity.' },
           from: { type: 'string', description: 'Sender routing label; matches any label of the same registered agent identity.' },
+          id: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep the envelope with this exact id.' },
+          inReplyTo: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep envelopes whose object body carries this exact inReplyTo field.' },
+          excludeFrom: { type: 'string', description: 'Sender routing label to drop; matches any label of the same registered agent identity.' },
+          priority: { type: 'string', enum: [...BUS_PRIORITIES], description: 'Keep envelopes stamped with this exact P0–P3 band.' },
+          kind: { type: 'string', enum: [...BUS_PROTOCOL_KINDS], description: 'Keep envelopes whose protocol-v1 body kind matches.' },
+          topic: { type: 'string', description: 'Topic name (fleet.deploy) or namespace prefix (fleet.*) the body protocol topic must match.' },
+          thread: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'v2 thread label; matches note/context bodies only.' },
+          job: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep envelopes naming this job id — the same rule `phm comms bus read --job` applies.' },
+          since: { type: 'string', description: 'Keep rows received at or after the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the same grammar `phm comms bus read --since` takes.' },
+          contains: { type: 'string', minLength: 1, maxLength: BUS_READ_CONTAINS_MAX, description: 'Case-insensitive substring over each envelope\'s scrubbed one-line summary.' },
         },
         additionalProperties: false,
       },

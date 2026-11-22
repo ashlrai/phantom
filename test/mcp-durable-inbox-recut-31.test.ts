@@ -89,6 +89,16 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     [{ limit: 0 }], [{ limit: 101 }], [{ limit: 1.5 }], [{ limit: '5' }], [{ limit: null }],
     [{ to: 5 }], [{ to: null }], [{ to: '' }], [{ to: 'has space' }],
     [{ from: {} }], [{ from: 'line\nbreak' }],
+    [{ id: 'has space' }], [{ id: 5 }], [{ id: null }],
+    [{ inReplyTo: '' }], [{ inReplyTo: 'line\nbreak' }],
+    [{ excludeFrom: 'has space' }], [{ excludeFrom: 5 }],
+    [{ priority: 'P9' }], [{ priority: 'p0' }], [{ priority: 0 }], [{ priority: null }],
+    [{ kind: 'bogus' }], [{ kind: 'TASK' }], [{ kind: 5 }],
+    [{ topic: 'not a topic' }], [{ topic: 'fleetx.*' }], [{ topic: 'fleet..deploy' }], [{ topic: 5 }],
+    [{ thread: 'has space' }], [{ thread: 'x'.repeat(129) }], [{ thread: '' }],
+    [{ job: 'has space' }], [{ job: '' }], [{ job: 'x'.repeat(129) }],
+    [{ since: 'not-a-time' }], [{ since: '' }], [{ since: 1735689600000 }], [{ since: '999999d' }], [{ since: null }],
+    [{ contains: '' }], [{ contains: '   ' }], [{ contains: 'x'.repeat(513) }], [{ contains: 42 }],
     [{ after: 0, extra: 1 }], [{ path: '/tmp/x' }], [{ command: 'read' }], [{ file: 'x' }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const busInbox = vi.fn();
@@ -115,6 +125,9 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     expect(busInbox).toHaveBeenLastCalledWith({ after: 0, limit: 50, to: undefined, from: undefined });
     await client.callTool({ name: 'fleet_bus_inbox', arguments: { after: 3, limit: 5, to: 'w', from: 'a' } });
     expect(busInbox).toHaveBeenLastCalledWith({ after: 3, limit: 5, to: 'w', from: 'a' });
+    await client.callTool({ name: 'fleet_bus_inbox', arguments: { priority: 'P1', job: 'RQ-1', contains: 'Fake' } });
+    expect(busInbox).toHaveBeenLastCalledWith({ after: 0, limit: 50, to: undefined, from: undefined,
+      filters: { priority: 'P1', job: 'RQ-1', contains: 'fake' } });
   });
 
   it('reads durable envelopes with bodies by cursor and resumes without replay', async () => {
@@ -170,6 +183,68 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     expect(page.parsed).toMatchObject({ sourceState: 'ok', messages: [], returnedMessages: 0, nextCursor: 2 });
     const rest = await callInbox(client, { after: page.parsed['nextCursor'], to: 'nobody' });
     expect(rest.parsed).toMatchObject({ sourceState: 'ok', messages: [], returnedMessages: 0, nextCursor: 3 });
+  });
+
+  it('applies the priority, id, inReplyTo and excludeFrom read filters', async () => {
+    expect(post('p0', { priority: 'P0' }).status).toBe('posted');
+    expect(post('p2', { priority: 'P2' }).status).toBe('posted');
+    expect(post('reply', { body: { inReplyTo: 'p0', text: 'ack' } }).status).toBe('posted');
+    expect(post('plain', { body: { text: 'no link' } }).status).toBe('posted');
+    expect(post('other', { from: 'other-sender' }).status).toBe('posted');
+    const client = await connect();
+    const urgent = await callInbox(client, { priority: 'P0' });
+    expect(rows(urgent.parsed).map(row => row.envelope.id)).toEqual(['p0']);
+    expect(urgent.parsed['filters']).toEqual({ priority: 'P0' });
+    const one = await callInbox(client, { id: 'p2' });
+    expect(rows(one.parsed).map(row => row.envelope.id)).toEqual(['p2']);
+    const replies = await callInbox(client, { inReplyTo: 'p0' });
+    expect(rows(replies.parsed).map(row => row.envelope.id)).toEqual(['reply']);
+    const kept = await callInbox(client, { excludeFrom: 'fake-sender' });
+    expect(rows(kept.parsed).map(row => row.envelope.id)).toEqual(['other']);
+    // Filters narrow the shown page only; the cursor still covers every scanned row.
+    const narrowed = await callInbox(client, { priority: 'P0', limit: 2 });
+    expect(narrowed.parsed).toMatchObject({ returnedMessages: 1, nextCursor: 2 });
+    const rest = await callInbox(client, { after: narrowed.parsed['nextCursor'], priority: 'P0' });
+    expect(rest.parsed).toMatchObject({ messages: [], nextCursor: 5 });
+  });
+
+  it('matches excludeFrom under every label of one registered identity', async () => {
+    expect(registerAgentIdentity({ handle: 'bot', aliases: ['b-ops'] }, { root: fleetRoot() }).status).toBe('created');
+    expect(post('e1', { from: 'agent:bot' }).status).toBe('posted');
+    expect(post('e2', { from: 'b-ops' }).status).toBe('posted');
+    expect(post('e3').status).toBe('posted');
+    const client = await connect();
+    const kept = await callInbox(client, { excludeFrom: 'bot' });
+    expect(rows(kept.parsed).map(row => row.envelope.id)).toEqual(['e3']);
+  });
+
+  it('applies the protocol kind, topic, thread, job, since and contains read filters', async () => {
+    expect(post('task1', { to: 'fleet.deploy',
+      body: { protocol: { version: 1, kind: 'task', topic: 'fleet.deploy' }, ref: 'r1' } }).status).toBe('posted');
+    expect(post('note1', { body: { kind: 'note', text: 'deploy window soon', thread: 'job:RQ-9' } }).status).toBe('posted');
+    expect(post('st1', { body: { kind: 'work.status', jobId: 'RQ-9', status: 'running' } }).status).toBe('posted');
+    expect(post('plain', { body: { fake: 'nothing here' } }).status).toBe('posted');
+    const client = await connect();
+    const tasks = await callInbox(client, { kind: 'task' });
+    expect(rows(tasks.parsed).map(row => row.envelope.id)).toEqual(['task1']);
+    const prefix = await callInbox(client, { topic: 'fleet.*' });
+    expect(rows(prefix.parsed).map(row => row.envelope.id)).toEqual(['task1']);
+    const exact = await callInbox(client, { topic: 'fleet.deploy' });
+    expect(rows(exact.parsed).map(row => row.envelope.id)).toEqual(['task1']);
+    const other = await callInbox(client, { topic: 'repo.*' });
+    expect(other.parsed).toMatchObject({ returnedMessages: 0, nextCursor: 4 });
+    const threaded = await callInbox(client, { thread: 'job:RQ-9' });
+    expect(rows(threaded.parsed).map(row => row.envelope.id)).toEqual(['note1']);
+    const jobbed = await callInbox(client, { job: 'RQ-9' });
+    expect(rows(jobbed.parsed).map(row => row.envelope.id)).toEqual(['note1', 'st1']);
+    const all = await callInbox(client, { since: '0' });
+    expect(all.parsed).toMatchObject({ returnedMessages: 4 });
+    const future = await callInbox(client, { since: '1' });
+    expect(future.parsed).toMatchObject({ returnedMessages: 0, nextCursor: 4 });
+    const found = await callInbox(client, { contains: 'deploy window' });
+    expect(rows(found.parsed).map(row => row.envelope.id)).toEqual(['note1']);
+    const combined = await callInbox(client, { kind: 'task', contains: 'fleet.deploy' });
+    expect(rows(combined.parsed).map(row => row.envelope.id)).toEqual(['task1']);
   });
 
   it('excludes expired records while the cursor still skips them', async () => {
