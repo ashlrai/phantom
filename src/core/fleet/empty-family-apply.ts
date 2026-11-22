@@ -17,6 +17,11 @@ import { join } from 'node:path';
 import { readEmptyFamilies, type EmptyFamiliesReport } from './empty-families.js';
 import { jobFamily } from './slot-yield.js';
 import { createConfigReader } from './dynconfig.js';
+import { briefFamilyYield } from './leader-compact-brief.js';
+import { readLedgerLines } from './ledger-lines.js';
+import { ledgerRows } from './empty-cause.js';
+import { familyAutoStop, type FamilyAutoStop } from './family-auto-stop.js';
+import { parseStopFile } from './stop-file.js';
 
 export const EMPTY_APPLY_SCHEMA = 'jobs.empty.apply.v1';
 export const EMPTY_STOP_OFF_KEY = 'empty_stop.off';
@@ -225,7 +230,7 @@ export async function readEmptyStopOff(runsDir: string): Promise<boolean | null>
   } catch { return null; }
 }
 
-export interface EmptyApplyTickResult { schema: 'jobs.empty.apply.tick.v1'; ran: boolean; reason: string; result: EmptyApplyResult | null }
+export interface EmptyApplyTickResult { schema: 'jobs.empty.apply.tick.v1'; ran: boolean; reason: string; result: EmptyApplyResult | null; familyStops?: Omit<FamilyAutoStop, 'pattern'>[] | null }
 
 /** Self-tick stage: apply at most once an hour, and only when the kill switch is off (`phm fleet config set empty_stop.off 1` turns it off). */
 export async function runEmptyApplyTick(o: { runsDir: string; apply: boolean; now: number; readOff?: (runsDir: string) => Promise<boolean | null>; readReport?: EmptyApplyOptions['readReport'] }): Promise<EmptyApplyTickResult> {
@@ -236,8 +241,23 @@ export async function runEmptyApplyTick(o: { runsDir: string; apply: boolean; no
   const state = stateText === null ? null : parseState(stateText);
   if (!state) return skip('action record unknown');
   if (state.last_run_ms !== null && o.now - state.last_run_ms >= 0 && o.now - state.last_run_ms < HOUR_MS) return skip('ran within the last hour');
+  const stopPath = join(paths(o.runsDir).queue, 'family-stop.tsv');
+  const lines: string[] = []; let bytes = 0;
+  const [known, stopText] = await Promise.all([readLedgerLines(join(o.runsDir, 'metrics/jobs.jsonl'), line => {
+    if (ledgerRows(line, o.now, 2).rows.length) { bytes += Buffer.byteLength(line); if (bytes <= 8 * 1024 * 1024) lines.push(line); }
+  }), readText(stopPath)]);
+  let familyStops: EmptyApplyTickResult['familyStops'] = null;
+  if (known && bytes <= 8 * 1024 * 1024 && stopText !== null) {
+    const live = parseStopFile(stopText).filter(row => row.until > o.now / 1000);
+    const rows = familyAutoStop(briefFamilyYield(lines.join('\n'), o.now), o.now).filter(row => !live.some(s => s.pattern === row.pattern));
+    if (o.apply && rows.length) {
+      await mkdir(paths(o.runsDir).queue, { recursive: true, mode: 0o700 });
+      await writeAtomic(stopPath, stopText + (stopText && !stopText.endsWith('\n') ? '\n' : '') + rows.map(r => `${r.pattern}\t${r.until}\t${r.why}\n`).join(''));
+    }
+    familyStops = rows.map(({ family, until, why }) => ({ family, until, why }));
+  }
   const result = await applyEmptyFamilies({ runsDir: o.runsDir, apply: o.apply, now: o.now, markRun: true, ...(o.readReport ? { readReport: o.readReport } : {}) });
-  return { schema: 'jobs.empty.apply.tick.v1', ran: result.known, reason: result.error ?? (o.apply ? 'applied' : 'dry-run'), result };
+  return { schema: 'jobs.empty.apply.tick.v1', ran: result.known, reason: result.error ?? (o.apply ? 'applied' : 'dry-run'), result, familyStops };
 }
 
 /** Plain lines for the CLI. */

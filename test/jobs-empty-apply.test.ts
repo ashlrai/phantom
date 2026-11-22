@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { applyEmptyFamilies, runEmptyApplyTick, undoEmptyFamily, EMPTY_APPLY_SCHEMA } from '../src/core/fleet/empty-family-apply.js';
 import { cmdJobs } from '../src/cli/jobs-empty.js';
 import { summarizeEmptyFamilies } from '../src/core/fleet/empty-families.js';
+import { briefFamilyYield } from '../src/core/fleet/leader-compact-brief.js';
+import { familyAutoStop } from '../src/core/fleet/family-auto-stop.js';
 
 const now = Date.parse('2026-11-19T12:00:00Z');
 const HOUR = 3600;
@@ -36,6 +38,48 @@ const seedHint = async (until: number) => {
   await put('empty-family-actions.json', JSON.stringify({ schema: 'jobs.empty.actions.v1', last_run_ms: null, entries: [{ family: 'RQ-LOGIN*', lane: 'cursor', action: 'reroute', ids: [], until, reason: '3of3-empty_auth_failed' }] }));
 };
 const get = (name: string) => readFile(join(dir, 'queue', name), 'utf8').catch(() => null);
+
+const familyLedger = (prefix = 'RQ-PHX-FLEETCLAIMSGREEN', count = 12) => Array.from({ length: count }, (_, i) =>
+  [{ event: 'launch', job: `${prefix}${750 + i}`, ts: new Date(now).toISOString() }, { event: 'finish', job: `${prefix}${750 + i}`, ts: new Date(now).toISOString(), empty: true }]).flat();
+const familyPlan = (rows: object[]) => familyAutoStop(briefFamilyYield(rows.map(r => JSON.stringify(r)).join('\n'), now), now);
+it('proposes a twelve-hour stop using the brief family ERE, matching only that family', () => {
+  const rows = familyPlan(familyLedger());
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ family: 'RQ-PHX-FLEETCLAIMSGREEN*', until: now / 1000 + 12 * HOUR });
+  const pattern = new RegExp(rows[0]!.pattern);
+  expect(pattern.test('RQ-PHX-FLEETCLAIMSGREEN752')).toBe(true);
+  for (const id of ['RQ-PHX-INGESTCONTRACTFINISH754S', 'RQ-PHX-FLEETCLAIMSGREEN752S', 'other-RQ-PHX-FLEETCLAIMSGREEN752']) expect(pattern.test(id)).toBe(false);
+});
+it('requires three empties, zero PRs and zero merges in the brief window; protects leader, fixup and guardian work', () => {
+  expect(familyPlan(familyLedger('work', 2))).toEqual([]);
+  expect(familyPlan(familyLedger('work', 3))).toHaveLength(1);
+  expect(familyPlan([...familyLedger(), { event: 'merged', job: 'RQ-PHX-FLEETCLAIMSGREEN750', ts: new Date(now).toISOString() }])).toEqual([]);
+  expect(familyPlan([...familyLedger(), { event: 'publish', class: 'pr', job: 'RQ-PHX-FLEETCLAIMSGREEN750', ts: new Date(now).toISOString() }])).toEqual([]);
+  expect(familyPlan(familyLedger().map(r => ({ ...r, ts: new Date(now - 3 * HOUR * 1000).toISOString() })))).toEqual([]);
+  for (const prefix of ['FIXUP-work-', 'guardian-work-', 'RQ-WORKQ8-']) expect(familyPlan(familyLedger(prefix).map(r => ({ ...r, src: 'leader' })))).toEqual([]);
+  expect(familyPlan(familyLedger().map(r => ({ ...r, src: 'main-guardian' })))).toEqual([]);
+});
+it('tick previews then appends one row, preserves existing rows, and does not renew an active stop', async () => {
+  await mkdir(join(dir, 'metrics'));
+  await writeFile(join(dir, 'metrics/jobs.jsonl'), familyLedger().map(r => JSON.stringify(r)).join('\n'));
+  const text = `^other$\t${now / 1000 + HOUR}\tmanual\n`;
+  await put('family-stop.tsv', text);
+  const base = { runsDir: dir, now, readOff: async () => false, readReport: async () => summarizeEmptyFamilies([], 24) };
+  expect((await runEmptyApplyTick({ ...base, apply: false })).familyStops).toHaveLength(1);
+  expect(await get('family-stop.tsv')).toBe(text);
+  expect((await runEmptyApplyTick({ ...base, apply: true })).familyStops).toHaveLength(1);
+  const written = await get('family-stop.tsv');
+  expect(written?.split('\n').filter(Boolean)).toHaveLength(2);
+  expect(written).toContain('\tauto_0of12_merged_12_empty_');
+  expect(new RegExp(written!.split('\n')[1]!.split('\t')[0]!).test('RQ-PHX-FLEETCLAIMSGREEN752')).toBe(true);
+  expect(new RegExp(written!.split('\n')[1]!.split('\t')[0]!).test('RQ-PHX-INGESTCONTRACTFINISH754S')).toBe(false);
+  expect((await runEmptyApplyTick({ ...base, now: now + HOUR * 1000, apply: true })).familyStops).toEqual([]);
+  expect(await get('family-stop.tsv')).toBe(written);
+});
+it('tick leaves missing ledger evidence unknown and never writes a stop', async () => {
+  const result = await runEmptyApplyTick({ runsDir: dir, apply: true, now, readOff: async () => false, readReport: async () => summarizeEmptyFamilies([], 24) });
+  expect(result.familyStops).toBeNull(); expect(await get('family-stop.tsv')).toBeNull();
+});
 
 it('stop: writes the exact READY ids with an expiry; other lanes, claimed and guarded jobs are left alone', async () => {
   await put('router-queue.md', queue);

@@ -17,10 +17,29 @@ import { parseStopFile, stopFilePath, stoppedFamilies } from './stop-file.js';
 import { readSource } from './runs-parked-queue.js';
 import { readHostFamilies } from './host-families.js';
 import { mergeLatencyLine } from './git-merge-latency.js';
+import { activeFamilyStops, type BriefFamily } from './family-auto-stop.js';
 
 export const LEADER_COMPACT_FILE = 'queue/leader-brief.json';
 const clean = (s: string) => scrubSecrets(s).replace(/\s+/g, ' ').slice(0, 80);
-type Counts = { family: string; launches: number; prs: number; merges: number; empty: number };
+
+/** The brief's two-hour family rollup, shared with self-tick before display truncation. */
+export function briefFamilyYield(text: string, now: number): BriefFamily[] {
+  const groups = new Map<string, BriefFamily>(), seen = new Set<string>();
+  for (const { row, id, at } of ledgerRows(text, now, 2).rows.sort((a, b) => a.at - b.at)) {
+    const collapsed = collapseFamily(id), family = collapsed?.family ?? id, event = ledgerEventName(row), phase = ledgerPhase(row);
+    const metric = phase === 'MERGED' || event === 'merged' ? 'merges'
+      : row.empty === true || ledgerStateTokens(row).includes('EMPTY_DONE') || row.class === 'empty' ? 'empty'
+      : event === 'launch' ? 'launches' : event === 'publish' && (row.class === 'pr' || ledgerPrUrl(row)) ? 'prs' : null;
+    if (!metric) continue;
+    const key = `${metric}:${metric === 'launches' || metric === 'empty' ? `${id}:${at}` : ledgerPrUrl(row) ?? id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const counts = groups.get(family) ?? { family, pattern: collapsed?.pattern ?? `^${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, guarded: false, launches: 0, prs: 0, merges: 0, empty: 0 };
+    counts.guarded ||= /Q8|FIXUP-|GUARDIAN|RELEASE/i.test(id) || /guardian/i.test(`${row.src ?? ''} ${row.source ?? ''}`);
+    counts[metric]++; groups.set(family, counts);
+  }
+  return [...groups.values()];
+}
 
 export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), hostLoadReader = readHostFamilies) {
   const cache = new Map<string, Promise<string>>();
@@ -37,7 +56,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     return cache.get(file)!;
   };
   const quiet = async <T>(p: Promise<T>): Promise<T | null> => p.catch(() => null);
-  const [snapshot, tail, pace, guardian, liveText, stopText, ready, hostLoad, log, slotsText, prsText] = await Promise.all([
+  const [snapshot, tail, pace, guardian, liveText, stopText, ready, hostLoad, log, slotsText, prsText, familyStopText] = await Promise.all([
     quiet(readChiefOfStaffSnapshot('auto', { runsDir, now: () => new Date(now), read })),
     readTail(join(runsDir, 'metrics/jobs.jsonl'), 8 * 1024 * 1024),
     quiet(readFleetPace({ runsDir, now: () => now })), quiet(readGuardianGlance(runsDir, now)),
@@ -46,6 +65,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     hostLoadReader(),
     readTail(join(runsDir, 'dispatchd.log'), 256 * 1024),
     quiet(read(join(runsDir, 'queue/slots.json'))), quiet(read(join(runsDir, 'fleet/open-prs.json'))),
+    quiet(read(join(runsDir, 'queue/family-stop.tsv'))),
   ]);
   for (const [name, state] of Object.entries(snapshot?.sources ?? {})) if (state !== 'unavailable') sourceState(name, state,
     state === 'healthy' ? 'parsed local snapshot' : name === 'queue/status.json' ? 'last_tick missing, invalid or older than 60s'
@@ -64,19 +84,6 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
   const slotRoot = objectRow(json(slotsText, 'queue/slots.json')), slots = objectRow(slotRoot.lanes ?? slotRoot);
   const latency = await compactMergeLatency(runsDir, tail?.text ?? '', now, json(prsText, 'fleet/open-prs.json'), sources['fleet/open-prs.json']?.state === 'missing');
   const rows = ledgerRows(tail?.text ?? '', now, 24).rows.sort((a, b) => a.at - b.at);
-  const groups = new Map<string, Counts>(), seen = new Set<string>();
-  for (const { row, id, at } of rows.filter(r => r.at >= now - 2 * 3_600_000)) {
-    const family = collapseFamily(id)?.family ?? id, event = ledgerEventName(row), phase = ledgerPhase(row);
-    const metric = phase === 'MERGED' || event === 'merged' ? 'merges'
-      : row.empty === true || ledgerStateTokens(row).includes('EMPTY_DONE') || row.class === 'empty' ? 'empty'
-      : event === 'launch' ? 'launches' : event === 'publish' && (row.class === 'pr' || ledgerPrUrl(row)) ? 'prs' : null;
-    if (!metric) continue;
-    const key = `${metric}:${metric === 'launches' || metric === 'empty' ? `${id}:${at}` : ledgerPrUrl(row) ?? id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const counts = groups.get(family) ?? { family: clean(family), launches: 0, prs: 0, merges: 0, empty: 0 };
-    counts[metric]++; groups.set(family, counts);
-  }
   const readyRows = ready === null ? null : parseReadyRows(ready);
   const lanes = (snapshot?.snapshot.lanes ?? []).map(l => {
     const finished = [...new Map(rows.filter(r => r.lane === l.lane && ledgerEventName(r.row) === 'finish').map(r => [`${r.id}:${r.at}`, r])).values()].slice(-20);
@@ -97,7 +104,8 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     .sort((a, b) => Number(b.status === 'stuck') - Number(a.status === 'stuck') || (Number(b.elapsed) || 0) - (Number(a.elapsed) || 0))
     .slice(0, 5).map(j => ({ id: clean(j.id), lane: clean(j.lane), status: j.status, elapsed: j.elapsed }));
   const stops = stopText === null ? [] : stoppedFamilies(parseStopFile(stopText), now).filter(s => s.until > now / 1000)
-    .map(s => ({ family: clean(s.family), until: s.until }));
+    .map(s => ({ family: clean(s.family), until: s.until, why: s.why, auto: false }));
+  stops.push(...activeFamilyStops(familyStopText ?? '', now).map(s => ({ ...s, family: clean(s.family) })));
   const brief = {
     schema: 'leader.compact-brief.v1', at: new Date(now).toISOString(), headline,
     state: lanes.length || tail || hasPace || guardian?.length ? 'ready' : 'no data', sources,
@@ -106,7 +114,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
       burnPerHour: p.recentPerHour, safeBurn: p.safeBurnPerHour ?? null, verdict: p.verdict === 'stale' || p.verdict === 'spent' ? p.line ?? p.verdict : p.verdict ?? 'unknown',
       headroom: p.headroom, source: p.source, ageHours: p.ageHours,
       why: p.verdict === 'unknown' ? [p.usedPct === null ? 'usage missing or stale' : '', p.hoursToReset === null || p.hoursToReset <= 0 ? 'reset missing or elapsed' : '', p.recentPerHour === null ? 'burn rate missing' : ''].filter(Boolean).join('; ') : 'usage, reset and burn rate known' })),
-    families: [...groups.values()].sort((a, b) => a.prs / Math.max(1, a.launches) - b.prs / Math.max(1, b.launches) || b.launches - a.launches || a.family.localeCompare(b.family)),
+    families: briefFamilyYield(tail?.text ?? '', now).map(({ family, launches, prs, merges, empty }) => ({ family: clean(family), launches, prs, merges, empty })).sort((a, b) => a.prs / Math.max(1, a.launches) - b.prs / Math.max(1, b.launches) || b.launches - a.launches || a.family.localeCompare(b.family)),
     attention, liveAt: typeof live?.generatedAt === 'string' ? clean(live.generatedAt) : null, main: (guardian ?? []).map(g => ({ repo: clean(g.repo), state: g.state, stale: g.stale })),
     medianOpenToMergeSeconds: latency.seconds, mergeLatencySource: latency.source, mergeLatencyWhy: latency.why,
     mergeLatency: latency,
@@ -134,6 +142,7 @@ export function compactBriefLines(b: CompactLeaderBrief): string[] {
     ...b.lanes.slice(0, 3).map(l => `${l.lane}: ${l.running ?? '?'}/${l.target ?? '?'}, ${l.queued ?? '?'} queued, held ${l.held ?? '?'}, empty ${l.emptyRate === null ? '?' : Math.round(l.emptyRate * 100) + '%'}`),
     ...b.pools.slice(0, 2).map(p => `${p.pool}: ${p.usedPct ?? '?'}%, reset ${p.hoursToReset ?? '?'}h, burn ${p.burnPerHour ?? '?'}/h, safe ${p.safeBurn ?? '?'}/h, ${p.verdict}`),
     ...b.families.slice(0, 2).map(f => `${f.family}: ${f.launches} launches, ${f.prs} PRs, ${f.merges} merges, ${f.empty} empty (2h)`),
+    ...b.stopped.filter(s => s.auto).map(s => `Stopped '${s.family}' for ${Math.ceil((s.until - Date.parse(b.at) / 1000) / 3600)} h: ${s.why}`),
     `Quiet/stuck: ${b.attention.map(j => j.id).join(', ') || (b.sources[LIVE_JOBS_FILE]?.state === 'healthy' ? 'none recorded' : 'unknown')}`,
     `Main: ${b.main.map(g => `${g.repo} ${g.state}${g.stale ? ' stale' : ''}`).join(', ') || 'unknown'}`,
     mergeLatencyLine(b.mergeLatency), `Stopped: ${b.sources.stops?.state === 'healthy' ? b.stopped.length : 'unknown'}; omitted: ${b.omitted}`,
