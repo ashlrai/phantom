@@ -271,6 +271,27 @@ No live dispatcher is installed by this change. Installation follows the
 existing [dispatcher review and pin workflow](../contrib/mac/README.md#installing-the-dispatcher).
 `phm route explain --json` adds the optional job `decision` to its hysteresis report.
 
+The same journal now feeds the report's `typed_decisions` field: a bounded
+`route.typed-decisions.v1` digest (`src/core/router/typed-decisions.ts`)
+folds the newest `TYPED_DECISIONS_LEDGER_LIMIT` (8 MiB) of
+`metrics/route.explain.jsonl` — `readTypedDecisions({runsDir?, limit?})` for
+the file read, `foldTypedDecisions(text, path, truncated)` for the pure
+fold. Rows count only under the exact producer contract (schema
+`route.explain.v1`, the `route.explain` event, advisory `true`, a finite
+epoch-second `ts`, and `status` `observed`/`unavailable`); an observed row
+must also carry a decision inside the producer's own allowlist, so a row
+the dispatcher could not have written counts as `invalid_rows`, never a
+partial pick. The digest reports `records`, `observed`/`unavailable`
+counts, top lane/model/reason-code tallies (each capped at eight), mean
+and max for the recorded `duration_ms`, `attempts` and `candidate_count`
+metrics, and the `oldest_ts`/`newest_ts` window. Malformed metric values
+stay unrecorded (`known` counts only well-formed figures; means stay null
+when none exist), a missing journal is `state: missing`, and a cut tail
+reports `truncated: true`. The rows carry no job identity, so the digest is
+fleet-level service evidence only — it describes what the typed layer
+decided and how the call behaved, never which job it decided for, and it
+routes, weights and applies nothing.
+
 ### Advisory lead/sidekick pairing
 
 The report's `pairing` field is a typed `route.pairing.v1` advisory decision,

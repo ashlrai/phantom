@@ -1048,6 +1048,30 @@ after reservations and reserve with room for one session, or for an unexpired
 selected Lightning/Flash free preview (`zeroCost: true`); otherwise `metered`.
 Unknown usage stays null. See [queue cost evidence](docs/QUEUE.md#resource-posture-the-lane-is-a-hint).
 
+`router/typed-decisions.ts` exports `foldTypedDecisions(text, path, truncated)`
+and `readTypedDecisions({runsDir?, limit?})`, producing a
+`route.typed-decisions.v1` digest of the dispatcher's typed-routing audit
+journal `<runsDir>/metrics/route.explain.jsonl` (`TYPED_DECISIONS_LEDGER_RELATIVE`).
+The read retains the newest `TYPED_DECISIONS_LEDGER_LIMIT` (8 MiB) via
+`readLedgerTail` — symlink and non-file refusals included — and reports
+`state` (`read`/`missing`/`unreadable`/`not-file`), `truncated`, `records`,
+`invalid_rows`, `observed`/`unavailable` counts, top-eight `lanes`,
+`models` and `reason_codes` tallies, `{known, mean, max}` summaries for the
+recorded `duration_ms`, `attempts` and `candidate_count` metrics, and the
+`oldest_ts`/`newest_ts` epoch-second window (null when no valid rows). A row
+counts only under the exact `route.explain.v1` producer contract — schema,
+`route.explain` event (event/type/kind alias), `advisory: true`, finite
+non-negative `ts`, `status` `observed`/`unavailable`, and for observed rows
+a decision inside the producer's allowlist (bounded lane/model ids, the
+effort/speed-tier enums, 1–16 in-vocabulary reason codes). Anything less is
+`invalid_rows`, never a partial pick; malformed optional metrics stay
+unrecorded (`known` counts well-formed figures only, means null when none
+exist). Journal rows carry no job identity, so the digest is fleet-level
+service evidence only. `explainRoutes(root, nowSeconds)` adds the digest as
+`typed_decisions` on both the available and unavailable reports. Nothing
+here routes, weights or applies anything. See
+[typed routing](docs/ROUTING.md#dispatcher-observation).
+
 `run/model-mode-data.ts` owns `ModeTier = lite|normal|ultra|fusion`, the exact
 model classifications and their capability order. `ModelEntry.modeTier` is
 required and excludes fusion (a composition). `RouteRequest.mode?` requests a
