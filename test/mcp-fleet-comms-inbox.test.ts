@@ -28,6 +28,8 @@ describe('fleet comms inbox', () => {
   it('validates and normalizes the unified-inbox filter dimensions', () => {
     expect(parseFleetCommsInboxArgs({ source: 'bus' }))
       .toEqual({ limit: 50, filter: { source: 'bus' } });
+    expect(parseFleetCommsInboxArgs({ kind: 'bus-handoff' }))
+      .toEqual({ limit: 50, filter: { kind: 'bus-handoff' } });
     expect(parseFleetCommsInboxArgs({ severity: 'high', blocking: true }))
       .toEqual({ limit: 50, filter: { severity: 'high', blocking: true } });
     expect(parseFleetCommsInboxArgs({ blocking: false }))
@@ -38,13 +40,14 @@ describe('fleet comms inbox', () => {
       .toEqual({ limit: 50, filter: { since: 1735689600000 } });
     expect(parseFleetCommsInboxArgs({ contains: 'fake' }))
       .toEqual({ limit: 50, filter: { contains: 'fake' } });
-    expect(parseFleetCommsInboxArgs({ source: 'bus', severity: 'warn', blocking: true, job: 'J1', since: '2h', contains: 'x', limit: 10 }))
-      .toEqual({ limit: 10, filter: { source: 'bus', severity: 'warn', blocking: true, job: 'J1', since: expect.any(Number), contains: 'x' } });
+    expect(parseFleetCommsInboxArgs({ source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true, job: 'J1', since: '2h', contains: 'x', limit: 10 }))
+      .toEqual({ limit: 10, filter: { source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true, job: 'J1', since: expect.any(Number), contains: 'x' } });
   });
 
   it('rejects malformed filter values', () => {
     for (const bad of [
-      { source: 'not-a-source' }, { source: 5 }, { severity: 'critical' }, { severity: true },
+      { source: 'not-a-source' }, { source: 5 }, { kind: 'not-a-kind' }, { kind: 'BUS-WORK' }, { kind: 5 },
+      { severity: 'critical' }, { severity: true },
       { blocking: 'yes' }, { blocking: 1 }, { job: '' }, { job: 'has space' }, { job: 'x'.repeat(129) },
       { since: 'not-a-time' }, { since: '' }, { since: 1735689600000 },
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 42 },
@@ -88,13 +91,13 @@ it('lists and routes the tool through the fleet server', async () => {
   const tool = (await client.listTools()).tools.find(tool => tool.name === 'fleet_comms_inbox');
   expect(tool).toBeDefined();
   expect(Object.keys((tool!.inputSchema as { properties: Record<string, unknown> }).properties))
-    .toEqual(['limit', 'source', 'severity', 'blocking', 'job', 'since', 'contains']);
+    .toEqual(['limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'contains']);
   const result = await client.callTool({ name: 'fleet_comms_inbox', arguments: { limit: 1 } });
   expect(JSON.parse((result.content as Array<{ text: string }>)[0].text)).toMatchObject({ items: [item], omitted: 2 });
   const filtered = await client.callTool({ name: 'fleet_comms_inbox',
-    arguments: { source: 'bus', contains: 'fake' } });
+    arguments: { source: 'bus', kind: 'bus-work', contains: 'fake' } });
   expect(JSON.parse((filtered.content as Array<{ text: string }>)[0].text))
-    .toMatchObject({ total: 1, filter: { source: 'bus', contains: 'fake' } });
+    .toMatchObject({ total: 1, filter: { source: 'bus', kind: 'bus-work', contains: 'fake' } });
   await expect(client.callTool({ name: 'fleet_comms_inbox', arguments: { limit: 0 } })).rejects.toThrow();
   await expect(client.callTool({ name: 'fleet_comms_inbox', arguments: { source: 'bogus' } })).rejects.toThrow();
 });
