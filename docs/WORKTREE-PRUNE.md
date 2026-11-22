@@ -22,6 +22,15 @@ lines (never `--force`), one per line, for a script or agent to run; with
 `--json` they come as `worktrees.plan.v1` `{commands}`. Add `--json` for the
 `worktrees.v1` report. The Home view's Disk card shows the same counts.
 
+The same command reports reaper health (`reaper` in the JSON). It is
+`healthy` when nothing is safe to remove or the last removal attempt in
+`worktree-reap.jsonl` is under 24 hours old, and `stale` when safe worktrees
+are waiting and the reaper never ran, last ran over 24 hours ago, or its last
+batch only failed. A publisher marker over six hours old is listed under
+`stuckRuns`. It is `unknown` when a record cannot be read. `eligible` lists the
+jobs passing the current removal gates, including stale-no-publish jobs.
+The check only reads; live, open, kept and dirty worktrees stay protected.
+
 ## `phm worktrees prune`
 
 
