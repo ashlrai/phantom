@@ -26,7 +26,7 @@ beforeAll(() => {
   for (const name of ['test-ci.mjs', 'check-realio-lane-membership.mjs', 'check-verse-sync-io.mjs']) {
     writeFileSync(join(root, 'scripts', name), '');
   }
-  writeFileSync(join(root, '.gitignore'), '.ashlr-gate/\nnode_modules/\n');
+  writeFileSync(join(root, '.gitignore'), '.ashlr-gate/\nnode_modules/\nshared/\n');
   writeFileSync(join(root, 'package-lock.json'), '{"lockfileVersion":3}');
   writeFileSync(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { tsBuildInfoFile: '.ashlr-gate/verify/backend.tsbuildinfo' } }));
   writeFileSync(join(root, 'node_modules/typescript/bin/tsc'), `

@@ -5,8 +5,8 @@
  * (`phm spend`) and the Needs-Mason ledger (`phm fleet needs-triage`). `buildMasonDigest` is pure.
  *
  * Posting goes through the existing owner-thread writer (`postOwnerNotice`) and nowhere else: it records one line
- * in Mason's own thread and calls no channel transport, so nothing is sent to anyone. The reusable tick helper
- * (`tickMasonDigest`, not yet wired to self-tick) posts at most once an hour, only when something changed, and stops when the live config
+ * in Mason's own thread and calls no channel transport, so nothing is sent to anyone. The self-tick hook
+ * (`tickMasonDigest`) posts at most once an hour, only when something changed, and stops when the live config
  * key `mason.digest.off` is 1. A number that could not be read is "unknown", never 0. */
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
