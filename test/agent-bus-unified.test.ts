@@ -2407,6 +2407,56 @@ describe('wake hint sender filter', () => {
     expect(readAgentWakes('nova', undefined, options, { from: 'orion' }))
       .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
   });
+
+  it('drops one sender\'s hints under every label of its identity', async () => {
+    const options = setup();
+    register(options, 'nova', 'orion');
+    expect(registerAgentIdentity({ handle: 'atlas', aliases: ['lane-atlas'] }, options).status).toBe('created');
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'a', id: 'w-atlas', priority: 'P0' }, options))
+      .toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'orion', to: 'nova', text: 'b', id: 'w-orion', priority: 'P0' }, options))
+      .toMatchObject({ status: 'posted' });
+    // Hints recorded under the alias spelling and under a bare label no
+    // identity claims — the same coverage the inbox/channel exclusion has.
+    enqueueBusWake({ kind: 'bus.send', id: 'w-lane', from: 'lane-atlas', to: 'agent:nova' }, { root: options.runsRoot });
+    enqueueBusWake({ kind: 'bus.send', id: 'w-ghost', from: 'ghost-sender', to: 'agent:nova' }, { root: options.runsRoot });
+    enqueueBusWake({ kind: 'bus.send', id: 'w-label', from: 'agent:atlas', to: 'ghost-sender' }, { root: options.runsRoot });
+
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok', matched: 4 });
+    // Handle, alias, agent: address and stable id all drop every label of
+    // the identity — the DM's agent:atlas row and the bare lane-atlas row.
+    for (const excludeFrom of ['atlas', 'lane-atlas', 'agent:atlas', stableAgentId('atlas')]) {
+      const page = readAgentWakes('nova', undefined, options, { excludeFrom });
+      expect(page).toMatchObject({ status: 'ok', matched: 2, truncated: false });
+      if (page.status !== 'ok') throw new Error('unreachable');
+      expect(page.wakes.map(row => row.id).sort()).toEqual(['w-ghost', 'w-orion']);
+    }
+    // An unresolvable exclusion keeps exact-label matching: only the literal
+    // ghost-sender row drops; a ref matching no label drops nothing.
+    const ghost = readAgentWakes('nova', undefined, options, { excludeFrom: 'ghost-sender' });
+    expect(ghost).toMatchObject({ status: 'ok', matched: 3 });
+    if (ghost.status !== 'ok') throw new Error('unreachable');
+    expect(ghost.wakes.map(row => row.id).sort()).toEqual(['w-atlas', 'w-lane', 'w-orion']);
+    expect(readAgentWakes('nova', undefined, options, { excludeFrom: 'ghost' }))
+      .toMatchObject({ status: 'ok', matched: 4 });
+    // A sender both included and excluded matches nothing; the exclusion
+    // composes with the job filter and still applies under label scope.
+    expect(readAgentWakes('nova', undefined, options, { from: 'atlas', excludeFrom: 'atlas' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    expect(readAgentWakes('nova', undefined, options, { from: 'atlas', excludeFrom: 'orion' }))
+      .toMatchObject({ status: 'ok', matched: 2 });
+    expect(readAgentWakes('nova', undefined, options, { excludeFrom: 'atlas', job: 'RQ-NONE' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    const label = readAgentWakes('ghost-sender', undefined, options);
+    expect(label).toMatchObject({ status: 'ok', scope: 'label', matched: 1 });
+    expect(readAgentWakes('ghost-sender', undefined, options, { excludeFrom: 'atlas' }))
+      .toMatchObject({ status: 'ok', scope: 'label', matched: 0, wakes: [] });
+    // The same validation the sender filter applies.
+    expect(readAgentWakes('nova', undefined, options, { excludeFrom: '' }))
+      .toMatchObject({ status: 'invalid' });
+    expect(readAgentWakes('nova', undefined, options, { excludeFrom: 'x'.repeat(129) }))
+      .toMatchObject({ status: 'invalid' });
+  });
 });
 
 describe('CLI session adapters', () => {
