@@ -1,0 +1,141 @@
+/**
+ * `fleet_agent_wakes` MCP adapter: the per-agent wake-hint read —
+ * `readAgentWakes`, the same read `phm agents bus wakes` serves.
+ * `fleet_agent_work`'s digest carries only a capped newest slice of the
+ * queue tail; this tool answers the wake questions that slice cannot —
+ * "which hints arrived since my last check", "which wake was about job X",
+ * "whose hints keep landing" — with the projection's own filters and its
+ * per-hint resolution: every `bus.send` hint resolves the live message it
+ * refers to (summary, priority, sender handle, channel, and for claimable
+ * work or a job citation the live `held`/`holder` plus `job` feed-state
+ * evidence), and every `wh-…` claim-holder hint re-derives the terminal
+ * `work.status` receipt that woke the holder. A hint is a routing hint to
+ * read the inbox — never a body, never authority.
+ *
+ * `agent` is required and resolves through the server-owned identity
+ * registry with the same handle/`agent:`/stable-id/alias refs
+ * `resolveAgent` accepts; a ref that resolves to no identity but matches
+ * the printable-label rule keeps literal-`to` matching under `scope:
+ * 'label'` — the same fallback the CLI read reports — so hints queued
+ * under a bare coordination label stay readable by their addressee.
+ * `since`, `job`, `from`, `excludeFrom` and `contains` apply the same
+ * rules the `phm agents bus wakes` flags share and are validated before
+ * any store read; the page always reports `matched` (every hint the
+ * bounded queue tail accepted before its row cap) and `truncated` (the
+ * queue tail or cap cut matches beyond the shown slice), so a capped list
+ * is never passed off as the whole queue. Read-only: no caller root, path
+ * or cwd is accepted — the store, registry, hold table, wake queue and
+ * feed roots stay server-owned — and the tool never claims, acks, replies,
+ * posts or renews TTL. Routing labels are data, never authenticated
+ * identity; an unreadable store, registry, hold table or wake queue stays
+ * `unavailable`/`retryable`/`unknown-agent`/`invalid` with its own reason,
+ * and `held`/`job`/referent resolution degrade to null or unknown — never
+ * an empty page or proven-free work passed off as fact.
+ */
+import {
+  busReadContains, readAgentWakes, type WakePage,
+} from '../core/agents/bus-unified.js';
+import { parseSince } from '../core/fleet/agent-messages.js';
+
+/** The printable-label rule `agent`, `job`, `from` and `excludeFrom` share. */
+const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
+
+const WAKE_KEYS = new Set(['agent', 'since', 'job', 'from', 'excludeFrom', 'contains']);
+const LABEL_KEYS = ['job', 'from', 'excludeFrom'] as const;
+
+export interface FleetAgentWakesArgs {
+  /** Agent ref — handle, `agent:<handle>`, stable `agt_` id or alias — resolved through the server-side registry. */
+  agent: string;
+  /** Keep only hints recorded strictly after this epoch-ms cutoff — the wakes read's own boundary. */
+  since?: number;
+  /** Keep only hints provably naming this job id — the same `busBodyJobMatch` rule every bus `--job` read applies. */
+  job?: string;
+  /** Keep only hints sent under any registered spelling of this sender ref. */
+  from?: string;
+  /** Drop hints sent under any registered spelling of this sender ref. */
+  excludeFrom?: string;
+  /** Keep only hints whose resolved referent text carries this needle — the shared `--contains` rule. */
+  contains?: string;
+}
+
+/**
+ * Runtime argument validation: low-level SDK servers never check the
+ * tools/list schema, so the server re-validates on every call. `agent`
+ * is required — the addressed read has no meaningful default — and every
+ * other key takes the same value rules `phm agents bus wakes` flags and
+ * the other bus reads share: `job`/`from`/`excludeFrom` printable routing
+ * labels, `since` the shared `15m`/`2h`/`1d`/epoch-ms/ISO grammar resolved
+ * to a safe non-negative epoch-ms integer, and `contains` the bounded
+ * free-text needle `busReadContains` normalizes. Unknown keys, wrong
+ * types, caller roots and malformed values are all refused before the
+ * store is touched.
+ */
+export function parseFleetAgentWakesArgs(args: Record<string, unknown>): FleetAgentWakesArgs | null {
+  if (Object.keys(args).some(key => !WAKE_KEYS.has(key))) return null;
+  const agent = args.agent;
+  if (typeof agent !== 'string' || !BUS_LABEL.test(agent)) return null;
+
+  const parsed: FleetAgentWakesArgs = { agent };
+  for (const key of LABEL_KEYS) {
+    const value = args[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || !BUS_LABEL.test(value)) return null;
+    parsed[key] = value;
+  }
+  const since = args.since;
+  if (since !== undefined) {
+    if (typeof since !== 'string') return null;
+    const resolved = parseSince(since);
+    if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
+    parsed.since = resolved;
+  }
+  const contains = busReadContains(args.contains);
+  if (contains === null) return null;
+  if (contains !== undefined) parsed.contains = contains;
+  return parsed;
+}
+
+export interface FleetAgentWakesDeps {
+  read?: typeof readAgentWakes;
+}
+
+interface FleetAgentWakesMeta {
+  schemaVersion: 1;
+  snapshotKind: 'local-persisted';
+  authority: 'none';
+  generatedAt: string;
+}
+
+/** The shared wake-page union with the MCP envelope metadata on every member, so `status` still narrows. */
+export type FleetAgentWakesResult = WakePage extends infer Member
+  ? Member extends WakePage ? FleetAgentWakesMeta & Member : never
+  : never;
+
+/**
+ * One wake-hint page through the shared `readAgentWakes` projection —
+ * the identical read `phm agents bus wakes` runs, so identity/label
+ * scope, queue-tail `matched`/`truncated` honesty, claim-holder citation
+ * re-derivation and per-hint message resolution can never diverge
+ * between the CLI and this tool. Every page status passes through
+ * untouched: `ok` keeps `agent`, `scope`, `wakes`, `matched` and
+ * `truncated`; `unknown-agent`, `unavailable` and `invalid` keep their
+ * own status and reason — never an invented empty page passed off as
+ * "no wakes".
+ */
+export async function readFleetAgentWakes(
+  args: FleetAgentWakesArgs,
+  deps: FleetAgentWakesDeps = {},
+): Promise<FleetAgentWakesResult> {
+  const read = deps.read ?? readAgentWakes;
+  const page: WakePage = read(args.agent, args.since, {}, {
+    ...(args.job === undefined ? {} : { job: args.job }),
+    ...(args.from === undefined ? {} : { from: args.from }),
+    ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
+    ...(args.contains === undefined ? {} : { contains: args.contains }),
+  });
+  return {
+    schemaVersion: 1 as const, snapshotKind: 'local-persisted' as const,
+    authority: 'none' as const, generatedAt: new Date().toISOString(),
+    ...page,
+  };
+}
