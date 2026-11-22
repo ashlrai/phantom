@@ -12,7 +12,7 @@ import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings, type OwnerThreadSettings } from '../comms/owner-channel.js';
 import { OWNER_CHANNELS, isOwnerChannel, type OwnerChannel } from '../comms/leader-mailbox.js';
-import { OWNER_THREAD_CONTAINS_MAX, acceptOwnerInbound, readOwnerCommsStatus, readOwnerThread, type OwnerThreadOptions, type OwnerThreadResult } from '../comms/owner-thread.js';
+import { OWNER_THREAD_CONTAINS_MAX, acceptOwnerInbound, readOwnerCommsStatus, readOwnerThread, type OwnerThreadMessage, type OwnerThreadOptions, type OwnerThreadResult } from '../comms/owner-thread.js';
 
 export const VERSE_OWNER_THREAD_PATH = '/api/verse/comms/owner-thread';
 /** Read-only "status now" brief for the Leader pane; same dispatch gate as the thread. */
@@ -125,6 +125,7 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
     }
     let limit: number | null;
     let channel: OwnerChannel | undefined;
+    let direction: OwnerThreadMessage['direction'] | undefined;
     let since: number | undefined;
     let contains: string | undefined;
     try {
@@ -137,6 +138,14 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
           return true;
         }
         channel = channelRaw;
+      }
+      const directionRaw = params.get('direction');
+      if (directionRaw !== null) {
+        if (directionRaw !== 'inbound' && directionRaw !== 'outbound') {
+          sendJson(res, 400, { error: 'direction must be inbound or outbound.' });
+          return true;
+        }
+        direction = directionRaw;
       }
       const sinceRaw = params.get('since');
       if (sinceRaw !== null) {
@@ -164,8 +173,8 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
     }
     try {
       const options = runtime(deps);
-      const filter = channel !== undefined || since !== undefined || contains !== undefined
-        ? { ...(channel !== undefined ? { channel } : {}), ...(since !== undefined ? { since } : {}), ...(contains !== undefined ? { contains } : {}) }
+      const filter = channel !== undefined || direction !== undefined || since !== undefined || contains !== undefined
+        ? { ...(channel !== undefined ? { channel } : {}), ...(direction !== undefined ? { direction } : {}), ...(since !== undefined ? { since } : {}), ...(contains !== undefined ? { contains } : {}) }
         : undefined;
       const thread = readOwnerThread(options, limit, filter);
       const { adapters, kill, paused } = readOwnerCommsStatus(options);

@@ -578,10 +578,12 @@ function awaitingReplyIds(state: ThreadState): string[] {
 /** Longest `--contains` needle the thread read accepts; the message text it matches is already bounded far shorter. */
 export const OWNER_THREAD_CONTAINS_MAX = 512;
 
-/** Optional read slice for `readOwnerThread`: one channel, a recorded-time floor and/or a text needle. */
+/** Optional read slice for `readOwnerThread`: one channel, one direction, a recorded-time floor and/or a text needle. */
 export interface OwnerThreadReadFilter {
   /** Keep only messages recorded on this channel. */
   channel?: OwnerChannel;
+  /** Keep only messages in this direction — what the owner sent (`inbound`) or what we answered (`outbound`). */
+  direction?: OwnerThreadMessage['direction'];
   /** Epoch ms; keeps messages whose `at` parses at or after it. An unparseable `at` never satisfies a `since` filter. */
   since?: number;
   /**
@@ -597,7 +599,10 @@ export interface OwnerThreadReadFilter {
 /**
  * The ordered owner thread, capped to the newest `limit` messages that pass
  * `filter` (receipt joins and the awaiting-reply mark follow the same slice,
- * so a filtered view never shows marks for rows it hid). `contains` keeps
+ * so a filtered view never shows marks for rows it hid). `direction` keeps
+ * only what the owner sent or only what we answered; the awaiting-reply mark
+ * only ever applies to inbound rows, so an outbound slice reports none.
+ * `contains` keeps
  * only messages whose stored text carries the needle as a case-insensitive
  * substring with whitespace collapsed on both sides — intake already refuses
  * secret-shaped text, so the match runs over the same scrubbed content the
@@ -613,6 +618,7 @@ export function readOwnerThread(options: OwnerThreadOptions, limit = 200, filter
     : filter.contains.toLowerCase().replace(/\s+/g, ' ').trim();
   const inView = (message: OwnerThreadMessage): boolean => {
     if (filter?.channel !== undefined && message.channel !== filter.channel) return false;
+    if (filter?.direction !== undefined && message.direction !== filter.direction) return false;
     if (filter?.since !== undefined) {
       const at = Date.parse(message.at);
       if (!Number.isFinite(at) || at < filter.since) return false;

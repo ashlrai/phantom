@@ -16,7 +16,7 @@ import {
   type OwnerThreadOptions,
 } from '../core/comms/owner-thread.js';
 
-const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--channel <desktop|telegram|email|imessage|slack>] [--since <15m|2h|1d|ISO|epoch-ms>] [--contains <text>] [--json]';
+const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--channel <desktop|telegram|email|imessage|slack>] [--direction <inbound|outbound>] [--since <15m|2h|1d|ISO|epoch-ms>] [--contains <text>] [--json]';
 const SEND_USAGE = 'usage: phm comms send-owner --text <message> [--reply-to <key>] [--idempotency-key <key>] [--json]';
 
 const HELLO_USAGE = 'usage: phm comms owner hello [--json]';
@@ -61,7 +61,7 @@ export async function cmdCommsOwnerStatus(json: boolean, options = ownerThreadOp
 export async function cmdCommsOwner(args: string[], options = ownerThreadOptions()): Promise<number> {
   const verb = args[0];
   if (verb === 'thread') {
-    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json'], values: ['--limit', '--channel', '--since', '--contains'] });
+    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json'], values: ['--limit', '--channel', '--direction', '--since', '--contains'] });
     if (bad) { console.error(bad.message); console.error(THREAD_USAGE); return 2; }
     const limitRaw = args[args.indexOf('--limit') + 1];
     const limit = args.includes('--limit') ? Number(limitRaw) : 200;
@@ -78,6 +78,16 @@ export async function cmdCommsOwner(args: string[], options = ownerThreadOptions
         return 2;
       }
       channel = raw;
+    }
+    let direction: 'inbound' | 'outbound' | undefined;
+    if (args.includes('--direction')) {
+      const raw = args[args.indexOf('--direction') + 1];
+      if (raw !== 'inbound' && raw !== 'outbound') {
+        console.error('--direction takes inbound or outbound.');
+        console.error(THREAD_USAGE);
+        return 2;
+      }
+      direction = raw;
     }
     let since: number | undefined;
     if (args.includes('--since')) {
@@ -103,8 +113,8 @@ export async function cmdCommsOwner(args: string[], options = ownerThreadOptions
       }
       contains = raw;
     }
-    const filter = channel !== undefined || since !== undefined || contains !== undefined
-      ? { ...(channel !== undefined ? { channel } : {}), ...(since !== undefined ? { since } : {}), ...(contains !== undefined ? { contains } : {}) }
+    const filter = channel !== undefined || direction !== undefined || since !== undefined || contains !== undefined
+      ? { ...(channel !== undefined ? { channel } : {}), ...(direction !== undefined ? { direction } : {}), ...(since !== undefined ? { since } : {}), ...(contains !== undefined ? { contains } : {}) }
       : undefined;
     const view = readOwnerThread(options, limit, filter);
     const json = args.includes('--json');
