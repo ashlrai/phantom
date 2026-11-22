@@ -3146,10 +3146,13 @@ with a `reason`); they never throw for bad input or storage faults.
 `postLabelMessage`, `sendHandoff`, `sendWakeRequest`, `announceWork`,
 `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
-carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?, priority?, kind?, job?, matched?, since?, channel?, contains?}, options?)`
+carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, priority?, kind?, job?, matched?, since?, channel?, contains?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
-keeping exact-label matching, `priority` keeps only envelopes stamped
+keeping exact-label matching, `excludeFrom` drops mail sent under every
+registered spelling of one identity through the same matcher — an
+unresolvable ref keeping exact-label matching — composing with `from` so a
+sender both included and excluded matches nothing, `priority` keeps only envelopes stamped
 with that exact P0..P3 band — the same match `comms bus read --priority`
 applies, `kind` keeps only one delivery kind — `dm`, `channel`,
 `handoff` or `legacy`, the same kind each inbox row reports, and `channel`
@@ -3233,11 +3236,14 @@ handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or
 `available`, `agent` the resolved handle or null, and an unknown ref or
 unreadable registry answers `unknown-agent`/`unavailable`, never an empty
-list), `readAgentChannel(name, {topic, from, thread, priority, job, matched, since, contains, after, limit}, options?)`
+list), `readAgentChannel(name, {topic, from, excludeFrom, thread, priority, job, matched, since, contains, after, limit}, options?)`
 (one oldest-first page of a registry channel's live posts addressed to
 `group:<name>:*` — or one topic — with `group.presence` heartbeats
 excluded; `from` filters by sender through identity-label matching,
-`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
+`excludeFrom` drops posts sent under every registered spelling of one
+identity through the same matcher — an unresolvable ref keeping
+exact-label matching — composing with `from` so a sender both included
+and excluded matches nothing, `thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `priority` keeps only posts stamped with that exact P0..P3 band, and `job`
 keeps only posts that name one job — the same `busBodyJobMatch` rule
 `readAgentInbox`'s `job` applies: a `work.post`/`work.status`/`work.result`/`wake`
@@ -3338,10 +3344,12 @@ and
 shares — the inbox page, `readBusEnvelopeById`, wake referents and the
 `agent-messages.v1` `jobState` field. `labelIdentityOf(registry)` binds one
 already-read `AgentRegistry` into the label→identity-key lookup every
-sender filter shares — `readAgentInbox`/`readAgentChannel` `from`,
-`comms bus read`/`watch --from` and `followBusStream` (`fleet bus-follow
+sender filter shares — `readAgentInbox`/`readAgentChannel` `from` and
+`excludeFrom`, `comms bus read`/`watch --from` and
+`followBusStream` (`fleet bus-follow
 --from` and `--exclude-from`, the latter dropping every label of the named
-identity exactly as `comms bus read`/`watch --exclude-from` and
+identity exactly as `readAgentInbox`/`readAgentChannel`
+`excludeFrom`, `comms bus read`/`watch --exclude-from` and
 `fleet_bus_inbox`'s `excludeFrom` do) — resolving a label through handle,
 `agent:` address, stable id or
 alias (exact match first, then lowercase), so a filter naming any spelling

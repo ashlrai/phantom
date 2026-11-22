@@ -1085,7 +1085,13 @@ export function busBodyJobMatch(body: unknown, job: string): boolean {
  * `note`/`context` bodies carrying that v2 thread label; `from` narrows by
  * sender through the same identity-label matching `channel read` uses — a
  * ref that resolves through the registry matches every label of that
- * identity, an unresolvable ref keeps exact-label matching. `priority` keeps
+ * identity, an unresolvable ref keeps exact-label matching. `excludeFrom`
+ * drops mail sent under every registered spelling of one identity — the
+ * same sender-exclusion rule `comms bus read|watch --exclude-from`,
+ * `fleet bus-follow --exclude-from` and `fleet_bus_inbox`'s `excludeFrom`
+ * apply — so a member's noisy sender never reaches the page while every
+ * other sender still does; it composes with `from` (a sender both included
+ * and excluded matches nothing) and with every other filter. `priority` keeps
  * only envelopes stamped with that exact P0..P3 band — the same match
  * `comms bus read --priority` applies — so urgent mail is one filtered read,
  * not a page through the backlog. `job` keeps only mail that names one job:
@@ -1127,8 +1133,8 @@ export function busBodyJobMatch(body: unknown, job: string): boolean {
  * `messages` still returns only the first `limit` of them.
  */
 export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string;
-    matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string; since?: number; channel?: string;
-    contains?: string } = {},
+    excludeFrom?: string; matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string; since?: number;
+    channel?: string; contains?: string } = {},
   options: UnifiedBusOptions = {}): InboxPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
   const countMatched = page.matched === true;
@@ -1141,6 +1147,10 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   }
   if (page.from !== undefined && (typeof page.from !== 'string' || page.from.length === 0 || page.from.length > 128)) {
     return { status: 'invalid', reason: 'Invalid sender filter.' };
+  }
+  if (page.excludeFrom !== undefined &&
+      (typeof page.excludeFrom !== 'string' || page.excludeFrom.length === 0 || page.excludeFrom.length > 128)) {
+    return { status: 'invalid', reason: 'Invalid sender-exclusion filter.' };
   }
   if (priority !== undefined && !BUS_PRIORITIES.includes(priority)) {
     return { status: 'invalid', reason: 'Invalid priority.' };
@@ -1167,6 +1177,8 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   if (!target) return { status: 'unknown-agent', reason: 'Agent is not a registered identity.' };
   const self = `${AGENT_ADDRESS_PREFIX}${target.identity.handle}`;
   const fromMatch = page.from === undefined ? undefined : agentAddressMatcher(labelIdentityOf(read.registry), page.from);
+  const excludeFromMatch = page.excludeFrom === undefined ? undefined
+    : agentAddressMatcher(labelIdentityOf(read.registry), page.excludeFrom);
   const messages: InboxMessage[] = [];
   let matched = 0;
   let cursor = after;
@@ -1201,6 +1213,7 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
         (thread === undefined || busBodyThread(envelope.body) === thread) &&
         (jobFilter === undefined || busBodyJobMatch(envelope.body, jobFilter)) &&
         (fromMatch === undefined || fromMatch(envelope.from)) &&
+        (excludeFromMatch === undefined || !excludeFromMatch(envelope.from)) &&
         (priority === undefined || envelope.priority === priority) &&
         (since === undefined || row.receivedAt >= since) &&
         (channelFilter === undefined || channel === channelFilter) &&
@@ -1646,6 +1659,18 @@ export interface ChannelReadOptions {
    */
   from?: string;
   /**
+   * Sender-exclusion filter: a handle, `agent:<handle>`, stable id or alias.
+   * A ref that resolves through the identity registry drops posts sent under
+   * every label of that identity; an unresolvable ref keeps exact-label
+   * matching — the same `agentAddressMatcher` rule `comms bus read|watch
+   * --exclude-from`, `fleet bus-follow --exclude-from` and `fleet_bus_inbox`'s
+   * `excludeFrom` apply, so a room's noisy member never reaches the
+   * transcript while every other sender still does. It composes with `from`
+   * (a sender both included and excluded matches nothing) and with every
+   * other filter.
+   */
+  excludeFrom?: string;
+  /**
    * Thread filter: the v2 `thread` label a `note`/`context` body carries.
    * Every other body kind — and a note without the field — never matches.
    */
@@ -1703,7 +1728,12 @@ export type ChannelReadPage =
  * (`groupPresence`), not messages. Reading needs no identity and no
  * membership: membership gates posting only, and the rows are the same
  * shared store `comms bus group read` sees. `from` narrows by sender through
- * the same identity-label matching `comms bus read` uses; `thread` narrows to
+ * the same identity-label matching `comms bus read` uses; `excludeFrom`
+ * drops posts sent under every registered spelling of one identity — the
+ * same sender-exclusion rule `comms bus read|watch --exclude-from`,
+ * `fleet bus-follow --exclude-from` and `fleet_bus_inbox`'s `excludeFrom`
+ * apply, with an unresolvable ref keeping exact-label matching — so a room's
+ * noisy member never reaches the transcript; `thread` narrows to
  * `note`/`context` bodies carrying that v2 thread label, `priority`
  * narrows to posts stamped with that exact P0..P3 band, and `job` narrows
  * to posts that name one job — the same `busBodyJobMatch` rule `agents bus
@@ -1770,6 +1800,13 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
     }
     fromMatch = agentAddressMatcher(labelIdentityOf(read.registry), page.from);
   }
+  let excludeFromMatch: ((value: string) => boolean) | undefined;
+  if (page.excludeFrom !== undefined) {
+    if (typeof page.excludeFrom !== 'string' || page.excludeFrom.length === 0 || page.excludeFrom.length > 128) {
+      return { status: 'invalid', reason: 'Invalid sender-exclusion filter.' };
+    }
+    excludeFromMatch = agentAddressMatcher(labelIdentityOf(read.registry), page.excludeFrom);
+  }
   const messages: ChannelReadMessage[] = [];
   let matched = 0;
   let cursor = after;
@@ -1784,6 +1821,7 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
       const accepted = !isGroupPresenceBody(body) && envelope.to.startsWith(prefix) &&
         (exact === undefined || envelope.to === exact) &&
         (fromMatch === undefined || fromMatch(envelope.from)) &&
+        (excludeFromMatch === undefined || !excludeFromMatch(envelope.from)) &&
         (thread === undefined || busBodyThread(body) === thread) &&
         (priority === undefined || envelope.priority === priority) &&
         (job === undefined || busBodyJobMatch(body, job)) &&

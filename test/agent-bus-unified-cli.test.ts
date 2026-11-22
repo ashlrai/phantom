@@ -326,6 +326,41 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['channel', 'read', 'release', '--contains', '   '])).toMatchObject({ code: 1, json: { status: 'invalid' } });
   });
 
+  it('filters inbox and channel reads by --exclude-from', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'relay', '--alias', 'lane-relay'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova', '--member', 'relay'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'atlas dm', '--id', 'x-dm-a'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'relay', '--to', 'nova', '--text', 'relay dm', '--id', 'x-dm-r'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'atlas post', '--id', 'x-ch-a'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'relay', '--text', 'relay post', '--id', 'x-ch-r'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    // Every spelling of the excluded identity drops its mail on both reads.
+    for (const ref of ['relay', 'lane-relay', 'agent:relay']) {
+      const inbox = await run(['inbox', 'nova', '--exclude-from', ref]);
+      expect(inbox.code).toBe(0);
+      expect(inbox.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id).sort())
+        .toEqual(['x-ch-a', 'x-dm-a']);
+      const channel = await run(['channel', 'read', 'release', '--exclude-from', ref]);
+      expect(channel.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id))
+        .toEqual(['x-ch-a']);
+    }
+    // It composes with --from: a sender both included and excluded matches nothing.
+    expect((await run(['inbox', 'nova', '--from', 'relay', '--exclude-from', 'relay'])).json.messages).toEqual([]);
+    expect((await run(['channel', 'read', 'release', '--from', 'relay', '--exclude-from', 'relay'])).json.messages)
+      .toEqual([]);
+    // --matched counts only the accepted rows; a blank value fails closed.
+    expect((await run(['inbox', 'nova', '--exclude-from', 'relay', '--matched'])).json.matched).toBe(2);
+    expect(await run(['inbox', 'nova', '--exclude-from='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['channel', 'read', 'release', '--exclude-from', ''])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('filters inbox reads by --kind', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
