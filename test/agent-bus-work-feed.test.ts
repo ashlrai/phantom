@@ -279,6 +279,32 @@ describe('work-feed view filters', () => {
     expect(ids(projectBusWorkFeedView(result, { repo: 'ashlrai/phantom', provider: 'devin' }))).toEqual(['one']);
   });
 
+  it('keeps jobs by declared dispatch tier; a job with no spec never matches', () => {
+    const result = okResult([
+      viewJob({ id: 'fast', dispatch: { tier: 'fast', scope: 's', acceptance: 'a' } }),
+      viewJob({ id: 'work', dispatch: { tier: 'work', scope: 's', acceptance: 'a' } }),
+      viewJob({ id: 'frontier', dispatch: { tier: 'frontier', scope: 's', acceptance: 'a' } }),
+      viewJob({ id: 'plain' }),
+    ]);
+    expect(ids(projectBusWorkFeedView(result, { tier: 'work' }))).toEqual(['work']);
+    expect(ids(projectBusWorkFeedView(result, { tier: 'fast' }))).toEqual(['fast']);
+    expect(ids(projectBusWorkFeedView(result, { tier: 'frontier' }))).toEqual(['frontier']);
+    // A job carrying no dispatch spec declares no tier and never matches.
+    expect(ids(projectBusWorkFeedView(result, { tier: 'mid' }))).toEqual([]);
+    // The filter composes with the other structured filters and holds regroup.
+    expect(ids(projectBusWorkFeedView(result, { tier: 'work', provider: 'claude' }))).toEqual([]);
+    expect(ids(projectBusWorkFeedView(result, { tier: 'work', status: 'queued' }))).toEqual(['work']);
+    const claims: BusWorkFeedClaims = { source: 'available', truncated: false, holds: [
+      { jobId: 'work', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:x' },
+      { jobId: 'fast', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:y' },
+    ] };
+    const view = projectBusWorkFeedView(okResult(result.status === 'ok' ? result.jobs : [], claims), { tier: 'work' });
+    expect(ids(view)).toEqual(['work']);
+    expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['work']);
+  });
+
   it('keeps only provably-claimable open jobs under --claimable and regroups holds', () => {
     const claims: BusWorkFeedClaims = { source: 'available', truncated: false, holds: [
       { jobId: 'held', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,

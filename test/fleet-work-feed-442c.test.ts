@@ -728,6 +728,44 @@ describe('work-feed --repo, --provider and --claimable filters', () => {
   });
 });
 
+describe('work-feed --tier filter', () => {
+  it('keeps jobs by declared dispatch tier, in text and JSON', async () => {
+    append({ ...post, jobId: 'fake-fast', dispatch: { tier: 'fast', scope: 's', acceptance: 'a' } }, 1);
+    append({ ...post, jobId: 'fake-work', dispatch: { tier: 'work', scope: 's', acceptance: 'a' } }, 2);
+    append({ ...post, jobId: 'fake-plain' }, 3);
+    const log = output();
+    const jobLines = () => log.mock.calls.map(call => String(call[0])).filter(line => line.startsWith('fake-'));
+    // --tier keeps only jobs whose work.post declared that dispatch tier.
+    expect(await cmdFleetWorkFeed(['--root', root, '--tier', 'fast'])).toBe(0);
+    expect(jobLines()).toEqual([expect.stringContaining('fake-fast queued')]);
+    expect(String(log.mock.calls[0]?.[0])).toContain('tier=fast');
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=1 receipts=3 feed=ok');
+    log.mockClear();
+    // A job carrying no dispatch spec declares no tier and never matches.
+    expect(await cmdFleetWorkFeed(['--root', root, '--tier', 'mid', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({ status: 'ok', jobs: [], receipts: 3 });
+    log.mockClear();
+    // The filter composes with the other structured filters.
+    expect(await cmdFleetWorkFeed(['--root', root, '--tier', 'work', '--provider', 'claude'])).toBe(0);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0');
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--tier', 'work', '--repo', 'fake/repo', '--status', 'queued'])).toBe(0);
+    expect(jobLines()).toEqual([expect.stringContaining('fake-work queued')]);
+  });
+
+  it('rejects bad --tier values with usage on stderr and exit 2', async () => {
+    const log = output();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const args of [['--tier'], ['--tier', 'bogus'], ['--tier', 'x', '--tier', 'y'],
+      ['--tier', 'fast', '--tier', 'mid'], ['--root', root, '--tier', 'FAST']]) {
+      expect(await cmdFleetWorkFeed(args)).toBe(2);
+    }
+    expect(log).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledTimes(5);
+    expect(error.mock.calls[0]?.[0]).toContain('Usage: ashlr fleet work-feed');
+  });
+});
+
 describe('busWorkFeedJobHold', () => {
   const feedJob = (claimKeys: string[]): BusWorkFeedJob => ({ id: 'J', owner: 'agent:o', to: 'leaders',
     provider: 'devin', repo: 'a/b', title: 'T', claimKeys, status: 'queued', updatedAt: 1,

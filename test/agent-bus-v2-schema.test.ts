@@ -192,6 +192,7 @@ describe('ashlr agents bus contract', () => {
     expect(j.schemaVersion).toBe(AGENT_BUS_V2_VERSION);
     expect(j).toEqual(JSON.parse(JSON.stringify(busV2ContractSummary())));
     expect(j.bodyKinds).toEqual([...BODY_KINDS]);
+    expect(j.workTiers).toEqual(['fast', 'mid', 'work', 'frontier']);
   });
   it('lists registered adapters and refuses channels that have none', async () => {
     const listed = JSON.parse((await run(['bus', 'channels', 'list', '--json'])).out);

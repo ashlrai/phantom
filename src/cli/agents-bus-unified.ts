@@ -9,7 +9,7 @@ import {
   readAgentChannel, readAgentInbox, readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
   updateWorkStatus, INBOX_KINDS, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
-import { PROVIDERS, providerSchema, WORK_STATUSES, parseClaimKey, type WorkJob } from '../core/agents/bus-v2-schema.js';
+import { PROVIDERS, providerSchema, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedOwnerMatcher, busWorkFeedRepoKey, busWorkFeedToMatcher, BUS_WORK_FEED_CONTAINS_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
@@ -52,7 +52,7 @@ ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--clai
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
-ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--to <label>] [--owner <agent>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--contains <text>]
+ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--contains <text>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>]
@@ -151,7 +151,10 @@ read-only and need no identity; work feed --to keeps jobs announced to that
 routing label and --owner keeps jobs announced by that agent, each under
 every label of one agent identity, --repo keeps jobs announced for one
 owner/name repo (case-insensitive, the claim-key rule), --provider keeps
-jobs announced for one provider, --claimable keeps only open jobs whose
+jobs announced for one provider, --tier keeps only jobs whose announcement
+declared that dispatch tier — a job carrying no dispatch spec declares none
+and never matches, so the filter answers "which jobs are for my tier" in one
+read — --claimable keeps only open jobs whose
 declared claim keys provably include a free key (it implies the claims
 join), --open keeps queued/rescheduled candidates with claim keys, including
 unknown holds, and implies --claims; --since keeps only jobs whose last activity — the newest accepted
@@ -659,6 +662,11 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (providerRaw !== undefined && !providerSchema.safeParse(providerRaw).success) {
         throw new UsageError(`--provider must be one of ${PROVIDERS.join(', ')}.`);
       }
+      const tierRaw = one('--tier');
+      const tier = tierRaw === undefined ? undefined : WORK_TIERS.find(item => item === tierRaw);
+      if (tierRaw !== undefined && tier === undefined) {
+        throw new UsageError(`--tier must be one of ${WORK_TIERS.join(', ')}.`);
+      }
       const contains = one('--contains');
       if (contains !== undefined && (contains.trim() === '' || contains.length > BUS_WORK_FEED_CONTAINS_MAX)) {
         throw new UsageError(`--contains takes a non-empty search text of at most ${BUS_WORK_FEED_CONTAINS_MAX} characters.`);
@@ -668,7 +676,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const result = projectBusWorkFeedView(
         readBusWorkFeed({ root: options.root, claims: p.bools.has('--claims') || claimable || open }),
         { status: status as WorkJob['status'] | undefined, jobId, repo,
-          provider: providerRaw as WorkJob['provider'] | undefined,
+          provider: providerRaw as WorkJob['provider'] | undefined, tier,
           open: open || undefined, claimable: claimable ? true : undefined, since: sinceArg(), contains,
           toMatch: to === undefined ? undefined : busWorkFeedToMatcher(to, { root: options.root }),
           ownerMatch: owner === undefined ? undefined : busWorkFeedOwnerMatcher(owner, { root: options.root }) });
@@ -729,13 +737,13 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
             [tier, scope, acceptance].some(value => value === undefined)) {
           throw new UsageError('--tier, --scope and --acceptance are required together.');
         }
-        if (tier !== undefined && !['fast', 'mid', 'work', 'frontier'].includes(tier)) {
-          throw new UsageError('--tier must be fast, mid, work or frontier.');
+        if (tier !== undefined && !(WORK_TIERS as readonly string[]).includes(tier)) {
+          throw new UsageError(`--tier must be one of ${WORK_TIERS.join(', ')}.`);
         }
         const result = await announceWork({ ...routed, jobId: required('--job'), title: required('--title'),
           repo: required('--repo'), claimKeys: p.values.get('--claim') ?? [],
           provider: one('--provider') as BusProvider | undefined,
-          dispatch: tier === undefined ? undefined : { tier: tier as 'fast' | 'mid' | 'work' | 'frontier',
+          dispatch: tier === undefined ? undefined : { tier: tier as WorkDispatch['tier'],
             scope: scope!, acceptance: acceptance! } }, options);
         return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
       }
