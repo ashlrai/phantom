@@ -214,6 +214,17 @@ export interface RouterWeightEvidence {
   merge_queue_conflicts_known: number;
   merge_queue_retries_known: number;
   merge_queue_recuts_known: number;
+  /**
+   * Group outcomes (the known cohort) carrying a recorded `repo` — the
+   * repo the job targeted, joined by the outcome fold in the bounded
+   * repo-label shape. `repos` tallies the recorded repo labels over the
+   * same cohort, most jobs first — a group's merge rate built wholly on
+   * one repo reads differently than one spread across the fleet, so the
+   * repo mix behind the held-merge figure shows here as advisory
+   * context. Null when no outcome recorded a repo — never zero-filled.
+   */
+  repos_known: number;
+  repos: { repo: string; jobs: number }[] | null;
 }
 
 export interface RouterWeightProposalOptions {
@@ -486,6 +497,16 @@ export interface RouterWeightProposalSet {
    * usage_missing.
    */
   usage_sources: { usage_source: string; jobs: number }[];
+  /**
+   * Top recorded `repo` labels across every folded outcome — known,
+   * unknown and unclassified alike, since repo identity is not merge
+   * evidence (the same scope rule usage_missing/usage_sources follow).
+   * Each entry is the repo the job targeted in the outcome fold's
+   * bounded repo-label shape, so an operator sees which repos the
+   * retained window's outcomes came from. Empty when no outcome
+   * recorded one; counts cover the retained window.
+   */
+  repos: { repo: string; jobs: number }[];
 }
 
 /** Running tallies for the outcome-quality signals; every count starts at zero and means stay sums until emitted. */
@@ -522,6 +543,8 @@ interface WeightEvidenceTally {
   mergeQueueConflicts: number;
   mergeQueueRetries: number;
   mergeQueueRecuts: number;
+  repos: number;
+  repoLabels: Map<string, number>;
 }
 
 const freshTally = (): WeightEvidenceTally => ({
@@ -540,7 +563,7 @@ const freshTally = (): WeightEvidenceTally => ({
   pool: 0, poolKinds: new Map(),
   mergeQueue: 0, mergeQueueBlocked: 0, mergeQueueBlockedReasons: new Map(),
   mergeQueueCheckFailures: 0, mergeQueueConflicts: 0, mergeQueueRetries: 0,
-  mergeQueueRecuts: 0,
+  mergeQueueRecuts: 0, repos: 0, repoLabels: new Map(),
 });
 
 /** Top recorded lane-hint blocking codes kept per group, most jobs first. */
@@ -565,6 +588,8 @@ const MAX_HANDOFF_TRIGGERS = 8;
 const MAX_PROVIDER_WALL_TRIGGERS = 8;
 /** Top recorded pool throttle classes kept per group and in the unknown cohort, most jobs first. */
 const MAX_POOL_KINDS = 8;
+/** Top recorded repo labels kept per group and at set level, most jobs first. */
+const MAX_REPOS = 8;
 
 const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   ci_first_pass_known: t.ciKnown,
@@ -642,6 +667,12 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   merge_queue_conflicts_known: t.mergeQueueConflicts,
   merge_queue_retries_known: t.mergeQueueRetries,
   merge_queue_recuts_known: t.mergeQueueRecuts,
+  repos_known: t.repos,
+  repos: t.repos === 0 ? null
+    : [...t.repoLabels.entries()]
+        .map(([repo, jobs]) => ({ repo, jobs }))
+        .sort((a, b) => b.jobs - a.jobs || a.repo.localeCompare(b.repo))
+        .slice(0, MAX_REPOS),
 });
 
 /**
@@ -653,8 +684,8 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
  * time, merge latency, queue-admission wait, CI wall, publish-station
  * wait, pass^k, dispatch lane
  * overrides, lane-hint blocking codes, session-handoff advisories,
- * provider-wall lane holds, slot-throttle detections and
- * merge-queue friction)
+ * provider-wall lane holds, slot-throttle detections, merge-queue
+ * friction and the recorded repo mix)
  * as advisory evidence over
  * the same known cohort. Recorded lane-hint blocking codes
  * (`lane_hint_blocked_by`) tally per group as
@@ -701,6 +732,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   const mergeQueueBlockedReasonsUnknown = new Map<string, number>();
   const usageMissing = new Map<string, number>();
   const usageSources = new Map<string, number>();
+  const repos = new Map<string, number>();
   let unknownSkipped = 0;
   let unknownDeferred = 0;
   let unknownNoop = 0;
@@ -719,6 +751,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     // outcome tallies its recorded labels — classified or not.
     if (o.usage_missing !== null) usageMissing.set(o.usage_missing, (usageMissing.get(o.usage_missing) ?? 0) + 1);
     if (o.usage_source !== null) usageSources.set(o.usage_source, (usageSources.get(o.usage_source) ?? 0) + 1);
+    // Repo identity is capture evidence like usage provenance, not merge
+    // evidence: every folded outcome tallies its recorded repo —
+    // classified or not.
+    if (o.repo !== null) repos.set(o.repo, (repos.get(o.repo) ?? 0) + 1);
     if (!isRouteId(o.work_class) || !isRouteId(o.lane)) { unclassified++; continue; }
     if (o.merged === null) {
       unknown++;
@@ -934,6 +970,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
       if (o.merge_queue.retries > 0) t.mergeQueueRetries++;
       if (o.merge_queue.recuts > 0) t.mergeQueueRecuts++;
     }
+    if (o.repo !== null) {
+      t.repos++;
+      t.repoLabels.set(o.repo, (t.repoLabels.get(o.repo) ?? 0) + 1);
+    }
     groups.set(key, g);
     known++;
   }
@@ -1008,6 +1048,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     .map(([usage_source, jobs]) => ({ usage_source, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.usage_source.localeCompare(b.usage_source))
     .slice(0, 10);
+  const topRepos = [...repos.entries()]
+    .map(([repo, jobs]) => ({ repo, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.repo.localeCompare(b.repo))
+    .slice(0, MAX_REPOS);
   return { proposals, known_outcomes: known, unknown_outcomes: unknown, unclassified_outcomes: unclassified,
     unknown_empty: unknownEmpty, unknown_nonzero_exit: unknownNonzeroExit,
     unknown_failure_classes: topFailureClasses, unknown_empty_classes: topEmptyClasses,
@@ -1032,7 +1076,8 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     unknown_merge_queue_retries: unknownMergeQueueRetries,
     unknown_merge_queue_recuts: unknownMergeQueueRecuts,
     unknown_unresolved: unknownUnresolved,
-    usage_missing: topUsageMissing, usage_sources: topUsageSources };
+    usage_missing: topUsageMissing, usage_sources: topUsageSources,
+    repos: topRepos };
 }
 
 export interface RouterWeightProposalReport {
@@ -1265,6 +1310,12 @@ export interface RouterWeightProposalReport {
    */
   usage_sources: { usage_source: string; jobs: number }[] | null;
   /**
+   * Top recorded `repo` labels across every folded outcome — see
+   * RouterWeightProposalSet. Null when the ledger was not read; empty
+   * when read but no outcome recorded a repo.
+   */
+  repos: { repo: string; jobs: number }[] | null;
+  /**
    * Health of the fleet controller's recorded lane-quality verdicts
    * (`route.quality.v1` receipts in `queue/fleet-controller.json`, read via
    * controller-quality.ts). 'unreported' means the caller supplied no read —
@@ -1314,7 +1365,7 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
       unknown_merge_queue_check_failures: null, unknown_merge_queue_conflicts: null,
       unknown_merge_queue_retries: null, unknown_merge_queue_recuts: null,
       unknown_unresolved: null,
-      usage_missing: null, usage_sources: null, proposals: [] };
+      usage_missing: null, usage_sources: null, repos: null, proposals: [] };
   }
   const set = proposeRouterWeights(read.outcomes, { ...opts, minSamples: bounds.min_samples, maxShift: bounds.max_shift });
   const status = set.proposals.some(p => p.status === 'proposed') ? 'proposed' : 'insufficient-evidence';
@@ -1368,5 +1419,6 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     unknown_merge_queue_recuts: read.merge_events_state === 'read' ? set.unknown_merge_queue_recuts : null,
     unknown_unresolved: set.unknown_unresolved,
     usage_missing: set.usage_missing, usage_sources: set.usage_sources,
+    repos: set.repos,
     proposals: set.proposals };
 }

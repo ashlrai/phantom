@@ -382,6 +382,8 @@ describe('outcome-quality evidence', () => {
       merge_queue_conflicts_known: 0,
       merge_queue_retries_known: 0,
       merge_queue_recuts_known: 0,
+      repos_known: 0,
+      repos: null,
     });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).toContain('evidence ci_first_pass=0.8(10)');
@@ -547,6 +549,7 @@ describe('outcome-quality evidence', () => {
       merge_queue_known: 0, merge_queue_blocked_known: 0, merge_queue_blocked_reasons: null,
       merge_queue_check_failures_known: 0, merge_queue_conflicts_known: 0,
       merge_queue_retries_known: 0, merge_queue_recuts_known: 0,
+      repos_known: 0, repos: null,
     });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).not.toContain('ci_first_pass=');
@@ -680,10 +683,46 @@ describe('outcome-quality evidence', () => {
     expect(out).toContain('lane_blocked=7(quota_exhausted:5,saturated:5,held:2)');
   });
 
+  it('folds recorded repo labels into group evidence and set tallies', async () => {
+    // dispatchd's queue rows carry the ready line's repo cell; the fold
+    // keeps the newest bounded value per job. Repo identity tallies like
+    // usage provenance — every folded outcome counts at set level, while
+    // the per-group evidence covers the known cohort only.
+    const repoRow = (job: string, lane: string, workClass: string | null, phase: string | null, repo: string): object =>
+      ({ job, lane, model: 'synthetic-model', tier: 'work', ...(workClass === null ? {} : { work_class: workClass }), ...(phase === null ? {} : { phase }), repo });
+    writeLedger([
+      ...Array.from({ length: 15 }, (_, i) => repoRow(`synthetic-repo-a-${i}`, 'alpha', 'code', 'MERGED', 'phantom')),
+      ...Array.from({ length: 5 }, (_, i) => repoRow(`synthetic-repo-b-${i}`, 'alpha', 'code', 'MERGED', 'ashlrai/lexicon')),
+      // An unclassified outcome (no recorded class) still tallies its repo.
+      { job: 'synthetic-repo-unc', lane: 'alpha', phase: 'MERGED', repo: 'phantom' },
+      // An unknown-cohort outcome tallies the same way — repo is not merge evidence.
+      repoRow('synthetic-repo-unq', 'alpha', 'code', 'VERIFIED', 'locus'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({ known_outcomes: 20, unknown_outcomes: 1, unclassified_outcomes: 1 });
+    const p = report.proposals[0];
+    expect(p).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 20 });
+    expect(p.evidence.repos_known).toBe(20);
+    expect(p.evidence.repos).toEqual([
+      { repo: 'phantom', jobs: 15 },
+      { repo: 'ashlrai/lexicon', jobs: 5 },
+    ]);
+    // Set-level repos tally every folded outcome: 15+1 phantom, 5 lexicon, 1 locus.
+    expect(report.repos).toEqual([
+      { repo: 'phantom', jobs: 16 },
+      { repo: 'ashlrai/lexicon', jobs: 5 },
+      { repo: 'locus', jobs: 1 },
+    ]);
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('repos=20(phantom:15,ashlrai/lexicon:5)');
+    expect(out).toContain('repo mix: phantom:16,ashlrai/lexicon:5,locus:1');
+  });
+
   it('reports null usage tallies when the ledger was not read', async () => {
     const { code, report } = await runJson();
     expect(code).toBe(1);
-    expect(report).toMatchObject({ usage_missing: null, usage_sources: null });
+    expect(report).toMatchObject({ usage_missing: null, usage_sources: null, repos: null });
   });
 });
 
