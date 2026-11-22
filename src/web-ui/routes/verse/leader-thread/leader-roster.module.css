@@ -43,9 +43,32 @@
 .surface[data-layout='beside'] .chat { min-width: 0; }
 
 .reading[data-layout='beside'] {
-  flex: 0 1 44%;
-  border-left: 1px solid var(--border-subtle);
+  flex: 0 0 clamp(340px, var(--reading-share, 44%), calc(100% - 420px));
   animation-name: reading-beside-in;
+}
+
+.splitter {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: 1px;
+  background: var(--border-subtle);
+  cursor: col-resize;
+  touch-action: none;
+}
+.splitter::before {
+  position: absolute;
+  inset: 0 calc(var(--space-1) * -1);
+  content: '';
+}
+.splitter:hover,
+.splitter:focus-visible,
+.splitter[data-dragging] { background: var(--accent-500); }
+.splitter:focus-visible { outline: none; box-shadow: 0 0 0 1px var(--accent-500); }
+:global(body[data-verse-resizing='true']) {
+  cursor: col-resize;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 @keyframes reading-beside-in {
