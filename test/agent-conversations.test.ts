@@ -129,6 +129,28 @@ describe('conversations from messages', () => {
     expect(filterConversations(list, { since: T0 + 3 * MIN, agent: 'leader' })).toEqual([]);
   });
 
+  it('contains keeps whole threads where any member subject carries the needle', () => {
+    const list = buildConversations([
+      say('a', 'leader', 'claude', 0, { kind: 'ask', subject: 'fix the parser crash' }),
+      say('b', 'claude', 'leader', 1, { kind: 'reply', replyTo: 'a', subject: 'on it' }),
+      say('c', 'grok', 'zai', 2, { kind: 'status', subject: 'docs  pass   done' }),
+      say('d', 'zai', 'grok', 3, { kind: 'reply', replyTo: 'c', subject: 'ack' }),
+    ], NOW);
+    // Any member subject matches — 'b' alone would not carry it, the pair still does via 'a'.
+    expect(filterConversations(list, { contains: 'parser' }).map(c => c.id)).toEqual(['a']);
+    // Case-insensitive, whitespace collapsed on both sides.
+    expect(filterConversations(list, { contains: 'DOCS   PASS' }).map(c => c.id)).toEqual(['c']);
+    // Whole threads, never partial message lists: both members stay.
+    const [thread] = filterConversations(list, { contains: 'parser' });
+    expect(thread!.messageCount).toBe(2);
+    // It composes with the other filters like every flag here.
+    expect(filterConversations(list, { contains: 'parser', state: 'answered' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { contains: 'parser', agent: 'grok' })).toEqual([]);
+    // A needle that normalizes to nothing imposes no constraint; no match is an honest empty.
+    expect(filterConversations(list, { contains: '   ' })).toHaveLength(2);
+    expect(filterConversations(list, { contains: 'zzz' })).toEqual([]);
+  });
+
   it('an identity resolver matches every label of one agent, an unresolvable side stays strict', () => {
     const list = buildConversations([say('a', 'one', 'two', 0, { kind: 'ask' }), say('b', 'three', 'four', 1, { kind: 'status' })], NOW);
     const same = (label: string) => ['one', 'two', 'query-label'].includes(label) ? 'agt_same' : undefined;
@@ -581,6 +603,32 @@ describe('phm agents conversations --json', () => {
     expect(errors.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('the CLI --contains filters by subject text and refuses a bad needle', async () => {
+    const root = bus(CHAT), lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    // 'build' is only in the answered thread's subjects; 'docs' only in the wait.
+    expect(await run(['--contains', 'BUILD', '--json'])).toBe(0);
+    const hit = JSON.parse(lines.pop()!);
+    expect(hit.conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    expect(hit.matched).toBe(1);
+    expect(await run(['--contains', 'docs', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['m3']);
+    // No match is an honest empty page, matched 0, never an error.
+    expect(await run(['--contains', 'zzz', '--json'])).toBe(0);
+    const none = JSON.parse(lines.pop()!);
+    expect(none.conversations).toEqual([]);
+    expect(none.matched).toBe(0);
+    // It composes with the other filters like every flag here.
+    expect(await run(['--contains', 'build', '--waiting', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations).toEqual([]);
+    // Bad values are usage errors, never a silent default.
+    expect(await run(['--contains'])).toBe(2);
+    expect(await run(['--contains', '   '])).toBe(2);
+    expect(await run(['--contains', 'x'.repeat(513)])).toBe(2);
+    expect(await run(['--contains', '--json'])).toBe(2);
+    expect(errors.length).toBeGreaterThanOrEqual(4);
+  });
+
   it('the API serves the same read behind a read session and checks its query', async () => {
     const root = bus(CHAT);
     const serve = (module: ReturnType<typeof createFleetLiveMapApi>) =>
@@ -618,6 +666,16 @@ describe('phm agents conversations --json', () => {
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?since=bogus`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?since=`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?since=1&since=2`)).status).toBe(400);
+    // contains keeps threads whose member subjects carry the needle — the same
+    // text search --contains applies — and bad needles are refused.
+    const found = await call(`${AGENT_CONVERSATIONS_PATH}?contains=BUILD`);
+    expect(found.status).toBe(200);
+    expect(found.body.conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    expect(found.body.matched).toBe(1);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?contains=`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?contains=%20%20`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?contains=a&contains=b`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?contains=${'x'.repeat(513)}`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?state=open`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?state=`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?limit=0`)).status).toBe(400);

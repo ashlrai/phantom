@@ -90,6 +90,15 @@ export interface ConversationQuery {
    * out even while it still waits, so pair it with `--waiting`/`--state`
    * when the question is "what is still outstanding", not "what moved". */
   since?: number;
+  /** Keep only threads where at least one member message's scrubbed
+   * one-line `subject` carries the needle as a case-insensitive substring —
+   * the same `--contains` text search `phm messages`, `agents bus inbox`
+   * and `agents bus channel read` apply, over the same rendered summaries
+   * those reads show (never the raw body, so a secret-shaped value stays
+   * unfindable). Whitespace collapses on both sides; a needle that
+   * normalizes to nothing imposes no constraint. Whole threads, never
+   * partial message lists: the matched member stays in `messages[]`. */
+  contains?: string;
   /** Cap the returned threads, newest order kept (longest-waiting first,
    * then newest); absent means every matched thread. `matched` still
    * reports the full filtered count. */
@@ -167,15 +176,25 @@ export function groupConversations(messages: readonly ConversationMessage[], now
  * literal `waiting.on` match and never widens. Without a predicate only the
  * literal `waiting.on` label matches. `since` keeps only the threads whose
  * `lastAt` reaches the epoch-ms cutoff — activity inside the window, whole
- * threads like every other filter here.
+ * threads like every other filter here. `contains` keeps only the threads
+ * where at least one member message's scrubbed `subject` carries the needle
+ * — the same text-search contract `phm messages --contains` applies — so
+ * "which thread is about X" is one filtered read.
  */
 export function filterConversations(list: readonly Conversation[], query: ConversationQuery,
   identityOf?: AgentIdentityKeyFor, waitingOnMatch?: (on: string, from: string) => boolean): Conversation[] {
   const agent = query.agent?.toLowerCase();
   const key = agent !== undefined && identityOf ? identityOf(query.agent!) : undefined;
   const owed = query.waitingOn?.toLowerCase();
+  // --contains normalizes once per read — lowercase, whitespace collapsed,
+  // trimmed — the same needle form every other bus read's --contains applies;
+  // a needle that normalizes to nothing imposes no constraint.
+  const needle = query.contains?.toLowerCase().replace(/\s+/g, ' ').trim();
+  const mentions = (c: Conversation): boolean => needle === undefined || needle === '' ||
+    c.messages.some(m => m.subject.toLowerCase().replace(/\s+/g, ' ').includes(needle));
   return list.filter(c => (query.job === undefined || c.jobs.includes(query.job))
     && (query.since === undefined || Date.parse(c.lastAt) >= query.since)
+    && mentions(c)
     && (!agent || c.participants.some(p => p.name.toLowerCase() === agent
       || (key !== undefined && identityOf?.(p.name) === key)))
     && (!query.waitingOnly || c.state === 'waiting')
