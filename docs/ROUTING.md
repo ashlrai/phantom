@@ -354,7 +354,15 @@ attempt worked, so only `jobId` keys an outcome — the attempt id never
 mints a phantom outcome, `session_start`/`session_stop` carry no job
 fields and stay unattached, and a queue job's `session_rotate`/`launch`/
 `finish` rows fold into one outcome whether one session or a later
-retry ran them. `work_class` is the class a jobs row recorded when
+retry ran them. Node-runner finish rows (`phm-node-runner.v1`, the
+multi-Mac node pool's pack executor) carry the same dual-id contract —
+`job` is the per-claim id (`<jobId>:<token>`) and `jobId` the logical
+node-queue id — so only `jobId` keys an outcome, and the runner's
+recorded verdict folds as `node_outcome`/`node_id`/`node_pack`: the
+producer's closed `succeeded`/`fenced`/`failed` execution word for the
+offloaded pack job (result artifacts, never pull requests, so `merged`
+stays `null`) plus the node and pack that ran it in the bounded id
+shape. `work_class` is the class a jobs row recorded when
 one exists; otherwise it is the job's newest `work-market.v1`
 `route_decision` class — the market's own classification of the job,
 written for every evaluated job — and stays `null` when neither ledger
@@ -545,6 +553,25 @@ so rows of every other event leave it standing. All three stay
 `null` when no pool row named the job — the retained window
 recorded no throttle detection, which is unknown, not "no throttle
 ever".
+`node_outcome`/`node_id`/`node_pack` carry the node runner's recorded
+execution verdict — `phm-node-runner.v1` finish rows, the multi-Mac
+node pool's pack executor receipts (src/core/drive/nodes/runner.ts).
+The row counts only on the schema with an `outcome` inside the
+producer's closed vocabulary (`succeeded` — the pack completed and
+staged its result artifact; `fenced` — the claim's lease was lost
+mid-run; `failed` — the pack errored or its result could not be
+staged); the newest recognized finish row replaces the triple
+wholesale and every other row leaves it standing. The verdict is the
+offloaded node-pack job's terminal execution evidence — result
+artifacts, never pull requests, so `merged` stays `null` — while
+`node_id` joins the row's `node` (the machine that ran the pack) and
+`node_pack` its `pack` reference, each only in the bounded identifier
+shape (a malformed value drops to `null` without discarding the
+recorded verdict). Claim and leader fencing tokens on the same rows
+are machinery and never join. All three stay `null` when no
+recognized runner row named the job — the retained window recorded
+no node execution verdict, which is unknown, not "never ran on a
+node".
 `empty_tag` is the fleet's recorded WHY for a job that
 ended empty — the `job.empty-tag.v1` rows `phm jobs empty --record`
 appends to `metrics/empty-tags.jsonl` from empty-final-reason's verdict

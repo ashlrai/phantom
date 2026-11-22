@@ -687,6 +687,26 @@ session or a later retry ran them, and rows carrying `job` without
 `jobId` stay unattached. `session_start`/`session_stop` carry no job
 fields and never mint outcomes; `session_rotate`, `launch` and `finish`
 carry the just-pulled task's ids and fold under the same rule.
+Node-runner finish rows (`phm-node-runner.v1`,
+src/core/drive/nodes/runner.ts — the multi-Mac node pool's pack
+executor) resolve job identity by the same dual-id contract: `job` is
+the unique per-claim id (`<jobId>:<token>` — the claim's fencing token
+makes every attempt distinct) and `jobId` the logical node-queue id the
+claim worked (`ready:<job>:<attempt>`, the node bridge's routerJobId),
+so only `jobId` keys an outcome — the claim-scoped id never mints a
+phantom outcome and a retried claim's finish rows fold into the same
+outcome. The row's `outcome` is the runner's closed terminal verdict
+vocabulary — `succeeded`/`fenced`/`failed` — an execution verdict for
+the offloaded pack job, never a merge phase (node-pack jobs produce
+result artifacts, not pull requests), so it folds as
+`node_outcome`/`node_id`/`node_pack`: the verdict word plus the row's
+`node` and `pack` in the bounded identifier shape (the producer's
+validId alphabet at the file's standard bound; a malformed value drops
+to null without discarding the recorded verdict). The row counts only
+on the schema with an in-vocabulary `outcome`; the newest recognized
+finish row replaces the triple wholesale, claim and leader fencing
+tokens never join, and all three stay `null` when no recognized runner
+row named the job — unknown, never "never ran on a node".
 `lane_hint_blocked_by` is the dispatch claim's recorded lane-hint
 blocking codes — the third field of the claim's lane-override record.
 A solo `claim` row that left its hinted lane spreads the work market's

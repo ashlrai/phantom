@@ -241,6 +241,7 @@ describe('router outcome ledger (612S preservation)', () => {
       handoff_trigger: null, handoff_lane: null, handoff_target: null,
       provider_wall_trigger: null, provider_wall_pattern: null, provider_wall_lane: null,
       pool_kind: null, pool_mem_free_pct: null, pool_swap_gb: null,
+      node_outcome: null, node_id: null, node_pack: null,
       merge_queue: null,
       passk: null,
     }]);
@@ -746,6 +747,73 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(byId.get('ready:RQ-NODE-1:1')).toBeDefined();
     expect(byId.get('attempt-9')).toMatchObject({ merged: null });
     expect(fold.outcomes.some(o => o.job_id.startsWith('sess-'))).toBe(false);
+  });
+
+  it('keys phm-node-runner.v1 rows on jobId and folds the runner verdict', () => {
+    const fold = foldRouterOutcomes([
+      // The runner's finish rows carry two ids under the producer's
+      // contract: `job` is the per-claim id (<jobId>:<token>) and `jobId`
+      // the logical node-queue id. Only jobId may key an outcome — the
+      // claim-scoped id never mints a phantom outcome.
+      '{"schema":"phm-node-runner.v1","ts":"2026-11-20T10:00:00Z","event":"finish","job":"ready:RQ-NODE-1:1:4","jobId":"ready:RQ-NODE-1:1","node":"muse","pack":"shell-check","token":4,"leaderToken":3,"outcome":"succeeded","outputBytes":4242}',
+      // A second node job gets its own outcome.
+      '{"schema":"phm-node-runner.v1","ts":"2026-11-20T10:05:00Z","event":"finish","job":"ready:RQ-NODE-2:1:7","jobId":"ready:RQ-NODE-2:1","node":"mini","pack":"omlx-chat","token":7,"leaderToken":3,"outcome":"failed"}',
+      // A retried claim of the same queue job folds into the same
+      // outcome — one outcome per logical node job, not per claim.
+      '{"schema":"phm-node-runner.v1","ts":"2026-11-20T11:00:00Z","event":"finish","job":"ready:RQ-NODE-1:1:9","jobId":"ready:RQ-NODE-1:1","node":"studio","pack":"codex-file","token":9,"leaderToken":5,"outcome":"fenced"}',
+      // A runner row carrying the claim id without jobId has no logical
+      // job identity — the attempt id never keys an outcome.
+      '{"schema":"phm-node-runner.v1","ts":"2026-11-20T11:01:00Z","event":"finish","job":"ready:RQ-NODE-3:1:2","node":"muse","pack":"shell-check","outcome":"succeeded"}',
+      // Rows under any other schema keep the standard job-first
+      // precedence — a foreign schema's job field still wins.
+      '{"schema":"other.v9","job":"attempt-9","jobId":"logical-9","event":"finish"}',
+    ].join('\n'));
+    expect(fold.unattached_rows).toBe(1);
+    expect(fold.outcomes.map(o => o.job_id)).toEqual([
+      'ready:RQ-NODE-1:1', 'ready:RQ-NODE-2:1', 'attempt-9',
+    ]);
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    // The execution verdict is not a merge verdict: succeeded/failed/
+    // fenced leave merged null, and fencing tokens never join.
+    expect(byId.get('ready:RQ-NODE-1:1')).toMatchObject({
+      node_outcome: 'fenced', node_id: 'studio', node_pack: 'codex-file',
+      merged: null, lane: null, work_class: null, empty: null, exit_code: null,
+      failure_class: null, task_outcome: null, skipped: null, deferred: null, noop: null,
+    });
+    expect(byId.get('ready:RQ-NODE-2:1')).toMatchObject({
+      node_outcome: 'failed', node_id: 'mini', node_pack: 'omlx-chat', merged: null,
+    });
+    expect(byId.get('attempt-9')).toMatchObject({ node_outcome: null, merged: null });
+    expect(fold.outcomes.some(o => o.job_id.includes(':4') || o.job_id.includes(':9'))).toBe(false);
+  });
+
+  it('bounds node runner verdict evidence and keeps unknown null', () => {
+    const fold = foldRouterOutcomes([
+      // An outcome word outside the closed vocabulary skips the row's
+      // node evidence entirely — never recorded raw — while the row
+      // still keys its outcome on jobId.
+      '{"schema":"phm-node-runner.v1","event":"finish","job":"ready:A:1:1","jobId":"ready:A:1","node":"muse","pack":"shell-check","outcome":"Succeeded"}',
+      '{"schema":"phm-node-runner.v1","event":"finish","job":"ready:B:1:1","jobId":"ready:B:1","node":"muse","pack":"shell-check","outcome":"bogus-word"}',
+      // Malformed node/pack values drop to null without discarding the
+      // recorded verdict.
+      '{"schema":"phm-node-runner.v1","event":"finish","job":"ready:C:1:1","jobId":"ready:C:1","node":"bad node!","pack":"ok-pack","outcome":"succeeded"}',
+      '{"schema":"phm-node-runner.v1","event":"finish","job":"ready:D:1:1","jobId":"ready:D:1","pack":"shell-check","outcome":"fenced"}',
+      // The newest recognized runner row replaces the triple wholesale;
+      // an unrecognized later row leaves the standing verdict alone.
+      '{"schema":"phm-node-runner.v1","event":"finish","job":"ready:E:1:1","jobId":"ready:E:1","node":"muse","pack":"shell-check","outcome":"succeeded"}',
+      '{"schema":"phm-node-runner.v1","event":"finish","job":"ready:E:1:2","jobId":"ready:E:1","node":"studio","pack":"codex-file","outcome":"failed"}',
+      '{"schema":"phm-node-runner.v1","event":"finish","job":"ready:E:1:3","jobId":"ready:E:1","node":"other","pack":"other-pack","outcome":"unrecognized"}',
+      // A non-runner row never mints node evidence even carrying the
+      // lookalike fields.
+      '{"job":"F1","event":"finish","outcome":"succeeded","node":"muse","pack":"shell-check"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('ready:A:1')).toMatchObject({ node_outcome: null, node_id: null, node_pack: null });
+    expect(byId.get('ready:B:1')).toMatchObject({ node_outcome: null, node_id: null, node_pack: null });
+    expect(byId.get('ready:C:1')).toMatchObject({ node_outcome: 'succeeded', node_id: null, node_pack: 'ok-pack' });
+    expect(byId.get('ready:D:1')).toMatchObject({ node_outcome: 'fenced', node_id: null, node_pack: 'shell-check' });
+    expect(byId.get('ready:E:1')).toMatchObject({ node_outcome: 'failed', node_id: 'studio', node_pack: 'codex-file' });
+    expect(byId.get('F1')).toMatchObject({ node_outcome: null, node_id: null, node_pack: null, merged: null });
   });
 
   it('folds the claim lane-hint blocking codes, newest claim stands', () => {
