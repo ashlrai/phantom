@@ -14,6 +14,7 @@ import { BUS_PROTOCOL_KINDS, BUS_PROTOCOL_VERSION, isTopicPattern, protocolOf, t
 import { agentAddressMatcher, agentIdentityKeys } from '../core/agents/bus-identity.js';
 import { busBodyThread } from '../core/agents/bus-v2-schema.js';
 import { busBodyJobMatch } from '../core/agents/bus-unified.js';
+import { parseSince } from '../core/fleet/agent-messages.js';
 
 const HELP = `phm comms bus group read <room> <topic> <cursor>
 phm comms bus group presence <room> <topic>
@@ -24,8 +25,8 @@ phm comms bus post --file <envelope.json|->
 phm comms bus post --reply-to <id> --id <new-id> --from <address> --text <text> [--ttl-ms <ms>]
 phm comms bus post-batch --file <batch.json|->
 phm comms bus status
-phm comms bus read [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--thread <label>] [--job <id>]
-phm comms bus watch [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--thread <label>] [--job <id>] [--interval-ms <ms>] [--max-pages <n>] [--timeout-ms <ms>] [--until-reply]
+phm comms bus read [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--thread <label>] [--job <id>] [--since <15m|2h|1d|ISO>]
+phm comms bus watch [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--thread <label>] [--job <id>] [--since <15m|2h|1d|ISO>] [--interval-ms <ms>] [--max-pages <n>] [--timeout-ms <ms>] [--until-reply]
 ${COMMS_BUS_CLAIM_HELP}
 Local JSON transport; no delivery handlers. Bodies are untrusted JSON data.
 Protocol v${BUS_PROTOCOL_VERSION}: a body may carry {"protocol":{"version":1,"kind":<kind>,"topic"?,"payload_ref"?}}.
@@ -49,6 +50,7 @@ ID filters match envelope IDs exactly and case-sensitively; IDs are transport da
 This is an application convention, not an envelope field or authenticated identity.
 --thread matches the v2 thread label on note/context bodies only; every other body kind never matches.
 --job keeps only envelopes naming one job: a work.post/work.status/work.result/wake body declaring that jobId, a worker-handoff assigning that fleet job id through taskId, or a note/context body carrying the job:<id> thread label — the same match agents bus inbox --job and channel read --job apply.
+--since keeps only rows received at or after the cutoff — the same inclusive receivedAt >= since match agents bus inbox --since, channel read --since, wakes --since and phm messages --since apply; the value is 15m, 2h, 1d, epoch ms or an ISO time, resolved once when the read starts.
 All supplied filters must match. Limit applies before filtering; it counts scanned live records, not matches.
 Expired records advance the cursor but do not count toward the limit.
 Priority is a routing attribute; it does not establish identity or authority.
@@ -104,7 +106,7 @@ export interface CommsBusDependencies {
   peers?: CommsBusPeersDeps;
 }
 
-type BusFilters = { id?: string; inReplyTo?: string; to?: string; from?: string; excludeFrom?: string; priority?: string; kind?: string; topic?: string; thread?: string; job?: string };
+type BusFilters = { id?: string; inReplyTo?: string; to?: string; from?: string; excludeFrom?: string; priority?: string; kind?: string; topic?: string; thread?: string; job?: string; since?: string };
 
 /** Resolved address predicates; each is present exactly when its filter is. */
 type BusAddressMatchers = { to?: (value: string) => boolean; from?: (value: string) => boolean; excludeFrom?: (value: string) => boolean };
@@ -227,9 +229,9 @@ async function postBatch(args: string[], options: BusInboxOptions, deps: CommsBu
   return receipt.complete ? 0 : receipt.status === 'invalid' ? 2 : 1;
 }
 
-function filterPage(page: BusInboxPage, filters: BusFilters, addresses: BusAddressMatchers): BusInboxPage {
+function filterPage(page: BusInboxPage, filters: BusFilters, addresses: BusAddressMatchers, sinceMs?: number): BusInboxPage {
   if (page.status !== 'ok' || Object.values(filters).every(value => value === undefined)) return page;
-  return { ...page, messages: page.messages.filter(({ envelope }) =>
+  return { ...page, messages: page.messages.filter(({ envelope, receivedAt }) =>
     (filters.id === undefined || envelope.id === filters.id) &&
     (filters.inReplyTo === undefined || envelope.body !== null && typeof envelope.body === 'object' &&
       !Array.isArray(envelope.body) && Object.hasOwn(envelope.body, 'inReplyTo') && envelope.body.inReplyTo === filters.inReplyTo) &&
@@ -240,7 +242,8 @@ function filterPage(page: BusInboxPage, filters: BusFilters, addresses: BusAddre
     (filters.kind === undefined || protocolOf(envelope.body)?.kind === filters.kind) &&
     (filters.topic === undefined || topicMatches(filters.topic, protocolOf(envelope.body)?.topic ?? '')) &&
     (filters.thread === undefined || busBodyThread(envelope.body) === filters.thread) &&
-    (filters.job === undefined || busBodyJobMatch(envelope.body, filters.job))) };
+    (filters.job === undefined || busBodyJobMatch(envelope.body, filters.job)) &&
+    (sinceMs === undefined || receivedAt >= sinceMs)) };
 }
 
 function waitForPoll(ms: number, signal: AbortSignal): Promise<void> {
@@ -271,7 +274,7 @@ function deliver(json: string, deps: CommsBusDependencies, checkpoint?: ReturnTy
   });
 }
 
-async function watch(after: number, limit: number, interval: number, maxPages: number | undefined, timeout: number | undefined, filters: BusFilters, addresses: BusAddressMatchers, options: BusInboxOptions, deps: CommsBusDependencies, checkpoint: ReturnType<typeof openBusCheckpoint> | undefined, untilReply: boolean): Promise<number> {
+async function watch(after: number, limit: number, interval: number, maxPages: number | undefined, timeout: number | undefined, filters: BusFilters, addresses: BusAddressMatchers, sinceMs: number | undefined, options: BusInboxOptions, deps: CommsBusDependencies, checkpoint: ReturnType<typeof openBusCheckpoint> | undefined, untilReply: boolean): Promise<number> {
   const controller = new AbortController(), stop = (): void => controller.abort();
   const list = deps.list ?? listBusInboxAfter;
   const deliverPage = (json: string): void | Promise<boolean> => {
@@ -300,7 +303,7 @@ async function watch(after: number, limit: number, interval: number, maxPages: n
       }
       if (expired()) break;
       if (page.status === 'ok') {
-        const filtered = filterPage(page, filters, addresses);
+        const filtered = filterPage(page, filters, addresses, sinceMs);
         if (untilReply && filtered.status === 'ok' && filtered.messages.length === 0) {
           // Unrelated page: advance the scan position without emitting output.
           checkpoint?.save(page.nextCursor);
@@ -414,7 +417,7 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
     const token = rest[i]!, inline = /^(--id|--in-reply-to|--reply-to|--to|--from|--exclude-from|--text)=(.*)$/s.exec(token);
     const key = inline?.[1] ?? token;
     const label = key === '--id' || key === '--in-reply-to' || key === '--reply-to' || key === '--to' || key === '--from' || key === '--exclude-from' || key === '--text';
-    const flags = verb === 'post' ? ['--file', '--reply-to', '--id', '--from', '--text', '--ttl-ms'] : verb === 'watch' ? ['--checkpoint', '--after', '--limit', '--interval-ms', '--max-pages', '--timeout-ms', '--until-reply', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority', '--kind', '--topic', '--thread', '--job'] : ['--checkpoint', '--after', '--limit', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority', '--kind', '--topic', '--thread', '--job'];
+    const flags = verb === 'post' ? ['--file', '--reply-to', '--id', '--from', '--text', '--ttl-ms'] : verb === 'watch' ? ['--checkpoint', '--after', '--limit', '--interval-ms', '--max-pages', '--timeout-ms', '--until-reply', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority', '--kind', '--topic', '--thread', '--job', '--since'] : ['--checkpoint', '--after', '--limit', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority', '--kind', '--topic', '--thread', '--job', '--since'];
     if (!flags.includes(key) || values.has(key)) return invalid();
     if (key === '--until-reply') { values.set(key, 'true'); continue; }
     const value = inline ? inline[2] : rest[++i];
@@ -426,12 +429,14 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
     const value = values.get(key);
     if (value !== undefined && (!/^(0|[1-9][0-9]*)$/.test(value) || !Number.isSafeInteger(Number(value)))) return invalid();
   }
-  const filters = { id: values.get('--id'), inReplyTo: values.get('--in-reply-to'), to: values.get('--to'), from: values.get('--from'), excludeFrom: values.get('--exclude-from'), priority: values.get('--priority'), kind: values.get('--kind'), topic: values.get('--topic'), thread: values.get('--thread'), job: values.get('--job') };
+  const filters = { id: values.get('--id'), inReplyTo: values.get('--in-reply-to'), to: values.get('--to'), from: values.get('--from'), excludeFrom: values.get('--exclude-from'), priority: values.get('--priority'), kind: values.get('--kind'), topic: values.get('--topic'), thread: values.get('--thread'), job: values.get('--job'), since: values.get('--since') };
   if (filters.priority !== undefined && !BUS_PRIORITIES.includes(filters.priority as BusPriority)) return invalid();
   if (filters.kind !== undefined && !(BUS_PROTOCOL_KINDS as readonly string[]).includes(filters.kind)) return invalid();
   if (filters.topic !== undefined && !isTopicPattern(filters.topic)) return invalid();
   if (filters.thread !== undefined && !/^[\x21-\x7e]{1,128}$/.test(filters.thread)) return invalid();
   if (filters.job !== undefined && !/^[\x21-\x7e]{1,128}$/.test(filters.job)) return invalid();
+  const sinceMs = filters.since === undefined ? undefined : parseSince(filters.since, (options.now ?? Date.now)());
+  if (sinceMs !== undefined && (sinceMs === null || !Number.isSafeInteger(sinceMs) || sinceMs < 0)) return invalid();
   for (const label of [filters.id, filters.inReplyTo, filters.to, filters.from, filters.excludeFrom]) {
     if (label !== undefined && !validateBusEnvelope({ id: label, from: label, to: label, priority: 'P3', ttl: 1, body: null }).ok) return invalid();
   }
@@ -454,7 +459,7 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
       if (timeout !== undefined && (timeout < 1 || timeout > 3600000)) return invalid();
       const untilReply = values.has('--until-reply');
       if (untilReply && (filters.inReplyTo === undefined || timeout === undefined || maxPages !== undefined)) return invalid();
-      return await watch(after, limit, interval, maxPages, timeout, filters, busAddressMatchers(filters, options), options, deps, checkpoint, untilReply);
+      return await watch(after, limit, interval, maxPages, timeout, filters, busAddressMatchers(filters, options), sinceMs, options, deps, checkpoint, untilReply);
     }
     let result;
     if (verb === 'post') {
@@ -472,7 +477,7 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
         const parsed = text === null ? null : parseBusEnvelope(text);
         result = parsed?.ok ? appendBusInbox(parsed.value, options) : { status: 'invalid' };
       }
-    } else result = filterPage((deps.list ?? listBusInboxAfter)(after, limit, options), filters, busAddressMatchers(filters, options));
+    } else result = filterPage((deps.list ?? listBusInboxAfter)(after, limit, options), filters, busAddressMatchers(filters, options), sinceMs);
     await deliver(JSON.stringify(result), deps, checkpoint);
     if (result.status === 'ok' && verb === 'read') checkpoint?.save((result as BusInboxPage & { status: 'ok' }).nextCursor);
     return busStatusExitCode(result.status);

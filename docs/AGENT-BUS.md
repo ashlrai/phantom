@@ -1081,7 +1081,13 @@ apply, so a raw label read (the `leaders` sink that work announcements
 default to included) answers one job's traffic without paging the whole
 stream. On `bus-follow` only citing envelopes emit message records while
 checkpoints still advance past the rest, so a job-scoped stream resumes on
-the same cursor an unfiltered one would.
+the same cursor an unfiltered one would. `--since <15m|2h|1d|ISO>` narrows
+`comms bus read|watch` to rows received at or after the cutoff — the same
+inclusive `receivedAt >= since` match `agents bus inbox --since`,
+`channel read --since`, `wakes --since` and `phm messages --since` apply,
+resolved once when the read starts; a `--checkpoint` consumer binds the raw
+`--since` value into its filter identity, so a relative window keeps
+resuming while an absolute change fails closed.
 
 ### 4. Work feed
 
