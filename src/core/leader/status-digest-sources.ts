@@ -50,6 +50,8 @@ export interface StatusDigestSources {
   authLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
   /** The `Not live yet` line from `fleet.drift.v1` when merged fleet files are not installed; null when all live or unreadable. */
   notLiveLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
+  /** Read-only warning for a lane still cut after its cause cleared. */
+  adaptLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
   blocker?: (runsDir: string, nowMs: number, lanes: Array<{ lane: string; running: number; target: number; held: boolean }> | null) => Promise<DigestBlocker>;
 }
 
@@ -107,6 +109,10 @@ const defaults: StatusDigestSources = {
   yieldLine: async (runsDir, nowMs) => {
     const { readYieldBy, yieldDigestLine } = await import('../fleet/yield-by.js');
     return yieldDigestLine(await readYieldBy({ by: 'source', now: nowMs, metrics: join(runsDir, 'metrics', 'jobs.jsonl'), queue: join(runsDir, 'queue', 'router-queue.md') }));
+  },
+  adaptLine: async (runsDir, nowMs) => {
+    const { readLaneAdapt, laneAdaptDigestLine } = await import('../fleet/lane-adapt.js');
+    return laneAdaptDigestLine(await readLaneAdapt({ runsDir, now: () => nowMs }));
   },
   blocker: readBlocker,
 };
@@ -221,7 +227,8 @@ export async function gatherStatusDigestInput(runsDir: string, now: Date, overri
   const waste = await fact(() => src.wasteLine?.(runsDir, nowMs) ?? null, 'waste check failed');
   const auth = await fact(() => src.authLine?.(runsDir, nowMs) ?? null, 'sign-in check failed');
   const notLive = await fact(() => src.notLiveLine?.(runsDir, nowMs) ?? null, 'drift check failed');
+  const adapt = await fact(() => src.adaptLine?.(runsDir, nowMs) ?? null, 'adapt check failed');
   const blocker = await fact(() => src.blocker?.(runsDir, nowMs, lanes.ok ? lanes.value : null) ?? undefined, 'blocker check failed');
   const updatePending = installed.ok && published.ok ? versionNewer(published.value, installed.value) : null;
-  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, ...(mergeTime ? { mergeTime } : {}), lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}), ...(supply.ok && supply.value ? { supplyLine: supply.value } : {}), ...(yieldFact.ok && yieldFact.value ? { yieldLine: yieldFact.value } : {}), ...(waste.ok && waste.value ? { wasteLine: waste.value } : {}), ...(auth.ok && auth.value ? { authLine: auth.value } : {}), ...(notLive.ok && notLive.value ? { notLiveLine: notLive.value } : {}), ...(blocker.ok && blocker.value ? { blocker: blocker.value } : {}) };
+  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, ...(mergeTime ? { mergeTime } : {}), lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}), ...(supply.ok && supply.value ? { supplyLine: supply.value } : {}), ...(yieldFact.ok && yieldFact.value ? { yieldLine: yieldFact.value } : {}), ...(waste.ok && waste.value ? { wasteLine: waste.value } : {}), ...(auth.ok && auth.value ? { authLine: auth.value } : {}), ...(notLive.ok && notLive.value ? { notLiveLine: notLive.value } : {}), ...(adapt.ok && adapt.value ? { adaptLine: adapt.value } : {}), ...(blocker.ok && blocker.value ? { blocker: blocker.value } : {}) };
 }
