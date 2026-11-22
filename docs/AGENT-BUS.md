@@ -395,7 +395,14 @@ row the same filters accept across the whole retained store, the same count
 resumes at the newest shown row's cursor, so paging never skips an unshown
 match. Persist
 `nextCursor` only after handling the
-page. `--frame <cli>` prints the page as one bounded block marked untrusted
+page. `fleet_agent_inbox` (the isolated fleet MCP tool) serves the same
+read with the same dimensions as arguments — `agent` required, every inbox
+filter as its MCP counterpart and `matched` as a JSON boolean — under the
+identical `readAgentInbox` validation, so an MCP-connected agent reads its
+addressed mail, channel posts, handoffs and live hold/job annotations
+without shelling out to `phm`; it accepts no caller root or path and
+passes a refused or unavailable page through untouched.
+`--frame <cli>` prints the page as one bounded block marked untrusted
 data, the same for every CLI: each line summarizes the body — `note`,
 `context` and `worker-handoff` carry their message text, while typed
 kinds compose one scrubbed line (`work.status <job> <status> — <detail>`,

@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cmdFleetVitals, readFleetVitalsView, readHostVitals } from '../src/cli/fleet-vitals.js';
+import { MEMORY_GUARD } from '../src/core/resources/lane-autopilot.js';
 import {
   parseSwapoutSample, readSwapoutRateEvidence, syncSwapoutSamples,
   SWAPOUT_SAMPLE_SCHEMA, SWAPOUT_RATE_LEDGER_RELATIVE,
@@ -106,21 +107,52 @@ it('reads the ledger back into the sample distribution fleet vitals tunes agains
     JSON.stringify(sampleRow({ free_pct: 140 })),
   ];
   await writeFile(join(root, SWAPOUT_RATE_LEDGER_RELATIVE), rows.join('\n') + '\n');
-  const evidence = await readSwapoutRateEvidence(root);
+  const evidence = await readSwapoutRateEvidence(root, { guard: MEMORY_GUARD });
   expect(evidence).toMatchObject({
     source: 'degraded', state: 'known', samples: 3, invalidRows: 3,
     oldestAt: SAMPLED_AT, newestAt: new Date((TS_SECONDS + 600) * 1000).toISOString(),
     freePctKnown: 2, freePctMin: 41, freePctMean: 49.5,
     swapGbKnown: 2, swapGbMax: 3,
     swapoutsKnown: 2, swapoutsMean: 1.13, swapoutsMax: 2, swapoutsPositive: 2,
+    // Both recorded free_pct values sit above lowFreePct and raiseFreePct;
+    // neither swap figure reaches its guard threshold.
+    memoryGuard: {
+      constants: MEMORY_GUARD,
+      freePctKnown: 2, swapGbKnown: 2, swapoutsKnown: 2,
+      freeBelowLowShare: 0, freeAboveRaiseShare: 1,
+      swapoutsGrowingShare: 0, swapAboveBackstopShare: 0,
+    },
+  });
+});
+
+it('reports the share of samples where each MEMORY_GUARD condition fires', async () => {
+  const root = await fixture(null);
+  await mkdir(join(root, 'metrics'), { recursive: true });
+  const at = (offset: number) => new Date((TS_SECONDS + offset) * 1000).toISOString();
+  const rows = [
+    // free 20 fires both free guards; swapouts 150 and swap 60 fire theirs.
+    sampleRow({ sampled_at: at(0), free_pct: 20, swap_gb: 60, swapouts_per_min: 150 }),
+    // free 55 clears both free guards; swapouts 0.5 and swap 10 clear theirs.
+    sampleRow({ sampled_at: at(300), free_pct: 55, swap_gb: 10, swapouts_per_min: 0.5 }),
+    // A sample carrying only swapouts still counts toward that field's denominator.
+    sampleRow({ sampled_at: at(600), free_pct: null, swap_gb: null, swapouts_per_min: 200 }),
+  ];
+  await writeFile(join(root, SWAPOUT_RATE_LEDGER_RELATIVE), rows.map(JSON.stringify).join('\n') + '\n');
+  const evidence = await readSwapoutRateEvidence(root, { guard: MEMORY_GUARD });
+  expect(evidence.memoryGuard).toEqual({
+    constants: { ...MEMORY_GUARD },
+    freePctKnown: 2, swapGbKnown: 2, swapoutsKnown: 3,
+    freeBelowLowShare: 0.5, freeAboveRaiseShare: 0.5,
+    swapoutsGrowingShare: 0.6667, swapAboveBackstopShare: 0.5,
   });
 });
 
 it('reports unknown evidence when the ledger is absent, empty or unreadable', async () => {
   const root = await fixture(null);
-  expect(await readSwapoutRateEvidence(root)).toMatchObject({
+  expect(await readSwapoutRateEvidence(root, { guard: MEMORY_GUARD })).toMatchObject({
     source: 'missing', state: 'unknown', samples: 0, invalidRows: 0,
     oldestAt: null, newestAt: null, swapoutsMean: null, swapoutsMax: null,
+    memoryGuard: null,
   });
   await mkdir(join(root, 'metrics'), { recursive: true });
   await writeFile(join(root, SWAPOUT_RATE_LEDGER_RELATIVE), '');
@@ -141,6 +173,8 @@ it('round-trips a synced sample into known evidence', async () => {
     swapGbKnown: 1, swapGbMax: 1.5,
     swapoutsKnown: 1, swapoutsMean: 0.25, swapoutsMax: 0.25, swapoutsPositive: 1,
   });
+  // Without injected thresholds the guard assessment stays absent, never guessed.
+  expect(evidence.memoryGuard).toBeNull();
 });
 
 it('adds swapout_rate to the vitals view without touching the HostVitals shape', async () => {
@@ -158,12 +192,16 @@ it('prints the memory-samples line and emits swapout_rate in --json output', asy
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   expect(await cmdFleetVitals(['--runs-dir', root, '--json'])).toBe(0);
   const json = JSON.parse(String(log.mock.calls[0]![0]));
-  expect(json.swapout_rate).toMatchObject({ state: 'known', samples: 1, swapoutsMean: 0.25 });
+  expect(json.swapout_rate).toMatchObject({
+    state: 'known', samples: 1, swapoutsMean: 0.25,
+    memoryGuard: { freeAboveRaiseShare: 1, swapoutsGrowingShare: 0 },
+  });
   log.mockClear();
   expect(await cmdFleetVitals(['--runs-dir', root])).toBe(0);
   const lines = log.mock.calls.map(call => String(call[0]));
   expect(lines.some(line => line.startsWith('Memory samples: 1 recorded'))).toBe(true);
   expect(lines.some(line => line.includes('swapouts/min mean 0.25'))).toBe(true);
+  expect(lines.some(line => line.startsWith('Memory guard:') && line.includes('free>30% 100%'))).toBe(true);
 });
 
 it('prints unknown, never a zeroed guess, when no ledger exists', async () => {
