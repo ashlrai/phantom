@@ -52,6 +52,16 @@ it('returns no data on an empty directory and writes a private snapshot each tic
   expect(await cmdLeaderBrief(['--json', '--write', join(dir, 'copy.json')])).toBe(0);
   expect(JSON.parse(await readFile(join(dir, 'copy.json'), 'utf8'))).toEqual(JSON.parse(String(output.mock.calls[0]![0])));
 });
+it('shows active automatic stops in plain words and carries them in the self-tick summary', async () => {
+  const stop = { family: 'red', until: now / 1000 + 12 * 3600, why: 'auto_0of12_merged_12_empty_red' };
+  await writeFile(join(dir, 'queue/family-stop.tsv'), `^red[0-9]+$\t${stop.until}\tauto_0of12_merged_12_empty_red\n^old$\t${now / 1000}\tauto_0of3_merged_3_empty_old\n`);
+  const brief = await readCompactBrief(dir, now);
+  expect(brief.stopped).toHaveLength(1);
+  expect(compactBriefLines(brief)).toContain("Stopped 'red' for 12 h: 0 of 12 merged");
+  const steps = Object.fromEntries(SELF_TICK_STEP_ORDER.map(s => [s, async () => ({ exitCode: 0, output: JSON.stringify({ familyStops: [stop] }) })])) as SelfTickSteps;
+  expect((await runSelfTick({ runsDir: dir, now: () => now, steps })).report.familyStops).toEqual([stop]);
+  expect(JSON.parse(await readFile(join(dir, 'queue/self-tick-last.json'), 'utf8')).familyStops).toEqual([stop]);
+});
 it('uses actual merge times and keeps only the five oldest stuck jobs', async () => {
   await writeFile(join(dir, 'metrics/jobs.jsonl'), JSON.stringify({ event: 'outcome', job: 'old', state: 'MERGED', ts: at, url: 'https://github.com/ashlrai/phantom/pull/7', createdAt: '2026-11-21T10:00:00Z', mergedAt: at }));
   await writeFile(join(dir, 'queue/live-jobs.json'), JSON.stringify({ jobs: Array.from({ length: 8 }, (_, i) => ({ id: `job-${i}`, lane: 'local', status: i === 7 ? 'quiet' : 'stuck', elapsed: i })) }));
