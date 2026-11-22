@@ -4778,6 +4778,17 @@ export async function tick(
       settleObservation(observationOutcome, enqueued === undefined ? undefined : { backlogItems: enqueued });
     }
   };
+  // Lessons whose every cited PR was reverted are withheld, and the
+  // skill-nudge fold discounts merges the standing set proves did not
+  // hold; the reverted set is read at most once a minute. Declared before
+  // runReflectionMaintenance: the off-tick jobs it launches can run before
+  // later const declarations in this scope initialize.
+  let revertedCache: { at: number; keys: ReadonlySet<string> } | null = null;
+  const revertedKeys = (): ReadonlySet<string> => {
+    const now = Date.now();
+    if (!revertedCache || now - revertedCache.at > 60_000) revertedCache = { at: now, keys: revertedPrKeys() };
+    return revertedCache.keys;
+  };
   const runReflectionMaintenance = async (): Promise<void> => {
     const ci = liveCfg.ciRerun;
     const lastCiLaunch = offTickJobsSnapshot().find(job => job.name === 'ci-rerun');
@@ -4811,11 +4822,12 @@ export async function tick(
         await syncRewardSignalsFromJobsLedger({ signal });
       }, { deadlineMs: TICK_PHASE_REWARD_SYNC_MS, parentSignal: opts.signal, log: phaseLog });
       // Shadow skill learning: fold the same jobs-ledger tail into candidate
-      // recovery skill cards. Best-effort and deduplicated by skill id;
-      // launchOffTickJob keeps it single-flight.
+      // recovery skill cards, with the standing revert set so a merge that
+      // did not hold never seeds a "recovery" draft. Best-effort and
+      // deduplicated by skill id; launchOffTickJob keeps it single-flight.
       launchOffTickJob('skill-nudge', async signal => {
         const { syncSkillNudgesFromJobsLedger } = await import('../fleet/skill-nudge.js');
-        await syncSkillNudgesFromJobsLedger({ signal });
+        await syncSkillNudgesFromJobsLedger({ signal, revertedPrKeys: revertedKeys() });
       }, { deadlineMs: TICK_PHASE_SKILL_NUDGE_MS, parentSignal: opts.signal, log: phaseLog });
       // Empty-job evidence: fold the same tail into empty-tags.jsonl and the
       // dupcheck outcome rows `phm jobs empty --record` used to write only
@@ -5123,13 +5135,6 @@ export async function tick(
     const provider = lane === 'claude-cli' ? 'claude' : lane === 'grok-cli' ? 'grok' : 'codex';
     return resolveNativeSeatLaunch({ accountsRoot: resolveAccountsRoot(routingCfg), provider, seatId: route.seatId,
       ...(provider === 'claude' ? { requireClaudeBrokerSafety: true } : {}) }).ok;
-  };
-  // Lessons whose every cited PR was reverted are withheld; the reverted set is read at most once a minute.
-  let revertedCache: { at: number; keys: ReadonlySet<string> } | null = null;
-  const revertedKeys = (): ReadonlySet<string> => {
-    const now = Date.now();
-    if (!revertedCache || now - revertedCache.at > 60_000) revertedCache = { at: now, keys: revertedPrKeys() };
-    return revertedCache.keys;
   };
   const producerGoalWithGuidance = (prompt: string, item: WorkItem, runId: string, preview = false): string => {
     const harnessGoal = standingTick ? withHarnessProducerPrompt(prompt, hooks) : prompt;
