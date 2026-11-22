@@ -4828,11 +4828,13 @@ export async function tick(
         log: phaseLog,
       });
       // Reward substrate producer: fold the jobs-ledger tail into
-      // reward-signals.jsonl on the same self-improvement cadence. The sync is
-      // best-effort and append-only; launchOffTickJob keeps it single-flight.
+      // reward-signals.jsonl on the same self-improvement cadence, with the
+      // standing revert set so a merge git history proves did not hold never
+      // counts as held. The sync is best-effort and append-only;
+      // launchOffTickJob keeps it single-flight.
       launchOffTickJob('reward-sync', async signal => {
         const { syncRewardSignalsFromJobsLedger } = await import('../metrics/reward-feed.js');
-        await syncRewardSignalsFromJobsLedger({ signal });
+        await syncRewardSignalsFromJobsLedger({ signal, revertedPrKeys: revertedKeys() });
       }, { deadlineMs: TICK_PHASE_REWARD_SYNC_MS, parentSignal: opts.signal, log: phaseLog });
       // Shadow skill learning: fold the same jobs-ledger tail into candidate
       // recovery skill cards, with the standing revert set so a merge that
