@@ -1,7 +1,7 @@
 /**
  * `phm fleet router-weights [--runs-dir <absolute dir>] [--json]` — advisory per-work-class router-weight
  * proposals from recorded outcomes (metrics/jobs.jsonl joined with the bounded side ledgers
- * api-spend/work-market/empty-tags/merge-events plus the reward-signal substrate under the
+ * api-spend/work-market/empty-tags/merge-events/launch-cost plus the reward-signal substrate under the
  * ASHLR home root). Read-only: never writes weights.json and never
  * changes routing. Logic lives in src/core/router/weight-proposals.ts; this file parses argv and renders.
  * Exit: 0 for a bounded read (proposals or an insufficient-evidence refusal); 1 when the ledger is missing,
@@ -16,7 +16,7 @@ import { buildRouterWeightProposalReport, type RouterWeightEvidence, type Router
 export const FLEET_ROUTER_WEIGHTS_USAGE =
   'Usage: phm fleet router-weights [--runs-dir <absolute dir>] [--json]\n' +
   'Advisory only. Reads <runs-dir>/metrics/jobs.jsonl (default ASHLR_RUNS_DIR, then ~/.ashlr-runs) plus the bounded ' +
-  'side ledgers (api-spend/work-market/empty-tags/merge-events) plus the reward-signal ledger ' +
+  'side ledgers (api-spend/work-market/empty-tags/merge-events/launch-cost) plus the reward-signal ledger ' +
   '(<ashlr>/metrics/reward-signals.jsonl) and the fleet controller\'s recorded lane-quality ' +
   'verdicts in <runs-dir>/queue/fleet-controller.json. ' +
   'Proposes bounded weight shifts per work_class/lane from held-merge outcomes (20 known outcomes required, ' +
@@ -48,6 +48,14 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
   if (e.cost_usd_mean !== null) parts.push(`cost_usd=${e.cost_usd_mean}(${e.cost_known})`);
   if (e.acus_mean !== null) parts.push(`acus=${e.acus_mean}(${e.acus_known})`);
   if (e.pool_pct_used_mean !== null) parts.push(`pool_pct_used=${e.pool_pct_used_mean}(${e.pool_pct_used_known})`);
+  if (e.launch_cost_known > 0) {
+    parts.push(`launch_cost=${e.launch_cost_known}` +
+      `(measured:${e.launch_cost_measured}` +
+      (e.launch_peak_processes_mean !== null ? `,peak_processes:${e.launch_peak_processes_mean}` : '') +
+      (e.launch_cpu_pct_mean !== null ? `,cpu_pct_mean:${e.launch_cpu_pct_mean}` : '') +
+      (e.launch_cpu_pct_peak_mean !== null ? `,cpu_pct_peak:${e.launch_cpu_pct_peak_mean}` : '') +
+      ')');
+  }
   if (e.wall_s_mean !== null) parts.push(`wall_s=${e.wall_s_mean}(${e.wall_known})`);
   if (e.ttm_s_mean !== null) parts.push(`ttm_s=${e.ttm_s_mean}(${e.ttm_known})`);
   if (e.queue_wait_s_mean !== null) parts.push(`queue_wait_s=${e.queue_wait_s_mean}(${e.queue_wait_known})`);
@@ -114,7 +122,7 @@ function qualityReceiptLine(r: ControllerQualityReceipt): string {
 }
 
 function proposalLines(report: RouterWeightProposalReport): string[] {
-  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} empty_tags=${report.empty_tag_state} merge_events=${report.merge_events_state} reward=${report.reward_state} controller_quality=${report.controller_quality_state} truncated=${report.truncated} as_of=${report.as_of} ` +
+  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} empty_tags=${report.empty_tag_state} merge_events=${report.merge_events_state} reward=${report.reward_state} launch_cost=${report.launch_cost_state} controller_quality=${report.controller_quality_state} truncated=${report.truncated} as_of=${report.as_of} ` +
     'advisory-only: not applied to routing or weights.json';
   if (report.status === 'unavailable') {
     return [header, `unavailable: ledger state=${report.ledger.state}; no proposals were computed`, `ledger ${report.ledger.path}`];
@@ -216,6 +224,11 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
       ? [`reward coverage: reward-signals.jsonl ${report.reward_state}; no reward-signal evidence joined`]
       : report.reward_truncated
         ? ['reward coverage: retained tail only; reward-signal joins cover the newest bytes']
+        : []),
+    ...(report.launch_cost_state !== 'read'
+      ? [`launch-cost coverage: launch-cost.jsonl ${report.launch_cost_state}; no launch resource evidence joined`]
+      : report.launch_cost_truncated
+        ? ['launch-cost coverage: retained tail only; launch_cost joins cover the newest bytes']
         : []),
     ...(report.controller_quality_state !== 'read' && report.controller_quality_state !== 'unreported'
       ? [`controller-quality coverage: fleet-controller.json ${report.controller_quality_state}; no lane-quality verdicts joined`]

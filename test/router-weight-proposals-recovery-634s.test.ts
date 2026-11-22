@@ -51,6 +51,17 @@ const writeRewardSignals = (rows: object[]): void => {
   mkdirSync(join(root, 'ashlr', 'metrics'), { recursive: true });
   writeFileSync(rewardSignalsPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
 };
+const launchCostsPath = (): string => join(runs, 'metrics', 'launch-cost.jsonl');
+const writeLaunchCosts = (rows: object[]): void => writeFileSync(launchCostsPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+/** A fleet.launch-cost.v1 row in the shape contrib/mac/launch_cost.py appends (src/core/fleet/launch-cost.ts). */
+const launchCostRow = (launchId: string, status: 'measured' | 'partial' | 'unknown', extra: Record<string, unknown> = {}): object => ({
+  schema: 'fleet.launch-cost.v1', lane: 'alpha', launchId, startedAt: '2026-11-01T00:00:00Z',
+  windowSeconds: 60, sampledSeconds: status === 'measured' ? 60 : 30, samples: status === 'measured' ? 60 : 6,
+  peakProcesses: status === 'unknown' ? null : 4,
+  meanCpuPercentOneCore: status === 'unknown' ? null : 12.5,
+  peakCpuPercentOneCore: status === 'unknown' ? null : 40,
+  status, ...extra,
+});
 /** A reward-signals.jsonl v1 row in the shape the reward-sync feed appends. */
 const rewardRow = (jobId: string, merged: boolean, pctUsedDelta: number | null): object => ({
   v: 1, jobId, pool: 'codex-cmp', repo: 'ashlrai/phantom', merged,
@@ -375,6 +386,11 @@ describe('outcome-quality evidence', () => {
       acus_mean: null,
       pool_pct_used_known: 0,
       pool_pct_used_mean: null,
+      launch_cost_known: 0,
+      launch_cost_measured: 0,
+      launch_peak_processes_mean: null,
+      launch_cpu_pct_mean: null,
+      launch_cpu_pct_peak_mean: null,
       diff_files_known: 0,
       diff_files_mean: null,
       diff_lines_known: 0,
@@ -554,6 +570,8 @@ describe('outcome-quality evidence', () => {
       passk_known: 0, passk_mean: null,
       acus_known: 0, acus_mean: null,
       pool_pct_used_known: 0, pool_pct_used_mean: null,
+      launch_cost_known: 0, launch_cost_measured: 0,
+      launch_peak_processes_mean: null, launch_cpu_pct_mean: null, launch_cpu_pct_peak_mean: null,
       diff_files_known: 0, diff_files_mean: null,
       diff_lines_known: 0, diff_lines_mean: null,
       usage_missing_known: 0,
@@ -1744,6 +1762,56 @@ describe('reward-signal evidence', () => {
     const { out } = await run(['--runs-dir', runs]);
     expect(out).toContain('reward=missing');
     expect(out).toContain('reward coverage: reward-signals.jsonl missing');
+  });
+});
+
+describe('launch-cost evidence', () => {
+  it('folds the recorded launch probe into per-group evidence with status and metric coverage', async () => {
+    writeLedger(merged(20));
+    writeLaunchCosts([
+      // The producer keys measured/partial rows <job>-<12-hex claim hash>.
+      launchCostRow('synthetic-MERGED-alpha-code-0-aaaabbbbcccc', 'measured'),
+      launchCostRow('synthetic-MERGED-alpha-code-1-aaaabbbbcccd', 'measured', { peakProcesses: 6, meanCpuPercentOneCore: 20, peakCpuPercentOneCore: 50 }),
+      launchCostRow('synthetic-MERGED-alpha-code-2-aaaabbbbccce', 'partial', { peakProcesses: 8, meanCpuPercentOneCore: 30, peakCpuPercentOneCore: 60 }),
+      // Unknown probes key the bare job id and record no figures.
+      launchCostRow('synthetic-MERGED-alpha-code-3', 'unknown'),
+      launchCostRow('synthetic-MERGED-alpha-code-4-aaaabbbbcccf', 'measured', { peakProcesses: 2, meanCpuPercentOneCore: 5, peakCpuPercentOneCore: 10 }),
+      // A row for a job outside the jobs window joins nothing.
+      launchCostRow('synthetic-elsewhere-aaaabbbbcccg', 'measured'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      launch_cost_state: 'read', launch_cost_truncated: false,
+      known_outcomes: 20,
+    });
+    expect(report.proposals).toHaveLength(1);
+    expect(report.proposals[0].evidence).toMatchObject({
+      // Five jobs carry a recorded probe verdict; three of them measured.
+      launch_cost_known: 5, launch_cost_measured: 3,
+      // Metric means cover only the rows that recorded figures — the
+      // unknown probe contributes its status, never a zeroed reading.
+      launch_peak_processes_mean: 5,
+      launch_cpu_pct_mean: 16.875,
+      launch_cpu_pct_peak_mean: 40,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('launch_cost=read');
+    expect(out).toContain('launch_cost=5(measured:3,peak_processes:5,cpu_pct_mean:16.875,cpu_pct_peak:40)');
+  });
+
+  it('reports launch-cost coverage missing and evidence nulls when the ledger was not read', async () => {
+    writeLedger(merged(20));
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({ launch_cost_state: 'missing', launch_cost_truncated: false });
+    expect(report.proposals[0].evidence).toMatchObject({
+      launch_cost_known: 0, launch_cost_measured: 0,
+      launch_peak_processes_mean: null, launch_cpu_pct_mean: null, launch_cpu_pct_peak_mean: null,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('launch_cost=missing');
+    expect(out).toContain('launch-cost coverage: launch-cost.jsonl missing');
   });
 });
 
