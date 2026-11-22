@@ -32,6 +32,7 @@ not automatically the host's state.
 | MCP tool | Returns |
 | --- | --- |
 | `fleet_work_feed` | The bus v2 work feed — announced jobs with status, provider, tier, claim-key hold coverage and the same filter set as `phm fleet work-feed`; `matched`/`omitted` report honest truncation under `limit`. |
+| `fleet_agent_inbox` | One agent's addressed bus inbox — the same readAgentInbox projection as `phm agents bus inbox`: delivery kinds, sender/channel/job filters, live held/holder and job feed-state annotations; `agent` is required, `after`/`limit` page by cursor and `matched` reports the true filtered total. |
 | `fleet_work_board` | The same bus work board; optional `limit` and exact `thread` filter. |
 | `fleet_coordination_claims` | Read-only fresh host advisory coordination claims, newest first. Reading a claim never creates one. |
 | `fleet_claim_execution` | Read-only sanitized evidence of which live advisory claims have started executing. Grants no claim authority. |
