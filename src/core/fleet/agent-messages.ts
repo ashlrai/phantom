@@ -6,7 +6,7 @@
  * identities, and every emitted string passes the shared secret scrub.
  */
 import { scrubSecrets } from '../util/scrub.js';
-import { PROVIDERS } from '../agents/bus-v2-schema.js';
+import { busBodyThread, PROVIDERS } from '../agents/bus-v2-schema.js';
 import { busBodyJobId, busBodySummary, busInboxJobMarker, jobAnnotationFromFeed,
   type BusEnvelopeLookupJob } from '../agents/bus-unified.js';
 import { readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
@@ -20,7 +20,7 @@ export const AGENT_MESSAGES_MAX_LIMIT = 1024;
 export const AGENT_MESSAGES_DEFAULT_LIMIT = 50;
 /** Conversation key prefix for messages about one job (`job:<jobId>`). */
 export const JOB_THREAD_PREFIX = 'job:';
-/** A job id is the same printable label every bus job citation carries. */
+/** A job id or thread label is the same printable label every bus read accepts. */
 const JOB_ID = /^[\x21-\x7e]{1,128}$/;
 const SUMMARY_MAX = 160;
 
@@ -50,8 +50,8 @@ export interface AgentMessages {
   /** Damaged bus rows skipped while reading. */
   skipped: number;
 }
-/** `with` narrows `agent` to the two-way talk between that agent and one other; `kind` keeps one classified kind; `priority` keeps one envelope band; `job` keeps the traffic that names one job. */
-export interface AgentMessagesQuery { since?: number; agent?: string; with?: string; kind?: AgentMessageKind; priority?: BusPriority; job?: string; limit?: number }
+/** `with` narrows `agent` to the two-way talk between that agent and one other; `kind` keeps one classified kind; `priority` keeps one envelope band; `job` keeps the traffic that names one job; `thread` keeps only note/context bodies carrying that v2 thread label — a row-level filter `readAgentMessages` applies before projection, the same `busBodyThread` match every other bus read's `--thread` applies. */
+export interface AgentMessagesQuery { since?: number; agent?: string; with?: string; kind?: AgentMessageKind; priority?: BusPriority; job?: string; thread?: string; limit?: number }
 
 type Body = Record<string, unknown>;
 const record = (value: unknown): Body | null =>
@@ -247,7 +247,12 @@ export function filterAgentMessages(messages: readonly AgentMessage[], query: Ag
 }
 
 /**
- * The one typed read behind the CLI, API and panes. Bodies that cite a
+ * The one typed read behind the CLI, API and panes. `thread` keeps only
+ * `note`/`context` bodies carrying that v2 thread label — the same
+ * `busBodyThread` match `agents bus inbox --thread`, `agents bus channel
+ * read --thread`, `comms bus read|watch --thread` and `fleet bus-follow
+ * --thread` apply — filtered on the bus rows before projection so `matched`
+ * counts only the rows every filter accepts. Bodies that cite a
  * job — a work-feed `jobId` or a `worker-handoff`'s `taskId` — get
  * `jobState`, the same live feed state `agents bus
  * inbox`/`show`/`work mine` resolve, from one claims-joined feed read per
@@ -256,10 +261,18 @@ export function filterAgentMessages(messages: readonly AgentMessage[], query: Ag
  */
 export function readAgentMessages(query: AgentMessagesQuery = {}, options: BusInboxOptions = {}): AgentMessages {
   const scan = scanBusInbox(options);
+  // --thread is a row-level filter applied before projection: it keeps only
+  // note/context bodies carrying that v2 thread label — the same
+  // `busBodyThread` match `agents bus inbox --thread`, `channel read
+  // --thread`, `comms bus read|watch --thread` and `fleet bus-follow
+  // --thread` apply — so every other body kind and a note without the field
+  // never matches, and `matched` counts only the rows it accepts.
+  const rows = query.thread === undefined ? scan.rows
+    : scan.rows.filter(row => busBodyThread(row.envelope.body) === query.thread);
   const identityOf = query.agent === undefined && query.with === undefined ? undefined
     : agentIdentityKeys({ root: options.root });
   const jobIds = new Set<string>();
-  for (const row of scan.rows) {
+  for (const row of rows) {
     const jobId = busBodyJobId(row.envelope.body);
     if (jobId !== undefined) jobIds.add(jobId);
   }
@@ -278,7 +291,7 @@ export function readAgentMessages(query: AgentMessagesQuery = {}, options: BusIn
       return annotation;
     };
   }
-  const matched = filterAgentMessages(projectAgentMessages(scan.rows, jobStateOf), query, identityOf);
+  const matched = filterAgentMessages(projectAgentMessages(rows, jobStateOf), query, identityOf);
   const limit = query.limit ?? AGENT_MESSAGES_DEFAULT_LIMIT;
   return { schema: 'agent-messages.v1', source: scan.source, messages: matched.slice(0, limit), matched: matched.length, skipped: scan.skipped };
 }
@@ -293,7 +306,7 @@ export function parseSince(value: string, now = Date.now()): number | null {
 }
 
 /** Shared validation for CLI flags and API query params. */
-export function parseAgentMessagesQuery(input: { since?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; limit?: string }, now = Date.now()):
+export function parseAgentMessagesQuery(input: { since?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; thread?: string; limit?: string }, now = Date.now()):
   { ok: true; query: AgentMessagesQuery } | { ok: false; error: string } {
   const query: AgentMessagesQuery = {};
   if (input.kind !== undefined) {
@@ -314,6 +327,12 @@ export function parseAgentMessagesQuery(input: { since?: string; agent?: string;
       return { ok: false, error: '--job takes a job id (printable label, 1-128 chars).' };
     }
     query.job = input.job;
+  }
+  if (input.thread !== undefined) {
+    if (!JOB_ID.test(input.thread)) {
+      return { ok: false, error: '--thread takes a thread label (printable, 1-128 chars).' };
+    }
+    query.thread = input.thread;
   }
   if (input.since !== undefined) {
     const since = parseSince(input.since, now);
