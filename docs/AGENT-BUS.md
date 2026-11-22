@@ -1066,7 +1066,10 @@ the send path still fails closed on both, so unknown is never open. Each
 section reports its own real
 state — a store that cannot be read reports `unavailable` with null counts,
 never zero, and the probe never throws, writes or takes a lock. Use it before a
-session assumes the bus is healthy.
+session assumes the bus is healthy. `fleet_bus_status` (the isolated fleet
+MCP tool) serves the same probe with no arguments — every store root stays
+server-owned — so an MCP-connected agent reads the same per-section states
+and the `sendGate` verdict without shelling out to `phm`.
 
 **CLI adapters.** `src/core/agents/bus-cli-adapters.ts` covers `claude`,
 `codex`, `devin`, `cursor` and `grok`. Each one detects its CLI (explicit
