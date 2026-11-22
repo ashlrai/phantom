@@ -122,6 +122,9 @@ const HOLDS_MAX = 1024;
 /** Feed statuses that still mean "open for a worker": queued or rescheduled. Progress reports and terminal states are not claimable. */
 export const BUS_FEED_OPEN_STATUSES: ReadonlySet<WorkJob['status']> = new Set(['queued', 'rescheduled']);
 
+/** Longest `--contains` needle the work-feed view accepts; the job text it matches is already bounded far shorter. */
+export const BUS_WORK_FEED_CONTAINS_MAX = 512;
+
 /** Provider of the identity's most recently seen runtime; undefined when it has none. */
 export function runtimeProvider(identity: AgentIdentity): Participant['provider'] | undefined {
   let provider: Participant['provider'] | undefined;
@@ -284,11 +287,24 @@ export interface BusWorkFeedViewFilters {
   toMatch?: (to: string) => boolean;
   /** Announcer predicate over `job.owner` from `busWorkFeedOwnerMatcher`. */
   ownerMatch?: (owner: string) => boolean;
+  /**
+   * Keep only jobs whose descriptive text carries the needle as a
+   * case-insensitive substring — the announcement title, the newest status
+   * detail and the declared dispatch scope/acceptance, each scrubbed,
+   * single-lined and clipped at the same bounds `formatBusWorkFeedJob`
+   * renders, with whitespace collapsed on both sides: the same `--contains`
+   * rule every other bus read applies, so "which announced jobs mention X"
+   * is one filtered read and a secret-shaped value stays unfindable. Ids,
+   * claim keys, statuses and routing labels are structured fields with
+   * their own filters, never search text.
+   */
+  contains?: string;
 }
 
 /**
  * Client-side `--status`/`--job`/`--repo`/`--provider`/`--claimable`/`--since`/
- * `--to`/`--owner` filters and newest-first ordering shared by the feed CLIs;
+ * `--to`/`--owner`/`--contains` filters and newest-first ordering shared by
+ * the feed CLIs;
  * the matchers are the `busWorkFeedToMatcher`/`busWorkFeedOwnerMatcher`
  * predicates. `since` keeps jobs whose `updatedAt` — the newest status
  * receipt time, or the announcement's while no status has moved the job —
@@ -306,6 +322,11 @@ export interface BusWorkFeedViewFilters {
 export function projectBusWorkFeedView(result: BusWorkFeedReadResult, filters: BusWorkFeedViewFilters = {}): BusWorkFeedReadResult {
   if (result.status !== 'ok') return result;
   const { coverage, heldByJob } = busWorkFeedHoldIndex(result.claims);
+  // The needle normalizes once — lowercase, whitespace collapsed, trimmed —
+  // so a phrase typed with stray spacing still finds its job; a blank
+  // needle is the empty substring and narrows nothing.
+  const containsNeedle = filters.contains === undefined ? undefined
+    : filters.contains.toLowerCase().replace(/\s+/g, ' ').trim();
   const jobs = result.jobs
     .filter(job => (filters.status === undefined || job.status === filters.status)
       && (filters.jobId === undefined || job.id === filters.jobId)
@@ -316,7 +337,8 @@ export function projectBusWorkFeedView(result: BusWorkFeedReadResult, filters: B
         && (coverage !== 'complete' || job.claimKeys.some(key => !heldByJob.get(job.id)?.has(key)))))
       && (filters.since === undefined || job.updatedAt >= filters.since)
       && (filters.toMatch === undefined || filters.toMatch(job.to))
-      && (filters.ownerMatch === undefined || filters.ownerMatch(job.owner)))
+      && (filters.ownerMatch === undefined || filters.ownerMatch(job.owner))
+      && (containsNeedle === undefined || busWorkFeedJobSearchText(job).includes(containsNeedle)))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const view: Extract<BusWorkFeedReadResult, { status: 'ok' }> = { ...result, jobs };
   if (result.claims !== undefined) {
@@ -342,6 +364,24 @@ function feedField(value: string, max: number): string {
   // eslint-disable-next-line no-control-regex
   const flat = scrubSecrets(value).replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
+/**
+ * The descriptive text a feed job's `--contains` filter searches: the
+ * announcement title, the newest status detail and the declared dispatch
+ * scope/acceptance — each through the same `feedField` scrub, single-line
+ * and display clip the job line renders, joined and normalized like every
+ * other `--contains` haystack. A match is therefore always visible in the
+ * row it selects, and a secret-shaped value is scrubbed before the match
+ * even though the stored envelope keeps it.
+ */
+function busWorkFeedJobSearchText(job: BusWorkFeedJob): string {
+  return [
+    feedField(job.title, FEED_TITLE_MAX),
+    job.detail === undefined ? '' : feedField(job.detail, FEED_DETAIL_MAX),
+    job.dispatch === undefined ? '' : feedField(job.dispatch.scope, DISPATCH_SCOPE_MAX),
+    job.dispatch === undefined ? '' : feedField(job.dispatch.acceptance, DISPATCH_ACCEPTANCE_MAX),
+  ].join(' ').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
 /**
