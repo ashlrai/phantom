@@ -401,6 +401,44 @@ const VERSION_SYNC_SEMVER = /^\d+\.\d+\.\d+$/;
 const VERSION_SYNC_PREFIX = 'sync-candidate-version: ';
 const VERSION_SYNC_MAX = 4;
 
+// `npm run build` opens with check:version and tsc -- both parsed above --
+// then runs five node helpers and `vite build` (ci.yml's Build step, and
+// the `npm ci && npm run build` preambles in perf-budget.yml and
+// companion-smoke.yml). Each helper's failure output names itself:
+// authority-surface prints `authority-surface: <error>` on stderr while
+// its success summary and `roots not built yet` note stay unparsed;
+// copy-assets prints `[copy-assets] source not found:`; an uncaught
+// throw in any chain script prints node's `file://<abs>:<line>`
+// code-frame header naming the script; and the
+// build-release-dependency-inventory catch prints
+// `release dependency inventory` messages. Vite 8 (rolldown) diagnostics
+// print `[UNRESOLVED_IMPORT] Could not resolve '<spec>' in <importer>`
+// and its commonjs-external throw prints `[vite]: Rolldown failed to
+// resolve import "<spec>" from "<importer>"`; the importer resolves
+// through the same `/<repo>/<repo>/` checkout marker as TAP locations,
+// so the group keys on the real source file whose import closure decides
+// touched. All of these group under `(build)`: a parenthesized identity
+// can never resolve through a vitest pass line, so they classify
+// shared-baseline, pr-caused or unknown -- never probable-flake. Passing
+// builds, vite's `built in` summary, rolldown diagnostics whose file
+// lives only inside the code frame (PARSE_ERROR), OOM kills and
+// unrelated output stay unparsed.
+const BUILD_STEP_NAMES = '(build)';
+const BUILD_STEP_MAX = 24;
+const BUILD_AUTHORITY_SURFACE_OK = /^authority-surface: \d+ files, \d+ packages, \d+ missing roots, \d+ unresolved — digest \S+$/;
+const BUILD_AUTHORITY_SURFACE_NOTE = /^authority-surface: roots not built yet: /;
+const BUILD_VITE_UNRESOLVED = /\[UNRESOLVED_IMPORT\]\s*Could not resolve\s*'[^'\n]*'\s*in\s*(\S+)/;
+const BUILD_VITE_EXTERNAL = /\[vite\]: Rolldown failed to resolve import\s*"[^"\n]*"\s*from\s*"([^"\n]+)"/;
+const BUILD_UNCAUGHT_HEADER = /^file:\/\/.*\/(scripts\/[A-Za-z0-9][A-Za-z0-9._-]*\.mjs):\d+\s*$/;
+const BUILD_CHAIN_SCRIPTS = new Set([
+  'scripts/authority-surface.mjs',
+  'scripts/copy-assets.mjs',
+  'scripts/build-preparation-builtin.mjs',
+  'scripts/build-identity.mjs',
+  'scripts/build-release-dependency-inventory.mjs',
+  'scripts/sync-candidate-version.mjs',
+]);
+
 // Failure files whose real inputs sit outside any import closure: a gate
 // script reads data files directly, so the closure walk alone would miss
 // every input a PR could break. dependencies() seeds these before walking.
@@ -449,6 +487,52 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   // compiles and resolves it -- the manifest carrying the script and
   // pinned deps, its lockfile and the tsconfig tsx reads.
   'scripts/benchmark-memory.ts': ['package.json', 'package-lock.json', 'tsconfig.json'],
+  // The npm run build helpers read data files no import closure reaches.
+  // authority-surface walks the compiled authority closure, so the dist
+  // graph has no enumerable source closure and the toolchain manifests
+  // seed the provable inputs; copy-assets copies the web public assets
+  // and the toolgraph manifest verbatim; build-preparation-builtin reads
+  // the evaluator entries, the trusted preparation workflow source and
+  // the verify wrappers it bundles (the esbuild transitive graph stays
+  // unattributed); build-identity reads package.json. The
+  // release-dependency-inventory script imports compiled dist modules,
+  // so its closure cannot resolve at all -- its closed input list lives
+  // in BUILD_STEP_INPUTS instead.
+  'scripts/authority-surface.mjs': ['package.json', 'package-lock.json', 'tsconfig.json'],
+  'scripts/copy-assets.mjs': ['src/core/toolgraph/graph.json', 'src/core/web/public/app.js', 'src/core/web/public/index.html', 'src/core/web/public/styles.css'],
+  'scripts/build-preparation-builtin.mjs': [
+    'scripts/evaluators/preparation-verification-workflow.ts',
+    'scripts/evaluators/preparation-verification.mjs',
+    'scripts/evaluators/preparation-verification-fixture-runtime.ts',
+    'scripts/evaluators/preparation-verification-fixtures.ts',
+    'scripts/evaluators/preparation-verification-activity.mjs',
+    'scripts/evaluators/preparation-verification-child.mjs',
+    'scripts/evaluators/preparation-verification-controller.mjs',
+    'scripts/evaluators/preparation-verification-native.mjs',
+    'scripts/evaluators/preparation-verification-protocol.mjs',
+    'scripts/evaluators/preparation-verification-tool.mjs',
+    'scripts/evaluators/preparation-workload.mjs',
+    'src/core/resources/engineering-preparation.ts',
+    'src/core/run/verify-commands.ts',
+    'src/core/universe/fixed-evaluator.ts',
+  ],
+  'scripts/build-identity.mjs': ['package.json'],
+};
+
+// Closed input lists for build-step failures whose import closure cannot
+// resolve, keyed by failure file and consulted through the flatInputs
+// chain, so these groups never pick up the vitest harness ambient set.
+const BUILD_STEP_INPUTS: Record<string, readonly string[]> = {
+  // scripts/build-release-dependency-inventory.mjs imports compiled
+  // dist/core modules, so the import-closure walk fails closed; the
+  // closed set is the script itself, the npm pack inputs and the src
+  // modules its dist imports compile from.
+  'scripts/build-release-dependency-inventory.mjs': [
+    'scripts/build-release-dependency-inventory.mjs',
+    'package.json', 'package-lock.json', 'npm-shrinkwrap.json', '.npmrc',
+    'src/core/daemon/runtime-release-dependency-inventory.ts',
+    'src/core/util/private-storage.ts',
+  ],
 };
 
 // The first-paint budget gate measures bundle bytes, not source: the
@@ -506,6 +590,67 @@ function parseVersionSyncFailures(log: string): Failure[] {
     }
     if (line.startsWith(VERSION_SYNC_PREFIX)) {
       out.push({ file: VERSION_SYNC_FILE, names: VERSION_SYNC_NAMES, testId: `${VERSION_SYNC_FILE} > ${VERSION_SYNC_NAMES}`, excerpt: clean(line) });
+    }
+  }
+  return out;
+}
+
+// A vite/rolldown build diagnostic names its importer either
+// repo-relative (`src/main.js` -- the build's cwd is the checkout root)
+// or absolute; the absolute form resolves through the same
+// `/<repo>/<repo>/` checkout marker as TAP locations. node_modules
+// paths, virtual modules and unresolvable absolutes stay unparsed
+// rather than guessed.
+function buildImporterFile(raw: string, repo: string | undefined): string | null {
+  let path = raw.replace(/\\/g, '/');
+  const query = path.indexOf('?');
+  if (query >= 0) path = path.slice(0, query);
+  if (path.startsWith('file://')) path = path.slice('file://'.length);
+  const repoName = repo?.split('/')[1];
+  if (repoName !== undefined) {
+    const marker = `/${repoName}/${repoName}/`;
+    const at = path.indexOf(marker);
+    if (at >= 0) path = path.slice(at + marker.length);
+  }
+  if (!path || path.startsWith('node_modules/') || posix.normalize(path) !== path || path.includes('..') || posix.isAbsolute(path)) return null;
+  return path;
+}
+
+function parseBuildStepFailures(log: string, repo?: string): Failure[] {
+  const out: Failure[] = [];
+  const emit = (file: string, excerpt: string) => {
+    if (out.length >= BUILD_STEP_MAX) return;
+    out.push({ file, names: BUILD_STEP_NAMES, testId: `${file} > ${BUILD_STEP_NAMES}`, excerpt: clean(excerpt) });
+  };
+  for (const line of lines(log)) {
+    if (out.length >= BUILD_STEP_MAX) break;
+    if (line.startsWith('authority-surface: ')) {
+      if (!BUILD_AUTHORITY_SURFACE_OK.test(line) && !BUILD_AUTHORITY_SURFACE_NOTE.test(line)) emit('scripts/authority-surface.mjs', line);
+      continue;
+    }
+    if (line.startsWith('[copy-assets] source not found: ')) {
+      emit('scripts/copy-assets.mjs', line);
+      continue;
+    }
+    if (/^release dependency inventory(?: npm pack)?: /.test(line) || line === 'npm pack file report is missing' || line === 'npm runtime closure exceeds traversal depth') {
+      emit('scripts/build-release-dependency-inventory.mjs', line);
+      continue;
+    }
+    const uncaught = BUILD_UNCAUGHT_HEADER.exec(line);
+    if (uncaught !== null) {
+      if (BUILD_CHAIN_SCRIPTS.has(uncaught[1]!)) emit(uncaught[1]!, line);
+      continue;
+    }
+    const unresolved = BUILD_VITE_UNRESOLVED.exec(line);
+    if (unresolved !== null) {
+      const file = buildImporterFile(unresolved[1]!, repo);
+      if (file !== null) emit(file, line);
+      continue;
+    }
+    const external = BUILD_VITE_EXTERNAL.exec(line);
+    if (external !== null) {
+      const file = buildImporterFile(external[1]!, repo);
+      if (file !== null) emit(file, line);
     }
   }
   return out;
@@ -1500,6 +1645,10 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     if (result.length >= 100) break;
     result.push(failure);
   }
+  for (const failure of parseBuildStepFailures(log, repo)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
   for (const failure of parsePerfBudgetFailures(log)) {
     if (result.length >= 100) break;
     result.push(failure);
@@ -1953,7 +2102,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // measure bundle bytes or wrap the suite run, and never read a
       // file's imports, so the dependency set is each gate's closed
       // input list rather than the import closure walk.
-      const flatInputs = LINT_GUARD_INPUTS[failure.names] ?? FIRST_PAINT_INPUTS[failure.names] ?? TEST_RUNNER_INPUTS[failure.names];
+      const flatInputs = LINT_GUARD_INPUTS[failure.names] ?? FIRST_PAINT_INPUTS[failure.names] ?? TEST_RUNNER_INPUTS[failure.names] ?? BUILD_STEP_INPUTS[failure.file];
       const deps = flatInputs !== undefined ? new Set<string>(flatInputs) : await dependencies(failure.file);
       // Generated artifacts are produced by the clean-tree job, not the test
       // runner: the vitest harness ambient set cannot stale them, so only
@@ -1967,7 +2116,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // the harness, and the secret-shape/
       // secret-scan/version-provenance trust gates have no vitest harness
       // at all, so the ambient set cannot reach any of them.
-      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || flatInputs !== undefined || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
+      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || failure.names === BUILD_STEP_NAMES || flatInputs !== undefined || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
       const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
       observations.push({ pr, failure, touched, runId: failure.runId });
     }

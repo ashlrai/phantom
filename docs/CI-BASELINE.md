@@ -168,6 +168,37 @@ Passing reports (`matches: true`), write-mode results, empty or unknown
 `changed` entries, non-semver versions, malformed or multi-line JSON, and
 unrelated output stay unparsed.
 
+After `tsc`, `npm run build` runs five node helpers and `vite build`
+(ci.yml's Build step, and the `npm ci && npm run build` preambles in
+perf-budget.yml and companion-smoke.yml). Each helper's failure output
+names itself and groups under `<file> > (build)`: authority-surface
+prints `authority-surface: <error>` on stderr (its success summary and
+`roots not built yet` note stay unparsed), copy-assets prints
+`[copy-assets] source not found:`, an uncaught throw in any chain script
+prints node's `file://<abs>:<line>` code-frame header naming the script
+(only the six chain scripts -- authority-surface, copy-assets,
+build-preparation-builtin, build-identity,
+build-release-dependency-inventory and sync-candidate-version -- are
+attributed), and the release-dependency-inventory catch prints
+`release dependency inventory` messages. Vite 8 (rolldown) diagnostics
+print `[UNRESOLVED_IMPORT] Could not resolve '<spec>' in <importer>`
+and its commonjs-external throw prints `[vite]: Rolldown failed to
+resolve import "<spec>" from "<importer>"`; the importer resolves
+repo-relative or through the same `/<repo>/<repo>/` checkout marker as
+TAP locations, so the group keys on the real source file whose import
+closure decides touched. Helper groups seed their direct data inputs as
+static inputs (authority-surface's toolchain manifests, copy-assets'
+web public assets and toolgraph manifest, build-preparation-builtin's
+evaluator entries and trusted preparation sources, build-identity's
+package.json); the release-dependency-inventory script imports compiled
+dist modules so its closure cannot resolve and it uses a closed input
+list instead. Like the other non-test identities these groups can never
+resolve through a vitest pass line and classify `shared-baseline`,
+`pr-caused` or `unknown` -- never `probable-flake`. Passing builds,
+vite's `built in` summary, rolldown diagnostics whose file lives only
+inside the code frame (PARSE_ERROR), node_modules or virtual-module
+importers, OOM kills and unrelated output stay unparsed.
+
 The advisory `perf-budget` workflow times the cold paths in
 `perf/budgets.json` and prints one pretty-printed
 `ashlr.perf-budget-report.v1` JSON document before exiting non-zero.
