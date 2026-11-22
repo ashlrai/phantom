@@ -18,6 +18,7 @@ afterEach(() => {
 function setup() {
   const f = resourceFixture();
   const request = vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/app/fleet-usage' && init?.method === 'GET') return Response.json({ schema: 'fleet-usage.v1', generatedAt: f.snapshot.sampledAt, lanes: [] });
     if (path === '/api/resources' && init?.method === 'GET') return new Response(JSON.stringify(f.snapshot), { status: 200 });
     throw new Error(`Unexpected workspace navigation request: ${path}`);
   });
@@ -40,7 +41,9 @@ describe('workspace navigation uses the existing scoped resource session', () =>
     expect(screen.getByLabelText('Task prompt')).not.toBeVisible();
     await user.click(navigation.getByRole('button', { name: 'Workspace' }));
     expect(screen.getByLabelText('Task prompt')).toHaveValue('Workspace draft');
-    expect(f.request.mock.calls.every(([path, init]) => path === '/api/resources' && init?.method === 'GET')).toBe(true);
+    expect(f.request.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
+      ['/api/resources', 'GET'], ['/api/app/fleet-usage', 'GET'],
+    ]);
     expect(EventSource).not.toHaveBeenCalled();
   });
 
