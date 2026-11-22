@@ -11,6 +11,10 @@
 
 import { readLedgerLines, type YieldLineReader } from './ledger-lines.js';
 import { FILLER_ID, yieldTally, type YieldReport, type YieldRow, type YieldRun } from './slot-yield.js';
+import { dirname, join } from 'node:path';
+import { runsRoot } from '../metrics/loop-collect.js';
+import { readText } from './empty-cause.js';
+import { classifyYieldEmpty, YIELD_EMPTY_LABELS, type YieldEmptyReason } from './empty-why-classify.js';
 
 export const FAMILY_YIELD_SCHEMA = 'fleet.family-yield.v1';
 /** Finished runs a family needs in the window before it can be told to stop. */
@@ -59,10 +63,24 @@ export interface FamilyStopRow { family: string; pattern: string; until: number;
 
 /** Exact recurring name; unlike stop-policy families, internal digits and areas stay distinct. */
 export const launchFamily = (id: string): string => id.replace(/\d+[A-Za-z]?$/, '');
+export type FamilyFinish = { empty: boolean; reason: YieldEmptyReason; at: number };
+/** Last N finished launches, ordered by launch time; running launches never consume the sample. */
+export function shouldPauseFamily(stats: { recent_finishes: readonly FamilyFinish[] } | undefined, n = 4): boolean {
+  const last = stats?.recent_finishes.slice().sort((a, b) => b.at - a.at).slice(0, n) ?? [];
+  return Number.isSafeInteger(n) && n > 0 && last.length === n
+    && last.every(r => r.empty && (r.reason === 'no_eligible_source' || r.reason === 'no_diff'));
+}
+export const pausedFamily = (rows: readonly LaunchFamilyYield[], id: string): boolean =>
+  shouldPauseFamily(rows.find(row => row.family === launchFamily(id)));
+export const readLaunchFamilies = async (root = runsRoot(), now = Date.now()): Promise<LaunchFamilyYield[]> =>
+  (await readFamilyYield(join(root, 'metrics/jobs.jsonl'), 24, now)).launch_families;
 export type LaunchFamilyYield = Pick<FamilyYieldRow, 'family' | 'launches' | 'prs' | 'merged' | 'empty' | 'merged_per_launch'> & {
   empty_tokens: number | null;
   empty_tokens_partial: boolean;
   sentence: string;
+  empty_reasons: Record<YieldEmptyReason, number>;
+  recent_finishes: FamilyFinish[];
+  paused: boolean;
 };
 
 function launchFamilies(runs: readonly YieldRun[]): LaunchFamilyYield[] {
@@ -73,11 +91,16 @@ function launchFamilies(runs: readonly YieldRun[]): LaunchFamilyYield[] {
   }
   return [...groups].map(([family, group]): LaunchFamilyYield => {
     const row = familyRow(family, group), empty = group.filter(r => r.empty);
+    const empty_reasons = Object.fromEntries(Object.keys(YIELD_EMPTY_LABELS).map(k => [k, 0])) as Record<YieldEmptyReason, number>;
+    for (const run of empty) empty_reasons[run.empty_reason ?? 'unknown']++;
+    const top = (Object.keys(empty_reasons) as YieldEmptyReason[]).sort((a, b) => empty_reasons[b] - empty_reasons[a])[0]!;
+    const recent_finishes = group.filter(r => r.finished).map(r => ({ empty: r.empty && !r.merged && r.prs.size === 0, reason: r.empty_reason ?? 'unknown', at: r.at })).sort((a, b) => b.at - a.at);
     const tokens = knownSum(empty.map(r => r.tokens)), partial = empty.some(r => r.tokens === null);
     const amount = tokens === null ? 'unknown tokens' : `${partial ? 'at least ' : ''}${new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(tokens)} tokens`;
     return { family, launches: row.launches, prs: row.prs, merged: row.merged, empty: row.empty,
       merged_per_launch: row.merged_per_launch, empty_tokens: tokens, empty_tokens_partial: partial,
-      sentence: `${family.replace(/^RQ-(?:PHX-)?/, '')}: ${row.merged} of ${row.launches} merged, ${amount} on empty runs` };
+      empty_reasons, recent_finishes, paused: shouldPauseFamily({ recent_finishes }),
+      sentence: `${family.replace(/^RQ-(?:PHX-)?/, '')}: ${row.merged} of ${row.launches} merged, ${amount} on empty runs${row.empty ? `; ${row.empty} of ${row.launches} empty, mostly '${YIELD_EMPTY_LABELS[top]}'` : ''}` };
   }).sort((a, b) => a.merged_per_launch - b.merged_per_launch || (b.empty_tokens ?? -1) - (a.empty_tokens ?? -1)
     || b.launches - a.launches || a.family.localeCompare(b.family));
 }
@@ -227,6 +250,13 @@ export function unknownFamilyYield(hours: number): FamilyYieldReport {
 /** Stream a metrics file through the shared tally; an unreadable file is unknown, never zero. */
 export async function readFamilyYield(path: string, hours: number, now: number, read: YieldLineReader = readLedgerLines): Promise<FamilyYieldReport> {
   const tally = yieldTally(now, hours);
-  if (!await read(path, line => tally.add(line))) return unknownFamilyYield(hours);
-  return familyYieldFromRuns(tally.runs(), now, hours, tally.report());
+  if (!await read(path, line => tally.add(line)).catch(() => false)) return unknownFamilyYield(hours);
+  const runs = tally.runs(), latest = new Map(runs.map(r => [r.job, r]));
+  // Files are overwritten on retries: only the newest attempt may use their evidence.
+  for (let i = 0; i < runs.length; i += 16) await Promise.all(runs.slice(i, i + 16).map(async (run, offset) => {
+    if (!run.empty || run.empty_reason && run.empty_reason !== 'unknown' || latest.get(run.job) !== run || !/^[\w.-]+$/.test(run.job)) return;
+    const texts = await Promise.all(['log', 'publish'].map(ext => readText(join(dirname(path), '..', `${run.job}.${ext}`), 65536)));
+    runs[i + offset] = { ...run, empty_reason: (['precheck_skip', 'worker_error', 'no_eligible_source', 'no_diff'] as const).find(reason => texts.some(text => classifyYieldEmpty(text) === reason)) ?? 'unknown' };
+  }));
+  return familyYieldFromRuns(runs, now, hours, tally.report());
 }

@@ -24,6 +24,7 @@
 import { parseLedgerTs } from '../metrics/loop.js';
 import { isNodePoolLedgerRow } from './jobs-ledger-dialect.js';
 import type { JobsEmptyWhy } from './jobs-empty-why.js';
+import { classifyYieldEmpty, type YieldEmptyReason } from './empty-why-classify.js';
 export const YIELD_MIN_LAUNCHES = 5;
 
 /**
@@ -160,6 +161,7 @@ interface Run {
   /** `at` is the launch time; `last` the newest timestamped row for the run (epoch ms). */
   job: string; lane: string; tier: string; repo: string; /** From the launch row; null when it named none. */ model: string | null; at: number; last: number;
   finished: boolean; empty: boolean; aborted: boolean;
+  empty_reason?: YieldEmptyReason;
   wall: number | null; tokens: number | null;
   prs: Set<string>; merged: boolean; reverted: boolean;
   /** Epoch ms of the credited merge; null when its timestamp is unusable. */
@@ -459,6 +461,8 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
         if (!run) return;
         run.finished = true;
         run.empty ||= row.empty === true;
+        run.empty_reason = typeof row.exit_code === 'number' && row.exit_code !== 0 ? 'worker_error'
+          : classifyYieldEmpty([row.empty_reason, row.reason, row.summary].filter(v => typeof v === 'string').join('\n'));
         run.wall = count(row.wall_s);
         run.tokens = count(row.tokens_total);
       } else if (event === 'publish') {
@@ -467,7 +471,11 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
         // eventless PUBLISHED spelling carries `prUrl` and no `class` at all.
         const url = firstString(row, URL_KEYS);
         if (kind === 'pr' || (kind === 'unknown' && url !== null)) run.prs.add(url ?? `pr:${run.prs.size}`);
-        else if (kind === 'empty') run.empty = true;
+        else if (kind === 'empty') {
+          run.empty = true;
+          const reason = classifyYieldEmpty([row.empty_reason, row.reason, row.summary].filter(v => typeof v === 'string').join('\n'));
+          if (reason !== 'unknown' && run.empty_reason !== 'worker_error') run.empty_reason = reason;
+        }
         else if (kind.startsWith('abort')) run.aborted = true;
       }
       const state = outcomeState(row, event, phase);

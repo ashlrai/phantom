@@ -59,6 +59,7 @@
  * out of the timer.
  */
 import { randomBytes } from 'node:crypto';
+import { pausedFamily, readLaunchFamilies } from './family-yield.js';
 import { constants, existsSync, type Stats } from 'node:fs';
 import { lstat, mkdir, mkdtemp, open, readdir, link, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -617,6 +618,7 @@ async function recutLoopTickLocked(deps: RecutLoopDeps): Promise<RecutLoopTickRe
   const candidates = backlog.items.filter((item) =>
     item.suggestedAction === 'recut' && FLEET_BRIDGE_TITLE_RE.test(item.title));
   if (candidates.length === 0) return result;
+  const familyStats = await readLaunchFamilies(runsDir, nowMs);
 
   let merged: MergedFleetPr[];
   try {
@@ -694,6 +696,7 @@ async function recutLoopTickLocked(deps: RecutLoopDeps): Promise<RecutLoopTickRe
     }
     const id = await nextFreeId(runsDir, dropDir, pr);
     if (id === null) { skip('no-id'); continue; }
+    if (pausedFamily(familyStats, `RQ-PHX-${id}`)) { skip('family-paused'); continue; }
     const file = join(dropDir, `${DROP_JOB_FILE_PREFIX}${id}.md`);
     const unionSafe = await readUnionSafe({ number: pr, headSha }).catch(() => false);
     const body = renderBacklogRecutJob(pr, headSha, item.title, { unionSafe });

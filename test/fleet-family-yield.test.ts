@@ -2,7 +2,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { collapseFamily, familyVerdict, familyYield, launchFamily, type FamilyYieldRow } from '../src/core/fleet/family-yield.js';
+import { collapseFamily, familyVerdict, familyYield, launchFamily, readFamilyYield, shouldPauseFamily, type FamilyYieldRow } from '../src/core/fleet/family-yield.js';
+import { classifyYieldEmpty } from '../src/core/fleet/empty-why-classify.js';
+import { writeDropJob } from '../src/core/fleet/drop-job-writer.js';
+import { mkdirSync } from 'node:fs';
+import { shouldEmitRecut } from '../src/core/fleet/recut-gate.js';
 import { cmdFleetYield, familyYieldLines } from '../src/cli/fleet-yield.js';
 
 const now = Date.parse('2026-11-18T18:00:00Z');
@@ -194,7 +198,7 @@ describe('precise launch families', () => {
     ], now, 24);
     expect(report.launch_families).toEqual([expect.objectContaining({ family: 'RQ-PHX-SCRIPTSLAND', launches: 3,
       prs: 1, merged: 1, empty: 1, merged_per_launch: 1 / 3, empty_tokens: 1_500_000, empty_tokens_partial: false,
-      sentence: 'SCRIPTSLAND: 1 of 3 merged, 1.5M tokens on empty runs' })]);
+      sentence: "SCRIPTSLAND: 1 of 3 merged, 1.5M tokens on empty runs; 1 of 3 empty, mostly 'reason unknown'" })]);
   });
 
   it('ranks the worst rates first and preserves unknown and partial EMPTY usage', () => {
@@ -207,5 +211,47 @@ describe('precise launch families', () => {
     expect(report.launch_families[0]!.sentence).toContain('at least 20 tokens');
     expect(report.launch_families[1]).toMatchObject({ empty_tokens: null, empty_tokens_partial: true });
     expect(report.launch_families[2]).toMatchObject({ empty_tokens: 0, empty_tokens_partial: false });
+  });
+});
+
+describe('EMPTY reason pause', () => {
+  it.each([
+    ['No eligible PR', 'no_eligible_source'], ['source PR already merged', 'no_eligible_source'],
+    ['Worker finished with no changes produced.', 'no_diff'], ['precheck skipped: stale source', 'precheck_skip'],
+    ['MCP tool failed; no diff', 'worker_error'], ['RESULT EMPTY', 'unknown'],
+    ['No eligible PR; permission denied', 'worker_error'],
+    [`No eligible PR\n${'working\n'.repeat(61)}RESULT EMPTY`, 'unknown'],
+  ])('classifies fixture %s', (log, reason) => expect(classifyYieldEmpty(log)).toBe(reason));
+  const history = (name = 'CONSOLELAND', count = 4) => Array.from({ length: count }, (_, i) => {
+    const job = `RQ-PHX-${name}${793 + i}${i === 0 ? 'B' : ''}`;
+    return [launch(job, 10 - i), finish(job, 9.5 - i, { empty: true, summary: i % 2 ? 'no diff' : 'No eligible PR' })];
+  }).flat();
+  it('groups letter siblings and pauses only the last N proven empty finished launches', () => {
+    const lines = history(), stats = familyYield(lines, now, 24).launch_families[0]!;
+    expect(stats).toMatchObject({ family: 'RQ-PHX-CONSOLELAND', paused: true, empty_reasons: { no_diff: 2, no_eligible_source: 2, unknown: 0 } });
+    expect(shouldPauseFamily(stats, 5)).toBe(false);
+    expect(shouldPauseFamily(undefined)).toBe(false);
+    expect(shouldPauseFamily(stats, 0)).toBe(false);
+    expect(shouldEmitRecut({ family: stats.family, stopList: [], lastJobs: [], masterTouched: true, diffContained: false, yieldStats: stats }).code).toBe('family-paused');
+    for (const fields of [{ empty: false }, { empty: true }, { empty: true, summary: 'worker_error' }, { empty: true, summary: 'precheck_skip' }]) {
+      const updated = familyYield([...lines, launch('RQ-PHX-CONSOLELAND799', 1), finish('RQ-PHX-CONSOLELAND799', 0.5, fields)], now, 24);
+      expect(shouldPauseFamily(updated.launch_families[0])).toBe(false);
+    }
+    expect(shouldPauseFamily(familyYield([...lines, launch('RQ-PHX-CONSOLELAND799', 1)], now, 24).launch_families[0])).toBe(true);
+  });
+  it('uses bounded log evidence, and prevents LAND, recut and red-fix drops before writing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'family-pause-'));
+    try {
+      mkdirSync(join(dir, 'metrics'));
+      const lines = ['CONSOLELAND', 'RECUT', 'REDFIX'].flatMap(name => history(name));
+      lines.push(launch('RQ-LOG1', 2), finish('RQ-LOG1', 1, { empty: true }));
+      writeFileSync(join(dir, 'metrics/jobs.jsonl'), lines.join('\n'));
+      writeFileSync(join(dir, 'RQ-LOG1.log'), 'No eligible PR');
+      const report = await readFamilyYield(join(dir, 'metrics/jobs.jsonl'), 24, now);
+      expect(report.launch_families.find(r => r.family === 'RQ-LOG')?.empty_reasons.no_eligible_source).toBe(1);
+      for (const id of ['CONSOLELAND800', 'RECUT800', 'REDFIX800']) {
+        await expect(writeDropJob(dir, { id, lane: 'codex-personal', tier: 'work', body: 'Find a source PR and finish it.' }, () => new Date(now))).rejects.toThrow('family paused');
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
