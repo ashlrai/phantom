@@ -130,4 +130,9 @@ is the same object the desktop imports from
 `learnFleetOutcomes` for its `finished` count — the dispatch log alone
 carries no stamped outcome lines, so the jobs-ledger tail is what makes the
 count real; a missing or unreadable ledger degrades to dispatch-log
-evidence and `sources.metrics` reports the ledger's health.
+evidence and `sources.metrics` reports the ledger's health. Its `merges`
+section reads the same ledger tail for MERGED verdicts (reconciler terminal
+rows and the merged/outcome dialects, newest first, one row per job with
+job, PR, repo, lane and stamp) ahead of any stamped merge lines still
+present in the events log; without the ledger the section keeps only those
+stamped lines.

@@ -9,6 +9,8 @@ import { sanitizePublicJson } from '../util/public-json.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { learnFleetOutcomes, outcomeLearningView } from '../routing/outcome-learning.js';
 import { readLedgerTail, ROUTER_OUTCOME_LEDGER_RELATIVE } from '../router/outcomes.js';
+import { ledgerPhase, ledgerPrUrl, ledgerLane } from './empty-cause.js';
+import { ledgerEventTs, ledgerJobId, ledgerLifecycleEvent, ledgerOutcomeState } from './jobs-ledger-dialect.js';
 import { pinnedContextRows } from './library-pins.js';
 
 export interface ContextPackOptions extends BusInboxOptions {
@@ -57,6 +59,41 @@ async function jobsLedgerTail(runsDir: string): Promise<string | null> {
   return read.state === 'read' ? read.text : null;
 }
 
+/**
+ * Newest-first MERGED verdicts from the jobs-ledger tail, one row per job.
+ * The reconciler's terminal rows are the merge evidence dispatch-events.log
+ * never carried, so the pack's merges section reads them through the shared
+ * ledger dialect — the same helpers wt-audit and the outcome fold apply.
+ * A verdict with no parseable stamp cannot be ordered and stays out; a row
+ * naming neither a job nor a PR URL is unattributable noise and skips too.
+ * Malformed lines are the fold's count elsewhere, not this section's.
+ */
+function recentLedgerMerges(ledger: string | null, limit: number): { at: number; row: Record<string, unknown> }[] {
+  if (ledger === null || limit <= 0) return [];
+  const best = new Map<string, { at: number; row: Record<string, unknown> }>();
+  for (const line of ledger.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let row: Record<string, unknown>;
+    try {
+      const value: unknown = JSON.parse(line);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      row = value as Record<string, unknown>;
+    } catch { continue; }
+    const phase = ledgerPhase(row);
+    const event = ledgerLifecycleEvent(row, phase);
+    if (ledgerOutcomeState(row, event, phase) !== 'MERGED') continue;
+    const at = ledgerEventTs(row, phase);
+    const job = ledgerJobId(row);
+    const pr = ledgerPrUrl(row);
+    if (at === null || (job === null && pr === null)) continue;
+    const key = job ?? pr!;
+    const prev = best.get(key);
+    if (prev !== undefined && prev.at >= at) continue;
+    best.set(key, { at, row });
+  }
+  return [...best.values()].sort((a, b) => b.at - a.at).slice(0, limit);
+}
+
 export async function buildContextPack(options: ContextPackOptions): Promise<string> {
   const { job, lane, runsDir } = options;
   const cap = options.maxTokens ?? 2000, count = options.merges ?? 5;
@@ -100,7 +137,23 @@ export async function buildContextPack(options: ContextPackOptions): Promise<str
   }
   const threads = [...selected.values()].sort((a, b) => a.envelope.priority.localeCompare(b.envelope.priority) || b.cursor - a.cursor)
     .map(({ cursor: at, envelope: { id, from, to, priority, body } }) => ({ source: 'bus-inbox', cursor: at, id, from, to, priority, body }));
-  const merges = events.text.split(/\r?\n/).filter(line => /\b(?:MERGED|MERGE)\b|\bOUTCOME \S+ merged\b|\bstate=merged\b|"state"\s*:\s*"merged"/.test(line)).reverse().slice(0, count);
+  // The ledger's MERGED verdicts lead — they are the recorded merge evidence —
+  // followed by any stamped merge lines a producer still writes to the events
+  // log (legacy/hand-written dialect the outcome fold also accepts). The
+  // shared `count` budget covers both sources, ledger first.
+  const ledgerSource = join(runsDir, ROUTER_OUTCOME_LEDGER_RELATIVE);
+  const mergeRows = [
+    ...recentLedgerMerges(ledger, count).map(({ at, row }) => ({
+      source: ledgerSource,
+      job: ledgerJobId(row),
+      pr: ledgerPrUrl(row),
+      repo: typeof row['repo'] === 'string' && row['repo'].trim() ? row['repo'].trim() : null,
+      lane: ledgerLane(row),
+      at: new Date(at).toISOString(),
+    })),
+    ...events.text.split(/\r?\n/).filter(line => /\b(?:MERGED|MERGE)\b|\bOUTCOME \S+ merged\b|\bstate=merged\b|"state"\s*:\s*"merged"/.test(line)).reverse().slice(0, count)
+      .map(text => ({ source: events.path, text })),
+  ].slice(0, count);
   const learning = outcomeLearningView(learnFleetOutcomes(events.text, ledger));
   const pins = pinnedContextRows(10, { home: options.home });
   const json = compactContext(job, lane, [
@@ -109,7 +162,7 @@ export async function buildContextPack(options: ContextPackOptions): Promise<str
       ...threads.filter(row => row.body && typeof row.body === 'object' && !Array.isArray(row.body) && row.body['status'] === 'blocked' &&
         !projectBusThread(rows, row.id).some(reply => reply.cursor > row.cursor && reply.envelope.body && typeof reply.envelope.body === 'object' && !Array.isArray(reply.envelope.body) &&
           ['resolved', 'closed', 'unblocked'].includes(String(reply.envelope.body['status']))))] },
-    { name: 'merges', rows: merges.map(text => ({ source: events.path, text })) }, { name: 'threads', rows: threads },
+    { name: 'merges', rows: mergeRows }, { name: 'threads', rows: threads },
     ...(pins.length ? [{ name: 'pinned-by-mason', rows: pins }] : []),
   ], cap);
   let log: Awaited<ReturnType<typeof open>> | undefined;
