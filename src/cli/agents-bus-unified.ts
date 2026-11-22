@@ -38,7 +38,7 @@ ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--thread <t
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--channel <name>] [--matched] [--frame <cli>]
-ashlr agents bus wakes [<agent>] [--since <15m|2h|1d|ISO>] [--job <id>]
+ashlr agents bus wakes [<agent>] [--since <15m|2h|1d|ISO>] [--job <id>] [--from <agent>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
@@ -92,7 +92,14 @@ cutoff — the phm messages grammar (15m, 2h, 1d, epoch ms or an ISO
 time), resolved to epoch ms — so fresh mail, a room's recent posts and
 new wake hints are one filtered read without a persisted cursor; inbox
 and channel read match receivedAt inclusively, wakes matches hints
-after it. --channel on inbox keeps only mail addressed to one registry
+after it. --from on wakes keeps only hints whose recorded sender label
+resolves to one agent — a handle, agent:<handle>, stable id or alias
+matching every label of that identity, the same rule inbox --from and
+channel read --from apply, with an unresolvable ref keeping exact-label
+matching; a bus.send hint's sender is the triggering envelope's from, a
+claim-holder wh-… hint's the posting identity's agent:<handle>, so
+"which agent keeps waking me" is one filtered read. --channel on inbox
+keeps only mail addressed to one registry
 channel's group:<name>:* addresses — channel posts and channel-addressed
 handoffs alike — so an agent in several rooms reads one room's pending
 mail in one filtered read; it composes with --kind to separate a room's
@@ -583,7 +590,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       noExtra(2);
       const agent = sub ?? self;
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
-      const page = readAgentWakes(agent, sinceArg(), options, { job: one('--job') });
+      const page = readAgentWakes(agent, sinceArg(), options, { job: one('--job'), from: one('--from') });
       if (page.status !== 'ok') return finish(page, '');
       out(json ? JSON.stringify(page) : [
         ...(page.truncated ? [`${page.matched} wake hint(s) matched; the bounded queue tail is truncated — showing the newest ${page.wakes.length}`] : []),

@@ -1415,13 +1415,27 @@ export type WakePage = { status: 'ok'; agent: string;
  * needs the resolved referent, an unreadable bus store makes the filtered
  * read `unavailable` rather than an empty page, and `matched` then counts
  * the proven matches on the resolved page while `truncated` keeps its
- * queue-tail meaning.
+ * queue-tail meaning. `filter.from` keeps only hints whose recorded `from`
+ * label matches one agent — the same `agentAddressMatcher` identity-label
+ * rule `inbox --from`/`channel read --from` apply over the already-read
+ * registry: a handle, `agent:<handle>`, stable id or alias matches every
+ * label of that identity, and an unresolvable ref keeps exact-label
+ * matching, so unknown identity state never widens the filter. The matched
+ * label is the hint row's own `from` — the triggering envelope's sender on
+ * a `bus.send` hint, the `agent:<handle>` of the identity whose terminal
+ * `work.status` generated a claim-holder `wh-…` hint — so "which agent
+ * keeps waking me" is one filtered read that composes with `--since` and
+ * `--job`.
  */
 export function readAgentWakes(ref: string, sinceAt: number | undefined, options: UnifiedBusOptions = {},
-  filter: { job?: string } = {}): WakePage {
+  filter: { job?: string; from?: string } = {}): WakePage {
   const job = filter.job;
   if (job !== undefined && (typeof job !== 'string' || !THREAD.test(job))) {
     return { status: 'invalid', reason: 'Invalid job id.' };
+  }
+  const from = filter.from;
+  if (from !== undefined && (typeof from !== 'string' || from.length === 0 || from.length > 128)) {
+    return { status: 'invalid', reason: 'Invalid sender filter.' };
   }
   const read = readAgentRegistry(options);
   if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
@@ -1429,10 +1443,13 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
   if (target === undefined && !WAKE_HINT_LABEL.test(ref)) {
     return { status: 'unknown-agent', reason: 'Agent is not a registered identity.' };
   }
+  const fromMatch = from === undefined ? undefined
+    : agentAddressMatcher(labelIdentityOf(read.registry), from);
   const wakes = readBusWakes({ root: options.runsRoot, sinceAt, match: wake =>
-    target !== undefined
+    (fromMatch === undefined || fromMatch(wake.from)) &&
+    (target !== undefined
       ? target.labels.has(wake.to) || (channelOf(wake.to, target.channels) !== null && !target.labels.has(wake.from))
-      : wake.to === ref });
+      : wake.to === ref) });
   if (wakes.state === 'unreadable') return { status: 'unavailable', reason: 'Wake queue is unreadable.' };
   // One bounded store scan serves both per-row resolutions: the claim-holder
   // citation re-derivation and the ordinary hint's referent lookup.
