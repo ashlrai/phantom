@@ -7,8 +7,10 @@
  * bot-seat store `work mine`'s seats section, `id list`'s seat participants
  * and the unified inbox seats source read, the agentnet peer work-dispatch
  * journal `consumePeerWork` and the unified inbox peer-dispatch source read,
- * and the claim-store drift verdict comparing the claim journal with the
- * coordination table it is dual-written to. Each
+ * the agentnet peer coordination ledger `sendPeerMessage`, `readPeerInbox`,
+ * `peers dispatch` and `phm fleet peer-ledger` parse, and the claim-store
+ * drift verdict comparing the claim journal with the coordination table it
+ * is dual-written to. Each
  * section reports its own real state; a section that cannot be read reports
  * unavailable or null, never zero, and the whole read never throws. Read-only:
  * takes no writer lock, writes nothing, makes no network calls and grants
@@ -30,6 +32,7 @@ import { inspectSeatStore } from '../bots/seats.js';
 import { readBusWorkFeed, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import { ownerChatRoot, ownerReceiptDir, readOwnerChatReceipts } from './chat-owner-receipts.js';
 import { readWorkDispatchJournal } from '../agentnet/work-dispatch-journal.js';
+import { readPeerLedger } from '../agentnet/peer-ledger.js';
 import { realHome } from '../real-home.js';
 import type { BusWorkMineBoardOptions } from './bus-work-mine.js';
 
@@ -194,6 +197,22 @@ export interface UnifiedBusStatus {
      * inbox peer-dispatch source lists; same null rule as `receipts`. */
     unpublished: number | null;
   };
+  /** Agentnet peer coordination ledger
+   * (`<busRoot>/agentnet/coordination.json`) behind `phm agentnet peers
+   * send|post|read|dispatch` admission, dedupe and rate limits, `phm fleet
+   * peer-ledger`/`fleet_peer_ledger` and the peer-bus budget gate — read by
+   * `readPeerLedger`, the same reader those surfaces use, under the same
+   * root `agentnetPaths().busRoot` resolves (`realHome()/.ashlr/fleet`, or
+   * the probe's `root` override), so a corrupt, public-mode or otherwise
+   * unreadable ledger is named here instead of leaving status green while
+   * every peer verb refuses closed. Counts only, never peer names, claim
+   * keys, digests, threads or bodies. */
+  peerLedger: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Live (unexpired) coordination rows the peer send budget still
+     * counts; 0 on a verified-missing ledger, null when it cannot be read. */
+    liveRows: number | null;
+  };
 }
 
 /** The board probe: shared task board state plus the fleet queue claim index
@@ -357,15 +376,20 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     seats = { source: 'unavailable', seats: null, states: null, handoffs: null };
   }
 
-  // `consumePeerWork` writes the journal under `agentnetPaths().busRoot` —
+  // `consumePeerWork` writes the journal and `sendPeerMessage`/`readPeerInbox`
+  // keep the coordination ledger under `agentnetPaths().busRoot` —
   // `realHome()/.ashlr/fleet`, deliberately not `ashlrHome()` — unless a
   // `busRoot` override selects another root; the probe resolves the same way
   // and reports unavailable rather than guessing when no real home exists.
+  // `realHome()` is total (every resolver path catches), so this stays
+  // outside the per-section try blocks without risking the never-throw
+  // contract.
+  const agentnetHome = realHome();
+  const agentnetBusRoot = options.root ?? (agentnetHome === null ? undefined : join(agentnetHome, '.ashlr', 'fleet'));
+
   let peerDispatch: UnifiedBusStatus['peerDispatch'];
   try {
-    const home = realHome();
-    const busRoot = options.root ?? (home === null ? undefined : join(home, '.ashlr', 'fleet'));
-    const journal = busRoot === undefined ? undefined : readWorkDispatchJournal(busRoot);
+    const journal = agentnetBusRoot === undefined ? undefined : readWorkDispatchJournal(agentnetBusRoot);
     peerDispatch = journal === undefined || journal.status === 'unavailable'
       ? { source: 'unavailable', receipts: null, unpublished: null }
       : { source: journal.status, receipts: journal.receipts.length,
@@ -374,5 +398,25 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     peerDispatch = { source: 'unavailable', receipts: null, unpublished: null };
   }
 
-  return { asOf, store, registry, wakes, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch };
+  // The ledger reader folds a missing file and an all-expired ledger into the
+  // same 'empty' report, so existence is probed first — the same convention
+  // `ownerChat` applies — and a never-written store reports missing rather
+  // than available-with-zero.
+  let peerLedger: UnifiedBusStatus['peerLedger'];
+  try {
+    if (agentnetBusRoot === undefined) {
+      peerLedger = { source: 'unavailable', liveRows: null };
+    } else {
+      const report = readPeerLedger({ busRoot: agentnetBusRoot, now });
+      peerLedger = report.status === 'unavailable'
+        ? { source: 'unavailable', liveRows: null }
+        : busPathMissing(join(agentnetBusRoot, 'agentnet', 'coordination.json'))
+          ? { source: 'missing', liveRows: 0 }
+          : { source: 'available', liveRows: report.liveRows };
+    }
+  } catch {
+    peerLedger = { source: 'unavailable', liveRows: null };
+  }
+
+  return { asOf, store, registry, wakes, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger };
 }

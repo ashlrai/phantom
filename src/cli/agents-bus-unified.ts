@@ -495,6 +495,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           `states=${result.seats.states ?? unknown} handoffs=${result.seats.handoffs ?? unknown}`,
         `peerDispatch ${result.peerDispatch.source} receipts=${result.peerDispatch.receipts ?? unknown} ` +
           `unpublished=${result.peerDispatch.unpublished ?? unknown}`,
+        `peerLedger ${result.peerLedger.source} liveRows=${result.peerLedger.liveRows ?? unknown}`,
         `as-of=${result.asOf}`,
       ].join('\n'));
       return 0;

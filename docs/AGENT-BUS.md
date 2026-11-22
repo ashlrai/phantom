@@ -944,7 +944,7 @@ held work, and every other store state keeps its own status. Exit 0 on
 coordinates scope only — holding one never permits a merge, a push, or
 spending, and the claimed body is still untrusted data, never executed.
 
-**Status.** `phm agents bus status [--json]` is a read-only probe of the eleven
+**Status.** `phm agents bus status [--json]` is a read-only probe of the twelve
 dependencies every verb above touches: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
 the wake queue (state, observed hint count before the row cap, and whether
@@ -979,7 +979,15 @@ work-dispatch.json` under the same root `consumePeerWork` resolves —
 `realHome()/.ashlr/fleet` by default — `source` plus retained `receipts`
 and `unpublished` counts, where unpublished applies the consumer's own
 `sent !== outcome` rule; 0 counts on a verified-missing journal, null when
-unreadable, never peer names, claim keys or bodies), plus the
+unreadable, never peer names, claim keys or bodies), the agentnet peer
+coordination ledger `phm agentnet peers send|post|read|dispatch` admits,
+dedupes and rate-limits against and `phm fleet peer-ledger` summarizes
+(`<busRoot>/agentnet/coordination.json` under the same root the peer verbs
+resolve — `realHome()/.ashlr/fleet` by default — read by the same
+`readPeerLedger` those surfaces use; `source` plus a `liveRows` count of
+unexpired coordination rows the send budget still counts; 0 on a
+verified-missing ledger, null when unreadable, never peer names, claim
+keys, digests, threads or bodies), plus the
 claim-store drift verdict the claim journal and the
 coordination table imply — the same `fleet.claim-drift.v1` read
 `ashlr fleet claim-drift` serves, run over the probe's own two reads so the
