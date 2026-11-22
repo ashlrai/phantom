@@ -14,7 +14,7 @@
  */
 import { betaSample, createSeededRng, gammaSample, type BanditRng } from './bandit.js';
 import { ledgerAtMs, ledgerEventName, ledgerJobId, ledgerLane, ledgerPhase } from '../fleet/empty-cause.js';
-import { ledgerEventTs, ledgerLifecycleEvent, ledgerOutcomeState } from '../fleet/jobs-ledger-dialect.js';
+import { isNodePoolLedgerRow, ledgerEventTs, ledgerLifecycleEvent, ledgerOutcomeState } from '../fleet/jobs-ledger-dialect.js';
 import { hasRevertEvidence } from '../fleet/slot-yield.js';
 
 export const OUTCOME_LEARNING_SCHEMA = 'routing.outcome-learning.v1' as const;
@@ -611,6 +611,16 @@ export function learnOutcomes(text: string, censor?: CensorOptions): OutcomeLear
  * decisions, claims that never launched) are not outcome evidence and are
  * skipped without counting as malformed.
  *
+ * Node-pool producer rows (`fleet.session-pool.v1`,
+ * `phm-node-runner.v1` — jobs-ledger-dialect.isNodePoolLedgerRow) are a
+ * different dialect entirely: `job` is the per-attempt id and `jobId` the
+ * logical `ready:*` queue id, and no row carries the assign fields a cell
+ * needs, so a session-pool `launch` — which reuses the dispatchd event
+ * name — would otherwise count malformed and every `finish` would key
+ * usage on a phantom claim id. They are node-execution evidence the
+ * router outcome fold already consumes; here they skip like any other
+ * operational row.
+ *
  * Batch sessions (RQ-BATCH-*) launch under the session id, which is
  * infrastructure and never an attempt — member jobs get `batch_claim` rows
  * instead of `launch` rows. A claim is held until the session's own `launch`
@@ -695,6 +705,11 @@ function parseJobsLedgerEvents(text: string): { events: ParsedEvent[]; malformed
       if (!value || typeof value !== 'object' || Array.isArray(value)) { malformed += 1; continue; }
       row = value as Record<string, unknown>;
     } catch { malformed += 1; continue; }
+    // Node-pool machinery rows are a different producer dialect — see the
+    // function doc. Skipping before the event dispatch keeps a
+    // session-pool `launch` from counting malformed and a runner `finish`
+    // from keying usage on its per-claim id.
+    if (isNodePoolLedgerRow(row)) continue;
     const eventName = ledgerEventName(row);
     if (eventName === 'batch_claim') {
       const assign = ledgerAssign(row);

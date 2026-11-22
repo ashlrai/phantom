@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readDispatchEvents, type DispatchEvent } from '../fabric/dispatch-events.js';
 import { readJobsTail } from './report-ledger.js';
+import { isNodePoolLedgerRow } from './jobs-ledger-dialect.js';
 import { readFleetRunsDirState } from './runs-dir-state.js';
 import { scrubSecrets } from '../util/scrub.js';
 
@@ -164,6 +165,10 @@ export function healthySamples(text: string | null): HealthySample[] {
     if (!line.includes('"launch"') && !line.includes('"pool"')) continue;
     try {
       const row = JSON.parse(line) as Record<string, unknown>;
+      // Node-pool rows are a different producer dialect: a session-pool
+      // `launch` carries no mem_free_pct, and its null reading would reset
+      // the healthy streak clearedBy needs.
+      if (isNodePoolLedgerRow(row)) continue;
       const at = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
       if (!Number.isFinite(at) || (row.event !== 'launch' && row.event !== 'pool')) continue;
       out.push({ at, memFreePct: typeof row.mem_free_pct === 'number' ? row.mem_free_pct : null });

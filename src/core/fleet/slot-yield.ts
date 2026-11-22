@@ -22,6 +22,7 @@
  */
 
 import { parseLedgerTs } from '../metrics/loop.js';
+import { isNodePoolLedgerRow } from './jobs-ledger-dialect.js';
 import type { JobsEmptyWhy } from './jobs-empty-why.js';
 export const YIELD_MIN_LAUNCHES = 5;
 
@@ -420,6 +421,10 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
         if (!value || typeof value !== 'object' || Array.isArray(value)) return;
         row = value as Record<string, unknown>;
       } catch { return; }
+      // Node-pool machinery rows are a different producer dialect —
+      // `job` is a per-attempt id, never a dispatchd launch. Without the
+      // schema gate a session-pool `launch` would mint a phantom run.
+      if (isNodePoolLedgerRow(row)) return;
       const job = word(firstString(row, JOB_KEYS));
       if (job === 'unknown') return;
       const phase = phaseOf(row);

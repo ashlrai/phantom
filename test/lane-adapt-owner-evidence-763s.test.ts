@@ -30,6 +30,17 @@ describe('preserved controller evidence', () => {
     expect(healthySamples('{broken\n' + JSON.stringify({ ts: 'bad', event: 'launch' }))).toEqual([]);
     expect(parseAdaptEvent(event('11:00', 'ADAPT malformed'))).toBeNull();
   });
+  it('skips node-pool producer rows when reading healthy memory samples', () => {
+    // A session-pool `launch` reuses the dispatchd event name but carries no
+    // mem_free_pct — its null reading would reset the healthy streak
+    // clearedBy needs, so node-pool rows never become samples.
+    const text = [
+      JSON.stringify({ schema: 'fleet.session-pool.v1', ts: '2026-11-21T11:20:00Z', sessionId: 'sess-a', event: 'launch', context: 0, job: 'sess-a:1', jobId: 'ready:RQ-NODE-1:1' }),
+      JSON.stringify({ schema: 'phm-node-runner.v1', ts: '2026-11-21T11:21:00Z', event: 'finish', job: 'ready:RQ-NODE-1:1:4', jobId: 'ready:RQ-NODE-1:1', node: 'muse', pack: 'shell-check', token: 4, outcome: 'succeeded' }),
+      JSON.stringify({ ts: '2026-11-21T11:35:00Z', event: 'launch', mem_free_pct: 60 }),
+    ].join('\n');
+    expect(healthySamples(text)).toEqual([{ at: Date.parse('2026-11-21T11:35:00Z'), memFreePct: 60 }]);
+  });
   it('reports missing and unreadable sources through injected readers', async () => {
     const readers = { events: vi.fn().mockRejectedValue(new Error('unreadable')), state: vi.fn().mockRejectedValue(new Error('unreadable')), jobs: vi.fn().mockRejectedValue(new Error('unreadable')) };
     const report = await readLaneAdapt({ now: () => now, runsDir: '/fake', readers });
