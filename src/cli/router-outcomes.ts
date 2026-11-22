@@ -19,6 +19,9 @@
  * recorded launch decline
  * (skipped/skip_reason/skip_code), the fleet's recorded keep-queued
  * verdict (deferred/defer_reason/defer_repeat_of), the fleet's recorded
+ * terminal no-op verdict
+ * (noop/noop_reason/noop_repeat_of, folded from empty-family outcome
+ * phases like DONE-NOOP), the fleet's recorded
  * empty tag
  * (empty_tag, joined from metrics/empty-tags.jsonl) and the advisory
  * pass^k join from eval.lane-scores.v1.
@@ -155,6 +158,7 @@ function outcomeLine(o: RouterOutcome): string {
     `empty_class=${text(o.empty_class)}`, `empty_tag=${text(o.empty_tag)}`, `task_outcome=${text(o.task_outcome)}`,
     `skipped=${text(o.skipped)}`, `skip_reason=${text(o.skip_reason)}`, `skip_code=${text(o.skip_code)}`,
     `deferred=${text(o.deferred)}`, `defer_reason=${text(o.defer_reason)}`, `defer_repeat_of=${text(o.defer_repeat_of)}`,
+    `noop=${text(o.noop)}`, `noop_reason=${text(o.noop_reason)}`, `noop_repeat_of=${text(o.noop_repeat_of)}`,
     `lane_hint_blocked_by=${o.lane_hint_blocked_by === null ? 'unknown' : `[${o.lane_hint_blocked_by.join(',')}]`}`,
     `market_lane=${text(o.market_lane)}`, `market_preferred=${text(o.market_preferred)}`, `market_override=${text(o.market_override)}`,
     `market_reasons=${o.market_reasons === null ? 'unknown' : `[${o.market_reasons.join(',')}]`}`,

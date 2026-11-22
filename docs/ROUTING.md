@@ -428,6 +428,34 @@ when unrecorded or malformed and clear with the verdict — all three
 stay `null`/`false` when no keep-queued receipt stands, distinct from
 `skipped` (the skip gate's decline), `task_outcome` `deferred` (a
 batch member's requeue word) and queue waits that write no receipt.
+`noop`/`noop_reason`/`noop_repeat_of` are the fleet's recorded terminal
+no-op verdict: an outcome-phase row whose resolved phase sits in the
+canonical empty family the sibling readers share — `DONE-NOOP` (the
+live spelling; dispatchd's already-merged/terminal-target admission,
+recut-skip and repair-freshness verdicts and restock's precheck
+retirements write `{event:'outcome', state:'DONE-NOOP'}` with
+`launched:false` and the recorded `reason`) plus the defensive
+`EMPTY`/`EMPTY_DONE`/`SKIPPED-EMPTY`/`NOOP` spellings
+(`SKIPPED` stays out so a batch member's `task_outcome` word never
+mints a job verdict). It is the fleet's recorded "no publishable work
+needed" decision — the job never ran because its target was already
+resolved — distinct from `empty` (the finish row's measured no-diff),
+`skipped`, `deferred` and the merge lifecycle (`merged` stays `null`).
+The verdict competes with the other launch-decision rows on row order:
+the newest empty-family row marks it with its recorded reason
+(`reason`, then `empty_reason`, then `noop_reason`, bounded
+identifier-label shape — `already-merged`, `target_pr_merged`/
+`target_pr_closed`/`target_pr_conflicts_resolved`/
+`target_pr_checks_resolved`, `recut-already-merged`, the precheck
+retirement labels) and cover
+(`repeatOf`/`repeat_of`, the recut verdict's prior attempt), resolves a
+standing `skipped`/`deferred` to `false` (a `null` one stays `null` —
+no receipt was ever recorded), and every newer launch-decision receipt
+— a `claim`/`batch_claim`/`launch` dispatch, a skip-gate row, a
+keep-queued receipt or a `recut_admission` verdict — supersedes it to
+`false`; `finish`/`publish`/outcome rows of other phases and
+non-decision events never touch it. All three stay `null` when no
+empty-family row named the job.
 `empty_tag` is the fleet's recorded WHY for a job that
 ended empty — the `job.empty-tag.v1` rows `phm jobs empty --record`
 appends to `metrics/empty-tags.jsonl` from empty-final-reason's verdict
@@ -532,7 +560,18 @@ jobs whose standing launch decision is a recorded keep-queued verdict
 defer, or a `precheck_parked` park no later dispatch or decline
 superseded) and `unknown_defer_reasons` tallies their recorded reason
 labels (top entries first), so a job the fleet recorded keeping queued
-reads as explained rather than unresolved — `unknown_market_reasons`
+reads as explained rather than unresolved — `unknown_noop` counts jobs
+whose standing verdict is the fleet's recorded terminal no-op (an
+empty-family outcome phase — `DONE-NOOP` and kin — that no later
+launch-decision receipt superseded: dispatchd's
+already-merged/terminal-target, recut-skip and repair-freshness
+verdicts and restock's precheck retirements, the recorded "no
+publishable work needed" decision) and `unknown_noop_reasons` tallies
+their recorded reason labels (`already-merged`, `target_pr_*`,
+`recut-already-merged`, the precheck retirement labels, `unlabeled`
+when the verdict row carried none; top entries first) — so a job the
+fleet recorded needing no work reads as explained rather than
+unresolved — `unknown_market_reasons`
 tallies the work market's recorded `reason_codes` for each
 unknown-cohort job's newest `route_decision` row — queue-side
 diagnostic context for why the market was or was not routing the job
@@ -551,14 +590,17 @@ once however many lanes rejected it for it — the per-lane why behind
 `unknown_unresolved` is
 the remainder with no
 recorded failure signal, no requeue word and no standing skip
-decline or keep-queued verdict (finished cleanly awaiting a
+decline, keep-queued verdict or terminal no-op verdict (finished
+cleanly awaiting a
 verdict, still in flight, or carrying only transient launch receipts). These are counts over the retained window; when the ledger was
 not read they are `null`, never zero — and `unknown_empty_tags` is
 `null` whenever the empty-tags ledger itself was not read, since an
 absent tag journal means tag coverage is unknown rather than zero;
 `unknown_market_reasons`, `unknown_market_rejected` and
 `unknown_market_rejected_reasons` are `null` the same way whenever the
-market ledger itself was not read. When the ledger exceeds the retained tail the
+market ledger itself was not read (`unknown_noop`/
+`unknown_noop_reasons` read jobs-ledger rows only, so they are real
+whenever the jobs read succeeded). When the ledger exceeds the retained tail the
 report carries `truncated: true` and every count covers the newest bytes
 only; `market_state`/`market_truncated` report the decision journal's
 health and `empty_tag_state`/`empty_tag_truncated` the tags journal's

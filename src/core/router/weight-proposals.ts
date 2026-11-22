@@ -246,6 +246,28 @@ export interface RouterWeightProposalSet {
   unknown_deferred: number;
   unknown_defer_reasons: { reason: string; jobs: number }[];
   /**
+   * Jobs inside the unknown cohort whose standing verdict is the fleet's
+   * recorded terminal no-op — an empty-family outcome phase
+   * (`DONE-NOOP`/`EMPTY`/`EMPTY_DONE`/`SKIPPED-EMPTY`/`NOOP`) no later
+   * launch-decision receipt superseded, joined as `noop`. dispatchd's
+   * already-merged/terminal-target, recut-skip and repair-freshness
+   * verdicts and restock's precheck retirements land here: the fleet
+   * recorded that the job needed no publishable work, so the missing
+   * merge verdict is explained rather than unresolved. The verdict
+   * reads jobs-ledger rows only — no side ledger — so the tally is
+   * available whenever the jobs read succeeded.
+   */
+  unknown_noop: number;
+  /**
+   * Top recorded no-op reasons inside the unknown cohort, by jobs — the
+   * newest empty-family row's `reason` label (`already-merged`,
+   * `target_pr_merged`/`target_pr_closed`,
+   * `target_pr_conflicts_resolved`, `recut-already-merged`, the
+   * precheck retirement labels) or `unlabeled` when the verdict row
+   * carried no bounded reason. Empty when none recorded.
+   */
+  unknown_noop_reasons: { reason: string; jobs: number }[];
+  /**
    * Top recorded work-market `reason_codes` inside the unknown cohort,
    * by jobs — the market's own routing verdict for each job's newest
    * `route_decision` row (`preferred_lane`/`healthy_capacity` behind a
@@ -444,12 +466,14 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   const skipReasons = new Map<string, number>();
   const emptyTags = new Map<string, number>();
   const deferReasons = new Map<string, number>();
+  const noopReasons = new Map<string, number>();
   const marketReasons = new Map<string, number>();
   const marketRejectedReasons = new Map<string, number>();
   const usageMissing = new Map<string, number>();
   const usageSources = new Map<string, number>();
   let unknownSkipped = 0;
   let unknownDeferred = 0;
+  let unknownNoop = 0;
   let unknownMarketRejected = 0;
   for (const o of outcomes) {
     // Usage provenance is capture evidence, not merge evidence: every folded
@@ -473,14 +497,20 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
       // recut_admission defer or precheck_parked with no later dispatch
       // or decline) is the recorded keep-queued decision — the fleet
       // chose to hold the job for a covering attempt or a bounded retry —
-      // and explains it the same way. A job carrying none of them has no
-      // recorded launch decision — it finished cleanly awaiting a verdict
-      // or is still in flight.
+      // and explains it the same way. The fleet's recorded terminal
+      // no-op verdict (an empty-family outcome phase — DONE-NOOP and kin —
+      // that no later launch-decision receipt superseded) is the
+      // recorded "no publishable work needed" decision: the job never
+      // ran because the fleet already resolved its target, so it
+      // explains the missing merge verdict the same way. A job carrying
+      // none of them has no recorded launch decision — it finished
+      // cleanly awaiting a verdict or is still in flight.
       const empty = o.empty === true;
       const nonzeroExit = o.exit_code !== null && o.exit_code !== 0;
       const requeued = o.task_outcome !== null && TASK_OUTCOME_RETRY.has(o.task_outcome);
       const declined = o.skipped === true;
       const deferred = o.deferred === true;
+      const noop = o.noop === true;
       if (empty) unknownEmpty++;
       if (nonzeroExit) unknownNonzeroExit++;
       if (o.failure_class !== null) failureClasses.set(o.failure_class, (failureClasses.get(o.failure_class) ?? 0) + 1);
@@ -496,6 +526,11 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
         unknownDeferred++;
         const key = o.defer_reason ?? 'unlabeled';
         deferReasons.set(key, (deferReasons.get(key) ?? 0) + 1);
+      }
+      if (noop) {
+        unknownNoop++;
+        const key = o.noop_reason ?? 'unlabeled';
+        noopReasons.set(key, (noopReasons.get(key) ?? 0) + 1);
       }
       // The market's newest route_decision verdict is queue-side
       // diagnostic: each recorded reason code tallies once per job —
@@ -523,7 +558,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
           marketRejectedReasons.set(code, (marketRejectedReasons.get(code) ?? 0) + 1);
         }
       }
-      if (!empty && !nonzeroExit && o.failure_class === null && !requeued && !declined && !deferred) unknownUnresolved++;
+      if (!empty && !nonzeroExit && o.failure_class === null && !requeued && !declined && !deferred && !noop) unknownUnresolved++;
       continue;
     }
     const key = JSON.stringify([o.work_class, o.lane]);
@@ -612,6 +647,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     .map(([reason, jobs]) => ({ reason, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
     .slice(0, 10);
+  const topNoopReasons = [...noopReasons.entries()]
+    .map(([reason, jobs]) => ({ reason, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
+    .slice(0, 10);
   const topMarketReasons = [...marketReasons.entries()]
     .map(([reason, jobs]) => ({ reason, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
@@ -634,6 +673,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     unknown_task_outcomes: topTaskOutcomes, unknown_skipped: unknownSkipped,
     unknown_skip_reasons: topSkipReasons, unknown_empty_tags: topEmptyTags,
     unknown_deferred: unknownDeferred, unknown_defer_reasons: topDeferReasons,
+    unknown_noop: unknownNoop, unknown_noop_reasons: topNoopReasons,
     unknown_market_reasons: topMarketReasons,
     unknown_market_rejected: unknownMarketRejected,
     unknown_market_rejected_reasons: topMarketRejectedReasons,
@@ -732,6 +772,19 @@ export interface RouterWeightProposalReport {
    */
   unknown_defer_reasons: { reason: string; jobs: number }[] | null;
   /**
+   * Jobs inside the unknown cohort whose standing verdict is the fleet's
+   * recorded terminal no-op — see RouterWeightProposalSet. Null when the
+   * ledger was not read; 0 is a real measurement.
+   */
+  unknown_noop: number | null;
+  /**
+   * Top recorded no-op reasons inside the unknown cohort, by jobs —
+   * `already-merged`, `target_pr_*`, `recut-already-merged`, the precheck
+   * retirement labels and `unlabeled` for verdicts whose reason did not
+   * join. Null when the ledger was not read; empty when none recorded.
+   */
+  unknown_noop_reasons: { reason: string; jobs: number }[] | null;
+  /**
    * Top recorded work-market `reason_codes` inside the unknown cohort,
    * by jobs — the market's routing verdict for each job's newest
    * route_decision row (see RouterWeightProposalSet). Null when the
@@ -803,7 +856,8 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     return { ...head, status: 'unavailable', known_outcomes: null, unknown_outcomes: null, unclassified_outcomes: null,
       unknown_empty: null, unknown_nonzero_exit: null, unknown_failure_classes: null, unknown_empty_classes: null,
       unknown_task_outcomes: null, unknown_skipped: null, unknown_skip_reasons: null, unknown_empty_tags: null,
-      unknown_deferred: null, unknown_defer_reasons: null, unknown_market_reasons: null,
+      unknown_deferred: null, unknown_defer_reasons: null, unknown_noop: null,
+      unknown_noop_reasons: null, unknown_market_reasons: null,
       unknown_market_rejected: null, unknown_market_rejected_reasons: null,
       unknown_unresolved: null,
       usage_missing: null, usage_sources: null, proposals: [] };
@@ -821,6 +875,10 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     // empty jobs tagged" when it only knows "tags unread" — report null.
     unknown_empty_tags: read.empty_tag_state === 'read' ? set.unknown_empty_tags : null,
     unknown_deferred: set.unknown_deferred, unknown_defer_reasons: set.unknown_defer_reasons,
+    // No-op verdicts are jobs-ledger rows like the skip and keep-queued
+    // verdicts — no side-ledger join — so the tallies are real whenever
+    // the jobs read succeeded.
+    unknown_noop: set.unknown_noop, unknown_noop_reasons: set.unknown_noop_reasons,
     // Market reasons and the per-lane rejection record join through the
     // same work-market.jsonl tail as work_class: anything but 'read'
     // means no decision verdicts joined, so the tallies would claim "no

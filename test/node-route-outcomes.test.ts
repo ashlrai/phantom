@@ -20,6 +20,7 @@ const outcome = (job: string, lane: string | null, merged: boolean | null, rever
   task_outcome: null, lane_hint_blocked_by: null,
   skipped: null, skip_reason: null, skip_code: null,
   deferred: null, defer_reason: null, defer_repeat_of: null,
+  noop: null, noop_reason: null, noop_repeat_of: null,
   market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
   market_rejected: null,
   passk: null,

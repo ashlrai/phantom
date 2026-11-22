@@ -54,7 +54,16 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // deferred/defer_reason/defer_repeat_of: the newest keep-queued verdict
 // stands until a later dispatch or skip-gate decline supersedes it, so a
 // job the fleet recorded keeping queued stops reading as unexplained
-// unknown too.
+// unknown too. The fleet's recorded terminal no-op verdicts — outcome-phase
+// rows in the canonical empty family (DONE-NOOP plus the defensive
+// EMPTY/EMPTY_DONE/SKIPPED-EMPTY/NOOP spellings the sibling readers
+// share) — fold as noop/noop_reason/noop_repeat_of under the same
+// row-order competition: dispatchd's already-merged/terminal-target
+// admission, recut-skip and repair-freshness verdicts and restock's
+// precheck retirements record that the job needed no publishable work,
+// the verdict resolves a standing skip or deferral, and every newer
+// launch-decision receipt supersedes it — so a job the fleet recorded
+// needing no work stops reading as unexplained unknown as well.
 // `empty_tag` joins a fourth bounded ledger, <runs>/metrics/empty-tags.jsonl:
 // the `job.empty-tag.v1` rows `phm jobs empty --record` appends beside the
 // job ledger — the fleet's own recorded WHY for a job that finished empty
@@ -425,6 +434,63 @@ export interface RouterOutcome {
    * cleared with the verdict; `null` whenever `deferred` is not `true`.
    */
   defer_repeat_of: string | null;
+  /**
+   * The fleet's recorded terminal no-op verdict — an outcome-phase row
+   * whose resolved phase sits in the canonical empty family
+   * (`DONE-NOOP`, `EMPTY`, `EMPTY_DONE`, `SKIPPED-EMPTY`, `NOOP`, the
+   * vocabulary skill-nudge's EMPTY_PHASES, lane-yield-verdict/weight's
+   * EMPTY_PHASES, queue job-outcomes' TERMINAL_EMPTY and
+   * launch_precheck's _TERMINAL_EMPTY share; `SKIPPED` stays out so a
+   * batch member's task_outcome word never mints a job verdict).
+   * dispatchd writes it as `{event:'outcome', state:'DONE-NOOP'}` when
+   * its admission check finds the job already merged or its target PR
+   * terminal (`already-merged`, `target_pr_merged`,
+   * `target_pr_closed`), when a recut already merged
+   * (`recut-already-merged`), and when a repair target's freshness
+   * resolves (`target_pr_conflicts_resolved` and kin); restock writes
+   * the same row when precheck retires the line — always with
+   * `launched:false` and the recorded `reason`. It is the fleet's
+   * recorded "no publishable work needed" verdict, distinct from
+   * `empty` (the finish row's measured no-diff — these jobs never ran),
+   * `skipped` (the skip gate's decline — the job may be re-evaluated),
+   * `deferred` (kept queued) and the merge lifecycle fields (the
+   * reward feed and retro feed deliberately never count DONE-NOOP as a
+   * merge resolution). The verdict stands until the fleet's newer
+   * recorded launch decision — a `claim`/`batch_claim`/`launch`
+   * dispatch, a skip-gate receipt, a keep-queued receipt or a
+   * `recut_admission` verdict — supersedes it to `false`, and a
+   * standing skip or deferral clears when the no-op verdict lands,
+   * since the terminal verdict resolves the queued job. `null` when no
+   * empty-family phase row named the job — unknown, never a guessed
+   * verdict.
+   */
+  noop: boolean | null;
+  /**
+   * The standing no-op verdict's recorded reason — the newest
+   * empty-family row's `reason`, then `empty_reason`, then
+   * `noop_reason`, in the bounded identifier-label shape
+   * `failure_class` uses (`already-merged`, `target_pr_merged`,
+   * `target_pr_closed`, `target_pr_conflicts_resolved`,
+   * `target_pr_checks_resolved`, `recut-already-merged`, the precheck
+   * retirement labels).
+   * Malformed labels are skipped, never recorded raw; the newest
+   * no-op row replaces it wholesale and a superseding launch decision
+   * clears it; `null` whenever `noop` is not `true`.
+   */
+  noop_reason: string | null;
+  /**
+   * The standing no-op verdict's recorded covering attempt — the
+   * no-op row's `repeatOf`/`repeat_of` in the bounded job-id shape:
+   * the recut verdict's in-flight or merged prior attempt, which the
+   * recut-skip DONE-NOOP row carries through from its
+   * `recut_admission` receipt. The dispatchd admission,
+   * repair-freshness and restock retirements record no cover, so it
+   * stays `null` there; malformed values are
+   * skipped, never recorded raw. Replaced wholesale by the newest
+   * no-op row and cleared with the verdict; `null` whenever `noop`
+   * is not `true`.
+   */
+  noop_repeat_of: string | null;
   /**
    * The work market's recorded routing verdict for the job — the newest
    * `work-market.v1` `route_decision` row's `chosen_lane`, the lane the
@@ -837,6 +903,38 @@ const deferRepeatOf = (r: Row): string | null => {
   return v !== null && DEFER_REPEAT_OF.test(v) ? v : null;
 };
 
+/**
+ * The terminal no-op phase vocabulary — the fleet's canonical empty
+ * family across the sibling readers: skill-nudge's EMPTY_PHASES,
+ * lane-yield-verdict/weight's EMPTY_PHASES, queue job-outcomes'
+ * TERMINAL_EMPTY and launch_precheck's _TERMINAL_EMPTY. DONE-NOOP is
+ * the live spelling — dispatchd's admission, recut-skip and
+ * repair-freshness verdicts and restock's precheck retirements write
+ * `{event:'outcome', state:'DONE-NOOP'}`; the rest are defensive dialect
+ * coverage. `SKIPPED` stays out on purpose: a `task_outcome` row's
+ * `outcome` field resolves to it, and a batch member's session word
+ * must never mint a job-level verdict.
+ */
+const TERMINAL_NOOP_PHASES: ReadonlySet<string> = new Set([
+  'DONE-NOOP', 'EMPTY', 'EMPTY_DONE', 'SKIPPED-EMPTY', 'NOOP',
+]);
+/**
+ * The standing no-op verdict's recorded reason label — the newest
+ * empty-family row's `reason`, then `empty_reason`, then `noop_reason`,
+ * in the same bounded identifier-label shape `failure_class` uses. The
+ * writers' vocabulary is closed today (`already-merged`,
+ * `target_pr_merged`/`target_pr_closed`,
+ * `target_pr_conflicts_resolved`, `recut-already-merged`, the precheck
+ * retirement labels), but the fold records whatever bounded label a
+ * producer wrote rather than second-guessing it; anything else is
+ * skipped, never recorded raw.
+ */
+const NOOP_REASON_KEYS = ['reason', 'empty_reason', 'noop_reason'] as const;
+const noopReason = (r: Row): string | null => {
+  const v = str(r, ...NOOP_REASON_KEYS);
+  return v !== null && LEDGER_LABEL.test(v) ? v : null;
+};
+
 // Revert evidence uses the same field vocabulary the fleet ledger readers
 // already honor: event names (event/type/kind), terminal state fields
 // (phase/state/outcome/status/result/conclusion) and the reverted_at /
@@ -1121,6 +1219,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       task_outcome: null, lane_hint_blocked_by: null,
       skipped: null, skip_reason: null, skip_code: null,
       deferred: null, defer_reason: null, defer_repeat_of: null,
+      noop: null, noop_reason: null, noop_repeat_of: null,
       market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
       market_rejected: null,
       passk: null,
@@ -1277,6 +1376,44 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       o.deferred = false;
       o.defer_reason = null;
       o.defer_repeat_of = null;
+    }
+    // The fleet's recorded terminal no-op verdict competes with the other
+    // launch-decision rows on row order like the skip and keep-queued
+    // verdicts: an outcome-phase row whose resolved phase sits in the
+    // canonical empty family (DONE-NOOP and kin — dispatchd's
+    // already-merged/terminal-target, recut-skip and repair-freshness
+    // verdicts, restock's precheck retirements) marks the standing
+    // verdict with its recorded reason/cover and resolves any standing
+    // skip or deferral — the terminal verdict is the fleet's newest
+    // recorded decision about the queued job (a null skip/defer stays
+    // null: no receipt was ever recorded, so none is superseded). Every
+    // newer launch-decision receipt — a claim/batch_claim/launch
+    // dispatch, a skip-gate row, a keep-queued receipt or a
+    // recut_admission verdict — supersedes it to false ("a no-op
+    // verdict was recorded but the job was decided again after all").
+    // finish/publish/outcome rows of other phases and non-decision
+    // events never touch it; the newest no-op row replaces reason and
+    // cover wholesale.
+    if (TERMINAL_NOOP_PHASES.has(state)) {
+      o.noop = true;
+      o.noop_reason = noopReason(r);
+      o.noop_repeat_of = deferRepeatOf(r);
+      if (o.skipped === true) {
+        o.skipped = false;
+        o.skip_reason = null;
+        o.skip_code = null;
+      }
+      if (o.deferred === true) {
+        o.deferred = false;
+        o.defer_reason = null;
+        o.defer_repeat_of = null;
+      }
+    } else if (o.noop === true && deferEvent !== undefined &&
+        (QUEUE_DISPATCH_EVENTS.has(deferEvent) || SKIP_GATE_EVENTS.has(deferEvent) ||
+         DEFER_EVENTS.has(deferEvent) || deferEvent === RECUT_ADMISSION_EVENT)) {
+      o.noop = false;
+      o.noop_reason = null;
+      o.noop_repeat_of = null;
     }
     outcomes.set(j, o);
   }

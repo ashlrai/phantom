@@ -673,7 +673,7 @@ skip receipt stands: `skipped` is `null` before any skip or dispatch
 row, `false` once superseded, and `skip_reason`/`skip_code` are `null`
 whenever `skipped` is not `true` — a decline distinct from the finish
 row's measured `empty` no-diff verdict, the batch member's
-`task_outcome` word, and terminal no-op phases like `DONE-NOOP`.
+`task_outcome` word, and the terminal no-op verdict `noop` folds.
 `deferred`/`defer_reason`/`defer_repeat_of` are the fleet's recorded
 keep-queued launch verdict: dispatchd's launch loop writes
 `dispatch_deferred` when a ready line's request digest is already
@@ -701,6 +701,43 @@ row and cleared with the verdict; all three stay `null`/`false` when
 no keep-queued receipt stands — distinct from `skipped` (the skip
 gate's decline), `task_outcome` `deferred` (a batch member's requeue
 word) and queue waits that write no receipt.
+`noop`/`noop_reason`/`noop_repeat_of` are the fleet's recorded terminal
+no-op verdict: an outcome-phase row whose resolved phase sits in the
+canonical empty family the sibling readers share — `DONE-NOOP` (the
+live spelling: dispatchd's already-merged/terminal-target admission,
+recut-skip and repair-freshness verdicts and restock's precheck
+retirements write `{event:'outcome', state:'DONE-NOOP'}` with
+`launched:false` and the recorded `reason`), plus the defensive
+`EMPTY`/`EMPTY_DONE`/`SKIPPED-EMPTY`/`NOOP` spellings
+(skill-nudge's `EMPTY_PHASES`, lane-yield-verdict/weight's
+`EMPTY_PHASES`, queue job-outcomes' `TERMINAL_EMPTY` and
+launch_precheck's `_TERMINAL_EMPTY` vocabulary; `SKIPPED` stays out so
+a batch member's `task_outcome` word never mints a job verdict). It
+is the fleet's recorded "no publishable work needed" decision —
+distinct from `empty` (the finish row's measured no-diff; these jobs
+never ran), `skipped` (the skip gate's decline), `deferred` (kept
+queued) and the merge lifecycle (`merged` stays `null`; the reward and
+retro feeds deliberately never count `DONE-NOOP` as a merge
+resolution). The verdict competes with the other launch-decision rows
+on row order: the newest empty-family row marks it with its recorded
+reason — `reason`, then `empty_reason`, then `noop_reason`, in the
+bounded identifier-label shape (`already-merged`, `target_pr_merged`/
+`target_pr_closed`/`target_pr_conflicts_resolved`/
+`target_pr_checks_resolved`, `recut-already-merged`, the precheck
+retirement labels; malformed
+spellings skipped, never recorded raw) — and cover (`repeatOf`/
+`repeat_of` in the bounded job-id shape, the recut verdict's prior
+attempt; the admission, repair-freshness and restock rows record none),
+while a standing `skipped`/`deferred` resolves to `false` since the
+terminal verdict is the fleet's newest recorded decision about the
+queued job (a `null` skip/defer stays `null` — no receipt was ever
+recorded). Every newer launch-decision receipt — a
+`claim`/`batch_claim`/`launch` dispatch, a skip-gate row, a
+keep-queued receipt or a `recut_admission` verdict — supersedes it to
+`false`; `finish`/`publish`/outcome rows of other phases and
+non-decision events never touch it, and the newest no-op row replaces
+reason and cover wholesale. All three stay `null` when no empty-family
+row named the job — unknown, never a guessed verdict.
 `merged` reads the jobs-ledger outcome dialect the sibling fleet readers
 share: a terminal phase across
 `phase`/`state`/`outcome`/`status`/`result`/`conclusion`, or a `merged` /
