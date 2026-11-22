@@ -47,6 +47,15 @@ export interface BusFollowRequest {
    * unreadable registry keep exact-label matching, so unknown identity state
    * never widens the stream. Filtering is not authentication. */
   from?: string;
+  /** Optional sender-exclusion filter: the same `agentAddressMatcher` rule
+   * `comms bus read|watch --exclude-from` and `fleet_bus_inbox`'s `excludeFrom`
+   * apply — a handle, `agent:` address, stable id or alias resolves through
+   * the registry to every label of that identity; a sender resolving to no
+   * identity and an unreadable registry keep exact-label matching, so unknown
+   * identity state never widens the stream. Every envelope whose `from` label
+   * matches is skipped while checkpoints still advance past it exactly like
+   * every other filter. Filtering is not authentication. */
+  excludeFrom?: string;
   /** Optional priority filter: exact `BUS_PRIORITIES` match on
    * `envelope.priority`, the same field `agents bus inbox --priority` and
    * `channel read --priority` narrow on. */
@@ -79,6 +88,7 @@ export function validBusFollowRequest(request: BusFollowRequest): boolean {
     (request.to === undefined || label(request.to)) &&
     (request.job === undefined || label(request.job)) &&
     (request.from === undefined || label(request.from)) &&
+    (request.excludeFrom === undefined || label(request.excludeFrom)) &&
     (request.priority === undefined || BUS_PRIORITIES.includes(request.priority)) &&
     (request.thread === undefined || label(request.thread)) &&
     (request.since === undefined || (Number.isSafeInteger(request.since) && request.since >= 0)) &&
@@ -156,6 +166,8 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
     : agentPendingAddressMatcher(request.to, registryRead.status === 'ok' ? registryRead.registry : undefined);
   const fromMatch = request.from === undefined ? undefined
     : agentAddressMatcher(registryRead.status === 'ok' ? labelIdentityOf(registryRead.registry) : undefined, request.from);
+  const excludeFromMatch = request.excludeFrom === undefined ? undefined
+    : agentAddressMatcher(registryRead.status === 'ok' ? labelIdentityOf(registryRead.registry) : undefined, request.excludeFrom);
   // The request passed validBusFollowRequest, so the needle is normalized text or absent.
   const containsNeedle = busReadContains(request.contains) ?? undefined;
   const emit = async (record: BusFollowRecord): Promise<boolean> => {
@@ -177,6 +189,7 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
         if (!addressedTo(row.envelope.to, row.envelope.from)) continue;
         if (request.job !== undefined && !busBodyJobMatch(row.envelope.body, request.job)) continue;
         if (fromMatch !== undefined && !fromMatch(row.envelope.from)) continue;
+        if (excludeFromMatch !== undefined && excludeFromMatch(row.envelope.from)) continue;
         if (request.priority !== undefined && row.envelope.priority !== request.priority) continue;
         if (request.thread !== undefined && busBodyThread(row.envelope.body) !== request.thread) continue;
         if (request.since !== undefined && row.receivedAt < request.since) continue;
