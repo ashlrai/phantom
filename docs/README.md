@@ -41,6 +41,8 @@ A zero exit code is not a merge and not permission to spend. `phm docs --agent -
 | Plan bounded cross-provider child agents | [Subagents](https://github.com/ashlrai/phantom/blob/master/docs/SUBAGENTS.md) |
 | Discover an experimental Phantom peer API and generate a typed client | [Phantom peer discovery](https://github.com/ashlrai/phantom/blob/master/docs/PHANTOM-DISCOVERY.md) |
 | Install, open the console, and make a first turn | [Quickstart](QUICKSTART.md) |
+| Get short answers on cost, supported agents, data, contributing and help | [FAQ](https://github.com/ashlrai/phantom/blob/master/docs/FAQ.md) |
+| Learn the fleet vocabulary: job, lane, tier, worker, bridge PR, Merge Gate | [Glossary](https://github.com/ashlrai/phantom/blob/master/docs/GLOSSARY.md) |
 | Install, connect MCP, upgrade, and uninstall | [Self-hosting](SELF-HOSTING.md) |
 | Use the console | [Phantom user guide](VERSE.md) |
 | Publish local reports and browse their pages | [Report pages — source guide](https://github.com/ashlrai/phantom/blob/master/docs/PAGES.md) |
@@ -419,3 +421,44 @@ canonical release guide for required hosted qualification and publication.
 
 - [App restart](https://github.com/ashlrai/phantom/blob/master/docs/APP-RESTART.md): Held restart command, process ownership audit, and remaining zero-downtime acceptance work.
 - [Rebase batch ordering](https://github.com/ashlrai/phantom/blob/master/docs/REBASE-ORDERING.md) — file-overlap clusters group eligible sibling rebase jobs within batch limits.
+
+Console and owner surfaces:
+
+- [Console panes](https://github.com/ashlrai/phantom/blob/master/docs/PANES.md): every dock pane, how to open it, and how to add one.
+- [Console notifications](https://github.com/ashlrai/phantom/blob/master/docs/NOTIFICATIONS.md): what each bell notification means and which pane it opens.
+- [Needs-you items](https://github.com/ashlrai/phantom/blob/master/docs/NEEDS-YOU.md): the console drawer that flags fixable problems across lanes and this Mac.
+- [Connect your ecosystem](https://github.com/ashlrai/phantom/blob/master/docs/ECOSYSTEM-ONBOARDING.md): the Settings wizard that detects capabilities and asks for one integration grant.
+- [Drafts](https://github.com/ashlrai/phantom/blob/master/docs/DRAFTS.md): mail to anyone other than the owner waits for approval.
+- [Operator glance](https://github.com/ashlrai/phantom/blob/master/docs/OPERATOR-GLANCE.md): one typed fleet reading for phone, Telegram, email and agents.
+- [Tell me when a condition matches](https://github.com/ashlrai/phantom/blob/master/docs/AUTOMATIONS-WATCH.md): `watch` triggers over read-only GitHub JSON on an RRULE interval.
+- [Self-update](https://github.com/ashlrai/phantom/blob/master/docs/SELF-UPDATE.md): keep a source checkout current with `origin/master`, and when it refuses.
+- [What shipped](https://github.com/ashlrai/phantom/blob/master/docs/SHIPPED.md): merged work in plain words, grouped by product area (generated).
+
+Lanes, capacity and fleet operation:
+
+- [Lane health](https://github.com/ashlrai/phantom/blob/master/docs/LANE-HEALTH.md), [lane holds](https://github.com/ashlrai/phantom/blob/master/docs/LANE-HOLDS.md) and [lane fit](https://github.com/ashlrai/phantom/blob/master/docs/LANE-FIT.md): per-lane health numbers, hold vs. pause, and which job kinds suit a lane.
+- [Provider capacity cards](https://github.com/ashlrai/phantom/blob/master/docs/PROVIDER-CARDS.md), [zero waste](https://github.com/ashlrai/phantom/blob/master/docs/ZERO-WASTE.md) and the [resource ledger](https://github.com/ashlrai/phantom/blob/master/docs/RESOURCE-LEDGER.md): plan usage and resets, spending remaining usage before reset, and the read-only lane and spend snapshot.
+- [Runtime-dynamic fleet config](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-CONFIG.md): change fleet limits without restarting dispatchd or a reader.
+- [Fleet verbs](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-VERBS.md): how convention-based fleet verbs are discovered and dispatched.
+- [Chief of staff](https://github.com/ashlrai/phantom/blob/master/docs/COS.md) and its [desktop API](https://github.com/ashlrai/phantom/blob/master/docs/COS-DESKTOP-API.md): a verified plain-language instruction becomes a durable queued job.
+- [Fleet brief-send](https://github.com/ashlrai/phantom/blob/master/docs/BRIEF-SEND.md): morning and overnight fleet summaries by email and Telegram.
+- [Main guardian](https://github.com/ashlrai/phantom/blob/master/docs/main-guardian.md): keeping each repository's default branch green after merge.
+- [Merge identity](https://github.com/ashlrai/phantom/blob/master/docs/MERGE-IDENTITY.md): which merges came from automation and which from a person.
+- [Agent output evaluation](https://github.com/ashlrai/phantom/blob/master/docs/OUTPUT-EVAL.md): a private job, lane, model and outcome snapshot for routing analysis.
+- [Daily CI trigger plan](https://github.com/ashlrai/phantom/blob/master/docs/CI-DAILY-PLAN.md): a read-only workflow trigger report; its patch needs owner review.
+- [Cloud agent claim and return routes](https://github.com/ashlrai/phantom/blob/master/docs/CLOUD-AGENT-ROUTES.md): an off-host agent reads the work board and records a result.
+- [Branch gardener](https://github.com/ashlrai/phantom/blob/master/docs/BRANCH-GARDENER.md): a dry-run-by-default branch audit across the fleet repositories.
+- [Repository ranking](https://github.com/ashlrai/phantom/blob/master/docs/REPO-RANK.md), [Amplify](https://github.com/ashlrai/phantom/blob/master/docs/AMPLIFY.md) and the [bets lane](https://github.com/ashlrai/phantom/blob/master/docs/BETS-LANE.md): ranking repositories, the offline advisory loop over the standing objective, and the capacity share for bets.
+- [Private intent ledger](https://github.com/ashlrai/phantom/blob/master/docs/INTENT.md) and [work-order proposals](https://github.com/ashlrai/phantom/blob/master/docs/WORK-ORDERS.md): how directives and structured proposals are recorded.
+- [Graph registry snapshots](https://github.com/ashlrai/phantom/blob/master/docs/GRAPH-V1.md): declared fleet relationships and seat catalogs as a `graph.v1` projection, not runtime health.
+- [Docs Radar](https://github.com/ashlrai/phantom/blob/master/docs/RADAR.md): records changes to public documentation and package metadata.
+- [Release autonomy audit](https://github.com/ashlrai/phantom/blob/master/docs/RELEASE-AUTONOMY.md): the remaining release steps per repository (not yet wired into the CLI).
+
+Agents, apps and integrations:
+
+- [Area owners](https://github.com/ashlrai/phantom/blob/master/docs/AREA-OWNERS.md): entry points, modules and tests per area; CODEOWNERS stays the complete protected-path list.
+- [Capability registry](https://github.com/ashlrai/phantom/blob/master/docs/CAPABILITY-REGISTRY.md) and [MCP native tools](https://github.com/ashlrai/phantom/blob/master/docs/MCP-TOOLS.md): the in-repo source of truth for servers, skills and connectors, and the catalog of native MCP tools.
+- [Agent profiles](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-PROFILES.md) and [agent group chat](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-CHAT.md): portable agent metadata and the retained group conversation.
+- [Apps control](https://github.com/ashlrai/phantom/blob/master/docs/APPS-CONTROL.md), [drive agent apps](https://github.com/ashlrai/phantom/blob/master/docs/APP-DRIVE.md), [desktop control](https://github.com/ashlrai/phantom/blob/master/docs/DESKTOPCTL.md) and [desktop operator](https://github.com/ashlrai/phantom/blob/master/docs/DESKTOP-OPERATOR.md): listing, driving and reading the desktop agent apps on this Mac.
+- [Slack bus ingress](https://github.com/ashlrai/phantom/blob/master/docs/SLACK-BUS-INGRESS.md) and the [Slack credential boundary](https://github.com/ashlrai/phantom/blob/master/docs/SLACK-CREDENTIAL-INJECTION.md): opt-in Slack Events ingress and where its credentials live.
+- [Agent-to-agent channels](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-TO-AGENT.md): design note; ships a configuration schema only.
