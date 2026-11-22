@@ -82,6 +82,24 @@ signature field exists; selection for future runs still verifies it.
 An empty corpus is normal on a fresh install: the plain-text output says
 "No skills yet", and `--json` returns `"total": 0`.
 
+## Did a skill help?
+
+Shadow skill selections are observe-only, but their outcomes are recorded:
+`phm fleet status --json` exposes `trajectoryLearning.skillOutcomes`, which
+attributes each trajectory's resolved terminal outcome (and deterministic
+post-merge realized outcome) back to the skill revisions selected on it.
+Per-skill rows count distinct trajectories per skill revision with sparse
+outcome tallies — for example how many selections ended `merged`, `rejected`
+or `failed`, and how many merged selections were later `reverted` or
+`regressed`. Lifecycle stages of one use collapse into a single selection,
+and unjoined or conflicting skill rows never enter the tally.
+
+The projection is sample-gated exactly like `skillObservation`: per-skill
+counts publish only after at least `MIN_SKILL_OBSERVED_TRAJECTORIES` (3)
+production trajectories carry skill-use coverage, and the whole section is
+withheld when the skill-use ledger is degraded. Below the gate the field is
+absent — unknown stays unknown, never a zero.
+
 ## Exit codes
 
 `0` listed (including an empty list), `2` bad usage (unknown flag, bad
