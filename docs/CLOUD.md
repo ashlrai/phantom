@@ -355,10 +355,25 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   distinct hour buckets across two UTC days inside the 7-day window —
   umbrella cells at six hours, per-key cells at four — and a missing or
   unreadable ledger emits nothing. Truncated ledger tails are stated in
-  the prompt as a lower bound, never hidden.
+  the prompt as a lower bound, never hidden —
+  and the trajectory outcome projection's recurring adverse skill
+  tallies, the per-(skill, revision) selection counts and deterministic
+  post-merge realized verdicts `trajectoryLearning.skillOutcomes`
+  publishes for learned skill cards once the skill-observation sample
+  gate passes (otherwise only visible through
+  `phm skills list --outcomes` and `phm fleet status` — reports someone
+  had to run and read, even though the skill library is the
+  self-improvement loop's own memory). A (skill, revision) row becomes
+  an item while its reverted + regressed + followed-up realized
+  outcomes reach the recurring bar inside the 7-day window, only while
+  that exact revision is still the corpus's newest card and its status
+  is candidate or verified — superseded and withdrawn revisions were
+  already handled — and only on a healthy corpus, since a degraded card
+  history cannot prove which revision is live; a withheld projection, a
+  degraded ledger or another repository emits nothing.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
-  memory-pressure and fleet-controller items carry
+  memory-pressure, fleet-controller and skill-outcome items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
@@ -407,7 +422,15 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   doing-this framing per cell — dead readings, mis-tuned or mis-firing
   shed bands, broken hold attribution, a blind merge feed, an
   unmeasured quality cohort — and emit only for the fleet's own
-  repository since the ledger describes this install's dispatcher. They
+  repository since the ledger describes this install's dispatcher.
+  Skill-outcome items name the
+  trajectory-learning projection, the skill-use and card ledgers and
+  the `phm skills list --outcomes` report, keep the
+  association-not-causation framing — shadow selections never steered
+  those runs — with the same owner-side no-change escape for a card
+  withdrawal, which is a host-signed ledger act, and emit only for the
+  fleet's own repository since the learned-skill machinery is this
+  repo's. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
