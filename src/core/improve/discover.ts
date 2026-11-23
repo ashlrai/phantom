@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Twenty-one sources, all of which Phantom
+ * evidence instead of a hand-kept list. Twenty-two sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -142,7 +142,17 @@
  *     CONTRACT-M334 stage-2 bar (gatewayShadowBacklogItems below). Until
  *     now the journal was write-only evidence — divergenceStats(), the
  *     exit-criteria evaluator, has no caller — so a shadow that kept
- *     failing the flip criteria never became work.
+ *     failing the flip criteria never became work;
+ *   - the fleet recheck verdict history's recurring non-clean cells: the
+ *     per-pass fleet.recheck-record.v1 rows the self-tick recheck-record
+ *     step and `phm fleet recheck-record` append to
+ *     <ashlr home>/fleet/recheck-log.jsonl — recurring overall verdicts,
+ *     per-section UNKNOWN/BLOCKED states and recurring normalized missing
+ *     reasons (recheckBacklogItems below), so a fleet whose own
+ *     verification of its claimed state keeps failing becomes work
+ *     instead of sitting in `phm fleet recheck-record --last`, the verse
+ *     recheck history and the fleet MCP recheck tool, reports someone
+ *     had to run.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -188,6 +198,7 @@ import { memoryBacklogItems } from './memory-backlog.js';
 import { controllerBacklogItems } from './controller-backlog.js';
 import { skillOutcomeBacklogItems } from './skill-outcome-backlog.js';
 import { precheckSkipBacklogItems } from './precheck-skip-backlog.js';
+import { recheckBacklogItems } from './recheck-backlog.js';
 import { sourceYieldBacklogItems } from './source-yield-backlog.js';
 import { gatewayShadowBacklogItems } from './gateway-shadow-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
@@ -431,6 +442,19 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // decisions for the rate to mean something, and only for the fleet's
   // own repository.
   items.push(...await gatewayShadowBacklogItems({ repo }));
+
+  // Fleet recheck verdict history: the self-tick recheck-record step's
+  // retained per-pass verdicts — recurring overall UNKNOWN/BLOCKED
+  // verdicts, per-section non-clean states and recurring normalized
+  // missing reasons — become backlog items too. Until now the log only
+  // ever reached `phm fleet recheck-record --last`, the verse recheck
+  // history parameter and the fleet MCP recheck tool, reports someone
+  // had to run and read, even though the recheck is the fleet's own
+  // verification of its claimed state. Same bounded no-follow tail read
+  // and the writer's own row contract; a cell emits only at the
+  // recurring bar inside the window and only for the fleet's own
+  // repository.
+  items.push(...await recheckBacklogItems({ repo }));
   return { items, errors };
 }
 
