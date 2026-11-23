@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Seventeen sources, all of which Phantom
+ * evidence instead of a hand-kept list. Eighteen sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -107,6 +107,14 @@
  *     (controllerBacklogItems below), so a controller that keeps
  *     throttling, freezing or flying blind becomes work instead of
  *     sitting in `phm fleet admission --details`, `phm amplify` and
+ *     `phm fleet status`, reports someone had to run;
+ *   - the trajectory outcome projection's recurring adverse skill
+ *     tallies: the per-(skill, revision) selection counts and realized
+ *     post-merge verdicts `trajectoryLearning.skillOutcomes` publishes
+ *     for learned skill cards after the sample gate
+ *     (skillOutcomeBacklogItems below), so a card whose observed
+ *     selections keep company with merges that did not hold becomes
+ *     work instead of sitting in `phm skills list --outcomes` and
  *     `phm fleet status`, reports someone had to run.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
@@ -151,6 +159,7 @@ import { ciRerunBacklogItems } from './ci-rerun-backlog.js';
 import { lostLaunchBacklogItems } from './lost-launch-backlog.js';
 import { memoryBacklogItems } from './memory-backlog.js';
 import { controllerBacklogItems } from './controller-backlog.js';
+import { skillOutcomeBacklogItems } from './skill-outcome-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -340,6 +349,19 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // bounded generation reads; an item emits only at the recurring bar
   // inside the window and only for the fleet's own repository.
   items.push(...await controllerBacklogItems({ repo }));
+
+  // Trajectory skill outcomes: the learned-skill corpus's per-revision
+  // selection tallies and deterministic post-merge realized verdicts —
+  // recurring adverse outcomes on the trajectories a card was observed
+  // on — become backlog items too. Until now they only ever reached
+  // `phm skills list --outcomes` and `phm fleet status`'s
+  // trajectoryLearning.skillOutcomes, reports someone had to run and
+  // read, even though the skill library is the self-improvement loop's
+  // own memory. Same sample-gated projection read and the same
+  // healthy-only corpus bar; a row emits only at the recurring adverse
+  // bar inside the window, only while its exact revision is still the
+  // live card, and only for the fleet's own repository.
+  items.push(...await skillOutcomeBacklogItems({ repo }));
   return { items, errors };
 }
 
