@@ -624,13 +624,39 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   producer schemas and unsafe job ids drop like the sibling
   jobs-ledger readers' own parse, truncated tails are stated as
   lower bounds, and rows emit only for the fleet's own repository
-  since the capture paths are this install's dispatcher and lanes.
+  since the capture paths are this install's dispatcher and lanes —
+  and the fleet runtime journal's recurring adverse dispatch
+  evidence, the fleet.runtime dispatch rows tick-hooks-live's
+  afterDispatch appends to fleet/runtime/runs.jsonl under the ASHLR
+  home — one row per work-item outcome carrying the route decision
+  behind it (backend, lane, seatId, the SeatRouter seatDecision with
+  per-seat exclusion details, the park/split RouteHold, the
+  skipReason, the harness version) alongside landing rows for merges
+  and reverts (otherwise only visible through the Fleet live
+  projection behind `phm fleet lane-slots`/`phm lanes`/`phm map`, the
+  ops board and scheduling's work-history join — display and
+  attribution surfaces, while tick.json keeps only the LAST tick's
+  held list, so recurring holds, chronic seat exclusions and
+  repeating skip codes never became work). A (seat, reason-kind)
+  exclusion becomes an item only for evidence-broken kinds —
+  unknown-usage, unreachable, signed-out, other — while
+  capacity-truth and policy kinds stay silent; a (hold kind, repo)
+  cell emits only for seat-evaluated parks (policy holds carry no
+  seatDecision) and splits; a skip cell needs a code-shaped reason
+  on a hold-free non-dispatched row; every cell reaches the
+  recurring bars of distinct items across distinct UTC days inside
+  the 7-day window, a missing or unreadable journal emits nothing,
+  landing rows and malformed lines drop like the sibling readers'
+  own parse, the current and rotated .1 tails read bounded at the
+  writer's RUNS_JOURNAL_MAX_BYTES with truncation stated as lower
+  bounds, and rows emit only for the fleet's own repository since
+  the journal is this install's dispatch record.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
-  reward, job-control and usage-gap items carry
+  reward, job-control, usage-gap and runtime-journal items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
