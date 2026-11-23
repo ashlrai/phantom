@@ -132,9 +132,12 @@ phm channels status --json
 `phm comms setup-telegram` still discovers the chat id. `status` reports each
 channel's `configured`/`credential`/`paired` state plus `received`,
 `pendingOutbound`, and `lastSeenAt` — measured numbers, or `"unknown"` when a
-source cannot be read. `cli`, `desktop`, and `page` need no setup and always
-report ready; `mobile` needs the `~/.ashlr/verse-remote.json` gateway file
-([REMOTE-PHONE.md](REMOTE-PHONE.md)).
+source cannot be read. Pairing stores follow the same rule: a missing
+`queue/telegram-pair.json` or `queue/email-paired.json` is a measured
+unpaired/zero, while an unreadable or malformed record reports `"unknown"` —
+never a guessed "not paired". `cli`, `desktop`, and `page` need no setup and
+always report ready; `mobile` needs the `~/.ashlr/verse-remote.json` gateway
+file ([REMOTE-PHONE.md](REMOTE-PHONE.md)).
 
 ## Where to watch it
 
