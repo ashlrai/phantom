@@ -64,6 +64,7 @@ Evidence:
 - `src/web-ui/routes/verse/resources/SpendDown.tsx`
 - `src/web-ui/routes/verse/sections/AutonomySection.tsx`
 - `src/cli/fleet-metrics.ts`
+- `src/core/fleet/metrics-series.ts`
 
 Gaps:
 
