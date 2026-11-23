@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readLeaderStatusSnapshot, renderLeaderStatus } from '../src/core/comms/leader-status-snapshot.js';
 
-const now = Date.parse('2026-11-11T12:00:00Z');
+// Guardian headings use local wall time, like the production writer.
+const now = Date.parse('2026-11-11T12:00:00');
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
@@ -52,6 +53,7 @@ describe('Leader queue rollup freshness', () => {
     writeFileSync(join(root, 'queue', 'status.json'), '{');
     rmSync(join(root, 'supervisor', 'status-main-guardian.md'));
     const result = await snapshot(root);
+    expect(result.mains).toMatchObject({ known: false, green: null, red: null, total: null, observedAt: null });
     expect(renderLeaderStatus(result)).toContain('last 24h: unknown');
     expect(renderLeaderStatus(result)).toContain('Mains: unknown');
     expect(result.ceo).toEqual(['Work continues.']);
@@ -61,5 +63,66 @@ describe('Leader queue rollup freshness', () => {
     const root = fixture(); writeQueue(root, new Date(now).toISOString());
     rmSync(join(root, 'leader', 'PLAN-LOG.md'));
     expect(await snapshot(root)).toMatchObject({ merged24h: 12, mains: { known: true, green: 1 }, ceo: [] });
+  });
+
+  it('reports lane activity independently of merge evidence and preserves measured zeroes', async () => {
+    const root = fixture();
+    writeFileSync(join(root, 'queue', 'status.json'), JSON.stringify({ last_tick: new Date(now).toISOString(),
+      lanes: { claude: { running: 2, queued: 5 }, codex: { running: 0, queued: 0 }, devin: { running: -1, queued: '3' } },
+      rollup_24h: { merged: 3, by_lane: { claude: { merged: 3 } } } }));
+    const result = await snapshot(root);
+    expect(result.queueState).toBe('fresh');
+    expect(result.laneActivity).toEqual([
+      { lane: 'claude', running: 2, queued: 5 }, { lane: 'codex', running: 0, queued: 0 },
+      { lane: 'devin', running: null, queued: null },
+    ]);
+    expect(result.merged24h).toBe(3);
+    expect(renderLeaderStatus(result)).toContain('claude: 2 running, 5 queued; codex: 0 running, 0 queued; devin: unknown running, unknown queued');
+  });
+
+  it.each([undefined, {}, { running: 1.5, queued: Number.MAX_SAFE_INTEGER + 1 }])('keeps missing or invalid activity unknown: %j', async activity => {
+    const root = fixture();
+    writeFileSync(join(root, 'queue', 'status.json'), JSON.stringify({ last_tick: new Date(now).toISOString(),
+      lanes: { codex: activity }, rollup_24h: { by_lane: { codex: { merged: 4 } } } }));
+    const result = await snapshot(root);
+    expect(result.laneActivity).toEqual([{ lane: 'codex', running: null, queued: null }]);
+    expect(result.merged24h).toBe(4);
+  });
+
+  it('keeps activity available when merge evidence is absent', async () => {
+    const root = fixture();
+    writeFileSync(join(root, 'queue', 'status.json'), JSON.stringify({ last_tick: new Date(now).toISOString(), lanes: { codex: { running: 1, queued: 2 } } }));
+    const result = await snapshot(root);
+    expect(result).toMatchObject({ merged24h: null, laneActivity: [{ lane: 'codex', running: 1, queued: 2 }] });
+    expect(renderLeaderStatus(result)).toContain('codex: 1 running, 2 queued');
+  });
+
+  it.each(['missing', 'malformed', 'stale'])('does not expose cached activity when the queue is %s', async state => {
+    const root = fixture();
+    if (state !== 'missing') writeFileSync(join(root, 'queue', 'status.json'), state === 'malformed' ? '{' : JSON.stringify({
+      last_tick: new Date(now - 60_001).toISOString(), lanes: { codex: { running: 8, queued: 9 } }, rollup_24h: { merged: 12 },
+    }));
+    const result = await snapshot(root);
+    expect(result).toMatchObject({ queueState: state === 'stale' ? 'stale' : 'unavailable', laneActivity: [], merged24h: null });
+    expect(renderLeaderStatus(result)).toContain('Lane activity: unknown');
+    expect(result.mains.known).toBe(true);
+  });
+
+  it.each(['2026-11-11 11:29:59', '2026-11-11 12:00:01', 'invalid'])('reports unknown guardian health for stale or undated input: %s', async at => {
+    const root = fixture(); writeQueue(root, new Date(now).toISOString());
+    writeFileSync(join(root, 'supervisor', 'status-main-guardian.md'), `# Main guardian status (${at})\n| phantom | master | abcdef1 | green | ${at} | | | |`);
+    const result = await snapshot(root);
+    expect(result.mains).toMatchObject({ known: false, stale: true, green: null, red: null, total: null, unknown: null });
+    expect(renderLeaderStatus(result)).toContain('Mains: unknown');
+    expect(renderLeaderStatus(result)).not.toContain('Mains green:');
+    expect(result.merged24h).toBe(12);
+  });
+
+  it('reports unknown guardian rows explicitly at the freshness boundary', async () => {
+    const root = fixture();
+    writeFileSync(join(root, 'supervisor', 'status-main-guardian.md'), '# Main guardian status (2026-11-11 11:30:00)\n| phantom | master | abcdef1 | unknown | | | | |');
+    const result = await snapshot(root);
+    expect(result.mains).toMatchObject({ known: true, stale: false, green: 0, red: 0, total: 1, unknown: 1 });
+    expect(renderLeaderStatus(result)).toContain('Unknown: 1. Guardian checked:');
   });
 });
