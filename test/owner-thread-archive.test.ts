@@ -34,6 +34,27 @@ it('lists regular archives and pages, skipping damaged files and scrubbing text'
   expect(readOwnerThreadHistory(f, { before: 4, limit: 2 }).messages.map(m => m.seq)).toEqual([2, 3]);
   expect(listOwnerThreadArchives({ runsDir: join(f.runsDir, 'missing') })).toEqual([]);
 });
+it('applies the shared thread view filters to archived pages', () => {
+  const f = fixture();
+  archive(f.dir, 1, 3, [
+    { seq: 1, id: 'm1', idempotencyKey: 'k1', channel: 'desktop', senderId: 'owner', direction: 'inbound', at: '2026-01-01T00:00:00.000Z', text: 'deploy the fix' },
+    { seq: 2, id: 'm2', idempotencyKey: 'k2', channel: 'telegram', senderId: 'owner', direction: 'outbound', at: '2026-01-02T00:00:00.000Z', text: 'shipped it' },
+    { seq: 3, id: 'm3', idempotencyKey: 'k3', channel: 'email', senderId: 'owner', direction: 'inbound', at: 'not-a-date', text: 'please review the fix' },
+  ]);
+  const seqs = (page: Parameters<typeof readOwnerThreadHistory>[1]) => readOwnerThreadHistory(f, page).messages.map(m => m.seq);
+  expect(seqs({ channel: 'telegram' })).toEqual([2]);
+  expect(seqs({ direction: 'outbound' })).toEqual([2]);
+  // The unparseable `at` on seq 3 never satisfies a since floor.
+  expect(seqs({ since: Date.parse('2026-01-01T12:00:00.000Z') })).toEqual([2]);
+  expect(seqs({ contains: 'DEPLOY' })).toEqual([1]);
+  expect(seqs({ contains: 'the fix' })).toEqual([1, 3]);
+  expect(seqs({ channel: 'email', direction: 'inbound' })).toEqual([3]);
+  expect(seqs({ before: 3, contains: 'fix' })).toEqual([1]);
+  expect(seqs({ contains: 'fix', limit: 1 })).toEqual([3]);
+  const filtered = readOwnerThreadHistory(f, { channel: 'slack' });
+  expect(filtered.messages).toEqual([]);
+  expect(filtered).toMatchObject({ archives: 1, skipped: 0 });
+});
 it('reads archives produced by real rotation', async () => {
   const f = fixture();
   const options: OwnerThreadOptions = { runsDir: f.runsDir, busRoot: join(f.runsDir, 'bus'), capacity: { messages: 4, bytes: 1_048_576 },

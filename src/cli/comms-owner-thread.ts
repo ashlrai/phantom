@@ -5,7 +5,7 @@
 import { rejectUnknownOptions } from './args.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings } from '../core/comms/owner-channel.js';
 import { liveOwnerTransports } from '../core/comms/owner-live-transport.js';
-import { OWNER_CHANNELS, isOwnerChannel, type OwnerChannel } from '../core/comms/leader-mailbox.js';
+import { OWNER_CHANNELS, isOwnerChannel } from '../core/comms/leader-mailbox.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 import {
   OWNER_THREAD_CONTAINS_MAX,
@@ -14,6 +14,7 @@ import {
   sendOwnerHello,
   sendOwnerReply,
   type OwnerThreadOptions,
+  type OwnerThreadReadFilter,
 } from '../core/comms/owner-thread.js';
 
 const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--channel <desktop|telegram|email|imessage|slack>] [--direction <inbound|outbound>] [--since <15m|2h|1d|ISO|epoch-ms>] [--contains <text>] [--json]';
@@ -35,6 +36,54 @@ export function ownerThreadOptions(transports: OwnerThreadOptions['transports'] 
     settings: loadOwnerThreadSettings(configDir()),
     transports,
   };
+}
+
+/**
+ * Parse the shared `--channel`/`--direction`/`--since`/`--contains` slice
+ * flags into the `OwnerThreadReadFilter` `phm comms thread` and
+ * `phm fleet owner-history` both apply, so the live read and the archive
+ * read can never disagree about what a flag means. Returns the filter to
+ * pass through — absent when no flag was given — or `error`, the one-line
+ * reason the args are invalid for the caller to print beside its own
+ * usage. A repeated flag resolves to its first occurrence, exactly as the
+ * inline parses always did; each caller keeps its own unknown-option and
+ * duplicate-flag checks.
+ */
+export function parseOwnerThreadFilterArgs(args: string[]): { filter?: OwnerThreadReadFilter; error?: string } {
+  const filter: OwnerThreadReadFilter = {};
+  if (args.includes('--channel')) {
+    const raw = args[args.indexOf('--channel') + 1];
+    if (raw === undefined || !isOwnerChannel(raw)) {
+      return { error: `--channel takes one of ${OWNER_CHANNELS.join(', ')}.` };
+    }
+    filter.channel = raw;
+  }
+  if (args.includes('--direction')) {
+    const raw = args[args.indexOf('--direction') + 1];
+    if (raw !== 'inbound' && raw !== 'outbound') {
+      return { error: '--direction takes inbound or outbound.' };
+    }
+    filter.direction = raw;
+  }
+  if (args.includes('--since')) {
+    const raw = args[args.indexOf('--since') + 1];
+    const parsed = raw === undefined ? null : parseSince(raw);
+    if (parsed === null) {
+      return { error: '--since takes 15m, 2h, 1d, epoch ms or an ISO time.' };
+    }
+    filter.since = parsed;
+  }
+  if (args.includes('--contains')) {
+    const raw = args[args.indexOf('--contains') + 1];
+    // Free text, not a label: printable content of any kind is fine,
+    // bounded like every other comms read's --contains; a flag-looking
+    // or blank value is a missing needle, not a search.
+    if (raw === undefined || raw.startsWith('--') || raw.trim() === '' || raw.length > OWNER_THREAD_CONTAINS_MAX) {
+      return { error: `--contains takes a non-empty search text of at most ${OWNER_THREAD_CONTAINS_MAX} characters.` };
+    }
+    filter.contains = raw;
+  }
+  return { ...(Object.keys(filter).length === 0 ? {} : { filter }) };
 }
 
 function emit(json: boolean, value: unknown, text: string): void {
@@ -69,54 +118,13 @@ export async function cmdCommsOwner(args: string[], options = ownerThreadOptions
       console.error(THREAD_USAGE);
       return 2;
     }
-    let channel: OwnerChannel | undefined;
-    if (args.includes('--channel')) {
-      const raw = args[args.indexOf('--channel') + 1];
-      if (raw === undefined || !isOwnerChannel(raw)) {
-        console.error(`--channel takes one of ${OWNER_CHANNELS.join(', ')}.`);
-        console.error(THREAD_USAGE);
-        return 2;
-      }
-      channel = raw;
+    const parsed = parseOwnerThreadFilterArgs(args);
+    if (parsed.error !== undefined) {
+      console.error(parsed.error);
+      console.error(THREAD_USAGE);
+      return 2;
     }
-    let direction: 'inbound' | 'outbound' | undefined;
-    if (args.includes('--direction')) {
-      const raw = args[args.indexOf('--direction') + 1];
-      if (raw !== 'inbound' && raw !== 'outbound') {
-        console.error('--direction takes inbound or outbound.');
-        console.error(THREAD_USAGE);
-        return 2;
-      }
-      direction = raw;
-    }
-    let since: number | undefined;
-    if (args.includes('--since')) {
-      const raw = args[args.indexOf('--since') + 1];
-      const parsed = raw === undefined ? null : parseSince(raw);
-      if (parsed === null) {
-        console.error('--since takes 15m, 2h, 1d, epoch ms or an ISO time.');
-        console.error(THREAD_USAGE);
-        return 2;
-      }
-      since = parsed;
-    }
-    let contains: string | undefined;
-    if (args.includes('--contains')) {
-      const raw = args[args.indexOf('--contains') + 1];
-      // Free text, not a label: printable content of any kind is fine,
-      // bounded like every other comms read's --contains; a flag-looking
-      // or blank value is a missing needle, not a search.
-      if (raw === undefined || raw.startsWith('--') || raw.trim() === '' || raw.length > OWNER_THREAD_CONTAINS_MAX) {
-        console.error(`--contains takes a non-empty search text of at most ${OWNER_THREAD_CONTAINS_MAX} characters.`);
-        console.error(THREAD_USAGE);
-        return 2;
-      }
-      contains = raw;
-    }
-    const filter = channel !== undefined || direction !== undefined || since !== undefined || contains !== undefined
-      ? { ...(channel !== undefined ? { channel } : {}), ...(direction !== undefined ? { direction } : {}), ...(since !== undefined ? { since } : {}), ...(contains !== undefined ? { contains } : {}) }
-      : undefined;
-    const view = readOwnerThread(options, limit, filter);
+    const view = readOwnerThread(options, limit, parsed.filter);
     const json = args.includes('--json');
     const awaiting = new Set(view.awaitingReply ?? []);
     emit(json, view, view.messages.map(message => {

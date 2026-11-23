@@ -96,9 +96,16 @@ phm fleet owner-history --limit 50 --json   # read-only; page back with --before
 phm fleet owner-pull --channel telegram     # pull remote channels into the thread
 ```
 
+Archived pages take the same view slice `phm comms thread` does —
+`--channel`, `--direction`, `--since` and `--contains` — applied through
+the shared predicate, so "what did the owner say about X on Telegram
+before the live window" is one filtered call, not manual paging.
+
 The isolated fleet MCP server serves the same projection as
-`fleet_owner_history` (`before`/`limit`, same bounds) — the only MCP read
-that reaches the archives `fleet_comms_thread`'s live window cannot see.
+`fleet_owner_history` (`before`/`limit` plus the same
+`channel`/`direction`/`since`/`contains` slice, same bounds) — the only
+MCP read that reaches the archives `fleet_comms_thread`'s live window
+cannot see.
 
 `owner-pull` skips a channel that is not configured and enabled, and does
 nothing while `~/.ashlr/KILL` or the comms pause is set.
