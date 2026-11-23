@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Seven sources, all of which Phantom
+ * evidence instead of a hand-kept list. Eight sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -29,7 +29,13 @@
  *     per-step pass/fail tallies every gated worker run records to
  *     metrics/local-gate.jsonl and `phm fleet vitals` folds
  *     (localGateBacklogItems below), so a gate step that keeps killing
- *     workers' diffs reaches the backlog instead of sitting in a report.
+ *     workers' diffs reaches the backlog instead of sitting in a report;
+ *   - the pass^k eval's regression alerts: the task, pass^k and dimension
+ *     regressions the nightly golden-set eval journals to
+ *     ~/.ashlr/eval/passk/alerts.jsonl (passkAlertBacklogItems below), so a
+ *     lane/model that keeps losing measured capability reaches the backlog
+ *     instead of sitting in `phm eval passk alerts`, a report someone had
+ *     to run.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -63,6 +69,7 @@ import type { Proposal } from './loop.js';
 import { nightlyLearningBacklogItems } from './nightly-backlog.js';
 import { fleetPolicyBacklogItems } from './policy-backlog.js';
 import { localGateBacklogItems } from './gate-backlog.js';
+import { passkAlertBacklogItems } from './passk-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -150,6 +157,14 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // healthy-only evidence bar: a missing, unreadable or partially corrupt
   // ledger yields no items.
   items.push(...await localGateBacklogItems({ repo }));
+
+  // Pass^k eval alerts: the nightly golden-set eval's recorded regressions
+  // become backlog items too — until now they only surfaced in
+  // `phm eval passk alerts`, a report someone had to run and read. An
+  // identity emits while the newest persisted report still shows the
+  // regression or the journal shows it recurring across eval reports;
+  // same healthy-only evidence bar and the same fleet-repo gate.
+  items.push(...await passkAlertBacklogItems({ repo }));
   return { items, errors };
 }
 
