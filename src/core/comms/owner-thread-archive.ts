@@ -52,7 +52,7 @@ function canonicalKey(message: OwnerThreadMessage): string {
 
 /**
  * The page `readOwnerThreadHistory` serves: seq paging (`before`, `limit`)
- * plus the same `channel`/`direction`/`since`/`contains` slice
+ * plus the same `channel`/`direction`/`since`/`beforeAt`/`contains` slice
  * `readOwnerThread` applies — one `OwnerThreadReadFilter` vocabulary, so
  * `phm fleet owner-history` and `fleet_owner_history` can slice archived
  * cross-channel history exactly the way `phm comms thread` slices the live

@@ -2341,6 +2341,9 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
   {
     "inputSchema": {
       "properties": {
+        "beforeAt": {
+          "type": "string",
+        },
         "channel": {
           "enum": [
             "desktop",

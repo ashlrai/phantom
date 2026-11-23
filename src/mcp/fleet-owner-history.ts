@@ -12,12 +12,14 @@
  * sequence number — page back with the oldest seq a previous page
  * returned — and `limit` caps the page (1–500, default 50), the same
  * bounds the CLI flags enforce and the core read clamps to.
- * `channel`, `direction`, `since` and `contains` apply the same view
- * slice `fleet_comms_thread` exposes — one channel's lines, one
- * direction's lines, a recorded-time floor or a case-insensitive text
+ * `channel`, `direction`, `since`, `beforeAt` and `contains` apply the
+ * same view slice `fleet_comms_thread` exposes — one channel's lines, one
+ * direction's lines, a recorded-time window (`since` the inclusive floor,
+ * `beforeAt` the exclusive ceiling) or a case-insensitive text
  * needle — to the archived pages through the shared
  * `ownerThreadViewPredicate`, so a filtered archive read keeps exactly
- * the rows the live read would. The result reports `archives` (retained
+ * the rows the live read would. `beforeAt` is named apart from `before`
+ * because `before` already pages by seq on this read. The result reports `archives` (retained
  * archive files found) and `skipped` (files that could not be read or
  * validated — counted, never fatal), so a partially readable history
  * stays honest rather than passing an empty page off as fact.
@@ -26,7 +28,7 @@
  * real account home and cannot be retargeted by HOME or ASHLR_*
  * variables, the same root the native gateway's owner-thread tools use —
  * so every key outside `before`/`limit`/`channel`/`direction`/`since`/
- * `contains`, caller root, path, cwd or environment override is refused
+ * `beforeAt`/`contains`, caller root, path, cwd or environment override is refused
  * before the read runs. Read-only: the projection only joins existing
  * reads, writes nothing and sends nothing; message text is the stored
  * scrubbed intake content — never a secret value — and routing labels
@@ -43,7 +45,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 export const FLEET_OWNER_HISTORY_LIMIT_DEFAULT = 50;
 export const FLEET_OWNER_HISTORY_LIMIT_MAX = 500;
 
-const HISTORY_KEYS = new Set(['before', 'limit', 'channel', 'direction', 'since', 'contains']);
+const HISTORY_KEYS = new Set(['before', 'limit', 'channel', 'direction', 'since', 'beforeAt', 'contains']);
 
 export interface FleetOwnerHistoryArgs {
   /** Keep only archived messages with seq below this sequence number. */
@@ -77,6 +79,12 @@ export function parseFleetOwnerHistoryArgs(args: Record<string, unknown>): Fleet
     const since = parseSince(args.since);
     if (since === null || !Number.isSafeInteger(since) || since < 0) return null;
     filter.since = since;
+  }
+  if (args.beforeAt !== undefined) {
+    if (typeof args.beforeAt !== 'string') return null;
+    const beforeAt = parseSince(args.beforeAt);
+    if (beforeAt === null || !Number.isSafeInteger(beforeAt) || beforeAt < 0) return null;
+    filter.beforeAt = beforeAt;
   }
   if (args.contains !== undefined) {
     if (typeof args.contains !== 'string' || args.contains.trim() === '' || args.contains.length > OWNER_THREAD_CONTAINS_MAX) return null;
