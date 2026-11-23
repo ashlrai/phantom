@@ -313,9 +313,20 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   an item while its failed rerun calls reach the recurring bar and
   outnumber the window's successful calls, the signature of a rerun loop
   that cannot fire. Verdict rows without a recorded test id never emit,
-  and a missing or unreadable journal emits nothing.
+  and a missing or unreadable journal emits nothing —
+  and the lost-launch report's corroborated losses, the launches whose
+  `<ID>.launch` first line records the launcher dying or whose launch
+  event has no finish/publish row and no open run marker once the grace
+  passed, folded from `metrics/jobs.jsonl` by `phm jobs lost`
+  (otherwise only visible through that report and supply-doctor's 24 h
+  count; outcome learning censors the silent vanishes as unresolved
+  attempts that never count). A (lane, class) cell becomes an item while
+  its corroborated losses reach the recurring bar inside the 72-hour
+  window — jobs the dispatcher still counts as running are excluded, so
+  a long job never queues work — and an unreadable ledger or run-marker
+  directory emits nothing.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
-  cross-review, empty-tag, post-merge and ci-rerun items carry
+  cross-review, empty-tag, post-merge, ci-rerun and lost-launch items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
@@ -348,7 +359,11 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   commands, keep the find-which-side-is-wrong framing for fail verdicts
   and the find-why-the-calls-error framing for call failures, and emit
   only when a journal row's recorded repository matches the discovery
-  target. They
+  target. Lost-launch items name the jobs-lost report and the runs-dir
+  evidence, keep the find-which-side-owns-the-cause framing — pinned ops
+  machinery versus the queue/job lifecycle this repository owns — and
+  emit only for the fleet's own repository since the launch machinery is
+  this install's. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
