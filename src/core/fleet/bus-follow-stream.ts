@@ -81,6 +81,12 @@ export interface BusFollowRequest {
    * never emit, the same inclusive `receivedAt >= since` match
    * `agents bus inbox --since` resolves its grammar to once per read. */
   since?: number;
+  /** Optional received-at ceiling in epoch ms: rows received at or after the
+   * cutoff never emit — the exclusive `receivedAt < before` match
+   * `comms bus read|watch --before` and `fleet_bus_inbox`'s `before` apply,
+   * composing with `since` into one `[since, before)` window where a row
+   * stamped exactly at either bound never matches. */
+  before?: number;
   /** Optional text filter: the same `busReadContainsMatch` rule
    * `agents bus inbox --contains`, `channel read --contains`,
    * `comms bus read|watch --contains` and `phm messages --contains`
@@ -134,6 +140,7 @@ export function validBusFollowRequest(request: BusFollowRequest): boolean {
     (request.priority === undefined || BUS_PRIORITIES.includes(request.priority)) &&
     (request.thread === undefined || label(request.thread)) &&
     (request.since === undefined || (Number.isSafeInteger(request.since) && request.since >= 0)) &&
+    (request.before === undefined || (Number.isSafeInteger(request.before) && request.before >= 0)) &&
     busReadContains(request.contains) !== null &&
     (request.id === undefined || label(request.id)) &&
     (request.inReplyTo === undefined || label(request.inReplyTo)) &&
@@ -247,6 +254,7 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
         if (request.topic !== undefined && !topicMatches(request.topic, protocolOf(row.envelope.body)?.topic ?? '')) continue;
         if (request.thread !== undefined && busBodyThread(row.envelope.body) !== request.thread) continue;
         if (request.since !== undefined && row.receivedAt < request.since) continue;
+        if (request.before !== undefined && row.receivedAt >= request.before) continue;
         if (containsNeedle !== undefined && !busReadContainsMatch(row.envelope.body, containsNeedle)) continue;
         if (!(await emit({ type: 'message', cursor: row.cursor, receivedAt: row.receivedAt, envelope: row.envelope }))) {
           status = aborted() ? 'cancelled' : 'output-unavailable';

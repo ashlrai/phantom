@@ -3633,8 +3633,11 @@ case-variant or otherwise unregistered spelling keeps exact-label matching
 and never inherits an identity's label set. `followBusStream` (`fleet bus-follow`)
 applies the same narrowing the bus page reads share, so the stream and
 `comms bus read|watch`/`fleet_bus_inbox` can never disagree about what a
-filter keeps: besides the routing, job, priority, thread, since and
-contains dimensions above it also takes `id`/`inReplyTo` — the exact
+filter keeps: besides the routing, job, priority, thread, since/before
+window and contains dimensions above — `before` the exclusive
+`receivedAt < before` upper bound composing with `since` into one
+`[since, before)` window, the same match `comms bus read|watch --before`
+and `fleet_bus_inbox`'s `before` apply — it also takes `id`/`inReplyTo` — the exact
 envelope-id and own-property reply-correlation matches — `kind`/`topic` —
 the protocol-v1 `protocolOf(body)?.kind` and `topicMatches` rules — and
 `channel`, the raw `group:<channel>:` `to`-prefix the unaddressed bus reads

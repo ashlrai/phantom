@@ -50,6 +50,11 @@ export interface FleetBusInboxFilters {
   job?: string;
   /** Epoch-ms cutoff resolved at parse time; keeps `receivedAt >= since`. */
   since?: number;
+  /** Epoch-ms cutoff resolved at parse time; keeps `receivedAt < before` —
+   * the exclusive upper bound composing with `since` into one
+   * `[since, before)` window, the same rule `phm comms bus read|watch
+   * --before` and `fleet bus-follow --before` apply. */
+  before?: number;
   /** Normalized `--contains` needle over the scrubbed one-line summary. */
   contains?: string;
 }
@@ -73,7 +78,7 @@ export interface FleetBusInboxDeps {
 }
 
 const INBOX_KEYS = new Set(['after', 'limit', 'to', 'from',
-  'id', 'inReplyTo', 'excludeFrom', 'priority', 'kind', 'topic', 'thread', 'job', 'channel', 'since', 'contains']);
+  'id', 'inReplyTo', 'excludeFrom', 'priority', 'kind', 'topic', 'thread', 'job', 'channel', 'since', 'before', 'contains']);
 /** The printable-label rule `--thread`, `--job` and the address fields share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
@@ -145,6 +150,13 @@ export function parseFleetBusInboxArgs(args: Record<string, unknown>): FleetBusI
     if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
     filters.since = resolved;
   }
+  const before = args['before'];
+  if (before !== undefined) {
+    if (typeof before !== 'string') return null;
+    const resolved = parseSince(before);
+    if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
+    filters.before = resolved;
+  }
   const contains = busReadContains(args['contains']);
   if (contains === null) return null;
   if (contains !== undefined) filters.contains = contains;
@@ -209,6 +221,7 @@ export async function readFleetBusInbox(input: FleetBusInboxArgs, deps: FleetBus
     (filters?.job === undefined || busBodyJobMatch(envelope.body, filters.job)) &&
     (filters?.channel === undefined || envelope.to.startsWith(`group:${filters.channel}:`)) &&
     (filters?.since === undefined || receivedAt >= filters.since) &&
+    (filters?.before === undefined || receivedAt < filters.before) &&
     (filters?.contains === undefined || busReadContainsMatch(envelope.body, filters.contains)));
   return {
     ...base, sourceState: 'ok' as const, messages,
