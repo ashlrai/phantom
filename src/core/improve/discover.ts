@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Thirty sources, all of which Phantom
+ * evidence instead of a hand-kept list. Thirty-one sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -243,6 +243,16 @@
  *     `phm router-calibration`, the eval harness, the dashboard and the
  *     `phm router outcomes` join — reports someone had to run and read —
  *     so a pool whose resolved work kept not holding never became work;
+ *   - the job-control steering ledger's recurring unacknowledged
+ *     requests: the fleet.job.control.v1 rows `phm job <action>`, POST
+ *     /api/verse/fleet/runs/control and the desktop job detail append to
+ *     queue/job-control.jsonl under the fleet runs directory — requests
+ *     still standing at 'requested' because no pass consumes them or
+ *     appends the dispatcher contract's acknowledgement
+ *     (jobControlBacklogItems below). Until now the ledger's only
+ *     readers were the session-thread display surfaces, which render a
+ *     standing request as "The dispatcher has not applied it yet." — so
+ *     steering verbs that are dead letters never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -299,6 +309,7 @@ import { proposalOutcomeBacklogItems } from './proposal-outcome-backlog.js';
 import { typedRouteBacklogItems } from './typed-route-backlog.js';
 import { branchGardenerBacklogItems } from './branch-gardener-backlog.js';
 import { rewardBacklogItems } from './reward-backlog.js';
+import { jobControlBacklogItems } from './job-control-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -667,6 +678,21 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // fleet's own repository since the ledger is this install's dispatch
   // record.
   items.push(...await rewardBacklogItems({ repo }));
+
+  // Job-control steering ledger: the fleet.job.control.v1 requests `phm
+  // job <action>`, POST /api/verse/fleet/runs/control and the desktop job
+  // detail append to queue/job-control.jsonl — requests still standing at
+  // 'requested' because nothing consumes them or appends the dispatcher
+  // contract's acknowledgement — become a backlog item too. Until now the
+  // ledger's only readers were the session-thread display surfaces, which
+  // render a standing request as "The dispatcher has not applied it yet."
+  // — so pause/resume/move-of-a-live-job/stop-of-a-queued-job verbs that
+  // are dead letters never became work. Same bounded tail read and the
+  // writer's own fold contract; the cell emits only at the recurring bars
+  // inside the 7-day window — enough unacknowledged requests across
+  // enough distinct jobs and UTC days — and only for the fleet's own
+  // repository since the ledger is this install's steering record.
+  items.push(...await jobControlBacklogItems({ repo }));
   return { items, errors };
 }
 
