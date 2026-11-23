@@ -74,6 +74,7 @@ export const FLEET_MCP_TOOL_NAMES: readonly string[] = Object.freeze([
   'fleet_email_outbox_batch_await',
   'fleet_comms_inbox',
   'fleet_comms_status',
+  'fleet_comms_thread',
   'fleet_email_diagnosis',
   'fleet_imessage_path',
   'fleet_imessage_acks',
