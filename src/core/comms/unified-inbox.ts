@@ -273,18 +273,15 @@ import { listDrafts as listCommsAgentDrafts, type CommsDraft } from '../comms-ag
 import { compareRanked, needsYouPriorityHeuristic, type AttentionItem, type NeedsYouPriority, type RankedAttentionItem } from '../decide/needs-you.js';
 import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxInspection, type BusInboxOptions, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { createBusMailbox, type BusMailboxPendingMessage } from '../fleet/bus-mailbox.js';
-import { BusBoard, busBoardStoragePaths, type BusBoardPendingPeers } from '../fleet/bus-board.js';
+import { readBusBoardPending, type BusBoardPendingRead } from '../fleet/bus-board.js';
 import { busBoardDeliveryText } from '../fleet/bus-delivery.js';
-import { SharedStore } from '../fleet/shared-store.js';
 import { BUS_PROTOCOL_KEY, isClaimableWork, type BusPriority } from '../fleet/bus-envelope.js';
 import { busReplyCitations, handoffAnswerScope, isWorkerHandoffBody, workerHandoffAnswered, type BusReplyCitation, type HandoffAnswerScope } from '../fleet/handoff-body.js';
 import { readAgentRegistry } from '../agents/bus-identity.js';
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
 import { readNeedsMasonReplyDeliveries, type NeedsMasonReplyDeliveryReport } from '../fleet/needs-mason-relay.js';
-import { loadConfigReadOnly, loadConfigReadOnlyStrict } from '../config.js';
-import { ashlrHome } from '../cloud/store.js';
-import type { AshlrConfig } from '../types.js';
+import { loadConfigReadOnly } from '../config.js';
 import { readEmailDropConfig, readEmailDropInbox } from './email-drop-config.js';
 import { probeOutboxDir, readEmailOutbox, type EmailOutboxEntry, type EmailOutboxListing } from './email-outbox.js';
 import { gmailArchivePlanLatestPath, readGmailArchivePlanLatest } from './gmail-archive-plan-latest.js';
@@ -474,10 +471,7 @@ export interface MailboxPendingRead {
  * when the store could be read — 'missing' is a verified-empty board (no
  * `state.json` ever written), 'unavailable' an unreadable one, never an
  * empty list passed off as fact. */
-export type BoardPendingRead =
-  | { source: 'available'; pending: BusBoardPendingPeers }
-  | { source: 'missing' }
-  | { source: 'unavailable' };
+export type BoardPendingRead = BusBoardPendingRead;
 
 export interface UnifiedInboxOptions {
   /** Shared runs context (`~/.ashlr-runs`): needs-you, teammate text/task and draft stores. */
@@ -499,7 +493,7 @@ export interface UnifiedInboxOptions {
   inspectBus?: typeof inspectBusInbox;
   /** Legacy `phm bus` mailbox seam; default reads `pendingAll` under the fleet root's parent. */
   readMailbox?: (options: { busRoot?: string; now?: () => number }) => MailboxPendingRead;
-  /** Shared task board seam; default reads `BusBoard.pendingAll` under the same `busBoardStoragePaths` derivation `phm bus board`, `work mine` and `agents bus status` share. */
+  /** Shared task board seam; default reads `BusBoard.pendingAll` through the shared `readBusBoardPending` under the same `busBoardStoragePaths` derivation `phm bus board`, `work mine` and `agents bus status` share. */
   readBoard?: (options: { busRoot?: string; now?: () => number }) => BoardPendingRead;
   readClaims?: (root?: string) => BusWorkClaimsInspection;
   readCoordination?: typeof listCoordination;
@@ -1339,33 +1333,6 @@ function mailboxItems(read: NonNullable<UnifiedInboxOptions['readMailbox']>, opt
   return { report: { state: truncated ? 'degraded' : 'healthy', pending: items.length }, items };
 }
 
-/**
- * The default board read: `BusBoard.pendingAll` under the same path
- * derivation `phm bus board`, `agents bus work mine`'s board section and
- * `agents bus status` share — `busBoardStoragePaths` over the fleet root
- * (`busRoot`, else `<ashlrHome>/fleet`, the same default `bus inbox`
- * resolves), so a custom `busRoot` probes the matching scratch store. A
- * board that was never used — no `state.json` — is 'missing' (verified
- * empty) and the read returns before `BusBoard`'s transaction can create
- * the directory or lock file a write would leave; an unreadable board, a
- * malformed config, a relative path override or a disabled event bus
- * reports 'unavailable', never an empty list passed off as fact.
- */
-function readBoardPending(options: { busRoot?: string; now?: () => number }): BoardPendingRead {
-  let cfg: AshlrConfig;
-  try { cfg = loadConfigReadOnlyStrict(); } catch { return { source: 'unavailable' }; }
-  const paths = busBoardStoragePaths(options.busRoot ?? join(ashlrHome(), 'fleet'), cfg);
-  if (paths.status !== 'ok') return { source: 'unavailable' };
-  if (!existsSync(join(paths.boardRoot, 'state.json'))) return { source: 'missing' };
-  try {
-    const shared = cfg.fleet?.sharedQueue;
-    const fleet = new SharedStore(paths.queueRoot, shared?.leaseMs);
-    return { source: 'available', pending: new BusBoard({ root: paths.boardRoot, fleet, cfg }).pendingAll(options.now?.()) };
-  } catch {
-    return { source: 'unavailable' };
-  }
-}
-
 /** Same identifier grammar `BusBoard` validates every stored peer, thread, task, delivery and fleet-item id against; re-checked before one reaches a command line. */
 const BOARD_ID = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$/;
 
@@ -2109,7 +2076,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const drafts = await draftItems(options.listPendingDrafts ?? listDrafts, options.listCommsDrafts ?? listCommsAgentDrafts, options.runsDir);
   const bus = busItems(options);
   const mailbox = mailboxItems(options.readMailbox ?? readMailboxPending, options);
-  const board = boardItems(options.readBoard ?? readBoardPending, options);
+  const board = boardItems(options.readBoard ?? readBusBoardPending, options);
   const conversations = conversationItems(options.readConversations ?? readAgentConversations, options, now, bus.covered);
   const seats = await seatItems(options.readSeatHandoffs ?? planSeatHandoffs, now);
   const peerDispatch = peerDispatchItems(options.readPeerDispatch ?? readPeerDispatchJournal, options);

@@ -10,6 +10,8 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { AshlrConfig } from '../types.js';
+import { ashlrHome } from '../cloud/store.js';
+import { loadConfigReadOnlyStrict } from '../config.js';
 import { fsyncDirectory } from '../util/durability.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
@@ -538,16 +540,24 @@ export class BusBoard {
    * read with every thread member as the label set, so every unacknowledged
    * delivery (a delivery's recipient is always a joined member) and every
    * task on every thread lists — the pending board `phm comms inbox`
-   * projects, where `pendingFor` still requires knowing peer labels ahead of
-   * time and `pending` only one. `peers` reports every member label the
-   * board knows, sorted. Item `content.text` stays the stored untrusted
-   * text, exactly like `pendingFor`; reading never acknowledges anything and
-   * grants no authority.
+   * projects and `fleet_bus_board` serves, where `pendingFor` still
+   * requires knowing peer labels ahead of time and `pending` only one.
+   * `jobId`, `contains` and `sinceMs` are the same optional filters
+   * `pendingFor` takes, applied by the shared `pendingDigest` under
+   * identical rules: `jobId` narrows the digest to threads carrying a task
+   * whose `itemId` cites it — and `peers` then reports only that job's
+   * thread members — `contains` the normalized `--contains` needle over
+   * the same scrubbed display text, `sinceMs` the epoch-ms cutoff
+   * deliveries must reach while tasks never match. `peers` reports every
+   * member label the board knows under the applied scope, sorted. Item
+   * `content.text` stays the stored untrusted text, exactly like
+   * `pendingFor`; reading never acknowledges anything and grants no
+   * authority.
    */
-  pendingAll(now?: number): BusBoardPendingPeers {
+  pendingAll(now?: number, jobId?: string, contains?: string, sinceMs?: number): BusBoardPendingPeers {
     return this.transaction(false, (state) => {
       const labels = new Set(state.threads.flatMap((thread) => thread.members));
-      const digest = this.pendingDigest(state, labels, now ?? Date.now());
+      const digest = this.pendingDigest(state, labels, now ?? Date.now(), jobId, contains, sinceMs);
       return {
         peers: digest.members,
         claims: digest.claims,
@@ -794,5 +804,61 @@ export class BusBoard {
       delete task.claim;
       return this.taskView(task);
     });
+  }
+}
+
+/** The resolved fleet-wide board read `readBusBoardPending` returns. */
+export type BusBoardPendingRead =
+  | { source: 'available'; pending: BusBoardPendingPeers }
+  | { source: 'missing' }
+  | { source: 'unavailable' };
+
+/**
+ * Options for `readBusBoardPending`: `busRoot` overrides the fleet root the
+ * board paths derive from — the same seam `phm comms inbox`'s board source
+ * and tests use, unset resolving `<ashlrHome>/fleet` — `now` the epoch-ms
+ * thunk the digest evaluates holds against, and `jobId`/`contains`/`sinceMs`
+ * the same optional filters `BusBoard.pendingAll` takes.
+ */
+export interface BusBoardPendingReadOptions {
+  busRoot?: string;
+  now?: () => number;
+  jobId?: string;
+  contains?: string;
+  sinceMs?: number;
+}
+
+/**
+ * The one fleet-wide pending-board read every surface shares —
+ * `BusBoard.pendingAll` under the same `busBoardStoragePaths` derivation
+ * `phm bus board`, `agents bus work mine`'s board section,
+ * `agents bus status` and `phm comms inbox`'s board source apply:
+ * `<dirname(fleetRoot)>/bus` for state and `<fleetRoot>/bus-queue` for the
+ * fleet queue — `<ashlrHome>/bus` and `<ashlrHome>/fleet/bus-queue` on the
+ * default root — unless `fleet.sharedQueue` runs in attested filesystem
+ * mode. A board that was never used — no `state.json` — is 'missing'
+ * (verified empty) and the read returns before `BusBoard`'s transaction
+ * can create the directory or lock file a write would leave; an
+ * unreadable board, a malformed config, a relative path override or a
+ * disabled event bus reports 'unavailable', never an empty digest passed
+ * off as fact. Read-only: the digest takes the board's local read lock and
+ * writes nothing — it never acknowledges a delivery or claims a task.
+ */
+export function readBusBoardPending(options: BusBoardPendingReadOptions = {}): BusBoardPendingRead {
+  let cfg: AshlrConfig;
+  try { cfg = loadConfigReadOnlyStrict(); } catch { return { source: 'unavailable' }; }
+  const paths = busBoardStoragePaths(options.busRoot ?? join(ashlrHome(), 'fleet'), cfg);
+  if (paths.status !== 'ok') return { source: 'unavailable' };
+  if (!existsSync(join(paths.boardRoot, 'state.json'))) return { source: 'missing' };
+  try {
+    const shared = cfg.fleet?.sharedQueue;
+    const fleet = new SharedStore(paths.queueRoot, shared?.leaseMs);
+    return {
+      source: 'available',
+      pending: new BusBoard({ root: paths.boardRoot, fleet, cfg })
+        .pendingAll(options.now?.(), options.jobId, options.contains, options.sinceMs),
+    };
+  } catch {
+    return { source: 'unavailable' };
   }
 }
