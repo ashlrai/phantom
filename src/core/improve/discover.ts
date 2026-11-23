@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Twenty-seven sources, all of which Phantom
+ * evidence instead of a hand-kept list. Twenty-eight sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -210,6 +210,17 @@
  *     backlog's own area-leverage ranking — reports and joins someone had
  *     to run — so the self-improvement loop's own measured verdicts never
  *     became work;
+ *   - the typed-routing decision journal's recurring unavailability and
+ *     degradation: the per-tick `route.explain.v1` rows dispatchd's
+ *     observe_typed_route appends to metrics/route.explain.jsonl after
+ *     each advisory `phm route decide` sample — 'unavailable' records
+ *     where the whole call failed, and observed decisions carrying the
+ *     decideRoute failure codes (backend-unavailable, deadline,
+ *     schema-invalid) that force the deterministic fallback
+ *     (typedRouteBacklogItems below). Until now the journal only ever
+ *     reached `phm route explain`'s typed_decisions digest, a report
+ *     someone had to run and read, so a typed routing layer that kept
+ *     failing — or kept falling back — never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -263,6 +274,7 @@ import { lessonTrialBacklogItems } from './lesson-trial-backlog.js';
 import { unfedBacklogItems } from './unfed-backlog.js';
 import { dupcheckGateBacklogItems } from './dupcheck-gate-backlog.js';
 import { proposalOutcomeBacklogItems } from './proposal-outcome-backlog.js';
+import { typedRouteBacklogItems } from './typed-route-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -593,6 +605,20 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // yields nothing, and only the fleet's own repository inherits the
   // items since the verbs and scheduler sync are this repo's machinery.
   items.push(...await proposalOutcomeBacklogItems({ repo }));
+
+  // Typed-routing decision journal: the dispatcher's per-tick advisory
+  // `phm route decide` samples — recurring 'unavailable' records (the
+  // whole call failing before a decision exists) and recurring
+  // degradation reason codes on observed decisions (the model path
+  // failing over to the deterministic fallback) — become backlog items
+  // too. Until now the journal only ever reached `phm route explain`'s
+  // typed_decisions digest, a report someone had to run and read, so a
+  // typed layer that kept failing — or kept falling back — never became
+  // work. Same bounded tail read and the digest reader's own row
+  // contract; a cell emits only at the recurring bars inside the
+  // 7-day window, and only for the fleet's own repository since the
+  // journal describes this install's dispatcher.
+  items.push(...await typedRouteBacklogItems({ repo }));
   return { items, errors };
 }
 
