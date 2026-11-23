@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Twenty-four sources, all of which Phantom
+ * evidence instead of a hand-kept list. Twenty-six sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -185,6 +185,18 @@
  *     reports and joins someone had to run — so chronic underused
  *     capacity, systematic requirement mismatches, unroutable work and
  *     hint-vocabulary drift never became work;
+ *   - the pre-launch dupcheck gate's precision ledger: the
+ *     queue.dupcheck-event.v1 rows `phm queue dupcheck --gate` records
+ *     for every claimed job — skip, warn or launch — plus the outcome
+ *     rows empty-tag-sync appends when a let-through job finishes EMPTY
+ *     already_done (dupcheckGateBacklogItems below). Until now the
+ *     ledger only fed `phm queue dupcheck --stats` and the Ideas
+ *     list's dupcheck-gate signal, reports someone had to run and act
+ *     on by hand: a gate whose recall keeps missing duplicates, or
+ *     whose skips keep being wrong, never became autonomous work. A
+ *     cell emits only at the same recurring bars the Ideas list
+ *     applies inside the 7-day window, and only for the fleet's own
+ *     repository since the ledger carries no repository column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -236,6 +248,7 @@ import { gatewayShadowBacklogItems } from './gateway-shadow-backlog.js';
 import { stuckJobBacklogItems } from './stuck-job-backlog.js';
 import { lessonTrialBacklogItems } from './lesson-trial-backlog.js';
 import { unfedBacklogItems } from './unfed-backlog.js';
+import { dupcheckGateBacklogItems } from './dupcheck-gate-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -536,6 +549,18 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // only the fleet's own repository inherits the items since the
   // journal describes this install's dispatcher and lanes.
   items.push(...await unfedBacklogItems({ repo }));
+
+  // Pre-launch dupcheck gate precision: the queue.dupcheck-event.v1
+  // ledger's recurring missed duplicates — let-through jobs that still
+  // finish EMPTY already_done — and recurring false skips — skipped jobs
+  // recorded launching or warning later — become backlog items too.
+  // Until now the ledger only ever reached `phm queue dupcheck --stats`
+  // and the Ideas list's dupcheck-gate signal, reports someone had to
+  // run and act on by hand. Same bounded tail read and the stats
+  // reader's own per-job fold; a cell emits only at the Ideas list's
+  // recurring bars inside the 7-day window, and only for the fleet's
+  // own repository since the ledger carries no repository column.
+  items.push(...await dupcheckGateBacklogItems({ repo }));
   return { items, errors };
 }
 
