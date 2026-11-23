@@ -1858,6 +1858,10 @@ is a prefix claim — it covers the path and everything beneath it — so it
 overlaps a bus `path:` glob that matches any path in that subtree, in either
 acquire order. Characters such as `[` or `{` are literal under `globMatches`,
 never wildcards, so a team path like `src/[id]` stays a concrete prefix claim.
+`*` and `?` are the glob wildcards but also legal filename characters: a team
+path carrying them keeps the same prefix coverage, and the overlap check reads
+the path as a glob on top of that, so the answer can err toward a conflict,
+never toward a miss.
 Queued path claims stay
 a read-only view of queue prompt files and can be merged onto that board with
 `claimBoard()`. `phm agents roster` reads this table through `readRosterClaims`.
