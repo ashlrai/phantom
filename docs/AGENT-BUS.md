@@ -254,7 +254,14 @@ the CLI this process detected (`self: true`, `cli`). A well-formed ref that
 names no identity is `unknown`, a non-label ref `invalid`, an unreadable
 registry `unavailable` and a missing `PHM_AGENT_ID` on the self path `unset` —
 unknown identity state is reported, never guessed, and the read writes
-nothing.
+nothing. `fleet_agent_identity` (the isolated fleet MCP tool) serves the
+same card for a required `agent` ref — the shared server has no per-caller
+`PHM_AGENT_ID`, so the no-ref self view never runs there — under the
+identical `busAgentView` validation, so an MCP-connected agent resolves a
+label it saw in a message row, claim owner or channel member list to the
+canonical id, `agent:<handle>` address, aliases, runtimes and member
+channels without shelling out to `phm`; it accepts no caller root or path
+and never registers, aliases, joins channels or writes.
 
 **Addresses.** The envelope keeps its fields; the unified API fills in the
 channel metadata group (`sender.agent_id` is the `agt_` id, `sender.vendor` the
