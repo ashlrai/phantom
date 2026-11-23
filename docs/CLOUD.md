@@ -668,14 +668,42 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   ledger emits nothing, malformed lines and foreign-schema rows drop
   like the writers' own contract, truncated tails read as lower
   bounds, and another repository emits nothing since the journal
-  carries no repository column.
+  carries no repository column —
+  and the incident-gate decision ledger's recurring failure classes
+  and stuck tightenings, the per-class rows `ashlr fleet
+  incident-gate --apply` appends to
+  `fleet/incident-gates.jsonl` under the Ashlr home (~/.ashlr/fleet)
+  after mining `metrics/jobs.jsonl` and `dispatch-events.log` under
+  the fleet runs directory for repeated failure signatures —
+  lane-error, test-failure and merge-conflict classes that cross the
+  >=3-fresh-signals bar (otherwise only visible as append-only audit:
+  appendIncidentGateLedger has no reader and the verb has no report
+  mode, so the fleet's own incident response never became work). A
+  class becomes an item while its watermark-advancing rows — applied
+  tightenings, or lane-hold refusals that record manual-hold or an
+  unknown lane — span two distinct UTC days inside the 7-day window:
+  each refire needed fresh failure signals, so the bounded holds keep
+  treating a cause that stays unfixed. A second item emits while the
+  class's tightenings that never landed — 'error' rows and
+  repo-cooldown refusals, which leave the watermark stuck so the same
+  signals re-fire every --apply run — span two distinct UTC days, the
+  signature of a broken apply path rather than a transient. lane-error
+  rows carry this install's lane scope and emit only for the fleet's
+  own repository; test-failure and merge-conflict rows carry the
+  qualified owner/repo scope and emit only when it matches the
+  discovery target exactly, case-insensitive. Only writer-appended
+  rows count — dry-run evaluations leave no trace — rows failing the
+  writer's closed contract or whose cls disagrees with its gate drop
+  like the sibling readers' own parse, a missing or unreadable ledger
+  emits nothing, truncated tails are stated as lower bounds, and
+  secret-shaped detail text is scrubbed before it reaches a prompt.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
-  reward, job-control, usage-gap, runtime-journal and generator-yield
-  items carry priority 3;
+  reward, job-control, usage-gap, runtime-journal, generator-yield and
+  incident-gate items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -805,7 +833,15 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   capability/stop-verdict vocabulary drift — with the same owner-side
   no-change escape, and emit only for the fleet's own repository
   since the journal describes this install's queue intake and carries
-  no repository column. They
+  no repository column. Incident-gate items name the decision ledger,
+  the `ashlr fleet incident-gate` verb and the mining sources, keep
+  the find-why-the-class-keeps-recurring-or-the-tightening-keeps-
+  failing framing per bucket — an unfixed lane, credential, quota,
+  test or merge cause versus a broken apply path (slots.json or
+  runs-dir writability, the repo-hold store, the KILL switch) — with
+  the same owner-side no-change escape, and emit lane-error cells only
+  for the fleet's own repository while repo-scoped cells match the
+  discovery target's owner/repo exactly. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
