@@ -274,12 +274,7 @@ function feedLabelMatcher(ref: string, options: { root?: string }): (label: stri
   return agentAddressMatcher(agentIdentityKeys({ root: options.root }), ref);
 }
 
-/** Announcement-address matcher for a job's `to` label. */
-export function busWorkFeedToMatcher(to: string, options: { root?: string } = {}): (label: string) => boolean {
-  return feedLabelMatcher(to, options);
-}
-
-/** Announcer matcher for a job's `owner` label — the same identity contract `to` uses. */
+/** Announcer matcher for a job's `owner` label — the same identity contract the addressed surfaces share. */
 export function busWorkFeedOwnerMatcher(owner: string, options: { root?: string } = {}): (label: string) => boolean {
   return feedLabelMatcher(owner, options);
 }
@@ -287,8 +282,8 @@ export function busWorkFeedOwnerMatcher(owner: string, options: { root?: string 
 /**
  * The feed `--to` filter's addressed-to-agent matcher under the pending-work
  * rule every other addressed surface shares — `bus next`, the `work mine`
- * digest's next/handoffs/wakes/inbox sections and `agents bus inbox`: the
- * literal label, every label of the identity it resolves to, and
+ * digest's jobs/next/handoffs/wakes/inbox sections and `agents bus inbox`:
+ * the literal label, every label of the identity it resolves to, and
  * `group:<channel>:<topic>` addresses of registry channels that identity
  * belongs to, minus channel posts the identity sent itself (`owner` is the
  * announcement's sender label). A `to` ref that resolves to no identity, or

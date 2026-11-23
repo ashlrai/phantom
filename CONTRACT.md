@@ -2887,15 +2887,15 @@ origin covers a scope key, not mail, and carries no `message`. `jobs` reports th
 (`BUS_FEED_OPEN_STATUSES`, at least one claim key, newest 50 of `open`) as
 `BusWorkMineJob` (`BusWorkFeedJob` — so it carries the feed's `postId`/`statusId`
 envelope citations and any `work.result` report — plus `addressed`, `announced`, `freeKeys`,
-`heldKeys`, `claimable`): `addressed` marks a `to` label resolving to the
-agent's identity and `announced` an `owner` label resolving to it (the agent
-posted the job and owns its status reports) — both through the identity-label
-contract `busWorkFeedToMatcher`/`busWorkFeedOwnerMatcher` apply (an
-unresolvable ref or unreadable registry keeps exact-label matching); the
-feed `--to` filter applies the wider pending-work addressed rule
-`busWorkFeedPendingToMatcher`, which also covers `group:<channel>:<topic>`
-announcements of registry channels the identity belongs to, minus the
-agent's own channel posts;
+`heldKeys`, `claimable`): `addressed` marks announcements that are pending
+work for the agent under the same rule the feed `--to` filter and the
+next/handoffs sections share — `busWorkFeedPendingToMatcher`: any label of
+the resolved identity or a `group:<channel>:<topic>` address of a registry
+channel it belongs to, minus the agent's own channel posts (an unresolvable
+ref or unreadable registry keeps exact-label matching, so unknown identity
+state never widens it); `announced` marks an `owner` label resolving to the
+agent's identity (the agent posted the job and owns its status reports)
+through the identity-label contract `busWorkFeedOwnerMatcher` applies;
 `holds` is `complete`/`truncated`/`unknown` from the feed's
 claims join, and `claimable` is `true` only on a provably free key, `false`
 only when every declared key is provably held, `null` when coverage is

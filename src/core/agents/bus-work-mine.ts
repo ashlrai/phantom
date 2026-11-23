@@ -33,7 +33,7 @@ import { parseClaimKey } from './bus-v2-schema.js';
 import type { AgentMessageKind } from '../fleet/agent-messages.js';
 import { conversationScope, readAgentConversations, type AgentConversations, type ConversationScope } from '../fleet/agent-conversations.js';
 import { plainAge } from '../fleet/agent-conversation-model.js';
-import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobHold, busWorkFeedJobSearchText, busWorkFeedOwnerMatcher, busWorkFeedToMatcher,
+import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobHold, busWorkFeedJobSearchText, busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher,
   busWorkJobDispatch, busWorkJobResultSuffix, readBusWorkFeed, type BusWorkFeedHoldCoverage, type BusWorkFeedJob,
   type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import { agentWakeClaimHolderSuffix, agentWakeMessageSuffix, busBodyFallbackSummary, busBodyJobIds, busBodyJobId, busBodyJobMatch,
@@ -133,7 +133,7 @@ export type BusWorkMineHoldCoverage = BusWorkFeedHoldCoverage;
 
 /** An open feed job plus its per-key hold state; a null field means unknown, never none. */
 export interface BusWorkMineJob extends BusWorkFeedJob {
-  /** True when the announcement `to` label resolves to this agent's identity; false keeps exact-label misses honest. */
+  /** True when the announcement is pending work addressed to this agent — the `work feed --to` rule: any label of its identity or a member `group:<channel>:<topic>` address, minus its own posts; false keeps exact-label misses honest. */
   addressed: boolean;
   /** True when the job's `owner` (announcer) label resolves to this agent's identity — the agent posted it and owns its status reports; false keeps exact-label misses honest. */
   announced: boolean;
@@ -675,13 +675,17 @@ function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | 
       (contains === undefined || busWorkFeedJobSearchText(job).includes(contains)) &&
       (sinceMs === undefined || job.updatedAt >= sinceMs))
     .sort((a, b) => b.updatedAt - a.updatedAt);
-  const toMatch = busWorkFeedToMatcher(agent, { root });
+  // `addressed` is the pending-work rule the feed `--to` filter and the
+  // next/handoffs sections share: identity labels plus member `group:`
+  // channel addresses, minus the agent's own posts — so a job `work feed
+  // --to <agent>` lists never reads addressed:false here.
+  const toMatch = busWorkFeedPendingToMatcher(agent, { root });
   const ownerMatch = busWorkFeedOwnerMatcher(agent, { root });
   return {
     status: 'ok', holds: coverage, open: open.length, receipts: feed.receipts,
     truncated: open.length > WORK_MINE_JOBS_MAX,
     jobs: open.slice(0, WORK_MINE_JOBS_MAX).map(job =>
-      busWorkMineJobAnnotation(job, heldByJob.get(job.id), coverage, toMatch(job.to), ownerMatch(job.owner))),
+      busWorkMineJobAnnotation(job, heldByJob.get(job.id), coverage, toMatch(job.to, job.owner), ownerMatch(job.owner))),
   };
 }
 
