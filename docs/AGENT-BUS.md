@@ -679,6 +679,7 @@ hold coverage rule and reports incomplete coverage as degraded.
 
 `phm agents bus work feed [--status <s>] [--job <id>] [--repo <owner/name>]
 [--provider <p>] [--tier <fast|mid|work|frontier>] [--to <label>] [--owner <agent>]
+[--channel <name>]
 [--claims] [--open] [--claimable]
 [--since <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-200>]`
 reads the
@@ -714,7 +715,7 @@ that routing label and `--owner` keeps jobs announced by that agent; each
 matches literally and under every label of one agent identity the ref resolves
 to through the registry — a handle, `agent:` address, stable id or alias,
 matched exactly, so a case-variant spelling names no identity — while an
-unresolvable ref or an unreadable registry keeps exact-label matching. `--repo` keeps jobs announced for one `owner/name`
+unresolvable ref or an unreadable registry keeps exact-label matching. `--channel` keeps only jobs announced to `group:<channel>:*` — the room's whole traffic under every topic, the same address prefix `inbox --channel`, `channel read` and `phm messages --channel` match on the raw routing label; the value takes the strict channel-name grammar, needs no registry, and a name outside it is a usage error. `--repo` keeps jobs announced for one `owner/name`
 repo, compared case-insensitively under the same rule claim keys use, and
 `--provider` keeps jobs announced for one provider; a malformed `--repo` or
 `--provider` is a usage error, never a silent empty view. `--tier` keeps
@@ -1621,10 +1622,14 @@ addressed-to-agent rule `bus next`, `bus-follow`, handoff receive, the
 `work mine` digest and `agents bus inbox` apply; an unresolvable `--to` or
 an unreadable registry keeps exact-label matching — the filter narrows the
 fleet view, it never widens it. `--owner` keeps jobs announced by that agent
-under every label of one agent identity. The
+under every label of one agent identity. `--channel <name>` keeps only jobs
+whose post was addressed to `group:<name>:*` — the room's whole traffic
+under every topic, the same raw address prefix `inbox --channel`,
+`channel read` and `phm messages --channel` match, validated by the strict
+channel-name grammar with no registry dependence. The
 endpoint needs a current read session and accepts `claims=true` plus the
 same filter parameters the feed CLIs take — `status`, `job`, `repo`,
-`provider`, `tier`, `to`, `owner`, `since`, `contains`, `open`,
+`provider`, `tier`, `to`, `owner`, `since`, `contains`, `channel`, `open`,
 `claimable` and `limit` — each a single value validated by the shared
 `parseBusWorkFeedQuery` rules (`src/core/agents/bus-work-feed-query.ts`) and
 applied through the same `projectBusWorkFeedView` the CLIs use, so an HTTP

@@ -1,7 +1,7 @@
 /** Thin argv adapter for the unified agent bus (src/core/agents/bus-unified.ts). Exit 0 ok, 1 refused, 2 usage. */
 import { isAbsolute } from 'node:path';
 import {
-  BUS_CLIS, createAgentChannel, joinAgentChannel, leaveAgentChannel, readAgentRegistry, registerAgentIdentity,
+  agentChannelNameSchema, BUS_CLIS, createAgentChannel, joinAgentChannel, leaveAgentChannel, readAgentRegistry, registerAgentIdentity,
   type BusCli, type BusProvider,
 } from '../core/agents/bus-identity.js';
 import {
@@ -54,7 +54,7 @@ ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--clai
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
-ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
+ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--priority P0..P3]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--priority P0..P3]
@@ -178,7 +178,10 @@ read-only and need no identity; work feed --to keeps jobs announced to that
 agent — the literal routing label, every label of one agent identity, and
 group:<channel>:<topic> addresses of registry channels the identity belongs
 to, minus that identity's own channel posts — while --owner keeps jobs
-announced by that agent under every label of one agent identity, --repo keeps jobs announced for one
+announced by that agent under every label of one agent identity, --channel
+keeps only jobs announced to group:<channel>:* — the room's traffic under
+every topic, the same address prefix inbox --channel and channel read
+match —, --repo keeps jobs announced for one
 owner/name repo (case-insensitive, the claim-key rule), --provider keeps
 jobs announced for one provider, --tier keeps only jobs whose announcement
 declared that dispatch tier — a job carrying no dispatch spec declares none
@@ -786,6 +789,10 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (tierRaw !== undefined && tier === undefined) {
         throw new UsageError(`--tier must be one of ${WORK_TIERS.join(', ')}.`);
       }
+      const channel = one('--channel');
+      if (channel !== undefined && !agentChannelNameSchema.safeParse(channel).success) {
+        throw new UsageError('--channel takes a bus channel name (a-z, 0-9, _ -; 1-32 chars).');
+      }
       const contains = one('--contains');
       if (contains !== undefined && (contains.trim() === '' || contains.length > BUS_WORK_FEED_CONTAINS_MAX)) {
         throw new UsageError(`--contains takes a non-empty search text of at most ${BUS_WORK_FEED_CONTAINS_MAX} characters.`);
@@ -801,7 +808,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         readBusWorkFeed({ root: options.root, claims: p.bools.has('--claims') || claimable || open }),
         { status: status as WorkJob['status'] | undefined, jobId, repo,
           provider: providerRaw as WorkJob['provider'] | undefined, tier,
-          open: open || undefined, claimable: claimable ? true : undefined, since: sinceArg(), contains,
+          open: open || undefined, claimable: claimable ? true : undefined, since: sinceArg(), contains, channel,
           toMatch: to === undefined ? undefined : busWorkFeedPendingToMatcher(to, { root: options.root }),
           ownerMatch: owner === undefined ? undefined : busWorkFeedOwnerMatcher(owner, { root: options.root }) });
       const paged = limit === undefined ? result : sliceBusWorkFeedView(result, limit);

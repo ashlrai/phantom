@@ -91,6 +91,7 @@ describe('fleet_work_feed argument parsing', () => {
     expect(parseFleetWorkFeedArgs({ owner: 'agent:planner' })?.filters.ownerMatch).toBeTypeOf('function');
     expect(parseFleetWorkFeedArgs({ since: '1800000000000' })?.filters).toMatchObject({ since: 1800000000000 });
     expect(parseFleetWorkFeedArgs({ contains: 'parser' })?.filters).toMatchObject({ contains: 'parser' });
+    expect(parseFleetWorkFeedArgs({ channel: 'release' })?.filters).toMatchObject({ channel: 'release' });
   });
 
   it('rejects unknown keys, caller roots and malformed values before any read', () => {
@@ -100,6 +101,7 @@ describe('fleet_work_feed argument parsing', () => {
       { repo: 'no-slash' }, { repo: 'a/b/c' }, { provider: 'bogus' }, { tier: 'bogus' },
       { to: 'has space' }, { owner: 5 }, { since: 'not-a-time' }, { since: '' },
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 42 },
+      { channel: 'Has Space' }, { channel: '' }, { channel: 5 }, { channel: 'x'.repeat(33) },
       { status: null }, { job: null },
     ]) expect(parseFleetWorkFeedArgs(bad)).toBeNull();
   });

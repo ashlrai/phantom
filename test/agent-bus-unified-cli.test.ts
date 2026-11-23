@@ -870,6 +870,27 @@ describe('phm agents bus (unified)', () => {
     }
   });
 
+  it('filters the work feed by --channel on the announcement room address', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-ROOM', '--title', 'room job',
+      '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom',
+      '--to', 'group:release:deploy', '--id', 'ch-post'])).json).toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-SINK', '--title', 'sink job',
+      '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom', '--id', 'ch-sink'])).json)
+      .toMatchObject({ status: 'posted' });
+    const ids = (feed: { json: { jobs: { id: string }[] } }) => feed.json.jobs.map(job => job.id);
+    // The room's traffic under every topic — the same group:<name>: prefix
+    // inbox --channel and channel read match.
+    expect(ids(await run(['work', 'feed', '--channel', 'release']))).toEqual(['RQ-ROOM']);
+    expect(ids(await run(['work', 'feed', '--channel', 'ops']))).toEqual([]);
+    // The filter composes with the other view filters.
+    expect(ids(await run(['work', 'feed', '--channel', 'release', '--status', 'done']))).toEqual([]);
+    // A name outside the channel grammar is a usage error, never a guessed match.
+    for (const bad of ['Has Space', 'UPPER', 'a:b']) {
+      expect(await run(['work', 'feed', '--channel', bad])).toMatchObject({ code: 2 });
+    }
+  });
+
   it('pages the work feed with --limit and reports matched/omitted', async () => {
     const spy = vi.spyOn(Date, 'now');
     let clock = 1_800_000_000_000;

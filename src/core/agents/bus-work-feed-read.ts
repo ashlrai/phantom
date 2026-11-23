@@ -354,11 +354,20 @@ export interface BusWorkFeedViewFilters {
    * their own filters, never search text.
    */
   contains?: string;
+  /**
+   * Keep only jobs whose announcement `to` carries `group:<channel>:` — the
+   * room's whole traffic under every topic, the same address prefix
+   * `phm messages --channel`, `agents bus inbox --channel` and `channel read`
+   * match. The value is the strict channel-name grammar; matching is a raw
+   * prefix on the routing label, so it needs no registry and never widens on
+   * unknown state.
+   */
+  channel?: string;
 }
 
 /**
  * Client-side `--status`/`--job`/`--repo`/`--provider`/`--tier`/`--claimable`/`--since`/
- * `--to`/`--owner`/`--contains` filters and newest-first ordering shared by
+ * `--to`/`--owner`/`--contains`/`--channel` filters and newest-first ordering shared by
  * the feed CLIs;
  * the matchers are the `busWorkFeedPendingToMatcher`/`busWorkFeedOwnerMatcher`
  * predicates. `since` keeps jobs whose `updatedAt` — the newest status
@@ -394,6 +403,7 @@ export function projectBusWorkFeedView(result: BusWorkFeedReadResult, filters: B
       && (filters.since === undefined || job.updatedAt >= filters.since)
       && (filters.toMatch === undefined || filters.toMatch(job.to, job.owner))
       && (filters.ownerMatch === undefined || filters.ownerMatch(job.owner))
+      && (filters.channel === undefined || job.to.startsWith(`group:${filters.channel}:`))
       && (containsNeedle === undefined || busWorkFeedJobSearchText(job).includes(containsNeedle)))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const view: Extract<BusWorkFeedReadResult, { status: 'ok' }> = { ...result, jobs };
