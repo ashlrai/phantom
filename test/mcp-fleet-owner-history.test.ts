@@ -5,9 +5,10 @@
  * live thread window; once rotation moves the oldest messages into
  * owner-thread-archive files beside the live record, this is the only
  * MCP read that pages them back — seq paging with `before`, bounded
- * pages with `limit`, archive/skipped counts kept honest and message
- * text scrubbed on read, all through the shared projection so the CLI
- * and MCP surfaces can never diverge.
+ * pages with `limit`, the shared channel/direction/since/contains view
+ * slice `fleet_comms_thread` exposes, archive/skipped counts kept
+ * honest and message text scrubbed on read, all through the shared
+ * projection so the CLI and MCP surfaces can never diverge.
  *
  * Hermetic: injected readers and crafted owner-thread archive fixtures
  * under temp runs dirs — never the real home, config, owner thread or
@@ -86,13 +87,29 @@ describe('fleet_owner_history argument parsing', () => {
     expect(parseFleetOwnerHistoryArgs({ before: 7, limit: 10 })).toEqual({ limit: 10, before: 7 });
   });
 
+  it('accepts the shared view slice and rejects malformed values before any read runs', () => {
+    expect(parseFleetOwnerHistoryArgs({ channel: 'telegram' })).toEqual({ limit: 50, filter: { channel: 'telegram' } });
+    expect(parseFleetOwnerHistoryArgs({ direction: 'inbound' })).toEqual({ limit: 50, filter: { direction: 'inbound' } });
+    expect(parseFleetOwnerHistoryArgs({ direction: 'outbound', limit: 10 })).toEqual({ limit: 10, filter: { direction: 'outbound' } });
+    expect(parseFleetOwnerHistoryArgs({ since: '2026-01-01T00:00:00Z' })).toEqual({ limit: 50, filter: { since: Date.parse('2026-01-01T00:00:00Z') } });
+    expect(parseFleetOwnerHistoryArgs({ since: '1700000000000' })).toEqual({ limit: 50, filter: { since: 1700000000000 } });
+    expect(parseFleetOwnerHistoryArgs({ contains: 'deploy fix' })).toEqual({ limit: 50, filter: { contains: 'deploy fix' } });
+    expect(parseFleetOwnerHistoryArgs({ before: 9, channel: 'slack', contains: 'x' })).toEqual({ limit: 50, before: 9, filter: { channel: 'slack', contains: 'x' } });
+    for (const bad of [
+      { channel: 'sms' }, { channel: 5 }, { channel: null },
+      { direction: 'sideways' }, { direction: 1 },
+      { since: 'bogus' }, { since: 5 }, { since: '-1' }, { since: null },
+      { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 5 },
+    ]) expect(parseFleetOwnerHistoryArgs(bad)).toBeNull();
+  });
+
   it('rejects out-of-range limits, bad cursors, unknown keys and caller paths before any read runs', () => {
     for (const bad of [
       { limit: 0 }, { limit: FLEET_OWNER_HISTORY_LIMIT_MAX + 1 }, { limit: 1.5 }, { limit: '5' }, { limit: null },
       { before: 0 }, { before: -3 }, { before: 1.5 }, { before: '5' }, { before: null },
       { before: Number.MAX_SAFE_INTEGER + 1 }, { before: Number.NaN },
       { root: '/tmp/fake' }, { path: '/tmp/x' }, { cwd: '/tmp' }, { runsDir: '/tmp/x' }, { configDir: '/tmp/x' },
-      { extra: 1 }, { json: true }, { channel: 'telegram' }, { contains: 'x' },
+      { extra: 1 }, { json: true },
     ]) expect(parseFleetOwnerHistoryArgs(bad)).toBeNull();
   });
 });
@@ -121,6 +138,19 @@ describe('fleet_owner_history reader', () => {
     });
     expect((result as typeof view).messages).toHaveLength(1);
     expect(result.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('forwards the view slice to the shared read as page fields', async () => {
+    const seen: unknown[][] = [];
+    const history: typeof readOwnerThreadHistory = (...args: Parameters<typeof readOwnerThreadHistory>) => {
+      seen.push(args as unknown[]);
+      return { schema: 'comms.owner-thread-history.v1' as const, messages: [], archives: 0, skipped: 0 };
+    };
+    await readFleetOwnerHistory(
+      { limit: 10, before: 30, filter: { channel: 'telegram', contains: 'deploy' } },
+      { runsDir: '/server-owned', history },
+    );
+    expect(seen[0]![1]).toEqual({ before: 30, limit: 10, channel: 'telegram', contains: 'deploy' });
   });
 
   it('reports a throwing read as unavailable — never an invented empty history', async () => {
@@ -159,6 +189,24 @@ describe('fleet_owner_history reader', () => {
     expect((oldest as ReturnType<typeof readOwnerThreadHistory>).messages.map(m => m.seq)).toEqual([1, 2]);
   });
 
+  it('applies the shared view slice to the real archived projection', async () => {
+    const dir = runsDir([{
+      first: 1, last: 3,
+      messages: [
+        { ...message(1), channel: 'telegram', direction: 'outbound', text: 'ship it' },
+        message(2),
+        { ...message(3), channel: 'email', at: '2026-01-03T00:00:00.000Z', text: 'please review the fix' },
+      ],
+    }]);
+    const seqs = async (filter: NonNullable<Parameters<typeof readFleetOwnerHistory>[0]['filter']>) =>
+      ((await readFleetOwnerHistory({ limit: 50, filter }, { runsDir: dir })) as ReturnType<typeof readOwnerThreadHistory>).messages.map(m => m.seq);
+    expect(await seqs({ channel: 'telegram' })).toEqual([1]);
+    expect(await seqs({ direction: 'outbound' })).toEqual([1]);
+    expect(await seqs({ since: Date.parse('2026-01-02T00:00:00.000Z') })).toEqual([3]);
+    expect(await seqs({ contains: 'review' })).toEqual([3]);
+    expect(await seqs({ channel: 'slack' })).toEqual([]);
+  });
+
   it('reports a verified-empty history for a missing leader dir — real zeros, not unknown', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'fleet-owner-history-empty-'));
     roots.push(dir);
@@ -187,6 +235,10 @@ describe('fleet_owner_history MCP tool', () => {
       properties: {
         before: { type: 'integer', minimum: 1 },
         limit: { type: 'integer', minimum: 1, maximum: 500, default: 50 },
+        channel: { type: 'string' },
+        direction: { type: 'string', enum: ['inbound', 'outbound'] },
+        since: { type: 'string' },
+        contains: { type: 'string', minLength: 1, maxLength: 512 },
       },
     });
   });
@@ -194,7 +246,10 @@ describe('fleet_owner_history MCP tool', () => {
   it.each([
     [{ root: '/tmp/fake-root' }], [{ path: '/tmp/x' }], [{ cwd: '/tmp' }],
     [{ runsDir: '/tmp/x' }], [{ before: 0 }], [{ before: 1.5 }], [{ before: '9' }],
-    [{ limit: 0 }], [{ limit: 501 }], [{ limit: '10' }], [{ channel: 'telegram' }], [{ extra: 1 }],
+    [{ limit: 0 }], [{ limit: 501 }], [{ limit: '10' }],
+    [{ channel: 'sms' }], [{ channel: 5 }], [{ direction: 'sideways' }],
+    [{ since: 'bogus' }], [{ since: 5 }], [{ contains: '' }], [{ contains: 'x'.repeat(513) }],
+    [{ extra: 1 }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const ownerHistory = vi.fn();
     const client = await connect({ status: async () => ({}), loop: async () => ({}), ownerHistory });
@@ -215,6 +270,16 @@ describe('fleet_owner_history MCP tool', () => {
     const { parsed } = await call(client, { before: 12, limit: 5 });
     expect(ownerHistory).toHaveBeenCalledWith({ limit: 5, before: 12 });
     expect(parsed).toEqual(payload);
+  });
+
+  it('passes the view slice through to the reader as a filter', async () => {
+    const ownerHistory = vi.fn(async () => ({ ok: true }));
+    const client = await connect({ status: async () => ({}), loop: async () => ({}), ownerHistory });
+    await call(client, { channel: 'telegram', direction: 'inbound', since: '2026-01-01T00:00:00Z', contains: 'deploy' });
+    expect(ownerHistory).toHaveBeenCalledWith({
+      limit: 50,
+      filter: { channel: 'telegram', direction: 'inbound', since: Date.parse('2026-01-01T00:00:00Z'), contains: 'deploy' },
+    });
   });
 
   it('defaults to limit 50 with no cursor when arguments are omitted', async () => {

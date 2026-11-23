@@ -597,6 +597,33 @@ export interface OwnerThreadReadFilter {
 }
 
 /**
+ * The one slice predicate the live `readOwnerThread` view and the archive
+ * `readOwnerThreadHistory` read share: a message stays when it passes every
+ * supplied dimension — its recorded channel, its direction, the `since`
+ * recorded-time floor (an unparseable `at` never satisfies it) and the
+ * `contains` needle as a case-insensitive substring over the stored text
+ * with whitespace collapsed on both sides. Exported so the archived pages
+ * `phm fleet owner-history` and `fleet_owner_history` apply the identical
+ * rule `phm comms thread` does — the two reads can never disagree about
+ * what a filter keeps.
+ */
+export function ownerThreadViewPredicate(filter?: OwnerThreadReadFilter): (message: OwnerThreadMessage) => boolean {
+  const needle = filter?.contains === undefined ? undefined
+    : filter.contains.toLowerCase().replace(/\s+/g, ' ').trim();
+  return message => {
+    if (filter?.channel !== undefined && message.channel !== filter.channel) return false;
+    if (filter?.direction !== undefined && message.direction !== filter.direction) return false;
+    if (filter?.since !== undefined) {
+      const at = Date.parse(message.at);
+      if (!Number.isFinite(at) || at < filter.since) return false;
+    }
+    if (needle !== undefined && needle !== '' &&
+        !message.text.toLowerCase().replace(/\s+/g, ' ').includes(needle)) return false;
+    return true;
+  };
+}
+
+/**
  * The ordered owner thread, capped to the newest `limit` messages that pass
  * `filter` (receipt joins and the awaiting-reply mark follow the same slice,
  * so a filtered view never shows marks for rows it hid). `direction` keeps
@@ -614,19 +641,7 @@ export function readOwnerThread(options: OwnerThreadOptions, limit = 200, filter
   | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: OwnerThreadMessage[]; receipts: OwnerThreadReceipts; awaitingReply: string[] }
   | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: []; receipts: OwnerThreadReceipts; awaitingReply: null; unavailable: true } {
   const cap = Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 200) : 200;
-  const needle = filter?.contains === undefined ? undefined
-    : filter.contains.toLowerCase().replace(/\s+/g, ' ').trim();
-  const inView = (message: OwnerThreadMessage): boolean => {
-    if (filter?.channel !== undefined && message.channel !== filter.channel) return false;
-    if (filter?.direction !== undefined && message.direction !== filter.direction) return false;
-    if (filter?.since !== undefined) {
-      const at = Date.parse(message.at);
-      if (!Number.isFinite(at) || at < filter.since) return false;
-    }
-    if (needle !== undefined && needle !== '' &&
-        !message.text.toLowerCase().replace(/\s+/g, ' ').includes(needle)) return false;
-    return true;
-  };
+  const inView = ownerThreadViewPredicate(filter);
   try {
     const state = readState(options);
     const messages = state.messages.filter(inView).slice(-cap);
