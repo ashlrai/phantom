@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AUTO_DISCOVER_EMPTY_EVERY_MS, AUTO_DISCOVER_EVERY_MS, autoDiscover, discoverBacklog, resetAutoDiscoverForTests } from '../src/core/improve/discover.js';
+import { AUTO_DISCOVER_EMPTY_EVERY_MS, AUTO_DISCOVER_EVERY_MS, autoDiscover, discoverBacklog, fleetLearningBacklogItems, resetAutoDiscoverForTests } from '../src/core/improve/discover.js';
 import { updateCloudBudget } from '../src/core/cloud/store.js';
 import { appendUserBacklogItems, readUserBacklogItems, validBacklogItem } from '../src/core/cloud/backlog.js';
 import type { Proposal } from '../src/core/improve/loop.js';
@@ -128,5 +128,102 @@ describe('scheduled auto-discover', () => {
     hasNext = true;
     expect((await run(AUTO_DISCOVER_EMPTY_EVERY_MS + AUTO_DISCOVER_EVERY_MS - 1)).ran).toBe(false);
     expect((await run(AUTO_DISCOVER_EMPTY_EVERY_MS + AUTO_DISCOVER_EVERY_MS)).ran).toBe(true);
+  });
+});
+
+// Fleet outcome learning → backlog items: the jobs ledger and dispatch log's
+// recurring failure patterns (breakage/dirty/fixup/low-merge) become items.
+describe('fleet outcome-learning items', () => {
+  const FTS = '2026-11-01T00:00:00Z';
+  const fleetFile = (rel: string, text: string): string => {
+    const p = path.join(home, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, text);
+    return p;
+  };
+  const assign = (job: string, repo: string): string =>
+    JSON.stringify({ event: 'assign', job, repo, resource: 'devin', model: 'swe-2-max', jobType: 'code', ts: FTS });
+  const outcome = (job: string, breakage: number): string =>
+    JSON.stringify({ event: 'outcome', job, state: 'merged', usage: 1000, breakage, ts: FTS });
+  /** Three finished attempts on one cell that each merged and then broke main. */
+  const breakageEvents = (repo = 'phantom'): string =>
+    [1, 2, 3].flatMap((n) => [assign(`J-${n}`, repo), outcome(`J-${n}`, 1)]).join('\n') + '\n';
+  /** Jobs-ledger dialect: launch assigns plus reconciler CLOSED verdicts — a low-merge cell. */
+  const closedLedger = (repo = 'phantom'): string =>
+    [1, 2, 3].flatMap((n) => [
+      JSON.stringify({ event: 'launch', job: `L-${n}`, repo, lane: 'devin', tier: 'work', model: 'swe-2-max', ts: FTS }),
+      JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: `L-${n}`, prUrl: `https://github.com/ashlrai/phantom/pull/${n}`, outcome: 'CLOSED', ts: FTS }),
+    ]).join('\n') + '\n';
+
+  it('turns a recurring breakage cell into valid priority-3 backlog items', async () => {
+    const eventsPath = fleetFile('.ashlr-runs/queue/dispatch-events.log', breakageEvents());
+    const items = await fleetLearningBacklogItems({ repo: 'ashlrai/phantom', eventsPath });
+    expect(items).toHaveLength(2);
+    expect(items.map((i) => i.area)).toEqual(['fleet-breakage', 'fleet-low-merge']);
+    for (const item of items) {
+      expect(item.id).toMatch(/^fleet-learn-improve-[0-9a-f]{8}$/);
+      expect(validBacklogItem(item)).not.toBeNull();
+      expect(item).toMatchObject({ priority: 3, repo: 'ashlrai/phantom' });
+      expect(item.prompt).toContain("fleet repo 'phantom'");
+      expect(item.prompt).toContain('no-change');
+      expect(item.prompt).toContain('add the regression check');
+    }
+    expect(items[0]!.title).toContain('breakage');
+    expect(items[0]!.prompt).toContain('3 finished attempts');
+  });
+
+  it('matches fleet cells to the target repo case-insensitively on the repo name', async () => {
+    // Cell repos are bare queue labels (the fold's identifier alphabet
+    // admits no '/'); the backlog target is owner/name — the shared
+    // repository name is the last path segment on both sides.
+    const eventsPath = fleetFile('.ashlr-runs/queue/dispatch-events.log', breakageEvents('Phantom'));
+    const items = await fleetLearningBacklogItems({ repo: 'ashlrai/phantom', eventsPath });
+    expect(items.map((i) => i.area)).toEqual(['fleet-breakage', 'fleet-low-merge']);
+  });
+
+  it('emits nothing for telemetry about a different repository', async () => {
+    const eventsPath = fleetFile('.ashlr-runs/queue/dispatch-events.log', breakageEvents('otherrepo'));
+    const items = await fleetLearningBacklogItems({ repo: 'ashlrai/phantom', eventsPath });
+    expect(items).toEqual([]);
+  });
+
+  it('emits nothing when both sources are missing', async () => {
+    const items = await fleetLearningBacklogItems({
+      repo: 'ashlrai/phantom',
+      eventsPath: path.join(home, 'no-such-events.log'),
+      ledgerPath: path.join(home, 'no-such-jobs.jsonl'),
+    });
+    expect(items).toEqual([]);
+  });
+
+  it('folds the jobs ledger alone into a low-merge item', async () => {
+    const ledgerPath = fleetFile('.ashlr-runs/metrics/jobs.jsonl', closedLedger());
+    const items = await fleetLearningBacklogItems({ repo: 'ashlrai/phantom', ledgerPath });
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ area: 'fleet-low-merge', priority: 3, repo: 'ashlrai/phantom' });
+  });
+
+  it('honours the item limit in fold order (breakage before low-merge)', async () => {
+    const eventsPath = fleetFile('.ashlr-runs/queue/dispatch-events.log', breakageEvents());
+    const items = await fleetLearningBacklogItems({ repo: 'ashlrai/phantom', eventsPath, limit: 1 });
+    expect(items).toHaveLength(1);
+    expect(items[0]!.area).toBe('fleet-breakage');
+  });
+
+  it('appends fleet learning items after the GitHub sources and dedupes on refresh', async () => {
+    fleetFile('.ashlr-runs/queue/dispatch-events.log', breakageEvents());
+    const greenGh = async (args: string[]) => {
+      const p = args[4] ?? '';
+      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+    };
+    const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+    const fleet = first.items.filter((i) => i.id.startsWith('fleet-learn-'));
+    expect(fleet.map((i) => i.area)).toEqual(['fleet-breakage', 'fleet-low-merge']);
+    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+    expect(appendUserBacklogItems(first.items)).toBe(fleet.length);
+    const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+    expect(appendUserBacklogItems(second.items)).toBe(0);
+    expect(readUserBacklogItems().filter((i) => i.id.startsWith('fleet-learn-'))).toHaveLength(2);
   });
 });
