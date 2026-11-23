@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Four sources, all of which Phantom
+ * evidence instead of a hand-kept list. Five sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -14,7 +14,12 @@
  *   - the fleet's own outcome learning: recurring breakage, dirty, fixup and
  *     low-merge patterns the jobs ledger and dispatch log already prove
  *     (fleetLearningBacklogItems below), so the fleet's self-diagnosed
- *     improvement work reaches the backlog that does it.
+ *     improvement work reaches the backlog that does it;
+ *   - the nightly local retro's proposals: recurring verification, scope,
+ *     safety, review and execution findings mined from fleet, cloud and
+ *     Devin job records (nightlyLearningBacklogItems below), so the mined
+ *     lessons reach the backlog instead of sitting advisory-only in
+ *     `phm improve nightly`.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -45,6 +50,7 @@ import {
 } from '../router/outcomes.js';
 import { kindOf } from './outcomes.js';
 import type { Proposal } from './loop.js';
+import { nightlyLearningBacklogItems } from './nightly-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -113,6 +119,11 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // read. Read-only and bounded; the operator backlog dedupes by the
   // stable fleet-learn-improve-<hash> id, so refreshes add only new cells.
   items.push(...await fleetLearningBacklogItems({ repo }));
+
+  // Nightly retro proposals: the local miner's recurring-failure findings
+  // become backlog items too — until now they only surfaced in
+  // `phm improve nightly`, a report someone had to run and read.
+  items.push(...await nightlyLearningBacklogItems({ repo }));
   return { items, errors };
 }
 
