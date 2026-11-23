@@ -15,6 +15,43 @@ def prompt(job, attrs='P1, pool=devin', text='Fix src/core/queue/store.ts retry 
 
 
 class EmptyJobAdmission(unittest.TestCase):
+    def test_concurrent_recuts_keep_durable_identity_until_completion(self):
+        from concurrent.futures import ThreadPoolExecutor
+        for terminal in ('finish', 'launch_terminal'):
+            with self.subTest(terminal=terminal), build() as tmp:
+                home = Path(tmp).resolve(); env = launch_stubs(home)
+                q = home / '.ashlr-runs/queue'
+                ledger = home / '.ashlr-runs/metrics/jobs.jsonl'
+                for job in ('RQ-A', 'RQ-B'):
+                    queue_job(home, job, 'devin')
+                    (q / f'prompts/{job}.md').write_text(prompt(job))
+                with ThreadPoolExecutor(max_workers=2) as workers:
+                    results = list(workers.map(lambda _: tick(home, env), range(2)))
+                for result in results: self.assertEqual(result.returncode, 0, result.stderr)
+                def rows(): return list(map(json.loads, ledger.read_text().splitlines()))
+                claims = [r for r in rows() if r.get('event') == 'claim']
+                self.assertEqual([r['job'] for r in claims], ['RQ-A'])
+                # Lost artifacts and duplicate receipts do not end ownership.
+                (q / 'run/RQ-A.dispatched').unlink(missing_ok=True)
+                with ledger.open('a') as stream:
+                    stream.write(json.dumps(claims[0]) + '\n')
+                self.assertEqual(tick(home, env).returncode, 0)
+                self.assertFalse(dispatched(home, 'RQ-B'))
+                self.assertTrue(any(r.get('event') == 'dispatch_deferred' and r.get('job') == 'RQ-B'
+                                    and r.get('reason') == 'duplicate-request' and r.get('repeatOf') == 'RQ-A'
+                                    for r in rows()))
+                # PR resolution can describe an older attempt; it cannot free a worker.
+                with ledger.open('a') as stream:
+                    stream.write(json.dumps(dict(event='outcome', state='MERGED', job='RQ-A')) + '\n')
+                self.assertEqual(tick(home, env).returncode, 0)
+                self.assertFalse(dispatched(home, 'RQ-B'))
+                with ledger.open('a') as stream:
+                    stream.write(json.dumps(dict(event=terminal, job='RQ-A', lane='devin')) + '\n')
+                self.assertEqual(tick(home, env).returncode, 0)
+                self.assertTrue(dispatched(home, 'RQ-B'))
+                self.assertEqual([r['job'] for r in rows() if r.get('event') == 'claim'],
+                                 ['RQ-A', 'RQ-A', 'RQ-B'])
+
     def test_repair_jobs_for_different_prs_are_different_requests(self):
         a, b = 'RQ-FIXUP-phantom-41-aaaaaaa', 'RQ-FIXUP-phantom-42-aaaaaaa'
         self.assertNotEqual(request_hash(a, 'phantom', prompt(a)), request_hash(b, 'phantom', prompt(b)))
@@ -94,6 +131,8 @@ class EmptyJobAdmission(unittest.TestCase):
                     self.assertFalse(dispatched(home, 'RQ-B'))
                     # Once ownership ends, the retained request can retry.
                     (q / 'run/RQ-A.dispatched').unlink(missing_ok=True)
+                    with ledger.open('a') as stream:
+                        stream.write(json.dumps(dict(event='finish', job='RQ-A', lane='codex-cmp')) + '\n')
                     self.assertEqual(tick(home, env).returncode, 0)
                     self.assertTrue(dispatched(home, 'RQ-B'))
 

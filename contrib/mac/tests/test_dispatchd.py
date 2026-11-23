@@ -195,9 +195,11 @@ class DispatchClaimTests(unittest.TestCase):
         (home / f'.ashlr-runs/queue/run/{job}.dispatched').unlink(missing_ok=True)
         queue_job(home, job, lane='devin')
         with ledger.open('a') as f: f.write(json.dumps(launches()[0]) + '\n')
-        before = ledger.read_text()
         self.assertEqual(tick(home, env).returncode, 0)
-        self.assertEqual(ledger.read_text(), before)
+        self.assertEqual(len(launches()), 2)  # original receipt plus its duplicate
+        deferred = [row for row in map(json.loads, ledger.read_text().splitlines())
+                    if row.get('event') == 'dispatch_deferred' and row.get('job') == job]
+        self.assertEqual([(r['reason'], r['repeatOf']) for r in deferred], [('active-attempt', job)])
         self.assertTrue(any(line.startswith(job + '\t') for line in ready_lines(home)))
         with ledger.open('a') as f: f.write(json.dumps(dict(event='finish', job=job, lane='devin')) + '\n')
         self.assertEqual(tick(home, env).returncode, 0)
