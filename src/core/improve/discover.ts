@@ -115,7 +115,17 @@
  *     (skillOutcomeBacklogItems below), so a card whose observed
  *     selections keep company with merges that did not hold becomes
  *     work instead of sitting in `phm skills list --outcomes` and
- *     `phm fleet status`, reports someone had to run.
+ *     `phm fleet status`, reports someone had to run;
+ *   - the precheck-skip ledger's recurring skip evidence: the
+ *     `queue/precheck-skips.tsv` rows dispatchd appends for every job
+ *     its empty-run precheck or dupcheck gate finishes as DONE-NOOP —
+ *     recurring (code, reason) groups across distinct jobs and job ids
+ *     the queue keeps resurrecting after a skip
+ *     (precheckSkipBacklogItems below), so producers that keep minting
+ *     already-done work, or a precheck rule that keeps misfiring, become
+ *     work instead of sitting in `phm fleet precheck-repeats`,
+ *     `phm fleet parked` and `phm fleet queue`, reports someone had to
+ *     run.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -160,6 +170,7 @@ import { lostLaunchBacklogItems } from './lost-launch-backlog.js';
 import { memoryBacklogItems } from './memory-backlog.js';
 import { controllerBacklogItems } from './controller-backlog.js';
 import { skillOutcomeBacklogItems } from './skill-outcome-backlog.js';
+import { precheckSkipBacklogItems } from './precheck-skip-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -362,6 +373,17 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // bar inside the window, only while its exact revision is still the
   // live card, and only for the fleet's own repository.
   items.push(...await skillOutcomeBacklogItems({ repo }));
+
+  // Precheck-skip ledger: the dispatcher's own DONE-NOOP record —
+  // recurring (code, reason) skip groups across distinct jobs and job
+  // ids the queue keeps resurrecting after a skip — become backlog
+  // items too. Until now the ledger only ever reached
+  // `phm fleet precheck-repeats`, `phm fleet parked`'s queue-health
+  // tallies and `phm fleet queue`'s skip sections, reports someone had
+  // to run and read. Same bounded tail read and the queue projection's
+  // own row validation; an item emits only at the recurring bar inside
+  // the window and only for the fleet's own repository.
+  items.push(...await precheckSkipBacklogItems({ repo }));
   return { items, errors };
 }
 
