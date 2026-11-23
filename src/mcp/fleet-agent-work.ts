@@ -20,9 +20,10 @@
  *
  * `agent` is required and resolves through the server-owned identity
  * registry with the same handle/`agent:`/stable-id/alias refs
- * `resolveAgent` accepts; `job`, `since`, `contains` and `priority` apply
- * the same rules the `phm agents bus work mine` flags share and are
- * validated before any store read. Read-only: no caller root, path or cwd is
+ * `resolveAgent` accepts; `job`, `since`, `contains`, `priority` and
+ * `channel` apply the same rules the `phm agents bus work mine` flags
+ * share and are validated before any store read. Read-only: no caller
+ * root, path or cwd is
  * accepted — the store, registry, hold table, feed, mailbox, board,
  * wake-queue and seat roots stay server-owned — and the tool never
  * claims, acks, replies, posts, releases or writes. Routing labels are
@@ -30,6 +31,7 @@
  * no execution, claim, merge, push, spend or dispatch authority.
  */
 import { busReadContains } from '../core/agents/bus-unified.js';
+import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
 import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import type { BusWorkMineOptions, BusWorkMineResult } from '../core/agents/bus-work-mine.js';
 import { readBusWorkMineWithSeats } from '../core/agents/bus-work-mine-seats.js';
@@ -38,7 +40,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 /** The printable-label rule `agent` and `job` share — the same bound every bus read applies. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const WORK_KEYS = new Set(['agent', 'job', 'contains', 'since', 'priority']);
+const WORK_KEYS = new Set(['agent', 'job', 'contains', 'since', 'priority', 'channel']);
 
 export interface FleetAgentWorkArgs {
   /** Agent ref — handle, `agent:<handle>`, stable `agt_` id or alias — resolved through the server-side registry. */
@@ -51,6 +53,8 @@ export interface FleetAgentWorkArgs {
   since?: number;
   /** Keep only pending items stamped with this exact P0..P3 band — the same `--priority` rule every bus read shares. */
   priority?: BusPriority;
+  /** Keep only pending items provably addressed to `group:<name>:*` of one bus channel — the same `--channel` rule every bus read shares. */
+  channel?: string;
 }
 
 /**
@@ -61,8 +65,10 @@ export interface FleetAgentWorkArgs {
  * `job` a printable routing label, `contains` the bounded free-text
  * needle `busReadContains` normalizes, `since` the shared `15m`/`2h`/`1d`/
  * epoch-ms/ISO grammar resolved to a safe non-negative epoch-ms integer,
- * `priority` one exact P0..P3 band. Unknown keys, wrong types, caller
- * roots and malformed values are all refused before the store is touched.
+ * `priority` one exact P0..P3 band, `channel` the strict channel-name
+ * grammar every bus `--channel` read validates. Unknown keys, wrong
+ * types, caller roots and malformed values are all refused before the
+ * store is touched.
  */
 export function parseFleetAgentWorkArgs(args: Record<string, unknown>): FleetAgentWorkArgs | null {
   if (Object.keys(args).some(key => !WORK_KEYS.has(key))) return null;
@@ -89,6 +95,11 @@ export function parseFleetAgentWorkArgs(args: Record<string, unknown>): FleetAge
   if (priority !== undefined) {
     if (typeof priority !== 'string' || !(BUS_PRIORITIES as readonly string[]).includes(priority)) return null;
     parsed.priority = priority as BusPriority;
+  }
+  const channel = args.channel;
+  if (channel !== undefined) {
+    if (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) return null;
+    parsed.channel = channel;
   }
   return parsed;
 }
@@ -117,5 +128,6 @@ export async function readFleetAgentWork(
     ...(args.contains === undefined ? {} : { contains: args.contains }),
     ...(args.since === undefined ? {} : { since: args.since }),
     ...(args.priority === undefined ? {} : { priority: args.priority }),
+    ...(args.channel === undefined ? {} : { channel: args.channel }),
   });
 }
