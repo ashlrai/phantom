@@ -626,7 +626,12 @@ rooted. `group.presence` heartbeats are expiring observations with their own
 read (`phm comms bus group presence`), never messages: they form no thread
 and cannot answer a waiting one. `--json` prints `agents.conversations.v1` (`version` 1), and
 `GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&since=1h&contains=text&limit=50]`
-serves the same read with a current read session.
+serves the same read with a current read session. The isolated fleet MCP
+server's `fleet_agent_conversations` tool serves the same projection with
+the same filters as arguments (`agent`, `waiting`/`blocked` booleans,
+`state`, `job`, `waitingOn`, `since`, `contains`, `limit`), so an
+MCP-connected agent reads the fleet-wide thread view — who waits on whom,
+what is blocked, what moved lately — without shelling out to `phm`.
 
 - `conversations[]`: `id`, `participants[]` (`name`, `label`, `known`, `node`;
   an agent no label proves has `label` "unknown agent"), `subject` (the latest,

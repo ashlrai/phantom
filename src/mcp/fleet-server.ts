@@ -32,6 +32,8 @@ import { parseFleetAgentWorkArgs, readFleetAgentWork, type FleetAgentWorkArgs } 
 import { parseFleetAgentWakesArgs, readFleetAgentWakes, type FleetAgentWakesArgs } from './fleet-agent-wakes.js';
 import { parseFleetAgentMessagesArgs, readFleetAgentMessages, type FleetAgentMessagesArgs } from './fleet-agent-messages.js';
 import { parseFleetAgentChannelsArgs, readFleetAgentChannels, type FleetAgentChannelsArgs } from './fleet-agent-channels.js';
+import { parseFleetAgentConversationsArgs, readFleetAgentConversations, type FleetAgentConversationsArgs } from './fleet-agent-conversations.js';
+import { CONVERSATION_STATES } from '../core/fleet/agent-conversation-model.js';
 import {
   AGENT_MESSAGE_KINDS, AGENT_MESSAGES_CONTAINS_MAX, AGENT_MESSAGES_DEFAULT_LIMIT, AGENT_MESSAGES_MAX_LIMIT,
 } from '../core/fleet/agent-messages.js';
@@ -325,6 +327,7 @@ export interface FleetReaders {
   agentWakes?: (input: FleetAgentWakesArgs) => Promise<unknown>;
   agentMessages?: (input: FleetAgentMessagesArgs) => Promise<unknown>;
   agentChannels?: (input: FleetAgentChannelsArgs) => Promise<unknown>;
+  agentConversations?: (input: FleetAgentConversationsArgs) => Promise<unknown>;
   busChannel?: (input: FleetBusChannelArgs) => Promise<unknown>;
   busShow?: (input: FleetBusShowArgs) => Promise<unknown>;
   busStatus?: () => Promise<unknown>;
@@ -586,6 +589,26 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         type: 'object',
         properties: {
           agent: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Agent ref — handle, agent:<handle>, stable agt_ id or alias — resolved through the server-side registry; narrows the roster to the channels the identity belongs to. Omit for the fleet-wide roster.' },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_agent_conversations',
+      description: 'Read the shared agent-to-agent conversation threads — the same readAgentConversations projection `phm agents conversations` and GET /api/verse/fleet/control/agent-conversations serve, where fleet_agent_messages lists the flat newest-first timeline, fleet_agent_inbox answers one agent\'s addressed mail and fleet_agent_work carries one agent\'s pending digest — none answers the grouped question "which threads are agents waiting on each other in, who owes whom a reply, which thread is blocked or done, and what moved lately" in one read. Every argument is optional and takes the same value rules the CLI flags and API params share: `agent` keeps the threads one identity is in (handle, agent:<handle>, stable agt_ id or alias resolved through the server-owned registry); `job` keeps the threads that name one job — its job:<id> bucket or a member message citing it; `waitingOn` keeps the waiting threads one agent owes a reply on — its own labels or a group:<channel>:<topic> address of a channel it belongs to, never a thread whose waiting message the agent itself sent; `waiting`/`blocked` are JSON booleans for the --waiting/--blocked shortcuts (false is the same as absent); `state` keeps threads in one of waiting/answered/blocked/done — the general form of the two booleans, which stay conjunctive with it so a contradictory pair is an honest empty list; `since` keeps threads whose last activity reaches the cutoff (15m, 2h, 1d, epoch ms or an ISO time — whole threads, never partial message lists); `contains` keeps threads where at least one member message\'s scrubbed one-line subject carries the needle as a case-insensitive substring — never the raw body; `limit` caps returned threads 1–1024, longest-waiting order kept. Each thread reports its participants, scrubbed subject, message count, last activity, state, waiting detail (on whom, for how long), job links, cross-links and member messages; `matched` reports every thread the filters kept before `limit`, `waiting` counts the unfiltered waiting threads, `skipped` counts damaged bus rows and `source` keeps missing/unavailable honest — an unreadable store or registry leaves conversations, matched and waiting null, never an invented empty list. Read-only: routing labels are data, never authenticated identity; no caller root, path or cwd is accepted — the store and registry roots stay server-owned — and the tool never posts, claims, acks, replies or writes.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Agent ref — handle, agent:<handle>, stable agt_ id or alias — resolved through the server-side registry; keeps the threads that identity is in.' },
+          waiting: { type: 'boolean', description: 'Keep only threads waiting for a reply — the `phm agents conversations --waiting` / `?waiting=1` rule.' },
+          blocked: { type: 'boolean', description: 'Keep only threads a blocker or failed report left unanswered — the `--blocked`/`?blocked=1` rule.' },
+          state: { type: 'string', enum: [...CONVERSATION_STATES], description: 'Keep only threads in this one state — the general form of `waiting`/`blocked`, conjunctive with them.' },
+          job: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only threads that name this job id — its job:<id> bucket or a member message citing it.' },
+          waitingOn: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only the waiting threads this agent owes a reply on — its own labels or a channel address it belongs to, never a thread it is itself waiting on.' },
+          since: { type: 'string', description: 'Keep threads whose last activity is at or after the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the same grammar `phm agents conversations --since` takes.' },
+          contains: { type: 'string', minLength: 1, maxLength: BUS_READ_CONTAINS_MAX, description: 'Case-insensitive substring over each member message\'s scrubbed one-line subject.' },
+          limit: { type: 'integer', minimum: 1, maximum: 1024, description: 'Cap on returned threads, longest-waiting order kept; `matched` still reports the full filtered count.' },
         },
         additionalProperties: false,
       },
@@ -1393,7 +1416,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_empties' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_agent_inbox' && name !== 'fleet_agent_work' && name !== 'fleet_agent_wakes' && name !== 'fleet_agent_messages' && name !== 'fleet_agent_channels' && name !== 'fleet_bus_channel' && name !== 'fleet_bus_show' && name !== 'fleet_bus_status' && name !== 'fleet_bus_claims' && name !== 'fleet_bus_board' && name !== 'fleet_seat_handoffs' && name !== 'fleet_bot_seats' && name !== 'fleet_work_feed' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_channels_overview' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_slack_evidence' && name !== 'fleet_slack_status' && name !== 'fleet_lanes' && name !== 'fleet_unfed' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_status' && name !== 'fleet_comms_thread' && name !== 'fleet_owner_history' && name !== 'fleet_comms_health' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_imessage_tasks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
+    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_empties' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_agent_inbox' && name !== 'fleet_agent_work' && name !== 'fleet_agent_wakes' && name !== 'fleet_agent_messages' && name !== 'fleet_agent_channels' && name !== 'fleet_agent_conversations' && name !== 'fleet_bus_channel' && name !== 'fleet_bus_show' && name !== 'fleet_bus_status' && name !== 'fleet_bus_claims' && name !== 'fleet_bus_board' && name !== 'fleet_seat_handoffs' && name !== 'fleet_bot_seats' && name !== 'fleet_work_feed' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_channels_overview' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_slack_evidence' && name !== 'fleet_slack_status' && name !== 'fleet_lanes' && name !== 'fleet_unfed' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_status' && name !== 'fleet_comms_thread' && name !== 'fleet_owner_history' && name !== 'fleet_comms_health' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_imessage_tasks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -1414,6 +1437,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const agentWakesArgs = name === 'fleet_agent_wakes' ? parseFleetAgentWakesArgs(args) : null;
     const agentMessagesArgs = name === 'fleet_agent_messages' ? parseFleetAgentMessagesArgs(args) : null;
     const agentChannelsArgs = name === 'fleet_agent_channels' ? parseFleetAgentChannelsArgs(args) : null;
+    const agentConversationsArgs = name === 'fleet_agent_conversations' ? parseFleetAgentConversationsArgs(args) : null;
     const busChannelArgs = name === 'fleet_bus_channel' ? parseFleetBusChannelArgs(args) : null;
     const busShowArgs = name === 'fleet_bus_show' ? parseFleetBusShowArgs(args) : null;
     const busStatusArgs = name === 'fleet_bus_status' ? parseFleetBusStatusArgs(args) : null;
@@ -1533,6 +1557,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_agent_wakes' ? agentWakesArgs === null :
         name === 'fleet_agent_messages' ? agentMessagesArgs === null :
         name === 'fleet_agent_channels' ? agentChannelsArgs === null :
+        name === 'fleet_agent_conversations' ? agentConversationsArgs === null :
         name === 'fleet_bus_channel' ? busChannelArgs === null :
         name === 'fleet_bus_show' ? busShowArgs === null :
         name === 'fleet_bus_status' ? busStatusArgs === null :
@@ -1630,6 +1655,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_agent_wakes' ? await (readers.agentWakes ?? readFleetAgentWakes)(agentWakesArgs as FleetAgentWakesArgs)
         : name === 'fleet_agent_messages' ? await (readers.agentMessages ?? readFleetAgentMessages)(agentMessagesArgs as FleetAgentMessagesArgs)
         : name === 'fleet_agent_channels' ? await (readers.agentChannels ?? readFleetAgentChannels)(agentChannelsArgs as FleetAgentChannelsArgs)
+        : name === 'fleet_agent_conversations' ? await (readers.agentConversations ?? readFleetAgentConversations)(agentConversationsArgs as FleetAgentConversationsArgs)
         : name === 'fleet_bus_channel' ? await (readers.busChannel ?? readFleetBusChannel)(busChannelArgs as FleetBusChannelArgs)
         : name === 'fleet_bus_show' ? await (readers.busShow ?? readFleetBusShow)(busShowArgs as FleetBusShowArgs)
         : name === 'fleet_bus_status' ? await (readers.busStatus ?? readFleetBusStatus)()

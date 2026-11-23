@@ -118,7 +118,20 @@ identical `readAgentMessages` validation, so an MCP-connected agent reads
 the fleet-wide timeline, its classified kinds, conversation/job/pr links
 and `matched`/`skipped`/`source` honesty without shelling out to `phm`; it
 accepts no caller root or path and passes a missing or unavailable store
-through untouched.
+through untouched. `fleet_agent_conversations` (the same isolated fleet
+MCP server) serves the shared `agents.conversations.v1` thread read —
+`phm agents conversations`, GET
+`/api/verse/fleet/control/agent-conversations` and the Map pane's thread
+lines and Conversations panel all run the one `readAgentConversations`
+projection, and the tool is that read with the same dimensions as
+arguments: `agent`, `waiting`, `blocked`, `state`, `job`, `waitingOn`,
+`since`, `contains` and `limit` all optional — so an MCP-connected agent
+answers "which threads wait for a reply, which are blocked, which are
+done" fleet-wide without reconstructing reply chains from the raw
+timeline; `matched`/`waiting`/`skipped`/`source` pass through untouched,
+an unreadable bus or registry stays null rather than an invented empty
+thread list, and the tool accepts no caller root or path and never posts,
+claims, acks, replies or renews TTL.
 
 ## Write
 
