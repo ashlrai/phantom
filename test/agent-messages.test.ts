@@ -584,6 +584,45 @@ describe('phm messages projection', () => {
     expect(parseAgentMessagesQuery({ excludeFrom: 'x'.repeat(129) }).ok).toBe(false);
   });
 
+  it('filters to envelopes citing one id through their own inReplyTo field', () => {
+    const root = store();
+    post(root, T0, { id: 'q1', from: 'a', to: 'b', body: { kind: 'note', text: 'can you review the parser?' } });
+    post(root, T0 + 1_000, { id: 'r1', from: 'b', to: 'a', body: { kind: 'note', text: 'looks good', inReplyTo: 'q1' } });
+    // The replyTo alias roots the conversation but is not the citation the
+    // filter reads — the same own-property rule every bus read applies.
+    post(root, T0 + 2_000, { id: 'r2', from: 'b', to: 'a', body: { kind: 'note', text: 'replyTo alias only', replyTo: 'q1' } });
+    // A reply addressed to a room still answers the cited envelope: the
+    // timeline is fleet-wide, so the filter is not limited to one inbox.
+    post(root, T0 + 3_000, { id: 'r3', from: 'c', to: 'group:eng:general', body: { kind: 'note', text: 'channel answer', inReplyTo: 'q1' } });
+    // Case, other ids, substring ids, non-string values and bodies without
+    // the field never match.
+    post(root, T0 + 4_000, { id: 'x1', from: 'a', to: 'b', body: { kind: 'note', text: 'wrong case', inReplyTo: 'Q1' } });
+    post(root, T0 + 5_000, { id: 'x2', from: 'a', to: 'b', body: { kind: 'note', text: 'other id', inReplyTo: 'q2' } });
+    post(root, T0 + 6_000, { id: 'x3', from: 'a', to: 'b', body: { kind: 'note', text: 'substring id', inReplyTo: 'q1-extra' } });
+    post(root, T0 + 7_000, { id: 'x4', from: 'a', to: 'b', body: { kind: 'note', text: 'numeric citation', inReplyTo: 42 } });
+    post(root, T0 + 8_000, { id: 'x5', from: 'a', to: 'b', body: { kind: 'note', text: 'no citation' } });
+    const hits = read(root, { inReplyTo: 'q1' });
+    expect(hits.messages.map(m => m.id)).toEqual(['r3', 'r1']);
+    expect(hits.matched).toBe(2);
+    // --in-reply-to composes with the other filters; matched counts only the
+    // rows every filter accepts and limit caps the page, not the count.
+    expect(read(root, { inReplyTo: 'q1', agent: 'c' }).messages.map(m => m.id)).toEqual(['r3']);
+    expect(read(root, { inReplyTo: 'q1', contains: 'channel' }).messages.map(m => m.id)).toEqual(['r3']);
+    expect(read(root, { inReplyTo: 'q1', channel: 'eng' }).messages.map(m => m.id)).toEqual(['r3']);
+    expect(read(root, { inReplyTo: 'q1', kind: 'ask' })).toMatchObject({ matched: 0, messages: [] });
+    expect(read(root, { inReplyTo: 'q1', limit: 1 })).toMatchObject({ matched: 2, messages: [{ id: 'r3' }] });
+    // An uncited id is an empty page, not an error.
+    expect(read(root, { inReplyTo: 'q-gone' })).toMatchObject({ matched: 0, messages: [] });
+  });
+
+  it('parses --in-reply-to as a printable envelope id and refuses anything else', () => {
+    expect(parseAgentMessagesQuery({ inReplyTo: 'm-1' })).toEqual({ ok: true, query: { inReplyTo: 'm-1' } });
+    expect(parseAgentMessagesQuery({ inReplyTo: 'm-1', kind: 'reply', limit: '5' })).toEqual({ ok: true, query: { inReplyTo: 'm-1', kind: 'reply', limit: 5 } });
+    expect(parseAgentMessagesQuery({ inReplyTo: 'has space' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ inReplyTo: '' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ inReplyTo: 'x'.repeat(129) }).ok).toBe(false);
+  });
+
   it('serves the same read at GET /api/verse/agent-bus/messages', async () => {
     const calls: unknown[] = [];
     const api = createAgentBusApi({ messages: query => { calls.push(query); return { schema: 'agent-messages.v1', source: 'missing', messages: [], matched: 0, skipped: 0 }; } });
@@ -594,11 +633,11 @@ describe('phm messages projection', () => {
       const handled = await api(ctx, { url, headers: {} } as never, res, url.split('?')[0]!, 'GET');
       return { handled, status: status || (res as { statusCode: number }).statusCode, body };
     };
-    const ok = await send('/api/verse/agent-bus/messages?agent=claude&kind=ask&priority=P0&job=RQ-JOB1&thread=t-1&contains=parser%20fix&excludeFrom=atlas&limit=5');
+    const ok = await send('/api/verse/agent-bus/messages?agent=claude&kind=ask&priority=P0&job=RQ-JOB1&thread=t-1&contains=parser%20fix&excludeFrom=atlas&inReplyTo=m-1&limit=5');
     expect(ok.handled).toBe(true);
     expect(ok.status).toBe(200);
     expect(JSON.parse(ok.body)).toMatchObject({ schema: 'agent-messages.v1' });
-    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', job: 'RQ-JOB1', thread: 't-1', contains: 'parser fix', excludeFrom: 'atlas', agent: 'claude', limit: 5 }]);
+    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', job: 'RQ-JOB1', thread: 't-1', contains: 'parser fix', excludeFrom: 'atlas', inReplyTo: 'm-1', agent: 'claude', limit: 5 }]);
     expect((await send('/api/verse/agent-bus/messages?limit=0')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?kind=chatter')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?priority=urgent')).status).toBe(400);
@@ -606,6 +645,7 @@ describe('phm messages projection', () => {
     expect((await send('/api/verse/agent-bus/messages?thread=has%20space')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?contains=')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?excludeFrom=has%20space')).status).toBe(400);
+    expect((await send('/api/verse/agent-bus/messages?inReplyTo=has%20space')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?excludeFrom=a&excludeFrom=b')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?after=1')).status).toBe(400);
   });

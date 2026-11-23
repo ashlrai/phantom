@@ -29,11 +29,17 @@ address prefix `agents bus inbox --channel` and `channel read` match,
 decided on the raw `to` label before projection — `--contains <text>` for
 only the messages whose scrubbed
 summary carries that text, `--exclude-from <name|lane>` for only the mail
-one sender did not write, `--limit <n>`)
+one sender did not write, `--in-reply-to <id>` for only the envelopes whose
+object body cites that envelope id through its own `inReplyTo` field — the
+same own-property exact match `comms bus read|watch --in-reply-to`,
+`fleet bus-follow --in-reply-to` and `fleet_bus_inbox`'s `inReplyTo`
+apply, never the `replyTo` alias or a substring, so "who answered envelope
+X" is one filtered read of the whole fleet timeline, replies addressed to
+anyone — `--limit <n>`)
 or GET `/api/verse/agent-bus/messages` with the same
 `since`, `agent`, `with`, `kind`, `priority`, `job`, `thread`, `channel`,
 `contains`,
-`excludeFrom` and `limit` params. Both return `agent-messages.v1`: newest
+`excludeFrom`, `inReplyTo` and `limit` params. Both return `agent-messages.v1`: newest
 first, each with `id`, `ts`, `priority` (the envelope's P0–P3 band, the
 same band `comms bus read --priority` filters on), `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line
