@@ -430,6 +430,14 @@ export interface UnifiedInboxFilter {
    * (`since` null) or whose recorded time cannot be parsed never matches:
    * unknown stays out of the match rather than being counted as recent. */
   since?: number;
+  /** Keep only items whose recorded `since` (ISO appearance time) parses to
+   * strictly before this epoch-ms cutoff — the exclusive `<` upper bound
+   * composing with `since` into one `[since, before)` window, the same rule
+   * every bus read `--before` applies. An item exactly on the cutoff, whose
+   * store keeps no timestamp (`since` null) or whose recorded time cannot be
+   * parsed never matches: unknown stays out of the match rather than being
+   * counted as old. */
+  before?: number;
   /** Keep only items whose displayed text carries this search string — a
    * case-insensitive substring over the item's scrubbed `title` and `detail`,
    * whitespace collapsed on both sides the same way every other bus read's
@@ -2229,7 +2237,8 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     (requested.source !== undefined || requested.kind !== undefined ||
       requested.severity !== undefined ||
       requested.blocking !== undefined || requested.job !== undefined ||
-      requested.since !== undefined || requested.contains !== undefined)
+      requested.since !== undefined || requested.before !== undefined ||
+      requested.contains !== undefined)
     ? requested : undefined;
   // --contains is a case-insensitive substring over the item's scrubbed
   // title/detail — the text the row actually shows, so a match is always
@@ -2252,6 +2261,12 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     // then and stays out of the match rather than being counted as new.
     (filter.since === undefined ||
       (item.since !== null && Date.parse(item.since) >= filter.since)) &&
+    // A before filter keeps only items whose recorded appearance time is
+    // strictly before the cutoff — the exclusive upper bound pairing with
+    // since's inclusive lower bound into one [since, before) window; an
+    // item exactly on the cutoff or unable to prove its time stays out.
+    (filter.before === undefined ||
+      (item.since !== null && Date.parse(item.since) < filter.before)) &&
     (containsNeedle === undefined || containsNeedle === '' ||
       `${item.title} ${item.detail ?? ''}`.toLowerCase().replace(/\s+/g, ' ').includes(containsNeedle)));
   const total = matched.length;

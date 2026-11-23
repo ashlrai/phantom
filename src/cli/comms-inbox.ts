@@ -9,7 +9,7 @@ import { INBOX_MAX_CHARS, readInboxEntries } from '../core/fleet/mason-inbox.js'
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
-const HELP = `phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--json]
+const HELP = `phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]
 phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 With no verb, lists every pending comms item — unresolved needs-you lines
@@ -38,7 +38,10 @@ delivery on a job-carrying thread, a conversation thread's jobs, a wake hint's c
 task's job, a seat's node-job handoff or a peer-dispatch receipt's job — and --since only items whose
 recorded appearance time reaches the cutoff (15m, 2h, 1d, epoch ms or an
 ISO time; an item whose store keeps no timestamp never matches, so unknown
-never counts as new); --contains keeps only items whose scrubbed title or
+never counts as new), with --before the exclusive upper bound keeping only
+items whose recorded appearance time is strictly before its cutoff — the
+two compose into one [since, before) window and an item exactly on either
+boundary stays out of the excluded side; --contains keeps only items whose scrubbed title or
 detail carries the text as a case-insensitive substring — the same text
 the row shows, never the deep-link commands — and the
 dimensions AND together, and the
@@ -161,6 +164,7 @@ function describeUnifiedFilter(filter: UnifiedInboxFilter): string {
     ...(filter.blocking === undefined ? [] : ['blocking']),
     ...(filter.job === undefined ? [] : [`job=${filter.job}`]),
     ...(filter.since === undefined ? [] : [`since=${new Date(filter.since).toISOString()}`]),
+    ...(filter.before === undefined ? [] : [`before=${new Date(filter.before).toISOString()}`]),
     ...(filter.contains === undefined ? [] : [`contains=${filter.contains}`]),
   ].join(' ');
 }
@@ -198,7 +202,7 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
       let json = false, blocking = false;
       let source: UnifiedInboxSource | undefined, kind: UnifiedInboxKind | undefined,
         severity: UnifiedInboxSeverity | undefined, job: string | undefined, contains: string | undefined;
-      let sinceMs: number | undefined;
+      let sinceMs: number | undefined, beforeMs: number | undefined;
       const seen = new Set<string>();
       for (let i = 0; i < args.length; i++) {
         const arg = args[i]!;
@@ -236,6 +240,16 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
           if (ms === null || !Number.isSafeInteger(ms) || ms < 0) return invalid();
           seen.add(arg); sinceMs = ms; continue;
         }
+        if (arg === '--before' && !seen.has(arg)) {
+          const value = args[++i];
+          // A flag-looking value is a missing value — the same rule --since applies.
+          if (value === undefined || value.startsWith('--')) return invalid();
+          const ms = parseSince(value);
+          // The same --before rule every bus read applies: an unparseable,
+          // unsafe or negative cutoff refuses the invocation.
+          if (ms === null || !Number.isSafeInteger(ms) || ms < 0) return invalid();
+          seen.add(arg); beforeMs = ms; continue;
+        }
         if (arg === '--contains' && !seen.has(arg)) {
           const value = args[++i];
           // Free text, not a label: printable content of any kind is fine,
@@ -249,12 +263,13 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
       }
       const filter: UnifiedInboxFilter | undefined =
         source === undefined && kind === undefined && severity === undefined && !blocking &&
-          job === undefined && sinceMs === undefined && contains === undefined ? undefined
+          job === undefined && sinceMs === undefined && beforeMs === undefined && contains === undefined ? undefined
           : { ...(source === undefined ? {} : { source }),
               ...(kind === undefined ? {} : { kind }),
               ...(severity === undefined ? {} : { severity }),
               ...(job === undefined ? {} : { job }),
               ...(sinceMs === undefined ? {} : { since: sinceMs }),
+              ...(beforeMs === undefined ? {} : { before: beforeMs }),
               ...(contains === undefined ? {} : { contains }),
               ...(blocking ? { blocking: true } : {}) };
       const report = await readUnifiedInbox({ runsDir: options.runsDir, busRoot: options.busRoot,
