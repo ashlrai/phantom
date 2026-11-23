@@ -20,9 +20,10 @@
  *
  * `agent` is required and resolves through the server-owned identity
  * registry with the same handle/`agent:`/stable-id/alias refs
- * `resolveAgent` accepts; `job`, `since`, `contains`, `priority` and
- * `channel` apply the same rules the `phm agents bus work mine` flags
- * share and are validated before any store read. Read-only: no caller
+ * `resolveAgent` accepts; `job`, `since`, `before`, `contains`,
+ * `priority` and `channel` apply the same rules the
+ * `phm agents bus work mine` flags share and are validated before any
+ * store read. Read-only: no caller
  * root, path or cwd is
  * accepted — the store, registry, hold table, feed, mailbox, board,
  * wake-queue and seat roots stay server-owned — and the tool never
@@ -40,7 +41,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 /** The printable-label rule `agent` and `job` share — the same bound every bus read applies. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const WORK_KEYS = new Set(['agent', 'job', 'contains', 'since', 'priority', 'channel']);
+const WORK_KEYS = new Set(['agent', 'job', 'contains', 'since', 'before', 'priority', 'channel']);
 
 export interface FleetAgentWorkArgs {
   /** Agent ref — handle, `agent:<handle>`, stable `agt_` id or alias — resolved through the server-side registry. */
@@ -51,6 +52,8 @@ export interface FleetAgentWorkArgs {
   contains?: string;
   /** Keep only pending items whose recorded time reaches this epoch-ms cutoff — the shared `since` grammar resolved once. */
   since?: number;
+  /** Keep only pending items whose recorded time is strictly before this epoch-ms cutoff — the shared `before` grammar resolved once, exclusive like every bus read's upper bound. */
+  before?: number;
   /** Keep only pending items stamped with this exact P0..P3 band — the same `--priority` rule every bus read shares. */
   priority?: BusPriority;
   /** Keep only pending items provably addressed to `group:<name>:*` of one bus channel — the same `--channel` rule every bus read shares. */
@@ -91,6 +94,13 @@ export function parseFleetAgentWorkArgs(args: Record<string, unknown>): FleetAge
     if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
     parsed.since = resolved;
   }
+  const before = args.before;
+  if (before !== undefined) {
+    if (typeof before !== 'string') return null;
+    const resolved = parseSince(before);
+    if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
+    parsed.before = resolved;
+  }
   const priority = args.priority;
   if (priority !== undefined) {
     if (typeof priority !== 'string' || !(BUS_PRIORITIES as readonly string[]).includes(priority)) return null;
@@ -127,6 +137,7 @@ export async function readFleetAgentWork(
     ...(args.job === undefined ? {} : { job: args.job }),
     ...(args.contains === undefined ? {} : { contains: args.contains }),
     ...(args.since === undefined ? {} : { since: args.since }),
+    ...(args.before === undefined ? {} : { before: args.before }),
     ...(args.priority === undefined ? {} : { priority: args.priority }),
     ...(args.channel === undefined ? {} : { channel: args.channel }),
   });

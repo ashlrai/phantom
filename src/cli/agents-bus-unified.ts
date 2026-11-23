@@ -56,7 +56,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
-ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>]
+ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
@@ -286,7 +286,20 @@ read instant, not the held work's age, so no per-record recency exists
 to filter on; a pending item older than the
 cutoff is still pending but is not new, channels and seats stay
 unfiltered, and
-every count stays the filtered total. --priority on work mine keeps only
+every count stays the filtered total. --before on work mine keeps only
+pending items whose recorded time is strictly before its own cutoff —
+the exclusive upper bound on the same grammar --since takes, so the
+pair reads one [since, before) window and "what was pending before
+time T" is one filtered digest: claims match the lease's recorded
+started, feed jobs and announced jobs match updatedAt, next/handoffs
+match the envelope receipt, threads/awaiting/blocked inherit the shared
+conversations read's lastAt bound, mailbox matches acceptance, and
+board deliveries match createdAt while board tasks — which keep no
+timestamp — never match; an item stamped exactly at the cutoff never
+matches, channels and seats stay unfiltered, inbox and wakes keep
+their since bound but their shared reads accept no upper bound yet so
+the cutoff never reaches them, and every count stays the filtered
+total. --priority on work mine keeps only
 pending items stamped with that exact P0..P3 band — the same match inbox
 --priority and every other bus read applies, so "what urgent work is
 pending for me" is one filtered digest: next and handoffs keep envelopes
@@ -870,6 +883,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const job = one('--job');
       const contains = one('--contains');
       const since = sinceArg();
+      const before = beforeArg();
       const priority = priorityArg();
       const channel = one('--channel');
       if (channel !== undefined && !agentChannelNameSchema.safeParse(channel).success) {
@@ -879,6 +893,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         { ...options, ...(job === undefined ? {} : { job }),
           ...(contains === undefined ? {} : { contains }),
           ...(since === undefined ? {} : { since }),
+          ...(before === undefined ? {} : { before }),
           ...(priority === undefined ? {} : { priority }),
           ...(channel === undefined ? {} : { channel }) });
       if (result.status !== 'ok') {

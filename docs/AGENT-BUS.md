@@ -789,7 +789,7 @@ free set. Exit 0 acquired,
 2 invalid, 1 otherwise. Claims still coordinate scope only — holding one
 never permits a merge, a push, or spending.
 
-**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>]` is the read-only
+**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>]` is the read-only
 digest that answers "what is pending for this agent" in one call: the live
 coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block — the reverse of `work feed --claims`,
@@ -1060,7 +1060,28 @@ plan read instant, not the held work's age, so no per-record recency
 exists to filter on. A pending item older than the
 cutoff is still pending but is not new; `channels` and `seats` stay
 unfiltered, every count stays the filtered total, the result echoes
-`since` as ISO in JSON and the human header prints it. `--priority
+`since` as ISO in JSON and the human header prints it. `--before
+<when>` narrows the whole digest the other way — "what was pending for
+this agent before time T" — under the exclusive upper bound every bus
+read's `--before` shares on the same `15m`/`2h`/`1d`/epoch-ms/ISO
+grammar, composing with `--since` into one `[since, before)` window
+(the lower bound inclusive, the upper exclusive, an item stamped
+exactly at either bound excluded from the excluded side). Each
+section keys on the same per-store timestamp `--since` uses: claims
+match the lease's recorded `started` strictly below the cutoff (a null
+start never matches — unknown stays out), feed jobs and announced jobs
+match `updatedAt`, `next`/`handoffs` match the envelope receipt,
+threads/awaiting/blocked inherit the shared conversations read's
+`lastAt` bound, mailbox mail matches acceptance, and board deliveries
+match `createdAt` while board tasks — which keep no timestamp — never
+match. `wakes` and `inbox` keep their `--since` bound but their
+shared reads accept no upper bound yet, so the cutoff never reaches
+them and they report exactly the rows their `--since`-only read
+returns; `channels` and `seats` carry no per-item historical timestamp
+and stay unfiltered under every filter, like they do under `--since`.
+An item stamped at or after the cutoff never matches, every count
+stays the filtered total, the result echoes `before` as ISO in JSON
+and the human header prints it. `--priority
 <P0..P3>` narrows the whole digest the same way — "what urgent work is
 pending for me" — under the exact-band match every other bus
 `--priority` read applies, across the sections whose items carry a wire
@@ -1112,8 +1133,8 @@ own read state — `missing`/`available`/`unavailable` for claims,
 unreadable dependency degrades only its own section. Exit 0 on a completed
 read, 2 on an invalid agent ref. `fleet_agent_work` (the isolated fleet
 MCP tool) serves the same `readBusWorkMineWithSeats` projection — `agent`
-required, `job`/`since`/`contains`/`priority`/`channel` the same filters —
-under the same
+required, `job`/`since`/`before`/`contains`/`priority`/`channel` the same
+filters — under the same
 validation, so an MCP-connected agent reads its whole pending digest
 without shelling out to `phm`; it accepts no caller root or path and
 passes a refused or degraded section through untouched.

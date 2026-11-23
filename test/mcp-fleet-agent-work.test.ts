@@ -1,7 +1,7 @@
 /**
  * fleet_agent_work: the per-agent pending-work digest over the isolated
  * fleet MCP server — the same readBusWorkMineWithSeats projection
- * `phm agents bus work mine` serves, with agent/job/since/contains
+ * `phm agents bus work mine` serves, with agent/job/since/before/contains
  * validated before any store read and non-ok digests passed through
  * untouched.
  *
@@ -84,11 +84,13 @@ describe('fleet_agent_work argument parsing', () => {
     }
   });
 
-  it('maps the shared job, since and contains filters onto the read options', () => {
+  it('maps the shared job, since, before and contains filters onto the read options', () => {
     const parsed = parseFleetAgentWorkArgs({
-      agent: 'planner', job: 'RQ-9', since: '1800000000000', contains: '  Parser   Fix ',
+      agent: 'planner', job: 'RQ-9', since: '1800000000000', before: '1900000000000',
+      contains: '  Parser   Fix ',
     });
-    expect(parsed).toEqual({ agent: 'planner', job: 'RQ-9', since: 1800000000000, contains: 'parser fix' });
+    expect(parsed).toEqual({ agent: 'planner', job: 'RQ-9', since: 1800000000000,
+      before: 1900000000000, contains: 'parser fix' });
   });
 
   it('maps the shared priority band onto the read options', () => {
@@ -109,15 +111,20 @@ describe('fleet_agent_work argument parsing', () => {
     }
   });
 
-  it('accepts the shared since grammar and rejects the rest', () => {
-    for (const since of ['15m', '2h', '1d', '1800000000000', '2026-01-01T00:00:00.000Z']) {
-      const parsed = parseFleetAgentWorkArgs({ agent: 'a', since });
-      expect(parsed).not.toBeNull();
-      expect(typeof parsed!.since).toBe('number');
-      expect(parsed!.since!).toBeGreaterThanOrEqual(0);
+  it('accepts the shared since and before grammar and rejects the rest', () => {
+    for (const bound of ['15m', '2h', '1d', '1800000000000', '2026-01-01T00:00:00.000Z']) {
+      const parsedSince = parseFleetAgentWorkArgs({ agent: 'a', since: bound });
+      expect(parsedSince).not.toBeNull();
+      expect(typeof parsedSince!.since).toBe('number');
+      expect(parsedSince!.since!).toBeGreaterThanOrEqual(0);
+      const parsedBefore = parseFleetAgentWorkArgs({ agent: 'a', before: bound });
+      expect(parsedBefore).not.toBeNull();
+      expect(typeof parsedBefore!.before).toBe('number');
+      expect(parsedBefore!.before!).toBeGreaterThanOrEqual(0);
     }
-    for (const since of ['never', '', 5, null, true, '99999999999999999']) {
-      expect(parseFleetAgentWorkArgs({ agent: 'a', since })).toBeNull();
+    for (const bound of ['never', '', 5, null, true, '99999999999999999']) {
+      expect(parseFleetAgentWorkArgs({ agent: 'a', since: bound })).toBeNull();
+      expect(parseFleetAgentWorkArgs({ agent: 'a', before: bound })).toBeNull();
     }
   });
 
@@ -130,6 +137,7 @@ describe('fleet_agent_work argument parsing', () => {
       { agent: 'a', contains: '' }, { agent: 'a', contains: '   ' },
       { agent: 'a', contains: 'x'.repeat(513) }, { agent: 'a', contains: 42 },
       { agent: 'a', since: 'never' }, { agent: 'a', since: 5 },
+      { agent: 'a', before: 'never' }, { agent: 'a', before: 5 },
       { agent: 'a', priority: 'P9' }, { agent: 'a', priority: 'urgent' }, { agent: 'a', priority: 5 },
       { agent: 'a', channel: 'Eng' }, { agent: 'a', channel: 'has space' },
       { agent: 'a', channel: 'a'.repeat(33) }, { agent: 'a', channel: '' }, { agent: 'a', channel: 5 },
@@ -142,17 +150,17 @@ describe('fleet_agent_work reader', () => {
   it('runs the shared digest read with the parsed filters and returns it untouched', async () => {
     const seen: Array<[string, BusWorkMineOptions]> = [];
     const canned = digest({ job: 'RQ-9', contains: 'parser fix', since: '2027-01-14T22:13:20.000Z',
-      priority: 'P1', channel: 'eng' });
+      before: '2027-01-15T22:13:20.000Z', priority: 'P1', channel: 'eng' });
     const mine = async (agent: string, options: BusWorkMineOptions): Promise<BusWorkMineResult> => {
       seen.push([agent, options]);
       return canned;
     };
     const result = await readFleetAgentWork(
       parseFleetAgentWorkArgs({ agent: 'planner', job: 'RQ-9', since: '1800000000000',
-        contains: 'Parser Fix', priority: 'P1', channel: 'eng' })!,
+        before: '1900000000000', contains: 'Parser Fix', priority: 'P1', channel: 'eng' })!,
       { mine });
-    expect(seen).toEqual([['planner', { job: 'RQ-9', since: 1800000000000, contains: 'parser fix',
-      priority: 'P1', channel: 'eng' }]]);
+    expect(seen).toEqual([['planner', { job: 'RQ-9', since: 1800000000000, before: 1900000000000,
+      contains: 'parser fix', priority: 'P1', channel: 'eng' }]]);
     expect(result).toBe(canned);
   });
 
@@ -206,6 +214,7 @@ describe('fleet_agent_work MCP tool', () => {
     expect(tool?.inputSchema.properties?.['job'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
     expect(tool?.inputSchema.properties?.['since']).toMatchObject({ type: 'string' });
+    expect(tool?.inputSchema.properties?.['before']).toMatchObject({ type: 'string' });
     expect(tool?.inputSchema.properties?.['contains'])
       .toMatchObject({ type: 'string', minLength: 1, maxLength: 512 });
     expect(tool?.inputSchema.properties?.['priority'])
@@ -219,6 +228,7 @@ describe('fleet_agent_work MCP tool', () => {
     [{ agent: 'a', root: '/tmp/fake-root' }], [{ agent: 'a', path: '/tmp/x' }], [{ agent: 'a', cwd: '/tmp' }],
     [{ agent: 'a', runsDir: '/tmp' }], [{ agent: 'a', mailbox: '/tmp' }], [{ agent: 'a', seats: '/tmp' }],
     [{ agent: 'a', job: 'has space' }], [{ agent: 'a', since: 'never' }], [{ agent: 'a', since: 5 }],
+    [{ agent: 'a', before: 'never' }], [{ agent: 'a', before: 5 }],
     [{ agent: 'a', contains: '' }], [{ agent: 'a', contains: 'x'.repeat(513) }],
     [{ agent: 'a', priority: 'P9' }], [{ agent: 'a', priority: 'urgent' }],
     [{ agent: 'a', channel: 'Eng' }], [{ agent: 'a', channel: 'has space' }], [{ agent: 'a', channel: 5 }],
@@ -236,9 +246,10 @@ describe('fleet_agent_work MCP tool', () => {
     const payload = digest({ job: 'RQ-9', contains: 'parser fix' });
     const agentWork = vi.fn(async () => payload);
     const client = await connect({ status: async () => ({}), loop: async () => ({}), agentWork });
-    const { parsed } = await callWork(client, { agent: 'planner', job: 'RQ-9', contains: 'Parser Fix', since: '1800000000000', priority: 'P2', channel: 'eng' });
+    const { parsed } = await callWork(client, { agent: 'planner', job: 'RQ-9', contains: 'Parser Fix', since: '1800000000000', before: '1900000000000', priority: 'P2', channel: 'eng' });
     expect(agentWork).toHaveBeenCalledWith(expect.objectContaining({
-      agent: 'planner', job: 'RQ-9', contains: 'parser fix', since: 1800000000000, priority: 'P2', channel: 'eng',
+      agent: 'planner', job: 'RQ-9', contains: 'parser fix', since: 1800000000000, before: 1900000000000,
+      priority: 'P2', channel: 'eng',
     }));
     expect(parsed).toEqual(payload);
   });
