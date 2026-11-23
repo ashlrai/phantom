@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Twelve sources, all of which Phantom
+ * evidence instead of a hand-kept list. Thirteen sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -64,7 +64,15 @@
  *     recurring 'blocked' or 'unknown' tags and an untagged majority
  *     (emptyTagBacklogItems below), so finishes the fleet already
  *     classified become work instead of sitting in `phm empties`-family
- *     reports someone had to run.
+ *     reports someone had to run;
+ *   - the signed post-merge observation ledger's recurring adverse
+ *     outcomes: the reverted, regressed and followed-up rows the
+ *     outcome-watcher and post-merge-stability passes record to
+ *     fleet/post-merge-observations.jsonl, folded through the same
+ *     jobs-ledger join `phm fleet eval-report` prints into per-lane,
+ *     per-tier and per-repo durability tallies (postMergeBacklogItems
+ *     below), so merges that keep not holding become work instead of
+ *     sitting in a report someone had to run.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -103,6 +111,7 @@ import { frictionBacklogItems } from './friction-backlog.js';
 import { tickHealthBacklogItems } from './tick-health-backlog.js';
 import { crossReviewBacklogItems } from './xreview-backlog.js';
 import { emptyTagBacklogItems } from './empty-tag-backlog.js';
+import { postMergeBacklogItems } from './postmerge-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -234,6 +243,18 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // ledger reads; a missing jobs ledger or an unjoinable tags ledger
   // yields no items, and only the fleet's own repository inherits them.
   items.push(...await emptyTagBacklogItems({ repo }));
+
+  // Post-merge observation ledger: the signed adverse outcomes the
+  // outcome-watcher and post-merge-stability passes record — merges that
+  // later reverted, regressed or needed follow-up fixes — become backlog
+  // items too. Until now they only ever reached `phm fleet eval-report`,
+  // a report someone had to run and read, and the standing merge pass's
+  // internal pacing read. The same bounded jobs-ledger tail and the same
+  // verified observation read feed the fold; a group emits only at the
+  // recurring adverse bar inside the report window, lane/tier cells only
+  // for the fleet's own repository, and repo cells only when the fold's
+  // recorded repo name matches the target.
+  items.push(...await postMergeBacklogItems({ repo }));
   return { items, errors };
 }
 

@@ -283,9 +283,25 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   window's majority — the signature of a dead or starved empty-tag-sync;
   gate-skipped finishes never count, and the explained `already_done`,
   `no_change_needed` and `pool_cap` tags never become work. A missing jobs
-  ledger or an unjoinable tags ledger emits nothing.
+  ledger or an unjoinable tags ledger emits nothing —
+  and the signed post-merge observation ledger's recurring adverse
+  outcomes, the reverted, regressed and followed-up rows the
+  outcome-watcher and post-merge-stability passes record to
+  `fleet/post-merge-observations.jsonl` (otherwise only visible through
+  `phm fleet eval-report` and the standing merge pass's internal pacing
+  read). The same fold `phm fleet eval-report` prints joins them through
+  `metrics/jobs.jsonl` into per-lane, per-tier and per-repo durability
+  tallies over a 30-day window; a group becomes an item while its
+  recorded adverse outcomes reach the recurring bar — lane and tier
+  cells emit only for the fleet's own repository since they describe
+  this repo's executor machinery, and a repo cell emits only when the
+  fold's recorded repository name matches the discovery target. A
+  degraded observation read or a missing jobs ledger emits nothing, and
+  prompts quote only the measured merged/adverse counts and the
+  deterministic/heuristic confidence split — never a durability rate the
+  gh-less fold cannot support.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
-  cross-review and empty-tag items carry
+  cross-review, empty-tag and post-merge items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
@@ -309,7 +325,11 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   target — findings on another repository's pull requests never land on
   this one. Empty-tag items name the tag and jobs ledgers and keep the
   find-the-tag-vocabulary-or-the-sync framing, emitting only for the
-  fleet's own repository since the tag machinery is this repo's. They
+  fleet's own repository since the tag machinery is this repo's.
+  Post-merge items name the observation and jobs ledgers and the
+  eval-report fold, keep the find-why-merges-keep-not-holding framing,
+  and emit lane and tier cells only for the fleet's own repository while
+  repo cells emit only for the repository the fold recorded. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
