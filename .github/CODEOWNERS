@@ -611,6 +611,7 @@
 /test/improve-postmerge-backlog.test.ts @masonwyatt23
 /test/improve-precheck-skip-backlog.test.ts @masonwyatt23
 /test/improve-promote-redteam.test.ts @masonwyatt23
+/test/improve-recheck-backlog.test.ts @masonwyatt23
 /test/improve-revert-ledger.test.ts @masonwyatt23
 /test/improve-revert-scan.test.ts @masonwyatt23
 /test/improve-reverted.test.ts @masonwyatt23

@@ -412,11 +412,26 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   tolerance of 2%, naming the largest recorded backend disagreements. A
   missing or unreadable fabric directory emits nothing, and rows emit
   only for the fleet's own repository since the shadow covers this
-  install's dispatches.
+  install's dispatches —
+  and the fleet recheck verdict history's recurring non-clean cells, the
+  per-pass `fleet.recheck-record.v1` rows the self-tick recheck-record
+  step and `phm fleet recheck-record` append to
+  `fleet/recheck-log.jsonl` under the Ashlr home (otherwise only visible
+  through `phm fleet recheck-record --last`, the verse recheck history
+  parameter and the fleet MCP recheck tool — reports someone had to run
+  and read). A cell becomes an item while it is recorded on at least
+  three in-window rows inside the 7-day window: an overall UNKNOWN or
+  BLOCKED verdict, a runtime/claims/bridge/task section state, or a
+  missing reason normalized so count-carrying variants group as one —
+  UNKNOWN (the section's evidence never arrived) and BLOCKED (a
+  positively identified gap) stay separate cells since they are
+  different problems, reasons group across the per-section lists but
+  never the flattened overall list, VERIFIED-only history emits
+  nothing, and a missing or unreadable log emits nothing.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
-  source-yield and gateway-shadow
+  source-yield, gateway-shadow and recheck
   items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
@@ -493,7 +508,13 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   versus an over-blocking legacy path — with the same owner-side
   no-change escape when shadow is off or the gateway already flipped,
   and emit only for the fleet's own repository since the shadow covers
-  this install's dispatches and carries no repository column. They
+  this install's dispatches and carries no repository column. Recheck
+  items name the verdict log, the
+  `phm fleet recheck-record` verb and the self-tick recheck-record
+  step, keep the find-why-the-fleet's-own-verification-keeps-failing
+  framing — a degraded evidence path versus a positively identified gap
+  this repository owns — and emit only for the fleet's own repository
+  since the recheck verifies this install's claimed state. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
