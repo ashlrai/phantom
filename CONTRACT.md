@@ -3935,8 +3935,11 @@ command names remain evidence. No direct push fallback exists.
 fleet hold evidence for the `pr.resolve-conflicts.v1` CLI envelope.
 See [the resolver guide](docs/PR-CONFLICT-RESOLVER.md).
 
-`phm fleet messages --since <ts> --json` returns the map reader's newest-first
-`{from,to,kind,at,summary}` rows (null and exit 1 when unreadable). The existing
+`phm fleet messages --since <ts> [--before <ts>] --json` returns the map
+reader's newest-first
+`{from,to,kind,at,summary}` rows (null and exit 1 when unreadable); `--before`
+keeps only rows received strictly before its cutoff, composing with `--since`
+into one `[since, before)` window. The existing
 `fleet.map-messages.v1` adds optional scrubbed `text` (8192 characters); receipts
 are deduplicated by id before the since filter. The desktop's existing 2D/3D
 map overlays these messages for 10 seconds; clicking opens the text in place.

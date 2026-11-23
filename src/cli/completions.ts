@@ -191,7 +191,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'work-board', 'work-feed', 'work-result', 'workers', 'worklog', 'worktree-stale', 'wt-audit',
     'yield', 'graph', 'release-backlog',
   ],
-  bus: ['thread', 'task', 'board', 'send', 'inbox', 'ack', 'recent', '--since', '--from', '--to', '--body', '--id', '--priority', '--ttl', '--limit', '--peer', '--root', '--queue-root', '--json', '--help'],
+  bus: ['thread', 'task', 'board', 'send', 'inbox', 'ack', 'recent', '--since', '--before', '--from', '--to', '--body', '--id', '--priority', '--ttl', '--limit', '--peer', '--root', '--queue-root', '--json', '--help'],
   estates: ['--repo', '--json', '--help'],
   'ci': ['baseline', 'reruns', '--repo', '--json', '--queue', '--queue-file', '--apply', '--help'],
   'ci-metrics': ['--json', '--help'],

@@ -52,7 +52,7 @@ named nested type. Relative source links refer to the source checkout.
 | GET | `/api/fleet` | none | [FleetStatus](../src/core/fleet/status.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet'` |
 | GET | `/api/fleet/lanes` | none | [FleetLaneSnapshot](../src/core/fleet/lane-console.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/lanes'` |
 | GET | `/api/fleet/message-graph` | since (10m, 2h, 1d, epoch ms or ISO; default 15m) | [FleetMessageGraph](../src/core/fleet/message-graph.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/message-graph?since=1h'` |
-| GET | `/api/fleet/map/messages` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), limit (1 to 100; default 20) | [MapMessages](../src/core/fleet/map-messages.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/map/messages?limit=10'` |
+| GET | `/api/fleet/map/messages` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), before (10m, 2h, 1d, epoch ms or ISO; exclusive upper bound), limit (1 to 100; default 20) | [MapMessages](../src/core/fleet/map-messages.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/map/messages?limit=10'` |
 | GET | `/api/fleet/activity` | hours, limit | [AgentActivityReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/activity?hours=6'` |
 | GET | `/api/fleet/verified-completion` | hours (claim window, default 24, max 168) | [VerifiedCompletionReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/verified-completion'` |
 | GET | `/api/fleet/sessions` | none | [FleetSessionsV1](../src/core/fleet/runs-sessions.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/sessions'` |
@@ -515,9 +515,11 @@ these frames, with a "Back to live" button.
 
 #### Recent bus messages
 
-`phm bus recent [--since 5m] [--json]` lists agent-to-agent messages, newest
+`phm bus recent [--since 5m] [--before <10m|2h|1d|ISO|epoch>] [--json]` lists
+agent-to-agent messages, newest
 first, as `bus.recent.v1`: `{schema, as_of, messages:[{at, from, to, kind,
-summary}]}`. `from` and `to` are routing labels and `summary` is one plain
+summary}]}`. `--before` keeps only messages received strictly before its
+cutoff, so `--since` and `--before` read one closed `[since, before)` window. `from` and `to` are routing labels and `summary` is one plain
 line of at most 100 characters (the scrubbed summary, never the message
 body). An empty bus prints "No messages yet."; `messages` is null when the bus
 could not be read. The Fleet map pulses the same lines, and clicking a line
@@ -658,11 +660,13 @@ what is blocked, what moved lately — without shelling out to `phm`.
 
 #### Agent messages
 
-`phm agents messages [--since 1h] [--limit N] [--json]` lists recent
+`phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--limit N] [--json]` lists recent
 agent-to-agent messages from the same bus read (no new store), newest first.
+`--before` keeps only messages received strictly before its cutoff, so
+`--since` and `--before` read one closed `[since, before)` window.
 `group.presence` heartbeats are observations, not messages, and never list.
 `--json` prints `agents.messages.v1` (`version` 1), and
-`GET /api/verse/fleet/control/agent-messages[?since=1h&limit=50]` serves the
+`GET /api/verse/fleet/control/agent-messages[?since=1h&before=2h&limit=50]` serves the
 same read with a current read session.
 
 - `messages[]`: `at`, `from`, `to`, `kind`, `summary` (at most 160

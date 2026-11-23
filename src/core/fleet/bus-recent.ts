@@ -30,9 +30,9 @@ export function buildBusRecent(asOf: string, messages: readonly AgentsMessage[] 
   return { schema: BUS_RECENT_SCHEMA, as_of: asOf, messages: messages && messages.map(m => ({ at: m.at, from: m.fromName, to: m.toName, kind: m.kind, summary: short(m.summary) })) };
 }
 
-/** `since` is 10m, 2h, 1d, epoch ms or an ISO time. Exit-code hint: ok false is a bad flag. */
-export function readBusRecent(since: string = BUS_RECENT_DEFAULT_SINCE, options: BusInboxOptions = {}): { ok: true; result: BusRecent } | { ok: false; error: string } {
-  const read = readAgentsMessages({ since, limit: '1024' }, options);
+/** `since`/`before` take 10m, 2h, 1d, epoch ms or ISO (`before` exclusive); exit-code hint: ok false is a bad flag. */
+export function readBusRecent(input: { since?: string; before?: string } = {}, options: BusInboxOptions = {}): { ok: true; result: BusRecent } | { ok: false; error: string } {
+  const read = readAgentsMessages({ since: input.since ?? BUS_RECENT_DEFAULT_SINCE, before: input.before, limit: '1024' }, options);
   return read.ok ? { ok: true, result: buildBusRecent(read.result.generatedAt, read.result.messages) } : read;
 }
 
