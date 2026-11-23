@@ -1493,10 +1493,10 @@ export type AllWakesPage =
   | { status: 'ok'; scope: 'fleet'; wakes: AgentWakeRow[]; matched: number; truncated: boolean }
   | { status: 'unavailable' | 'invalid'; reason: string };
 
-/** The filter set every wake read shares: one job id, sender include/exclude, one priority band and contains text. */
-interface WakeFilter { job?: string; from?: string; excludeFrom?: string; contains?: string; priority?: BusPriority }
+/** The filter set every wake read shares: one job id, sender include/exclude, one channel, one priority band and contains text. */
+interface WakeFilter { job?: string; from?: string; excludeFrom?: string; channel?: string; contains?: string; priority?: BusPriority }
 
-type ParsedWakeFilter = { ok: true; job?: string; from?: string; excludeFrom?: string; containsNeedle?: string; priority?: BusPriority }
+type ParsedWakeFilter = { ok: true; job?: string; from?: string; excludeFrom?: string; channel?: string; containsNeedle?: string; priority?: BusPriority }
   | { ok: false; reason: string };
 
 /** Validate the shared wakes filter set before any store is touched. */
@@ -1518,10 +1518,15 @@ function parseWakeFilter(filter: WakeFilter): ParsedWakeFilter {
       (typeof excludeFrom !== 'string' || excludeFrom.length === 0 || excludeFrom.length > 128)) {
     return { ok: false, reason: 'Invalid sender-exclusion filter.' };
   }
+  const channel = filter.channel;
+  if (channel !== undefined && (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success)) {
+    return { ok: false, reason: 'Invalid channel name.' };
+  }
   const containsNeedle = busReadContains(filter.contains);
   if (containsNeedle === null) return { ok: false, reason: 'Invalid contains filter.' };
   return { ok: true, ...(job === undefined ? {} : { job }),
     ...(from === undefined ? {} : { from }), ...(excludeFrom === undefined ? {} : { excludeFrom }),
+    ...(channel === undefined ? {} : { channel }),
     ...(priority === undefined ? {} : { priority }),
     ...(containsNeedle === undefined ? {} : { containsNeedle }) };
 }
@@ -1642,7 +1647,16 @@ function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, r
  * included and excluded matches nothing, the same rule
  * `readAgentInbox`/`readAgentChannel`'s `excludeFrom` apply; the drop
  * happens inside the queue-tail match, so `matched` stays the count the
- * whole filter set accepts. `filter.contains` keeps only hints whose
+ * whole filter set accepts. `filter.channel` keeps only hints whose own
+ * `to` label sits under `group:<name>:*` — the same room prefix
+ * `inbox --channel`, `channel read` and `phm messages --channel` match,
+ * grammar-validated by the shared channel-name rule and decided on the
+ * hint's address alone, so it needs no referent resolution, composes
+ * with the addressee scope (a per-agent read narrows to one room's hints
+ * for that agent — a channel the agent does not belong to simply has no
+ * hints to show) and with every other filter, `matched` counting it with
+ * the rest of the queue-tail match; a name no hint addresses matches
+ * nothing rather than erroring. `filter.contains` keeps only hints whose
  * resolved referent text carries the needle — a `bus.send` hint's live
  * message summary or a claim-holder hint's citing `work.status` detail,
  * the same scrubbed one-line text the row reports — so "which wake was
@@ -1672,7 +1686,9 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
     : agentRefAddressMatcher(parsed.from, read.registry, labelIdentityOf(read.registry));
   const excludeFromMatch = parsed.excludeFrom === undefined ? undefined
     : agentRefAddressMatcher(parsed.excludeFrom, read.registry, labelIdentityOf(read.registry));
+  const channelPrefix = parsed.channel === undefined ? undefined : `group:${parsed.channel}:`;
   const page = readWakeRows(sinceAt, options, read.registry, wake =>
+    (channelPrefix === undefined || wake.to.startsWith(channelPrefix)) &&
     (fromMatch === undefined || fromMatch(wake.from)) &&
     (excludeFromMatch === undefined || !excludeFromMatch(wake.from)) &&
     (target !== undefined
@@ -1691,8 +1707,12 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
  * claim-holder fan-out writes, which no identity ref can name). Rows
  * carry the same `claimHolder`/`message` resolution `readAgentWakes`
  * annotates, so fleet triage costs the same zero extra reads; the
- * `since`/`job`/`from`/`excludeFrom`/`contains`/`priority` filters
- * behave identically, including the fail-closed `unavailable` when a
+ * `since`/`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority` filters
+ * behave identically — `channel` keeps only hints whose own `to` label sits
+ * under `group:<name>:*`, the room prefix every other bus read's channel
+ * filter matches, decided on the address alone inside the queue-tail match
+ * so `matched` counts it with the rest — including the fail-closed
+ * `unavailable` when a
  * `job`/`contains`/`priority` verdict needs a bus store that cannot be
  * read. An unreadable registry or queue is `unavailable`, never an
  * empty page passed off as "no wakes".
@@ -1707,7 +1727,9 @@ export function readAllWakes(sinceAt: number | undefined, options: UnifiedBusOpt
     : agentRefAddressMatcher(parsed.from, read.registry, labelIdentityOf(read.registry));
   const excludeFromMatch = parsed.excludeFrom === undefined ? undefined
     : agentRefAddressMatcher(parsed.excludeFrom, read.registry, labelIdentityOf(read.registry));
+  const channelPrefix = parsed.channel === undefined ? undefined : `group:${parsed.channel}:`;
   const page = readWakeRows(sinceAt, options, read.registry, wake =>
+    (channelPrefix === undefined || wake.to.startsWith(channelPrefix)) &&
     (fromMatch === undefined || fromMatch(wake.from)) &&
     (excludeFromMatch === undefined || !excludeFromMatch(wake.from)), parsed);
   if (page.status !== 'ok') return page;
