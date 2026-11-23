@@ -597,13 +597,40 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   'applied'/'refused' paths quoted as context, a missing or unreadable
   ledger emitting nothing, truncated tails stated as lower bounds, and
   rows emitting only for the fleet's own repository since the ledger is
-  this install's steering record.
+  this install's steering record —
+  and the jobs ledger's recurring usage-capture gaps, the
+  `usage_missing` provenance labels dispatchd's `job_usage()`
+  (contrib/mac/dispatchd.py — `devin_usage()` reading the Devin
+  sessions.db, `claude_usage()` reading the claude result JSON usage
+  block, and the 'tokens used' log-line fallback) writes on every
+  finish row in `metrics/jobs.jsonl` under the fleet runs directory
+  when a lane's own usage evidence cannot be flattened — sessions.db
+  missing or unreadable, no session for the worktree, incomplete or
+  unreported Devin usage, a missing claude result usage block, a
+  tokens line absent from the log (otherwise only visible through
+  `phm fleet router-weights`'s usage_missing/usage_sources coverage
+  tallies and `phm router outcomes`'s per-job fields — reports
+  someone had to run and read, so a capture path that kept failing
+  starved the router's weight, calibration and cost evidence while
+  looking like ordinary absent data). Each job collapses to its
+  newest in-tail finish row — a retry whose later finish captured
+  usage is evidence the gap closed, not that it persists — and a
+  label becomes an item only while its standing finishes reach the
+  recurring bars of distinct jobs across distinct UTC days inside
+  the 7-day window; lane and repo attribution joins the same tail's
+  jobTimelines fold and degrades to 'unknown'/'unattributed' rather
+  than suppressing the gap evidence, a missing or unreadable ledger
+  emits nothing, malformed lines, non-finish events, node-pool
+  producer schemas and unsafe job ids drop like the sibling
+  jobs-ledger readers' own parse, truncated tails are stated as
+  lower bounds, and rows emit only for the fleet's own repository
+  since the capture paths are this install's dispatcher and lanes.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
-  reward and job-control items carry
+  reward, job-control and usage-gap items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
