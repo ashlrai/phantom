@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Twenty sources, all of which Phantom
+ * evidence instead of a hand-kept list. Twenty-one sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -132,7 +132,17 @@
  *     queue's src= tags into jobs.yield-by.v1 — and the leader digest's
  *     yield_low line (sourceYieldBacklogItems below), so a producer whose
  *     launches keep ending empty or aborted becomes work instead of
- *     sitting in a report someone had to run.
+ *     sitting in a report someone had to run;
+ *   - the InferenceGateway shadow journal's recurring divergence: the
+ *     observe-only gateway-vs-legacy comparison rows the daemon appends
+ *     to fabric/gateway-shadow-<UTC-day>.jsonl when
+ *     foundry.fabric.gatewayShadow is on — recurring safety-relevant
+ *     divergences where the gateway would dispatch what the legacy path
+ *     blocked, and a measured divergence rate at or above the
+ *     CONTRACT-M334 stage-2 bar (gatewayShadowBacklogItems below). Until
+ *     now the journal was write-only evidence — divergenceStats(), the
+ *     exit-criteria evaluator, has no caller — so a shadow that kept
+ *     failing the flip criteria never became work.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -179,6 +189,7 @@ import { controllerBacklogItems } from './controller-backlog.js';
 import { skillOutcomeBacklogItems } from './skill-outcome-backlog.js';
 import { precheckSkipBacklogItems } from './precheck-skip-backlog.js';
 import { sourceYieldBacklogItems } from './source-yield-backlog.js';
+import { gatewayShadowBacklogItems } from './gateway-shadow-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -406,6 +417,20 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // window, 'other'/'unknown' never emit, and only the fleet's own
   // repository inherits the evidence.
   items.push(...await sourceYieldBacklogItems({ repo }));
+
+  // InferenceGateway shadow journal: the observe-only gateway-vs-legacy
+  // comparison rows the daemon appends to fabric/gateway-shadow-<day>.jsonl
+  // — recurring safety-relevant divergences (the gateway would dispatch
+  // what the legacy path blocked) and a measured divergence rate at or
+  // above the CONTRACT-M334 stage-2 bar — become backlog items too. Until
+  // now the journal was write-only evidence: divergenceStats(), the exit
+  // criteria evaluator, has no caller and no report reads the files, so a
+  // shadow that kept failing the flip criteria never became work. Same
+  // bounded per-day tail reads; the safety item emits at the recurring
+  // bar and the divergence item only once the window holds enough
+  // decisions for the rate to mean something, and only for the fleet's
+  // own repository.
+  items.push(...await gatewayShadowBacklogItems({ repo }));
   return { items, errors };
 }
 

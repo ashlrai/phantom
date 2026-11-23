@@ -396,11 +396,27 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   poor-yield threshold and at least three recorded finishes ended empty
   or aborted; launches still in flight carry no verdict and never count,
   the `other` catch-all never emits, and a missing or unreadable jobs
-  ledger emits nothing.
+  ledger emits nothing —
+  and the InferenceGateway shadow journal's recurring divergence, the
+  observe-only gateway-vs-legacy comparison rows the daemon appends to
+  `fabric/gateway-shadow-<UTC-day>.jsonl` under the Phantom state
+  directory when `foundry.fabric.gatewayShadow` is on (otherwise only
+  visible through `readGatewayShadow`/`divergenceStats` in
+  src/core/fabric/gateway-shadow.ts — code with no caller, so the journal
+  had no reader at all). A safety-relevant divergence — the gateway
+  would have dispatched an item the legacy path blocked on throttle,
+  budget or resource pause — becomes an item while such rows reach three
+  inside the 7-day window, the CONTRACT-M334 stage-3 bar being zero; a
+  divergence item emits while the window holds at least 50 shadowed
+  decisions and the measured divergence rate reaches the stage-2
+  tolerance of 2%, naming the largest recorded backend disagreements. A
+  missing or unreadable fabric directory emits nothing, and rows emit
+  only for the fleet's own repository since the shadow covers this
+  install's dispatches.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
-  memory-pressure, fleet-controller, skill-outcome, precheck-skip and
-  source-yield
+  memory-pressure, fleet-controller, skill-outcome, precheck-skip,
+  source-yield and gateway-shadow
   items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
@@ -471,7 +487,13 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   framing — a bad yield may be misrouting, starvation or host state,
   not a broken producer — with the same owner-side no-change escape,
   and emit only for the fleet's own repository since the producers are
-  this install's machinery. They
+  this install's machinery. Gateway-shadow items name the shadow journal,
+  the CONTRACT-M334 exit criteria and the gateway/legacy routing modules,
+  keep the find-which-side-is-wrong framing — a missing gateway guard
+  versus an over-blocking legacy path — with the same owner-side
+  no-change escape when shadow is off or the gateway already flipped,
+  and emit only for the fleet's own repository since the shadow covers
+  this install's dispatches and carries no repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
