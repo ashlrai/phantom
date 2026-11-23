@@ -248,3 +248,28 @@ button.row { cursor: pointer; }
   .pulse[data-live],
   .item, .reading { animation: none; }
 }
+
+/* Standalone session divider; percentage layout integration is separately owned. */
+.splitter {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: 1px;
+  background: var(--border-subtle);
+  cursor: col-resize;
+  touch-action: none;
+}
+.splitter::before {
+  position: absolute;
+  inset: 0 calc(var(--space-1) * -1);
+  content: '';
+}
+.splitter:hover,
+.splitter:focus-visible,
+.splitter[data-dragging] { background: var(--accent-500); }
+.splitter:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+:global(body[data-verse-resizing='true']) {
+  cursor: col-resize;
+  user-select: none;
+  -webkit-user-select: none;
+}
