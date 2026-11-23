@@ -129,6 +129,32 @@ describe('conversations from messages', () => {
     expect(filterConversations(list, { since: T0 + 3 * MIN, agent: 'leader' })).toEqual([]);
   });
 
+  it('before keeps whole threads whose last activity precedes the cutoff, composing with since into one window', () => {
+    const list = buildConversations([
+      say('a', 'leader', 'claude', 0, { kind: 'ask' }),
+      say('b', 'claude', 'leader', 1, { kind: 'reply', replyTo: 'a' }),
+      say('c', 'grok', 'zai', 4, { kind: 'ask' }),
+      say('d', 'zai', 'grok', 5, { kind: 'reply', replyTo: 'c' }),
+    ], NOW);
+    // 'a' last spoke at minute 1, 'c' at minute 5.
+    const older = filterConversations(list, { before: T0 + 3 * MIN });
+    expect(older.map(c => c.id)).toEqual(['a']);
+    // The whole thread stays — its minute-0 opener is not trimmed by the cutoff.
+    expect(older[0]!.messageCount).toBe(2);
+    // Exclusive: 'c' last spoke exactly at minute 5, so a cutoff there drops
+    // it while 'a' stays; one minute later both stay.
+    expect(filterConversations(list, { before: T0 + 5 * MIN }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { before: T0 + 6 * MIN }).map(c => c.id).sort()).toEqual(['a', 'c']);
+    // since/before read one [since, before) window: a thread stamped exactly
+    // at either bound never matches, and an inverted window is an honest empty.
+    expect(filterConversations(list, { since: T0 + MIN, before: T0 + 5 * MIN }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { since: T0 + 5 * MIN, before: T0 + 5 * MIN })).toEqual([]);
+    expect(filterConversations(list, { since: T0 + 6 * MIN, before: T0 + 3 * MIN })).toEqual([]);
+    // It composes with the other filters like every flag here.
+    expect(filterConversations(list, { before: T0 + 3 * MIN, state: 'answered' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { before: T0 + 3 * MIN, agent: 'grok' })).toEqual([]);
+  });
+
   it('contains keeps whole threads where any member subject carries the needle', () => {
     const list = buildConversations([
       say('a', 'leader', 'claude', 0, { kind: 'ask', subject: 'fix the parser crash' }),
@@ -427,6 +453,27 @@ describe('phm agents conversations --json', () => {
     expect(readAgentConversations({ since: T0 + 90_000, state: 'answered' }, { root, now: () => NOW }).conversations).toEqual([]);
   });
 
+  it('a before read keeps only threads last active before the cutoff', () => {
+    const root = bus(CHAT);
+    // m1's thread last spoke at T0+1m, m3's wait at T0+2m.
+    const older = readAgentConversations({ before: T0 + 90_000 }, { root, now: () => NOW });
+    expect(older.conversations!.map(c => c.id)).toEqual(['m1']);
+    expect(older.matched).toBe(1);
+    // `waiting` still counts the whole bus, filtered or not.
+    expect(older.waiting).toBe(1);
+    // Exclusive: m3's wait landed exactly on this cutoff, so it drops while
+    // m1's older thread stays; a cutoff on m1's own last activity empties all.
+    expect(readAgentConversations({ before: T0 + 2 * MIN }, { root, now: () => NOW }).conversations!.map(c => c.id)).toEqual(['m1']);
+    expect(readAgentConversations({ before: T0 + MIN }, { root, now: () => NOW }).conversations).toEqual([]);
+    // since/before read one [since, before) window on lastAt.
+    const windowed = readAgentConversations({ since: T0, before: T0 + 90_000 }, { root, now: () => NOW });
+    expect(windowed.conversations!.map(c => c.id)).toEqual(['m1']);
+    expect(windowed.matched).toBe(1);
+    // An inverted window is an honest empty page, not an error.
+    expect(readAgentConversations({ since: T0 + 3 * MIN, before: T0 + MIN }, { root, now: () => NOW }))
+      .toMatchObject({ matched: 0, conversations: [] });
+  });
+
   it('an empty bus is source missing with no conversations', () => {
     expect(readAgentConversations({}, { root: bus(), now: () => NOW })).toEqual({ schema: 'agents.conversations.v1', version: 1,
       generatedAt: '2026-11-18T12:30:00.000Z', source: 'missing', conversations: [], matched: 0, waiting: 0, skipped: 0 });
@@ -607,6 +654,33 @@ describe('phm agents conversations --json', () => {
     expect(errors.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('the CLI --before filters by last activity and refuses a bad cutoff', async () => {
+    const root = bus(CHAT), lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    // 29m before NOW (T0+30m) is T0+1m — exactly m1's last activity, exclusive.
+    expect(await run(['--before', '29m', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations).toEqual([]);
+    // 28.5m before NOW is T0+1.5m — m1's thread stayed, m3's newer wait did not.
+    expect(await run(['--before', '1710s', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    // An ISO cutoff past both threads lists them all, m3 first (waiting pins).
+    expect(await run(['--before', '2026-11-18T12:30:00.000Z', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['m3', 'm1']);
+    // --before composes with --since into one window and the other filters:
+    // [T0+1m, T0+2m) keeps m1 — exactly on the since bound — and drops m3.
+    expect(await run(['--since', '29m', '--before', '28m', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    expect(await run(['--before', '27m', '--waiting', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['m3']);
+    // An inverted window is an honest empty page, not an error.
+    expect(await run(['--since', '28m', '--before', '29m', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations).toEqual([]);
+    // Bad values are usage errors, never a silent default.
+    expect(await run(['--before', 'bogus'])).toBe(2);
+    expect(await run(['--before'])).toBe(2);
+    expect(errors.length).toBeGreaterThanOrEqual(2);
+  });
+
   it('the CLI --contains filters by subject text and refuses a bad needle', async () => {
     const root = bus(CHAT), lines: string[] = [], errors: string[] = [];
     const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
@@ -670,6 +744,18 @@ describe('phm agents conversations --json', () => {
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?since=bogus`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?since=`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?since=1&since=2`)).status).toBe(400);
+    // before keeps threads last active strictly before the cutoff, composing
+    // with since into one [since, before) window; bad values are refused.
+    const older = await call(`${AGENT_CONVERSATIONS_PATH}?before=${T0 + 90_000}`);
+    expect(older.status).toBe(200);
+    expect(older.body.conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    expect(older.body.matched).toBe(1);
+    const windowed = await call(`${AGENT_CONVERSATIONS_PATH}?since=${T0}&before=${T0 + 90_000}`);
+    expect(windowed.status).toBe(200);
+    expect(windowed.body.conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?before=bogus`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?before=`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?before=1&before=2`)).status).toBe(400);
     // contains keeps threads whose member subjects carry the needle — the same
     // text search --contains applies — and bad needles are refused.
     const found = await call(`${AGENT_CONVERSATIONS_PATH}?contains=BUILD`);

@@ -90,6 +90,14 @@ export interface ConversationQuery {
    * out even while it still waits, so pair it with `--waiting`/`--state`
    * when the question is "what is still outstanding", not "what moved". */
   since?: number;
+  /** Keep only threads whose last activity (`lastAt`) is strictly before
+   * this epoch-ms cutoff — the exclusive upper bound composing with `since`
+   * into one `[since, before)` window, the same `receivedAt < before` rule
+   * every other bus read's `--before` applies, so a thread stamped exactly
+   * at the cutoff never matches and adjacent windows never double-count it.
+   * Whole threads, never partial message lists: reaching a past slice of
+   * the thread list no longer means paging forward through everything newer. */
+  before?: number;
   /** Keep only threads where at least one member message's scrubbed
    * one-line `subject` carries the needle as a case-insensitive substring —
    * the same `--contains` text search `phm messages`, `agents bus inbox`
@@ -181,7 +189,11 @@ export function groupConversations(messages: readonly ConversationMessage[], now
  * literal `waiting.on` match and never widens. Without a predicate only the
  * literal `waiting.on` label matches. `since` keeps only the threads whose
  * `lastAt` reaches the epoch-ms cutoff — activity inside the window, whole
- * threads like every other filter here. `contains` keeps only the threads
+ * threads like every other filter here. `before` keeps only the threads
+ * whose `lastAt` is strictly before its own epoch-ms cutoff — the exclusive
+ * upper bound `since` composes with into one `[since, before)` window — and
+ * an inverted or empty window is an honest empty list, never an error.
+ * `contains` keeps only the threads
  * where at least one member message's scrubbed `subject` carries the needle
  * — the same text-search contract `phm messages --contains` applies — so
  * "which thread is about X" is one filtered read.
@@ -201,6 +213,7 @@ export function filterConversations(list: readonly Conversation[], query: Conver
     c.messages.some(m => m.subject.toLowerCase().replace(/\s+/g, ' ').includes(needle));
   return list.filter(c => (query.job === undefined || c.jobs.includes(query.job))
     && (query.since === undefined || Date.parse(c.lastAt) >= query.since)
+    && (query.before === undefined || Date.parse(c.lastAt) < query.before)
     && mentions(c)
     && (!agent || c.participants.some(p => p.name.toLowerCase() === agent
       || (key !== undefined && identityOf?.(p.name) === key)))

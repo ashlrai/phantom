@@ -13,7 +13,7 @@ ashlr agents chat list|read <outcome:id|run:id> --channel <channel> [--after <cu
 ashlr agents mesh status [--root <abs>] [--json]
 ashlr agents edges [--json]
 ashlr agents messages [--since 1h] [--limit N] [--json]
-ashlr agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..1024>] [--json]
+ashlr agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..1024>] [--json]
 ashlr agents roster [--json]
 ashlr agents bus contract [--json]
 ashlr agents bus channels list [--json]
