@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Twenty-six sources, all of which Phantom
+ * evidence instead of a hand-kept list. Twenty-seven sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -197,6 +197,19 @@
  *     cell emits only at the same recurring bars the Ideas list
  *     applies inside the 7-day window, and only for the fleet's own
  *     repository since the ledger carries no repository column;
+ *   - the improve outcome ledger's recurring adverse evidence: the
+ *     digest-chained scorecard `phm improve register|measure|promote|
+ *     observe` appends to $ASHLR_HOME/improve/outcomes.jsonl — registered
+ *     proposals that never get measured (registration is automated by the
+ *     cloud scheduler's syncCloudBacklogOutcomes but the later verbs are
+ *     manual and unscheduled), in-window measured events that keep
+ *     returning no value, measured regressions on declared metrics and
+ *     merged-then-reverted observations
+ *     (proposalOutcomeBacklogItems below). Until now the ledger only ever
+ *     reached `phm improve outcomes`, the north-star vision read and the
+ *     backlog's own area-leverage ranking — reports and joins someone had
+ *     to run — so the self-improvement loop's own measured verdicts never
+ *     became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -249,6 +262,7 @@ import { stuckJobBacklogItems } from './stuck-job-backlog.js';
 import { lessonTrialBacklogItems } from './lesson-trial-backlog.js';
 import { unfedBacklogItems } from './unfed-backlog.js';
 import { dupcheckGateBacklogItems } from './dupcheck-gate-backlog.js';
+import { proposalOutcomeBacklogItems } from './proposal-outcome-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -561,6 +575,24 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // recurring bars inside the 7-day window, and only for the fleet's
   // own repository since the ledger carries no repository column.
   items.push(...await dupcheckGateBacklogItems({ repo }));
+
+  // Improve outcome ledger: the self-improvement loop's own scorecard —
+  // registered proposals that never get measured, metric runners that keep
+  // returning unknown, measured regressions on declared metrics and
+  // merged-then-reverted observations — becomes backlog items too. Until
+  // now the digest-chained ledger only ever reached `phm improve
+  // outcomes` (a report someone had to run), the north-star vision read
+  // and the backlog's own area-leverage ranking, so the loop's measured
+  // verdicts never became work even though registration is automated and
+  // measurement, promotion and observation are manual verbs no scheduled
+  // pass runs. Same bounded verified-ledger read and the same scoreOutcomes
+  // fold `phm improve outcomes` prints; each signal emits only at the
+  // recurring bar of distinct proposals — event-recency signals inside
+  // the 7-day window, the measurement stall as a current-state tally past
+  // its grace — a missing ledger reads as empty while a broken chain
+  // yields nothing, and only the fleet's own repository inherits the
+  // items since the verbs and scheduler sync are this repo's machinery.
+  items.push(...await proposalOutcomeBacklogItems({ repo }));
   return { items, errors };
 }
 

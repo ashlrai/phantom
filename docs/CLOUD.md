@@ -493,12 +493,37 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   warning later — a missing or unreadable ledger emits nothing,
   malformed lines and unknown actions drop like the stats reader's own
   parse, and another repository emits nothing since the ledger carries
-  no repository column.
+  no repository column —
+  and the improve outcome ledger's recurring adverse evidence, the
+  digest-chained scorecard `phm improve register`, the scheduler's
+  `syncCloudBacklogOutcomes`, `phm improve measure`, `promote` and
+  `observe` append to `improve/outcomes.jsonl` under the Ashlr home
+  (otherwise only visible through `phm improve outcomes`, the
+  north-star vision read and the backlog's own area-leverage ranking —
+  reports and joins someone had to run, so the self-improvement
+  loop's own measured verdicts never became work). A signal becomes
+  an item at the recurring bar of three distinct proposals: registered
+  proposals with a recorded PR but no `measured` event past the
+  24-hour grace — registration is automated but the later verbs are
+  manual and unscheduled, so the scorecard starves — is a
+  current-state stall tally; in-window `measured` events that keep
+  returning no value become an item at three recorded events across
+  two distinct proposals, quoting the recorded reasons; measured
+  regressions (declared metric worse at head than merge base) and
+  merged-then-reverted observations become items at three distinct
+  proposals whose establishing event lands inside the 7-day window,
+  the re-land rule clearing a revert a later merge supersedes. A
+  missing ledger reads as empty while a broken chain emits nothing,
+  proposals whose last observation is a revert never count as
+  measurement stalls, and rows emit only for the fleet's own
+  repository since the verbs and scheduler sync are this repo's
+  machinery.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
-  work-market and dupcheck items carry
+  work-market, dupcheck and improve-outcome
+  items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
@@ -608,7 +633,14 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   producers minting already-done work — with the same owner-side
   no-change escape, and emit only for the fleet's own repository since
   the gate is this repo's machinery and the ledger carries no
-  repository column. They
+  repository column. Improve-outcome items name the outcome ledger,
+  the `phm improve outcomes` report and the measure/promote/observe
+  verbs, keep the find-which-pipeline-stage-is-failing framing per
+  signal — an unscheduled measurement stage, a broken metric-runner
+  contract, intake shipping work that fails its own declared metric,
+  or championed changes that do not hold — and emit only for the
+  fleet's own repository since the verbs and scheduler sync are this
+  repo's machinery. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
