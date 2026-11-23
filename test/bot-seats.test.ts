@@ -8,6 +8,7 @@ import { participantSchema } from '../src/core/agents/bus-v2-schema.js';
 import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { acquireCoordination, listCoordination, releaseCoordinationBySource } from '../src/core/agents/claim-store.js';
 import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
+import { busBodyJobIds } from '../src/core/agents/bus-unified.js';
 import { DriveNodes, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { emptyState } from '../src/core/drive/nodes/state.js';
 import { runBotsCli } from '../src/cli/bots.js';
@@ -289,6 +290,43 @@ it('posts a real bus note to leaders for each handed-off record by default', asy
   expect((await applySeatHandoff('helper', opts)).handoffs).toEqual([]);
   const again = listBusInboxAfter(0, 100, { root: fleetRoot });
   expect(again.status === 'ok' ? again.messages : []).toHaveLength(1);
+});
+it('cites a node-job handoff notice under its job thread and leaves claim keys uncited', async () => {
+  const o = await fixture({ ...seat(), nodeId: 'helper-node' });
+  const fleetRoot = join(o.home, '.ashlr', 'fleet');
+  const state = emptyState();
+  const store: NodesStore = { transaction: fn => fn(state) };
+  const router = new DriveNodes(store, { now: o.now });
+  const node = router.join('helper-node')!;
+  const leader = router.heartbeat(node)!.leader!;
+  router.enqueue('node-job-7'); router.claim(leader, node, 'node-job-7');
+  router.enqueue('x'.repeat(130)); router.claim(leader, node, 'x'.repeat(130));
+  acquireCoordination({ root: fleetRoot, origin: 'resource', key: 'pr:o/r#9', owner: 'helper', sourceId: 'bus-cite-claim', leaseMs: 3600000, leaseUntil: now + 3600000, now });
+  await writeFile(join(o.root, 'seat-state.json'), JSON.stringify({ helper: { state: 'draining', since: iso(), exhaustedReset: null } }));
+  const opts: SeatOptions = { ...o, nodesStore: store, readQuota: async () => exhausted,
+    ownerNotice: async () => ({ status: 'accepted' }) };
+  const result = await applySeatHandoff('helper', opts);
+  expect(result.handoffs.map(h => `${h.work.kind}:${h.work.ref}`).sort())
+    .toEqual([`bus-claim:pr:o/r#9`, 'node-job:node-job-7', `node-job:${'x'.repeat(130)}`].sort());
+  const page = listBusInboxAfter(0, 100, { root: fleetRoot });
+  expect(page.status).toBe('ok');
+  const rows = page.status === 'ok' ? page.messages : [];
+  expect(rows).toHaveLength(3);
+  const bodyOf = (fragment: string) => {
+    const row = rows.find(r => typeof r.envelope.body === 'object' && r.envelope.body !== null &&
+      'text' in r.envelope.body && String((r.envelope.body as { text: unknown }).text).includes(fragment));
+    expect(row, `notice mentioning ${fragment}`).toBeDefined();
+    return row!.envelope.body as Record<string, unknown>;
+  };
+  // A node-job ref is the job id every `--job` bus read already matches, so the
+  // notice carries the same `job:<id>` thread citation work traffic uses.
+  const cited = bodyOf('node-job node-job-7');
+  expect(cited['thread']).toBe('job:node-job-7');
+  expect(busBodyJobIds(cited)).toEqual(['node-job-7']);
+  // A ref too long to form a valid bus label cites nothing rather than guessing.
+  expect(bodyOf(`node-job ${'x'.repeat(130)}`)).not.toHaveProperty('thread');
+  // A bus-claim ref is a coordination claim key, never a job citation.
+  expect(bodyOf('bus-claim pr:o/r#9')).not.toHaveProperty('thread');
 });
 it('routes seat-to-seat messages through the seat fleet root and clock', async () => {
   const reviewer = { id: 'reviewer', kind: 'local', displayName: 'Reviewer', participantId: 'reviewer', capabilities: ['review'], quota: { source: 'none' } };
