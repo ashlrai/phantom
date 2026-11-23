@@ -322,6 +322,10 @@ it('bus-follow rejects invalid arguments before touching the store', async () =>
     ['--after', '0', '--duration-ms', '100', '--thread', 'bad label', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--since', 'not-a-time', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--since', '-5', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--before', 'not-a-time', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--before', '-5', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--before', '9999999999999999', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--before', '15m', '--before', '2h', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--contains', '', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--contains=', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--contains', '   ', '--root', root, '--json'],
@@ -376,6 +380,21 @@ it('filters the CLI stream by --channel', async () => {
   const rows = emitted.map(line => JSON.parse(line) as BusFollowRecord);
   expect(messages(rows).map(row => row.envelope.id)).toEqual(['eng-1', 'eng-2']);
   expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 4 });
+});
+
+it('filters the CLI stream by --before', async () => {
+  const edge = Date.now() - 60_000;
+  post('old', 'worker-a', {}, edge - 60_000);
+  post('edge', 'worker-a', {}, edge);
+  post('new');
+  const emitted: string[] = [];
+  const code = await cmdFleetBusFollow(['--after', '0', '--duration-ms', '250', '--interval-ms', '100',
+    '--before', String(edge), '--root', root, '--json'],
+    { emit: (json: string) => { emitted.push(json); } });
+  expect(code).toBe(0);
+  const rows = emitted.map(line => JSON.parse(line) as BusFollowRecord);
+  expect(messages(rows).map(row => row.envelope.id)).toEqual(['old']);
+  expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
 });
 
 it('delivers only envelopes from --from senders under every registered spelling', async () => {
@@ -526,6 +545,35 @@ it('delivers only envelopes received at or after --since', async () => {
   expect(result.status).toBe('expired');
   expect(messages(records).map(row => row.envelope.id)).toEqual(['boundary', 'new']);
   expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
+it('delivers only envelopes received strictly before --before', async () => {
+  const edge = Date.now() - 60_000;
+  post('old', 'worker-a', {}, edge - 60_000);
+  post('edge', 'worker-a', {}, edge);
+  post('new');
+  const { records, pending, expire } = follow({ before: edge });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['old']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
+it('keeps only envelopes inside the [since, before) window', async () => {
+  const base = Date.now();
+  post('w-old', 'worker-a', {}, base - 300_000);
+  post('w-lo', 'worker-a', {}, base - 200_000);
+  post('w-hi', 'worker-a', {}, base - 100_000);
+  post('w-new', 'worker-a', {}, base);
+  const { records, pending, expire } = follow({ since: base - 200_000, before: base - 100_000 });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  // since is inclusive and before exclusive: w-lo sits on the lower bound,
+  // w-hi on the upper, and only w-lo streams.
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['w-lo']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 4 });
 });
 
 it('applies --from, --priority, --thread and --since together', async () => {

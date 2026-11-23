@@ -1578,8 +1578,10 @@ unresolvable sender or unreadable registry keeping exact-label matching —
 identity — the same sender-exclusion rule `comms bus read|watch`'s
 `--exclude-from` and `fleet_bus_inbox`'s `excludeFrom` apply —
 `--priority` keeps one `P0`–`P3`, `--thread` keeps `note`/`context` bodies
-carrying that thread label, and `--since <15m|2h|1d|ISO>` keeps rows received
-at or after the cutoff. The stream also narrows on the remaining fields the
+carrying that thread label, `--since <15m|2h|1d|ISO>` keeps rows received
+at or after the cutoff, and `--before <15m|2h|1d|ISO>` keeps rows received
+strictly before it — the exclusive upper bound composing with `--since`
+into one `[since, before)` window. The stream also narrows on the remaining fields the
 bus page reads share: `--id` keeps only the envelope carrying that exact id,
 `--in-reply-to` keeps only object bodies whose own `inReplyTo` equals it —
 the same application convention `comms bus read|watch` and `fleet_bus_inbox`
@@ -1593,7 +1595,15 @@ inclusive `receivedAt >= since` match `agents bus inbox --since`,
 `channel read --since`, `wakes --since` and `phm messages --since` apply,
 resolved once when the read starts; a `--checkpoint` consumer binds the raw
 `--since` value into its filter identity, so a relative window keeps
-resuming while an absolute change fails closed. `--channel <name>` narrows
+resuming while an absolute change fails closed. `--before <15m|2h|1d|ISO>`
+narrows `comms bus read|watch` and `fleet_bus_inbox`'s `before` to rows
+received strictly before the cutoff — the exclusive `receivedAt < before`
+match `fleet bus-follow --before` applies, on the same `parseSince`
+grammar, resolved once when the read starts and composing with
+`--since`/`since` into one `[since, before)` window where a row stamped
+exactly at either bound never matches; a `comms bus --checkpoint` consumer
+binds the raw `--before` value into its filter identity the same way.
+`--channel <name>` narrows
 `comms bus read|watch`, `fleet bus-follow` and `fleet_bus_inbox`'s `channel`
 to envelopes addressed to `group:<name>:*` — the room's whole traffic under
 every topic, the same raw `to`-prefix rule `channel read`, `wakes --channel`,

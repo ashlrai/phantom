@@ -101,6 +101,7 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     [{ channel: '-lead' }], [{ channel: 'group:eng' }], [{ channel: 'eng:general' }],
     [{ channel: '' }], [{ channel: 5 }], [{ channel: null }],
     [{ since: 'not-a-time' }], [{ since: '' }], [{ since: 1735689600000 }], [{ since: '999999d' }], [{ since: null }],
+    [{ before: 'not-a-time' }], [{ before: '' }], [{ before: 1735689600000 }], [{ before: '999999d' }], [{ before: null }],
     [{ contains: '' }], [{ contains: '   ' }], [{ contains: 'x'.repeat(513) }], [{ contains: 42 }],
     [{ after: 0, extra: 1 }], [{ path: '/tmp/x' }], [{ command: 'read' }], [{ file: 'x' }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
@@ -272,6 +273,22 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     expect(rows(found.parsed).map(row => row.envelope.id)).toEqual(['note1']);
     const combined = await callInbox(client, { kind: 'task', contains: 'fleet.deploy' });
     expect(rows(combined.parsed).map(row => row.envelope.id)).toEqual(['task1']);
+  });
+
+  it('applies the before upper bound exclusive of its edge and composes with since', async () => {
+    expect(post('b-old', {}, () => 1_000).status).toBe('posted');
+    expect(post('b-edge', {}, () => 2_000).status).toBe('posted');
+    expect(post('b-new', {}, () => 3_000).status).toBe('posted');
+    const client = await connect();
+    const before = await callInbox(client, { before: '2000' });
+    expect(before.parsed).toMatchObject({ sourceState: 'ok', filters: { before: 2000 } });
+    expect(rows(before.parsed).map(row => row.envelope.id)).toEqual(['b-old']);
+    // [since, before) keeps the lower bound inclusive and the upper exclusive:
+    // b-edge sits exactly on since and b-new exactly on before.
+    const window = await callInbox(client, { since: '2000', before: '3000' });
+    expect(rows(window.parsed).map(row => row.envelope.id)).toEqual(['b-edge']);
+    const empty = await callInbox(client, { before: '1000' });
+    expect(empty.parsed).toMatchObject({ sourceState: 'ok', returnedMessages: 0, nextCursor: 3 });
   });
 
   it('applies the channel read filter to every topic of one room', async () => {
