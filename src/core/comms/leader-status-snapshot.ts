@@ -25,8 +25,18 @@ export interface LeaderStatusSnapshot {
   merged24h: number | null;
   medianTtmS: number | null;
   lanes: LeaderStatusLane[];
-  mains: { known: boolean; green: number; red: number; total: number; redRepos: string[]; stale: boolean };
+  queueState: 'fresh' | 'stale' | 'unavailable';
+  laneActivity: Array<{ lane: string; running: number | null; queued: number | null }>;
+  mains: { known: boolean; green: number | null; red: number | null; total: number | null; unknown: number | null; redRepos: string[]; stale: boolean; observedAt: string | null };
   ceo: string[];
+}
+
+function summarizeQueueActivity(status: unknown): LeaderStatusSnapshot['laneActivity'] {
+  const lanes = object(object(status).lanes);
+  const names = new Set([...Object.keys(lanes), ...Object.keys(object(object(object(status).rollup_24h).by_lane))]);
+  return [...names].filter(name => name && laneName(name) === name).sort().slice(0, MAX_LANES).map(lane => ({
+    lane, running: mergedCount(object(lanes[lane]).running), queued: mergedCount(object(lanes[lane]).queued),
+  }));
 }
 
 // ESC sequences: CSI, OSC (BEL or ST terminated), then any other two-byte escape.
@@ -77,28 +87,35 @@ export function summarizeQueueRollup(status: unknown): Pick<LeaderStatusSnapshot
 
 export async function readLeaderStatusSnapshot(opts: { runsDir?: string; now?: () => number } = {}): Promise<LeaderStatusSnapshot> {
   const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  const now = (opts.now ?? Date.now)();
+  const unknownQueue = { ...summarizeQueueRollup(null), laneActivity: [], queueState: 'unavailable' as const };
   const [queue, mains, journal] = await Promise.all([
     readSource(join(runsDir, 'queue', 'status.json'), MAX_STATUS_BYTES, false).then(source => {
-      if (source.state !== 'healthy') return summarizeQueueRollup(null);
+      if (source.state !== 'healthy') return unknownQueue;
       try {
         const status: unknown = JSON.parse(source.text);
         const tick = object(status).last_tick;
-        const age = (opts.now ?? Date.now)() - (typeof tick === 'string' ? Date.parse(tick) : NaN);
+        const age = now - (typeof tick === 'string' ? Date.parse(tick) : NaN);
         return Number.isFinite(age) && age >= 0 && age <= MAX_QUEUE_AGE_MS
-          ? summarizeQueueRollup(status) : summarizeQueueRollup(null);
-      } catch { return summarizeQueueRollup(null); }
+          ? { ...summarizeQueueRollup(status), laneActivity: summarizeQueueActivity(status), queueState: 'fresh' as const }
+          : { ...unknownQueue, queueState: 'stale' as const };
+      } catch { return unknownQueue; }
     }),
-    readFleetMainHealth({ runsDir, now: opts.now }).catch(() => null),
-    readLeaderJournal({ runsDir, now: opts.now }).catch(() => null),
+    readFleetMainHealth({ runsDir, now: () => now }).catch(() => null),
+    readLeaderJournal({ runsDir, now: () => now }).catch(() => null),
   ]);
-  const repos = mains?.source === 'ok' ? mains.repos : [];
+  const observedAt = mains?.statusAt ?? null;
+  const stale = mains?.stale !== false || observedAt === null || Date.parse(observedAt) > now;
+  const known = mains?.source === 'ok' && !stale && mains.repos.length > 0;
+  const repos = known ? mains.repos : [];
   const ceo = (journal?.passes[0]?.sections ?? []).filter(section => /\bCEO\b/i.test(section.title)).flatMap(section => section.bullets).slice(0, 6);
   return {
     schema: LEADER_STATUS_SNAPSHOT_SCHEMA, ...queue,
     mains: {
-      known: repos.length > 0, total: repos.length, stale: mains?.stale ?? true,
-      green: repos.filter(repo => repo.state === 'green').length,
-      red: repos.filter(repo => repo.state === 'red').length,
+      known, total: known ? repos.length : null, stale, observedAt,
+      green: known ? repos.filter(repo => repo.state === 'green').length : null,
+      red: known ? repos.filter(repo => repo.state === 'red').length : null,
+      unknown: known ? repos.filter(repo => repo.state === 'unknown').length : null,
       redRepos: repos.filter(repo => repo.state === 'red').map(repo => repo.repo).slice(0, 8),
     },
     ceo: ceo.map(line => scrubSecrets(line)),
@@ -112,7 +129,7 @@ function duration(seconds: number): string {
 /** Short plain-words status, built only from the snapshot. Also the fallback when no model answers. */
 export function renderLeaderStatus(snapshot: LeaderStatusSnapshot): string {
   const lines: string[] = [];
-  if (snapshot.merged24h === null) lines.push('Merged PRs in the last 24h: unknown (no rollup recorded).');
+  if (snapshot.merged24h === null) lines.push(`Merged PRs in the last 24h: unknown (queue ${snapshot.queueState}; no fresh complete rollup).`);
   else {
     const median = snapshot.medianTtmS === null ? '' : `, median time to merge ${duration(snapshot.medianTtmS)}`;
     lines.push(`Merged PRs in the last 24h: ${snapshot.merged24h}${median}.`);
@@ -120,11 +137,13 @@ export function renderLeaderStatus(snapshot: LeaderStatusSnapshot): string {
       .map(lane => `${lane.lane} ${lane.merged}${lane.medianTtmS === null ? '' : ` (median ${duration(lane.medianTtmS)})`}`);
     if (perLane.length) lines.push(`By lane: ${perLane.join(', ')}.`);
   }
+  const activity = snapshot.laneActivity.map(lane => `${lane.lane}: ${lane.running ?? 'unknown'} running, ${lane.queued ?? 'unknown'} queued`);
+  lines.push(activity.length ? `Lane activity: ${activity.join('; ')}.` : `Lane activity: unknown (queue ${snapshot.queueState}).`);
   const { mains } = snapshot;
-  if (!mains.known) lines.push('Mains: unknown (no guardian table).');
+  if (!mains.known) lines.push(`Mains: unknown (${!mains.observedAt ? 'no dated guardian table' : mains.stale ? 'guardian table is stale' : 'guardian table has no rows'}).`);
   else {
     const red = mains.red ? ` Red: ${mains.redRepos.join(', ')}.` : '';
-    lines.push(`Mains green: ${mains.green} of ${mains.total}.${red}${mains.stale ? ' The table is stale.' : ''}`);
+    lines.push(`Mains green: ${mains.green} of ${mains.total}.${red}${mains.unknown ? ` Unknown: ${mains.unknown}.` : ''} Guardian checked: ${mains.observedAt}.`);
   }
   if (snapshot.ceo.length) lines.push(`CEO summary: ${snapshot.ceo.slice(0, 3).join(' ')}`);
   return lines.join('\n');
