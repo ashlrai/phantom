@@ -254,7 +254,15 @@ its member handles, creator and creation time, or only the channels one
 resolved identity belongs to. A missing registry is a verified-empty list
 (`source: missing`), an unreadable one is `unavailable` — never an empty
 list — and membership is a routing label set (who may post), not proof of
-presence or authority. `phm agents bus channel read <name> [--topic <t>]
+presence or authority. `fleet_agent_channels` (the isolated fleet MCP
+tool) serves the same roster read with the optional `agent` ref as its
+only argument — omitted it lists every registry channel, supplied it
+narrows to the channels that resolved identity belongs to, and an
+unregistered ref answers `unknown-agent` — under the identical
+`listBusChannels` validation, so an MCP-connected agent learns which
+rooms exist and who may post in them without shelling out to `phm`; it
+accepts no caller root or path and never posts, joins, leaves or renames
+a channel. `phm agents bus channel read <name> [--topic <t>]
 [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3]
 [--job <id>]
 [--since <15m|2h|1d|ISO>] [--contains <text>] [--matched]
