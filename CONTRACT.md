@@ -2853,18 +2853,19 @@ while reuse on another key cannot relocate it. Claims coordinate only and grant
 no execution authority; the token returns only to its acquirer.
 
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
-`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--priority P0..P3]`. `readBusWorkMine(agent, options?)`
-(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `contains?`, `since?`, `priority?`, `now?: () => number` frozen once
+`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>]`. `readBusWorkMine(agent, options?)`
+(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `contains?`, `since?`, `priority?`, `channel?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, job?, contains?, since?, priority?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
+asOf, job?, contains?, since?, priority?, channel?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule, a `job` outside the same rule
 (`invalid-job`), a `contains` outside the shared bounded free-text
 rule every bus `--contains` read applies (`invalid-contains`), a
 `since` that is not a safe non-negative epoch-ms integer
-(`invalid-since`), or a `priority` outside the P0..P3 band
-(`invalid-priority`). `job`, `contains`, `since` (as ISO) and
-`priority` echo the applied
+(`invalid-since`), a `priority` outside the P0..P3 band
+(`invalid-priority`), or a `channel` outside the strict channel-name
+grammar every bus `--channel` read validates (`invalid-channel`).
+`job`, `contains`, `since` (as ISO), `priority` and `channel` echo the applied
 filters and are absent on an
 unfiltered read. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
@@ -3191,7 +3192,8 @@ evidence and the section stays whole like `channels`. `formatBusWorkMine(result)
 renders the shared human lines — titles, the declared dispatch spec and key
 lists scrubbed, single-lined and display-clipped (the same
 `busWorkJobDispatch` tag the feed job line prints); JSON keeps full values.
-Exit 0 on a completed read, 2 on an invalid agent, job, contains or since.
+Exit 0 on a completed read, 2 on an invalid agent, job, contains, since,
+priority or channel.
 
 `options.job` narrows the whole digest to one job id under the same
 `busBodyJobMatch` citation rule the inbox/channel `job` filters apply —
@@ -3299,6 +3301,31 @@ rows carry no per-item band), `channels` and `seats` stay unfiltered —
 registry context and band-less projections, like `channels` under every
 filter. Every count stays the filtered total, and a row whose band
 cannot be proven never matches.
+
+`options.channel` narrows the whole digest to pending items provably
+addressed to `group:<name>:*` of one bus channel — the same room prefix
+every bus read's `--channel` matches, validated by the strict
+channel-name grammar and matched as a raw `to` prefix that needs no
+registry and never widens on unknown state: `jobs`/`announced` keep
+announcements whose `to` carries the prefix (the feed `--channel`
+rule), `next`/`handoffs` keep envelopes whose `to` carries it inside
+the shared pending-work walk (a channel-filtered handoff still sees
+its answer in the reply-citation scan), `claims` keep only message
+claims whose resolved leased envelope's `to` carries it — a claim
+with no resolved message, a scope-key claim or an unresolvable/
+unreadable lease names no provable room and never lists, the same
+"unknown stays out" rule `priority` applies — `threads`/`awaiting`/
+`blocked` keep threads whose latest message — the wait's own
+recipient for waiting threads, the block report's recipient for
+blocked ones — is addressed to the room, `wakes` pass `channel` to
+`readAgentWakes`' `filter.channel` (the hint's own `to` prefix),
+`inbox` passes it to `readAgentInbox` (the member-channel rule — a
+room the agent does not belong to simply has no mail to show), and
+`mailbox` ANDs the `to` prefix into `BusMailbox.pendingFor`'s `match`
+predicate. `board`, `channels` and `seats` carry no per-item room in
+their projections and stay unfiltered, like they do under `priority`.
+Every count stays the filtered total, and a row whose room cannot be
+proven never matches.
 
 ### Unified agent bus (RQ-BUS-UNIFY-1)
 

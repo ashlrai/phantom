@@ -783,7 +783,7 @@ free set. Exit 0 acquired,
 2 invalid, 1 otherwise. Claims still coordinate scope only — holding one
 never permits a merge, a push, or spending.
 
-**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--priority P0..P3]` is the read-only
+**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>]` is the read-only
 digest that answers "what is pending for this agent" in one call: the live
 coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block — the reverse of `work feed --claims`,
@@ -1071,7 +1071,30 @@ announced jobs, the three thread sections, board rows, `channels` and
 `seats` carry no per-item band in their projections and stay
 unfiltered; every count stays the filtered total, the result echoes
 `priority` in JSON and the human header prints it, and a row whose
-band cannot be proven never matches. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
+band cannot be proven never matches. `--channel <name>` narrows the
+whole digest the same way — "what is pending for me in this room" —
+under the same room prefix every other bus `--channel` read matches,
+validated by the strict channel-name grammar and matched as a raw
+`group:<name>:` prefix on each section's own address evidence:
+feed jobs and announced jobs keep announcements whose `to` carries
+the prefix (the feed `--channel` rule), `next`/`handoffs` and
+`mailbox` keep envelopes whose `to` carries it, claims keep only
+message claims whose resolved leased envelope sits in the room — a
+claim naming no resolved message, a scope-key claim or an
+unresolvable/unreadable lease names no provable room and never
+lists, the same "unknown stays out" rule `--priority` applies, the
+three thread sections keep threads whose latest message — the
+wait's own recipient for waiting threads, the block report's
+recipient for blocked ones — is addressed to the room, and `wakes`
+and `inbox` pass the name to their own reads' channel filters (the
+wakes read's raw `to` prefix, the inbox read's member-channel rule —
+a room the agent does not belong to simply has no mail or hints to
+show). `board`, `channels` and `seats` carry no per-item room in
+their projections and stay unfiltered, like they do under
+`--priority`; every count stays the filtered total, the result
+echoes `channel` in JSON and the human header prints it, and a row
+whose room cannot be proven never matches. The agent defaults to
+`PHM_AGENT_ID`; an unresolvable ref keeps
 exact-label claim matching, reports `identity: null`, answers `unknown-agent`
 for inbox rather than an empty list, and reads wakes under `scope: 'label'`
 — the same literal-`to` matching `agents bus wakes` applies — so pending
@@ -1083,7 +1106,8 @@ own read state — `missing`/`available`/`unavailable` for claims,
 unreadable dependency degrades only its own section. Exit 0 on a completed
 read, 2 on an invalid agent ref. `fleet_agent_work` (the isolated fleet
 MCP tool) serves the same `readBusWorkMineWithSeats` projection — `agent`
-required, `job`/`since`/`contains`/`priority` the same filters — under the same
+required, `job`/`since`/`contains`/`priority`/`channel` the same filters —
+under the same
 validation, so an MCP-connected agent reads its whole pending digest
 without shelling out to `phm`; it accepts no caller root or path and
 passes a refused or degraded section through untouched.
