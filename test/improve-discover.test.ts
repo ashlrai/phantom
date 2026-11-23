@@ -203,6 +203,68 @@ describe('fleet outcome-learning items', () => {
     expect(items[0]).toMatchObject({ area: 'fleet-low-merge', priority: 3, repo: 'ashlrai/phantom' });
   });
 
+  /** Three jobs-ledger merges whose own PRs each recorded merge-queue friction. */
+  const frictionLedger = (): string =>
+    [1, 2, 3].flatMap((n) => [
+      JSON.stringify({ event: 'launch', job: `F-${n}`, repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: FTS }),
+      JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: `F-${n}`, prUrl: `https://github.com/ashlrai/phantom/pull/${200 + n}`, outcome: 'MERGED', mergedAt: FTS, ts: FTS }),
+    ]).join('\n') + '\n';
+  /** merge-events.jsonl rows: a recorded conflict and a required-check failure per PR. */
+  const frictionEvents = (): string =>
+    [201, 202, 203].flatMap((pr) => [
+      JSON.stringify({ repo: 'ashlrai/phantom', pr, type: 'conflict', at: FTS }),
+      JSON.stringify({ repo: 'ashlrai/phantom', pr, type: 'check_observed', conclusion: 'failure', required: true, at: FTS }),
+    ]).join('\n') + '\n';
+
+  it('turns recurring merge-queue friction into dirty and fixup backlog items', async () => {
+    const ledgerPath = fleetFile('.ashlr-runs/metrics/jobs.jsonl', frictionLedger());
+    const mergePath = fleetFile('.ashlr-runs/metrics/merge-events.jsonl', frictionEvents());
+    const items = await fleetLearningBacklogItems({ repo: 'ashlrai/phantom', ledgerPath, mergeEventsPath: mergePath });
+    expect(items.map((i) => i.area)).toEqual(['fleet-dirty', 'fleet-fixup']);
+    for (const item of items) {
+      expect(item.id).toMatch(/^fleet-learn-improve-[0-9a-f]{8}$/);
+      expect(validBacklogItem(item)).not.toBeNull();
+      expect(item).toMatchObject({ priority: 3, repo: 'ashlrai/phantom' });
+    }
+    expect(items[0]!.prompt).toContain('dirty or merge-conflicted pull requests');
+    expect(items[1]!.prompt).toContain('needed a fix-up');
+  });
+
+  it('emits no friction items when the merge-events ledger is absent or unreadable', async () => {
+    const ledgerPath = fleetFile('.ashlr-runs/metrics/jobs.jsonl', frictionLedger());
+    // The same ledger with no merge-events file: three clean held merges
+    // produce no recurring pattern at all.
+    const items = await fleetLearningBacklogItems({
+      repo: 'ashlrai/phantom', ledgerPath,
+      mergeEventsPath: path.join(home, 'no-such-merge-events.jsonl'),
+    });
+    expect(items).toEqual([]);
+  });
+
+  it('never joins merge-queue friction through a contested or unclaimed PR', async () => {
+    // J-C1 and J-C2 both claim pull/301: the PR's recorded conflict belongs
+    // to neither attempt. pull/302 has friction rows but no verdict claims
+    // it. Only J-C3's unambiguous pull/303 merge may count — one dirty
+    // attempt is below the recurring threshold, so nothing emits.
+    const ledgerPath = fleetFile('.ashlr-runs/metrics/jobs.jsonl', [
+      JSON.stringify({ event: 'launch', job: 'C-1', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: FTS }),
+      JSON.stringify({ event: 'launch', job: 'C-2', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: FTS }),
+      JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'C-1', prUrl: 'https://github.com/ashlrai/phantom/pull/301', outcome: 'MERGED', mergedAt: FTS, ts: FTS }),
+      JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'C-2', prUrl: 'https://github.com/ashlrai/phantom/pull/301', outcome: 'CLOSED', closedAt: FTS, ts: FTS }),
+      JSON.stringify({ event: 'launch', job: 'C-3', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: FTS }),
+      JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'C-3', prUrl: 'https://github.com/ashlrai/phantom/pull/303', outcome: 'MERGED', mergedAt: FTS, ts: FTS }),
+    ].join('\n') + '\n');
+    const mergePath = fleetFile('.ashlr-runs/metrics/merge-events.jsonl', [
+      JSON.stringify({ repo: 'ashlrai/phantom', pr: 301, type: 'conflict', at: FTS }),
+      JSON.stringify({ repo: 'ashlrai/phantom', pr: 302, type: 'conflict', at: FTS }),
+      JSON.stringify({ repo: 'ashlrai/phantom', pr: 303, type: 'conflict', at: FTS }),
+      JSON.stringify({ repo: 'ashlrai/phantom', pr: 303, type: 'check_observed', conclusion: 'failure', required: true, at: FTS }),
+    ].join('\n') + '\n');
+    const items = await fleetLearningBacklogItems({ repo: 'ashlrai/phantom', ledgerPath, mergeEventsPath: mergePath });
+    // One dirty and one fixup attempt never reach the recurring threshold.
+    expect(items).toEqual([]);
+  });
+
   it('honours the item limit in fold order (breakage before low-merge)', async () => {
     const eventsPath = fleetFile('.ashlr-runs/queue/dispatch-events.log', breakageEvents());
     const items = await fleetLearningBacklogItems({ repo: 'ashlrai/phantom', eventsPath, limit: 1 });

@@ -37,7 +37,12 @@ import {
   outcomeLearningView,
   type ImprovementJob,
 } from '../routing/outcome-learning.js';
-import { readLedgerTail, ROUTER_OUTCOME_LEDGER_RELATIVE } from '../router/outcomes.js';
+import {
+  foldMergeEvents,
+  readLedgerTail,
+  ROUTER_MERGE_EVENTS_LEDGER_RELATIVE,
+  ROUTER_OUTCOME_LEDGER_RELATIVE,
+} from '../router/outcomes.js';
 import { kindOf } from './outcomes.js';
 import type { Proposal } from './loop.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
@@ -128,14 +133,21 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
 // autoDiscover queue them.
 //
 // Honesty rules, same as every other backlog source:
-//  - Read-only. The dispatch log, jobs ledger and standing revert ledger
-//    are read through their bounded tail readers; nothing is written and
-//    no network is touched.
-//  - Bounded. The jobs ledger is read through readLedgerTail's
-//    ROUTER_OUTCOME_LEDGER_LIMIT window, the event log through a capped
-//    tail read, and at most `limit` items (default 8, hard-capped at 25)
-//    are emitted — the improvement-job list itself is unbounded, so the
-//    cap keeps one refresh from flooding the backlog.
+//  - Read-only. The dispatch log, jobs ledger, standing revert ledger and
+//    merge-events ledger are read through their bounded tail readers;
+//    nothing is written and no network is touched.
+//  - Bounded. The jobs and merge-events ledgers are read through
+//    readLedgerTail's ROUTER_OUTCOME_LEDGER_LIMIT window, the event log
+//    through a capped tail read, and at most `limit` items (default 8,
+//    hard-capped at 25) are emitted — the improvement-job list itself is
+//    unbounded, so the cap keeps one refresh from flooding the backlog.
+//  - Merge-queue friction joins through the same unambiguous-claim rule
+//    `phm fleet outcomes` applies: a verdict row's own PR URL claimed by
+//    exactly that job contributes its recorded conflicts, recuts, conflict
+//    blocks, required-check failures and failed retries to the cell's
+//    dirty/fixups counts — the evidence the dirty and fixup improvement
+//    patterns read. A contested or foreign claim never joins, and an
+//    absent or unreadable merge-events ledger contributes nothing.
 //  - Unknown stays unknown. Cells exist only for measured attempts;
 //    patterns fire only at the fold's own RECURRING_FAILURES threshold,
 //    and a missing or unreadable source contributes nothing — never a
@@ -164,6 +176,8 @@ export interface FleetLearningItemsOptions {
   eventsPath?: string;
   /** Jobs ledger override (default: <runsDir>/metrics/jobs.jsonl). */
   ledgerPath?: string;
+  /** Merge-events ledger override (default: <runsDir>/metrics/merge-events.jsonl). */
+  mergeEventsPath?: string;
   /** Runs dir for the ledger default; $ASHLR_RUNS_DIR wins when set. */
   runsDir?: string;
   /** Home for the default event-log paths (default: os.homedir()). */
@@ -196,6 +210,19 @@ async function readFleetLedgerText(opts: FleetLearningItemsOptions, home: string
     ?? join(opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(home, '.ashlr-runs'), ROUTER_OUTCOME_LEDGER_RELATIVE);
   const tail = await readLedgerTail(path);
   return tail.state === 'read' ? tail.text : null;
+}
+
+/**
+ * Bounded tail of the merge-events ledger folded per PR — the same
+ * foldMergeEvents output `phm fleet outcomes --merge-events` reads. Null
+ * when the file is missing or unreadable; the outcome fold then runs on
+ * the jobs ledger's own evidence alone.
+ */
+async function readFleetMergeQueue(opts: FleetLearningItemsOptions, home: string): Promise<ReturnType<typeof foldMergeEvents> | null> {
+  const path = opts.mergeEventsPath
+    ?? join(opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(home, '.ashlr-runs'), ROUTER_MERGE_EVENTS_LEDGER_RELATIVE);
+  const tail = await readLedgerTail(path);
+  return tail.state === 'read' ? foldMergeEvents(tail.text) : null;
 }
 
 /** The repository name both vocabularies record: the last path segment, lowercased. */
@@ -234,14 +261,15 @@ export async function fleetLearningBacklogItems(opts: FleetLearningItemsOptions)
     const repo = opts.repo.trim();
     if (repo === '') return [];
     const home = opts.homeDir ?? homedir();
-    const [eventsText, ledgerText] = await Promise.all([
+    const [eventsText, ledgerText, mergeQueue] = await Promise.all([
       readFleetEventsText(opts, home),
       readFleetLedgerText(opts, home),
+      readFleetMergeQueue(opts, home),
     ]);
     if (eventsText === null && ledgerText === null) return [];
     const now = opts.now ?? new Date();
     const censor = censorFromConfig(loadConfigReadOnly().router, now.getTime());
-    const learning = learnFleetOutcomes(eventsText, ledgerText, censor, readStandingRevertKeys());
+    const learning = learnFleetOutcomes(eventsText, ledgerText, censor, readStandingRevertKeys(), mergeQueue);
     const limit = Math.max(1, Math.min(opts.limit ?? FLEET_LEARNING_MAX_ITEMS, FLEET_LEARNING_ITEM_HARD_MAX));
     const items: CloudBacklogItem[] = [];
     for (const job of outcomeLearningView(learning).improvementJobs) {
