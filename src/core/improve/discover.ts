@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Nine sources, all of which Phantom
+ * evidence instead of a hand-kept list. Eleven sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -50,7 +50,14 @@
  *     recurring whole-tick failure reasons (tickHealthBacklogItems below),
  *     so the self-improvement loop's own machinery degrading becomes work
  *     instead of sitting in a state file `phm daemon status` only ever
- *     shows the last tick of.
+ *     shows the last tick of;
+ *   - the cross-review journal's recurring findings: the reject reason
+ *     codes and review failures `fleet/cross-review.jsonl` records for
+ *     each repository's pull requests (crossReviewBacklogItems below), so
+ *     a producer whose diffs keep failing independent review — or a
+ *     reviewer pipeline that keeps failing before a verdict — becomes
+ *     work instead of sitting in `phm router outcomes`/`router-weights`
+ *     tallies and the audit log.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -87,6 +94,7 @@ import { localGateBacklogItems } from './gate-backlog.js';
 import { passkAlertBacklogItems } from './passk-backlog.js';
 import { frictionBacklogItems } from './friction-backlog.js';
 import { tickHealthBacklogItems } from './tick-health-backlog.js';
+import { crossReviewBacklogItems } from './xreview-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -201,6 +209,14 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // while its phase or reason recurs inside the 7-day window and only for
   // the fleet's own repository.
   items.push(...await tickHealthBacklogItems({ repo }));
+
+  // Cross-review journal: the recurring reject reasons and review failures
+  // the cross-model review audit log records become backlog items too —
+  // until now they only surfaced in `phm router outcomes`/`router-weights`
+  // tallies and the audit log itself. Same bounded tail read and the same
+  // recorded-evidence bar: a cell emits only after enough in-window rows
+  // span enough distinct pull requests, matched to the target repository.
+  items.push(...await crossReviewBacklogItems({ repo }));
   return { items, errors };
 }
 

@@ -8,6 +8,7 @@ import { fleetPolicyBacklogItems } from '../src/core/improve/policy-backlog.js';
 import { localGateBacklogItems } from '../src/core/improve/gate-backlog.js';
 import { passkAlertBacklogItems } from '../src/core/improve/passk-backlog.js';
 import { frictionBacklogItems } from '../src/core/improve/friction-backlog.js';
+import { crossReviewBacklogItems } from '../src/core/improve/xreview-backlog.js';
 import { nightlyProposalsPath } from '../src/core/learn/retro/store.js';
 import { updateCloudBudget } from '../src/core/cloud/store.js';
 import { appendUserBacklogItems, readUserBacklogItems, validBacklogItem } from '../src/core/cloud/backlog.js';
@@ -1102,5 +1103,151 @@ describe('fleet friction items', () => {
       if (savedRuns === undefined) delete process.env.ASHLR_RUNS_DIR;
       else process.env.ASHLR_RUNS_DIR = savedRuns;
     }
+  });
+});
+
+// Cross-review journal recurring findings → backlog items: the reject reason
+// codes and review failures fleet/cross-review.jsonl records become items
+// instead of sitting advisory-only in `phm router outcomes`/`router-weights`
+// tallies and the audit log.
+describe('cross-review findings', () => {
+  const NOW = new Date('2026-11-22T12:00:00Z');
+  const iso = (hoursAgo: number): string => new Date(NOW.getTime() - hoursAgo * 3_600_000).toISOString();
+  const journalPath = (): string => path.join(home, '.ashlr', 'fleet', 'cross-review.jsonl');
+  const writeJournal = (lines: string[]): void => {
+    const file = journalPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${lines.join('\n')}\n`);
+  };
+  const review = (hoursAgo: number, over: Record<string, unknown> = {}): string =>
+    JSON.stringify({
+      schemaVersion: 1, kind: 'review', at: iso(hoursAgo),
+      repo: 'ashlrai/phantom', pr: 700, prUrl: 'https://github.com/ashlrai/phantom/pull/700',
+      reviewedHeadSha: 'a'.repeat(40), diffSha256: 'b'.repeat(64),
+      producerPool: 'devin', producerFamily: 'devin',
+      reviewerPool: 'claude', reviewerFamily: 'claude',
+      outcome: 'reject', reasons: ['missing-tests'], failure: null, skippedFor: [],
+      ...over,
+    });
+  /** Three rejects for pool 'devin' citing 'missing-tests' across two pull requests. */
+  const rejectFindings = (): string[] => [
+    review(30, { pr: 701 }),
+    review(20, { pr: 701 }),
+    review(10, { pr: 702, reasons: ['missing-tests', 'out-of-scope'] }),
+  ];
+  /** Three failed reviews on 'ashlrai/phantom' citing the 'timeout' failure code across two PRs. */
+  const failureFindings = (): string[] => [
+    review(30, { outcome: 'failed', reasons: [], failure: 'timeout', reviewerPool: null, reviewerFamily: null, pr: 801 }),
+    review(20, { outcome: 'failed', reasons: [], failure: 'timeout', reviewerPool: 'claude', pr: 801 }),
+    review(10, { outcome: 'failed', reasons: [], failure: 'timeout', reviewerPool: 'codex', pr: 802 }),
+  ];
+
+  it('turns recurring reject reasons into valid priority-3 backlog items', async () => {
+    writeJournal(rejectFindings());
+    const items = await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW });
+    // 'missing-tests' rests on all three rows; 'out-of-scope' rests on the
+    // single multi-reason row — below the recurring bar, so one item.
+    expect(items).toHaveLength(1);
+    const missing = items[0]!;
+    expect(missing.id).toMatch(/^xreview-reject-[0-9a-f]{16}$/);
+    expect(validBacklogItem(missing)).not.toBeNull();
+    expect(missing).toMatchObject({ priority: 3, repo: 'ashlrai/phantom', area: 'cross-review' });
+    expect(missing.prompt).toContain('fleet/cross-review.jsonl');
+    expect(missing.prompt).toContain('no-change');
+    expect(missing.prompt).toContain('phm router outcomes');
+    expect(missing.title).toContain('devin');
+    expect(missing.title).toContain('missing-tests');
+    // missing-tests: 3 rows (the multi-reason row counts once per code) across 2 PRs.
+    expect(missing.prompt).toContain('3 recorded reject rows across 2 distinct pull requests');
+    expect(missing.prompt).toContain('ashlrai/phantom#701');
+    expect(missing.prompt).toContain('ashlrai/phantom#702');
+    expect(missing.prompt).toContain('Producer families seen: devin:3');
+    expect(missing.prompt).toContain('Reviewer pools seen: claude:3');
+  });
+
+  it('emits nothing below the row or distinct-PR bar, for stale evidence, or another repository', async () => {
+    // Three rows but all on one pull request: one job's problem, not a fleet finding.
+    writeJournal([review(30), review(20), review(10)]);
+    expect(await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
+    // Two rows across two PRs never reach the row bar.
+    writeJournal([review(30, { pr: 711 }), review(20, { pr: 712 })]);
+    expect(await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
+    // Recurring but stale: the newest row is older than the window.
+    writeJournal(rejectFindings().map((line) => {
+      const row = JSON.parse(line) as Record<string, unknown>;
+      row['at'] = iso(24 * 40);
+      return JSON.stringify(row);
+    }));
+    expect(await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
+    // Findings on another repository's pull requests never land on this one.
+    writeJournal(rejectFindings().map((line) => {
+      const row = JSON.parse(line) as Record<string, unknown>;
+      row['repo'] = 'ashlrai/other';
+      return JSON.stringify(row);
+    }));
+    expect(await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
+    // Repo matching is case-insensitive like the nightly source's.
+    writeJournal(rejectFindings().map((line) => {
+      const row = JSON.parse(line) as Record<string, unknown>;
+      row['repo'] = 'AshlrAI/Phantom';
+      return JSON.stringify(row);
+    }));
+    expect(await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toHaveLength(1);
+  });
+
+  it('turns recurring review failures into failure items and ignores non-finding rows', async () => {
+    writeJournal([
+      ...failureFindings(),
+      // approve, skipped and decision rows are not findings.
+      review(8, { outcome: 'approve', reasons: ['correct-and-scoped'], pr: 803 }),
+      review(7, { outcome: 'skipped', reasons: [], failure: null, skippedFor: ['sensitive-path'], pr: 804 }),
+      JSON.stringify({ schemaVersion: 1, kind: 'decision', at: iso(6), repo: 'ashlrai/phantom', pr: 805, action: 'enable-auto-merge' }),
+      // A torn tail line and a foreign schema version are skipped, never trusted.
+      'not json',
+      JSON.stringify({ schemaVersion: 2, kind: 'review', at: iso(5), repo: 'ashlrai/phantom', pr: 806, outcome: 'reject', reasons: ['missing-tests'], producerPool: 'devin' }),
+      // Rejects without a usable reason or producer pool cannot be attributed.
+      review(4, { reasons: [], pr: 807 }),
+      review(3, { reasons: ['not-a-real-code'], pr: 808 }),
+      review(2, { producerPool: 'bad pool!', pr: 809 }),
+    ]);
+    const items = await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW });
+    expect(items).toHaveLength(1);
+    const item = items[0]!;
+    expect(item.id).toMatch(/^xreview-failure-[0-9a-f]{16}$/);
+    expect(validBacklogItem(item)).not.toBeNull();
+    expect(item).toMatchObject({ priority: 3, repo: 'ashlrai/phantom', area: 'cross-review' });
+    expect(item.title).toContain('timeout');
+    expect(item.prompt).toContain('3 recorded failed-review rows across 2 distinct pull requests');
+    expect(item.prompt).toContain('Reviewer pools seen: claude:1, codex:1');
+    expect(item.prompt).toContain('1 row(s) recorded no reviewer pool');
+    expect(item.prompt).toContain('no-change');
+  });
+
+  it('emits nothing for a missing ledger and derives stable ids honouring the limit', async () => {
+    expect(await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
+    writeJournal([...rejectFindings(), ...failureFindings()]);
+    const first = await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW });
+    const second = await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW });
+    expect(second.map((i) => i.id)).toEqual(first.map((i) => i.id));
+    expect(first).toHaveLength(2);
+    const one = await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW, limit: 1 });
+    expect(one).toHaveLength(1);
+  });
+
+  it('appends cross-review items through discovery and dedupes on refresh', async () => {
+    writeJournal(rejectFindings());
+    const greenGh = async (args: string[]) => {
+      const p = args[4] ?? '';
+      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+    };
+    const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+    const xreview = first.items.filter((i) => i.id.startsWith('xreview-'));
+    expect(xreview).toHaveLength(1);
+    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+    expect(appendUserBacklogItems(xreview)).toBe(1);
+    const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('xreview-')))).toBe(0);
+    expect(readUserBacklogItems().filter((i) => i.id.startsWith('xreview-'))).toHaveLength(1);
   });
 });
