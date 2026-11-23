@@ -650,14 +650,32 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   own parse, the current and rotated .1 tails read bounded at the
   writer's RUNS_JOURNAL_MAX_BYTES with truncation stated as lower
   bounds, and rows emit only for the fleet's own repository since
-  the journal is this install's dispatch record.
+  the journal is this install's dispatch record —
+  and the queue generation journal's recurring candidate refusals,
+  the queue.generation-event.v1 decisions planAutofill's trace
+  (src/core/fleet/queue-autofill.ts) records and the autofill runner
+  and supply-floor pass append to metrics/generation.jsonl under the
+  fleet runs directory on every applied pass — 'drafted' and
+  'rejected' rows per candidate with the refusal reason, otherwise
+  only visible through `phm queue yield`'s queue.generator-yield.v1
+  report, the metrics panel and queue-autofill's per-pass candidate
+  ranking — surfaces that steer one pass at a time or that someone
+  had to run and read). A (src, reason) cell becomes an item only
+  while its recorded rejections reach the recurring bars of four
+  events across two distinct UTC days inside the 7-day window, with
+  the src's drafted events tallied as refusal-share context; the
+  'unknown' src catch-all never emits, a missing or unreadable
+  ledger emits nothing, malformed lines and foreign-schema rows drop
+  like the writers' own contract, truncated tails read as lower
+  bounds, and another repository emits nothing since the journal
+  carries no repository column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
-  reward, job-control, usage-gap and runtime-journal items carry
-  priority 3;
+  reward, job-control, usage-gap, runtime-journal and generator-yield
+  items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -779,7 +797,15 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   failing, find which evidence source keeps the audits erroring — with
   the same owner-side no-change escape, and emit only when a journal
   row's recorded repository matches the discovery target, since each
-  audited remote owns its own branch namespace. They
+  audited remote owns its own branch namespace. Generator-yield items
+  name the generation journal, `phm queue yield` and the
+  queue-autofill refusal checks, keep the
+  which-side-owns-the-refusals framing per cell — candidate sources
+  minting work the fleet already refuses versus refusal checks or
+  capability/stop-verdict vocabulary drift — with the same owner-side
+  no-change escape, and emit only for the fleet's own repository
+  since the journal describes this install's queue intake and carries
+  no repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
