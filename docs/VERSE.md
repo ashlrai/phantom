@@ -9,7 +9,9 @@ every account and local model is costing you.
 
 The primary CLI is `phm`; `ashlr` and `ashlr verse` remain compatible, as do
 `/verse/` routes. The current repository is `ashlrai/phantom` and the source
-package is the published `@ashlr/phantom@3.26.0`.
+package is `@ashlr/phantom`, first published under that name in canonical 3.26.0.
+The `@ashlr/phantom/universe` export also began with that release. The source
+version in `package.json` and dated entries in the [changelog](https://github.com/ashlrai/phantom/blob/master/CHANGELOG.md) describe source and release history; neither proves npm promotion, desktop signing, or the installed version.
 The earlier published compatibility release is 3.25.3, distributed as `@ashlr/hub`
 and `Phantom.app`. The historical 3.25.0 release used `Ashlr.app`; older
 screenshots and references retain their captured names. See
