@@ -20,9 +20,12 @@ phm comms send-owner --text "Synthetic reply" --json
 ```
 
 MCP tools: `ashlr_comms_thread` (read; optional `channel`, `direction`,
-`since` and `contains` narrow the same view) and `ashlr_comms_send_owner` (append;
-KILL refuses it). `ashlr_comms` includes the same adapter rollup as
-`phm comms status --json`.
+`since` and `contains` narrow the same view), `ashlr_comms_send_owner`
+(append; KILL refuses it) and `fleet_comms_thread` on the isolated fleet
+server (the same read with `limit` plus the same four filters). `ashlr_comms`
+includes the same adapter rollup as `phm comms status --json`, and
+`fleet_comms_status`/`fleet_comms_inbox` serve the status and pending-item
+projections of this thread.
 
 The thread read takes `--channel <desktop|telegram|email|imessage|slack>`,
 `--direction <inbound|outbound>` (only what the owner sent, or only what we

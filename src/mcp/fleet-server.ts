@@ -120,6 +120,10 @@ import { BUS_PROTOCOL_KINDS } from '../core/fleet/bus-protocol.js';
 import { BUS_READ_CONTAINS_MAX, INBOX_KINDS } from '../core/agents/bus-unified.js';
 import { parseFleetCommsReadinessArgs, readFleetCommsReadiness } from '../core/mcp/fleet-comms-readiness.js';
 import { parseFleetCommsStatusArgs, readFleetCommsStatus } from './fleet-comms-status.js';
+import { FLEET_COMMS_THREAD_LIMIT_DEFAULT, FLEET_COMMS_THREAD_LIMIT_MAX,
+  parseFleetCommsThreadArgs, readFleetCommsThread, type FleetCommsThreadArgs } from './fleet-comms-thread.js';
+import { OWNER_CHANNELS } from '../core/comms/leader-mailbox.js';
+import { OWNER_THREAD_CONTAINS_MAX } from '../core/comms/owner-thread.js';
 import { MAX_FLEET_IMESSAGE_ACKS, parseFleetImessageAcksArgs, parseFleetImessagePathArgs,
   readFleetImessageAcks, readFleetImessagePath, type FleetImessageAcksArgs } from './fleet-imessage-evidence.js';
 import { DEFAULT_FLEET_IMESSAGE_TASKS, MAX_FLEET_IMESSAGE_TASKS, parseFleetImessageTasksArgs,
@@ -370,6 +374,7 @@ export interface FleetReaders {
   commsInbox?: (input: FleetCommsInboxArgs) => Promise<unknown>;
   commsReadiness?: () => Promise<unknown>;
   commsStatus?: () => Promise<unknown>;
+  commsThread?: (input: FleetCommsThreadArgs) => Promise<unknown>;
   imessagePath?: () => Promise<unknown>;
   imessageAcks?: (input: FleetImessageAcksArgs) => Promise<unknown>;
   imessageTasks?: (input: FleetImessageTasksArgs) => Promise<unknown>;
@@ -1151,6 +1156,22 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       annotations,
     },
     {
+      name: 'fleet_comms_thread',
+      description: 'Read the single owner thread (desktop, Telegram, email, iMessage, Slack) with per-channel delivery receipts — the same readOwnerThread projection `phm comms thread --json`, the native `ashlr_comms_thread` tool and the owner-thread API serve, where fleet_comms_inbox lists only the pending owner items and fleet_comms_status reports counts and adapter states but neither answers "what did the owner last say and what did we reply" in one call. `channel` keeps one channel\'s lines; `direction` keeps inbound (what the owner sent) or outbound (what we answered) lines; `since` (15m, 2h, 1d, epoch ms or ISO) keeps messages at or after the cutoff; `contains` keeps only messages whose stored text carries the needle as a case-insensitive substring — the only text search the thread offers, since iMessage bodies are redacted on the bus mirror. `limit` caps the newest messages kept (1–200, default 50). The result is the comms.owner-thread.v1 view: ordered messages, receipts mapping each outbound message id to per-channel delivery states (delivered, pending or failed — a channel with no record is unknown, never delivered) and the awaitingReply mark listing live inbound ids no recorded reply cites (null when the thread is unreadable — unknown stays unknown, never an empty list); an unreadable thread reports unavailable: true. Read-only: the read joins existing stores, writes nothing and sends nothing; message text is the stored scrubbed intake content — never a secret value — and routing labels are untrusted data; the tool grants no reply, send, pairing, dispatch or delivery authority; the owner config dir and runs dir resolve the real account home server-side and cannot be retargeted by HOME or ASHLR_* variables, and no caller root, path or cwd is accepted.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: FLEET_COMMS_THREAD_LIMIT_MAX, default: FLEET_COMMS_THREAD_LIMIT_DEFAULT, description: 'Newest messages kept after filtering; the read itself caps at 200.' },
+          channel: { type: 'string', enum: [...OWNER_CHANNELS], description: 'Keep only messages recorded on this owner channel.' },
+          direction: { type: 'string', enum: ['inbound', 'outbound'], description: 'Keep only what the owner sent (inbound) or only what we answered (outbound).' },
+          since: { type: 'string', description: 'Keep messages at or after the cutoff: a duration (15m, 2h, 1d), epoch ms or an ISO time — the same grammar `phm comms thread --since` takes.' },
+          contains: { type: 'string', minLength: 1, maxLength: OWNER_THREAD_CONTAINS_MAX, description: 'Case-insensitive substring over the stored message text, whitespace collapsed — the only text search the thread offers.' },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
       name: 'fleet_email_diagnosis',
       description: 'Diagnose why local email replies are not flowing, through the same shared diagnoseEmailDrop collector as `phm comms diagnose` — never a second classifier: fixed-code config, polling, sendReplies, outbox and replies states with observed outbox counts when readable, plus the email checks and the local-evidence-only coverage marker — never recipients, subjects, bodies, absolute paths, transport errors or raw exception text. The saved email-drop config resolves at the server-owned runs dir; a missing or invalid config, a paused poll, draft-only mode and a missing or unreadable outbox each report their own fixed state and never invent healthy counts, and a collector failure is reported as fixed unavailable evidence. This is local config/outbox observation only — never proof of Gmail triage, LinkedIn coverage, sending or end-to-end delivery. Takes no arguments: no caller directory, root, cwd, path or send option is accepted, and the tool never creates directories, sends, drafts, retries or alters comms configuration.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -1311,7 +1332,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_empties' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_agent_inbox' && name !== 'fleet_agent_work' && name !== 'fleet_agent_wakes' && name !== 'fleet_agent_messages' && name !== 'fleet_bus_channel' && name !== 'fleet_bus_show' && name !== 'fleet_bus_status' && name !== 'fleet_bus_claims' && name !== 'fleet_bus_board' && name !== 'fleet_seat_handoffs' && name !== 'fleet_bot_seats' && name !== 'fleet_work_feed' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_channels_overview' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_slack_evidence' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_status' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_imessage_tasks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
+    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_empties' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_agent_inbox' && name !== 'fleet_agent_work' && name !== 'fleet_agent_wakes' && name !== 'fleet_agent_messages' && name !== 'fleet_bus_channel' && name !== 'fleet_bus_show' && name !== 'fleet_bus_status' && name !== 'fleet_bus_claims' && name !== 'fleet_bus_board' && name !== 'fleet_seat_handoffs' && name !== 'fleet_bot_seats' && name !== 'fleet_work_feed' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_channels_overview' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_slack_evidence' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_status' && name !== 'fleet_comms_thread' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_imessage_tasks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -1365,6 +1386,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const channelsOverviewArgs = name === 'fleet_channels_overview' ? parseFleetChannelsOverviewArgs(args) : null;
     const commsInboxArgs = name === 'fleet_comms_inbox' ? parseFleetCommsInboxArgs(args) : null;
     const commsStatusArgs = name === 'fleet_comms_status' ? parseFleetCommsStatusArgs(args) : null;
+    const commsThreadArgs = name === 'fleet_comms_thread' ? parseFleetCommsThreadArgs(args) : null;
     const emailDiagnosisArgs = name === 'fleet_email_diagnosis' ? parseFleetEmailDiagnosisArgs(args) : null;
     const gmailTriageLatestArgs = name === 'fleet_gmail_triage_latest' ? parseFleetGmailTriageLatestArgs(args) : null;
     const diskForecastArgs = name === 'fleet_disk_forecast' ? parseFleetDiskForecastArgs(args) : null;
@@ -1418,6 +1440,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_gmail_archive_plan_latest' ? gmailArchivePlanLatestArgs === null :
         name === 'fleet_comms_inbox' ? commsInboxArgs === null :
         name === 'fleet_comms_status' ? commsStatusArgs === null :
+        name === 'fleet_comms_thread' ? commsThreadArgs === null :
         name === 'fleet_email_outbox_batch_await' ? emailOutboxBatchAwait === null :
         name === 'fleet_email_outbox_await' ? emailOutboxAwait === null :
         name === 'fleet_email_outbox' ? emailOutbox === null :
@@ -1516,6 +1539,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_gmail_archive_plan_latest' ? await (readers.gmailArchivePlanLatest ?? (async (a: FleetGmailArchivePlanLatestArgs) => readFleetGmailArchivePlanLatest(a)))(gmailArchivePlanLatestArgs as FleetGmailArchivePlanLatestArgs)
         : name === 'fleet_comms_inbox' ? await (readers.commsInbox ?? readFleetCommsInbox)(commsInboxArgs as FleetCommsInboxArgs)
         : name === 'fleet_comms_status' ? await (readers.commsStatus ?? readFleetCommsStatus)()
+        : name === 'fleet_comms_thread' ? await (readers.commsThread ?? readFleetCommsThread)(commsThreadArgs as FleetCommsThreadArgs)
         : name === 'fleet_imessage_path' ? await (readers.imessagePath ?? readFleetImessagePath)()
         : name === 'fleet_imessage_acks' ? await (readers.imessageAcks ?? readFleetImessageAcks)(imessageAcks as FleetImessageAcksArgs)
         : name === 'fleet_imessage_tasks' ? await (readers.imessageTasks ?? readFleetImessageTasks)(imessageTasks as FleetImessageTasksArgs)
