@@ -1181,6 +1181,18 @@ holdout. When the trajectory journals or the run ledger are degraded,
 truncated or simply absent, the tallies stay unknown rather than reading as
 zero.
 
+The holdout's answer is shown here too. Approved cloud launches are randomly
+split: most get the lessons block, a fixed share runs without it, and both
+arms record which notes applied. **Approved knowledge** carries a one-line
+read of that experiment — landed rates with and without lessons overall, and
+per note once enough finished runs exist in each arm, with the point effect
+and a 95% interval (`helps`, `hurts`, `no clear effect`, or still
+`measuring`). Launch failures and unfinished runs are named as not counted.
+Below three finished runs in either arm the effect stays unknown; when the
+task store or revert evidence cannot be read, every trial line stays absent
+rather than reading as zero. `ashlr improve lessons [--json]` prints the
+same numbers.
+
 **When sweeps run.** `ashlr verse` sweeps in the background: first 5 minutes
 after start, then hourly, skipping a tick while a sweep is running or when the
 last one is under 10 minutes old. It runs only on the live console (not with
