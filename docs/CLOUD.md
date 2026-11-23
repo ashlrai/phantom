@@ -427,11 +427,26 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   positively identified gap) stay separate cells since they are
   different problems, reasons group across the per-section lists but
   never the flattened overall list, VERIFIED-only history emits
-  nothing, and a missing or unreadable log emits nothing.
+  nothing, and a missing or unreadable log emits nothing —
+  and the stuck-job reaper's own audit ledgers, the ghost-close rows the
+  stray-stop reaper appends to `queue/stuck-jobs.jsonl` when a run marker
+  outlives its dead process and the `by:'stuck-jobs'` kill rows it audits
+  to `queue/job-stops.jsonl` when a job past the stuck bar had to be
+  SIGTERMed/SIGKILLed (otherwise only visible through `phm jobs stuck`'s
+  live marker view and `phm job show`'s per-job window — both ledgers
+  were write-only audit with no trend fold, while the lost-launch feed
+  excludes open-marker jobs by design). A (kind, lane) cell becomes an
+  item while its distinct job count reaches the recurring bar of three
+  inside the 72-hour window; lane and repo attribution joins
+  `metrics/jobs.jsonl` as enrichment that degrades to 'unknown' rather
+  than suppressing the reaper evidence, each class reads only its own
+  ledger so one missing file silences only its class, truncated tails
+  are stated as lower bounds, and rows emit only for the fleet's own
+  repository since the reaper is this install's machinery.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
-  source-yield, gateway-shadow and recheck
+  source-yield, gateway-shadow, recheck and stuck-job
   items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
@@ -514,7 +529,13 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   step, keep the find-why-the-fleet's-own-verification-keeps-failing
   framing — a degraded evidence path versus a positively identified gap
   this repository owns — and emit only for the fleet's own repository
-  since the recheck verifies this install's claimed state. They
+  since the recheck verifies this install's claimed state. Stuck-job
+  items name the two reaper ledgers, `phm jobs stuck` and the pinned
+  contrib/mac machinery boundary, keep the find-which-side-owns-the-cause
+  framing per class — the launch→reap handoff dropping finish evidence
+  versus jobs hanging past the stuck bar — with the same owner-side
+  no-change escape, and emit only for the fleet's own repository since
+  the reaper is this install's machinery. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
