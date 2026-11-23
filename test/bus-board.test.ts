@@ -444,6 +444,45 @@ describe('bus board pending digest', () => {
     expect(digest.threads[0]!.pendingDeliveries).toBe(51);
   });
 
+  it('applies the shared job, contains and since filters under the display form', async () => {
+    const store = board();
+    const first = threadWith('alice', 'bob');
+    const second = store.createThread('carol', 'Other work').id;
+    store.joinThread('bob', second);
+    await store.post('alice', first, 'frobnicate the plan');
+    await store.post('carol', second, 'water the plants');
+    store.createTask('alice', first, 'job-1', 'Job one task');
+    store.createTask('carol', second, 'job-2', 'Job two task');
+
+    // --job keeps only the thread carrying a task whose itemId cites it.
+    const byJob = store.pending('bob', Date.now(), 'job-1');
+    expect(byJob.peer).toBe('bob');
+    expect(byJob.threads.map((row) => row.id)).toEqual([first]);
+    expect(byJob.tasks.matched).toBe(1);
+    expect(byJob.tasks.items[0]).toMatchObject({ itemId: 'job-1' });
+    expect(byJob.deliveries.matched).toBe(1);
+
+    // --contains narrows deliveries by the same scrubbed display text every
+    // bus read shares; tasks without the needle drop out and matched counts
+    // the filtered set.
+    const byText = store.pending('bob', Date.now(), undefined, 'frobnicate');
+    expect(byText.deliveries.matched).toBe(1);
+    expect(byText.tasks.matched).toBe(0);
+    expect(byText.threads.map((row) => row.id)).toEqual([first]);
+    // The display frame is unchanged: filtered rows still carry it.
+    expect(byText.deliveries.items[0]!.content.text).toContain('untrusted id=');
+
+    // --since keeps only deliveries reaching the cutoff; tasks carry no
+    // timestamp so under a time filter the task list is provably empty.
+    const future = store.pending('bob', Date.now(), undefined, undefined, Date.now() + 60_000);
+    expect(future.deliveries.matched).toBe(0);
+    expect(future.tasks.matched).toBe(0);
+    expect(future.threads).toEqual([]);
+    // Omitting every filter is the unchanged single-peer digest.
+    expect(store.pending('bob').deliveries.matched).toBe(2);
+    expect(store.pending('bob').tasks.matched).toBe(2);
+  });
+
   it('refuses while disabled and enforces the peer allowlist', () => {
     expect(() => board({ cfg: disabledCfg }).pending('alice')).toThrow('Fleet event bus is disabled');
     expect(() => board({ peers: [{ id: 'alice' }] }).pending('mallory'))
@@ -744,6 +783,69 @@ describe('phm bus CLI end-to-end', () => {
     expect(output.join('\n')).not.toMatch(/ownerToken|ownerKey/);
     expect((await call(['board', 'pending', 'extra'])).code).toBe(2);
     expect((await call(['board', 'bogus'])).code).toBe(2);
+  });
+
+  it('filters the board pending digest by job, contains and since', async () => {
+    const thread = (await call(['thread', 'create', 'Board'])).value.result.id;
+    await call(['thread', 'join', thread], 'bob');
+    await call(['thread', 'post', thread, 'frobnicate the plan'], 'alice');
+    await call(['task', 'create', thread, 'job-7', 'Job task']);
+    const other = (await call(['thread', 'create', 'Other work'])).value.result.id;
+    await call(['thread', 'join', other], 'bob');
+    await call(['task', 'create', other, 'job-8', 'Other task']);
+
+    // --job keeps only the thread carrying a task citing that fleet item.
+    const byJob = await call(['board', 'pending', '--job', 'job-7'], 'bob');
+    expect(byJob.code).toBe(0);
+    expect(byJob.value.result.peer).toBe('bob');
+    expect(byJob.value.result.threads.map((row: { id: string }) => row.id)).toEqual([thread]);
+    expect(byJob.value.result.tasks.matched).toBe(1);
+    expect(byJob.value.result.tasks.items[0]).toMatchObject({ itemId: 'job-7' });
+
+    // --contains narrows deliveries by scrubbed display text.
+    const byText = await call(['board', 'pending', '--contains', 'frobnicate'], 'bob');
+    expect(byText.code).toBe(0);
+    expect(byText.value.result.deliveries.matched).toBe(1);
+    expect(byText.value.result.tasks.matched).toBe(0);
+
+    // --since in the future excludes every delivery and provably empties
+    // the undated task list; an unparseable cutoff is a usage error.
+    const future = await call(['board', 'pending', '--since', '9999999999999'], 'bob');
+    expect(future.code).toBe(0);
+    expect(future.value.result.deliveries.matched).toBe(0);
+    expect(future.value.result.tasks.matched).toBe(0);
+    expect((await call(['board', 'pending', '--since', 'bogus'])).code).toBe(2);
+
+    // The filters belong to board pending alone — elsewhere they are refused.
+    expect((await call(['thread', 'list', '--job', 'job-7'])).code).toBe(2);
+    expect((await call(['task', 'list', thread, '--contains', 'x'])).code).toBe(2);
+  });
+
+  it('serves the fleet-wide board pending digest through --all', async () => {
+    const thread = (await call(['thread', 'create', 'Board'])).value.result.id;
+    await call(['thread', 'join', thread], 'bob');
+    await call(['thread', 'post', thread, 'ping'], 'alice');
+    await call(['task', 'create', thread, 'job-9', 'Work']);
+
+    output = [];
+    const code = await cmdFleetBus(['board', 'pending', '--all', '--job', 'job-9', '--json',
+      '--root', boardRoot, '--queue-root', queueDir], { loadConfig, out: (t) => output.push(t) });
+    expect(code).toBe(0);
+    const result = JSON.parse(output.at(-1)!).result;
+    // The fleet-wide form reports every known member under peers and keeps
+    // the stored untrusted text the MCP board read serves.
+    expect(result.peers.sort()).toEqual(['alice', 'bob']);
+    expect(result.threads.map((row: { id: string }) => row.id)).toEqual([thread]);
+    expect(result.tasks.matched).toBe(1);
+    expect(result.tasks.items[0]).toMatchObject({ itemId: 'job-9' });
+    expect(result.deliveries.matched).toBe(2);
+    expect(result.tasks.items[0].content.text).toBe('Work');
+
+    // --all leaves no single peer view, so pairing it with --peer is refused.
+    output = [];
+    const conflict = await cmdFleetBus(['board', 'pending', '--all', '--peer', 'bob', '--json',
+      '--root', boardRoot, '--queue-root', queueDir], { loadConfig, out: (t) => output.push(t) });
+    expect(conflict).toBe(2);
   });
 
   it('reports usage errors as exit 2 and prints help as exit 0', async () => {

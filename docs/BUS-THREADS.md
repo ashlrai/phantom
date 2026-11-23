@@ -131,7 +131,18 @@ snapshot plus one shared-queue read returns every thread the peer has joined
 (with member list, pending-delivery count and per-state task counts), every
 unacknowledged delivery addressed to the peer (`matched` is the true total;
 `items` caps at 50 with `truncated`), and every task on those threads annotated
-with the fleet queue's observed hold state. A task `hold` is `held` when the
+with the fleet queue's observed hold state. `--all` swaps the single-peer view
+for the fleet-wide `pendingAll` digest — every thread member as the label set,
+reported under `peers` with the stored untrusted text rather than the
+display frame — the same read `fleet_bus_board` and `comms inbox`'s board
+source project, and it cannot be combined with `--peer`. `--job`,
+`--contains` and `--since` are the same optional filters `pendingFor` and
+`pendingAll` take, applied under identical rules: `--job` keeps only threads
+carrying a task whose fleet `itemId` cites it, `--contains` the normalized
+needle over the same scrubbed display text, and `--since` (15m, 2h, 1d,
+epoch ms or an ISO time) the cutoff deliveries must reach while tasks —
+which the board records without a timestamp — never match; the flags are
+valid only on `board pending`. A task `hold` is `held` when the
 queue shows a live claim (the `owner` peer label and lease expiry, never
 capability material), `open` when the queue shows no live claim — an expired
 modern `claimed` record counts as open because the claim path reclaims it —

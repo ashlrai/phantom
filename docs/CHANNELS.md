@@ -303,8 +303,9 @@ EVERY peer (`phm bus thread`/`task`/`board`,
 [docs/BUS-THREADS.md](BUS-THREADS.md)): the fleet-wide
 `BusBoard.pendingAll` digest — the same locked snapshot and queue read
 `pendingFor` serves per label set, where `work mine`'s board section still
-needs the agent's labels ahead of time and `phm bus board pending` takes
-one `--peer` at a time — lists every unacknowledged delivery (board mail
+needs the agent's labels ahead of time and `phm bus board pending` reads
+one `--peer`'s view or, with `--all`, this same fleet-wide digest — lists
+every unacknowledged delivery (board mail
 awaiting `thread ack`; the wire TTL bounds live observers only, so `since`
 is the delivery's recorded `createdAt` and `expiresAt` stays null) and
 every task whose observed hold is not `held` — `open` is claimable work,
