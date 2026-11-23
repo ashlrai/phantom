@@ -558,13 +558,35 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   classifications — repo matching is exact owner/name since each
   audited remote owns its own branch namespace, a missing or
   unreadable journal emits nothing, and truncated tails are stated in
-  the prompt as lower bounds.
+  the prompt as lower bounds —
+  and the reward-signal ledger's recurring per-pool not-held collapse,
+  the resolved-job rows the daemon's reward-sync off-tick job folds
+  from `metrics/jobs.jsonl` into `metrics/reward-signals.jsonl` under
+  the Ashlr home — one scrubbed reward-signal.v1 row per job whose PR
+  lifecycle reached an authoritative resolution, `merged:true` for a
+  verified merge and `merged:false` for a PR closed unmerged or a merge
+  later reverted (otherwise only visible through `phm
+  router-calibration`, the eval harness's `readRewardSignals`, the
+  dashboard's `latestRewardSignals` and the `phm router outcomes`
+  join — reports and joins someone had to run and read, so a dispatch
+  pool whose resolved work kept not holding never became work even
+  though the ledger exists to score which arm deserves the next
+  dispatch). A pool becomes an item while its in-window resolved rows
+  reach the recurring bars — enough rows, enough not-held rows, a
+  strict majority not held and evidence spanning distinct UTC days
+  inside the 7-day window — with rows whose pool field went unrecorded
+  grouping as the calibration arm's own 'unknown' cell, in-flight jobs
+  absent by design and never counted; a missing or unreadable ledger
+  emits nothing, rows failing the writer's closed contract drop like
+  the substrate readers' own parse, truncated tails are stated as lower
+  bounds, and another repository emits nothing since the ledger is
+  this install's dispatch record.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
-  work-market, dupcheck, improve-outcome, typed-route and branch-gardener
-  items carry
+  work-market, dupcheck, improve-outcome, typed-route, branch-gardener
+  and reward items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to

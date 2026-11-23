@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Twenty-nine sources, all of which Phantom
+ * evidence instead of a hand-kept list. Thirty sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -233,6 +233,16 @@
  *     (branchGardenerBacklogItems below). Until now the journal was
  *     write-only audit — it had no reader at all — so stranded fleet
  *     branches, a broken delete path and blind audits never became work;
+ *   - the reward-signal ledger's recurring per-pool not-held collapse:
+ *     the resolved-job rows the daemon's reward-sync job folds from
+ *     metrics/jobs.jsonl into $ASHLR_HOME/metrics/reward-signals.jsonl —
+ *     merged:true for a verified merge, merged:false for a PR closed
+ *     unmerged or a merge later reverted, grouped per dispatch pool
+ *     exactly as router calibration groups its arms
+ *     (rewardBacklogItems below). Until now the substrate only ever fed
+ *     `phm router-calibration`, the eval harness, the dashboard and the
+ *     `phm router outcomes` join — reports someone had to run and read —
+ *     so a pool whose resolved work kept not holding never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -288,6 +298,7 @@ import { dupcheckGateBacklogItems } from './dupcheck-gate-backlog.js';
 import { proposalOutcomeBacklogItems } from './proposal-outcome-backlog.js';
 import { typedRouteBacklogItems } from './typed-route-backlog.js';
 import { branchGardenerBacklogItems } from './branch-gardener-backlog.js';
+import { rewardBacklogItems } from './reward-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -644,6 +655,18 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // matching is exact owner/name, and a missing or unreadable journal
   // yields nothing.
   items.push(...await branchGardenerBacklogItems({ repo }));
+
+  // Reward-signal ledger: the daemon's reward-sync job folds resolved
+  // jobs-ledger outcomes into $ASHLR_HOME/metrics/reward-signals.jsonl —
+  // the shared per-job reward substrate router calibration scores per
+  // pool arm. Until now every consumer was a report or a join someone
+  // had to run and read, so a pool whose resolved work kept not holding
+  // never became work. Same bounded tail read at the writer's own byte
+  // bound and the writer's row contract; a pool's cell emits only at
+  // the recurring bars inside the 7-day window, and only for the
+  // fleet's own repository since the ledger is this install's dispatch
+  // record.
+  items.push(...await rewardBacklogItems({ repo }));
   return { items, errors };
 }
 
