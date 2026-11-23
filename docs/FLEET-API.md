@@ -566,7 +566,7 @@ compute scene draws its message lines at the same thickness.
 
 #### Agent conversations
 
-`phm agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..1024>] [--json]`
+`phm agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..1024>] [--json]`
 groups the same bus read into threads by reply chain and by the declared
 conversation label a body carries, longest-waiting first and then newest
 first. `--agent` matches a participant's routing label and, through
@@ -598,7 +598,14 @@ literal `waiting.on` label match, never a widened one. `--since <when>` keeps
 only the threads whose `lastAt` — the newest message's time — is at or after
 the cutoff, in the same grammar `phm messages --since` takes (`15m`, `2h`,
 `1d`, epoch ms or an ISO time, inclusive): "what moved lately" is one
-filtered read, whole threads like every other filter here. A dormant thread
+filtered read, whole threads like every other filter here. `--before <when>`
+keeps only the threads whose `lastAt` is strictly before its own cutoff on
+the same grammar — the exclusive upper bound composing with `--since` into
+one `[since, before)` window, the same rule every other bus read's
+`--before` applies, so a thread stamped exactly at either bound never
+matches and reaching a past slice of the thread list is one filtered read
+instead of paging forward through everything newer; an inverted or empty
+window is an honest empty list, never an error. A dormant thread
 drops out even while it still waits, so pair it with `--waiting` or `--state`
 when the question is what is still outstanding — the `waiting` count still
 reports every waiting thread on the bus, filtered or not. `--contains
@@ -625,11 +632,11 @@ conversation; only the synthesized per-pair fallback stays reply-chain
 rooted. `group.presence` heartbeats are expiring observations with their own
 read (`phm comms bus group presence`), never messages: they form no thread
 and cannot answer a waiting one. `--json` prints `agents.conversations.v1` (`version` 1), and
-`GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&since=1h&contains=text&limit=50]`
+`GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&since=1h&before=2h&contains=text&limit=50]`
 serves the same read with a current read session. The isolated fleet MCP
 server's `fleet_agent_conversations` tool serves the same projection with
 the same filters as arguments (`agent`, `waiting`/`blocked` booleans,
-`state`, `job`, `waitingOn`, `since`, `contains`, `limit`), so an
+`state`, `job`, `waitingOn`, `since`, `before`, `contains`, `limit`), so an
 MCP-connected agent reads the fleet-wide thread view — who waits on whom,
 what is blocked, what moved lately — without shelling out to `phm`.
 

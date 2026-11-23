@@ -3,7 +3,7 @@ import { CONVERSATION_STATES, type ConversationState } from '../core/fleet/agent
 import { parseSince } from '../core/fleet/agent-messages.js';
 
 /** `phm agents conversations`: thin argv adapter for core/fleet/agent-conversations.ts. Exit 0 read, 1 bus unreadable, 2 bad usage. */
-export const AGENTS_CONVERSATIONS_USAGE = `Usage: phm agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..1024>] [--json]
+export const AGENTS_CONVERSATIONS_USAGE = `Usage: phm agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..1024>] [--json]
 
 Agent-to-agent messages grouped into threads by reply chain: who is in each
 thread, the latest subject, message count, last activity and one state:
@@ -23,7 +23,13 @@ a thread whose waiting message the agent itself sent;
 15m, 2h, 1d, epoch ms or an ISO time, the same grammar phm messages --since
 takes — so "what moved lately" is one filtered read; a dormant thread drops
 out even while it still waits, so pair it with --waiting or --state when the
-question is what is still outstanding;
+question is what is still outstanding. --before keeps only the threads whose
+last activity is strictly before its own cutoff on the same grammar — the
+exclusive upper bound composing with --since into one [since, before)
+window, so a thread stamped exactly at either bound never matches and
+reaching a past slice of the thread list is one filtered read instead of
+paging forward through everything newer; an inverted or empty window is an
+honest empty list, never an error;
 --contains keeps only the threads where at least one member message's
 scrubbed one-line subject carries the needle as a case-insensitive
 substring — the same text search phm messages --contains, agents bus
@@ -43,7 +49,7 @@ export async function runAgentsConversationsCli(args: string[], out: (text: stri
   err: (text: string) => void = console.error, options: BusInboxOptions = {}): Promise<number> {
   if (args.some(arg => arg === '--help' || arg === '-h')) { out(AGENTS_CONVERSATIONS_USAGE); return 0; }
   let json = false, waitingOnly = false, blockedOnly = false, agent: string | undefined, job: string | undefined, waitingOn: string | undefined;
-  let state: ConversationState | undefined, limit: number | undefined, sinceRaw: string | undefined, contains: string | undefined;
+  let state: ConversationState | undefined, limit: number | undefined, sinceRaw: string | undefined, beforeRaw: string | undefined, contains: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!, value = args[i + 1];
     if (arg === '--json' && !json) json = true;
@@ -53,6 +59,7 @@ export async function runAgentsConversationsCli(args: string[], out: (text: stri
     else if (arg === '--job' && job === undefined && value !== undefined && value !== '' && !value.startsWith('--')) { job = value; i++; }
     else if (arg === '--waiting-on' && waitingOn === undefined && value !== undefined && value !== '' && !value.startsWith('--')) { waitingOn = value; i++; }
     else if (arg === '--since' && sinceRaw === undefined && value !== undefined && value !== '' && !value.startsWith('--')) { sinceRaw = value; i++; }
+    else if (arg === '--before' && beforeRaw === undefined && value !== undefined && value !== '' && !value.startsWith('--')) { beforeRaw = value; i++; }
     else if (arg === '--contains' && contains === undefined && value !== undefined && value.trim() !== '' &&
       value.length <= CONTAINS_MAX && !value.startsWith('--')) { contains = value; i++; }
     else if (arg === '--state' && state === undefined && value !== undefined && !value.startsWith('--')) {
@@ -70,8 +77,10 @@ export async function runAgentsConversationsCli(args: string[], out: (text: stri
   // in tests and the live clock in production agree on "15m ago".
   const since = sinceRaw === undefined ? undefined : parseSince(sinceRaw, options.now?.() ?? Date.now());
   if (sinceRaw !== undefined && since === null) { err('--since takes 15m, 2h, 1d, epoch ms or an ISO time.'); return 2; }
+  const before = beforeRaw === undefined ? undefined : parseSince(beforeRaw, options.now?.() ?? Date.now());
+  if (beforeRaw !== undefined && before === null) { err('--before takes 15m, 2h, 1d, epoch ms or an ISO time.'); return 2; }
   const { formatAgentConversationsText, readAgentConversations } = await import('../core/fleet/agent-conversations.js');
-  const result = readAgentConversations({ agent, waitingOnly, blockedOnly, job, waitingOn, state, since: since ?? undefined, contains, limit }, options);
+  const result = readAgentConversations({ agent, waitingOnly, blockedOnly, job, waitingOn, state, since: since ?? undefined, before: before ?? undefined, contains, limit }, options);
   out(json ? JSON.stringify(result, null, 2) : formatAgentConversationsText(result));
   return result.source === 'unavailable' ? 1 : 0;
 }

@@ -82,12 +82,12 @@ describe('fleet_agent_conversations argument parsing', () => {
     const parsed = parseFleetAgentConversationsArgs({
       agent: 'agent:claude', waiting: true, blocked: true, state: 'waiting',
       job: 'RQ-9', waitingOn: 'agent:leader', since: '1800000000000',
-      contains: '  Build   OK ', limit: 25,
+      before: '1800000001000', contains: '  Build   OK ', limit: 25,
     });
     expect(parsed).toEqual({
       agent: 'agent:claude', waiting: true, blocked: true, state: 'waiting',
       job: 'RQ-9', waitingOn: 'agent:leader', since: 1800000000000,
-      contains: 'build ok', limit: 25,
+      before: 1800000001000, contains: 'build ok', limit: 25,
     });
   });
 
@@ -112,6 +112,12 @@ describe('fleet_agent_conversations argument parsing', () => {
     expect(parseFleetAgentConversationsArgs({ since: '15m' })?.since).toBeGreaterThan(0);
   });
 
+  it('resolves before on the same grammar as the exclusive upper bound', () => {
+    const parsed = parseFleetAgentConversationsArgs({ before: '2026-01-01T00:00:00.000Z' });
+    expect(parsed).toMatchObject({ before: Date.parse('2026-01-01T00:00:00.000Z') });
+    expect(parseFleetAgentConversationsArgs({ before: '15m' })?.before).toBeGreaterThan(0);
+  });
+
   it('bounds limit to the projection page size', () => {
     expect(parseFleetAgentConversationsArgs({ limit: 1 })).toMatchObject({ limit: 1 });
     expect(parseFleetAgentConversationsArgs({ limit: 1024 })).toMatchObject({ limit: 1024 });
@@ -130,6 +136,7 @@ describe('fleet_agent_conversations argument parsing', () => {
       { waiting: 'yes' }, { waiting: 1 }, { waiting: null }, { blocked: 'no' }, { blocked: 0 },
       { state: 'WAITING' }, { state: 'open' }, { state: 5 }, { state: null },
       { since: 'never' }, { since: 5 }, { since: '' }, { since: '9999999d' },
+      { before: 'never' }, { before: 5 }, { before: '' }, { before: '9999999d' },
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 42 },
       { limit: 0 }, { limit: 1025 }, { limit: 1.5 }, { limit: '50' },
     ]) expect(parseFleetAgentConversationsArgs(bad)).toBeNull();
@@ -147,13 +154,13 @@ describe('fleet_agent_conversations reader', () => {
       parseFleetAgentConversationsArgs({
         agent: 'agent:claude', waiting: true, blocked: true, state: 'waiting',
         job: 'RQ-9', waitingOn: 'agent:leader', since: '1800000000000',
-        contains: 'Build OK', limit: 10,
+        before: '1800000001000', contains: 'Build OK', limit: 10,
       })!,
       { read });
     expect(seen).toEqual([{
       agent: 'agent:claude', waitingOnly: true, blockedOnly: true, state: 'waiting',
       job: 'RQ-9', waitingOn: 'agent:leader', since: 1800000000000,
-      contains: 'build ok', limit: 10,
+      before: 1800000001000, contains: 'build ok', limit: 10,
     }]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
@@ -221,6 +228,8 @@ describe('fleet_agent_conversations MCP tool', () => {
       .toMatchObject({ type: 'boolean' });
     expect(tool?.inputSchema.properties?.['contains'])
       .toMatchObject({ type: 'string', minLength: 1, maxLength: 512 });
+    expect(tool?.inputSchema.properties?.['before'])
+      .toMatchObject({ type: 'string' });
     expect(tool?.inputSchema.properties?.['limit'])
       .toMatchObject({ type: 'integer', minimum: 1, maximum: 1024 });
   });
@@ -232,6 +241,7 @@ describe('fleet_agent_conversations MCP tool', () => {
     [{ waiting: 'yes' }], [{ waiting: 1 }], [{ blocked: 'no' }], [{ blocked: 0 }],
     [{ state: 'WAITING' }], [{ state: 'open' }], [{ state: 5 }],
     [{ since: 'never' }], [{ since: 5 }], [{ since: '9999999d' }],
+    [{ before: 'never' }], [{ before: 5 }], [{ before: '9999999d' }],
     [{ contains: '' }], [{ contains: '   ' }], [{ contains: 'x'.repeat(513) }], [{ contains: 42 }],
     [{ limit: 0 }], [{ limit: 1025 }], [{ limit: 1.5 }], [{ limit: '50' }],
     [{ extra: 1 }], [{ matched: true }],
@@ -254,11 +264,13 @@ describe('fleet_agent_conversations MCP tool', () => {
     const client = await connect({ status: async () => ({}), loop: async () => ({}), agentConversations });
     const { parsed } = await callConversations(client, {
       agent: 'agent:claude', waiting: true, state: 'waiting', job: 'RQ-9',
-      waitingOn: 'agent:leader', since: '1800000000000', contains: 'Build OK', limit: 10,
+      waitingOn: 'agent:leader', since: '1800000000000', before: '1800000001000',
+      contains: 'Build OK', limit: 10,
     });
     expect(agentConversations).toHaveBeenCalledWith(expect.objectContaining({
       agent: 'agent:claude', waiting: true, state: 'waiting', job: 'RQ-9',
-      waitingOn: 'agent:leader', since: 1800000000000, contains: 'build ok', limit: 10,
+      waitingOn: 'agent:leader', since: 1800000000000, before: 1800000001000,
+      contains: 'build ok', limit: 10,
     }));
     expect(parsed).toEqual(payload);
   });

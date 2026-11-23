@@ -25,7 +25,9 @@
  * contradictory pair is an honest empty list — `since` the shared
  * 15m/2h/1d/epoch-ms/ISO grammar resolved to a safe non-negative
  * epoch-ms integer (threads whose last activity reaches the cutoff, whole
- * threads never partial message lists), `contains` the bounded needle
+ * threads never partial message lists), `before` the same grammar as the
+ * exclusive upper bound composing with `since` into one `[since, before)`
+ * window on last activity, `contains` the bounded needle
  * `busReadContains` normalizes over each member message's scrubbed
  * one-line subject — never the raw body — and `limit` an integer in
  * 1–1024. Unknown keys, wrong types, caller roots and malformed values
@@ -55,7 +57,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const CONVERSATION_KEYS = new Set([
-  'agent', 'waiting', 'blocked', 'state', 'job', 'waitingOn', 'since', 'contains', 'limit',
+  'agent', 'waiting', 'blocked', 'state', 'job', 'waitingOn', 'since', 'before', 'contains', 'limit',
 ]);
 const LABEL_KEYS = ['agent', 'job', 'waitingOn'] as const;
 /** The same page cap `phm agents conversations --limit` and the API param share. */
@@ -76,6 +78,8 @@ export interface FleetAgentConversationsArgs {
   waitingOn?: string;
   /** Keep only threads whose last activity is at or after this epoch-ms cutoff — the shared `since` grammar resolved once. */
   since?: number;
+  /** Keep only threads whose last activity is strictly before this epoch-ms cutoff — the exclusive upper bound composing with `since` into one `[since, before)` window. */
+  before?: number;
   /** Keep only threads where at least one member message's scrubbed one-line subject carries this needle — the shared `--contains` rule. */
   contains?: string;
   /** Cap the returned threads, longest-waiting order kept; `matched` still reports the full filtered count. */
@@ -89,9 +93,11 @@ export interface FleetAgentConversationsArgs {
  * the same value rules `phm agents conversations` flags and the API
  * params share: the label keys printable routing labels, `waiting`/
  * `blocked` JSON booleans (`false` is the same as absent), `state` one
- * exact CONVERSATION_STATES member, `since` the shared
+ * exact CONVERSATION_STATES member, `since`/`before` the shared
  * `15m`/`2h`/`1d`/epoch-ms/ISO grammar resolved to a safe non-negative
- * epoch-ms integer, `contains` the bounded free-text needle
+ * epoch-ms integer — `before` the exclusive upper bound composing with
+ * `since` into one `[since, before)` window on last activity —
+ * `contains` the bounded free-text needle
  * `busReadContains` normalizes and `limit` an integer in 1–1024.
  * Unknown keys, wrong types, caller roots and malformed values are all
  * refused before the store is touched.
@@ -125,6 +131,13 @@ export function parseFleetAgentConversationsArgs(args: Record<string, unknown>):
     const resolved = parseSince(since);
     if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
     parsed.since = resolved;
+  }
+  const before = args.before;
+  if (before !== undefined) {
+    if (typeof before !== 'string') return null;
+    const resolved = parseSince(before);
+    if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
+    parsed.before = resolved;
   }
   const limit = args.limit;
   if (limit !== undefined) {
@@ -170,6 +183,7 @@ export async function readFleetAgentConversations(
     ...(args.job === undefined ? {} : { job: args.job }),
     ...(args.waitingOn === undefined ? {} : { waitingOn: args.waitingOn }),
     ...(args.since === undefined ? {} : { since: args.since }),
+    ...(args.before === undefined ? {} : { before: args.before }),
     ...(args.contains === undefined ? {} : { contains: args.contains }),
     ...(args.limit === undefined ? {} : { limit: args.limit }),
   };
