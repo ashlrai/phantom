@@ -74,7 +74,7 @@ export interface SeatOptions {
   readQuota?: (seat: BotSeat) => Promise<QuotaEvidence>;
   ownerOptions?: OwnerThreadOptions;
   ownerNotice?: (input: { text: string; idempotencyKey: string }) => Promise<unknown>;
-  busPost?: (input: { from: string; text: string; id: string }) => Promise<unknown>;
+  busPost?: (input: { from: string; text: string; id: string; thread?: string }) => Promise<unknown>;
   releaseNode?: (claim: NonNullable<QueueJobV1['claim']>) => boolean;
 }
 const root = (o: SeatOptions) => join(o.home ?? homedir(), '.phantom', 'bots');
@@ -421,6 +421,17 @@ async function noticeStatus(send: () => Promise<unknown>): Promise<NoticeStatus>
     return ['posted', 'accepted', 'sent', 'duplicate', 'halted', 'refused', 'unavailable'].includes(String(status)) ? status as NoticeStatus : 'unknown';
   } catch { return 'failed'; }
 }
+/** The `job:<id>` thread label a handoff bus note cites for a node-job record —
+ * the same job citation the unified inbox seats source and `work mine --job`
+ * already apply to a `node-job` ref, so every `--job` bus read and the job's
+ * conversation thread find the notice. A `bus-claim` ref is a coordination
+ * claim key, never a job citation, and a ref that cannot form a valid bus
+ * label cites nothing rather than a guessed thread. */
+function handoffJobThread(record: SeatHandoff): string | undefined {
+  if (record.work.kind !== 'node-job') return undefined;
+  const thread = `job:${record.work.ref}`;
+  return /^[\x21-\x7e]{1,128}$/.test(thread) ? thread : undefined;
+}
 /**
  * The per-record bus note: one system envelope on the shared bus addressed to
  * the fleet work sink (`leaders`), the same place work announcements and peer
@@ -431,13 +442,13 @@ async function noticeStatus(send: () => Promise<unknown>): Promise<NoticeStatus>
  * the comms pause honored, no wake for a P2 notice. The handoff id is the
  * envelope id, so a crash-retry dedupes to `duplicate` rather than doubling.
  */
-async function seatHandoffBusNotice(input: { from: string; text: string; id: string }, o: SeatOptions) {
+async function seatHandoffBusNotice(input: { from: string; text: string; id: string; thread?: string }, o: SeatOptions) {
   const blocked = localWriteGate();
   if (blocked) return { status: blocked.status };
   if (scrubSecrets(input.text) !== input.text) return { status: 'refused' };
   const posted = appendBusInbox({
     id: input.id, from: input.from, to: LEADERS_ADDRESS, priority: 'P2', ttl: CHANNEL_BUS_TTL_MS,
-    body: { kind: 'note', text: input.text },
+    body: { kind: 'note', text: input.text, ...(input.thread === undefined ? {} : { thread: input.thread }) },
     channel: 'bus', channel_ref: `seat-handoff:${input.id}`,
     sender: { agent_id: input.from, vendor: 'phantom', human: false, team: true },
     external: false, origin_bridge: 'bot-seats',
@@ -494,9 +505,12 @@ export async function applySeatHandoff(id: string, o: SeatOptions = {}) {
       if (existing && notifications.bus && notifications.owner && !held) continue;
       const notice = { text: `Seat ${id} handed off ${record.work.kind} ${record.work.ref}. Done: ${record.done}; left: ${record.left}.`, idempotencyKey: `seat-handoff:${record.handoffId}` };
       receipts[record.handoffId] = notifications;
+      const thread = handoffJobThread(record);
       if (!notifications.bus) {
-        notifications.bus = await noticeStatus(() => o.busPost ? o.busPost({ from: row.seat.participantId, text: notice.text, id: record.handoffId })
-          : seatHandoffBusNotice({ from: row.seat.participantId, text: notice.text, id: record.handoffId }, o));
+        notifications.bus = await noticeStatus(() => o.busPost
+          ? o.busPost({ from: row.seat.participantId, text: notice.text, id: record.handoffId,
+              ...(thread === undefined ? {} : { thread }) })
+          : seatHandoffBusNotice({ from: row.seat.participantId, text: notice.text, id: record.handoffId, thread }, o));
         await saveReceipts(receipts, o);
       }
       if (!notifications.owner) {

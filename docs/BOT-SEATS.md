@@ -145,7 +145,12 @@ between sending and saving a receipt retries with the same key. The bus note
 is one `note` envelope appended to the shared bus store addressed to `leaders`
 — a system post from the seat's participant id with `origin_bridge`
 `bot-seats`, not a channel message, so no bus identity registration or channel
-membership is required. KILL and the comms pause refuse it like every other
+membership is required. A `node-job` record's note also carries
+`thread: job:<ref>` — the same job citation `work mine --job` and the unified
+inbox seats source already apply to a node-job ref — so every `--job` bus read
+and the job's conversation thread find the handoff; a `bus-claim` ref is a
+coordination claim key, never a job citation, and a ref that cannot form a
+valid bus label cites nothing. KILL and the comms pause refuse it like every other
 local bus write; an unavailable store reports `unavailable`, never a claimed
 post. Notification failures do not undo release or expose exception text: apply reports per-record
 `notifications.bus` and `notifications.owner` statuses. A failed/halted attempt
