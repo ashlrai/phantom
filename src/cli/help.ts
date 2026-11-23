@@ -664,7 +664,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     safety: 'append',
     jsonShape: 'ChannelAddResult {ok, kind, changed, credential, next}',
   },
-  { usage: 'phm agentnet peers read [--after <cursor>] [--json]', description: 'Read the authenticated session inbox; ignores raw bus envelopes without private admission evidence.', safety: 'read', jsonShape: '{status, messages, nextCursor}' },
+  { usage: 'phm agentnet peers read [--after <cursor>] [--since <t>] [--before <t>] [--contains <text>] [--priority P0..P3] [--job <id>] [--json]', description: 'Read the authenticated session inbox; ignores raw bus envelopes without private admission evidence. --since/--before keep one closed [since, before) window on receivedAt, --contains matches the scrubbed summary, --priority the exact P0..P3 band and --job the shared job-citation rule — the same filters every bus read applies.', safety: 'read', jsonShape: '{status, messages, nextCursor, workResults}' },
   { usage: 'phm agentnet peers list [--json]', description: 'List host-enrolled callsigns and Slack identities; never prints session credentials.', safety: 'read', jsonShape: '{peers:[]}' },
   { usage: 'phm agentnet peers send <to|#channel-id> <kind> <text> [--reply-to <id>] [--thread <id>] [--json]', description: 'Authenticated team peer message; bounded hops and pair rate, approval-gated Slack broker. Exit 1 refused, 2 usage.', safety: 'append', jsonShape: 'PeerResult {status, reason?, id?, origin?, hopCount?, slack?}' },
   { usage: 'phm agentnet channels propose <name> [--apply] [--json]', description: 'Preview a private collaboration channel draft; --apply records it locally. Never creates a Slack channel.', safety: 'proposal', jsonShape: '{status, action, name, dryRun}' },

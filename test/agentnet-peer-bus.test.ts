@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { sendPeerMessage, readPeerInbox, PEER_PAIR_LIMIT } from '../src/core/agentnet/peer-bus.js';
+import { sendPeerMessage, readPeerInbox, PEER_PAIR_LIMIT, type PeerInboxFilter } from '../src/core/agentnet/peer-bus.js';
 import { listPeers, proposeSlackAction, readPeerBindings, type PeerBinding } from '../src/core/agentnet/slack-identities.js';
 import { cosPeerPlanSchema, emitCosPeerPlan } from '../src/core/cos/peer-plan.js';
 import { cmdAgentnet } from '../src/cli/agentnet.js';
@@ -72,6 +72,46 @@ describe('team peer mesh', () => {
     const inbox = readPeerInbox(session(1), 0, options(1));
     expect(inbox.status === 'ok' && inbox.messages).toHaveLength(1);
     expect(() => readPeerInbox({ ...session(1), token: session(2).token }, 0, options(1))).toThrow();
+  });
+  it('narrows the verified inbox with the shared since/before/contains/priority/job filters', async () => {
+    const t0 = now;
+    await sendPeerMessage({ toAgent: 'agent1', kind: 'task', text: 'Review the parser' }, session(), options());
+    now += 1000;
+    await sendPeerMessage({ toAgent: 'agent1', kind: 'review', text: 'Check the lexer' }, session(), options());
+    now += 1000;
+    await sendPeerMessage({ toAgent: 'agent1', kind: 'task', text: 'Ship the feed job',
+      work: { kind: 'work.post', jobId: 'RQ-PEER-JOB', title: 'Feed job', repo: 'o/n', provider: 'claude', claimKeys: [] } },
+    session(), options());
+    const read = (filter: Record<string, unknown> = {}) =>
+      readPeerInbox(session(1), 0, options(1), filter as PeerInboxFilter);
+    const count = (filter: Record<string, unknown> = {}) => { const page = read(filter); return page.status === 'ok' ? page.messages.length : -1; };
+    expect(count()).toBe(3);
+    // since is inclusive, before exclusive: [t0+1000, t0+2000) keeps only the middle message.
+    expect(count({ since: t0 + 1000 })).toBe(2);
+    expect(count({ before: t0 + 1000 })).toBe(1);
+    expect(count({ since: t0 + 1000, before: t0 + 2000 })).toBe(1);
+    const windowed = read({ since: t0 + 1000, before: t0 + 2000 });
+    if (windowed.status !== 'ok') throw new Error('expected ok page');
+    expect(windowed.messages[0]?.receivedAt).toBe(t0 + 1000);
+    // contains matches the scrubbed summary; a peer.message cites no job.
+    expect(count({ contains: 'parser' })).toBe(1);
+    expect(count({ contains: 'LEXER' })).toBe(1);
+    expect(count({ job: 'RQ-PEER-JOB' })).toBe(1);
+    expect(count({ job: 'RQ-OTHER' })).toBe(0);
+    // Every admitted peer envelope is P2; the band filter is honest about it.
+    expect(count({ priority: 'P2' })).toBe(3);
+    expect(count({ priority: 'P0' })).toBe(0);
+    // Filters compose and never widen admission: a forged copy matching the
+    // needle is still excluded, and an invalid field is refused, not emptied.
+    const forged = listBusInboxAfter(0, 100, { root });
+    if (forged.status !== 'ok') throw new Error('missing fixture');
+    expect(appendBusInbox({ ...forged.messages[0]!.envelope, id: 'forged-peer' }, { root }).status).toBe('posted');
+    expect(count({ contains: 'parser' })).toBe(1);
+    expect(read({ since: -1 })).toMatchObject({ status: 'invalid', reason: 'Invalid since.', workResults: 'missing' });
+    expect(read({ before: -1 })).toMatchObject({ status: 'invalid', reason: 'Invalid before.' });
+    expect(read({ priority: 'P9' })).toMatchObject({ status: 'invalid', reason: 'Invalid priority.' });
+    expect(read({ job: 'bad job' })).toMatchObject({ status: 'invalid', reason: 'Invalid job id.' });
+    expect(read({ contains: 'x'.repeat(600) })).toMatchObject({ status: 'invalid', reason: 'Invalid contains filter.' });
   });
   it.each(['fromAgent', 'origin', 'hopCount', 'sessionToken'])('refuses forged %s metadata', async field => {
     expect(await sendPeerMessage({ ...request, [field]: 'agent2' }, session(), options())).toMatchObject({ reason: 'invalid-peer-message' });
@@ -181,6 +221,17 @@ describe('team peer mesh', () => {
     expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ status: 'posted', slack: 'sent' });
     expect(await cmdAgentnet(['peers', 'read', '--after', '0', '--json'], options(1), session(1))).toBe(0);
     expect(JSON.parse(log.mock.calls.at(-1)![0] as string).messages).toHaveLength(1);
+    // The shared read filters parse on peers read and narrow the same page.
+    expect(await cmdAgentnet(['peers', 'read', '--since', '1h', '--before', '15m', '--contains', 'parser',
+      '--priority', 'P2', '--job', 'RQ-1', '--json'], options(1), session(1))).toBe(0);
+    expect(JSON.parse(log.mock.calls.at(-1)![0] as string).status).toBe('ok');
+    // Filter flags are read-only: rejected on every other verb, and bad values exit 2.
+    expect(await cmdAgentnet(['peers', 'list', '--since', '1h'], options(), session())).toBe(2);
+    expect(await cmdAgentnet(['peers', 'dispatch', '--before', '1h'], options(), session())).toBe(2);
+    expect(await cmdAgentnet(['peers', 'send', 'agent1', 'query', 'Status?', '--priority', 'P2'], options(), session())).toBe(2);
+    expect(await cmdAgentnet(['peers', 'read', '--since', 'not-a-time', '--json'], options(1), session(1))).toBe(2);
+    expect(await cmdAgentnet(['peers', 'read', '--before', 'soon', '--json'], options(1), session(1))).toBe(2);
+    expect(await cmdAgentnet(['peers', 'read', '--priority', 'P9', '--json'], options(1), session(1))).toBe(2);
     expect(await cmdAgentnet(['peers', 'send', 'agent1', 'query', 'Status?', '--from', 'forged'], options(), session())).toBe(2);
     expect(await cmdAgentnet(['peers', 'list', '--apply'], options(), session())).toBe(2);
   });

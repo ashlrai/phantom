@@ -1,8 +1,8 @@
 # RQ-AGENTNET-PEERBUS-1: authenticated team peers
 
 `src/core/agentnet/peer-bus.ts` owns `PeerRequest`, `PeerBusOptions`, `PeerResult`,
-`peerRequestSchema`, `sendPeerMessage(input: unknown, session: PeerSession, options?: PeerBusOptions)`
-and `readPeerInbox(session: PeerSession, after?: number, options?: PeerBusOptions)`.
+`PeerInboxFilter`, `peerRequestSchema`, `sendPeerMessage(input: unknown, session: PeerSession, options?: PeerBusOptions)`
+and `readPeerInbox(session: PeerSession, after?: number, options?: PeerBusOptions, filter?: PeerInboxFilter)`.
 `slack-identities.ts` owns `PeerBinding`, `PeerSession`, `readPeerBindings`,
 `authenticatePeer`, `listPeers`, and `proposeSlackAction`; `cos/peer-plan.ts` owns
 `cosPeerPlanSchema` and `emitCosPeerPlan`. None grants execution or spending authority.
@@ -36,6 +36,21 @@ sent outcome per receipt is admitted and earlier replies stay bus-local. Every
 read reports `workResults: missing|available|unavailable` for that journal —
 missing means dispatch never ran, unavailable means results are unknown, not
 absent.
+
+`readPeerInbox`'s optional `filter` narrows the admitted page with the shared
+bus read grammar every other bus read applies, minus the sender/thread filters
+a callsign cannot express: `since` keeps messages received at or after the
+epoch-ms cutoff (inclusive), `before` keeps only those strictly before it
+(exclusive, composing into one `[since, before)` window), `contains` matches
+the scrubbed one-line summary as a case-insensitive substring
+(`busReadContainsMatch`), `priority` keeps only the exact P0..P3 band, and
+`job` keeps only bodies the shared `busBodyJobMatch` rule names — a
+`peer.message` cites no job and never matches. The filter only narrows
+admission; it never widens it, and the `after`/`nextCursor` paging contract is
+unchanged, so a filtered page may be sparse while `nextCursor` still resumes
+past every scanned row. An invalid filter field answers `{status:'invalid',
+reason}` with the same `workResults` report rather than an empty page passed
+off as "no mail".
 
 Host-owned `~/.ashlr/agentnet/bindings.json` is a private 0600 strict JSON object
 `{version:1, peers:[]}` (max 128). Each binding has `callsign`, `lane`, `sessionId`,
