@@ -3,6 +3,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AUTO_DISCOVER_EMPTY_EVERY_MS, AUTO_DISCOVER_EVERY_MS, autoDiscover, discoverBacklog, fleetLearningBacklogItems, resetAutoDiscoverForTests } from '../src/core/improve/discover.js';
+import { nightlyLearningBacklogItems } from '../src/core/improve/nightly-backlog.js';
+import { nightlyProposalsPath } from '../src/core/learn/retro/store.js';
 import { updateCloudBudget } from '../src/core/cloud/store.js';
 import { appendUserBacklogItems, readUserBacklogItems, validBacklogItem } from '../src/core/cloud/backlog.js';
 import type { Proposal } from '../src/core/improve/loop.js';
@@ -287,5 +289,140 @@ describe('fleet outcome-learning items', () => {
     const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
     expect(appendUserBacklogItems(second.items)).toBe(0);
     expect(readUserBacklogItems().filter((i) => i.id.startsWith('fleet-learn-'))).toHaveLength(2);
+  });
+});
+
+// Nightly retro proposals → backlog items: the local miner's recurring
+// failure findings (verification/scope/safety/review/execution) become items
+// instead of sitting advisory-only in `phm improve nightly`.
+describe('nightly retro proposals', () => {
+  const NIGHTLY_LESSON = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: '["ashlrai/phantom","pb-fix","verification"]',
+    repo: 'ashlrai/phantom',
+    playbook: 'pb-fix',
+    cause: 'verification',
+    status: 'pending',
+    text: 'Run the affected repository checks and resolve failures before requesting review.',
+    evidence: ['job:RQ-1', 'review:cloud-review:T-1'],
+    ...over,
+  });
+  const NIGHTLY_PROPOSAL = (lessonId: string, over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: `nightly:${lessonId}`,
+    status: 'proposed',
+    repo: 'ashlrai/phantom',
+    lessonId,
+    title: 'Investigate recurring verification findings',
+    prompt: 'Run the affected repository checks and resolve failures before requesting review. Inspect the local evidence references before proposing a change. This proposal grants no execution or publication authority.',
+    evaluation: 'Add a deterministic regression fixture for the evidenced failure and run affected checks.',
+    metric: 'Fewer matching failures or blocking review findings in subsequent comparable jobs.',
+    ...over,
+  });
+  const nightlyState = (lessons: unknown[], proposals: unknown[]): Record<string, unknown> => ({
+    v: 1, advisoryOnly: true, completedNight: '2026-11-20',
+    jobs: [], reviews: [], priors: [], lessons, proposals,
+  });
+  const writeNightly = (state: unknown): void => {
+    const file = nightlyProposalsPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(file, `${JSON.stringify(state)}\n`, { mode: 0o600 });
+  };
+
+  it('turns nightly proposals into valid priority-3 backlog items', async () => {
+    const lesson = NIGHTLY_LESSON();
+    writeNightly(nightlyState([lesson], [NIGHTLY_PROPOSAL(lesson.id as string)]));
+    const items = await nightlyLearningBacklogItems({ repo: 'ashlrai/phantom' });
+    expect(items).toHaveLength(1);
+    const item = items[0]!;
+    expect(item.id).toMatch(/^nightly-[0-9a-f]{16}$/);
+    expect(validBacklogItem(item)).not.toBeNull();
+    expect(item).toMatchObject({ priority: 3, repo: 'ashlrai/phantom', area: 'nightly-verification' });
+    expect(item.title).toContain('verification');
+    expect(item.title).toContain('pb-fix');
+    expect(item.title).toContain('ashlrai/phantom');
+    expect(item.prompt).toContain('Run the affected repository checks');
+    expect(item.prompt).toContain('grants no execution or publication authority');
+    expect(item.prompt).toContain('job:RQ-1, review:cloud-review:T-1');
+    expect(item.prompt).toContain('Evaluation: Add a deterministic regression fixture');
+    expect(item.prompt).toContain('Metric to move: Fewer matching failures');
+    expect(item.prompt).toContain('no-change');
+  });
+
+  it('emits nothing when the nightly state is missing, invalid or unsafe', async () => {
+    expect(await nightlyLearningBacklogItems({ repo: 'ashlrai/phantom' })).toEqual([]);
+    writeNightly({ v: 1 });
+    expect(await nightlyLearningBacklogItems({ repo: 'ashlrai/phantom' })).toEqual([]);
+    writeNightly('not json');
+    expect(await nightlyLearningBacklogItems({ repo: 'ashlrai/phantom' })).toEqual([]);
+  });
+
+  it('emits nothing for proposals about a different repository', async () => {
+    const lesson = NIGHTLY_LESSON({ id: '["other/repo",null,"execution"]', repo: 'other/repo', playbook: null, cause: 'execution' });
+    writeNightly(nightlyState([lesson], [NIGHTLY_PROPOSAL(lesson.id as string, { repo: 'other/repo' })]));
+    expect(await nightlyLearningBacklogItems({ repo: 'ashlrai/phantom' })).toEqual([]);
+  });
+
+  it('matches the repository case-insensitively', async () => {
+    const lesson = NIGHTLY_LESSON({ id: '["AshlrAI/Phantom",null,"review"]', repo: 'AshlrAI/Phantom', playbook: null, cause: 'review' });
+    writeNightly(nightlyState([lesson], [NIGHTLY_PROPOSAL(lesson.id as string, { repo: 'AshlrAI/Phantom' })]));
+    const items = await nightlyLearningBacklogItems({ repo: 'ashlrai/phantom' });
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ area: 'nightly-review', repo: 'ashlrai/phantom' });
+  });
+
+  it('ranks by recorded evidence count and honours the limit', async () => {
+    const weak = NIGHTLY_LESSON({ id: '["ashlrai/phantom",null,"scope"]', playbook: null, cause: 'scope', evidence: ['job:RQ-1'] });
+    const strong = NIGHTLY_LESSON({ id: '["ashlrai/phantom","pb-fix","verification"]', evidence: ['job:RQ-1', 'job:RQ-2', 'review:r1', 'review:r2', 'review:r3'] });
+    writeNightly(nightlyState([weak, strong], [
+      NIGHTLY_PROPOSAL(weak.id as string),
+      NIGHTLY_PROPOSAL(strong.id as string),
+    ]));
+    const items = await nightlyLearningBacklogItems({ repo: 'ashlrai/phantom' });
+    expect(items.map((i) => i.area)).toEqual(['nightly-verification', 'nightly-scope']);
+    const one = await nightlyLearningBacklogItems({ repo: 'ashlrai/phantom', limit: 1 });
+    expect(one).toHaveLength(1);
+    expect(one[0]!.area).toBe('nightly-verification');
+  });
+
+  it('skips malformed proposals, orphan proposals and malformed lessons', async () => {
+    const good = NIGHTLY_LESSON();
+    writeNightly(nightlyState(
+      [good, { id: 'bad', repo: 'ashlrai/phantom' }],
+      [
+        NIGHTLY_PROPOSAL(good.id as string),
+        NIGHTLY_PROPOSAL('nightly:["ashlrai/phantom",null,"missing"]'),
+        { id: 'nightly:incomplete' },
+      ],
+    ));
+    const items = await nightlyLearningBacklogItems({ repo: 'ashlrai/phantom' });
+    expect(items).toHaveLength(1);
+    expect(items[0]!.area).toBe('nightly-verification');
+  });
+
+  it('caps evidence references inside the prompt', async () => {
+    const evidence = Array.from({ length: 14 }, (_, i) => `job:RQ-${i}`);
+    const lesson = NIGHTLY_LESSON({ evidence });
+    writeNightly(nightlyState([lesson], [NIGHTLY_PROPOSAL(lesson.id as string)]));
+    const [item] = await nightlyLearningBacklogItems({ repo: 'ashlrai/phantom' });
+    expect(item!.prompt).toContain('job:RQ-9');
+    expect(item!.prompt).not.toContain('job:RQ-10');
+    expect(item!.prompt).toContain('and 4 more');
+  });
+
+  it('appends nightly items through discovery and dedupes on refresh', async () => {
+    const lesson = NIGHTLY_LESSON();
+    writeNightly(nightlyState([lesson], [NIGHTLY_PROPOSAL(lesson.id as string)]));
+    const greenGh = async (args: string[]) => {
+      const p = args[4] ?? '';
+      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+    };
+    const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+    const nightly = first.items.filter((i) => i.id.startsWith('nightly-'));
+    expect(nightly).toHaveLength(1);
+    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+    expect(appendUserBacklogItems(first.items)).toBe(nightly.length);
+    const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+    expect(appendUserBacklogItems(second.items)).toBe(0);
+    expect(readUserBacklogItems().filter((i) => i.id.startsWith('nightly-'))).toHaveLength(1);
   });
 });

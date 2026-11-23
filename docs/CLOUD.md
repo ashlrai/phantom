@@ -226,13 +226,18 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   `leader-<memoId>-<n>`. Its class-C actions still go to Needs you.
 - **Discovered items** are added by `phm improve discover` and the
   scheduler's refresh: a red default branch, issues someone with triage
-  rights labelled `phantom`, evidence-backed proposals, and the fleet's own
+  rights labelled `phantom`, evidence-backed proposals, the fleet's own
   outcome learning — recurring breakage, dirty, fixup and low-merge patterns
   the jobs ledger and dispatch log already prove become items whose ids
   embed the stable `improve-<hash>` job id, so refreshes add only new
-  patterns. Fleet items carry priority 3 and name the fleet repo label in
-  the prompt; they launch only for the repository self-improvement is
-  pointed at.
+  patterns — and the nightly local retro's proposals, the recurring
+  verification, scope, safety, review and execution findings it mines from
+  fleet, cloud and Devin job records (`~/.ashlr/learn/retro-proposals.json`,
+  otherwise only visible through `phm improve nightly`). Fleet and nightly
+  items carry priority 3; fleet items name the fleet repo label in the
+  prompt, nightly items keep the proposal's advisory framing and name the
+  evidence record ids to inspect. They launch only for the repository
+  self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
   after it ends `merged` or its session reported `no-change` (the work was
