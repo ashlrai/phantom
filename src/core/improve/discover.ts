@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Eighteen sources, all of which Phantom
+ * evidence instead of a hand-kept list. Twenty sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -125,7 +125,14 @@
  *     already-done work, or a precheck rule that keeps misfiring, become
  *     work instead of sitting in `phm fleet precheck-repeats`,
  *     `phm fleet parked` and `phm fleet queue`, reports someone had to
- *     run.
+ *     run;
+ *   - the producer-yield scoreboard's recurring no-land sources: the
+ *     per-source launches, PRs, merges, empties and aborts
+ *     `phm jobs yield --by source` folds from metrics/jobs.jsonl and the
+ *     queue's src= tags into jobs.yield-by.v1 — and the leader digest's
+ *     yield_low line (sourceYieldBacklogItems below), so a producer whose
+ *     launches keep ending empty or aborted becomes work instead of
+ *     sitting in a report someone had to run.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -171,6 +178,7 @@ import { memoryBacklogItems } from './memory-backlog.js';
 import { controllerBacklogItems } from './controller-backlog.js';
 import { skillOutcomeBacklogItems } from './skill-outcome-backlog.js';
 import { precheckSkipBacklogItems } from './precheck-skip-backlog.js';
+import { sourceYieldBacklogItems } from './source-yield-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -384,6 +392,20 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // own row validation; an item emits only at the recurring bar inside
   // the window and only for the fleet's own repository.
   items.push(...await precheckSkipBacklogItems({ repo }));
+
+  // Producer yield: the jobs.yield-by.v1 scoreboard's recurring no-land
+  // sources — launches attributed to each producer (leader bets, Core
+  // planner rows, cl-stream docs jobs, guardian fixups, restock filler)
+  // that keep ending empty or aborted with merged-per-launch under the
+  // fleet's own stop threshold — become backlog items too. Until now they
+  // only ever reached `phm jobs yield --by source` and the leader
+  // digest's yield_low line, reports someone had to read, even though
+  // the producers are the self-improvement loop's own intake. Same
+  // bounded jobs-ledger tail read and the same src= queue join; a source
+  // emits only at the fleet's judging and recurring bars inside the
+  // window, 'other'/'unknown' never emit, and only the fleet's own
+  // repository inherits the evidence.
+  items.push(...await sourceYieldBacklogItems({ repo }));
   return { items, errors };
 }
 

@@ -383,10 +383,24 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   job- and PR-specific numbers — and a job id becomes an item while
   its recorded skips reach the same recurring bar, the signature of a
   producer resurrecting finished work. A degraded ledger read or a
-  missing file emits nothing.
+  missing file emits nothing —
+  and the producer-yield scoreboard's recurring no-land sources, the
+  per-source launches, PRs, merges, empties and aborts
+  `phm jobs yield --by source` folds from `metrics/jobs.jsonl` and the
+  queue's `src=` tags into `jobs.yield-by.v1` — the same fold the leader
+  digest's `yield_low` line reads (otherwise only visible through that
+  report and the digest). A producer — leader bets, Core planner rows,
+  cl-stream docs jobs, guardian fixups or restock filler — becomes an
+  item while its launches reach the fleet's own judging count inside the
+  7-day window, its merged-per-launch stays under the fleet's own
+  poor-yield threshold and at least three recorded finishes ended empty
+  or aborted; launches still in flight carry no verdict and never count,
+  the `other` catch-all never emits, and a missing or unreadable jobs
+  ledger emits nothing.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
-  memory-pressure, fleet-controller, skill-outcome and precheck-skip
+  memory-pressure, fleet-controller, skill-outcome, precheck-skip and
+  source-yield
   items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
@@ -450,7 +464,14 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   finished-work framing — pinned contrib/mac precheck machinery
   versus the queue producers and dedup this repository owns — and
   emit only for the fleet's own repository since the ledger records
-  this install's dispatch skips and carries no repository column. They
+  this install's dispatch skips and carries no repository column.
+  Source-yield items name the yield-by fold, the jobs and
+  router-queue ledgers and the `phm jobs yield --by source` /
+  `phm jobs producers` reports, keep the association-not-causation
+  framing — a bad yield may be misrouting, starvation or host state,
+  not a broken producer — with the same owner-side no-change escape,
+  and emit only for the fleet's own repository since the producers are
+  this install's machinery. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
