@@ -517,13 +517,31 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   proposals whose last observation is a revert never count as
   measurement stalls, and rows emit only for the fleet's own
   repository since the verbs and scheduler sync are this repo's
-  machinery.
+  machinery —
+  and the typed-routing decision journal's recurring unavailability
+  and degradation, the per-tick `route.explain.v1` rows dispatchd's
+  observe_typed_route appends to `metrics/route.explain.jsonl` after
+  each advisory `phm route decide` sample (otherwise only visible
+  through `phm route explain`'s typed_decisions digest — a report
+  someone had to run and read). An item emits only while the evidence
+  spans enough distinct UTC days inside the 7-day window at the
+  recurring row and share bars — 'unavailable' samples (the whole
+  decide call failing before a decision exists) must reach a tenth of
+  all valid records, and a decideRoute failure code
+  (backend-unavailable, deadline, schema-invalid) must ride a
+  twentieth of observed decisions while also carrying the
+  deterministic-fallback marker, so a degraded code a later backend
+  recovered never counts; path and policy codes never emit, a missing
+  or unreadable journal emits nothing, malformed lines and decisions
+  outside the producer's allowlist drop like the digest reader's own
+  parse, truncated tails are stated as lower bounds, and another
+  repository emits nothing since the journal describes this install's
+  dispatcher.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
-  work-market, dupcheck and improve-outcome
-  items carry
+  work-market, dupcheck, improve-outcome and typed-route items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
