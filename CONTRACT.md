@@ -3517,7 +3517,9 @@ the same rule, sorted and deduplicated, so a body matches `--job` exactly
 when the id is in the set — and the unified comms inbox carries it on each
 item's `jobIds` (feed jobs by their id, bus/mailbox bodies by their
 citations, board tasks by `itemId` with deliveries riding their thread's
-citations, conversations by `thread.jobs`, teammate tasks by `jobId`, seat
+citations, conversations by `thread.jobs`, wake hints by their cited job —
+a claim-holder hint's `jobId` or a resolved referent's feed citation —
+teammate tasks by `jobId`, seat
 handoffs by `node-job` refs, peer-dispatch receipts by their peer-announced
 `jobId`) for `comms inbox --job` to match against,
 absent when no job relation is provable; `busReadContains(value)` and
