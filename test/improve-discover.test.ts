@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AUTO_DISCOVER_EMPTY_EVERY_MS, AUTO_DISCOVER_EVERY_MS, autoDiscover, discoverBacklog, fleetLearningBacklogItems, resetAutoDiscoverForTests } from '../src/core/improve/discover.js';
 import { nightlyLearningBacklogItems } from '../src/core/improve/nightly-backlog.js';
+import { fleetPolicyBacklogItems } from '../src/core/improve/policy-backlog.js';
 import { nightlyProposalsPath } from '../src/core/learn/retro/store.js';
 import { updateCloudBudget } from '../src/core/cloud/store.js';
 import { appendUserBacklogItems, readUserBacklogItems, validBacklogItem } from '../src/core/cloud/backlog.js';
@@ -449,5 +450,115 @@ describe('nightly retro proposals', () => {
     const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
     expect(appendUserBacklogItems(second.items)).toBe(0);
     expect(readUserBacklogItems().filter((i) => i.id.startsWith('nightly-'))).toHaveLength(1);
+  });
+});
+
+// Fleet outcome-metrics policy suggestions → backlog items: the measured
+// empty-lane prompt-template flags and within-tier model routing hints
+// `phm fleet metrics suggest|weekly` computes become items instead of
+// sitting advisory-only in a report someone had to run.
+describe('fleet policy suggestions', () => {
+  const NOW = new Date('2026-11-22T12:00:00Z');
+  const at = (hoursAgo: number): string => new Date(NOW.getTime() - hoursAgo * 3_600_000).toISOString();
+  const ledgerFile = (rel: string, lines: string[]): string => {
+    const p = path.join(home, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, `${lines.join('\n')}\n`);
+    return p;
+  };
+  const row = (kind: string, hoursAgo: number, fields: Record<string, unknown>): string =>
+    JSON.stringify({ event: kind, ts: at(hoursAgo), ...fields });
+  /**
+   * A lane whose 20 measured finishes all come back empty (the
+   * promptTemplateFlags evidence) beside a 'work' tier where cheap-model's
+   * recorded cost per published PR is half of costly-model's (the
+   * tierRoutingHints evidence). Every finish carries cost and wall_s and
+   * every published job a URL, so the cohorts are complete.
+   */
+  const policyLedger = (): string[] => {
+    const lines: string[] = [];
+    for (let i = 0; i < 20; i += 1) {
+      const job = `E-${i}`;
+      lines.push(row('launch', 5, { job, lane: 'empty-lane', model: 'empty-model', tier: 'work' }));
+      lines.push(row('finish', 4, { job, cost: 3, empty: true, wall_s: 60 }));
+    }
+    let pr = 5000;
+    for (const [model, cost] of [['cheap-model', 1], ['costly-model', 2]] as const) {
+      for (let i = 0; i < 20; i += 1) {
+        const job = `${model}-${i}`;
+        pr += 1;
+        lines.push(row('launch', 5, { job, lane: 'mixed-lane', model, tier: 'work' }));
+        lines.push(row('finish', 4, { job, cost, empty: false, wall_s: 60 }));
+        lines.push(row('publish', 3, { job, url: `https://github.com/ashlrai/phantom/pull/${pr}` }));
+      }
+    }
+    return lines;
+  };
+
+  it('turns measured suggestions into valid priority-3 backlog items, flag before hint', async () => {
+    const ledgerPath = ledgerFile('.ashlr-runs/metrics/jobs.jsonl', policyLedger());
+    const items = await fleetPolicyBacklogItems({ repo: 'ashlrai/phantom', ledgerPath, now: NOW });
+    expect(items).toHaveLength(2);
+    const [flag, hint] = items;
+    for (const item of items) {
+      expect(item.id).toMatch(/^fleet-policy-[0-9a-f]{16}$/);
+      expect(validBacklogItem(item)).not.toBeNull();
+      expect(item).toMatchObject({ priority: 3, repo: 'ashlrai/phantom', area: 'fleet-policy' });
+    }
+    expect(flag!.title).toContain('empty-lane');
+    expect(flag!.title).toContain('review-scope-and-context');
+    expect(flag!.prompt).toContain('20 measured finishes; empty rate 1');
+    expect(flag!.prompt).toContain('advisory');
+    expect(flag!.prompt).toContain('no-change');
+    expect(flag!.prompt).toContain('events:');
+    expect(hint!.title).toContain("'work'");
+    expect(hint!.title).toContain('cheap-model');
+    expect(hint!.title).toContain('costly-model');
+    expect(hint!.prompt).toContain('20% lower recorded USD per published PR');
+    expect(hint!.prompt).toContain('no-change');
+  });
+
+  it('derives stable ids so a refresh re-adds nothing', async () => {
+    const ledgerPath = ledgerFile('.ashlr-runs/metrics/jobs.jsonl', policyLedger());
+    const first = await fleetPolicyBacklogItems({ repo: 'ashlrai/phantom', ledgerPath, now: NOW });
+    const second = await fleetPolicyBacklogItems({ repo: 'ashlrai/phantom', ledgerPath, now: NOW });
+    expect(second.map((i) => i.id)).toEqual(first.map((i) => i.id));
+  });
+
+  it('honours the item limit with flags ahead of hints', async () => {
+    const ledgerPath = ledgerFile('.ashlr-runs/metrics/jobs.jsonl', policyLedger());
+    const items = await fleetPolicyBacklogItems({ repo: 'ashlrai/phantom', ledgerPath, now: NOW, limit: 1 });
+    expect(items).toHaveLength(1);
+    expect(items[0]!.title).toContain('empty-lane');
+  });
+
+  it('emits nothing for another repository, a missing ledger or degraded evidence', async () => {
+    const ledgerPath = ledgerFile('.ashlr-runs/metrics/jobs.jsonl', policyLedger());
+    // The suggestions describe this fleet's lanes and models — this repo's
+    // machinery — so self-improvement pointed elsewhere inherits nothing.
+    expect(await fleetPolicyBacklogItems({ repo: 'ashlrai/other', ledgerPath, now: NOW })).toEqual([]);
+    expect(await fleetPolicyBacklogItems({
+      repo: 'ashlrai/phantom', ledgerPath: path.join(home, 'no-such-jobs.jsonl'), now: NOW,
+    })).toEqual([]);
+    // One unparseable row degrades the whole fold: unknown stays unknown.
+    const degraded = ledgerFile('.ashlr-runs/metrics/jobs-bad.jsonl', [...policyLedger(), 'not json']);
+    expect(await fleetPolicyBacklogItems({ repo: 'ashlrai/phantom', ledgerPath: degraded, now: NOW })).toEqual([]);
+  });
+
+  it('appends policy items through discovery and dedupes on refresh', async () => {
+    ledgerFile('.ashlr-runs/metrics/jobs.jsonl', policyLedger());
+    const greenGh = async (args: string[]) => {
+      const p = args[4] ?? '';
+      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+    };
+    const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+    const policy = first.items.filter((i) => i.id.startsWith('fleet-policy-'));
+    expect(policy).toHaveLength(2);
+    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+    expect(appendUserBacklogItems(policy)).toBe(2);
+    const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('fleet-policy-')))).toBe(0);
+    expect(readUserBacklogItems().filter((i) => i.id.startsWith('fleet-policy-'))).toHaveLength(2);
   });
 });
