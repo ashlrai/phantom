@@ -12,11 +12,11 @@
  * `phm messages` flags and the API params share, all validated before any
  * store read: `since` the shared 15m/2h/1d/epoch-ms/ISO grammar resolved
  * to a safe non-negative epoch-ms integer, `agent`/`with`/`job`/`thread`/
- * `excludeFrom` printable routing labels (`with` narrows `agent` to the
- * two-way talk between that agent and one other and requires `agent`),
- * `kind` one of ask/reply/handoff/status/blocker under the CLI's
- * case-insensitive match, `priority` one exact P0–P3 band, `channel` the
- * strict channel-name grammar, `contains` the bounded needle
+ * `excludeFrom`/`inReplyTo` printable routing labels (`with` narrows
+ * `agent` to the two-way talk between that agent and one other and
+ * requires `agent`), `kind` one of ask/reply/handoff/status/blocker under
+ * the CLI's case-insensitive match, `priority` one exact P0–P3 band,
+ * `channel` the strict channel-name grammar, `contains` the bounded needle
  * `busReadContains` normalizes and `limit` an integer in 1–1024 (the
  * projection's own default of 50 applies when absent). Unknown keys,
  * wrong types, caller roots and malformed values are all refused before
@@ -42,14 +42,14 @@ import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
 import { busReadContains } from '../core/agents/bus-unified.js';
 import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 
-/** The printable-label rule `agent`, `with`, `job`, `thread` and `excludeFrom` share. */
+/** The printable-label rule `agent`, `with`, `job`, `thread`, `excludeFrom` and `inReplyTo` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const MESSAGE_KEYS = new Set([
   'since', 'agent', 'with', 'kind', 'priority', 'job', 'thread',
-  'contains', 'excludeFrom', 'channel', 'limit',
+  'contains', 'excludeFrom', 'inReplyTo', 'channel', 'limit',
 ]);
-const LABEL_KEYS = ['job', 'thread', 'excludeFrom'] as const;
+const LABEL_KEYS = ['job', 'thread', 'excludeFrom', 'inReplyTo'] as const;
 
 /** The parsed arguments are the projection's own query — the MCP surface adds no filter the CLI/API do not share. */
 export type FleetAgentMessagesArgs = AgentMessagesQuery;
