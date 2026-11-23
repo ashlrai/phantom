@@ -1098,6 +1098,52 @@ describe('readBusWorkMine', () => {
     expect(narrowed.handoffs.matched).toBe(0);
   });
 
+  it('marks jobs addressed under the pending-work rule: member channels count, own posts do not', async () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova', 'orion');
+    for (const [handle, cli, provider] of [['atlas', 'claude', 'claude'], ['nova', 'codex', 'codex-personal'],
+      ['orion', 'devin', 'devin']] as const) {
+      registerAgentIdentity({ handle, runtime: { cli, provider, model: null } }, options);
+    }
+    // eng: atlas + nova. ops: orion only.
+    expect(createAgentChannel({ name: 'eng', createdBy: 'atlas', members: ['nova'] }, options).status)
+      .toBe('created');
+    expect(createAgentChannel({ name: 'ops', createdBy: 'orion' }, options).status).toBe('created');
+
+    // A job announced to a channel the agent belongs to is pending work for
+    // it — the same `addressed` rule `work feed --to` filters by.
+    await announce(options, 'orion', 'RQ-J-ENG', ['queue:RQ-J-ENG'], 'group:eng:general');
+    await announce(options, 'atlas', 'RQ-J-OWN', ['queue:RQ-J-OWN'], 'group:eng:general');
+    await announce(options, 'nova', 'RQ-J-OPS', ['queue:RQ-J-OPS'], 'group:ops:general');
+    await announce(options, 'orion', 'RQ-J-DIRECT', ['queue:RQ-J-DIRECT'], 'agent:nova');
+
+    const flags = (agent: string): Map<string, { addressed: boolean; announced: boolean }> => {
+      const result = readBusWorkMine(agent, options);
+      expect(result.status).toBe('ok');
+      if (result.status !== 'ok' || result.jobs.status !== 'ok') throw new Error('unreachable');
+      return new Map(result.jobs.jobs.map(entry => [entry.id, { addressed: entry.addressed, announced: entry.announced }]));
+    };
+    // atlas is an eng member: orion's eng post is addressed to her; her own
+    // eng post is not (own channel posts are never pending for the author).
+    // The ops-channel job belongs to orion alone; the direct post is nova's.
+    expect(flags('atlas').get('RQ-J-ENG')).toEqual({ addressed: true, announced: false });
+    expect(flags('atlas').get('RQ-J-OWN')).toEqual({ addressed: false, announced: true });
+    expect(flags('atlas').get('RQ-J-OPS')).toEqual({ addressed: false, announced: false });
+    expect(flags('atlas').get('RQ-J-DIRECT')).toEqual({ addressed: false, announced: false });
+    // nova sees the same eng channel work — including atlas's own post,
+    // which is pending for every member but its author — plus her own ops job.
+    expect(flags('nova').get('RQ-J-ENG')).toEqual({ addressed: true, announced: false });
+    expect(flags('nova').get('RQ-J-OWN')).toEqual({ addressed: true, announced: false });
+    expect(flags('nova').get('RQ-J-OPS')).toEqual({ addressed: false, announced: true });
+    expect(flags('nova').get('RQ-J-DIRECT')).toEqual({ addressed: true, announced: false });
+    // orion belongs to ops only: he announced the eng job himself but it is
+    // not pending work addressed to him; atlas's eng post never reaches him.
+    expect(flags('orion').get('RQ-J-ENG')).toEqual({ addressed: false, announced: true });
+    expect(flags('orion').get('RQ-J-OWN')).toEqual({ addressed: false, announced: false });
+    expect(flags('orion').get('RQ-J-OPS')).toEqual({ addressed: true, announced: false });
+    expect(flags('orion').get('RQ-J-DIRECT')).toEqual({ addressed: false, announced: true });
+  });
+
   it('reports the registry channels the agent belongs to and keeps an unreadable registry unknown', () => {
     const options = setup(Date.now());
     register(options, 'atlas', 'nova', 'ghost');

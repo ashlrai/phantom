@@ -878,11 +878,12 @@ job-scoped, without flattening it into inbox items or knowing peer
 labels ahead of time; it accepts no caller root or path, reports `source`
 missing verified-empty versus unavailable, and never acknowledges or
 claims.
-`addressed` marks jobs whose announcement
-`to` label resolves to the agent's
-identity, and `announced` marks jobs whose `owner` (announcer) label resolves
-to it — the agent posted them and owns their status reports, so the digest
-distinguishes driveable announcements from claimable work. Each job also
+`addressed` marks jobs that are pending work for the agent under the same
+rule the feed `--to` filter applies — any label of its identity or a
+`group:<channel>:<topic>` address of a registry channel it belongs to, minus
+its own channel posts — and `announced` marks jobs whose `owner` (announcer)
+label resolves to it — the agent posted them and owns their status reports,
+so the digest distinguishes driveable announcements from claimable work. Each job also
 carries the feed's `postId`/`statusId` envelope citations plus any
 `work.result` report, so the digest
 names the `agents bus show` handles behind every open job. The same feed
