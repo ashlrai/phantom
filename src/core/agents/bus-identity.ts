@@ -260,9 +260,17 @@ export function agentAddressMatcher(identityOf: AgentIdentityKeyFor | undefined,
  * `to` and `from` routing labels.
  */
 export function agentPendingAddressMatcher(ref: string, registry: AgentRegistry | undefined): (to: string, from: string) => boolean {
-  const identityOf = registry === undefined ? undefined : identityKeysFor(registry);
-  const key = identityOf?.(ref);
   const identity = registry === undefined ? undefined : resolveAgent(registry, ref);
+  const identityOf = registry === undefined ? undefined : identityKeysFor(registry);
+  // `ref` is an agent ref, so it resolves through `resolveAgent` exactly like
+  // the inbox, wake, channel and work-mine identity reads: a case-variant or
+  // otherwise unregistered spelling resolves to no identity and keeps
+  // exact-label matching only. The lowercase fallback `identityKeysFor`
+  // carries belongs to the envelope `to` labels on the right of the compare —
+  // a `Devin`-stamped recipient still reaches handle `devin` — never to the
+  // agent ref, which would otherwise inherit one identity's label matching
+  // while missing its channel membership.
+  const key = identity?.id;
   const selfLabels = new Set(identity === undefined ? [] : agentLabels(identity));
   const prefixes = registry === undefined || identity === undefined ? [] : registry.channels
     .filter(channel => channel.members.includes(identity.handle))

@@ -654,9 +654,10 @@ status, detail or `updatedAt` — only the announcer's `work.status` does —
 and a malformed or orphan result is ignored like any other non-feed body,
 never a projection refusal. `--to` keeps jobs whose announcement was addressed to
 that routing label and `--owner` keeps jobs announced by that agent; each
-matches literally and under every label of one agent identity through the
-registry, while an unresolvable ref or an unreadable registry keeps
-exact-label matching. `--repo` keeps jobs announced for one `owner/name`
+matches literally and under every label of one agent identity the ref resolves
+to through the registry — a handle, `agent:` address, stable id or alias,
+matched exactly, so a case-variant spelling names no identity — while an
+unresolvable ref or an unreadable registry keeps exact-label matching. `--repo` keeps jobs announced for one `owner/name`
 repo, compared case-insensitively under the same rule claim keys use, and
 `--provider` keeps jobs announced for one provider; a malformed `--repo` or
 `--provider` is a usage error, never a silent empty view. `--tier` keeps

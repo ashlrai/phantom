@@ -409,6 +409,7 @@ describe('work-feed view filters', () => {
         viewJob({ id: 'direct', to: 'agent:nova', owner: 'agent:atlas', updatedAt: 300 }),
         viewJob({ id: 'ops', to: 'group:ops:deploy', owner: 'agent:atlas', updatedAt: 200 }),
         viewJob({ id: 'bare', to: 'nova', owner: 'agent:atlas', updatedAt: 100 }),
+        viewJob({ id: 'caseenv', to: 'Nova', owner: 'agent:atlas', updatedAt: 50 }),
       ]);
       const shown = (agent: string, at: string = root): string[] => {
         const view = projectBusWorkFeedView(result, { toMatch: busWorkFeedPendingToMatcher(agent, { root: at }) });
@@ -416,8 +417,15 @@ describe('work-feed view filters', () => {
         return view.jobs.map(job => job.id).sort();
       };
       // nova is a release member: the channel announcement, the agent:-label
-      // post and the bare-label post all reach her; the ops-channel post does not.
-      expect(shown('nova')).toEqual(['bare', 'chan', 'direct']);
+      // post, the bare-label post and the case-folded 'Nova' address all reach
+      // her — the envelope label resolves through the registry's label rule —
+      // while the ops-channel post does not.
+      expect(shown('nova')).toEqual(['bare', 'caseenv', 'chan', 'direct']);
+      // 'Nova' is no registered handle, alias, id or agent: address, so as an
+      // agent ref it resolves to no identity and keeps exact-label matching:
+      // only the job literally addressed 'Nova' shows, never nova's channel or
+      // label work — the same unresolvable-ref rule 'ghost' already follows.
+      expect(shown('Nova')).toEqual(['caseenv']);
       // atlas posted every job herself: her own channel posts are not pending
       // work addressed to her, and she belongs to no ops channel — nothing shows.
       expect(shown('atlas')).toEqual([]);
