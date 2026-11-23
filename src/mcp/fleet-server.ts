@@ -54,6 +54,7 @@ import { parseFleetSurfaceOwnerArgs, readFleetSurfaceOwner } from './fleet-surfa
 import { parseFleetClaimExecutionArgs, readFleetClaimExecution } from './fleet-claim-execution.js';
 import { readFleetLanes } from './fleet-lanes.js';
 import { parseFleetSelfTickLastArgs, readFleetSelfTickLast } from './fleet-self-tick.js';
+import { parseFleetUnfedArgs, readFleetUnfed, type FleetUnfedArgs } from './fleet-unfed.js';
 import { MAX_FLEET_RECHECK_HISTORY, DEFAULT_FLEET_RECHECK_HISTORY, parseFleetRecheckArgs, parseFleetRecheckHistoryArgs,
   readFleetRecheckTool, readFleetRecheckHistoryTool, type FleetRecheckHistoryArgs } from './fleet-recheck.js';
 import { readFleetUsageResets } from './fleet-usage-resets.js';
@@ -345,6 +346,7 @@ export interface FleetReaders {
   slackStatus?: () => Promise<unknown>;
   claimNotices?: () => Promise<unknown>;
   lanes?: () => Promise<unknown>;
+  unfed?: (input: FleetUnfedArgs) => Promise<unknown>;
   selfTickLast?: () => Promise<unknown>;
   usageResets?: () => Promise<unknown>;
   resetHistory?: (input: FleetResetHistoryArgs) => Promise<unknown>;
@@ -818,6 +820,18 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       name: 'fleet_lanes',
       description: 'Read a persisted per-lane posture: running/target counts, hold state with holder attribution, reason and expiry, plus resource-ledger usage (used percent, credits remaining, reset time, burn rate, window). A persisted observation only — no tool starts, holds, releases, or otherwise changes a lane.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_unfed',
+      description: 'Read the shared work queue\'s per-resource utilization and unfed capacity — the same readUnfedReport assembly `phm fleet unfed --json` serves, where fleet_lanes reports each lane\'s posture (running/target/hold/usage) and fleet_work_feed lists the jobs themselves but neither answers "which lanes have free slots while runnable rows wait under another lane\'s hint, and why". The result is the fleet.unfed.v1 report: per lane running, target, held, utilization, headroom, readyHinted, waitingElsewhere, unfed and the blocked reason-code counts, plus waiting, invalidRows, unfedLanes, unfedSlots, the fleetStop verdict (admission_stopped, global_admission or null), source (dispatcher or derived), derivedReasons, statusAsOf and statusFresh — a stale or untimestamped snapshot is reported flagged, never hidden. The window folds cover the last windowHours (default 24, at most 168 — the same bound --window enforces): history (unfed ticks, slot-ticks lost and leading blocked reasons per lane), overrides (route decisions that left the hinted lane, by reason and hinted-to-chosen lane), rejections (per-lane refusal codes), claims (jobs.jsonl launches that left their hint — events, not distinct jobs) and decisionOutcomes (each decided job joined to its recorded merge outcome by how the hint fared). Honesty is the report\'s own: each fold keeps available/truncated/jobsAvailable flags so a missing market log or tail-truncated ledger stays a lower bound or unknown — never an invented zero — and an absent or unreadable queue/status.json reports { status: "unavailable" }, never an invented all-fed fleet. `windowHours` is the only argument; every store root stays server-owned — no caller root, path, cwd or runsDir is accepted — and the tool never writes, launches, holds, releases, claims or dispatches anything; counts, lane names and reason codes only, never job ids, task text or credentials.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          windowHours: { type: 'number', exclusiveMinimum: 0, maximum: 168, description: 'Fold window in hours for the history/override/claims/outcome/rejection sections — the same bound `phm fleet unfed --window` enforces; omitted means the 24-hour default.' },
+        },
+        additionalProperties: false,
+      },
       annotations,
     },
     {
@@ -1348,7 +1362,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_empties' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_agent_inbox' && name !== 'fleet_agent_work' && name !== 'fleet_agent_wakes' && name !== 'fleet_agent_messages' && name !== 'fleet_bus_channel' && name !== 'fleet_bus_show' && name !== 'fleet_bus_status' && name !== 'fleet_bus_claims' && name !== 'fleet_bus_board' && name !== 'fleet_seat_handoffs' && name !== 'fleet_bot_seats' && name !== 'fleet_work_feed' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_channels_overview' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_slack_evidence' && name !== 'fleet_slack_status' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_status' && name !== 'fleet_comms_thread' && name !== 'fleet_comms_health' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_imessage_tasks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
+    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_empties' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_agent_inbox' && name !== 'fleet_agent_work' && name !== 'fleet_agent_wakes' && name !== 'fleet_agent_messages' && name !== 'fleet_bus_channel' && name !== 'fleet_bus_show' && name !== 'fleet_bus_status' && name !== 'fleet_bus_claims' && name !== 'fleet_bus_board' && name !== 'fleet_seat_handoffs' && name !== 'fleet_bot_seats' && name !== 'fleet_work_feed' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_channels_overview' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_slack_evidence' && name !== 'fleet_slack_status' && name !== 'fleet_lanes' && name !== 'fleet_unfed' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_status' && name !== 'fleet_comms_thread' && name !== 'fleet_comms_health' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_imessage_tasks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -1418,6 +1432,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const orchestrationRead = name === 'fleet_orchestration_read' ? parseFleetOrchestrationReadArgs(args) : null;
     const intentRead = name === 'fleet_intent_read' ? parseFleetIntentReadArgs(args) : null;
     const selfTickLastArgs = name === 'fleet_self_tick_last' ? parseFleetSelfTickLastArgs(args) : null;
+    const unfedArgs = name === 'fleet_unfed' ? parseFleetUnfedArgs(args) : null;
     const sessionHandoffArgs = name === 'fleet_session_handoff' ? parseFleetSessionHandoffArgs(args) : null;
     const peerLedgerArgs = name === 'fleet_peer_ledger' ? parseFleetPeerLedgerArgs(args) : null;
     const recheckArgs = name === 'fleet_recheck' ? parseFleetRecheckArgs(args) : null;
@@ -1430,6 +1445,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_orchestration_read' ? orchestrationRead === null :
         name === 'fleet_intent_read' ? intentRead === null :
         name === 'fleet_self_tick_last' ? selfTickLastArgs === null :
+        name === 'fleet_unfed' ? unfedArgs === null :
         name === 'fleet_runtime' ? parseFleetRuntimeArgs(args) === null :
         name === 'fleet_peer_ledger' ? peerLedgerArgs === null :
         name === 'fleet_session_handoff' ? sessionHandoffArgs === null :
@@ -1522,6 +1538,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_claim_notices' ? await readFleetClaimNotices(readers.claimNotices)
         : name === 'fleet_slack_replies' ? await readFleetSlackReplies(readers.slackReplies)
         : name === 'fleet_lanes' ? await (readers.lanes ?? readFleetLanes)()
+        : name === 'fleet_unfed' ? await (readers.unfed ?? readFleetUnfed)(unfedArgs as FleetUnfedArgs)
         : name === 'fleet_self_tick_last' ? await (readers.selfTickLast ?? (() => readFleetSelfTickLast()))()
         : name === 'fleet_recheck' ? await (readers.recheck ?? (() => readFleetRecheckTool()))()
         : name === 'fleet_recheck_history' ? await (readers.recheckHistory ?? readFleetRecheckHistoryTool)(recheckHistory as FleetRecheckHistoryArgs)
