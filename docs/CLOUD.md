@@ -240,16 +240,25 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   (otherwise only visible in that report) — and the local pre-merge
   gate ledger's recurring step failures, the per-step pass/fail tallies
   every gated worker run records to `metrics/local-gate.jsonl` and
-  `phm fleet vitals` folds (otherwise only visible in that report).
-  Fleet, nightly, policy and local-gate items carry priority 3; fleet
-  items name the fleet repo label in the prompt, nightly items keep the
+  `phm fleet vitals` folds (otherwise only visible in that report) — and
+  the pass^k eval's regression alerts, the task, pass^k and dimension
+  regressions the nightly golden-set eval journals to
+  `~/.ashlr/eval/passk/alerts.jsonl` (otherwise only visible through
+  `phm eval passk alerts`). An alert identity becomes an item while the
+  newest persisted eval report still shows the regression or the journal
+  shows it recurring across eval reports.
+  Fleet, nightly, policy, local-gate and pass^k items carry priority 3;
+  fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
   the jobs-ledger evidence references — they emit only for the fleet's
   own repository, since the advice describes this repo's lanes, models
   and tiers — and local-gate items name the gate ledger and keep the
   find-the-gate-or-the-worker-output framing, emitting only for the
-  fleet's own repository since the gate is this repo's machinery. They
+  fleet's own repository since the gate is this repo's machinery.
+  Pass^k items name the alerts journal and keep the reproduce-with-
+  `phm eval passk` framing, emitting only for the fleet's own repository
+  since the eval machinery is this repo's. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never

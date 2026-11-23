@@ -6,6 +6,7 @@ import { AUTO_DISCOVER_EMPTY_EVERY_MS, AUTO_DISCOVER_EVERY_MS, autoDiscover, dis
 import { nightlyLearningBacklogItems } from '../src/core/improve/nightly-backlog.js';
 import { fleetPolicyBacklogItems } from '../src/core/improve/policy-backlog.js';
 import { localGateBacklogItems } from '../src/core/improve/gate-backlog.js';
+import { passkAlertBacklogItems } from '../src/core/improve/passk-backlog.js';
 import { nightlyProposalsPath } from '../src/core/learn/retro/store.js';
 import { updateCloudBudget } from '../src/core/cloud/store.js';
 import { appendUserBacklogItems, readUserBacklogItems, validBacklogItem } from '../src/core/cloud/backlog.js';
@@ -658,5 +659,238 @@ describe('local-gate ledger items', () => {
     const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
     expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('local-gate-')))).toBe(0);
     expect(readUserBacklogItems().filter((i) => i.id.startsWith('local-gate-'))).toHaveLength(2);
+  });
+});
+
+// pass^k eval regression alerts → backlog items: the nightly golden-set
+// eval's recorded regressions (alerts.jsonl plus the newest persisted
+// report) become items instead of sitting advisory-only in
+// `phm eval passk alerts`.
+describe('pass^k eval alert items', () => {
+  const NOW = new Date('2026-11-22T12:00:00Z');
+  const iso = (hoursAgo: number): string => new Date(NOW.getTime() - hoursAgo * 3_600_000).toISOString();
+  const evalDir = (): string => path.join(home, '.ashlr', 'eval', 'passk');
+  const alertRow = (hoursAgo: number, reportId: string, alert: Record<string, unknown>): string =>
+    JSON.stringify({ v: 1, kind: 'alert', ts: iso(hoursAgo), report: reportId, alert });
+  const TASK_REGRESSED = { kind: 'task-regressed', lane: 'work', model: 'local-coder', taskId: 'fix-add', before: 1, after: 0 };
+  const PASSK_DROP = { kind: 'passk-drop', lane: 'mid', model: 'mid-coder', before: 0.9, after: 0.6 };
+  const DIM_DROP = { kind: 'dimension-drop', lane: 'work', model: 'local-coder', taskId: 'fix-add', dimension: 'tests', before: 0.8, after: 0.4 };
+
+  /** A lane entry shaped like a real report's, with the measured fields the corroboration check reads. */
+  const evalLane = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    lane: 'work', model: 'local-coder',
+    tasks: [{
+      taskId: 'fix-add', trials: 4, passes: 0, pass1: 0, ci95: null, passAtK: 0, passPowK: 0,
+      dimensionRates: { tests: 0, diffQuality: 0.5, instructions: 0.5 }, trialsDetail: [],
+    }],
+    trialsTotal: 4, passesTotal: 0, meanPass1: 0, meanPassAtK: 0, meanPassPowK: 0,
+    ...over,
+  });
+  const evalReport = (id: string, generatedAt: string, lanes: unknown[]): Record<string, unknown> => ({
+    schema: 'eval.passk.v1', id, generatedAt,
+    dataset: { sha256: 'f'.repeat(64), tasks: 6 }, trials: 4, k: 2, lanes, alerts: [],
+  });
+
+  /** Write alerts.jsonl, reports/<id>.json files and the latest.json pointer under the test ASHLR root. */
+  const writeEvalStore = (opts: {
+    alerts?: string[];
+    reports?: { id: string; generatedAt: string; lanes: unknown[] }[];
+    latestId?: string | null;
+  }): void => {
+    const dir = evalDir();
+    fs.mkdirSync(path.join(dir, 'reports'), { recursive: true });
+    if (opts.alerts !== undefined) fs.writeFileSync(path.join(dir, 'alerts.jsonl'), `${opts.alerts.join('\n')}\n`);
+    for (const r of opts.reports ?? []) {
+      fs.writeFileSync(path.join(dir, 'reports', `${r.id}.json`), `${JSON.stringify(evalReport(r.id, r.generatedAt, r.lanes))}\n`);
+    }
+    if (opts.latestId !== undefined && opts.latestId !== null) {
+      const gen = (opts.reports ?? []).find((r) => r.id === opts.latestId)?.generatedAt ?? iso(1);
+      fs.writeFileSync(path.join(dir, 'latest.json'), `${JSON.stringify({ schema: 'eval.passk.v1', id: opts.latestId, generatedAt: gen })}\n`);
+    }
+  };
+
+  it('turns a still-measured regression into a valid priority-3 backlog item', async () => {
+    writeEvalStore({
+      alerts: [alertRow(5, 'passk-r1', TASK_REGRESSED)],
+      reports: [{ id: 'passk-r1', generatedAt: iso(5), lanes: [evalLane()] }],
+      latestId: 'passk-r1',
+    });
+    const items = await passkAlertBacklogItems({ repo: 'ashlrai/phantom', now: NOW });
+    expect(items).toHaveLength(1);
+    const item = items[0]!;
+    expect(item.id).toMatch(/^passk-alert-[0-9a-f]{16}$/);
+    expect(validBacklogItem(item)).not.toBeNull();
+    expect(item).toMatchObject({ priority: 3, repo: 'ashlrai/phantom', area: 'passk-eval' });
+    expect(item.title).toContain('work/local-coder');
+    expect(item.title).toContain('fix-add');
+    expect(item.prompt).toContain('task-regressed');
+    expect(item.prompt).toContain('still shows this regression');
+    expect(item.prompt).toContain('eval/passk/alerts.jsonl');
+    expect(item.prompt).toContain('phm eval passk');
+    expect(item.prompt).toContain('no-change');
+    expect(item.prompt).toContain('1 alert row(s) across 1 distinct eval report(s)');
+  });
+
+  it('covers all three alert kinds and corroborates each against the newest report', async () => {
+    writeEvalStore({
+      alerts: [
+        alertRow(8, 'passk-r1', TASK_REGRESSED),
+        alertRow(6, 'passk-r2', PASSK_DROP),
+        alertRow(4, 'passk-r3', DIM_DROP),
+      ],
+      reports: [{
+        id: 'passk-r3', generatedAt: iso(4),
+        lanes: [
+          evalLane(),                                                        // task passes=0, tests rate 0
+          evalLane({ lane: 'mid', model: 'mid-coder', tasks: [], meanPassPowK: 0.5 }), // pass^k 0.5 <= 0.9-0.1
+        ],
+      }],
+      latestId: 'passk-r3',
+    });
+    const items = await passkAlertBacklogItems({ repo: 'ashlrai/phantom', now: NOW });
+    expect(items).toHaveLength(3);
+    const byTitle = new Map(items.map((i) => [i.title, i]));
+    expect([...byTitle.keys()].some((t) => t.includes('lost task'))).toBe(true);
+    expect([...byTitle.keys()].some((t) => t.includes('pass^k dropped'))).toBe(true);
+    expect([...byTitle.keys()].some((t) => t.includes('tests') && t.includes('dropped'))).toBe(true);
+    for (const item of items) {
+      expect(item.prompt).toContain('still shows this regression');
+      expect(validBacklogItem(item)).not.toBeNull();
+    }
+  });
+
+  it('emits on recurrence across reports even when the newest report cleared', async () => {
+    writeEvalStore({
+      alerts: [
+        alertRow(50, 'passk-r1', TASK_REGRESSED),
+        alertRow(26, 'passk-r2', TASK_REGRESSED),
+      ],
+      // The newest report shows the task passing again — cleared, but two
+      // distinct reports flagged it, so the recurrence path still emits.
+      reports: [{
+        id: 'passk-r3', generatedAt: iso(2),
+        lanes: [evalLane({
+          tasks: [{
+            taskId: 'fix-add', trials: 4, passes: 3, pass1: 0.75, ci95: null, passAtK: 1, passPowK: 0.3,
+            dimensionRates: { tests: 0.9, diffQuality: 0.9, instructions: 0.9 }, trialsDetail: [],
+          }],
+        })],
+      }],
+      latestId: 'passk-r3',
+    });
+    const items = await passkAlertBacklogItems({ repo: 'ashlrai/phantom', now: NOW });
+    expect(items).toHaveLength(1);
+    expect(items[0]!.prompt).toContain('no longer shows this regression');
+    expect(items[0]!.prompt).toContain('2 distinct eval report(s)');
+  });
+
+  it('emits on recurrence when no report can corroborate', async () => {
+    // Alerts but no latest.json/reports — unverifiable, recurrence still emits.
+    writeEvalStore({
+      alerts: [
+        alertRow(50, 'passk-r1', TASK_REGRESSED),
+        alertRow(26, 'passk-r2', TASK_REGRESSED),
+      ],
+    });
+    const items = await passkAlertBacklogItems({ repo: 'ashlrai/phantom', now: NOW });
+    expect(items).toHaveLength(1);
+    expect(items[0]!.prompt).toContain('could corroborate this identity');
+  });
+
+  it('emits nothing for a one-shot alert the newest report cleared', async () => {
+    writeEvalStore({
+      alerts: [alertRow(5, 'passk-r1', TASK_REGRESSED)],
+      reports: [{
+        id: 'passk-r2', generatedAt: iso(1),
+        lanes: [evalLane({
+          tasks: [{
+            taskId: 'fix-add', trials: 4, passes: 4, pass1: 1, ci95: null, passAtK: 1, passPowK: 1,
+            dimensionRates: { tests: 1, diffQuality: 1, instructions: 1 }, trialsDetail: [],
+          }],
+        })],
+      }],
+      latestId: 'passk-r2',
+    });
+    expect(await passkAlertBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
+  });
+
+  it('emits nothing for a stale alert even while still measured', async () => {
+    writeEvalStore({
+      alerts: [alertRow(24 * 40, 'passk-r1', TASK_REGRESSED)],
+      reports: [{ id: 'passk-r1', generatedAt: iso(24 * 40), lanes: [evalLane()] }],
+      latestId: 'passk-r1',
+    });
+    expect(await passkAlertBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
+    // Inside the window the same evidence emits.
+    writeEvalStore({
+      alerts: [alertRow(24 * 20, 'passk-r1', TASK_REGRESSED)],
+      reports: [{ id: 'passk-r1', generatedAt: iso(24 * 20), lanes: [evalLane()] }],
+      latestId: 'passk-r1',
+    });
+    expect(await passkAlertBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toHaveLength(1);
+  });
+
+  it('emits nothing for a missing or degraded journal, or another repository', async () => {
+    // Missing journal entirely.
+    expect(await passkAlertBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
+    writeEvalStore({
+      alerts: [alertRow(5, 'passk-r1', TASK_REGRESSED), 'not json'],
+      reports: [{ id: 'passk-r1', generatedAt: iso(5), lanes: [evalLane()] }],
+      latestId: 'passk-r1',
+    });
+    // One malformed row degrades the whole read: unknown stays unknown.
+    expect(await passkAlertBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
+    writeEvalStore({
+      alerts: [alertRow(5, 'passk-r1', TASK_REGRESSED)],
+      reports: [{ id: 'passk-r1', generatedAt: iso(5), lanes: [evalLane()] }],
+      latestId: 'passk-r1',
+    });
+    // The eval machinery is this repo's — self-improvement pointed elsewhere inherits nothing.
+    expect(await passkAlertBacklogItems({ repo: 'ashlrai/other', now: NOW })).toEqual([]);
+  });
+
+  it('derives stable ids, honours the limit, and orders still-regressed first', async () => {
+    writeEvalStore({
+      alerts: [
+        alertRow(9, 'passk-r1', PASSK_DROP),
+        alertRow(7, 'passk-r2', TASK_REGRESSED),
+        alertRow(5, 'passk-r3', DIM_DROP),
+      ],
+      reports: [{
+        id: 'passk-r3', generatedAt: iso(5),
+        lanes: [
+          evalLane(),
+          evalLane({ lane: 'mid', model: 'mid-coder', tasks: [], meanPassPowK: 0.5 }),
+        ],
+      }],
+      latestId: 'passk-r3',
+    });
+    const first = await passkAlertBacklogItems({ repo: 'ashlrai/phantom', now: NOW });
+    const second = await passkAlertBacklogItems({ repo: 'ashlrai/phantom', now: NOW });
+    expect(second.map((i) => i.id)).toEqual(first.map((i) => i.id));
+    expect(first).toHaveLength(3);
+    const one = await passkAlertBacklogItems({ repo: 'ashlrai/phantom', now: NOW, limit: 1 });
+    expect(one).toHaveLength(1);
+  });
+
+  it('appends pass^k items through discovery and dedupes on refresh', async () => {
+    writeEvalStore({
+      alerts: [alertRow(5, 'passk-r1', TASK_REGRESSED)],
+      reports: [{ id: 'passk-r1', generatedAt: iso(5), lanes: [evalLane()] }],
+      latestId: 'passk-r1',
+    });
+    const greenGh = async (args: string[]) => {
+      const p = args[4] ?? '';
+      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+    };
+    const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+    const passk = first.items.filter((i) => i.id.startsWith('passk-alert-'));
+    expect(passk).toHaveLength(1);
+    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+    expect(appendUserBacklogItems(passk)).toBe(1);
+    const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('passk-alert-')))).toBe(0);
+    expect(readUserBacklogItems().filter((i) => i.id.startsWith('passk-alert-'))).toHaveLength(1);
   });
 });
