@@ -2890,7 +2890,7 @@ origin covers a scope key, not mail, and carries no `message`. `jobs` reports th
 (`BUS_FEED_OPEN_STATUSES`, at least one claim key, newest 50 of `open`) as
 `BusWorkMineJob` (`BusWorkFeedJob` — so it carries the feed's `postId`/`statusId`
 envelope citations and any `work.result` report — plus `addressed`, `announced`, `freeKeys`,
-`heldKeys`, `claimable`): `addressed` marks announcements that are pending
+`heldKeys`, `claimable`, `holders`): `addressed` marks announcements that are pending
 work for the agent under the same rule the feed `--to` filter and the
 next/handoffs sections share — `busWorkFeedPendingToMatcher`: any label of
 the resolved identity or a `group:<channel>:<topic>` address of a registry
@@ -2903,7 +2903,14 @@ through the identity-label contract `busWorkFeedOwnerMatcher` applies;
 claims join, and `claimable` is `true` only on a provably free key, `false`
 only when every declared key is provably held, `null` when coverage is
 `truncated` or `unknown` — `busWorkMineJobAnnotation(job, held, coverage,
-addressed, announced?)` is the exported pure rule. A non-ok feed collapses the section to
+addressed, announced?, holds?)` is the exported pure rule. `holders` lists
+the shown live holds on the job's declared keys — each `{claimKey, owner,
+leaseUntil, origin}` (`BusWorkMineJobHold`) projected from the feed's
+claims join, so the digest names who blocks each key and until when without
+a `claim list --jobs` read; it is `null` when hold coverage is `unknown`
+(the coordination table could not be read) and the shown lower bound under
+`truncated`, and it never carries fencing tokens or lease source ids. A
+non-ok feed collapses the section to
 its own status (`refused` keeps `reason`/`receipts` and the blamed `receipt`
 when the projection named one). `announced` is the
 outbound side of the same feed read: every job whose `owner` label resolves
@@ -2914,13 +2921,16 @@ listed because only the announcer may move a job and a failed one can still
 be rescheduled or terminated. Each item is a `BusWorkMineAnnouncedJob` —
 `BusWorkFeedJob` plus the same per-key hold coverage the jobs section
 computes, so it carries the feed's `postId`/`statusId` envelope citations
-and any `work.result` report, plus `held`/`heldKeys`/`freeKeys`: `held` is `true` when a declared key has a
+and any `work.result` report, plus `held`/`heldKeys`/`freeKeys`/`holders`:
+`held` is `true` when a declared key has a
 shown live hold, `false` when complete coverage proves none is held or the
 job declares no keys, `null` when coverage cannot prove either way (a
 `running`/`idle` announcement with `held:false` has no live claim on its
-declared scope — the announcer is the only one who can move it);
-`busWorkMineAnnouncedAnnotation(job, held, coverage)` is the exported pure
-rule over the same coverage/`heldByJob` index the jobs section uses. A job still
+declared scope — the announcer is the only one who can move it); `holders`
+is the same shown-hold list the jobs section reports under the same
+unknown/truncated honesty;
+`busWorkMineAnnouncedAnnotation(job, held, coverage, holds?)` is the exported pure
+rule over the same coverage/`heldByJob`/`holdsByJob` index the jobs section uses. A job still
 open with claim keys appears in both `jobs` (the claimable view) and
 `announced` (the ownership view). A non-ok feed reports the section's own
 `refused`/`unavailable`/`retryable`/`invalid` state, never an empty list.

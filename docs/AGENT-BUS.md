@@ -800,7 +800,12 @@ the open work-feed jobs (`queued`/`rescheduled`, declaring at least one claim
 key; newest 50 shown, `open` keeps the true total) annotated per declared key —
 `freeKeys`/`heldKeys` plus a tri-state
 `claimable` that is `null` whenever hold coverage is `truncated` or `unknown`,
-never a guess — the claimable work envelopes addressed to it, the same live
+never a guess — and `holders`, the shown live holds on the job's declared keys
+each naming its `claimKey`, owner label, lease expiry and claim class, so the
+digest answers "who blocks this key and until when" inside the same read
+instead of a `claim list --jobs` join (`null` under `unknown` coverage, the
+shown lower bound under `truncated`; fencing tokens and lease source ids never
+leave the store) — the claimable work envelopes addressed to it, the same live
 `kind:'work'`/protocol-`task` receipts `fleet bus-next` would walk in claim
 order (priority band, then cursor; the first 10 shown, `matched` the true
 total), each carrying its hold state against the message-claim journal and
@@ -964,7 +969,10 @@ rule — with its `postId`/`statusId` citations and any `work.result` report, so
 with claim keys appears in both `jobs` (the claimable view) and `announced`
 (the ownership view), while a `running`/`idle`/`blocked`/`failed` or
 claim-key-less announcement the agent posted no longer leaves the digest
-invisible. The hold fields let the announcer see that a job reporting
+invisible. Each announced item also carries `holders` — the same shown-hold
+list the jobs section reports under the same unknown/truncated honesty — so
+the announcer can tell a live worker from a stale lease on its own
+declarations. The hold fields let the announcer see that a job reporting
 `running`/`idle` has `held:false` — no live claim on its declared scope —
 without a second `claim list` or `work feed --claims` read; only the
 announcer may reschedule or terminate it. A non-ok feed reports the section's own

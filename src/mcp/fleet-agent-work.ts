@@ -6,7 +6,9 @@
  * question an MCP-connected agent actually asks first — "what is pending
  * for me" — with the projection's own join of live claims (message-id
  * leases resolved to the retained envelope they cover), open and
- * announced work-feed jobs with per-key hold coverage, claimable work
+ * announced work-feed jobs with per-key hold coverage — each blocked
+ * key's shown holders (owner label, lease expiry, claim class) named
+ * inline — claimable work
  * envelopes and worker-handoff assignments in bus-next order, the
  * conversation threads waiting on its answer, its own unanswered asks,
  * blocked threads it is party to, wake hints, the next inbox page,

@@ -214,7 +214,11 @@ journal's receipt pin decides resolved vs not-found and reports
 pinned=false/unknown on drift), the open feed jobs still claimable
 for it, the feed jobs it announced that have not finished (done and
 terminated drop off; failed stays listed because only the announcer may
-move it), the claimable work envelopes addressed to it or a channel it
+move it) — each carrying the per-key hold coverage of its declared
+claim keys plus the shown holders (owner label, lease expiry, claim
+class) naming who blocks each key, so a live worker reads differently
+from a stale lease — the claimable work envelopes addressed to it or a
+channel it
 belongs
 to in bus-next order with their hold state, the worker-handoff assignments
 addressed the same way (each item carries the to label handoff-receive and
