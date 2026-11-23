@@ -39,13 +39,16 @@ it('slices archived pages with the shared thread view flags', async () => {
   expect(await seqs(['--channel', 'telegram'])).toEqual([2]);
   expect(await seqs(['--direction', 'outbound'])).toEqual([2]);
   expect(await seqs(['--since', '2026-01-02T00:00:00Z'])).toEqual([2, 3]);
+  // seq 2 sits exactly at the ceiling — exclusive, like every other comms read's --before.
+  expect(await seqs(['--before-at', '2026-01-02T00:00:00Z'])).toEqual([1]);
+  expect(await seqs(['--since', '2026-01-01T12:00:00Z', '--before-at', '2026-01-03T00:00:00Z'])).toEqual([2]);
   expect(await seqs(['--contains', 'the fix'])).toEqual([1, 3]);
   expect(await seqs(['--channel', 'email', '--before', '4'])).toEqual([3]);
   expect(await seqs(['--channel', 'slack'])).toEqual([]);
   const beforeErrors = errors.length;
-  for (const args of [['--channel', 'sms'], ['--direction', 'sideways'], ['--since', 'bogus'], ['--contains', ''], ['--channel', 'desktop', '--channel', 'telegram'], ['--contains', '--json']]) {
+  for (const args of [['--channel', 'sms'], ['--direction', 'sideways'], ['--since', 'bogus'], ['--before-at', 'bogus'], ['--contains', ''], ['--channel', 'desktop', '--channel', 'telegram'], ['--contains', '--json']]) {
     expect(await cmdFleetOwnerHistory(args, deps)).toBe(2);
   }
-  expect(errors.length - beforeErrors).toBe(11);
+  expect(errors.length - beforeErrors).toBe(13);
   expect(errors[beforeErrors]).toContain('--channel takes one of');
 });

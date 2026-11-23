@@ -127,6 +127,7 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
     let channel: OwnerChannel | undefined;
     let direction: OwnerThreadMessage['direction'] | undefined;
     let since: number | undefined;
+    let beforeAt: number | undefined;
     let contains: string | undefined;
     try {
       const params = new URL(req.url ?? path, 'http://localhost').searchParams;
@@ -156,6 +157,15 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
         }
         since = parsed;
       }
+      const beforeAtRaw = params.get('beforeAt');
+      if (beforeAtRaw !== null) {
+        const parsed = parseSince(beforeAtRaw);
+        if (parsed === null) {
+          sendJson(res, 400, { error: 'beforeAt takes 15m, 2h, 1d, epoch ms or an ISO time.' });
+          return true;
+        }
+        beforeAt = parsed;
+      }
       const containsRaw = params.get('contains');
       if (containsRaw !== null) {
         if (containsRaw.trim() === '' || containsRaw.length > OWNER_THREAD_CONTAINS_MAX) {
@@ -173,8 +183,8 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
     }
     try {
       const options = runtime(deps);
-      const filter = channel !== undefined || direction !== undefined || since !== undefined || contains !== undefined
-        ? { ...(channel !== undefined ? { channel } : {}), ...(direction !== undefined ? { direction } : {}), ...(since !== undefined ? { since } : {}), ...(contains !== undefined ? { contains } : {}) }
+      const filter = channel !== undefined || direction !== undefined || since !== undefined || beforeAt !== undefined || contains !== undefined
+        ? { ...(channel !== undefined ? { channel } : {}), ...(direction !== undefined ? { direction } : {}), ...(since !== undefined ? { since } : {}), ...(beforeAt !== undefined ? { beforeAt } : {}), ...(contains !== undefined ? { contains } : {}) }
         : undefined;
       const thread = readOwnerThread(options, limit, filter);
       const { adapters, kill, paused } = readOwnerCommsStatus(options);

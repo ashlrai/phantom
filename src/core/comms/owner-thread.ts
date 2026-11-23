@@ -578,7 +578,7 @@ function awaitingReplyIds(state: ThreadState): string[] {
 /** Longest `--contains` needle the thread read accepts; the message text it matches is already bounded far shorter. */
 export const OWNER_THREAD_CONTAINS_MAX = 512;
 
-/** Optional read slice for `readOwnerThread`: one channel, one direction, a recorded-time floor and/or a text needle. */
+/** Optional read slice for `readOwnerThread`: one channel, one direction, a recorded-time window and/or a text needle. */
 export interface OwnerThreadReadFilter {
   /** Keep only messages recorded on this channel. */
   channel?: OwnerChannel;
@@ -586,6 +586,15 @@ export interface OwnerThreadReadFilter {
   direction?: OwnerThreadMessage['direction'];
   /** Epoch ms; keeps messages whose `at` parses at or after it. An unparseable `at` never satisfies a `since` filter. */
   since?: number;
+  /**
+   * Epoch ms; keeps messages whose `at` parses strictly before it — the
+   * exclusive recorded-time ceiling that pairs with `since`'s inclusive
+   * floor, the same `[since, before)` window every other comms and bus
+   * read applies. Named `beforeAt` rather than `before` because the
+   * archive page already spends `before` on its seq cursor. An
+   * unparseable `at` never satisfies a `beforeAt` filter.
+   */
+  beforeAt?: number;
   /**
    * Case-insensitive substring over the stored message text, whitespace
    * collapsed on both sides — the same `--contains` rule every other comms
@@ -600,7 +609,8 @@ export interface OwnerThreadReadFilter {
  * The one slice predicate the live `readOwnerThread` view and the archive
  * `readOwnerThreadHistory` read share: a message stays when it passes every
  * supplied dimension — its recorded channel, its direction, the `since`
- * recorded-time floor (an unparseable `at` never satisfies it) and the
+ * recorded-time floor and `beforeAt` recorded-time ceiling (an unparseable
+ * `at` never satisfies either bound) and the
  * `contains` needle as a case-insensitive substring over the stored text
  * with whitespace collapsed on both sides. Exported so the archived pages
  * `phm fleet owner-history` and `fleet_owner_history` apply the identical
@@ -616,6 +626,10 @@ export function ownerThreadViewPredicate(filter?: OwnerThreadReadFilter): (messa
     if (filter?.since !== undefined) {
       const at = Date.parse(message.at);
       if (!Number.isFinite(at) || at < filter.since) return false;
+    }
+    if (filter?.beforeAt !== undefined) {
+      const at = Date.parse(message.at);
+      if (!Number.isFinite(at) || at >= filter.beforeAt) return false;
     }
     if (needle !== undefined && needle !== '' &&
         !message.text.toLowerCase().replace(/\s+/g, ' ').includes(needle)) return false;

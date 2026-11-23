@@ -44,8 +44,11 @@ it('applies the shared thread view filters to archived pages', () => {
   const seqs = (page: Parameters<typeof readOwnerThreadHistory>[1]) => readOwnerThreadHistory(f, page).messages.map(m => m.seq);
   expect(seqs({ channel: 'telegram' })).toEqual([2]);
   expect(seqs({ direction: 'outbound' })).toEqual([2]);
-  // The unparseable `at` on seq 3 never satisfies a since floor.
+  // The unparseable `at` on seq 3 never satisfies a since floor or a beforeAt ceiling.
   expect(seqs({ since: Date.parse('2026-01-01T12:00:00.000Z') })).toEqual([2]);
+  // seq 2 sits exactly at the ceiling — exclusive, like every other comms read's --before.
+  expect(seqs({ beforeAt: Date.parse('2026-01-02T00:00:00.000Z') })).toEqual([1]);
+  expect(seqs({ since: Date.parse('2026-01-01T12:00:00.000Z'), beforeAt: Date.parse('2026-01-03T00:00:00.000Z') })).toEqual([2]);
   expect(seqs({ contains: 'DEPLOY' })).toEqual([1]);
   expect(seqs({ contains: 'the fix' })).toEqual([1, 3]);
   expect(seqs({ channel: 'email', direction: 'inbound' })).toEqual([3]);

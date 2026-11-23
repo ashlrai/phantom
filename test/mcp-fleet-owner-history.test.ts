@@ -5,7 +5,7 @@
  * live thread window; once rotation moves the oldest messages into
  * owner-thread-archive files beside the live record, this is the only
  * MCP read that pages them back — seq paging with `before`, bounded
- * pages with `limit`, the shared channel/direction/since/contains view
+ * pages with `limit`, the shared channel/direction/since/beforeAt/contains view
  * slice `fleet_comms_thread` exposes, archive/skipped counts kept
  * honest and message text scrubbed on read, all through the shared
  * projection so the CLI and MCP surfaces can never diverge.
@@ -93,12 +93,15 @@ describe('fleet_owner_history argument parsing', () => {
     expect(parseFleetOwnerHistoryArgs({ direction: 'outbound', limit: 10 })).toEqual({ limit: 10, filter: { direction: 'outbound' } });
     expect(parseFleetOwnerHistoryArgs({ since: '2026-01-01T00:00:00Z' })).toEqual({ limit: 50, filter: { since: Date.parse('2026-01-01T00:00:00Z') } });
     expect(parseFleetOwnerHistoryArgs({ since: '1700000000000' })).toEqual({ limit: 50, filter: { since: 1700000000000 } });
+    expect(parseFleetOwnerHistoryArgs({ beforeAt: '2026-01-02T00:00:00Z' })).toEqual({ limit: 50, filter: { beforeAt: Date.parse('2026-01-02T00:00:00Z') } });
+    expect(parseFleetOwnerHistoryArgs({ beforeAt: '2h' })).toEqual({ limit: 50, filter: { beforeAt: expect.any(Number) } });
     expect(parseFleetOwnerHistoryArgs({ contains: 'deploy fix' })).toEqual({ limit: 50, filter: { contains: 'deploy fix' } });
     expect(parseFleetOwnerHistoryArgs({ before: 9, channel: 'slack', contains: 'x' })).toEqual({ limit: 50, before: 9, filter: { channel: 'slack', contains: 'x' } });
     for (const bad of [
       { channel: 'sms' }, { channel: 5 }, { channel: null },
       { direction: 'sideways' }, { direction: 1 },
       { since: 'bogus' }, { since: 5 }, { since: '-1' }, { since: null },
+      { beforeAt: 'bogus' }, { beforeAt: 5 }, { beforeAt: '-1' }, { beforeAt: null },
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 5 },
     ]) expect(parseFleetOwnerHistoryArgs(bad)).toBeNull();
   });
@@ -203,6 +206,8 @@ describe('fleet_owner_history reader', () => {
     expect(await seqs({ channel: 'telegram' })).toEqual([1]);
     expect(await seqs({ direction: 'outbound' })).toEqual([1]);
     expect(await seqs({ since: Date.parse('2026-01-02T00:00:00.000Z') })).toEqual([3]);
+    // seq 3 sits exactly at the ceiling — exclusive, like every other comms read's --before.
+    expect(await seqs({ beforeAt: Date.parse('2026-01-03T00:00:00.000Z') })).toEqual([1, 2]);
     expect(await seqs({ contains: 'review' })).toEqual([3]);
     expect(await seqs({ channel: 'slack' })).toEqual([]);
   });
@@ -238,6 +243,7 @@ describe('fleet_owner_history MCP tool', () => {
         channel: { type: 'string' },
         direction: { type: 'string', enum: ['inbound', 'outbound'] },
         since: { type: 'string' },
+        beforeAt: { type: 'string' },
         contains: { type: 'string', minLength: 1, maxLength: 512 },
       },
     });
@@ -248,7 +254,7 @@ describe('fleet_owner_history MCP tool', () => {
     [{ runsDir: '/tmp/x' }], [{ before: 0 }], [{ before: 1.5 }], [{ before: '9' }],
     [{ limit: 0 }], [{ limit: 501 }], [{ limit: '10' }],
     [{ channel: 'sms' }], [{ channel: 5 }], [{ direction: 'sideways' }],
-    [{ since: 'bogus' }], [{ since: 5 }], [{ contains: '' }], [{ contains: 'x'.repeat(513) }],
+    [{ since: 'bogus' }], [{ since: 5 }], [{ beforeAt: 'bogus' }], [{ beforeAt: 5 }], [{ contains: '' }], [{ contains: 'x'.repeat(513) }],
     [{ extra: 1 }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const ownerHistory = vi.fn();
@@ -275,10 +281,10 @@ describe('fleet_owner_history MCP tool', () => {
   it('passes the view slice through to the reader as a filter', async () => {
     const ownerHistory = vi.fn(async () => ({ ok: true }));
     const client = await connect({ status: async () => ({}), loop: async () => ({}), ownerHistory });
-    await call(client, { channel: 'telegram', direction: 'inbound', since: '2026-01-01T00:00:00Z', contains: 'deploy' });
+    await call(client, { channel: 'telegram', direction: 'inbound', since: '2026-01-01T00:00:00Z', beforeAt: '2026-02-01T00:00:00Z', contains: 'deploy' });
     expect(ownerHistory).toHaveBeenCalledWith({
       limit: 50,
-      filter: { channel: 'telegram', direction: 'inbound', since: Date.parse('2026-01-01T00:00:00Z'), contains: 'deploy' },
+      filter: { channel: 'telegram', direction: 'inbound', since: Date.parse('2026-01-01T00:00:00Z'), beforeAt: Date.parse('2026-02-01T00:00:00Z'), contains: 'deploy' },
     });
   });
 

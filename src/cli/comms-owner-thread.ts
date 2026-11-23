@@ -17,7 +17,7 @@ import {
   type OwnerThreadReadFilter,
 } from '../core/comms/owner-thread.js';
 
-const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--channel <desktop|telegram|email|imessage|slack>] [--direction <inbound|outbound>] [--since <15m|2h|1d|ISO|epoch-ms>] [--contains <text>] [--json]';
+const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--channel <desktop|telegram|email|imessage|slack>] [--direction <inbound|outbound>] [--since <15m|2h|1d|ISO|epoch-ms>] [--before-at <15m|2h|1d|ISO|epoch-ms>] [--contains <text>] [--json]';
 const SEND_USAGE = 'usage: phm comms send-owner --text <message> [--reply-to <key>] [--idempotency-key <key>] [--json]';
 
 const HELLO_USAGE = 'usage: phm comms owner hello [--json]';
@@ -39,7 +39,7 @@ export function ownerThreadOptions(transports: OwnerThreadOptions['transports'] 
 }
 
 /**
- * Parse the shared `--channel`/`--direction`/`--since`/`--contains` slice
+ * Parse the shared `--channel`/`--direction`/`--since`/`--before-at`/`--contains` slice
  * flags into the `OwnerThreadReadFilter` `phm comms thread` and
  * `phm fleet owner-history` both apply, so the live read and the archive
  * read can never disagree about what a flag means. Returns the filter to
@@ -72,6 +72,14 @@ export function parseOwnerThreadFilterArgs(args: string[]): { filter?: OwnerThre
       return { error: '--since takes 15m, 2h, 1d, epoch ms or an ISO time.' };
     }
     filter.since = parsed;
+  }
+  if (args.includes('--before-at')) {
+    const raw = args[args.indexOf('--before-at') + 1];
+    const parsed = raw === undefined ? null : parseSince(raw);
+    if (parsed === null) {
+      return { error: '--before-at takes 15m, 2h, 1d, epoch ms or an ISO time.' };
+    }
+    filter.beforeAt = parsed;
   }
   if (args.includes('--contains')) {
     const raw = args[args.indexOf('--contains') + 1];
@@ -110,7 +118,7 @@ export async function cmdCommsOwnerStatus(json: boolean, options = ownerThreadOp
 export async function cmdCommsOwner(args: string[], options = ownerThreadOptions()): Promise<number> {
   const verb = args[0];
   if (verb === 'thread') {
-    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json'], values: ['--limit', '--channel', '--direction', '--since', '--contains'] });
+    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json'], values: ['--limit', '--channel', '--direction', '--since', '--before-at', '--contains'] });
     if (bad) { console.error(bad.message); console.error(THREAD_USAGE); return 2; }
     const limitRaw = args[args.indexOf('--limit') + 1];
     const limit = args.includes('--limit') ? Number(limitRaw) : 200;

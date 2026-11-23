@@ -100,6 +100,22 @@ describe('GET /api/verse/comms/owner-thread', () => {
     }
   });
 
+  it('filters by beforeAt and rejects a bad value with 400', async () => {
+    await seed(3);
+    // seq 2 lands exactly at the ceiling — exclusive, like every other comms read's --before.
+    const ceiling = new Date(NOW + 2).toISOString();
+    const r = await call('GET', `?beforeAt=${encodeURIComponent(ceiling)}`);
+    expect(r.status).toBe(200);
+    expect(r.body.messages.map((m: { seq: number }) => m.seq)).toEqual([1]);
+    const window = await call('GET', `?since=${encodeURIComponent(new Date(NOW + 1).toISOString())}&beforeAt=${encodeURIComponent(new Date(NOW + 3).toISOString())}`);
+    expect(window.status).toBe(200);
+    expect(window.body.messages.map((m: { seq: number }) => m.seq)).toEqual([1, 2]);
+    for (const bad of ['?beforeAt=', '?beforeAt=bogus']) {
+      const rejected = await call('GET', bad);
+      expect(rejected.status, bad).toBe(400);
+    }
+  });
+
   it('filters by direction and rejects a bad value with 400', async () => {
     await seed(2);
     const inbound = await call('GET', '?direction=inbound');
