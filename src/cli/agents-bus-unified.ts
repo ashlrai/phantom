@@ -11,7 +11,7 @@ import {
 } from '../core/agents/bus-unified.js';
 import { PROVIDERS, providerSchema, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
-import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
+import { attachBusCliSession, busAgentView, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope } from '../core/agents/bus-claims.js';
 import { COORDINATION_ORIGINS, type CoordinationOrigin } from '../core/agents/claim-store.js';
@@ -29,6 +29,7 @@ export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'post', 'channel', 
 
 export const AGENTS_BUS_UNIFIED_HELP = `ashlr agents bus id register [<handle>] [--cli <cli>] [--provider <p>] [--model <m>] [--alias <label>]... [--display <name>]
 ashlr agents bus id list
+ashlr agents bus id show [<ref>]
 ashlr agents bus dm --to <agent> --text <text> [--from <agent>] [--priority P0..P3] [--thread <t>] [--ref <ref>]... [--reply-to <id>] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus post --to <label> --text <text> [--kind note|context] [--from <agent>] [--priority P0..P3] [--thread <t>] [--ref <ref>]... [--reply-to <id>] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus channel create <name> [--from <agent>] [--member <agent>]...
@@ -305,7 +306,12 @@ outbound send gate every write verb passes through — its sendGate section
 reports open, blocked or unknown plus the kill-switch and comms-pause
 verdicts separately, so an agent learns sends are gated before a write
 refuses; a section that cannot be read reports unavailable or unknown,
-never zero.
+never zero. id show [<ref>] resolves one ref — or PHM_AGENT_ID when the
+ref is omitted — to its registered identity: the agt_ id, agent:<handle>
+address, aliases, runtimes and member channels, plus the detected session
+CLI on the self view; an unresolvable ref reports unknown, a malformed one
+invalid, an unreadable registry unavailable and a missing PHM_AGENT_ID
+unset — never a guessed identity.
 No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
 
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
@@ -577,6 +583,25 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           model: one('--model'), aliases, displayName }, env, options)
         : registerAgentIdentity({ handle, aliases, displayName }, options);
       return finish(result, 'identity' in result ? `${result.status}: ${result.identity.handle} ${result.identity.id}` : '');
+    }
+    if (verb === 'id' && sub === 'show') {
+      noExtra(3);
+      const result = busAgentView(arg, env, options);
+      if (result.status !== 'ok') return finish(result, '');
+      const runtimes = result.identity.runtimes
+        .map(r => `${r.cli}/${r.provider}${r.model ? `/${r.model}` : ''}`).join(',') || '-';
+      // displayName is stored text: control characters flatten before it reaches a line.
+      // eslint-disable-next-line no-control-regex
+      const display = result.identity.displayName.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').trim();
+      out(json ? JSON.stringify(result) : [
+        `${result.identity.handle} ${result.identity.id} ${result.address}` +
+          (result.self ? ` cli=${result.cli ?? '-'}` : ''),
+        `  display=${display === '' ? '-' : display} created=${new Date(result.identity.createdAt).toISOString()}`,
+        `  runtimes=${runtimes}`,
+        ...(result.identity.aliases.length ? [`  aliases=${result.identity.aliases.join(',')}`] : []),
+        `  channels=${result.channels.join(',') || '-'}`,
+      ].join('\n'));
+      return 0;
     }
     if (verb === 'dm') {
       noExtra(1);

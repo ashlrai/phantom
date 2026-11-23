@@ -419,10 +419,10 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{schemaVersion, providers[], wakeKinds[], bodyKinds[], workStatuses[], claimKeyForms[], claimLeaseMs:{min,max}, claimsGrantExecutionAuthority:false}',
   },
   {
-    usage: 'ashlr agents bus id register|list [<handle>] [--cli <cli>] [--model <m>] [--alias <label>] [--root <abs>] [--json]',
-    description: 'Stable agent identity registry beside the local bus store: one agt_ id per handle across providers and models. Identities are routing names, never authentication.',
+    usage: 'ashlr agents bus id register|list|show [<handle|ref>] [--cli <cli>] [--model <m>] [--alias <label>] [--root <abs>] [--json]',
+    description: 'Stable agent identity registry beside the local bus store: one agt_ id per handle across providers and models. id show resolves one ref — or PHM_AGENT_ID — to its identity card, channels and agent: address. Identities are routing names, never authentication.',
     safety: 'append',
-    jsonShape: '{status:created|updated|unchanged, identity:{id, handle, aliases[], runtimes[]}} | {status:ok, identities[], channels[]}',
+    jsonShape: '{status:created|updated|unchanged, identity:{id, handle, aliases[], runtimes[]}} | {status:ok, identities[], channels[]} | {status:ok, ref, self, identity, channels[], address, cli?} | {status:unknown|invalid|unavailable|unset, reason}',
   },
   {
     usage: 'ashlr agents bus dm|handoff|channel <create|join|leave|post> ... [--priority P0..P3] [--wake|--no-wake] [--root <abs>] [--json]',
@@ -1253,7 +1253,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'openai-agents sessions|inspect|turns [session-id] [--json]', desc: 'Read bounded managed OpenAI Agents API metadata. API access is separate from subscriptions; no execution qualification or mutations.', topic: 'autonomy' },
   { cmd: 'agents bus channels list|test <id> [--json]', desc: 'List registered channel adapters and probe the local bus or handoff store.', topic: 'autonomy' },
   { cmd: 'agents bus contract [--json]', desc: 'Print the Agent Bus v2 contract: schema version, providers, body kinds, work statuses, claim key forms. Read-only.', topic: 'autonomy' },
-  { cmd: 'agents bus id register|list [<handle>] [--json]', desc: 'Stable agent identity registry: one agt_ id per handle across providers and models.', topic: 'autonomy' },
+  { cmd: 'agents bus id register|list|show [<handle|ref>] [--json]', desc: 'Stable agent identity registry: one agt_ id per handle across providers and models; id show resolves one ref or PHM_AGENT_ID to its identity card.', topic: 'autonomy' },
   { cmd: 'agents bus dm|channel|handoff ... [--json]', desc: 'Unified agent bus: DMs, member-only channels and handoffs on the one local bus store, with priority wake.', topic: 'autonomy' },
   { cmd: 'agents bus inbox|wakes|show|adapters [<agent|id>] [--json]', desc: 'Read an identity inbox or wake hints, one retained envelope by id, or list the claude/codex/devin/cursor/grok session adapters. Read-only.', topic: 'autonomy' },
   { cmd: 'agents roster [--json]', desc: 'Unified live session roster. One probe per source, about 5s each, unknown on timeout or an unverified command. Read-only.', topic: 'autonomy' },

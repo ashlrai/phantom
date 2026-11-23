@@ -3610,6 +3610,14 @@ legacy mail.
 
 `src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
 `detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,
+`busAgentView(ref?, env, options?)` (the `agents bus id show [<ref>]` read — the
+registered identity one ref resolves to plus its `agent:<handle>` address and
+member-channel names, or the PHM_AGENT_ID self view that also reports the
+detected session CLI; statuses `ok` with `self`/`ref`/`identity`/`channels`/
+`address` (`cli` only on self), `unknown` for a well-formed unregistered ref,
+`invalid` for a non-label ref, `unavailable` for an unreadable registry and
+`unset` when the self path has no PHM_AGENT_ID — resolution is `resolveAgent`'s
+exact-label rule, never case-folded, and the read is read-only),
 `frameBusInbox(cli, messages)` renders each body through `busBodySummary`,
 falling back to `busBodyFallbackSummary` for unrecognized bodies; items
 carrying `held` show it inside the line's bracket, and items carrying `job`
