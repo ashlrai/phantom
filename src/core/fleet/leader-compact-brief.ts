@@ -21,6 +21,7 @@ import { openPrCount } from './open-prs.js';
 import { mergeLatencyLine } from './git-merge-latency.js';
 import { activeFamilyStops, type BriefFamily } from './family-auto-stop.js';
 import { whyIdle } from './why-idle.js';
+import { fleetGhosts } from './ghosts.js';
 
 export const LEADER_COMPACT_FILE = 'queue/leader-brief.json';
 const clean = (s: string) => scrubSecrets(s).replace(/\s+/g, ' ').slice(0, 80);
@@ -125,6 +126,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
   }
   const mergedPrs = [...merges.values()].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 5);
   const readyRows = ready === null ? null : parseReadyRows(ready);
+  const ghosts = await fleetGhosts({ runsDir, now: () => now });
   const lanes = (snapshot?.snapshot.lanes ?? []).map(l => {
     const finished = [...new Map(rows.filter(r => r.lane === l.lane && ledgerEventName(r.row) === 'finish').map(r => [`${r.id}:${r.at}`, r])).values()].slice(-20);
     const slot = objectRow(slots[l.lane]), pause = slot.pause_new_until;
@@ -132,7 +134,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     const held = slot.held === true || (pause_new_until !== null && pause_new_until > now / 1000) ? true
       : slot.held === false || slot.held === undefined && Object.keys(slot).length ? false : l.held;
     const queuedReady = readyRows?.filter(r => r.lane === l.lane && !r.id.startsWith('PARKED-') && r.id !== 'id').length ?? null;
-    return { lane: clean(l.lane), running: tick.running[l.lane] ?? l.running, queued: queuedReady, queuedReady,
+    return { lane: clean(l.lane), ghosts: ghosts.known ? ghosts.jobs.filter(j => j.lane === l.lane && j.state === 'ghost').length : null, running: tick.running[l.lane] ?? l.running, queued: queuedReady, queuedReady,
       target: l.target, held, pause_new_until, emptyRate: finished.length ? finished.filter(r => r.row.empty === true).length / finished.length : null };
   });
   const hungry = lanes.filter(l => l.held === false && l.running !== null && l.target !== null && l.queuedReady !== null
@@ -200,7 +202,7 @@ export async function writeCompactBrief(runsDir: string, now = Date.now(), file 
 export function compactBriefLines(b: CompactLeaderBrief): string[] {
   const lines = [b.headline, ...(b.hostLoadWarning ? [b.hostLoadWarning] : []), `Leader: ${b.state} (${b.at}); lanes: ${b.lanes.length}; pools: ${b.pools.length}`,
     ...b.whyIdle,
-    ...b.lanes.slice(0, 3 - b.whyIdle.length).map(l => `${l.lane}: ${l.running ?? '?'}/${l.target ?? '?'}, ${l.queued ?? '?'} queued, held ${l.held ?? '?'}, empty ${l.emptyRate === null ? '?' : Math.round(l.emptyRate * 100) + '%'}`),
+    ...b.lanes.slice(0, 3 - b.whyIdle.length).map(l => `${l.lane}: ${l.running ?? '?'}/${l.target ?? '?'}, ${l.ghosts ?? '?'} ghosts, ${l.queued ?? '?'} queued, held ${l.held ?? '?'}, empty ${l.emptyRate === null ? '?' : Math.round(l.emptyRate * 100) + '%'}`),
     ...b.pools.slice(0, 2).map(p => `${p.pool}: ${p.usedPct ?? '?'}%, reset ${p.hoursToReset ?? '?'}h, burn ${p.burnPerHour ?? '?'}/h, safe ${p.safeBurn ?? '?'}/h, ${p.verdict}`),
     ...b.families.slice(0, 2).map(f => `${f.family}: ${f.launches} launches, ${f.prs} PRs, ${f.merges} merges, ${f.empty} empty (2h)`),
     ...(b.emptyTokenFamilies === null ? ['EMPTY tokens (24h): unknown'] : b.emptyTokenFamilies.slice(0, 3).map(f => `${f.family}: ${f.tokens === null ? 'unknown' : f.tokens} EMPTY tokens (24h), ${f.unknownJobs} jobs with unknown usage`)),
