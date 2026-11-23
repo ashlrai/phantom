@@ -2643,10 +2643,13 @@ read-only reader over the local inbox; `GET /api/verse/agent-bus/work-feed`
 200 with the projection's own status, `unavailable`/`retryable`/`invalid`
 answer 503. Its query is the feed CLIs' filter set: `claims=true` adds the
 claims hold join, `open=true`/`claimable=true` imply it like the CLI flags,
-and `status`, `job`, `repo`, `provider`, `tier`, `to`, `owner`, `since` and
-`contains` narrow the answer through the same `projectBusWorkFeedView` the
+and `status`, `job`, `repo`, `provider`, `tier`, `to`, `owner`, `since`,
+`contains` and `channel` narrow the answer through the same
+`projectBusWorkFeedView` the
 CLIs use — jobs answer newest-first, `to`/`owner` resolve through the
-server-side identity registry with exact-label fallback, and `repo`,
+server-side identity registry with exact-label fallback, `channel` is the
+strict channel-name grammar prefix-matching `group:<channel>:` on the
+announcement address, and `repo`,
 `since` and `contains` share the CLI normalization. `limit` (1–200,
 `BUS_WORK_FEED_LIMIT_MAX`) pages the filtered view through the shared
 `sliceBusWorkFeedView`, reporting `matched`/`omitted`; absent, the whole
@@ -2703,7 +2706,7 @@ hold coverage rule and reports incomplete coverage as degraded.
 exported read-only overlap predicate; acquisition and observation now share one
 structural overlap rule. `projectBusWorkFeedView(result, filters?)` applies the
 client-side feed filters (`{status?, jobId?, repo?, provider?, tier?, claimable?, open?,
-since?, toMatch?, ownerMatch?, contains?}`),
+since?, toMatch?, ownerMatch?, contains?, channel?}`),
 newest-first order and per-job hold regrouping; `repo` is the lowercase
 `owner/name` key `busWorkFeedRepoKey(repo)` normalizes a `--repo` argument to
 (undefined for a non-slug, so callers reject it as usage) and matches a job's
@@ -2734,7 +2737,11 @@ newest status detail and the declared dispatch scope/acceptance, each
 scrubbed, single-lined and clipped at the same bounds `formatBusWorkFeedJob`
 renders — so ids, claim keys, statuses and routing labels stay structured
 fields with their own filters, never search text, and a secret-shaped value
-is scrubbed before the match. `sliceBusWorkFeedView(result, limit)` pages an
+is scrubbed before the match. `channel` keeps only jobs whose announcement
+`to` carries `group:<channel>:` — the room's whole traffic under every
+topic, the same raw address prefix `agents bus inbox --channel`, `channel
+read` and `phm messages --channel` match; the value is the strict
+channel-name grammar and matching needs no registry. `sliceBusWorkFeedView(result, limit)` pages an
 ok view newest-first to `limit` jobs (1–`BUS_WORK_FEED_LIMIT_MAX`, 200),
 reporting `matched` as the true filtered total before the slice and
 `omitted` as the rest while claims holds regroup under the shown jobs only;
@@ -2751,7 +2758,7 @@ footer adds `receipt=<id>` when the projection blamed a retained envelope,
 and a paged read's footer adds `matched=N omitted=M` —
 both feed CLIs use them, and both accept `--to <label>`, `--owner
 <agent>`, `--job <id>`, `--repo <owner/name>`, `--provider <p>`,
-`--claimable`, `--since <15m|2h|1d|ISO>`, `--contains <text>` and
+`--channel <name>`, `--claimable`, `--since <15m|2h|1d|ISO>`, `--contains <text>` and
 `--limit <1-200>` beside
 `--status`; `--claimable`
 implies the claims join, `--since` parses through the shared `parseSince`
@@ -2761,10 +2768,10 @@ the whole filtered view answers), and `--contains` takes a non-empty needle of a
 overlong values as usage errors.
 `phm fleet work-feed [--claims]
 [--to <label>] [--owner <agent>] [--job <id>] [--repo <owner/name>]
-[--provider <p>] [--claimable] [--since <15m|2h|1d|ISO>] [--limit <1-200>]` and
+[--provider <p>] [--channel <name>] [--claimable] [--since <15m|2h|1d|ISO>] [--limit <1-200>]` and
 `phm agents bus work feed [--status] [--claims] [--claimable] [--to <label>]
 [--owner <agent>] [--job <id>] [--repo <owner/name>] [--provider <p>]
-[--since <15m|2h|1d|ISO>] [--limit <1-200>]` print the same
+[--channel <name>] [--since <15m|2h|1d|ISO>] [--limit <1-200>]` print the same
 projection — hold lines plus a `claims=` footer — and non-ok reads print
 `jobs=unknown` rather than a fabricated count.
 

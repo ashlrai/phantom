@@ -396,6 +396,36 @@ describe('work-feed view filters', () => {
     expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['title']);
   });
 
+  it('keeps jobs announced to group:<channel>:* under every topic', () => {
+    const result = okResult([
+      viewJob({ id: 'room-a', to: 'group:release:general', updatedAt: 400 }),
+      viewJob({ id: 'room-a-topic', to: 'group:release:deploy', updatedAt: 300 }),
+      viewJob({ id: 'room-b', to: 'group:ops:deploy', updatedAt: 200 }),
+      viewJob({ id: 'direct', to: 'agent:nova', updatedAt: 100 }),
+      viewJob({ id: 'leaders', to: 'leaders', updatedAt: 50 }),
+    ]);
+    // The room's whole traffic under every topic — the same group:<name>:
+    // prefix agents bus inbox --channel, channel read and phm messages
+    // --channel match on the raw routing label.
+    expect(ids(projectBusWorkFeedView(result, { channel: 'release' }))).toEqual(['room-a', 'room-a-topic']);
+    expect(ids(projectBusWorkFeedView(result, { channel: 'ops' }))).toEqual(['room-b']);
+    expect(ids(projectBusWorkFeedView(result, { channel: 'ghost' }))).toEqual([]);
+    // The prefix needs the topic separator: a lookalike label that merely
+    // starts with the room name never matches, and case stays exact.
+    expect(ids(projectBusWorkFeedView(result, { channel: 'release2' }))).toEqual([]);
+    expect(ids(projectBusWorkFeedView(okResult([viewJob({ id: 'x', to: 'group:Release:general' })]), { channel: 'release' }))).toEqual([]);
+    // The filter composes with the others and holds still regroup under shown jobs.
+    const claims: BusWorkFeedClaims = { source: 'available', truncated: false, holds: [
+      { jobId: 'room-a', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:x' },
+      { jobId: 'leaders', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:y' },
+    ] };
+    const view = projectBusWorkFeedView(okResult(result.status === 'ok' ? result.jobs : [], claims), { channel: 'release' });
+    expect(ids(view)).toEqual(['room-a', 'room-a-topic']);
+    expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['room-a']);
+  });
+
   it('matches --to under the pending-work addressed rule: identity labels plus member channels', () => {
     const root = mkdtempSync(join(tmpdir(), 'bus-feed-to-'));
     try {

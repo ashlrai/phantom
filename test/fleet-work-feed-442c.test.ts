@@ -635,6 +635,54 @@ describe('work-feed --to announcement-address filter', () => {
   });
 });
 
+describe('work-feed --channel room filter', () => {
+  it('keeps only jobs announced to group:<channel>:* under every topic', async () => {
+    append(post, 1, 'fake-agent', 'group:release:general');
+    now += 10;
+    append({ ...post, jobId: 'fake-room-topic' }, 2, 'fake-agent', 'group:release:deploy');
+    now += 10;
+    append({ ...post, jobId: 'fake-other-room' }, 3, 'fake-agent', 'group:ops:deploy');
+    now += 10;
+    append({ ...post, jobId: 'fake-direct' }, 4, 'fake-agent', 'agent:worker-bot');
+    now += 10;
+    append({ ...post, jobId: 'fake-sink' }, 5, 'fake-agent', 'leaders');
+    const result = readBusWorkFeed({ root });
+    expect(result).toMatchObject({ status: 'ok', receipts: 5 });
+    const log = output();
+    // The room's whole traffic under every topic — the same group:<name>:
+    // prefix agents bus inbox --channel and channel read match.
+    expect(await cmdFleetWorkFeed(['--root', root, '--channel', 'release', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({
+      status: 'ok', receipts: 5, jobs: [{ id: 'fake-room-topic' }, { id: 'fake-job' }] });
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--channel', 'ops'])).toBe(0);
+    expect(log.mock.calls.map(call => String(call[0])).filter(line => line.startsWith('fake-')))
+      .toEqual([expect.stringContaining('fake-other-room')]);
+    log.mockClear();
+    // A room nothing was announced to is an honest empty view, not an error.
+    expect(await cmdFleetWorkFeed(['--root', root, '--channel', 'ghost'])).toBe(0);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0 receipts=5 feed=ok');
+    // The prefix needs the topic separator: lookalike labels never match.
+    now += 10;
+    append({ ...post, jobId: 'fake-lookalike' }, 6, 'fake-agent', 'group:release2:x');
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--channel', 'release', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0])).jobs.map((job: { id: string }) => job.id))
+      .toEqual(['fake-room-topic', 'fake-job']);
+  });
+
+  it('rejects channel names outside the bus channel grammar', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const args of [['--root', root, '--channel', 'Has Space'], ['--root', root, '--channel', 'UPPER'],
+      ['--root', root, '--channel', ''], ['--root', root, '--channel', 'x'.repeat(33)],
+      ['--root', root, '--channel', 'a:b'], ['--root', root, '--channel', 'release', '--channel', 'ops'],
+      ['--root', root, '--channel']]) {
+      expect(await cmdFleetWorkFeed(args)).toBe(2);
+    }
+    expect(error).toHaveBeenCalledTimes(7);
+  });
+});
+
 describe('work-feed --job and --owner filters', () => {
   it('keeps one job id and jobs announced by an agent label in text and JSON', async () => {
     append(post, 1, 'fake-agent');

@@ -24,10 +24,10 @@ export const FLEET_WORK_FEED_LIMIT_DEFAULT = 50;
 
 const FEED_KEYS = new Set([
   'claims', 'open', 'claimable',
-  'status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'contains', 'limit',
+  'status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'contains', 'channel', 'limit',
 ]);
 const FLAG_KEYS = ['claims', 'open', 'claimable'] as const;
-const STRING_KEYS = ['status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'contains'] as const;
+const STRING_KEYS = ['status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'contains', 'channel'] as const;
 
 export interface FleetWorkFeedArgs {
   /** Newest-first job cap applied after filtering; `matched` keeps the true total. */
