@@ -341,10 +341,24 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   judged samples in at least six distinct hour buckets spanning two UTC
   days inside the 7-day window; partial rows never count as blocked or
   clear, a missing or unreadable ledger emits nothing, and unknown
-  fields stay unknown rather than reading as zero.
+  fields stay unknown rather than reading as zero —
+  and the fleet-controller ledger's recurring control evidence, the
+  per-tick `fleet-controller.ledger.v1` rows the dispatcher's fleet
+  controller appends to `metrics/fleet-controller.jsonl` under the fleet
+  runs directory (and its single `.1` rotation; otherwise only visible
+  through `phm fleet admission --details`, `phm amplify` and
+  `phm fleet status` — reports someone had to run and read). A
+  fail-closed signature, degraded reading, shed driver, ambiguous lane,
+  shed umbrella, unapplied would-shed plan, blind merge objective or
+  mostly-unmeasured quality receipt becomes an item while its recorded
+  condition holds on at least half of a tick-hour's rows in enough
+  distinct hour buckets across two UTC days inside the 7-day window —
+  umbrella cells at six hours, per-key cells at four — and a missing or
+  unreadable ledger emits nothing. Truncated ledger tails are stated in
+  the prompt as a lower bound, never hidden.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
-  cross-review, empty-tag, post-merge, ci-rerun, lost-launch and
-  memory-pressure items carry
+  cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
+  memory-pressure and fleet-controller items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
@@ -387,7 +401,13 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   retune-the-unmeasured-guard-constants framing for withheld raises —
   with the same owner-side no-change escape — and emit only for the
   fleet's own repository since the evidence describes this install's
-  host and fleet machinery. They
+  host and fleet machinery. Fleet-controller items name the controller
+  ledger, `phm fleet admission --details` and the pinned
+  contrib/mac machinery boundary, keep the find-why-the-controller-keeps-
+  doing-this framing per cell — dead readings, mis-tuned or mis-firing
+  shed bands, broken hold attribution, a blind merge feed, an
+  unmeasured quality cohort — and emit only for the fleet's own
+  repository since the ledger describes this install's dispatcher. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never

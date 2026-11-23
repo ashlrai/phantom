@@ -311,6 +311,7 @@
 /test/bus-mirror-dispatch.test.ts @masonwyatt23
 /test/bus-transport-router.test.ts @masonwyatt23
 /test/bus-wake-queue-custody.test.ts @masonwyatt23
+/test/caps-dispatch-schema-original-6225-844s.test.ts @masonwyatt23
 /test/channel-mirror-deadline-soln1.test.ts @masonwyatt23
 /test/channel-mirror-recovery-solu1.test.ts @masonwyatt23
 /test/ci-baseline.test.ts @masonwyatt23
@@ -596,6 +597,7 @@
 /test/improve-boundary.test.ts @masonwyatt23
 /test/improve-ci-rerun-backlog.test.ts @masonwyatt23
 /test/improve-cli-boundary.test.ts @masonwyatt23
+/test/improve-controller-backlog.test.ts @masonwyatt23
 /test/improve-discover.test.ts @masonwyatt23
 /test/improve-empty-tag-backlog.test.ts @masonwyatt23
 /test/improve-hot-patch.test.ts @masonwyatt23
