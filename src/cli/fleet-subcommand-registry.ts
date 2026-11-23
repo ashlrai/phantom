@@ -156,6 +156,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'filler-yield': () => import('./fleet-filler-yield.js'),
   'gaps': () => import('./fleet-gaps.js'),
   'gate-run': () => import('./fleet-gate-run.js'),
+  'ghosts': () => import('./fleet-ghosts.js'),
   'glance': () => import('./fleet-glance.js'),
   'gmail-archive-plan': () => import('./fleet-gmail-archive-plan.js'),
   'gmail-status': () => import('./fleet-gmail-status.js'),
