@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Five sources, all of which Phantom
+ * evidence instead of a hand-kept list. Six sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -19,7 +19,12 @@
  *     safety, review and execution findings mined from fleet, cloud and
  *     Devin job records (nightlyLearningBacklogItems below), so the mined
  *     lessons reach the backlog instead of sitting advisory-only in
- *     `phm improve nightly`.
+ *     `phm improve nightly`;
+ *   - the fleet outcome metrics' advisory policy suggestions: the measured
+ *     empty-lane prompt-template flags and within-tier model routing hints
+ *     `phm fleet metrics report|suggest|weekly` already computes
+ *     (fleetPolicyBacklogItems below), so the fleet's self-diagnosed policy
+ *     work reaches the backlog instead of only a report someone had to run.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -51,6 +56,7 @@ import {
 import { kindOf } from './outcomes.js';
 import type { Proposal } from './loop.js';
 import { nightlyLearningBacklogItems } from './nightly-backlog.js';
+import { fleetPolicyBacklogItems } from './policy-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -124,6 +130,13 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // become backlog items too — until now they only surfaced in
   // `phm improve nightly`, a report someone had to run and read.
   items.push(...await nightlyLearningBacklogItems({ repo }));
+
+  // Fleet policy suggestions: the outcome metrics' measured empty-lane
+  // flags and within-tier routing hints become backlog items too — until
+  // now they only surfaced in `phm fleet metrics suggest|weekly`, a report
+  // someone had to run and read. Same bounded jobs-ledger read and the
+  // same healthy-only evidence bar as that report.
+  items.push(...await fleetPolicyBacklogItems({ repo }));
   return { items, errors };
 }
 

@@ -230,13 +230,20 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   outcome learning — recurring breakage, revert, dirty, fixup and low-merge
   patterns the jobs ledger and dispatch log already prove become items
   whose ids embed the stable `improve-<hash>` job id, so refreshes add only new
-  patterns — and the nightly local retro's proposals, the recurring
+  patterns — the nightly local retro's proposals, the recurring
   verification, scope, safety, review and execution findings it mines from
   fleet, cloud and Devin job records (`~/.ashlr/learn/retro-proposals.json`,
-  otherwise only visible through `phm improve nightly`). Fleet and nightly
-  items carry priority 3; fleet items name the fleet repo label in the
-  prompt, nightly items keep the proposal's advisory framing and name the
-  evidence record ids to inspect. They launch only for the repository
+  otherwise only visible through `phm improve nightly`) — and the fleet
+  outcome metrics' advisory policy suggestions, the measured empty-lane
+  prompt-template flags and within-tier model routing hints
+  `phm fleet metrics suggest|weekly` computes from the same jobs ledger
+  (otherwise only visible in that report). Fleet, nightly and policy items
+  carry priority 3; fleet items name the fleet repo label in the prompt,
+  nightly items keep the proposal's advisory framing and name the evidence
+  record ids to inspect, and policy items keep the suggestion's advisory
+  framing and name the jobs-ledger evidence references — they emit only
+  for the fleet's own repository, since the advice describes this repo's
+  lanes, models and tiers. They launch only for the repository
   self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
