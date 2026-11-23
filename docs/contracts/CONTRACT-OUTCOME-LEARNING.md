@@ -162,6 +162,10 @@ whose id does not match a recorded resource simply takes no penalty.
 
 A failure pattern becomes an improvement job when it has happened at least
 three times and, for a low merge rate, good merges are the minority. The
+`revert` pattern counts the cell's `reverted` attempts — merges the fleet's
+own evidence proved did not hold — so recurring undone merges surface as
+improvement work even when the cell's held-merge rate looks healthy; its
+rate is the share of the cell's attempts that resolved `reverted`. The
 `dirty` and `fixup` patterns count both the dispatch log's exclusive
 outcome states and the merge-queue friction flags above, so recurring
 merge conflicts and required-check failures surface as improvement work

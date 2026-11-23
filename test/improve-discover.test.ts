@@ -134,7 +134,7 @@ describe('scheduled auto-discover', () => {
 });
 
 // Fleet outcome learning → backlog items: the jobs ledger and dispatch log's
-// recurring failure patterns (breakage/dirty/fixup/low-merge) become items.
+// recurring failure patterns (breakage/revert/dirty/fixup/low-merge) become items.
 describe('fleet outcome-learning items', () => {
   const FTS = '2026-11-01T00:00:00Z';
   const fleetFile = (rel: string, text: string): string => {
@@ -265,6 +265,31 @@ describe('fleet outcome-learning items', () => {
     const items = await fleetLearningBacklogItems({ repo: 'ashlrai/phantom', ledgerPath, mergeEventsPath: mergePath });
     // One dirty and one fixup attempt never reach the recurring threshold.
     expect(items).toEqual([]);
+  });
+
+  /** Three reverted merges beside three held ones — a revert-only recurring cell. */
+  const revertedLedger = (): string =>
+    [
+      ...[1, 2, 3].flatMap((n) => [
+        JSON.stringify({ event: 'launch', job: `V-${n}`, repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: FTS }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: `V-${n}`, prUrl: `https://github.com/ashlrai/phantom/pull/${300 + n}`, outcome: 'MERGED', mergedAt: FTS, ts: FTS }),
+        JSON.stringify({ event: 'revert', job: `V-${n}`, lane: 'devin', ts: FTS }),
+      ]),
+      ...[1, 2, 3].flatMap((n) => [
+        JSON.stringify({ event: 'launch', job: `H-${n}`, repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: FTS }),
+        JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: `H-${n}`, prUrl: `https://github.com/ashlrai/phantom/pull/${310 + n}`, outcome: 'MERGED', mergedAt: FTS, ts: FTS }),
+      ]),
+    ].join('\n') + '\n';
+
+  it('turns recurring reverted merges into a revert backlog item', async () => {
+    const ledgerPath = fleetFile('.ashlr-runs/metrics/jobs.jsonl', revertedLedger());
+    const items = await fleetLearningBacklogItems({ repo: 'ashlrai/phantom', ledgerPath });
+    // Half the cell's merges did not hold: the revert pattern fires while
+    // the held-merge rate keeps low-merge quiet.
+    expect(items.map((i) => i.area)).toEqual(['fleet-revert']);
+    expect(items[0]).toMatchObject({ priority: 3, repo: 'ashlrai/phantom' });
+    expect(validBacklogItem(items[0]!)).not.toBeNull();
+    expect(items[0]!.prompt).toContain('did not hold');
   });
 
   it('honours the item limit in fold order (breakage before low-merge)', async () => {

@@ -11,9 +11,9 @@
  *     red-branch poll), one item per failing head commit;
  *   - the loop's own evidence-backed proposals (declined handoffs, steward
  *     retention, team feedback), in their public form;
- *   - the fleet's own outcome learning: recurring breakage, dirty, fixup and
- *     low-merge patterns the jobs ledger and dispatch log already prove
- *     (fleetLearningBacklogItems below), so the fleet's self-diagnosed
+ *   - the fleet's own outcome learning: recurring breakage, revert, dirty,
+ *     fixup and low-merge patterns the jobs ledger and dispatch log already
+ *     prove (fleetLearningBacklogItems below), so the fleet's self-diagnosed
  *     improvement work reaches the backlog that does it;
  *   - the nightly local retro's proposals: recurring verification, scope,
  *     safety, review and execution findings mined from fleet, cloud and
@@ -133,9 +133,9 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
 // The fleet's outcome learning (src/core/routing/outcome-learning.ts) folds
 // the dispatch event log and jobs ledger into per-cell statistics and
 // already computes the self-improvement work those statistics justify:
-// `improvementJobs` — recurring breakage, dirty, fixup and low-merge
-// patterns, each with a concrete task ("add a regression check that fails
-// before merge"). Until now those jobs only surfaced in `phm fleet
+// `improvementJobs` — recurring breakage, revert, dirty, fixup and
+// low-merge patterns, each with a concrete task ("add a regression check
+// that fails before merge"). Until now those jobs only surfaced in `phm fleet
 // outcomes`, a report someone had to run and read; nothing carried them
 // into the self-improvement backlog `discoverBacklog` feeds, so the
 // fleet's self-diagnosed work never reached the queue built to do it.

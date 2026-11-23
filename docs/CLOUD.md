@@ -227,9 +227,9 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
 - **Discovered items** are added by `phm improve discover` and the
   scheduler's refresh: a red default branch, issues someone with triage
   rights labelled `phantom`, evidence-backed proposals, the fleet's own
-  outcome learning — recurring breakage, dirty, fixup and low-merge patterns
-  the jobs ledger and dispatch log already prove become items whose ids
-  embed the stable `improve-<hash>` job id, so refreshes add only new
+  outcome learning — recurring breakage, revert, dirty, fixup and low-merge
+  patterns the jobs ledger and dispatch log already prove become items
+  whose ids embed the stable `improve-<hash>` job id, so refreshes add only new
   patterns — and the nightly local retro's proposals, the recurring
   verification, scope, safety, review and execution findings it mines from
   fleet, cloud and Devin job records (`~/.ashlr/learn/retro-proposals.json`,
