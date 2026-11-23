@@ -106,7 +106,12 @@ narrowed to the seats the queried agent denotes, so an agent sees its own
 pending seat handoffs inside the one per-agent digest. The isolated fleet
 MCP server serves the same whole-roster plan as `fleet_seat_handoffs` —
 no arguments, server-owned roots, `apply` always false — so MCP-connected
-agents read the same handoff posture the CLI prints.
+agents read the same handoff posture the CLI prints. The roster itself —
+per-seat quota evidence, projected lifecycle state, `acceptsNewWork` and
+open claims/jobs — reads as `fleet_bot_seats`, the same seat views
+`phm bots seats --json` computes minus the persist-on-read lifecycle
+write (`persisted: false`), with secret-handle names and adapter
+internals kept out of the result.
 
 Handoff defaults to a dry-run plan. It refuses active seats; only draining seats
 or idle seats with work may hand off (completed handoffs allow harmless replay).
