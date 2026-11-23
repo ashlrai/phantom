@@ -54,7 +54,7 @@ ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--clai
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
-ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
+ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--priority P0..P3]
@@ -198,7 +198,10 @@ join), --open keeps queued/rescheduled candidates with claim keys, including
 unknown holds, and implies --claims; --since keeps only jobs whose last activity — the newest accepted
 status receipt time, or the announcement's while no status has moved the
 job — reaches the cutoff (15m, 2h, 1d, epoch ms or an ISO time, the same
-grammar inbox --since takes), while --job keeps one job id. --contains on
+grammar inbox --since takes), --before keeps only jobs whose last activity
+is strictly before its own cutoff on the same field so the pair reads one
+[since, before) window and older pages stay reachable past the newest-first
+--limit cap, while --job keeps one job id. --contains on
 work feed keeps only jobs whose title, newest status detail or declared
 dispatch scope/acceptance carries the needle as a case-insensitive
 substring over the same scrubbed display-clipped text the job line renders
@@ -340,7 +343,7 @@ No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
 
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
-  '--frame', '--since', '--root', '--key', '--owner', '--origin', '--lease-ms', '--token', '--outcome', '--reason',
+  '--frame', '--since', '--before', '--root', '--key', '--owner', '--origin', '--lease-ms', '--token', '--outcome', '--reason',
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
   '--kind', '--channel', '--contains', '--exclude-from', '--reply-to']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
@@ -526,6 +529,16 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (raw === undefined) return undefined;
       const ms = parseSince(raw);
       if (ms === null) throw new UsageError('--since takes 15m, 2h, 1d, epoch ms or an ISO time.');
+      return ms;
+    };
+    // --before is the exclusive upper bound on the same updatedAt field
+    // --since bounds inclusively below — the feed's [since, before) window
+    // and its older-page bound past the newest-first --limit cap.
+    const beforeArg = (): number | undefined => {
+      const raw = one('--before');
+      if (raw === undefined) return undefined;
+      const ms = parseSince(raw);
+      if (ms === null) throw new UsageError('--before takes 15m, 2h, 1d, epoch ms or an ISO time.');
       return ms;
     };
     const [verb, sub, arg, ...extra] = p.positionals;
@@ -825,7 +838,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         readBusWorkFeed({ root: options.root, claims: p.bools.has('--claims') || claimable || open }),
         { status: status as WorkJob['status'] | undefined, jobId, repo,
           provider: providerRaw as WorkJob['provider'] | undefined, tier,
-          open: open || undefined, claimable: claimable ? true : undefined, since: sinceArg(), contains, channel,
+          open: open || undefined, claimable: claimable ? true : undefined, since: sinceArg(), before: beforeArg(), contains, channel,
           toMatch: to === undefined ? undefined : busWorkFeedPendingToMatcher(to, { root: options.root }),
           ownerMatch: owner === undefined ? undefined : busWorkFeedOwnerMatcher(owner, { root: options.root }) });
       const paged = limit === undefined ? result : sliceBusWorkFeedView(result, limit);

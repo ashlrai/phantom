@@ -5,8 +5,8 @@ import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
 import { PROVIDERS, providerSchema, WORK_STATUSES, WORK_TIERS, type WorkDispatch, type WorkJob } from '../core/agents/bus-v2-schema.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
-const usage = `Usage: ashlr fleet work-feed [--root <absolute>] [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <${PROVIDERS.join('|')}>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>] [--json] [--help]
-Read-only bus v2 work feed; --open keeps open-status candidates with claim keys, including unknown holds, and implies --claims; --claims joins live coordination holds and --claimable keeps only open jobs whose declared claim keys provably include a free one (it implies the claims join). --repo keeps jobs announced for that owner/name repo (case-insensitive, the claim-key rule), --provider keeps jobs announced for that provider, --tier keeps only jobs whose announcement declared that dispatch tier — a job carrying no dispatch spec declares none and never matches — --to keeps jobs whose announcement was addressed to that agent — the literal routing label, every label of one agent identity, and group:<channel>:<topic> addresses of registry channels the identity belongs to, minus that identity's own channel posts — and --owner keeps jobs announced by that agent, each under every label of one agent identity; --channel keeps only jobs announced to group:<channel>:* — the room's traffic under every topic, the same address prefix agents bus inbox --channel and channel read match —; --job keeps one job id; --since keeps only jobs whose last activity — the newest accepted status receipt time, or the announcement's while no status has moved the job — reaches the cutoff (15m, 2h, 1d, epoch ms or an ISO time); --contains keeps only jobs whose title, newest status detail or declared dispatch scope/acceptance carries the needle as a case-insensitive substring, matched over the same scrubbed display-clipped text the job line renders; --limit pages the filtered view newest-first and reports matched/omitted. Unknown feed or hold state stays unknown.`;
+const usage = `Usage: ashlr fleet work-feed [--root <absolute>] [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <${PROVIDERS.join('|')}>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>] [--json] [--help]
+Read-only bus v2 work feed; --open keeps open-status candidates with claim keys, including unknown holds, and implies --claims; --claims joins live coordination holds and --claimable keeps only open jobs whose declared claim keys provably include a free one (it implies the claims join). --repo keeps jobs announced for that owner/name repo (case-insensitive, the claim-key rule), --provider keeps jobs announced for that provider, --tier keeps only jobs whose announcement declared that dispatch tier — a job carrying no dispatch spec declares none and never matches — --to keeps jobs whose announcement was addressed to that agent — the literal routing label, every label of one agent identity, and group:<channel>:<topic> addresses of registry channels the identity belongs to, minus that identity's own channel posts — and --owner keeps jobs announced by that agent, each under every label of one agent identity; --channel keeps only jobs announced to group:<channel>:* — the room's traffic under every topic, the same address prefix agents bus inbox --channel and channel read match —; --job keeps one job id; --since keeps only jobs whose last activity — the newest accepted status receipt time, or the announcement's while no status has moved the job — reaches the cutoff (15m, 2h, 1d, epoch ms or an ISO time), and --before keeps only jobs whose last activity is strictly before its own cutoff on the same field, so the pair reads one [since, before) window and older pages stay reachable past the newest-first --limit cap; --contains keeps only jobs whose title, newest status detail or declared dispatch scope/acceptance carries the needle as a case-insensitive substring, matched over the same scrubbed display-clipped text the job line renders; --limit pages the filtered view newest-first and reports matched/omitted. Unknown feed or hold state stays unknown.`;
 
 const LABEL = /^[\x21-\x7e]{1,128}(?![\s\S])/;
 
@@ -15,7 +15,7 @@ export async function cmdFleetWorkFeed(args: string[]): Promise<number> {
   let root: string | undefined, status: WorkJob['status'] | undefined, to: string | undefined,
     owner: string | undefined, jobId: string | undefined, repo: string | undefined, channel: string | undefined,
     provider: WorkJob['provider'] | undefined, tier: WorkDispatch['tier'] | undefined,
-    sinceRaw: string | undefined, contains: string | undefined, limit: number | undefined,
+    sinceRaw: string | undefined, beforeRaw: string | undefined, contains: string | undefined, limit: number | undefined,
     json = false, claims = false, claimable = false, open = false;
   for (let i = 0; i < args.length; i++) {
     const key = args[i]!;
@@ -23,7 +23,7 @@ export async function cmdFleetWorkFeed(args: string[]): Promise<number> {
     if (key === '--claims' && !claims) { claims = true; continue; }
     if (key === '--open' && !open) { open = true; continue; }
     if (key === '--claimable' && !claimable) { claimable = true; continue; }
-    if (!['--root', '--status', '--to', '--owner', '--job', '--repo', '--provider', '--tier', '--channel', '--since', '--contains', '--limit'].includes(key)) { console.error(usage); return 2; }
+    if (!['--root', '--status', '--to', '--owner', '--job', '--repo', '--provider', '--tier', '--channel', '--since', '--before', '--contains', '--limit'].includes(key)) { console.error(usage); return 2; }
     const value = args[++i];
     if (!value || value.startsWith('--')) { console.error(usage); return 2; }
     if (key === '--limit' && limit === undefined && /^[0-9]+$/.test(value)) {
@@ -34,6 +34,7 @@ export async function cmdFleetWorkFeed(args: string[]): Promise<number> {
     }
     if (key === '--root' && root === undefined) root = value;
     else if (key === '--since' && sinceRaw === undefined) sinceRaw = value;
+    else if (key === '--before' && beforeRaw === undefined) beforeRaw = value;
     else if (key === '--contains' && contains === undefined &&
       value.trim() !== '' && value.length <= BUS_WORK_FEED_CONTAINS_MAX) contains = value;
     else if (key === '--status' && status === undefined && WORK_STATUSES.some(item => item === value)) {
@@ -58,12 +59,16 @@ export async function cmdFleetWorkFeed(args: string[]): Promise<number> {
     } else { console.error(usage); return 2; }
   }
   if (root !== undefined && (!isAbsolute(root) || root.includes('\0'))) { console.error(usage); return 2; }
-  // The same --since grammar agents bus inbox --since and phm messages --since
-  // take — 15m, 2h, 1d, epoch ms or an ISO time — resolved once at read start.
+  // The same --since/--before grammar agents bus inbox --since and phm messages
+  // --since take — 15m, 2h, 1d, epoch ms or an ISO time — resolved once at read
+  // start; --before is the exclusive upper bound on the same updatedAt field.
   const since = sinceRaw === undefined ? undefined : parseSince(sinceRaw);
   if (sinceRaw !== undefined && since === null) { console.error(usage); return 2; }
+  const before = beforeRaw === undefined ? undefined : parseSince(beforeRaw);
+  if (beforeRaw !== undefined && before === null) { console.error(usage); return 2; }
   const result = projectBusWorkFeedView(readBusWorkFeed({ root, claims: claims || claimable || open }), {
     status, jobId, repo, provider, tier, open: open || undefined, claimable: claimable || undefined, since: since ?? undefined,
+    before: before ?? undefined,
     contains, channel,
     toMatch: to === undefined ? undefined : busWorkFeedPendingToMatcher(to, { root }),
     ownerMatch: owner === undefined ? undefined : busWorkFeedOwnerMatcher(owner, { root }),

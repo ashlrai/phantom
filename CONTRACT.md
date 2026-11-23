@@ -2644,7 +2644,7 @@ read-only reader over the local inbox; `GET /api/verse/agent-bus/work-feed`
 answer 503. Its query is the feed CLIs' filter set: `claims=true` adds the
 claims hold join, `open=true`/`claimable=true` imply it like the CLI flags,
 and `status`, `job`, `repo`, `provider`, `tier`, `to`, `owner`, `since`,
-`contains` and `channel` narrow the answer through the same
+`before`, `contains` and `channel` narrow the answer through the same
 `projectBusWorkFeedView` the
 CLIs use — jobs answer newest-first, `to`/`owner` resolve through the
 server-side identity registry with exact-label fallback, `channel` is the
@@ -2706,7 +2706,7 @@ hold coverage rule and reports incomplete coverage as degraded.
 exported read-only overlap predicate; acquisition and observation now share one
 structural overlap rule. `projectBusWorkFeedView(result, filters?)` applies the
 client-side feed filters (`{status?, jobId?, repo?, provider?, tier?, claimable?, open?,
-since?, toMatch?, ownerMatch?, contains?, channel?}`),
+since?, before?, toMatch?, ownerMatch?, contains?, channel?}`),
 newest-first order and per-job hold regrouping; `repo` is the lowercase
 `owner/name` key `busWorkFeedRepoKey(repo)` normalizes a `--repo` argument to
 (undefined for a non-slug, so callers reject it as usage) and matches a job's
@@ -2716,7 +2716,11 @@ tier from `WORK_TIERS` — a job carrying no dispatch spec declares none and
 never matches — `since` is an epoch-ms cutoff that keeps jobs whose `updatedAt` —
 the newest accepted `work.status` receipt time, or the `work.post` receipt
 time while no status has moved the job — is at or after it (the same
-inclusive `>=` rule every `--since` bus read applies), and `claimable:true`
+inclusive `>=` rule every `--since` bus read applies), `before` is the
+exclusive `<` bound on the same `updatedAt` field so `since`/`before`
+read one closed `[since, before)` window and `--before` at the oldest
+shown job's `updatedAt` reaches the older jobs the newest-first
+`--limit` cap hides, and `claimable:true`
 keeps only jobs whose tri-state `claimable` is
 provably true — a read without the claims join carries no field to match, so
 it answers an honest empty view. `toMatch` is the predicate
@@ -2758,11 +2762,11 @@ footer adds `receipt=<id>` when the projection blamed a retained envelope,
 and a paged read's footer adds `matched=N omitted=M` —
 both feed CLIs use them, and both accept `--to <label>`, `--owner
 <agent>`, `--job <id>`, `--repo <owner/name>`, `--provider <p>`,
-`--channel <name>`, `--claimable`, `--since <15m|2h|1d|ISO>`, `--contains <text>` and
+`--channel <name>`, `--claimable`, `--since <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--contains <text>` and
 `--limit <1-200>` beside
 `--status`; `--claimable`
-implies the claims join, `--since` parses through the shared `parseSince`
-grammar, `--limit` runs `sliceBusWorkFeedView` after the filters (absent,
+implies the claims join, `--since` and `--before` parse through the shared `parseSince`
+grammar — `since` inclusive, `before` exclusive on `updatedAt` — `--limit` runs `sliceBusWorkFeedView` after the filters (absent,
 the whole filtered view answers), and `--contains` takes a non-empty needle of at most
 `BUS_WORK_FEED_CONTAINS_MAX` (512) characters, refusing unparseable or
 overlong values as usage errors.

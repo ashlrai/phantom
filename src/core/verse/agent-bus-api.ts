@@ -7,7 +7,8 @@
  * work-feed --json`): ok and refused answers return 200 with the projection's
  * own status; unreadable or invalid storage returns 503. It accepts `claims=true`
  * plus the same filter parameters the feed CLIs take — `status`, `job`, `repo`,
- * `provider`, `tier`, `to`, `owner`, `since`, `contains`, `open` and `claimable`,
+ * `provider`, `tier`, `to`, `owner`, `since`, `before`, `contains`, `channel`,
+ * `open` and `claimable`,
  * each validated by the shared `parseBusWorkFeedQuery` rules and applied through
  * the same `projectBusWorkFeedView` the CLIs use (`open`/`claimable` imply the
  * claims join); `limit` pages the filtered view through the shared
@@ -63,7 +64,7 @@ const WORK_FEED = `${PATH}/work-feed`;
 /** The query keys the work-feed read accepts — the `claims` hold join, the
  * filter set `parseBusWorkFeedQuery` validates into `projectBusWorkFeedView`,
  * and the `limit` page bound `sliceBusWorkFeedView` applies after it. */
-const WORK_FEED_PARAMS = ['claims', 'status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'contains', 'channel', 'open', 'claimable', 'limit'] as const;
+const WORK_FEED_PARAMS = ['claims', 'status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'before', 'contains', 'channel', 'open', 'claimable', 'limit'] as const;
 const NEEDS_MASON_RESOLVE = `${NEEDS_MASON}/resolve`;
 const ASKS = `${NEEDS_MASON}/asks`;
 const ASKS_ANSWER = `${ASKS}/answer`;

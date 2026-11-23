@@ -898,6 +898,44 @@ describe('phm agents bus (unified)', () => {
     }
   });
 
+  it('filters the work feed by --before on last activity', async () => {
+    const spy = vi.spyOn(Date, 'now');
+    let clock = 1_800_000_000_000;
+    spy.mockImplementation(() => clock);
+    try {
+      expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+      expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-BEFORE-OLD', '--title', 'old',
+        '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom', '--id', 'sb-old'])).json)
+        .toMatchObject({ status: 'posted' });
+      clock += 120_000;
+      expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-BEFORE-NEW', '--title', 'new',
+        '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom', '--id', 'sb-new'])).json)
+        .toMatchObject({ status: 'posted' });
+      const ids = (feed: { json: { jobs: { id: string }[] } }) => feed.json.jobs.map(job => job.id);
+      // A cutoff between the two announcement times keeps only the older job.
+      const between = await run(['work', 'feed', '--before', String(clock - 60_000)]);
+      expect(between.code).toBe(0);
+      expect(ids(between)).toEqual(['RQ-BEFORE-OLD']);
+      // The bound is exclusive: the newer job's own updatedAt drops it out.
+      expect(ids(await run(['work', 'feed', '--before', String(clock)]))).toEqual(['RQ-BEFORE-OLD']);
+      // since/before read one [since, before) window.
+      expect(ids(await run(['work', 'feed', '--since', String(clock - 180_000), '--before', String(clock + 60_000)])))
+        .toEqual(['RQ-BEFORE-NEW', 'RQ-BEFORE-OLD']);
+      expect(ids(await run(['work', 'feed', '--since', String(clock - 60_000), '--before', String(clock + 60_000)])))
+        .toEqual(['RQ-BEFORE-NEW']);
+      // A status moves the older job's last activity past the bound — it drops out.
+      clock += 10_000;
+      expect((await run(['work', 'status', '--from', 'atlas', '--job', 'RQ-BEFORE-OLD', '--status', 'running',
+        '--id', 'sb-old-s'])).json).toMatchObject({ status: 'posted' });
+      expect(ids(await run(['work', 'feed', '--before', String(clock - 5_000)]))).toEqual(['RQ-BEFORE-NEW']);
+      // Unparseable and duplicate cutoffs are usage errors, never silently widened.
+      expect(await run(['work', 'feed', '--before', 'bogus'])).toMatchObject({ code: 2 });
+      expect(await run(['work', 'feed', '--before', '1m', '--before', '2m'])).toMatchObject({ code: 2 });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('filters the work feed by --channel on the announcement room address', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-ROOM', '--title', 'room job',

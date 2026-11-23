@@ -350,6 +350,33 @@ describe('work-feed view filters', () => {
     expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['new']);
   });
 
+  it('keeps jobs whose last activity precedes the --before cutoff and composes with --since', () => {
+    const jobs = [
+      viewJob({ id: 'old', updatedAt: 100 }),
+      viewJob({ id: 'edge', updatedAt: 200 }),
+      viewJob({ id: 'new', status: 'done', updatedAt: 300 }),
+    ];
+    const result = okResult(jobs);
+    // Exclusive like the window's upper bound: updatedAt == cutoff drops out.
+    expect(ids(projectBusWorkFeedView(result, { before: 200 }))).toEqual(['old']);
+    expect(ids(projectBusWorkFeedView(result, { before: 201 }))).toEqual(['edge', 'old']);
+    expect(ids(projectBusWorkFeedView(result, { before: 100 }))).toEqual([]);
+    // since/before read one [since, before) window — the boundary job counts once.
+    expect(ids(projectBusWorkFeedView(result, { since: 200, before: 300 }))).toEqual(['edge']);
+    expect(ids(projectBusWorkFeedView(result, { since: 200, before: 200 }))).toEqual([]);
+    expect(ids(projectBusWorkFeedView(result, { before: 250, status: 'done' }))).toEqual([]);
+    // Holds regroup under the jobs still shown: a hidden job's hold never lists.
+    const claims: BusWorkFeedClaims = { source: 'available', truncated: false, holds: [
+      { jobId: 'old', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:x' },
+      { jobId: 'new', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:y' },
+    ] };
+    const view = projectBusWorkFeedView(okResult(jobs, claims), { before: 200 });
+    expect(ids(view)).toEqual(['old']);
+    expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['old']);
+  });
+
   it('keeps jobs whose descriptive text carries the --contains needle', () => {
     const dispatch = { tier: 'work' as const, scope: 'Migrate the queue drain path', acceptance: 'Drain finishes green' };
     const jobs = [
@@ -517,7 +544,7 @@ describe('work-feed view filters', () => {
 
   it('passes non-ok reads through untouched', () => {
     const refused: BusWorkFeedReadResult = { status: 'refused', reason: 'duplicate-job', receipts: 2, asOf: 'now' };
-    expect(projectBusWorkFeedView(refused, { repo: 'a/b', provider: 'devin', claimable: true, since: 1, contains: 'x' })).toBe(refused);
+    expect(projectBusWorkFeedView(refused, { repo: 'a/b', provider: 'devin', claimable: true, since: 1, before: 2, contains: 'x' })).toBe(refused);
   });
 
   it('pages the filtered view with honest matched/omitted counts and regrouped holds', () => {
