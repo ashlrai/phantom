@@ -32,6 +32,8 @@ export interface MasonThreadOptions {
   owner: OwnerThreadOptions;
   /** Epoch ms; items older than this are left out. */
   sinceMs: number;
+  /** Epoch ms; items at or after this are left out — the exclusive recorded-time ceiling pairing with `sinceMs`'s inclusive floor into the same `[since, before)` window every other comms and bus read applies, so a past slice of the thread is one bounded read instead of a page through everything newer. Items are filtered before the cross-channel merge, so a sighting outside the window never joins an item. */
+  beforeMs?: number;
   now: number;
   /** Seam for tests; default reads the real order trace. */
   trace?: (runsDir: string, now: number) => Promise<OrderTraceV1>;
@@ -65,7 +67,7 @@ export async function readMasonThread(opts: MasonThreadOptions): Promise<MasonTh
   if ('unavailable' in owner) gaps.push('Owner thread could not be read: messages from every channel may be missing.');
   for (const m of owner.messages) {
     const at = Date.parse(m.at);
-    if (!Number.isFinite(at) || at < opts.sinceMs) continue;
+    if (!Number.isFinite(at) || at < opts.sinceMs || (opts.beforeMs !== undefined && at >= opts.beforeMs)) continue;
     const inbound = m.direction === 'inbound';
     drafts.push({
       at, dir: inbound ? 'in' : 'out', store: 'owner', channel: m.channel, text: m.text,
@@ -75,7 +77,7 @@ export async function readMasonThread(opts: MasonThreadOptions): Promise<MasonTh
   }
 
   // Inbox entries: precise times and every channel from one read, jobs from the trace.
-  const entries = readRecentChannelEntries(opts.runsDir, opts.now, Math.max(1, opts.now - opts.sinceMs));
+  const entries = readRecentChannelEntries(opts.runsDir, opts.now, Math.max(1, opts.now - opts.sinceMs), opts.beforeMs);
   const inbox = await readInboxEntries({ runsDir: opts.runsDir, limit: Number.MAX_SAFE_INTEGER });
   if (inbox.sourceState === 'degraded') gaps.push('The shared inbox could not be read: some messages may be missing.');
   let trace: OrderTraceV1 | null = null;
@@ -124,7 +126,8 @@ export async function readMasonThread(opts: MasonThreadOptions): Promise<MasonTh
     const channels = [...d.channels].filter(c => c !== d.channel);
     return { at: new Date(d.at).toISOString(), dir: d.dir, channel: d.channel, text: clip(d.text), state, job_ids: [...d.jobs.keys()].sort(), also_on: channels };
   });
-  return { schema: MASON_THREAD_SCHEMA, as_of: nowIso, since: new Date(opts.sinceMs).toISOString(), items, gaps };
+  return { schema: MASON_THREAD_SCHEMA, as_of: nowIso, since: new Date(opts.sinceMs).toISOString(),
+    ...(opts.beforeMs === undefined ? {} : { before: new Date(opts.beforeMs).toISOString() }), items, gaps };
 }
 
 export { MASON_THREAD_EMPTY, MASON_THREAD_SCHEMA, masonStateWord, masonThreadText, type MasonThread, type MasonThreadItem, type MasonThreadState } from './mason-thread-model.js';

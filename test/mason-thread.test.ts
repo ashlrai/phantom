@@ -1,13 +1,14 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import { cmdMason } from '../src/cli/mason-thread.js';
 import { MASON_THREAD_SCHEMA, masonThreadText, readMasonThread } from '../src/core/comms/mason-thread.js';
 import { acceptOwnerInbound, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
 import type { OrderTraceV1 } from '../src/core/fleet/order-trace.js';
 
 const roots: string[] = [];
-afterEach(() => { roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })); });
+afterEach(() => { vi.restoreAllMocks(); roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })); });
 
 const NOW = Date.parse('2026-11-19T12:00:00Z');
 const noTrace = async (): Promise<OrderTraceV1> => ({ v: 1, generatedAt: '', sources: { inbox: 'healthy', prompts: 'healthy', publishes: 'healthy', queue: 'healthy' }, orders: [] });
@@ -72,4 +73,63 @@ it('says unknown when the stores cannot be read', async () => {
   writeFileSync(join(dir, 'owner-thread.json'), 'not json');
   const thread = await f.read();
   expect(thread.gaps.join(' ')).toContain('Owner thread could not be read');
+});
+
+it('keeps only the [since, before) window across owner and inbox sightings', async () => {
+  const f = fixture();
+  const dir = join(f.runsDir, 'leader'); mkdirSync(dir, { recursive: true });
+  await f.inbound('imessage', 'key-older', 'older request please', NOW - 300_000);
+  await f.inbound('desktop', 'key-boundary', 'boundary request please', NOW - 120_000);
+  await f.inbound('imessage', 'key-newer', 'newer request please', NOW - 60_000);
+  const iso = (ms: number) => new Date(ms).toISOString();
+  writeFileSync(join(dir, 'MASON-INBOX.md'),
+    `${iso(NOW - 200_000)} [src:telegram id:inbox-older] inbox older note\n` +
+    `${iso(NOW - 30_000)} [src:telegram id:inbox-newer] inbox newer note\n`);
+  const beforeMs = NOW - 120_000;
+  const thread = await readMasonThread({ runsDir: f.runsDir, busRoot: join(f.runsDir, 'bus'), owner: f.owner,
+    sinceMs: NOW - 86_400_000, beforeMs, now: NOW, trace: noTrace });
+  expect(thread.before).toBe(iso(beforeMs));
+  expect(thread.items.map(i => i.text)).toEqual(['older request please', 'inbox older note']);
+});
+
+it('drops a sighting stamped exactly at the ceiling and echoes before only when given', async () => {
+  const f = fixture();
+  await f.inbound('imessage', 'key-edge', 'edge request please', NOW - 120_000);
+  await f.inbound('imessage', 'key-inside', 'inside request please', NOW - 120_001);
+  const beforeMs = NOW - 120_000;
+  const bounded = await readMasonThread({ runsDir: f.runsDir, busRoot: join(f.runsDir, 'bus'), owner: f.owner,
+    sinceMs: NOW - 86_400_000, beforeMs, now: NOW, trace: noTrace });
+  expect(bounded.items.map(i => i.text)).toEqual(['inside request please']);
+  const unbounded = await f.read();
+  expect(unbounded.before).toBeUndefined();
+  expect(unbounded.items.map(i => i.text)).toEqual(['inside request please', 'edge request please']);
+});
+
+it('filters outbound replies by the same ceiling and reads an inverted window as honest empty', async () => {
+  const f = fixture();
+  await f.inbound('imessage', 'key-reply-src', 'please answer this', NOW - 300_000);
+  await sendOwnerReply({ text: 'Answering now.', idempotencyKey: 'reply-key-before' }, f.owner);
+  const beforeMs = NOW - 120_000;
+  const bounded = await readMasonThread({ runsDir: f.runsDir, busRoot: join(f.runsDir, 'bus'), owner: f.owner,
+    sinceMs: NOW - 86_400_000, beforeMs, now: NOW, trace: noTrace });
+  expect(bounded.items.map(i => [i.dir, i.text])).toEqual([['in', 'please answer this']]);
+  const inverted = await readMasonThread({ runsDir: f.runsDir, busRoot: join(f.runsDir, 'bus'), owner: f.owner,
+    sinceMs: NOW - 60_000, beforeMs, now: NOW, trace: noTrace });
+  expect(inverted.items).toEqual([]);
+});
+
+it('parses --before on the thread command and refuses a bad value', async () => {
+  const f = fixture();
+  await f.inbound('imessage', 'key-cli-old', 'cli older note', NOW - 300_000);
+  await f.inbound('imessage', 'key-cli-new', 'cli newer note', NOW - 60_000);
+  const deps = { runsDir: f.runsDir, busRoot: join(f.runsDir, 'bus'), owner: f.owner, now: NOW, trace: noTrace };
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const code = await cmdMason(['thread', '--json',
+    '--since', '2026-11-18T12:00:00.000Z', '--before', '2026-11-19T11:58:00.000Z'], deps);
+  expect(code).toBe(0);
+  const thread = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
+  expect(thread.before).toBe('2026-11-19T11:58:00.000Z');
+  expect(thread.items.map((i: { text: string }) => i.text)).toEqual(['cli older note']);
+  expect(await cmdMason(['thread', '--before', 'soon'], deps)).toBe(2);
 });
