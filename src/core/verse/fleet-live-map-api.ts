@@ -7,7 +7,7 @@
  * and callers that arrive while a build is running share it, so the map costs
  * at most one fleet read per 5 s however many panes or agents poll it.
  *
- * GET /api/verse/fleet/control/map-edges[?since=10m] is `phm map edges --json`
+ * GET /api/verse/fleet/control/map-edges[?since=10m&before=1h] is `phm map edges --json`
  * (fleet.map-edges.v1): who messaged whom, for the map's message lines. The
  * default window is throttled the same way; 503 carries the typed "unknown" body.
  *
@@ -74,7 +74,7 @@ export function throttledLiveMap<T = FleetLiveMap>(read: () => Promise<T>, clock
 }
 
 export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = throttledLiveMap(() => readFleetLiveMap()),
-  edges: (since: string) => MapEdges | null = readMapEdges, messages: typeof readAgentsMessages = readAgentsMessages,
+  edges: (since: string, options?: { before?: string }) => MapEdges | null = readMapEdges, messages: typeof readAgentsMessages = readAgentsMessages,
   conversations: typeof readAgentConversations = readAgentConversations, replay: typeof readMapReplay = readMapReplay): ApiModule {
   const defaultEdges = throttledLiveMap(async () => edges(MAP_EDGES_DEFAULT_SINCE));
   return async (ctx, req, res, path, method) => {
@@ -131,9 +131,13 @@ export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = thrott
       return true;
     }
     if (path === MAP_EDGES_PATH) {
-      if ([...params.keys()].some(key => key !== 'since') || params.getAll('since').length > 1) { sendJson(res, 400, { error: 'Use since only, once.' }); return true; }
+      if ([...params.keys()].some(key => key !== 'since' && key !== 'before') || params.getAll('since').length > 1 || params.getAll('before').length > 1) {
+        sendJson(res, 400, { error: 'Use since and before only, once each.' }); return true;
+      }
+      const rawBefore = params.get('before');
+      if (rawBefore !== null && parseSince(rawBefore) === null) { sendJson(res, 400, { error: 'before takes 10m, 2h, 1d, epoch ms or an ISO time.' }); return true; }
       try {
-        const since = params.get('since'), result = since === null ? await defaultEdges() : edges(since);
+        const since = params.get('since'), result = since === null && rawBefore === null ? await defaultEdges() : edges(since ?? MAP_EDGES_DEFAULT_SINCE, { before: rawBefore ?? undefined });
         if (!result) sendJson(res, 400, { error: 'since takes 10m, 2h, 1d, epoch ms or an ISO time.' });
         else sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
       } catch { sendJson(res, 503, { error: 'Map edges unavailable.' }); }
