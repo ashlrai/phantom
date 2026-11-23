@@ -2089,8 +2089,11 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     cand = [f for f in cand if admission[f[0]]["outcome"] != "DONE-NOOP"]
     seen = set(); pc_n = 0; local_ok = None; market_rejects = {}
     claimed_requests = {}
+    # Reservations cover the gap before process/base evidence appears. Use the
+    # same terminal-receipt boundary as the per-job launch guard for copies too.
+    request_owners = alive | ACTIVE_LAUNCHES
     active_claims = {row['job']: row for row in JOBS if isinstance(row, dict)
-                     and row.get('event') == 'claim' and isinstance(row.get('job'), str) and row['job'] in alive}
+                     and row.get('event') == 'claim' and isinstance(row.get('job'), str) and row['job'] in request_owners}
     for owner, row in active_claims.items():
         hashes = row.get('request_hashes', [])
         if isinstance(hashes, list):
