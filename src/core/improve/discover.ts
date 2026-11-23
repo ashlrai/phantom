@@ -253,6 +253,18 @@
  *     readers were the session-thread display surfaces, which render a
  *     standing request as "The dispatcher has not applied it yet." — so
  *     steering verbs that are dead letters never became work;
+ *   - the jobs ledger's recurring usage-capture gaps: the usage_missing
+ *     labels dispatchd's job_usage() writes on every finish row when a
+ *     lane's own usage evidence cannot be flattened — sessions.db
+ *     missing/unreadable, no session for the worktree, incomplete or
+ *     unreported Devin usage, missing claude result usage, a tokens
+ *     line absent from the log — folded per label across each job's
+ *     newest finish row (usageGapBacklogItems below). Until now the
+ *     labels only ever reached `phm fleet router-weights`'s coverage
+ *     tallies and `phm router outcomes`'s per-job fields, reports
+ *     someone had to run and read, so a capture path that kept failing
+ *     starved the router's weight, calibration and cost evidence while
+ *     looking like ordinary absent data;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -310,6 +322,7 @@ import { typedRouteBacklogItems } from './typed-route-backlog.js';
 import { branchGardenerBacklogItems } from './branch-gardener-backlog.js';
 import { rewardBacklogItems } from './reward-backlog.js';
 import { jobControlBacklogItems } from './job-control-backlog.js';
+import { usageGapBacklogItems } from './usage-gap-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -693,6 +706,24 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // enough distinct jobs and UTC days — and only for the fleet's own
   // repository since the ledger is this install's steering record.
   items.push(...await jobControlBacklogItems({ repo }));
+
+  // Jobs-ledger usage capture: the usage_missing labels dispatchd's
+  // job_usage() writes on every finish row — recurring per-label cells
+  // across distinct jobs and UTC days inside the 7-day window — become
+  // backlog items too. Until now the labels only ever reached `phm
+  // fleet router-weights`'s coverage tallies and `phm router outcomes`'s
+  // per-job fields, reports someone had to run and read, so a capture
+  // path that kept failing starved the router's weight, calibration and
+  // cost evidence while looking like ordinary absent data. Same
+  // bounded tail read the router outcome fold uses, the jobs-ledger
+  // dialect's own row validation, each job collapsed to its newest
+  // finish row (a retry that captured usage is evidence the gap
+  // closed), lane/repo attribution joined from the same tail's
+  // jobTimelines fold degrading to 'unknown'/'unattributed', truncated
+  // tails stated as lower bounds, and only the fleet's own repository
+  // inherits the items since the capture paths are this install's
+  // dispatcher and lanes.
+  items.push(...await usageGapBacklogItems({ repo }));
   return { items, errors };
 }
 
