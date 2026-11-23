@@ -9,7 +9,7 @@ import {
 } from '../core/fleet/bus-inbox.js';
 import { BUS_PRIORITIES, validateBusEnvelope, type BusPriority, type BusProtocolKind } from '../core/fleet/bus-envelope.js';
 import { BUS_PROTOCOL_KINDS, isTopicPattern, protocolOf, topicMatches } from '../core/fleet/bus-protocol.js';
-import { agentRefAddressMatcher, readAgentRegistry } from '../core/agents/bus-identity.js';
+import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry } from '../core/agents/bus-identity.js';
 import { busBodyThread } from '../core/agents/bus-v2-schema.js';
 import { busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
@@ -38,6 +38,14 @@ export interface FleetBusInboxFilters {
   topic?: string;
   /** v2 thread label — matches `note`/`context` bodies only. */
   thread?: string;
+  /** Room filter: keeps only envelopes addressed to `group:<channel>:*` —
+   * the same raw `to`-prefix rule `phm comms bus read --channel`,
+   * `fleet bus-follow --channel`, `phm messages --channel`,
+   * `agents bus wakes --channel` and the work feed's `--channel` apply; the
+   * strict channel-name grammar, decided on the `to` label with no registry
+   * dependence — the addressed `agents bus inbox --channel` resolves the
+   * same prefix only across channels the agent belongs to. */
+  channel?: string;
   /** One job id the body must name (the shared `busBodyJobMatch` rule). */
   job?: string;
   /** Epoch-ms cutoff resolved at parse time; keeps `receivedAt >= since`. */
@@ -65,7 +73,7 @@ export interface FleetBusInboxDeps {
 }
 
 const INBOX_KEYS = new Set(['after', 'limit', 'to', 'from',
-  'id', 'inReplyTo', 'excludeFrom', 'priority', 'kind', 'topic', 'thread', 'job', 'since', 'contains']);
+  'id', 'inReplyTo', 'excludeFrom', 'priority', 'kind', 'topic', 'thread', 'job', 'channel', 'since', 'contains']);
 /** The printable-label rule `--thread`, `--job` and the address fields share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
@@ -124,6 +132,11 @@ export function parseFleetBusInboxArgs(args: Record<string, unknown>): FleetBusI
     if (value === undefined) continue;
     if (typeof value !== 'string' || !BUS_LABEL.test(value)) return null;
     filters[key] = value;
+  }
+  const channel = args['channel'];
+  if (channel !== undefined) {
+    if (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) return null;
+    filters.channel = channel;
   }
   const since = args['since'];
   if (since !== undefined) {
@@ -194,6 +207,7 @@ export async function readFleetBusInbox(input: FleetBusInboxArgs, deps: FleetBus
     (filters?.topic === undefined || topicMatches(filters.topic, protocolOf(envelope.body)?.topic ?? '')) &&
     (filters?.thread === undefined || busBodyThread(envelope.body) === filters.thread) &&
     (filters?.job === undefined || busBodyJobMatch(envelope.body, filters.job)) &&
+    (filters?.channel === undefined || envelope.to.startsWith(`group:${filters.channel}:`)) &&
     (filters?.since === undefined || receivedAt >= filters.since) &&
     (filters?.contains === undefined || busReadContainsMatch(envelope.body, filters.contains)));
   return {
