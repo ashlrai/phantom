@@ -175,6 +175,27 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     expect(rows(combined.parsed).map(row => row.envelope.id)).toEqual(['a1', 'a2']);
   });
 
+  it('keeps exact-label matching for a case-variant agent ref', async () => {
+    expect(registerAgentIdentity({ handle: 'worker', aliases: ['w-ops'] }, { root: fleetRoot() }).status).toBe('created');
+    expect(registerAgentIdentity({ handle: 'bot' }, { root: fleetRoot() }).status).toBe('created');
+    expect(post('a1', { to: 'agent:worker', from: 'agent:bot' }).status).toBe('posted');
+    expect(post('a2', { to: 'w-ops', from: 'bot' }).status).toBe('posted');
+    expect(post('a3', { to: 'Worker', from: 'agent:bot' }).status).toBe('posted');
+    const client = await connect();
+    // 'Worker' names no registered label exactly: only the literal 'Worker'
+    // stamp matches — never the identity's other spellings.
+    const recipient = await callInbox(client, { to: 'Worker' });
+    expect(rows(recipient.parsed).map(row => row.envelope.id)).toEqual(['a3']);
+    const sender = await callInbox(client, { from: 'BOT' });
+    expect(rows(sender.parsed)).toEqual([]);
+    // An exact ref still widens across the identity's labels, case-folded
+    // envelope stamps included.
+    const exact = await callInbox(client, { to: 'worker' });
+    expect(rows(exact.parsed).map(row => row.envelope.id)).toEqual(['a1', 'a2', 'a3']);
+    const exactSender = await callInbox(client, { from: 'bot' });
+    expect(rows(exactSender.parsed).map(row => row.envelope.id)).toEqual(['a1', 'a2', 'a3']);
+  });
+
   it('advances nextCursor through empty filtered pages without replay', async () => {
     for (const id of ['a', 'b', 'c']) expect(post(id).status).toBe('posted');
     const client = await connect();

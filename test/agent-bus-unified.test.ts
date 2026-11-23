@@ -183,6 +183,12 @@ describe('channel reads', () => {
     // An unresolvable ref keeps exact-label matching and finds nothing.
     const ghost = readAgentChannel('release', { from: 'ghost' }, options);
     expect(ghost.status === 'ok' && ghost.messages).toEqual([]);
+    // A case-variant of a registered handle resolves to no identity: only a
+    // literal 'Nova' stamp would match, and none exists here.
+    for (const ref of ['Nova', 'LANE-NOVA', 'agent:Nova']) {
+      const variant = readAgentChannel('release', { from: ref }, options);
+      expect(variant.status === 'ok' && variant.messages).toEqual([]);
+    }
 
     // Paging resumes at nextCursor, which covers every scanned row.
     const first = readAgentChannel('release', { limit: 1 }, options);
@@ -427,6 +433,11 @@ describe('sender-filtered inbox reads', () => {
 
     // An unresolvable ref keeps exact-label matching and finds nothing.
     expect(readAgentInbox('nova', { from: 'ghost' }, options)).toMatchObject({ status: 'ok', messages: [] });
+    // A case-variant of a registered handle or alias resolves to no identity:
+    // it keeps exact-label matching like 'ghost', never the identity's labels.
+    for (const ref of ['Relay', 'LANE-RELAY', 'agent:Relay']) {
+      expect(readAgentInbox('nova', { from: ref }, options)).toMatchObject({ status: 'ok', messages: [] });
+    }
     // --from composes with --thread.
     const threaded = readAgentInbox('nova', { from: 'relay', thread: 'rq-7' }, options);
     expect(threaded.status === 'ok' && threaded.messages.map(m => m.envelope.id)).toEqual(['dm-r2']);
@@ -464,6 +475,9 @@ describe('sender-filtered inbox reads', () => {
     // An unresolvable ref keeps exact-label matching: nothing is dropped.
     const ghost = readAgentInbox('nova', { excludeFrom: 'ghost' }, options);
     expect(ghost.status === 'ok' && ghost.messages).toHaveLength(5);
+    // A case-variant exclusion names no identity either: it drops nothing.
+    const variant = readAgentInbox('nova', { excludeFrom: 'Relay' }, options);
+    expect(variant.status === 'ok' && variant.messages).toHaveLength(5);
     // A filter that drops rows still reports a cursor covering the scan.
     const dropped = readAgentInbox('nova', { excludeFrom: 'relay', limit: 1 }, options);
     if (dropped.status !== 'ok') throw new Error(`unexpected ${dropped.status}`);
@@ -2418,6 +2432,12 @@ describe('wake hint sender filter', () => {
     expect(ghost.wakes.map(row => row.id)).toEqual(['w-ghost']);
     expect(readAgentWakes('nova', undefined, options, { from: 'ghost' }))
       .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    // A case-variant of a registered handle or alias resolves to no identity:
+    // exact-label matching only, like 'ghost' — never the identity's labels.
+    for (const from of ['Atlas', 'LANE-ATLAS', 'agent:Atlas']) {
+      expect(readAgentWakes('nova', undefined, options, { from }))
+        .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    }
     // The sender filter composes with the job filter and still applies
     // under label scope — 'ghost-sender' is no registered identity, so its
     // read matches `to` literally while `from` keeps its own rule.
@@ -2486,6 +2506,9 @@ describe('wake hint sender filter', () => {
     if (ghost.status !== 'ok') throw new Error('unreachable');
     expect(ghost.wakes.map(row => row.id).sort()).toEqual(['w-atlas', 'w-lane', 'w-orion']);
     expect(readAgentWakes('nova', undefined, options, { excludeFrom: 'ghost' }))
+      .toMatchObject({ status: 'ok', matched: 4 });
+    // A case-variant exclusion resolves to no identity: it drops nothing.
+    expect(readAgentWakes('nova', undefined, options, { excludeFrom: 'Atlas' }))
       .toMatchObject({ status: 'ok', matched: 4 });
     // A sender both included and excluded matches nothing; the exclusion
     // composes with the job filter and still applies under label scope.

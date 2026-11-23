@@ -9,7 +9,7 @@ import {
 } from '../core/fleet/bus-inbox.js';
 import { BUS_PRIORITIES, validateBusEnvelope, type BusPriority, type BusProtocolKind } from '../core/fleet/bus-envelope.js';
 import { BUS_PROTOCOL_KINDS, isTopicPattern, protocolOf, topicMatches } from '../core/fleet/bus-protocol.js';
-import { agentAddressMatcher, agentIdentityKeys } from '../core/agents/bus-identity.js';
+import { agentRefAddressMatcher, readAgentRegistry } from '../core/agents/bus-identity.js';
 import { busBodyThread } from '../core/agents/bus-v2-schema.js';
 import { busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
@@ -175,11 +175,12 @@ export async function readFleetBusInbox(input: FleetBusInboxArgs, deps: FleetBus
   if (page.status !== 'ok') {
     return { ...base, sourceState: page.status, messages: null, returnedMessages: null, nextCursor: null };
   }
-  const identityOf = input.to === undefined && input.from === undefined && filters?.excludeFrom === undefined
-    ? undefined : agentIdentityKeys();
-  const to = input.to === undefined ? undefined : agentAddressMatcher(identityOf, input.to);
-  const from = input.from === undefined ? undefined : agentAddressMatcher(identityOf, input.from);
-  const excludeFrom = filters?.excludeFrom === undefined ? undefined : agentAddressMatcher(identityOf, filters.excludeFrom);
+  const registryRead = input.to === undefined && input.from === undefined && filters?.excludeFrom === undefined
+    ? undefined : readAgentRegistry();
+  const registry = registryRead?.status === 'ok' ? registryRead.registry : undefined;
+  const to = input.to === undefined ? undefined : agentRefAddressMatcher(input.to, registry);
+  const from = input.from === undefined ? undefined : agentRefAddressMatcher(input.from, registry);
+  const excludeFrom = filters?.excludeFrom === undefined ? undefined : agentRefAddressMatcher(filters.excludeFrom, registry);
   const messages = page.messages.filter(({ envelope, receivedAt }) =>
     (to === undefined || to(envelope.to)) &&
     (from === undefined || from(envelope.from)) &&

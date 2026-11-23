@@ -7,10 +7,10 @@
  */
 import { scrubSecrets } from '../util/scrub.js';
 import { busBodyThread, PROVIDERS } from '../agents/bus-v2-schema.js';
-import { busBodyJobId, busBodySummary, busInboxJobMarker, jobAnnotationFromFeed,
+import { busBodyJobId, busBodySummary, busInboxJobMarker, jobAnnotationFromFeed, labelIdentityOf,
   type BusEnvelopeLookupJob } from '../agents/bus-unified.js';
 import { readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
-import { agentChannelNameSchema, agentIdentityKeys, BUS_CLIS, type AgentIdentityKeyFor } from '../agents/bus-identity.js';
+import { agentChannelNameSchema, readAgentRegistry, resolveAgent, BUS_CLIS, type AgentIdentityKeyFor } from '../agents/bus-identity.js';
 import { BUS_PRIORITIES, type BusPriority } from './bus-envelope.js';
 import { scanBusInbox, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
 
@@ -235,15 +235,21 @@ export function projectAgentMessages(rows: readonly BusInboxReceipt[],
  * replies into the thread and claim operations mapped through a declared
  * claim key count, exactly the rows `conversation` already groups. Every
  * match is a real projected field, never a text guess; a message naming no
- * job never passes.
+ * job never passes. Query refs (`agent`/`with`/`excludeFrom`) resolve their
+ * identity key through `refKeyFor` when the read supplies it — exact
+ * `resolveAgent` semantics, so a case-variant or otherwise unregistered
+ * spelling never inherits an identity's label set — while the projected
+ * `from`/`to` labels keep folding through `identityOf`; a caller passing
+ * only `identityOf` keeps the historical fold on both sides.
  */
 export function filterAgentMessages(messages: readonly AgentMessage[], query: AgentMessagesQuery,
-  identityOf?: AgentIdentityKeyFor): AgentMessage[] {
+  identityOf?: AgentIdentityKeyFor, refKeyFor?: AgentIdentityKeyFor): AgentMessage[] {
   const want = (value: string | undefined) => value ? agentName(value).toLowerCase() : null;
   const agent = want(query.agent), peer = want(query.with), exclude = want(query.excludeFrom);
-  const agentKey = identityOf && query.agent ? identityOf(agentName(query.agent)) : undefined;
-  const peerKey = identityOf && query.with ? identityOf(agentName(query.with)) : undefined;
-  const excludeKey = identityOf && query.excludeFrom ? identityOf(agentName(query.excludeFrom)) : undefined;
+  const keyFor = refKeyFor ?? identityOf;
+  const agentKey = query.agent ? keyFor?.(agentName(query.agent)) : undefined;
+  const peerKey = query.with ? keyFor?.(agentName(query.with)) : undefined;
+  const excludeKey = query.excludeFrom ? keyFor?.(agentName(query.excludeFrom)) : undefined;
   const is = (ref: AgentRef, name: string, key: string | undefined) =>
     ref.name.toLowerCase() === name || ref.lane === name || (key !== undefined && identityOf?.(ref.name) === key);
   const jobThread = query.job === undefined ? null : `${JOB_THREAD_PREFIX}${query.job}`;
@@ -295,8 +301,11 @@ export function readAgentMessages(query: AgentMessagesQuery = {}, options: BusIn
   const rows = scan.rows.filter(row =>
     (query.thread === undefined || busBodyThread(row.envelope.body) === query.thread) &&
     (channelPrefix === undefined || row.envelope.to.startsWith(channelPrefix)));
-  const identityOf = query.agent === undefined && query.with === undefined && query.excludeFrom === undefined ? undefined
-    : agentIdentityKeys({ root: options.root });
+  const registryRead = query.agent === undefined && query.with === undefined && query.excludeFrom === undefined
+    ? undefined : readAgentRegistry({ root: options.root });
+  const registry = registryRead?.status === 'ok' ? registryRead.registry : undefined;
+  const identityOf = registry === undefined ? undefined : labelIdentityOf(registry);
+  const refKeyFor = registry === undefined ? undefined : (ref: string) => resolveAgent(registry, ref)?.id;
   const jobIds = new Set<string>();
   for (const row of rows) {
     const jobId = busBodyJobId(row.envelope.body);
@@ -317,7 +326,7 @@ export function readAgentMessages(query: AgentMessagesQuery = {}, options: BusIn
       return annotation;
     };
   }
-  const matched = filterAgentMessages(projectAgentMessages(rows, jobStateOf), query, identityOf);
+  const matched = filterAgentMessages(projectAgentMessages(rows, jobStateOf), query, identityOf, refKeyFor);
   const limit = query.limit ?? AGENT_MESSAGES_DEFAULT_LIMIT;
   return { schema: 'agent-messages.v1', source: scan.source, messages: matched.slice(0, limit), matched: matched.length, skipped: scan.skipped };
 }

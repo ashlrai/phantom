@@ -571,7 +571,9 @@ groups the same bus read into threads by reply chain and by the declared
 conversation label a body carries, longest-waiting first and then newest
 first. `--agent` matches a participant's routing label and, through
 the agent identity registry, every other label of the same registered
-identity (handle, alias or `agent:` address); with no readable registry the
+identity (handle, alias or `agent:` address) — the ref itself resolves
+exactly, so a case-variant or otherwise unregistered spelling names no
+identity; with no readable registry the
 match stays on the literal label. `--job <id>` keeps the whole threads that
 name that job — the `job:<id>` bucket itself or a member message citing it
 through the same channels `phm messages --job` honors (a `jobId`/`taskId`

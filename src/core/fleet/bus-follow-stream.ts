@@ -4,8 +4,8 @@ import { isAbsolute } from 'node:path';
 import { BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxPage } from './bus-inbox.js';
 import { BUS_PRIORITIES, BUS_PROTOCOL_KINDS, isTopicPattern, protocolOf, topicMatches,
   type BusEnvelope, type BusPriority, type BusProtocolKind } from './bus-envelope.js';
-import { agentAddressMatcher, agentPendingAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
-import { busBodyJobMatch, busReadContains, busReadContainsMatch, labelIdentityOf } from '../agents/bus-unified.js';
+import { agentPendingAddressMatcher, agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
+import { busBodyJobMatch, busReadContains, busReadContainsMatch } from '../agents/bus-unified.js';
 import { busBodyThread } from '../agents/bus-v2-schema.js';
 
 export const BUS_FOLLOW_MAX_DURATION_MS = 3_600_000;
@@ -41,14 +41,14 @@ export interface BusFollowRequest {
    * no job and never matches; checkpoints still advance past filtered rows
    * exactly like `--to`, so a job-scoped stream resumes on the same cursor. */
   job?: string;
-  /** Optional sender filter: the same `agentAddressMatcher` rule
+  /** Optional sender filter: the same `agentRefAddressMatcher` rule
    * `agents bus inbox --from` and `comms bus read --from` apply — a handle,
    * `agent:` address, stable id or alias resolves through the registry to
    * every label of that identity; a sender resolving to no identity and an
    * unreadable registry keep exact-label matching, so unknown identity state
    * never widens the stream. Filtering is not authentication. */
   from?: string;
-  /** Optional sender-exclusion filter: the same `agentAddressMatcher` rule
+  /** Optional sender-exclusion filter: the same `agentRefAddressMatcher` rule
    * `comms bus read|watch --exclude-from` and `fleet_bus_inbox`'s `excludeFrom`
    * apply — a handle, `agent:` address, stable id or alias resolves through
    * the registry to every label of that identity; a sender resolving to no
@@ -195,12 +195,10 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
   const list = deps.list ?? listBusInboxAfter;
   const options = { root: request.root, now: deps.now };
   const registryRead = readAgentRegistry({ root: request.root });
-  const addressedTo = request.to === undefined ? () => true
-    : agentPendingAddressMatcher(request.to, registryRead.status === 'ok' ? registryRead.registry : undefined);
-  const fromMatch = request.from === undefined ? undefined
-    : agentAddressMatcher(registryRead.status === 'ok' ? labelIdentityOf(registryRead.registry) : undefined, request.from);
-  const excludeFromMatch = request.excludeFrom === undefined ? undefined
-    : agentAddressMatcher(registryRead.status === 'ok' ? labelIdentityOf(registryRead.registry) : undefined, request.excludeFrom);
+  const registry = registryRead.status === 'ok' ? registryRead.registry : undefined;
+  const addressedTo = request.to === undefined ? () => true : agentPendingAddressMatcher(request.to, registry);
+  const fromMatch = request.from === undefined ? undefined : agentRefAddressMatcher(request.from, registry);
+  const excludeFromMatch = request.excludeFrom === undefined ? undefined : agentRefAddressMatcher(request.excludeFrom, registry);
   // The request passed validBusFollowRequest, so the needle is normalized text or absent.
   const containsNeedle = busReadContains(request.contains) ?? undefined;
   const emit = async (record: BusFollowRecord): Promise<boolean> => {

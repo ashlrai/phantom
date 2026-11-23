@@ -165,7 +165,12 @@ export function groupConversations(messages: readonly ConversationMessage[], now
  * member message naming it — whole threads, never partial message lists. With
  * `identityOf`, a participant also matches when its label and the query
  * resolve to the same registered identity, so one agent's handle, alias and
- * address never split the filter; an unresolvable side changes nothing.
+ * address never split the filter; an unresolvable side changes nothing. The
+ * query agent resolves its key through `refKeyFor` when the read supplies
+ * it — exact `resolveAgent` semantics, so a case-variant or otherwise
+ * unregistered spelling never inherits an identity's label set — while
+ * participant labels keep folding through `identityOf`; a caller passing
+ * only `identityOf` keeps the historical fold on both sides.
  * `waitingOn` keeps the waiting threads one agent owes a reply on: only a
  * `state:'waiting'` thread whose `waiting.on` the caller's `waitingOnMatch`
  * predicate accepts for its latest sender qualifies — `readAgentConversations`
@@ -182,9 +187,11 @@ export function groupConversations(messages: readonly ConversationMessage[], now
  * "which thread is about X" is one filtered read.
  */
 export function filterConversations(list: readonly Conversation[], query: ConversationQuery,
-  identityOf?: AgentIdentityKeyFor, waitingOnMatch?: (on: string, from: string) => boolean): Conversation[] {
+  identityOf?: AgentIdentityKeyFor, waitingOnMatch?: (on: string, from: string) => boolean,
+  refKeyFor?: AgentIdentityKeyFor): Conversation[] {
   const agent = query.agent?.toLowerCase();
-  const key = agent !== undefined && identityOf ? identityOf(query.agent!) : undefined;
+  const keyFor = refKeyFor ?? identityOf;
+  const key = agent !== undefined ? keyFor?.(query.agent!) : undefined;
   const owed = query.waitingOn?.toLowerCase();
   // --contains normalizes once per read — lowercase, whitespace collapsed,
   // trimmed — the same needle form every other bus read's --contains applies;

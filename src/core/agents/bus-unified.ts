@@ -35,7 +35,7 @@ import { BUS_V2_TEXT_MAX, busBodyThread, contextBodySchema, noteBodySchema, wake
   workStatusBodySchema, type Participant, type WorkJob } from './bus-v2-schema.js';
 import { readBusWorkFeed, runtimeProvider, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import {
-  AGENT_ADDRESS_PREFIX, agentAddressMatcher, agentChannelNameSchema, agentLabels, findAgentChannel, readAgentRegistry,
+  AGENT_ADDRESS_PREFIX, agentChannelNameSchema, agentLabels, agentRefAddressMatcher, findAgentChannel, readAgentRegistry,
   RESERVED_PREFIXES, resolveAgent, type AgentIdentity, type AgentIdentityKeyFor, type AgentRegistry,
   type AgentRegistryOptions,
 } from './bus-identity.js';
@@ -1181,9 +1181,9 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   const target = addressing(read.registry, ref);
   if (!target) return { status: 'unknown-agent', reason: 'Agent is not a registered identity.' };
   const self = `${AGENT_ADDRESS_PREFIX}${target.identity.handle}`;
-  const fromMatch = page.from === undefined ? undefined : agentAddressMatcher(labelIdentityOf(read.registry), page.from);
+  const fromMatch = page.from === undefined ? undefined : agentRefAddressMatcher(page.from, read.registry, labelIdentityOf(read.registry));
   const excludeFromMatch = page.excludeFrom === undefined ? undefined
-    : agentAddressMatcher(labelIdentityOf(read.registry), page.excludeFrom);
+    : agentRefAddressMatcher(page.excludeFrom, read.registry, labelIdentityOf(read.registry));
   const messages: InboxMessage[] = [];
   let matched = 0;
   let cursor = after;
@@ -1489,7 +1489,7 @@ export type WakePage = { status: 'ok'; agent: string;
  * read `unavailable` rather than an empty page, and `matched` then counts
  * the proven matches on the resolved page while `truncated` keeps its
  * queue-tail meaning. `filter.from` keeps only hints whose recorded `from`
- * label matches one agent — the same `agentAddressMatcher` identity-label
+ * label matches one agent — the same `agentRefAddressMatcher` identity-label
  * rule `inbox --from`/`channel read --from` apply over the already-read
  * registry: a handle, `agent:<handle>`, stable id or alias matches every
  * label of that identity, and an unresolvable ref keeps exact-label
@@ -1550,9 +1550,9 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
     return { status: 'unknown-agent', reason: 'Agent is not a registered identity.' };
   }
   const fromMatch = from === undefined ? undefined
-    : agentAddressMatcher(labelIdentityOf(read.registry), from);
+    : agentRefAddressMatcher(from, read.registry, labelIdentityOf(read.registry));
   const excludeFromMatch = excludeFrom === undefined ? undefined
-    : agentAddressMatcher(labelIdentityOf(read.registry), excludeFrom);
+    : agentRefAddressMatcher(excludeFrom, read.registry, labelIdentityOf(read.registry));
   const wakes = readBusWakes({ root: options.runsRoot, sinceAt, match: wake =>
     (fromMatch === undefined || fromMatch(wake.from)) &&
     (excludeFromMatch === undefined || !excludeFromMatch(wake.from)) &&
@@ -1706,7 +1706,7 @@ export interface ChannelReadOptions {
    * Sender-exclusion filter: a handle, `agent:<handle>`, stable id or alias.
    * A ref that resolves through the identity registry drops posts sent under
    * every label of that identity; an unresolvable ref keeps exact-label
-   * matching — the same `agentAddressMatcher` rule `comms bus read|watch
+   * matching — the same `agentRefAddressMatcher` rule `comms bus read|watch
    * --exclude-from`, `fleet bus-follow --exclude-from` and `fleet_bus_inbox`'s
    * `excludeFrom` apply, so a room's noisy member never reaches the
    * transcript while every other sender still does. It composes with `from`
@@ -1842,14 +1842,14 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
     if (typeof page.from !== 'string' || page.from.length === 0 || page.from.length > 128) {
       return { status: 'invalid', reason: 'Invalid sender filter.' };
     }
-    fromMatch = agentAddressMatcher(labelIdentityOf(read.registry), page.from);
+    fromMatch = agentRefAddressMatcher(page.from, read.registry, labelIdentityOf(read.registry));
   }
   let excludeFromMatch: ((value: string) => boolean) | undefined;
   if (page.excludeFrom !== undefined) {
     if (typeof page.excludeFrom !== 'string' || page.excludeFrom.length === 0 || page.excludeFrom.length > 128) {
       return { status: 'invalid', reason: 'Invalid sender-exclusion filter.' };
     }
-    excludeFromMatch = agentAddressMatcher(labelIdentityOf(read.registry), page.excludeFrom);
+    excludeFromMatch = agentRefAddressMatcher(page.excludeFrom, read.registry, labelIdentityOf(read.registry));
   }
   const messages: ChannelReadMessage[] = [];
   let matched = 0;
