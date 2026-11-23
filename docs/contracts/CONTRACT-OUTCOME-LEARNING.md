@@ -158,4 +158,13 @@ section reads the same ledger tail for MERGED verdicts (reconciler terminal
 rows and the merged/outcome dialects, newest first, one row per job with
 job, PR, repo, lane and stamp) ahead of any stamped merge lines still
 present in the events log; without the ledger the section keeps only those
-stamped lines.
+stamped lines. A verdict whose recorded revert evidence proves the merge
+did not hold carries `reverted: true` — the same two sources and era rule
+the outcome folds apply: in-ledger revert evidence (`hasRevertEvidence`)
+stamped at or after the verdict's own stamp, or a standing
+`owner/repo#n` key from `improve/revert-outcomes.jsonl` claimed by exactly
+that job through the verdict row's own PR URL. Revert evidence older than
+the verdict belongs to an earlier merge era and leaves the merge a fresh
+held merge, absent or unmatched keys change nothing, a contested or
+foreign claim never resolves, and a verdict with no job id stays unmarked
+rather than guessed.
