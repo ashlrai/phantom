@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Twenty-two sources, all of which Phantom
+ * evidence instead of a hand-kept list. Twenty-three sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -152,7 +152,16 @@
  *     verification of its claimed state keeps failing becomes work
  *     instead of sitting in `phm fleet recheck-record --last`, the verse
  *     recheck history and the fleet MCP recheck tool, reports someone
- *     had to run.
+ *     had to run;
+ *   - the stuck-job reaper's own audit ledgers: the ghost-close rows the
+ *     stray-stop reaper appends to queue/stuck-jobs.jsonl when a run
+ *     marker outlives its dead process, and the by:'stuck-jobs' kill rows
+ *     it audits to queue/job-stops.jsonl when a job past the stuck bar
+ *     had to be SIGTERMed/SIGKILLed (stuckJobBacklogItems below), so
+ *     recurring reaper interventions — the launch→reap handoff dropping
+ *     finish evidence, or jobs that keep hanging instead of ending —
+ *     become work instead of sitting in two write-only audit files
+ *     `phm jobs stuck` and `phm job show` only ever read live or per-job.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -201,6 +210,7 @@ import { precheckSkipBacklogItems } from './precheck-skip-backlog.js';
 import { recheckBacklogItems } from './recheck-backlog.js';
 import { sourceYieldBacklogItems } from './source-yield-backlog.js';
 import { gatewayShadowBacklogItems } from './gateway-shadow-backlog.js';
+import { stuckJobBacklogItems } from './stuck-job-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -455,6 +465,21 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // recurring bar inside the window and only for the fleet's own
   // repository.
   items.push(...await recheckBacklogItems({ repo }));
+
+  // Stuck-job reaper ledgers: the stray-stop reaper's own audit trail —
+  // ghost-close rows in queue/stuck-jobs.jsonl (a run marker that outlived
+  // its dead process) and by:'stuck-jobs' kill rows in
+  // queue/job-stops.jsonl (a job past the stuck bar SIGTERMed/SIGKILLed)
+  // — become backlog items too. Until now both were write-only audit:
+  // stuck-jobs.jsonl had no reader at all and job-stops.jsonl was read
+  // only per-job by the job window, while `phm jobs stuck` folds only the
+  // live marker set and the lost-launch feed excludes open-marker jobs —
+  // the exact class ghosts belong to. A (kind, lane) cell emits only at
+  // the recurring bar of distinct jobs inside the window, lane/repo
+  // attribution joins metrics/jobs.jsonl as enrichment that degrades to
+  // 'unknown' rather than suppressing the reaper evidence, and only the
+  // fleet's own repository inherits the items.
+  items.push(...await stuckJobBacklogItems({ repo }));
   return { items, errors };
 }
 
