@@ -254,8 +254,19 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   item while its own open condition holds — the primary signal or a
   declared open-on signal counted something in the window — and no
   operator note suppresses it; a note marked `fixed` whose signal is back
-  emits as regressed, while `in-progress` and `wontfix` notes stay out.
-  Fleet, nightly, policy, local-gate, pass^k and friction items carry
+  emits as regressed, while `in-progress` and `wontfix` notes stay out —
+  and the resident daemon's own tick ledger, the per-phase ledgers and
+  whole-tick reasons `daemon.json` retains for the last 100 ticks
+  (otherwise only visible through `phm daemon status`, which prints just
+  the last tick's phases and outcome). A tick phase becomes an item while
+  its degraded, timed-out, abandoned, budget-starved or failing off-tick
+  outcomes recur inside a 7-day window — one settled off-tick run failure
+  observed on many ticks counts once — and a whole-tick reason becomes an
+  item while `state-persistence-failed` or `activation-refused` recurs;
+  policy reasons like `budget-exhausted` never do. A missing or unreadable
+  state file emits nothing.
+  Fleet, nightly, policy, local-gate, pass^k, friction and tick-health
+  items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
@@ -270,7 +281,10 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   since the eval machinery is this repo's. Friction items name the fold's
   sources and keep the find-the-machinery-or-queue-path framing, emitting
   only for the fleet's own repository since the drag is this repo's
-  dispatch, queue and lane machinery. They
+  dispatch, queue and lane machinery. Tick-health items name the state
+  ledger and keep the inspect-the-phase-deadlines framing, emitting only
+  for the fleet's own repository since the daemon is this install's
+  machinery. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
