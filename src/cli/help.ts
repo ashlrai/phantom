@@ -676,10 +676,10 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'MasonDigest {schema:"phantom.mason.digest.v1", as_of, since, window_hours, merged, median_minutes_to_merge, releases_published, lanes_busy, lanes_target, pools:[{pool, used_percent, hours_to_reset}], wasted_launch_rate, asks, ask_kinds, lines, has_news, change_key, post:{state:"posted"|"duplicate"|"rate-limited"|"unavailable"|"refused", reason}|null}; unknown is null',
   },
   {
-    usage: 'phm mason thread [--since <dur>] [--json]',
-    description: 'One thread with Mason across iMessage, Slack, Telegram, email and desktop: his messages and the leader\'s replies in time order, the same request on two channels shown once, each of his messages tagged Received, Assigned, Running, Blocked or Verified with its linked jobs. Default window 1d (15m, 2h, 1d, epoch ms or ISO). A source that cannot be read is named in gaps and a state that cannot be known is UNKNOWN. Read-only: sends nothing. Prints "Nothing yet." when empty. Exit 0 read, 2 usage.',
+    usage: 'phm mason thread [--since <dur>] [--before <dur>] [--json]',
+    description: 'One thread with Mason across iMessage, Slack, Telegram, email and desktop: his messages and the leader\'s replies in time order, the same request on two channels shown once, each of his messages tagged Received, Assigned, Running, Blocked or Verified with its linked jobs. Default window 1d (15m, 2h, 1d, epoch ms or ISO); --before is the exclusive upper bound on the same grammar, so since/before read one [since, before) window and a past slice of the thread is one bounded read. A source that cannot be read is named in gaps and a state that cannot be known is UNKNOWN. Read-only: sends nothing. Prints "Nothing yet." when empty. Exit 0 read, 2 usage.',
     safety: 'read',
-    jsonShape: 'MasonThread {schema:"phantom.mason.thread.v1", as_of, since, items:[{at, dir:"in"|"out", channel, text, state:"RECEIVED"|"ASSIGNED"|"RUNNING"|"BLOCKED"|"VERIFIED"|"UNKNOWN"|null, job_ids, also_on}], gaps}',
+    jsonShape: 'MasonThread {schema:"phantom.mason.thread.v1", as_of, since, before?, items:[{at, dir:"in"|"out", channel, text, state:"RECEIVED"|"ASSIGNED"|"RUNNING"|"BLOCKED"|"VERIFIED"|"UNKNOWN"|null, job_ids, also_on}], gaps}',
   },
   {
     usage: 'phm work state <id> [--json]',
@@ -1297,7 +1297,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'manager [--apply-rejects]',    desc: 'Frontier judge scorecard over pending proposals (shadow mode by default; never merges).', topic: 'autonomy' },
   { cmd: 'best-of-n [--repo --title -n]', desc: 'Generate N candidate diffs (multi-model), critic-select, file the winner as a proposal (M142/M333).', topic: 'autonomy' },
   { cmd: 'context read | write [--json]', desc: 'Read current company context or save a sourced note.', topic: 'run' },
-  { cmd: 'mason thread [--since <dur>] [--json]', desc: 'Mason\'s one thread across every channel: messages and replies in time order, each tagged Received, Assigned, Running, Blocked or Verified with its jobs. Read-only.', topic: 'autonomy' },
+  { cmd: 'mason thread [--since <dur>] [--before <dur>] [--json]', desc: 'Mason\'s one thread across every channel: messages and replies in time order, each tagged Received, Assigned, Running, Blocked or Verified with its jobs. Read-only.', topic: 'autonomy' },
   { cmd: 'mason digest [--since 1h] [--post] [--json]', desc: 'Mason\'s hourly update in plain words (six lines at most): merges, releases, lanes, pools, wasted launches, asks that need him. --post writes it to his own thread only.', topic: 'autonomy' },
   { cmd: 'comms <status|thread|send-owner|cycle|digest>',  desc: 'Operator comms. status --json, thread and send-owner are the one owner thread; replies go only to the configured owner. KILL halts adapters.', topic: 'autonomy' },
   { cmd: 'connectors add|list|remove|show|import|exec|config [--json]', desc: 'Manage credential-free connector profiles, launch connectors with phantom-injected credentials, and print client configs that hold no token.', topic: 'autonomy' },

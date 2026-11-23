@@ -78,15 +78,26 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
     }
     if (path === VERSE_MASON_THREAD_PATH) {
       const now = deps.now?.() ?? Date.now();
+      const params = new URL(req.url ?? path, 'http://localhost').searchParams;
       let sinceMs: number | null = null;
-      try { sinceMs = parseSince(new URL(req.url ?? path, 'http://localhost').searchParams.get('since') ?? '1d', now); } catch { /* 400 below */ }
+      let beforeMs: number | undefined;
+      try {
+        sinceMs = parseSince(params.get('since') ?? '1d', now);
+        const beforeRaw = params.get('before');
+        if (beforeRaw !== null) {
+          const parsed = parseSince(beforeRaw, now);
+          if (parsed === null) { sendJson(res, 400, { error: 'before takes 15m, 2h, 1d, epoch ms or an ISO time.' }); return true; }
+          beforeMs = parsed;
+        }
+      } catch { /* 400 below */ }
       if (sinceMs === null) {
         sendJson(res, 400, { error: 'since takes 15m, 2h, 1d, epoch ms or an ISO time.' });
         return true;
       }
       try {
         const options = runtime(deps);
-        sendJson(res, 200, await readMasonThread({ runsDir: options.runsDir, busRoot: deps.busRoot ?? join(ashlrHome(), 'fleet'), owner: options, sinceMs, now }));
+        sendJson(res, 200, await readMasonThread({ runsDir: options.runsDir, busRoot: deps.busRoot ?? join(ashlrHome(), 'fleet'), owner: options, sinceMs, now,
+          ...(beforeMs === undefined ? {} : { beforeMs }) }));
       } catch {
         sendJson(res, 200, { schema: MASON_THREAD_SCHEMA, unavailable: true });
       }
