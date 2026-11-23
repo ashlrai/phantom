@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Sixteen sources, all of which Phantom
+ * evidence instead of a hand-kept list. Seventeen sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -97,7 +97,14 @@
  *     fleet's memory posture — or guard constants that never match the
  *     measured operating point — becomes work instead of sitting in
  *     `phm fleet vitals`' swapout_rate section, a report someone had
- *     to run.
+ *     to run;
+ *   - the typed-routing observation journal's recurring failures: the
+ *     dispatcher's per-tick `phm route decide` samples journaled to
+ *     metrics/route.explain.jsonl — 'unavailable' service rows that
+ *     outnumber observed picks and degraded reason codes on observed
+ *     decisions (routeExplainBacklogItems below), so a dark or degraded
+ *     typed-routing service becomes work instead of sitting in
+ *     `phm route explain`'s digest, a report someone had to run.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -140,6 +147,7 @@ import { postMergeBacklogItems } from './postmerge-backlog.js';
 import { ciRerunBacklogItems } from './ci-rerun-backlog.js';
 import { lostLaunchBacklogItems } from './lost-launch-backlog.js';
 import { memoryBacklogItems } from './memory-backlog.js';
+import { routeExplainBacklogItems } from './route-explain-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -318,6 +326,21 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the writer's own row validation; an item emits only at the recurring
   // bar inside the window and only for the fleet's own repository.
   items.push(...await memoryBacklogItems({ repo }));
+
+  // Typed-routing observation journal: the dispatcher's per-tick
+  // `phm route decide` samples — recurring 'unavailable' service rows
+  // (the call itself failing: missing CLI, sample-budget timeout,
+  // invalid envelope) and recurring degraded reason codes on observed
+  // picks (schema-invalid/-retry, backend-unavailable, deadline,
+  // deterministic-fallback) — become backlog items too. Until now they
+  // only ever reached `phm route explain`'s typed_decisions digest, a
+  // report someone had to run and read; a dark or degraded typed-routing
+  // service looked identical to a healthy one until someone opened it.
+  // Same bounded journal tail read and the same producer-contract row
+  // validation the digest applies; the service cell emits only while
+  // unavailable outnumbers observed inside the window, a code only at
+  // the recurring bar, and only for the fleet's own repository.
+  items.push(...await routeExplainBacklogItems({ repo }));
   return { items, errors };
 }
 

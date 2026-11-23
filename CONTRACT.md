@@ -1184,10 +1184,17 @@ after reservations and reserve with room for one session, or for an unexpired
 selected Lightning/Flash free preview (`zeroCost: true`); otherwise `metered`.
 Unknown usage stays null. See [queue cost evidence](docs/QUEUE.md#resource-posture-the-lane-is-a-hint).
 
-`router/typed-decisions.ts` exports `foldTypedDecisions(text, path, truncated)`
-and `readTypedDecisions({runsDir?, limit?})`, producing a
+`router/typed-decisions.ts` exports `foldTypedDecisions(text, path, truncated)`,
+`readTypedDecisions({runsDir?, limit?})` and
+`typedDecisionSampleFrom(raw)`, producing a
 `route.typed-decisions.v1` digest of the dispatcher's typed-routing audit
 journal `<runsDir>/metrics/route.explain.jsonl` (`TYPED_DECISIONS_LEDGER_RELATIVE`).
+`typedDecisionSampleFrom` validates one parsed journal value into a
+`TypedDecisionSample` (`ts` epoch seconds, `status` `observed`/`unavailable`,
+the allowlisted `JournalDecision` on observed rows — null on unavailable —
+and the parsed `row` for optional metrics), returning null for anything
+the producer could not have written; the digest and the improvement
+backlog's recurring-failure fold share it so one contract decides validity.
 The read retains the newest `TYPED_DECISIONS_LEDGER_LIMIT` (8 MiB) via
 `readLedgerTail` — symlink and non-file refusals included — and reports
 `state` (`read`/`missing`/`unreadable`/`not-file`), `truncated`, `records`,
