@@ -90,24 +90,32 @@ export function busWorkFeedJobHold(
 
 /**
  * The hold evidence behind one claims join, shared by the feed annotation
- * and the `work mine` digest: the coverage state plus the shown holds grouped
- * by job id. `unknown` means the coordination table could not be read;
- * `truncated` means shown holds are real but later ones are unseen.
+ * and the `work mine` digest: the coverage state, the shown held keys grouped
+ * by job id (`heldByJob`) and the shown hold rows themselves grouped the same
+ * way (`holdsByJob`) so a per-job read can name who holds each blocked key.
+ * `unknown` means the coordination table could not be read; `truncated` means
+ * shown holds are real but later ones are unseen — both maps are then
+ * lower bounds, never the full hold set.
  */
 export function busWorkFeedHoldIndex(claims: BusWorkFeedClaims | undefined): {
   coverage: BusWorkFeedHoldCoverage;
   heldByJob: ReadonlyMap<string, ReadonlySet<string>>;
+  holdsByJob: ReadonlyMap<string, readonly BusWorkFeedHold[]>;
 } {
   const coverage: BusWorkFeedHoldCoverage =
     claims === undefined || claims.source === 'unavailable' ? 'unknown'
     : claims.truncated ? 'truncated' : 'complete';
   const heldByJob = new Map<string, Set<string>>();
+  const holdsByJob = new Map<string, BusWorkFeedHold[]>();
   for (const hold of claims?.holds ?? []) {
     const set = heldByJob.get(hold.jobId) ?? new Set<string>();
     set.add(hold.claimKey);
     heldByJob.set(hold.jobId, set);
+    const rows = holdsByJob.get(hold.jobId) ?? [];
+    rows.push(hold);
+    holdsByJob.set(hold.jobId, rows);
   }
-  return { coverage, heldByJob };
+  return { coverage, heldByJob, holdsByJob };
 }
 
 export type BusWorkFeedReadResult =

@@ -11,7 +11,7 @@ import { busWorkMineAnnouncedAnnotation, busWorkMineJobAnnotation, formatBusWork
 import { busWorkMineSeatsFromPlan, readBusWorkMineSeats, readBusWorkMineWithSeats } from '../src/core/agents/bus-work-mine-seats.js';
 import { planSeatHandoffs, type SeatHandoffsPlan, type SeatOptions } from '../src/core/bots/seats.js';
 import { emptyState } from '../src/core/drive/nodes/state.js';
-import type { BusWorkFeedJob } from '../src/core/agents/bus-work-feed-read.js';
+import type { BusWorkFeedHold, BusWorkFeedJob } from '../src/core/agents/bus-work-feed-read.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { BusBoard } from '../src/core/fleet/bus-board.js';
 import { enqueueBusWake } from '../src/core/fleet/bus-wake-queue.js';
@@ -67,6 +67,9 @@ const job = (over: Partial<BusWorkFeedJob>): BusWorkFeedJob => ({ id: 'J', owner
   provider: 'claude', repo: 'a/b', title: 'T', claimKeys: ['queue:J'], status: 'queued',
   updatedAt: 1, postId: 'm-post', statusId: null, ...over });
 
+const hold = (over: Partial<BusWorkFeedHold>): BusWorkFeedHold => ({ jobId: 'J', claimKey: 'queue:J',
+  owner: 'agent:nova', leaseUntil: 5_000, origin: 'resource', sourceId: 'test:nova-1', ...over });
+
 describe('busWorkMineJobAnnotation', () => {
   it('marks provably free, provably held and unknown coverage honestly', () => {
     const held = new Set(['queue:J', 'repo:a/b']);
@@ -83,6 +86,29 @@ describe('busWorkMineJobAnnotation', () => {
     // Unknown coverage: nothing is provable, so nothing is claimed free or held.
     expect(busWorkMineJobAnnotation(job({}), undefined, 'unknown', true))
       .toMatchObject({ freeKeys: null, heldKeys: null, claimable: null, addressed: true });
+  });
+
+  it('projects the shown holds as holder entries under the same coverage honesty', () => {
+    const holds = [hold({ claimKey: 'queue:J' }),
+      hold({ claimKey: 'repo:a/b', owner: 'agent:atlas', origin: 'message', leaseUntil: 9_000 })];
+    // Complete coverage: the shown rows list verbatim minus store internals —
+    // claim key, owner label, lease expiry and claim class; never the
+    // fencing token or lease source id the feed row also carries.
+    expect(busWorkMineJobAnnotation(job({ claimKeys: ['queue:J', 'repo:a/b'] }),
+      new Set(['queue:J', 'repo:a/b']), 'complete', false, false, holds).holders).toEqual([
+      { claimKey: 'queue:J', owner: 'agent:nova', leaseUntil: 5_000, origin: 'resource' },
+      { claimKey: 'repo:a/b', owner: 'agent:atlas', leaseUntil: 9_000, origin: 'message' }]);
+    // Complete coverage with no shown holds is an honest empty list.
+    expect(busWorkMineJobAnnotation(job({}), undefined, 'complete', false).holders).toEqual([]);
+    // Truncated coverage keeps every shown row as the same lower bound
+    // heldKeys is — the hold list is per job, not per provably-held key.
+    expect(busWorkMineJobAnnotation(job({ claimKeys: ['queue:J', 'repo:a/b'] }),
+      new Set(['queue:J', 'repo:a/b']), 'truncated', false, false, holds).holders).toEqual([
+      { claimKey: 'queue:J', owner: 'agent:nova', leaseUntil: 5_000, origin: 'resource' },
+      { claimKey: 'repo:a/b', owner: 'agent:atlas', leaseUntil: 9_000, origin: 'message' }]);
+    // Unknown coverage is null — the table could not be read, never an empty
+    // list passed off as fact even when rows were handed in.
+    expect(busWorkMineJobAnnotation(job({}), undefined, 'unknown', true, false, holds).holders).toBeNull();
   });
 });
 
@@ -108,6 +134,14 @@ describe('busWorkMineAnnouncedAnnotation', () => {
       .toMatchObject({ held: false, heldKeys: null, freeKeys: null });
     expect(busWorkMineAnnouncedAnnotation(job({ claimKeys: [] }), undefined, 'truncated'))
       .toMatchObject({ held: false, heldKeys: [], freeKeys: null });
+  });
+
+  it('carries the same holder projection the jobs section reports', () => {
+    const holds = [hold({ claimKey: 'queue:J' })];
+    expect(busWorkMineAnnouncedAnnotation(job({}), new Set(['queue:J']), 'complete', holds).holders)
+      .toEqual([{ claimKey: 'queue:J', owner: 'agent:nova', leaseUntil: 5_000, origin: 'resource' }]);
+    expect(busWorkMineAnnouncedAnnotation(job({}), undefined, 'complete').holders).toEqual([]);
+    expect(busWorkMineAnnouncedAnnotation(job({}), undefined, 'unknown', holds).holders).toBeNull();
   });
 });
 
@@ -363,6 +397,72 @@ describe('readBusWorkMine', () => {
     expect(announcedLine('RQ-H-3 blocked')).toContain('held=no');
   });
 
+  it('names the shown hold owners and lease expiries on job and announced lines', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+
+    // Both declared keys are held — by two different labels of nova's identity —
+    // so the digest must name each holder instead of sending the reader to
+    // `claim list --jobs`.
+    await announce(options, 'atlas', 'RQ-HOLD-1', ['queue:RQ-HOLD-1', 'repo:a/b']);
+    const now = options.clock.now;
+    claim(options, 'queue:RQ-HOLD-1', 'nova', 'test:nova-hold-1', now);
+    claim(options, 'repo:a/b', 'agent:nova', 'test:nova-hold-2', now);
+    const leaseUntil = now + 60_000;
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok' || result.jobs.status !== 'ok' || result.announced.status !== 'ok') {
+      throw new Error('unreachable');
+    }
+    const expected = [
+      { claimKey: 'queue:RQ-HOLD-1', owner: 'nova', leaseUntil, origin: 'resource' },
+      { claimKey: 'repo:a/b', owner: 'agent:nova', leaseUntil, origin: 'resource' }];
+    const jobItem = result.jobs.jobs.find(item => item.id === 'RQ-HOLD-1');
+    expect(jobItem).toMatchObject({ claimable: false, heldKeys: ['queue:RQ-HOLD-1', 'repo:a/b'],
+      freeKeys: [] });
+    expect(jobItem?.holders).toEqual(expected);
+    const announcedItem = result.announced.items.find(item => item.id === 'RQ-HOLD-1');
+    expect(announcedItem).toMatchObject({ held: true });
+    expect(announcedItem?.holders).toEqual(expected);
+    // Holder entries never carry the lease source id or fencing internals.
+    expect(JSON.stringify(jobItem?.holders)).not.toContain('test:nova-hold');
+
+    const text = formatBusWorkMine(result);
+    const jobLine = text.find(line => line.includes('RQ-HOLD-1 queued') && line.includes('claimable='))!;
+    expect(jobLine).toContain('holders=queue:RQ-HOLD-1>nova@');
+    expect(jobLine).toContain('repo:a/b>agent:nova@');
+    expect(jobLine).toContain('/resource');
+    const announcedLine = text.find(line => line.includes('RQ-HOLD-1 queued') && line.includes('heldkeys='))!;
+    expect(announcedLine).toContain('holders=queue:RQ-HOLD-1>nova@');
+  });
+
+  it('reports holders unknown — never an empty list — when the hold table is unreadable', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    await announce(options, 'atlas', 'RQ-HU-1', ['queue:RQ-HU-1']);
+    claim(options, 'queue:RQ-HU-1', 'nova', 'test:nova-hu1', options.clock.now);
+    // Poison the coordination table after the lease lands: coverage is
+    // unknown, so holders is null on both sections.
+    writeFileSync(join(options.root, 'coordination', 'claims.json'), 'invalid JSON');
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok' || result.jobs.status !== 'ok' || result.announced.status !== 'ok') {
+      throw new Error('unreachable');
+    }
+    expect(result.jobs.jobs[0]).toMatchObject({ id: 'RQ-HU-1', holders: null });
+    expect(result.announced.items[0]).toMatchObject({ id: 'RQ-HU-1', holders: null });
+    const text = formatBusWorkMine(result);
+    expect(text.find(line => line.includes('RQ-HU-1 queued') && line.includes('claimable=')))
+      .toContain('holders=-');
+    expect(text.find(line => line.includes('RQ-HU-1 queued') && line.includes('heldkeys=')))
+      .toContain('holders=-');
+  });
+
   it('carries the newest work.result report on announced and open job lines', async () => {
     const options = setup();
     register(options, 'atlas', 'nova');
@@ -424,7 +524,7 @@ describe('readBusWorkMine', () => {
     expect(result.status).toBe('ok');
     if (result.status !== 'ok' || result.announced.status !== 'ok') throw new Error('unreachable');
     expect(result.announced.items[0]).toMatchObject({ id: 'RQ-U-1', held: null,
-      heldKeys: null, freeKeys: null });
+      heldKeys: null, freeKeys: null, holders: null });
     expect(formatBusWorkMine(result)
       .find(line => line.includes('RQ-U-1 queued') && line.includes('heldkeys='))).toContain('held=unknown');
   });
@@ -689,7 +789,8 @@ describe('readBusWorkMine', () => {
     expect(result.claims).toEqual({ status: 'unavailable' });
     expect(result.jobs).toMatchObject({ status: 'ok', holds: 'unknown' });
     if (result.jobs.status !== 'ok') throw new Error('unreachable');
-    expect(result.jobs.jobs[0]).toMatchObject({ id: 'RQ-M-9', claimable: null, freeKeys: null, heldKeys: null });
+    expect(result.jobs.jobs[0]).toMatchObject({ id: 'RQ-M-9', claimable: null, freeKeys: null,
+      heldKeys: null, holders: null });
     // The claimable-envelope walk degrades the same way: listed, holds unknown.
     expect(result.next).toMatchObject({ status: 'ok', holds: 'unknown', matched: 0 });
     // The handoff walk shares the scan and the hold join: same honest unknown.
