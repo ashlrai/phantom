@@ -170,6 +170,37 @@ it('claims work addressed to a channel the --to identity belongs to, minus its o
   expect(take('group:eng:alerts', 'worker-a')).toBe('late');
 });
 
+it('keeps a case-variant agent ref on exact-label matching, never a folded identity', () => {
+  expect(registerAgentIdentity({ handle: 'worker-a' }, { root }).status).toBe('created');
+  expect(registerAgentIdentity({ handle: 'worker-b' }, { root }).status).toBe('created');
+  // eng: worker-a + worker-b.
+  expect(createAgentChannel({ name: 'eng', createdBy: 'worker-a', members: ['worker-b'] }, { root }).status).toBe('created');
+  post('chan-work', { to: 'group:eng:general', priority: 'P1' });
+  post('direct-a', { to: 'worker-a', priority: 'P2' });
+  post('case-literal', { to: 'Worker-A', priority: 'P0' });
+  const take = (to: string) => {
+    const result = claimNextBusWork({ ...request(), to });
+    expect(result.status).toBe('acquired');
+    if (result.status !== 'acquired') throw new Error('expected a claim');
+    expect(mutateBusWorkClaim({ action: 'complete', id: result.receipt.envelope.id, token: result.token, root }).status).toBe('completed');
+    return result.receipt.envelope.id;
+  };
+  // 'Worker-A' is no registered handle, alias, stable id or agent: address, so
+  // it resolves to no identity: it claims only the envelope literally
+  // addressed 'Worker-A', never worker-a's channel or label-addressed work —
+  // the same exact-label rule an unknown ref or unreadable registry follows.
+  expect(take('Worker-A')).toBe('case-literal');
+  expect(claimNextBusWork({ ...request(), to: 'Worker-A' }))
+    .toEqual({ status: 'empty', candidates: 1, held: 0 });
+  // The real 'worker-a' still claims its member-channel post and direct mail;
+  // the 'Worker-A'-addressed receipt reaches it through the envelope-label
+  // rule but is already completed, so it stays a fenced candidate.
+  expect(take('worker-a')).toBe('chan-work');
+  expect(take('worker-a')).toBe('direct-a');
+  expect(claimNextBusWork({ ...request(), to: 'worker-a' }))
+    .toEqual({ status: 'empty', candidates: 3, held: 0 });
+});
+
 it('keeps channel work unmatched when the identity registry is unreadable', () => {
   expect(registerAgentIdentity({ handle: 'worker-a' }, { root }).status).toBe('created');
   expect(registerAgentIdentity({ handle: 'worker-b' }, { root }).status).toBe('created');
