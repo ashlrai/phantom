@@ -3079,7 +3079,12 @@ proven, not fabricated) and an unreadable one reports
 that the unified bus never carried: `BusBoard.pendingFor(labels, now, jobId?, contains?, sinceMs?)` runs
 the board's own locked snapshot plus one shared-queue claim-index read under
 the union of every label the agent answers to, so an agent on the board no
-longer needs a separate `--peer` read per label. `peers` names the queried
+longer needs a separate `--peer` read per label. Its fleet-wide form,
+`BusBoard.pendingAll(now?, jobId?, contains?, sinceMs?)`, takes the same
+optional filters over every thread member as the label set — the digest
+`phm comms inbox`'s board source and `fleet_bus_board` project through the
+shared `readBusBoardPending` read, which reports `missing` for a
+verified-empty board and `unavailable` for an unreadable one. `peers` names the queried
 labels the board actually knows — each a member of at least one thread,
 sorted — so an agent that never joined reads verified-empty rather than
 mistaking "not a peer" for "nothing pending"; `threads` keeps the board's

@@ -595,6 +595,82 @@ describe('bus board pendingAll digest', () => {
     expect(digest.deliveries).toEqual({ matched: 0, items: [], truncated: false });
     expect(digest.tasks).toEqual({ matched: 0, items: [], truncated: false });
   });
+
+  it('narrows the fleet-wide digest to threads citing one job id', async () => {
+    const store = board();
+    const first = threadWith('alice', 'bob');
+    const second = store.createThread('carol', 'Other work').id;
+    store.joinThread('dave', second);
+    await store.post('alice', first, 'job one mail');
+    await store.post('carol', second, 'job two mail');
+    store.createTask('alice', first, 'job-1', 'Job one task');
+    store.createTask('carol', second, 'job-2', 'Job two task');
+
+    const digest = store.pendingAll(undefined, 'job-1');
+    // Only the job-citing thread survives; its deliveries and rollup ride along.
+    expect(digest.threads.map((row) => row.id)).toEqual([first]);
+    expect(digest.tasks.matched).toBe(1);
+    expect(digest.tasks.items[0]).toMatchObject({ itemId: 'job-1' });
+    // Every member of the surviving thread is a known peer; the other
+    // thread's members drop out with it.
+    expect(digest.peers.sort()).toEqual(['alice', 'bob']);
+    // The unfiltered read still sees both threads — the filter narrows, never widens.
+    expect(store.pendingAll().threads).toHaveLength(2);
+    expect(store.pendingAll(undefined, 'job-absent').threads).toEqual([]);
+    expect(store.pendingAll(undefined, 'job-absent').tasks.matched).toBe(0);
+  });
+
+  it('filters the fleet-wide digest by displayed text like pendingFor', async () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob', 'carol');
+    await store.post('alice', threadId, 'frobnicate the plan');
+    await store.post('bob', threadId, 'unrelated chatter');
+    store.createTask('alice', threadId, 'item-frob', 'Frobnicate task');
+    store.createTask('alice', threadId, 'item-other', 'Water plants');
+    // A second thread with nothing the needle names drops its rollup out.
+    const quiet = store.createThread('dave', 'Watering rota').id;
+    store.joinThread('erin', quiet);
+
+    const digest = store.pendingAll(undefined, undefined, ' Frobnicate ');
+    // Every member of the matching thread receives each post, so the one
+    // frobnicate post yields three deliveries; matched counts filtered rows.
+    expect(digest.deliveries.matched).toBe(3);
+    expect(digest.tasks.matched).toBe(1);
+    expect(digest.tasks.items[0]).toMatchObject({ itemId: 'item-frob' });
+    expect(digest.threads).toHaveLength(1);
+    expect(digest.threads[0]).toMatchObject({ id: threadId, pendingDeliveries: 3 });
+    // Membership is not text: every board member stays a known peer.
+    expect(digest.peers.sort()).toEqual(['alice', 'bob', 'carol', 'dave', 'erin']);
+    expect(store.pendingAll(undefined, undefined, 'absent-text').deliveries.matched).toBe(0);
+    expect(store.pendingAll(undefined, undefined, 'absent-text').threads).toEqual([]);
+  });
+
+  it('keeps only deliveries reaching the since cutoff and drops undated tasks', async () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob');
+    await store.post('alice', threadId, 'recent mail');
+    store.createTask('alice', threadId, 'item-x', 'Undated task');
+
+    const all = store.pendingAll();
+    expect(all.deliveries.matched).toBe(2);
+    expect(all.tasks.matched).toBe(1);
+
+    // A cutoff in the future excludes every recorded delivery; tasks carry
+    // no timestamp, so under `since` the task list is provably empty and a
+    // thread rollup survives only while a delivery does — none here.
+    const future = store.pendingAll(undefined, undefined, undefined, Date.now() + 60_000);
+    expect(future.deliveries.matched).toBe(0);
+    expect(future.tasks.matched).toBe(0);
+    expect(future.threads).toEqual([]);
+    // The epoch floor keeps every recorded delivery; tasks stay empty under
+    // any `since` and the thread rollup survives through its deliveries.
+    const floor = store.pendingAll(undefined, undefined, undefined, 0);
+    expect(floor.deliveries.matched).toBe(2);
+    expect(floor.tasks.matched).toBe(0);
+    expect(floor.threads.map((row) => row.id)).toEqual([threadId]);
+    // Membership still reports every member — `since` narrows items, not peers.
+    expect(floor.peers.sort()).toEqual(['alice', 'bob']);
+  });
 });
 
 describe('phm bus CLI end-to-end', () => {

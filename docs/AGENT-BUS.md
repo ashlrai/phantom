@@ -869,7 +869,15 @@ no agent labels are needed ahead of time — listing each unacknowledged
 delivery and each task whose observed hold is not `held` (`held` is
 in-flight work, not pending) with the same missing/unavailable/degraded
 honesty and `phm bus thread`/`task`/`board` deep links; it reads only,
-never acknowledges or claims.
+never acknowledges or claims. `fleet_bus_board` (the isolated fleet MCP
+tool) serves the same `readBusBoardPending`/`BusBoard.pendingAll` digest
+directly — `job`, `contains` and `since` the same filters the `work
+mine` board section shares, under the same validation — so an
+MCP-connected agent reads the whole pending board, fleet-wide and
+job-scoped, without flattening it into inbox items or knowing peer
+labels ahead of time; it accepts no caller root or path, reports `source`
+missing verified-empty versus unavailable, and never acknowledges or
+claims.
 `addressed` marks jobs whose announcement
 `to` label resolves to the agent's
 identity, and `announced` marks jobs whose `owner` (announcer) label resolves

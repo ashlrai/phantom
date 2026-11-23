@@ -146,9 +146,16 @@ mine` carries the same digest as its `board` section — one locked snapshot
 under every routing label the agent's identity answers to, with the same
 hold-state honesty — so an agent on the board finds its pending deliveries
 and tasks without a separate `board pending --peer` read per label.
-`BusBoard.pendingAll` is the fleet-wide form — every thread member as the
-label set in the same locked snapshot and queue read — and `phm comms
-inbox`'s `board` source projects it: every unacknowledged delivery and
-every task whose hold is not `held`, across all peers, with the same
-untrusted-content and missing/unavailable/degraded honesty; the projection
-reads only and never acknowledges or claims.
+`BusBoard.pendingAll(now?, jobId?, contains?, sinceMs?)` is the fleet-wide
+form — every thread member as the label set in the same locked snapshot
+and queue read, with the same optional filters `pendingFor` takes: `jobId`
+keeps only threads carrying a task whose `itemId` cites it (and `peers`
+then reports only that job's thread members), `contains` the normalized
+`--contains` needle over the same scrubbed display text, and `sinceMs` the
+epoch-ms cutoff deliveries must reach while tasks — which the board
+records without any timestamp — never match. `phm comms inbox`'s `board`
+source and the `fleet_bus_board` fleet MCP tool project it: every
+unacknowledged delivery and every task whose hold is not `held`, across
+all peers, with the same untrusted-content and
+missing/unavailable/degraded honesty; both read only, never acknowledge
+or claim.
