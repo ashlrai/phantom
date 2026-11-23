@@ -24,10 +24,10 @@ export const FLEET_WORK_FEED_LIMIT_DEFAULT = 50;
 
 const FEED_KEYS = new Set([
   'claims', 'open', 'claimable',
-  'status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'contains', 'channel', 'limit',
+  'status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'before', 'contains', 'channel', 'limit',
 ]);
 const FLAG_KEYS = ['claims', 'open', 'claimable'] as const;
-const STRING_KEYS = ['status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'contains', 'channel'] as const;
+const STRING_KEYS = ['status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'before', 'contains', 'channel'] as const;
 
 export interface FleetWorkFeedArgs {
   /** Newest-first job cap applied after filtering; `matched` keeps the true total. */
@@ -43,7 +43,9 @@ export interface FleetWorkFeedArgs {
  * accepts, `false` is the same as absent — and every other key takes a
  * string the shared `parseBusWorkFeedQuery` rules then check (status,
  * provider and tier enums, the owner/name repo slug, printable routing
- * labels, the shared `since` grammar and the `contains` bound). Unknown
+ * labels, the shared `since`/`before` grammar — `since` inclusive and
+ * `before` exclusive on the job's `updatedAt`, one [since, before) window —
+ * and the `contains` bound). Unknown
  * keys, wrong types and malformed values are all refused before any store
  * read, exactly like an invalid HTTP query.
  */

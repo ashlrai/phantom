@@ -338,6 +338,16 @@ export interface BusWorkFeedViewFilters {
    * same inclusive `>=` rule every `--since` bus read applies.
    */
   since?: number;
+  /**
+   * Keep only jobs whose last activity is strictly before this epoch-ms
+   * cutoff — the same `job.updatedAt` field `since` bounds inclusively
+   * below, so `since`/`before` read one closed [since, before) window and
+   * adjacent windows never double-count a boundary job. It is also the
+   * paging bound: the view sorts newest-first under a `--limit` cap, so
+   * `--before` at the oldest shown job's `updatedAt` reaches the jobs an
+   * unbounded newest page can never show once more than the cap match.
+   */
+  before?: number;
   /** Announcement-address predicate from `busWorkFeedPendingToMatcher`; called with the job's `to` address and `owner` (announcement sender) label. */
   toMatch?: (to: string, owner: string) => boolean;
   /** Announcer predicate over `job.owner` from `busWorkFeedOwnerMatcher`. */
@@ -366,14 +376,17 @@ export interface BusWorkFeedViewFilters {
 }
 
 /**
- * Client-side `--status`/`--job`/`--repo`/`--provider`/`--tier`/`--claimable`/`--since`/
+ * Client-side `--status`/`--job`/`--repo`/`--provider`/`--tier`/`--claimable`/`--since`/`--before`/
  * `--to`/`--owner`/`--contains`/`--channel` filters and newest-first ordering shared by
  * the feed CLIs;
  * the matchers are the `busWorkFeedPendingToMatcher`/`busWorkFeedOwnerMatcher`
  * predicates. `since` keeps jobs whose `updatedAt` — the newest status
  * receipt time, or the announcement's while no status has moved the job —
  * reaches the cutoff, so "which jobs moved lately" is one filtered read
- * instead of paging terminal jobs that have sat unchanged.
+ * instead of paging terminal jobs that have sat unchanged; `before` is the
+ * exclusive upper bound on the same field, so the pair reads one
+ * [since, before) window and older pages stay reachable past the
+ * newest-first `--limit` cap.
  * With claims, holds regroup under the jobs still shown so a filtered view
  * never lists a hold for a hidden job. `--claimable` keeps only jobs whose
  * tri-state `claimable` is provably true — unknown coverage never counts as
@@ -401,6 +414,7 @@ export function projectBusWorkFeedView(result: BusWorkFeedReadResult, filters: B
       && (filters.open !== true || (BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length > 0
         && (coverage !== 'complete' || job.claimKeys.some(key => !heldByJob.get(job.id)?.has(key)))))
       && (filters.since === undefined || job.updatedAt >= filters.since)
+      && (filters.before === undefined || job.updatedAt < filters.before)
       && (filters.toMatch === undefined || filters.toMatch(job.to, job.owner))
       && (filters.ownerMatch === undefined || filters.ownerMatch(job.owner))
       && (filters.channel === undefined || job.to.startsWith(`group:${filters.channel}:`))

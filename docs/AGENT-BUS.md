@@ -690,7 +690,7 @@ hold coverage rule and reports incomplete coverage as degraded.
 [--provider <p>] [--tier <fast|mid|work|frontier>] [--to <label>] [--owner <agent>]
 [--channel <name>]
 [--claims] [--open] [--claimable]
-[--since <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-200>]`
+[--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-200>]`
 reads the
 same projection back — jobs newest-first, optionally filtered by status,
 exact job id, announced repo, provider, declared dispatch tier,
@@ -738,7 +738,13 @@ only jobs whose last activity reaches the cutoff — `updatedAt`, the receipt
 time of the newest accepted `work.status`, or the `work.post` receipt time
 while no status has moved the job — matched inclusively like every other
 `--since` bus read, so "which jobs moved lately" is one filtered read
-instead of paging terminal jobs that have sat unchanged. `--contains`
+instead of paging terminal jobs that have sat unchanged. `--before` keeps
+only jobs whose `updatedAt` is strictly before its own cutoff on the same
+field and grammar — the exclusive upper bound `--since` lacks — so the
+pair reads one `[since, before)` window with no boundary job counted
+twice, and, because the view sorts newest-first under the `--limit` cap,
+`--before` at the oldest shown job's `updatedAt` reaches the older jobs a
+plain newest page can never show once more than the cap match. `--contains`
 keeps only jobs whose descriptive text carries the needle as a
 case-insensitive substring — the announcement title, the newest status
 detail and the declared dispatch scope/acceptance, each scrubbed,
@@ -1675,8 +1681,8 @@ under every topic, the same raw address prefix `inbox --channel`,
 channel-name grammar with no registry dependence. The
 endpoint needs a current read session and accepts `claims=true` plus the
 same filter parameters the feed CLIs take — `status`, `job`, `repo`,
-`provider`, `tier`, `to`, `owner`, `since`, `contains`, `channel`, `open`,
-`claimable` and `limit` — each a single value validated by the shared
+`provider`, `tier`, `to`, `owner`, `since`, `before`, `contains`, `channel`,
+`open`, `claimable` and `limit` — each a single value validated by the shared
 `parseBusWorkFeedQuery` rules (`src/core/agents/bus-work-feed-query.ts`) and
 applied through the same `projectBusWorkFeedView` the CLIs use, so an HTTP
 client gets the identical narrowed, newest-first view: `open`/`claimable`
