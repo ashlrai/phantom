@@ -335,6 +335,7 @@ import { rewardBacklogItems } from './reward-backlog.js';
 import { jobControlBacklogItems } from './job-control-backlog.js';
 import { usageGapBacklogItems } from './usage-gap-backlog.js';
 import { runtimeJournalBacklogItems } from './runtime-journal-backlog.js';
+import { generatorYieldBacklogItems } from './generator-yield-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -757,6 +758,24 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the fleet's own repository inherits the items since the journal is
   // this install's dispatch record.
   items.push(...await runtimeJournalBacklogItems({ repo }));
+
+  // Queue generation journal: the queue.generation-event.v1 decisions
+  // planAutofill's trace records and the autofill runner and supply-floor
+  // pass append to metrics/generation.jsonl — recurring (src, reason)
+  // refusal cells across distinct UTC days inside the window — become
+  // backlog items too. Until now the journal only ever reached `phm
+  // queue yield`'s queue.generator-yield.v1 report, the metrics panel
+  // and queue-autofill's per-pass candidate ranking, surfaces that
+  // steer one pass at a time or that someone had to run and read, so
+  // an intake whose candidate sources keep minting work the fleet
+  // refuses — stopped families, missing capabilities, resurfaced
+  // shipped work — never became work. Same bounded tail read; a cell
+  // emits only at the recurring bars of recorded rejections across
+  // distinct UTC days, the 'unknown' src catch-all never emits, a
+  // missing or unreadable ledger yields nothing, truncated tails read
+  // as lower bounds, and only the fleet's own repository inherits the
+  // items since the journal carries no repository column.
+  items.push(...await generatorYieldBacklogItems({ repo }));
   return { items, errors };
 }
 
