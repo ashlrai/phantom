@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Three sources, all of which Phantom
+ * evidence instead of a hand-kept list. Four sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -10,7 +10,11 @@
  *   - failing checks on the head of the default branch (the automations
  *     red-branch poll), one item per failing head commit;
  *   - the loop's own evidence-backed proposals (declined handoffs, steward
- *     retention, team feedback), in their public form.
+ *     retention, team feedback), in their public form;
+ *   - the fleet's own outcome learning: recurring breakage, dirty, fixup and
+ *     low-merge patterns the jobs ledger and dispatch log already prove
+ *     (fleetLearningBacklogItems below), so the fleet's self-diagnosed
+ *     improvement work reaches the backlog that does it.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -20,10 +24,23 @@
  * DATA fence (the automations lane convention, lanes.ts buildAutomationPrompt),
  * with the fence marker broken up so the text cannot close it.
  */
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { AutomationGh } from '../automations/github.js';
+import { CLOUD_REPO_PATTERN } from '../cloud/store.js';
 import type { CloudBacklogItem } from '../cloud/types.js';
+import { loadConfigReadOnly } from '../config.js';
+import { readSource } from '../fleet/runs-parked-queue.js';
+import {
+  censorFromConfig,
+  learnFleetOutcomes,
+  outcomeLearningView,
+  type ImprovementJob,
+} from '../routing/outcome-learning.js';
+import { readLedgerTail, ROUTER_OUTCOME_LEDGER_RELATIVE } from '../router/outcomes.js';
 import { kindOf } from './outcomes.js';
 import type { Proposal } from './loop.js';
+import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -84,7 +101,158 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
         '', `Eval: ${p.evalPlan}`, `Metric to move: ${p.metric}`].join('\n'),
     });
   }
+
+  // Fleet outcome learning: the jobs ledger and dispatch log's recurring
+  // failure patterns become backlog items too — until now they only
+  // surfaced in `phm fleet outcomes`, a report someone had to run and
+  // read. Read-only and bounded; the operator backlog dedupes by the
+  // stable fleet-learn-improve-<hash> id, so refreshes add only new cells.
+  items.push(...await fleetLearningBacklogItems({ repo }));
   return { items, errors };
+}
+
+// ---------------------------------------------------------------------------
+// Fleet outcome learning → backlog items
+//
+// The fleet's outcome learning (src/core/routing/outcome-learning.ts) folds
+// the dispatch event log and jobs ledger into per-cell statistics and
+// already computes the self-improvement work those statistics justify:
+// `improvementJobs` — recurring breakage, dirty, fixup and low-merge
+// patterns, each with a concrete task ("add a regression check that fails
+// before merge"). Until now those jobs only surfaced in `phm fleet
+// outcomes`, a report someone had to run and read; nothing carried them
+// into the self-improvement backlog `discoverBacklog` feeds, so the
+// fleet's self-diagnosed work never reached the queue built to do it.
+// fleetLearningBacklogItems turns the top recurring patterns into
+// CloudBacklogItems so both `phm improve discover` and the scheduler's
+// autoDiscover queue them.
+//
+// Honesty rules, same as every other backlog source:
+//  - Read-only. The dispatch log, jobs ledger and standing revert ledger
+//    are read through their bounded tail readers; nothing is written and
+//    no network is touched.
+//  - Bounded. The jobs ledger is read through readLedgerTail's
+//    ROUTER_OUTCOME_LEDGER_LIMIT window, the event log through a capped
+//    tail read, and at most `limit` items (default 8, hard-capped at 25)
+//    are emitted — the improvement-job list itself is unbounded, so the
+//    cap keeps one refresh from flooding the backlog.
+//  - Unknown stays unknown. Cells exist only for measured attempts;
+//    patterns fire only at the fold's own RECURRING_FAILURES threshold,
+//    and a missing or unreadable source contributes nothing — never a
+//    fabricated pattern.
+//  - Repo matching is by repository name. Fleet cells carry the queue's
+//    bare repo label ('phantom'); the backlog addresses owner/name
+//    ('ashlrai/phantom'). The last path segment is the name both
+//    vocabularies record, so an item is emitted only when they agree —
+//    telemetry for a different repository never lands on this one.
+//  - Dedup is downstream. The item id embeds the fold's stable
+//    `improve-<hash>` job id (cell + pattern, never the counts), so a
+//    refresh re-derives the same id and appendUserBacklogItems adds only
+//    what is new; a pattern that grows worse does not spawn a twin item.
+// ---------------------------------------------------------------------------
+
+/** Bounded tail of the dispatch event log — the same source `phm fleet outcomes` folds. */
+const FLEET_EVENTS_MAX_BYTES = 8 * 1024 * 1024;
+/** Items one call may emit; the improvement-job list is unbounded. */
+export const FLEET_LEARNING_MAX_ITEMS = 8;
+const FLEET_LEARNING_ITEM_HARD_MAX = 25;
+
+export interface FleetLearningItemsOptions {
+  /** Backlog target in owner/name form; fleet cells must name the same repository. */
+  repo: string;
+  /** Dispatch event log override (default: the fleet outcomes reader's paths). */
+  eventsPath?: string;
+  /** Jobs ledger override (default: <runsDir>/metrics/jobs.jsonl). */
+  ledgerPath?: string;
+  /** Runs dir for the ledger default; $ASHLR_RUNS_DIR wins when set. */
+  runsDir?: string;
+  /** Home for the default event-log paths (default: os.homedir()). */
+  homeDir?: string;
+  /** Most items one call emits (default FLEET_LEARNING_MAX_ITEMS, hard-capped). */
+  limit?: number;
+  /** Clock for the outcome censor (default: now). */
+  now?: Date;
+}
+
+/** The fleet outcomes reader's event-log candidates, in order. */
+function defaultFleetEventLogs(home: string): string[] {
+  return [
+    join(home, '.ashlr-runs', 'queue', 'dispatch-events.log'),
+    join(home, '.ashlr-runs', 'dispatch-events.log'),
+  ];
+}
+
+async function readFleetEventsText(opts: FleetLearningItemsOptions, home: string): Promise<string | null> {
+  const candidates = opts.eventsPath !== undefined ? [opts.eventsPath] : defaultFleetEventLogs(home);
+  for (const path of candidates) {
+    const read = await readSource(path, FLEET_EVENTS_MAX_BYTES, true);
+    if (read.state === 'healthy') return read.text;
+  }
+  return null;
+}
+
+async function readFleetLedgerText(opts: FleetLearningItemsOptions, home: string): Promise<string | null> {
+  const path = opts.ledgerPath
+    ?? join(opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(home, '.ashlr-runs'), ROUTER_OUTCOME_LEDGER_RELATIVE);
+  const tail = await readLedgerTail(path);
+  return tail.state === 'read' ? tail.text : null;
+}
+
+/** The repository name both vocabularies record: the last path segment, lowercased. */
+function fleetRepoName(repo: string): string {
+  return (repo.split('/').pop() ?? repo).trim().toLowerCase();
+}
+
+function fleetImprovementItem(job: ImprovementJob, repo: string): CloudBacklogItem | null {
+  if (fleetRepoName(job.repo) !== fleetRepoName(repo)) return null;
+  const prompt = [
+    `Phantom's fleet outcome learning found a recurring failure pattern in its own job telemetry — the self-improvement work this backlog exists for.`,
+    '',
+    job.task,
+    '',
+    `Telemetry: ${job.pattern} pattern on ${job.resource}/${job.model} for fleet repo '${job.repo}' ${job.jobType} jobs — ${job.attempts} finished attempts in the bounded ledger window, observed rate ${Math.round(job.rate * 100)}%.`,
+    '',
+    `Investigate what those jobs changed and add the regression check or fix that prevents the pattern recurring. The fleet repo label is '${job.repo}': if this checkout is not that repository, or the pattern no longer reproduces on the default branch, report no-change and name the evidence.`,
+  ].join('\n');
+  return {
+    id: `fleet-learn-${job.id}`,
+    title: job.title,
+    prompt,
+    area: `fleet-${job.pattern}`,
+    priority: 3,
+    ...(CLOUD_REPO_PATTERN.test(repo) ? { repo } : {}),
+  };
+}
+
+/**
+ * Backlog items for the fleet's recurring outcome patterns, fanned out to
+ * the target repo's name. Total: any read or fold failure yields no items
+ * rather than throwing into discovery.
+ */
+export async function fleetLearningBacklogItems(opts: FleetLearningItemsOptions): Promise<CloudBacklogItem[]> {
+  try {
+    const repo = opts.repo.trim();
+    if (repo === '') return [];
+    const home = opts.homeDir ?? homedir();
+    const [eventsText, ledgerText] = await Promise.all([
+      readFleetEventsText(opts, home),
+      readFleetLedgerText(opts, home),
+    ]);
+    if (eventsText === null && ledgerText === null) return [];
+    const now = opts.now ?? new Date();
+    const censor = censorFromConfig(loadConfigReadOnly().router, now.getTime());
+    const learning = learnFleetOutcomes(eventsText, ledgerText, censor, readStandingRevertKeys());
+    const limit = Math.max(1, Math.min(opts.limit ?? FLEET_LEARNING_MAX_ITEMS, FLEET_LEARNING_ITEM_HARD_MAX));
+    const items: CloudBacklogItem[] = [];
+    for (const job of outcomeLearningView(learning).improvementJobs) {
+      if (items.length >= limit) break;
+      const item = fleetImprovementItem(job, repo);
+      if (item !== null) items.push(item);
+    }
+    return items;
+  } catch {
+    return [];
+  }
 }
 
 /**
