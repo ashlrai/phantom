@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Thirty-one sources, all of which Phantom
+ * evidence instead of a hand-kept list. Thirty-two sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -265,6 +265,17 @@
  *     someone had to run and read, so a capture path that kept failing
  *     starved the router's weight, calibration and cost evidence while
  *     looking like ordinary absent data;
+ *   - the fleet runtime journal's recurring adverse dispatch evidence:
+ *     the seat-router exclusions whose reason kinds mean broken or
+ *     missing eligibility evidence (unknown-usage, unreachable,
+ *     signed-out, other), the seat-evaluated park and split holds, and
+ *     the code-shaped skip reasons — each folded per cell across
+ *     distinct items and UTC days inside the 7-day window
+ *     (runtimeJournalBacklogItems below). Until now the journal's only
+ *     readers were the Fleet live projection and the ops/attribution
+ *     joins, and tick.json keeps only the LAST tick's held list, so
+ *     recurring holds, chronic seat exclusions and repeating skip codes
+ *     were invisible history that never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -323,6 +334,7 @@ import { branchGardenerBacklogItems } from './branch-gardener-backlog.js';
 import { rewardBacklogItems } from './reward-backlog.js';
 import { jobControlBacklogItems } from './job-control-backlog.js';
 import { usageGapBacklogItems } from './usage-gap-backlog.js';
+import { runtimeJournalBacklogItems } from './runtime-journal-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -724,6 +736,27 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // inherits the items since the capture paths are this install's
   // dispatcher and lanes.
   items.push(...await usageGapBacklogItems({ repo }));
+
+  // Fleet runtime journal: the standing fleet's own dispatch journal —
+  // fleet/runtime/runs.jsonl under the ASHLR home — records every
+  // work-item outcome with the route decision behind it (backend, lane,
+  // seatId, the SeatRouter seatDecision with per-seat exclusion details,
+  // the park/split RouteHold, the skipReason). Until now its only
+  // readers were the Fleet live projection (/api/verse/fleet/live
+  // behind `phm fleet lane-slots`/`phm lanes`/`phm map`) and the
+  // ops/attribution joins, and tick.json keeps only the LAST tick's
+  // held list — so recurring seat-exclusion evidence (unknown-usage,
+  // unreachable, signed-out, other; capacity and policy kinds never
+  // emit), seat-evaluated park/split holds (policy holds carry no
+  // seatDecision and are intended backpressure) and code-shaped skip
+  // reasons were invisible history. Same bounded tail read the writer's
+  // own rotation bound allows — RUNS_JOURNAL_MAX_BYTES per file across
+  // the current and .1 predecessor — each cell emitting only at the
+  // recurring bars of distinct items across distinct UTC days inside
+  // the 7-day window, truncated tails stated as lower bounds, and only
+  // the fleet's own repository inherits the items since the journal is
+  // this install's dispatch record.
+  items.push(...await runtimeJournalBacklogItems({ repo }));
   return { items, errors };
 }
 
