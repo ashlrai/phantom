@@ -84,6 +84,44 @@ describe('phm agents bus (unified)', () => {
     expect(adapters.json.adapters.map((a: { cli: string }) => a.cli)).toEqual(['claude', 'codex', 'devin', 'cursor', 'grok']);
   });
 
+  it('resolves one agent ref through id show — self, aliases and honest misses', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude', '--alias', 'lane-atlas', '--display', 'Atlas One'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'ops', '--from', 'atlas', '--member', 'nova'])).json).toMatchObject({ status: 'created' });
+
+    // Self view: PHM_AGENT_ID resolves to the card, the detected CLI rides along.
+    const self = await run(['id', 'show'], { PHM_AGENT_ID: 'atlas', CLAUDECODE: '1' });
+    expect(self.code).toBe(0);
+    expect(self.json).toMatchObject({ status: 'ok', ref: 'atlas', self: true, address: 'agent:atlas', cli: 'claude',
+      channels: ['ops'], identity: { handle: 'atlas', aliases: ['lane-atlas'], displayName: 'Atlas One' } });
+    // Explicit refs resolve handle, alias and agent: address — self stays false and no cli is reported.
+    for (const ref of ['atlas', 'lane-atlas', 'agent:atlas']) {
+      const view = await run(['id', 'show', ref]);
+      expect(view.code).toBe(0);
+      expect(view.json).toMatchObject({ status: 'ok', ref, self: false, address: 'agent:atlas', channels: ['ops'],
+        identity: { handle: 'atlas' } });
+      expect(view.json).not.toHaveProperty('cli');
+    }
+    const stable = (await run(['id', 'list'])).json.identities.find((i: { handle: string }) => i.handle === 'atlas').id;
+    expect((await run(['id', 'show', stable])).json).toMatchObject({ status: 'ok', self: false, identity: { id: stable } });
+    // Honest misses: unset env, unregistered self and ref, malformed ref.
+    expect(await run(['id', 'show'])).toMatchObject({ code: 1, json: { status: 'unset' } });
+    expect(await run(['id', 'show'], { PHM_AGENT_ID: 'ghost' }))
+      .toMatchObject({ code: 1, json: { status: 'unknown', self: true } });
+    expect(await run(['id', 'show', 'ghost'])).toMatchObject({ code: 1, json: { status: 'unknown', self: false } });
+    expect(await run(['id', 'show', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    // Human output prints the same card without --json.
+    const humanOut: string[] = [];
+    const human = await runAgentsBusUnified(['id', 'show', 'atlas', '--root', root], t => humanOut.push(t), () => {});
+    expect(human).toBe(0);
+    const card = humanOut.join('\n');
+    expect(card).toContain('atlas agt_');
+    expect(card).toContain('agent:atlas');
+    expect(card).toContain('channels=ops');
+    expect(card).toContain('aliases=lane-atlas');
+  });
+
   it('stamps --reply-to as the v2 inReplyTo citation on dm, post and channel post', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

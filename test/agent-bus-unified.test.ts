@@ -15,7 +15,7 @@ import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import {
-  attachBusCliSession, busSelfFromEnv, detectBusCli, frameBusInbox, getBusCliAdapter, listBusCliAdapters,
+  attachBusCliSession, busAgentView, busSelfFromEnv, detectBusCli, frameBusInbox, getBusCliAdapter, listBusCliAdapters,
   BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END,
 } from '../src/core/agents/bus-cli-adapters.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
@@ -2763,6 +2763,37 @@ describe('CLI session adapters', () => {
     expect(busSelfFromEnv({ PHM_AGENT_ID: 'atlas', CURSOR_AGENT: '1' }, options)).toMatchObject({ status: 'ok', cli: 'cursor', identity: { handle: 'atlas' } });
     expect(busSelfFromEnv({}, options)).toMatchObject({ status: 'unset' });
     expect(busSelfFromEnv({ PHM_AGENT_ID: 'ghost' }, options)).toMatchObject({ status: 'unknown' });
+  });
+
+  it('resolves one agent ref to its identity card through busAgentView', () => {
+    const options = setup();
+    expect(registerAgentIdentity({ handle: 'atlas', aliases: ['lane-atlas'] }, options).status).toBe('created');
+    register(options, 'nova');
+    expect(createAgentChannel({ name: 'ops', createdBy: 'atlas', members: ['atlas', 'nova'] }, options).status).toBe('created');
+
+    // Self view: PHM_AGENT_ID resolves and the detected session CLI rides along.
+    expect(busAgentView(undefined, { PHM_AGENT_ID: 'atlas', CLAUDECODE: '1' }, options))
+      .toMatchObject({ status: 'ok', ref: 'atlas', self: true, address: 'agent:atlas', cli: 'claude',
+        channels: ['ops'], identity: { handle: 'atlas', aliases: ['lane-atlas'] } });
+    // Explicit refs resolve handle, alias, agent: address and stable id; self stays false and no cli is reported.
+    for (const ref of ['atlas', 'lane-atlas', 'agent:atlas', stableAgentId('atlas')]) {
+      const view = busAgentView(ref, {}, options);
+      expect(view).toMatchObject({ status: 'ok', ref, self: false, address: 'agent:atlas', channels: ['ops'],
+        identity: { handle: 'atlas' } });
+      expect(view.status === 'ok' && 'cli' in view).toBe(false);
+    }
+    // nova sits in ops too; an agent in no channel reports an empty list, never a guess.
+    expect(busAgentView('nova', {}, options)).toMatchObject({ status: 'ok', channels: ['ops'] });
+    // Honest misses: unset env, unregistered refs, malformed refs, unreadable registry.
+    expect(busAgentView(undefined, {}, options)).toEqual({ status: 'unset', reason: 'PHM_AGENT_ID is not set.' });
+    expect(busAgentView(undefined, { PHM_AGENT_ID: 'ghost' }, options))
+      .toMatchObject({ status: 'unknown', ref: 'ghost', self: true });
+    expect(busAgentView('ghost', {}, options)).toMatchObject({ status: 'unknown', ref: 'ghost', self: false });
+    expect(busAgentView('has space', {}, options)).toMatchObject({ status: 'invalid', self: false });
+    const broken = setup();
+    register(broken, 'atlas');
+    writeFileSync(join(broken.root, 'agent-identities', 'registry.json'), 'not json{');
+    expect(busAgentView('atlas', {}, broken)).toMatchObject({ status: 'unavailable', ref: 'atlas' });
   });
 
   it('frames inbox messages as bounded untrusted data and neutralises marker injection', async () => {

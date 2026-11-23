@@ -224,6 +224,19 @@ Claude to Codex or from one model to another. Each identity keeps:
 An identity is a routing name, never authentication. It grants no tool, spend,
 send or execution authority; consumers keep their own admission checks.
 
+`phm agents bus id show [<ref>]` is the one-ref read of that registry: with a
+ref — a handle, `agent:<handle>`, stable `agt_` id or alias — it resolves
+through the same `resolveAgent` exact-label rule every bus read applies and
+reports the identity's card: its id, `agent:<handle>` address, aliases,
+runtimes and the registry channels whose member list names its handle (the
+`group:<channel>:*` addresses pending work also matches). With no ref it
+reads `PHM_AGENT_ID` instead, answering "who am I" and additionally reporting
+the CLI this process detected (`self: true`, `cli`). A well-formed ref that
+names no identity is `unknown`, a non-label ref `invalid`, an unreadable
+registry `unavailable` and a missing `PHM_AGENT_ID` on the self path `unset` —
+unknown identity state is reported, never guessed, and the read writes
+nothing.
+
 **Addresses.** The envelope keeps its fields; the unified API fills in the
 channel metadata group (`sender.agent_id` is the `agt_` id, `sender.vendor` the
 latest runtime's provider, `origin_bridge` is `agent-bus`).
