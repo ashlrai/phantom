@@ -21,8 +21,10 @@ phm comms send-owner --text "Synthetic reply" --json
 
 MCP tools: `ashlr_comms_thread` (read; optional `channel`, `direction`,
 `since` and `contains` narrow the same view), `ashlr_comms_send_owner`
-(append; KILL refuses it) and `fleet_comms_thread` on the isolated fleet
-server (the same read with `limit` plus the same four filters). `ashlr_comms`
+(append; KILL refuses it), `fleet_comms_thread` on the isolated fleet
+server (the same read with `limit` plus the same four filters) and
+`fleet_owner_history` there too (the archived pages `fleet_comms_thread`
+cannot see, with `before`/`limit`). `ashlr_comms`
 includes the same adapter rollup as `phm comms status --json`, and
 `fleet_comms_status`/`fleet_comms_inbox` serve the status and pending-item
 projections of this thread.
@@ -93,6 +95,10 @@ still dedupe replays.
 phm fleet owner-history --limit 50 --json   # read-only; page back with --before <seq>
 phm fleet owner-pull --channel telegram     # pull remote channels into the thread
 ```
+
+The isolated fleet MCP server serves the same projection as
+`fleet_owner_history` (`before`/`limit`, same bounds) — the only MCP read
+that reaches the archives `fleet_comms_thread`'s live window cannot see.
 
 `owner-pull` skips a channel that is not configured and enabled, and does
 nothing while `~/.ashlr/KILL` or the comms pause is set.
