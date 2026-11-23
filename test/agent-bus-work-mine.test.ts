@@ -2189,6 +2189,113 @@ describe('readBusWorkMine', () => {
     }
   });
 
+  it('rejects a priority outside the P0..P3 band', () => {
+    const options = setup();
+    register(options, 'atlas');
+    for (const priority of ['P9', 'p0', 'urgent', '', 5, null]) {
+      expect(readBusWorkMine('atlas', { ...options, priority: priority as never }))
+        .toEqual({ status: 'invalid', reason: 'invalid-priority' });
+    }
+  });
+
+  it('filters the digest to one priority band across the banded sections', async () => {
+    // Real wall time: mutateBusWorkClaim checks the leased envelope's TTL
+    // against Date.now(), not the injected read clock.
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+
+    // Claimable work and handoffs at two bands; handoffs wake by default.
+    postClaimable(options, 'w-p0', { priority: 'P0' });
+    postClaimable(options, 'w-p3', { priority: 'P3' });
+    expect(await sendHandoff({ from: 'nova', to: 'atlas', taskId: 'RQ-H-P0',
+      prompt: 'urgent handoff', id: 'ho-p0', priority: 'P0' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendHandoff({ from: 'nova', to: 'atlas', taskId: 'RQ-H-P3',
+      prompt: 'later handoff', id: 'ho-p3', priority: 'P3' }, options)).toMatchObject({ status: 'posted' });
+
+    // Mail at two bands: a P0 DM wakes unconditionally, a P3 DM does not.
+    expect(await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'urgent question?',
+      id: 'dm-p0', priority: 'P0' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'later question?',
+      id: 'dm-p3', priority: 'P3' }, options)).toMatchObject({ status: 'posted' });
+
+    // Wake requests always record their hint; the hint's band is the
+    // resolved referent envelope's own priority.
+    expect(await sendWakeRequest({ from: 'nova', to: 'atlas', reason: 'urgent ping',
+      id: 'wk-p0', priority: 'P0' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendWakeRequest({ from: 'nova', to: 'atlas', reason: 'later ping',
+      id: 'wk-p3', priority: 'P3' }, options)).toMatchObject({ status: 'posted' });
+
+    // Legacy mailbox rows at two bands.
+    const mailboxSend = (id: string, priority: 'P0' | 'P3'): void => {
+      expect(createBusMailbox(dirname(options.root), options.now).send({ id, from: 'agent:nova',
+        to: 'atlas', priority, ttl: 120_000, body: { text: `legacy ${id}` } }).replayed).toBe(false);
+    };
+    mailboxSend('mb-p0', 'P0');
+    mailboxSend('mb-p3', 'P3');
+
+    // Message claims on both bands plus a scope claim with no band at all.
+    takeWork(options, 'w-p0', 'atlas');
+    takeWork(options, 'w-p3', 'atlas');
+    claim(options, 'repo:a/b', 'atlas', 'test:scope', options.clock.now);
+
+    const all = readBusWorkMine('atlas', options);
+    expect(all.status).toBe('ok');
+    if (all.status !== 'ok') throw new Error('unreachable');
+    const result = readBusWorkMine('atlas', { ...options, priority: 'P0' });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.priority).toBe('P0');
+    expect(formatBusWorkMine(result)[0]).toContain('priority=P0');
+
+    // next and handoffs keep only the P0 envelopes.
+    expect(result.next).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.next.status !== 'ok') throw new Error('unreachable');
+    expect(result.next.items.map(item => item.id)).toEqual(['w-p0']);
+    expect(result.handoffs).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(result.handoffs.items.map(item => item.id)).toEqual(['ho-p0']);
+
+    // Inbox keeps the four P0 envelopes; matched is the filtered total.
+    expect(result.inbox.status).toBe('ok');
+    if (result.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.inbox.matched).toBe(4);
+    expect(result.inbox.messages.map(message => message.id).sort())
+      .toEqual(['dm-p0', 'ho-p0', 'w-p0', 'wk-p0']);
+
+    // Mailbox keeps only the P0 row.
+    expect(result.mailbox.status).toBe('ok');
+    if (result.mailbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.mailbox).toMatchObject({ matched: 1, truncated: false });
+    expect(result.mailbox.messages.map(message => message.id)).toEqual(['mb-p0']);
+
+    // Wakes decide on the resolved referent's band: the P0 DM, handoff and
+    // wake-request hints stay; the P3 handoff and wake-request hints drop.
+    expect(result.wakes).toMatchObject({ status: 'ok', matched: 3 });
+    if (result.wakes.status !== 'ok') throw new Error('unreachable');
+    expect(result.wakes.wakes.map(wake => wake.id).sort()).toEqual(['dm-p0', 'ho-p0', 'wk-p0']);
+    expect(all.wakes).toMatchObject({ status: 'ok', matched: 5 });
+
+    // Claims keep only the message claim whose leased envelope is P0; the
+    // P3-leased claim and the band-less scope claim name no provable band.
+    expect(result.claims.status).toBe('ok');
+    if (result.claims.status !== 'ok') throw new Error('unreachable');
+    expect(result.claims.claims.map(row => row.key)).toEqual(['queue:w-p0']);
+    if (all.claims.status !== 'ok') throw new Error('unreachable');
+    expect(all.claims.claims.map(row => row.key).sort())
+      .toEqual(['queue:w-p0', 'queue:w-p3', 'repo:a/b']);
+
+    // Sections whose projections carry no per-item band stay whole.
+    expect(result.jobs).toEqual(all.jobs);
+    expect(result.announced).toEqual(all.announced);
+    expect(result.threads).toEqual(all.threads);
+    expect(result.awaiting).toEqual(all.awaiting);
+    expect(result.blocked).toEqual(all.blocked);
+    expect(result.board).toEqual(all.board);
+    expect(result.channels).toEqual(all.channels);
+  });
+
   it('filters wake hints by queue time under the read\'s own strictly-after boundary', () => {
     const options = setup();
     register(options, 'atlas');
@@ -2749,6 +2856,17 @@ describe('phm agents bus work mine', () => {
     expect(since).toBeGreaterThanOrEqual(before - 2 * 3_600_000 - 5_000);
     expect(since).toBeLessThanOrEqual(Date.now() - 2 * 3_600_000 + 5_000);
     const bad = await run(['work', 'mine', '--since', 'bogus'], env);
+    expect(bad.code).toBe(2);
+    expect(bad.json).toMatchObject({ error: 'invalid-argument' });
+  });
+
+  it('accepts --priority, echoes the applied band and rejects a bad value', async () => {
+    const env = { PHM_AGENT_ID: 'atlas' };
+    await run(['id', 'register', 'atlas', '--cli', 'claude'], env);
+    const result = await run(['work', 'mine', '--priority', 'P1'], env);
+    expect(result.code).toBe(0);
+    expect(result.json).toMatchObject({ status: 'ok', priority: 'P1' });
+    const bad = await run(['work', 'mine', '--priority', 'P9'], env);
     expect(bad.code).toBe(2);
     expect(bad.json).toMatchObject({ error: 'invalid-argument' });
   });

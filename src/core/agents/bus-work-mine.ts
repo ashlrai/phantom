@@ -124,6 +124,21 @@ export interface BusWorkMineOptions {
    * exists to filter on. Every section's count
    * stays the filtered total, never the unfiltered one. */
   since?: number;
+  /** Keep only pending items stamped with this exact P0..P3 band — the same
+   * `--priority` match every other bus read applies — on the sections whose
+   * items carry a wire band: `next` and `handoffs` keep envelopes of that
+   * priority, `inbox` and `mailbox` keep mail of that band, `wakes` keeps
+   * hints whose resolved referent reports that band (the wakes read's own
+   * rule: `unresolved`/`unknown` referents never match), and `claims` keep
+   * only message claims whose resolved leased envelope reports that band —
+   * a claim with no resolved message (a scope-key claim, an unresolvable or
+   * unreadable-message lease) names no provable band and never lists, the
+   * same "unknown stays out" rule the job filter applies. `jobs`,
+   * `announced`, the three thread sections, `board`, `channels` and `seats`
+   * carry no per-item band in their projections and stay unfiltered, like
+   * `channels` does under every filter. Every section's count stays the
+   * filtered total, never the unfiltered one. */
+  priority?: BusPriority;
   /** Injectable clock, frozen once so every section reads the same instant. */
   now?: () => number;
 }
@@ -575,6 +590,8 @@ export type BusWorkMineResult =
       contains?: string;
       /** The time filter the read applied, echoed as ISO for JSON consumers; absent on an unfiltered read. */
       since?: string;
+      /** The band filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
+      priority?: BusPriority;
       claims: BusWorkMineClaims; jobs: BusWorkMineJobs; announced: BusWorkMineAnnounced;
       next: BusWorkMineNext;
       handoffs: BusWorkMineHandoffs; threads: BusWorkMineThreads; awaiting: BusWorkMineAwaiting;
@@ -747,6 +764,7 @@ function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number,
   const page = readAgentInbox(agent, { limit: WORK_MINE_INBOX_MAX + 1, matched: true,
     ...(options.job === undefined ? {} : { job: options.job }),
     ...(options.since === undefined ? {} : { since: options.since }),
+    ...(options.priority === undefined ? {} : { priority: options.priority }),
     ...(contains === undefined ? {} : { contains }) },
     { root: options.root, now: () => nowMs });
   if (page.status !== 'ok') return { status: page.status, reason: page.reason };
@@ -794,10 +812,12 @@ function mailboxSection(agent: string, identity: AgentIdentity | undefined,
   const home = options.mailboxHome ?? (options.root === undefined ? undefined : dirname(options.root));
   const job = options.job;
   const since = options.since;
-  const match = job === undefined && contains === undefined && since === undefined ? undefined
+  const priority = options.priority;
+  const match = job === undefined && contains === undefined && since === undefined && priority === undefined ? undefined
     : (message: BusMailboxPendingMessage) =>
       (job === undefined || busBodyJobMatch(message.envelope.body, job)) &&
       (since === undefined || message.acceptedAt >= since) &&
+      (priority === undefined || message.envelope.priority === priority) &&
       (contains === undefined || busReadContainsMatch(message.envelope.body, contains));
   let read: ReturnType<ReturnType<typeof createBusMailbox>['pendingFor']>;
   try {
@@ -992,10 +1012,13 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
       // keeps only receipts at or after the cutoff — the same
       // `receivedAt >= since` rule `agents bus inbox --since` applies — and
       // runs in the same place so a since-filtered handoff still sees its
-      // answer in replyCites.
+      // answer in replyCites. A priority filter keeps only envelopes of that
+      // band — the same exact P0..P3 match `agents bus inbox --priority`
+      // applies — for both kinds alike.
       if (options.job !== undefined && !busBodyJobMatch(envelope.body, options.job)) continue;
       if (contains !== undefined && !busReadContainsMatch(envelope.body, contains)) continue;
       if (options.since !== undefined && row.receivedAt < options.since) continue;
+      if (options.priority !== undefined && envelope.priority !== options.priority) continue;
       const kind = claimableKind(envelope.body);
       if (kind !== null) {
         nextCandidates.push({
@@ -1400,8 +1423,16 @@ function claimContainsMatch(claim: BusWorkMineClaim, needle: string): boolean {
  * read instant, not the held work's age, so no per-record recency exists
  * to filter on; a since-filtered handoff still sees its
  * answer in the shared reply scan, and `channels` stays unfiltered under
- * all three filters. `channels` is registry context, not pending work, and
- * stays unfiltered under any filter. Counts
+ * all three filters. `options.priority` applies the band rule every bus
+ * read's `--priority` shares across the sections whose items carry a wire
+ * band: next/handoffs keep envelopes of that priority, inbox and mailbox
+ * keep mail of that band, wakes keep hints whose resolved referent reports
+ * it (unresolved or unknown referents never match), and claims keep only
+ * message claims whose resolved leased envelope reports that band — a
+ * claim naming no provable band never lists. Feed jobs, announced jobs,
+ * the three thread sections, board rows, channels and seats carry no
+ * per-item band and stay unfiltered. `channels` is registry context, not
+ * pending work, and stays unfiltered under any filter. Counts
  * stay filtered totals; a section that cannot prove the relation reports
  * its own read state, never a padded match.
  */
@@ -1417,6 +1448,10 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
   // non-negative integer, parsed by the caller from the shared time grammar.
   if (options.since !== undefined && (!Number.isSafeInteger(options.since) || options.since < 0)) {
     return { status: 'invalid', reason: 'invalid-since' };
+  }
+  // The same P0..P3 band every bus read's `--priority` validates.
+  if (options.priority !== undefined && !BUS_PRIORITIES.includes(options.priority)) {
+    return { status: 'invalid', reason: 'invalid-priority' };
   }
   const sinceMs = options.since;
   const nowMs = (options.now ?? Date.now)();
@@ -1497,12 +1532,23 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       claims.claims = claims.claims.filter(claim =>
         claim.started !== null && Date.parse(claim.started) >= sinceMs);
     }
+    if (options.priority !== undefined) {
+      // A claim lists under a band filter only when its leased envelope
+      // provably reports that band — the resolved message's own priority,
+      // the same evidence `message.priority` carries. A claim with no
+      // resolved message — a scope-key claim, an unresolvable or unreadable
+      // lease — names no provable band and never lists, the same "unknown
+      // stays out" rule the job filter applies.
+      claims.claims = claims.claims.filter(claim =>
+        claim.message?.status === 'resolved' && claim.message.priority === options.priority);
+    }
   }
 
   const page = readAgentWakes(agent, sinceMs,
     { root: options.root, runsRoot: options.runsRoot, now: () => nowMs },
     { ...(options.job === undefined ? {} : { job: options.job }),
-      ...(contains === undefined ? {} : { contains }) });
+      ...(contains === undefined ? {} : { contains }),
+      ...(options.priority === undefined ? {} : { priority: options.priority }) });
   const wakes: BusWorkMineWakes = page.status === 'ok'
     ? { status: 'ok', agent: page.agent, scope: page.scope, matched: page.matched,
         truncated: page.truncated || page.matched > WORK_MINE_WAKES_MAX,
@@ -1528,6 +1574,7 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
     ...(options.job === undefined ? {} : { job: options.job }),
     ...(options.contains === undefined ? {} : { contains: options.contains }),
     ...(sinceMs === undefined ? {} : { since: new Date(sinceMs).toISOString() }),
+    ...(options.priority === undefined ? {} : { priority: options.priority }),
     claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board,
     channels };
 }
@@ -1560,7 +1607,8 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
     `registry=${who.registry} as-of=${result.asOf}` +
     (result.job === undefined ? '' : ` job=${result.job}`) +
     (result.contains === undefined ? '' : ` contains="${result.contains}"`) +
-    (result.since === undefined ? '' : ` since=${result.since}`));
+    (result.since === undefined ? '' : ` since=${result.since}`) +
+    (result.priority === undefined ? '' : ` priority=${result.priority}`));
 
   const claims = result.claims;
   if (claims.status !== 'ok') {
