@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Fourteen sources, all of which Phantom
+ * evidence instead of a hand-kept list. Fifteen sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -79,7 +79,15 @@
  *     journaled to ci-reruns/journal.jsonl by the daemon's ci-rerun pass
  *     (ciRerunBacklogItems below), so flake evidence the analyzer gets
  *     wrong — and a rerun loop that cannot fire — becomes work instead of
- *     sitting in `phm ci reruns`, a report someone had to run.
+ *     sitting in `phm ci reruns`, a report someone had to run;
+ *   - the lost-launch report's corroborated losses: launches whose
+ *     <ID>.launch first line records the launcher dying, or launches with
+ *     no finish/publish row and no open run marker once the grace passed,
+ *     folded from metrics/jobs.jsonl by `phm jobs lost`
+ *     (lostLaunchBacklogItems below), so a launch path that keeps dying
+ *     or dropping jobs becomes work instead of sitting in a report
+ *     someone had to run — outcome learning censors the silent vanishes
+ *     as unresolved attempts that never count.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -120,6 +128,7 @@ import { crossReviewBacklogItems } from './xreview-backlog.js';
 import { emptyTagBacklogItems } from './empty-tag-backlog.js';
 import { postMergeBacklogItems } from './postmerge-backlog.js';
 import { ciRerunBacklogItems } from './ci-rerun-backlog.js';
+import { lostLaunchBacklogItems } from './lost-launch-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -275,6 +284,18 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // journal tail read; a group emits only at the recurring bar inside the
   // journal's own 7-day window and only for the repository the rows name.
   items.push(...await ciRerunBacklogItems({ repo }));
+
+  // Lost launches: the `phm jobs lost` report's corroborated losses —
+  // launches whose .launch first line records the launcher dying, or
+  // launches with no finish/publish row and no open run marker once the
+  // grace passed — become backlog items too. Until now they only ever
+  // reached `phm jobs lost` and supply-doctor's 24 h count, reports
+  // someone had to run and read, and outcome learning censors the silent
+  // vanishes as unresolved attempts that never count. The feed drops jobs
+  // the dispatcher still counts as running, so a long job never queues
+  // work; a (lane, class) cell emits only at the recurring bar inside the
+  // window and only for the fleet's own repository.
+  items.push(...await lostLaunchBacklogItems({ repo }));
   return { items, errors };
 }
 

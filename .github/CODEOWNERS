@@ -600,6 +600,7 @@
 /test/improve-empty-tag-backlog.test.ts @masonwyatt23
 /test/improve-hot-patch.test.ts @masonwyatt23
 /test/improve-lesson-trial.test.ts @masonwyatt23
+/test/improve-lost-launch-backlog.test.ts @masonwyatt23
 /test/improve-observe.test.ts @masonwyatt23
 /test/improve-outcomes.test.ts @masonwyatt23
 /test/improve-postmerge-backlog.test.ts @masonwyatt23
