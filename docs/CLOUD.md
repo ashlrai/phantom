@@ -341,10 +341,24 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   judged samples in at least six distinct hour buckets spanning two UTC
   days inside the 7-day window; partial rows never count as blocked or
   clear, a missing or unreadable ledger emits nothing, and unknown
-  fields stay unknown rather than reading as zero.
+  fields stay unknown rather than reading as zero —
+  and the typed-routing observation journal's recurring failures, the
+  dispatcher's per-tick `phm route decide` samples journaled to
+  `metrics/route.explain.jsonl` under the fleet runs directory (otherwise
+  only visible through `phm route explain`'s typed_decisions digest, a
+  report someone had to run). An 'unavailable' service cell becomes an
+  item while unavailable samples reach the recurring bar inside the
+  7-day window AND outnumber the window's observed picks — the signature
+  of a dark typed-routing service — and each degraded reason code
+  (schema-invalid, schema-retry, backend-unavailable, deadline,
+  deterministic-fallback) becomes an item at the same recurring bar on
+  observed decisions; healthy state codes like no-candidates and
+  admission-blocked never emit, rows count only under the same producer
+  contract the digest validates, and a missing or unreadable journal
+  emits nothing.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
-  cross-review, empty-tag, post-merge, ci-rerun, lost-launch and
-  memory-pressure items carry
+  cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
+  memory-pressure and typed-routing items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
@@ -387,7 +401,11 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   retune-the-unmeasured-guard-constants framing for withheld raises —
   with the same owner-side no-change escape — and emit only for the
   fleet's own repository since the evidence describes this install's
-  host and fleet machinery. They
+  host and fleet machinery. Typed-routing items name the observation
+  journal and the `phm route explain` digest, keep the
+  find-why-the-service-or-its-backends-degrade framing, and emit only
+  for the fleet's own repository since the journal is this install's
+  dispatcher machinery. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never

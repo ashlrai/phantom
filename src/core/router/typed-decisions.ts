@@ -55,7 +55,7 @@ const str = (r: Row, ...keys: string[]): string | null => {
 const boundedCount = (v: unknown): number | null =>
   typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 && v <= MAX_METRIC ? v : null;
 
-interface JournalDecision {
+export interface JournalDecision {
   lane: string;
   model: string;
   effort: string;
@@ -88,6 +88,52 @@ function decisionFrom(raw: unknown): JournalDecision | null {
     codes.push(code);
   }
   return { lane, model, effort, speed_tier: speedTier, reason_codes: codes };
+}
+
+/**
+ * One journal row that passed the exact producer contract: schema
+ * route.explain.v1, the route.explain event (event/type/kind alias),
+ * advisory:true, a finite non-negative epoch-second ts and a status inside
+ * the observed/unavailable vocabulary — plus, on observed rows only, a
+ * decision passing the producer's own allowlist. `row` is the parsed record
+ * so consumers can read the optional bounded metrics (duration_ms,
+ * attempts, candidate_count) the digest tallies separately; `decision` is
+ * null on unavailable rows, which carry none by producer contract.
+ */
+export interface TypedDecisionSample {
+  ts: number;
+  status: 'observed' | 'unavailable';
+  decision: JournalDecision | null;
+  row: Record<string, unknown>;
+}
+
+/**
+ * Validate one parsed journal value into a TypedDecisionSample. Returns
+ * null for anything the producer could not have written — malformed JSON
+ * shapes, wrong schema/event, missing advisory flag, bad ts or status, and
+ * observed rows whose decision fails the allowlist. Row-level consumers
+ * (the typed-decisions digest, the improvement backlog's recurring-
+ * failure fold) share this one contract so a row can never be valid
+ * evidence for one and corrupt for the other.
+ */
+export function typedDecisionSampleFrom(raw: unknown): TypedDecisionSample | null {
+  if (!isRow(raw) || raw['schema'] !== TYPED_DECISIONS_ROW_SCHEMA ||
+      str(raw, 'event', 'type', 'kind') !== 'route.explain' ||
+      raw['advisory'] !== true) {
+    return null;
+  }
+  const ts = raw['ts'];
+  const status = raw['status'];
+  if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < 0 ||
+      typeof status !== 'string' || !STATUSES.has(status)) {
+    return null;
+  }
+  if (status === 'unavailable') {
+    return { ts, status: 'unavailable', decision: null, row: raw };
+  }
+  const decision = decisionFrom(raw['decision']);
+  if (decision === null) return null;
+  return { ts, status: 'observed', decision, row: raw };
 }
 
 export interface TypedTally { key: string; decisions: number }
@@ -215,51 +261,36 @@ export function foldTypedDecisions(text: string, path: string, truncated: boolea
       digest.invalid_rows += 1;
       continue;
     }
-    if (!isRow(row) || row['schema'] !== TYPED_DECISIONS_ROW_SCHEMA ||
-        str(row, 'event', 'type', 'kind') !== 'route.explain' ||
-        row['advisory'] !== true) {
+    const sample = typedDecisionSampleFrom(row);
+    if (sample === null) {
       digest.invalid_rows += 1;
       continue;
-    }
-    const ts = row['ts'];
-    const status = row['status'];
-    if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < 0 ||
-        typeof status !== 'string' || !STATUSES.has(status)) {
-      digest.invalid_rows += 1;
-      continue;
-    }
-    let decision: JournalDecision | null = null;
-    if (status === 'observed') {
-      decision = decisionFrom(row['decision']);
-      if (decision === null) {
-        digest.invalid_rows += 1;
-        continue;
-      }
     }
     digest.records += 1;
-    digest.oldest_ts = digest.oldest_ts === null ? ts : Math.min(digest.oldest_ts, ts);
-    digest.newest_ts = digest.newest_ts === null ? ts : Math.max(digest.newest_ts, ts);
-    if (status === 'unavailable') {
+    digest.oldest_ts = digest.oldest_ts === null ? sample.ts : Math.min(digest.oldest_ts, sample.ts);
+    digest.newest_ts = digest.newest_ts === null ? sample.ts : Math.max(digest.newest_ts, sample.ts);
+    if (sample.status === 'unavailable') {
       digest.unavailable += 1;
       continue;
     }
     digest.observed += 1;
-    tallyAdd(lanes, decision!.lane);
-    tallyAdd(models, decision!.model);
-    for (const code of new Set(decision!.reason_codes)) tallyAdd(reasons, code);
-    const duration = boundedCount(row['duration_ms']);
+    const decision = sample.decision!;
+    tallyAdd(lanes, decision.lane);
+    tallyAdd(models, decision.model);
+    for (const code of new Set(decision.reason_codes)) tallyAdd(reasons, code);
+    const duration = boundedCount(sample.row['duration_ms']);
     if (duration !== null) {
       digest.duration_ms.known += 1;
       durationSum += duration;
       durationMax = Math.max(durationMax, duration);
     }
-    const attempts = boundedCount(row['attempts']);
+    const attempts = boundedCount(sample.row['attempts']);
     if (attempts !== null) {
       digest.attempts.known += 1;
       attemptsSum += attempts;
       attemptsMax = Math.max(attemptsMax, attempts);
     }
-    const candidates = boundedCount(row['candidate_count']);
+    const candidates = boundedCount(sample.row['candidate_count']);
     if (candidates !== null) {
       digest.candidate_count.known += 1;
       candidateSum += candidates;
