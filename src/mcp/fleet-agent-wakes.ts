@@ -34,7 +34,7 @@
  * or proven-free work passed off as fact.
  */
 import {
-  busReadContains, readAgentWakes, type WakePage,
+  busReadContains, readAgentWakes, readAllWakes, type AllWakesPage, type WakePage,
 } from '../core/agents/bus-unified.js';
 import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
@@ -46,8 +46,8 @@ const WAKE_KEYS = new Set(['agent', 'since', 'job', 'from', 'excludeFrom', 'prio
 const LABEL_KEYS = ['job', 'from', 'excludeFrom'] as const;
 
 export interface FleetAgentWakesArgs {
-  /** Agent ref — handle, `agent:<handle>`, stable `agt_` id or alias — resolved through the server-side registry. */
-  agent: string;
+  /** Agent ref — handle, `agent:<handle>`, stable `agt_` id or alias — resolved through the server-side registry. Omit for the fleet-wide read: every hint in the bounded queue tail, each row's own `to` naming its addressee. */
+  agent?: string;
   /** Keep only hints recorded strictly after this epoch-ms cutoff — the wakes read's own boundary. */
   since?: number;
   /** Keep only hints provably naming this job id — the same `busBodyJobMatch` rule every bus `--job` read applies. */
@@ -78,9 +78,10 @@ export interface FleetAgentWakesArgs {
 export function parseFleetAgentWakesArgs(args: Record<string, unknown>): FleetAgentWakesArgs | null {
   if (Object.keys(args).some(key => !WAKE_KEYS.has(key))) return null;
   const agent = args.agent;
-  if (typeof agent !== 'string' || !BUS_LABEL.test(agent)) return null;
+  if (agent !== undefined && (typeof agent !== 'string' || !BUS_LABEL.test(agent))) return null;
 
-  const parsed: FleetAgentWakesArgs = { agent };
+  const parsed: FleetAgentWakesArgs = {};
+  if (agent !== undefined) parsed.agent = agent;
   for (const key of LABEL_KEYS) {
     const value = args[key];
     if (value === undefined) continue;
@@ -107,6 +108,7 @@ export function parseFleetAgentWakesArgs(args: Record<string, unknown>): FleetAg
 
 export interface FleetAgentWakesDeps {
   read?: typeof readAgentWakes;
+  readAll?: typeof readAllWakes;
 }
 
 interface FleetAgentWakesMeta {
@@ -117,8 +119,8 @@ interface FleetAgentWakesMeta {
 }
 
 /** The shared wake-page union with the MCP envelope metadata on every member, so `status` still narrows. */
-export type FleetAgentWakesResult = WakePage extends infer Member
-  ? Member extends WakePage ? FleetAgentWakesMeta & Member : never
+export type FleetAgentWakesResult = (WakePage | AllWakesPage) extends infer Member
+  ? Member extends WakePage | AllWakesPage ? FleetAgentWakesMeta & Member : never
   : never;
 
 /**
@@ -136,14 +138,16 @@ export async function readFleetAgentWakes(
   args: FleetAgentWakesArgs,
   deps: FleetAgentWakesDeps = {},
 ): Promise<FleetAgentWakesResult> {
-  const read = deps.read ?? readAgentWakes;
-  const page: WakePage = read(args.agent, args.since, {}, {
+  const filter = {
     ...(args.job === undefined ? {} : { job: args.job }),
     ...(args.from === undefined ? {} : { from: args.from }),
     ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
     ...(args.priority === undefined ? {} : { priority: args.priority }),
     ...(args.contains === undefined ? {} : { contains: args.contains }),
-  });
+  };
+  const page: WakePage | AllWakesPage = args.agent === undefined
+    ? (deps.readAll ?? readAllWakes)(args.since, {}, filter)
+    : (deps.read ?? readAgentWakes)(args.agent, args.since, {}, filter);
   return {
     schemaVersion: 1 as const, snapshotKind: 'local-persisted' as const,
     authority: 'none' as const, generatedAt: new Date().toISOString(),
