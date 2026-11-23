@@ -125,7 +125,7 @@ describe('fleet_bus_channel reader', () => {
     const seen: Array<[string, unknown]> = [];
     const read: typeof readAgentChannel = (name, page) => {
       seen.push([name, page]);
-      return okPage({ matched: 3 });
+      return okPage({ matched: 1 });
     };
     const result = await readFleetBusChannel(
       parseFleetBusChannelArgs({ channel: 'ops', after: 4, limit: 10, matched: true, topic: 'alerts' })!,
@@ -133,10 +133,35 @@ describe('fleet_bus_channel reader', () => {
     expect(seen).toEqual([['ops', { after: 4, limit: 10, matched: true, topic: 'alerts' }]]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
-      channel: 'ops', status: 'ok', nextCursor: 9, matched: 3,
+      channel: 'ops', status: 'ok', nextCursor: 9, matched: 1,
     });
     expect(result.messages).toHaveLength(1);
     expect(result.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('reports the newest shown cursor as nextCursor when matched hides rows', async () => {
+    // A matched page scans the whole store, so the core nextCursor is the
+    // store's end — resuming there would skip the unshown matches. The
+    // adapter reports the same honest resume point the CLI does.
+    const read: typeof readAgentChannel = () => okPage({
+      matched: 3,
+      messages: [message({ cursor: 4 }), message({ cursor: 7 })],
+      nextCursor: 9,
+    });
+    const result = await readFleetBusChannel(
+      parseFleetBusChannelArgs({ channel: 'ops', matched: true })!, { read });
+    expect(result).toMatchObject({ status: 'ok', matched: 3, nextCursor: 7 });
+    expect(result.messages).toHaveLength(2);
+  });
+
+  it('keeps the store-end cursor when every match fits the page', async () => {
+    const read: typeof readAgentChannel = () => okPage({
+      matched: 2,
+      messages: [message({ cursor: 4 }), message({ cursor: 7 })],
+    });
+    const result = await readFleetBusChannel(
+      parseFleetBusChannelArgs({ channel: 'ops', matched: true })!, { read });
+    expect(result).toMatchObject({ status: 'ok', matched: 2, nextCursor: 9 });
   });
 
   it('omits matched when the page did not count the whole store', async () => {

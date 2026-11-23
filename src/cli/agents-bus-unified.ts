@@ -5,7 +5,7 @@ import {
   type BusCli, type BusProvider,
 } from '../core/agents/bus-identity.js';
 import {
-  agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodyFallbackSummary, busInboxJobMarker, listBusChannels, postChannelMessage, postLabelMessage,
+  agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodyFallbackSummary, busInboxJobMarker, busPageResumeCursor, listBusChannels, postChannelMessage, postLabelMessage,
   readAgentChannel, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
   updateWorkStatus, INBOX_KINDS, type AllWakesPage, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WakePage, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
@@ -653,8 +653,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         // --matched scans the whole store, so the core nextCursor is the store's
         // end — resuming there would skip unshown matches. The honest resume
         // point is the newest shown row's cursor (the same rule inbox applies).
-        const nextCursor = result.matched !== undefined && result.matched > result.messages.length
-          ? Math.max(...result.messages.map(m => m.cursor)) : result.nextCursor;
+        const nextCursor = busPageResumeCursor(result);
         const shown = { ...result, nextCursor };
         out(json ? JSON.stringify(shown) : [
           ...shown.messages.map(m => `${m.cursor} ${m.priority} #${shown.channel}:${m.topic} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}` +
@@ -698,8 +697,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       // point is the newest shown row's cursor: every unshown match sits
       // beyond it and every shown one at or before it (the same rule the
       // work mine inbox section applies).
-      const nextCursor = page.matched !== undefined && page.matched > page.messages.length
-        ? Math.max(...page.messages.map(m => m.cursor)) : page.nextCursor;
+      const nextCursor = busPageResumeCursor(page);
       const shown = { ...page, nextCursor };
       if (frame) { out(json ? JSON.stringify({ ...shown, framed: frameBusInbox(frame as BusCli, page.messages) }) : frameBusInbox(frame as BusCli, page.messages)); return 0; }
       out(json ? JSON.stringify(shown) : [

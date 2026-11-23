@@ -24,7 +24,7 @@
  * proven-free work passed off as history.
  */
 import {
-  busReadContains, readAgentChannel,
+  busPageResumeCursor, busReadContains, readAgentChannel,
   type ChannelReadMessage, type ChannelReadPage,
 } from '../core/agents/bus-unified.js';
 import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
@@ -150,7 +150,10 @@ export interface FleetBusChannelResult {
  * reason: `invalid`, `unknown-channel`, `unavailable` and `retryable` each
  * stay themselves, never an invented empty transcript, and `ok` keeps
  * `nextCursor` for resuming plus `matched` only when the read asked for
- * the whole-store count.
+ * the whole-store count. `nextCursor` is the same honest resume point
+ * `phm agents bus channel read` reports — under `matched` the core page's
+ * cursor is the store's end, so the adapter reports the newest shown row's
+ * cursor instead, or a client resuming there would skip every unshown match.
  */
 export async function readFleetBusChannel(
   args: FleetBusChannelArgs,
@@ -169,7 +172,7 @@ export async function readFleetBusChannel(
   }
   return {
     ...base, channel: page.channel, status: 'ok' as const,
-    messages: page.messages, nextCursor: page.nextCursor,
+    messages: page.messages, nextCursor: busPageResumeCursor(page),
     ...(page.matched === undefined ? {} : { matched: page.matched }),
   };
 }

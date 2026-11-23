@@ -3529,7 +3529,18 @@ are the shared `--contains` validation and match every bus read applies:
 and `followBusStream` (`fleet bus-follow --contains`) all run the same
 case-insensitive whitespace-collapsed substring over the scrubbed
 one-line summary, never the raw body, so a secret-shaped value stays
-unfindable and protocol-v1 payloads stay opaque; and `comms inbox
+unfindable and protocol-v1 payloads stay opaque; `busPageResumeCursor(page)`
+is the one honest resume cursor every paged bus read's consumer reports —
+a plain page's `nextCursor` already resumes strictly before the first
+unshown row, but a `matched` page scans the whole retained store so its
+raw cursor is the store's end and resuming there would skip every unshown
+match, so when `matched` exceeds the shown rows the helper answers the
+newest shown row's cursor instead (every unshown match sits beyond it,
+every shown one at or before it) while a `matched` total that fits the
+page keeps the store-end cursor — `phm agents bus inbox`, `phm agents bus
+channel read` and the `fleet_agent_inbox`/`fleet_bus_channel` MCP adapters
+all report this same cursor, so a matched read never disagrees about
+where to resume; and `comms inbox
 --contains` (`UnifiedInboxFilter.contains`, bounded by
 `UNIFIED_INBOX_CONTAINS_MAX`) keeps only items whose scrubbed
 `title`/`detail` — the text the row shows, never the `act` command links —
