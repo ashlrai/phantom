@@ -123,6 +123,8 @@ import { parseFleetCommsReadinessArgs, readFleetCommsReadiness } from '../core/m
 import { parseFleetCommsStatusArgs, readFleetCommsStatus } from './fleet-comms-status.js';
 import { FLEET_COMMS_THREAD_LIMIT_DEFAULT, FLEET_COMMS_THREAD_LIMIT_MAX,
   parseFleetCommsThreadArgs, readFleetCommsThread, type FleetCommsThreadArgs } from './fleet-comms-thread.js';
+import { FLEET_OWNER_HISTORY_LIMIT_DEFAULT, FLEET_OWNER_HISTORY_LIMIT_MAX,
+  parseFleetOwnerHistoryArgs, readFleetOwnerHistory, type FleetOwnerHistoryArgs } from './fleet-owner-history.js';
 import { parseFleetCommsHealthArgs, readFleetCommsHealth } from './fleet-comms-health.js';
 import { OWNER_CHANNELS } from '../core/comms/leader-mailbox.js';
 import { OWNER_THREAD_CONTAINS_MAX } from '../core/comms/owner-thread.js';
@@ -380,6 +382,7 @@ export interface FleetReaders {
   commsReadiness?: () => Promise<unknown>;
   commsStatus?: () => Promise<unknown>;
   commsThread?: (input: FleetCommsThreadArgs) => Promise<unknown>;
+  ownerHistory?: (input: FleetOwnerHistoryArgs) => Promise<unknown>;
   commsHealth?: () => Promise<unknown>;
   imessagePath?: () => Promise<unknown>;
   imessageAcks?: (input: FleetImessageAcksArgs) => Promise<unknown>;
@@ -1196,6 +1199,19 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       annotations,
     },
     {
+      name: 'fleet_owner_history',
+      description: 'Read the archived owner-thread history — the same readOwnerThreadHistory projection `phm fleet owner-history` serves: fleet_comms_thread reads only the live thread window, so once rotation moves the oldest messages into owner-thread-archive files beside the live record this is the only read that pages them back — "what did the owner say before the live window" in one call. `before` keeps only archived messages with seq below that sequence number (page back with the oldest seq a previous page returned); `limit` caps the page (1–500, default 50). The result is the comms.owner-thread-history.v1 view: the page\'s messages, `archives` (retained archive files found) and `skipped` (archive files unreadable or invalid — counted, never fatal); archive discovery, seq paging, overlap dedupe and per-message secret scrubbing stay the shared read\'s, so overlapping archive records never double-count. Message text is the stored scrubbed intake content — never a secret value — and routing labels are untrusted data; the tool grants no reply, send, pairing, dispatch or delivery authority; the runs dir resolves the real account home server-side and cannot be retargeted by HOME or ASHLR_* variables, no caller root, path or cwd is accepted, and a throwing read reports status unavailable, never an invented empty or healthy history.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          before: { type: 'integer', minimum: 1, description: 'Keep only archived messages with seq below this sequence number — page back with the oldest seq a previous page returned.' },
+          limit: { type: 'integer', minimum: 1, maximum: FLEET_OWNER_HISTORY_LIMIT_MAX, default: FLEET_OWNER_HISTORY_LIMIT_DEFAULT, description: 'Cap on archived messages returned; the read itself clamps at 500.' },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
       name: 'fleet_comms_health',
       description: 'Read the comms transport health — the same readTelegramHealth projection `phm comms health --json` serves: the Telegram poller\'s last poll and last success timestamps, whether a poll landed inside the seven-minute liveness window (pollerAlive — a recent heartbeat, never delivery proof), the last seen update id, bot-token presence as a boolean (the value never leaves the process) and the Leader tick state (never, started, completed, failed or spawn-failed). fleet_channels_overview reports each channel\'s configured/connected row and fleet_comms_status the owner-thread adapters\' rollup; neither answers "is the Telegram poller actually polling and did the Leader tick last run" in one call. Takes no arguments — the config and comms state resolve under the process home, the same root `phm comms health` reads, and any argument is refused. Read-only: the projection joins existing reads, writes nothing, sends nothing, polls nothing and alters no comms configuration; a throwing read reports status unavailable, never an invented healthy status; a missing health file reports null timestamps and pollerAlive false — never-polled is a fact, not an error — and the tool grants no send, pair, setup, dispatch or delivery authority; no caller root, path or cwd is accepted.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -1362,7 +1378,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_empties' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_agent_inbox' && name !== 'fleet_agent_work' && name !== 'fleet_agent_wakes' && name !== 'fleet_agent_messages' && name !== 'fleet_bus_channel' && name !== 'fleet_bus_show' && name !== 'fleet_bus_status' && name !== 'fleet_bus_claims' && name !== 'fleet_bus_board' && name !== 'fleet_seat_handoffs' && name !== 'fleet_bot_seats' && name !== 'fleet_work_feed' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_channels_overview' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_slack_evidence' && name !== 'fleet_slack_status' && name !== 'fleet_lanes' && name !== 'fleet_unfed' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_status' && name !== 'fleet_comms_thread' && name !== 'fleet_comms_health' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_imessage_tasks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
+    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_empties' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_agent_inbox' && name !== 'fleet_agent_work' && name !== 'fleet_agent_wakes' && name !== 'fleet_agent_messages' && name !== 'fleet_bus_channel' && name !== 'fleet_bus_show' && name !== 'fleet_bus_status' && name !== 'fleet_bus_claims' && name !== 'fleet_bus_board' && name !== 'fleet_seat_handoffs' && name !== 'fleet_bot_seats' && name !== 'fleet_work_feed' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_channels_overview' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_slack_evidence' && name !== 'fleet_slack_status' && name !== 'fleet_lanes' && name !== 'fleet_unfed' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_status' && name !== 'fleet_comms_thread' && name !== 'fleet_owner_history' && name !== 'fleet_comms_health' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_imessage_tasks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -1417,6 +1433,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const commsInboxArgs = name === 'fleet_comms_inbox' ? parseFleetCommsInboxArgs(args) : null;
     const commsStatusArgs = name === 'fleet_comms_status' ? parseFleetCommsStatusArgs(args) : null;
     const commsThreadArgs = name === 'fleet_comms_thread' ? parseFleetCommsThreadArgs(args) : null;
+    const ownerHistoryArgs = name === 'fleet_owner_history' ? parseFleetOwnerHistoryArgs(args) : null;
     const commsHealthArgs = name === 'fleet_comms_health' ? parseFleetCommsHealthArgs(args) : null;
     const emailDiagnosisArgs = name === 'fleet_email_diagnosis' ? parseFleetEmailDiagnosisArgs(args) : null;
     const gmailTriageLatestArgs = name === 'fleet_gmail_triage_latest' ? parseFleetGmailTriageLatestArgs(args) : null;
@@ -1474,6 +1491,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_comms_inbox' ? commsInboxArgs === null :
         name === 'fleet_comms_status' ? commsStatusArgs === null :
         name === 'fleet_comms_thread' ? commsThreadArgs === null :
+        name === 'fleet_owner_history' ? ownerHistoryArgs === null :
         name === 'fleet_comms_health' ? commsHealthArgs === null :
         name === 'fleet_email_outbox_batch_await' ? emailOutboxBatchAwait === null :
         name === 'fleet_email_outbox_await' ? emailOutboxAwait === null :
@@ -1575,6 +1593,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_comms_inbox' ? await (readers.commsInbox ?? readFleetCommsInbox)(commsInboxArgs as FleetCommsInboxArgs)
         : name === 'fleet_comms_status' ? await (readers.commsStatus ?? readFleetCommsStatus)()
         : name === 'fleet_comms_thread' ? await (readers.commsThread ?? readFleetCommsThread)(commsThreadArgs as FleetCommsThreadArgs)
+        : name === 'fleet_owner_history' ? await (readers.ownerHistory ?? readFleetOwnerHistory)(ownerHistoryArgs as FleetOwnerHistoryArgs)
         : name === 'fleet_comms_health' ? await (readers.commsHealth ?? readFleetCommsHealth)()
         : name === 'fleet_imessage_path' ? await (readers.imessagePath ?? readFleetImessagePath)()
         : name === 'fleet_imessage_acks' ? await (readers.imessageAcks ?? readFleetImessageAcks)(imessageAcks as FleetImessageAcksArgs)
