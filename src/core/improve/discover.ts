@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Sixteen sources, all of which Phantom
+ * evidence instead of a hand-kept list. Seventeen sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -97,7 +97,17 @@
  *     fleet's memory posture — or guard constants that never match the
  *     measured operating point — becomes work instead of sitting in
  *     `phm fleet vitals`' swapout_rate section, a report someone had
- *     to run.
+ *     to run;
+ *   - the fleet-controller ledger's recurring control evidence: the
+ *     per-tick `fleet-controller.ledger.v1` rows dispatchd appends to
+ *     metrics/fleet-controller.jsonl — recurring fail-closed readings,
+ *     applied shed levels and their driving signals, would-shed plans
+ *     never applied, ambiguous hold attribution, a blind merge
+ *     objective and mostly-unmeasured lane quality receipts
+ *     (controllerBacklogItems below), so a controller that keeps
+ *     throttling, freezing or flying blind becomes work instead of
+ *     sitting in `phm fleet admission --details`, `phm amplify` and
+ *     `phm fleet status`, reports someone had to run.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -140,6 +150,7 @@ import { postMergeBacklogItems } from './postmerge-backlog.js';
 import { ciRerunBacklogItems } from './ci-rerun-backlog.js';
 import { lostLaunchBacklogItems } from './lost-launch-backlog.js';
 import { memoryBacklogItems } from './memory-backlog.js';
+import { controllerBacklogItems } from './controller-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -318,6 +329,17 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the writer's own row validation; an item emits only at the recurring
   // bar inside the window and only for the fleet's own repository.
   items.push(...await memoryBacklogItems({ repo }));
+
+  // Fleet-controller ledger: the dispatcher's own per-tick control
+  // record — recurring fail-closed readings, applied shed levels and
+  // their driving signals, would-shed plans never applied, ambiguous
+  // hold attribution, a blind merge objective and unmeasured lane
+  // quality — become backlog items too. Until now the ledger only ever
+  // reached `phm fleet admission --details`, `phm amplify` and
+  // `phm fleet status`, reports someone had to run and read. Same
+  // bounded generation reads; an item emits only at the recurring bar
+  // inside the window and only for the fleet's own repository.
+  items.push(...await controllerBacklogItems({ repo }));
   return { items, errors };
 }
 
