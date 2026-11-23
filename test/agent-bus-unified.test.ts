@@ -7,7 +7,7 @@ import {
   registerAgentIdentity, resolveAgent, stableAgentId,
 } from '../src/core/agents/bus-identity.js';
 import {
-  agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodySummary, listBusChannels, postChannelMessage, postLabelMessage,
+  agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodySummary, busPageResumeCursor, listBusChannels, postChannelMessage, postLabelMessage,
   readAgentChannel, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff,
   sendWakeRequest, shouldWake, updateWorkStatus, type AgentWakeRow, type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
@@ -297,6 +297,28 @@ describe('channel reads', () => {
     if (resumed.status !== 'ok') throw new Error(`unexpected ${resumed.status}`);
     expect(resumed.matched).toBe(0);
     expect(resumed.messages).toEqual([]);
+  });
+});
+
+describe('busPageResumeCursor', () => {
+  const row = (cursor: number) => ({ cursor });
+
+  it('keeps the page cursor when matched was not asked or every match is shown', () => {
+    expect(busPageResumeCursor({ nextCursor: 9, messages: [row(7)] })).toBe(9);
+    expect(busPageResumeCursor({ nextCursor: 9, matched: 1, messages: [row(7)] })).toBe(9);
+    expect(busPageResumeCursor({ nextCursor: 9, matched: 2, messages: [row(4), row(7)] })).toBe(9);
+  });
+
+  it('resumes at the newest shown row when matched hides rows beyond the page', () => {
+    // The raw nextCursor is the store's end after a whole-store matched scan;
+    // resuming there would skip the unshown matches, so the honest cursor is
+    // the newest shown row's.
+    expect(busPageResumeCursor({ nextCursor: 9, matched: 3, messages: [row(4), row(7)] })).toBe(7);
+    expect(busPageResumeCursor({ nextCursor: 9, matched: 3, messages: [row(7)] })).toBe(7);
+  });
+
+  it('keeps the page cursor when a matched page shows no rows', () => {
+    expect(busPageResumeCursor({ nextCursor: 9, matched: 2, messages: [] })).toBe(9);
   });
 });
 

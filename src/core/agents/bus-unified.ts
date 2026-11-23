@@ -1028,6 +1028,27 @@ export function busReadContains(value: unknown): string | null | undefined {
   return busReadContainsNeedle(value);
 }
 
+/**
+ * The honest resume cursor a paged bus read reports. A plain page stops the
+ * scan at `limit`, so its `nextCursor` already resumes strictly before the
+ * first unshown row. A `matched` page scans the whole retained store to count
+ * every accepted row, so its raw `nextCursor` is the store's end — resuming
+ * there would skip every match beyond the shown slice. When `matched`
+ * exceeds the shown rows the resume point is the newest shown row's cursor:
+ * every unshown match sits beyond it and every shown one at or before it, so
+ * `--after <nextCursor>` continues the page without a gap or a repeat. A
+ * `matched` total that fits inside the page keeps the store-end cursor —
+ * nothing was hidden, so the scan's end is the honest resume. The CLI and
+ * the fleet MCP adapters all report this one cursor, so a matched read can
+ * never disagree about where to resume.
+ */
+export function busPageResumeCursor(page: { nextCursor: number; matched?: number;
+    messages: readonly { cursor: number }[] }): number {
+  return page.matched !== undefined && page.matched > page.messages.length && page.messages.length > 0
+    ? Math.max(...page.messages.map(message => message.cursor))
+    : page.nextCursor;
+}
+
 interface Addressing { identity: AgentIdentity; labels: Set<string>; channels: Map<string, string> }
 
 function addressing(reg: AgentRegistry, ref: string): Addressing | undefined {
