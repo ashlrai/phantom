@@ -1304,7 +1304,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'imessage doctor|poll [--apply] [--json]', desc: 'iMessage intake: doctor checks permissions and config; poll counts waiting messages (dry run), --apply receipts them. Never prints message text.', topic: 'autonomy' },
   { cmd: 'director',                     desc: 'Retired — the Leader handles this (see `ashlr leader`). Still prints the read-only fleet god-view; sends nothing.', topic: 'autonomy' },
   { cmd: 'invent',                       desc: 'Generative backlog invention — propose novel high-value work items.', topic: 'autonomy' },
-  { cmd: 'ideas list [--human]', desc: 'Rank what the fleet should fix next from local signals (empty launches, main-guardian fixups, disk trend, idle lanes, unspent usage, self-awareness loop diagnosis). JSON by default; unreadable signals show as unknown.', topic: 'autonomy' },
+  { cmd: 'ideas list [--human]', desc: 'Rank what the fleet should fix next from local signals (empty launches, main-guardian fixups, disk trend, idle lanes, unspent usage, self-awareness loop diagnosis, pre-launch dupcheck precision). JSON by default; unreadable signals show as unknown.', topic: 'autonomy' },
   { cmd: 'ideas queue <id> [--json]', desc: 'Queue one idea from `ideas list` as a job; the same idea queues once.', topic: 'autonomy' },
   { cmd: 'universe <demo|init|run|status|archive>', desc: 'Local experiment evolution: run competing code variants, measure them, and reuse winning artifacts.', topic: 'autonomy' },
   { cmd: 'universe console --root <absolute> [--port N] [--json]', desc: 'Foreground read-only Universe console on loopback; explicit root, ephemeral port by default, no service activation.', topic: 'autonomy' },

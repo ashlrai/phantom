@@ -67,6 +67,14 @@ async function seedAllSignals(): Promise<void> {
     loop_wait: { missing: 'loop stage times not collected' },
     bets_share: { missing: 'bets share not computed' },
   }));
+  // Three jobs the gate let through all ended EMPTY already_done: the missed-duplicates idea trips once.
+  const dupcheck = (job: string, action: string, tag?: string) =>
+    JSON.stringify({ schema: 'queue.dupcheck-event.v1', at: iso(30), job, action, ...(tag ? { tag } : {}) });
+  await put('metrics/dupcheck.jsonl', [
+    dupcheck('RQ-DUP-1', 'launch'), dupcheck('RQ-DUP-2', 'launch'), dupcheck('RQ-DUP-3', 'warn'),
+    dupcheck('RQ-DUP-1', 'outcome', 'already_done'), dupcheck('RQ-DUP-2', 'outcome', 'already_done'), dupcheck('RQ-DUP-3', 'outcome', 'already_done'),
+    'not json at all',
+  ].join('\n') + '\n');
 }
 
 const read = () => readIdeaList({ runsDir: root, usageLogPaths: [join(root, 'queue', 'usage-readings.log')], now: NOW });
@@ -81,6 +89,7 @@ describe('ideas list ranking', () => {
       ['disk-trend:runway', 75],
       ['guardian-fixups:phantom:lint', 70],
       ['idle-lanes:claude', 66],
+      ['dupcheck-gate:missed-duplicates', 50],
       ['empty-launches:rq-phx-recut', 34],
       ['unspent-usage:claude', 30],
     ]);
@@ -93,6 +102,10 @@ describe('ideas list ranking', () => {
     expect(byId.get('disk-trend:runway')).toMatchObject({ title: 'Disk will drop below 150 GB free in about 15 hours', evidence: { freeGb: 180, gbPerHour: 2, hoursUntilFloor: 15 } });
     expect(byId.get('idle-lanes:claude')!.title).toBe('claude has 5 jobs waiting but runs 0 of 3');
     expect(byId.get('unspent-usage:claude')).toMatchObject({ evidence: { usedPct: 40, hoursToReset: 10, readingAgeHours: 1, projectedLeftAtResetPct: 38 } });
+    expect(byId.get('dupcheck-gate:missed-duplicates')).toMatchObject({
+      signal: 'dupcheck-gate',
+      evidence: { checked: 3, launches: 2, warns: 1, launchedEndedAlreadyDone: 2, warnedEndedAlreadyDone: 1, missedRate: 1 },
+    });
     for (const idea of report.ideas) {
       expect(idea.title).not.toMatch(/\n/);
       expect(idea.task.length).toBeGreaterThan(20);
@@ -130,7 +143,7 @@ describe('ideas list ranking', () => {
     const signals: BottleneckSignals = {
       emptyLaunches: { ok: false, reason: 'x' }, guardianFixups: { ok: false, reason: 'x' }, disk: { ok: false, reason: 'x' }, idleLanes: { ok: false, reason: 'x' },
       unspentUsage: { ok: true, data: [{ pool: 'claude', usedPct: 30, hoursToReset: 6, readingAgeHours: 0.5, projectedLeftPct: null }] },
-      loopHints: { ok: false, reason: 'x' },
+      loopHints: { ok: false, reason: 'x' }, dupcheckGate: { ok: false, reason: 'x' },
     };
     const [idea] = rankBottlenecks(signals, NOW).ideas;
     expect(idea!.evidence.projectedLeftAtResetPct).toBeNull();
@@ -242,10 +255,59 @@ describe('stable JSON', () => {
     const lane = (name: string) => ({ lane: name, status: 'red' as const, running: 0, target: 1, queued: 1 });
     const signals: BottleneckSignals = {
       emptyLaunches: { ok: false, reason: 'x' }, guardianFixups: { ok: false, reason: 'x' }, disk: { ok: false, reason: 'x' }, unspentUsage: { ok: false, reason: 'x' },
-      loopHints: { ok: false, reason: 'x' },
+      loopHints: { ok: false, reason: 'x' }, dupcheckGate: { ok: false, reason: 'x' },
       idleLanes: { ok: true, data: [lane('zeta'), lane('alpha')] },
     };
     expect(rankBottlenecks(signals, NOW).ideas.map(idea => idea.id)).toEqual(['idle-lanes:alpha', 'idle-lanes:zeta']);
+  });
+});
+
+describe('dupcheck-gate signal', () => {
+  const event = (job: string, action: string, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ schema: 'queue.dupcheck-event.v1', at: iso(1), job, action, ...extra });
+  const ledger = (rows: string[]) => rows.join('\n') + '\n';
+  const dupcheckIdeas = async (text: string) => {
+    await put('metrics/dupcheck.jsonl', text);
+    return (await read()).ideas.filter(idea => idea.signal === 'dupcheck-gate');
+  };
+
+  it('ranks false skips: skipped jobs that launched anyway', async () => {
+    const ideas = await dupcheckIdeas(ledger([
+      event('RQ-SKIP-1', 'skip'), event('RQ-SKIP-1', 'launch'),
+      event('RQ-SKIP-2', 'skip'), event('RQ-SKIP-2', 'warn'),
+      event('RQ-SKIP-3', 'skip'),
+    ]));
+    expect(ideas.map(idea => idea.id)).toEqual(['dupcheck-gate:false-skips']);
+    expect(ideas[0]).toMatchObject({
+      payoff: { score: 50 },
+      evidence: { checked: 3, skips: 3, falseSkips: 2, skipPrecision: 0.33, falseSkipJobs: 'RQ-SKIP-1, RQ-SKIP-2' },
+    });
+  });
+
+  it('keeps missed duplicates below the count or rate threshold out', async () => {
+    // Two ended already_done: under DUPCHECK_MISSED_MIN even at a 100% rate.
+    expect(await dupcheckIdeas(ledger([
+      event('RQ-M-1', 'launch'), event('RQ-M-1', 'outcome', { tag: 'already_done' }),
+      event('RQ-M-2', 'launch'), event('RQ-M-2', 'outcome', { tag: 'already_done' }),
+    ]))).toEqual([]);
+    // Three misses in forty-one let-through launches: under DUPCHECK_MISSED_RATE.
+    const rows = [
+      event('RQ-M-1', 'launch'), event('RQ-M-1', 'outcome', { tag: 'already_done' }),
+      event('RQ-M-2', 'warn'), event('RQ-M-2', 'outcome', { tag: 'already_done' }),
+      event('RQ-M-3', 'launch'), event('RQ-M-3', 'outcome', { tag: 'already_done' }),
+      ...Array.from({ length: 37 }, (_, i) => event(`RQ-OK-${i}`, 'launch')),
+    ];
+    expect(await dupcheckIdeas(ledger(rows))).toEqual([]);
+  });
+
+  it('reports the signal unknown when no dupcheck event is readable, ok when the file is merely empty', async () => {
+    await put('metrics/dupcheck.jsonl', 'garbage\n{"schema":"other.v1"}\n');
+    let report = await read();
+    expect(report.signals.find(signal => signal.name === 'dupcheck-gate')).toMatchObject({ status: 'unknown' });
+    expect(report.ideas.some(idea => idea.signal === 'dupcheck-gate')).toBe(false);
+    await put('metrics/dupcheck.jsonl', '');
+    report = await read();
+    expect(report.signals.find(signal => signal.name === 'dupcheck-gate')).toMatchObject({ status: 'ok' });
   });
 });
 
