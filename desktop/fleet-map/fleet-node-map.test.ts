@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, within } from '@testing-library/dom';
+import { fireEvent, within } from '@testing-library/react';
 import { FleetNodeMap } from './fleet-node-map.js';
 import { fleetFixture } from './fixture.js';
 import { parseFleetGraphSeed } from '../../src/core/graph/registry.js';

@@ -408,22 +408,27 @@ describe('gate data files', () => {
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
   });
 
-  it('phase A typechecks both projects once, inside typecheck-fast — no duplicate web pass', () => {
+  it('phase A typechecks every project once, inside typecheck-fast — no duplicate passes', () => {
     const specs = phaseASpecs({ nodeBin: 'node', npmCmd: 'npm', tscBin: 'TSC', eslintBin: 'ESLINT', gateDir: '.ashlr-gate' });
-    // Exactly one typecheck step: the npm script that runs tsgo on both projects.
+    // Exactly one typecheck step: the npm script that runs tsgo on all projects.
     expect(specs.filter((spec) => spec.name.includes('typecheck')).map((spec) => spec.name)).toEqual(['typecheck-fast']);
-    // No step invokes a compiler on the web tsconfig directly.
-    for (const spec of specs) expect(spec.args.join(' ')).not.toContain('src/web-ui/tsconfig.json');
-    // And typecheck:fast itself still names the web project, matching `npm run typecheck`.
+    // No step invokes a compiler on a project tsconfig directly.
+    for (const spec of specs) {
+      expect(spec.args.join(' ')).not.toContain('src/web-ui/tsconfig.json');
+      expect(spec.args.join(' ')).not.toContain('desktop/tsconfig.json');
+    }
+    // And typecheck:fast itself still names each project, matching `npm run typecheck`.
     const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
     expect(pkg.scripts['typecheck:fast']).toContain('tsgo');
     expect(pkg.scripts['typecheck:fast']).toContain('src/web-ui/tsconfig.json');
+    expect(pkg.scripts['typecheck:fast']).toContain('desktop/tsconfig.json');
   });
 
-  it('--check typechecks both tsconfig projects with the native compiler', () => {
+  it('--check typechecks every tsconfig project with the native compiler', () => {
     expect(checkTypeSpecs({ nodeBin: 'node', tsgoBin: 'TSGO' })).toEqual([
       { name: 'typecheck', cmd: 'node', args: ['TSGO', '--noEmit', '-p', 'tsconfig.json'] },
       { name: 'typecheck-web', cmd: 'node', args: ['TSGO', '--noEmit', '-p', 'src/web-ui/tsconfig.json'] },
+      { name: 'typecheck-desktop', cmd: 'node', args: ['TSGO', '--noEmit', '-p', 'desktop/tsconfig.json'] },
     ]);
   });
 

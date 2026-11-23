@@ -183,7 +183,7 @@ describe('verifyPassedDir', () => {
 });
 
 describe('verify-changed dedupe end-to-end', () => {
-  it.each(['clean', 'backend', 'web'])('scopes status verification for %s changes', (project) => {
+  it.each(['clean', 'backend', 'web', 'desktop'])('scopes status verification for %s changes', (project) => {
     const root = fixture(true);
     const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
     git('checkout', '--', 'scripts/check-realio-lane-membership.mjs');
@@ -191,7 +191,7 @@ describe('verify-changed dedupe end-to-end', () => {
     mkdirSync(join(root, 'node_modules/.bin'), { recursive: true });
     writeFileSync(join(root, 'node_modules/.bin/tsgo'), '#!/usr/bin/env node\nconst fs = require("node:fs"); const calls = fs.existsSync("observed.txt") ? JSON.parse(fs.readFileSync("observed.txt")) : []; calls.push(process.argv.slice(2)); fs.writeFileSync("observed.txt", JSON.stringify(calls));\n', { mode: 0o755 });
     if (project !== 'clean') {
-      const file = project === 'web' ? 'src/web-ui/view.ts' : 'src/backend.ts';
+      const file = project === 'web' ? 'src/web-ui/view.ts' : project === 'desktop' ? 'desktop/view.ts' : 'src/backend.ts';
       mkdirSync(dirname(join(root, file)), { recursive: true });
       writeFileSync(join(root, file), 'export {};\n');
       if (project === 'backend') git('add', file);
@@ -202,9 +202,10 @@ describe('verify-changed dedupe end-to-end', () => {
       expect(result.stdout).toContain('verify: 0 changed files (status), typecheck skipped: no changes');
       expect(existsSync(join(root, 'observed.txt'))).toBe(false);
     } else {
-      expect(result.stdout).toContain(`verify: 1 changed files (status), ${project} only, incremental`);
+      const configs: Record<string, string> = { backend: 'tsconfig.json', web: 'src/web-ui/tsconfig.json', desktop: 'desktop/tsconfig.json' };
+      expect(result.stdout).toContain(`verify: 1 changed files (status), ${project}, incremental`);
       expect(JSON.parse(readFileSync(join(root, 'observed.txt'), 'utf8'))).toEqual([[
-        '--noEmit', '-p', project === 'web' ? 'src/web-ui/tsconfig.json' : 'tsconfig.json',
+        '--noEmit', '-p', configs[project],
         '--incremental', '--tsBuildInfoFile', join(realpathSync(root), `.ashlr-gate/verify/${project}.tsbuildinfo`),
       ]]);
     }

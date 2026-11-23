@@ -12,4 +12,6 @@ a node with the keyboard dispatches a bubbling, composed `select` CustomEvent
 whose `detail` contains `{ id, label, type, status }`.
 
 Verify with `npx tsc --noEmit -p desktop/tsconfig.json` and
-`HOME=$(mktemp -d) npx vitest run --config desktop/vitest.config.mts`.
+`HOME=$(mktemp -d) npx vitest run --config desktop/vitest.config.mts`;
+`node scripts/verify-changed.mjs` runs the desktop typecheck and this suite
+automatically when their inputs change.
