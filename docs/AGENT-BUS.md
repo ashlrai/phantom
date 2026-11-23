@@ -109,7 +109,14 @@ collapsed to one line and clipped to 160 characters before the match, so the
 search runs over exactly the bounded text the read reports — never the raw
 body — and a needle longer than that line can never match. `phm comms inbox
 read --contains` applies the same literal case-insensitive substring to
-Mason's own inbox file.
+Mason's own inbox file. `fleet_agent_messages` (the isolated fleet MCP
+tool) serves the same read with the same dimensions as arguments — every
+`phm messages` filter as its MCP counterpart, all optional — under the
+identical `readAgentMessages` validation, so an MCP-connected agent reads
+the fleet-wide timeline, its classified kinds, conversation/job/pr links
+and `matched`/`skipped`/`source` honesty without shelling out to `phm`; it
+accepts no caller root or path and passes a missing or unavailable store
+through untouched.
 
 ## Write
 
