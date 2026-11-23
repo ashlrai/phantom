@@ -272,9 +272,20 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   log). A finding becomes an item while its recorded rows span enough
   distinct pull requests inside the recency window — a producer whose
   diffs keep failing independent review for the same reason, or a
-  reviewer pipeline that keeps failing before a verdict.
-  Fleet, nightly, policy, local-gate, pass^k, friction, tick-health and
-  cross-review items carry
+  reviewer pipeline that keeps failing before a verdict — and the
+  empty-job tag ledger's recurring
+  actionable tags, the `job.empty-tag.v1` rows the daemon's empty-tag-sync
+  and `phm jobs empty --record` write to `metrics/empty-tags.jsonl`
+  (otherwise only visible through the `phm empties`-family reports and the
+  router's outcome fold). A finish becomes an item while its recorded tag
+  is `blocked` or `unknown` at least three times inside the same 72-hour
+  window the sync uses, or while finishes with no tag row at all are the
+  window's majority — the signature of a dead or starved empty-tag-sync;
+  gate-skipped finishes never count, and the explained `already_done`,
+  `no_change_needed` and `pool_cap` tags never become work. A missing jobs
+  ledger or an unjoinable tags ledger emits nothing.
+  Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
+  cross-review and empty-tag items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
@@ -296,7 +307,9 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   journal and keep the find-why-review-keeps-failing framing, emitting
   only when a review row's recorded repository matches the discovery
   target — findings on another repository's pull requests never land on
-  this one. They
+  this one. Empty-tag items name the tag and jobs ledgers and keep the
+  find-the-tag-vocabulary-or-the-sync framing, emitting only for the
+  fleet's own repository since the tag machinery is this repo's. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
