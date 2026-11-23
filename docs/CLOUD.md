@@ -458,11 +458,31 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   and unresolvable notes emit nothing, `helps`, `no-difference` and
   `unknown` emit nothing, a withheld trial (a task-store or ledger
   read failure) or a failed knowledge read emits nothing for the
-  per-note rows, and another repository emits nothing.
+  per-note rows, and another repository emits nothing —
+  and the work market journal's recurring unfed-capacity and
+  route-decision evidence, the per-tick `route_decision` and
+  `unfed_capacity` rows dispatchd's market_metric appends to
+  `metrics/work-market.jsonl` under the fleet runs directory
+  (otherwise only visible through `phm fleet unfed`, `phm route
+  explain` and the router outcome/weight folds — reports someone had
+  to run and read). A lane becomes an item while its recorded unfed
+  ticks span enough distinct UTC days inside the 7-day window — free
+  target slots while runnable rows waited under other lanes' hints —
+  a (lane, reason-code) cell becomes an item while distinct jobs keep
+  recording that lane's rejection for the same non-mechanical code
+  across days (lower_rank, saturated, held and hysteresis_* never
+  emit — the market working as designed), and unrouted decisions and
+  unknown_preference overrides become umbrella items at the same
+  recurring bar; route decisions collapse to each job's latest
+  in-window row, a missing or unreadable journal emits nothing,
+  truncated tails are stated as lower bounds, and rows emit only for
+  the fleet's own repository since the journal describes this
+  install's dispatcher and lanes.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
-  source-yield, gateway-shadow, recheck, stuck-job and lesson-trial
+  source-yield, gateway-shadow, recheck, stuck-job, lesson-trial and
+  work-market
   items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
@@ -559,7 +579,14 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   with the same owner-side no-change escape, since approving, editing or
   rejecting a lesson note is a Verse act only the owner takes, and emit
   only for the fleet's own repository since the trial covers this
-  install's cloud runs. They
+  install's cloud runs. Work-market items name the market journal,
+  `phm fleet unfed` and the pinned contrib/mac machinery boundary, keep
+  the find-why-capacity-keeps-going-unused-or-jobs-keep-failing-
+  requirements framing per cell — stale lane advertisements versus
+  drifting queue specs and hint vocabulary, mechanical rejection codes
+  excluded — with the same owner-side no-change escape, and emit only
+  for the fleet's own repository since the journal describes this
+  install's dispatcher and carries no repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never

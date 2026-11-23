@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Twenty-three sources, all of which Phantom
+ * evidence instead of a hand-kept list. Twenty-four sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -173,6 +173,18 @@
  *     'hurts' — the 95% interval excluding zero on the negative side —
  *     and a per-note row only while the note is still approved, so a
  *     rejected or superseded lesson stops queueing work;
+ *   - the work market's recurring unfed-capacity and route-decision
+ *     evidence: the per-tick route_decision and unfed_capacity rows
+ *     dispatchd's market_metric appends to metrics/work-market.jsonl —
+ *     lanes that keep free target slots while runnable rows wait under
+ *     other lanes' hints, lanes that keep rejecting distinct jobs for
+ *     the same recorded reason code, jobs the market keeps routing
+ *     nowhere and jobs whose preferred_lane names no known lane
+ *     (unfedBacklogItems below). Until now the journal only ever
+ *     reached `phm fleet unfed` and the router outcome/weight folds —
+ *     reports and joins someone had to run — so chronic underused
+ *     capacity, systematic requirement mismatches, unroutable work and
+ *     hint-vocabulary drift never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -223,6 +235,7 @@ import { sourceYieldBacklogItems } from './source-yield-backlog.js';
 import { gatewayShadowBacklogItems } from './gateway-shadow-backlog.js';
 import { stuckJobBacklogItems } from './stuck-job-backlog.js';
 import { lessonTrialBacklogItems } from './lesson-trial-backlog.js';
+import { unfedBacklogItems } from './unfed-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -504,6 +517,25 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // while the note is still approved; a withheld trial or note read
   // emits nothing.
   items.push(...await lessonTrialBacklogItems({ repo }));
+
+  // Work-market journal: the dispatcher's own per-tick market record —
+  // recurring unfed lanes (free target slots while runnable rows wait
+  // under other lanes' hints, with the recorded blocked codes),
+  // per-(lane, reason) rejection cells at the recurring bar of distinct
+  // jobs across distinct UTC days, unrouted decisions and
+  // unknown-preference overrides — become backlog items too. Until now
+  // the append-only journal only ever reached `phm fleet unfed` and the
+  // router outcome/weight folds, reports and joins someone had to run,
+  // so chronic underused capacity, systematic requirement mismatches,
+  // unroutable work and hint-vocabulary drift never became work. Same
+  // bounded tail read the unfed report uses; route decisions collapse
+  // to each job's latest in-window row under the same rule the unfed
+  // folds apply, mechanical rejection codes (lower_rank, saturated,
+  // held, hysteresis_*) never emit, a missing or unreadable journal
+  // yields nothing, truncated tails are stated as lower bounds, and
+  // only the fleet's own repository inherits the items since the
+  // journal describes this install's dispatcher and lanes.
+  items.push(...await unfedBacklogItems({ repo }));
   return { items, errors };
 }
 
