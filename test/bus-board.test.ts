@@ -22,6 +22,7 @@ beforeEach(() => {
   fleet = new SharedStore(queueDir, 60_000);
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   rmSync(dir, { recursive: true, force: true });
@@ -710,6 +711,54 @@ describe('bus board pendingAll digest', () => {
     // Membership still reports every member — `since` narrows items, not peers.
     expect(floor.peers.sort()).toEqual(['alice', 'bob']);
   });
+
+  it('keeps only deliveries inside the exclusive [since, before) window', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const store = board();
+    const threadId = threadWith('alice', 'bob');
+    const at = (iso: string) => vi.setSystemTime(new Date(iso));
+    at('2026-01-01T00:00:00.000Z');
+    await store.post('alice', threadId, 'oldest mail');
+    at('2026-01-01T00:01:00.000Z');
+    await store.post('alice', threadId, 'middle mail');
+    at('2026-01-01T00:02:00.000Z');
+    await store.post('alice', threadId, 'newest mail');
+    store.createTask('alice', threadId, 'item-x', 'Undated task');
+
+    const since = Date.parse('2026-01-01T00:01:00.000Z');
+    const before = Date.parse('2026-01-01T00:02:00.000Z');
+    const texts = (rows: { content: { text: string } }[]) =>
+      rows.map((row) => (JSON.parse(row.content.text) as { body?: { text?: string } }).body?.text);
+
+    // [since, before): the middle post alone survives — `since` stays
+    // inclusive so the boundary post at exactly `since` matches, `before`
+    // is exclusive so the post stamped exactly at `before` never does, and
+    // the undated task stays out under any time bound.
+    const window = store.pendingAll(undefined, undefined, undefined, since, before);
+    expect(window.deliveries.matched).toBe(2);
+    expect(texts(window.deliveries.items)).toEqual(['middle mail', 'middle mail']);
+    expect(window.tasks.matched).toBe(0);
+    expect(window.threads).toHaveLength(1);
+    expect(window.threads[0]).toMatchObject({ id: threadId, pendingDeliveries: 2 });
+    expect(window.peers.sort()).toEqual(['alice', 'bob']);
+    // The same window through the single-peer and multi-peer reads — the
+    // bound threads through the shared digest, never a second filter.
+    expect(store.pending('bob', undefined, undefined, undefined, since, before).deliveries.matched).toBe(1);
+    expect(store.pendingFor(['bob'], undefined, undefined, undefined, since, before).deliveries.matched).toBe(1);
+
+    // `before` alone is the older-page bound: everything strictly before
+    // the newest post's stamp survives, tasks still never match.
+    const older = store.pendingAll(undefined, undefined, undefined, undefined, before);
+    expect(older.deliveries.matched).toBe(4);
+    expect(older.tasks.matched).toBe(0);
+    // An inverted or empty window is an honest empty read, not a usage
+    // failure — the bounds are data, and no delivery can satisfy both.
+    const inverted = store.pendingAll(undefined, undefined, undefined, before, since);
+    expect(inverted.deliveries.matched).toBe(0);
+    expect(inverted.tasks.matched).toBe(0);
+    expect(inverted.threads).toEqual([]);
+    expect(store.pendingAll(undefined, undefined, undefined, since, since).deliveries.matched).toBe(0);
+  });
 });
 
 describe('phm bus CLI end-to-end', () => {
@@ -816,9 +865,33 @@ describe('phm bus CLI end-to-end', () => {
     expect(future.value.result.tasks.matched).toBe(0);
     expect((await call(['board', 'pending', '--since', 'bogus'])).code).toBe(2);
 
+    // --before is the exclusive upper bound on the same createdAt field:
+    // the epoch floor admits nothing, a future cutoff keeps the one bob
+    // delivery while the undated task list stays empty under any time
+    // bound, and paired with --since the two read one [since, before)
+    // window; an unparseable cutoff is a usage error like --since's.
+    const floor = await call(['board', 'pending', '--before', '0'], 'bob');
+    expect(floor.code).toBe(0);
+    expect(floor.value.result.deliveries.matched).toBe(0);
+    expect(floor.value.result.tasks.matched).toBe(0);
+    expect(floor.value.result.threads).toEqual([]);
+    const window = await call(['board', 'pending', '--since', '0', '--before', String(Date.now() + 60_000)], 'bob');
+    expect(window.code).toBe(0);
+    expect(window.value.result.deliveries.matched).toBe(1);
+    expect(window.value.result.tasks.matched).toBe(0);
+    expect((await call(['board', 'pending', '--before', 'bogus'])).code).toBe(2);
+
+    // --all takes the same bound on the fleet-wide read.
+    output = [];
+    const allFloor = await cmdFleetBus(['board', 'pending', '--all', '--before', '0', '--json',
+      '--root', boardRoot, '--queue-root', queueDir], { loadConfig, out: (t) => output.push(t) });
+    expect(allFloor).toBe(0);
+    expect(JSON.parse(output.at(-1)!).result.deliveries.matched).toBe(0);
+
     // The filters belong to board pending alone — elsewhere they are refused.
     expect((await call(['thread', 'list', '--job', 'job-7'])).code).toBe(2);
     expect((await call(['task', 'list', thread, '--contains', 'x'])).code).toBe(2);
+    expect((await call(['thread', 'list', '--before', '1d'])).code).toBe(2);
   });
 
   it('serves the fleet-wide board pending digest through --all', async () => {

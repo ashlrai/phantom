@@ -3103,18 +3103,18 @@ proven, not fabricated) and an unreadable one reports
 `{status:'unavailable', reason}`.
 `board` is the digest's window into the shared task board
 (`src/core/fleet/bus-board.ts`, the store `phm bus board pending` reads)
-that the unified bus never carried: `BusBoard.pendingFor(labels, now, jobId?, contains?, sinceMs?)` runs
+that the unified bus never carried: `BusBoard.pendingFor(labels, now, jobId?, contains?, sinceMs?, beforeMs?)` runs
 the board's own locked snapshot plus one shared-queue claim-index read under
 the union of every label the agent answers to, so an agent on the board no
 longer needs a separate `--peer` read per label. Its fleet-wide form,
-`BusBoard.pendingAll(now?, jobId?, contains?, sinceMs?)`, takes the same
+`BusBoard.pendingAll(now?, jobId?, contains?, sinceMs?, beforeMs?)`, takes the same
 optional filters over every thread member as the label set — the digest
 `phm comms inbox`'s board source and `fleet_bus_board` project through the
 shared `readBusBoardPending` read, which reports `missing` for a
 verified-empty board and `unavailable` for an unreadable one, and `phm bus
 board pending --all` serves the same `pendingAll` digest directly. The
 single-peer form `phm bus board pending` serves,
-`BusBoard.pending(actor, now?, jobId?, contains?, sinceMs?)`, takes the
+`BusBoard.pending(actor, now?, jobId?, contains?, sinceMs?, beforeMs?)`, takes the
 same optional filters under the identical `pendingDigest` rules while
 keeping its `peer` display shape. `peers` names the queried
 labels the board actually knows — each a member of at least one thread,
@@ -3146,7 +3146,13 @@ fault reports `{status:'unavailable', reason:'board-unreadable'}`. Under
 `sinceMs` the digest keeps only deliveries whose `createdAt` reaches the
 cutoff — tasks, which the board records without any timestamp, never
 match — and a thread rollup lists only while it still holds a surviving
-delivery, the rollup itself carrying no time. Board
+delivery, the rollup itself carrying no time. `beforeMs` is the exclusive
+upper bound on the same `createdAt` field every bus read's `--before`
+shares: a delivery matches only when its parsed time is strictly below the
+cutoff, so `sinceMs`/`beforeMs` read one `[since, before)` window — the
+lower bound inclusive, the upper exclusive, an unparseable `createdAt`
+satisfying neither — while tasks stay unmatchable under either bound and
+the rollup rule is unchanged. Board
 content stays `trust:'untrusted'` shared data: it coordinates attention,
 never grants execution authority.
 `channels` is the digest's window into the registry channels the agent
