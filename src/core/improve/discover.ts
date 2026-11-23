@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Eleven sources, all of which Phantom
+ * evidence instead of a hand-kept list. Twelve sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -57,7 +57,14 @@
  *     a producer whose diffs keep failing independent review — or a
  *     reviewer pipeline that keeps failing before a verdict — becomes
  *     work instead of sitting in `phm router outcomes`/`router-weights`
- *     tallies and the audit log.
+ *     tallies and the audit log;
+ *   - the empty-job tag ledger's recurring actionable tags: the
+ *     job.empty-tag.v1 rows the daemon's empty-tag-sync and
+ *     `phm jobs empty --record` write to metrics/empty-tags.jsonl —
+ *     recurring 'blocked' or 'unknown' tags and an untagged majority
+ *     (emptyTagBacklogItems below), so finishes the fleet already
+ *     classified become work instead of sitting in `phm empties`-family
+ *     reports someone had to run.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -95,6 +102,7 @@ import { passkAlertBacklogItems } from './passk-backlog.js';
 import { frictionBacklogItems } from './friction-backlog.js';
 import { tickHealthBacklogItems } from './tick-health-backlog.js';
 import { crossReviewBacklogItems } from './xreview-backlog.js';
+import { emptyTagBacklogItems } from './empty-tag-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -217,6 +225,15 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // recorded-evidence bar: a cell emits only after enough in-window rows
   // span enough distinct pull requests, matched to the target repository.
   items.push(...await crossReviewBacklogItems({ repo }));
+
+  // Empty-job tag ledger: the recorded empty-tag vocabulary's recurring
+  // actionable buckets — 'blocked' and 'unknown' tags plus finishes with
+  // no tag row when they are the window's majority — become backlog items
+  // too. Until now they only surfaced in `phm empties`-family reports and
+  // the router's outcome fold, none of which queue work. Same bounded
+  // ledger reads; a missing jobs ledger or an unjoinable tags ledger
+  // yields no items, and only the fleet's own repository inherits them.
+  items.push(...await emptyTagBacklogItems({ repo }));
   return { items, errors };
 }
 
