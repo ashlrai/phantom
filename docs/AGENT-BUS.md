@@ -508,7 +508,7 @@ the human line the same way `held` does, and `work mine`'s inbox section
 carries the same field.
 `phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--job <id>]
 [--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
-[--contains <text>]` lists wake
+[--channel <name>] [--contains <text>]` lists wake
 hints for the agent and its
 channels. `--all` drops the addressee scope entirely — every hint in the
 bounded queue tail, registered identities' and bare coordination or
@@ -531,7 +531,16 @@ spelling of one identity through the same matcher and exact-label
 fallback `--from` applies — composing with `--from` so a sender both
 included and excluded matches nothing — so "everyone's wakes except the
 noisy bot's" is one filtered read, and `matched` stays the count the
-whole filter set accepts. A ref that resolves to no registered identity keeps exact-label
+whole filter set accepts. `--channel` keeps only hints addressed to
+`group:<name>:*` of one channel — the same room prefix `inbox --channel`,
+`channel read` and `phm messages --channel` match, grammar-validated by
+the shared channel-name rule — decided on the hint's own `to` label, so
+it needs no referent resolution and composes with the addressee scope
+and every other filter: on a per-agent read it narrows to one room's
+hints for that agent (a channel the agent does not belong to simply has
+no hints to show), and on `--all` it answers "which hints concern room
+X" in one fleet read, with `matched` counting it inside the queue-tail
+match like `from`/`excludeFrom`. A ref that resolves to no registered identity keeps exact-label
 matching instead — the page reports `scope: 'label'` (vs `'identity'`),
 `agent` the queried label verbatim, and only hints whose `to` is that label
 match — so hints queued under a bare coordination or routing label, like the
@@ -582,7 +591,7 @@ cannot be read. Triage no longer costs one `agents bus show` per hint.
 `fleet_agent_wakes` (the isolated fleet MCP tool) serves the same read with
 the same dimensions as arguments — `agent` optional (omitted, the
 fleet-wide `--all` read under `scope: 'fleet'`), `since`/`job`/`from`/
-`excludeFrom`/`priority`/`contains` the same filters — under the identical
+`excludeFrom`/`channel`/`priority`/`contains` the same filters — under the identical
 `readAgentWakes`/`readAllWakes` validation, so an MCP-connected agent reads its wake
 hints, claim-holder citations and resolved referents — or the whole
 fleet's pending hints in one call — without shelling out

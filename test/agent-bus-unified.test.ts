@@ -2697,6 +2697,55 @@ describe('fleet-wide wakes read', () => {
       .toMatchObject({ status: 'invalid' });
   });
 
+  it('filters hints by the channel room their to label addresses', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    expect(createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova', 'orion'] }, options).status).toBe('created');
+    expect(createAgentChannel({ name: 'ops', createdBy: 'atlas' }, options).status).toBe('created');
+    expect(createAgentChannel({ name: 'ops-team', createdBy: 'atlas' }, options).status).toBe('created');
+    // P0 posts wake the room address; a plain DM wakes only its addressee.
+    expect(await postChannelMessage({ from: 'atlas', channel: 'release', text: 'cut now',
+      id: 'w-rel-atlas', priority: 'P0' }, options)).toMatchObject({ status: 'posted' });
+    expect(await postChannelMessage({ from: 'orion', channel: 'release', text: 'ack',
+      id: 'w-rel-orion', priority: 'P0' }, options)).toMatchObject({ status: 'posted' });
+    expect(await postChannelMessage({ from: 'atlas', channel: 'ops', text: 'page ops',
+      id: 'w-ops', priority: 'P0' }, options)).toMatchObject({ status: 'posted' });
+    expect(await postChannelMessage({ from: 'atlas', channel: 'ops-team', text: 'sub-team',
+      id: 'w-ops-team', priority: 'P0' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'dm',
+      id: 'w-dm', priority: 'P0', wake: true }, options)).toMatchObject({ status: 'posted' });
+
+    const release = readAllWakes(undefined, options, { channel: 'release' });
+    expect(release).toMatchObject({ status: 'ok', scope: 'fleet', matched: 2 });
+    if (release.status !== 'ok') throw new Error('unreachable');
+    expect(release.wakes.map(row => row.id)).toEqual(['w-rel-atlas', 'w-rel-orion']);
+    expect(release.wakes.map(row => row.to)).toEqual(['group:release:general', 'group:release:general']);
+    // The room prefix is exact — ops-team traffic never leaks into ops, and a
+    // grammatically valid name no hint addresses matches nothing, not an error.
+    const ops = readAllWakes(undefined, options, { channel: 'ops' });
+    expect(ops).toMatchObject({ status: 'ok', matched: 1 });
+    if (ops.status !== 'ok') throw new Error('unreachable');
+    expect(ops.wakes.map(row => row.id)).toEqual(['w-ops']);
+    expect(readAllWakes(undefined, options, { channel: 'absent' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    expect(readAllWakes(undefined, options, { channel: 'Bad Name' }))
+      .toMatchObject({ status: 'invalid' });
+
+    // The per-agent read narrows inside the same addressee scope: nova belongs
+    // to release but not ops, so only the room's hints show for her.
+    const novaRelease = readAgentWakes('nova', undefined, options, { channel: 'release' });
+    expect(novaRelease).toMatchObject({ status: 'ok', matched: 2 });
+    if (novaRelease.status !== 'ok') throw new Error('unreachable');
+    expect(novaRelease.wakes.map(row => row.id)).toEqual(['w-rel-atlas', 'w-rel-orion']);
+    expect(readAgentWakes('nova', undefined, options, { channel: 'ops' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    // The filter composes with the queue-tail sender match like every other.
+    const orionOnly = readAllWakes(undefined, options, { channel: 'release', from: 'orion' });
+    expect(orionOnly).toMatchObject({ status: 'ok', matched: 1 });
+    if (orionOnly.status !== 'ok') throw new Error('unreachable');
+    expect(orionOnly.wakes.map(row => row.id)).toEqual(['w-rel-orion']);
+  });
+
   it('resolves claim-holder hints and fails closed on an unreadable bus store', async () => {
     const options = setup();
     register(options, 'atlas', 'nova');

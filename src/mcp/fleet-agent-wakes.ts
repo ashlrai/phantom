@@ -18,7 +18,8 @@
  * the printable-label rule keeps literal-`to` matching under `scope:
  * 'label'` — the same fallback the CLI read reports — so hints queued
  * under a bare coordination label stay readable by their addressee.
- * `since`, `job`, `from`, `excludeFrom`, `priority` and `contains` apply
+ * `since`, `job`, `from`, `excludeFrom`, `channel`, `priority` and
+ * `contains` apply
  * the same rules the `phm agents bus wakes` flags share and are validated
  * before any store read; the page always reports `matched` (every hint
  * the bounded queue tail accepted before its row cap) and `truncated`
@@ -36,13 +37,14 @@
 import {
   busReadContains, readAgentWakes, readAllWakes, type AllWakesPage, type WakePage,
 } from '../core/agents/bus-unified.js';
+import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
 import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
 /** The printable-label rule `agent`, `job`, `from` and `excludeFrom` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const WAKE_KEYS = new Set(['agent', 'since', 'job', 'from', 'excludeFrom', 'priority', 'contains']);
+const WAKE_KEYS = new Set(['agent', 'since', 'job', 'from', 'excludeFrom', 'channel', 'priority', 'contains']);
 const LABEL_KEYS = ['job', 'from', 'excludeFrom'] as const;
 
 export interface FleetAgentWakesArgs {
@@ -56,6 +58,8 @@ export interface FleetAgentWakesArgs {
   from?: string;
   /** Drop hints sent under any registered spelling of this sender ref. */
   excludeFrom?: string;
+  /** Keep only hints addressed to `group:<name>:*` of this channel — the same room prefix `phm agents bus wakes --channel` and every other bus read's channel filter match. */
+  channel?: string;
   /** Keep only hints in one exact P0–P3 band, decided on the resolved referent — the same match `phm agents bus wakes --priority` applies. */
   priority?: BusPriority;
   /** Keep only hints whose resolved referent text carries this needle — the shared `--contains` rule. */
@@ -68,7 +72,7 @@ export interface FleetAgentWakesArgs {
  * is required — the addressed read has no meaningful default — and every
  * other key takes the same value rules `phm agents bus wakes` flags and
  * the other bus reads share: `job`/`from`/`excludeFrom` printable routing
- * labels, the P0–P3 priority enum, `since` the shared
+ * labels, `channel` the strict channel-name grammar, the P0–P3 priority enum, `since` the shared
  * `15m`/`2h`/`1d`/epoch-ms/ISO grammar resolved
  * to a safe non-negative epoch-ms integer, and `contains` the bounded
  * free-text needle `busReadContains` normalizes. Unknown keys, wrong
@@ -87,6 +91,11 @@ export function parseFleetAgentWakesArgs(args: Record<string, unknown>): FleetAg
     if (value === undefined) continue;
     if (typeof value !== 'string' || !BUS_LABEL.test(value)) return null;
     parsed[key] = value;
+  }
+  const channel = args.channel;
+  if (channel !== undefined) {
+    if (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) return null;
+    parsed.channel = channel;
   }
   const priority = args.priority;
   if (priority !== undefined) {
@@ -142,6 +151,7 @@ export async function readFleetAgentWakes(
     ...(args.job === undefined ? {} : { job: args.job }),
     ...(args.from === undefined ? {} : { from: args.from }),
     ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
+    ...(args.channel === undefined ? {} : { channel: args.channel }),
     ...(args.priority === undefined ? {} : { priority: args.priority }),
     ...(args.contains === undefined ? {} : { contains: args.contains }),
   };

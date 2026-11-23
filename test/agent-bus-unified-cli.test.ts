@@ -218,6 +218,34 @@ describe('phm agents bus (unified)', () => {
     expect((await run(['wakes', 'nova'])).json).toMatchObject({ matched: 2 });
   });
 
+  it('filters wakes by the channel room their to label addresses', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'ops', '--from', 'atlas'])).json).toMatchObject({ status: 'created' });
+    // P0 channel posts wake the room's group:<name>:* address.
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'cut', '--priority', 'P0', '--id', 'wc-rel'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['channel', 'post', 'ops', '--from', 'atlas', '--text', 'page', '--priority', 'P0', '--id', 'wc-ops'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'hi', '--priority', 'P0', '--id', 'wc-dm'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+
+    // Per-agent: nova belongs to release, so the room's hint shows; ops is not hers.
+    const release = await run(['wakes', 'nova', '--channel', 'release']);
+    expect(release.json).toMatchObject({ matched: 1, truncated: false });
+    expect(release.json.wakes.map((w: { id: string; to: string }) => `${w.id}:${w.to}`)).toEqual(['wc-rel:group:release:general']);
+    expect((await run(['wakes', 'nova', '--channel', 'ops'])).json).toMatchObject({ matched: 0, wakes: [] });
+    // Fleet-wide: --channel answers "which hints concern room X" in one read.
+    const allOps = await run(['wakes', '--all', '--channel', 'ops']);
+    expect(allOps.json).toMatchObject({ status: 'ok', scope: 'fleet', matched: 1 });
+    expect(allOps.json.wakes.map((w: { id: string }) => w.id)).toEqual(['wc-ops']);
+    expect((await run(['wakes', '--all', '--channel', 'absent'])).json).toMatchObject({ matched: 0, wakes: [] });
+    expect(await run(['wakes', 'nova', '--channel', 'Bad Name'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['wakes', '--all', '--channel='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('lists channels for discovery and filters by agent', async () => {
     // Before any registry exists the list is verified-empty, not an error.
     expect(await run(['channel', 'list'])).toMatchObject({ code: 0,

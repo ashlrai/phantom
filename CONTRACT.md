@@ -3427,7 +3427,16 @@ every registered spelling of one identity through the same matcher and
 exact-label fallback, composing with `from` so a sender both included
 and excluded matches nothing — the drop runs inside the queue-tail
 match, so `matched` stays the count the whole filter set accepts, with a
-malformed exclusion answering `invalid`; `filter.priority` keeps only
+malformed exclusion answering `invalid`; `filter.channel` keeps only
+hints whose own `to` label sits under `group:<name>:*` — the same room
+prefix `readAgentInbox`'s `channel` and `phm messages --channel` match,
+grammar-validated by the shared channel-name rule and decided on the
+hint's address alone, so it needs no referent resolution, composes with
+the addressee scope (a per-agent read narrows to one room's hints for
+that agent) and with every other filter, `matched` counting it inside
+the queue-tail match, a name no hint addresses matching nothing rather
+than erroring, and a malformed channel name answering `invalid`;
+`filter.priority` keeps only
 hints in one exact P0..P3 band — the same match every other bus read's
 `--priority` applies — decided on the resolved referent's own band (the
 live message a `bus.send` hint points at, or the citing `work.status`
@@ -3442,9 +3451,11 @@ claim-holder fan-out writes appear beside registered identities' hints,
 each row's own `to` naming its addressee; the ok page carries
 `scope:'fleet'`, `wakes`, `matched` and `truncated` under the same
 queue-tail semantics `readAgentWakes` documents, and the same
-`job`/`from`/`excludeFrom`/`contains`/`priority` filter set validates
+`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority` filter set validates
 and resolves referents identically — sender matchers resolve through
-the registry with exact-label fallback, filtered verdicts fail closed
+the registry with exact-label fallback, `channel` keeps only hints whose
+own `to` label sits under `group:<name>:*` inside the queue-tail match,
+filtered verdicts fail closed
 `unavailable` on an unreadable bus store, and malformed filter values
 answer `invalid`; an unreadable registry or wake queue answers
 `unavailable`, never an empty page passed off as "no wakes"),
