@@ -957,8 +957,8 @@ in-flight work, not pending) with the same missing/unavailable/degraded
 honesty and `phm bus thread`/`task`/`board` deep links; it reads only,
 never acknowledges or claims. `fleet_bus_board` (the isolated fleet MCP
 tool) serves the same `readBusBoardPending`/`BusBoard.pendingAll` digest
-directly — `job`, `contains` and `since` the same filters the `work
-mine` board section shares, under the same validation — so an
+directly — `job`, `contains`, `since` and `before` the board digest's
+shared filters under the same validation — so an
 MCP-connected agent reads the whole pending board, fleet-wide and
 job-scoped, without flattening it into inbox items or knowing peer
 labels ahead of time; it accepts no caller root or path, reports `source`

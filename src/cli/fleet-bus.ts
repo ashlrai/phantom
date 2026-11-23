@@ -13,7 +13,7 @@ export const usage = `Usage: phm bus thread create <title> [--peer <id>] [--json
        phm bus thread ack <thread-id> <delivery-id> [--peer <id>] [--json]
        phm bus thread post <thread-id> <body> [--peer <id>] [--json]
        phm bus thread list [--peer <id>] [--json]
-       phm bus board pending [--peer <id>] [--all] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO|ms>] [--json]
+       phm bus board pending [--peer <id>] [--all] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO|ms>] [--before <15m|2h|1d|ISO|ms>] [--json]
        phm bus task create <thread-id> <fleet-item-id> <title> [--peer <id>] [--json]
        phm bus task list <thread-id> [--peer <id>] [--json]
        phm bus task claim|renew|release <task-id> [--peer <id>] [--json]
@@ -31,10 +31,11 @@ state; --all instead returns the fleet-wide digest every thread member shares
 (the same read fleet_bus_board and comms inbox's board source project, reported
 under peers rather than peer). --job keeps only threads carrying a task whose
 fleet item id cites it, --contains keeps only rows whose scrubbed display text
-carries the needle, and --since keeps only deliveries whose createdAt reaches
-the cutoff while tasks — which the board records without a timestamp — never
-match; the three filters are the same rules every other bus read applies and
-are valid only on board pending.`;
+carries the needle, --since keeps only deliveries whose createdAt reaches the
+cutoff, --before keeps only deliveries recorded strictly before its own cutoff
+so the pair reads one [since, before) window, and tasks — which the board
+records without a timestamp — never match; the filters are the same rules
+every other bus read applies and are valid only on board pending.`;
 
 const ARITIES: Record<string, number> = {
   'thread:create': 1, 'thread:join': 1, 'thread:post': 2,
@@ -70,6 +71,7 @@ interface Parsed {
   job?: string;
   contains?: string;
   since?: string;
+  before?: string;
   help: boolean;
 }
 
@@ -84,9 +86,9 @@ function parse(args: readonly string[]): Parsed | null {
     if (!literal && arg.startsWith('-')) {
       const flag = arg === '-h' ? '--help' : arg;
       if (flags.has(flag) ||
-        !['--peer', '--root', '--queue-root', '--json', '--help', '--all', '--job', '--contains', '--since'].includes(flag)) return null;
+        !['--peer', '--root', '--queue-root', '--json', '--help', '--all', '--job', '--contains', '--since', '--before'].includes(flag)) return null;
       flags.add(flag);
-      if (['--peer', '--root', '--queue-root', '--job', '--contains', '--since'].includes(flag)) {
+      if (['--peer', '--root', '--queue-root', '--job', '--contains', '--since', '--before'].includes(flag)) {
         const value = args[++i];
         if (value === undefined) return null;
         if (flag === '--peer') {
@@ -100,6 +102,7 @@ function parse(args: readonly string[]): Parsed | null {
           parsed.queueRoot = value;
         } else if (flag === '--job') parsed.job = value;
         else if (flag === '--contains') parsed.contains = value;
+        else if (flag === '--before') parsed.before = value;
         else parsed.since = value;
       }
       if (flag === '--help') parsed.help = true;
@@ -135,20 +138,29 @@ export async function cmdFleetBus(args: string[], deps: FleetBusDeps = {}): Prom
   // alone; anywhere else they are refused rather than silently dropped, and
   // `--all` leaves no single peer view for `--peer` to select.
   const boardScoped = parsed.all === true || parsed.job !== undefined ||
-    parsed.contains !== undefined || parsed.since !== undefined;
+    parsed.contains !== undefined || parsed.since !== undefined || parsed.before !== undefined;
   if ((boardScoped && parsed.command !== 'board:pending') ||
     (parsed.command === 'board:pending' && parsed.all === true && parsed.peer !== undefined)) {
     out(JSON.stringify({ ok: false, error: 'Invalid bus arguments', usage }));
     return 2;
   }
   let boardSinceMs: number | undefined;
+  let boardBeforeMs: number | undefined;
   if (parsed.command === 'board:pending' && parsed.since !== undefined) {
-    const sinceMs = parseSince(parsed.since);
-    if (sinceMs === null) {
+    const ms = parseSince(parsed.since);
+    if (ms === null) {
       out(JSON.stringify({ ok: false, error: 'Invalid bus arguments', usage }));
       return 2;
     }
-    boardSinceMs = sinceMs;
+    boardSinceMs = ms;
+  }
+  if (parsed.command === 'board:pending' && parsed.before !== undefined) {
+    const ms = parseSince(parsed.before);
+    if (ms === null) {
+      out(JSON.stringify({ ok: false, error: 'Invalid bus arguments', usage }));
+      return 2;
+    }
+    boardBeforeMs = ms;
   }
   try {
     const cfg = (deps.loadConfig ?? loadConfigReadOnlyStrict)();
@@ -180,8 +192,8 @@ export async function cmdFleetBus(args: string[], deps: FleetBusDeps = {}): Prom
       case 'thread:hops': result = board.hops(actor, first!); break;
       case 'board:pending':
         result = parsed.all === true
-          ? board.pendingAll(Date.now(), parsed.job, parsed.contains, boardSinceMs)
-          : board.pending(actor, Date.now(), parsed.job, parsed.contains, boardSinceMs);
+          ? board.pendingAll(Date.now(), parsed.job, parsed.contains, boardSinceMs, boardBeforeMs)
+          : board.pending(actor, Date.now(), parsed.job, parsed.contains, boardSinceMs, boardBeforeMs);
         break;
       case 'task:create': result = board.createTask(actor, first!, second!, third!); break;
       case 'task:list': result = board.listTasks(actor, first!); break;
