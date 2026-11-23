@@ -135,8 +135,28 @@ can take it now, it is sent there; if nothing can, the action is `nowhere`.
 The plain-language reason names the constraint that decided the assignment,
 for example `Sent to Devin because CMP Codex resets in 40 min with 5% left.`
 
-`learnedSeatPenalty` turns the same posterior means into seat-router penalties.
-Omitting the penalty leaves `routeSeat` unchanged.
+`learnedSeatPenalty` turns the same posterior means into seat-router penalties
+for one (job type, repo) cell. `learnedFleetSeatPenalty` pools every recorded
+cell per resource instead — attempts, good merges and usage summed across
+models, job types and repos — because a seat-router request carries no fleet
+job type or repo, so the resource's whole dispatch record is the honest prior.
+Both normalize the same way: the best resource's penalty is 0 and every other
+resource's stays inside [0, 1].
+
+`learned-seat-evidence.ts` is the production join that was missing: it reads
+the same bounded evidence `phm fleet outcomes` folds — the dispatch event
+log (first readable canonical candidate, whole file capped at 8 MiB) and the
+jobs-ledger tail (`ROUTER_OUTCOME_LEDGER_LIMIT`), plus the standing revert
+keys and the router censor config — through synchronous bounded readers, and
+hands `routeSeat` the pooled penalty and a one-line provenance note via
+`LeaderSeatDeps.route` (`loadDefaultLeaderSeatDeps`). The result is cached
+for `LEARNED_SEAT_EVIDENCE_TTL_MS` (15 minutes) because planning calls
+`route` once per seat variant; a changed `ASHLR_RUNS_DIR` invalidates
+immediately. Every read failure degrades to `{ learnedPenalty: {} }` —
+missing, unreadable, oversized or non-regular files contribute nothing, so
+with no usable evidence the seat ranking is byte-identical to the weights
+alone and no note is appended. Penalty keys are fleet resource names; a seat
+whose id does not match a recorded resource simply takes no penalty.
 
 ## Improvement jobs
 

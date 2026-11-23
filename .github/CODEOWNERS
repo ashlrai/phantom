@@ -670,6 +670,7 @@
 /test/learn-retro-nightly-report.test.ts @masonwyatt23
 /test/learn-retro-sweep-315.test.ts @masonwyatt23
 /test/learn-retro-sweep-timer-315.test.ts @masonwyatt23
+/test/learned-seat-evidence.test.ts @masonwyatt23
 /test/legacy-collector-reconciliation-driver.test.ts @masonwyatt23
 /test/legacy-judge-lanes-310.test.ts @masonwyatt23
 /test/legacy-red-team-routing-310.test.ts @masonwyatt23

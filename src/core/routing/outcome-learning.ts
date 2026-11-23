@@ -1152,11 +1152,11 @@ function evidenceFor(learning: OutcomeLearning, resource: string, model: string,
   return publish(sum);
 }
 
-function meanSuccess(cell: OutcomeCellView): number {
+function meanSuccess(cell: Pick<OutcomeCellView, 'attempts' | 'goodMerges'>): number {
   return (1 + cell.goodMerges) / (2 + cell.attempts);
 }
 
-function meanCheapness(cell: OutcomeCellView): number {
+function meanCheapness(cell: Pick<OutcomeCellView, 'attempts' | 'usage'>): number {
   return (1 + cell.attempts) / (1 + cell.usage);
 }
 
@@ -1381,6 +1381,37 @@ export function learnedSeatPenalty(learning: OutcomeLearning, jobType: string, r
     const previous = scores.get(cell.resource);
     if (previous === undefined || score > previous) scores.set(cell.resource, score);
   }
+  return normalizedPenalties(scores);
+}
+
+/**
+ * The same posterior means pooled across every recorded cell: a seat-router
+ * request carries no fleet job type or repo, so the honest prior is the
+ * resource's whole dispatch record — attempts, good merges and usage summed
+ * per resource over all models, job types and repos, then the same
+ * meanSuccess x meanCheapness reward and normalization learnedSeatPenalty
+ * applies. Lower is better; the best resource stays at 0 and every other
+ * resource's penalty stays inside [0, 1]. An empty or all-unmeasured log
+ * yields {} — the router's ranking is then byte-identical.
+ */
+export function learnedFleetSeatPenalty(learning: OutcomeLearning): Record<string, number> {
+  const pooled = new Map<string, { attempts: number; goodMerges: number; usage: number }>();
+  for (const cell of learning.cells) {
+    if (cell.attempts < 1) continue;
+    const acc = pooled.get(cell.resource) ?? { attempts: 0, goodMerges: 0, usage: 0 };
+    acc.attempts += cell.attempts;
+    acc.goodMerges += cell.goodMerges;
+    acc.usage += cell.usage;
+    pooled.set(cell.resource, acc);
+  }
+  const scores = new Map<string, number>();
+  for (const [resource, cell] of pooled) {
+    scores.set(resource, meanSuccess(cell) * meanCheapness(cell));
+  }
+  return normalizedPenalties(scores);
+}
+
+function normalizedPenalties(scores: ReadonlyMap<string, number>): Record<string, number> {
   let best = 0;
   for (const score of scores.values()) if (score > best) best = score;
   const penalty: Record<string, number> = {};
