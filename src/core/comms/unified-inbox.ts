@@ -126,6 +126,24 @@
  *               source: one pending thing, one item. Act: `phm agents
  *               conversations`, `phm agents bus show`, `phm agents bus
  *               post --thread`.
+ *   wakes       pending wake hints fleet-wide — the same `readAllWakes`
+ *               projection `phm agents bus wakes --all` and `fleet_agent_wakes`
+ *               serve, grouped by addressee so the bounded queue tail never
+ *               floods the view with one item per hint. A wake is the bus's
+ *               notification layer — "go read your inbox" — never pending
+ *               work itself and never Mason-blocking, so items are warn and
+ *               non-blocking; `since` is the newest hint's queue time and
+ *               `expiresAt` stays null because a hint carries no deadline —
+ *               it ages out of the bounded tail, unknown. Each addressee's
+ *               `jobIds` are the jobs its hints provably cite (a claim-holder
+ *               hint's `jobId` or a resolved referent's feed citation), so
+ *               `--job` finds the hint under the same job it belongs to.
+ *               Addressees group by resolved identity when the `to` label
+ *               resolves through the registry and by the literal label
+ *               otherwise, so unknown identity state never merges distinct
+ *               addressees. An unreadable queue, registry, bus store or hold
+ *               table is 'unavailable', never an empty page passed off as
+ *               "no wakes". Act: `phm agents bus wakes`, `--all`.
  *   seats       bot seats whose projected handoff plan still has work to
  *               move — the same `planSeatHandoffs` read `phm bots handoffs`
  *               serves, so the inbox and that surface can never disagree.
@@ -265,7 +283,8 @@ import { existsSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { busWorkFeedHoldIndex, BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedJob, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
-import { busBodyFallbackSummary, busBodyJobIds, busBodySummary } from '../agents/bus-unified.js';
+import { busBodyFallbackSummary, busBodyJobIds, busBodySummary, readAllWakes,
+  type AgentWakeRow, type AllWakesPage } from '../agents/bus-unified.js';
 import { coordinationRowBlocks, listCoordination } from '../agents/claim-store.js';
 import { readPendingProposals, readTeamApprovals, type ProposalApprovalItem, type TeamApprovalItem } from '../approvals/surface.js';
 import { listDrafts, type Draft } from '../cos/drafts.js';
@@ -277,7 +296,7 @@ import { readBusBoardPending, type BusBoardPendingRead } from '../fleet/bus-boar
 import { busBoardDeliveryText } from '../fleet/bus-delivery.js';
 import { BUS_PROTOCOL_KEY, isClaimableWork, type BusPriority } from '../fleet/bus-envelope.js';
 import { busReplyCitations, handoffAnswerScope, isWorkerHandoffBody, workerHandoffAnswered, type BusReplyCitation, type HandoffAnswerScope } from '../fleet/handoff-body.js';
-import { readAgentRegistry } from '../agents/bus-identity.js';
+import { readAgentRegistry, resolveAgent } from '../agents/bus-identity.js';
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
 import { readNeedsMasonReplyDeliveries, type NeedsMasonReplyDeliveryReport } from '../fleet/needs-mason-relay.js';
@@ -315,7 +334,7 @@ const SUGGESTED_LEASE_MS = 600_000;
 /** Every pending-work source the unified view can report, in display order. */
 export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
-  'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'seats',
+  'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
@@ -333,7 +352,7 @@ export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeve
 export const UNIFIED_INBOX_KINDS = [
   'needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message',
   'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'mailbox-message',
-  'board-delivery', 'board-task', 'agent-thread', 'seat-handoff', 'peer-dispatch-result', 'gmail-over-target',
+  'board-delivery', 'board-task', 'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'gmail-over-target',
   'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
   'inbox-proposal', 'slack-request',
 ] as const;
@@ -504,6 +523,9 @@ export interface UnifiedInboxOptions {
   /** Undelivered-reply seam; default reads the same owner thread plus its delivery receipts. */
   readOwnerUndelivered?: (options: { runsDir: string }) => OwnerUndeliveredReplies;
   readConversations?: typeof readAgentConversations;
+  /** Wake-hint seam; default reads `readAllWakes` fleet-wide under the same
+   * bus root and runs dir `agents bus wakes --all`/`fleet_agent_wakes` use. */
+  readWakes?: (options: { root?: string; runsRoot?: string; now?: () => number }) => AllWakesPage;
   readSeatHandoffs?: typeof planSeatHandoffs;
   /** Peer-dispatch journal seam; default reads `agentnet/work-dispatch.json` under the bus root like `phm agentnet peers dispatch`. */
   readPeerDispatch?: (options: { busRoot?: string }) => WorkDispatchJournal;
@@ -1514,6 +1536,83 @@ function conversationItems(read: NonNullable<UnifiedInboxOptions['readConversati
   return { report: { state: result.skipped > 0 ? 'degraded' : 'healthy', pending: items.length }, items };
 }
 
+/** Referent descriptions named inside one wake item's detail line before the overflow count takes over. */
+const WAKE_DETAIL_REFS = 3;
+
+/**
+ * Pending wake hints fleet-wide — the same `readAllWakes` projection
+ * `phm agents bus wakes --all` and `fleet_agent_wakes` serve, grouped by
+ * addressee so the bounded queue tail never floods the view with one item
+ * per hint. A wake is the bus's notification layer — "go read your inbox" —
+ * never pending work itself and never Mason-blocking, so items are warn and
+ * non-blocking; `since` is the newest hint's queue time (last activity, the
+ * same rule conversation threads use) and `expiresAt` stays null because a
+ * hint carries no deadline — it ages out of the bounded tail, unknown.
+ * Each addressee's `jobIds` are the jobs its hints provably cite — a
+ * claim-holder hint's `jobId` or a resolved referent's feed citation —
+ * absent when none name a job. The addressee groups by resolved identity
+ * when the `to` label resolves through the registry (one agent's hints
+ * under any spelling merge) and by the literal label otherwise, so unknown
+ * identity state never merges distinct addressees. An unreadable queue,
+ * registry, bus store or hold table reports 'unavailable', never an empty
+ * page passed off as "no wakes".
+ */
+function wakeItems(read: NonNullable<UnifiedInboxOptions['readWakes']>,
+  options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let page: AllWakesPage;
+  try { page = read({ root: options.busRoot, runsRoot: options.runsDir, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (page.status !== 'ok') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const registryRead = readAgentRegistry({ root: options.busRoot });
+  const registry = registryRead.status === 'ok' ? registryRead.registry : undefined;
+  interface WakeGroup { key: string; label: string; rows: AgentWakeRow[] }
+  const groups = new Map<string, WakeGroup>();
+  for (const wake of page.wakes) {
+    const identity = registry === undefined ? undefined : resolveAgent(registry, wake.to);
+    const key = identity === undefined ? `label:${wake.to}` : `id:${identity.id}`;
+    const group = groups.get(key) ?? { key, label: identity?.handle ?? wake.to, rows: [] };
+    group.rows.push(wake);
+    groups.set(key, group);
+  }
+  const items = [...groups.values()].map((group): Omit<UnifiedInboxItem, 'priority'> => {
+    const newestFirst = [...group.rows].sort((a, b) => b.at - a.at);
+    const newest = newestFirst[0]!;
+    const count = group.rows.length;
+    const jobIds = new Set<string>();
+    const refs: string[] = [];
+    for (const wake of newestFirst.slice(0, WAKE_DETAIL_REFS)) {
+      const holder = wake.claimHolder;
+      const message = wake.message;
+      if (holder !== undefined && holder !== 'unresolved' && holder !== 'unknown') {
+        jobIds.add(holder.jobId);
+        refs.push(`job ${holder.jobId} ${holder.status}`);
+      } else if (message?.status === 'resolved') {
+        if (message.job !== undefined) jobIds.add(message.job.jobId);
+        refs.push(`"${oneLine(message.summary, 80)}"`);
+      } else {
+        refs.push(`hint ${wake.id}`);
+      }
+    }
+    const overflow = count > WAKE_DETAIL_REFS ? ` +${count - WAKE_DETAIL_REFS} more` : '';
+    const detail = refs.length === 0 ? null : oneLine(`${refs.join(' · ')}${overflow}`, DETAIL_MAX);
+    return {
+      id: `wakes:${createHash('sha256').update(group.key).digest('hex').slice(0, 16)}`,
+      source: 'wakes',
+      kind: 'wake-hint',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`${count} pending wake hint${count === 1 ? '' : 's'} for ${group.label}`, TITLE_MAX),
+      detail,
+      since: iso(newest.at),
+      expiresAt: null,
+      ...jobIdsField(jobIds),
+      act: [`phm agents bus wakes ${group.label}`, 'phm agents bus wakes --all'],
+    };
+  });
+  items.sort((a, b) => (b.since ?? '').localeCompare(a.since ?? ''));
+  return { report: { state: 'healthy', pending: items.length }, items };
+}
+
 /** Work refs named inside one seat item's detail line before the overflow count takes over. */
 const SEAT_DETAIL_REFS = 4;
 
@@ -2078,6 +2177,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const mailbox = mailboxItems(options.readMailbox ?? readMailboxPending, options);
   const board = boardItems(options.readBoard ?? readBusBoardPending, options);
   const conversations = conversationItems(options.readConversations ?? readAgentConversations, options, now, bus.covered);
+  const wakes = wakeItems(options.readWakes ?? ((o) => readAllWakes(undefined, { root: o.root, runsRoot: o.runsRoot, now: o.now })), options);
   const seats = await seatItems(options.readSeatHandoffs ?? planSeatHandoffs, now);
   const peerDispatch = peerDispatchItems(options.readPeerDispatch ?? readPeerDispatchJournal, options);
   const gmail = gmailItems(options.readGmailPlans ?? readGmailArchivePlanLatest, options.runsDir);
@@ -2105,6 +2205,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     mailbox: mailbox.report,
     board: board.report,
     conversations: conversations.report,
+    wakes: wakes.report,
     seats: seats.report,
     'peer-dispatch': peerDispatch.report,
     gmail: gmail.report,
@@ -2116,7 +2217,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     proposals: proposals.report,
     slack: slack.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...seats.items, ...peerDispatch.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...drafts.items, ...bus.items, ...mailbox.items, ...board.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

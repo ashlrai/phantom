@@ -34,6 +34,7 @@ import type { AshlrConfig } from '../src/core/types.js';
 import type { AgentConversations } from '../src/core/fleet/agent-conversations.js';
 import type { SlackJournalRead, SlackObservation } from '../src/core/agents/slack-journal.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
+import type { AgentWakeRow, AllWakesPage } from '../src/core/agents/bus-unified.js';
 import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { listNeedsMason } from '../src/core/fleet/needs-mason-resolve.js';
 import { writeDelivery } from '../src/core/fleet/needs-mason-reply-delivery.js';
@@ -125,6 +126,7 @@ describe('readUnifiedInbox sources', () => {
         mailbox: { state: 'missing', pending: 0 },
         board: { state: 'missing', pending: 0 },
         conversations: { state: 'missing', pending: 0 },
+        wakes: { state: 'healthy', pending: 0 },
         seats: { state: 'missing', pending: 0 },
         'peer-dispatch': { state: 'missing', pending: 0 },
         'email-inbox': { state: 'missing', pending: 0 },
@@ -961,6 +963,98 @@ describe('agent conversation threads in the unified inbox', () => {
     const throwing = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
       readConversations: () => { throw new Error('boom'); } });
     expect(throwing.sources.conversations).toEqual({ state: 'unavailable', pending: null });
+  });
+});
+
+describe('wake hints in the unified inbox', () => {
+  const wakeRow = (id: string, to: string, at: number, extra: Partial<AgentWakeRow> = {}): AgentWakeRow =>
+    ({ id, from: 'agent:peer', to, kind: 'bus.send', at, ...extra });
+  const wakesPage = (wakes: AgentWakeRow[]): AllWakesPage =>
+    ({ status: 'ok', scope: 'fleet', wakes, matched: wakes.length, truncated: false });
+  const resolvedMsg = (summary: string, jobId?: string): AgentWakeRow['message'] => ({
+    status: 'resolved', id: 'env-1', ts: new Date(now).toISOString(), priority: 'P2',
+    from: 'agent:peer', to: 'agent:helper', channel: null, fromAgent: null, summary,
+    ...(jobId === undefined ? {} : { job: { jobId, feed: 'ok' as const, job: null } }),
+  });
+
+  it('groups pending wake hints by addressee into one warn item each', async () => {
+    registerAgentIdentity({ handle: 'helper', aliases: ['helper-alias'] }, { root: busRoot });
+    const inbox = await read({
+      readWakes: () => wakesPage([
+        wakeRow('m-1', 'agent:helper', now - 7_200_000, { message: resolvedMsg('review the diff') }),
+        wakeRow('m-2', 'helper', now - 3_600_000, { message: resolvedMsg('check the feed') }),
+        wakeRow('m-3', 'helper-alias', now - 1_800_000),
+        wakeRow('m-4', 'worker-9', now - 900_000),
+      ]),
+    });
+    const items = inbox.items.filter(i => i.source === 'wakes');
+    // helper's three label spellings merge into one identity group; the
+    // unregistered worker-9 stays a literal-label group.
+    expect(items).toHaveLength(2);
+    const helper = items.find(i => i.title.includes('helper'))!;
+    expect(helper).toMatchObject({
+      kind: 'wake-hint', severity: 'warn', blocking: false,
+      title: '3 pending wake hints for helper',
+      since: new Date(now - 1_800_000).toISOString(), expiresAt: null,
+    });
+    expect(helper.detail).toContain('"review the diff"');
+    expect(helper.act).toEqual(['phm agents bus wakes helper', 'phm agents bus wakes --all']);
+    const worker = items.find(i => i.title.includes('worker-9'))!;
+    expect(worker).toMatchObject({ title: '1 pending wake hint for worker-9', kind: 'wake-hint' });
+    expect(inbox.sources.wakes).toEqual({ state: 'healthy', pending: 2 });
+  });
+
+  it('carries provable job citations so --job finds the hint', async () => {
+    const page = wakesPage([
+      wakeRow('wh-1', 'agent:helper', now - 3_600_000, {
+        claimHolder: { statusId: 'st-1', jobId: 'RQ-WAKE-1', status: 'done', priority: 'P2' } }),
+      wakeRow('m-2', 'agent:helper', now - 1_800_000, { message: resolvedMsg('feed says ship', 'RQ-WAKE-2') }),
+      wakeRow('m-3', 'agent:helper', now - 900_000, { message: resolvedMsg('no job here') }),
+    ]);
+    const inbox = await read({ readWakes: () => page });
+    const item = inbox.items.find(i => i.source === 'wakes')!;
+    expect(item.jobIds).toEqual(['RQ-WAKE-1', 'RQ-WAKE-2']);
+    const byJob = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
+      readRequests: () => ({ status: 'missing', requests: [] }),
+      readWakes: () => page, filter: { job: 'RQ-WAKE-1' } });
+    expect(byJob.items.filter(i => i.source === 'wakes')).toHaveLength(1);
+    expect(byJob.items.find(i => i.source === 'wakes')!.jobIds).toContain('RQ-WAKE-1');
+  });
+
+  it('reports the wakes source unavailable when the fleet read cannot resolve', async () => {
+    const inbox = await read({ readWakes: () => ({ status: 'unavailable', reason: 'registry unreadable' }) });
+    expect(inbox.sources.wakes).toEqual({ state: 'unavailable', pending: null });
+    expect(inbox.items.filter(i => i.source === 'wakes')).toHaveLength(0);
+    const throwing = await read({ readWakes: () => { throw new Error('boom'); } });
+    expect(throwing.sources.wakes).toEqual({ state: 'unavailable', pending: null });
+  });
+
+  it('reports a readable empty wake queue as healthy with nothing pending', async () => {
+    const inbox = await read({ readWakes: () => wakesPage([]) });
+    expect(inbox.sources.wakes).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'wakes')).toHaveLength(0);
+  });
+
+  it('honors source, kind, since and contains filters on wake items', async () => {
+    const page = wakesPage([
+      wakeRow('m-1', 'agent:helper', now - 7_200_000, { message: resolvedMsg('old ping') }),
+      wakeRow('m-2', 'agent:helper', now - 900_000, { message: resolvedMsg('fresh ping about the release') }),
+    ]);
+    const readWakes = () => page;
+    const base = { runsDir, busRoot, now: () => now, readRequests: () => ({ status: 'missing' as const, requests: [] }), readWakes };
+    const bySource = await readUnifiedInbox({ ...base, filter: { source: 'wakes' } });
+    expect(bySource.items.every(i => i.source === 'wakes')).toBe(true);
+    expect(bySource.items.filter(i => i.source === 'wakes')).toHaveLength(1);
+    const byKind = await readUnifiedInbox({ ...base, filter: { kind: 'wake-hint' } });
+    expect(byKind.items.filter(i => i.source === 'wakes')).toHaveLength(1);
+    const bySince = await readUnifiedInbox({ ...base, filter: { since: now - 1_000_000 } });
+    expect(bySince.items.filter(i => i.source === 'wakes')).toHaveLength(1);
+    const tooNew = await readUnifiedInbox({ ...base, filter: { since: now - 500_000 } });
+    expect(tooNew.items.filter(i => i.source === 'wakes')).toHaveLength(0);
+    const byContains = await readUnifiedInbox({ ...base, filter: { contains: 'release' } });
+    expect(byContains.items.filter(i => i.source === 'wakes')).toHaveLength(1);
+    const missContains = await readUnifiedInbox({ ...base, filter: { contains: 'nonexistent-needle' } });
+    expect(missContains.items.filter(i => i.source === 'wakes')).toHaveLength(0);
   });
 });
 
