@@ -61,12 +61,13 @@ export interface AgentsMessages {
 
 /** Pure: bus receipts in, messages and per-pair weights out. Same rows and clock, same JSON. */
 export function buildAgentsMessages(scan: { source: AgentsMessages['source']; rows: readonly BusInboxReceipt[]; skipped?: number },
-  query: { since: number; limit?: number }, now: number): AgentsMessages {
+  query: { since: number; before?: number; limit?: number }, now: number): AgentsMessages {
   const head = { schema: 'agents.messages.v1' as const, version: 1 as const, generatedAt: new Date(now).toISOString(),
     since: new Date(query.since).toISOString(), source: scan.source };
   const skipped = scan.skipped ?? 0;
   if (scan.source === 'unavailable') return { ...head, messages: null, pairs: null, matched: null, skipped };
-  const rows = scan.rows.filter(row => agentToAgent(row.envelope) && row.receivedAt >= query.since && row.receivedAt <= now);
+  const rows = scan.rows.filter(row => agentToAgent(row.envelope) && row.receivedAt >= query.since && row.receivedAt <= now
+    && (query.before === undefined || row.receivedAt < query.before));
   const node = (name: string, lane: string | null) => mapEdgeAgent({ name, lane }).node ?? UNKNOWN_NODE;
   const all: AgentsMessage[] = projectAgentMessages(rows).map(m => ({
     at: m.ts, from: node(m.from.name, m.from.lane), to: node(m.to.name, m.to.lane), kind: m.kind, summary: m.summary,
@@ -84,20 +85,26 @@ export function buildAgentsMessages(scan: { source: AgentsMessages['source']; ro
   return { ...head, messages: all.slice(0, query.limit ?? AGENTS_MESSAGES_DEFAULT_LIMIT), pairs: [...pairs.values()], matched: all.length, skipped };
 }
 
-/** Shared flag/param check: `since` is 10m, 2h, 1d, epoch ms or ISO; `limit` 1..1024. */
-export function parseAgentsMessagesQuery(input: { since?: string; limit?: string }, now: number):
-  { ok: true; query: { since: number; limit: number } } | { ok: false; error: string } {
+/** Shared flag/param check: `since`/`before` take 10m, 2h, 1d, epoch ms or ISO (`before` exclusive); `limit` 1..1024. */
+export function parseAgentsMessagesQuery(input: { since?: string; before?: string; limit?: string }, now: number):
+  { ok: true; query: { since: number; before?: number; limit: number } } | { ok: false; error: string } {
   const since = parseSince(input.since ?? AGENTS_MESSAGES_DEFAULT_SINCE, now);
   if (since === null) return { ok: false, error: '--since takes 10m, 2h, 1d, epoch ms or an ISO time.' };
+  let before: number | undefined;
+  if (input.before !== undefined) {
+    const parsed = parseSince(input.before, now);
+    if (parsed === null) return { ok: false, error: '--before takes 10m, 2h, 1d, epoch ms or an ISO time.' };
+    before = parsed;
+  }
   const limit = input.limit === undefined ? AGENTS_MESSAGES_DEFAULT_LIMIT : Number(input.limit);
   if (input.limit !== undefined && (!/^[1-9][0-9]*$/.test(input.limit) || limit > AGENT_MESSAGES_MAX_LIMIT)) {
     return { ok: false, error: `--limit takes 1..${AGENT_MESSAGES_MAX_LIMIT}.` };
   }
-  return { ok: true, query: { since, limit } };
+  return { ok: true, query: { since, before, limit } };
 }
 
 /** The one read behind the CLI, the API and the map. */
-export function readAgentsMessages(input: { since?: string; limit?: string } = {}, options: BusInboxOptions = {}):
+export function readAgentsMessages(input: { since?: string; before?: string; limit?: string } = {}, options: BusInboxOptions = {}):
   { ok: true; result: AgentsMessages } | { ok: false; error: string } {
   const now = (options.now ?? Date.now)(), parsed = parseAgentsMessagesQuery(input, now);
   return parsed.ok ? { ok: true, result: buildAgentsMessages(scanBusInbox(options), parsed.query, now) } : parsed;

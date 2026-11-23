@@ -18,7 +18,7 @@ function store(said: Said[] = []) {
     { root, now: () => at }).status).toBe('posted'));
   return root;
 }
-const read = (root: string, input: { since?: string; limit?: string } = {}) => {
+const read = (root: string, input: { since?: string; before?: string; limit?: string } = {}) => {
   const result = readAgentsMessages(input, { root, now: () => NOW });
   if (!result.ok) throw new Error(result.error);
   return result.result;
@@ -65,7 +65,27 @@ describe('phm agents messages', () => {
     expect(read(root, { since: '30s' }).matched).toBe(0);
     expect(read(root, { limit: '1' })).toMatchObject({ matched: 3, messages: [{ summary: 'thanks, next the docs' }] });
     expect(readAgentsMessages({ since: 'soon' }, { root })).toEqual({ ok: false, error: '--since takes 10m, 2h, 1d, epoch ms or an ISO time.' });
+    expect(readAgentsMessages({ before: 'soon' }, { root })).toEqual({ ok: false, error: '--before takes 10m, 2h, 1d, epoch ms or an ISO time.' });
     expect(readAgentsMessages({ limit: '0' }, { root })).toEqual({ ok: false, error: '--limit takes 1..1024.' });
+  });
+
+  it('--before keeps only messages received strictly before its cutoff, composing with --since into one [since, before) window', () => {
+    const root = store(chat);
+    // before at T0+1500 drops the T0+2000 row; the T0 and T0+1000 rows stay.
+    expect(read(root, { before: new Date(T0 + 1_500).toISOString() }).messages!.map(m => m.summary))
+      .toEqual(['on it?', 'please look at the build']);
+    expect(read(root, { before: new Date(T0 + 1_500).toISOString() }).matched).toBe(2);
+    // A message stamped exactly at the cutoff drops — adjacent windows never double-count it.
+    expect(read(root, { before: String(T0 + 2_000) }).matched).toBe(2);
+    // [since, before): since after T0 keeps only the T0+1000 row inside the window.
+    expect(read(root, { since: new Date(T0 + 500).toISOString(), before: new Date(T0 + 1_500).toISOString() }).messages!.map(m => m.summary))
+      .toEqual(['on it?']);
+    // An inverted window is an honest empty page, not an error.
+    expect(read(root, { since: new Date(T0 + 2_000).toISOString(), before: new Date(T0 + 1_000).toISOString() }))
+      .toMatchObject({ matched: 0, messages: [], pairs: [] });
+    // pairs and matched reflect only the windowed rows.
+    const windowed = read(root, { before: new Date(T0 + 1_500).toISOString() });
+    expect(windowed.pairs!.map(p => `${p.from}->${p.to}`)).toEqual(['lane:claude->leader', 'leader->lane:claude']);
   });
 
   it('aggregates edge weights per node pair over the whole window, keeping the last 5 summaries', () => {
@@ -103,6 +123,10 @@ describe('phm agents messages', () => {
     expect(await runAgentsMessagesCli(['--limit'], () => {}, line => err.push(line))).toBe(2);
     expect(await runAgentsMessagesCli(['--since', 'later'], () => {}, line => err.push(line))).toBe(2);
     expect(err.at(-1)).toBe('--since takes 10m, 2h, 1d, epoch ms or an ISO time.');
+    expect(await runAgentsMessagesCli(['--before', 'later'], () => {}, line => err.push(line))).toBe(2);
+    expect(err.at(-1)).toBe('--before takes 10m, 2h, 1d, epoch ms or an ISO time.');
+    expect(await runAgentsMessagesCli(['--before'], () => {}, line => err.push(line))).toBe(2);
+    expect(await runAgentsMessagesCli(['--before', '1h', '--before', '2h'], () => {}, line => err.push(line))).toBe(2);
   });
 
   it('the API serves the same read and refuses unknown params', async () => {
@@ -117,7 +141,12 @@ describe('phm agents messages', () => {
     const ok = await call(`${AGENT_MESSAGES_PATH}?since=1h&limit=1`);
     expect(ok).toMatchObject({ handled: true, status: 200, body: { schema: 'agents.messages.v1', version: 1, matched: 3 } });
     expect(ok.body!.messages).toHaveLength(1);
+    const windowed = await call(`${AGENT_MESSAGES_PATH}?before=${encodeURIComponent(new Date(T0 + 1_500).toISOString())}`);
+    expect(windowed).toMatchObject({ handled: true, status: 200, body: { matched: 2 } });
+    expect(windowed.body!.messages!.map(m => m.summary)).toEqual(['on it?', 'please look at the build']);
     expect((await call(`${AGENT_MESSAGES_PATH}?agent=leader`)).status).toBe(400);
     expect((await call(`${AGENT_MESSAGES_PATH}?since=never`)).body!.error).toContain('--since');
+    expect((await call(`${AGENT_MESSAGES_PATH}?before=never`)).body!.error).toContain('--before');
+    expect((await call(`${AGENT_MESSAGES_PATH}?before=1h&before=2h`)).status).toBe(400);
   });
 });
