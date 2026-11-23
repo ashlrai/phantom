@@ -264,9 +264,17 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   observed on many ticks counts once — and a whole-tick reason becomes an
   item while `state-persistence-failed` or `activation-refused` recurs;
   policy reasons like `budget-exhausted` never do. A missing or unreadable
-  state file emits nothing.
-  Fleet, nightly, policy, local-gate, pass^k, friction and tick-health
-  items carry
+  state file emits nothing —
+  and the cross-model review journal's recurring findings, the reject
+  reason codes and review failures `fleet/cross-review.jsonl` records for
+  each repository's pull requests (otherwise only visible through
+  `phm router outcomes`/`phm fleet router-weights` tallies and the audit
+  log). A finding becomes an item while its recorded rows span enough
+  distinct pull requests inside the recency window — a producer whose
+  diffs keep failing independent review for the same reason, or a
+  reviewer pipeline that keeps failing before a verdict.
+  Fleet, nightly, policy, local-gate, pass^k, friction, tick-health and
+  cross-review items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
@@ -284,7 +292,11 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   dispatch, queue and lane machinery. Tick-health items name the state
   ledger and keep the inspect-the-phase-deadlines framing, emitting only
   for the fleet's own repository since the daemon is this install's
-  machinery. They
+  machinery. Cross-review items name the review
+  journal and keep the find-why-review-keeps-failing framing, emitting
+  only when a review row's recorded repository matches the discovery
+  target — findings on another repository's pull requests never land on
+  this one. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
