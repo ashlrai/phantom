@@ -161,7 +161,18 @@
  *     recurring reaper interventions — the launch→reap handoff dropping
  *     finish evidence, or jobs that keep hanging instead of ending —
  *     become work instead of sitting in two write-only audit files
- *     `phm jobs stuck` and `phm job show` only ever read live or per-job.
+ *     `phm jobs stuck` and `phm job show` only ever read live or per-job;
+ *   - the cloud lesson holdout trial's adverse verdicts: the randomized
+ *     served-vs-holdout landing comparison lessonTrial folds from the
+ *     cloud task files and revert ledgers — overall and per knowledge
+ *     note — that `phm improve lessons` and the Verse Lessons view
+ *     publish (lessonTrialBacklogItems below). Until now a 'hurts'
+ *     verdict only ever reached those reports: a lesson whose served
+ *     arm keeps landing worse, or the injection feature as a whole,
+ *     never became work. A scope emits only while its verdict is
+ *     'hurts' — the 95% interval excluding zero on the negative side —
+ *     and a per-note row only while the note is still approved, so a
+ *     rejected or superseded lesson stops queueing work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -211,6 +222,7 @@ import { recheckBacklogItems } from './recheck-backlog.js';
 import { sourceYieldBacklogItems } from './source-yield-backlog.js';
 import { gatewayShadowBacklogItems } from './gateway-shadow-backlog.js';
 import { stuckJobBacklogItems } from './stuck-job-backlog.js';
+import { lessonTrialBacklogItems } from './lesson-trial-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -480,6 +492,18 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // 'unknown' rather than suppressing the reaper evidence, and only the
   // fleet's own repository inherits the items.
   items.push(...await stuckJobBacklogItems({ repo }));
+
+  // Cloud lesson holdout trial: the randomized served-vs-holdout landing
+  // comparison lessonTrial computes over the cloud task files and revert
+  // ledgers — the same report `phm improve lessons` prints and the Verse
+  // Lessons view exposes as knowledge.trial. Until now a 'hurts' verdict
+  // only ever reached reports someone had to run: a lesson whose served
+  // arm keeps landing worse, or the injection feature as a whole, never
+  // became work. A scope emits only on the adverse verdict — the 95%
+  // interval excluding zero on the negative side — and per-note rows only
+  // while the note is still approved; a withheld trial or note read
+  // emits nothing.
+  items.push(...await lessonTrialBacklogItems({ repo }));
   return { items, errors };
 }
 

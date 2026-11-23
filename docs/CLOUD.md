@@ -442,11 +442,27 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   than suppressing the reaper evidence, each class reads only its own
   ledger so one missing file silences only its class, truncated tails
   are stated as lower bounds, and rows emit only for the fleet's own
-  repository since the reaper is this install's machinery.
+  repository since the reaper is this install's machinery —
+  and the cloud lesson holdout trial's adverse verdicts, the
+  randomized served-vs-holdout landing comparison `lessonTrial`
+  (src/core/improve/lesson-trial.ts) folds from the cloud task files
+  under `~/.ashlr/cloud/tasks` and the revert ledgers — overall and
+  per knowledge note — that `phm improve lessons` prints and the
+  Verse Lessons view exposes as `knowledge.trial` (otherwise only
+  visible through those reports — a 'hurts' verdict never became
+  work). A scope becomes an item only while its verdict is `hurts` —
+  the 95% interval excluding zero on the negative side, served runs
+  landing measurably worse than the identical prompt held out — and a
+  per-note row only while its note is still `approved`, since that is
+  the state that keeps it eligible for injection; rejected, pending
+  and unresolvable notes emit nothing, `helps`, `no-difference` and
+  `unknown` emit nothing, a withheld trial (a task-store or ledger
+  read failure) or a failed knowledge read emits nothing for the
+  per-note rows, and another repository emits nothing.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
-  source-yield, gateway-shadow, recheck and stuck-job
+  source-yield, gateway-shadow, recheck, stuck-job and lesson-trial
   items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
@@ -535,7 +551,15 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   framing per class — the launch→reap handoff dropping finish evidence
   versus jobs hanging past the stuck bar — with the same owner-side
   no-change escape, and emit only for the fleet's own repository since
-  the reaper is this install's machinery. They
+  the reaper is this install's machinery. Lesson-trial
+  items name the holdout trial, the `phm improve lessons` report and the
+  cloud task store, keep the find-why-served-runs-land-worse framing —
+  scope matching or injection assembly in learn/retro/inject.ts, the
+  retro suggestion pipeline, or a biased arm assignment or landing fold —
+  with the same owner-side no-change escape, since approving, editing or
+  rejecting a lesson note is a Verse act only the owner takes, and emit
+  only for the fleet's own repository since the trial covers this
+  install's cloud runs. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
