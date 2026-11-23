@@ -112,8 +112,12 @@ Non-required check observations, plain retry requests, pending checks and
 PRs no verdict claims unambiguously contribute nothing, and absent, empty
 or unmatched evidence changes nothing. `phm fleet outcomes` reads the
 ledger's bounded tail by default (`--merge-events <file>` overrides) and
-passes the fold; `phm select` and the fleet context pack do not consume
-the friction fields and pass nothing.
+passes the fold; `phm improve discover`'s fleet-learning backlog items read
+the same bounded tail (`mergeEventsPath` overrides the
+`<runsDir>/metrics/merge-events.jsonl` default) so the dirty/fixup
+improvement patterns reach the self-improvement backlog. `phm select` and
+the fleet context pack do not consume the friction fields and pass
+nothing.
 
 ## How it routes
 
