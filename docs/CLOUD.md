@@ -324,9 +324,27 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   its corroborated losses reach the recurring bar inside the 72-hour
   window — jobs the dispatcher still counts as running are excluded, so
   a long job never queues work — and an unreadable ledger or run-marker
-  directory emits nothing.
+  directory emits nothing —
+  and the swapout-rate ledger's recurring memory evidence, the per-sample
+  `free_pct`/`swap_gb`/`swapouts_per_min` rows the daemon's swapout-sync
+  job folds from the bridge's memstat.json into
+  `metrics/swapout-rate.jsonl` under the fleet runs directory
+  (otherwise only visible through `phm fleet vitals`' swapout_rate
+  section and the console's memory-guard card — reports someone had to
+  open, even though the ledger exists to tune the lane-autopilot
+  MEMORY_GUARD constants the code itself marks unmeasured). A sample
+  becomes recorded-pressure evidence when any recorded field meets a
+  severe line — free below the guard's low line, any swapout activity,
+  or swap past the backstop — and a complete three-field reading becomes
+  withheld-raise evidence when `memoryAllowsRaise` refuses it. An axis
+  becomes an item while its condition holds on at least half of the
+  judged samples in at least six distinct hour buckets spanning two UTC
+  days inside the 7-day window; partial rows never count as blocked or
+  clear, a missing or unreadable ledger emits nothing, and unknown
+  fields stay unknown rather than reading as zero.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
-  cross-review, empty-tag, post-merge, ci-rerun and lost-launch items carry
+  cross-review, empty-tag, post-merge, ci-rerun, lost-launch and
+  memory-pressure items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
@@ -363,7 +381,13 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   evidence, keep the find-which-side-owns-the-cause framing — pinned ops
   machinery versus the queue/job lifecycle this repository owns — and
   emit only for the fleet's own repository since the launch machinery is
-  this install's. They
+  this install's. Memory-pressure items name the swapout-rate ledger,
+  `phm fleet vitals` and the lane-memory-pressure throttle, keep the
+  find-what-is-holding-the-memory framing for recorded pressure and the
+  retune-the-unmeasured-guard-constants framing for withheld raises —
+  with the same owner-side no-change escape — and emit only for the
+  fleet's own repository since the evidence describes this install's
+  host and fleet machinery. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
