@@ -43,7 +43,14 @@
  *     wrong routes, holds and concurrency throttles
  *     (frictionBacklogItems below), so recurring
  *     operational drag becomes work instead of sitting in a report whose
- *     note ledger only updates on manual runs.
+ *     note ledger only updates on manual runs;
+ *   - the daemon's own tick ledger: the per-phase ledgers and tick reasons
+ *     daemon.json's bounded tick history records — recurring degraded,
+ *     timed-out, abandoned, budget-starved or failing-off-tick stages and
+ *     recurring whole-tick failure reasons (tickHealthBacklogItems below),
+ *     so the self-improvement loop's own machinery degrading becomes work
+ *     instead of sitting in a state file `phm daemon status` only ever
+ *     shows the last tick of.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -79,6 +86,7 @@ import { fleetPolicyBacklogItems } from './policy-backlog.js';
 import { localGateBacklogItems } from './gate-backlog.js';
 import { passkAlertBacklogItems } from './passk-backlog.js';
 import { frictionBacklogItems } from './friction-backlog.js';
+import { tickHealthBacklogItems } from './tick-health-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -181,6 +189,18 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // an item emits only while its own 7-day signal fires and no operator
   // note suppresses it, and only for the fleet's own repository.
   items.push(...await frictionBacklogItems({ repo }));
+
+  // Daemon tick ledger: the resident daemon's own phase ledgers and tick
+  // reasons — recurring degraded, timed-out, abandoned, budget-starved or
+  // failing-off-tick stages plus recurring whole-tick failure reasons —
+  // become backlog items too. Until now they only ever reached
+  // `phm daemon status`, which prints the LAST tick's phases and outcome;
+  // the retained history daemon.json keeps (100 ticks) was read by no
+  // fold, so the self-improvement loop's own machinery degrading never
+  // became work. Same bounded no-follow state read; an item emits only
+  // while its phase or reason recurs inside the 7-day window and only for
+  // the fleet's own repository.
+  items.push(...await tickHealthBacklogItems({ repo }));
   return { items, errors };
 }
 
