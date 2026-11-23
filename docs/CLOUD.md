@@ -477,13 +477,28 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   in-window row, a missing or unreadable journal emits nothing,
   truncated tails are stated as lower bounds, and rows emit only for
   the fleet's own repository since the journal describes this
-  install's dispatcher and lanes.
+  install's dispatcher and lanes —
+  and the pre-launch dupcheck gate's precision ledger, the
+  queue.dupcheck-event.v1 rows `phm queue dupcheck --gate` records for
+  every claimed job — skip, warn or launch — plus the outcome rows
+  empty-tag-sync and `phm jobs empty --record` append when a
+  let-through job finishes EMPTY already_done, folded through the same
+  per-job semantics `phm queue dupcheck --stats` and the Ideas list's
+  dupcheck-gate signal compute (otherwise only visible through those
+  reports — recurring missed duplicates or wrong skips never became
+  work). A cell becomes an item only at the Ideas list's recurring
+  bars, anchored inside the 7-day window — missed duplicates need
+  three let-through jobs ending already_done at a missed share of a
+  tenth, false skips need two skipped jobs recorded launching or
+  warning later — a missing or unreadable ledger emits nothing,
+  malformed lines and unknown actions drop like the stats reader's own
+  parse, and another repository emits nothing since the ledger carries
+  no repository column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
-  source-yield, gateway-shadow, recheck, stuck-job, lesson-trial and
-  work-market
-  items carry
+  source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
+  work-market and dupcheck items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
@@ -586,7 +601,14 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   drifting queue specs and hint vocabulary, mechanical rejection codes
   excluded — with the same owner-side no-change escape, and emit only
   for the fleet's own repository since the journal describes this
-  install's dispatcher and carries no repository column. They
+  install's dispatcher and carries no repository column. Dupcheck items
+  name the dupcheck ledger, `phm queue dupcheck --stats` and the gate
+  module src/core/queue/dupcheck.ts, keep the
+  find-which-side-owns-the-miss framing per cell — gate recall versus
+  producers minting already-done work — with the same owner-side
+  no-change escape, and emit only for the fleet's own repository since
+  the gate is this repo's machinery and the ledger carries no
+  repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
