@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Six sources, all of which Phantom
+ * evidence instead of a hand-kept list. Seven sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -24,7 +24,12 @@
  *     empty-lane prompt-template flags and within-tier model routing hints
  *     `phm fleet metrics report|suggest|weekly` already computes
  *     (fleetPolicyBacklogItems below), so the fleet's self-diagnosed policy
- *     work reaches the backlog instead of only a report someone had to run.
+ *     work reaches the backlog instead of only a report someone had to run;
+ *   - the local pre-merge gate ledger's recurring step failures: the
+ *     per-step pass/fail tallies every gated worker run records to
+ *     metrics/local-gate.jsonl and `phm fleet vitals` folds
+ *     (localGateBacklogItems below), so a gate step that keeps killing
+ *     workers' diffs reaches the backlog instead of sitting in a report.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -57,6 +62,7 @@ import { kindOf } from './outcomes.js';
 import type { Proposal } from './loop.js';
 import { nightlyLearningBacklogItems } from './nightly-backlog.js';
 import { fleetPolicyBacklogItems } from './policy-backlog.js';
+import { localGateBacklogItems } from './gate-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -137,6 +143,13 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // someone had to run and read. Same bounded jobs-ledger read and the
   // same healthy-only evidence bar as that report.
   items.push(...await fleetPolicyBacklogItems({ repo }));
+
+  // Local-gate ledger: the pre-merge gate's recurring per-step failures
+  // become backlog items too — until now they only surfaced in
+  // `phm fleet vitals`, a report someone had to run and read. Same
+  // healthy-only evidence bar: a missing, unreadable or partially corrupt
+  // ledger yields no items.
+  items.push(...await localGateBacklogItems({ repo }));
   return { items, errors };
 }
 

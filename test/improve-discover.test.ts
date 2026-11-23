@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AUTO_DISCOVER_EMPTY_EVERY_MS, AUTO_DISCOVER_EVERY_MS, autoDiscover, discoverBacklog, fleetLearningBacklogItems, resetAutoDiscoverForTests } from '../src/core/improve/discover.js';
 import { nightlyLearningBacklogItems } from '../src/core/improve/nightly-backlog.js';
 import { fleetPolicyBacklogItems } from '../src/core/improve/policy-backlog.js';
+import { localGateBacklogItems } from '../src/core/improve/gate-backlog.js';
 import { nightlyProposalsPath } from '../src/core/learn/retro/store.js';
 import { updateCloudBudget } from '../src/core/cloud/store.js';
 import { appendUserBacklogItems, readUserBacklogItems, validBacklogItem } from '../src/core/cloud/backlog.js';
@@ -560,5 +561,102 @@ describe('fleet policy suggestions', () => {
     const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
     expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('fleet-policy-')))).toBe(0);
     expect(readUserBacklogItems().filter((i) => i.id.startsWith('fleet-policy-'))).toHaveLength(2);
+  });
+});
+
+// Local-gate ledger recurring step failures → backlog items: the per-step
+// pass/fail tallies every gated worker run records to metrics/local-gate.jsonl
+// become items instead of sitting advisory-only in `phm fleet vitals`.
+describe('local-gate ledger items', () => {
+  const HEAD = 'a'.repeat(40);
+  const BASE = 'b'.repeat(40);
+  const gateFile = (runsDir: string, lines: string[]): string => {
+    const p = path.join(runsDir, 'metrics', 'local-gate.jsonl');
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, `${lines.join('\n')}\n`);
+    return runsDir;
+  };
+  const report = (verdict: 'pass' | 'fail', failed: string[] = []): string =>
+    JSON.stringify({
+      verdict, headSha: HEAD, baseSha: BASE, seconds: 12.5,
+      steps: [
+        { name: 'typecheck', ok: !failed.includes('typecheck'), seconds: 4.2 },
+        { name: 'verify-changed', ok: !failed.includes('verify-changed'), seconds: 3.1 },
+        { name: 'merge readiness', ok: !failed.includes('merge readiness'), seconds: 0.8 },
+        { name: 'budget', ok: !failed.includes('budget'), seconds: 0.1 },
+      ],
+    });
+  /** Five reports: typecheck fails four, verify-changed three, the rest pass — both over the recurring bar. */
+  const failingRuns = (): string[] => [
+    report('fail', ['typecheck', 'verify-changed']),
+    report('fail', ['typecheck', 'verify-changed']),
+    report('fail', ['typecheck', 'verify-changed']),
+    report('fail', ['typecheck']),
+    report('pass'),
+  ];
+
+  it('turns recurring step failures into valid priority-3 backlog items, worst first', async () => {
+    const runsDir = gateFile(path.join(home, 'runs-a'), failingRuns());
+    const items = await localGateBacklogItems({ repo: 'ashlrai/phantom', runsDir });
+    expect(items).toHaveLength(2);
+    const [first, second] = items;
+    for (const item of items) {
+      expect(item.id).toMatch(/^local-gate-[0-9a-f]{16}$/);
+      expect(validBacklogItem(item)).not.toBeNull();
+      expect(item).toMatchObject({ priority: 3, repo: 'ashlrai/phantom', area: 'local-gate' });
+    }
+    expect(first!.title).toContain('typecheck');
+    expect(first!.prompt).toContain('failed 4 of its 5 recorded runs');
+    expect(first!.prompt).toContain('5 gate report(s)');
+    expect(first!.prompt).toContain('no-change');
+    expect(first!.prompt).toContain('metrics/local-gate.jsonl');
+    expect(second!.title).toContain('verify-changed');
+    expect(second!.prompt).toContain('failed 3 of its 5 recorded runs');
+    expect(second!.prompt).toContain("newest recorded gate verdict was 'pass'");
+  });
+
+  it('emits nothing below the recurring-failure bar, for a missing ledger, or on degraded rows', async () => {
+    // Two failures never reach the bar of three.
+    const quiet = gateFile(path.join(home, 'runs-b'), [report('fail', ['typecheck']), report('fail', ['typecheck']), report('pass')]);
+    expect(await localGateBacklogItems({ repo: 'ashlrai/phantom', runsDir: quiet })).toEqual([]);
+    // A missing ledger is unknown, never an empty success with items.
+    expect(await localGateBacklogItems({
+      repo: 'ashlrai/phantom', runsDir: path.join(home, 'no-such-runs'),
+    })).toEqual([]);
+    // One unparseable row degrades the whole read: unknown stays unknown.
+    const degraded = gateFile(path.join(home, 'runs-c'), [...failingRuns(), 'not json']);
+    expect(await localGateBacklogItems({ repo: 'ashlrai/phantom', runsDir: degraded })).toEqual([]);
+  });
+
+  it('emits nothing for another repository — the gate rows carry no repo and the gate is this repo\'s machinery', async () => {
+    const runsDir = gateFile(path.join(home, 'runs-d'), failingRuns());
+    expect(await localGateBacklogItems({ repo: 'ashlrai/other', runsDir })).toEqual([]);
+  });
+
+  it('derives stable ids so a refresh re-adds nothing and honours the limit', async () => {
+    const runsDir = gateFile(path.join(home, 'runs-e'), failingRuns());
+    const first = await localGateBacklogItems({ repo: 'ashlrai/phantom', runsDir });
+    const second = await localGateBacklogItems({ repo: 'ashlrai/phantom', runsDir });
+    expect(second.map((i) => i.id)).toEqual(first.map((i) => i.id));
+    const one = await localGateBacklogItems({ repo: 'ashlrai/phantom', runsDir, limit: 1 });
+    expect(one).toHaveLength(1);
+    expect(one[0]!.title).toContain('typecheck');
+  });
+
+  it('appends local-gate items through discovery and dedupes on refresh', async () => {
+    gateFile(path.join(home, '.ashlr-runs'), failingRuns());
+    const greenGh = async (args: string[]) => {
+      const p = args[4] ?? '';
+      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+    };
+    const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+    const gate = first.items.filter((i) => i.id.startsWith('local-gate-'));
+    expect(gate).toHaveLength(2);
+    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+    expect(appendUserBacklogItems(gate)).toBe(2);
+    const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('local-gate-')))).toBe(0);
+    expect(readUserBacklogItems().filter((i) => i.id.startsWith('local-gate-'))).toHaveLength(2);
   });
 });
