@@ -370,10 +370,24 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   is candidate or verified — superseded and withdrawn revisions were
   already handled — and only on a healthy corpus, since a degraded card
   history cannot prove which revision is live; a withheld projection, a
-  degraded ledger or another repository emits nothing.
+  degraded ledger or another repository emits nothing —
+  and the precheck-skip ledger's recurring skip evidence, the
+  `queue/precheck-skips.tsv` rows the dispatchd claim loop appends for
+  every job its empty-run precheck or dupcheck gate finishes as
+  DONE-NOOP without a model call (otherwise only visible through
+  `phm fleet precheck-repeats`, `phm fleet parked`'s queue-health
+  tallies and `phm fleet queue`'s skip sections — reports someone had
+  to run and read). A (code, reason-shape) group becomes an item while
+  its recorded skips span enough distinct job ids inside the 7-day
+  window — reasons group on a digit-normalized shape since they embed
+  job- and PR-specific numbers — and a job id becomes an item while
+  its recorded skips reach the same recurring bar, the signature of a
+  producer resurrecting finished work. A degraded ledger read or a
+  missing file emits nothing.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
-  memory-pressure, fleet-controller and skill-outcome items carry
+  memory-pressure, fleet-controller, skill-outcome and precheck-skip
+  items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
@@ -430,7 +444,13 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   those runs — with the same owner-side no-change escape for a card
   withdrawal, which is a host-signed ledger act, and emit only for the
   fleet's own repository since the learned-skill machinery is this
-  repo's. They
+  repo's. Precheck-skip items name the skip ledger and the
+  `phm fleet precheck-repeats`/`phm fleet parked`/`phm fleet queue`
+  folds, keep the find-which-producer-keeps-minting-or-resurrecting-
+  finished-work framing — pinned contrib/mac precheck machinery
+  versus the queue producers and dedup this repository owns — and
+  emit only for the fleet's own repository since the ledger records
+  this install's dispatch skips and carries no repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
