@@ -1120,18 +1120,22 @@ passes a refused or degraded section through untouched.
 
 **Pending-work claim.** `phm agents bus work next [<agent>] --lease-ms
 <1..3600000> [--owner <label>] [--contains <text>] [--since
-<15m|2h|1d|ISO>] [--priority P0..P3]` is the claim half of the loop `work
+<15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3]` is the claim half of the loop `work
 mine`
 opens: it takes the next claimable work envelope addressed to the agent —
 the same live `kind:'work'`/protocol-`task` receipts the digest's `next`
 section lists — and leases it through the same message-id claim path
 `fleet bus-next`/`comms bus next` run, so the find → claim step never
-leaves this surface. `--contains`, `--since` and `--priority` narrow the
+leaves this surface. `--contains`, `--since`, `--before` and `--priority`
+narrow the
 claimable set under the same rules every bus read applies — the scrubbed
-one-line summary substring, the inclusive `receivedAt` cutoff and the
+one-line summary substring, the inclusive `receivedAt` cutoff, the
+exclusive `receivedAt` ceiling composing with `--since` into one
+`[since, before)` window and the
 exact P0..P3 band — so "claim the next work about X" or "claim the next
 urgent one" is one atomic step rather than a filtered list followed by a
-claim-by-id, and `empty`'s `{candidates, held}` totals count only the
+claim-by-id, a claim can never pick work newer than the window the
+claimant reviewed, and `empty`'s `{candidates, held}` totals count only the
 filtered scan. The bounded scan walks candidates in `bus next`
 order (priority band, then cursor) and matches "addressed to it" under
 the identical rule: any label of the resolved identity or a
@@ -1531,11 +1535,15 @@ reads apply, through the same identity registry the message filters use; a
 keeps exact-label matching and never widens. All four claim surfaces —
 `agents bus work next`, `fleet bus-next`, `fleet bus-wait-claim` and
 `comms bus next` — take the same `--contains <text>`, `--since
-<15m|2h|1d|ISO>` and `--priority <P0|P1|P2|P3>` read filters, applied inside
+<15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>` and `--priority <P0|P1|P2|P3>`
+read filters, applied inside
 the claim scan under the identical rules the reads use (the scrubbed
-one-line summary substring, the inclusive `receivedAt` cutoff, the exact
+one-line summary substring, the inclusive `receivedAt` cutoff, the
+exclusive `receivedAt` ceiling composing with `--since` into one
+`[since, before)` window, the exact
 priority band), so the claimable set is exactly what the matching read
-would list and a filtered claim can never pick work the read would hide.
+would list and a filtered claim can never pick work the read would hide —
+including work newer than the window it reviewed.
 When nothing is acquirable the
 result is `{status:'empty', candidates, held}` rather than a bare `empty`:
 `candidates` counts every live claimable receipt the bounded scan found

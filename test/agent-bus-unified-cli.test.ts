@@ -1144,10 +1144,18 @@ describe('phm agents bus (unified)', () => {
       receipt: { envelope: { id: 'wf-chore' } } });
     await complete('wf-chore', bySince.json.token);
 
+    // --before is the exclusive receivedAt ceiling in the same grammar: a
+    // cutoff before every receipt's arrival empties the filtered scan even
+    // though the completed receipts would otherwise count as candidates.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--before', '1'], env))
+      .toMatchObject({ code: 0, json: { status: 'empty', candidates: 0, held: 0 } });
+
     // Malformed filters are usage or invalid results, never a widened claim.
     expect(await run(['work', 'next', '--lease-ms', '60000', '--priority', 'P9'], env))
       .toMatchObject({ code: 2 });
     expect(await run(['work', 'next', '--lease-ms', '60000', '--since', 'bogus'], env))
+      .toMatchObject({ code: 2 });
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--before', 'bogus'], env))
       .toMatchObject({ code: 2 });
     expect(await run(['work', 'next', '--lease-ms', '60000', '--contains', '   '], env))
       .toMatchObject({ code: 2, json: { status: 'invalid' } });

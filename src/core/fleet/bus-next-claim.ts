@@ -15,6 +15,12 @@ export interface BusNextRequest {
   /** Keep only receipts received at or after this epoch-ms cutoff — the same
    * inclusive `receivedAt >= since` rule `agents bus inbox --since` applies. */
   since?: number;
+  /** Keep only receipts received strictly before this epoch-ms cutoff — the
+   * exclusive upper bound composing with `since` into one `[since, before)`
+   * window, the same `receivedAt < before` rule every bus read's `--before`
+   * applies, so the claim can take exactly the slice a bounded read showed
+   * and never pick work newer than the window the claimant reviewed. */
+  before?: number;
   /** Keep only envelopes in this priority band — the same exact-band match
    * every bus read's `--priority` applies. Ordering already prefers P0, so
    * this narrows the claimable set rather than reordering it. */
@@ -24,7 +30,7 @@ export interface BusNextRequest {
  * scan totals so a caller can tell a dry well from held work without a second
  * read: `candidates` is every live claimable envelope addressed to `--to` the
  * bounded scan found that also satisfies the request's `contains`/`since`/
- * `priority` filters, and `held` is how many of those answered `conflict` — a
+ * `before`/`priority` filters, and `held` is how many of those answered `conflict` — a
  * live claim on the message id or an overlapping coordination key, which may
  * be the requester's own prior claim. `candidates - held` failed acquire for
  * other reasons (completed, expired, lost, missing, or a receipt that changed
@@ -57,6 +63,7 @@ export function claimNextBusWork(request: BusNextRequest): BusNextResult {
   const containsNeedle = busReadContains(request.contains);
   if (containsNeedle === null) return { status: 'invalid' };
   if (request.since !== undefined && (!Number.isSafeInteger(request.since) || request.since < 0)) return { status: 'invalid' };
+  if (request.before !== undefined && (!Number.isSafeInteger(request.before) || request.before < 0)) return { status: 'invalid' };
   if (request.priority !== undefined && !BUS_PRIORITIES.includes(request.priority)) return { status: 'invalid' };
   const addressedTo = claimAddressMatcher(request);
   const candidates: BusInboxReceipt[] = [];
@@ -69,11 +76,14 @@ export function claimNextBusWork(request: BusNextRequest): BusNextResult {
     if (scanned > BUS_INBOX_MAX_MESSAGES || result.nextCursor < cursor) return { status: 'retryable' };
     for (const receipt of result.messages) {
       // The read filters every bus surface shares apply to the claimable set
-      // the same way: `since` is the inclusive receivedAt cutoff, `priority`
-      // the exact band, and `contains` the scrubbed one-line summary — so a
-      // filtered claim can never pick work the matching read would hide.
+      // the same way: `since` is the inclusive receivedAt cutoff, `before` the
+      // exclusive upper bound composing with it into one [since, before)
+      // window, `priority` the exact band, and `contains` the scrubbed
+      // one-line summary — so a filtered claim can never pick work the
+      // matching read would hide, including work newer than its window.
       if (addressedTo(receipt.envelope.to, receipt.envelope.from) && isClaimableWork(receipt.envelope.body) &&
           (request.since === undefined || receipt.receivedAt >= request.since) &&
+          (request.before === undefined || receipt.receivedAt < request.before) &&
           (request.priority === undefined || receipt.envelope.priority === request.priority) &&
           (containsNeedle === undefined || busReadContainsMatch(receipt.envelope.body, containsNeedle))) {
         candidates.push(receipt);

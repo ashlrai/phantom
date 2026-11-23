@@ -299,6 +299,48 @@ it('applies contains, since and priority to the claimable scan and its empty tot
     .toEqual({ status: 'empty', candidates: 0, held: 0 });
 });
 
+it('applies the exclusive before bound to the claimable scan and its empty totals', () => {
+  const t0 = now;
+  post('pre-work', { priority: 'P0' });
+  now += 30_000;
+  const t1 = now;
+  post('edge-work', { priority: 'P1' });
+  now += 30_000;
+  const t2 = now;
+  post('post-work', { priority: 'P2' });
+  const take = (filters: Partial<BusNextRequest> = {}) => {
+    const result = claimNextBusWork({ ...request(), ...filters });
+    if (result.status !== 'acquired' || !('token' in result)) throw new Error(`expected a claim, got ${result.status}`);
+    expect(mutateBusWorkClaim({ action: 'complete', id: result.receipt.envelope.id, token: result.token, root }).status).toBe('completed');
+    return result.receipt.envelope.id;
+  };
+
+  // --before is the exclusive receivedAt ceiling: the t1 receipt sits exactly
+  // on the bound and never matches, so only the t0 work is inside the window.
+  expect(take({ before: t1 })).toBe('pre-work');
+  // [since, before) composes both bounds on the same receivedAt field: the
+  // completed t0 receipt is the only candidate the window still holds — it
+  // answers 'completed', never 'held'.
+  expect(claimNextBusWork({ ...request(), since: t0, before: t1 }))
+    .toEqual({ status: 'empty', candidates: 1, held: 0 });
+  // The window [t1, t2) holds only the boundary-stamped edge receipt; the
+  // t2 receipt sits exactly on the ceiling and stays outside.
+  expect(take({ since: t1, before: t2 })).toBe('edge-work');
+  // A ceiling at or before the oldest receipt, an inverted or empty window,
+  // and a window the newest receipt sits on are all honest empty scans —
+  // never a widened claim.
+  expect(claimNextBusWork({ ...request(), before: t0 }))
+    .toEqual({ status: 'empty', candidates: 0, held: 0 });
+  expect(claimNextBusWork({ ...request(), since: t1, before: t1 }))
+    .toEqual({ status: 'empty', candidates: 0, held: 0 });
+  expect(claimNextBusWork({ ...request(), since: t1 + 1, before: t2 }))
+    .toEqual({ status: 'empty', candidates: 0, held: 0 });
+  expect(claimNextBusWork({ ...request(), since: t1, before: t2 }))
+    .toEqual({ status: 'empty', candidates: 1, held: 0 });
+  // Unbounded, the one remaining live receipt still claims.
+  expect(take()).toBe('post-work');
+});
+
 it('rejects malformed contains, since and priority filters before scanning', () => {
   post('work');
   const bad: Partial<BusNextRequest>[] = [
@@ -309,6 +351,10 @@ it('rejects malformed contains, since and priority filters before scanning', () 
     { since: 1.5 },
     { since: Number.MAX_SAFE_INTEGER + 1 },
     { since: NaN },
+    { before: -1 },
+    { before: 1.5 },
+    { before: Number.MAX_SAFE_INTEGER + 1 },
+    { before: NaN },
     { priority: 'P9' as unknown as BusPriority },
   ];
   for (const filters of bad) {
