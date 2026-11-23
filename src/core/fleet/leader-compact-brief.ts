@@ -108,6 +108,22 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
   const prs = json(prsText, 'fleet/open-prs.json'), openPrs = openPrCount(prs, now);
   const latency = await compactMergeLatency(runsDir, tail?.text ?? '', now, prs, sources['fleet/open-prs.json']?.state === 'missing');
   const rows = ledgerRows(tail?.text ?? '', now, 24).rows.sort((a, b) => a.at - b.at);
+  // Reuse the bounded tail, including eventless outcomes and merges older than the rollup window.
+  const mergeRows = ledgerRows(tail?.text ?? '', now, Infinity, true);
+  if (tail && mergeRows.malformed) sourceState('ledger', 'degraded', 'invalid rows in bounded job ledger tail');
+  const merges = new Map<string, { url: string; repo: string; number: number; title: string; at: string }>();
+  for (const { row, at } of mergeRows.rows) {
+    if (ledgerPhase(row) !== 'MERGED' && ledgerEventName(row) !== 'merged') continue;
+    const url = ledgerPrUrl(row), match = url?.match(/^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\/[\w.-]{1,100})\/pull\/([1-9]\d*)$/);
+    const mergedAt = row.mergedAt === undefined ? at : parseLedgerTs(row.mergedAt);
+    if (!match || match[1]!.split('/').some(part => part === '.' || part === '..') || !Number.isSafeInteger(Number(match[2])) || mergedAt === null || mergedAt > now) continue;
+    const observedAt = new Date(mergedAt).toISOString(), previous = merges.get(url!);
+    if (!previous || observedAt >= previous.at) merges.set(url!, {
+      url: url!, repo: match[1]!, number: Number(match[2]),
+      title: typeof row.title === 'string' ? clean(row.title) : '', at: observedAt,
+    });
+  }
+  const mergedPrs = [...merges.values()].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 5);
   const readyRows = ready === null ? null : parseReadyRows(ready);
   const lanes = (snapshot?.snapshot.lanes ?? []).map(l => {
     const finished = [...new Map(rows.filter(r => r.lane === l.lane && ledgerEventName(r.row) === 'finish').map(r => [`${r.id}:${r.at}`, r])).values()].slice(-20);
@@ -141,7 +157,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
   stops.push(...activeFamilyStops(familyStopText ?? '', now).map(s => ({ ...s, family: clean(s.family) })));
   const release = await readReleaseBacklog({ now, cacheOnly: true });
   const brief = {
-    openPrs,
+    openPrs, mergedPrs,
     release: release.counts,
     releaseRepos: release.repos.map(r => ({ repo: r.repo, latestTag: r.latestTag, tagDate: r.releasedAt,
       commitsSinceTag: r.mergedCommits, state: r.verdict, reason: r.git?.reason ?? null, source: r.git?.source ?? (r.git ? 'local git' : 'GitHub cache') })),
@@ -159,11 +175,11 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     mergeLatency: latency,
     hostLoad: { ...hostLoad, leftovers: hostLoad.leftovers ? { ...hostLoad.leftovers, items: undefined } : undefined,
       families: hostLoad.families.slice(0, 8), omitted: hostLoad.omitted + Math.max(0, hostLoad.families.length - 8) },
-    stopped: stops, omitted: 0,
+    stopped: stops, omitted: Math.max(0, merges.size - mergedPrs.length),
     whyIdle: whyIdle({ at: new Date(now).toISOString(), lanes, attention, pools: [] }).map(clean),
   };
   // Drop the lowest-priority rows, explicitly counting omissions, until the entire wire payload fits.
-  const lists = [brief.families, brief.stopped, brief.main, brief.pools, brief.lanes, brief.attention];
+  const lists = [brief.families, brief.stopped, brief.main, brief.pools, brief.lanes, brief.attention, brief.mergedPrs];
   while (Buffer.byteLength(JSON.stringify(brief)) >= 8191) {
     const list = lists.find(a => a.length > 1) ?? lists.find(a => a.length);
     if (list) { list.pop(); brief.omitted++; continue; }
@@ -172,7 +188,9 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
   }
   return brief;
 }
-export type CompactLeaderBrief = Awaited<ReturnType<typeof readCompactBrief>>;
+type GeneratedBrief = Awaited<ReturnType<typeof readCompactBrief>>;
+/** Stored briefs written before merge projection recovery remain readable. */
+export type CompactLeaderBrief = Omit<GeneratedBrief, 'mergedPrs'> & Partial<Pick<GeneratedBrief, 'mergedPrs'>>;
 export async function writeCompactBrief(runsDir: string, now = Date.now(), file = join(runsDir, LEADER_COMPACT_FILE)) {
   const brief = await readCompactBrief(runsDir, now);
   await mkdir(join(file, '..'), { recursive: true, mode: 0o700 });
