@@ -594,6 +594,7 @@
 /test/improve-api.test.ts @masonwyatt23
 /test/improve-backlog-leverage.test.ts @masonwyatt23
 /test/improve-boundary.test.ts @masonwyatt23
+/test/improve-ci-rerun-backlog.test.ts @masonwyatt23
 /test/improve-cli-boundary.test.ts @masonwyatt23
 /test/improve-discover.test.ts @masonwyatt23
 /test/improve-empty-tag-backlog.test.ts @masonwyatt23
