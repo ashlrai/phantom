@@ -44,6 +44,7 @@ export const FLEET_MCP_TOOL_NAMES: readonly string[] = Object.freeze([
   'fleet_claim_notices',
   'fleet_slack_replies',
   'fleet_slack_evidence',
+  'fleet_slack_status',
   'fleet_lanes',
   'fleet_usage_resets',
   'fleet_reset_await',
