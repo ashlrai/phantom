@@ -299,9 +299,23 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   degraded observation read or a missing jobs ledger emits nothing, and
   prompts quote only the measured merged/adverse counts and the
   deterministic/heuristic confidence split — never a durability rate the
-  gh-less fold cannot support.
+  gh-less fold cannot support —
+  and the resident ci-rerun journal's recurring fail verdicts and failed
+  rerun calls, the probable-flake classifications whose reruns keep
+  concluding failure and the `gh run rerun --failed` calls that keep
+  erroring, journaled to `ci-reruns/journal.jsonl` under the Phantom state
+  directory by the daemon's ci-rerun pass (otherwise only visible through
+  `phm ci reruns` and `phm daemon status`'s last-pass status). A test
+  becomes an item while its recorded fail verdicts reach the recurring
+  bar across at least two distinct heads inside the journal's own
+  7-day window — the probable-flake classification is not holding, so
+  the grouping or the test itself needs work — and a repository becomes
+  an item while its failed rerun calls reach the recurring bar and
+  outnumber the window's successful calls, the signature of a rerun loop
+  that cannot fire. Verdict rows without a recorded test id never emit,
+  and a missing or unreadable journal emits nothing.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
-  cross-review, empty-tag and post-merge items carry
+  cross-review, empty-tag, post-merge and ci-rerun items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
@@ -329,7 +343,12 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   Post-merge items name the observation and jobs ledgers and the
   eval-report fold, keep the find-why-merges-keep-not-holding framing,
   and emit lane and tier cells only for the fleet's own repository while
-  repo cells emit only for the repository the fold recorded. They
+  repo cells emit only for the repository the fold recorded. Ci-rerun
+  items name the rerun journal and the `phm ci reruns`/`phm ci baseline`
+  commands, keep the find-which-side-is-wrong framing for fail verdicts
+  and the find-why-the-calls-error framing for call failures, and emit
+  only when a journal row's recorded repository matches the discovery
+  target. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never

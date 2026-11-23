@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Thirteen sources, all of which Phantom
+ * evidence instead of a hand-kept list. Fourteen sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -72,7 +72,14 @@
  *     jobs-ledger join `phm fleet eval-report` prints into per-lane,
  *     per-tier and per-repo durability tallies (postMergeBacklogItems
  *     below), so merges that keep not holding become work instead of
- *     sitting in a report someone had to run.
+ *     sitting in a report someone had to run;
+ *   - the resident ci-rerun journal's recurring fail verdicts and failed
+ *     rerun calls: the probable-flake classifications whose reruns keep
+ *     concluding failure and the `gh run rerun` calls that keep erroring,
+ *     journaled to ci-reruns/journal.jsonl by the daemon's ci-rerun pass
+ *     (ciRerunBacklogItems below), so flake evidence the analyzer gets
+ *     wrong — and a rerun loop that cannot fire — becomes work instead of
+ *     sitting in `phm ci reruns`, a report someone had to run.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -112,6 +119,7 @@ import { tickHealthBacklogItems } from './tick-health-backlog.js';
 import { crossReviewBacklogItems } from './xreview-backlog.js';
 import { emptyTagBacklogItems } from './empty-tag-backlog.js';
 import { postMergeBacklogItems } from './postmerge-backlog.js';
+import { ciRerunBacklogItems } from './ci-rerun-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -255,6 +263,18 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // for the fleet's own repository, and repo cells only when the fold's
   // recorded repo name matches the target.
   items.push(...await postMergeBacklogItems({ repo }));
+
+  // CI rerun journal: the resident ci-rerun pass's recorded fail verdicts
+  // — probable-flake classifications whose reruns keep concluding failure —
+  // and its recurring failed `gh run rerun` calls become backlog items
+  // too. Until now they only ever reached `phm ci reruns --json` and
+  // `phm daemon status`'s last-pass status, reports someone had to run
+  // and read; the recurring-flake fold's own queue path covers tests that
+  // keep flaking, but a classification that keeps proving wrong — or a
+  // rerun loop that cannot fire at all — never became work. Same bounded
+  // journal tail read; a group emits only at the recurring bar inside the
+  // journal's own 7-day window and only for the repository the rows name.
+  items.push(...await ciRerunBacklogItems({ repo }));
   return { items, errors };
 }
 
