@@ -450,6 +450,10 @@ describe('phm agents conversations --json', () => {
     }
     // A label no identity proves still matches only itself.
     expect(readAgentConversations({ agent: 'zai' }, { root, now: () => NOW }).conversations!.map(c => c.id)).toEqual(['m4']);
+    // A case-variant of the handle or alias resolves to no identity: it keeps
+    // the literal participant-name match, never the identity's other labels.
+    expect(readAgentConversations({ agent: 'Atlas' }, { root, now: () => NOW }).conversations!.map(c => c.id)).toEqual(['m1']);
+    expect(readAgentConversations({ agent: 'DEVIN-CLOUD' }, { root, now: () => NOW }).conversations!.map(c => c.id)).toEqual(['m3']);
   });
 
   it('a slack-coordination request waits for a reply; declared types set the state', () => {

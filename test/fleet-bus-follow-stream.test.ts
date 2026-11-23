@@ -332,6 +332,24 @@ it('delivers only envelopes from --from senders under every registered spelling'
   }
 });
 
+it('keeps exact-label --from matching for a case-variant agent ref', async () => {
+  expect(registerAgentIdentity({ handle: 'worker-a', aliases: ['wa-alias'] }, { root }).status).toBe('created');
+  post('bare', 'worker-a', { from: 'worker-a' });
+  post('address', 'worker-a', { from: 'agent:worker-a' });
+  post('alias', 'worker-a', { from: 'wa-alias' });
+  post('stamped', 'worker-a', { from: 'Worker-A' });
+  // 'Worker-A' names no registered label exactly, so it matches only the
+  // literal 'Worker-A' stamp — never the identity's other spellings.
+  for (const [from, ids] of [['Worker-A', ['stamped']], ['WA-ALIAS', []], ['agent:Worker-A', []]] as const) {
+    const { records, pending, expire } = follow({ from });
+    expire();
+    const result = await pending;
+    expect(result.status).toBe('expired');
+    expect(messages(records).map(row => row.envelope.id)).toEqual(ids);
+    expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 4 });
+  }
+});
+
 it('keeps exact-label --from matching when the identity registry is unreadable', async () => {
   expect(registerAgentIdentity({ handle: 'worker-a', aliases: ['wa-alias'] }, { root }).status).toBe('created');
   post('exact', 'worker-a', { from: 'agent:worker-a' });

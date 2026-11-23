@@ -68,6 +68,11 @@ describe('phm messages projection', () => {
     // An unregistered label still matches only its exact name or lane.
     expect(read(root, { agent: 'grok-9' }).messages.map(m => m.id)).toEqual(['i3']);
     expect(read(root, { agent: 'nobody' }).messages).toEqual([]);
+    // A case-variant of a registered handle or alias resolves to no identity:
+    // it keeps the literal name match, never the identity's other labels.
+    expect(read(root, { agent: 'Atlas' }).messages.map(m => m.id)).toEqual(['i1']);
+    expect(read(root, { agent: 'DEVIN-CLOUD' }).messages.map(m => m.id)).toEqual(['i2']);
+    expect(read(root, { agent: 'agent:Atlas' }).messages.map(m => m.id)).toEqual(['i1']);
     // A damaged registry reads unavailable: the filter falls back to strict labels.
     writeFileSync(join(root, 'agent-identities', 'registry.json'), '{"broken"', { mode: 0o600 });
     expect(read(root, { agent: 'devin-cloud' }).messages.map(m => m.id)).toEqual(['i2']);
@@ -550,6 +555,11 @@ describe('phm messages projection', () => {
     // An unresolvable ref keeps exact name/lane matching, and an empty page
     // is a read, not an error.
     expect(read(root, { excludeFrom: 'nobody' })).toMatchObject({ matched: 4 });
+    // A case-variant of a registered handle or alias resolves to no identity:
+    // it drops only the literal name match — x1 under 'Atlas', x2 under
+    // 'DEVIN-CLOUD' — never every label the identity writes under.
+    expect(read(root, { excludeFrom: 'Atlas' }).messages.map(m => m.id)).toEqual(['x4', 'x3', 'x2']);
+    expect(read(root, { excludeFrom: 'DEVIN-CLOUD' }).messages.map(m => m.id)).toEqual(['x4', 'x3', 'x1']);
     expect(read(root, { excludeFrom: 'atlas', contains: 'alias label' })).toMatchObject({ matched: 0, messages: [] });
     // A damaged registry reads unavailable: the filter falls back to strict
     // name/lane labels — the alias spelling itself drops, the handle's own

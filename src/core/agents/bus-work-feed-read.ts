@@ -3,7 +3,7 @@ import { BUS_INBOX_MAX_MESSAGES, listBusInboxAfter, type BusInboxReceipt } from 
 import { coordinationRowBlocks, listCoordination, type CoordinationOrigin } from './claim-store.js';
 import { projectBusWorkFeed, type WorkFeedOwnerKeyFor, type WorkFeedProviderFor, type WorkFeedRefusalReceipt,
   type WorkFeedResult, type WorkFeedResultCitation } from './bus-work-feed.js';
-import { agentAddressMatcher, agentIdentityKeys, agentPendingAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
+import { agentPendingAddressMatcher, agentRefAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { repoSlugSchema } from './bus-v2-schema.js';
 import type { Participant, WorkDispatch, WorkJob } from './bus-v2-schema.js';
@@ -271,7 +271,8 @@ export function readBusWorkFeed(options: BusWorkFeedReadOptions = {}): BusWorkFe
  * never widens the filter.
  */
 function feedLabelMatcher(ref: string, options: { root?: string }): (label: string) => boolean {
-  return agentAddressMatcher(agentIdentityKeys({ root: options.root }), ref);
+  const read = readAgentRegistry({ root: options.root });
+  return agentRefAddressMatcher(ref, read.status === 'ok' ? read.registry : undefined);
 }
 
 /** Announcer matcher for a job's `owner` label — the same identity contract the addressed surfaces share. */

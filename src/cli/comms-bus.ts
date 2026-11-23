@@ -11,7 +11,7 @@ import { busStatusExitCode } from './comms-bus-exit.js';
 import { cmdCommsBusClaim, COMMS_BUS_CLAIM_HELP } from './comms-bus-claim.js';
 import { withCodexPeersSession, type LocusPeersEndpoint } from '../core/fleet/adapters/codex-peers.js';
 import { BUS_PROTOCOL_KINDS, BUS_PROTOCOL_VERSION, isTopicPattern, protocolOf, topicMatches } from '../core/fleet/bus-protocol.js';
-import { agentAddressMatcher, agentIdentityKeys } from '../core/agents/bus-identity.js';
+import { agentRefAddressMatcher, readAgentRegistry } from '../core/agents/bus-identity.js';
 import { busBodyThread } from '../core/agents/bus-v2-schema.js';
 import { busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
@@ -123,10 +123,11 @@ type BusAddressMatchers = { to?: (value: string) => boolean; from?: (value: stri
 function busAddressMatchers(filters: BusFilters, options: BusInboxOptions): BusAddressMatchers {
   const matchers: BusAddressMatchers = {};
   if (filters.to === undefined && filters.from === undefined && filters.excludeFrom === undefined) return matchers;
-  const identityOf = agentIdentityKeys({ root: options.root });
-  if (filters.to !== undefined) matchers.to = agentAddressMatcher(identityOf, filters.to);
-  if (filters.from !== undefined) matchers.from = agentAddressMatcher(identityOf, filters.from);
-  if (filters.excludeFrom !== undefined) matchers.excludeFrom = agentAddressMatcher(identityOf, filters.excludeFrom);
+  const read = readAgentRegistry({ root: options.root });
+  const registry = read.status === 'ok' ? read.registry : undefined;
+  if (filters.to !== undefined) matchers.to = agentRefAddressMatcher(filters.to, registry);
+  if (filters.from !== undefined) matchers.from = agentRefAddressMatcher(filters.from, registry);
+  if (filters.excludeFrom !== undefined) matchers.excludeFrom = agentRefAddressMatcher(filters.excludeFrom, registry);
   return matchers;
 }
 

@@ -88,7 +88,9 @@ that declare the job; here the row's own reported fields decide, and a
 message that names no job never passes. `--agent` and `--with` match through
 the agent identity registry beside the store: a handle, alias or `agent:`
 address of one registered identity counts as that agent, so its labels never
-split the filter. With no readable registry the match stays on the literal
+split the filter — the ref itself resolves exactly, so a case-variant or
+otherwise unregistered spelling names no identity and keeps the literal
+label match. With no readable registry the match stays on the literal
 label — an unreadable registry never widens a read. `--exclude-from` is the
 same identity match pointed at the sender only: a handle, alias or `agent:`
 address of one registered identity drops every message that identity wrote,
@@ -238,8 +240,9 @@ latest runtime's provider, `origin_bridge` is `agent-bus`).
 `worker-handoff` for the caller's `--to`. The flag names the recipient
 identity, not one literal label: a handoff addressed to the `agent:` address,
 bare handle, stable id or any alias of that identity all match, through the
-same registry read the inbox, wakes and `bus next` claims use. A `--to`
-naming no registered identity — and an unreadable registry — keeps
+same registry read the inbox, wakes and `bus next` claims use — the `--to`
+itself resolves exactly, so a case-variant spelling names no identity. A
+`--to` naming no registered identity — and an unreadable registry — keeps
 exact-label matching, so unknown identity state never widens which handoffs
 run. The check still only proves the envelope's addressee; routing labels are
 never authenticated identities.
@@ -465,7 +468,7 @@ messages` grammar the inbox and channel read take, resolved to epoch ms —
 so a wake-driven agent reads just the hints newer than its last check.
 `--from` keeps only hints whose recorded sender label matches one agent —
 a handle, `agent:<handle>`, stable id or alias resolving every label of
-that identity through the same `agentAddressMatcher` rule `inbox --from`
+that identity through the same `agentRefAddressMatcher` rule `inbox --from`
 and `channel read --from` apply, with an unresolvable ref keeping
 exact-label matching; the matched label is the hint row's own `from` —
 the triggering envelope's sender on a `bus.send` hint, the posting
@@ -1449,7 +1452,7 @@ stream. On `bus-follow` only citing envelopes emit message records while
 checkpoints still advance past the rest, so a job-scoped stream resumes on
 the same cursor an unfiltered one would. `fleet bus-follow` also narrows on
 the fields the inbox reads filter by: `--from` keeps envelopes sent under any
-registered spelling of one identity — the same `agentAddressMatcher` rule
+registered spelling of one identity — the same `agentRefAddressMatcher` rule
 `agents bus inbox --from` applies, resolved once at stream start, with an
 unresolvable sender or unreadable registry keeping exact-label matching —
 `--exclude-from` drops envelopes sent under any registered spelling of one

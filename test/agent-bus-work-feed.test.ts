@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { projectBusWorkFeed } from '../src/core/agents/bus-work-feed.js';
-import { busWorkFeedPendingToMatcher, busWorkFeedRepoKey, busWorkJobDispatch, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView,
+import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, busWorkJobDispatch, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView,
   sliceBusWorkFeedView, type BusWorkFeedClaims, type BusWorkFeedJob, type BusWorkFeedReadResult } from '../src/core/agents/bus-work-feed-read.js';
 import { createAgentChannel, registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { workFeedSchema, type Participant, WORK_STATUSES } from '../src/core/agents/bus-v2-schema.js';
@@ -442,6 +442,45 @@ describe('work-feed view filters', () => {
         mkdirSync(join(bad, 'agent-identities'), { mode: 0o700 });
         writeFileSync(join(bad, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
         expect(shown('nova', bad)).toEqual(['bare']);
+      } finally { rmSync(bad, { recursive: true, force: true }); }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('matches --owner under the same exact-ref rule: the ref resolves exactly, owner labels still fold', () => {
+    const root = mkdtempSync(join(tmpdir(), 'bus-feed-owner-'));
+    try {
+      expect(registerAgentIdentity({ handle: 'atlas', aliases: ['a-cloud'] }, { root }).status).toBe('created');
+      expect(registerAgentIdentity({ handle: 'nova' }, { root }).status).toBe('created');
+      const result = okResult([
+        viewJob({ id: 'handle', owner: 'agent:atlas', updatedAt: 400 }),
+        viewJob({ id: 'alias', owner: 'a-cloud', updatedAt: 300 }),
+        viewJob({ id: 'caseenv', owner: 'Atlas', updatedAt: 200 }),
+        viewJob({ id: 'other', owner: 'agent:nova', updatedAt: 100 }),
+      ]);
+      const shown = (owner: string, at: string = root): string[] => {
+        const view = projectBusWorkFeedView(result, { ownerMatch: busWorkFeedOwnerMatcher(owner, { root: at }) });
+        if (view.status !== 'ok') throw new Error('expected an ok view');
+        return view.jobs.map(job => job.id).sort();
+      };
+      // atlas and every spelling of her identity announce her jobs; the
+      // case-folded 'Atlas' owner label resolves through the registry too.
+      for (const ref of ['atlas', 'a-cloud', 'agent:atlas']) {
+        expect(shown(ref)).toEqual(['alias', 'caseenv', 'handle']);
+      }
+      // 'Atlas' names no registered label exactly, so as an owner ref it keeps
+      // exact-label matching: only the job literally owned 'Atlas' shows —
+      // never the identity's handle or alias announcements.
+      expect(shown('Atlas')).toEqual(['caseenv']);
+      expect(shown('ghost')).toEqual([]);
+      // An unreadable registry never widens: 'atlas' falls back to the literal
+      // owner label, so only a job literally owned 'atlas' could match — here
+      // none does, while the literal 'agent:atlas' ref still finds its row.
+      const bad = mkdtempSync(join(tmpdir(), 'bus-feed-owner-bad-'));
+      try {
+        mkdirSync(join(bad, 'agent-identities'), { mode: 0o700 });
+        writeFileSync(join(bad, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+        expect(shown('atlas', bad)).toEqual([]);
+        expect(shown('agent:atlas', bad)).toEqual(['handle']);
       } finally { rmSync(bad, { recursive: true, force: true }); }
     } finally { rmSync(root, { recursive: true, force: true }); }
   });

@@ -1,7 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, appendBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxPost, type BusInboxReceipt } from './bus-inbox.js';
 import { validateBusEnvelope, type BusEnvelope } from './bus-envelope.js';
-import { agentAddressMatcher, agentIdentityKeys } from '../agents/bus-identity.js';
+import { agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
 
 export type RequestOutcome = 'replied' | 'timeout' | 'cancelled' | 'post-refused' | 'source-unavailable' | 'invalid-input';
 export interface RequestResult {
@@ -41,9 +41,10 @@ export async function requestBusRoundtrip(input: unknown, timeoutMs: number, int
   if (!checked.ok || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3600000 ||
       !Number.isSafeInteger(intervalMs) || intervalMs < 100 || intervalMs > 60000) return result('invalid-input');
   const request: BusEnvelope = checked.value;
-  const identityOf = agentIdentityKeys({ root: options.root });
-  const replyFrom = agentAddressMatcher(identityOf, request.to);
-  const replyTo = agentAddressMatcher(identityOf, request.from);
+  const registryRead = readAgentRegistry({ root: options.root });
+  const registry = registryRead.status === 'ok' ? registryRead.registry : undefined;
+  const replyFrom = agentRefAddressMatcher(request.to, registry);
+  const replyTo = agentRefAddressMatcher(request.from, registry);
   const deadline = start + Math.min(timeoutMs, request.ttl);
   const stopped = (): RequestOutcome | null => deps.signal?.aborted ? 'cancelled' : performance.now() >= deadline ? 'timeout' : null;
   const pause = async (): Promise<void> => wait(Math.max(0, Math.min(intervalMs, deadline - performance.now())), deps.signal);

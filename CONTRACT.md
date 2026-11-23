@@ -2725,7 +2725,8 @@ identity, and `group:<channel>:<topic>` addresses of registry channels the
 identity belongs to, minus channel posts the identity sent itself.
 `ownerMatch` is the predicate `busWorkFeedOwnerMatcher(owner, {root?})`
 builds over a job's `owner` (announcer) label — matching literally and
-under every label of one agent identity (an unresolvable ref or unreadable
+under every label of one agent identity the owner ref resolves to exactly
+through `resolveAgent` (an unresolvable ref or unreadable
 registry keeps exact-label matching for both). `contains` is the `--contains` needle normalized once
 (lowercase, whitespace collapsed, trimmed) and matched as a case-insensitive
 substring over the job's descriptive text — the announcement title, the
@@ -3259,6 +3260,18 @@ rule the unified inbox's `--since` applies.
 `src/core/agents/bus-identity.ts`: `stableAgentId(handle): string` (`agt_` + 20 hex),
 `agentAddress(handle)`, `resolveAgent(registry, ref)`, `agentLabels(identity)`,
 `agentIdentityKeys(options?)`, `agentAddressMatcher(identityOf, label)`,
+`agentRefAddressMatcher(ref, registry, identityOf?)` (the read-filter
+predicate every caller-supplied agent ref shares — `inbox`/`channel read`
+`from`/`excludeFrom`, `comms bus read|watch` `--to`/`--from`/`--exclude-from`,
+`fleet bus-follow` `--from`/`--exclude-from`, `fleet_bus_inbox`'s `to`/`from`/
+`excludeFrom`, the work-feed `--owner` announcer match and request/handoff
+correlation refs: the literal ref or any label of the identity `resolveAgent`
+proves it to be — the ref itself never case-folds, so a spelling like `Devin`
+naming no registered label keeps exact-label matching rather than inheriting
+handle `devin`'s label set, while envelope-side labels still fold exact-first
+then lowercase through `identityOf`, defaulting to `identityKeysFor(registry)`;
+an unreadable registry or unresolvable ref matches the literal ref only, so
+unknown identity state never widens a filter),
 `agentPendingAddressMatcher(ref, registry)` (the shared addressed-to-agent
 predicate the `bus next` claim scan and the `work mine` next/handoffs
 sections apply: the literal ref or any label of its resolved identity, or a
@@ -3358,7 +3371,7 @@ text), `matched` counting the proven matches on the resolved page, an
 unreadable bus store answering `unavailable`, and a malformed contains
 value answering `invalid`;
 `filter.from` keeps only hints whose recorded `from` label matches one
-agent through the same `agentAddressMatcher` identity-label rule
+agent through the same `agentRefAddressMatcher` identity-label rule
 `readAgentInbox`'s `from` applies — a handle, `agent:<handle>`, stable id
 or alias matching every label of that identity, an unresolvable ref
 keeping exact-label matching — over the hint row's own `from` (the
@@ -3497,11 +3510,14 @@ sender filter shares — `readAgentInbox`/`readAgentChannel` `from` and
 --from` and `--exclude-from`, the latter dropping every label of the named
 identity exactly as `readAgentInbox`/`readAgentChannel`
 `excludeFrom`, `comms bus read`/`watch --exclude-from` and
-`fleet_bus_inbox`'s `excludeFrom` do) — resolving a label through handle,
+`fleet_bus_inbox`'s `excludeFrom` do) — the value-side half of
+`agentRefAddressMatcher`: retained envelope labels resolve through handle,
 `agent:` address, stable id or
-alias (exact match first, then lowercase), so a filter naming any spelling
-of one identity matches every label of that identity while an unresolvable
-label keeps exact-label matching. `followBusStream` (`fleet bus-follow`)
+alias (exact match first, then lowercase), so a filter naming any registered
+spelling of one identity matches every label of that identity, while the
+caller-supplied ref itself resolves through `resolveAgent` exactly — a
+case-variant or otherwise unregistered spelling keeps exact-label matching
+and never inherits an identity's label set. `followBusStream` (`fleet bus-follow`)
 applies the same narrowing the bus page reads share, so the stream and
 `comms bus read|watch`/`fleet_bus_inbox` can never disagree about what a
 filter keeps: besides the routing, job, priority, thread, since and
