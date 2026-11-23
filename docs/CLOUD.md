@@ -536,12 +536,35 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   outside the producer's allowlist drop like the digest reader's own
   parse, truncated tails are stated as lower bounds, and another
   repository emits nothing since the journal describes this install's
-  dispatcher.
+  dispatcher —
+  and the branch gardener's audit journal, the per-repo `result` rows
+  the launchd branch gardener (contrib/mac/branch-gardener.py,
+  docs/BRANCH-GARDENER.md) appends to
+  `metrics/branch-gardener.jsonl` under the fleet runs directory on
+  every scheduled pass (otherwise only visible as append-only audit —
+  the journal had no reader at all). A repository becomes an item
+  while its recorded `result` events inside the 7-day window show
+  recurring evidence of three kinds: branches whose `flag` rows — the
+  gardener's documented triage list of PR-less branches with unique or
+  recent commits and branches whose tip moved after their PR — persist
+  across flag observations spanning at least a day, at two or more
+  distinct branches; `failed-or-uncertain` delete rows — branches
+  inside atomic `git push --delete` batches that errored or timed out,
+  so the remote ref may or may not be gone — reach three rows across
+  two distinct UTC days; or errored result events reach two distinct
+  UTC days, the signature of evidence gathering that keeps failing and
+  leaving that repo's branches unclassified. Only `result` events
+  fold — plan, delete-intent and deleted rows repeat the same
+  classifications — repo matching is exact owner/name since each
+  audited remote owns its own branch namespace, a missing or
+  unreadable journal emits nothing, and truncated tails are stated in
+  the prompt as lower bounds.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
-  work-market, dupcheck, improve-outcome and typed-route items carry
+  work-market, dupcheck, improve-outcome, typed-route and branch-gardener
+  items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
@@ -658,7 +681,13 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   contract, intake shipping work that fails its own declared metric,
   or championed changes that do not hold — and emit only for the
   fleet's own repository since the verbs and scheduler sync are this
-  repo's machinery. They
+  repo's machinery. Branch-gardener items name the audit journal, the
+  gardener script and its docs, keep the per-bucket framing — triage
+  the persistently flagged branches, find why the atomic deletes keep
+  failing, find which evidence source keeps the audits erroring — with
+  the same owner-side no-change escape, and emit only when a journal
+  row's recorded repository matches the discovery target, since each
+  audited remote owns its own branch namespace. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
