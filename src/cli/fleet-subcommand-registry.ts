@@ -208,6 +208,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'inbox': () => import('./fleet-inbox.js'),
   'inbox-acks': () => import('./fleet-inbox-acks.js'),
   'incident-gate': () => import('./fleet-incident-gate.js'),
+  'install': () => import('./fleet-install.js'),
   'intent': () => import('./fleet-intent.js'),
   'intent-edit': () => import('./fleet-intent-edit.js'),
   'intent-evidence': () => import('./fleet-intent-evidence.js'),
