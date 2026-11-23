@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Twenty-eight sources, all of which Phantom
+ * evidence instead of a hand-kept list. Twenty-nine sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -221,6 +221,18 @@
  *     reached `phm route explain`'s typed_decisions digest, a report
  *     someone had to run and read, so a typed routing layer that kept
  *     failing — or kept falling back — never became work;
+ *   - the branch gardener's audit journal: the per-repo `result` rows the
+ *     launchd branch gardener (contrib/mac/branch-gardener.py) appends to
+ *     <runs>/metrics/branch-gardener.jsonl on every scheduled pass —
+ *     branches whose `flag` rows persist across audits spanning at least
+ *     a day (the gardener's documented triage list nobody worked),
+ *     `failed-or-uncertain` delete rows recurring across days (atomic
+ *     push --delete batches that keep erroring or timing out) and per-repo
+ *     `error` results recurring across days (evidence gathering that keeps
+ *     failing, leaving that repo's branches unclassified)
+ *     (branchGardenerBacklogItems below). Until now the journal was
+ *     write-only audit — it had no reader at all — so stranded fleet
+ *     branches, a broken delete path and blind audits never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -275,6 +287,7 @@ import { unfedBacklogItems } from './unfed-backlog.js';
 import { dupcheckGateBacklogItems } from './dupcheck-gate-backlog.js';
 import { proposalOutcomeBacklogItems } from './proposal-outcome-backlog.js';
 import { typedRouteBacklogItems } from './typed-route-backlog.js';
+import { branchGardenerBacklogItems } from './branch-gardener-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -619,6 +632,18 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // 7-day window, and only for the fleet's own repository since the
   // journal describes this install's dispatcher.
   items.push(...await typedRouteBacklogItems({ repo }));
+
+  // Branch-gardener audit journal: the launchd gardener's per-repo result
+  // rows — branches whose flag observations persist across audits spanning
+  // at least a day (the documented triage list nobody worked), recurring
+  // failed-or-uncertain delete rows and recurring per-repo error results —
+  // become backlog items too. Until now the journal was write-only audit
+  // with no reader at all. Same bounded tail read; only `result` events
+  // fold (plan/delete-intent/deleted repeat the same classifications), a
+  // bucket emits only at its recurring bar inside the 7-day window, repo
+  // matching is exact owner/name, and a missing or unreadable journal
+  // yields nothing.
+  items.push(...await branchGardenerBacklogItems({ repo }));
   return { items, errors };
 }
 
