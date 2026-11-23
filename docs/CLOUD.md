@@ -580,13 +580,30 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   emits nothing, rows failing the writer's closed contract drop like
   the substrate readers' own parse, truncated tails are stated as lower
   bounds, and another repository emits nothing since the ledger is
-  this install's dispatch record.
+  this install's dispatch record —
+  and the job-control steering ledger's recurring unacknowledged
+  requests, the fleet.job.control.v1 rows `phm job <action>`, POST
+  /api/verse/fleet/runs/control and the desktop job detail append to
+  `queue/job-control.jsonl` under the fleet runs directory — requests
+  still standing at 'requested' because the documented dispatcher
+  contract's apply-and-acknowledge side has no consumer (otherwise only
+  visible through the session-thread display, which renders a standing
+  request as "The dispatcher has not applied it yet." — the ledger's
+  only readers were display surfaces, so steering verbs that are dead
+  letters never became work). The cell becomes an item while
+  unacknowledged requests inside the 7-day window reach three, cover
+  two distinct job ids and span two distinct UTC days — one job's
+  retries or one afternoon of trials never emit — with the synchronous
+  'applied'/'refused' paths quoted as context, a missing or unreadable
+  ledger emitting nothing, truncated tails stated as lower bounds, and
+  rows emitting only for the fleet's own repository since the ledger is
+  this install's steering record.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
-  work-market, dupcheck, improve-outcome, typed-route, branch-gardener
-  and reward items carry
+  work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
+  reward and job-control items carry
   priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
