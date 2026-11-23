@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Thirty-two sources, all of which Phantom
+ * evidence instead of a hand-kept list. Thirty-four sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -276,6 +276,21 @@
  *     joins, and tick.json keeps only the LAST tick's held list, so
  *     recurring holds, chronic seat exclusions and repeating skip codes
  *     were invisible history that never became work;
+ *   - the incident-gate decision ledger's recurring failure classes and
+ *     stuck tightenings: the per-class rows `ashlr fleet incident-gate
+ *     --apply` appends to fleet/incident-gates.jsonl under the Ashlr
+ *     home after mining metrics/jobs.jsonl and dispatch-events.log for
+ *     repeated failure signatures — classes whose tightenings advanced
+ *     the watermark firing on distinct UTC days (each refire needed
+ *     fresh signals, so the class kept recurring despite the bounded
+ *     holds), and classes whose tightenings never landed — 'error'
+ *     rows and repo-cooldown refusals that leave the watermark stuck so
+ *     the same signals re-fire every run (incidentGateBacklogItems
+ *     below). Until now the ledger was write-only audit —
+ *     appendIncidentGateLedger had no reader and the verb has no report
+ *     mode — so a failure class the fleet's own incident response kept
+ *     catching, or a gate that kept failing to protect it, never became
+ *     work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -336,6 +351,7 @@ import { jobControlBacklogItems } from './job-control-backlog.js';
 import { usageGapBacklogItems } from './usage-gap-backlog.js';
 import { runtimeJournalBacklogItems } from './runtime-journal-backlog.js';
 import { generatorYieldBacklogItems } from './generator-yield-backlog.js';
+import { incidentGateBacklogItems } from './incident-gate-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -776,6 +792,28 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // as lower bounds, and only the fleet's own repository inherits the
   // items since the journal carries no repository column.
   items.push(...await generatorYieldBacklogItems({ repo }));
+
+  // Incident-gate decision ledger: the fleet's own incident response —
+  // `ashlr fleet incident-gate --apply` mines metrics/jobs.jsonl and
+  // dispatch-events.log for repeated failure classes (lane-error,
+  // test-failure, merge-conflict), tightens the gate that owns each one
+  // (bounded lane hold or repo cooldown) and appends one scrubbed row
+  // per tripped class to fleet/incident-gates.jsonl under the Ashlr
+  // home. Until now the ledger was write-only audit — the append helper
+  // has no reader and the verb has no report mode — so two evidence
+  // kinds never became work: classes whose tightenings advanced the
+  // watermark and kept firing on distinct UTC days inside the window
+  // (each refire needed fresh failure signals — the bounded holds treat
+  // the symptom while the cause stays unfixed), and classes whose
+  // tightenings never landed — 'error' rows and repo-cooldown refusals
+  // leave the watermark stuck, so the same signals re-fire every run
+  // and the fleet's protection is stuck, not absent. Same bounded
+  // no-follow tail read and the writer's own row contract; a cell emits
+  // only at the recurring bar of distinct UTC days inside the window,
+  // lane-error rows only for the fleet's own repository while
+  // repo-scoped rows match the discovery target's owner/repo exactly,
+  // and a missing or unreadable ledger yields nothing.
+  items.push(...await incidentGateBacklogItems({ repo }));
   return { items, errors };
 }
 

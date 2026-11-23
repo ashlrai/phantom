@@ -606,6 +606,7 @@
 /test/improve-gateway-shadow-backlog.test.ts @masonwyatt23
 /test/improve-generator-yield-backlog.test.ts @masonwyatt23
 /test/improve-hot-patch.test.ts @masonwyatt23
+/test/improve-incident-gate-backlog.test.ts @masonwyatt23
 /test/improve-job-control-backlog.test.ts @masonwyatt23
 /test/improve-lesson-trial-backlog.test.ts @masonwyatt23
 /test/improve-lesson-trial.test.ts @masonwyatt23
