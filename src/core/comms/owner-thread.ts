@@ -817,7 +817,14 @@ export async function pullOwnerChannel(channel: OwnerChannel, options: OwnerThre
   return results;
 }
 
-/** Record a local-only notice in the owner thread, without invoking transports. */
+/**
+ * Record a local-only notice in the owner thread, without invoking transports.
+ * The record lands on the desktop surface — the channel `postOwnerNotice`
+ * already uses for leader-originated local posts — never a phone channel it
+ * was not delivered on: an `imessage` (or any remote) outbound here would
+ * claim a send that never happened and read as proof that channel already
+ * carried an outbound.
+ */
 export async function postOwnerThreadNotice(text: string, idempotencyKey: string, options: OwnerThreadOptions): Promise<OwnerThreadResult> {
   const clean = cleanText(text);
   if (!clean || !KEY.test(idempotencyKey)) return { status: 'refused' };
@@ -826,7 +833,7 @@ export async function postOwnerThreadNotice(text: string, idempotencyKey: string
       if (state.archivedKeys?.includes(keyDigest(idempotencyKey)) || state.messages.some(m => m.idempotencyKey === idempotencyKey)) {
         return { status: 'duplicate' as const };
       }
-      const stored = appendMessage(state, { idempotencyKey, channel: 'imessage', senderId: 'leader', direction: 'outbound', at: new Date(clock(options)).toISOString(), text: clean });
+      const stored = appendMessage(state, { idempotencyKey, channel: 'desktop', senderId: 'leader', direction: 'outbound', at: new Date(clock(options)).toISOString(), text: clean, fanout: ['desktop'] });
       return { status: 'accepted' as const, seq: stored.seq };
     });
   } catch { return { status: 'unavailable' }; }
