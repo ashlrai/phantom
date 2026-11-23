@@ -246,8 +246,17 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   `~/.ashlr/eval/passk/alerts.jsonl` (otherwise only visible through
   `phm eval passk alerts`). An alert identity becomes an item while the
   newest persisted eval report still shows the regression or the journal
-  shows it recurring across eval reports.
-  Fleet, nightly, policy, local-gate and pass^k items carry priority 3;
+  shows it recurring across eval reports — and the fleet friction fold's
+  firing categories, the dispatch→merge drags `phm friction` scores over
+  a 7-day window across jobs.jsonl, the dispatch event log, ready.tsv,
+  guardian state, lane slots, overrides and its own note ledger
+  (otherwise only visible in that report). A friction category becomes an
+  item while its own open condition holds — the primary signal or a
+  declared open-on signal counted something in the window — and no
+  operator note suppresses it; a note marked `fixed` whose signal is back
+  emits as regressed, while `in-progress` and `wontfix` notes stay out.
+  Fleet, nightly, policy, local-gate, pass^k and friction items carry
+  priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -258,7 +267,10 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   fleet's own repository since the gate is this repo's machinery.
   Pass^k items name the alerts journal and keep the reproduce-with-
   `phm eval passk` framing, emitting only for the fleet's own repository
-  since the eval machinery is this repo's. They
+  since the eval machinery is this repo's. Friction items name the fold's
+  sources and keep the find-the-machinery-or-queue-path framing, emitting
+  only for the fleet's own repository since the drag is this repo's
+  dispatch, queue and lane machinery. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never

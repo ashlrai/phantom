@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Eight sources, all of which Phantom
+ * evidence instead of a hand-kept list. Nine sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -35,7 +35,15 @@
  *     ~/.ashlr/eval/passk/alerts.jsonl (passkAlertBacklogItems below), so a
  *     lane/model that keeps losing measured capability reaches the backlog
  *     instead of sitting in `phm eval passk alerts`, a report someone had
- *     to run.
+ *     to run;
+ *   - the fleet friction fold's firing categories: the dispatch→merge drags
+ *     `phm friction` scores over a 7-day window — empty finishes,
+ *     anomalous diffs, requeues, lane auth, quota, invalid tiers, red
+ *     mains, stale ready rows, deferred requests, manual interventions,
+ *     wrong routes, holds and concurrency throttles
+ *     (frictionBacklogItems below), so recurring
+ *     operational drag becomes work instead of sitting in a report whose
+ *     note ledger only updates on manual runs.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -70,6 +78,7 @@ import { nightlyLearningBacklogItems } from './nightly-backlog.js';
 import { fleetPolicyBacklogItems } from './policy-backlog.js';
 import { localGateBacklogItems } from './gate-backlog.js';
 import { passkAlertBacklogItems } from './passk-backlog.js';
+import { frictionBacklogItems } from './friction-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -165,6 +174,13 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // regression or the journal shows it recurring across eval reports;
   // same healthy-only evidence bar and the same fleet-repo gate.
   items.push(...await passkAlertBacklogItems({ repo }));
+
+  // Fleet friction fold: the dispatch→merge drag categories `phm friction`
+  // scores become backlog items too — until now they only surfaced in that
+  // report, which someone had to run and read. Same bounded runs-dir reads;
+  // an item emits only while its own 7-day signal fires and no operator
+  // note suppresses it, and only for the fleet's own repository.
+  items.push(...await frictionBacklogItems({ repo }));
   return { items, errors };
 }
 
