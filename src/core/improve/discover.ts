@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Fifteen sources, all of which Phantom
+ * evidence instead of a hand-kept list. Sixteen sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -87,7 +87,17 @@
  *     (lostLaunchBacklogItems below), so a launch path that keeps dying
  *     or dropping jobs becomes work instead of sitting in a report
  *     someone had to run — outcome learning censors the silent vanishes
- *     as unresolved attempts that never count.
+ *     as unresolved attempts that never count;
+ *   - the swapout-rate ledger's recurring memory evidence: the per-sample
+ *     free_pct/swap_gb/swapouts_per_min rows the daemon's swapout-sync
+ *     job folds from memstat.json into metrics/swapout-rate.jsonl —
+ *     recurring recorded-pressure hours and recurring hours where the
+ *     lane-autopilot MEMORY_GUARD refuses target raises
+ *     (memoryBacklogItems below), so a host that keeps starving the
+ *     fleet's memory posture — or guard constants that never match the
+ *     measured operating point — becomes work instead of sitting in
+ *     `phm fleet vitals`' swapout_rate section, a report someone had
+ *     to run.
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -129,6 +139,7 @@ import { emptyTagBacklogItems } from './empty-tag-backlog.js';
 import { postMergeBacklogItems } from './postmerge-backlog.js';
 import { ciRerunBacklogItems } from './ci-rerun-backlog.js';
 import { lostLaunchBacklogItems } from './lost-launch-backlog.js';
+import { memoryBacklogItems } from './memory-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -296,6 +307,17 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // work; a (lane, class) cell emits only at the recurring bar inside the
   // window and only for the fleet's own repository.
   items.push(...await lostLaunchBacklogItems({ repo }));
+
+  // Swapout-rate ledger: the daemon's per-sample host memory readings —
+  // recurring recorded-pressure hours and recurring hours where the
+  // lane-autopilot memory guard refuses target raises — become backlog
+  // items too. Until now they only ever reached `phm fleet vitals`'s
+  // swapout_rate section and the console's memory-guard card, reports
+  // someone had to open, even though the ledger exists to tune the
+  // guard's explicitly unmeasured constants. Same bounded tail read and
+  // the writer's own row validation; an item emits only at the recurring
+  // bar inside the window and only for the fleet's own repository.
+  items.push(...await memoryBacklogItems({ repo }));
   return { items, errors };
 }
 
