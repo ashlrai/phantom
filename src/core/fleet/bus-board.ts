@@ -471,12 +471,17 @@ export class BusBoard {
    * the queue shows no live claim — a claim attempt still passes through
    * `claimTask`'s own fences. Deliveries and tasks cap their item lists;
    * `matched` keeps the true totals. Reading never acknowledges anything.
+   * `jobId`, `contains` and `sinceMs` are the same optional filters
+   * `pendingFor`/`pendingAll` take, applied by the shared `pendingDigest`
+   * under identical rules, so `phm bus board pending` narrows exactly the
+   * way `work mine`'s board section and `fleet_bus_board` do; `now` is the
+   * epoch-ms instant task holds evaluate against (default `Date.now()`).
    */
-  pending(actor: string): BusBoardPending {
+  pending(actor: string, now = Date.now(), jobId?: string, contains?: string, sinceMs?: number): BusBoardPending {
     actor = this.peer(actor);
     return this.transaction(false, (state) => ({
       peer: actor,
-      ...this.presentDigest(this.pendingDigest(state, new Set([actor]), Date.now())),
+      ...this.presentDigest(this.pendingDigest(state, new Set([actor]), now, jobId, contains, sinceMs)),
     }));
   }
 

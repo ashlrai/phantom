@@ -4,6 +4,7 @@ import { ashlrHome } from '../core/cloud/store.js';
 import { loadConfigReadOnlyStrict } from '../core/config.js';
 import { BusBoard } from '../core/fleet/bus-board.js';
 import { SharedStore } from '../core/fleet/shared-store.js';
+import { parseSince } from '../core/fleet/agent-messages.js';
 import type { AshlrConfig } from '../core/types.js';
 
 export const usage = `Usage: phm bus thread create <title> [--peer <id>] [--json]
@@ -12,7 +13,7 @@ export const usage = `Usage: phm bus thread create <title> [--peer <id>] [--json
        phm bus thread ack <thread-id> <delivery-id> [--peer <id>] [--json]
        phm bus thread post <thread-id> <body> [--peer <id>] [--json]
        phm bus thread list [--peer <id>] [--json]
-       phm bus board pending [--peer <id>] [--json]
+       phm bus board pending [--peer <id>] [--all] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO|ms>] [--json]
        phm bus task create <thread-id> <fleet-item-id> <title> [--peer <id>] [--json]
        phm bus task list <thread-id> [--peer <id>] [--json]
        phm bus task claim|renew|release <task-id> [--peer <id>] [--json]
@@ -23,7 +24,17 @@ durable mailbox (phm bus send --help). --root <abs> and --queue-root <abs>
 override the default private coordination paths. Quote titles and bodies as one
 argument; -- permits content beginning with -. Output is JSON. Peer labels are
 cooperative routing labels, never identities; fleet claims grant no execution
-authority.`;
+authority.
+
+board pending digests one peer's unacknowledged deliveries and per-task hold
+state; --all instead returns the fleet-wide digest every thread member shares
+(the same read fleet_bus_board and comms inbox's board source project, reported
+under peers rather than peer). --job keeps only threads carrying a task whose
+fleet item id cites it, --contains keeps only rows whose scrubbed display text
+carries the needle, and --since keeps only deliveries whose createdAt reaches
+the cutoff while tasks — which the board records without a timestamp — never
+match; the three filters are the same rules every other bus read applies and
+are valid only on board pending.`;
 
 const ARITIES: Record<string, number> = {
   'thread:create': 1, 'thread:join': 1, 'thread:post': 2,
@@ -55,6 +66,10 @@ interface Parsed {
   peer?: string;
   root?: string;
   queueRoot?: string;
+  all?: boolean;
+  job?: string;
+  contains?: string;
+  since?: string;
   help: boolean;
 }
 
@@ -68,20 +83,27 @@ function parse(args: readonly string[]): Parsed | null {
     if (!literal && arg === '--') { literal = true; continue; }
     if (!literal && arg.startsWith('-')) {
       const flag = arg === '-h' ? '--help' : arg;
-      if (flags.has(flag) || !['--peer', '--root', '--queue-root', '--json', '--help'].includes(flag)) return null;
+      if (flags.has(flag) ||
+        !['--peer', '--root', '--queue-root', '--json', '--help', '--all', '--job', '--contains', '--since'].includes(flag)) return null;
       flags.add(flag);
-      if (flag === '--peer' || flag === '--root' || flag === '--queue-root') {
+      if (['--peer', '--root', '--queue-root', '--job', '--contains', '--since'].includes(flag)) {
         const value = args[++i];
         if (value === undefined) return null;
         if (flag === '--peer') {
           if (PEER_ID.exec(value)?.[0] !== value) return null;
           parsed.peer = value;
-        } else {
+        } else if (flag === '--root') {
           if (!isAbsolute(value)) return null;
-          if (flag === '--root') parsed.root = value; else parsed.queueRoot = value;
-        }
+          parsed.root = value;
+        } else if (flag === '--queue-root') {
+          if (!isAbsolute(value)) return null;
+          parsed.queueRoot = value;
+        } else if (flag === '--job') parsed.job = value;
+        else if (flag === '--contains') parsed.contains = value;
+        else parsed.since = value;
       }
       if (flag === '--help') parsed.help = true;
+      if (flag === '--all') parsed.all = true;
     } else positional.push(arg);
   }
   parsed.command = `${positional[0]}:${positional[1]}`;
@@ -108,6 +130,25 @@ export async function cmdFleetBus(args: string[], deps: FleetBusDeps = {}): Prom
   if (parsed.help) {
     out(usage);
     return 0;
+  }
+  // The board digest filters and fleet-wide flag belong to `board pending`
+  // alone; anywhere else they are refused rather than silently dropped, and
+  // `--all` leaves no single peer view for `--peer` to select.
+  const boardScoped = parsed.all === true || parsed.job !== undefined ||
+    parsed.contains !== undefined || parsed.since !== undefined;
+  if ((boardScoped && parsed.command !== 'board:pending') ||
+    (parsed.command === 'board:pending' && parsed.all === true && parsed.peer !== undefined)) {
+    out(JSON.stringify({ ok: false, error: 'Invalid bus arguments', usage }));
+    return 2;
+  }
+  let boardSinceMs: number | undefined;
+  if (parsed.command === 'board:pending' && parsed.since !== undefined) {
+    const sinceMs = parseSince(parsed.since);
+    if (sinceMs === null) {
+      out(JSON.stringify({ ok: false, error: 'Invalid bus arguments', usage }));
+      return 2;
+    }
+    boardSinceMs = sinceMs;
   }
   try {
     const cfg = (deps.loadConfig ?? loadConfigReadOnlyStrict)();
@@ -137,7 +178,11 @@ export async function cmdFleetBus(args: string[], deps: FleetBusDeps = {}): Prom
       case 'thread:ack': result = board.acknowledge(actor, first!, second!); break;
       case 'thread:receipts': result = board.receipts(actor, first!); break;
       case 'thread:hops': result = board.hops(actor, first!); break;
-      case 'board:pending': result = board.pending(actor); break;
+      case 'board:pending':
+        result = parsed.all === true
+          ? board.pendingAll(Date.now(), parsed.job, parsed.contains, boardSinceMs)
+          : board.pending(actor, Date.now(), parsed.job, parsed.contains, boardSinceMs);
+        break;
       case 'task:create': result = board.createTask(actor, first!, second!, third!); break;
       case 'task:list': result = board.listTasks(actor, first!); break;
       case 'task:claim': result = board.claimTask(actor, first!); break;
