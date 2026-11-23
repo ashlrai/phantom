@@ -734,7 +734,7 @@ free set. Exit 0 acquired,
 2 invalid, 1 otherwise. Claims still coordinate scope only — holding one
 never permits a merge, a push, or spending.
 
-**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>]` is the read-only
+**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--priority P0..P3]` is the read-only
 digest that answers "what is pending for this agent" in one call: the live
 coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block — the reverse of `work feed --claims`,
@@ -997,7 +997,24 @@ plan read instant, not the held work's age, so no per-record recency
 exists to filter on. A pending item older than the
 cutoff is still pending but is not new; `channels` and `seats` stay
 unfiltered, every count stays the filtered total, the result echoes
-`since` as ISO in JSON and the human header prints it. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
+`since` as ISO in JSON and the human header prints it. `--priority
+<P0..P3>` narrows the whole digest the same way — "what urgent work is
+pending for me" — under the exact-band match every other bus
+`--priority` read applies, across the sections whose items carry a wire
+band: `next`/`handoffs` keep envelopes of that priority inside the
+shared pending-work walk, `inbox` applies its own priority filter,
+`mailbox` mail keeps only envelopes of that band, `wakes` keep hints
+whose resolved referent reports that band (unresolved or unknown
+referents never match — the wakes read's own rule), and claims keep
+only message claims whose resolved leased envelope reports that band —
+a claim with no resolved message, a scope-key claim or an
+unresolvable/unreadable lease names no provable band and never lists,
+the same "unknown stays out" rule `--job` applies. Feed jobs,
+announced jobs, the three thread sections, board rows, `channels` and
+`seats` carry no per-item band in their projections and stay
+unfiltered; every count stays the filtered total, the result echoes
+`priority` in JSON and the human header prints it, and a row whose
+band cannot be proven never matches. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
 exact-label claim matching, reports `identity: null`, answers `unknown-agent`
 for inbox rather than an empty list, and reads wakes under `scope: 'label'`
 — the same literal-`to` matching `agents bus wakes` applies — so pending
@@ -1009,7 +1026,7 @@ own read state — `missing`/`available`/`unavailable` for claims,
 unreadable dependency degrades only its own section. Exit 0 on a completed
 read, 2 on an invalid agent ref. `fleet_agent_work` (the isolated fleet
 MCP tool) serves the same `readBusWorkMineWithSeats` projection — `agent`
-required, `job`/`since`/`contains` the same filters — under the same
+required, `job`/`since`/`contains`/`priority` the same filters — under the same
 validation, so an MCP-connected agent reads its whole pending digest
 without shelling out to `phm`; it accepts no caller root or path and
 passes a refused or degraded section through untouched.

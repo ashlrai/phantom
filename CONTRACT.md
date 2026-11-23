@@ -2846,17 +2846,19 @@ while reuse on another key cannot relocate it. Claims coordinate only and grant
 no execution authority; the token returns only to its acquirer.
 
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
-`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>]`. `readBusWorkMine(agent, options?)`
-(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `contains?`, `since?`, `now?: () => number` frozen once
+`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--priority P0..P3]`. `readBusWorkMine(agent, options?)`
+(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `contains?`, `since?`, `priority?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, job?, contains?, since?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
+asOf, job?, contains?, since?, priority?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule, a `job` outside the same rule
 (`invalid-job`), a `contains` outside the shared bounded free-text
-rule every bus `--contains` read applies (`invalid-contains`), or a
+rule every bus `--contains` read applies (`invalid-contains`), a
 `since` that is not a safe non-negative epoch-ms integer
-(`invalid-since`). `job`, `contains` and `since` echo the applied
-filters — `since` as ISO — and are absent on an
+(`invalid-since`), or a `priority` outside the P0..P3 band
+(`invalid-priority`). `job`, `contains`, `since` (as ISO) and
+`priority` echo the applied
+filters and are absent on an
 unfiltered read. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
 `claims` reuses
@@ -3259,6 +3261,27 @@ context, not pending work, and stays unfiltered like it does under
 but is not new; every count stays the filtered total, and an item whose
 store keeps no timestamp never matches — the same "unknown stays out"
 rule the unified inbox's `--since` applies.
+
+`options.priority` narrows the whole digest to pending items stamped
+with that exact P0..P3 band — the same match every bus read's
+`--priority` applies — across the sections whose items carry a wire
+band: `next`/`handoffs` keep envelopes of that priority inside the
+shared pending-work walk, `inbox` passes it to `readAgentInbox`,
+`mailbox` ANDs `envelope.priority === priority` into
+`BusMailbox.pendingFor`'s `match` predicate, `wakes` pass it to
+`readAgentWakes`' `filter.priority` (the resolved referent's band —
+`unresolved`/`unknown` referents never match), and `claims` keep only
+message claims whose resolved leased envelope reports that band
+(`claim.message.status === 'resolved'` and `message.priority` equal) —
+a claim with no resolved message, a scope-key claim or an
+unresolvable/unreadable lease names no provable band and never lists,
+the same "unknown stays out" rule the `job` filter applies.
+`jobs`/`announced` (feed jobs carry no wire band in the projection),
+`threads`/`awaiting`/`blocked` (a thread mixes bands), `board` (board
+rows carry no per-item band), `channels` and `seats` stay unfiltered —
+registry context and band-less projections, like `channels` under every
+filter. Every count stays the filtered total, and a row whose band
+cannot be proven never matches.
 
 ### Unified agent bus (RQ-BUS-UNIFY-1)
 

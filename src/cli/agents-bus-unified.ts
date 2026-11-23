@@ -55,7 +55,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
-ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>]
+ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--priority P0..P3]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--priority P0..P3]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
@@ -269,7 +269,17 @@ read instant, not the held work's age, so no per-record recency exists
 to filter on; a pending item older than the
 cutoff is still pending but is not new, channels and seats stay
 unfiltered, and
-every count stays the filtered total. work next claims the next claimable
+every count stays the filtered total. --priority on work mine keeps only
+pending items stamped with that exact P0..P3 band — the same match inbox
+--priority and every other bus read applies, so "what urgent work is
+pending for me" is one filtered digest: next and handoffs keep envelopes
+of that band, inbox and mailbox keep mail of that band, wakes keep hints
+whose resolved referent reports it (unresolved or unknown referents
+never match), and claims keep only message claims whose resolved leased
+envelope reports that band — a claim naming no provable band never lists;
+feed jobs, announced jobs, the thread sections, board rows, channels and
+seats carry no per-item band and stay unfiltered, and every count stays
+the filtered total. work next claims the next claimable
 work envelope addressed to the agent — the same kind:'work'/protocol-task
 receipts work mine's next section lists, walked in bus-next order
 (priority band, then cursor) under the same addressed-to rule: any label
@@ -794,10 +804,12 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const job = one('--job');
       const contains = one('--contains');
       const since = sinceArg();
+      const priority = priorityArg();
       const result = await readBusWorkMineWithSeats(agent,
         { ...options, ...(job === undefined ? {} : { job }),
           ...(contains === undefined ? {} : { contains }),
-          ...(since === undefined ? {} : { since }) });
+          ...(since === undefined ? {} : { since }),
+          ...(priority === undefined ? {} : { priority }) });
       if (result.status !== 'ok') {
         out(json ? JSON.stringify(result) : `${result.status}: ${result.reason}`);
         return 2;
