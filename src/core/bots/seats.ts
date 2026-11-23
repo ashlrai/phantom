@@ -187,7 +187,7 @@ async function persist(states: Record<string, SeatState>, o: SeatOptions) {
   await writeFile(temp, JSON.stringify(states) + '\n', { mode: 0o600, flag: 'wx' });
   await rename(temp, path);
 }
-export async function listSeats(o: SeatOptions = {}) {
+async function seatsView(o: SeatOptions, persistProjected: boolean) {
   const data = await snapshot(o);
   const seats = await Promise.all(data.seats.map(async ({ seat, quota: evidence, state, work }) => {
     const adapter = seat.kind === 'devin-bot' ? createDevinBotAdapter({ ...seat, readUsage: async () => evidence }) : advisorySeatAdapter(seat, async () => evidence);
@@ -196,16 +196,34 @@ export async function listSeats(o: SeatOptions = {}) {
   }));
   const output = { schema: 'phantom-bot-seats.v1' as const, seats };
   assertMetadata(JSON.stringify({ ...output, seats: output.seats.map(s => ({ ...s, handoffs: s.handoffs.map(({ handoffId: _id, ...h }) => h) })) }));
-  let changed = false;
-  for (const row of data.seats) {
-    if (row.state.state !== (data.states[row.seat.id]?.state ?? 'active')) {
-      data.states[row.seat.id] = row.state;
-      changed = true;
+  if (persistProjected) {
+    let changed = false;
+    for (const row of data.seats) {
+      if (row.state.state !== (data.states[row.seat.id]?.state ?? 'active')) {
+        data.states[row.seat.id] = row.state;
+        changed = true;
+      }
     }
+    if (changed) await persist(data.states, o);
   }
-  if (changed) await persist(data.states, o);
   return output;
 }
+export function listSeats(o: SeatOptions = {}) {
+  return seatsView(o, true);
+}
+/**
+ * The same seat views `listSeats` computes — quota evidence, projected
+ * lifecycle state, `acceptsNewWork`, live claims, in-flight jobs and recent
+ * handoffs — minus the persist-on-read lifecycle write `phm bots seats`
+ * performs, for surfaces that must never mutate seat state (the isolated
+ * fleet MCP server's `fleet_bot_seats`). Claims still coordinate only; the
+ * roster grants no execution authority.
+ */
+export function readBotSeats(o: SeatOptions = {}) {
+  return seatsView(o, false);
+}
+/** The roster `readBotSeats`/`listSeats` return — one entry per configured seat. */
+export type BotSeatsRoster = Awaited<ReturnType<typeof readBotSeats>>;
 export async function seatMayClaim(id: string, o: SeatOptions = {}): Promise<boolean> {
   return (await listSeats(o)).seats.find(s => s.id === id)?.acceptsNewWork ?? false;
 }
