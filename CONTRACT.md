@@ -3395,6 +3395,19 @@ receipt's band behind a claim-holder `wh-…` hint), with
 `unresolved`/`unknown` referents never matching, `matched` counting the
 proven matches on the resolved page, an unreadable bus store answering
 `unavailable`, and a band outside P0..P3 answering `invalid`),
+`readAllWakes(sinceAt, options?, filter?)` (the fleet-wide companion —
+every hint the bounded queue tail holds with no addressee scope, so
+hints queued under bare coordination or routing labels the
+claim-holder fan-out writes appear beside registered identities' hints,
+each row's own `to` naming its addressee; the ok page carries
+`scope:'fleet'`, `wakes`, `matched` and `truncated` under the same
+queue-tail semantics `readAgentWakes` documents, and the same
+`job`/`from`/`excludeFrom`/`contains`/`priority` filter set validates
+and resolves referents identically — sender matchers resolve through
+the registry with exact-label fallback, filtered verdicts fail closed
+`unavailable` on an unreadable bus store, and malformed filter values
+answer `invalid`; an unreadable registry or wake queue answers
+`unavailable`, never an empty page passed off as "no wakes"),
 `listBusChannels(agent, options?)`
 (the registry channels name-sorted with `createdBy`, `createdAt` and member
 handles in join order — all of them, or only those one resolved identity

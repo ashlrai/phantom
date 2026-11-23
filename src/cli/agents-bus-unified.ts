@@ -6,8 +6,8 @@ import {
 } from '../core/agents/bus-identity.js';
 import {
   agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodyFallbackSummary, busInboxJobMarker, listBusChannels, postChannelMessage, postLabelMessage,
-  readAgentChannel, readAgentInbox, readAgentWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
-  updateWorkStatus, INBOX_KINDS, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WorkStatusInput,
+  readAgentChannel, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
+  updateWorkStatus, INBOX_KINDS, type AllWakesPage, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WakePage, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { PROVIDERS, providerSchema, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
@@ -39,7 +39,7 @@ ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-f
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--matched] [--frame <cli>]
-ashlr agents bus wakes [<agent>] [--since <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--contains <text>]
+ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--contains <text>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
@@ -126,7 +126,12 @@ claim-holder wh-… hint's the posting identity's agent:<handle>, so
 wakes drops hints sent under every registered spelling of one identity —
 the same matcher and exact-label fallback --from applies — composing
 with --from so a sender both included and excluded matches nothing, so
-"everyone's wakes except the noisy bot's" is one filtered read. --channel on inbox
+"everyone's wakes except the noisy bot's" is one filtered read. --all on
+wakes drops the addressee scope entirely — every hint in the bounded
+queue tail, registered identities' and bare coordination labels' alike,
+each row's own to naming its addressee — so a leader or comms pass sees
+who has pending hints in one read instead of one wakes call per
+identity; it takes no agent and the same filters apply. --channel on inbox
 keeps only mail addressed to one registry
 channel's group:<name>:* addresses — channel posts and channel-addressed
 handoffs alike — so an agent in several rooms reads one room's pending
@@ -299,7 +304,7 @@ const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
   '--kind', '--channel', '--contains', '--exclude-from', '--reply-to']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
-const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--open', '--claimable', '--jobs', '--matched']);
+const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--open', '--claimable', '--jobs', '--matched', '--all']);
 const MESSAGE_CLAIM_ACTIONS = ['acquire', 'renew', 'release', 'complete'] as const;
 const MESSAGE_CLAIM_OK = new Set(['acquired', 'renewed', 'released', 'completed']);
 
@@ -697,11 +702,18 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     }
     if (verb === 'wakes') {
       noExtra(2);
-      const agent = sub ?? self;
-      if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
-      const page = readAgentWakes(agent, sinceArg(), options,
-        { job: one('--job'), from: one('--from'), excludeFrom: one('--exclude-from'), contains: one('--contains'),
-          priority: priorityArg() });
+      const filter = { job: one('--job'), from: one('--from'), excludeFrom: one('--exclude-from'),
+        contains: one('--contains'), priority: priorityArg() };
+      const since = sinceArg();
+      let page: WakePage | AllWakesPage;
+      if (p.bools.has('--all')) {
+        if (sub !== undefined) throw new UsageError('wakes --all lists every wake hint and takes no agent.');
+        page = readAllWakes(since, options, filter);
+      } else {
+        const agent = sub ?? self;
+        if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
+        page = readAgentWakes(agent, since, options, filter);
+      }
       if (page.status !== 'ok') return finish(page, '');
       out(json ? JSON.stringify(page) : [
         ...(page.truncated ? [`${page.matched} wake hint(s) matched; the bounded queue tail is truncated — showing the newest ${page.wakes.length}`] : []),

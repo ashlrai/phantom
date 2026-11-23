@@ -15,7 +15,9 @@ import { FLEET_MCP_TOOL_NAMES } from './support/fleet-mcp-tools.js';
 import {
   parseFleetAgentWakesArgs, readFleetAgentWakes, type FleetAgentWakesArgs,
 } from '../src/mcp/fleet-agent-wakes.js';
-import { readAgentWakes, type AgentWakeRow, type WakePage } from '../src/core/agents/bus-unified.js';
+import {
+  readAgentWakes, readAllWakes, type AgentWakeRow, type AllWakesPage, type WakePage,
+} from '../src/core/agents/bus-unified.js';
 
 const connections: Client[] = [];
 
@@ -27,6 +29,11 @@ const wake = (over: Partial<AgentWakeRow> = {}): AgentWakeRow => ({
 
 const okPage = (over: Partial<Extract<WakePage, { status: 'ok' }>> = {}): WakePage => ({
   status: 'ok', agent: 'planner', scope: 'identity',
+  wakes: [wake()], matched: 1, truncated: false, ...over,
+});
+
+const okAllPage = (over: Partial<Extract<AllWakesPage, { status: 'ok' }>> = {}): AllWakesPage => ({
+  status: 'ok', scope: 'fleet',
   wakes: [wake()], matched: 1, truncated: false, ...over,
 });
 
@@ -55,14 +62,17 @@ async function callWakes(client: Client, args?: Record<string, unknown>) {
 }
 
 describe('fleet_agent_wakes argument parsing', () => {
-  it('requires agent and leaves every filter absent by default', () => {
+  it('leaves agent absent by default and parses every filter without it', () => {
+    expect(parseFleetAgentWakesArgs({})).toEqual({});
+    expect(parseFleetAgentWakesArgs({ since: '1800000000000', priority: 'P0', contains: 'x' }))
+      .toEqual({ since: 1800000000000, priority: 'P0', contains: 'x' });
     expect(parseFleetAgentWakesArgs({ agent: 'planner' })).toEqual({ agent: 'planner' });
     expect(parseFleetAgentWakesArgs({ agent: 'agent:planner' })).toEqual({ agent: 'agent:planner' });
     expect(parseFleetAgentWakesArgs({ agent: 'x'.repeat(128) })).toEqual({ agent: 'x'.repeat(128) });
   });
 
-  it('rejects a missing or malformed agent ref before any read', () => {
-    for (const bad of [{}, { agent: 5 }, { agent: '' }, { agent: 'has space' },
+  it('rejects a malformed agent ref before any read', () => {
+    for (const bad of [{ agent: 5 }, { agent: '' }, { agent: 'has space' },
       { agent: 'x'.repeat(129) }, { agent: null }, { agent: true }, { agent: 'line\nbreak' }]) {
       expect(parseFleetAgentWakesArgs(bad)).toBeNull();
     }
@@ -149,6 +159,37 @@ describe('fleet_agent_wakes reader', () => {
     expect(result).toMatchObject({ status: 'ok', agent: 'bare-label', scope: 'label' });
   });
 
+  it('runs the fleet-wide readAllWakes projection when agent is omitted', async () => {
+    const seen: Array<[number | undefined, unknown, unknown]> = [];
+    const readAll: typeof readAllWakes = (sinceAt, _options, filter) => {
+      seen.push([sinceAt, _options, filter]);
+      return okAllPage({ matched: 4 });
+    };
+    const read = vi.fn();
+    const result = await readFleetAgentWakes(
+      parseFleetAgentWakesArgs({ since: '1800000000000', job: 'RQ-9', priority: 'P1' })!,
+      { read, readAll });
+    expect(read).not.toHaveBeenCalled();
+    expect(seen).toEqual([[1800000000000, {}, { job: 'RQ-9', priority: 'P1' }]]);
+    expect(result).toMatchObject({
+      schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
+      status: 'ok', scope: 'fleet', matched: 4, truncated: false,
+    });
+    expect(result.wakes).toHaveLength(1);
+    expect(result.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('passes an unfiltered fleet read through with undefined cutoff and empty filter', async () => {
+    const seen: Array<[number | undefined, unknown, unknown]> = [];
+    const readAll: typeof readAllWakes = (sinceAt, _options, filter) => {
+      seen.push([sinceAt, _options, filter]);
+      return okAllPage({ wakes: [] });
+    };
+    const result = await readFleetAgentWakes(parseFleetAgentWakesArgs({})!, { readAll });
+    expect(seen).toEqual([[undefined, {}, {}]]);
+    expect(result).toMatchObject({ status: 'ok', scope: 'fleet', wakes: [], matched: 1 });
+  });
+
   it.each([
     { status: 'unknown-agent', reason: 'Agent is not a registered identity.' },
     { status: 'unavailable', reason: 'Wake queue is unreadable.' },
@@ -172,7 +213,8 @@ describe('fleet_agent_wakes MCP tool', () => {
       readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
     });
     expect(tool?.description).toContain('no caller root, path or cwd is accepted');
-    expect(tool?.inputSchema).toMatchObject({ type: 'object', additionalProperties: false, required: ['agent'] });
+    expect(tool?.description).toContain('fleet-wide');
+    expect(tool?.inputSchema).toMatchObject({ type: 'object', additionalProperties: false, required: [] });
     expect(tool?.inputSchema.properties?.['agent'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
     expect(tool?.inputSchema.properties?.['priority'])
@@ -182,7 +224,7 @@ describe('fleet_agent_wakes MCP tool', () => {
   });
 
   it.each([
-    [{}], [{ agent: '' }], [{ agent: 'has space' }], [{ agent: 5 }],
+    [{ agent: '' }], [{ agent: 'has space' }], [{ agent: 5 }],
     [{ agent: 'a', root: '/tmp/fake-root' }], [{ agent: 'a', path: '/tmp/x' }], [{ agent: 'a', cwd: '/tmp' }],
     [{ agent: 'a', limit: 5 }], [{ agent: 'a', after: 0 }], [{ agent: 'a', matched: true }],
     [{ agent: 'a', job: 'has space' }], [{ agent: 'a', from: 5 }], [{ agent: 'a', excludeFrom: null }],
@@ -215,6 +257,24 @@ describe('fleet_agent_wakes MCP tool', () => {
     const args = agentWakes.mock.calls[0]![0] as FleetAgentWakesArgs;
     expect(args.from).toBeUndefined();
     expect(args.excludeFrom).toBeUndefined();
+    expect(parsed).toEqual(payload);
+  });
+
+  it('serves the fleet-wide page when agent is omitted', async () => {
+    const payload = {
+      schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
+      generatedAt: '2026-01-01T00:00:00.000Z',
+      status: 'ok', scope: 'fleet',
+      wakes: [wake({ to: 'fleet.mesh' })], matched: 2, truncated: false,
+    };
+    const agentWakes = vi.fn(async () => payload);
+    const client = await connect({ status: async () => ({}), loop: async () => ({}), agentWakes });
+    const { parsed } = await callWakes(client, { priority: 'P0' });
+    // The shared reader sees the parsed args with no agent — the fleet-wide
+    // branch inside readFleetAgentWakes picks readAllWakes.
+    expect(agentWakes).toHaveBeenCalledWith(expect.objectContaining({ priority: 'P0' }));
+    const args = agentWakes.mock.calls[0]![0] as FleetAgentWakesArgs;
+    expect(args.agent).toBeUndefined();
     expect(parsed).toEqual(payload);
   });
 });

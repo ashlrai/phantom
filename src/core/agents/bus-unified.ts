@@ -1457,6 +1457,123 @@ export type WakePage = { status: 'ok'; agent: string;
   { status: 'unknown-agent' | 'unavailable' | 'invalid'; reason: string };
 
 /**
+ * One page of every wake hint in the bounded queue tail — the fleet-wide
+ * companion to `readAgentWakes`: no addressee scope, so hints queued under
+ * bare coordination or routing labels (the claim-holder fan-out's raw
+ * claim-owner targets) appear beside registered identities' hints, each
+ * row's own `to` naming its addressee. `scope:'fleet'` marks the unscoped
+ * read. `matched`/`truncated` carry the same queue-tail semantics
+ * `readAgentWakes` documents — `matched` counts every hint the bounded
+ * tail accepted before the row cap, or the proven matches on the resolved
+ * page under `job`/`contains`/`priority`, and `truncated` marks older
+ * bytes or matched rows beyond the returned slice.
+ */
+export type AllWakesPage =
+  | { status: 'ok'; scope: 'fleet'; wakes: AgentWakeRow[]; matched: number; truncated: boolean }
+  | { status: 'unavailable' | 'invalid'; reason: string };
+
+/** The filter set every wake read shares: one job id, sender include/exclude, one priority band and contains text. */
+interface WakeFilter { job?: string; from?: string; excludeFrom?: string; contains?: string; priority?: BusPriority }
+
+type ParsedWakeFilter = { ok: true; job?: string; from?: string; excludeFrom?: string; containsNeedle?: string; priority?: BusPriority }
+  | { ok: false; reason: string };
+
+/** Validate the shared wakes filter set before any store is touched. */
+function parseWakeFilter(filter: WakeFilter): ParsedWakeFilter {
+  const job = filter.job;
+  if (job !== undefined && (typeof job !== 'string' || !THREAD.test(job))) {
+    return { ok: false, reason: 'Invalid job id.' };
+  }
+  const priority = filter.priority;
+  if (priority !== undefined && !BUS_PRIORITIES.includes(priority)) {
+    return { ok: false, reason: 'Invalid priority.' };
+  }
+  const from = filter.from;
+  if (from !== undefined && (typeof from !== 'string' || from.length === 0 || from.length > 128)) {
+    return { ok: false, reason: 'Invalid sender filter.' };
+  }
+  const excludeFrom = filter.excludeFrom;
+  if (excludeFrom !== undefined &&
+      (typeof excludeFrom !== 'string' || excludeFrom.length === 0 || excludeFrom.length > 128)) {
+    return { ok: false, reason: 'Invalid sender-exclusion filter.' };
+  }
+  const containsNeedle = busReadContains(filter.contains);
+  if (containsNeedle === null) return { ok: false, reason: 'Invalid contains filter.' };
+  return { ok: true, ...(job === undefined ? {} : { job }),
+    ...(from === undefined ? {} : { from }), ...(excludeFrom === undefined ? {} : { excludeFrom }),
+    ...(priority === undefined ? {} : { priority }),
+    ...(containsNeedle === undefined ? {} : { containsNeedle }) };
+}
+
+/** The annotated rows plus queue-tail counts every wake page reports. */
+type WakeRowsPage = { status: 'ok'; wakes: AgentWakeRow[]; matched: number; truncated: boolean }
+  | { status: 'unavailable'; reason: string };
+
+/**
+ * The queue-tail read plus referent resolution every wake page shares.
+ * `match` decides addressee scope inside `readBusWakes`, so `matched`
+ * counts only rows the whole filter set accepts; one bounded store scan
+ * then resolves each row's `claimHolder`/`message` evidence and the
+ * `job`/`contains`/`priority` verdicts filter on that resolved text — an
+ * unreadable queue is `unavailable`, and a `job`/`contains`/`priority`
+ * read whose bus store cannot be read fails closed the same way, never
+ * an empty page passed off as "no wakes".
+ */
+function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, registry: AgentRegistry,
+  match: (wake: BusWakeRow) => boolean, filter: ParsedWakeFilter & { ok: true }): WakeRowsPage {
+  const wakes = readBusWakes({ root: options.runsRoot, sinceAt, match });
+  if (wakes.state === 'unreadable') return { status: 'unavailable', reason: 'Wake queue is unreadable.' };
+  // One bounded store scan serves both per-row resolutions: the claim-holder
+  // citation re-derivation and the ordinary hint's referent lookup.
+  const scan = wakes.wakes.length === 0 ? undefined
+    : scanBusInbox({ root: options.root, now: options.now });
+  const job = filter.job, containsNeedle = filter.containsNeedle, priority = filter.priority;
+  // A job, contains or priority verdict needs the resolved referent; when the
+  // store cannot be read every hint's citation, summary and band are unknown,
+  // so the filtered read fails closed instead of reporting an empty page as
+  // "no wakes for this job", "no wakes mentioning this" or "no urgent wakes".
+  if ((job !== undefined || containsNeedle !== undefined || priority !== undefined) &&
+      scan !== undefined && scan.source === 'unavailable') {
+    return { status: 'unavailable', reason: 'Bus store is not readable.' };
+  }
+  const contexts = claimHolderWakeContexts(wakes.wakes, options, scan);
+  const resolved = wakeMessageContexts(wakes.wakes, scan, registry, options, job);
+  const shown = wakes.wakes.filter(row => {
+    if (job !== undefined) {
+      const holder = contexts.get(row.id);
+      const jobMatch = typeof holder === 'object' ? holder.jobId === job : resolved.jobMatches.has(row.id);
+      if (!jobMatch) return false;
+    }
+    if (containsNeedle !== undefined &&
+        !wakeHintContainsMatch(contexts.get(row.id), resolved.contexts.get(row.id), containsNeedle)) {
+      return false;
+    }
+    if (priority !== undefined) {
+      // The band is the resolved referent's own priority — the live message a
+      // bus.send hint points at, or the citing work.status receipt behind a
+      // claim-holder wh-… hint. A hint whose referent is unresolved or
+      // unknown names no provable band and never matches.
+      const holder = contexts.get(row.id);
+      const message = resolved.contexts.get(row.id);
+      const band = typeof holder === 'object' ? holder.priority
+        : message?.status === 'resolved' ? message.priority : undefined;
+      if (band !== priority) return false;
+    }
+    return true;
+  });
+  return { status: 'ok',
+    wakes: shown.map(row => {
+      const claimHolder = contexts.get(row.id);
+      const message = resolved.contexts.get(row.id);
+      return { ...row,
+        ...(claimHolder === undefined ? {} : { claimHolder }),
+        ...(message === undefined ? {} : { message }) };
+    }),
+    matched: job === undefined && containsNeedle === undefined && priority === undefined ? wakes.matched ?? 0 : shown.length,
+    truncated: wakes.truncated ?? false };
+}
+
+/**
  * Wake hints addressed to this identity under any label it resolves through
  * (address, bare handle, stable id or alias) or to one of its channels after
  * `sinceAt`. A ref that resolves to no registered identity keeps exact-label
@@ -1521,93 +1638,59 @@ export type WakePage = { status: 'ok'; agent: string;
  * `unavailable`, and a band outside P0..P3 answering `invalid`.
  */
 export function readAgentWakes(ref: string, sinceAt: number | undefined, options: UnifiedBusOptions = {},
-  filter: { job?: string; from?: string; excludeFrom?: string; contains?: string; priority?: BusPriority } = {}): WakePage {
-  const job = filter.job;
-  if (job !== undefined && (typeof job !== 'string' || !THREAD.test(job))) {
-    return { status: 'invalid', reason: 'Invalid job id.' };
-  }
-  const priority = filter.priority;
-  if (priority !== undefined && !BUS_PRIORITIES.includes(priority)) {
-    return { status: 'invalid', reason: 'Invalid priority.' };
-  }
-  const from = filter.from;
-  if (from !== undefined && (typeof from !== 'string' || from.length === 0 || from.length > 128)) {
-    return { status: 'invalid', reason: 'Invalid sender filter.' };
-  }
-  const excludeFrom = filter.excludeFrom;
-  if (excludeFrom !== undefined &&
-      (typeof excludeFrom !== 'string' || excludeFrom.length === 0 || excludeFrom.length > 128)) {
-    return { status: 'invalid', reason: 'Invalid sender-exclusion filter.' };
-  }
-  const containsNeedle = busReadContains(filter.contains);
-  if (containsNeedle === null) {
-    return { status: 'invalid', reason: 'Invalid contains filter.' };
-  }
+  filter: WakeFilter = {}): WakePage {
+  const parsed = parseWakeFilter(filter);
+  if (!parsed.ok) return { status: 'invalid', reason: parsed.reason };
   const read = readAgentRegistry(options);
   if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
   const target = addressing(read.registry, ref);
   if (target === undefined && !WAKE_HINT_LABEL.test(ref)) {
     return { status: 'unknown-agent', reason: 'Agent is not a registered identity.' };
   }
-  const fromMatch = from === undefined ? undefined
-    : agentRefAddressMatcher(from, read.registry, labelIdentityOf(read.registry));
-  const excludeFromMatch = excludeFrom === undefined ? undefined
-    : agentRefAddressMatcher(excludeFrom, read.registry, labelIdentityOf(read.registry));
-  const wakes = readBusWakes({ root: options.runsRoot, sinceAt, match: wake =>
+  const fromMatch = parsed.from === undefined ? undefined
+    : agentRefAddressMatcher(parsed.from, read.registry, labelIdentityOf(read.registry));
+  const excludeFromMatch = parsed.excludeFrom === undefined ? undefined
+    : agentRefAddressMatcher(parsed.excludeFrom, read.registry, labelIdentityOf(read.registry));
+  const page = readWakeRows(sinceAt, options, read.registry, wake =>
     (fromMatch === undefined || fromMatch(wake.from)) &&
     (excludeFromMatch === undefined || !excludeFromMatch(wake.from)) &&
     (target !== undefined
       ? target.labels.has(wake.to) || (channelOf(wake.to, target.channels) !== null && !target.labels.has(wake.from))
-      : wake.to === ref) });
-  if (wakes.state === 'unreadable') return { status: 'unavailable', reason: 'Wake queue is unreadable.' };
-  // One bounded store scan serves both per-row resolutions: the claim-holder
-  // citation re-derivation and the ordinary hint's referent lookup.
-  const scan = wakes.wakes.length === 0 ? undefined
-    : scanBusInbox({ root: options.root, now: options.now });
-  // A job, contains or priority verdict needs the resolved referent; when the
-  // store cannot be read every hint's citation, summary and band are unknown,
-  // so the filtered read fails closed instead of reporting an empty page as
-  // "no wakes for this job", "no wakes mentioning this" or "no urgent wakes".
-  if ((job !== undefined || containsNeedle !== undefined || priority !== undefined) &&
-      scan !== undefined && scan.source === 'unavailable') {
-    return { status: 'unavailable', reason: 'Bus store is not readable.' };
-  }
-  const contexts = claimHolderWakeContexts(wakes.wakes, options, scan);
-  const resolved = wakeMessageContexts(wakes.wakes, scan, read.registry, options, job);
-  const shown = wakes.wakes.filter(row => {
-    if (job !== undefined) {
-      const holder = contexts.get(row.id);
-      const jobMatch = typeof holder === 'object' ? holder.jobId === job : resolved.jobMatches.has(row.id);
-      if (!jobMatch) return false;
-    }
-    if (containsNeedle !== undefined &&
-        !wakeHintContainsMatch(contexts.get(row.id), resolved.contexts.get(row.id), containsNeedle)) {
-      return false;
-    }
-    if (priority !== undefined) {
-      // The band is the resolved referent's own priority — the live message a
-      // bus.send hint points at, or the citing work.status receipt behind a
-      // claim-holder wh-… hint. A hint whose referent is unresolved or
-      // unknown names no provable band and never matches.
-      const holder = contexts.get(row.id);
-      const message = resolved.contexts.get(row.id);
-      const band = typeof holder === 'object' ? holder.priority
-        : message?.status === 'resolved' ? message.priority : undefined;
-      if (band !== priority) return false;
-    }
-    return true;
-  });
+      : wake.to === ref), parsed);
+  if (page.status !== 'ok') return page;
   return { status: 'ok', agent: target?.identity.handle ?? ref,
     scope: target === undefined ? 'label' : 'identity',
-    wakes: shown.map(row => {
-      const claimHolder = contexts.get(row.id);
-      const message = resolved.contexts.get(row.id);
-      return { ...row,
-        ...(claimHolder === undefined ? {} : { claimHolder }),
-        ...(message === undefined ? {} : { message }) };
-    }),
-    matched: job === undefined && containsNeedle === undefined && priority === undefined ? wakes.matched ?? 0 : shown.length,
-    truncated: wakes.truncated ?? false };
+    wakes: page.wakes, matched: page.matched, truncated: page.truncated };
+}
+
+/**
+ * Every wake hint the bounded queue tail holds, fleet-wide — the read a
+ * leader or comms pass runs once instead of `readAgentWakes` per
+ * registered identity (and once more per bare coordination label the
+ * claim-holder fan-out writes, which no identity ref can name). Rows
+ * carry the same `claimHolder`/`message` resolution `readAgentWakes`
+ * annotates, so fleet triage costs the same zero extra reads; the
+ * `since`/`job`/`from`/`excludeFrom`/`contains`/`priority` filters
+ * behave identically, including the fail-closed `unavailable` when a
+ * `job`/`contains`/`priority` verdict needs a bus store that cannot be
+ * read. An unreadable registry or queue is `unavailable`, never an
+ * empty page passed off as "no wakes".
+ */
+export function readAllWakes(sinceAt: number | undefined, options: UnifiedBusOptions = {},
+  filter: WakeFilter = {}): AllWakesPage {
+  const parsed = parseWakeFilter(filter);
+  if (!parsed.ok) return { status: 'invalid', reason: parsed.reason };
+  const read = readAgentRegistry(options);
+  if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
+  const fromMatch = parsed.from === undefined ? undefined
+    : agentRefAddressMatcher(parsed.from, read.registry, labelIdentityOf(read.registry));
+  const excludeFromMatch = parsed.excludeFrom === undefined ? undefined
+    : agentRefAddressMatcher(parsed.excludeFrom, read.registry, labelIdentityOf(read.registry));
+  const page = readWakeRows(sinceAt, options, read.registry, wake =>
+    (fromMatch === undefined || fromMatch(wake.from)) &&
+    (excludeFromMatch === undefined || !excludeFromMatch(wake.from)), parsed);
+  if (page.status !== 'ok') return page;
+  return { status: 'ok', scope: 'fleet', wakes: page.wakes, matched: page.matched, truncated: page.truncated };
 }
 
 /**

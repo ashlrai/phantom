@@ -459,11 +459,16 @@ feed's own `refused`/`unavailable` state) without a `show` per item; the
 compact `job=<id>:<state>` marker rides inside the frame's bracket and on
 the human line the same way `held` does, and `work mine`'s inbox section
 carries the same field.
-`phm agents bus wakes <agent> [--since <15m|2h|1d|ISO>] [--job <id>]
+`phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--job <id>]
 [--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
 [--contains <text>]` lists wake
 hints for the agent and its
-channels. `--since` keeps only hints after the cutoff — the same `phm
+channels. `--all` drops the addressee scope entirely — every hint in the
+bounded queue tail, registered identities' and bare coordination or
+routing labels' alike, each row's own `to` naming its addressee — so a
+leader or comms pass sees who has pending hints in one read under
+`scope: 'fleet'` instead of one `wakes` call per identity; it takes no
+agent operand and the same filters apply. `--since` keeps only hints after the cutoff — the same `phm
 messages` grammar the inbox and channel read take, resolved to epoch ms —
 so a wake-driven agent reads just the hints newer than its last check.
 `--from` keeps only hints whose recorded sender label matches one agent —
@@ -528,10 +533,12 @@ same `held`/`job` evidence an inbox row carries; `unresolved` when the store
 was read and holds no live envelope with that id; `unknown` when the store
 cannot be read. Triage no longer costs one `agents bus show` per hint.
 `fleet_agent_wakes` (the isolated fleet MCP tool) serves the same read with
-the same dimensions as arguments — `agent` required, `since`/`job`/`from`/
+the same dimensions as arguments — `agent` optional (omitted, the
+fleet-wide `--all` read under `scope: 'fleet'`), `since`/`job`/`from`/
 `excludeFrom`/`priority`/`contains` the same filters — under the identical
-`readAgentWakes` validation, so an MCP-connected agent reads its wake
-hints, claim-holder citations and resolved referents without shelling out
+`readAgentWakes`/`readAllWakes` validation, so an MCP-connected agent reads its wake
+hints, claim-holder citations and resolved referents — or the whole
+fleet's pending hints in one call — without shelling out
 to `phm`; it accepts no caller root or path and passes a refused or
 unavailable page through untouched.
 
