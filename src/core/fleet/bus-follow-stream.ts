@@ -4,7 +4,7 @@ import { isAbsolute } from 'node:path';
 import { BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxPage } from './bus-inbox.js';
 import { BUS_PRIORITIES, BUS_PROTOCOL_KINDS, isTopicPattern, protocolOf, topicMatches,
   type BusEnvelope, type BusPriority, type BusProtocolKind } from './bus-envelope.js';
-import { agentPendingAddressMatcher, agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
+import { agentChannelNameSchema, agentPendingAddressMatcher, agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
 import { busBodyJobMatch, busReadContains, busReadContainsMatch } from '../agents/bus-unified.js';
 import { busBodyThread } from '../agents/bus-v2-schema.js';
 
@@ -33,6 +33,18 @@ export interface BusFollowRequest {
    * keep exact-label matching, so unknown identity state never widens the
    * stream. Filtering is not authentication. */
   to?: string;
+  /** Optional channel filter: keeps only envelopes addressed to
+   * `group:<channel>:*` — the room's whole traffic under every topic, the
+   * same raw `to`-prefix rule `phm messages --channel`, `agents bus wakes
+   * --channel`, `channel read` and the work feed's `--channel` apply, so
+   * one room's stream is a single flag instead
+   * of one `--to group:<channel>:<topic>` per topic. The value is the strict
+   * channel-name grammar; matching is a raw prefix on the routing label, so
+   * it needs no registry and never widens on unknown state — the addressed
+   * `agents bus inbox --channel` resolves the same prefix only across
+   * channels the agent belongs to. Checkpoints
+   * still advance past filtered rows exactly like every other filter. */
+  channel?: string;
   /** Optional job filter: the same `busBodyJobMatch` citation rule
    * `agents bus inbox --job` applies — a `work.post`/`work.status`/
    * `work.result`/`wake` body declaring the `jobId`, a `worker-handoff`
@@ -115,6 +127,7 @@ export function validBusFollowRequest(request: BusFollowRequest): boolean {
   return Number.isSafeInteger(request.after) && request.after >= 0 &&
     Number.isSafeInteger(request.durationMs) && request.durationMs >= 1 && request.durationMs <= BUS_FOLLOW_MAX_DURATION_MS &&
     (request.to === undefined || label(request.to)) &&
+    (request.channel === undefined || agentChannelNameSchema.safeParse(request.channel).success) &&
     (request.job === undefined || label(request.job)) &&
     (request.from === undefined || label(request.from)) &&
     (request.excludeFrom === undefined || label(request.excludeFrom)) &&
@@ -197,6 +210,7 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
   const registryRead = readAgentRegistry({ root: request.root });
   const registry = registryRead.status === 'ok' ? registryRead.registry : undefined;
   const addressedTo = request.to === undefined ? () => true : agentPendingAddressMatcher(request.to, registry);
+  const channelPrefix = request.channel === undefined ? undefined : `group:${request.channel}:`;
   const fromMatch = request.from === undefined ? undefined : agentRefAddressMatcher(request.from, registry);
   const excludeFromMatch = request.excludeFrom === undefined ? undefined : agentRefAddressMatcher(request.excludeFrom, registry);
   // The request passed validBusFollowRequest, so the needle is normalized text or absent.
@@ -218,6 +232,7 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
       let accepted = true;
       for (const row of page.messages) {
         if (!addressedTo(row.envelope.to, row.envelope.from)) continue;
+        if (channelPrefix !== undefined && !row.envelope.to.startsWith(channelPrefix)) continue;
         if (request.id !== undefined && row.envelope.id !== request.id) continue;
         if (request.inReplyTo !== undefined) {
           const body = row.envelope.body;

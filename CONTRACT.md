@@ -3604,8 +3604,14 @@ applies the same narrowing the bus page reads share, so the stream and
 `comms bus read|watch`/`fleet_bus_inbox` can never disagree about what a
 filter keeps: besides the routing, job, priority, thread, since and
 contains dimensions above it also takes `id`/`inReplyTo` — the exact
-envelope-id and own-property reply-correlation matches — and `kind`/`topic` —
-the protocol-v1 `protocolOf(body)?.kind` and `topicMatches` rules — each
+envelope-id and own-property reply-correlation matches — `kind`/`topic` —
+the protocol-v1 `protocolOf(body)?.kind` and `topicMatches` rules — and
+`channel`, the raw `group:<channel>:` `to`-prefix the unaddressed bus reads
+share (`comms bus read|watch --channel`, `fleet bus-follow --channel`,
+`fleet_bus_inbox`'s `channel`, `wakes --channel`, `phm messages --channel`,
+the work feed's `--channel`; the addressed `agents bus inbox --channel`
+resolves the same prefix only across the agent's member channels), strict
+channel-name grammar with no registry dependence — each
 skipping non-matching rows while checkpoints still advance past them.
 Claim tokens and `work.result`
 queueId/receiptId never appear in a summary.

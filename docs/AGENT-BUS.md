@@ -1563,7 +1563,20 @@ inclusive `receivedAt >= since` match `agents bus inbox --since`,
 `channel read --since`, `wakes --since` and `phm messages --since` apply,
 resolved once when the read starts; a `--checkpoint` consumer binds the raw
 `--since` value into its filter identity, so a relative window keeps
-resuming while an absolute change fails closed. `--contains <text>`
+resuming while an absolute change fails closed. `--channel <name>` narrows
+`comms bus read|watch`, `fleet bus-follow` and `fleet_bus_inbox`'s `channel`
+to envelopes addressed to `group:<name>:*` — the room's whole traffic under
+every topic, the same raw `to`-prefix rule `channel read`, `wakes --channel`,
+`phm messages --channel` and the work feed's `--channel` apply (the addressed
+`agents bus inbox --channel` resolves the same prefix only across channels
+the agent belongs to),
+decided on the `to` label with no registry dependence so unknown channel
+state never widens a read; the value takes the strict channel-name grammar,
+the filter composes conjunctively with every other read filter, filtered
+rows still advance `bus-follow` checkpoints and `comms bus` page cursors
+exactly like every other filter, and a `comms bus --checkpoint` consumer
+binds the `--channel` value into its filter identity, so a room change
+fails closed. `--contains <text>`
 narrows `comms bus read|watch` and `fleet bus-follow` to envelopes whose
 scrubbed one-line summary carries the needle — the same
 `busReadContainsMatch` rule `agents bus inbox --contains`,
