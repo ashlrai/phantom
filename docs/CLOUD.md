@@ -1266,7 +1266,27 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   unresolvable notes emit nothing, a withheld projection (a degraded
   or truncated runs log, degraded trajectory sources) or a failed
   knowledge read emits nothing, and another repository emits nothing
-  since the ledger describes this install's injection machinery.
+  since the ledger describes this install's injection machinery —
+  and the landed-close attempt journal's recurring adverse cells, the
+  {at, pr, head, outcome, reason?} rows `ashlr fleet landed-close
+  --apply` appends to <runs>/queue/landed-closes.jsonl for each
+  attempted close of a DIRTY bridge PR whose changed paths already
+  match master, fed every applied self-tick by step 14's landed-sweep
+  (landedCloseBacklogItems). Until now the ledger's only readers were
+  the Verse Live home card — a last-256-KiB/24-hour view — and the
+  self-tick step's aggregate closed=/planned= counts, so recurring
+  per-PR `gh pr close` failures (the run stops at the first failure,
+  leaving the PR at the head of every later plan), 'head-moved' skips
+  (the PR's head or state keeps changing between the dirty-landed
+  report and the close re-read — churn the sweeper re-plans every
+  tick), 'view-failed' skips recurring across PRs (the gh read path
+  degraded while the step still reports success, since skips never
+  fail the sweep) and skipped rows whose reason sits outside the
+  writer's {view-failed, head-moved} vocabulary never became work. A
+  cell emits only at the recurring bars of three adverse rows across
+  two distinct UTC days inside the 7-day window, truncated tails are
+  stated as lower bounds, and items emit only for the fleet's own
+  repository since the journal carries no repo column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -1277,7 +1297,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
   catalog-refresh, mcp-gateway, routines, rate-limit, queue-visit,
-  devin-review, custody, launch-cost and knowledge-outcome items carry priority 3;
+  devin-review, custody, launch-cost, knowledge-outcome and landed-close items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
