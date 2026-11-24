@@ -811,7 +811,27 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   as no evidence rather than folding partial rows, unqualified
   outcome labels never guess, and rows emit only for the fleet's own
   repository since every judgeProposal call site is this install's
-  merge path.
+  merge path,
+  and the fleet host disk sample files' recurring freeze-line evidence,
+  the {at, free_gb} rows the self-tick appends to
+  `queue/host-disk-samples.json` under the fleet runs directory (one
+  reading per 5 minutes, 48 hours kept) and the contrib/mac
+  disk-growth.py sampler keeps in `queue/disk-growth-history.json`
+  (otherwise only visible through `phm host disk`, `phm fleet
+  vitals`' disk section, `phm host top`'s disk trend, the hourly
+  digest's disk_low blocker and the Ideas disk-trend signal — reports
+  and a transient warning someone had to see, so a host whose disk
+  kept trending into the lane-freeze line never became work). Each
+  judged hour's closing verdict is the same diskBurn/diskLowLine
+  computation `phm host disk` runs against the freeze line
+  `compact.lanes.raise_freeze_below_gb`; an axis becomes an item only
+  while its verdict recurs in at least six distinct judged hour
+  buckets spanning two UTC days inside the 7-day window — below the
+  freeze line, or falling with under 24 hours of runway — a missing,
+  degraded or invalid sample file degrades only its own coverage,
+  malformed rows drop like the writer's contract, and rows emit only
+  for the fleet's own repository since the samples describe this
+  install's host.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -819,7 +839,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
   reward, job-control, usage-gap, runtime-journal, generator-yield,
   incident-gate, jev-decisions, worktree-reap, gap-proposal,
-  recut-loop and judge-verdicts items carry priority 3;
+  recut-loop, judge-verdicts and disk-pressure items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -861,7 +881,14 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   retune-the-unmeasured-guard-constants framing for withheld raises —
   with the same owner-side no-change escape — and emit only for the
   fleet's own repository since the evidence describes this install's
-  host and fleet machinery. Fleet-controller items name the controller
+  host and fleet machinery. Disk-pressure items name the two sample
+  files, `phm host disk`, the digest's disk_low warning and the
+  worktree/reap surfaces, keep the
+  find-what-is-consuming-the-disk framing for below-freeze hours and
+  the find-the-sustained-burn framing for runway hours — with the same
+  owner-side no-change escape — and emit only for the fleet's own
+  repository since the samples describe this install's host.
+  Fleet-controller items name the controller
   ledger, `phm fleet admission --details` and the pinned
   contrib/mac machinery boundary, keep the find-why-the-controller-keeps-
   doing-this framing per cell — dead readings, mis-tuned or mis-firing

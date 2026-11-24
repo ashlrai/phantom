@@ -98,6 +98,18 @@
  *     measured operating point — becomes work instead of sitting in
  *     `phm fleet vitals`' swapout_rate section, a report someone had
  *     to run;
+ *   - the host disk sample files' recurring freeze-line evidence: the
+ *     {at, free_gb} rows the self-tick appends to
+ *     queue/host-disk-samples.json and the contrib sampler keeps in
+ *     queue/disk-growth-history.json, folded per hour through the same
+ *     diskBurn/diskLowLine verdicts `phm host disk` and the digest's
+ *     disk_low blocker apply — recurring hour buckets closing below
+ *     compact.lanes.raise_freeze_below_gb and recurring hour buckets
+ *     closing on the under-24-hours runway condition
+ *     (diskBacklogItems below), so a host whose disk keeps trending
+ *     into the lane-freeze line becomes work instead of sitting in
+ *     `phm host disk`, `phm fleet vitals` and a transient digest
+ *     warning, reports someone had to run;
  *   - the fleet-controller ledger's recurring control evidence: the
  *     per-tick `fleet-controller.ledger.v1` rows dispatchd appends to
  *     metrics/fleet-controller.jsonl — recurring fail-closed readings,
@@ -395,6 +407,7 @@ import { postMergeBacklogItems } from './postmerge-backlog.js';
 import { ciRerunBacklogItems } from './ci-rerun-backlog.js';
 import { lostLaunchBacklogItems } from './lost-launch-backlog.js';
 import { memoryBacklogItems } from './memory-backlog.js';
+import { diskBacklogItems } from './disk-backlog.js';
 import { controllerBacklogItems } from './controller-backlog.js';
 import { skillOutcomeBacklogItems } from './skill-outcome-backlog.js';
 import { precheckSkipBacklogItems } from './precheck-skip-backlog.js';
@@ -597,6 +610,21 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the writer's own row validation; an item emits only at the recurring
   // bar inside the window and only for the fleet's own repository.
   items.push(...await memoryBacklogItems({ repo }));
+
+  // Host disk samples: the self-tick's per-5-minute free-disk readings
+  // and the contrib sampler's history, folded through the same
+  // diskBurn/diskLowLine verdicts `phm host disk` reports — recurring
+  // hour buckets closing below the lane-freeze line and recurring
+  // hour buckets closing on the digest's disk_low runway condition —
+  // become backlog items too. Until now they only ever reached
+  // `phm host disk`, `phm fleet vitals`' disk section, the digest's
+  // disk_low blocker and the Ideas disk-trend signal — reports and a
+  // transient warning someone had to see — so a host whose disk kept
+  // trending into the freeze line never became work. Same bounded
+  // whole-file reads and the production verdicts; an item emits only
+  // at the recurring bar inside the window and only for the fleet's
+  // own repository.
+  items.push(...await diskBacklogItems({ repo }));
 
   // Fleet-controller ledger: the dispatcher's own per-tick control
   // record — recurring fail-closed readings, applied shed levels and
