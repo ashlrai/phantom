@@ -858,7 +858,36 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   tails are stated as lower bounds, malformed lines and off-contract
   rows drop like the writer's own contract, and rows emit only for
   the fleet's own repository since the journal carries no repository
-  column — every pass scans this install's connected Devin org.
+  column — every pass scans this install's connected Devin org,
+  and the host-load history journal's recurring blocked-launch
+  evidence, the `host.load.history.v1` {at, load1, hostMax,
+  contributors:[{name, sharePercent}]} rows `takeLoadSnapshot` in
+  `src/core/fleet/load-history.ts` appends to
+  `queue/host-load-history.jsonl` under the fleet runs directory —
+  at most one per ten minutes and only while the dispatcher's
+  queue/admission-ctl.json reports over_host blocking, so every
+  recorded row is a blocked moment by construction (otherwise only
+  visible through `phm host load --history`'s summarizeLoadHistory
+  fold, the pulse and the hourly digest's blockedHourLine warning —
+  which prints only while the last hour tops
+  BLOCKED_LINE_OVER_MINUTES — and the contributor cross-references
+  inside the sibling memory- and controller-pressure prompts, so a
+  host whose launches kept being held for load never became work).
+  The fold is summarizeLoadHistory itself, so an hour bucket's
+  blockedMinutes and a contributor's sharePercent mean exactly what
+  the report prints; an item emits only while at least six distinct
+  hour buckets each recorded at least BLOCKED_LINE_OVER_MINUTES
+  blocked minutes across two UTC days inside the 7-day window — the
+  same worth-saying line the digest applies — and a second item
+  refines that claim only while the window's top contributor is
+  fleet-side machinery ('fleet jobs' or 'local model server', the
+  two labels contributorsOf attributes to this install) holding at
+  least half of blocked-time CPU share, since an owner-side dominant
+  app has no repo-side fix, a missing or unreadable journal emits
+  nothing, truncated tails are stated as lower bounds, malformed
+  lines drop like the writer's contract, and rows emit only for the
+  fleet's own repository since the journal describes this install's
+  host and carries no repository column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -866,8 +895,8 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
   reward, job-control, usage-gap, runtime-journal, generator-yield,
   incident-gate, jev-decisions, worktree-reap, gap-proposal,
-  recut-loop, judge-verdicts, disk-pressure and devin-autoland items
-  carry priority 3;
+  recut-loop, judge-verdicts, disk-pressure, devin-autoland and
+  host-load items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -1056,7 +1085,16 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   owner-side no-change escape for transient outages, deliberate pause
   or key scope only Mason can change, and emit only for the fleet's
   own repository since the journal records this install's passes and
-  carries no repository column. They
+  carries no repository column. Host-load items name the history
+  journal, `phm host load --history`, the digest and pulse warnings
+  and the takeLoadSnapshot writer in src/core/fleet/load-history.ts,
+  keep the find-what-is-loading-the-host framing — recurring fleet
+  jobs or model-server dominance meaning this fleet's own parallelism,
+  worker footprints or model-server concurrency versus owner-side
+  apps and pinned ops machinery — with the same owner-side no-change
+  escape for a rolled-forward window or pinned caps, and emit only
+  for the fleet's own repository since the journal records this
+  install's host and carries no repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
