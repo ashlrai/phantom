@@ -181,7 +181,10 @@ describe('native MCP tool inventory', () => {
     expect(observeBytes).toBeLessThanOrEqual(2500);
     const ownerComms = addedTools.filter(tool => tool.name === 'ashlr_comms_thread' || tool.name === 'ashlr_comms_send_owner');
     const ownerCommsBytes = ownerComms.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
-    expect(ownerCommsBytes).toBeLessThanOrEqual(1600);
+    // ashlr_comms_thread measured 1,490 bytes and ashlr_comms_send_owner 348
+    // with their commas after the undelivered slice; the allowance leaves room
+    // for description edits only.
+    expect(ownerCommsBytes).toBeLessThanOrEqual(1900);
     const agentComms = addedTools.filter(tool => tool.name.startsWith('ashlr_comms_agent_'));
     const agentCommsBytes = agentComms.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(agentCommsBytes).toBeLessThanOrEqual(767);

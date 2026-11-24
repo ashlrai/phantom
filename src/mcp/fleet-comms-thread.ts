@@ -6,11 +6,14 @@
  * and `fleet_comms_status` reports counts and adapter states; neither
  * answers "what did the owner last say and what did we reply" — this is
  * the ordered read behind both: every live thread message newest-last with
- * the per-channel delivery receipts joined onto outbound rows and the
- * `awaitingReply` mark on inbound rows no recorded reply cites.
+ * the per-channel delivery receipts joined onto outbound rows, the
+ * `awaitingReply` mark on inbound rows no recorded reply cites and the
+ * `undeliveredReplies` mark on outbound replies a fanout destination
+ * cannot confirm.
  *
- * `channel`, `direction`, `since`, `beforeAt`, `contains`, `replyTo` and
- * `awaiting` narrow the same view the CLI flags and the native tool take —
+ * `channel`, `direction`, `since`, `beforeAt`, `contains`, `replyTo`,
+ * `awaiting` and `undelivered` narrow the same view the CLI flags and the
+ * native tool take —
  * one channel's lines, one direction's lines, a recorded-time window
  * (`since` the inclusive floor, `beforeAt` the exclusive ceiling — the
  * `[since, before)` bound every other comms read applies), a
@@ -18,12 +21,15 @@
  * iMessage bodies are redacted on the bus mirror, so this private read is
  * the one place they can be found), the one-key exchange `replyTo`
  * names — the message carrying that idempotency key plus every reply
- * citing it, the same key `send-owner --reply-to` takes — or `awaiting`,
+ * citing it, the same key `send-owner --reply-to` takes — `awaiting`,
  * the live-window slice keeping only the inbound messages the
- * awaiting-reply mark names. `limit` caps the
+ * awaiting-reply mark names, or `undelivered`, the live-window slice
+ * keeping only the outbound replies the `undeliveredReplies` mark names —
+ * the same set `readOwnerUndeliveredReplies` reports. `limit` caps the
  * newest messages kept (1–200, default 50). An unreadable thread keeps
  * `unavailable: true` and
- * `awaitingReply: null` — unknown stays unknown, never an empty list
+ * `awaitingReply: null`/`undeliveredReplies: null` — unknown stays unknown,
+ * never an empty list
  * passed off as fact.
  *
  * The owner config dir and runs dir stay server-owned —
@@ -49,7 +55,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 export const FLEET_COMMS_THREAD_LIMIT_DEFAULT = 50;
 export const FLEET_COMMS_THREAD_LIMIT_MAX = 200;
 
-const THREAD_KEYS = new Set(['limit', 'channel', 'direction', 'since', 'beforeAt', 'contains', 'replyTo', 'awaiting']);
+const THREAD_KEYS = new Set(['limit', 'channel', 'direction', 'since', 'beforeAt', 'contains', 'replyTo', 'awaiting', 'undelivered']);
 
 export interface FleetCommsThreadArgs {
   /** Newest messages kept after filtering; the read itself caps at 200. */
@@ -96,6 +102,10 @@ export function parseFleetCommsThreadArgs(args: Record<string, unknown>): FleetC
     if (args.awaiting !== true && args.awaiting !== false) return null;
     if (args.awaiting === true) filter.awaiting = true;
   }
+  if (args.undelivered !== undefined) {
+    if (args.undelivered !== true && args.undelivered !== false) return null;
+    if (args.undelivered === true) filter.undelivered = true;
+  }
   return { limit, ...(Object.keys(filter).length === 0 ? {} : { filter }) };
 }
 
@@ -130,10 +140,12 @@ function defaultCommsThreadOptions(): OwnerThreadOptions {
 /**
  * One owner-thread slice through the shared `readOwnerThread` read — the
  * identical projection `phm comms thread --json` and `ashlr_comms_thread`
- * run, so message order, receipt joins, the awaiting-reply mark and the
+ * run, so message order, receipt joins, the awaiting-reply and
+ * undelivered-reply marks and the
  * unreadable-thread verdict can never diverge between surfaces. The
  * projection's own fields stay beside the envelope's `generatedAt`; an
  * unreadable thread reports `unavailable: true` with `awaitingReply: null`
+ * and `undeliveredReplies: null`
  * from the read itself, and a throwing options build reports `unavailable`
  * — never an invented empty or healthy thread.
  */

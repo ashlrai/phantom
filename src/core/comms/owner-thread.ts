@@ -627,6 +627,19 @@ export interface OwnerThreadReadFilter {
    * `readOwnerThreadHistory` answers an awaiting page honestly empty.
    */
   awaiting?: boolean;
+  /**
+   * Keep only live outbound recorded replies (`replyTo` set, `fanout`
+   * declared) with at least one fanout destination delivery evidence cannot
+   * confirm — the same set `readOwnerUndeliveredReplies` reports and this
+   * read's `undeliveredReplies` mark lists, applied as a slice so "which
+   * replies still have not landed on every channel" is one filtered read
+   * composing with every other dimension. It is inherently outbound-only
+   * and live-window-only: archived messages are outside the undelivered
+   * window by contract, so `readOwnerThreadHistory` answers an undelivered
+   * page honestly empty, and it is disjoint with `awaiting` — both
+   * together is an honest empty slice.
+   */
+  undelivered?: boolean;
 }
 
 /**
@@ -678,14 +691,18 @@ export function ownerThreadViewPredicate(filter?: OwnerThreadReadFilter): (messa
  * the message carrying that `idempotencyKey` plus every reply citing it —
  * across every channel the reply fanned out to. `awaiting` keeps only the
  * live inbound messages the awaiting-reply mark names — the same set
- * `awaitingReply` reports, sliced into the view itself. An unreadable thread still
+ * `awaitingReply` reports, sliced into the view itself. `undelivered` keeps
+ * only the live outbound replies the `undeliveredReplies` mark names — the
+ * same set `readOwnerUndeliveredReplies` reports, sliced into the view
+ * itself. An unreadable thread still
  * reports `unavailable` with
- * `awaitingReply: null` — unknown stays unknown, never an empty filtered
+ * `awaitingReply: null` and `undeliveredReplies: null` — unknown stays
+ * unknown, never an empty filtered
  * list passed off as fact.
  */
 export function readOwnerThread(options: OwnerThreadOptions, limit = 200, filter?: OwnerThreadReadFilter):
-  | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: OwnerThreadMessage[]; receipts: OwnerThreadReceipts; awaitingReply: string[] }
-  | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: []; receipts: OwnerThreadReceipts; awaitingReply: null; unavailable: true } {
+  | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: OwnerThreadMessage[]; receipts: OwnerThreadReceipts; awaitingReply: string[]; undeliveredReplies: string[] }
+  | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: []; receipts: OwnerThreadReceipts; awaitingReply: null; undeliveredReplies: null; unavailable: true } {
   const cap = Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 200) : 200;
   const inView = ownerThreadViewPredicate(filter);
   try {
@@ -693,16 +710,28 @@ export function readOwnerThread(options: OwnerThreadOptions, limit = 200, filter
     const awaiting = filter?.awaiting === true
       ? new Set(awaitingReplyMessages(state).map(message => message.id))
       : undefined;
-    const messages = state.messages
-      .filter(message => inView(message) && (awaiting === undefined || awaiting.has(message.id)))
-      .slice(-cap);
+    // The undelivered mark is a standing read field like awaitingReply, so
+    // the reply scan runs on every view — the same bounded receipt join
+    // readOwnerCommsStatus pays — never only when the slice asks for it.
+    const undelivered = new Set(undeliveredReplyItems(state, options.runsDir).map(item => item.id));
+    // Marks follow the same effective slice as the messages — the shared
+    // predicate plus whichever live-window slices are set — so a filtered
+    // view never reports marks for rows it hid: an outbound-only
+    // `undelivered` slice reports no awaiting inbound, an inbound-only
+    // `awaiting` slice reports no undelivered replies.
+    const inSlice = (message: OwnerThreadMessage) =>
+      inView(message)
+      && (awaiting === undefined || awaiting.has(message.id))
+      && (filter?.undelivered !== true || undelivered.has(message.id));
+    const messages = state.messages.filter(inSlice).slice(-cap);
     return {
       schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages,
       receipts: readReceipts(options.runsDir, messages.filter(m => m.direction === 'outbound').map(m => m.id)),
-      awaitingReply: awaitingReplyMessages(state).filter(inView).map(message => message.id),
+      awaitingReply: awaitingReplyMessages(state).filter(inSlice).map(message => message.id),
+      undeliveredReplies: state.messages.filter(message => undelivered.has(message.id) && inSlice(message)).map(message => message.id),
     };
   } catch {
-    return { schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages: [], receipts: {}, awaitingReply: null, unavailable: true };
+    return { schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages: [], receipts: {}, awaitingReply: null, undeliveredReplies: null, unavailable: true };
   }
 }
 

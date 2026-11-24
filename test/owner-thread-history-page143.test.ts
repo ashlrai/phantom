@@ -69,6 +69,14 @@ it('answers an awaiting page honestly empty — the mark is live-window only', (
   expect(result).toMatchObject({ archives: 1, skipped: 0 });
 });
 
+it('answers an undelivered page honestly empty — the mark is live-window only', () => {
+  const f = fixture();
+  archive(f.dir, 1, 2, [message(1), message(2)]);
+  const result = readOwnerThreadHistory(f, { undelivered: true });
+  expect(result.messages).toEqual([]);
+  expect(result).toMatchObject({ archives: 1, skipped: 0 });
+});
+
 it('keeps the total byte budget when a page is not full', () => {
   const f = fixture();
   for (let seq = 1; seq <= 5; seq++) archive(f.dir, seq, seq, [message(seq, 'x'.repeat(1_700_000))]);

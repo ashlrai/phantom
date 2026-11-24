@@ -700,6 +700,74 @@ describe('owner thread', () => {
     expect(view.messages.map(message => [message.seq, message.direction])).toEqual([[3, 'inbound']]);
     expect(view.awaitingReply).toEqual(['m3']);
   });
+
+  it('filters the thread read by undelivered and marks unconfirmed replies', async () => {
+    const { options } = fixture();
+    options.transports!.telegram = {
+      async pull() { return []; },
+      async deliver() { return { status: 'refused' as const, reason: 'fixture refusal' }; },
+    };
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'tg question', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
+    await acceptOwnerInbound({ channel: 'email', senderId: 'email:owner@example.com', text: 'em ping', idempotencyKey: 'email-msg-0001', at: 1_700_000_100_000 }, options);
+    // m3 fans out to telegram+desktop: telegram refuses, desktop confirms — the reply stays unconfirmed on one leg.
+    await sendOwnerReply({ text: 'answer one', replyTo: 'telegram-msg-1', idempotencyKey: 'reply-owner-01' }, options);
+    // m4 answers the email inbound and every leg confirms — a delivered reply stays out of the slice.
+    await sendOwnerReply({ text: 'answer two', replyTo: 'email-msg-0001', idempotencyKey: 'reply-owner-02' }, options);
+    await acceptOwnerInbound({ channel: 'desktop', senderId: 'local-owner', text: 'desk note', idempotencyKey: 'desktop-msg-001', at: 1_700_000_200_000 }, options);
+    // m1 telegram inbound answered, m2 email inbound answered, m3 undelivered reply, m4 delivered reply, m5 desktop inbound awaiting.
+    const view = readOwnerThread(options);
+    expect(view.undeliveredReplies).toEqual(['m3']);
+    expect(view.awaitingReply).toEqual(['m5']);
+    const undelivered = readOwnerThread(options, 200, { undelivered: true });
+    expect(undelivered.messages.map(message => message.seq)).toEqual([3]);
+    expect(undelivered.undeliveredReplies).toEqual(['m3']);
+    // The slice is outbound-only and composes with every other dimension; marks never name rows the slice hid.
+    expect(readOwnerThread(options, 200, { undelivered: true, direction: 'inbound' }).messages).toEqual([]);
+    expect(readOwnerThread(options, 200, { undelivered: true, direction: 'inbound' }).awaitingReply).toEqual([]);
+    expect(readOwnerThread(options, 200, { undelivered: true, channel: 'email' }).messages).toEqual([]);
+    expect(readOwnerThread(options, 200, { undelivered: true, channel: 'telegram' }).messages.map(message => message.seq)).toEqual([3]);
+    expect(readOwnerThread(options, 200, { undelivered: true, contains: 'answer one' }).messages.map(message => message.seq)).toEqual([3]);
+    expect(readOwnerThread(options, 200, { undelivered: true, contains: 'answer two' }).messages).toEqual([]);
+    // awaiting and undelivered are disjoint live-window slices — both together is an honest empty view.
+    const both = readOwnerThread(options, 200, { awaiting: true, undelivered: true });
+    expect(both.messages).toEqual([]);
+    expect(both.awaitingReply).toEqual([]);
+    expect(both.undeliveredReplies).toEqual([]);
+    // An awaiting slice reports no undelivered mark — the view holds no outbound rows.
+    const awaiting = readOwnerThread(options, 200, { awaiting: true });
+    expect(awaiting.messages.map(message => message.seq)).toEqual([5]);
+    expect(awaiting.undeliveredReplies).toEqual([]);
+    // The mark follows the shared predicate: a channel slice keeps only that channel's unconfirmed replies.
+    expect(readOwnerThread(options, 200, { channel: 'telegram' }).undeliveredReplies).toEqual(['m3']);
+    expect(readOwnerThread(options, 200, { channel: 'email' }).undeliveredReplies).toEqual([]);
+  });
+
+  it('serves undelivered on the thread CLI and marks unconfirmed replies', async () => {
+    const { options } = fixture();
+    options.transports!.telegram = {
+      async pull() { return []; },
+      async deliver() { return { status: 'refused' as const, reason: 'fixture refusal' }; },
+    };
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'tg question', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
+    await sendOwnerReply({ text: 'answer', idempotencyKey: 'reply-owner-01' }, options);
+    const lines: string[] = [];
+    const write = console.log;
+    console.log = (line?: unknown) => { lines.push(String(line)); };
+    try {
+      expect(await cmdCommsOwner(['thread', '--undelivered', '--json'], options)).toBe(0);
+    } finally { console.log = write; }
+    const view = JSON.parse(lines[0] ?? '{}') as { messages: Array<{ seq: number; direction: string }>; undeliveredReplies: string[] };
+    expect(view.messages.map(message => [message.seq, message.direction])).toEqual([[2, 'outbound']]);
+    expect(view.undeliveredReplies).toEqual(['m2']);
+    // The human read marks the unconfirmed reply beside its per-channel receipt states.
+    const human: string[] = [];
+    console.log = (line?: unknown) => { human.push(String(line)); };
+    try {
+      expect(await cmdCommsOwner(['thread'], options)).toBe(0);
+    } finally { console.log = write; }
+    expect(human.join('\n')).toContain('[undelivered]');
+    expect(human.join('\n')).toContain('telegram:failed');
+  });
 });
 
 function writeForgedHome(root: string, email: string, slackId: string, handle: string): void {
