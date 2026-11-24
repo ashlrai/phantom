@@ -3,15 +3,15 @@
  * readers behind `ashlr fleet recheck` — runtime identity, the claims ledger,
  * channel health and the work board — so a single answer can say which host is
  * answering, whether shared state is fresh, which bridge is missing and which
- * authorized task is running. No FleetClaim field in the claims ledger
- * identifies a work-board item: claim.id is a ledger uuid and claim.task is free
- * text, so ledgerClaim stays null and owner equality is never task identity.
- * VERIFIED for the task section now requires the claim-store binding
+ * authorized task is running. A live owner-held FleetClaim can bind an item
+ * through exactly one [board:<id>] token in claim.task (claim-board-ref.ts).
+ * Owner equality alone is never task identity. The task section also accepts
+ * the separately written claim-store binding
  * (recheck-coordination-bind.ts): the item's claimReceipt
  * `bus-claim:<id>:<cursor>:<receivedAt>` must match a message-origin
  * claim-store row keyed `queue:<id>` with sourceId `<id>:<cursor>:<receivedAt>`,
  * the same owner and a lease live at the verdict clock, written separately by
- * bus-work-claims when the claim was acquired. Without that binding the pick is
+ * bus-work-claims when the claim was acquired. Without either binding the pick is
  * reported UNKNOWN with the exact missing-association reason.
  *
  * Every reader is injected (defaults come from the modules themselves), each
@@ -83,6 +83,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
 import { listWorkBoard, type WorkBoardResult } from '../comms/work-board.js';
+import { parseBoardRef } from './claim-board-ref.js';
 import { readChannelHealth, type ChannelHealth, type ChannelHealthReport } from './channel-health.js';
 import { readFleetBoard, type FleetBoard, type FleetClaim } from './coordination.js';
 import { listCoordination } from '../agents/claim-store.js';
@@ -156,7 +157,7 @@ export interface FleetRecheckClaim {
   claimReceipt: string;
   asOf: string;
   source: string;
-  ledgerClaim: FleetClaim | null;
+  ledgerClaim: { id: string; repo: string; expiresAt: string } | null;
   coordinationClaim?: RecheckCoordinationClaim | null;
 }
 
@@ -306,10 +307,8 @@ async function readOwnersSnapshot(deps: SurfaceOwnerDeps): Promise<FleetRecheckO
   };
 }
 
-/** Read a single task that claims a host can verify a runtime, the channels
- * and work board. No FleetClaim field in the claims ledger identifies a
- * work-board item: claim.id is a ledger uuid and claim.task is free text, so
- * ledgerClaim stays null and owner equality is never task identity. */
+/** Read runtime, channels and work-board evidence. Task verification requires
+ * an explicit board-token or claim-store binding, never owner equality alone. */
 export function defaultFleetRecheckDeps(now: () => Date): Required<FleetRecheckDeps> {
   return {
     now,
@@ -675,11 +674,27 @@ function pickLiveWorker(
   };
 }
 
+function claimLiveAt(claim: FleetClaim, nowMs: number): boolean {
+  return Number.isFinite(claim.claimedAt) && Number.isFinite(claim.expiresAt)
+    && claim.claimedAt <= nowMs && claim.expiresAt > nowMs;
+}
+
 function liveClaimFor(ledger: FleetBoard, owner: string, nowMs: number): FleetClaim | undefined {
-  return ledger.claims.find(claim =>
-    claim.agent === owner
-    && Number.isFinite(claim.claimedAt) && Number.isFinite(claim.expiresAt)
-    && claim.claimedAt <= nowMs && claim.expiresAt > nowMs);
+  return ledger.claims.find(claim => claim.agent === owner && claimLiveAt(claim, nowMs));
+}
+
+/** Newest live token-bound claim, preferring the board owner. Other owners
+ * are returned only to explain why a token does not verify the task. */
+function boundClaimFor(board: FleetBoard, itemId: string, owner: string, nowMs: number): FleetClaim | undefined {
+  let mine: FleetClaim | undefined;
+  let other: FleetClaim | undefined;
+  for (const claim of board.claims) {
+    if (!claimLiveAt(claim, nowMs) || parseBoardRef(claim.task).itemId !== itemId) continue;
+    if (claim.agent === owner) {
+      if (mine === undefined || claim.claimedAt > mine.claimedAt) mine = claim;
+    } else if (other === undefined || claim.claimedAt > other.claimedAt) other = claim;
+  }
+  return mine ?? other;
 }
 
 function taskSection(
@@ -736,11 +751,12 @@ function taskSection(
     ? bindPickToCoordination(item, coordination.value, nowMs)
     : null;
   const bindings = new Map(qualified.map(item => [item, bindOf(item)] as const));
-  // Prefer an item whose claim-store row binds VERIFIED (RUNNING before
-  // ASSIGNED). Otherwise prefer a qualified item whose owner holds a live
-  // ledger claim as a weak liveness signal, then the plain newest-first pick;
-  // that fallback ordering never verifies.
-  const bound = qualified.filter(item => bindings.get(item)?.state === 'VERIFIED');
+  const tokenBindings = new Map(qualified.map(item => [item, ledgerBoard === undefined
+    ? undefined : boundClaimFor(ledgerBoard, item.id, item.owner, nowMs)] as const));
+  // Prefer either explicit binding (RUNNING before ASSIGNED), then owner-only
+  // liveness, then the newest item. Owner-only liveness never verifies.
+  const bound = qualified.filter(item => bindings.get(item)?.state === 'VERIFIED'
+    || tokenBindings.get(item)?.agent === item.owner);
   const matched = qualified.filter(item => liveFor(item.owner) !== undefined);
   const pick = bound.find(item => item.state === 'RUNNING') ?? bound[0]
     ?? matched.find(item => item.state === 'RUNNING') ?? matched[0]
@@ -786,17 +802,22 @@ function taskSection(
       : null;
     const withReason = (text: string): string[] =>
       coordinationReason === null ? [text] : [text, coordinationReason];
-    // The coordination ledger and the work board share no explicit identity
-    // field: FleetClaim {id, repo, task, agent, claimedAt, expiresAt} cannot be
-    // joined to a WorkBoardItem {id, owner, claimReceipt} — the receipt is a
-    // bus-work-claims coordinate, claim.task is free text, and claim.id is a
-    // ledger uuid. Until a producer contract names the association, owner
-    // equality proves nothing about this task, so the pick stays UNKNOWN with
-    // ledgerClaim null rather than verifying on an unrelated lease.
+    const claim = tokenBindings.get(pick);
+    if (claim !== undefined && claim.agent === pick.owner) {
+      section.state = 'VERIFIED';
+      section.task = {
+        ...base,
+        ledgerClaim: { id: claim.id, repo: claim.repo, expiresAt: new Date(claim.expiresAt).toISOString() },
+      };
+      section.missing = [];
+      return section;
+    }
     section.state = 'UNKNOWN';
     section.task = { ...base, ledgerClaim: null };
     section.missing = withReason(
-      `task: no coordination-claim field associates a claim with board item ${pick.id}; owner match is not task identity`,
+      claim === undefined
+        ? `task: no live claim by ${pick.owner} carries [board:${pick.id}]; owner match is not task identity`
+        : `task: [board:${pick.id}] claim held by ${claim.agent}, not board owner ${pick.owner}`,
     );
     return section;
   }

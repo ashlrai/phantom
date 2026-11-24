@@ -2,16 +2,114 @@ import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import './helpers/local-memory.js';
+import { localModelFit, memoryFit } from '../src/core/resources/local-memory-fit.js';
 import { cmdRoute } from '../src/cli/route.js';
 import { decide } from '../src/core/decide/decide.js';
 import { buildOpenAICompatibleClient } from '../src/core/run/provider-client.js';
 import { defaultRouteBackends, candidateDecision, type RouteBackend } from '../src/core/routing/decision-backends.js';
-import { enumerateRouteCandidates, loadRouteSources, modelPrior, rankRouteCandidates } from '../src/core/routing/decision-candidates.js';
+import { enumerateRouteCandidates, loadRouteSources, modelPrior, rankRouteCandidates, type RouteSources } from '../src/core/routing/decision-candidates.js';
 import { routeDecisionSchema, routeRequestSchema, type RouteRequest } from '../src/core/routing/decision-schema.js';
 import { decideRoute } from '../src/core/routing/decision.js';
+import { KNOWN_MODELS, modelModeTier } from '../src/core/run/model-catalog.js';
+import { resetLaneOrder } from '../src/core/routing/reset-pressure.js';
 
 vi.mock('../src/core/run/provider-client.js', () => ({ buildOpenAICompatibleClient: vi.fn() }));
 vi.mock('../src/core/decide/decide.js', () => ({ decide: vi.fn() }));
+
+describe('company-neutral mode tiers', () => {
+  const now = Date.parse('2026-11-17T12:00:00Z');
+  const at = (hours: number) => new Date(now + hours * 3600000).toISOString();
+  const request = (mode: string) => ({ task_class: 'bug-fix', repo: 'phantom', tier_hint: 'work', mode,
+    lane_candidates: ['seat', 'api', 'local', 'cloud'],
+    quota_state: { seat: 'available', api: 'available', local: 'available', cloud: 'available' },
+    machine_state: { admit: true, running_by_lane: { seat: 0, api: 0, local: 0, cloud: 0 } } });
+  const sources = () => ({
+    models: { seat: 'claude-opus-5-5', api: 'gpt-6.1-sol', local: 'custom-loopback', cloud: 'gpt-6-astra',
+      'mode.custom-loopback': 'normal' },
+    slots: Object.fromEntries(['seat', 'api', 'local', 'cloud'].map(lane => [lane, { target: 1, hard_cap: 1 }])),
+    admission: { admit: true },
+    capacity: { seat: { resetAt: at(1) as string | null, remainingPercent: 1, costPerMTok: 20 },
+      api: { resetAt: at(24) as string | null, remainingPercent: 100, costPerMTok: 4 },
+      local: { resetAt: null, remainingPercent: null, costPerMTok: 0 } },
+  });
+
+  it('classifies catalog models by capability/cost class independently of engine tier', () => {
+    const modes = Object.fromEntries(KNOWN_MODELS.map(m => [m.id, m.modeTier]));
+    expect(Object.values(modes).every(Boolean)).toBe(true);
+    expect(modes).toMatchObject({ 'claude:claude-opus-5-5': 'normal', 'codex:gpt-6.1-sol': 'normal',
+      'claude:claude-fable-5-2': 'ultra', 'codex:gpt-6-astra': 'ultra', 'local-coder:small': 'lite' });
+    expect(modelModeTier('local-coder:qwen2.5:72b')).toBe('lite');
+    expect(modelModeTier('prototype')).toBeNull();
+  });
+
+  it('spends the nearest reset before higher burn pace, even below the calendar margin', () => {
+    expect(resetLaneOrder([{ pool: 'later', resetAt: at(24), remainingPercent: 100 },
+      { pool: 'soon', resetAt: at(1), remainingPercent: 1 }], now)[0].pool).toBe('soon');
+  });
+
+  it('enforces reset, free, cheapest order without consulting a backend', async () => {
+    const backend = { name: 'local-fast' as const, ask: vi.fn().mockResolvedValue(null) };
+    const options = { nowMs: now, backends: [backend] };
+    const s = sources();
+    expect(await decideRoute(request('normal'), s, options)).toMatchObject({ lane: 'seat', mode_tier: 'normal',
+      requested_mode: 'normal', reason_codes: expect.arrayContaining(['mode-tier', 'reset-pressure']) });
+    s.capacity.seat.remainingPercent = 0;
+    s.capacity.api.remainingPercent = 0;
+    expect(await decideRoute(request('normal'), s, options)).toMatchObject({ lane: 'local', reason_codes: expect.arrayContaining(['free-capacity']) });
+    s.capacity.local.costPerMTok = 8;
+    s.capacity.api.remainingPercent = 50;
+    s.capacity.api.resetAt = at(-1);
+    expect(await decideRoute(request('normal'), s, options)).toMatchObject({ lane: 'local' });
+    s.capacity.api.resetAt = null;
+    expect(await decideRoute(request('normal'), s, options)).toMatchObject({ lane: 'api', reason_codes: expect.arrayContaining(['cheapest']) });
+    expect(backend.ask).not.toHaveBeenCalled();
+  });
+
+  it('rejects a legacy backend choice that would strand nearer-reset allowance', async () => {
+    const job = { ...request('normal'), mode: undefined };
+    const s = sources();
+    const distant = enumerateRouteCandidates(job, s).find(c => c.lane === 'api')!;
+    const backend = { name: 'local-fast' as const, ask: vi.fn().mockResolvedValue(candidateDecision(distant)) };
+    expect(await decideRoute(job, s, { nowMs: now, backends: [backend] })).toMatchObject({ lane: 'seat',
+      reason_codes: expect.arrayContaining(['schema-invalid', 'deterministic-fallback']) });
+  });
+
+  it('filters exhausted quota, held slots, stale/invalid readings and preserves explicit custom capability', async () => {
+    for (const change of [
+      (s: RouteSources) => { s.slots = { local: { target: 1, hard_cap: 1, held: true } }; },
+      (s: RouteSources) => { s.capacity = { local: { resetAt: at(-1), remainingPercent: 50 } }; },
+      (s: RouteSources) => { s.capacity = { local: { resetAt: null, remainingPercent: 50, costPerMTok: -1 } }; },
+    ]) {
+      const s = sources(); change(s);
+      const job = { ...request('normal'), lane_candidates: ['local'] };
+      expect(await decideRoute(job, s, { nowMs: now, backends: [] })).toMatchObject({ lane: null });
+    }
+    const job = { ...request('normal'), quota_state: {} };
+    expect(await decideRoute(job, sources(), { nowMs: now, backends: [] })).toMatchObject({ lane: null });
+    await expect(decideRoute(request('invalid'), sources(), { backends: [] })).rejects.toThrow();
+  });
+
+  it('never downgrades ultra or admits full or unknown-mode lanes', async () => {
+    const s = sources();
+    expect(await decideRoute(request('ultra'), s, { nowMs: now, backends: [] })).toMatchObject({ lane: 'cloud', mode_tier: 'ultra' });
+    s.slots.cloud.target = 0;
+    expect(await decideRoute(request('ultra'), s, { nowMs: now, backends: [] })).toMatchObject({ lane: null, mode_tier: null });
+    delete (s.models as Record<string, string>)['mode.custom-loopback'];
+    s.slots.seat.target = 0;
+    s.slots.api.target = 0;
+    expect(await decideRoute(request('normal'), s, { nowMs: now, backends: [] })).toMatchObject({ lane: null });
+  });
+
+  it('resolves fusion to the existing typed pairing with frontier judgment and a faster sidekick', async () => {
+    const backend = { name: 'local-fast' as const, ask: vi.fn() };
+    const result = await decideRoute(request('fusion'), sources(), { nowMs: now, backends: [backend] });
+    expect(result).toMatchObject({ schema: 'route.pairing.v1', mode_tier: 'fusion', advisory: true,
+      lead: { lane: 'cloud', mode_tier: 'ultra', stages: ['plan', 'verify'] },
+      sidekick: { lane: 'seat', mode_tier: 'normal', stages: ['implement'] } });
+    expect(backend.ask).not.toHaveBeenCalled();
+  });
+});
 
 const request: RouteRequest = {
   task_class: 'bug-fix', repo: 'phantom', tier_hint: 'work', lane_candidates: ['codex-personal', 'claude'],
@@ -24,6 +122,14 @@ const sources = () => ({
   admission: { admit: true },
 });
 const selected = () => candidateDecision(enumerateRouteCandidates(request, sources())[0]!);
+it('records why a local advisory candidate cannot fit before considering model output', async () => {
+  vi.mocked(localModelFit).mockReturnValue(memoryFit('qwen-27b', null, 65536, null));
+  const s = sources(); Object.assign(s.models, { omlx: 'qwen-27b' }); Object.assign(s.slots, { omlx: { target: 1, hard_cap: 1 } });
+  const result = await decideRoute({ ...request, lane_candidates: ['omlx'], quota_state: { omlx: 'available' },
+    machine_state: { admit: true, running_by_lane: { omlx: 0 } } }, s);
+  expect(result).toMatchObject({ lane: null, attempts: 0, local_models_refused: [{ model: 'qwen-27b', verdict: 'unknown' }] });
+  await expect(defaultRouteBackends()[0]!.ask({ request, candidates: [], retry: false, signal: new AbortController().signal, timeoutMs: 100 })).rejects.toThrow('memory fit is unknown');
+});
 function backend(name: RouteBackend['name'], answer: unknown): RouteBackend {
   return { name, ask: vi.fn().mockResolvedValue(answer) };
 }

@@ -1,3 +1,4 @@
+/** Merges per repo over a time window compared with a target rate. Read-only. */
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';

@@ -399,6 +399,44 @@ describe('proposeHeal', () => {
 // ---------------------------------------------------------------------------
 
 describe('runSelfHealCycle', () => {
+  it.each([false, true])('reports detected and queued repos exactly once (targeted: %s)', async (targeted) => {
+    const repo = path.join(tmpHome, 'checked-repo');
+    fs.mkdirSync(repo);
+    mockListEnrolled.mockReturnValue([repo]);
+    mockDetectVerifyCommands.mockReturnValue([GREEN_VC]);
+    mockRunVerifyCommand.mockReturnValue(FAIL_RESULT);
+    const result = targeted
+      ? await runSelfHealCycleForRepos([repo, repo], makeCfg())
+      : await runSelfHealCycle(makeCfg());
+    expect(result.checkedRepos).toEqual([repo]);
+    expect(result.broken).toEqual([repo]);
+    expect(result.healItems).toHaveLength(1);
+  });
+
+  it.each([false, true])('reports pruned repos even when the budget prevents detection (targeted: %s)', async (targeted) => {
+    const repo = path.join(tmpHome, 'pruned-repo');
+    fs.mkdirSync(repo);
+    const store = path.join(tmpHome, '.ashlr'); fs.mkdirSync(store, { recursive: true });
+    fs.writeFileSync(path.join(store, 'self-heal-queue.json'), JSON.stringify([{ repo, tags: ['self-heal'] }]));
+    mockListEnrolled.mockReturnValue([repo]);
+    const result = targeted
+      ? await runSelfHealCycleForRepos([repo], makeCfg(), { budgetMs: 0 })
+      : await runSelfHealCycle(makeCfg(), { budgetMs: 0 });
+    expect(result.checked).toBe(0);
+    expect(result.checkedRepos).toEqual([repo]);
+    expect(mockDetectVerifyCommands).not.toHaveBeenCalled();
+    expect(JSON.parse(fs.readFileSync(path.join(store, 'self-heal-queue.json'), 'utf8'))).toEqual([]);
+  });
+
+  it('does not count an unauthorized repo as detected', async () => {
+    const repo = path.join(tmpHome, 'unauthorized-repo'); fs.mkdirSync(repo);
+    mockListEnrolled.mockReturnValue([repo]);
+    mockIsEnrolled.mockReturnValue(false);
+    const result = await runSelfHealCycle(makeCfg());
+    expect(result.checkedRepos).toEqual([]);
+    expect(mockDetectVerifyCommands).not.toHaveBeenCalled();
+  });
+
   it('holds outward authority through verification and rejects a KILL armed during the producer', async () => {
     const repo = path.join(tmpHome, 'repo-race-kill');
     fs.mkdirSync(repo, { recursive: true });
@@ -422,7 +460,7 @@ describe('runSelfHealCycle', () => {
     releaseVerify(BUILD_FAIL_RESULT);
 
     const result = await cycle;
-    expect(result).toEqual({ checked: 1, broken: [], healItems: [] });
+    expect(result).toEqual({ checked: 1, checkedRepos: [repo], broken: [], healItems: [] });
     expect(fs.existsSync(path.join(tmpHome, '.ashlr', 'self-heal-queue.json'))).toBe(false);
 
     mockKillSwitchOn.mockReturnValue(false);
@@ -451,7 +489,7 @@ describe('runSelfHealCycle', () => {
     releaseVerify(BUILD_FAIL_RESULT);
 
     const result = await cycle;
-    expect(result).toEqual({ checked: 1, broken: [], healItems: [] });
+    expect(result).toEqual({ checked: 1, checkedRepos: [repo], broken: [], healItems: [] });
     expect(fs.existsSync(path.join(tmpHome, '.ashlr', 'self-heal-queue.json'))).toBe(false);
   });
 
@@ -500,7 +538,7 @@ describe('runSelfHealCycle', () => {
       foundry: { selfHeal: false } as unknown as AshlrConfig['foundry'],
     });
 
-    expect(result).toEqual({ checked: 0, broken: [], healItems: [] });
+    expect(result).toEqual({ checked: 0, checkedRepos: [], broken: [], healItems: [] });
     expect(fs.readFileSync(path.join(ashlrDir, 'self-heal-queue.json'), 'utf8')).toBe(before);
   });
 
@@ -797,7 +835,7 @@ describe('runSelfHealCycle', () => {
 
     const legacyRegistryAlias = await runSelfHealCycleForRepos([canonicalRepo], makeCfg());
 
-    expect(legacyRegistryAlias).toEqual({ checked: 0, broken: [], healItems: [] });
+    expect(legacyRegistryAlias).toEqual({ checked: 0, checkedRepos: [], broken: [], healItems: [] });
     expect(mockRunVerifyCommand).not.toHaveBeenCalled();
   });
 

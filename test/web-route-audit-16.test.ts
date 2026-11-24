@@ -44,6 +44,9 @@ const SERVED_BY_DYNAMIC: readonly string[] = Object.freeze([
   '/api/verse/memory',
   '/api/verse/preferences',
   '/api/verse/search',
+  // src/core/web/server.ts:215 dispatches GET pages routes to pagesApiGetResponse in src/core/cos/pages.ts:435.
+  '/api/pages',
+  '/api/pages/:param',
 ]);
 
 const src = (file: string, text: string) => ({ file, text });

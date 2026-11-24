@@ -12,7 +12,7 @@
  * Hermetic: tmp HOME / ASHLR_HOME, fake ledger / sources / seat, injected
  * backlog; no model is called and no real ~/.ashlr is touched.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   LEADER_CLOUD_AREA,
@@ -32,6 +32,17 @@ import { defaultBudgetPolicy } from '../src/core/routing/policy.js';
 import type { EffectivePolicy } from '../src/core/authority/types.js';
 import type { AshlrConfig } from '../src/core/types.js';
 import { fakeLedger, makeApplyDeps, makePolicy, useTmpHome, type FakeLedger } from './helpers/leader-310b-fakes.js';
+
+vi.mock('../src/core/resources/local-memory-fit.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/core/resources/local-memory-fit.js')>();
+  return {
+    ...actual,
+    // The seat chain's local memory gate reads the host snapshot; fixtures
+    // provide a fitting machine so routing decisions stay deterministic.
+    localModelFit: () => actual.memoryFit('qwen', 8 * 1024 ** 3, 65536,
+      { totalBytes: 64 * 1024 ** 3, freeBytes: 48 * 1024 ** 3, swapGrowth: 0 }),
+  };
+});
 
 const home = useTmpHome();
 let ledger: FakeLedger;

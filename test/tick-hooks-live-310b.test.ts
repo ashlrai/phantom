@@ -322,6 +322,24 @@ describe('beforeTick — fail closed', () => {
 });
 
 describe('lanes, presence and the router seam', () => {
+  it.each([false, true])('overlaps independent runtime and presence reads (runtime fails: %s)', async (fails) => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const started: string[] = [];
+    h.deps.probeLocalRuntime = async () => {
+      started.push('runtime');
+      await blocked;
+      if (fails) throw new Error('probe failed');
+      return { reachable: true, slots: 1, contextPerSlot: 8192, detail: 'test' };
+    };
+    h.deps.presence = async () => { started.push('presence'); await blocked; return presenceNow; };
+    const hooks = createLiveTickHooks({ deps: h.deps });
+    const pending = hooks.beforeTick({ ...hookCtx, dryRun: true });
+    try { await vi.waitFor(() => expect(started).toEqual(['runtime', 'presence'])); }
+    finally { release(); }
+    await pending;
+    expect(h.ticks).toHaveLength(1);
+  });
   it('publishes fresh lanes during stuck mirror prep and stops on abort', async () => {
     const realSetImmediate = setImmediate;
     const realNextTick = process.nextTick;

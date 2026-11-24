@@ -1,0 +1,11 @@
+{
+  "data": [{
+    "starting_at": "2026-11-16T00:00:00Z",
+    "ending_at": "2026-11-17T00:00:00Z",
+    "results": [{ "amount": "123.78912", "currency": "USD", "description": null, "workspace_id": null,
+      "context_window": null, "cost_type": null, "inference_geo": null, "model": null,
+      "service_tier": null, "speed": null, "token_type": null }]
+  }],
+  "has_more": false,
+  "next_page": null
+}

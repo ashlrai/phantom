@@ -41,9 +41,9 @@ const BUCKET_MS: Record<GrowthRange, number> = {
 };
 
 export const GROWTH_FIELD_NEEDS: Record<string, string> = {
-  'growth.mergesPerHour': 'metrics/jobs.jsonl rows with event outcome, state MERGED, job, and ts. A missing or oversized file stays unknown.',
+  'growth.mergesPerHour': 'metrics/jobs.jsonl MERGED rows: a terminal outcome/state/status of MERGED (or a merged event) with a job id and ts or mergedAt. A missing or oversized file stays unknown.',
   'growth.pullsOpened': 'metrics/growth-pulls-1d.json, or metrics/growth-pulls-hourly.jsonl for 1W and 1M. A complete pull export with createdAt. Fleet proposals are not opened pull requests.',
-  'growth.pullsMerged': 'That same pull export, or metrics/jobs.jsonl MERGED rows whose url is a GitHub pull request.',
+  'growth.pullsMerged': 'That same pull export, or metrics/jobs.jsonl MERGED rows whose url or prUrl is a GitHub pull request.',
   'growth.releases': 'metrics/growth-releases.jsonl rows with publishedAt. gh is not called. releases.updateCheck is a phase, not a series.',
   'growth.laneUtilization': 'usage-readings.log rows with pool, pctUsed, and observedAt. A sensor snapshot is not a trend.',
   'growth.costPerMergedPr': 'metrics/growth-cost-hourly.jsonl costPerMergedPrUsd for metered lanes. Hours without a reading stay gaps. scorecard-history is only the daily fallback.',
@@ -201,6 +201,34 @@ function ready(id: GrowthSeriesId, label: string, unit: GrowthUnit, source: stri
 
 interface MergeEvent { at: number; pr: boolean }
 
+const MERGE_URL_FIELDS = ['url', 'prUrl', 'pr_url', 'pr'] as const;
+
+/**
+ * Merge evidence in the jobs.jsonl dialect the fleet readers share. Terminal
+ * PR state outranks the event name: the metrics-outcomes reconciler copies
+ * the PUBLISHED row and only swaps the outcome, so a merge arrives as an
+ * outcome/state/status MERGED row carrying jobId/prUrl/mergedAt — and a
+ * copied publish-shaped event must not hide it. `mergedAt` is the GitHub
+ * merge instant and outranks the row ts; a `merged` event counts only when
+ * no terminal state field is present.
+ */
+function mergeRow(row: Record<string, unknown>): (MergeEvent & { job: string }) | null {
+  const state = String(row['outcome'] ?? row['state'] ?? row['status'] ?? '').toUpperCase();
+  const event = row['event'] ?? row['type'];
+  if (state !== 'MERGED' && !(state === '' && event === 'merged')) return null;
+  const job = row['job'] ?? row['job_id'] ?? row['jobId'] ?? row['id'];
+  if (typeof job !== 'string' || !job.trim()) return null;
+  const time = row['mergedAt'] ?? row['ts'] ?? row['timestamp'] ?? row['at'];
+  const at = typeof time === 'string' ? Date.parse(time) : NaN;
+  if (!Number.isFinite(at)) return null;
+  let url = '';
+  for (const key of MERGE_URL_FIELDS) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) { url = value; break; }
+  }
+  return { job: job.trim(), at, pr: PR_URL.test(url) };
+}
+
 function mergeEvents(text: string, nowMs: number): { events: MergeEvent[]; dropped: number } {
   const jobs = new Map<string, MergeEvent>();
   let dropped = 0;
@@ -209,14 +237,10 @@ function mergeEvents(text: string, nowMs: number): { events: MergeEvent[]; dropp
     let parsed: unknown;
     try { parsed = JSON.parse(line); } catch { dropped += 1; continue; }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
-    const row = parsed as Record<string, unknown>;
-    if (row['event'] !== 'outcome' || row['state'] !== 'MERGED' || typeof row['job'] !== 'string' || !row['job'].trim()) continue;
-    const at = typeof row['ts'] === 'string' ? Date.parse(row['ts']) : NaN;
-    if (!Number.isFinite(at) || at > nowMs) continue;
-    const job = row['job'];
-    if ((jobs.get(job)?.at ?? -Infinity) > at) continue;
-    const url = typeof row['url'] === 'string' ? row['url'] : '';
-    jobs.set(job, { at, pr: PR_URL.test(url) });
+    const merge = mergeRow(parsed as Record<string, unknown>);
+    if (!merge || merge.at > nowMs) continue;
+    if ((jobs.get(merge.job)?.at ?? -Infinity) > merge.at) continue;
+    jobs.set(merge.job, { at: merge.at, pr: merge.pr });
   }
   return { events: [...jobs.values()], dropped };
 }

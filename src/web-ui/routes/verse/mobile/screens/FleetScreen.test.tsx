@@ -71,7 +71,8 @@ describe('FleetScreen states', () => {
   });
 
   it('says why when neither the control plane nor the live view answers', async () => {
-    routes({ 'GET /api/verse/control': json({ error: 'The daemon state file is unreadable.' }, 500), 'GET /api/verse/fleet/live': json({ error: 'nope' }, 404) });
+    routes({ 'GET /api/verse/control': json({ error: 'The daemon state file is unreadable.' }, 500), 'GET /api/verse/fleet/live': json({ error: 'nope' }, 404),
+      'GET /api/fleet/map/messages': json({ schema: 'fleet.map-messages.v1', version: 1, messages: [] }) });
     mount();
     expect(await screen.findByText('Couldn’t read the fleet')).toBeInTheDocument();
     expect(screen.getByText('The daemon state file is unreadable.')).toBeInTheDocument();

@@ -31,7 +31,9 @@
  * Also owned here (spec C2):
  *   - the BACKGROUND SCHEDULER, started on this module's first load (never
  *     under a test runner; ASHLR_CLOUD_AUTO=0 turns it off): refresh every
- *     10 min, self-improvement 2 min after start and then hourly;
+ *     10 min, self-improvement 2 min after start and then hourly — each
+ *     improve tick first registers unclosed metric-bearing backlog PRs into
+ *     the outcome ledger (improve/backlog-sync.ts) so leverage ranking sees them;
  *   - the Needs-you producer `needsYouItems()` that activity-api.ts merges:
  *     PR-open tasks ("ready for review") and launches that failed in the last
  *     24 h. Pure and served from a cache refreshed off the caller's stack. A
@@ -625,6 +627,16 @@ export function startCloudScheduler(env: NodeJS.ProcessEnv = process.env, deps: 
     const { autoDiscover } = await import('../improve/discover.js');
     const found = await autoDiscover();
     if (found.added) try { log(`cloud backlog: ${found.added} new item(s) discovered`); } catch { /* never throws */ }
+    // Register unclosed backlog PRs into the outcome ledger before the launch
+    // pick, so measured leverage (cloud/backlog.ts areaLeverage) keeps
+    // ranking on fresh evidence instead of starving until someone runs
+    // `phm improve sync-backlog` by hand. Best-effort: a sync failure never
+    // blocks the launch, and a second pass appends nothing.
+    try {
+      const { syncCloudBacklogOutcomes } = await import('../improve/backlog-sync.js');
+      const synced = syncCloudBacklogOutcomes();
+      if (synced.registered > 0) try { log(`cloud improve: registered ${synced.registered} backlog PR(s) into the outcome ledger`); } catch { /* never throws */ }
+    } catch { /* never throws */ }
     return improveGuarded({ count: 1, auto: true });
   });
   const state: SchedulerState = { timers: [], running: {}, lastError: {} };

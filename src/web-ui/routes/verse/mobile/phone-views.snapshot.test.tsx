@@ -19,7 +19,7 @@ afterEach(() => { evictAll(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.un
 // DOM snapshots complement the mobile CSS overflow and touch-target contracts.
 // Keep the viewport wrapper in the snapshot so phone intent is reviewable.
 it('390px fleet status', async () => {
-  stubFetch({ 'GET /api/verse/control': controlSnapshot() });
+  stubFetch({ 'GET /api/verse/control': controlSnapshot(), 'GET /api/fleet/map/messages': { schema: 'fleet.map-messages.v1', version: 1, messages: [] } });
   const view = renderMobile(<div style={{ width: 390 }}><FleetScreen /></div>);
   await screen.findByRole('heading', { name: 'Fleet' });
   await waitFor(() => expect(view.container.querySelector('[aria-busy="true"]')).toBeNull());
@@ -56,7 +56,9 @@ it('390px usage panel', async () => {
 });
 
 it('390px approve and held-lane decisions', async () => {
-  stubFetch({ 'GET /api/verse/fleet/control/holds': {
+  // No open asks (`phm asks`), so the asks card is absent and the screen starts at its filter.
+  stubFetch({ 'GET /api/verse/agent-bus/needs-mason/asks/batch': { schema: 'asks.batch.v1', count: 0, asks: [], ledger: 'available' },
+    'GET /api/verse/fleet/control/holds': {
     v: 1, generatedAt: '2026-11-04T12:00:00Z', sourceState: 'healthy',
     lanes: [{ lane: 'codex-personal', target: 0, floor: 0, ceiling: 8, held: true,
       heldReason: 'usage limit', heldUntil: null, lastChange: null, changedBy: 'autobackoff' }],

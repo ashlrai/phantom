@@ -11,10 +11,17 @@ export interface BinDiffEntry {
   liveSha256: string | null;
 }
 
-/** Compare manifest-backed source files without modifying either tree. */
-export async function fleetBinDiff(repo: string, bin: string, pins: string) {
+export interface ManifestFile { src?: unknown; name?: unknown; root?: unknown; class?: unknown; sha256?: unknown }
+
+/** The `files` array of fleet/manifest.json; throws on a malformed manifest. */
+export async function readManifestFiles(repo: string): Promise<ManifestFile[]> {
   const manifest: unknown = JSON.parse(await readFile(resolve(repo, 'fleet/manifest.json'), 'utf8'));
   if (!manifest || typeof manifest !== 'object' || !('files' in manifest) || !Array.isArray(manifest.files)) throw new Error('Invalid fleet manifest');
+  return manifest.files as ManifestFile[];
+}
+
+/** File names listed in a SHA256SUMS pin file; an absent file pins nothing. */
+export async function readPinnedNames(pins: string): Promise<Set<string>> {
   let pinText: string;
   try { pinText = await readFile(pins, 'utf8'); }
   catch (error) {
@@ -28,9 +35,16 @@ export async function fleetBinDiff(repo: string, bin: string, pins: string) {
     if (!match) throw new Error('Invalid SHA256 pin file');
     pinned.add(basename(match[2]!));
   }
+  return pinned;
+}
+
+/** Compare manifest-backed source files without modifying either tree. */
+export async function fleetBinDiff(repo: string, bin: string, pins: string) {
+  const manifestFiles = await readManifestFiles(repo);
+  const pinned = await readPinnedNames(pins);
   const hash = (data: Buffer) => createHash('sha256').update(data).digest('hex');
   const files: BinDiffEntry[] = [];
-  for (const item of manifest.files) {
+  for (const item of manifestFiles) {
     if (!item || typeof item !== 'object' || item.root !== 'runs-bin' || typeof item.src !== 'string') continue;
     const source = item.src;
     const file = item.name ?? basename(source);

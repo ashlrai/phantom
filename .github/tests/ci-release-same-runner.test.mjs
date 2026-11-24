@@ -63,7 +63,7 @@ test('native cache is keyed by the lockfile, never the commit, at the stable iso
   const restore = String(cache.with['restore-keys']).trim().split('\n').map(line => line.trim());
   assert.ok(cache.with.key.startsWith(restore[0]));
   assert.deepEqual(cache.with.path.trim().split('\n').map(line => line.trim()), [
-    '~/.cargo/registry/', '~/.cargo/git/db/', '~/.rustup/toolchains/',
+    '~/.cargo/registry/', '~/.cargo/git/db/',
     '~/.cache/electron/', '~/.cache/electron-builder/',
     '~/Library/Caches/electron/', '~/Library/Caches/electron-builder/',
     '${{ steps.tree.outputs.root }}/desktop/src-tauri/target/',

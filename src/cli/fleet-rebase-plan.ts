@@ -67,7 +67,7 @@ const POOL_RE = /^[a-z][a-z-]{0,30}$/;
 const PARK_DEP = /^PARKED-[A-Z][A-Z-]*(?:\.|$)/i;
 const REBASE_ID = /RQ-(?:REBASE|RECUT)[A-Za-z0-9._-]*/;
 const LINE_STATUS = /^- ([A-Z][A-Z-]*)\b/;
-const REPO_ATTR = /\brepo=(?:[A-Za-z0-9._-]+\/)?([A-Za-z0-9._-]+)/;
+const REPO_ATTR = /\brepo=([A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)?)/;
 const EMIT = new Set(['json', 'lines', 'rows']);
 /** Status words a named column can carry (mirrors lane-console's KNOWN_STATUSES). */
 const KNOWN_STATUS = new Set([
@@ -99,6 +99,14 @@ interface CoverageRead {
 function jobsFromRouterQueue(text: string): RebasePlanExistingJob[] {
   const jobs: RebasePlanExistingJob[] = [];
   for (const line of text.split(/\r?\n/)) {
+    if (line.trimStart().startsWith('{')) {
+      const row = JSON.parse(line) as Record<string, unknown>;
+      if (typeof row['id'] === 'string' && typeof row['status'] === 'string') jobs.push({
+        id: row['id'], status: row['status'], repo: typeof row['repo'] === 'string' ? row['repo'] : null,
+        text: typeof row['text'] === 'string' ? row['text'] : '',
+      });
+      continue;
+    }
     const status = LINE_STATUS.exec(line)?.[1];
     const id = REBASE_ID.exec(line)?.[0];
     if (!status || !id) continue;
@@ -115,7 +123,6 @@ function jobsFromRouterQueue(text: string): RebasePlanExistingJob[] {
  */
 function jobsFromReadyTsv(text: string): RebasePlanExistingJob[] {
   const jobs: RebasePlanExistingJob[] = [];
-  const seen = new Set<string>();
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line || line.startsWith('#')) continue;
@@ -146,8 +153,7 @@ function jobsFromReadyTsv(text: string): RebasePlanExistingJob[] {
         repo = cells[1] ?? null;                                // id repo pool tier promptfile
       }
     }
-    if (id === undefined || !REBASE_ID.test(id) || seen.has(id)) continue;
-    seen.add(id);
+    if (id === undefined || !REBASE_ID.test(id)) continue;
     jobs.push({ id, status, repo, text: '' });
   }
   return jobs;

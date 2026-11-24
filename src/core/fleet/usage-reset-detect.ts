@@ -12,6 +12,8 @@ export interface UsageResetRow {
 }
 export interface UsageResetsV1 {
   v: 1; generatedAt: string; sourceState: 'healthy' | 'degraded' | 'missing'; rows: UsageResetRow[];
+  /** Plain-words names of the inputs that could not be read; empty when healthy. */
+  problems?: string[];
 }
 export const RESET_DETECT_USED_PCT_MAX = 25;
 /** A provider reset further than this behind 'now' is stale evidence, not a passed window. */
@@ -77,9 +79,15 @@ export async function readUsageResets(opts: { runsDir?: string; now?: () => numb
       readLaneTargets({ runsDir, now: () => new Date(nowMs) }),
       readResourceLedger({ runsDir, now: () => nowMs }),
     ]);
-    result.sourceState = targets.sourceState === 'missing' ? 'missing' :
-      targets.sourceState === 'degraded' || Object.values(ledger.sources).some(state => state === 'degraded') ? 'degraded' : 'healthy';
+    // Only the lane slots and the dispatcher status feed a release decision; a
+    // malformed jobs or api-spend log says nothing about whether a window reset.
+    const problems: string[] = [];
+    if (targets.sourceState === 'missing') problems.push('the lane slots file is missing');
+    else if (targets.sourceState === 'degraded') problems.push('the lane slots file is unreadable');
+    if (ledger.sources.status === 'degraded') problems.push('the dispatcher status file (queue/status.json) is unreadable');
+    result.problems = problems;
+    result.sourceState = targets.sourceState === 'missing' ? 'missing' : problems.length ? 'degraded' : 'healthy';
     result.rows = detectUsageResets({ lanes: targets.lanes, ledger: ledger.lanes, ledgerAsOf: ledger.asOf, nowMs });
-  } catch { result.sourceState = 'degraded'; result.rows = []; }
+  } catch { result.sourceState = 'degraded'; result.rows = []; result.problems = ['the usage inputs could not be read']; }
   return result;
 }

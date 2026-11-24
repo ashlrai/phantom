@@ -69,6 +69,21 @@ it('answers two requests in reverse order and keeps input order with correct cor
   expect(h.rows().map(row => row.envelope.id).sort()).toEqual(['reply-a', 'reply-b', 'req-a', 'req-b']);
 });
 
+it('counts a replyTo-alias citation per row, the same citation the roundtrip credits', async () => {
+  const a = envelope('req-a', 'agent-a'), b = envelope('req-b', 'agent-b');
+  const h = setup([a, b]);
+  const stop = h.respondWhen(['req-a', 'req-b'], () => {
+    expect(appendBusInbox({ ...replyFor(a, 'reply-a-alias'), body: { replyTo: a.id, note: 'done' } }, h.options).status).toBe('posted');
+    expect(appendBusInbox(replyFor(b, 'reply-b'), h.options).status).toBe('posted');
+  });
+  const { code, report } = await h.run();
+  stop();
+  expect(code).toBe(0);
+  expect(report).toMatchObject({ status: 'all-replied', counts: { total: 2, attempted: 2, replied: 2, failed: 0, notAttempted: 0 } });
+  expect(report.requests.map((row: { outcome: string }) => row.outcome)).toEqual(['replied', 'replied']);
+  expect(report.requests[0].result.reply.envelope.id).toBe('reply-a-alias');
+});
+
 it('never exceeds the concurrency bound and gives every request one shared deadline', async () => {
   const requests = Array.from({ length: 6 }, (_, i) => envelope(`req-${i}`));
   const h = setup(requests);

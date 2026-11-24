@@ -1,8 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AshlrConfig } from '../src/core/types.js';
+import { clearBoardLease, listCoordination, upsertBoardLease } from '../src/core/agents/claim-store.js';
 import { cmdFleetBus } from '../src/cli/fleet-bus.js';
 import { BusBoard } from '../src/core/fleet/bus-board.js';
 import { SharedStore, type QueueClaimRef } from '../src/core/fleet/shared-store.js';
@@ -21,9 +22,34 @@ beforeEach(() => {
   fleet = new SharedStore(queueDir, 60_000);
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   rmSync(dir, { recursive: true, force: true });
+});
+
+describe('board coordination lease release', () => {
+  it('releases a capped board lease by owner', () => {
+    const root = join(dir, 'coordination');
+    const now = 10_000;
+    const sourceId = 'board-cap';
+    const leaseUntil = now + 48 * 60 * 60 * 1000;
+    expect(upsertBoardLease({ root, sourceId, owner: 'peer-a', leaseUntil, now }).status).toBe('acquired');
+    expect(listCoordination(root, now).claims[0]?.leaseUntil).toBeLessThan(leaseUntil);
+
+    expect(clearBoardLease(sourceId, 'peer-a', root, now).status).toBe('released');
+    expect(listCoordination(root, now).claims).toEqual([]);
+  });
+
+  it('keeps a board lease when a different owner tries to release it', () => {
+    const root = join(dir, 'coordination');
+    const now = 10_000;
+    const sourceId = 'board-owner';
+    expect(upsertBoardLease({ root, sourceId, owner: 'peer-a', leaseUntil: now + 60_000, now }).status).toBe('acquired');
+
+    expect(clearBoardLease(sourceId, 'peer-b', root, now).status).toBe('stale');
+    expect(listCoordination(root, now).claims).toContainEqual(expect.objectContaining({ sourceId, owner: 'peer-a' }));
+  });
 });
 
 const board = (options: { cfg?: AshlrConfig; peers?: readonly { id: string }[] | null; fleet?: SharedStore } = {}) =>
@@ -218,6 +244,76 @@ describe('bus board threads', () => {
   });
 });
 
+describe('bus board thread read filters', () => {
+  it('filters deliveries, receipts, threads and tasks by the shared read rules', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const store = board();
+    const at = (iso: string) => vi.setSystemTime(new Date(iso));
+    const first = store.createThread('alice', 'Frobnicate plans').id;
+    store.joinThread('bob', first);
+    const second = store.createThread('carol', 'Watering rota').id;
+    store.joinThread('bob', second);
+
+    at('2026-01-01T00:00:00.000Z');
+    await store.post('alice', first, 'frobnicate the plan');
+    at('2026-01-01T00:01:00.000Z');
+    await store.post('alice', first, 'water the plants');
+    store.createTask('alice', first, 'item-frob', 'Frobnicate task');
+    store.createTask('alice', first, 'item-other', 'Water plants');
+
+    const T0 = Date.parse('2026-01-01T00:00:00.000Z');
+    const T1 = Date.parse('2026-01-01T00:01:00.000Z');
+    const created = (rows: { createdAt: string }[]) => rows.map((row) => row.createdAt);
+
+    // --contains keeps only posts whose text carries the needle; hops
+    // filters the same deliveries before projecting metadata, and
+    // pendingOnly composes with the same filter.
+    expect(created(store.readThread('bob', first, false, { contains: 'frobnicate' })))
+      .toEqual(['2026-01-01T00:00:00.000Z']);
+    expect(store.readThread('bob', first, true, { contains: 'absent' })).toHaveLength(0);
+    expect(created(store.hops('bob', first, { contains: 'water' })))
+      .toEqual(['2026-01-01T00:01:00.000Z']);
+
+    // [since, before) on createdAt: since inclusive, before exclusive —
+    // the same window board pending applies.
+    expect(created(store.readThread('bob', first, false, { sinceMs: T0 })))
+      .toEqual(['2026-01-01T00:00:00.000Z', '2026-01-01T00:01:00.000Z']);
+    expect(created(store.readThread('bob', first, false, { beforeMs: T1 })))
+      .toEqual(['2026-01-01T00:00:00.000Z']);
+    expect(created(store.readThread('bob', first, false, { sinceMs: T0 + 1, beforeMs: T1 + 1 })))
+      .toEqual(['2026-01-01T00:01:00.000Z']);
+    expect(store.readThread('bob', first, false, { sinceMs: T1, beforeMs: T1 })).toHaveLength(0);
+
+    // Filtering never acknowledges: an acked delivery leaves pending reads
+    // under every filter while history keeps it.
+    const pending = store.readThread('bob', first, true, { contains: 'frobnicate' });
+    expect(pending).toHaveLength(1);
+    store.acknowledge('bob', first, pending[0]!.id);
+    expect(store.readThread('bob', first, true, { contains: 'frobnicate' })).toHaveLength(0);
+    expect(store.readThread('bob', first, false, { contains: 'frobnicate' })).toHaveLength(1);
+
+    // receipts window on receivedAt: the first ack lands at T1, the second
+    // at 02:00, so a 01:00 cutoff splits them one each way.
+    at('2026-01-01T02:00:00.000Z');
+    const remaining = store.readThread('bob', first, true);
+    expect(remaining).toHaveLength(1);
+    store.acknowledge('bob', first, remaining[0]!.id);
+    const cutoff = Date.parse('2026-01-01T01:00:00.000Z');
+    expect(store.receipts('alice', first)).toHaveLength(2);
+    expect(store.receipts('alice', first, { sinceMs: cutoff })).toHaveLength(1);
+    expect(store.receipts('alice', first, { beforeMs: cutoff })).toHaveLength(1);
+    expect(store.receipts('alice', first, { sinceMs: cutoff, beforeMs: cutoff })).toHaveLength(0);
+
+    // Title reads take --contains under the same normalized rule.
+    expect(store.listThreads('bob').map((row) => row.id).sort()).toEqual([first, second].sort());
+    expect(store.listThreads('bob', 'frobnicate').map((row) => row.id)).toEqual([first]);
+    expect(store.listThreads('bob', '  ABSENT  ')).toHaveLength(0);
+    expect(store.listTasks('alice', first).map((row) => row.itemId).sort()).toEqual(['item-frob', 'item-other']);
+    expect(store.listTasks('alice', first, 'frobnicate').map((row) => row.itemId)).toEqual(['item-frob']);
+    expect(store.listTasks('alice', first, 'absent')).toHaveLength(0);
+  });
+});
+
 describe('bus board task claims tied to fleet claims', () => {
   function taskOn(actor: string, itemId = 'fleet-item-1') {
     const store = board();
@@ -302,6 +398,439 @@ describe('bus board task claims tied to fleet claims', () => {
   });
 });
 
+describe('bus board pending digest', () => {
+  it('returns an empty honest digest for a peer with no threads', () => {
+    const result = board().pending('nobody');
+    expect(result.peer).toBe('nobody');
+    expect(result.claims).toBe('readable');
+    expect(result.threads).toEqual([]);
+    expect(result.deliveries).toEqual({ matched: 0, items: [], truncated: false });
+    expect(result.tasks).toEqual({ matched: 0, items: [], truncated: false });
+  });
+
+  it('aggregates unacknowledged deliveries across joined threads only', async () => {
+    const store = board();
+    const first = threadWith('alice', 'bob');
+    const second = store.createThread('alice', 'Second').id;
+    store.joinThread('bob', second);
+    const hidden = store.createThread('alice', 'Carol only').id;
+    store.joinThread('carol', hidden);
+    await store.post('alice', first, 'one');
+    await store.post('alice', second, 'two');
+    await store.post('alice', first, 'three');
+    await store.post('carol', hidden, 'not for bob');
+
+    const digest = store.pending('bob');
+    expect(digest.deliveries.matched).toBe(3);
+    expect(digest.deliveries.truncated).toBe(false);
+    expect(digest.deliveries.items.map((row) => row.id).sort())
+      .toEqual(store.readThread('bob', first, true).map((row) => row.id)
+        .concat(store.readThread('bob', second, true).map((row) => row.id)).sort());
+    expect(digest.deliveries.items[0]!.content.trust).toBe('untrusted');
+    expect(digest.deliveries.items[0]!.content.text).toContain('untrusted id=');
+    expect(digest.threads.map((row) => row.id).sort()).toEqual([first, second].sort());
+    const rollup = new Map(digest.threads.map((row) => [row.id, row.pendingDeliveries]));
+    expect(rollup.get(first)).toBe(2);
+    expect(rollup.get(second)).toBe(1);
+
+    // The digest's own id + threadId feed thread ack; reading acknowledged nothing.
+    store.acknowledge('bob', first, digest.deliveries.items[0]!.id);
+    expect(store.pending('bob').deliveries.matched).toBe(2);
+    const carol = store.pending('carol');
+    expect(carol.deliveries.matched).toBe(1);
+    expect(carol.deliveries.items[0]!.threadId).toBe(hidden);
+    expect(carol.threads.map((row) => row.id)).toEqual([hidden]);
+  });
+
+  it('annotates task hold state from the live fleet queue', () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob');
+    store.createTask('alice', threadId, 'item-open', 'Open task');
+    const held = store.createTask('alice', threadId, 'item-held', 'Held task');
+    store.claimTask('alice', held.id);
+    // A queue claim with no board record still reports held: the queue is the fence.
+    store.createTask('alice', threadId, 'item-external', 'Externally held');
+    expect(fleet.claimLeases(['item-external'], 1, 'fleet-worker')).toHaveLength(1);
+    // A task on a thread bob never joined stays out of bob's digest.
+    const other = store.createThread('alice', 'Alice and carol').id;
+    store.joinThread('carol', other);
+    store.createTask('alice', other, 'item-hidden', 'Hidden task');
+
+    const digest = store.pending('bob');
+    expect(digest.claims).toBe('readable');
+    expect(digest.tasks.matched).toBe(3);
+    const byItem = new Map(digest.tasks.items.map((row) => [row.itemId, row]));
+    expect(byItem.get('item-open')).toMatchObject({ hold: 'open', claimed: false, owner: null });
+    expect(byItem.get('item-held')).toMatchObject({ hold: 'held', claimed: true });
+    expect(byItem.get('item-held')!.owner).toMatchObject({ peerId: 'alice' });
+    expect(byItem.get('item-external')).toMatchObject({ hold: 'held', claimed: false });
+    expect(byItem.get('item-external')!.owner).toMatchObject({ peerId: 'fleet-worker' });
+    expect(digest.tasks.items.some((row) => row.itemId === 'item-hidden')).toBe(false);
+    expect(digest.threads.find((row) => row.id === threadId)!.tasks)
+      .toEqual({ open: 1, held: 2, ambiguous: 0, unknown: 0 });
+  });
+
+  it('reports an expired claimed lease as open and an expired executing lease as ambiguous', () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob');
+    const reclaimable = store.createTask('alice', threadId, 'item-reclaimable', 'Reclaimable');
+    const executing = store.createTask('alice', threadId, 'item-executing', 'Executing');
+    const first = store.claimTask('alice', reclaimable.id);
+    const second = store.claimTask('alice', executing.id);
+    const stored = JSON.parse(readFileSync(join(boardRoot, 'state.json'), 'utf8')) as
+      { tasks: { id: string; claim: QueueClaimRef }[] };
+    const live = fleet.validateClaims([stored.tasks.find((row) => row.id === executing.id)!.claim]);
+    expect(live).toHaveLength(1);
+    expect(fleet.beginClaimExecution(live[0]!)).not.toBeNull();
+
+    vi.spyOn(Date, 'now').mockReturnValue(Math.max(first.owner!.leaseUntil, second.owner!.leaseUntil) + 1);
+    const byItem = new Map(store.pending('bob').tasks.items.map((row) => [row.itemId, row]));
+    expect(byItem.get('item-reclaimable')).toMatchObject({ hold: 'open', claimed: true, owner: null });
+    expect(byItem.get('item-executing')).toMatchObject({ hold: 'ambiguous', claimed: true, owner: null });
+    expect(store.pending('bob').threads[0]!.tasks).toEqual({ open: 1, held: 0, ambiguous: 1, unknown: 0 });
+  });
+
+  it('marks every task hold unknown when the shared queue cannot be read', async () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob');
+    store.createTask('alice', threadId, 'item-x', 'Task');
+    await store.post('alice', threadId, 'mail still arrives');
+    mkdirSync(queueDir, { recursive: true });
+    writeFileSync(join(queueDir, 'ashlr-fleet-queue.json'), '{broken');
+    const digest = store.pending('bob');
+    expect(digest.claims).toBe('unreadable');
+    expect(digest.deliveries.matched).toBe(1);
+    expect(digest.tasks.items[0]).toMatchObject({ hold: 'unknown', owner: null });
+    expect(digest.threads[0]!.tasks).toEqual({ open: 0, held: 0, ambiguous: 0, unknown: 1 });
+  });
+
+  it('keeps true matched totals when item lists truncate at the cap', async () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob');
+    for (let index = 0; index < 51; index++) await store.post('alice', threadId, `m${index}`);
+    const digest = store.pending('bob');
+    expect(digest.deliveries.matched).toBe(51);
+    expect(digest.deliveries.items).toHaveLength(50);
+    expect(digest.deliveries.truncated).toBe(true);
+    expect(digest.threads[0]!.pendingDeliveries).toBe(51);
+  });
+
+  it('applies the shared job, contains and since filters under the display form', async () => {
+    const store = board();
+    const first = threadWith('alice', 'bob');
+    const second = store.createThread('carol', 'Other work').id;
+    store.joinThread('bob', second);
+    await store.post('alice', first, 'frobnicate the plan');
+    await store.post('carol', second, 'water the plants');
+    store.createTask('alice', first, 'job-1', 'Job one task');
+    store.createTask('carol', second, 'job-2', 'Job two task');
+
+    // --job keeps only the thread carrying a task whose itemId cites it.
+    const byJob = store.pending('bob', Date.now(), 'job-1');
+    expect(byJob.peer).toBe('bob');
+    expect(byJob.threads.map((row) => row.id)).toEqual([first]);
+    expect(byJob.tasks.matched).toBe(1);
+    expect(byJob.tasks.items[0]).toMatchObject({ itemId: 'job-1' });
+    expect(byJob.deliveries.matched).toBe(1);
+
+    // --contains narrows deliveries by the same scrubbed display text every
+    // bus read shares; tasks without the needle drop out and matched counts
+    // the filtered set.
+    const byText = store.pending('bob', Date.now(), undefined, 'frobnicate');
+    expect(byText.deliveries.matched).toBe(1);
+    expect(byText.tasks.matched).toBe(0);
+    expect(byText.threads.map((row) => row.id)).toEqual([first]);
+    // The display frame is unchanged: filtered rows still carry it.
+    expect(byText.deliveries.items[0]!.content.text).toContain('untrusted id=');
+
+    // --since keeps only deliveries reaching the cutoff; tasks carry no
+    // timestamp so under a time filter the task list is provably empty.
+    const future = store.pending('bob', Date.now(), undefined, undefined, Date.now() + 60_000);
+    expect(future.deliveries.matched).toBe(0);
+    expect(future.tasks.matched).toBe(0);
+    expect(future.threads).toEqual([]);
+    // Omitting every filter is the unchanged single-peer digest.
+    expect(store.pending('bob').deliveries.matched).toBe(2);
+    expect(store.pending('bob').tasks.matched).toBe(2);
+  });
+
+  it('refuses while disabled and enforces the peer allowlist', () => {
+    expect(() => board({ cfg: disabledCfg }).pending('alice')).toThrow('Fleet event bus is disabled');
+    expect(() => board({ peers: [{ id: 'alice' }] }).pending('mallory'))
+      .toThrow('Bus peer is absent from the peer registry');
+  });
+});
+
+describe('bus board pendingFor digest', () => {
+  it('unions pending work across every peer label in one read', async () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob', 'agent:bob');
+    await store.post('alice', threadId, 'for bob');
+    await store.post('alice', threadId, 'for agent bob');
+    store.createTask('alice', threadId, 'item-x', 'Shared task');
+
+    const digest = store.pendingFor(['bob', 'agent:bob', 'mallory']);
+    // Both member labels are known; the stranger label matches nothing.
+    expect(digest.peers).toEqual(['agent:bob', 'bob']);
+    // The thread counts once even though two queried labels are members.
+    expect(digest.threads).toHaveLength(1);
+    expect(digest.threads[0]!.members.sort()).toEqual(['agent:bob', 'alice', 'bob']);
+    // Each post snapshots all three members; the two bob labels match four deliveries.
+    expect(digest.deliveries.matched).toBe(4);
+    expect(digest.deliveries.items.map((row) => row.recipient).sort())
+      .toEqual(['agent:bob', 'agent:bob', 'bob', 'bob']);
+    expect(digest.tasks.matched).toBe(1);
+    expect(digest.tasks.items[0]).toMatchObject({ itemId: 'item-x', hold: 'open', claimed: false });
+  });
+
+  it('returns stored content text where pending returns the display frame', async () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob');
+    store.createTask('alice', threadId, 'item-t', 'Raw title');
+    await store.post('alice', threadId, 'hello board');
+
+    const single = store.pending('bob');
+    const multi = store.pendingFor(['bob']);
+    expect(single.tasks.items[0]!.content.text).toContain('untrusted id=');
+    expect(multi.tasks.items[0]!.content.text).toBe('Raw title');
+    expect(single.deliveries.items[0]!.content.text).toContain('untrusted id=');
+    // The stored delivery content is the canonical envelope JSON.
+    const stored = JSON.parse(multi.deliveries.items[0]!.content.text) as
+      { body?: { text?: string } };
+    expect(stored.body?.text).toBe('hello board');
+    expect(multi.threads[0]!.content.text).toBe('Thread title');
+  });
+
+  it('evaluates task holds at the injected instant and skips invalid labels', () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob');
+    const task = store.createTask('alice', threadId, 'item-timed', 'Timed');
+    const claimed = store.claimTask('alice', task.id);
+
+    expect(store.pendingFor(['bob', 'bad label!', '']).tasks.items[0]!.hold).toBe('held');
+    const after = claimed.owner!.leaseUntil + 1;
+    expect(store.pendingFor(['bob'], after).tasks.items[0]!.hold).toBe('open');
+    // Invalid labels never reach the peer set; only well-formed members are known.
+    expect(store.pendingFor(['bob', 'bad label!', '']).peers).toEqual(['bob']);
+  });
+
+  it('enforces the peer allowlist per label without throwing', () => {
+    const store = board({ peers: [{ id: 'alice' }, { id: 'bob' }] });
+    threadWith('alice', 'bob');
+    // 'carol' is well-formed but absent from the allowlist, so it matches nothing.
+    const digest = store.pendingFor(['alice', 'carol']);
+    expect(digest.peers).toEqual(['alice']);
+  });
+
+  it('filters deliveries, tasks and thread rollups by displayed text while peers stay known', async () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob');
+    await store.post('alice', threadId, 'frobnicate the plan');
+    await store.post('alice', threadId, 'unrelated chatter');
+    store.createTask('alice', threadId, 'item-frob', 'Frobnicate task');
+    store.createTask('alice', threadId, 'item-other', 'Water plants');
+    // A second thread bob belongs to with nothing the needle names: its
+    // rollup drops out but bob stays a known peer — membership is not text.
+    const quiet = store.createThread('carol', 'Watering rota').id;
+    store.joinThread('bob', quiet);
+
+    // 'carol' belongs only to the quiet thread — peers staying complete
+    // proves the text filter never narrows board membership.
+    const digest = store.pendingFor(['bob', 'carol'], undefined, undefined, ' Frobnicate ');
+    expect(digest.peers).toEqual(['bob', 'carol']);
+    // Only the frobnicate post's bob delivery survives; matched counts the
+    // filtered set, never the unfiltered total.
+    expect(digest.deliveries.matched).toBe(1);
+    expect(digest.deliveries.items).toHaveLength(1);
+    const stored = JSON.parse(digest.deliveries.items[0]!.content.text) as { body?: { text?: string } };
+    expect(stored.body?.text).toBe('frobnicate the plan');
+    expect(digest.tasks.matched).toBe(1);
+    expect(digest.tasks.items[0]).toMatchObject({ itemId: 'item-frob' });
+    // The matching thread's rollup counts only matching items; the quiet
+    // thread drops out entirely.
+    expect(digest.threads).toHaveLength(1);
+    expect(digest.threads[0]).toMatchObject({ id: threadId, pendingDeliveries: 1 });
+    expect(digest.threads[0]!.tasks).toEqual({ open: 1, held: 0, ambiguous: 0, unknown: 0 });
+    // Case and padding normalize like every other --contains read.
+    expect(store.pendingFor(['bob'], undefined, undefined, 'FROBNICATE').deliveries.matched).toBe(1);
+    expect(store.pendingFor(['bob'], undefined, undefined, 'absent-text').deliveries.matched).toBe(0);
+    expect(store.pendingFor(['bob'], undefined, undefined, 'absent-text').threads).toEqual([]);
+    expect(store.pendingFor(['bob'], undefined, undefined, 'absent-text').peers).toEqual(['bob']);
+  });
+});
+
+describe('bus board pendingAll digest', () => {
+  it('lists every unacknowledged delivery and every task across all threads in one read', async () => {
+    const store = board();
+    const first = threadWith('alice', 'bob');
+    const second = store.createThread('carol', 'Second').id;
+    store.joinThread('dave', second);
+    await store.post('alice', first, 'for the first thread');
+    await store.post('bob', first, 'another first-thread post');
+    await store.post('carol', second, 'for the second thread');
+    store.createTask('alice', first, 'item-open', 'Open task');
+    const held = store.createTask('alice', first, 'item-held', 'Held task');
+    store.claimTask('alice', held.id);
+    store.createTask('dave', second, 'item-other', 'Other thread task');
+    // Acknowledging one delivery removes only that row from the fleet view.
+    const before = store.pendingAll();
+    expect(before.deliveries.matched).toBe(6); // two member deliveries per post
+    const target = before.deliveries.items.find((d) => d.recipient === 'bob' && d.threadId === first)!;
+    store.acknowledge('bob', first, target.id);
+
+    const digest = store.pendingAll();
+    expect(digest.peers.sort()).toEqual(['alice', 'bob', 'carol', 'dave']);
+    expect(digest.claims).toBe('readable');
+    expect(digest.deliveries.matched).toBe(5);
+    expect(digest.deliveries.truncated).toBe(false);
+    expect(digest.tasks.matched).toBe(3);
+    const byItem = new Map(digest.tasks.items.map((row) => [row.itemId, row]));
+    expect(byItem.get('item-open')).toMatchObject({ hold: 'open', claimed: false });
+    expect(byItem.get('item-held')).toMatchObject({ hold: 'held', claimed: true });
+    expect(byItem.get('item-other')).toMatchObject({ hold: 'open', claimed: false });
+    // Every thread joined; the digest is the union of both peers' pendingFor reads.
+    expect(digest.threads.map((row) => row.id).sort()).toEqual([first, second].sort());
+    // Stored untrusted text, same contract as pendingFor — never the display frame.
+    const stored = JSON.parse(digest.deliveries.items[0]!.content.text) as { body?: { text?: string } };
+    expect(typeof stored.body?.text).toBe('string');
+    // Reading acknowledged nothing else.
+    expect(store.pendingAll().deliveries.matched).toBe(5);
+  });
+
+  it('returns an empty honest digest when the board has no threads', () => {
+    const digest = board().pendingAll();
+    expect(digest.peers).toEqual([]);
+    expect(digest.claims).toBe('readable');
+    expect(digest.threads).toEqual([]);
+    expect(digest.deliveries).toEqual({ matched: 0, items: [], truncated: false });
+    expect(digest.tasks).toEqual({ matched: 0, items: [], truncated: false });
+  });
+
+  it('narrows the fleet-wide digest to threads citing one job id', async () => {
+    const store = board();
+    const first = threadWith('alice', 'bob');
+    const second = store.createThread('carol', 'Other work').id;
+    store.joinThread('dave', second);
+    await store.post('alice', first, 'job one mail');
+    await store.post('carol', second, 'job two mail');
+    store.createTask('alice', first, 'job-1', 'Job one task');
+    store.createTask('carol', second, 'job-2', 'Job two task');
+
+    const digest = store.pendingAll(undefined, 'job-1');
+    // Only the job-citing thread survives; its deliveries and rollup ride along.
+    expect(digest.threads.map((row) => row.id)).toEqual([first]);
+    expect(digest.tasks.matched).toBe(1);
+    expect(digest.tasks.items[0]).toMatchObject({ itemId: 'job-1' });
+    // Every member of the surviving thread is a known peer; the other
+    // thread's members drop out with it.
+    expect(digest.peers.sort()).toEqual(['alice', 'bob']);
+    // The unfiltered read still sees both threads — the filter narrows, never widens.
+    expect(store.pendingAll().threads).toHaveLength(2);
+    expect(store.pendingAll(undefined, 'job-absent').threads).toEqual([]);
+    expect(store.pendingAll(undefined, 'job-absent').tasks.matched).toBe(0);
+  });
+
+  it('filters the fleet-wide digest by displayed text like pendingFor', async () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob', 'carol');
+    await store.post('alice', threadId, 'frobnicate the plan');
+    await store.post('bob', threadId, 'unrelated chatter');
+    store.createTask('alice', threadId, 'item-frob', 'Frobnicate task');
+    store.createTask('alice', threadId, 'item-other', 'Water plants');
+    // A second thread with nothing the needle names drops its rollup out.
+    const quiet = store.createThread('dave', 'Watering rota').id;
+    store.joinThread('erin', quiet);
+
+    const digest = store.pendingAll(undefined, undefined, ' Frobnicate ');
+    // Every member of the matching thread receives each post, so the one
+    // frobnicate post yields three deliveries; matched counts filtered rows.
+    expect(digest.deliveries.matched).toBe(3);
+    expect(digest.tasks.matched).toBe(1);
+    expect(digest.tasks.items[0]).toMatchObject({ itemId: 'item-frob' });
+    expect(digest.threads).toHaveLength(1);
+    expect(digest.threads[0]).toMatchObject({ id: threadId, pendingDeliveries: 3 });
+    // Membership is not text: every board member stays a known peer.
+    expect(digest.peers.sort()).toEqual(['alice', 'bob', 'carol', 'dave', 'erin']);
+    expect(store.pendingAll(undefined, undefined, 'absent-text').deliveries.matched).toBe(0);
+    expect(store.pendingAll(undefined, undefined, 'absent-text').threads).toEqual([]);
+  });
+
+  it('keeps only deliveries reaching the since cutoff and drops undated tasks', async () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob');
+    await store.post('alice', threadId, 'recent mail');
+    store.createTask('alice', threadId, 'item-x', 'Undated task');
+
+    const all = store.pendingAll();
+    expect(all.deliveries.matched).toBe(2);
+    expect(all.tasks.matched).toBe(1);
+
+    // A cutoff in the future excludes every recorded delivery; tasks carry
+    // no timestamp, so under `since` the task list is provably empty and a
+    // thread rollup survives only while a delivery does — none here.
+    const future = store.pendingAll(undefined, undefined, undefined, Date.now() + 60_000);
+    expect(future.deliveries.matched).toBe(0);
+    expect(future.tasks.matched).toBe(0);
+    expect(future.threads).toEqual([]);
+    // The epoch floor keeps every recorded delivery; tasks stay empty under
+    // any `since` and the thread rollup survives through its deliveries.
+    const floor = store.pendingAll(undefined, undefined, undefined, 0);
+    expect(floor.deliveries.matched).toBe(2);
+    expect(floor.tasks.matched).toBe(0);
+    expect(floor.threads.map((row) => row.id)).toEqual([threadId]);
+    // Membership still reports every member — `since` narrows items, not peers.
+    expect(floor.peers.sort()).toEqual(['alice', 'bob']);
+  });
+
+  it('keeps only deliveries inside the exclusive [since, before) window', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const store = board();
+    const threadId = threadWith('alice', 'bob');
+    const at = (iso: string) => vi.setSystemTime(new Date(iso));
+    at('2026-01-01T00:00:00.000Z');
+    await store.post('alice', threadId, 'oldest mail');
+    at('2026-01-01T00:01:00.000Z');
+    await store.post('alice', threadId, 'middle mail');
+    at('2026-01-01T00:02:00.000Z');
+    await store.post('alice', threadId, 'newest mail');
+    store.createTask('alice', threadId, 'item-x', 'Undated task');
+
+    const since = Date.parse('2026-01-01T00:01:00.000Z');
+    const before = Date.parse('2026-01-01T00:02:00.000Z');
+    const texts = (rows: { content: { text: string } }[]) =>
+      rows.map((row) => (JSON.parse(row.content.text) as { body?: { text?: string } }).body?.text);
+
+    // [since, before): the middle post alone survives — `since` stays
+    // inclusive so the boundary post at exactly `since` matches, `before`
+    // is exclusive so the post stamped exactly at `before` never does, and
+    // the undated task stays out under any time bound.
+    const window = store.pendingAll(undefined, undefined, undefined, since, before);
+    expect(window.deliveries.matched).toBe(2);
+    expect(texts(window.deliveries.items)).toEqual(['middle mail', 'middle mail']);
+    expect(window.tasks.matched).toBe(0);
+    expect(window.threads).toHaveLength(1);
+    expect(window.threads[0]).toMatchObject({ id: threadId, pendingDeliveries: 2 });
+    expect(window.peers.sort()).toEqual(['alice', 'bob']);
+    // The same window through the single-peer and multi-peer reads — the
+    // bound threads through the shared digest, never a second filter.
+    expect(store.pending('bob', undefined, undefined, undefined, since, before).deliveries.matched).toBe(1);
+    expect(store.pendingFor(['bob'], undefined, undefined, undefined, since, before).deliveries.matched).toBe(1);
+
+    // `before` alone is the older-page bound: everything strictly before
+    // the newest post's stamp survives, tasks still never match.
+    const older = store.pendingAll(undefined, undefined, undefined, undefined, before);
+    expect(older.deliveries.matched).toBe(4);
+    expect(older.tasks.matched).toBe(0);
+    // An inverted or empty window is an honest empty read, not a usage
+    // failure — the bounds are data, and no delivery can satisfy both.
+    const inverted = store.pendingAll(undefined, undefined, undefined, before, since);
+    expect(inverted.deliveries.matched).toBe(0);
+    expect(inverted.tasks.matched).toBe(0);
+    expect(inverted.threads).toEqual([]);
+    expect(store.pendingAll(undefined, undefined, undefined, since, since).deliveries.matched).toBe(0);
+  });
+});
+
 describe('phm bus CLI end-to-end', () => {
   let output: string[];
   const loadConfig = () => ({}) as AshlrConfig;
@@ -355,6 +884,162 @@ describe('phm bus CLI end-to-end', () => {
     expect(released.value.result.owner).toBeNull();
     expect(fleet.claimLeases(['fleet-item-1'], 1, 'external-worker')).toHaveLength(1);
     expect(output.join('\n')).not.toMatch(/ownerToken|ownerKey/);
+  });
+
+  it('answers the board pending digest through argv', async () => {
+    const thread = (await call(['thread', 'create', 'Board'])).value.result.id;
+    await call(['thread', 'join', thread], 'bob');
+    await call(['thread', 'post', thread, 'ping'], 'alice');
+    const task = (await call(['task', 'create', thread, 'fleet-item-9', 'Work'])).value.result.id;
+    await call(['task', 'claim', task], 'bob');
+    const digest = await call(['board', 'pending'], 'bob');
+    expect(digest.code).toBe(0);
+    expect(digest.value.result.peer).toBe('bob');
+    expect(digest.value.result.claims).toBe('readable');
+    expect(digest.value.result.deliveries.matched).toBe(1);
+    expect(digest.value.result.tasks.items[0]).toMatchObject({ hold: 'held', claimed: true });
+    expect(digest.value.result.tasks.items[0].owner.peerId).toBe('bob');
+    expect(output.join('\n')).not.toMatch(/ownerToken|ownerKey/);
+    expect((await call(['board', 'pending', 'extra'])).code).toBe(2);
+    expect((await call(['board', 'bogus'])).code).toBe(2);
+  });
+
+  it('filters the board pending digest by job, contains and since', async () => {
+    const thread = (await call(['thread', 'create', 'Board'])).value.result.id;
+    await call(['thread', 'join', thread], 'bob');
+    await call(['thread', 'post', thread, 'frobnicate the plan'], 'alice');
+    await call(['task', 'create', thread, 'job-7', 'Job task']);
+    const other = (await call(['thread', 'create', 'Other work'])).value.result.id;
+    await call(['thread', 'join', other], 'bob');
+    await call(['task', 'create', other, 'job-8', 'Other task']);
+
+    // --job keeps only the thread carrying a task citing that fleet item.
+    const byJob = await call(['board', 'pending', '--job', 'job-7'], 'bob');
+    expect(byJob.code).toBe(0);
+    expect(byJob.value.result.peer).toBe('bob');
+    expect(byJob.value.result.threads.map((row: { id: string }) => row.id)).toEqual([thread]);
+    expect(byJob.value.result.tasks.matched).toBe(1);
+    expect(byJob.value.result.tasks.items[0]).toMatchObject({ itemId: 'job-7' });
+
+    // --contains narrows deliveries by scrubbed display text.
+    const byText = await call(['board', 'pending', '--contains', 'frobnicate'], 'bob');
+    expect(byText.code).toBe(0);
+    expect(byText.value.result.deliveries.matched).toBe(1);
+    expect(byText.value.result.tasks.matched).toBe(0);
+
+    // --since in the future excludes every delivery and provably empties
+    // the undated task list; an unparseable cutoff is a usage error.
+    const future = await call(['board', 'pending', '--since', '9999999999999'], 'bob');
+    expect(future.code).toBe(0);
+    expect(future.value.result.deliveries.matched).toBe(0);
+    expect(future.value.result.tasks.matched).toBe(0);
+    expect((await call(['board', 'pending', '--since', 'bogus'])).code).toBe(2);
+
+    // --before is the exclusive upper bound on the same createdAt field:
+    // the epoch floor admits nothing, a future cutoff keeps the one bob
+    // delivery while the undated task list stays empty under any time
+    // bound, and paired with --since the two read one [since, before)
+    // window; an unparseable cutoff is a usage error like --since's.
+    const floor = await call(['board', 'pending', '--before', '0'], 'bob');
+    expect(floor.code).toBe(0);
+    expect(floor.value.result.deliveries.matched).toBe(0);
+    expect(floor.value.result.tasks.matched).toBe(0);
+    expect(floor.value.result.threads).toEqual([]);
+    const window = await call(['board', 'pending', '--since', '0', '--before', String(Date.now() + 60_000)], 'bob');
+    expect(window.code).toBe(0);
+    expect(window.value.result.deliveries.matched).toBe(1);
+    expect(window.value.result.tasks.matched).toBe(0);
+    expect((await call(['board', 'pending', '--before', 'bogus'])).code).toBe(2);
+
+    // --all takes the same bound on the fleet-wide read.
+    output = [];
+    const allFloor = await cmdFleetBus(['board', 'pending', '--all', '--before', '0', '--json',
+      '--root', boardRoot, '--queue-root', queueDir], { loadConfig, out: (t) => output.push(t) });
+    expect(allFloor).toBe(0);
+    expect(JSON.parse(output.at(-1)!).result.deliveries.matched).toBe(0);
+
+    // --job and --all stay board pending's own flags, and a filter valid
+    // nowhere on the command — a time bound on a title-only list, a text
+    // needle on text-less receipts — is refused rather than silently dropped.
+    expect((await call(['thread', 'list', '--job', 'job-7'])).code).toBe(2);
+    expect((await call(['thread', 'list', '--all'])).code).toBe(2);
+    expect((await call(['task', 'list', thread, '--before', '1d'])).code).toBe(2);
+    expect((await call(['thread', 'receipts', thread, '--contains', 'x'])).code).toBe(2);
+    // --contains now reaches the title reads it always applied to.
+    expect((await call(['task', 'list', thread, '--contains', 'absent-text'])).code).toBe(0);
+  });
+
+  it('filters the thread reads through argv', async () => {
+    const thread = (await call(['thread', 'create', 'Release board'])).value.result.id;
+    await call(['thread', 'join', thread], 'bob');
+    await call(['thread', 'post', thread, 'frobnicate the plan'], 'alice');
+    await call(['thread', 'post', thread, 'water the plants'], 'alice');
+    await call(['task', 'create', thread, 'job-t1', 'Frobnicate task'], 'alice');
+    await call(['task', 'create', thread, 'job-t2', 'Water plants'], 'alice');
+
+    // --contains narrows deliveries by post text on read, pending and hops.
+    const byText = await call(['thread', 'read', thread, '--contains', 'frobnicate'], 'bob');
+    expect(byText.code).toBe(0);
+    expect(byText.value.result).toHaveLength(1);
+    expect((await call(['thread', 'pending', thread, '--contains', 'absent'], 'bob')).value.result).toHaveLength(0);
+    expect((await call(['thread', 'hops', thread, '--contains', 'frobnicate'], 'bob')).value.result).toHaveLength(1);
+
+    // --since/--before bound deliveries on createdAt; an unparseable cutoff
+    // is a usage error like board pending's.
+    const future = await call(['thread', 'read', thread, '--since', '9999999999999'], 'bob');
+    expect(future.code).toBe(0);
+    expect(future.value.result).toHaveLength(0);
+    const window = await call(['thread', 'read', thread, '--since', '0', '--before', String(Date.now() + 60_000)], 'bob');
+    expect(window.value.result).toHaveLength(2);
+    expect((await call(['thread', 'read', thread, '--since', 'bogus'], 'bob')).code).toBe(2);
+
+    // Title reads take --contains; receipts take the time window on
+    // receivedAt — ack one delivery and bound it both ways.
+    const tasks = await call(['task', 'list', thread, '--contains', 'frobnicate'], 'bob');
+    expect(tasks.code).toBe(0);
+    expect(tasks.value.result).toHaveLength(1);
+    expect(tasks.value.result[0].itemId).toBe('job-t1');
+    const list = await call(['thread', 'list', '--contains', 'release'], 'bob');
+    expect(list.value.result.map((row: { id: string }) => row.id)).toEqual([thread]);
+
+    const read = await call(['thread', 'read', thread], 'bob');
+    const deliveryId = read.value.result[0].id;
+    await call(['thread', 'ack', thread, deliveryId], 'bob');
+    const receipts = await call(['thread', 'receipts', thread, '--since', '0'], 'alice');
+    expect(receipts.value.result).toHaveLength(1);
+    expect((await call(['thread', 'receipts', thread, '--before', '0'], 'alice')).value.result).toHaveLength(0);
+
+    // A filter valid nowhere on the command stays a usage error.
+    expect((await call(['thread', 'read', thread, '--job', 'job-t1'])).code).toBe(2);
+    expect((await call(['thread', 'join', thread, '--contains', 'x'])).code).toBe(2);
+    expect((await call(['task', 'claim', 'task-x', '--since', '1d'])).code).toBe(2);
+  });
+
+  it('serves the fleet-wide board pending digest through --all', async () => {
+    const thread = (await call(['thread', 'create', 'Board'])).value.result.id;
+    await call(['thread', 'join', thread], 'bob');
+    await call(['thread', 'post', thread, 'ping'], 'alice');
+    await call(['task', 'create', thread, 'job-9', 'Work']);
+
+    output = [];
+    const code = await cmdFleetBus(['board', 'pending', '--all', '--job', 'job-9', '--json',
+      '--root', boardRoot, '--queue-root', queueDir], { loadConfig, out: (t) => output.push(t) });
+    expect(code).toBe(0);
+    const result = JSON.parse(output.at(-1)!).result;
+    // The fleet-wide form reports every known member under peers and keeps
+    // the stored untrusted text the MCP board read serves.
+    expect(result.peers.sort()).toEqual(['alice', 'bob']);
+    expect(result.threads.map((row: { id: string }) => row.id)).toEqual([thread]);
+    expect(result.tasks.matched).toBe(1);
+    expect(result.tasks.items[0]).toMatchObject({ itemId: 'job-9' });
+    expect(result.deliveries.matched).toBe(2);
+    expect(result.tasks.items[0].content.text).toBe('Work');
+
+    // --all leaves no single peer view, so pairing it with --peer is refused.
+    output = [];
+    const conflict = await cmdFleetBus(['board', 'pending', '--all', '--peer', 'bob', '--json',
+      '--root', boardRoot, '--queue-root', queueDir], { loadConfig, out: (t) => output.push(t) });
+    expect(conflict).toBe(2);
   });
 
   it('reports usage errors as exit 2 and prints help as exit 0', async () => {

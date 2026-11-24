@@ -42,6 +42,21 @@
         "ratio": {"type": ["number", "null"]}
       }
     },
+    "notRunning": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["job_or_lane", "kind", "reason", "since", "unblock"],
+        "properties": {
+          "job_or_lane": {"type": "string"},
+          "kind": {"type": "string"},
+          "reason": {"type": "string"},
+          "since": {"type": ["string", "null"]},
+          "unblock": {"type": "string"}
+        }
+      }
+    },
     "lanes": {
       "type": "array",
       "items": {
@@ -201,6 +216,40 @@
         "properties": {
           "at": {"type": "string"},
           "text": {"type": "string"}
+        }
+      }
+    },
+    "leaderChat": {
+      "description": "Optional. MASON-INBOX entries and the leader's replies as one time-ordered chat; absent when either journal was unread.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "generatedAt", "messages", "skipped"],
+      "properties": {
+        "v": {"const": 1},
+        "generatedAt": {"type": "string"},
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "ts", "direction", "channel", "text", "state"],
+            "properties": {
+              "id": {"type": "string"},
+              "ts": {"type": ["string", "null"]},
+              "direction": {"enum": ["to-leader", "from-leader"]},
+              "channel": {"type": "string"},
+              "text": {"type": "string"},
+              "state": {"enum": ["sent", "received", "answered", "open-over-2h", "reply"]},
+              "received": {"type": "boolean"},
+              "replyTo": {"type": "string"}
+            }
+          }
+        },
+        "skipped": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["malformedInbox"],
+          "properties": {"malformedInbox": {"type": "number"}}
         }
       }
     },

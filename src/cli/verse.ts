@@ -190,6 +190,7 @@ export interface VerseBackgroundDeps {
   loadAutomations?: () => Promise<{ scheduleAutomationsTick: () => (() => void) | null }>;
   loadRetroSweep?: () => Promise<{ scheduleRetroSweep: (cfg: AshlrConfig) => (() => void) | null }>;
   loadTeammateComms?: () => Promise<{ scheduleTeammateMessages: (cfg: AshlrConfig) => (() => void) | null }>;
+  loadMesh?: () => Promise<{ scheduleAgentMesh: () => (() => void) | null }>;
   /**
    * Run the services that probe or publish ACCOUNT state (health sweep,
    * budget capacity publisher). False under `--no-accounts`: that flag says
@@ -289,6 +290,10 @@ export async function startVerseBackgroundServices(
   if (accountServices) await attempt('retro-sweep', async () => {
     const mod = await (deps.loadRetroSweep ?? (() => import('../core/learn/retro/sweep-timer.js')))();
     return mod.scheduleRetroSweep(cfg);
+  });
+  if (accountServices) await attempt('agent-mesh', async () => {
+    const mod = await (deps.loadMesh ?? (() => import('../core/agents/mesh-publisher.js')))();
+    return mod.scheduleAgentMesh();
   });
   // Native iMessage permissions follow the desktop's sidecar responsibility.
   // Keep its worker in this existing live process; a launchd copy may lack FDA.

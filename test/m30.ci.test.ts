@@ -114,7 +114,8 @@ describe('M30 CI workflow', () => {
     const site = workflowJob('site');
     expect(classifier).toContain('run: node .github/scripts/ci-site-lane.mjs');
     expect(classifier).toContain('run: node .github/scripts/ci-source-binding.mjs');
-    expect(classifier).toContain('fetch-depth: 0');
+    expect(classifier).toContain('fetch-depth: 1');
+    expect(classifier).toContain('node .github/scripts/ci-fetch-range.mjs');
     expect(classifier).toContain('filter: blob:none');
     expect(site).toContain('run: node .github/scripts/ci-source-binding.mjs');
     expect(site).toContain('run: node --test .github/tests/ci-site-lane.test.mjs');
@@ -291,6 +292,7 @@ describe('M30 CI workflow', () => {
     expect(permissionJobs).toEqual([
       ['release-build', { contents: 'read', actions: 'read' }],
       ['release-suites', { contents: 'read' }],
+      ['release-gate-autotag', { actions: 'write' }],
     ]);
     // Release-gate dispatches share one group per tag so a second train queues
     // behind the first (#4592); every other run keeps its PR or run_id group.
@@ -432,7 +434,7 @@ describe('M30 CI workflow', () => {
     expect(receipt.name).toBe('Master full qualification');
     expect(receipt.permissions).toBeUndefined();
     expect(receipt.needs.slice().sort()).toEqual(Object.keys(jobs).filter(id =>
-      !['master-full', 'fixup-queue', 'release-suites'].includes(id)).sort());
+      !['master-full', 'fixup-queue', 'release-suites', 'release-gate-autotag'].includes(id)).sort());
     expect(runs('master-full', 'schedule', 'refs/heads/master')).toBe(true);
     expect(runs('master-full', 'schedule', 'refs/heads/master', '0,30 * * * *')).toBe(false);
     for (const event of ['pull_request', 'merge_group', 'push', 'workflow_dispatch']) {
@@ -546,13 +548,31 @@ echo pending=true; exit 2
     }
   });
 
+  it('dispatches Auto-tag only after a successful master release-gate run', () => {
+    const jobs = parse(ciYml).jobs as Record<string, {
+      if?: string;
+      needs?: string[];
+      permissions?: Record<string, string>;
+      steps: { name?: string; run?: string; env?: Record<string, string> }[];
+    }>;
+    const job = jobs['release-gate-autotag']!;
+    expect(job.if).toBe("github.event_name == 'workflow_dispatch' && inputs.release_gate == true && github.ref == 'refs/heads/master' && needs['release-build'].result == 'success' && needs['release-suites'].result == 'success'");
+    expect(job.needs).toEqual(['release-build', 'release-suites']);
+    expect(job.permissions).toEqual({ actions: 'write' });
+    const dispatch = job.steps.find((entry) => entry.name === 'Dispatch Auto-tag for exact release-gate SHA');
+    expect(dispatch?.env?.GH_TOKEN).toBe('${{ github.token }}');
+    expect(dispatch?.run).toContain('repos/${GITHUB_REPOSITORY}/actions/workflows/auto-tag.yml/dispatches');
+    expect(dispatch?.run).toContain('{"ref":"master","inputs":{"sha":"${GITHUB_SHA}"}}');
+    expect(jobs['merge-gate']!.needs).not.toContain('release-gate-autotag');
+  });
+
   it('keeps Quick typecheck advisory and free of the two split-out checks', () => {
     const workflow = parse(ciYml);
     const quick = workflow.jobs.quick;
     expect(quick.name).toBe('Quick typecheck');
     expect(quick['continue-on-error']).toBeUndefined();
     const restore = quick.steps.find((step: { name?: string }) => step.name === 'Restore protected-branch compiler state');
-    expect(restore.if).toBe("steps.history.outputs.equal != 'true'");
+    expect(restore.if).toBe("github.event_name == 'push'");
     expect(restore.uses).toBe('actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809');
     expect(restore.with.path.trim().split('\n')).toEqual([
       'node_modules/.cache/phantom-backend.tsbuildinfo',
@@ -574,7 +594,7 @@ echo pending=true; exit 2
     expect(pointer.if).toBe(save.if);
     expect(pointer.with.path).toBe(save.with.path);
     const compiler = quick.steps.find((step: { name?: string }) => step.name === 'Core no-emit type check');
-    expect(compiler.if).toBe("steps.history.outputs.equal != 'true'");
+    expect(compiler.if).toBe("github.event_name == 'push'");
     expect(compiler.run).toContain('npm run typecheck\n');
     expect(compiler.run).toContain('$GITHUB_STEP_SUMMARY');
     expect(compiler.run).toContain('test -s "$graph"');
@@ -637,7 +657,16 @@ echo pending=true; exit 2
         compilerOptions: { incremental: true, tsBuildInfoFile: cache, noEmit: true, strict: true, types: [], skipLibCheck: true },
         files: [source],
       }));
-      const compile = () => spawnSync(resolve(repoRoot, 'node_modules/.bin/tsgo'), ['--noEmit', '-p', config], { encoding: 'utf8' });
+      // The native compiler is a preview binary that is occasionally killed by a
+      // signal on constrained runners (status null). Diagnostics (exit 1/2) are
+      // final; only a signal death is retried, and a persistent one fails loudly.
+      const run = () => spawnSync(resolve(repoRoot, 'node_modules/.bin/tsgo'), ['--noEmit', '-p', config], { encoding: 'utf8', timeout: 60_000, killSignal: 'SIGKILL' });
+      const compile = () => {
+        let result = run();
+        for (let attempt = 1; attempt < 3 && result.signal && !result.error; attempt += 1) result = run();
+        expect({ status: result.status, signal: result.signal, error: result.error?.message, stderr: result.stderr }).toMatchObject({ status: expect.any(Number) });
+        return result;
+      };
       writeFileSync(source, 'export const candidate: number = 1;\n');
       expect(compile().status).toBe(0);
       const initial = readFileSync(cache, 'utf8');
@@ -654,64 +683,34 @@ echo pending=true; exit 2
     }
   }, 90_000);
 
-  it('gates only the expensive Quick steps on the proven source-identical flag', () => {
-    type Step = { name?: string; id?: string; if?: string; env?: Record<string, string>; run?: string; uses?: string };
+  it('skips the duplicate Quick typecheck on PR and merge_group but keeps it on master pushes', () => {
+    type Step = { name?: string; id?: string; if?: string; run?: string };
     const quick = (parse(ciYml).jobs as Record<string, { steps: Step[] }>).quick;
     const step = (name: string) => {
       const found = quick.steps.find((entry) => entry.name === name);
       expect(found, `missing step ${name}`).toBeDefined();
       return found!;
     };
-    const proof = step('Prove source-identical history fast path');
-    expect(proof.id).toBe('history');
-    expect(proof.env?.GH_TOKEN).toBe('${{ github.token }}');
-    expect(proof.run).toContain('ci-history-source.mjs');
-    expect(proof.run).toContain('github-repository-binding.mjs');
-    expect(proof.run).toContain('GITHUB_OUTPUT');
-    // The proof step itself is PR/merge-group only; master pushes skip it and
-    // therefore always run every expensive step below.
-    const proofIf = (event: string): boolean => Boolean(runInNewContext(
-      `(${proof.if!.replace(/github\.event_name/g, 'event')})`,
-      { event },
+    // fast-gate is the blocking typecheck on PR and merge_group; the
+    // source-identical proof is gone with the duplicate it used to skip.
+    expect(quick.steps.find((entry) => entry.id === 'history')).toBeUndefined();
+    expect(quick.steps.some((entry) => (entry.if ?? '').includes('steps.history'))).toBe(false);
+    const runs = (condition: string, event: string, mcpOutput = 'false'): boolean => Boolean(runInNewContext(
+      `(${condition.replace(/github\.event_name/g, JSON.stringify(event)).replace(/steps\.mcp_selection\.outputs\.mcp_output/g, JSON.stringify(mcpOutput))})`,
     ));
-    for (const event of ['pull_request', 'merge_group']) expect(proofIf(event), event).toBe(true);
-    for (const event of ['push', 'schedule', 'workflow_dispatch', 'workflow_call']) expect(proofIf(event), event).toBe(false);
-    // Ordering: proof runs after Node setup and before any dependency install.
-    const names = quick.steps.map((entry) => entry.name);
-    expect(names.indexOf('Set up Node.js 22')).toBeLessThan(names.indexOf(proof.name!));
-    expect(names.indexOf(proof.name!)).toBeLessThan(names.indexOf('Install dependencies'));
-    // Compiler and drift steps require the trusted proof; the selected MCP
-    // contract still needs dependencies even for a source-identical candidate.
-    const expensive = ['Hash protected-branch compiler inputs', 'Install dependencies', 'Restore protected-branch compiler state', 'Core no-emit type check'];
-    for (const name of expensive) {
-      expect(step(name).if, name).toBe(name === 'Install dependencies'
-        ? "steps.history.outputs.equal != 'true' || steps.mcp_selection.outputs.mcp_output == 'true'"
-        : "steps.history.outputs.equal != 'true'");
-    }
-    // Execute the actual workflow predicate: skip only when the flag is the
-    // exact string 'true'; every fallback shape (false, unset, empty) runs.
-    const runs = (condition: string, equal: string | undefined, mcpOutput = 'false'): boolean => Boolean(runInNewContext(
-      `(${condition.replace(/steps\.history\.outputs\.equal/g, JSON.stringify(equal ?? '')).replace(/steps\.mcp_selection\.outputs\.mcp_output/g, JSON.stringify(mcpOutput))})`,
-    ));
-    for (const name of expensive) {
+    for (const name of ['Hash protected-branch compiler inputs', 'Restore protected-branch compiler state', 'Core no-emit type check']) {
       const condition = step(name).if!;
-      expect(runs(condition, 'true'), `${name} skips on proven equality`).toBe(false);
-      for (const fallback of ['false', undefined, '']) {
-        expect(runs(condition, fallback), `${name} runs on ${String(fallback)}`).toBe(true);
-      }
+      expect(runs(condition, 'push'), `${name} on push`).toBe(true);
+      for (const event of ['pull_request', 'merge_group']) expect(runs(condition, event), `${name} on ${event}`).toBe(false);
     }
-    expect(runs(step('Install dependencies').if!, 'true', 'true')).toBe(true);
-    // A tampered or unknown flag spelling must never satisfy the skip either.
-    for (const forged of ['True', 'TRUE', '1', 'yes', ' equal']) {
-      expect(runs(step('Install dependencies').if!, forged), `forged flag ${forged}`).toBe(true);
-    }
-    // Only these four steps may key off the proof output: checkout, setup
-    // and protected-branch cache saving must never join the exemption.
-    const gated = quick.steps
-      .filter((entry) => entry.name !== proof.name && (entry.if ?? '').includes('steps.history'))
-      .map((entry) => entry.name)
-      .sort();
-    expect(gated).toEqual([...expensive].sort());
+    const install = step('Install dependencies').if!;
+    expect(runs(install, 'push')).toBe(true);
+    expect(runs(install, 'pull_request')).toBe(false);
+    expect(runs(install, 'pull_request', 'true')).toBe(true);
+    expect(runs(install, 'merge_group', 'true')).toBe(true);
+    expect(step('Test MCP output contract').if).toBe("steps.mcp_selection.outputs.mcp_output == 'true'");
+    const fastGate = (parse(ciYml).jobs as Record<string, { steps: Step[] }>)['fast-gate'];
+    expect(fastGate.steps.find((entry) => entry.name === 'Core no-emit type check')?.run).toContain('npm run typecheck');
   });
 
   it('runs a read-only generated-files check as its own required job on every fast-path event', () => {
@@ -741,6 +740,11 @@ echo pending=true; exit 2
     type Step = { name?: string; if?: string; run?: string; env?: unknown; uses?: string; with?: Record<string, unknown>; 'continue-on-error'?: unknown };
     const jobs = parse(ciYml).jobs as Record<string, { name: string; if?: string; needs?: unknown; 'runs-on': string; permissions?: unknown; 'continue-on-error'?: unknown; steps: Step[] }>;
     const job = jobs['authority-drift']!;
+    const checkout = job.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+    expect(checkout?.with?.filter).toBeUndefined();
+    expect(checkout?.with?.['fetch-depth']).toBe(1);
+    expect(checkout?.with?.['sparse-checkout']).toBe('.github');
+    expect(checkout?.with?.['sparse-checkout-cone-mode']).toBe(false);
     expect(job.name).toBe('Check authority drift (hermetic)');
     expect(job['runs-on']).toBe('ubuntu-latest');
     expect(job.if).toBe(jobs.quick!.if);
@@ -751,7 +755,7 @@ echo pending=true; exit 2
     expect(job.steps.find((step) => step.uses?.startsWith('actions/checkout@'))?.with?.['persist-credentials']).toBe(false);
     const drift = job.steps.find((step) => step.name === 'Check authority drift (hermetic)');
     expect(drift).toBeDefined();
-    expect(drift!.if).toBeUndefined();
+    expect(drift!.if).toBe("steps.drift_reuse.outputs.reuse != 'true'");
     expect(drift!['continue-on-error']).toBeUndefined();
     expect(drift!.env).toBeUndefined();
     expect(drift!.run).toBe(
@@ -778,10 +782,20 @@ echo pending=true; exit 2
     expect(job.if).toBe("github.event_name == 'pull_request' || github.event_name == 'merge_group'");
     expect(job.env?.ASHLR_CI_BASE_SHA).toBe('${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}');
     const checkout = job.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+    expect(checkout?.with?.filter).toBeUndefined();
+    expect(checkout?.with?.['fetch-depth']).toBe(1);
+    expect(checkout?.with?.['sparse-checkout']).toBe('.github\npackage.json\npackage-lock.json\ntsconfig.json\nsrc/web-ui/tsconfig.json\neslint.config.js\ntest/config\n');
+    expect(checkout?.with?.['sparse-checkout-cone-mode']).toBe(false);
     expect(checkout?.with?.['persist-credentials']).toBe(false);
     expect(checkout?.with?.ref).toContain('merge_group.head_sha');
     for (const step of job.steps.filter((entry) => entry.uses)) expect(step.uses, step.uses).toMatch(/@[0-9a-f]{40}\b/);
-    expect(job.steps.some((step) => step.uses?.startsWith('actions/cache/save@'))).toBe(false);
+    const saves = job.steps.filter((step) => step.uses?.startsWith('actions/cache/save@'));
+    expect(saves.length).toBeGreaterThan(0);
+    for (const step of saves) {
+      expect(step['continue-on-error']).toBe(true);
+      expect(step.with?.key ?? '').toMatch(/^phantom-ci-green-v1-/);
+      expect(step.with?.key ?? '').not.toContain('master-typecheck');
+    }
     const typecheck = job.steps.find((step) => step.name === 'Core no-emit type check');
     expect(typecheck?.run).toContain('npm run typecheck');
     expect(typecheck?.if).toBeUndefined();
@@ -799,7 +813,7 @@ echo pending=true; exit 2
       expect(needs).toContain(id);
     }
     expect(needs).not.toContain('authority-drift');
-    expect(JSON.stringify(job)).not.toMatch(/secrets\.|id-token|pull_request_target|actions\/cache\/save@/);
+    expect(JSON.stringify(job)).not.toMatch(/secrets\.|id-token|pull_request_target/);
   });
 
   it('executes the real history proof contract for equal and fallback outcomes', async () => {
@@ -1040,7 +1054,7 @@ echo pending=true; exit 2
     const shared = jobs['ci-shared-macos']!;
     expect(jobs.classify?.outputs).toEqual({
       lane: '${{ steps.lane.outputs.lane }}',
-      release_gate: "${{ (github.event_name == 'schedule' && github.event.schedule == '0,30 * * * *') || (github.event_name == 'workflow_dispatch' && inputs.release_gate == true) }}",
+      release_gate: "${{ github.event_name == 'workflow_dispatch' && inputs.release_gate == true }}",
       mac_slice: '${{ steps.mac.outputs.mac_slice }}',
       mac_general_exclude: '${{ steps.mac.outputs.mac_general_exclude }}',
     });
@@ -1063,7 +1077,7 @@ echo pending=true; exit 2
       const push = id === 'ci' ? " && !(github.event_name == 'push' && github.ref == 'refs/heads/master')" : " && github.event_name != 'push'";
       expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${push} && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'`);
     }
-    expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '17 */6 * * *' }, { cron: '0,30 * * * *' }]);
+    expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '17 */6 * * *' }]);
     expect(jobs['mac-general']!.strategy!.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(2);
     // Daily Mac rotation (RQ-DAILY-15-PHANTOM-2): only the scheduled or a sliced
@@ -1092,9 +1106,10 @@ echo pending=true; exit 2
       if (matrix?.shard) return matrix.shard.map((shard) => job.name.replace('${{ matrix.shard }}', String(shard)));
       return [job.name];
     });
-    expect(names).toHaveLength(29);
-    expect(new Set(names).size).toBe(29);
+    expect(names).toHaveLength(30);
+    expect(new Set(names).size).toBe(30);
     expect(names).toContain('Release suites (build + signing path)');
+    expect(names).toContain('Dispatch Auto-tag for green release-gate SHA');
     expect(names).toContain('Check generated files');
     expect(names).toContain('Check authority drift (hermetic)');
     expect(names).toContain('Fast gate (typecheck + affected tests)');

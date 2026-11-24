@@ -339,7 +339,7 @@ HOME=$(mktemp -d) npx vitest run test/doc-facts.test.ts $(git ls-files 'test/*au
 ```
 
 A failure means the rebase is not publishable: close it as obsolete or recut.
-Do not resolve a drift failure by editing the test. Merge Gate stays the full
+Do not resolve a drift failure by editing the test. Merge Gate stays the required
 check; this rule only stops a rebase from publishing blind.
 
 ### Deferral

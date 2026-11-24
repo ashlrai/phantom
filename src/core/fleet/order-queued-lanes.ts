@@ -1,12 +1,11 @@
 /** Queued-lane lookup for the order trace. A `<id>.launch` marker names the
  * lane but flips the job to 'launched', so the routed lane of a job that is
  * only queued exists nowhere but `<root>/queue/ready.tsv`. This is a bounded,
- * never-throwing read of that file — the shared parseReadyTsv reader plus the
- * legacy five-column normalization — reduced to a job-id → lane map. Lane ids
- * only; row text never leaves the module. */
+ * never-throwing read of that file — the shared parseReadyTsv reader, which
+ * recognizes the dispatcher's job/repo/lane/tier/prompt dialect — reduced to
+ * a job-id → lane map. Lane ids only; row text never leaves the module. */
 import { join } from 'node:path';
 import { parseReadyTsv } from './lane-console.js';
-import { normalizeLegacyRows } from './ready-supply.js';
 import { readSource, type Source } from './runs-parked-queue.js';
 
 const MAX_READY = 2 * 1024 * 1024;
@@ -30,7 +29,7 @@ const DOTTED_POOL = /^([A-Z-]+)\.(.+)$/;
 export function queuedLanesFromText(text: string): Map<string, string> {
   const lanes = new Map<string, string>();
   const ambiguous = new Set<string>();
-  for (const row of parseReadyTsv(normalizeLegacyRows(text)).rows) {
+  for (const row of parseReadyTsv(text).rows) {
     if (row.id === null || ambiguous.has(row.id)) continue;
     const lane = DOTTED_POOL.exec(row.pool)?.[2] ?? row.pool;
     const prior = lanes.get(row.id);

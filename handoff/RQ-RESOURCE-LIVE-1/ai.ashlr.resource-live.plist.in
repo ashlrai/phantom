@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.ashlr.resource-live</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PHM__</string>
+    <string>usage</string>
+    <string>resource-live</string>
+    <string>--watch</string>
+    <string>--runs-dir</string><string>__RUNS_DIR__</string>
+  </array>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>60</integer>
+  <key>RunAtLoad</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>__RUNS_DIR__/logs/resource-live.log</string>
+  <key>StandardErrorPath</key><string>__RUNS_DIR__/logs/resource-live.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>__HOME__</string>
+    <key>PATH</key><string>__PATH__</string>
+    <key>ASHLR_RUNS_DIR</key><string>__RUNS_DIR__</string>
+  </dict>
+</dict>
+</plist>

@@ -12,14 +12,18 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { runInNewContext } from 'node:vm';
 import { parse } from 'yaml';
 
 const repoRoot = resolve(import.meta.dirname, '..');
+type WorkflowStep = { id?: string; name?: string; run?: string; uses?: string; if?: string; env?: Record<string, string> };
 const workflow = parse(readFileSync(resolve(repoRoot, '.github/workflows/auto-tag.yml'), 'utf8')) as {
   on: Record<string, unknown>;
-  jobs: { tag: { permissions: Record<string, string>; steps: { id?: string; name?: string; run?: string }[] } };
+  concurrency: { group: string };
+  jobs: { tag: { if: string; permissions: Record<string, string>; env: Record<string, string>; steps: WorkflowStep[] } };
 };
 const step = workflow.jobs.tag.steps.find((entry) => entry.id === 'checks')!;
+const validateShaStep = workflow.jobs.tag.steps.find((entry) => entry.id === 'validate-dispatch-sha')!;
 const GEN = 'Check generated files';
 const DRIFT = 'Check authority drift (hermetic)';
 
@@ -59,10 +63,55 @@ esac
   }
 }
 
+function runShaValidation(sha: string, status: string) {
+  const dir = mkdtempSync(join(tmpdir(), 'auto-tag-sha-'));
+  try {
+    const calls = join(dir, 'gh-calls');
+    writeFileSync(calls, '');
+    writeFileSync(join(dir, 'gh'), `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$GH_CALLS"
+printf '%s\\n' "$GH_STATUS"
+`);
+    chmodSync(join(dir, 'gh'), 0o755);
+    const result = spawnSync('bash', ['-c', validateShaStep.run!], {
+      encoding: 'utf8',
+      env: {
+        ...process.env, PATH: `${dir}:${process.env.PATH}`, CANDIDATE_SHA: sha,
+        REPO: 'ashlrai/phantom', GH_TOKEN: 'stub', GH_CALLS: calls, GH_STATUS: status,
+      },
+    });
+    return { status: result.status, log: result.stdout + result.stderr, calls: readFileSync(calls, 'utf8') };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 const ok = (name: string): Run => ({ name, conclusion: 'success' });
 const allGreen = [ok('Merge Gate'), ok(GEN), ok(DRIFT)];
 
 describe('Auto-tag requires both split checks on the exact sha', { timeout: 60_000 }, () => {
+  it('validates an explicit dispatch SHA before minting write authority', () => {
+    const steps = workflow.jobs.tag.steps;
+    const mint = steps.findIndex((entry) => entry.id === 'app');
+    const validation = steps.indexOf(validateShaStep);
+    expect(validation).toBe(0);
+    expect(validation).toBeLessThan(mint);
+    expect(validateShaStep.if).toBe("github.event_name == 'workflow_dispatch' && inputs.sha != ''");
+
+    const invalid = runShaValidation('not-a-commit', 'identical');
+    expect(invalid.status).not.toBe(0);
+    expect(invalid.calls).toBe('');
+    for (const status of ['ahead', 'identical']) {
+      const valid = runShaValidation('a'.repeat(40), status);
+      expect(valid.status, valid.log).toBe(0);
+      expect(valid.calls).toContain('repos/ashlrai/phantom/compare/');
+      expect(valid.calls).toContain('...master');
+    }
+    const diverged = runShaValidation('b'.repeat(40), 'diverged');
+    expect(diverged.status).not.toBe(0);
+    expect(diverged.calls).toContain('...master');
+  });
+
   it('tags only when Merge Gate and both new checks are success', () => {
     const result = runStep(allGreen);
     expect(result.status, result.log).toBe(0);
@@ -108,5 +157,16 @@ describe('Auto-tag requires both split checks on the exact sha', { timeout: 60_0
     expect(Object.keys(workflow.on).sort()).toEqual(['push', 'schedule', 'workflow_dispatch', 'workflow_run']);
     expect(workflow.jobs.tag.permissions).toEqual({ contents: 'read', checks: 'read', actions: 'write' });
     expect(step.run).not.toMatch(/secrets\./);
+    expect(workflow.jobs.tag.if).toContain("github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master'");
+    const trigger = workflow.jobs.tag.env.TRIGGER.replace(/^\$\{\{|\}\}$/g, '')
+      .replaceAll('github.event_name', 'event').replaceAll('github.event.workflow_run.event', 'source');
+    expect(runInNewContext(trigger, { event: 'workflow_dispatch', source: undefined })).toBe('workflow_dispatch');
+    const dispatch = workflow.on.workflow_dispatch as { inputs?: Record<string, unknown> };
+    expect(dispatch.inputs?.sha).toEqual({
+      description: 'Exact release-gated master commit to evaluate', required: false, type: 'string', default: '',
+    });
+    expect(workflow.jobs.tag.env.SHA).toContain("github.event_name == 'workflow_dispatch' && inputs.sha != '' && inputs.sha");
+    expect(workflow.concurrency.group).toContain("github.event_name == 'workflow_dispatch' && inputs.sha != '' && inputs.sha");
+    expect(workflow.jobs.tag.env.TRIGGER).toContain("|| github.event_name");
   });
 });

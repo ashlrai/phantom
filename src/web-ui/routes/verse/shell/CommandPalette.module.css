@@ -207,6 +207,14 @@
 }
 .foot span { display: inline-flex; align-items: center; gap: var(--space-1); }
 
+/* A CLI command on show: its line, what it does, then output or the ask. */
+.cli { padding: var(--space-3) var(--space-4); overflow: auto; font-size: var(--text-sm-size); }
+.cliLine { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); font-family: var(--font-mono); color: var(--text-primary); }
+.cliLine code { overflow-wrap: anywhere; user-select: all; }
+.cliAbout { margin: var(--space-2) 0; color: var(--text-secondary); }
+.cliAsk { margin: 0; color: var(--status-warning-fg); }
+.cliOutput { margin: 0; max-height: 40vh; overflow: auto; white-space: pre-wrap; font-family: var(--font-mono); font-size: var(--text-xs-size); color: var(--text-primary); }
+
 @keyframes fade { from { opacity: 0; } }
 @keyframes rise { from { opacity: 0; transform: translateY(-4px); } }
 

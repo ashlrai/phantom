@@ -17,10 +17,20 @@ const pinned = new Set([
 
 function workflow(name: string) {
   const text = readFileSync(resolve(repoRoot, '.github/workflows', name), 'utf8');
-  return { text, doc: parse(text) as { permissions: unknown; jobs: Record<string, { permissions: Record<string, string>; steps: Array<Record<string, unknown>> }> } };
+  return { text, doc: parse(text) as {
+    on?: Record<string, unknown>;
+    permissions: unknown;
+    jobs: Record<string, { permissions: Record<string, string>; steps: Array<Record<string, unknown>> }>;
+  } };
 }
 
 describe('preflight and metrics workflows', () => {
+  it('rejects workflow_run on the preflight fixer', () => {
+    const { text, doc } = workflow('preflight-fixer.yml');
+    expect(text).not.toMatch(/workflow_run/);
+    expect(Object.keys(doc.on ?? {}).sort()).toEqual(['schedule', 'workflow_dispatch']);
+  });
+
   it.each(['preflight-fixer.yml', 'release-flow-metrics.yml'])('%s is empty at the top and pinned per job', (name) => {
     const { text, doc } = workflow(name);
     expect(doc.permissions).toEqual({});

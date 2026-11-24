@@ -1,0 +1,6 @@
+##[group]Run npm run check:first-paint:built
+npm run check:first-paint:built
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+check-first-paint-budget: first-paint root "app/VerseMobileApp.tsx" is not in the Vite manifest
+##[error]Process completed with exit code 2.

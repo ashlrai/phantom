@@ -3,8 +3,9 @@
 A pull request that a job produced on one Mac pool (pool A) is reviewed by a
 model from a different family on a different pool (pool B). A deterministic
 step then decides whether the bridge may enable auto-merge. This replaces the
-Grok-agent owner reviews for ordinary PRs. Tier-1, CODEOWNERS and other
-sensitive changes still go to the box for a Security review.
+Grok-agent owner reviews for ordinary PRs. With [tier1-verify](#tier1-verify)
+on, Tier-1, CODEOWNERS and other sensitive changes are verified by agents too;
+only the GATES v3 floor still goes to the box for a Security review.
 
 Source: `src/core/fleet/cross-review.ts` (policy, scan, prompt, verdict,
 decision), `src/core/fleet/cross-review-process.ts` (the isolated reviewer
@@ -98,6 +99,51 @@ supervisor that calls it.
   not scanned.
 - Binary, unparseable, quoted-path, traversal, empty or oversized diffs.
 
+## tier1-verify
+
+Article 1 of [AGENTS.md](../AGENTS.md) removes ask-Mason steps, so a sensitive
+change no longer parks for a human review. When `tier1.enabled` is set in the
+policy, an escalating change goes through a deep verification stage
+(`src/core/fleet/tier1-verify.ts`) instead:
+
+1. **GATES v3 floor (unchanged, still escalates).** CI config and
+   `.github/**`, secret material, release and signing tooling, the
+   action-class registry, comms send policy, the KILL home, edits to
+   CODEOWNERS itself (a rename or a broad last-match rule can disable
+   ownership without a removed line), Security-pinned
+   paths (`publish.sh`, scrub, dispatchd, git-safe), sandbox profiles
+   (`*.sb`), the TCC helper and loopback auth, leader wrappers and prompts,
+   billing and payments, credential reads or download-exec in added code,
+   secret-shaped added values, unreadable, unmeasurable or oversized diffs,
+   and the bridge denylist. The model is not asked about these.
+2. **Deterministic checks** on the exact diff: a secret-shape scan of added
+   lines (hit count only, never the value), authority-fixture impact (rule
+   ids, Tier-1 source, test and fixture counts), test tampering, and
+   regression risk (`scoreDiffRisk`: oversize, shrinking tests, or source
+   changed with no test touched). Paths a CODEOWNERS file owns are verified
+   here; editing the CODEOWNERS file itself is floor.
+3. **Two model reviews:** the standard review, then a semantic claim-vs-diff
+   pass (`tier1-semantic` prompt) by a second seat on another pool or family.
+   Both must be producer-independent. Both answer with the closed schema.
+4. **Full CI:** every `tier1.fullChecks` entry (exact name, or `prefix*`)
+   must have succeeded on the exact head, beyond the required Merge Gate.
+   Full suites do not run on `pull_request`, so the decision holds with
+   `tier1-full-ci-missing` (`checkStatus: wait`) until the bridge dispatches
+   them on the head branch.
+
+Outcomes: `enable-auto-merge` (`tier1-verified`); `reject` with the
+assessment as the failure report and a one-line `fixJob`
+(`RQ-T1FIX-<repo>-<pr>-<sha7>`, tier frontier) that `--queue <router-queue.md>`
+appends once per id; `re-review` or `hold` on review gaps; `escalate` only
+for the floor. A failed reviewer holds rather than re-spending a model;
+enabling requires two distinct reviewer seats. Enable it with:
+
+```json
+"tier1": { "enabled": true, "fullChecks": ["CI (Node 22, *", "Mac exhaustive (isolated)"] }
+```
+
+Absent or `enabled: false` keeps the previous escalate behaviour.
+
 ## Files
 
 `$ASHLR_HOME/cross-review.json` is owner-written. Any invalid entry fails the
@@ -145,7 +191,8 @@ untrusted:
   "title": "…",
   "body": "…",
   "diffFile": "/abs/path/pr-123.diff",
-  "codeownersFile": "/abs/path/CODEOWNERS"
+  "codeownersFile": "/abs/path/CODEOWNERS",
+  "headRef": "bridge/RQ-EXAMPLE"
 }
 ```
 

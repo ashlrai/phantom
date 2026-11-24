@@ -98,6 +98,97 @@ export function judgeRequiredChecks(
   return pending ? 'pending' : 'green';
 }
 
+export interface FinalizeRunRecord {
+  status: string;
+  conclusion: string | null;
+  createdAt: string | null;
+  version: string | null;
+  sha: string | null;
+}
+
+export const FINALIZE_ATTEMPT_CAP = 2;
+export const FINALIZE_FAILURE_COOLDOWN_MS = 60 * 60 * 1000;
+
+/** Matches `run-name` on finalize-github-release.yml. Anything else is unreadable. */
+export function finalizeRunIdentity(title: string | null): { version: string; sha: string } | null {
+  const match = /^finalize ((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)) ([a-f0-9]{40})$/.exec(title ?? '');
+  if (!match) return null;
+  return { version: match[1]!, sha: match[2]! };
+}
+
+/**
+ * At most two finalize runs for one version and sha. A failure in the last
+ * hour blocks the next try. An unattributed run newer than the candidate
+ * counts against that pair, so a title-less failure cannot retry every tick.
+ */
+export function finalizeRetryDecision(input: {
+  now: string;
+  version: string;
+  sha: string;
+  since: string | null;
+  runs: readonly FinalizeRunRecord[];
+}): { dispatch: boolean; reason: string } {
+  const nowMs = Date.parse(input.now);
+  const sinceMs = input.since === null ? Number.NEGATIVE_INFINITY : Date.parse(input.since);
+  if (!Number.isFinite(nowMs) || !Number.isFinite(sinceMs)) return { dispatch: false, reason: 'finalize-clock' };
+  const relevant = input.runs.filter((run) => {
+    if (run.version !== null && run.sha !== null) return run.version === input.version && run.sha === input.sha;
+    const at = run.createdAt === null ? Number.NaN : Date.parse(run.createdAt);
+    return Number.isFinite(at) && at >= sinceMs;
+  });
+  if (relevant.some((run) => run.status !== 'completed')) return { dispatch: false, reason: 'finalize-in-progress' };
+  if (relevant.length >= FINALIZE_ATTEMPT_CAP) return { dispatch: false, reason: 'finalize-attempt-cap' };
+  const cooling = relevant.some((run) => {
+    if (run.conclusion === 'success' || run.conclusion === 'skipped') return false;
+    const at = run.createdAt === null ? Number.NaN : Date.parse(run.createdAt);
+    if (!Number.isFinite(at) || at > nowMs) return true;
+    return nowMs - at < FINALIZE_FAILURE_COOLDOWN_MS;
+  });
+  if (cooling) return { dispatch: false, reason: 'finalize-failure-cooldown' };
+  return { dispatch: true, reason: 'finalize-allowed' };
+}
+
+export const FINALIZE_HISTORY_MS = 24 * 60 * 60 * 1000;
+const FINALIZE_RUN_PAGE_SIZE = 100;
+const FINALIZE_RUN_PAGE_CAP = 10;
+
+/** One page of finalize runs created in the last 24 hours. */
+export function finalizeRunsQuery(now: string, page: number): string {
+  const nowMs = Date.parse(now);
+  if (!Number.isFinite(nowMs) || !Number.isInteger(page) || page < 1) throw new Error('finalize-clock');
+  const created = new Date(nowMs - FINALIZE_HISTORY_MS).toISOString();
+  return `repos/${REPOSITORY}/actions/workflows/finalize-github-release.yml/runs?per_page=${FINALIZE_RUN_PAGE_SIZE}&page=${page}&created=${encodeURIComponent(`>=${created}`)}`;
+}
+
+function finalizeRunRecord(row: unknown): FinalizeRunRecord {
+  const item = record(row);
+  const identity = finalizeRunIdentity(text(item?.display_title) ?? text(item?.name));
+  return {
+    status: text(item?.status) ?? '',
+    conclusion: text(item?.conclusion),
+    createdAt: text(item?.created_at),
+    version: identity?.version ?? null,
+    sha: identity?.sha ?? null,
+  };
+}
+
+/** Every finalize run in the last 24 hours. A truncated window throws, so the cap cannot reset by falling off the first page. */
+export async function listFinalizeRuns(read: (path: string) => Promise<unknown>, now: string): Promise<FinalizeRunRecord[]> {
+  const runs: FinalizeRunRecord[] = [];
+  for (let page = 1; page <= FINALIZE_RUN_PAGE_CAP; page += 1) {
+    const listed = record(await read(finalizeRunsQuery(now, page)));
+    if (!listed || !Array.isArray(listed.workflow_runs)) throw new Error('incomplete finalize run inventory');
+    const rows = listed.workflow_runs;
+    runs.push(...rows.map(finalizeRunRecord));
+    const total = listed.total_count;
+    if (typeof total === 'number' && rows.length < FINALIZE_RUN_PAGE_SIZE && total !== runs.length) {
+      throw new Error('incomplete finalize run inventory');
+    }
+    if (rows.length < FINALIZE_RUN_PAGE_SIZE) return runs;
+  }
+  throw new Error('incomplete finalize run inventory');
+}
+
 export interface ReleaseAsset { name: string; created_at: string | null }
 export interface ReleaseRow {
   id: number;
@@ -123,11 +214,39 @@ export interface TrainObservation {
    * be a later merge than the release-please commit (two merges a second apart).
    * It carries that release commit's message when it is an ancestor of the tag
    * and package.json at the tag still carries the tag version.
+   * packageVersion and releaseGate identify that same tagged SHA when the
+   * subject is not a release-please line: package.json equals the tag and the
+   * release-gate receipt on that SHA is green.
    */
-  head: { tag: string; sha: string; message: string; releaseMessage?: string; ancestry: Ancestry; compareStatus?: string; committedAt: string | null } | null;
+  head: {
+    tag: string; sha: string; message: string; releaseMessage?: string;
+    packageVersion?: string | null; releaseGate?: ReleaseGateReceipt;
+    ancestry: Ancestry; compareStatus?: string; committedAt: string | null;
+  } | null;
   skippedTags?: { tag: string; reason: string }[];
   releases: ReleaseRow[];
-  openReleasePr: { number: number; nodeId: string; version: string; headSha: string; headRef: string; mergeable: string; state: 'OPEN' | 'MERGED'; queued: boolean } | null;
+  openReleasePr: {
+    number: number; nodeId: string; version: string; headSha: string; headRef: string;
+    mergeable: string; state: 'OPEN' | 'MERGED'; queued: boolean;
+    /** Latest merge-queue removal time when it is the newest queue event and the PR is not queued. */
+    queueEjectedAt?: string | null;
+    /** committedDate of the PR head commit; null when the queue read did not return it. */
+    headCommittedAt?: string | null;
+    /**
+     * True when an unaddressed merge-queue ejection left stale-green head
+     * checks and the head trails master: re-enqueueing would retry evidence
+     * the queue already rejected, so the plan syncs the branch first.
+     */
+    branchSyncDue?: boolean;
+    /**
+     * True when that ejection's base compare could not be read or returned no
+     * recognized status, so whether the head trails master is unknown. The
+     * plan defers every write to this PR — enqueue could retry evidence the
+     * queue already rejected and a blind sync could be a no-op write — while
+     * the rest of the observation and plan still complete.
+     */
+    branchSyncUnknown?: boolean;
+  } | null;
   pullChecks: { pending: number; failing: number } | null;
   /** Required CI on `head.sha`. Green is the only value that may dispatch a build. */
   candidateCi: CandidateCi;
@@ -149,12 +268,20 @@ export interface TrainObservation {
   attest: { runId: number; attempt: number; artifactId: number; completedAt: string | null } | null;
   attestPending: boolean;
   audit: { runId: number; attempt: number } | null;
+  /** A tag-ref or master audit for this SHA is queued or running. */
+  auditPending?: boolean;
   npmPublished: boolean | null;
   npmAt: string | null;
   /** Public npm provenance for this version. Absent means finalize is not dispatched. */
   npmPublish?: { runId: number; attempt: number; integrity: string } | null;
   /** A finalize run is queued, waiting, or in progress. */
   finalizePending?: boolean;
+  /**
+   * Recent finalize runs. `version` and `sha` are null when the run cannot
+   * be attributed; those still count against the current candidate when they
+   * are newer than its commit.
+   */
+  finalizeRuns?: readonly FinalizeRunRecord[];
   docsSynced: boolean;
   /** Parsed `version` from the updater endpoint, or null when it was not read. */
   feedVersion: string | null;
@@ -178,10 +305,16 @@ export interface TrainState {
 }
 
 export const ENQUEUE_PULL_REQUEST = 'mutation($pullRequestId:ID!){enqueuePullRequest(input:{pullRequestId:$pullRequestId}){mergeQueueEntry{position state}}}';
+/**
+ * MERGE method only: a base merge commit on top of the head, never a rewrite
+ * or force-push. expectedHeadOid pins the exact observed head so a head that
+ * moved since the read is refused instead of synced blind.
+ */
+export const UPDATE_PULL_REQUEST_BRANCH = 'mutation($pullRequestId:ID!,$expectedHeadOid:GitObjectID!){updatePullRequestBranch(input:{pullRequestId:$pullRequestId,expectedHeadOid:$expectedHeadOid,updateMethod:MERGE}){pullRequest{id headRefOid}}}';
 const PULL_NODE = /^PR_[A-Za-z0-9_-]+$/;
 export type ReleaseWrite =
   | { method: 'PATCH'; path: string; body: { name: string; body: string; draft: true; prerelease: false } }
-  | { method: 'POST'; path: 'graphql'; body: { query: string; variables: { pullRequestId: string } } }
+  | { method: 'POST'; path: 'graphql'; body: { query: string; variables: { pullRequestId: string; expectedHeadOid?: string } } }
   | { method: 'POST'; path: string; body: { ref: string; inputs: Record<string, string | boolean> } };
 
 export interface TrainPlan { state: TrainState; writes: ReleaseWrite[]; exitCode: 0 | 1 }
@@ -242,6 +375,17 @@ export function mergeStageDone(state: string | null | undefined): boolean {
 export function enqueueReleasePullRequest(nodeId: string): ReleaseWrite {
   if (!PULL_NODE.test(nodeId)) throw new Error('refusing release enqueue');
   return { method: 'POST', path: 'graphql', body: { query: ENQUEUE_PULL_REQUEST, variables: { pullRequestId: nodeId } } };
+}
+
+/**
+ * Refresh an ejected release-please head against current master. Planned only
+ * for an unaddressed merge-queue ejection on a head that trails master; the
+ * new merge commit makes pull_request checks re-verify the exact head, which
+ * either re-greens for enqueue or goes red so release-please regenerates.
+ */
+export function syncReleasePullRequest(nodeId: string, headOid: string): ReleaseWrite {
+  if (!PULL_NODE.test(nodeId) || !SHA.test(headOid)) throw new Error('refusing release branch sync');
+  return { method: 'POST', path: 'graphql', body: { query: UPDATE_PULL_REQUEST_BRANCH, variables: { pullRequestId: nodeId, expectedHeadOid: headOid } } };
 }
 
 /** Configured release cadence in minutes. Valid values are 1 through 1440, with no hourly floor. */
@@ -319,6 +463,38 @@ export function isReleasePleaseCommit(message: string, version: string): boolean
   return `${match[1]}.${match[2]}.${match[3]}` === version;
 }
 
+/** Same names and all/any rules as ci-release-gate.mjs. A receipt is those check runs on one SHA. */
+export const RELEASE_GATE_RECEIPT = Object.freeze([
+  ['Merge Gate', 'all'],
+  ['Secret-shape scan', 'all'],
+  ['Secret scan (diff)', 'all'],
+  ['Check generated files', 'any'],
+  ['Check authority drift (hermetic)', 'any'],
+  ['Quick typecheck', 'any'],
+  ['Fast gate (typecheck + affected tests)', 'any'],
+  ['Desktop release smoke', 'any'],
+  ['Release suites (build + signing path)', 'any'],
+] as const);
+
+export type ReleaseGateReceipt = 'green' | 'red' | 'pending' | 'unknown';
+
+/** Green only when every receipt row is present. Missing or running is pending. A bad conclusion is red. */
+export function releaseGateReceipt(
+  runs: readonly { name: string; status: string; conclusion: string | null; appId: number }[],
+): ReleaseGateReceipt {
+  let pending = false;
+  for (const [name, rule] of RELEASE_GATE_RECEIPT) {
+    const rows = runs.filter((run) => run.appId === ACTIONS_APP_ID && run.name === name);
+    if (rows.length === 0) { pending = true; continue; }
+    if (rows.some((run) => run.status !== 'completed')) { pending = true; continue; }
+    const conclusions = rows.map((run) => run.conclusion ?? 'none');
+    if (conclusions.some((conclusion) => conclusion !== 'success' && conclusion !== 'skipped')) return 'red';
+    if (rule === 'all' && conclusions.includes('skipped')) return 'red';
+    if (rule === 'any' && !conclusions.includes('success')) pending = true;
+  }
+  return pending ? 'pending' : 'green';
+}
+
 function releaseMismatch(tag: string, message: string): string {
   return `release_message_mismatch: tag=${tag} first_line=${JSON.stringify(message.split(/\r?\n/, 1)[0] ?? '')} expected=chore(<scope>): release ${tag.slice(1)}`;
 }
@@ -394,7 +570,7 @@ function emptyStages(mergeAt: string | null): Record<string, StageTiming> {
 export function assertReleaseWrite(write: ReleaseWrite): void {
   if (write.method !== 'PATCH' && write.method !== 'POST') throw new Error('refusing release write');
   const release = /^repos\/ashlrai\/phantom\/releases\/([1-9]\d*)$/;
-  const dispatch = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci|release-please|finalize-github-release)\.yml\/dispatches$/;
+  const dispatch = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|dependency-audit|publish-canonical-npm|ci|release-please|finalize-github-release)\.yml\/dispatches$/;
   if (write.path.includes('/merge') || JSON.stringify(write.body).includes('admin') || JSON.stringify(write.body).includes('bypass')) {
     throw new Error('refusing release write');
   }
@@ -404,14 +580,25 @@ export function assertReleaseWrite(write: ReleaseWrite): void {
     return;
   }
   if (write.path === 'graphql') {
-    const body = write.body as { query?: string; variables?: { pullRequestId?: string } };
-    if (body.query !== ENQUEUE_PULL_REQUEST || !PULL_NODE.test(body.variables?.pullRequestId ?? '')) throw new Error('refusing release enqueue');
-    return;
+    const body = write.body as { query?: string; variables?: { pullRequestId?: string; expectedHeadOid?: string } };
+    if (!PULL_NODE.test(body.variables?.pullRequestId ?? '')) throw new Error('refusing release pull request write');
+    if (body.query === ENQUEUE_PULL_REQUEST) {
+      if (body.variables?.expectedHeadOid !== undefined) throw new Error('refusing release enqueue');
+      return;
+    }
+    if (body.query === UPDATE_PULL_REQUEST_BRANCH) {
+      if (!SHA.test(body.variables?.expectedHeadOid ?? '')) throw new Error('refusing release branch sync');
+      return;
+    }
+    throw new Error('refusing release write');
   }
   if (dispatch.test(write.path)) {
     const body = write.body as { ref?: string; inputs?: Record<string, string | boolean> };
     if ((body.ref !== 'master' && !/^v\d+\.\d+\.\d+$/.test(body.ref ?? '')) || !body.inputs) throw new Error('refusing workflow dispatch');
     if (write.path.endsWith('/release-please.yml/dispatches') && (body.ref !== 'master' || Object.keys(body.inputs).length !== 0)) throw new Error('refusing release PR dispatch');
+    if (write.path.endsWith('/dependency-audit.yml/dispatches') && (!/^v\d+\.\d+\.\d+$/.test(body.ref ?? '') || Object.keys(body.inputs).length !== 0)) {
+      throw new Error('refusing audit dispatch');
+    }
     if (write.path.endsWith('/finalize-github-release.yml/dispatches')) {
       const inputs = body.inputs as Record<string, string>;
       const keys = Object.keys(inputs).sort();
@@ -444,8 +631,8 @@ function fixForward(input: TrainObservation, candidate: { name: string; sha: str
   let releasePr: string;
   const ready = readyReleasePr(pr, input.pullChecks, successor);
   if (ready) {
-    if (cadenceDue) writes.push(enqueueReleasePullRequest(ready.nodeId));
-    releasePr = cadenceDue ? 'release-pr-enqueued' : 'release-cadence-wait';
+    if (cadenceDue && !ready.branchSyncUnknown) writes.push(ready.branchSyncDue ? syncReleasePullRequest(ready.nodeId, ready.headSha) : enqueueReleasePullRequest(ready.nodeId));
+    releasePr = !cadenceDue ? 'release-cadence-wait' : ready.branchSyncUnknown ? 'release-pr-compare-unknown' : ready.branchSyncDue ? 'release-pr-syncing' : 'release-pr-enqueued';
   } else if (pr && pr.state === 'OPEN' && pr.version === successor) {
     releasePr = pr.queued ? 'release-pr-queued' : 'release-pr-checks-pending';
   } else if (cadenceDue) {
@@ -515,9 +702,15 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     return stopped(input.head ? 'candidate-not-newest' : 'no-release-tag');
   }
   const version = headTag.name.slice(1);
+  const subjectAdmitted = isReleasePleaseCommit(input.head.message, version) || isReleasePleaseCommit(input.head.releaseMessage ?? '', version);
+  // The tagged SHA is the release when its package.json version is the tag and
+  // the release-gate receipt on that SHA is green. The commit subject is not
+  // an input to the receipt, digest, or attestation checks, which stay bound
+  // to this SHA.
+  const receiptAdmitted = input.head.packageVersion === version && input.head.releaseGate === 'green';
   const admitted = (input.head.ancestry === 'ancestor' || input.head.ancestry === 'identical')
     && input.head.sha !== ''
-    && (isReleasePleaseCommit(input.head.message, version) || isReleasePleaseCommit(input.head.releaseMessage ?? '', version));
+    && (subjectAdmitted || receiptAdmitted);
   if (!admitted) {
     const detail = input.head.ancestry !== 'ancestor' && input.head.ancestry !== 'identical'
       ? `compare_not_ahead: ${input.head.compareStatus ?? input.head.ancestry}`
@@ -554,7 +747,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   const checks = input.pullChecks;
   if (fixForwardDue(input, headTag)) return fixForward(input, headTag, expected, cadenceDue);
   const ready = cadenceDue ? readyReleasePr(pr, checks, expected) : null;
-  if (ready) writes.push(enqueueReleasePullRequest(ready.nodeId));
+  if (ready && !ready.branchSyncUnknown) writes.push(ready.branchSyncDue ? syncReleasePullRequest(ready.nodeId, ready.headSha) : enqueueReleasePullRequest(ready.nodeId));
 
   const row = input.releases.find((release) => release.tag_name === headTag.name) ?? null;
   const names = row?.assets.map((asset) => asset.name) ?? [];
@@ -568,6 +761,16 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   // same SHA when they match, but github.ref_name must be the tag so the
   // phantom-release-<tag> concurrency group and tag-scoped workflows apply.
   const ref = headTag.name;
+  // The Mac autorun looks up the dependency audit by the release SHA. A master
+  // push audit is not a tag-ref run, so dispatch the audit on the tag itself
+  // as soon as this candidate is admitted. Empty inputs keep the audit workflow
+  // on its own steps. GITHUB_TOKEN sends it; the release App has no actions right.
+  if (!input.audit && !input.auditPending && publishable) {
+    writes.push({
+      method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/dependency-audit.yml/dispatches`,
+      body: { ref, inputs: {} },
+    });
+  }
   if (!input.build && !input.buildPending && publishable && !input.pushCiRed && !(row?.draft === false && input.npmPublished === true)) {
     writes.push({
       method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/ci.yml/dispatches`,
@@ -599,8 +802,11 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     });
   }
   const stocked = signed && names.includes('latest.json');
+  const finalizeRetry = finalizeRetryDecision({
+    now: input.now, version, sha: headTag.sha, since: input.head.committedAt, runs: input.finalizeRuns ?? [],
+  });
   if (row?.draft === true && stocked && publishable && input.npmPublished === true && input.npmPublish
-    && input.finalizePending !== true && version !== '3.30.34' && headTag.name !== 'v3.30.34') {
+    && input.finalizePending !== true && finalizeRetry.dispatch && version !== '3.30.34' && headTag.name !== 'v3.30.34') {
     writes.push({
       method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/finalize-github-release.yml/dispatches`,
       body: { ref: 'master', inputs: {
@@ -671,6 +877,22 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   };
 }
 
+/**
+ * Step summary for the workflow run. A skipped tag is not a blocker: it has no
+ * release-please commit (e.g. a hand version bump), is never published, and is
+ * superseded once the next release-please tag is admitted.
+ */
+export function trainStepSummary(state: Pick<TrainState, 'reason' | 'skippedTags'>): string {
+  const skipped = state.skippedTags ?? [];
+  const lines = [`### Release train`, '', state.reason];
+  if (skipped.length > 0) {
+    lines.push('', 'Skipped tags. They have no release-please commit, so the train never publishes them;'
+      + ' the next release-please tag supersedes their drafts. Not a blocker for the candidate above.');
+    for (const item of skipped) lines.push(`- ${item.reason}`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
 export function markWritesApplied(state: TrainState): TrainState {
   const steps: TrainState['steps'] = { ...state.steps, supersede: { status: 'complete' } };
   const order = ['build', 'attest', 'sign', 'notarize', 'npm', 'feed', 'docs', 'finalize'];
@@ -697,6 +919,47 @@ async function pages(read: (path: string) => Promise<unknown>, path: string): Pr
   throw new Error('incomplete release inventory');
 }
 
+async function packageVersionAt(read: (path: string) => Promise<unknown>, sha: string): Promise<string | null> {
+  try {
+    const content = record(await read(`repos/${REPOSITORY}/contents/package.json?ref=${sha}`));
+    if (content?.encoding !== 'base64' || typeof content.content !== 'string') return null;
+    const pkg = record(JSON.parse(Buffer.from(content.content.replace(/\s/g, ''), 'base64').toString('utf8')));
+    if (pkg?.name !== '@ashlr/phantom' || typeof pkg.version !== 'string' || !VERSION.test(pkg.version)) return null;
+    return pkg.version;
+  } catch {
+    return null;
+  }
+}
+
+async function releaseGateFor(read: (path: string) => Promise<unknown>, sha: string): Promise<ReleaseGateReceipt> {
+  try {
+    const collected: { name: string; status: string; conclusion: string | null; appId: number }[] = [];
+    let total: number | null = null;
+    for (let page = 1; page <= 10; page += 1) {
+      const listed = record(await read(`repos/${REPOSITORY}/commits/${sha}/check-runs?filter=latest&app_id=${ACTIONS_APP_ID}&per_page=100&page=${page}`));
+      const batch = listed && Array.isArray(listed.check_runs) ? listed.check_runs : null;
+      const pageTotal = listed && Number.isInteger(listed.total_count) ? Number(listed.total_count) : null;
+      if (!batch || pageTotal === null || pageTotal < 0) return 'unknown';
+      if (total === null) total = pageTotal;
+      else if (pageTotal !== total) return 'unknown';
+      for (const row of batch) {
+        const item = record(row);
+        collected.push({
+          name: text(item?.name) ?? '',
+          status: text(item?.status) ?? '',
+          conclusion: text(item?.conclusion),
+          appId: Number(record(item?.app)?.id),
+        });
+      }
+      if (batch.length < 100) break;
+    }
+    if (total === null || total !== collected.length || collected.length > 1000) return 'unknown';
+    return releaseGateReceipt(collected);
+  } catch {
+    return 'unknown';
+  }
+}
+
 async function ancestorReleaseMessage(read: (path: string) => Promise<unknown>, tag: { name: string; sha: string }): Promise<string | null> {
   const version = tag.name.slice(1);
   const content = record(await read(`repos/${REPOSITORY}/contents/package.json?ref=${tag.sha}`));
@@ -712,6 +975,61 @@ async function ancestorReleaseMessage(read: (path: string) => Promise<unknown>, 
   return null;
 }
 
+export interface ReleasePrQueueState {
+  queued: boolean;
+  /**
+   * createdAt of the newest merge-queue removal, only when it is the latest
+   * queue event and the PR is not currently queued. A removal means the merge
+   * group rejected this head against a newer base; the head's own required
+   * checks can stay green because they verified an older merge.
+   */
+  ejectedAt: string | null;
+  /** committedDate of the PR head commit; null when the read did not return it. */
+  headCommittedAt: string | null;
+}
+
+const RELEASE_PR_QUEUED = 'query($id:ID!){node(id:$id){... on PullRequest{isInMergeQueue}}}';
+const RELEASE_PR_EJECTION = 'query($id:ID!){node(id:$id){... on PullRequest{headRef{target{... on Commit{committedDate}}} timelineItems(last:20,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT]){nodes{__typename ... on AddedToMergeQueueEvent{createdAt} ... on RemovedFromMergeQueueEvent{createdAt}}}}}}';
+
+function graphqlNode(call: (method: string, path: string, body?: unknown) => string, query: string, nodeId: string): Record<string, unknown> | null {
+  const payload: unknown = JSON.parse(call('POST', 'graphql', { query, variables: { id: nodeId } }));
+  const errors = record(payload)?.errors;
+  if (Array.isArray(errors) && errors.length > 0) throw new Error('release queue state unavailable');
+  return record(record(record(payload)?.data)?.node);
+}
+
+/**
+ * Merge-queue membership is GraphQL-only; REST pull reads never expose it.
+ * enqueuePullRequest rejects an already-queued PR, so the plan must observe
+ * the entry instead of planning a write that can only fail. Membership stays
+ * on the minimal proven query; the ejection detail is a second best-effort
+ * read whose failure degrades to ordinary enqueue evidence, never to a
+ * stalled observation.
+ */
+export async function releasePrMergeQueueState(
+  nodeId: string,
+  call: (method: string, path: string, body?: unknown) => string = gh,
+): Promise<ReleasePrQueueState> {
+  if (!PULL_NODE.test(nodeId)) throw new Error('invalid release pull request');
+  const node = graphqlNode(call, RELEASE_PR_QUEUED, nodeId);
+  if (typeof node?.isInMergeQueue !== 'boolean') throw new Error('release queue state unavailable');
+  if (node.isInMergeQueue) return { queued: true, ejectedAt: null, headCommittedAt: null };
+  let ejectedAt: string | null = null;
+  let headCommittedAt: string | null = null;
+  try {
+    const detail = graphqlNode(call, RELEASE_PR_EJECTION, nodeId);
+    const items = record(detail?.timelineItems)?.nodes;
+    const events = Array.isArray(items) ? items.map(record) : [];
+    const last = record(events.at(-1));
+    ejectedAt = last?.__typename === 'RemovedFromMergeQueueEvent' ? text(last.createdAt) : null;
+    headCommittedAt = text(record(record(detail?.headRef)?.target)?.committedDate);
+  } catch {
+    ejectedAt = null;
+    headCommittedAt = null;
+  }
+  return { queued: false, ejectedAt, headCommittedAt };
+}
+
 export async function observeTrain(
   read: (path: string) => Promise<unknown>,
   now = new Date().toISOString(),
@@ -720,6 +1038,7 @@ export async function observeTrain(
     fleet: readSentinel(fleetKillPath()),
     autorun: readSentinel(autorunOffPath()),
   },
+  mergeQueueLookup: (nodeId: string) => Promise<ReleasePrQueueState> = releasePrMergeQueueState,
 ): Promise<TrainObservation> {
   const repo = record(await read(`repos/${REPOSITORY}`));
   if (repo?.id !== REPOSITORY_ID || repo.full_name !== REPOSITORY) throw new Error('unexpected repository');
@@ -767,11 +1086,16 @@ export async function observeTrain(
     const status = text(compare?.status);
     const ancestry: Ancestry = status === 'ahead' ? 'ancestor' : status === 'identical' ? 'identical' : status === 'diverged' ? 'diverged' : status === 'behind' ? 'behind' : 'unknown';
     const candidate: NonNullable<TrainObservation['head']> = { tag: newest.name, sha: newest.sha, message, ancestry, compareStatus: status ?? 'unknown', committedAt };
-    if (!isReleasePleaseCommit(message, newest.name.slice(1))) {
+    const version = newest.name.slice(1);
+    if (!isReleasePleaseCommit(message, version)) {
       const releaseMessage = await ancestorReleaseMessage(read, newest);
       if (releaseMessage) candidate.releaseMessage = releaseMessage;
     }
-    if (isReleasePleaseCommit(message, newest.name.slice(1)) || candidate.releaseMessage) {
+    candidate.packageVersion = await packageVersionAt(read, newest.sha);
+    if (candidate.packageVersion === version) candidate.releaseGate = await releaseGateFor(read, newest.sha);
+    const subject = isReleasePleaseCommit(message, version) || candidate.releaseMessage !== undefined;
+    const receipt = candidate.packageVersion === version && candidate.releaseGate === 'green';
+    if (subject || receipt) {
       head = candidate;
       break;
     }
@@ -814,31 +1138,56 @@ export async function observeTrain(
     const headRef = text(record(detail?.head)?.ref) ?? '';
     const headSha = text(record(detail?.head)?.sha) ?? '';
     const nodeId = text(detail?.node_id) ?? '';
-    const state = text(detail?.mergeable_state) ?? '';
     const pullState = detail?.merged_at ? 'MERGED' : detail?.state === 'open' ? 'OPEN' : 'OPEN';
     if (!version || !headRef.startsWith('release-please--') || !SHA.test(headSha) || !PULL_NODE.test(nodeId)) throw new Error('invalid release pull request');
-    const mergeable = detail?.mergeable === true && state === 'clean' ? 'MERGEABLE' : state === 'dirty' ? 'CONFLICTING' : 'UNKNOWN';
-    openReleasePr = { number: Number(listed.number), nodeId, version, headSha, headRef, mergeable, state: pullState, queued: false };
+    // mergeable_state folds in advisory check and review state; enqueue
+    // authority is the required-check judgment below plus GitHub's own rules.
+    const mergeable = detail?.mergeable === true ? 'MERGEABLE' : detail?.mergeable === false ? 'CONFLICTING' : 'UNKNOWN';
+    openReleasePr = { number: Number(listed.number), nodeId, version, headSha, headRef, mergeable, state: pullState, queued: false, queueEjectedAt: null, headCommittedAt: null, branchSyncDue: false };
   }
+  // Required check names are shared by the release-PR head, the admitted
+  // candidate and the fix-forward master read; fetch the ruleset evidence once.
+  let requiredNamesPromise: Promise<string[]> | null = null;
+  const requiredNames = () => (requiredNamesPromise ??= requiredCheckNames(read));
   let pullChecks: TrainObservation['pullChecks'] = null;
   if (openReleasePr) {
-    const checks = record(await read(`repos/${REPOSITORY}/commits/${openReleasePr.headSha}/check-runs?filter=latest&per_page=100`));
-    const runs = Array.isArray(checks?.check_runs) ? checks.check_runs : null;
-    if (!runs || checks?.total_count !== runs.length || runs.length > 100) throw new Error('incomplete check inventory');
-    let pending = 0; let failing = 0; let actions = 0;
-    for (const run of runs) {
-      const item = record(run);
-      if (record(item?.app)?.id !== 15368) continue;
-      actions += 1;
-      if (item?.status !== 'completed') pending += 1;
-      else if (item.conclusion !== 'success' && item.conclusion !== 'skipped') failing += 1;
+    const queue = await mergeQueueLookup(openReleasePr.nodeId);
+    openReleasePr.queued = queue.queued;
+    openReleasePr.queueEjectedAt = queue.ejectedAt;
+    openReleasePr.headCommittedAt = queue.headCommittedAt;
+    // A merge-queue ejection leaves the head's own required checks green:
+    // they verified head+base at pull_request time while the queue rejected
+    // head+base at enqueue time. When that rejection postdates the head
+    // commit, the green evidence is stale and re-enqueueing retries a merge
+    // the queue already refused. Sync the branch once so pull_request checks
+    // re-verify the exact head against current master: a transient failure
+    // then merges, a deterministic one surfaces as red head checks and lets
+    // release-please regenerate. The head-commit comparison keeps a synced
+    // head from re-entering this path, and the base comparison keeps a head
+    // that already contains master from planning a no-op update.
+    const ejectedMs = queue.ejectedAt ? Date.parse(queue.ejectedAt) : Number.NaN;
+    const committedMs = queue.headCommittedAt ? Date.parse(queue.headCommittedAt) : Number.NaN;
+    if (Number.isFinite(ejectedMs) && Number.isFinite(committedMs) && ejectedMs > committedMs) {
+      // A failed or unrecognized compare is unknown, never clear: the plan
+      // defers writes to this PR rather than enqueueing stale evidence or
+      // planning a blind sync, while the rest of the observation completes.
+      try {
+        const compare = record(await read(`repos/${REPOSITORY}/compare/${masterSha}...${openReleasePr.headSha}`));
+        const status = text(compare?.status);
+        if (status === 'behind' || status === 'diverged') openReleasePr.branchSyncDue = true;
+        else if (status !== 'ahead' && status !== 'identical') openReleasePr.branchSyncUnknown = true;
+      } catch {
+        openReleasePr.branchSyncUnknown = true;
+      }
     }
-    if (actions === 0) failing += 1;
-    pullChecks = { pending, failing };
+    // Only required checks gate the enqueue: advisory Actions runs (dependency
+    // audit, Vercel-adjacent jobs) neither block nor substitute for Merge Gate.
+    const prCi = await requiredCiOnSha(read, openReleasePr.headSha, await requiredNames());
+    pullChecks = { pending: prCi === 'pending' ? 1 : 0, failing: prCi === 'red' || prCi === 'unknown' ? 1 : 0 };
   }
   const version = head ? head.tag.slice(1) : masterVersion;
   const found = head ? await successfulRun(read, 'ci.yml', head.sha, head.tag) : { build: null, pending: false, pushCiRed: false };
-  const audit = head ? await auditRun(read, head.sha) : null;
+  const audited = head ? await auditRun(read, head.sha) : { audit: null, pending: false };
   const attested = found.build ? await attestRun(read, found.build.runId, found.build.attempt) : { attest: null, pending: false };
   const npm = await read(`registry/npm/@ashlr/phantom/${version}`);
   const npmRecord = record(npm);
@@ -853,30 +1202,31 @@ export async function observeTrain(
     }
   }
   let finalizePending = false;
+  let finalizeRuns: FinalizeRunRecord[] = [];
   if (npmPublish) {
     try {
-      const listed = record(await read(`repos/${REPOSITORY}/actions/workflows/finalize-github-release.yml/runs?per_page=20`));
-      const rows = Array.isArray(listed?.workflow_runs) ? listed.workflow_runs : [];
-      finalizePending = rows.some((row) => record(row)?.status !== 'completed');
+      finalizeRuns = await listFinalizeRuns(read, now);
+      finalizePending = finalizeRuns.some((run) => run.status !== 'completed');
     } catch {
       finalizePending = true;
     }
   }
   const docsSynced = head ? docsCarriersSynced(head.message, version) : false;
-  const candidateCi = head ? await requiredCi(read, head.sha) : 'unknown';
+  const candidateCi = head ? await requiredCiOnSha(read, head.sha, await requiredNames()) : 'unknown';
   // Only a candidate that can never build needs master's gate: see fixForwardDue.
   const masterCi = head && found.pushCiRed && !found.build && !found.pending && head.sha !== masterSha
-    ? await requiredCi(read, masterSha) : undefined;
+    ? await requiredCiOnSha(read, masterSha, await requiredNames()) : undefined;
   return {
     now, fleetKill: kill.fleet, autorunOff: kill.autorun,
     masterSha, masterVersion, cadenceMinutes, lastTaggedAt, aheadBy, tags, head, skippedTags, releases,
     openReleasePr, pullChecks, candidateCi, build: found.build, buildPending: found.pending, pushCiRed: found.pushCiRed,
     ...(masterCi ? { masterCi } : {}),
-    attest: attested.attest, attestPending: attested.pending, audit,
+    attest: attested.attest, attestPending: attested.pending, audit: audited.audit, auditPending: audited.pending,
     npmPublished: npm === null ? false : npmRecord?.version === version ? true : null,
     npmAt: text(npmRecord?.time) ?? (npmRecord && record(npmRecord.time)?.[version] ? String(record(npmRecord.time)?.[version]) : null),
     npmPublish,
     finalizePending,
+    finalizeRuns,
     docsSynced,
     feedVersion: await publishedFeedVersion(read, releases, head?.tag ?? null),
   };
@@ -904,8 +1254,8 @@ function checkContext(value: unknown): string | null {
   return name && name.length > 0 && name.length <= 128 && !name.includes('\n') ? name : null;
 }
 
-/** Required contexts from rulesets and classic protection, judged on this exact SHA. */
-async function requiredCi(read: (path: string) => Promise<unknown>, sha: string): Promise<CandidateCi> {
+/** Required check contexts from rulesets and classic branch protection. */
+async function requiredCheckNames(read: (path: string) => Promise<unknown>): Promise<string[]> {
   const names = new Set<string>();
   const rules = await read(`repos/${REPOSITORY}/rules/branches/master`);
   if (Array.isArray(rules)) {
@@ -928,6 +1278,11 @@ async function requiredCi(read: (path: string) => Promise<unknown>, sha: string)
       if (name) names.add(name);
     }
   }
+  return [...names];
+}
+
+/** Required contexts judged on this exact SHA's latest Actions check runs. */
+async function requiredCiOnSha(read: (path: string) => Promise<unknown>, sha: string, names: readonly string[]): Promise<CandidateCi> {
   const collected: unknown[] = [];
   let total: number | null = null;
   for (let page = 1; page <= 10; page += 1) {
@@ -950,7 +1305,7 @@ async function requiredCi(read: (path: string) => Promise<unknown>, sha: string)
       appId: Number(record(item?.app)?.id),
     };
   });
-  return judgeRequiredChecks([...names], parsed);
+  return judgeRequiredChecks(names, parsed);
 }
 
 async function publishedFeedVersion(read: (path: string) => Promise<unknown>, releases: ReleaseRow[], tag: string | null): Promise<string | null> {
@@ -998,16 +1353,24 @@ async function successfulRun(read: (path: string) => Promise<unknown>, workflow:
   return { build: null, pending, pushCiRed: pushRed && !pushGreen };
 }
 
-async function auditRun(read: (path: string) => Promise<unknown>, sha: string): Promise<TrainObservation['audit']> {
-  const listed = record(await read(`repos/${REPOSITORY}/actions/workflows/dependency-audit.yml/runs?head_sha=${sha}&status=success&per_page=5`));
+export function admitAuditRun(run: Record<string, unknown> | null, sha: string): boolean {
+  if (!run || run.head_sha !== sha || run.path !== '.github/workflows/dependency-audit.yml') return false;
+  return run.head_branch === 'master' || (typeof run.head_branch === 'string' && /^v\d+\.\d+\.\d+$/.test(run.head_branch));
+}
+
+async function auditRun(read: (path: string) => Promise<unknown>, sha: string): Promise<{ audit: TrainObservation['audit']; pending: boolean }> {
+  const listed = record(await read(`repos/${REPOSITORY}/actions/workflows/dependency-audit.yml/runs?head_sha=${sha}&per_page=10`));
   const runs = Array.isArray(listed?.workflow_runs) ? listed.workflow_runs : [];
+  let pending = false;
   for (const row of runs) {
     const run = record(row);
-    if (run?.head_sha !== sha || run.conclusion !== 'success' || run.head_branch !== 'master') continue;
-    if (!Number.isSafeInteger(run.id) || !Number.isSafeInteger(run.run_attempt)) continue;
-    return { runId: Number(run.id), attempt: Number(run.run_attempt) };
+    if (!admitAuditRun(run, sha)) continue;
+    if (run?.status === 'queued' || run?.status === 'in_progress' || run?.status === 'waiting') pending = true;
+    if (run?.status !== 'completed' || run?.conclusion !== 'success') continue;
+    if (!Number.isSafeInteger(run?.id) || !Number.isSafeInteger(run?.run_attempt)) continue;
+    return { audit: { runId: Number(run.id), attempt: Number(run.run_attempt) }, pending };
   }
-  return null;
+  return { audit: null, pending };
 }
 
 async function attestRun(read: (path: string) => Promise<unknown>, ciRun: number, ciAttempt: number): Promise<{ attest: TrainObservation['attest']; pending: boolean }> {
@@ -1045,32 +1408,43 @@ export function readReleaseState(path: string): TrainState {
   return parsed as TrainState;
 }
 
+const PUBLISH_WORKFLOW = '.github/workflows/publish-canonical-npm.yml';
+const PUBLISH_INVOCATION = /^https:\/\/github\.com\/ashlrai\/phantom\/actions\/runs\/([1-9]\d*)\/attempts\/([1-9]\d*)$/;
+
+/** Path, event and run id must all sit on this one predicate. A partial object is not a match. */
+function onePredicate(node: Record<string, unknown> | null): { runId: number; attempt: number } | null {
+  if (!node) return null;
+  const build = record(node.buildDefinition);
+  const workflow = record(record(build?.externalParameters)?.workflow);
+  const github = record(record(build?.internalParameters)?.github);
+  const invocation = text(record(record(node.runDetails)?.metadata)?.invocationId);
+  const path = text(workflow?.path);
+  const event = text(github?.event_name);
+  if (path !== PUBLISH_WORKFLOW || event !== 'workflow_dispatch' || !invocation) return null;
+  const match = PUBLISH_INVOCATION.exec(invocation);
+  if (!match) return null;
+  const runId = Number(match[1]);
+  const attempt = Number(match[2]);
+  if (!Number.isSafeInteger(runId) || !Number.isSafeInteger(attempt)) return null;
+  return { runId, attempt };
+}
+
 export function publishRunFromAttestation(body: unknown): { runId: number; attempt: number } | null {
-  const rows = Array.isArray(record(body)?.attestations) ? record(body)?.attestations as unknown[] : [];
-  for (const row of rows) {
-    const payload = text(record(record(record(row)?.bundle)?.dsseEnvelope)?.payload);
-    if (!payload || payload.length > 200_000) continue;
-    let decoded: unknown;
-    try { decoded = JSON.parse(Buffer.from(payload, 'base64').toString('utf8')); } catch { continue; }
-    const found: { path?: string; event?: string; invocation?: string } = {};
-    const walk = (value: unknown): void => {
-      if (!value || typeof value !== 'object') return;
-      if (Array.isArray(value)) { for (const item of value) walk(item); return; }
-      const item = value as Record<string, unknown>;
-      if (item.path === '.github/workflows/publish-canonical-npm.yml') found.path = item.path;
-      if (item.event_name === 'workflow_dispatch') found.event = item.event_name;
-      if (typeof item.invocationId === 'string') found.invocation = item.invocationId;
-      for (const child of Object.values(item)) walk(child);
-    };
-    walk(decoded);
-    const match = /^https:\/\/github\.com\/ashlrai\/phantom\/actions\/runs\/([1-9]\d*)\/attempts\/([1-9]\d*)$/.exec(found.invocation ?? '');
-    if (found.path && found.event && match) {
-      const runId = Number(match[1]);
-      const attempt = Number(match[2]);
-      if (Number.isSafeInteger(runId) && Number.isSafeInteger(attempt)) return { runId, attempt };
-    }
+  const rows = Array.isArray(record(body)?.attestations) ? record(body)?.attestations as unknown[] : null;
+  if (!rows || rows.length !== 1) return null;
+  const payload = text(record(record(record(rows[0])?.bundle)?.dsseEnvelope)?.payload);
+  if (!payload || payload.length > 200_000) return null;
+  let decoded: unknown;
+  try { decoded = JSON.parse(Buffer.from(payload, 'base64').toString('utf8')); } catch { return null; }
+  const statement = record(decoded);
+  if (!statement) return null;
+  const candidates = [record(statement.predicate), record(statement.buildDefinition) ? statement : null];
+  if (Array.isArray(statement.subject)) {
+    for (const entry of statement.subject) candidates.push(record(entry));
   }
-  return null;
+  const found = candidates.map(onePredicate).filter((item): item is { runId: number; attempt: number } => item !== null);
+  if (found.length !== 1) return null;
+  return found[0]!;
 }
 
 /** Argv and stdin for one `gh api` call. A body is sent only with `--input -`. */
@@ -1080,7 +1454,7 @@ export function releaseGithubCall(method: string, path: string, body?: unknown):
   return { args: [...args, '--input', '-', path], input: JSON.stringify(body) };
 }
 
-export const WORKFLOW_DISPATCH = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci|release-please|finalize-github-release)\.yml\/dispatches$/;
+export const WORKFLOW_DISPATCH = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|dependency-audit|publish-canonical-npm|ci|release-please|finalize-github-release)\.yml\/dispatches$/;
 
 /** Draft PATCH and enqueue use the App token. Workflow dispatches stay on
  *  GITHUB_TOKEN: the ashlr-release App has no actions permission, so a mint
@@ -1198,7 +1572,7 @@ async function main(): Promise<number> {
   const json = `${JSON.stringify(state, null, 2)}\n`;
   if (process.env.GITHUB_STEP_SUMMARY) {
     const { appendFileSync } = await import('node:fs');
-    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Release train\n\n${state.reason}\n\n${(state.skippedTags ?? []).map((item) => `- ${item.reason}`).join('\n')}\n`);
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, trainStepSummary(state));
   }
   if (out) writeFileSync(out, json, { mode: 0o644 });
   process.stdout.write(json);

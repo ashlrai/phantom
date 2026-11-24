@@ -1,3 +1,6 @@
+import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../src/core/fleet/local-store-lock.js';
+import { registerAgentIdentity, createAgentChannel } from '../src/core/agents/bus-identity.js';
+import { readAgentChat } from '../src/core/agents/chat.js';
 /**
  * RQ-IMSG-BRIDGE-1: iMessage intake channel.
  *
@@ -111,6 +114,18 @@ describe('pollInboundSince', () => {
     expect(sql).toContain('is_from_me = 0');
   });
 
+  it('falls back to private-only intake when native provenance columns are unavailable', async () => {
+    stdoutFor = args => { if (args.at(-1)!.includes('account_guid')) throw new Error('no such column'); return JSON.stringify([row(5, 'private')]); };
+    const result = await pollAsDarwin(4, cfg());
+    expect(result.ok && result.messages[0]!.identity).toBeUndefined();
+    expect(result.ok && result.messages[0]!.rowid).toBe(5);
+    expect(sqliteCalls()).toHaveLength(2);
+  });
+  it('does not mask unrelated sqlite errors with a private-only retry', async () => {
+    stdoutFor = args => { if (args.at(-1)!.includes('account_guid')) throw new Error('database is locked'); return JSON.stringify([row(5, 'private')]); };
+    expect(await pollAsDarwin(4, cfg())).toEqual({ ok: false, state: 'error' });
+    expect(sqliteCalls()).toHaveLength(1);
+  });
   it('drops rows from non-allowlisted handles even if the database returned them', async () => {
     stdoutFor = () => JSON.stringify([row(5, 'mine'), row(6, 'not yours', OTHER), row(7, 'again mine', MASON.toUpperCase())]);
     const polled = await pollAsDarwin(4, cfg());
@@ -196,6 +211,8 @@ describe('ingestIMessages', () => {
     const result = await ingestIMessages(cfg(), ingestDeps());
     expect(result).toMatchObject({ accepted: 1, duplicate: 1, cursor: 2 });
     expect(inbox().match(/\[src:imessage id:/g)).toHaveLength(1);
+    // A same-channel repeat is recorded but not re-sent: one outbound ack only.
+    expect(calls.filter((c) => c.file === 'osascript')).toHaveLength(1);
   });
 
   it('refuses secret-shaped text without storing it, and still moves the cursor past it', async () => {
@@ -230,5 +247,79 @@ describe('imessageChannelMessage', () => {
   it('rejects a non-positive ROWID or empty handle', () => {
     expect(imessageChannelMessage({ rowid: 0, text: 'hi', ts: 1, handle: MASON })).toBeNull();
     expect(imessageChannelMessage({ rowid: 3, text: 'hi', ts: 1, handle: ' ' })).toBeNull();
+  });
+});
+
+
+describe('owner thread recording', () => {
+  const ownerConfig = (ownerId = MASON.toLowerCase()) => {
+    const policyDir = join(home, '.ashlr');
+    mkdirSync(join(policyDir, 'comms'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(policyDir, 'agent-network.toml'),
+      `[mason]\nidentities=[{channel="imessage",id="${ownerId}"}]\n[team]\nidentities=[{channel="imessage",id="${ownerId}"}]`, { mode: 0o600 });
+    writeFileSync(join(policyDir, 'comms', 'owner-adapters.toml'), '[imessage]\nbridge = "loopback"\n', { mode: 0o600 });
+  };
+  const threadState = () => JSON.parse(readFileSync(join(runsDir, 'leader', 'owner-thread.json'), 'utf8')) as {
+    messages: Array<Record<string, unknown>>;
+  };
+
+  it('records a verified Mason text in the unified owner thread without a second inbox entry', async () => {
+    ownerConfig();
+    writeCursor(0, runsDir);
+    stdoutFor = () => JSON.stringify([row(3, 'ship the fix')]);
+    const busRoot = join(runsDir, 'fleet');
+    const result = await ingestIMessages(cfg(), { ...ingestDeps(), busRoot });
+    expect(result).toMatchObject({ ok: true, accepted: 1, cursor: 3 });
+    expect(inbox().match(/\[src:imessage id:/g)).toHaveLength(1);
+
+    const state = threadState();
+    expect(state.messages).toHaveLength(1);
+    // The configured owner id is canonical: intake verifies handles
+    // case-insensitively while ownerAllowed compares exactly.
+    expect(state.messages[0]).toMatchObject({
+      channel: 'imessage', direction: 'inbound', senderId: MASON.toLowerCase(),
+      text: 'ship the fix', channelRef: '3',
+    });
+    expect(state.messages[0]!.idempotencyKey).toMatch(/^[A-Za-z0-9._:-]{8,80}$/);
+
+    // The bus mirror is the redacted owner-thread envelope: no message text.
+    const mirror = JSON.parse(readFileSync(join(busRoot, 'bus-inbox', 'messages.json'), 'utf8')) as {
+      rows: Array<{ envelope: { body: Record<string, unknown> } }>;
+    };
+    expect(mirror.rows).toHaveLength(1);
+    expect(mirror.rows[0]!.envelope.body).toMatchObject({ kind: 'owner-thread', channel: 'imessage', redacted: true });
+    expect(JSON.stringify(mirror.rows[0]!.envelope.body)).not.toContain('ship the fix');
+  });
+
+  it('leaves intake untouched when the owner-thread adapter is not configured', async () => {
+    writeCursor(0, runsDir);
+    stdoutFor = () => JSON.stringify([row(3, 'ship the fix')]);
+    const result = await ingestIMessages(cfg(), ingestDeps());
+    expect(result).toMatchObject({ ok: true, accepted: 1, cursor: 3 });
+    expect(inbox()).toContain('ship the fix');
+    expect(existsSync(join(runsDir, 'leader', 'owner-thread.json'))).toBe(false);
+  });
+});
+
+describe('explicit owner group sharing native path', () => {
+  it('retains the checkpoint on pending write then recovers once through authenticated receiver', async () => {
+    const policyDir = join(home, '.ashlr'), busRoot = join(runsDir, 'fleet');
+    mkdirSync(policyDir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(policyDir, 'agent-network.toml'), `[mason]\nidentities=[{channel="imessage",id="${MASON}"}]\n[team]\nidentities=[{channel="bus",id="agent:alice"}]`, { mode: 0o600 });
+    writeFileSync(join(policyDir, 'comms.toml'), 'confirmedByMason=true', { mode: 0o600 });
+    registerAgentIdentity({ handle: 'alice' }, { root: busRoot });
+    createAgentChannel({ name: 'engineering', createdBy: 'alice' }, { root: busRoot });
+    writeCursor(0, runsDir);
+    const data = { ...row(1, JSON.stringify({ kind: 'agent-chat.share', channel: 'engineering', thread: 'run:one', text: 'Review this task.' })),
+      guid: '22222222-2222-4222-8222-222222222222', account_guid: '11111111-1111-4111-8111-111111111111' };
+    stdoutFor = () => JSON.stringify([data]);
+    const dir = join(busRoot, 'owner-chat-receipts'); mkdirSync(dir, { mode: 0o700 });
+    const held = acquireLocalStoreLockWithOutcome(join(dir, 'writer.lock'), 0, { anchorPath: busRoot, exactPrivateStorage: true });
+    if (held.state !== 'acquired') throw new Error('fixture lock failed');
+    try { expect(await ingestIMessages(cfg(), { ...ingestDeps(), busRoot })).toMatchObject({ deferred: true, cursor: 0 }); }
+    finally { releaseLocalStoreLock(held.lock); }
+    expect(readCursor(runsDir)).toBe(0);
+    expect(await ingestIMessages(cfg(), { ...ingestDeps(), busRoot })).toMatchObject({ ok: true, deferred: false, cursor: 1 });
+    expect(readAgentChat({ channel: 'engineering', thread: 'run:one' }, { root: busRoot })).toMatchObject({ status: 'ok', messages: [expect.objectContaining({ kind: 'interjection', text: 'Review this task.' })] });
   });
 });

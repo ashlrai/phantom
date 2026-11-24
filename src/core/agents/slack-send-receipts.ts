@@ -8,6 +8,7 @@ import { ashlrHome } from '../cloud/store.js';
 import { readPrivateFileCapped } from '../verse/preferences.js';
 import { isSlackChannelId, isSlackTs } from './slack-network.js';
 import type { SentReceipt } from './slack-reply-binding.js';
+import { isSlackSendStoreKey } from './slack-reply-identity.js';
 
 /** Same cap as MAX_REPLY_BYTES in slack-transport.ts (the transport's own store read). */
 const MAX_STORE_BYTES = 1024 * 1024;
@@ -30,19 +31,21 @@ export function readSlackSendReceipts(options: { stateRoot?: string } = {}): Sla
     if (read.truncated) return { state: 'degraded', receipts: [] };
     const data: unknown = JSON.parse(read.text);
     if (!record(data) || data.version !== 1 || !record(data.messages)) return { state: 'degraded', receipts: [] };
-    const rows = Object.values(data.messages);
+    const rows = Object.entries(data.messages);
     if (rows.length > MAX_MESSAGES) return { state: 'degraded', receipts: [] };
     const receipts: SentReceipt[] = [];
     let degraded = false;
-    for (const row of rows) {
-      if (!record(row) || !isSlackChannelId(row.channel) || (row.state !== 'attempted' && row.state !== 'sent') ||
+    for (const [key, row] of rows) {
+      // The store key is the 64-hex identity the transport derived from the
+      // envelope id; an invalid key is damaged evidence, not a keyless row.
+      if (!isSlackSendStoreKey(key) || !record(row) || !isSlackChannelId(row.channel) || (row.state !== 'attempted' && row.state !== 'sent') ||
           (row.thread !== undefined && !isSlackTs(row.thread)) ||
           (row.ts !== undefined && !isSlackTs(row.ts)) || (row.state === 'sent' && row.ts === undefined)) {
         degraded = true;
         continue;
       }
       receipts.push({
-        channel: row.channel, state: row.state,
+        key, channel: row.channel, state: row.state,
         ...(row.thread !== undefined ? { thread: row.thread as string } : {}),
         ...(row.ts !== undefined ? { ts: row.ts as string } : {}),
       });

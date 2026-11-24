@@ -475,11 +475,19 @@ describe('autopilot tick (real git, fake GitHub)', () => {
 
   it('requeues a queued lane\'s recut through the merge queue, pinned to the new head, exactly once', async () => {
     const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`, { queued: true });
+    git(f.clone, 'checkout', '-q', '--detach', f.base);
+    writeFileSync(join(f.clone, 'latest.js'), 'module.exports = 2;\n');
+    git(f.clone, 'add', 'latest.js');
+    git(f.clone, 'commit', '-qm', 'default branch advances before recovery');
+    git(f.clone, 'push', '-q', 'origin', 'HEAD:main');
+    const latest = git(f.clone, 'rev-parse', 'HEAD');
     const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [] as string[][], ownedPrefixes: ['improve/'], gh: f.gh as Gh, guards: () => ({ killSwitch: false, paused: false }) };
 
     const r = await tick(opts);
     expect(r, r.detail.join(' | ')).toMatchObject({ plan: 'recut', result: 'recut' });
     const recutSha = git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut').split('\t')[0];
+    git(f.clone, 'fetch', '-q', 'origin', 'improve/sum-recut');
+    expect(git(f.clone, 'rev-parse', 'FETCH_HEAD^')).toBe(latest);
     // The sanctioned entry: auto-merge with the head pinned — required checks and branch protection still decide.
     expect(f.calls.filter((c) => c.startsWith('pr merge'))).toEqual([`pr merge 42 --repo o/r --squash --auto --match-head-commit ${recutSha}`]);
     expect(f.calls.some((c) => c.startsWith('pr merge') && !c.includes('--auto'))).toBe(false);
@@ -494,6 +502,43 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     expect(f.calls.filter((c) => c.includes('POST repos/o/r/pulls'))).toHaveLength(1);
   });
 
+  it.each([
+    ['source head', 7, { head: { ref: 'improve/sum', sha: 'd'.repeat(40), repo: { full_name: 'o/r' } } }],
+    ['source closed', 7, { state: 'closed' }],
+    ['source disarmed', 7, { auto_merge: null }],
+    ['replacement head', 42, { head: { ref: 'improve/sum-recut', sha: 'd'.repeat(40), repo: { full_name: 'o/r' } } }],
+    ['replacement base', 42, { base: { ref: 'other', sha: BASE } }],
+    ['replacement conflict', 42, { mergeable: false, mergeable_state: 'blocked' }],
+    ['replacement dirty', 42, { mergeable: true, mergeable_state: 'dirty' }],
+    ['replacement unknown', 42, { mergeable: null, mergeable_state: 'unknown' }],
+    ['replacement draft', 42, { draft: true }],
+  ])('defers %s at the auto-merge handoff and resumes without duplicate recuts', async (_name, number, patch) => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`, { queued: true });
+    let opened = false, changed = true;
+    const gh: Gh = async args => {
+      const raw = await f.gh(args);
+      if (args[1] === '-X' && args[2] === 'POST' && args[3] === 'repos/o/r/pulls') opened = true;
+      if (opened && changed && args.at(-1)?.endsWith(`/pulls/${number}`))
+        return JSON.stringify({ ...JSON.parse(raw), ...patch });
+      if (!changed && args.at(-1)?.endsWith('/pulls/42')) return JSON.stringify({ ...JSON.parse(raw), mergeable_state: 'blocked' });
+      return raw;
+    };
+    const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [] as string[][], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }) };
+    expect(await tick(opts)).toMatchObject({ plan: 'recut', result: 'recut' });
+    await tick(opts);
+    expect(f.calls.filter(c => c.startsWith('pr merge'))).toEqual([]);
+    const state = JSON.parse(readFileSync(join(f.root, 'home', 'autopilot', 'state', 'o__r__7.json'), 'utf8'));
+    expect(state.recut.headSha).toBe(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut').split('\t')[0]);
+    expect(state.attempts['recut-queue:improve/sum-recut']).toBeUndefined();
+    changed = false;
+    expect(await tick(opts)).toMatchObject({ result: 'requeued' });
+    await tick(opts);
+    expect(f.calls.filter(c => c.includes('POST repos/o/r/pulls'))).toHaveLength(1);
+    expect(f.calls.filter(c => c.startsWith('pr merge'))).toEqual([
+      `pr merge 42 --repo o/r --squash --auto --match-head-commit ${state.recut.headSha}`,
+    ]);
+  });
+
   it('leaves an unqueued lane\'s recut unqueued: it opens a replacement PR but never merges or queues it', async () => {
     const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`);
     const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [] as string[][], ownedPrefixes: ['improve/'], gh: f.gh as Gh, guards: () => ({ killSwitch: false, paused: false }) };
@@ -502,6 +547,65 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     expect((await tick(opts)).plan).toBe('wait');
     expect(f.calls.some((c) => c.startsWith('pr merge'))).toBe(false);
     expect(f.calls.filter((c) => c.includes('POST repos/o/r/pulls'))).toHaveLength(1);
+  });
+
+  it.each([false, true])('submits a newly opened recut in the same tick once mergeability settles (refused=%s)', async (refused) => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`, { queued: true });
+    let reads = 0, submissions = 0;
+    const gh: Gh = async args => {
+      if (args[0] === 'pr' && args[1] === 'merge') {
+        submissions++;
+        if (refused && submissions === 1) throw new Error('queue refused');
+      }
+      const raw = await f.gh(args);
+      if (args.at(-1)?.endsWith('/pulls/42')) {
+        reads++;
+        // Fresh PRs compute asynchronously. Required checks can still be pending.
+        return JSON.stringify({ ...JSON.parse(raw), mergeable: reads === 1 ? null : true, mergeable_state: reads === 1 ? 'unknown' : 'blocked' });
+      }
+      return raw;
+    };
+    const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [] as string[][], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }) };
+    const first = await tick(opts);
+    expect(first).toMatchObject({ result: 'recut' });
+    expect(submissions).toBe(1); // No later event is needed for the first submission.
+    expect(first.detail.join(' ')).toContain(refused ? 'could not requeue' : 'requeued recut');
+    if (refused) expect(await tick(opts)).toMatchObject({ result: 'requeued' });
+    await tick(opts);
+    await tick(opts);
+    expect(submissions).toBe(refused ? 2 : 1);
+    expect(f.calls.filter(c => c.includes('POST repos/o/r/pulls'))).toHaveLength(1);
+    expect(f.calls.filter(c => c.startsWith('pr merge'))).toEqual([
+      `pr merge 42 --repo o/r --squash --auto --match-head-commit ${first.newHead}`,
+    ]);
+  });
+
+  it.each(['unknown', 'head', 'base', 'conflict', 'draft', 'source', 'pause'])('bounds mergeability polling and preserves the %s guard', async guard => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`, { queued: true });
+    let reads = 0;
+    const gh: Gh = async args => {
+      const raw = await f.gh(args);
+      if (args.at(-1)?.endsWith('/pulls/7') && reads > 0 && guard === 'source')
+        return JSON.stringify({ ...JSON.parse(raw), auto_merge: null });
+      if (!args.at(-1)?.endsWith('/pulls/42')) return raw;
+      const live = JSON.parse(raw);
+      reads++;
+      if (reads === 1 || guard === 'unknown') return JSON.stringify({ ...live, mergeable: null, mergeable_state: 'unknown' });
+      return JSON.stringify({ ...live,
+        ...(guard === 'head' ? { head: { ...live.head, sha: 'd'.repeat(40) } } : {}),
+        ...(guard === 'base' ? { base: { ...live.base, ref: 'other' } } : {}),
+        ...(guard === 'conflict' ? { mergeable: false, mergeable_state: 'dirty' } : {}),
+        ...(guard === 'draft' ? { draft: true } : {}),
+      });
+    };
+    const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [] as string[][], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: guard === 'pause' && reads > 0 }) };
+    expect(await tick(opts)).toMatchObject({ result: 'recut' });
+    expect(reads).toBeGreaterThan(1);
+    expect(reads).toBeLessThanOrEqual(3);
+    expect(f.calls.some(c => c.startsWith('pr merge'))).toBe(false);
+    const state = JSON.parse(readFileSync(join(f.root, 'home', 'autopilot', 'state', 'o__r__7.json'), 'utf8'));
+    expect(state.attempts['recut-queue:improve/sum-recut']).toBeUndefined();
+    expect(state.recut.queued).toBeUndefined();
   });
 
   it('finishes a requeue a failed tick left pending, retries on later ticks, and stops asking after three refusals', async () => {

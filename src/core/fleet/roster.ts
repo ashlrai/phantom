@@ -6,10 +6,19 @@ import { join } from 'node:path';
 import { scrubPrivateText } from '../util/scrub.js';
 
 export const SPECIALIST_ROSTER_SCHEMA = 'fleet-specialist-roster.v1' as const;
+/** Descriptive coordination metadata; never a transport or execution grant. */
+export interface SpecialistIdentity {
+  role: string;
+  capabilityTags: string[];
+  machineAffinity: string[];
+  laneAffinity: string[];
+  peerIds: string[];
+}
 export interface Specialist {
   id: string;
   callsign: string;
   domain: string;
+  identity?: SpecialistIdentity;
   allowedLanes: string[];
   allowedModels: string[];
   /** Relative to the roster directory; always memory/<id>.md. */
@@ -52,6 +61,7 @@ export function parseSpecialistRoster(value: unknown, homes: readonly string[] =
     throw new Error('Invalid specialist roster');
   }
   const ids = new Set<string>();
+  const peers = new Set<string>();
   const specialists = roster['specialists'].map((item: unknown): Specialist => {
     const row = object(item);
     const id = row['id'];
@@ -63,6 +73,19 @@ export function parseSpecialistRoster(value: unknown, homes: readonly string[] =
       return [...new Set(value.map(v => specialistText(v, homes, 200)))];
     };
     const stats = object(row['stats']);
+    let identity: SpecialistIdentity | undefined;
+    if (row['identity'] !== undefined) {
+      const metadata = object(row['identity']);
+      identity = {
+        role: specialistText(metadata['role'], homes, 200),
+        capabilityTags: list(metadata['capabilityTags']), machineAffinity: list(metadata['machineAffinity']),
+        laneAffinity: list(metadata['laneAffinity']), peerIds: list(metadata['peerIds']),
+      };
+      for (const peer of identity.peerIds) {
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(peer) || peers.has(peer)) throw new Error('Invalid specialist peer mapping');
+        peers.add(peer);
+      }
+    }
     const count = (key: string): number => {
       const n = stats[key];
       if (typeof n !== 'number' || !Number.isSafeInteger(n) || n < 0) throw new Error('Invalid specialist statistics');
@@ -74,6 +97,7 @@ export function parseSpecialistRoster(value: unknown, homes: readonly string[] =
       || emptyRate < 0 || emptyRate > 1 || (jobs === 0 && emptyRate !== 0)) throw new Error('Invalid specialist statistics');
     return {
       id, callsign: specialistText(row['callsign'], homes, 200), domain: specialistText(row['domain'], homes),
+      ...(identity ? { identity } : {}),
       allowedLanes: list(row['allowedLanes']), allowedModels: list(row['allowedModels']),
       memoryPath: `memory/${id}.md`,
       currentJob: row['currentJob'] === null ? null : specialistText(row['currentJob'], homes, 200),
@@ -88,6 +112,16 @@ export function findSpecialist(roster: SpecialistRoster, id: string): Specialist
   const specialist = roster.specialists.find(row => row.id === id);
   if (!specialist) throw new Error('Unknown specialist');
   return specialist;
+}
+
+export function configureSpecialistIdentity(roster: SpecialistRoster, id: string, identity: SpecialistIdentity): SpecialistRoster {
+  findSpecialist(roster, id);
+  return parseSpecialistRoster({ ...roster, specialists: roster.specialists.map(row => row.id === id ? { ...row, identity } : row) });
+}
+
+/** Mapping lookup only; callers must still authenticate peers independently. */
+export function specialistForPeer(roster: SpecialistRoster, peerId: string): Specialist | null {
+  return parseSpecialistRoster(roster).specialists.find(row => row.identity?.peerIds.includes(peerId)) ?? null;
 }
 
 /** Assign creates a stable identity on first use, and preserves it on reassignment. */

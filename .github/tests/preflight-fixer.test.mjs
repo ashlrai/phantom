@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { FULL_CRON } from '../scripts/ci-master-full.mjs';
 import {
   CLOUD_CAP, SUMMARY_TITLE, affectedFromPaths, buildPreflightReport, chooseRunList,
-  coveredByExistingRun, fixupLine, interpretRun, isRunnableTest, mergeRuns, planSummary,
+  coveredByExistingRun, fixupLine, interpretRun, isRunnableTest, loadHistory, mergeRuns, planSummary,
   planTestIssues, preflightLineId, redsFromVitestReport, releaseOwed, repoTestPath, testPathsInText,
 } from '../scripts/preflight-fixer.mjs';
 
@@ -52,10 +52,21 @@ function assertRunBlocksClean(text) {
   }
 }
 
+test('preflight workflow rejects workflow_run', () => {
+  assert.doesNotMatch(workflow, /workflow_run/);
+  assert.match(workflow, /^ {2}schedule:/m);
+  assert.match(workflow, /^ {2}workflow_dispatch:/m);
+  assert.match(workflow, /fetch-depth: 40/);
+  assert.doesNotMatch(workflow, /fetch-depth: 0/);
+  const autoTag = readFileSync(join(here, '../workflows/auto-tag.yml'), 'utf8');
+  const start = autoTag.slice(autoTag.indexOf('Start preflight fixer on master'));
+  assert.match(start, /preflight-fixer\.yml\/dispatches/);
+  assert.match(start, /\{"ref":"master"\}/);
+  assert.doesNotMatch(start.split('\n').slice(0, 12).join('\n'), /\$\{\{/);
+});
+
 test('workflow stays least privilege and does not interpolate the event into run', () => {
   assert.match(workflow, /^permissions: \{\}$/m);
-  assert.match(workflow, /workflows: \["Auto-tag"\]/);
-  assert.match(workflow, /types: \[requested\]/);
   assert.doesNotMatch(workflow, /secrets\.|persist-credentials:\s*true|release-train|release-desktop/);
   assertRunBlocksClean(workflow);
   assert.doesNotMatch(workflow, /\$\{\{\s*github\.event[.\s]/);
@@ -165,4 +176,9 @@ test('preflight writes issues and labels only', () => {
   assert.ok(writes.length >= 3);
   for (const write of writes) assert.match(write[2] ?? '', /\/(?:issues|labels)/);
   assert.doesNotMatch(source, /git tag|tag-github-release/);
+});
+
+test('plan degrades to fallback selection when CI history is unavailable', async () => {
+  const failing = async () => { throw new Error('CI metadata unavailable; refusing unverified full evidence'); };
+  assert.deepEqual(await loadHistory('ashlrai/phantom', failing), { latest: null, green: null, evidence: [], capped: true });
 });

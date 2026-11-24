@@ -12,6 +12,7 @@ import { parseMasonIdentities } from '../agents/leader-network.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import {
   OWNER_CHANNELS,
+  OWNER_THREAD_ID,
   isOwnerChannel,
   ownerChannelToBus,
   type OwnerChannel,
@@ -140,6 +141,84 @@ export function ownerAllowed(channel: OwnerChannel, senderId: string, settings: 
   return senderId.length > 0 && settings.owners[channel] === senderId;
 }
 
+export const NOTIFY_CHANNELS = ['imessage', 'email', 'desktop'] as const satisfies readonly OwnerChannel[];
+export type NotifyChannel = typeof NOTIFY_CHANNELS[number];
+export type NotifyUpdateType = 'decision' | 'approval' | 'digest' | 'incident' | 'merged' | 'status';
+export type NotifyAvailability = 'available' | 'unavailable' | 'unknown';
+type NotifyDelivery = 'now' | 'next-digest';
+interface NotifyRule {
+  readonly channel: NotifyChannel;
+  readonly fallback: NotifyChannel;
+  readonly delivery: NotifyDelivery;
+  readonly fallbackDelivery: NotifyDelivery;
+  readonly reason: string;
+  readonly replyFormat: 'YES or NO' | null;
+}
+
+/** Policy only: these routes use the existing owner thread, never another outbox. */
+export const NOTIFY_ROUTES = {
+  decision: { channel: 'imessage', fallback: 'desktop', delivery: 'now', fallbackDelivery: 'now', reason: 'Decisions need a short owner reply.', replyFormat: 'YES or NO' },
+  approval: { channel: 'imessage', fallback: 'desktop', delivery: 'now', fallbackDelivery: 'now', reason: 'Approvals need a short owner reply.', replyFormat: 'YES or NO' },
+  digest: { channel: 'email', fallback: 'desktop', delivery: 'now', fallbackDelivery: 'now', reason: 'A prepared digest belongs in email.', replyFormat: null },
+  incident: { channel: 'imessage', fallback: 'desktop', delivery: 'now', fallbackDelivery: 'now', reason: 'Incidents need prompt owner attention.', replyFormat: null },
+  merged: { channel: 'email', fallback: 'desktop', delivery: 'next-digest', fallbackDelivery: 'next-digest', reason: 'Merged work joins the next digest.', replyFormat: null },
+  status: { channel: 'desktop', fallback: 'email', delivery: 'now', fallbackDelivery: 'next-digest', reason: 'Live status belongs in the desktop app; email batches it.', replyFormat: null },
+} as const satisfies Record<NotifyUpdateType, NotifyRule>;
+
+export interface NotifyRoutePlan {
+  schemaVersion: 'notify.route.v1';
+  dryRun: true;
+  sent: false;
+  threadId: typeof OWNER_THREAD_ID;
+  updateType: NotifyUpdateType;
+  preferredChannel: NotifyChannel;
+  channel: NotifyChannel | null;
+  fallbackChannel: NotifyChannel;
+  availability: NotifyAvailability;
+  delivery: NotifyDelivery | 'blocked';
+  wouldSendNow: boolean | 'unknown';
+  reason: string;
+  replyFormat: 'YES or NO' | null;
+  verifiedSenderCheck: 'src/core/comms/owner-channel.ts#ownerAllowed';
+}
+
+/**
+ * The one update router. Supplied availability is a scenario, not live health
+ * or send/identity authority. `ruleChannel` is the owner's rule for this update
+ * type (notify-rules.ts); omitted, the built-in route applies.
+ */
+export function planNotifyRoute(
+  updateType: NotifyUpdateType,
+  availability: Partial<Record<NotifyChannel, NotifyAvailability>> = {},
+  ruleChannel?: NotifyChannel,
+): NotifyRoutePlan {
+  const base: NotifyRule = NOTIFY_ROUTES[updateType];
+  const fallbackChannel: NotifyChannel = ruleChannel === 'desktop' ? 'email' : 'desktop';
+  const rule: NotifyRule = !ruleChannel || ruleChannel === base.channel ? base : {
+    ...base, channel: ruleChannel, fallback: fallbackChannel,
+    fallbackDelivery: fallbackChannel === 'email' ? 'next-digest' : base.delivery,
+    reason: `The rule sends this to ${ruleChannel}.`,
+  };
+  const fallback = availability[rule.channel] === 'unavailable';
+  const candidate = fallback ? rule.fallback : rule.channel;
+  const state = availability[candidate] ?? 'unknown';
+  const channel = state === 'unavailable' ? null : candidate;
+  const delivery = channel === null ? 'blocked' : fallback ? rule.fallbackDelivery : rule.delivery;
+  const reason = [rule.reason,
+    ...(fallback ? [`${rule.channel} is unavailable; fallback is ${rule.fallback}.`] : []),
+    ...(channel === null ? ['Both channels are unavailable.'] : state === 'unknown' ? [`${channel} availability is unknown.`] : []),
+  ].join(' ');
+  // Explicit order is the versioned CLI JSON contract; no clock or config reads.
+  return {
+    schemaVersion: 'notify.route.v1', dryRun: true, sent: false, threadId: OWNER_THREAD_ID,
+    updateType, preferredChannel: rule.channel, channel, fallbackChannel: rule.fallback,
+    availability: state, delivery,
+    wouldSendNow: delivery !== 'now' ? false : state === 'unknown' ? 'unknown' : true,
+    reason, replyFormat: rule.replyFormat,
+    verifiedSenderCheck: 'src/core/comms/owner-channel.ts#ownerAllowed',
+  };
+}
+
 /** Reply destinations: the channel the owner used, then the desktop thread. */
 export function fanoutChannels(origin: OwnerChannel): OwnerChannel[] {
   return origin === 'desktop' ? ['desktop'] : [origin, 'desktop'];
@@ -164,6 +243,8 @@ export function loadOwnerThreadSettings(configDir: string): OwnerThreadSettings 
     if (identity.channel === 'bus') owners.desktop = identity.id;
     else if (isOwnerChannel(identity.channel)) owners[identity.channel] = identity.id;
   }
+  // Pairing must resolve to one owner handle; never choose the last of several.
+  if (new Set(parseMasonIdentities(network).filter(i => i.channel === 'imessage').map(i => i.id)).size !== 1) delete owners.imessage;
   let secretHandles: OwnerThreadSettings['secretHandles'] = {};
   let imessageBridge: OwnerThreadSettings['imessageBridge'] = 'off';
   try {

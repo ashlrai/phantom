@@ -47,6 +47,13 @@ it('renders failed reads without active controls', async () => {
   serve({}, 503); render(<AllowedAppsCard visible />);
   expect(await screen.findByText('Allowed apps are unavailable. Controls are disabled.')).toBeInTheDocument();
   expect(screen.queryAllByRole('button')).toHaveLength(0);
+  expect(screen.queryByText('Reading allowed apps...')).not.toBeInTheDocument();
+});
+it.each([null, {}, { connected: true, apps: {} }, { connected: true, apps: [null] }])('rejects malformed app lists (%j) without enabling controls', async body => {
+  serve(body); render(<AllowedAppsCard visible />);
+  expect(await screen.findByText('Allowed apps are unavailable. Controls are disabled.')).toBeInTheDocument();
+  expect(screen.queryByText('Reading allowed apps...')).not.toBeInTheDocument();
+  expect(screen.queryAllByRole('button')).toHaveLength(0);
 });
 it('makes the empty allowlist visible', async () => {
   serve({ ...fixture, apps: [] }); render(<AllowedAppsCard visible />);

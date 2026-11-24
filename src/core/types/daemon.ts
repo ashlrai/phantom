@@ -235,8 +235,10 @@ export interface DaemonDrainSummary {
  * means the phase threw or otherwise failed; `skipped` means the phase was
  * intentionally not run (recorded reason in `error`, e.g. 'no-frontier');
  * `running` appears only in in-progress snapshots, never in settled records.
+ * `off-tick` means the stage was handed to a resident background job; the
+ * tick did not wait on it.
  */
-export type DaemonTickPhaseStatus = 'ok' | 'degraded' | 'timeout' | 'skipped' | 'running';
+export type DaemonTickPhaseStatus = 'ok' | 'degraded' | 'timeout' | 'skipped' | 'running' | 'off-tick';
 
 /**
  * One bounded phase of a daemon tick. METADATA ONLY — never carries secret
@@ -250,6 +252,15 @@ export interface DaemonTickPhase {
   durationMs: number;
   /** Short machine-safe error/detail string; absent for a clean 'ok'. */
   error?: string;
+  offTick?: {
+    state: 'started' | 'running';
+    run: number;
+    since: string;
+    lastStatus?: DaemonTickPhaseStatus;
+    lastDurationMs?: number;
+    lastSettledAt?: string;
+    lastError?: string;
+  };
 }
 
 /**
@@ -368,6 +379,8 @@ export interface DaemonTick {
     postMergeCreditReleased?: number;
     postMergeCreditSkipped?: number;
     postMergeCreditSourceComplete?: boolean;
+    /** Eligibility-reason counts from the credit sweep (release funnel). */
+    postMergeCreditSkippedByReason?: Record<string, number>;
     skippedByCadence?: boolean;
     nextAfter?: string;
   };
@@ -426,6 +439,8 @@ export interface DaemonState {
    * clean tick; absent on pre-existing state.
    */
   lastTickError?: string | null;
+  /** Retry budget-interrupted calibration on the next eligible tick. */
+  counterfactualReplayPending?: boolean;
   /** Calendar day (YYYY-MM-DD) the spend counters apply to; null until first tick. */
   todayDate: string | null;
   /** Estimated USD spent so far today; reset when todayDate rolls over. */

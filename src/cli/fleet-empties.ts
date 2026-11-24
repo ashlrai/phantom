@@ -1,63 +1,38 @@
-/** Read-only report of explicit empty outcomes in the jobs ledger. */
-import { readTaskCheckJobs, type TaskCheckReader } from './fleet-task-check.js';
+/** One read-only EMPTY report, shared with fleet MCP, plus why each run ended empty. */
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { fleetEmpties, readFleetEmpties, humanFleetEmpties } from '../core/fleet/empties.js';
+import { emptiesWhyText, readEmptiesWhy, type EmptiesWhyReport } from '../core/fleet/empties-why.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
+export { fleetEmpties } from '../core/fleet/empties.js';
 
-const usage = 'Usage: phm fleet empties [--since 24h] [--json]';
-type Group = { lane: string; repo: string; reason: string; count: number };
-type Reason = { reason: string; count: number; suggested_filler_rule: string };
-export interface FleetEmptiesReport {
-  schema: 'fleet.empties.v1'; window_hours: number; known: boolean;
-  total: number | null; groups: Group[]; top_reasons: Reason[];
-}
-const label = (value: unknown): string => typeof value === 'string' && value.trim() ? value.trim() : 'unknown';
-
-export async function fleetEmpties(read: TaskCheckReader = readTaskCheckJobs, hours = 24, now = Date.now()): Promise<FleetEmptiesReport> {
-  if (!Number.isFinite(hours) || hours <= 0) throw new RangeError('Hours must be positive.');
-  const report: FleetEmptiesReport = { schema: 'fleet.empties.v1', window_hours: hours, known: false, total: null, groups: [], top_reasons: [] };
-  let text: string | null;
-  try { text = await read(); } catch { text = null; }
-  if (text === null) return report;
-  const groups = new Map<string, Group>(), reasons = new Map<string, number>();
-  for (const line of text.split(/\r?\n/)) {
-    let row: Record<string, unknown>;
-    try { const value: unknown = JSON.parse(line); if (!value || typeof value !== 'object' || Array.isArray(value)) continue; row = value as Record<string, unknown>; } catch { continue; }
-    const at = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
-    if (!Number.isFinite(at) || at > now || at < now - hours * 3_600_000) continue;
-    if (!(row.event === 'outcome' && row.empty === true) && ![row.event, row.outcome, row.state].includes('EMPTY_DONE')) continue;
-    const lane = label(row.lane), repo = label(row.repo), reason = label(row.reason);
-    const key = JSON.stringify([lane, repo, reason]);
-    const group = groups.get(key) ?? { lane, repo, reason, count: 0 };
-    group.count++; groups.set(key, group); reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
-  }
-  report.known = true;
-  report.groups = [...groups.values()].sort((a, b) => b.count - a.count || a.lane.localeCompare(b.lane) || a.repo.localeCompare(b.repo) || a.reason.localeCompare(b.reason));
-  report.total = report.groups.reduce((sum, group) => sum + group.count, 0);
-  report.top_reasons = [...reasons].map(([reason, count]) => ({ reason, count, suggested_filler_rule: reason === 'unknown'
-    ? 'Record an explicit reason for empty outcomes before proposing a filler rule.'
-    : 'Review this reason and add a filler precheck that prevents matching empty tasks.' }))
-    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason)).slice(0, 5);
-  return report;
-}
-
-export async function cmdFleetEmpties(args: string[], read: TaskCheckReader = readTaskCheckJobs, now = Date.now()): Promise<number> {
+const usage = 'Usage: phm fleet empties [--hours 24 | --since 24h] [--jobs <jobs.jsonl>] [--runs-dir <directory>] [--human | --json]';
+export async function cmdFleetEmpties(args: string[], read?: () => Promise<string | null>, now = Date.now()): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(`${usage}\nGroup explicit empty outcomes by lane, repo and recorded reason. Shows the five most common reasons and suggested filler rules. Reads metrics/jobs.jsonl; missing fields and unreadable metrics are unknown.`); return 0;
+    console.log(`${usage}\nJSON by default. Empty finishes, recorded causes, empty rate and top 5 job families. Reads metrics and explicit result-note paths only; unmatched evidence stays unknown.
+"why" gives each empty run one reason (plan_limit, held, precheck_skip, publish_abort, already_done, blocked, no_output, unknown) with a short evidence line, tokens per reason, lane and family, and the 10 costliest empty runs.`); return 0;
   }
-  let hours = 24, json = false, seenSince = false;
+  let hours = 24, root = join(homedir(), '.ashlr-runs'), jobs: string | undefined, human = false;
+  const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--json' && !json) json = true;
-    else if (args[i] === '--since' && !seenSince) {
-      seenSince = true; const match = /^(\d+(?:\.\d+)?)h$/.exec(args[++i] ?? '');
-      if (!match) { console.error(usage); return 2; } hours = Number(match[1]);
-    } else { console.error(usage); return 2; }
+    const arg = args[i]!;
+    if (seen.has(arg) || !['--since', '--hours', '--runs-dir', '--jobs', '--human', '--json'].includes(arg)) { console.error(usage); return 2; }
+    seen.add(arg);
+    if (arg === '--human' || arg === '--json') { human = arg === '--human'; continue; }
+    const value = args[++i];
+    if (!value || value.startsWith('-')) { console.error(usage); return 2; }
+    if (arg === '--since') hours = /^\d+(?:\.\d+)?h$/.test(value) ? Number(value.slice(0, -1)) : NaN;
+    else if (arg === '--hours') hours = /^\d+(?:\.\d+)?$/.test(value) ? Number(value) : NaN;
+    else if (arg === '--runs-dir') root = value;
+    else jobs = value;
   }
-  if (!Number.isFinite(hours) || hours <= 0) { console.error(usage); return 2; }
-  const report = await fleetEmpties(read, hours, now);
-  const output = json ? report : report.total === null ? 'Empty jobs: unknown (metrics unreadable)' : [
-    `Empty outcomes in the last ${hours} hours: ${report.total}`,
-    ...report.groups.map(g => `${g.lane} / ${g.repo} / ${g.reason}: ${g.count}`),
-    ...report.top_reasons.map(r => `${r.reason}: ${r.count}. Suggested filler rule: ${r.suggested_filler_rule}`),
-  ].join('\n');
-  console.log(json ? JSON.stringify(sanitizePublicJson(output)) : sanitizePublicJson(output));
-  return 0;
+  if (!Number.isFinite(hours) || hours <= 0 || hours > 2160 || (seen.has('--json') && seen.has('--human')) || (seen.has('--since') && seen.has('--hours'))) { console.error(usage); return 2; }
+  const injected = read && !seen.has('--runs-dir') && !jobs;
+  const [report, why] = await Promise.all([
+    injected ? fleetEmpties(read, hours, now) : readFleetEmpties(hours, now, root, jobs),
+    readEmptiesWhy({ hours, now, runsDir: root, jobsPath: jobs, ledger: injected ? read : undefined }),
+  ]);
+  const safeWhy = sanitizePublicJson(why) as EmptiesWhyReport;
+  console.log(human ? [humanFleetEmpties(report), ...emptiesWhyText(safeWhy)].join('\n') : JSON.stringify({ ...report, why: safeWhy }));
+  return report.known ? 0 : 1;
 }
