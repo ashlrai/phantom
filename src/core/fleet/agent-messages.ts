@@ -278,6 +278,70 @@ export function filterAgentMessages(messages: readonly AgentMessage[], query: Ag
 }
 
 /**
+ * The shared rows→messages pipeline behind `phm messages`, `phm agents
+ * messages`, `phm bus recent` and their API reads: the row-level `--thread`,
+ * `--in-reply-to` and `--channel` filters applied before projection, the
+ * identity-resolved sender filters, the live job feed annotations, then the
+ * projected-field filters — the result is every `AgentMessage` the query
+ * accepts, newest first, before `--limit`; callers slice and shape it.
+ * `annotateJobs` resolves the live feed state behind job citations — the
+ * `jobState` field `phm messages` emits and the `--job` citation match both
+ * read; a projection that never emits `jobState` passes false and still gets
+ * citation matching whenever `--job` is set.
+ */
+export function matchAgentMessages(rows: readonly BusInboxReceipt[], query: AgentMessagesQuery,
+  options: BusInboxOptions = {}, annotateJobs = true): AgentMessage[] {
+  // --thread, --in-reply-to and --channel are row-level filters applied
+  // before projection: the first keeps only note/context bodies carrying
+  // that v2 thread label — the same `busBodyThread` match `agents bus
+  // inbox --thread`, `channel read --thread`, `comms bus read|watch
+  // --thread` and `fleet bus-follow --thread` apply — the second keeps
+  // only object bodies whose own `inReplyTo` cites the named envelope —
+  // the shared `busBodyInReplyToMatch` rule `comms bus read|watch
+  // --in-reply-to`, `fleet bus-follow --in-reply-to`, `fleet_bus_inbox`'s
+  // `inReplyTo`, `agents bus inbox --in-reply-to` and `channel read
+  // --in-reply-to` apply —
+  // and the third keeps only envelopes addressed to `group:<channel>:*`,
+  // the room prefix `agents bus inbox --channel` and `channel read` match,
+  // decided on the raw `to` label so every topic of the named room lists
+  // while agent mail and other rooms never reach the page. Every other
+  // body kind and a note without the field never matches the thread
+  // filter, a `replyTo` alias or substring never matches the citation
+  // filter, and `matched` counts only the rows they accept.
+  const channelPrefix = query.channel === undefined ? undefined : `group:${query.channel}:`;
+  const kept = rows.filter(row =>
+    (query.thread === undefined || busBodyThread(row.envelope.body) === query.thread) &&
+    (query.inReplyTo === undefined || busBodyInReplyToMatch(row.envelope.body, query.inReplyTo)) &&
+    (channelPrefix === undefined || row.envelope.to.startsWith(channelPrefix)));
+  const registryRead = query.agent === undefined && query.with === undefined && query.from === undefined && query.excludeFrom === undefined
+    ? undefined : readAgentRegistry({ root: options.root });
+  const registry = registryRead?.status === 'ok' ? registryRead.registry : undefined;
+  const identityOf = registry === undefined ? undefined : labelIdentityOf(registry);
+  const refKeyFor = registry === undefined ? undefined : (ref: string) => resolveAgent(registry, ref)?.id;
+  const jobIds = new Set<string>();
+  for (const row of kept) {
+    const jobId = busBodyJobId(row.envelope.body);
+    if (jobId !== undefined) jobIds.add(jobId);
+  }
+  let jobStateOf: ((jobId: string) => BusEnvelopeLookupJob) | undefined;
+  if ((annotateJobs || query.job !== undefined) && jobIds.size > 0) {
+    let feed: BusWorkFeedReadResult | undefined;
+    try { feed = readBusWorkFeed({ root: options.root, now: options.now, claims: true }); }
+    catch { feed = undefined; }
+    const annotations = new Map<string, BusEnvelopeLookupJob>();
+    jobStateOf = (jobId) => {
+      let annotation = annotations.get(jobId);
+      if (annotation === undefined) {
+        annotation = feed === undefined ? { jobId, feed: 'unavailable' } : jobAnnotationFromFeed(feed, jobId);
+        annotations.set(jobId, annotation);
+      }
+      return annotation;
+    };
+  }
+  return filterAgentMessages(projectAgentMessages(kept, jobStateOf), query, identityOf, refKeyFor);
+}
+
+/**
  * The one typed read behind the CLI, API and panes. `thread` keeps only
  * `note`/`context` bodies carrying that v2 thread label — the same
  * `busBodyThread` match `agents bus inbox --thread`, `agents bus channel
@@ -300,54 +364,7 @@ export function filterAgentMessages(messages: readonly AgentMessage[], query: Ag
  */
 export function readAgentMessages(query: AgentMessagesQuery = {}, options: BusInboxOptions = {}): AgentMessages {
   const scan = scanBusInbox(options);
-  // --thread, --in-reply-to and --channel are row-level filters applied
-  // before projection: the first keeps only note/context bodies carrying
-  // that v2 thread label — the same `busBodyThread` match `agents bus
-  // inbox --thread`, `channel read --thread`, `comms bus read|watch
-  // --thread` and `fleet bus-follow --thread` apply — the second keeps
-  // only object bodies whose own `inReplyTo` cites the named envelope —
-  // the shared `busBodyInReplyToMatch` rule `comms bus read|watch
-  // --in-reply-to`, `fleet bus-follow --in-reply-to`, `fleet_bus_inbox`'s
-  // `inReplyTo`, `agents bus inbox --in-reply-to` and `channel read
-  // --in-reply-to` apply —
-  // and the third keeps only envelopes addressed to `group:<channel>:*`,
-  // the room prefix `agents bus inbox --channel` and `channel read` match,
-  // decided on the raw `to` label so every topic of the named room lists
-  // while agent mail and other rooms never reach the page. Every other
-  // body kind and a note without the field never matches the thread
-  // filter, a `replyTo` alias or substring never matches the citation
-  // filter, and `matched` counts only the rows they accept.
-  const channelPrefix = query.channel === undefined ? undefined : `group:${query.channel}:`;
-  const rows = scan.rows.filter(row =>
-    (query.thread === undefined || busBodyThread(row.envelope.body) === query.thread) &&
-    (query.inReplyTo === undefined || busBodyInReplyToMatch(row.envelope.body, query.inReplyTo)) &&
-    (channelPrefix === undefined || row.envelope.to.startsWith(channelPrefix)));
-  const registryRead = query.agent === undefined && query.with === undefined && query.from === undefined && query.excludeFrom === undefined
-    ? undefined : readAgentRegistry({ root: options.root });
-  const registry = registryRead?.status === 'ok' ? registryRead.registry : undefined;
-  const identityOf = registry === undefined ? undefined : labelIdentityOf(registry);
-  const refKeyFor = registry === undefined ? undefined : (ref: string) => resolveAgent(registry, ref)?.id;
-  const jobIds = new Set<string>();
-  for (const row of rows) {
-    const jobId = busBodyJobId(row.envelope.body);
-    if (jobId !== undefined) jobIds.add(jobId);
-  }
-  let jobStateOf: ((jobId: string) => BusEnvelopeLookupJob) | undefined;
-  if (jobIds.size > 0) {
-    let feed: BusWorkFeedReadResult | undefined;
-    try { feed = readBusWorkFeed({ root: options.root, now: options.now, claims: true }); }
-    catch { feed = undefined; }
-    const annotations = new Map<string, BusEnvelopeLookupJob>();
-    jobStateOf = (jobId) => {
-      let annotation = annotations.get(jobId);
-      if (annotation === undefined) {
-        annotation = feed === undefined ? { jobId, feed: 'unavailable' } : jobAnnotationFromFeed(feed, jobId);
-        annotations.set(jobId, annotation);
-      }
-      return annotation;
-    };
-  }
-  const matched = filterAgentMessages(projectAgentMessages(rows, jobStateOf), query, identityOf, refKeyFor);
+  const matched = matchAgentMessages(scan.rows, query, options);
   const limit = query.limit ?? AGENT_MESSAGES_DEFAULT_LIMIT;
   return { schema: 'agent-messages.v1', source: scan.source, messages: matched.slice(0, limit), matched: matched.length, skipped: scan.skipped };
 }

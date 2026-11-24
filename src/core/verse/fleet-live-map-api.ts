@@ -11,9 +11,11 @@
  * (fleet.map-edges.v1): who messaged whom, for the map's message lines. The
  * default window is throttled the same way; 503 carries the typed "unknown" body.
  *
- * GET /api/verse/fleet/control/agent-messages[?since=1h&before=2h&limit=50] is
+ * GET /api/verse/fleet/control/agent-messages[?since=1h&before=2h&limit=50&kind=ask&from=claude] is
  * `phm agents messages --json` (agents.messages.v1): the recent messages with
  * map node ids and per-line counts and last 5 summaries, for the map's cards.
+ * Every `phm messages` filter is a param of the same name (camelCase where the
+ * flag is dashed), validated by the same parser.
  *
  * GET /api/verse/fleet/control/map-replay[?since=6h&step=5m] is `phm map replay --json`
  * (fleet.map-replay.v1): the fleet one frame per step, for the Map pane's time slider.
@@ -120,11 +122,17 @@ export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = thrott
       return true;
     }
     if (path === AGENT_MESSAGES_PATH) {
-      if ([...params.keys()].some(key => key !== 'since' && key !== 'before' && key !== 'limit') || params.getAll('since').length > 1 || params.getAll('before').length > 1 || params.getAll('limit').length > 1) {
-        sendJson(res, 400, { error: 'Use since, before and limit only, once each.' }); return true;
+      // The same filter vocabulary `phm agents messages` and `phm messages`
+      // share; dashed flags arrive camelCase, each param once.
+      const keys = ['since', 'before', 'limit', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'contains', 'from', 'excludeFrom', 'inReplyTo'];
+      if ([...params.keys()].some(key => !keys.includes(key)) || keys.some(key => params.getAll(key).length > 1)) {
+        sendJson(res, 400, { error: 'Use since, before, limit, agent, with, kind, priority, job, thread, channel, contains, from, excludeFrom and inReplyTo only, once each.' }); return true;
       }
       try {
-        const read = messages({ since: params.get('since') ?? undefined, before: params.get('before') ?? undefined, limit: params.get('limit') ?? undefined });
+        const pick = (key: string) => params.get(key) ?? undefined;
+        const read = messages({ since: pick('since'), before: pick('before'), limit: pick('limit'), agent: pick('agent'), with: pick('with'),
+          kind: pick('kind'), priority: pick('priority'), job: pick('job'), thread: pick('thread'), channel: pick('channel'),
+          contains: pick('contains'), from: pick('from'), excludeFrom: pick('excludeFrom'), inReplyTo: pick('inReplyTo') });
         if (!read.ok) sendJson(res, 400, { error: read.error });
         else sendJson(res, read.result.source === 'unavailable' ? 503 : 200, read.result);
       } catch { sendJson(res, 503, { error: 'Agent messages unavailable.' }); }
