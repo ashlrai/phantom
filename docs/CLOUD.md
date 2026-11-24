@@ -761,14 +761,38 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   off-contract rows drop like the writer's own contract, truncated
   tails are stated as lower bounds, and rows emit only for the
   fleet's own repository since the proposer and its dedupe are this
-  install's machinery.
+  install's machinery,
+  and the desktop console's render-crash ledger, the fingerprint-keyed
+  crash records every caught render error appends to
+  `desktop/errors.jsonl` (and its single `errors.1.jsonl` rotation)
+  under the fleet runs directory through `POST
+  /api/verse/desktop-errors` — the error boundaries in `src/web-ui`
+  report surface, message, stack and app version, the verse endpoint
+  truncates, scrubs and fingerprints each crash, and the writer's own
+  10-minute dedupe collapses same-episode repeats (otherwise only
+  visible through `phm fleet desktop-errors`, a grouped report someone
+  had to run and read — so a pane, route or dock helper crashing day
+  after day because the component behind it was never fixed never
+  became work). A fingerprint cell becomes an item while its recorded
+  rows inside the 7-day window reach three and span at least two
+  distinct UTC days — a one-day burst, a single stray crash and a
+  stale ledger on a console nobody opens all stay out — with each
+  generation read as a bounded tail so truncation is stated as a lower
+  bound, missing or unreadable generations contributing nothing rather
+  than poisoning the fold, malformed lines and off-contract rows
+  dropped like the writer's own contract, the quoted surface, message
+  and app version scrubbed and flattened again before they reach a
+  prompt that never quotes stack frames, and items emitting only for
+  the fleet's own repository since the console and its error
+  boundaries are this repo's own UI.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
   reward, job-control, usage-gap, runtime-journal, generator-yield,
-  incident-gate, jev-decisions, worktree-reap and gap-proposal items carry priority 3;
+  incident-gate, jev-decisions, worktree-reap, gap-proposal and
+  desktop-errors items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
