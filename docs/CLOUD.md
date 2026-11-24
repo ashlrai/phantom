@@ -1246,7 +1246,27 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   first dated row — or wholesale when the file holds no dated row at
   all, the probe-blind case — truncated tails are stated as lower
   bounds, and items emit only for the fleet's own repository since the
-  probe is this install's launch machinery.
+  probe is this install's launch machinery —
+  and the knowledge-note trajectory outcome tallies' recurring adverse
+  evidence, the per-note {runs, joined, outcomes?, realized?} rows
+  readKnowledgeNoteOutcomes (src/core/learn/retro/knowledge-outcomes.ts)
+  folds from the knowledge-runs ledger — the per-injection
+  {trajectoryId, ids, at} rows recordKnowledgeRuns appends when an
+  approved note reaches a fleet producer brief — against trajectory
+  records, published on each approved note's `outcomes` field in the
+  Lessons state (otherwise only visible inside that one API payload —
+  the Verse Lessons panel renders the causal holdout `trial` line but
+  not `outcomes`, and no CLI folds them — so a note whose served runs
+  keep company with merges that did not hold never became work). A
+  note becomes an item only while its realized adverse tally —
+  reverted + regressed + followed-up, the same adverse trio the
+  skill-outcome feed counts — reaches the recurring bar of three
+  among its joined runs AND the note is still `approved`, the state
+  that keeps it eligible for injection; pending, rejected and
+  unresolvable notes emit nothing, a withheld projection (a degraded
+  or truncated runs log, degraded trajectory sources) or a failed
+  knowledge read emits nothing, and another repository emits nothing
+  since the ledger describes this install's injection machinery.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -1257,7 +1277,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
   catalog-refresh, mcp-gateway, routines, rate-limit, queue-visit,
-  devin-review, custody and launch-cost items carry priority 3;
+  devin-review, custody, launch-cost and knowledge-outcome items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
