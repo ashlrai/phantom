@@ -68,7 +68,7 @@ it('lists stopped families with why and time left, and says unknown or none in w
 
 it('shows ranked empty reasons and partial token measurements from the typed report', () => {
   render(<JobYieldCard report={{ ...jobYield([], now, 24), empty_why: { schema: 'jobs.empty-why.v1', version: 1, window_hours: 24, known: true, total: 2, jobs: [],
-    families: [{ family: 'RQ-REPAIR', empty: 2, wasted_tokens: 42, tokens_unknown_jobs: 1, reasons: { 'no-diff': 0, 'already-on-main': 1, 'precheck-catchable': 0, 'tool-error': 0, unknown: 1 } }] } }} />);
+    families: [{ family: 'RQ-REPAIR', empty: 2, wasted_tokens: 42, tokens_unknown_jobs: 1, reasons: { 'pool-cap': 0, 'no-diff': 0, 'already-on-main': 1, 'precheck-catchable': 0, 'tool-error': 0, unknown: 1 } }] } }} />);
   expect(screen.getByRole('region', { name: 'Why jobs ended empty' }).textContent).toContain('RQ-REPAIR: 42 wasted tokens (1 job with unknown tokens); 1 already on main, 1 unknown');
 });
 

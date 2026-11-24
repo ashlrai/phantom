@@ -13,17 +13,18 @@
  * broken drop folder look like a healthy empty outbox. Nothing here sends
  * mail or mutates config: `sendReplies` is reported, never toggled.
  */
-import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { readEmailDropConfig } from './email-drop-config.js';
-import { readEmailOutbox, type EmailOutboxListing } from './email-outbox.js';
+import { probeOutboxDir, readEmailOutbox, type EmailOutboxDirState, type EmailOutboxListing } from './email-outbox.js';
+
+export { probeOutboxDir };
 
 export type EmailCheckState = 'ok' | 'blocked' | 'unavailable' | 'unsupported';
 export interface EmailCheck { id: string; state: EmailCheckState; reason: string; nextStep: string }
 
 export interface EmailCounts { queued: number; drafted: number; sent: number; stuck: number }
 export type EmailConfigState = 'missing' | 'invalid' | 'ok';
-export type EmailOutboxAvailability = 'ok' | 'missing' | 'not-directory' | 'unreadable' | 'not-established';
+export type EmailOutboxAvailability = EmailOutboxDirState | 'not-established';
 /** `draft-only` and `paused` are deliberate states; `blocked` is a broken delivery path. */
 export type EmailRepliesState = 'not-configured' | 'paused' | 'draft-only' | 'blocked' | 'send-enabled';
 
@@ -43,7 +44,7 @@ export interface EmailDiagnosis {
 export interface EmailDiagnosisDeps {
   readConfig?: typeof readEmailDropConfig;
   /** Availability probe for the outbox dir (test seam). Default probeOutboxDir. */
-  probeDir?: (dir: string) => Exclude<EmailOutboxAvailability, 'not-established'>;
+  probeDir?: (dir: string) => EmailOutboxDirState;
   listOutbox?: typeof readEmailOutbox;
 }
 
@@ -53,37 +54,6 @@ const NEXT_SETUP = 'phm comms setup-email';
 const NEXT_CYCLE = 'phm comms email-cycle';
 const NEXT_OUTBOX = 'phm fleet email-outbox --json';
 const NEXT_DRAFTS = 'phm drafts list --status pending --json';
-const OUTBOX_SUBDIRS = ['sending', 'sent', 'drafted'] as const;
-
-/**
- * Establish that the outbox is a readable directory before trusting a
- * listing: readEmailOutbox silently degrades I/O failures to `[]`, so an
- * absent or unreadable drop folder must be classified here first. Errors are
- * mapped to fixed codes only — raw exception text never leaves.
- */
-export function probeOutboxDir(dir: string): Exclude<EmailOutboxAvailability, 'not-established'> {
-  let stat;
-  try {
-    stat = statSync(dir);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    return code === 'ENOENT' ? 'missing' : code === 'ENOTDIR' ? 'not-directory' : 'unreadable';
-  }
-  if (!stat.isDirectory()) return 'not-directory';
-  try {
-    readdirSync(dir);
-    for (const sub of OUTBOX_SUBDIRS) {
-      try {
-        readdirSync(join(dir, sub));
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      }
-    }
-  } catch {
-    return 'unreadable';
-  }
-  return 'ok';
-}
 
 /** Read-only email evidence for `phm comms diagnose`. Never throws. */
 export async function diagnoseEmailDrop(runsDir: string, deps: EmailDiagnosisDeps = {}): Promise<EmailDiagnosis> {

@@ -10,7 +10,8 @@ import { listLeaderAttachments } from '../verse/leader-attachment-list.js';
 import { BUS_INBOX_MAX_MESSAGES, listBusInboxAfter } from './bus-inbox.js';
 import { readHandoffFiles } from './handoff-files.js';
 import { listLeaderFiles } from './library-files.js';
-export const LIBRARY_KINDS = ['file', 'memory', 'message', 'context'] as const;
+import { loadSpecialistRoster, readSpecialistFile } from './roster.js';
+export const LIBRARY_KINDS = ['file', 'media', 'memory', 'message', 'context'] as const;
 export type LibraryKind = typeof LIBRARY_KINDS[number];
 /** Wire version shared by `phm library --json`, `phm library show --json` and the desktop API. Fields only ever get added. */
 export const LIBRARY_SCHEMA_VERSION = 1;
@@ -21,7 +22,7 @@ export const LIBRARY_SCHEMA_VERSION = 1;
 export interface LibraryItem { id: string; kind: LibraryKind; title: string; source: string; owner: string | null; asOf: string; size: number | null; preview: string }
 export interface LibraryFilter { kind?: LibraryKind; since?: string; q?: string }
 export interface LibrarySnapshot { v: typeof LIBRARY_SCHEMA_VERSION; asOf: string; items: LibraryItem[]; unavailable: string[] }
-export const LIBRARY_ID = /^(file|memory|message|context):[0-9a-f]{16}$/;
+export const LIBRARY_ID = /^(file|media|memory|message|context):[0-9a-f]{16}$/;
 /**
  * The existing stores the Library projects. Injectable so tests read fixtures;
  * the defaults are the real stores, which keep their own bounds and scrubbing.
@@ -32,7 +33,32 @@ export interface LibrarySources {
   memory: typeof listMemory;
   handoffs: typeof readHandoffFiles;
   bus: typeof listBusInboxAfter;
+  agentMemory: typeof readAgentMemory;
 }
+/** One specialist's own memory file (queue/specialists/memory/<id>.md). */
+export interface AgentMemoryFile { id: string; callsign: string; text: string; size: number; modifiedAt: string }
+/**
+ * Agent memory: each specialist's outcome log. A missing roster or file is empty;
+ * the roster reader fails closed on symlinked, oversized or malformed state.
+ */
+export async function readAgentMemory(rosterDir: string): Promise<AgentMemoryFile[]> {
+  const roster = await loadSpecialistRoster(rosterDir);
+  const dir = join(rosterDir, 'memory');
+  try { if (!(await lstat(dir)).isDirectory()) throw new Error('Unavailable'); } // lstat: a symlinked folder is not followed
+  catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return []; throw e; }
+  const rows = await Promise.all(roster.specialists.map(async s => {
+    const path = join(dir, `${s.id}.md`);
+    const text = await readSpecialistFile(path);
+    if (!text?.trim()) return null;
+    // As-of is the newest outcome's own timestamp; the file time is only a fallback.
+    const stamps = [...text.matchAll(/^## (\S+) — /gm)].map(m => Date.parse(m[1]!)).filter(Number.isFinite);
+    const at = stamps.length ? new Date(Math.max(...stamps)) : (await lstat(path)).mtime;
+    return { id: s.id, callsign: s.callsign, text, size: Buffer.byteLength(text), modifiedAt: at.toISOString() };
+  }));
+  return rows.filter((row): row is AgentMemoryFile => row !== null);
+}
+/** Latest outcome first, so the preview shows what the agent learned most recently. */
+const latestEntry = (text: string): string => text.trim().split(/\n(?=## )/).at(-1)!.replace(/^#+\s*/gm, '').replace(/^>\s?/gm, '');
 export interface LibraryDeps { runsDir?: string; home?: string; now?: () => Date; sources?: Partial<LibrarySources> }
 /** A missing leader folder is an empty Library, not an unavailable one. */
 async function leaderFiles(runsDir?: string): ReturnType<typeof listLeaderFiles> {
@@ -41,7 +67,7 @@ async function leaderFiles(runsDir?: string): ReturnType<typeof listLeaderFiles>
   catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return []; throw e; }
   return listLeaderFiles(dir);
 }
-const DEFAULT_SOURCES: LibrarySources = { leaderFiles, attachments: listLeaderAttachments, memory: listMemory, handoffs: readHandoffFiles, bus: listBusInboxAfter };
+const DEFAULT_SOURCES: LibrarySources = { leaderFiles, attachments: listLeaderAttachments, memory: listMemory, handoffs: readHandoffFiles, bus: listBusInboxAfter, agentMemory: readAgentMemory };
 const duration = (value: string): number => Number(value.slice(0, -1)) * ({ s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 }[value.slice(-1)] ?? NaN);
 export function parseLibraryFilter(input: Record<string, string>): LibraryFilter {
   if (Object.keys(input).some(k => !['kind', 'since', 'q'].includes(k)) ||
@@ -71,14 +97,17 @@ export async function readLibrary(filter: LibraryFilter = {}, deps: LibraryDeps 
     ['Files', 'file', async () => {
       return (await read.leaderFiles(runsDir)).map(f => item('file', `leader/${f.name}`, fileTitle(f.name), `leader/${f.name}`, f.modifiedAt, f.preview, 'leader', f.size));
     }],
-    ['Media', 'file', async () => {
+    ['Media', 'media', async () => {
       const media = await read.attachments({ limit: 100, runsDir });
       if (media.state === 'unavailable') throw new Error('Unavailable');
-      return media.items.map(f => item('file', `inbox-attachments/${f.name}`, 'Screenshot', `inbox-attachments/${f.name}`, f.modifiedAt, `${f.type} · ${f.bytes} bytes`, null, f.bytes));
+      return media.items.map(f => item('media', `inbox-attachments/${f.name}`, 'Screenshot', `inbox-attachments/${f.name}`, f.modifiedAt, `${f.type} · ${f.bytes} bytes`, null, f.bytes));
     }],
     // The memory store records who wrote each entry in `source`.
     ['Memory', 'memory', async () => (await read.memory({ home })).map(m =>
       item('memory', m.id, m.text, `~/.phantom/memory/${m.id}.md`, m.updated, m.text, m.source, Buffer.byteLength(m.text)))],
+    // Each agent's own memory; the agent is the owner.
+    ['Agent memory', 'memory', async () => (await read.agentMemory(join(runsDir, 'queue', 'specialists'))).map(m =>
+      item('memory', `specialists/${m.id}`, `${m.callsign} memory`, `specialists/memory/${m.id}.md`, m.modifiedAt, latestEntry(m.text), m.callsign, m.size))],
     ['Context', 'context', async () => {
       const data = await read.handoffs(runsDir);
       if (data.state === 'unavailable' || data.state === 'partial') unavailable.push('Context');

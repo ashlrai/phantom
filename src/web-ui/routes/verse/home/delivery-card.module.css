@@ -1,0 +1,30 @@
+/* Home's Merged PRs card: three figures, the day as one bar per hour, the three window counts, then the lanes that merged.
+   One column that wraps the same at 390 px. `.body` outranks Home's own `.card p` size, whichever sheet loads last. */
+.body { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.figures { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-6); }
+.body .figure { display: flex; flex-direction: column; min-width: 0; }
+.value { color: var(--text-primary); font-size: var(--text-2xl-size); font-weight: var(--font-weight-semibold); line-height: var(--text-2xl-line); letter-spacing: var(--tracking-display); font-variant-numeric: tabular-nums; }
+.label, .body .note, .body .axis { color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.body .note[data-warn] { color: var(--status-warning-fg); }
+/* Holds the drawing's height while the first read is out, so the card does not jump when it lands. */
+.body .note[data-reading] { min-height: 4.5rem; }
+.hours { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.bars { display: block; width: 100%; height: 3rem; border-bottom: 1px solid var(--border-subtle); overflow: visible; }
+/* Every hour is the same ink, quieter; the hour still filling is the full one. A quiet hour is a grey stub, never a missing bar. */
+.bar { fill: var(--accent-500); opacity: 0.45; transform-box: fill-box; transform-origin: 50% 100%; animation: rise var(--duration-slow) var(--ease-decelerate) both; }
+.bar[data-latest] { opacity: 1; }
+.bar[data-quiet] { fill: var(--border-strong); opacity: 1; animation: none; }
+@keyframes rise { from { transform: scaleY(0); } }
+.body .axis { display: flex; justify-content: space-between; font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); }
+/* Launched, published, merged: three counts of the same window in order. The chevron is order, not a share. */
+.flow { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); margin: 0; padding: 0; list-style: none; color: var(--text-secondary); font-size: var(--text-sm-size); font-variant-numeric: tabular-nums; }
+.flow strong { color: var(--text-primary); font-weight: var(--font-weight-semibold); }
+.flow li + li::before { content: '›'; margin-inline-end: var(--space-2); color: var(--text-tertiary); }
+/* One row per lane: mark and name, a bar against the lane that merged most, then the count in words. */
+.body .lanes { display: flex; flex-direction: column; gap: var(--space-1); }
+.lanes li { display: grid; grid-template-columns: minmax(0, 7rem) minmax(0, 1fr) minmax(0, 5.5rem); align-items: center; gap: var(--space-2); font-size: var(--text-xs-size); }
+.lane { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track { height: 0.25rem; border-radius: var(--radius-full); background: var(--meter-track); overflow: hidden; }
+.fill { display: block; height: 100%; border-radius: var(--radius-full); background: var(--accent-500); transition: width var(--duration-slow) var(--ease-standard); }
+.merged { color: var(--text-secondary); font-variant-numeric: tabular-nums; text-align: end; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .bar { animation: none; } .fill { transition: none; } }

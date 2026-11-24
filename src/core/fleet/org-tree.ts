@@ -10,6 +10,7 @@ import type { ResourceLedgerV1 } from './runs-resource-ledger.js';
 import type { FleetRunsDirState } from './runs-dir-state.js';
 import type { LaneModelSnapshot } from './lane-models.js';
 import type { LeaderSeatReport } from './leader-seat.js';
+import type { LaneHealth } from './lane-badge.js';
 
 /** A job or lane counts as live when something happened within this window. */
 export const ORG_LIVE_WINDOW_MS = 5 * 60_000;
@@ -31,6 +32,8 @@ export interface OrgTreeJob {
   /** What the job is doing, in plain words. */
   doing: string;
   startedAt: string | null;
+  /** Verified session PR URL; null when no source reported one. */
+  prUrl: string | null;
   /** Newest dispatcher event naming the job, else its start. `kind` is the dispatcher's word (LAUNCH, PUBLISH_START) or `started`. */
   lastEvent: { at: string; kind: string } | null;
   /** Newest of the last event and, when a worker process was seen, the time the tree was built. */
@@ -45,6 +48,8 @@ export interface OrgTreeLane {
   running: number | null; target: number | null; queued: number | null; held: boolean | null;
   /** Pool usage and when it was measured. */
   usage: { usedPct: number | null; asOf: string | null; resetAt: string | null };
+  /** The lane's health badge (ok, held, starved, wasteful, drained) with its plain reason; null when the lanes read had no verdict for it. */
+  health: LaneHealth | null;
   jobs: OrgTreeJob[];
 }
 export type OrgPlannerId = 'executor' | 'orchestrator' | 'guardian' | 'comms';
@@ -71,7 +76,7 @@ export interface FleetOrgTree {
   /** False when no job source answered: an empty lane is then unknown, not idle. */
   jobsKnown: boolean;
   /** Agent-to-agent message lines in the window; null when the bus could not be read. */
-  messages: { from: string; to: string; count: number | null }[] | null;
+  messages: { from: string; to: string; count: number | null; lastAt?: string }[] | null;
   messageWindowMinutes: number; unmappedMessages: number | null;
   sources: FleetOrgMap['sources'] & { lanes: Health; usage: Health };
 }
@@ -85,6 +90,8 @@ export interface OrgTreeInputs {
   engineLanes?: readonly FleetLaneState[] | null;
   /** Each lane's newest launch (`getLaneModelSnapshot`). */
   models?: LaneModelSnapshot | null;
+  /** Each lane's health verdict (`getFleetLaneSnapshot`); a lane with none reads `health: null`. */
+  laneHealth?: readonly { lane: string; health?: LaneHealth | null }[] | null;
 }
 
 const count = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
@@ -156,6 +163,7 @@ export function fleetOrgTree(map: FleetOrgMap, inputs: OrgTreeInputs = {}): Flee
   const lastEvent = (job: string) => runs?.events.find(event => event.text.split(/[\s=,]+/).includes(job)) ?? null;
 
   const jobsKnown = map.sources.fleet === 'available' || map.sources.sessions === 'healthy' || map.sources.sessions === 'degraded';
+  const healths = new Map(inputs.laneHealth?.map(row => [row.lane, row.health ?? null]));
   const launches = new Map(inputs.models?.lanes.map(row => [row.lane, row.lastLaunch?.model ?? null]));
   const lanes = map.nodes.filter(node => node.kind === 'lane').map((node): OrgTreeLane => {
     const row = laneCounts.get(node.label), pool = usageRows.get(node.label), engine = engines.get(node.label);
@@ -164,7 +172,7 @@ export function fleetOrgTree(map: FleetOrgMap, inputs: OrgTreeInputs = {}): Flee
       const last = event ? { at: event.at, kind: event.kind } : startedAt ? { at: startedAt, kind: 'started' } : null;
       const state = jobState(job.status, job.published);
       return { id: job.jobId!, repo: text(job.repo), model: text(job.model), provider: job.provider, status: job.status,
-        tier: job.tier ?? null, ageSeconds: job.ageSeconds ?? null, goal: job.goal ?? null, state, doing: jobDoing(state, job.status, text(job.repo)), startedAt,
+        tier: job.tier ?? null, ageSeconds: job.ageSeconds ?? null, goal: job.goal ?? null, state, doing: jobDoing(state, job.status, text(job.repo)), startedAt, prUrl: job.prUrl ?? null,
         lastEvent: last, lastActivityAt: newest(last?.at, job.processLive === 'yes' ? map.generatedAt : null) };
     }).sort((a, b) => start(a) - start(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const live = jobs.filter(job => job.state === 'running').length;
@@ -178,7 +186,7 @@ export function fleetOrgTree(map: FleetOrgMap, inputs: OrgTreeInputs = {}): Flee
     return { lane: node.label, provider: node.provider,
       model: (models.length === 1 ? models[0] : null) ?? launches.get(node.label) ?? null, state,
       doing: laneDoing(state, row?.heldReason ?? null, target, queued, running || live),
-      heldReason: row?.heldReason ?? null, running, target, queued, held,
+      heldReason: row?.heldReason ?? null, running, target, queued, held, health: healths.get(node.label) ?? null,
       usage: { usedPct: count(pool?.usedPct), asOf: pool ? pool.observation?.asOf ?? usage?.asOf ?? null : null, resetAt: pool?.resetAt ?? null },
       jobs };
   });
@@ -187,7 +195,7 @@ export function fleetOrgTree(map: FleetOrgMap, inputs: OrgTreeInputs = {}): Flee
 
   const leader = map.nodes.find(node => node.kind === 'leader');
   const messages = map.sources.messages !== 'available' ? null : map.edges.filter(edge => edge.kind === 'message')
-    .map(edge => ({ from: label.get(edge.from) ?? 'unknown', to: label.get(edge.to) ?? 'unknown', count: edge.count ?? null }))
+    .map(edge => ({ from: label.get(edge.from) ?? 'unknown', to: label.get(edge.to) ?? 'unknown', count: edge.count ?? null, ...(edge.lastAt ? { lastAt: edge.lastAt } : {}) }))
     .sort((a, b) => `${a.from}\n${a.to}` < `${b.from}\n${b.to}` ? -1 : 1);
   // A held lane can still have jobs running, so count jobs, not lane states.
   const paused = runs?.paused ?? null, working = lanes.map(lane => lane.running || lane.jobs.filter(job => job.state === 'running').length).filter(n => n > 0);

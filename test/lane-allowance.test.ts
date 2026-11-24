@@ -20,6 +20,18 @@ const scopedPosture = () => ({ posture: 'burn', postureReason: 'fixture', projec
   observedAt: iso(0), accountId: 'account-a', model: 'claude-opus', windowStart: iso(-3_600_000), resetAt: iso(3_600_000),
   costClass: 'included', freePreview: true, allowance: { in_flight: 2 } });
 describe('lane allowance', () => {
+  it('passes on where the measured window began, and only for a usable reading', () => {
+    const claude = (reading: Record<string, unknown>, at = now) => projectLaneAllowance({ resourceLive: { schema: RESOURCE_LIVE_SCHEMA, readings: [reading] } }, at)
+      .lanes.find(lane => lane.lane === 'claude')!;
+    expect(claude(scopedReading()).windowStart).toBe(iso(-3_600_000));
+    // No start on the reading is no start on the row: it is never derived from the reset.
+    expect(claude(resourceLive().readings[0]!).windowStart).toBeNull();
+    // A start at or after the reset describes no window.
+    expect(claude({ ...scopedReading(), window_start: iso(3_600_000) }).windowStart).toBeNull();
+    // A reading dated after now is not believed, so neither is its window.
+    expect(claude({ ...scopedReading(), observed_at: iso(60_000) }).windowStart).toBeNull();
+    expect(projectLaneAllowance({}, now).lanes.every(lane => lane.windowStart === null)).toBe(true);
+  });
   it('verifies the Python dispatcher receipt against its weekly measurement and rejects altered scope', async () => {
     const fixtures = new URL('../contrib/mac/tests/fixtures/posture-provenance/', import.meta.url);
     const weekly = JSON.parse(await readFile(new URL('weekly-capacity.json', fixtures), 'utf8')) as DevinWeeklyCapacity;

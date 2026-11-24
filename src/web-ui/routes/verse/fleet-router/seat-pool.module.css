@@ -1,0 +1,48 @@
+/* The seats board: every row on the same columns, so a kind of work is the same place down every row.
+   Name, then a group of cells per task; the usage windows and the fleet standing sit under the cells. */
+.words, .key, .reading, .fleet { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.words { margin-top: calc(var(--space-2) * -1); }
+.pool { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; font-size: var(--text-xs-size); }
+.tasks, .seat { display: grid; grid-template-columns: minmax(8rem, 14rem) repeat(5, minmax(0, 1fr)); column-gap: var(--space-3); align-items: start; }
+.tasks { padding-bottom: var(--space-1); color: var(--text-secondary); }
+.tasks span[data-chosen] { color: var(--text-primary); font-weight: var(--font-weight-semibold); }
+.seat { row-gap: var(--space-2); padding: var(--space-2) 0; border-top: 1px solid var(--border-subtle); animation: enter var(--duration-fast) var(--ease-decelerate) both; }
+.who { display: flex; flex-direction: column; gap: 0.125rem; min-width: 0; }
+.name { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; color: var(--text-primary); font-weight: var(--font-weight-semibold); }
+.standing { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+/* A seat in no try order steps back; its words still say why. */
+.seat[data-idle] .name { color: var(--text-secondary); }
+
+.group { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; min-width: 0; }
+.cell { display: inline-grid; place-items: center; box-sizing: border-box; min-width: 0; height: 1.25rem; padding: 0; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); font: inherit; font-size: var(--text-xs-size); font-style: normal; font-variant-numeric: tabular-nums; line-height: 1; transition: background-color var(--duration-fast) var(--ease-decelerate), border-color var(--duration-fast) var(--ease-decelerate), box-shadow var(--duration-fast) var(--ease-decelerate); }
+button.cell { cursor: pointer; }
+button.cell:hover { border-color: var(--text-secondary); }
+button.cell:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 2px; }
+.cell[data-standing='first'] { border-color: var(--accent-500); background: var(--accent-500); }
+.cell[data-standing='later'] { border-color: var(--border-strong); background: var(--bg-surface); }
+.cell[data-standing='held'] { border-style: dashed; border-color: var(--border-strong); }
+/* Not named: the router answered and left the seat out, so the cell is a quiet floor, not a gap. */
+.cell[data-standing='unnamed'] { background: var(--border-subtle); opacity: 0.6; }
+/* No answer is hatched, never an empty cell that reads as "not used". */
+.cell[data-standing='unknown'] { background: repeating-linear-gradient(135deg, var(--status-unknown-solid) 0 2px, transparent 2px 6px); }
+/* The kind of work chosen in the route table, ringed down every row. */
+.cell[data-chosen] { box-shadow: 0 0 0 1.5px var(--text-primary); }
+
+.readings { display: flex; flex-direction: column; gap: var(--space-1); grid-column: 2 / -1; min-width: 0; }
+.reading { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); }
+.reading b { color: var(--text-primary); font-weight: var(--font-weight-regular); }
+.meter { flex: 0 0 6rem; width: 6rem; }
+.fleet[data-fleet='closed'] { color: var(--status-warning-fg); }
+
+.key { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); }
+.key span { display: inline-flex; align-items: center; gap: var(--space-1); }
+.key .cell { width: 1.25rem; height: 0.875rem; }
+
+@keyframes enter { from { opacity: 0; transform: translateY(2px); } }
+@media (prefers-reduced-motion: reduce) { .seat { animation: none; } .cell { transition: none; } }
+/* A narrow pane: the name takes its own line and the five groups run the full width under it. */
+@media (max-width: 34rem) {
+  .tasks, .seat { grid-template-columns: repeat(5, minmax(0, 1fr)); column-gap: var(--space-2); }
+  .tasks span:first-child { display: none; }
+  .who, .readings { grid-column: 1 / -1; }
+}

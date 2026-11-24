@@ -252,11 +252,12 @@ const planLogFailure = (error: unknown, path: string): { sourceState: 'missing' 
   return { sourceState: missing ? 'missing' : 'unknown', reason: missing ? `No PLAN-LOG file at ${path}, so there are no replies yet.` : `Could not read the PLAN-LOG at ${path}.` };
 };
 
-/** Only explicit dated PLAN-LOG replies, keeping the newest copy of each text per date. */
-export async function readPlanLogReplies(opts: { limit?: number; file?: string; planLog?: string } = {}): Promise<{ sourceState: 'healthy' | 'missing' | 'unknown'; entries: OutboxEntry[]; reason?: string }> {
+/** Explicit PLAN-LOG replies: dated/text-deduped by default, or latest file entries with fileOrder. */
+export async function readPlanLogReplies(opts: { limit?: number; file?: string; planLog?: string; fileOrder?: boolean } = {}): Promise<{ sourceState: 'healthy' | 'missing' | 'unknown'; entries: OutboxEntry[]; reason?: string }> {
   const path = planLogPath(opts.file, opts.planLog);
   try {
-    return { sourceState: 'healthy', entries: datedPlanReplies(parsePlanLog(await readTail(path)), opts.limit ?? 30) };
+    const parsed = parsePlanLog(await readTail(path));
+    return { sourceState: 'healthy', entries: opts.fileOrder ? parsed.slice(-(opts.limit ?? 30)) : datedPlanReplies(parsed, opts.limit ?? 30) };
   } catch (error) {
     return { ...planLogFailure(error, path), entries: [] };
   }

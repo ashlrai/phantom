@@ -91,12 +91,13 @@ this machine and prints a short note for you to pass on yourself. Phantom never
 sends an invite, email or message to anyone.
 
 ```bash
-phm team add "Member B" --share 30 --repos acme/app --slack <their-slack-id> --verified
-phm team list --json
+phm team add "Member B" --pools claude,devin --seats member-b-agent --share 30 --dry-run   # checks, saves nothing
+phm team add "Member B" --pools claude,devin --seats member-b-agent --share 30 --apply     # saves one record
+phm team --json
 phm team remove <id>
 ```
 
-`--share` is the percent of each resource pool their agents may use; all shares
+`--pools` names the lanes they bring (an unknown pool is refused and the known ones are listed). `phm team` lists each person with their pools, seats and running jobs; jobs are counted by pool, not by person, and show `unknown` when the fleet cannot be read. Their other computer joins with the existing `phm node join` ([NODES.md](NODES.md)); nothing here builds a second pairing. `--share` is the percent of each resource pool their agents may use; all shares
 together stay at 100 or less. `--verified` says you checked the sender ids
 yourself: only then does a message from that id count as theirs. Any other
 sender is unverified and is never acted on. The last owner cannot be removed.

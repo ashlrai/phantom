@@ -448,6 +448,27 @@ describe('completed job artifacts', () => {
     expect(result.freeGb).toBe(123);
   });
 
+  it('reads completion evidence in the jobs-ledger dialect', async () => {
+    const path = file(artifact, 2048, 60);
+    // jobId/type/kind aliases plus an eventless reconciler MERGED row.
+    const dialect = jobsText([
+      { jobId: 'RQ-DONE', type: 'launch' },
+      { jobId: 'RQ-DONE', kind: 'finish' },
+      { jobId: 'RQ-DONE', prUrl: 'https://github.com/o/r/pull/1', outcome: 'MERGED', mergedAt: '2026-10-20T00:05:00Z', source: 'metrics-outcomes-reconciler' },
+    ]);
+    const plan = await planDiskMaint(baseDeps({ readJobs: HEALTHY(dialect), only: new Set(['job-artifacts']) }));
+    expect(plan.classes[0]!.candidates).toHaveLength(1);
+    // A publish claim carrying a phase but no reconciler source is not completion.
+    const unsourced = jobsText([
+      { jobId: 'RQ-DONE', event: 'launch' },
+      { jobId: 'RQ-DONE', event: 'finish' },
+      { jobId: 'RQ-DONE', event: 'publish', prUrl: 'https://github.com/o/r/pull/1', outcome: 'MERGED' },
+    ]);
+    const kept = await planDiskMaint(baseDeps({ readJobs: HEALTHY(unsourced), only: new Set(['job-artifacts']) }));
+    expect(kept.classes[0]!.candidates).toHaveLength(0);
+    expect(existsSync(path)).toBe(true);
+  });
+
   it('preserves workspaces, activity markers, fresh artifacts and later attempts', async () => {
     file(artifact, 2048, 60);
     file('.ashlr-runs/RQ-DONE.publish.prev-124', 100, 1);

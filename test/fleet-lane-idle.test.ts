@@ -14,6 +14,43 @@ it('explains all four reasons with hold and empty-queue precedence, omitting ful
     .toMatchObject({ reason: 'queued work not launching', gate_reason: null, running: 1, target: 3, queued: 2 });
 });
 
+it('omits a lane at its shed launch ceiling and reports room against it', () => {
+  const lanes = {
+    shedFull: lane({ running: 2, target: 4, effective_target: 2 }),
+    shedRoom: lane({ running: 1, target: 4, effective_target: 2 }),
+  };
+  const rows = explainIdleLanes({ lanes, admission: { admit: true } });
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ lane: 'shedRoom', running: 1, target: 2, reason: 'queued work not launching' });
+});
+
+it('reports the global cap block the same way fleet admission does', () => {
+  const atCap = { cap: 8, running: 8 };
+  expect(explainIdleLanes({ lanes: { codex: lane() }, admission: atCap })[0])
+    .toMatchObject({ reason: 'blocked by the global cap', gate_reason: null, line: 'codex: blocked by the global cap' });
+  // A non-cap block outranks the cap: freeing cap cannot launch while gated.
+  expect(explainIdleLanes({ lanes: { codex: lane() }, admission: { ...atCap, gate_reason: 'load high', admit: false, decision: 'stop' } })[0]!.reason)
+    .toBe('admission closed');
+  // A stop verdict at the cap is still the cap's block, matching fleet admission.
+  expect(explainIdleLanes({ lanes: { codex: lane() }, admission: { ...atCap, admit: false, decision: 'stop' } })[0]!.reason)
+    .toBe('blocked by the global cap');
+  // Under the cap the same stop verdict is a non-cap block.
+  expect(explainIdleLanes({ lanes: { codex: lane() }, admission: { cap: 8, running: 3, admit: false, decision: 'stop' } })[0]!.reason)
+    .toBe('admission closed');
+});
+
+it('leaves the cap unknown when the admission block cannot prove it', () => {
+  for (const admission of [
+    { cap: 8 }, { running: 8 }, { cap: 'eight', running: 8 }, { cap: 8, running: -1 }, { cap: 8, running: 8.5 },
+  ]) {
+    expect(explainIdleLanes({ lanes: { codex: lane() }, admission })[0]!.reason).toBe('queued work not launching');
+  }
+  // Hold and empty-queue precedence still win over a proven cap block.
+  const lanes = { held: lane({ held: true }), empty: lane({ queued: 0 }), blocked: lane() };
+  expect(explainIdleLanes({ lanes, admission: { cap: 8, running: 8 } }).map(l => l.reason))
+    .toEqual(['held', 'nothing queued', 'blocked by the global cap']);
+});
+
 it('reads the exact status path once and exposes only the typed projection in JSON and plain text', async () => {
   const reader = vi.fn().mockResolvedValue(JSON.stringify({ lanes: { codex: lane() }, unrelated: 'private metadata' }));
   const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);

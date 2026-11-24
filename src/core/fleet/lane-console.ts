@@ -25,9 +25,19 @@
  *                        an optional `key=value` TSV row or a positional row
  *                        `status id pool tier repo title` (or `id pool tier
  *                        repo title` when the status column is absent), with
- *                        an optional header line naming the columns. READY
- *                        rows give queue depth; in-flight statuses give live
- *                        jobs; timestamped LAND rows give merges/hour.
+ *                        an optional header line naming the columns. The live
+ *                        dispatcher's own dialect — `job repo lane tier
+ *                        prompt-path [requirements-json]` plus its two
+ *                        PARKED-<reason>[.<lane>] encodings — is recognized
+ *                        natively so the lane column lands on `pool`. The
+ *                        effective hint resolves like work_market.requirements:
+ *                        the requirements' `preferred_lane` wins over the lane
+ *                        cell (explicit null is lane-open), and a row the
+ *                        market would reject counts as dropped, never supply.
+ *                        READY rows the market may place anywhere count as
+ *                        `unhinted`, never guessed onto a lane. READY rows
+ *                        give queue depth; in-flight statuses give live jobs;
+ *                        timestamped LAND rows give merges/hour.
  *   queue.v1.json        DRIVER-1 queue document (schema 'queue.v1', jobs[]
  *                        with id/status/pool). When present it is the
  *                        authoritative in-flight (live) view.
@@ -54,13 +64,19 @@
  * (`phm fleet lanes --queue-dir <abs>`).
  */
 
-import { readFile, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { open, readdir, readFile, stat } from 'node:fs/promises';
+import { scrubSecrets } from '../util/scrub.js';
+import { HELD_LOOKBACK_MS, summarizeLaneHeld, type LaneHeld, type LaunchFile } from './lane-held.js';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { readingIsFresh } from '../usage/sensor-reading.js';
 import { readPoolBudgets, poolBudgetDirectory } from './pool-budget-store.js';
 import type { PoolBudgetSnapshot, PoolBudgetView } from './pool-budget.js';
 import { readLaneTargets } from './runs-lane-targets.js';
+import { laneHealthFor, type LaneHealth } from './lane-badge.js';
+import { parseStarvedState, readStarved, STARVED_STATE_FILE, type StarvedRead } from './lane-starved.js';
+import { readySpecCell, resolveReadyMarketRow } from './unfed-market.js';
 
 // ---------------------------------------------------------------------------
 // Public types — the fleet.lanes.v1 wire shape.
@@ -102,6 +118,8 @@ export interface FleetLaneCreditView {
 }
 
 export interface FleetLaneView {
+  /** Recent launch-file holds; absent when the newest launch went through. */
+  held?: LaneHeld;
   /** Lane id — a router pool name exactly as written in the queue/usage data. */
   lane: string;
   /** READY jobs queued for this lane (null when ready.tsv was absent/degraded). */
@@ -110,6 +128,8 @@ export interface FleetLaneView {
   liveJobs: number | null;
   /** Unique merged PRs (or legacy job-level merges) in the trailing window per hour. */
   mergesPerHour: number | null;
+  /** Jobs launched in the trailing window (jobs.jsonl `launch` events, one per job); null without launch events. */
+  startsInWindow: number | null;
   credit: FleetLaneCreditView;
   /** The lane's slot target from a healthy lane-targets read; null when it has no row or holds were not healthy. */
   slotTarget: number | null;
@@ -121,6 +141,8 @@ export interface FleetLaneView {
     by: 'autobackoff' | 'manual' | null;
     since: string | null;
   } | null;
+  /** One verdict: ok | held | starved | wasteful | drained, with a plain reason (lane-badge.ts). */
+  health: LaneHealth;
 }
 
 export interface FleetLaneSnapshot {
@@ -131,14 +153,28 @@ export interface FleetLaneSnapshot {
   notes: string[];
   /** Per-source health + counts. Basenames only — absolute paths never leave the host. */
   sources: {
-    queue: { state: FleetLaneSourceState; file: string; rows: number; dropped: number };
+    queue: {
+      state: FleetLaneSourceState; file: string; rows: number; dropped: number;
+      /** READY rows the market may place anywhere: no lane hint in the row or its requirements. */
+      unhinted: number;
+    };
     queueState: { state: FleetLaneSourceState; file: string; jobs: number };
     ledger: { state: FleetLaneSourceState; file: string; events: number; dropped: number };
     usage: { state: FleetLaneSourceState; files: string[]; pools: number; dropped: number };
     budgets: { state: 'healthy' | 'unavailable' };
   };
   lanes: FleetLaneView[];
+  /** Lanes with free slots and nothing ready to run on them (lane-starved.ts). */
+  starved: StarvedRead;
 }
+
+/**
+ * Supplies the per-lane top EMPTY reason notes for badge tooltips. Display
+ * surfaces inject `fleetLaneEmptyNotes` (src/core/fleet/lane-empty-notes.ts);
+ * lane-console must not import the empty-jobs report cluster itself because
+ * it sits inside the Tier-1 authority import closure.
+ */
+export type LaneEmptyNotesProvider = (runsDir: string, nowMs: number) => Promise<ReadonlyMap<string, string>>;
 
 export interface FleetLaneConsoleOptions {
   /** Router queue directory. Default `~/.ashlr-runs/queue`. Must be absolute when given. */
@@ -151,6 +187,10 @@ export interface FleetLaneConsoleOptions {
   now?: () => Date;
   /** Trailing window for mergesPerHour. Default 60 minutes. */
   mergeWindowMs?: number;
+  /** Where the Leader remembers when a lane first looked starved. Default `~/.ashlr/vision/leader`. */
+  starvedStateDir?: string;
+  /** Badge-tooltip notes per lane. Absent means no notes — never an error. */
+  emptyNotes?: LaneEmptyNotesProvider;
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +247,21 @@ const COLUMN_ALIASES: Readonly<Record<string, keyof FleetLaneQueueRow>> = {
 /** Positional order for bare cells once a leading status word is consumed. */
 const POSITIONAL_FIELDS: readonly (keyof FleetLaneQueueRow)[] = ['id', 'pool', 'tier', 'repo', 'title'];
 
+/** Repo cell in the dispatcher's positional dialect (bare name or owner/name). */
+const REPO_ID = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$/;
+/** dispatchd TIERS plus 'low' and the bets lane's `bet:<tier>` experiment rows. */
+const QUEUE_TIERS = new Set(['frontier', 'work', 'mid', 'fast', 'low']);
+function isQueueTier(cell: string): boolean {
+  const tier = cell.toLowerCase();
+  return QUEUE_TIERS.has(tier) || tier.startsWith('bet:');
+}
+/** PARKED-<reason>[.<lane>] lane marker; also accepts the dotted PARKED.<lane> spelling. */
+const PARKED_MARKER = /^PARKED(?:-[A-Za-z0-9_-]+)?(?:\.([A-Za-z0-9][A-Za-z0-9._@-]{0,63}))?$/i;
+/** The prompt cell is a path or at least a filename with an extension. */
+function promptCell(cell: string): boolean {
+  return cell.includes('/') || /\.[a-z][a-z0-9]{0,9}$/i.test(cell);
+}
+
 // ---------------------------------------------------------------------------
 // Small guards
 // ---------------------------------------------------------------------------
@@ -247,6 +302,72 @@ async function readBounded(path: string, maxBytes: number): Promise<string | nul
 interface ParsedTsv {
   rows: FleetLaneQueueRow[];
   dropped: number;
+  /** Dispatcher rows the work market would reject (invalid_requirements): bad spec, invalid preferred_lane or lane cell. Dead work — counted, never supply. */
+  invalid: number;
+  /** Dispatcher rows recognized but carrying no lane hint — open market rows the dispatcher may place on any lane. */
+  unhinted: number;
+  /** The validated job id and repo of each lane-open row, for supply classification without a lane. */
+  unhintedRows: { id: string; repo: string }[];
+}
+
+/** A recognized dispatcher row: attributed to a lane, lane-open, or market-invalid. */
+type DispatcherRow =
+  | { readonly kind: 'row'; readonly row: FleetLaneQueueRow }
+  | { readonly kind: 'open'; readonly id: string; readonly repo: string }
+  | { readonly kind: 'drop' }
+  | null;
+
+/**
+ * dispatchd's own ready.tsv dialects (contrib/mac/dispatchd.py, restock.py),
+ * all headerless. The lane hint sits right of the repo and the tier right of
+ * the lane; parked rows carry a PARKED-<reason>[.<lane>] marker either in the
+ * lane cell or leading the row, and a trailing requirements cell is JSON:
+ *   job repo lane tier prompt [requirements]                     ready row
+ *   job repo PARKED-<reason>[.<lane>] tier prompt [requirements] lane-column parked
+ *   PARKED-<reason>[.<lane>] job lane tier repo prompt [req]     status-first parked
+ * Returns null unless every cell validates — the generic positional reader
+ * then applies its own contract to the line. A ready row's effective lane
+ * hint resolves exactly like work_market.requirements: the requirements'
+ * preferred_lane wins over the lane column (explicit null is the open hint),
+ * the lane cell is the fallback only when the spec names none, and a row the
+ * market would reject is 'drop' — dead work, counted, never supply.
+ */
+function dispatcherQueueRow(cells: string[]): DispatcherRow {
+  const first = cells[0] ?? '';
+  if (PARKED_MARKER.test(first)) {
+    // Status-first parked: marker, job, lane, tier, repo, prompt[, requirements].
+    if (cells.length !== 6 && cells.length !== 7) return null;
+    const [id, pool, tier, repo, prompt, extra] = [cells[1]!, cells[2]!, cells[3]!, cells[4]!, cells[5]!, cells[6]];
+    if (!JOB_ID.test(id) || !LANE_ID.test(pool) || !isQueueTier(tier) || !REPO_ID.test(repo) || !promptCell(prompt)) return null;
+    if (extra !== undefined && !extra.startsWith('{')) return null;
+    return { kind: 'row', row: { id, status: first.toUpperCase(), pool, tier, repo, title: prompt } };
+  }
+  if (cells.length !== 5 && cells.length !== 6) return null;
+  if (!JOB_ID.test(first) || KNOWN_STATUSES.has(first.toUpperCase())) return null;
+  const extra = cells[5];
+  const laneMarker = PARKED_MARKER.exec(cells[2] ?? '');
+  if (laneMarker) {
+    // Lane-column parked: job, repo, marker, tier, prompt[, requirements].
+    if (extra !== undefined && !extra.startsWith('{')) return null;
+    const [id, repo, tier, prompt] = [cells[0]!, cells[1]!, cells[3]!, cells[4]!];
+    if (!REPO_ID.test(repo) || !isQueueTier(tier) || !promptCell(prompt)) return null;
+    return { kind: 'row', row: { id, status: cells[2]!.toUpperCase(), pool: laneMarker[1] ?? cells[2]!, tier, repo, title: prompt } };
+  }
+  // Ready row: job, repo, lane, tier, prompt[, requirements]. The market's
+  // requirements() gives the spec's preferred_lane precedence over the lane
+  // column — explicit null means lane-open — and validates the whole spec
+  // before the market sees the row. Anything it rejects is invalid_requirements:
+  // dead work the dispatcher never launches, counted here as dropped, never
+  // guessed onto a lane or counted as open supply.
+  const [id, repo, laneCell, tier, prompt] = [cells[0]!, cells[1]!, cells[2]!, cells[3]!, cells[4]!];
+  if (!REPO_ID.test(repo) || isQueueTier(laneCell) || !isQueueTier(tier) || !promptCell(prompt)) return null;
+  if (extra !== undefined && !extra.startsWith('{')) return { kind: 'drop' };
+  const spec = readySpecCell(extra);
+  if (spec === 'invalid') return { kind: 'drop' };
+  const resolved = resolveReadyMarketRow(cells, spec ?? {});
+  if (resolved === null) return { kind: 'drop' };
+  if (resolved.hint === null) return { kind: 'open', id, repo };
+  return { kind: 'row', row: { id, status: 'READY', pool: resolved.hint, tier, repo, title: prompt } };
 }
 
 /**
@@ -257,6 +378,9 @@ interface ParsedTsv {
 export function parseReadyTsv(text: string): ParsedTsv {
   const rows: FleetLaneQueueRow[] = [];
   let dropped = 0;
+  let invalid = 0;
+  let unhinted = 0;
+  const unhintedRows: { id: string; repo: string }[] = [];
   let header: (keyof FleetLaneQueueRow)[] | null = null;
 
   const lines = text.split('\n');
@@ -278,6 +402,19 @@ export function parseReadyTsv(text: string): ParsedTsv {
         mapped.some(m => m === 'pool' || m === 'status')
       ) {
         header = mapped as (keyof FleetLaneQueueRow)[];
+        continue;
+      }
+    }
+
+    // Headerless rows in the dispatcher's own dialect carry the lane hint in
+    // a different column order than the generic positional export; recognize
+    // them before the generic reader can misattribute repo names as lanes.
+    if (header === null) {
+      const dialect = dispatcherQueueRow(cells);
+      if (dialect !== null) {
+        if (dialect.kind === 'open') { unhinted++; unhintedRows.push({ id: dialect.id, repo: dialect.repo }); }
+        else if (dialect.kind === 'drop') { dropped++; invalid++; }
+        else rows.push(dialect.row);
         continue;
       }
     }
@@ -335,7 +472,7 @@ export function parseReadyTsv(text: string): ParsedTsv {
     }
     rows.push(row);
   }
-  return { rows, dropped };
+  return { rows, dropped, invalid, unhinted, unhintedRows };
 }
 
 // ---------------------------------------------------------------------------
@@ -424,6 +561,8 @@ export interface LaneLedgerEvent {
   at: string | null;
   pr: string | null;
   merge: boolean;
+  /** A `launch` event: the job was started. */
+  launch?: boolean;
 }
 
 function prIdentity(value: string | null): string | null {
@@ -456,7 +595,7 @@ export function parseJobsJsonl(text: string): { events: LaneLedgerEvent[]; dropp
       }
       return null;
     };
-    const job = pick('job', 'id', 'jobId');
+    const job = pick('job', 'job_id', 'jobId', 'id');
     const poolRaw = pick('pool', 'lane', 'account');
     const pool = poolRaw && LANE_ID.test(poolRaw) ? poolRaw : null;
     const at = pick('ts', 'at', 'time', 'timestamp', 'landedAt', 'mergedAt', 'completedAt', 'recordedAt', 'updatedAt');
@@ -466,7 +605,7 @@ export function parseJobsJsonl(text: string): { events: LaneLedgerEvent[]; dropp
       (transition !== null && MERGE_WORDS.has(transition.toLowerCase())) ||
       (eventName !== null && MERGE_WORDS.has(eventName.toLowerCase())) ||
       row['landed'] === true || row['merged'] === true;
-    events.push({ job, pool, at, pr: prIdentity(pick('prUrl', 'pr')), merge });
+    events.push({ job, pool, at, pr: prIdentity(pick('prUrl', 'pr')), merge, launch: eventName?.toLowerCase() === 'launch' });
   }
   return { events, dropped };
 }
@@ -610,12 +749,28 @@ export function defaultUsageLogPaths(queueDir: string): string[] {
   return [join(queueDir, 'usage-readings.log'), join(home, 'usage-readings.log')];
 }
 
+const EMPTY_NOTE_TTL_MS = 60_000;
+const emptyNoteCache = new Map<string, { at: number; provider: LaneEmptyNotesProvider; notes: Map<string, string> }>();
+
+/** Top EMPTY reason per lane over the last 24 h, for the badge tooltip. Cached a minute per provider: the snapshot is polled and the provider reads job logs. No provider means no notes; a throwing provider degrades to none — the tooltip is optional. */
+async function laneEmptyNotes(runsDir: string, nowMs: number, provider: LaneEmptyNotesProvider | undefined): Promise<Map<string, string>> {
+  if (!provider) return new Map();
+  const hit = emptyNoteCache.get(runsDir);
+  if (hit && hit.provider === provider && nowMs - hit.at >= 0 && nowMs - hit.at < EMPTY_NOTE_TTL_MS) return hit.notes;
+  let notes = new Map<string, string>();
+  try {
+    notes = new Map(await provider(runsDir, nowMs));
+  } catch { /* the tooltip is optional */ }
+  emptyNoteCache.set(runsDir, { at: nowMs, provider, notes });
+  return notes;
+}
+
 export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}): Promise<FleetLaneSnapshot> {
   const now = options.now?.() ?? new Date();
   const mergeWindowMs = options.mergeWindowMs ?? DEFAULT_MERGE_WINDOW_MS;
   const queueDir = options.queueDir ?? join(homedir(), '.ashlr-runs', 'queue');
   const sources: FleetLaneSnapshot['sources'] = {
-    queue: { state: 'missing', file: 'ready.tsv', rows: 0, dropped: 0 },
+    queue: { state: 'missing', file: 'ready.tsv', rows: 0, dropped: 0, unhinted: 0 },
     queueState: { state: 'missing', file: 'queue.v1.json', jobs: 0 },
     ledger: { state: 'missing', file: 'jobs.jsonl', events: 0, dropped: 0 },
     usage: { state: 'missing', files: [], pools: 0, dropped: 0 },
@@ -624,14 +779,19 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
 
   // ── 1. ready.tsv — queue depth (+ live/merge fallback evidence) ──────────
   let queueRows: FleetLaneQueueRow[] = [];
+  // Lane-open READY rows: open market supply any lane may claim. Null until
+  // ready.tsv parses — an unread queue cannot say whether open work waits.
+  let openQueueRows: number | null = null;
   try {
     const text = await readBounded(join(queueDir, 'ready.tsv'), MAX_QUEUE_FILE_BYTES);
     if (text !== null) {
       const parsed = parseReadyTsv(text);
       queueRows = parsed.rows;
+      openQueueRows = parsed.unhinted;
       sources.queue = {
         state: parsed.dropped > 0 ? 'degraded' : 'healthy',
         file: 'ready.tsv', rows: parsed.rows.length, dropped: parsed.dropped,
+        unhinted: parsed.unhinted,
       };
     }
   } catch (error) {
@@ -754,12 +914,41 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   }
   sawMergeEvidence = sawMergeEvidence || sawReadyLand || mergeCounts.size > 0;
 
+  // Starts = distinct jobs launched in the window, for the wasteful verdict.
+  const startJobs = new Map<string, Set<string>>();
+  for (const event of ledgerEvents) {
+    const at = eventTimestamp(event.at);
+    if (!event.launch || at === null || at > now.getTime() || at < cutoff) continue;
+    const pool = event.pool ?? (event.job ? queueState?.jobPool.get(event.job) ?? readyPoolOf(queueRows, event.job) : undefined);
+    if (!pool) continue;
+    const jobs = startJobs.get(pool) ?? new Set<string>();
+    jobs.add(event.job ?? String(at));
+    startJobs.set(pool, jobs);
+  }
+  const sawLaunch = startJobs.size > 0;
+
   const readyCounts = new Map<string, number>();
   const liveFromTsv = new Map<string, number>();
   for (const row of queueRows) {
     if (row.status === 'READY') readyCounts.set(row.pool, (readyCounts.get(row.pool) ?? 0) + 1);
     else if (LIVE_STATUSES.has(row.status)) liveFromTsv.set(row.pool, (liveFromTsv.get(row.pool) ?? 0) + 1);
   }
+
+  // ── 8. held launches — `<job>.launch` files beside the queue directory ──
+  const jobLane = new Map<string, string>();
+  for (const row of queueRows) { if (row.id) jobLane.set(row.id, row.pool); }
+  for (const [job, pool] of queueState?.jobPool ?? []) jobLane.set(job, pool);
+  for (const event of ledgerEvents) if (event.job && event.pool) jobLane.set(event.job, event.pool);
+  const heldByLane = summarizeLaneHeld({
+    launches: await readLaunchFiles(dirname(queueDir), now.getTime()),
+    laneOf: job => jobLane.get(job) ?? null,
+    meterObservedAt: lane => {
+      const at = creditFor(lane, budgets, usage.latest, now.getTime()).observedAt;
+      return at ? Date.parse(at) : null;
+    },
+    now: now.getTime(),
+  });
+  for (const lane of heldByLane.keys()) lanes.add(lane);
 
   const views: FleetLaneView[] = [...lanes].map(lane => {
     const queueDepth = sources.queue.state !== 'missing'
@@ -781,7 +970,10 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
       by: !row.held ? null : row.heldReason?.startsWith('autobackoff') ? 'autobackoff' : 'manual',
       since: row.lastChange,
     } : null;
-    return { lane, queueDepth, liveJobs, mergesPerHour, credit: creditFor(lane, budgets, usage.latest, now.getTime()), slotTarget: row?.target ?? null, hold };
+    const startsInWindow = sawLaunch ? startJobs.get(lane)?.size ?? 0 : null;
+    // Placeholder verdict; replaced once the starved read below has run.
+    return { lane, queueDepth, liveJobs, mergesPerHour, startsInWindow, health: { state: 'ok' as const, reason: 'ok', number: null }, credit: creditFor(lane, budgets, usage.latest, now.getTime()), slotTarget: row?.target ?? null, hold,
+      ...(heldByLane.has(lane) ? { held: heldByLane.get(lane)! } : {}) };
   });
 
   // Lanes doing something sort first; alphabetical inside each tier.
@@ -791,6 +983,42 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     return score(b) - score(a) || a.lane.localeCompare(b.lane);
   });
 
+  // Starved = free slots and no ready rows. A held lane is waiting, not starved; a drained one cannot run what it is given.
+  // Lane-open rows are open supply the market may place on any lane, so they keep a free lane from reading as starved.
+  let stateText: string | null = null;
+  try { stateText = await readBounded(join(options.starvedStateDir ?? join(homedir(), '.ashlr', 'vision', 'leader'), STARVED_STATE_FILE), 16 * 1024); } catch { /* no record yet */ }
+  const starved = readStarved(views.map(view => ({
+    lane: view.lane,
+    target: holds.get(view.lane)?.target ?? null,
+    running: view.liveJobs,
+    ready: view.queueDepth,
+    held: view.hold?.held === true,
+    drained: view.credit.remainingPct !== null && view.credit.remainingPct <= 0,
+  })), parseStarvedState(stateText).since, now.getTime(), openQueueRows);
+
+  const emptyNotes = await laneEmptyNotes(dirname(queueDir), now.getTime(), options.emptyNotes);
+  for (const view of views) {
+    const row = starved.lanes[view.lane];
+    view.health = laneHealthFor({
+      lane: view.lane,
+      remainingPct: view.credit.remainingPct,
+      held: view.hold?.held === true,
+      heldReason: view.hold?.reason ?? null,
+      slotTarget: view.slotTarget,
+      starved: row?.starved === true,
+      freeSlots: row?.free_slots ?? null,
+      readyRows: view.queueDepth,
+      starvedSince: row?.starved_since ?? null,
+      starts: view.startsInWindow,
+      // Merges are per hour over the window; convert back to a count.
+      merged: view.mergesPerHour === null ? null : Math.round(view.mergesPerHour * (mergeWindowMs / 3_600_000)),
+      windowMinutes: Math.round(mergeWindowMs / 60_000),
+      liveJobs: view.liveJobs,
+    }, now.getTime());
+    const note = emptyNotes.get(view.lane);
+    if (note) view.health.emptyNote = note;
+  }
+
   return {
     schema: 'fleet.lanes.v1',
     generatedAt: now.toISOString(),
@@ -799,7 +1027,33 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     notes,
     sources,
     lanes: views,
+    starved,
   };
+}
+
+/** Read recent regular launch files through a capped, no-follow descriptor. */
+async function readLaunchFiles(runsDir: string, nowMs: number): Promise<LaunchFile[]> {
+  let names: string[];
+  try { names = await readdir(runsDir); } catch { return []; }
+  const jobs = names.filter(n => /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}\.launch$/.test(n));
+  const found: LaunchFile[] = [];
+  for (let i = 0; i < jobs.length; i += 64) {
+    await Promise.all(jobs.slice(i, i + 64).map(async name => {
+      const file = await open(join(runsDir, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch(() => null);
+      if (!file) return;
+      try {
+        const info = await file.stat();
+        if (!info.isFile() || info.size > 4096 || info.mtimeMs > nowMs || nowMs - info.mtimeMs > HELD_LOOKBACK_MS) return;
+        const buffer = Buffer.alloc(4096);
+        const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+        const line = buffer.toString('utf8', 0, bytesRead).split(/\r?\n/).find(l => l.trim())?.trim() ?? '';
+        const firstLine = scrubSecrets(line).replace(/(?:~\/|\/)[^\s"'<>]*/g, '[path]').slice(0, 300);
+        found.push({ job: name.slice(0, -7), atMs: info.mtimeMs, firstLine });
+      } catch { /* A record removed mid-scan is not a launch. */ }
+      finally { await file.close(); }
+    }));
+  }
+  return found;
 }
 
 function readyPoolOf(rows: readonly FleetLaneQueueRow[], job: string): string | undefined {

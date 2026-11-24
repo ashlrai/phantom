@@ -1,0 +1,47 @@
+/* Machines: the total, then one tile per Mac, as many across as fit (one on a phone, three in Home's column).
+   Each tile reads top to bottom: which Mac and whether it answers, the slots it has free, memory, what it is running, then the smaller facts. */
+.card { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; overflow-wrap: anywhere; }
+.title { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-weight: var(--font-weight-semibold); }
+.line { margin: 0; color: var(--text-primary); font-size: var(--text-sm-size); }
+/* Two classes, so Home's own `.card p` rule (the card carries both sheets' classes there) does not make the small lines large. */
+.card .muted { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.card .macs { display: grid; grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr)); gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.mac { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; padding: var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+/* A Mac that does not answer steps back; its head says when it was last seen. */
+.mac[data-status='offline'] { border-style: dashed; }
+.mac[data-status='offline'] .fill { background: var(--status-unknown-solid); }
+.head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-2); min-width: 0; }
+.name { min-width: 0; color: var(--text-primary); font-size: var(--text-sm-size); font-weight: var(--font-weight-semibold); }
+.self { margin-inline-start: var(--space-1); color: var(--text-secondary); font-size: var(--text-xs-size); font-weight: var(--font-weight-regular); }
+/* The mark sits beside the word that says the same thing, never alone. Unknown is a hollow ring, so it cannot pass for online. */
+.status { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text-secondary); font-size: var(--text-xs-size); }
+.status::before { content: ''; flex: none; box-sizing: border-box; width: 0.5rem; height: 0.5rem; border: 1px solid var(--status-unknown-solid); border-radius: var(--radius-full); }
+.status[data-status='online']::before { border-color: var(--status-success-solid); background: var(--status-success-solid); }
+.status[data-status='offline'] { color: var(--status-danger-fg); font-weight: var(--font-weight-semibold); }
+.status[data-status='offline']::before { border-color: var(--status-danger-solid); background: var(--status-danger-solid); }
+.status[data-status='unknown'] { font-style: italic; }
+.seen { flex-basis: 100%; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+/* The figure is the one thing to read at a glance. Unmeasured slots get the words, small and italic, never a number. */
+.figure { display: flex; align-items: baseline; gap: var(--space-1); color: var(--text-secondary); font-size: var(--text-xs-size); }
+.figure strong { color: var(--text-primary); font-family: var(--font-display); font-size: var(--text-xl-size); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; line-height: 1.1; letter-spacing: var(--tracking-display); }
+.mac:not([data-status='online']) .figure strong { color: var(--text-secondary); }
+.figure[data-unknown], .mac [data-unknown] { color: var(--status-unknown-fg); font-style: italic; }
+.reading { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.label { color: var(--text-secondary); font-size: var(--text-xs-size); }
+.value { color: var(--text-primary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 0 var(--space-2); }
+/* Memory in use. Use is not health, so the fill is the accent and never green or red. */
+.track { display: block; height: 0.25rem; border-radius: var(--radius-full); background: var(--meter-track); overflow: hidden; }
+.fill { display: block; height: 100%; border-radius: var(--radius-full); background: var(--accent-500); transition: width var(--duration-slow) var(--ease-standard); }
+/* No share to draw: hatched, so a missing reading never looks like an empty (0% in use) bar. */
+.track[data-unknown] { background: repeating-linear-gradient(135deg, var(--status-unknown-solid) 0 2px, transparent 2px 6px); }
+.jobs { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); min-width: 0; }
+.job { min-width: 0; padding: calc(var(--space-1) / 2) var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-full); background: none; color: var(--text-primary); font-family: var(--font-mono, monospace); font-size: var(--text-xs-size); }
+button.job { min-height: 1.75rem; border-color: var(--border-default); cursor: pointer; transition: border-color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard); }
+button.job:hover { border-color: var(--accent-500); background: var(--bg-hover); }
+button.job:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+.facts { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); margin: 0; padding-top: var(--space-2); border-top: 1px solid var(--border-subtle); }
+.facts div { display: flex; flex-direction: column; min-width: 0; }
+.facts dt { color: var(--text-secondary); font-size: var(--text-xs-size); }
+.facts dd { margin: 0; color: var(--text-primary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .fill, button.job { transition: none; } }

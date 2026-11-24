@@ -42,6 +42,54 @@ the pair resolution reports the host path in `via`. Validation rejects
 self-hosting, unknown ends, duplicate edges, cycles and orphan hosted-only
 surfaces.
 
+## Execution adapter receipts
+
+`surface.adapter` selects the generated companion configuration format; it does
+not select an execution adapter. Optional `surface.dispatch` selects `engine`,
+`hosted`, or `unavailable`. Missing dispatch means unavailable, even if an engine
+or companion adapter is configured. The committed registry currently has no
+`dispatch` declarations, so even valid pairs return an unavailable receipt.
+
+Inspect a pair locally with the required JSON flag:
+
+```sh
+phm fleet caps-route --surface codex-cli --model gpt-6.2-sol --json
+phm fleet caps-route --surface glm-lite --model glm-5.3 --json
+```
+
+Both examples currently exit 1 with an `ok: false` JSON receipt because dispatch
+is absent. `--registry <path>` optionally selects another registry file. Exit 0
+means a successful receipt; exit 1 means a refused pair or invalid/unreadable
+registry; exit 2 means invalid arguments, including missing `--surface`, `--model`
+or `--json`. The command reads local registry metadata and does not launch a
+provider or resolve credentials.
+
+Pair resolution requires known surface and model ids in the same lane and a
+hosting path for hosted-only surfaces. An `engine` receipt names the engine,
+provider model id and `cli-agent` or `api-model` transport; when the model has a
+catalog id, its engine prefix must match the surface engine. A `hosted` receipt
+contains the provider model id and host/guest/via hops; it does not launch the
+host. `unavailable` and absent dispatch refuse. A successful receipt is metadata,
+not evidence of an installed engine, admission, authority, quota, or provider
+execution. The implementation is `routeSurfaceModel` in
+[`dispatch.ts`](../src/core/caps/dispatch.ts); it is not a launch integration.
+
+### Audited migration inventory
+
+The following source locations still contain provider-specific behavior; this is
+an inventory for future migration, not a claim that the receipt drives launches.
+Re-audit before changing them and preserve existing safety and admission checks.
+
+| Location | Current behavior | Ownership |
+| --- | --- | --- |
+| [`run/engines.ts`](../src/core/run/engines.ts) | Engine availability, provider output and retry handling | Fleet-editable |
+| [`run/engine-registry.ts`](../src/core/run/engine-registry.ts) | Engine specifications and provider configuration | Protected owner work |
+| [`run/harness-dispatch.ts`](../src/core/run/harness-dispatch.ts) | Provider-specific effort and sampling options | Fleet-editable |
+| [`run/orchestrator.ts`](../src/core/run/orchestrator.ts) | Provider seats and resume handling | Fleet-editable |
+| [`run/sandboxed-engine.ts`](../src/core/run/sandboxed-engine.ts) | Provider invocation and confinement handling | Protected owner work |
+| [`fleet/dispatch-router.ts`](../src/core/fleet/dispatch-router.ts) | Provider selection and admission policy | Protected owner work |
+| [`contrib/mac/dispatchd.py`](../contrib/mac/dispatchd.py) | Provider parsing, slot policy and launch paths | Fleet-editable source; Security review and re-pin required before live installation |
+
 ## Security rules enforced by validation
 
 Every rule below is checked by `validateCapsRegistry` and covered by

@@ -9,7 +9,7 @@ import { returnFleetClaim } from '../src/core/fleet/coordination-return.js';
 import { checkReturnPrs, type ReturnEvidenceRow } from '../src/core/fleet/return-pr-check.js';
 
 const HEAD_FULL = 'abc1234def567890abcdef1234567890abcdef12';
-const OTHER_FULL = '999888777666555444333222111000fffeee999aa0';
+const OTHER_FULL = '9'.repeat(40);
 
 const dirs: string[] = [];
 function fixture() {
@@ -94,7 +94,7 @@ describe('checkReturnPrs', () => {
     const gh: Gh = async () => { t += 30_000; return prBody(); };
     const report = await checkReturnPrs([row({ claimId: 'a' }), row({ claimId: 'b', pr: 2 })],
       { gh, now: () => t, timeoutMs: 20_000 });
-    expect(report.checked[0]).toMatchObject({ claimId: 'a', verdict: 'merged-at-head' });
+    expect(report.checked[0]).toMatchObject({ claimId: 'a', verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'deadline' });
     expect(report.checked[1]).toMatchObject({ claimId: 'b', verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'deadline' });
   });
   it('turns a gh throw into unknown with a fixed reason and no raw error text', async () => {
@@ -137,7 +137,8 @@ describe('ashlr fleet returns-check', () => {
     const gh = ghMap({ [key('example/demo', 396)]: prBody() });
     expect(await cmdFleetReturnsCheck([], { gh })).toBe(0);
     const lines = log.mock.calls.map(c => String(c[0]));
-    expect(lines[0]).toBe(`merged-at-head  example/demo#396  claimed abc1234 observed abc1234 (${claimId})`);
+    expect(lines[0]).toBe('projection coverage: parsed-total=1 omitted=0 unparsed=0');
+    expect(lines[1]).toBe(`merged-at-head  example/demo#396  claimed abc1234 observed abc1234 (${claimId})`);
     expect(lines.at(-1)).toMatch(/^checked=1 skipped=0 truncated=no as-of=/);
   });
   it('exits 1 when a checked row is not merged at head, and JSON carries the verdict', async () => {

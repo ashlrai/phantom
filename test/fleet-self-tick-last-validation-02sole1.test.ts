@@ -103,7 +103,7 @@ describe('self-tick last record: writer round trips', () => {
       'lane-autohold': async () => { throw new Error('seam exploded'); },
     };
     const { report } = await runSelfTick({ runsDir, steps: throwing, now: () => NOW_MS });
-    expect(report.steps[1]).toEqual({ step: 'lane-autohold', state: 'failed', exitCode: 1, report: null });
+    expect(report.steps[1]).toEqual({ step: 'lane-autohold', state: 'failed', exitCode: 1, report: null, error: 'seam exploded' });
     expect(readSelfTickLast(runsDir, NOW_MS)).toMatchObject({ state: 'ok', failedSteps: ['lane-autohold'] });
   });
 
@@ -155,6 +155,12 @@ describe('self-tick last record: contradictions and tampering', () => {
     expect(readSelfTickLast(runsDir, NOW_MS)).toEqual({ state: 'unreadable' });
   });
 
+  it('a failed step flipped to skipped cannot make the verdict clean', async () => {
+    await runAndPersist({ codes: { 'lane-autohold': 1 } });
+    mutateStored((record) => { storedSteps(record)[1]!['state'] = 'skipped'; });
+    expect(readSelfTickLast(runsDir, NOW_MS)).toEqual({ state: 'unreadable' });
+  });
+
   it('a failed step cannot vanish when a neighbour is malformed', async () => {
     await runAndPersist({ codes: { 'lane-autohold': 1 } });
     mutateStored((record) => { storedSteps(record)[0] = null as unknown as StoredStep; });
@@ -201,7 +207,7 @@ describe('self-tick last record: malformed raw fixtures', () => {
     ['a missing version', (r) => { delete r['v']; }],
     ['a version other than 1', (r) => { r['v'] = 2; }],
     ['a string version', (r) => { r['v'] = '1'; }],
-    ['an unknown step state', (r) => { storedSteps(r)[0]!['state'] = 'skipped'; }],
+    ['an unknown step state', (r) => { storedSteps(r)[0]!['state'] = 'unknown'; }],
     ['a missing step state', (r) => { delete storedSteps(r)[0]!['state']; }],
     ['a negative exit code', (r) => { storedSteps(r)[0]!['exitCode'] = -1; }],
     ['an exit code above 255', (r) => { storedSteps(r)[2]!['exitCode'] = 256; }],

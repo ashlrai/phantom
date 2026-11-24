@@ -58,7 +58,7 @@ describe('jobVerdict', () => {
 
 describe('jobYield', () => {
   it('keeps a family where every launch merged', () => {
-    expect(family(allMerge, 'RQ-DOCS-FIX')).toEqual({ family: 'RQ-DOCS-FIX', launches: 4, running: 0, empty: 0, skipped: 0, prs: 4, merged: 4,
+    expect(family(allMerge, 'RQ-DOCS-FIX')).toEqual({ family: 'RQ-DOCS-FIX', launches: 4, running: 0, empty: 0, skipped: 0, prs: 4, merged: 4, reverted: 0,
       merged_per_launch: 1, verdict: 'keep', reason: '4 merged from 4 launches' });
   });
 
@@ -78,7 +78,7 @@ describe('jobYield', () => {
   });
 
   it('reports zero launches for empty input, with a schema and version', () => {
-    expect(jobYield([], now, 24)).toEqual({ schema: 'jobs.yield.v1', version: 1, window_hours: 24, known: true, launches: 0, merged: 0, empty: 0, skipped: 0,
+    expect(jobYield([], now, 24)).toEqual({ schema: 'jobs.yield.v1', version: 1, window_hours: 24, known: true, launches: 0, merged: 0, reverted: 0, empty: 0, skipped: 0,
       stop_slots: 0, summary: 'No launches in the last 24 hours', families: [], stop_first: [] });
   });
 
@@ -110,8 +110,61 @@ describe('jobYield', () => {
   it('shows a kind that was only ever skipped as unknown yield, and ignores rows outside the window', () => {
     const lines = [skip('RQ-LOCUS2A111723Q8', 'locus'), ...empty('RQ-OLD-1').map(line => line.replace(at(2), at(30))),
       row({ event: 'precheck_skip', job: 'RQ-LOCUS3A111724Q8', repo: 'locus', ts: at(30) }), row({ event: 'precheck_skip', job: 'RQ-LOCUS4A111725Q8', repo: 'locus' })];
-    expect(jobYield(lines, now, 24).families).toEqual([{ family: 'one-test filler locus', launches: 0, running: 0, empty: 0, skipped: 1, prs: 0, merged: 0,
+    expect(jobYield(lines, now, 24).families).toEqual([{ family: 'one-test filler locus', launches: 0, running: 0, empty: 0, skipped: 1, prs: 0, merged: 0, reverted: 0,
       merged_per_launch: null, verdict: 'watch', reason: '0 merged from 0 launches, 1 skipped before launch' }]);
+  });
+
+  it('counts a merge recorded as reverted as reverted, never as a held merge', () => {
+    const revertedMerge = (job: string, evidence: Record<string, unknown>) => [...merged(job), row({ job, ts: at(0.4), ...evidence })];
+    const lines = [
+      ...revertedMerge('RQ-DOCS-FIX-1', { event: 'revert' }),
+      ...revertedMerge('RQ-DOCS-FIX-2', { reverted: true }),
+      ...revertedMerge('RQ-DOCS-FIX-3', { reverted_at: '2026-11-17T23:00:00Z' }),
+      ...revertedMerge('RQ-DOCS-FIX-4', { event: 'outcome', state: 'REVERTED' }),
+      ...merged('RQ-DOCS-FIX-5'),
+      // Explicit reverted:false is not evidence; the merge still holds.
+      ...[...merged('RQ-DOCS-FIX-6'), row({ job: 'RQ-DOCS-FIX-6', reverted: false, ts: at(0.4) })],
+    ];
+    const report = jobYield(lines, now, 24);
+    expect(report).toMatchObject({ launches: 6, merged: 2, reverted: 4 });
+    expect(report.families).toEqual([{ family: 'RQ-DOCS-FIX', launches: 6, running: 0, empty: 0, skipped: 0, prs: 6, merged: 2, reverted: 4,
+      merged_per_launch: 2 / 6, verdict: 'keep', reason: '2 merged from 6 launches, 4 reverted' }]);
+  });
+
+  it('lets a kind whose merges all reverted reach a stop verdict', () => {
+    const lines = Array.from({ length: 6 }, (_, i) => [...merged(`RQ-BADREVERT-${i + 1}`), row({ job: `RQ-BADREVERT-${i + 1}`, event: 'revert', ts: at(0.4) })]).flat();
+    const report = jobYield(lines, now, 24);
+    expect(report.families[0]).toMatchObject({ family: 'RQ-BADREVERT', launches: 6, merged: 0, reverted: 6, merged_per_launch: 0, verdict: 'stop',
+      reason: '0 merged from 6 launches, 6 reverted' });
+    expect(report).toMatchObject({ merged: 0, reverted: 6, stop_slots: 6 });
+    expect(report.stop_first).toEqual([{ family: 'RQ-BADREVERT', slots: 6, merged: 0, reason: '0 merged from 6 launches, 6 reverted' }]);
+    expect(report.summary).toBe('6 of 6 launches went to 1 job kind that merged nothing');
+  });
+
+  it('keeps revert evidence for a job whose rows arrive before its launch', () => {
+    const lines = [row({ job: 'RQ-EARLYREV-1', event: 'revert', ts: at(3) }), ...merged('RQ-EARLYREV-1')];
+    expect(jobYield(lines, now, 24).families[0]).toMatchObject({ launches: 1, merged: 0, reverted: 1 });
+  });
+
+  it('reads the full ledger dialect: phase/result/conclusion verdicts, arm lanes, type/kind/id fields', () => {
+    const dialect = [
+      // eval/batcher spellings: arm is the lane alias, type/kind name the
+      // event and id names the job; result carries the merge verdict.
+      row({ type: 'launch', id: 'RQ-DIALECT-1', repo: 'phantom', arm: 'work', ts: at(2) }),
+      row({ kind: 'finish', job: 'RQ-DIALECT-1', empty: false, ts: at(1) }),
+      row({ event: 'publish', job: 'RQ-DIALECT-1', class: 'pr', url: 'https://example.invalid/pr/d1', ts: at(1) }),
+      row({ type: 'outcome', job: 'RQ-DIALECT-1', result: 'MERGED', ts: at(0.5) }),
+      // phase and conclusion spellings count the same way.
+      row({ event: 'launch', job: 'RQ-DIALECT-2', repo: 'phantom', pool: 'work', ts: at(2) }),
+      row({ event: 'finish', job: 'RQ-DIALECT-2', empty: false, ts: at(1) }),
+      row({ event: 'publish', job: 'RQ-DIALECT-2', class: 'pr', url: 'https://example.invalid/pr/d2', ts: at(1) }),
+      row({ event: 'outcome', job: 'RQ-DIALECT-2', phase: 'MERGED', ts: at(0.5) }),
+      row({ event: 'launch', job: 'RQ-DIALECT-3', repo: 'phantom', lane: 'work', ts: at(2) }),
+      row({ event: 'finish', job: 'RQ-DIALECT-3', empty: false, ts: at(1) }),
+      row({ event: 'publish', job: 'RQ-DIALECT-3', class: 'pr', url: 'https://example.invalid/pr/d3', ts: at(1) }),
+      row({ event: 'outcome', job: 'RQ-DIALECT-3', conclusion: 'MERGED', ts: at(0.5) }),
+    ];
+    expect(family(dialect, 'RQ-DIALECT')).toMatchObject({ launches: 3, prs: 3, merged: 3, verdict: 'keep' });
   });
 });
 

@@ -73,6 +73,10 @@ import { basename, join } from 'node:path';
 import type { AshlrConfig, AuditEntry, DaemonConfig } from '../types.js';
 import { loadConfigReadOnly, loadConfigReadOnlyStrict, resolveSubscriptionMaxPercent, saveConfig } from '../config.js';
 import { plistKeepAwake } from '../authority/resident.js';
+import {
+  BUILD_STALE_COMMITS_RANGE, BUILD_STALE_HOURS_RANGE, DEFAULT_BUILD_STALE_LIMITS, resolveBuildStaleLimits, savedBuildStaleLimits,
+  validBuildStaleCommits, validBuildStaleHours, type BuildStaleLimits, type SavedBuildStaleLimits,
+} from '../fleet/build-stale.js';
 import { daemonServiceInstallOptions } from '../daemon/service-config.js';
 import { generateServiceDefinition, serviceStatus } from '../daemon/service.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
@@ -161,6 +165,7 @@ const CONTROL_ROUTES = new Set([
   `${CONTROL_PREFIX}/control`,
   `${CONTROL_PREFIX}/caps`,
   `${CONTROL_PREFIX}/resident-awake`,
+  `${CONTROL_PREFIX}/build-stale-limits`,
   `${CONTROL_PREFIX}/scope`,
   `${CONTROL_PREFIX}/audit`,
   `${CONTROL_PREFIX}/daemon`,
@@ -247,6 +252,23 @@ export async function readInstalledResidentPlist(filePath: string): Promise<{ se
   } finally {
     await handle?.close().catch(() => undefined);
   }
+}
+
+/** Settings ▸ Live build limits. `saved` is what config holds; `limits` is what the alert uses (env override > saved > default). */
+export interface VerseBuildStaleLimitsSnapshot {
+  schema: 'ashlr.build-stale-limits.v1';
+  limits: BuildStaleLimits;
+  saved: SavedBuildStaleLimits;
+  defaults: BuildStaleLimits;
+  envOverride: { commits: boolean; hours: boolean };
+  ranges: { commits: { min: number; max: number }; hours: { min: number; max: number } };
+}
+
+export function buildStaleLimitsSnapshot(cfg: AshlrConfig, env: Record<string, string | undefined> = process.env): VerseBuildStaleLimitsSnapshot {
+  const saved = savedBuildStaleLimits(cfg.fleet?.buildStale);
+  const { envOverride, ...limits } = resolveBuildStaleLimits(saved, env);
+  return { schema: 'ashlr.build-stale-limits.v1', limits, saved, defaults: DEFAULT_BUILD_STALE_LIMITS, envOverride,
+    ranges: { commits: BUILD_STALE_COMMITS_RANGE, hours: BUILD_STALE_HOURS_RANGE } };
 }
 
 async function residentAwakeSnapshot(cfg: AshlrConfig, saved = false): Promise<VerseResidentAwakeSnapshot> {
@@ -1764,6 +1786,50 @@ export async function handleVerseControlApi(
         }
       }
       sendJson(res, 200, await residentAwakeSnapshot(current, body !== null));
+      return true;
+    }
+
+    // ── /api/verse/build-stale-limits ────────────────────────────────────
+    // The two limits behind the `build-stale` pulse alert. POST takes exactly
+    // { commits, hours }, each a whole number in range or null for "default".
+    if (path === `${CONTROL_PREFIX}/build-stale-limits`) {
+      if (method !== 'GET' && method !== 'POST') {
+        sendJson(res, 404, { error: `not found: ${method} ${path}` });
+        return true;
+      }
+      if (method === 'POST' && !passesPostGate(ctx, req, res)) return true;
+      let body: Record<string, unknown> | null = null;
+      if (method === 'POST') {
+        body = await readJsonBody(req, res);
+        if (!body) return true;
+        const { commits, hours } = body;
+        if (Object.keys(body).length !== 2 || !('commits' in body) || !('hours' in body)
+          || (commits !== null && !validBuildStaleCommits(commits)) || (hours !== null && !validBuildStaleHours(hours))) {
+          sendInvalid(res, `body must be { commits, hours }: whole numbers (commits ${BUILD_STALE_COMMITS_RANGE.min}-${BUILD_STALE_COMMITS_RANGE.max}, hours ${BUILD_STALE_HOURS_RANGE.min}-${BUILD_STALE_HOURS_RANGE.max}) or null for the default`);
+          return true;
+        }
+      }
+      let current: AshlrConfig;
+      try { current = loadConfigReadOnlyStrict(); } catch {
+        sendError(res, 'VERSE_UNAVAILABLE', 'Configuration is invalid or unavailable; nothing was changed.');
+        return true;
+      }
+      if (body) {
+        const want = { commits: body['commits'] as number | null, hours: body['hours'] as number | null };
+        try {
+          const fleet = { ...current.fleet };
+          delete fleet.buildStale;
+          const buildStale = { ...(want.commits === null ? {} : { commits: want.commits }), ...(want.hours === null ? {} : { hours: want.hours }) };
+          saveConfig({ ...current, fleet: { ...fleet, ...(Object.keys(buildStale).length > 0 ? { buildStale } : {}) } });
+          current = loadConfigReadOnlyStrict();
+          const back = savedBuildStaleLimits(current.fleet?.buildStale);
+          if (back.commits !== want.commits || back.hours !== want.hours) throw new Error('readback mismatch');
+        } catch {
+          sendError(res, 'VERSE_UNAVAILABLE', 'The limits could not be saved and verified; check them before retrying.');
+          return true;
+        }
+      }
+      sendJson(res, 200, buildStaleLimitsSnapshot(current));
       return true;
     }
 

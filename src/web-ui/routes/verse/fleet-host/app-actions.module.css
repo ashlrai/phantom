@@ -1,0 +1,32 @@
+/* App actions (AppActionsCard): one line per action, newest first; wraps cleanly at 390px. */
+.head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-3); margin-bottom: var(--space-2); }
+.headline { flex: 1 1 12rem; margin: 0; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.headline[data-unknown] { color: var(--status-unknown-fg); font-style: italic; }
+
+.filter { display: inline-flex; flex: none; border: 1px solid var(--border-default); border-radius: var(--radius-sm); overflow: hidden; }
+.filter button { min-height: var(--control-h-xs); padding: 0 var(--space-2); border: 0; background: none; color: var(--text-secondary); font: inherit; font-variant-numeric: tabular-nums; cursor: pointer; }
+.filter button + button { border-left: 1px solid var(--border-default); }
+.filter button:hover { background: var(--bg-hover); }
+.filter button[aria-pressed='true'] { background: var(--bg-hover); color: var(--text-primary); font-weight: 600; }
+.filter button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
+
+.list { display: grid; gap: var(--space-1); max-height: 22rem; margin: 0 0 var(--space-2); padding: 0; overflow-y: auto; list-style: none; }
+
+/* Dot, what happened, when; the logged detail sits under the sentence. */
+.row { display: grid; grid-template-columns: var(--space-2) minmax(0, 1fr) max-content; align-items: baseline; gap: 0 var(--space-2); padding: var(--space-1) 0; animation: app-action-in var(--duration-base) var(--ease-decelerate); }
+@keyframes app-action-in { from { opacity: 0; } }
+
+.dot { width: var(--space-2); height: var(--space-2); border-radius: var(--radius-full); background: var(--status-success-solid); transform: translateY(-1px); }
+.row[data-tone='warn'] .dot { background: var(--status-warning-solid); }
+.row[data-tone='bad'] .dot { background: var(--status-danger-solid); }
+/* Unknown is hollow: there is no result to colour. */
+.row[data-tone='unknown'] .dot { border: 1px solid var(--status-unknown-fg); background: none; }
+
+.what { min-width: 0; color: var(--text-primary); font-weight: 600; overflow-wrap: anywhere; }
+.row[data-tone='ok'] .what { font-weight: 400; }
+.when { color: var(--text-tertiary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.detail { grid-column: 2 / -1; min-width: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+
+@media (prefers-reduced-motion: reduce) {
+  .row { animation: none; }
+}
