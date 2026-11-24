@@ -5,7 +5,7 @@ import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
 import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 
 /** `phm agents conversations`: thin argv adapter for core/fleet/agent-conversations.ts. Exit 0 read, 1 bus unreadable, 2 bad usage. */
-export const AGENTS_CONVERSATIONS_USAGE = `Usage: phm agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--channel <name>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--limit <1..1024>] [--json]
+export const AGENTS_CONVERSATIONS_USAGE = `Usage: phm agents conversations [--agent <name>] [--with <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--channel <name>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--limit <1..1024>] [--json]
 
 Agent-to-agent messages grouped into threads by reply chain: who is in each
 thread, the latest subject, message count, last activity and one state:
@@ -62,7 +62,14 @@ every bus read's --from applies, decided on each member message's from so
 a thread the agent only receives in never passes; --exclude-from drops
 every thread where any member message was sent under that agent's labels
 — the same sender-exclusion rule, composing with --from so a sender both
-included and excluded matches nothing;
+included and excluded matches nothing; --with narrows --agent to the
+threads holding the two-way exchange between the two named agents — the
+same pairwise rule phm messages --agent <a> --with <b> applies, decided
+on each member message's from/to endpoints in either direction, each
+side matching by the same name/identity-key rule — so "our thread" is
+one filtered read while a thread where the two only share a third party
+or a room never passes, and --with without --agent is a usage error,
+never a widened read;
 --limit caps the threads shown, longest-waiting order kept, while matched
 still reports the full filtered count.
 --json prints agents.conversations.v1. Read only.`;
@@ -78,6 +85,7 @@ export async function runAgentsConversationsCli(args: string[], out: (text: stri
   let json = false, waitingOnly = false, blockedOnly = false, agent: string | undefined, job: string | undefined, waitingOn: string | undefined;
   let state: ConversationState | undefined, limit: number | undefined, sinceRaw: string | undefined, beforeRaw: string | undefined, contains: string | undefined;
   let inReplyTo: string | undefined, channel: string | undefined, priority: BusPriority | undefined, from: string | undefined, excludeFrom: string | undefined;
+  let withPeer: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!, value = args[i + 1];
     if (arg === '--json' && !json) json = true;
@@ -96,6 +104,7 @@ export async function runAgentsConversationsCli(args: string[], out: (text: stri
       (BUS_PRIORITIES as readonly string[]).includes(value)) { priority = value as BusPriority; i++; }
     else if (arg === '--from' && from === undefined && value !== undefined && JOB_ID.test(value) && !value.startsWith('--')) { from = value; i++; }
     else if (arg === '--exclude-from' && excludeFrom === undefined && value !== undefined && JOB_ID.test(value) && !value.startsWith('--')) { excludeFrom = value; i++; }
+    else if (arg === '--with' && withPeer === undefined && value !== undefined && JOB_ID.test(value) && !value.startsWith('--')) { withPeer = value; i++; }
     else if (arg === '--state' && state === undefined && value !== undefined && !value.startsWith('--')) {
       if (!(CONVERSATION_STATES as readonly string[]).includes(value)) {
         err(`--state takes one of ${CONVERSATION_STATES.join(', ')}.`);
@@ -107,6 +116,7 @@ export async function runAgentsConversationsCli(args: string[], out: (text: stri
     else { err(AGENTS_CONVERSATIONS_USAGE); return 2; }
   }
   if (job !== undefined && !JOB_ID.test(job)) { err('--job takes a job id (printable label, 1-128 chars).'); return 2; }
+  if (withPeer !== undefined && agent === undefined) { err('--with takes the other agent and needs --agent.'); return 2; }
   // Relative cutoffs resolve against the read's own clock so a frozen `now`
   // in tests and the live clock in production agree on "15m ago".
   const since = sinceRaw === undefined ? undefined : parseSince(sinceRaw, options.now?.() ?? Date.now());
@@ -114,7 +124,7 @@ export async function runAgentsConversationsCli(args: string[], out: (text: stri
   const before = beforeRaw === undefined ? undefined : parseSince(beforeRaw, options.now?.() ?? Date.now());
   if (beforeRaw !== undefined && before === null) { err('--before takes 15m, 2h, 1d, epoch ms or an ISO time.'); return 2; }
   const { formatAgentConversationsText, readAgentConversations } = await import('../core/fleet/agent-conversations.js');
-  const result = readAgentConversations({ agent, waitingOnly, blockedOnly, job, waitingOn, state, since: since ?? undefined, before: before ?? undefined, contains, inReplyTo, channel, priority, from, excludeFrom, limit }, options);
+  const result = readAgentConversations({ agent, waitingOnly, blockedOnly, job, waitingOn, state, since: since ?? undefined, before: before ?? undefined, contains, inReplyTo, channel, priority, from, excludeFrom, with: withPeer, limit }, options);
   out(json ? JSON.stringify(result, null, 2) : formatAgentConversationsText(result));
   return result.source === 'unavailable' ? 1 : 0;
 }

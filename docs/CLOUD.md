@@ -987,7 +987,46 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   basename matched to the discovery target's repository name — a
   checkout enrolled under a differently-named directory is
   conservatively unmatched — and a full path is never quoted since it
-  would carry the account's home directory into a prompt.
+  would carry the account's home directory into a prompt,
+  and the router catalog refresh report series' recurring adverse
+  evidence, the `router.catalog-refresh.v1` reports refreshCatalog in
+  `src/core/routing/catalog-refresh.ts` writes one per
+  `phm router catalog refresh` run — the weekly catalogSchedule unit
+  (`src/core/routing/catalog-schedule.ts`) plus manual runs — to
+  `router/catalog/catalog-refresh-<stamp>.json` under the account home,
+  each carrying the per-source probe statuses, the additions and
+  reappeared lists, the unseen/deprecated/proposedRemovals model lists,
+  the `unknown` list of catalog models no ok source could verify, and
+  `rejectedRules` pattern-table rejections, with a review-only patch
+  beside each (otherwise only visible as each run's own stdout and the
+  accumulating artifacts no reader folded, so a catalog source whose
+  probe kept failing — its models never discovered and its owned
+  models never even flagged missing, since diffCatalog skips unseen
+  marks while an owning source reads unknown — catalog models that
+  kept failing verification while their tiers kept them routable, a
+  pattern rule rejected every week, and removal proposals that piled
+  up unreviewed — refresh never removes and MODEL_CATALOG_UNSEEN and
+  MODEL_CATALOG_UNASSIGNED have no consumers — never became work). A
+  cell — a source stuck at status 'unknown', a model stuck on the
+  unknown list, a rule stuck in rejectedRules, or a model stuck in
+  proposedRemovals — becomes an item only while it appears in at least
+  two distinct in-window reports spanning two distinct UTC days inside
+  the 28-day window, four scheduled observations being the honest
+  recurring bar for a weekly pass, AND only while the newest in-window
+  report still shows it adverse: these are state snapshots, not events,
+  so a source whose newest containing report reads 'ok', a model that
+  left the unknown or removal lists and a rule that left rejectedRules
+  all resolved and emit nothing, while an opt-in source absent from
+  later reports keeps its last recorded verdict. Rows count only
+  under the writer's contract — the schema stamp, a parseable
+  generatedAt and the four evidence collections — with off-contract
+  entries inside a valid report dropped rather than folded, malformed
+  files counted in the prompt's coverage note, future-dated artifacts
+  beyond a minute of skew ignored, bounded no-follow tail reads of the
+  newest report files with older files past the read bound stated, and
+  items emitted only for the fleet's own repository since the reports
+  describe this install's router catalog and carry no repository
+  column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -996,7 +1035,8 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   reward, job-control, usage-gap, runtime-journal, generator-yield,
   incident-gate, jev-decisions, worktree-reap, gap-proposal,
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
-  audit-trail, desktop-console, fleet-self-tick and repair-handoff items carry priority 3;
+  audit-trail, desktop-console, fleet-self-tick, repair-handoff and
+  catalog-refresh items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -1222,7 +1262,17 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   pinned ops machinery or a rolled-forward window, and emit only for
   the fleet's own repository or a checkout whose canonical path ends
   in the discovery target's repository name, since the journals
-  record this install's repair handoffs. They
+  record this install's repair handoffs. Catalog-refresh items name the
+  report series, refreshCatalog and the catalog-schedule unit, keep the
+  which-side-is-wrong framing per cell — a missing or moved provider
+  CLI, a changed help or listing format the extract patterns no longer
+  match, or a hung endpoint versus a stale catalog entry, a pattern
+  rule hand-edited into a shape the validator rejects, or a model the
+  owner intentionally keeps — with the same owner-side no-change escape
+  for a missing login, billing or host state only the owner can fix,
+  pinned ops machinery or a rolled-forward window, and emit only for
+  the fleet's own repository since the reports record this install's
+  router catalog and carry no repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never

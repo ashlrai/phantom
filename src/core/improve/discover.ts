@@ -447,6 +447,23 @@
  *     recurring — so a backend whose parents keep finishing empty, a
  *     capture path that keeps erroring, or a gate that keeps blocking
  *     proposals into repair children never became work;
+ *   - the router catalog refresh report series' recurring adverse
+ *     evidence: the router.catalog-refresh.v1 reports refreshCatalog
+ *     writes one per `phm router catalog refresh` run — the weekly
+ *     catalogSchedule unit plus manual runs — to
+ *     <ashlr home>/router/catalog/catalog-refresh-<stamp>.json, each
+ *     carrying per-source probe statuses, the unseen/deprecated/
+ *     proposedRemovals model lists, the unknown list of catalog models
+ *     no ok source could verify, and rejectedRules pattern-table
+ *     rejections (catalogRefreshBacklogItems below). Until now the
+ *     series had no reader at all — each run prints only its own
+ *     report and the artifacts accumulate unread — so a catalog source
+ *     whose probe kept failing (its models never discovered, and its
+ *     owned models never even flagged missing since diffCatalog skips
+ *     unseen marks while an owning source reads unknown), catalog
+ *     models that kept failing verification while staying routable,
+ *     a pattern rule rejected every week, and removal proposals that
+ *     piled up unreviewed never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -521,6 +538,7 @@ import { selfTickBacklogItems } from './self-tick-backlog.js';
 import { auditBacklogItems } from './audit-backlog.js';
 import { desktopErrorBacklogItems } from './desktop-error-backlog.js';
 import { repairHandoffBacklogItems } from './repair-handoff-backlog.js';
+import { catalogRefreshBacklogItems } from './catalog-refresh-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1228,6 +1246,30 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // tails are stated as lower bounds, and every journal string is
   // scrubbed before it reaches a prompt.
   items.push(...await repairHandoffBacklogItems({ repo }));
+
+  // Router catalog refresh report series: each `phm router catalog
+  // refresh` run — the weekly catalogSchedule unit plus manual runs —
+  // writes one router.catalog-refresh.v1 report to
+  // <ashlr home>/router/catalog/catalog-refresh-<stamp>.json carrying
+  // the per-source probe statuses, the unknown model list, the
+  // rejectedRules pattern rejections and the proposedRemovals list.
+  // Until now the artifacts accumulated unread — each run prints only
+  // its own report — so a source whose probe kept failing, models that
+  // kept failing verification while staying routable, a rule rejected
+  // every week and removal proposals piling up unreviewed never became
+  // work. Bounded no-follow tail reads of the newest report files; a
+  // cell emits only at the recurring bars of distinct in-window
+  // reports across distinct UTC days inside the 28-day window — four
+  // scheduled observations, since the refresh is weekly — AND only
+  // while the newest in-window report still shows it adverse, because
+  // these are state snapshots: a source that recovered, a model that
+  // left the unknown or removal lists, a rule that left rejectedRules
+  // all resolved and emit nothing. Rows count only under the writer's
+  // contract, malformed reports are dropped rather than folded, an
+  // unreadable dir or read yields nothing, and only the fleet's own
+  // repository inherits the items since the reports describe this
+  // install's router catalog and carry no repository column.
+  items.push(...await catalogRefreshBacklogItems({ repo }));
   return { items, errors };
 }
 
