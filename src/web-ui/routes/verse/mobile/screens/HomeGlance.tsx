@@ -1,5 +1,5 @@
 /**
- * The phone opens here, on exactly seven things, top to bottom:
+ * The phone opens here, with fleet health, admission, decisions and activity:
  *  -1. the four tiles: merged, time to merge, main green, plan runway (`phm status --brief --json`);
  *   0. the Pulse card: five numbers with a trend each (the desktop Home card, `phm fleet pulse`);
  *   1. one line of fleet health: merges in the last hour, lanes running, main
@@ -18,6 +18,10 @@ import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import type { QueryDef } from '../../../../data/queries.js';
 import { BriefTiles, briefQuery } from '../BriefTiles.js';
 import { TodayCard } from '../TodayCard.js';
+import { AdmissionCard } from '../AdmissionCard.js';
+import { FamilyYieldCard, familyYieldQuery } from '../../fleet-hub/FamilyYieldCard.js';
+import { fleetAdmissionQuery } from '../../fleet-hub/fleet-admission-query.js';
+import { hostLoadQuery } from '../../fleet-host/host-load-query.js';
 import { ApprovalsCard, approvalAsksQuery } from '../../home/ApprovalsCard.js';
 import { LeaderRepliesCard, leaderRepliesQuery } from '../../home/LeaderRepliesCard.js';
 import { LiveBuildLine } from '../../home/LiveBuildLine.js';
@@ -48,6 +52,9 @@ export const homeQuery: QueryDef<HomeSummary | null> = {
   },
 };
 export const refreshHomeGlance = (): Promise<unknown> => Promise.all([
+  refetchQuery(familyYieldQuery.key, () => familyYieldQuery.fetch(), true).catch(() => undefined),
+  refetchQuery(fleetAdmissionQuery.key, () => fleetAdmissionQuery.fetch(), true).catch(() => undefined),
+  refetchQuery(hostLoadQuery.key, () => hostLoadQuery.fetch(), true).catch(() => undefined),
   refetchQuery(briefQuery.key, () => briefQuery.fetch(), true).catch(() => undefined),
   refetchQuery(poolsQuery.key, () => poolsQuery.fetch(), true).catch(() => undefined),
   refetchQuery(homeQuery.key, () => homeQuery.fetch(), true).catch(() => undefined),
@@ -88,6 +95,8 @@ export function HomeGlance() {
       <BriefTiles />
       <PulseStrip />
       <PulseCard />
+      <AdmissionCard />
+      <FamilyYieldCard />
       {health ? <p className={styles.health} data-tone={health.tone} role="status" aria-label="Fleet health">{health.text}</p> : (
         <section className={`${ui.card} ${styles.needs}`} role="alert">
           <p className={styles.askText}>Fleet health is unknown. {read.error ? readFailureReason(read.error) : 'Your Mac’s build does not serve it yet. Update Phantom on your Mac.'}</p>

@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import type { SkillCard } from '../types.js';
 import type { MetricsJob } from './metrics-ingest.js';
 import { ledgerEventName, ledgerPhase } from './empty-cause.js';
+import { isNodePoolLedgerRow } from './jobs-ledger-dialect.js';
 import { readSkillCardCorpus, recordSkillCard, sanitizeSkillCard } from './skill-records.js';
 import { hasRevertEvidence } from './slot-yield.js';
 import {
@@ -109,7 +110,12 @@ export function nudgeSkillsFromJobs(jobs: readonly SkillNudgeJob[], ts = new Dat
 //     PUBLISHED/OPEN and task-level words (done/skipped/deferred) never
 //     resolve a job outcome.
 //   - reverted: sticky hasRevertEvidence, the same rule slot-yield and the
-//     router outcome fold apply.
+//     router outcome fold apply — plus, when the caller supplies the
+//     standing revert keys (`revertedPrKeys`: outcome-ledger, cloud-task and
+//     `fleet reverts --record` detections), a merged job whose standing
+//     verdict row's pull URL is claimed by exactly that job and whose
+//     `owner/repo#n` key stands in the set, the unambiguous-claim join
+//     outcome-learning applies.
 //   - retries: dispatch attempts beyond the first (launch, batch_claim, and
 //     claim rows not flagged launch_dedupe — dedupe claims pair with their
 //     launch and are one attempt) plus launch_failed rows whose action is
@@ -125,6 +131,12 @@ export function nudgeSkillsFromJobs(jobs: readonly SkillNudgeJob[], ts = new Dat
 const LEDGER_JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const LEDGER_LANE_KEYS = ['lane', 'pool', 'arm'] as const;
 const LEDGER_ACTION_KEYS = ['action'] as const;
+/** PR URL spellings the jobs-ledger producers emit — the set outcome-learning and the router outcome fold read. */
+const PR_URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr'] as const;
+/** A github.com pull URL in the canonical shape dispatchd and the fleet writers emit. */
+const GITHUB_PULL_URL = /^https:\/\/github\.com\/([^/?#\s]+)\/([^/?#\s]+)\/pull\/([1-9]\d*)\/?$/i;
+/** Batch session ids are infrastructure and never claim a PR — the rule the sibling outcome folds apply. */
+const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
 /** Same identifier alphabet draftSkillNudges accepts for id, lane and failureClass. */
 const LEDGER_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
 
@@ -142,6 +154,8 @@ type NudgeOutcome = 'merged' | 'failed' | 'empty' | 'cancelled';
 interface NudgeJobAccum {
   lane: string | null;
   outcome: NudgeOutcome | undefined;
+  /** PR URL on the row that set the standing outcome; null when that row carried none. */
+  verdictUrl: string | null;
   reverted: boolean;
   attempts: number;
   retryReceipts: number;
@@ -156,6 +170,39 @@ function firstString(row: Record<string, unknown>, keys: readonly string[]): str
     if (typeof value === 'string' && value.trim()) return value.trim();
   }
   return null;
+}
+
+/** First non-empty PR URL spelling on a ledger row; null when none is recorded. */
+function rowPrUrl(row: Record<string, unknown>): string | null {
+  return firstString(row, PR_URL_KEYS);
+}
+
+/** `owner/repo#n` (lowercase repo) for a pull URL; null when the URL is not that shape. */
+function pullRequestKey(url: string): string | null {
+  const match = GITHUB_PULL_URL.exec(url);
+  return match ? `${match[1]!.toLowerCase()}/${match[2]!.toLowerCase()}#${match[3]}` : null;
+}
+
+/**
+ * The standing revert-set join: a merged job whose standing verdict row's
+ * pull URL is claimed by exactly that job and whose `owner/repo#n` key
+ * stands in the supplied set counts as reverted — git-history reverts the
+ * jobs ledger never spelled still discount the draft. Absent, empty or
+ * unmatched keys change nothing, and a contested or foreign claim never
+ * resolves, the same rule outcome-learning applies.
+ */
+function standingReverted(
+  id: string,
+  acc: NudgeJobAccum,
+  claims: ReadonlyMap<string, ReadonlySet<string>> | null,
+  keys: ReadonlySet<string> | null | undefined,
+): boolean {
+  if (claims === null || keys === null || keys === undefined
+    || acc.outcome !== 'merged' || acc.verdictUrl === null) return false;
+  const claimants = claims.get(acc.verdictUrl);
+  if (claimants === undefined || claimants.size !== 1 || !claimants.has(id)) return false;
+  const key = pullRequestKey(acc.verdictUrl);
+  return key !== null && keys.has(key);
 }
 
 /** Event names (post-normalization, lowercase) that carry a terminal verdict with no phase field. */
@@ -198,8 +245,15 @@ function failureClassOf(row: Record<string, unknown>, event: string | null): str
  * job's last ledger position. Pure; never throws; malformed lines and rows
  * without a usable job id are ignored.
  */
-export function skillNudgeJobsFromLedger(text: string): SkillNudgeJob[] {
+export function skillNudgeJobsFromLedger(text: string, revertedPrKeys?: ReadonlySet<string> | null): SkillNudgeJob[] {
   const jobs = new Map<string, NudgeJobAccum>();
+  // PR URL -> claiming job ids, collected only when the caller supplied
+  // standing revert keys — the same unambiguous-claim evidence pass
+  // outcome-learning runs, so a contested or foreign URL never resolves.
+  // Node-pool producer rows are a different dialect and batch session ids
+  // are infrastructure: neither ever claims.
+  const claims = revertedPrKeys === undefined || revertedPrKeys === null || revertedPrKeys.size === 0
+    ? null : new Map<string, Set<string>>();
   let lineNo = 0;
   for (const line of text.split('\n')) {
     lineNo += 1;
@@ -211,10 +265,18 @@ export function skillNudgeJobsFromLedger(text: string): SkillNudgeJob[] {
       row = parsed as Record<string, unknown>;
     } catch { continue; }
     const id = firstString(row, LEDGER_JOB_KEYS);
+    if (claims !== null && id !== null && !id.startsWith(BATCH_SESSION_PREFIX) && !isNodePoolLedgerRow(row)) {
+      const url = rowPrUrl(row);
+      if (url !== null) {
+        const set = claims.get(url) ?? new Set<string>();
+        set.add(id);
+        claims.set(url, set);
+      }
+    }
     if (id === null || !LEDGER_ID_PATTERN.test(id)) continue;
     let acc = jobs.get(id);
     if (acc === undefined) {
-      acc = { lane: null, outcome: undefined, reverted: false, attempts: 0,
+      acc = { lane: null, outcome: undefined, verdictUrl: null, reverted: false, attempts: 0,
         retryReceipts: 0, recuts: 0, failureClass: null, lastLine: lineNo };
       jobs.set(id, acc);
     }
@@ -237,17 +299,23 @@ export function skillNudgeJobsFromLedger(text: string): SkillNudgeJob[] {
     if (failureClass !== null) acc.failureClass = failureClass;
     if (hasRevertEvidence(row)) acc.reverted = true;
     const outcome = outcomeOf(row);
-    if (outcome !== undefined) acc.outcome = outcome;
+    if (outcome !== undefined) {
+      acc.outcome = outcome;
+      // The standing verdict row's own PR URL is what the revert-set join
+      // binds to — a later verdict of a different PR is a fresh merge era.
+      acc.verdictUrl = rowPrUrl(row);
+    }
   }
   return [...jobs.entries()]
     .sort((a, b) => a[1].lastLine - b[1].lastLine)
     .map(([id, acc]) => {
       const retries = Math.max(0, acc.attempts - 1) + acc.retryReceipts;
+      const reverted = acc.reverted || standingReverted(id, acc, claims, revertedPrKeys);
       return {
         id,
         lane: acc.lane ?? 'unknown',
         ...(acc.outcome !== undefined ? { outcome: acc.outcome } : {}),
-        ...(acc.reverted ? { reverted: true } : {}),
+        ...(reverted ? { reverted: true } : {}),
         ...(retries > 0 ? { retries } : {}),
         ...(acc.recuts > 0 ? { recuts: acc.recuts } : {}),
         ...(acc.failureClass !== null ? { failureClass: acc.failureClass } : {}),
@@ -260,6 +328,15 @@ export interface SkillNudgeSyncOptions {
   runsDir?: string;
   /** Injected jobs-ledger tail text; skips the jobs.jsonl read when set. */
   jobsText?: string;
+  /**
+   * Standing revert keys (`owner/repo#n`) the caller resolved from the
+   * outcome ledger, cloud tasks and the revert-outcomes scan ledger — the
+   * same set outcome-learning consumes. A merged job whose standing
+   * verdict row's pull URL is claimed by exactly that job and whose key
+   * stands in the set folds as reverted; absent or unmatched keys change
+   * nothing.
+   */
+  revertedPrKeys?: ReadonlySet<string> | null;
   now?: () => Date;
   signal?: AbortSignal;
 }
@@ -294,7 +371,7 @@ export async function syncSkillNudgesFromJobsLedger(
       : await readLedgerTail(jobsPath);
     if (jobs.state !== 'read') return { state: jobs.state, ...empty };
     if (opts.signal?.aborted) return { state: 'read', ...empty, truncated: jobs.truncated };
-    const folded = skillNudgeJobsFromLedger(jobs.text);
+    const folded = skillNudgeJobsFromLedger(jobs.text, opts.revertedPrKeys);
     const candidates = nudgeSkillsFromJobs(folded, (opts.now ?? (() => new Date()))().toISOString());
     return { state: 'read', jobsPath, truncated: jobs.truncated, folded: folded.length, candidates: candidates.length };
   } catch {

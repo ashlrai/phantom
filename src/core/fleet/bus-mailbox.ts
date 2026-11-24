@@ -118,14 +118,27 @@ function pendingMailboxMessages(records: readonly RecordEntry[], at: number): Bu
 
 export interface BusMailbox {
   send(envelope: BusEnvelope): { id: string; replayed: boolean };
-  inbox(to: string, limit?: number): { messages: BusEnvelope[]; hasMore: boolean };
+  /**
+   * Pending (unacked, unexpired) messages addressed to `to`, in the mailbox's
+   * priority/acceptance/id drain order, capped at `limit` with `hasMore`
+   * reporting truncation. `match`, when given, narrows the pending set before
+   * `limit` and `hasMore` count it — the same filter hook `pendingFor` takes —
+   * so a filtered read's truncation is the filtered truncation, never the
+   * unfiltered one padded or hidden. Returned envelopes carry the remaining
+   * TTL budget, not the original acceptance-window TTL.
+   */
+  inbox(to: string, limit?: number, match?: (message: BusMailboxPendingMessage) => boolean): { messages: BusEnvelope[]; hasMore: boolean };
   /**
    * Pending (unacked, unexpired) mail addressed to ANY of `labels`, merged in
    * the same priority/acceptance/id order `inbox` applies per label. `matched`
    * counts every pending row across the labels before `limit`; each row keeps
    * its own `to` label — the `--to` `inbox`/`ack` take for that message.
+   * `match`, when given, narrows the pending set before `matched` and `limit`
+   * count it, so a filtered read's total is the filtered total — never the
+   * unfiltered one padded or hidden.
    */
-  pendingFor(labels: readonly string[], limit?: number): { messages: BusMailboxPendingMessage[]; matched: number };
+  pendingFor(labels: readonly string[], limit?: number,
+    match?: (message: BusMailboxPendingMessage) => boolean): { messages: BusMailboxPendingMessage[]; matched: number };
   /**
    * Pending mail across EVERY recipient label in the same drain order —
    * the fleet-wide read the unified comms inbox needs, where `pendingFor`
@@ -239,28 +252,30 @@ export function createBusMailbox(
       if (!Number.isSafeInteger(acceptedAt) || acceptedAt < 0) throw new BusMailboxError('storage');
       return { id: envelope.id, replayed: write({ v: 1, kind: 'message', acceptedAt, envelope }) };
     },
-    inbox(to, limit = 100) {
+    inbox(to, limit = 100, match) {
       validateBusAddress(to);
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new BusMailboxError('invalid-envelope');
       const records = read();
       const acked = new Set(records.filter((r): r is Ack => r.kind === 'ack' && r.to === to).map(r => r.id));
       const at = now();
       if (!Number.isSafeInteger(at) || at < 0) throw new BusMailboxError('storage');
-      const pending = records.filter((r): r is Message => r.kind === 'message' && r.envelope.to === to &&
+      let pending = records.filter((r): r is Message => r.kind === 'message' && r.envelope.to === to &&
         !acked.has(r.envelope.id) && at >= r.acceptedAt && at - r.acceptedAt < r.envelope.ttl);
       pending.sort((a, b) => a.envelope.priority.localeCompare(b.envelope.priority) ||
         a.acceptedAt - b.acceptedAt || a.envelope.id.localeCompare(b.envelope.id));
+      if (match !== undefined) pending = pending.filter(message => match(message));
       return {
         messages: pending.slice(0, limit).map(r => ({ ...r.envelope, ttl: r.envelope.ttl - (at - r.acceptedAt) })),
         hasMore: pending.length > limit,
       };
     },
-    pendingFor(labels, limit = 1000) {
+    pendingFor(labels, limit = 1000, match) {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 5000) throw new BusMailboxError('invalid-envelope');
       const wanted = new Set(labels.filter((label): label is string => typeof label === 'string' && label.length > 0));
       const at = now();
       if (!Number.isSafeInteger(at) || at < 0) throw new BusMailboxError('storage');
-      const pending = pendingMailboxMessages(read(), at).filter(message => wanted.has(message.envelope.to));
+      let pending = pendingMailboxMessages(read(), at).filter(message => wanted.has(message.envelope.to));
+      if (match !== undefined) pending = pending.filter(match);
       return { messages: pending.slice(0, limit), matched: pending.length };
     },
     pendingAll(limit = 1000) {

@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { readLaneTargets, LANE_ID_RE, type LaneTargetRow } from './runs-lane-targets.js';
 import { readHostMemory, REAL_PRESSURE_FREE_PCT, SWAP_GROWING_MB_PER_MIN, type HostMemoryDeps } from './host-memory.js';
 import { defaultRunsDir } from './host-top.js';
+import { readPauseState, pauseLine, type PauseState, type PausePaths } from './pause-state.js';
 
 export const LANE_PRESSURE_SCHEMA = 'lanes.pressure.v1';
 /** Free memory under this percent is critical. Warning starts at REAL_PRESSURE_FREE_PCT (35). */
@@ -103,6 +104,8 @@ export interface LanePressureReport {
   freePercent: number | null;
   swapGrowthMbPerMin: number | null;
   lanes: LanePressureRow[];
+  pause?: PauseState;
+  pauseLine?: string | null;
   gaps: string[];
 }
 
@@ -138,21 +141,22 @@ async function readConfiguredClasses(runsDir: string): Promise<Map<string, unkno
   return out;
 }
 
-export interface ReadLanePressureDeps extends HostMemoryDeps { readTargets?: () => Promise<{ sourceState: string; lanes: LaneTargetRow[] }> }
+export interface ReadLanePressureDeps extends HostMemoryDeps, PausePaths { readTargets?: () => Promise<{ sourceState: string; lanes: LaneTargetRow[] }> }
 
 /** The one impure entry: reads memory and lane targets, then hands them to buildLanePressure. Never throws, never writes. */
 export async function readLanePressure(deps: ReadLanePressureDeps = {}): Promise<LanePressureReport> {
   const runsDir = deps.runsDir ?? defaultRunsDir();
-  const [memory, targets, classes] = await Promise.all([
+  const [memory, targets, classes, pause] = await Promise.all([
     readHostMemory({ ...deps, runsDir }),
     (deps.readTargets ?? (() => readLaneTargets({ runsDir })))(),
     readConfiguredClasses(runsDir),
+    readPauseState(deps, runsDir),
   ]);
   const gaps: string[] = [];
   if (targets.sourceState !== 'healthy') gaps.push(`Lane targets are ${targets.sourceState}: queue/slots.json could not be read, so no lanes are listed.`);
-  return buildLanePressure({
+  return { ...buildLanePressure({
     now: (deps.now ?? Date.now)(), gaps,
     memory: { freePercent: memory.freePercent, swapGrowthMbPerMin: memory.swapGrowthMbPerMin, swapoutsPerMin: memory.swapoutsPerMin },
     lanes: targets.lanes.map(row => ({ lane: row.lane, target: row.target, floor: row.floor, memoryClass: classes.get(row.lane) })),
-  });
+  }), pause, pauseLine: pauseLine(pause) };
 }

@@ -42,7 +42,7 @@ The command consumes route evidence because invoking the legacy router can publi
 | Run the CLI from source, no build | `npm run dev -- <command>` or `npx tsx src/cli/index.ts <command>` |
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
 | Install the source build on `PATH` | `./install.sh` (builds, symlinks `bin/ashlr` into `~/.local/bin`) |
-| Worker pre-PR static checks | `node scripts/verify-changed.mjs` once in the foreground; replaces worker runs of full typecheck and lint, runs the docs link check when the diff touches markdown or deletes files, the quarantine-ledger check when test files or `queue/quarantine.tsv` change, and a syntax check of each changed file by type (Python, shell, Perl, shebang scripts, JSON, XML, Rust, Swift, YAML, TOML, CSS, Vitest snapshots, patch diffs) |
+| Worker pre-PR static checks | `node scripts/verify-changed.mjs` once in the foreground; replaces worker runs of full typecheck and lint, runs the docs link check when the diff touches markdown or deletes files, the quarantine-ledger check when test files or `queue/quarantine.tsv` change, and a syntax check of each changed file by type (Python, shell, Perl, shebang scripts, JSON, XML, Rust, Swift, YAML, TOML, CSS, Vitest snapshots, patch diffs, embedded payloads in HTML files, and scripts in the independently-owned `src/raycast/` and `examples/universe-site/` trees); reference in [verify-changed.md](verify-changed.md) |
 | Type check (backend + web) | `npm run typecheck` |
 | Fast type check via the native compiler (same projects as `typecheck`) | `npm run typecheck:fast` |
 | Lint (ESLint + real-I/O lane + Phantom console sync-I/O guards) | `npm run lint` |
@@ -69,9 +69,12 @@ It passes only when `Secret-shape scan`, `Secret scan (diff)`,
 `Classify PR site lane`, `Check generated files` and `Fast gate (typecheck + affected tests)` succeed
 and every full lane was skipped. `Quick typecheck` and
 `Check authority drift (hermetic)` (CODEOWNERS and Tier-1 import-closure
-drift) also run but are advisory. A direct push to master takes the same gate
-without the fast gate. No pull request or merge-queue commit may occupy a macOS
-or Windows runner: the `ci` Ubuntu/Windows matrix, the Mac exhaustive lanes
+drift) also run but are advisory. Auto-tag and the release gate require
+`Check authority drift (hermetic)` green on the exact commit; fix drift in
+the same pull request. A direct push to master takes the same gate
+without the fast gate. No pull request, merge-queue commit or direct `master`
+push may occupy a macOS or Windows runner: the `ci` Ubuntu/Windows matrix, the
+Mac exhaustive lanes
 (`Mac exhaustive (N/4)`, `Mac exhaustive (isolated)`), the shared-macOS and
 native-broker lanes, and the Windows service authority run only in the
 scheduled run on master (every six hours), on manual dispatch (optionally
@@ -84,13 +87,19 @@ selects are listed in
 
 **Fast test timing.** `npm run test:fast` runs the unit project with the existing isolated-home watchdog. It records Vitest file elapsed times in milliseconds and flags files over 20 seconds with a suggested split. The budget is advisory; test failures still fail the command. Pass Vitest filters after `--` for a focused run. Each run replaces the local report, so focused runs only contain selected files.
 
-**Tests.** Backend suites live in `test/` and are named after the milestone or
-release that introduced them: `test/m<N>.<topic>.test.ts`, invariant suites
-`test/h<N>.*.test.ts`, and `test/<topic>-<release>.test.ts`. Web tests sit next
+**Tests.** Backend suites live in `test/`. Most are named by topic,
+`test/<topic>.test.ts`, often with a request or release suffix
+(`test/authority-codeowners-310b.test.ts`). Older suites carry the milestone
+that introduced them (`test/m<N>.<topic>.test.ts`), and safety-invariant suites
+are `test/h<N>.*.test.ts`. Web tests sit next
 to their components as `src/web-ui/**/*.test.{ts,tsx}`. Tests that do real I/O
 must be listed in `test/config/realio-lane-membership.mjs` (`npm run lint`
 checks this). Every test runs with an isolated `HOME` (`test/setup/home.ts`),
 and writes under the real `~/.ashlr` fail the test.
+
+**Router outcomes.** `phm router outcomes --json` includes recorded merge and
+revert state alongside CI first-pass results, review findings, cost and wall
+time. See the [CLI reference](CLI-REFERENCE.md) for the command's filters.
 
 **Layout.** `src/cli/` holds thin argv dispatchers, one file per command group;
 `src/core/` holds the logic; `src/web-ui/` the React console; `desktop/` the
@@ -227,13 +236,19 @@ or a `revert`/`reverted` event or state name — the vocabulary slot-yield and
 the reward feed share) discounts a merge that did not hold: the attempt
 counts as a failure and the cell reports it under `reverted`, never under
 `merges` or `goodMerges`, while a merge recorded after the newest revert
-stays a fresh held merge.
+stays a fresh held merge. A second source covers reverts only git history
+proves: both callers resolve the standing `owner/repo#n` keys recorded in
+`$ASHLR_HOME/improve/revert-outcomes.jsonl` (`phm fleet reverts --record`),
+and a `MERGED` verdict whose own unambiguous PR claim names one resolves
+`reverted` the same way — so a merge the jobs ledger never marked as
+reverted still counts against the cell instead of inflating its merge rate.
 
 ### Selector
 
 `phm select --json` ranks candidates in `~/.ashlr-runs/selector/candidates.jsonl`
-by value x leverage / (time + usage), using the outcome log for what a candidate
-leaves out. It prints the top five as `READY` lines, appends them with their
+by value x leverage / (time + usage), using outcome learning over the dispatch
+log and `metrics/jobs.jsonl` for what a candidate leaves out (`--events` and
+`--ledger` override the sources). It prints the top five as `READY` lines, appends them with their
 predicted value to `~/.ashlr-runs/selector/picks.jsonl`, and never funds an id
 twice. `--dry-run` writes nothing. `phm select schedule --write` installs the
 hourly launchd agent on the Mac. See
@@ -384,6 +399,18 @@ TTL; changed contents under the same ID refuse. Inbox returns unacknowledged,
 unexpired envelopes in priority and acceptance order, with remaining TTL and
 `hasMore` for a truncated result. Reading never acknowledges. Ack checks the
 recipient and is idempotent; unknown IDs refuse.
+
+`phm bus inbox` takes the same read filters every other bus read shares, all
+ANDed: `--from`/`--exclude-from` keep or drop mail one sender label wrote
+(each resolved through the agent identity registry, so a registered identity's
+handle, `agent:` address, id and aliases all match, with exact-label matching
+when the ref resolves to nothing or the registry is unreadable), `--priority`
+keeps one P0..P3 band, `--job` keeps envelopes whose body cites that job,
+`--channel` keeps mail addressed to `group:<name>:*`, `--since`/`--before`
+bound the store acceptance time as one `[since, before)` window, `--contains`
+keeps envelopes whose scrubbed one-line summary carries the needle, and
+`--in-reply-to`/`--thread` keep bodies citing that envelope id or carrying
+that conversation label. `hasMore` reports truncation of the filtered set.
 
 State lives under `$ASHLR_HOME/bus-mailbox`, default `~/.ashlr/bus-mailbox`,
 separate from the task board's `$ASHLR_HOME/bus`. Reads create nothing; corrupt,

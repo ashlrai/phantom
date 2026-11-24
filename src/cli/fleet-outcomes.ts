@@ -14,14 +14,17 @@ import {
   type OutcomeLearningView,
   type ResourceOffer,
 } from '../core/routing/outcome-learning.js';
-import { readLedgerTail, ROUTER_OUTCOME_LEDGER_RELATIVE } from '../core/router/outcomes.js';
+import { readStandingRevertKeys } from '../core/improve/revert-ledger.js';
+import { foldMergeEvents, readLedgerTail, ROUTER_MERGE_EVENTS_LEDGER_RELATIVE, ROUTER_OUTCOME_LEDGER_RELATIVE } from '../core/router/outcomes.js';
 
 const usage = `Usage: phm fleet outcomes --lane <lane|all> [--hours 24] [--json]
-       phm fleet outcomes [--events <file>] [--ledger <file>] [--json]
-       phm fleet outcomes route --repo <repo> --type <jobType> [--priority critical|normal] [--job <id>] [--offers <file>] [--events <file>] [--ledger <file>] [--json]
+       phm fleet outcomes [--events <file>] [--ledger <file>] [--merge-events <file>] [--json]
+       phm fleet outcomes route --repo <repo> --type <jobType> [--priority critical|normal] [--job <id>] [--offers <file>] [--events <file>] [--ledger <file>] [--merge-events <file>] [--json]
 
 --events <file>  Dispatch event log. Default: ~/.ashlr-runs/queue/dispatch-events.log
 --ledger <file>  Jobs ledger (launch/finish/reconciler rows). Default: <runs dir>/metrics/jobs.jsonl
+--merge-events <file>  Merge-queue event ledger (conflicts, recuts, check failures, retries) the dirty/fixup
+             improvement patterns learn from. Default: <runs dir>/metrics/merge-events.jsonl
 --offers <file>  JSON array of resources that can take the job. Without it, every resource in the log is treated as free.
 --json           One JSON object on stdout.
 
@@ -66,10 +69,21 @@ function defaultJobsLedger(): string {
   return join(runsDir, ROUTER_OUTCOME_LEDGER_RELATIVE);
 }
 
+function defaultMergeEvents(): string {
+  const runsDir = process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  return join(runsDir, ROUTER_MERGE_EVENTS_LEDGER_RELATIVE);
+}
+
 /** Bounded tail of the jobs ledger; null when the file is missing or unreadable. */
 async function readJobsLedger(path: string | undefined): Promise<string | null> {
   const tail = await readLedgerTail(path ?? defaultJobsLedger());
   return tail.state === 'read' ? tail.text : null;
+}
+
+/** Bounded tail of the merge-events ledger folded per PR; null when unreadable. */
+async function readMergeQueue(path: string | undefined): Promise<ReturnType<typeof foldMergeEvents> | null> {
+  const tail = await readLedgerTail(path ?? defaultMergeEvents());
+  return tail.state === 'read' ? foldMergeEvents(tail.text) : null;
 }
 
 function isOffer(value: unknown): value is ResourceOffer {
@@ -99,6 +113,7 @@ interface Parsed {
   json: boolean;
   events?: string;
   ledger?: string;
+  mergeEvents?: string;
   offers?: string;
   repo?: string;
   jobType?: string;
@@ -128,6 +143,10 @@ function parseArgs(args: string[]): Parsed | null {
       const value = take('--ledger');
       if (value === null) return null;
       parsed.ledger = value;
+    } else if (arg === '--merge-events' && parsed.mergeEvents === undefined) {
+      const value = take('--merge-events');
+      if (value === null) return null;
+      parsed.mergeEvents = value;
     } else if (arg === '--offers' && parsed.offers === undefined) {
       const value = take('--offers');
       if (value === null) return null;
@@ -200,7 +219,7 @@ export async function cmdFleetOutcomes(args: string[]): Promise<number> {
     process.stderr.write(`${usage}\n`);
     return 2;
   }
-  const [text, ledger] = await Promise.all([readEvents(parsed.events), readJobsLedger(parsed.ledger)]);
+  const [text, ledger, mergeQueue] = await Promise.all([readEvents(parsed.events), readJobsLedger(parsed.ledger), readMergeQueue(parsed.mergeEvents)]);
   if (text === null && ledger === null) {
     const empty = payload({ schema: 'routing.outcome-learning.v1', finished: 0, malformed: 0, cells: [], improvementJobs: [] }, null);
     if (parsed.json) process.stdout.write(`${JSON.stringify(empty)}\n`);
@@ -208,7 +227,7 @@ export async function cmdFleetOutcomes(args: string[]): Promise<number> {
     return 1;
   }
   const { loadConfigReadOnly } = await import('../core/config.js');
-  const learning = learnFleetOutcomes(text, ledger, censorFromConfig(loadConfigReadOnly().router, Date.now()));
+  const learning = learnFleetOutcomes(text, ledger, censorFromConfig(loadConfigReadOnly().router, Date.now()), readStandingRevertKeys(), mergeQueue);
   const view = outcomeLearningView(learning);
   let route: LearnedRoute | null = null;
   if (parsed.mode === 'route') {

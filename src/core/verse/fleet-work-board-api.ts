@@ -14,7 +14,12 @@
  * store). A result receipt is evidence, not authority: it does not complete
  * or release a claim, and routing labels do not authenticate the responder.
  * The V1 dispatch + mutation-token gate in verse-api.ts runs before this
- * module sees any non-GET request; no second token check lives here. */
+ * module sees any non-GET request; no second token check lives here.
+ *
+ * `?state=` keeps only items the shared classifier placed in that state
+ * (RECEIVED / ASSIGNED / RUNNING / BLOCKED / VERIFIED); the board then also
+ * reports `state` and `matched`, the true filtered total across the whole
+ * settled scan before the display cap — never a count of the shown window. */
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ApiModule } from './api-modules.js';
@@ -26,6 +31,7 @@ import {
   WORK_BOARD_MAX_LIMIT,
   type WorkBoardResult,
 } from '../comms/work-board.js';
+import { WORK_ITEM_STATES, type WorkItemState } from '../comms/work-item-state.js';
 import { workResultBody, type WorkResultBody } from '../comms/work-result-body.js';
 import { postBusReply, replyResult, type ReplyResult } from '../fleet/bus-reply-post.js';
 import { sanitizePublicJson } from '../util/public-json.js';
@@ -41,7 +47,7 @@ const MAX_THREAD_CHARS = 200;
 
 export interface FleetWorkBoardApiDeps {
   /** Reader seam for tests. Default: listWorkBoard() at the server fleet root. */
-  read?: (opts: { root: string; now: number; limit?: number; channelRef?: string }) => WorkBoardResult;
+  read?: (opts: { root: string; now: number; limit?: number; channelRef?: string; state?: WorkItemState }) => WorkBoardResult;
   /** Clock seam for tests; stamps asOf and feeds the classifier. */
   now?: () => Date;
   /** Poster seam for tests. Default: postBusReply() at the default fleet root, as the CLI. */
@@ -153,6 +159,11 @@ export function createFleetWorkBoardApi(deps: FleetWorkBoardApiDeps = {}): ApiMo
       sendJson(res, 400, { error: `thread must be a channel_ref of at most ${MAX_THREAD_CHARS} chars.` });
       return true;
     }
+    const state = params.get('state');
+    if (state !== null && !(WORK_ITEM_STATES as readonly string[]).includes(state)) {
+      sendJson(res, 400, { error: `state must be one of ${WORK_ITEM_STATES.join(', ')}.` });
+      return true;
+    }
     const ms = now().getTime();
     const at = Number.isSafeInteger(ms) && ms >= 0 ? ms : 0;
     const asOf = new Date(at).toISOString();
@@ -163,6 +174,7 @@ export function createFleetWorkBoardApi(deps: FleetWorkBoardApiDeps = {}): ApiMo
         now: at,
         limit,
         ...(thread !== null ? { channelRef: thread } : {}),
+        ...(state !== null ? { state: state as WorkItemState } : {}),
       });
     } catch {
       board = { items: [], inbox: 'unavailable', truncated: false, claims: 'unavailable' };

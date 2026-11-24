@@ -53,6 +53,14 @@ describe('buildSpendDown', () => {
     expect(row.verdict).toMatch(/^exhausted until \w{3} \d{1,2} [AP]M$/);
   });
 
+  it('a pool last seen fully used with a reset two hours ago is unknown, never drained', () => {
+    const row = only(lane('claude', { usedPct: 100, resetAt: at(-2), burnPctPerHour: 0.5 }));
+    expect(row).toMatchObject({
+      state: 'unknown', used_frac: null, reset_at: at(-2), verdict: 'unknown: no reading',
+    });
+    expect(row.state).not.toBe('drained');
+  });
+
   it('unknown: no reading is "no reading", never zero', () => {
     expect(only(lane('zai', { usedPct: null }))).toMatchObject({
       state: 'unknown', used_frac: null, even_pace_frac: null, projected_at_reset: null, verdict: 'unknown: no reading', reason: 'no reading',

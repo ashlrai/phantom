@@ -164,7 +164,7 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
   };
 
   const board = listWorkBoard({ root: busRoot, now, limit });
-  if (board.inbox === 'unavailable' && !dryRun) return emit({
+  if (board.inbox === 'unavailable') return emit({
     status: 'inbox-unavailable', inbox: board.inbox,
     lines: ['board-notify: inbox unavailable; snapshot and sent ledger preserved'],
   }, 1);

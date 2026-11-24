@@ -17,7 +17,7 @@ EMPTY rate and jobs running vs capacity, plus fleet totals with 24 hourly values
 A lane's state is measured, idle (nothing happened anywhere, zeros are real) or no_data ("no data yet"); unknown is null, never 0.
 --alerts shows what needs you now, or "All lanes busy.": stalled (no job started and no PR merged for 30 minutes: an incident), starved
 (a lane below its slots with nothing queued for 30 minutes), wasting (a lane's EMPTY rate above 40% over its last 20 jobs) and pool_waste
-(a plan on track to leave more than 10% unused) and release_stale (a repo over 24 hours since its last release with PRs merged since, or a release with 0 assets; see phm release cadence). The desktop and phone Pulse strip shows them as a red row. Each new alert also sends one
+(a plan on track to leave more than 10% unused) and release_stale (a repo over 24 hours since its last release with PRs merged since, or a release with 0 assets; see phm release cadence). Skipped alerts flag jobs the precheck dropped twice in 6 hours, or one the leader queued; see phm jobs skipped. The desktop and phone Pulse strip shows them as a red row. Each new alert also sends one
 plain notice (email outbox and Telegram, as for main-red-notify), at most once an hour per alert; --no-notify only looks.
 --alerts --json prints fleet.pulse.alerts.v1 {schema,v,as_of,alerts:[{kind,lane,since,detail,fix_hint}],unknown:[...]}. since is null for a
 projection (pool_waste). unknown lists checks that could not be made; a check that could not be made never counts as fine.`;

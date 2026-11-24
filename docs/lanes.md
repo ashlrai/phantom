@@ -28,7 +28,14 @@ phm lanes fit --lane codex-personal --json
 phm lanes yield --json --since 24h
 phm lanes held --json
 phm lanes pool
+phm fleet lane-auth --json
 ```
+
+`phm fleet lane-auth` reports `ok`, `missing_signin`, `expired` or `unknown`
+from sign-in presence and job outcomes over the last 24 hours, without reading
+credential values. Blocked lanes include a fix; when at least 25% of their plan
+would go unused, they also get a sign-in Asks card. The hourly digest includes
+the blocked lane with the most unused plan.
 
 `phm lanes pool` says, per lane, whether queued rows are waiting on a used-up pool
 (98% used or more, nothing running): "waiting on a used-up pool until Sat 3:30 PM (10 rows)",

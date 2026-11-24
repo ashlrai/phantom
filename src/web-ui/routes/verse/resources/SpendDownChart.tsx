@@ -40,7 +40,7 @@ export function SpendDownChart({ data, pace }: { data: SpendDownV1; pace?: Fleet
     {data.pools.map(row => { const verdict = pace?.pools.find(p => p.pool === row.id); return <div className={styles.row} key={row.id} data-state={row.state}>
       <div className={styles.head}><span className={styles.label} data-testid="spenddown-sentence">{row.sentence ?? poolSentence(row)}</span>
         {row.state === 'idle' || row.blocked ? <span className={styles.verdict}>{row.verdict}</span> : null}</div>
-      {verdict ? <span className={styles.pace_line} data-testid="pace-sentence" data-pace={verdict.state}><strong>{paceWord(verdict.state)}</strong>{' '}{paceSentence(verdict)}</span> : null}
+      {verdict ? <span className={styles.pace_line} data-testid="pace-sentence" data-pace={verdict.state} data-over={verdict.verdict === 'over' || undefined}><strong>{verdict.verdict ?? paceWord(verdict.state)}</strong>{' '}{verdict.line ?? paceSentence(verdict)}</span> : null}
       {row.blocked_fix ? <span className={styles.reset} data-testid="spenddown-blocked">{row.blocked_fix}</span> : null}
       {row.running !== undefined ? <span className={styles.reset} data-testid="spenddown-slots">{slotsText(row.running, row.target ?? null, row.queued_rows ?? null)}</span> : null}
       {row.queued_hours !== undefined ? <span className={styles.reset} data-testid="spenddown-queued">{queuedText(row.queued_hours)}</span> : null}

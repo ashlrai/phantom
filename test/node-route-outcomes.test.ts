@@ -9,10 +9,27 @@ import type { RouterOutcome } from '../src/core/router/outcomes.js';
 const GIB = 1024 ** 3, MIB = 1024 ** 2;
 
 const outcome = (job: string, lane: string | null, merged: boolean | null, reverted: boolean | null = null): RouterOutcome => ({
-  schema: 'router.outcome.v1', job_id: job, lane, model: null, tier: null, work_class: null,
-  merged, reverted, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
-  tokens_total: null, ttm_s: null, empty: null, exit_code: null, failure_class: null, empty_class: null,
-  task_outcome: null, passk: null,
+  schema: 'router.outcome.v1', job_id: job, lane, model: null, tier: null, work_class: null, repo: null,
+  lane_hint: null, lane_override: null,
+  merged, reverted, ci_first_pass: null, review_findings: null, cost_usd: null, pool_pct_used: null, wall_s: null,
+  tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
+  tokens_cache_read: null, tokens_cache_write: null,
+  usage_source: null, usage_missing: null,
+  ttm_s: null, queue_wait_s: null, ci_wall_s: null, publish_wait_s: null, empty: null, diff_files: null, diff_lines: null,
+  exit_code: null, failure_class: null, empty_class: null, empty_tag: null,
+  task_outcome: null, lane_hint_blocked_by: null,
+  skipped: null, skip_reason: null, skip_code: null,
+  deferred: null, defer_reason: null, defer_repeat_of: null,
+  noop: null, noop_reason: null, noop_repeat_of: null,
+  market_lane: null, market_preferred: null, market_override: null, market_reasons: null,
+  market_rejected: null,
+  handoff_trigger: null, handoff_lane: null, handoff_target: null,
+  provider_wall_trigger: null, provider_wall_pattern: null, provider_wall_lane: null,
+  pool_kind: null, pool_mem_free_pct: null, pool_swap_gb: null,
+  node_outcome: null, node_id: null, node_pack: null,
+  merge_queue: null, cross_review: null,
+  launch_cost_status: null, launch_peak_processes: null, launch_mean_cpu_pct: null, launch_peak_cpu_pct: null,
+  passk: null,
 });
 
 describe('foldRouteLaneOutcomes', () => {

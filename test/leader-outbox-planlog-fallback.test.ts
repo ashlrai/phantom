@@ -75,7 +75,7 @@ it('serves all four fixture replies through CLI, desktop and phone models withou
   const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   try {
     const { runLeaderCli } = await import('../src/cli/leader.js');
-    expect(await runLeaderCli(['thread', '--json'])).toBe(0);
+    expect(await runLeaderCli(['thread', '--legacy', '--json'])).toBe(0);
     const { messages } = JSON.parse(String(log.mock.calls.at(-1)![0]));
     expect(messages.map((m: { text: string }) => m.text)).toEqual(['Answer 1\nSecond paragraph.', 'Answer 2\nSecond paragraph.', 'Answer 3\nSecond paragraph.', 'Outbox answer']);
     const { entries } = await readOutboxEntries({ runsDir });

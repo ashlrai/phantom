@@ -1,10 +1,11 @@
 /**
  * core/fleet/friction.ts — the dispatch→merge friction ledger (RQ-FRICTION-2).
- * `phm friction` mines ~/.ashlr-runs read-only — jobs.jsonl finishes, the
- * dispatch event log, ready.tsv rows, guardian red-main state, lane slots and
- * the manual-override files — folds operator annotations kept in
- * friction/ledger.jsonl, and scores each recurring drag as
- *   delegation unlocked × 7d frequency × blast radius / cost.
+ * `phm friction` mines ~/.ashlr-runs read-only — jobs.jsonl finishes,
+ * launch-failure receipts, backoff holds and adaptive-concurrency cap sheds,
+ * the dispatch event log, ready.tsv
+ * rows, guardian red-main state, lane slots and the manual-override files —
+ * folds operator annotations kept in friction/ledger.jsonl, and scores each
+ * recurring drag as delegation unlocked × 7d frequency × blast radius / cost.
  * An unread source leaves its signals unknown (null), never zero. Evidence
  * stays runs-dir-relative and secret-scrubbed.
  */
@@ -61,19 +62,24 @@ export interface FrictionReport {
 }
 
 interface Knobs { owner: string; unlock: number; blast: number; cost: number; primary: string }
-const CATALOG: Record<string, { title: string } & Knobs> = {
+const CATALOG: Record<string, { title: string; openOn?: readonly string[] } & Knobs> = {
   'empty-finishes': { title: 'Worker runs that finish with no diff, a refusal or a nonzero exit', owner: 'fleet', unlock: 3, blast: 3, cost: 2, primary: 'bad' },
   'anomalous-diffs': { title: 'Finish metrics with unusually large or inconsistent diffs', owner: 'fleet', unlock: 2, blast: 2, cost: 2, primary: 'finishes' },
-  'requeues': { title: 'Launches deferred and jobs requeued instead of running', owner: 'dispatchd', unlock: 3, blast: 2, cost: 2, primary: 'requeued' },
+  'requeues': { title: 'Launches deferred, failed or requeued instead of running', owner: 'dispatchd', unlock: 3, blast: 2, cost: 2, primary: 'requeued', openOn: ['launch_giveups'] },
   'lane-auth': { title: 'Lane auth expiries, autobackoff holds and re-logins', owner: 'security', unlock: 3, blast: 2, cost: 3, primary: 'auth_failures' },
   'quota-exhaustion': { title: 'Usage limits, credit exhaustion and model-capacity stalls', owner: 'fleet', unlock: 2, blast: 3, cost: 3, primary: 'usage_limits' },
   'invalid-tier': { title: 'Queue rows and enqueues carrying a tier dispatchd skips', owner: 'queuegen', unlock: 2, blast: 2, cost: 1, primary: 'ready_rows' },
   'red-main': { title: 'Default branches sitting red', owner: 'main-guardian', unlock: 3, blast: 3, cost: 2, primary: 'repos_red' },
   'stale-ready': { title: 'READY rows unclaimed past the stale boundary', owner: 'dispatchd', unlock: 2, blast: 2, cost: 1, primary: 'unclaimed' },
+  'deferred-requests': { title: 'READY rows deferred as duplicate requests of claimed work', owner: 'queuegen', unlock: 2, blast: 2, cost: 1, primary: 'deferred_jobs' },
   'manual-interventions': { title: 'Holds and overrides a human placed by hand', owner: 'masbot', unlock: 3, blast: 1, cost: 2, primary: 'manual_holds' },
   'wrong-route': { title: 'Jobs routed to the wrong account or tool and moved back', owner: 'router', unlock: 2, blast: 2, cost: 2, primary: 'route_moves' },
   'holds': { title: 'Lane holds and parked rows blocking the queue', owner: 'fleet', unlock: 2, blast: 3, cost: 2, primary: 'hold_events' },
+  'concurrency-throttle': { title: 'Fleet concurrency cap shedding sessions under host pressure', owner: 'fleet', unlock: 2, blast: 3, cost: 2, primary: 'backoffs' },
 };
+
+/** dispatchd.concurrency.v1 zone names; only 'danger' zones shed the cap. */
+const CONC_DANGER_ZONES = ['load', 'memory_pressure', 'mem_free', 'swap', 'disk', 'procs', 'fork', 'rate_limit'] as const;
 
 const cut = (s: string, n = 90): string => scrubSecrets(s.replace(/\s+/g, ' ').trim()).slice(0, n);
 /** Sum nullable counts; null only when every term is unknown. */
@@ -206,11 +212,16 @@ export function mineFriction(input: FrictionInput): FrictionReport {
   const evidence: Record<string, string[]> = Object.fromEntries(Object.keys(CATALOG).map(id => [id, []]));
   const ev = (id: string, text: string) => { const list = evidence[id]!; if (list.length < 3 && !list.includes(text)) list.push(cut(text)); };
 
-  // ── jobs.jsonl: finishes, backoff holds, enqueues, launches ──────────────
+  // ── jobs.jsonl: finishes, backoff holds, enqueues, launches, concurrency sheds ──
   const zero = z(input.jobs);
   let empty = zero, refused = zero, failed = zero, authHolds = zero, quotaSkips = zero, authSkips = zero;
   let anomalousDiffs = zero;
   let badTierEnqueue = zero, precheckParks = zero, quotaHoldJobs = zero, quotaFinish = zero;
+  let deferredEvents = zero, concBackoffs = zero, concRaises = zero, recutDeferrals = zero;
+  let launchFailures = zero, launchRetries = zero, launchGiveUps = zero;
+  const concDanger: Record<string, number | null> = Object.fromEntries(CONC_DANGER_ZONES.map(z => [z, zero]));
+  const deferredJobs = new Set<string>();
+  const recutDeferredJobs = new Set<string>();
   const enqueued = new Map<string, number>(); const launched = new Map<string, number>();
   const laneAuthHold = new Map<string, number>(); const laneFinish = new Map<string, number>();
   for (const r of jobs ?? []) {
@@ -253,6 +264,55 @@ export function mineFriction(input: FrictionInput): FrictionReport {
     if (r.event === 'autobackoff_skip') quotaSkips = (quotaSkips ?? 0) + 1;
     if (r.event === 'authbackoff_skip') authSkips = (authSkips ?? 0) + 1;
     if (r.event === 'precheck_parked') precheckParks = (precheckParks ?? 0) + 1;
+    if (r.event === 'dispatch_deferred') {
+      deferredEvents = (deferredEvents ?? 0) + 1;
+      if (r.job) deferredJobs.add(r.job);
+      const owner = typeof r.raw.repeatOf === 'string' && JID.test(r.raw.repeatOf) ? r.raw.repeatOf : null;
+      ev('deferred-requests', `jobs.jsonl dispatch_deferred job=${r.job ?? 'unknown'}${owner ? ` repeatOf=${owner}` : ''}`);
+    }
+    // recut_admission defer: the recut loop's own dedup gate held the READY
+    // row because an in-flight recut covers the same (pr, head) — claimed
+    // coverage like dispatch_deferred's, so the job joins the same deferred
+    // set while its own event count stays attributable. skip resolves the
+    // job DONE-NOOP and ready launches it; neither defers.
+    if (r.event === 'recut_admission' && strField(r.raw, ['action'])?.toLowerCase() === 'defer') {
+      recutDeferrals = (recutDeferrals ?? 0) + 1;
+      if (r.job) { deferredJobs.add(r.job); recutDeferredJobs.add(r.job); }
+      const owner = typeof r.raw.repeatOf === 'string' && JID.test(r.raw.repeatOf) ? r.raw.repeatOf : null;
+      ev('deferred-requests', `jobs.jsonl recut_admission job=${r.job ?? 'unknown'}${owner ? ` repeatOf=${owner}` : ''}`);
+    }
+    // launch_failed is the bounded launch-retry ledger's own verdict. action
+    // 'retry' requeues — the events log's requeue lines already count those —
+    // while 'give_up' is terminal: LAUNCH_GAVE_UP never matches the requeue
+    // text pattern, so this receipt is the only count of a job whose launch
+    // permanently failed. Rows without a recognized action still count in
+    // launch_failures; the retry/give-up split stays honest, never guessed.
+    if (r.event === 'launch_failed') {
+      launchFailures = (launchFailures ?? 0) + 1;
+      const action = strField(r.raw, ['action'])?.toLowerCase();
+      if (action === 'give_up') {
+        launchGiveUps = (launchGiveUps ?? 0) + 1;
+        const reason = strField(r.raw, ['reason']);
+        const failureClass = strField(r.raw, ['class']);
+        ev('requeues', `jobs.jsonl launch_failed job=${r.job ?? 'unknown'} give_up${reason ? ` reason=${cut(reason, 40)}` : ''}${failureClass ? ` class=${cut(failureClass, 24)}` : ''}`);
+      } else if (action === 'retry') launchRetries = (launchRetries ?? 0) + 1;
+    }
+    if (r.event === 'concurrency') {
+      const from = r.raw.from, to = r.raw.to;
+      if (typeof from === 'number' && Number.isFinite(from) && typeof to === 'number' && Number.isFinite(to) && from !== to) {
+        const reason = typeof r.raw.reason === 'string' && r.raw.reason ? ` ${cut(r.raw.reason, 60)}` : '';
+        if (to < from) {
+          concBackoffs = (concBackoffs ?? 0) + 1;
+          ev('concurrency-throttle', `jobs.jsonl concurrency ${from}->${to}${reason}`);
+          const zones = r.raw.zones;
+          if (zones !== null && typeof zones === 'object' && !Array.isArray(zones)) {
+            for (const zone of CONC_DANGER_ZONES) {
+              if ((zones as Record<string, unknown>)[zone] === 'danger') concDanger[zone] = (concDanger[zone] ?? 0) + 1;
+            }
+          }
+        } else concRaises = (concRaises ?? 0) + 1;
+      }
+    }
   }
   // A re-login is a nonempty finish on a lane after its newest auth hold.
   let relogins: number | null = jobs === null ? null : 0;
@@ -374,12 +434,15 @@ export function mineFriction(input: FrictionInput): FrictionReport {
   const signals: Record<string, Record<string, number | null>> = {
     'empty-finishes': { bad, empty, refused, failed },
     'anomalous-diffs': { finishes: anomalousDiffs },
-    'requeues': { requeued: events === null ? null : counts.requeued ?? 0 },
+    'requeues': { requeued: events === null ? null : counts.requeued ?? 0,
+      launch_failures: launchFailures, launch_retries: launchRetries, launch_giveups: launchGiveUps },
     'lane-auth': { auth_failures: authFailures, auth_holds: authHolds, relogins },
     'quota-exhaustion': { usage_limits: usageLimits, finish_errors: quotaFinish, credit_holds: counts.credit, model_capacity: counts.capacity, backoff_holds: quotaHoldJobs },
     'invalid-tier': { ready_rows: badTierRows, enqueued: badTierEnqueue },
     'red-main': { repos_red: reposRed, max_red_hours: maxRedH },
     'stale-ready': { unclaimed, unknown_age: unknownAge, max_age_hours: maxAgeH, queued: readyRows },
+    'deferred-requests': { deferred_jobs: jobs === null ? null : deferredJobs.size, deferrals: deferredEvents,
+      recut_deferrals: recutDeferrals, recut_deferred_jobs: jobs === null ? null : recutDeferredJobs.size },
     'manual-interventions': { manual_holds: manualHolds, budget_overrides: overrideCount, kept_jobs: kept },
     'wrong-route': {
       route_moves: sum([counts.routes, counts.routeHolds, counts.routeInvalid]),
@@ -390,12 +453,18 @@ export function mineFriction(input: FrictionInput): FrictionReport {
       lanes_held: lanesHeld, parked_rows: parkedRows, parked_events: counts.parked,
       unholds: counts.unholds, precheck_parks: precheckParks,
     },
+    'concurrency-throttle': {
+      backoffs: concBackoffs, raises: concRaises,
+      ...Object.fromEntries(CONC_DANGER_ZONES.map(zone => [`danger_${zone}`, concDanger[zone]])),
+    },
   };
   const items: FrictionItem[] = Object.entries(CATALOG).map(([id, spec]) => {
     const primary = signals[id]![spec.primary];
     const scan = ledger.scans.get(id);
     const note = ledger.notes.get(id);
-    const open = primary !== null && primary > 0;
+    // openOn names supplementary signals that open the item on their own —
+    // a terminal launch give-up is friction even when no requeue line exists.
+    const open = (primary !== null && primary > 0) || (spec.openOn ?? []).some(s => (signals[id]![s] ?? 0) > 0);
     let status: FrictionStatus = open ? 'open' : 'quiet';
     if (note) status = note.status === 'fixed' && open ? 'regressed' : note.status;
     return {
@@ -417,6 +486,21 @@ export function mineFriction(input: FrictionInput): FrictionReport {
       'queue/keep.txt': presence(input.keep),
       'friction/ledger.jsonl': presence(input.ledger),
     }, items };
+}
+
+/**
+ * Whether this scan's own evidence opened the item: the catalog's primary
+ * signal counted something, or a declared supplementary signal (openOn)
+ * did. Operator notes never open an item — they annotate or suppress one —
+ * so callers ranking "friction is firing" read this predicate instead of
+ * status, which a note can overwrite to in-progress/fixed/wontfix.
+ */
+export function frictionItemFires(item: FrictionItem): boolean {
+  const spec = CATALOG[item.id];
+  if (spec === undefined) return false;
+  const primary = item.signals[spec.primary];
+  if (typeof primary === 'number' && primary > 0) return true;
+  return (spec.openOn ?? []).some((signal) => (item.signals[signal] ?? 0) > 0);
 }
 
 const TAIL = 8 * 1024 * 1024, SMALL = 256 * 1024;

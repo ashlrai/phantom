@@ -136,6 +136,11 @@ with a randomized holdout, not with hit counts:
 * `phm improve lessons [--json]` compares the landed rate (merged and not
   reverted) with and without lessons, overall and per note, with a 95%
   interval. Below three finished runs in either arm the effect is unknown.
+  The same read is joined into the Lessons view state (`buildLessonsState`)
+  at read time — per note on each approved note and as an all-notes summary
+  on the Approved knowledge card — so the causal verdict sits next to the
+  decision it informs; a degraded task store or ledger withholds it rather
+  than reporting a verdict.
 
 ### Nightly ONE-TEAM proposals
 
@@ -164,7 +169,11 @@ FAILED/CLOSED-unmerged/reverted evidence as `failed`; CANCELLED as
 `devin:<mode>`), and rows that cannot prove attribution are skipped — unknown
 stays unknown. A merged-then-reverted task counts as `failed`, matching the
 fleet revert rule, and tasks superseded by a fleet PR are skipped because the
-carrying PR reports its own outcome.
+carrying PR reports its own outcome. Batch-member `task_outcome` rows are
+session bookkeeping, not lifecycle evidence: their `outcome` word
+(done/skipped/failed/deferred/unreported) reports what the bundle session
+did with the line — `failed` and kin mean it went back to `ready.tsv` — so
+the member's own publish/reconciler rows carry its real outcome.
 
 The review half produces `retro-input/review-blocks.jsonl` from the GitHub
 verdict the cloud tracker records on each task at its terminal transition

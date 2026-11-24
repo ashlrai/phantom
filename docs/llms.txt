@@ -14,7 +14,7 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 
 - [Ecosystem onboarding](ECOSYSTEM-ONBOARDING.md): `phm onboard --ecosystem --json` detects existing capabilities without values; one explicit grant wires the reviewed bundle and returns per-capability results.
 
-`phm connect` is not available in this checkout. Use `phantom add NAME` in a
+Phantom has no `connect` command in this checkout. Use `phantom add NAME` in a
 trusted terminal for a new Phantom Secrets name; keep credentials out of chat.
 Approval cards record consent and do not collect credentials.
 
@@ -35,6 +35,20 @@ Approval cards record consent and do not collect credentials.
 - [Automatic work](AUTOMATIC-OUTCOMES.md): Chat routing and fleet outcomes.
 - [Autonomy setup](AUTONOMY-SETUP.md): Dormant macOS autonomy. Status is not activation.
 - [Friction loop doctrine](doctrine/FRICTION-LOOP.md): How autonomy work is chosen — delegate everything, find where delegation stops for a human step, remove the step without removing the protection, and measure the signal after merge.
+
+## Contribute
+
+Outside contributors and their agents follow the same path as the fleet: one focused branch, local checks run once, a pull request from a fork, and `Merge Gate` as the one required hosted check.
+
+- [AGENTS.md](../AGENTS.md): The agent constitution: what agents may do, what stays with the owner, and how to work in this repository.
+- [Contributing](../CONTRIBUTING.md): Full conventions, tests, contracts and the dependency policy.
+- [Contribute with an agent](CONTRIBUTE-WITH-AN-AGENT.md): First pull request from a fork. Clone with `ashlrai/phantom` as `origin`, `npm ci`, make one change, run `node scripts/verify-changed.mjs` once, push to your fork and open the pull request against `master`.
+- [What CI requires](CONTRIBUTE-WITH-AN-AGENT.md#6-what-ci-requires): The jobs `Merge Gate` needs on a pull request; the full suites run on the scheduled `master` run.
+- [Which tests the fast gate runs](CONTRIBUTE-WITH-AN-AGENT.md#which-tests-the-fast-gate-runs): How `.github/scripts/ci-fast-select.mjs` picks tests from the changed paths.
+- [Protected paths](CONTRIBUTE-WITH-AN-AGENT.md#protected-paths-wait-for-the-owner): Diffs under `.github/CODEOWNERS` paths wait for the owner even when `Merge Gate` passes.
+- [Changed-files verification](verify-changed.md): What `node scripts/verify-changed.mjs` runs, its environment variables and typecheck slots.
+- [FAQ](FAQ.md): Short answers about what Phantom is, the mission and how agents work on it.
+- [Glossary](GLOSSARY.md): Shared fleet vocabulary: job, lane, worker, bridge PR, `Merge Gate`, leader and more.
 
 ## CLI
 
@@ -62,7 +76,7 @@ Approval cards record consent and do not collect credentials.
 - [Full copy-paste reference](llms-full.txt): Install, JSON commands, and MCP setup for Claude, Cursor, and Codex.
 - [Fleet MCP onramp](FLEET-MCP-ONRAMP.md): Read-only fleet MCP server. Add the stdio entry to a client config.
 - [Companions](COMPANIONS.md): Phantom Secrets, Locus, and Lexicon are installed separately. They are not bundled.
-- [Agent toolchain](AGENT-TOOLCHAIN.md): Companion MCP servers declared for agents working in this repo.
+- [Agent toolchain](AGENT-TOOLCHAIN.md): Companion MCP servers declared for agents working in this repo; all optional for outside contributors.
 - [Agent-native quickstart](AGENT-NATIVE-QUICKSTART.md): Use the desktop `/verse/` console as the visibility surface.
 - [Plugins](PLUGINS.md): Extend Phantom without forking.
 
@@ -78,6 +92,9 @@ Approval cards record consent and do not collect credentials.
 - [Cloud lane](CLOUD.md): Claude Code cloud sessions from chat, Command, or CLI.
 - [Add a computer in 60 seconds](add-a-computer.md): install, join, choose capabilities, verify, and leave.
 - Node router: `phm node join|pull|plan|status --json`, guide in `docs/NODE-ROUTER.md`. Nodes advertise caps, jobs carry an owner scope and a fenced lease, auth stays local.
+- [Team org](AGENT-NETWORK.md#team-org): `phm org show|join|plan --json`; declarative org.toml of members, agents, machines, lanes and contributed shares; opt-in per lane, plan within contributed limits, nothing private pooled. Join also requires `--member <id> --machine <id>` and the contributed `--lane <lane>[=<share>]` selections.
+- [Team invite, join and remove](TEAM.md#invite-join-and-remove-a-teammate): human-terminal commands `phm team invite <gh-user>`, `phm team join <invite>`, `phm team remove <gh-user> --json`; membership only, no credentials, each node keeps its own local auth, removal drains claims. Agent processes are refused; agents request access through the team MCP tools.
+- Dispatcher admission: `phm pool admission --json` reads starvation signals and the admission decision; read-only. Fresh dispatcher snapshots are preferred; missing or stale snapshots use legacy probes. Unavailable evidence stays unknown.
 - [Drive](DRIVE.md): Mac queue supervisor. Serial ticks, worker reaping, and READY job admission.
 - [Daemon tick phases](daemon-tick-phases.md): Bounded resident tick stages — per-phase status/duration/error and tick outcomes via `phm daemon status --json | jq .tick.phases`.
 - [Disk maintenance](DISK-MAINT.md): `phm disk-maint [--apply] [--json]` reclaims rebuildable bytes by class; `phm disk-maint schedule` installs the daily job. Dry run by default; the protect-list (`~/.codex*`, model weights, Docker, client trees, secrets) is unconditional.
@@ -104,7 +121,7 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Agent profiles](AGENT-PROFILES.md): Portable agent metadata lives at ~/.phantom/agents/<id>.toml. A doctrine is a Markdown path, never executed or expanded by the profile reader. Profiles never grant project acces...
 - [Agent readiness scorer](AGENT-READINESS.md): scripts/agent-readiness/score.mjs grades how legible a published site or a repo checkout is to an autonomous agent. It is fully offline: it reads only files inside the scored di...
 - [Agent-to-agent channels](AGENT-TO-AGENT.md): This design describes possible coordination between an owner's agent and a co-founder's agent over email, Slack, or iMessage. This change provides a configuration schema only: i...
-- [AGENTS.md audit](AGENTS-MD-AUDIT.md): Public-source snapshot: 2026-10-26. Scope: the seven current repositories below, all of which already have a root AGENTS.md. No new AGENTS.md files are needed. Cortex is a separ...
+- [AGENTS.md audit](AGENTS-MD-AUDIT.md): Public-source snapshot: 2026-11-21 (the first snapshot was 2026-10-26). Scope: the seven ecosystem repositories below. Each has a root AGENTS.md and a root CONTRIBUTING.md, and...
 - [Drive agent apps](APP-DRIVE.md): phm drive <devin|claude|codex|phantom> <action> --json uses the running Phantom console's existing session API. Its enrolled seats execute through provider CLIs or APIs, preserv...
 - [App restart and session ownership](APP-RESTART.md): Zero-downtime app restart is not implemented in this build. The command below reports why it is held and exits 1. It leaves the app, sessions, jobs, bundles and authority state...
 - [Steer the leaders](APP-STEER.md): Send one message through the shared inbox receiver using the app's steer box, the fleet graph's Steer and Hand off buttons, or the CLI:
@@ -136,7 +153,6 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Company context](COMPANY-CONTEXT.md): Save a sourced note, then read the current digest:
 - [Composer Commands](COMPOSER-COMMANDS.md): The Phantom desktop console's prompt box (the chat input at the bottom of the composer) accepts slash commands — type / at the start of your message to invoke one. Each command...
 - [Fleet constraint audit (RQ-CONSTRAINT-AUDIT-1)](CONSTRAINT-AUDIT.md): Status: audit plus one low-risk relaxation, 2026-11-16. Source baseline is 6015103469. This is the action layer over the constraints ledger (RQ-RETHINK-CONSTRAINTS-1). The ledge...
-- [Contribute with an agent](CONTRIBUTE-WITH-AN-AGENT.md): Phantom is built mostly by coding agents, with the human owner as a passive board member. Outside contributors use the same path as the fleet: one focused branch, local checks r...
 - [Coordinate work across the fleet](COORDINATION.md): Mason's orders are to coordinate rather than collide (23:06, October 31) and avoid wasted work, including a DIRTY PR (19:28). This page describes what the current master provide...
 - [Phantom core spec](CORE-SPEC.md): Phantom has six core parts and one leader that drives them. Everything else is a plugin or an adapter. A feature that does not serve one of the six parts does not belong in the...
 - [Chief-of-staff desktop API](COS-DESKTOP-API.md): Local Hub routes that let the desktop app queue a chief-of-staff task, list recent tasks, read a task's status and approve the drafted reply. Intake itself is described in COS.m...
@@ -166,7 +182,6 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Recorded fleet execution feedback](EXECUTION-FEEDBACK.md): Execution feedback connects terminal producer records to the existing retrospective sweep and Leader evidence. Reading it runs no provider, model, repair, or dispatch. It does n...
 - [Execution Identity V1](EXECUTION-IDENTITY-V1.md): Execution Identity V1 is the default-off, shadow-only contract for representing more than one execution account or runtime behind one Ashlr engine. It separates the mechanism th...
 - [Fable 5.2 orchestration](FABLE-ORCHESTRATOR.md): RQ-FABLE-ORCH-REG-2 implements the repository portion of EO RQ-FABLE-ORCHESTRATOR-1, following registration #4506.
-- [Frequently Asked Questions](FAQ.md): Phantom is an open-source engineering agent workbench by AshlrAI. Connect coding agents, API resources, or local models into one workbench. See README.md.
 - [Run and inspect signed firm graphs](FIRM-DEMO.md): This source-build demo exercises the new graph kernel without contacting a model, running candidate code, switching accounts, changing HOME or activating a daemon.
 - [Runtime-dynamic fleet config](FLEET-CONFIG.md): Change fleet limits without restarting dispatchd or any reader. Source: dynconfig.ts, CLI phm fleet config.
 - [Fleet graphs and coordination](FLEET-COORDINATION.md): Use the installed command's help to check availability. These surfaces exist in the current source; a source checkout does not establish publication or operation on a particular...
@@ -180,7 +195,6 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Manual fleet usage pacing](FLEET-USAGE-PACING.md): This offline command reads ~/.ashlr/fleet.json. Configure an explicit reset instant with a timezone before adding readings:
 - [Fleet Verbs](FLEET-VERBS.md): ashlr fleet <verb> supports convention-based verbs in src/cli/fleet-<verb>.ts exporting cmdFleet<Verb>. The dispatcher resolves safe names and loads them through the generated r...
 - [cfg.foundry — Polyglot Backend Configuration](FOUNDRY-CONFIG.md): This document describes every field in the foundry block of ~/.ashlr/config.json.
-- [Phantom glossary](GLOSSARY.md): Phantom's fleet uses a shared vocabulary so every leader, worker, and the desktop console talk about the same things.
 - [Governed-client gateway opt-in: design note](GOVERNED-GATEWAY-DESIGN.md): Status: decisions recorded 2026-10-19 02:15 ET (Engineering Orchestrator, under Mason's delegation; see section 8). Slice A, the pure validator and config types, is #879: not wi...
 - [Choosing graph context](GRAPH-CONTEXT-CHOICES.md): Use the graph that answers the question you actually have:
 - [Read the local knowledge graph over HTTP](GRAPH-HTTP.md): Use startGraphServer from @ashlr/phantom or @ashlr/phantom/core to start an independent read-only listener. It does not start the dashboard, dispatch work, enroll repositories,...
@@ -213,6 +227,7 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Local machine telemetry](MACHINE-TELEMETRY.md): Enable telemetry.machine.enabled = true in Phantom configuration, then run phm resources sample --json. Collection is disabled by default. Disabled telemetry performs no collect...
 - [Machinery-as-code migration plan](MACHINERY-MIGRATION.md): Status: plan + first slice landed (RQ-SWE5-MACHINERY-AS-CODE). This document records how the ~92 scripts that live under ~/.ashlr-runs outside the PR pipeline move into this rep...
 - [Sandbox mailbox engine adapters](MAILBOX-ENGINE.md): runMailboxEngine in src/core/run/mailbox-engine.ts provides a one-shot transport for codex exec and claude -p. Its caller owns sandbox creation, confinement, admission, cancella...
+- [Mason asks status](MASON-ASKS-STATUS.md): Generated by phm fleet asks status --markdown. Do not edit by hand; rerun the command.
 - [Publish Phantom MCP Registry metadata](MCP-REGISTRY-PUBLICATION.md): Discovery metadata for Registry server io.github.ashlrai/phantom-secrets-mcp is published from the ashlrai/phantom-secrets workflow .github/workflows/publish-mcp-registry.yml.
 - [Phantom MCP Native Tools](MCP-TOOLS.md): A catalog of all tools exposed by mcp-native.ts — the single source of truth for what agents can call through the MCP gateway. One tool must not exist outside this list; every t...
 - [Mac memguard rules](MEMGUARD-RULES.md): The pressure policy is implemented in contrib/mac/memguard/rules.ts, with a Mac sysctl adapter. The configuration flag pressureRuleEnabled defaults to false. Only the literal bo...
@@ -300,7 +315,6 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Standing authority (3.10)](STANDING-AUTHORITY.md): One Touch ID signs a standing grant: what the fleet may do, on which repos, with which engines and how much of your usage, for up to 30 days — including a signed rollout ladder...
 - [Stigmergic coordination](STIGMERGY.md): Agents on one machine coordinate through the environment, not through messages. Phantom leaves markers — small private JSON files under <ashlr home>/stigmergy/ — that any agent...
 - [Cross-provider subagents](SUBAGENTS.md): Plan a bounded child from any session or job, without locking it to the parent's provider:
-- [ashlr — Team Guide (2-person fleet)](TEAM.md): This guide covers running ashlr as a two-person team. Each teammate runs an independent fleet on their own machine. Shared visibility is provided by ashlr-pulse: both teammates...
 - [Test changed files](TEST-CHANGED.md): Run phm test --changed in a trusted npm repository. It compares the working tree, including untracked files, with HEAD. Use --base <ref> to compare with another Git ref, and --j...
 - [Explain a Tier-1 import](TIER1-WHY.md): From the repository root:
 - [Local model tuning data and evaluation](TUNE.md): phm tune currently provides offline preparation and an evaluation decision.
@@ -509,14 +523,13 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Session economics: batching, sub-agents and swarm sizing](strategy/SESSION-ECON.md): RQ-SESSION-ECON-1 · checked 2026-11-14 · source baseline 96a5a9be22a.
 - [StackSync EOS fleet capacity plan](strategy/STACKSYNC.md): Status: inventory and proposal only, 2026-11-14; RQ-STACKSYNC-WIRE-1.
 - [Strategy: the Spawn fleet model vs Phantom's architecture](strategy/spawn-fleet-model.md): Job: RQ-SWE5-RESEARCH-LOOP (pool claude, tier frontier, repo phantom).
-- [Changed-files verification (scripts/verify-changed.mjs)](verify-changed.md): Run the local pre-merge check from the repository root:
 <!-- docs-index:end -->
 
 - [Route hysteresis](ROUTE-HYSTERESIS.md): 60-minute pool residency, immutable launched jobs, two moves per six hours, ROUTE_HOLD and phm route explain --json.
 
 - [Durable memory](MEMORY.md): `phm memory add|list|search|forget --json`; preferences, doctrine and facts as markdown under `~/.phantom/memory/`, secret-shaped text refused.
 
-- [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references; `run <id> --scope <scope> --tool <tool> --lane <lane> --json -- <args>` denies execution pending Security review.
+- [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references. `phm connectors exec <id> --tool <tool> --lane <lane> -- <command>` starts a `cli` or `mcp-stdio` connector through `phantom exec`, so the child sees session tokens, never values; `phm connectors config --client claude|cursor|codex --lane <lane> --json` prints client MCP entries that launch through exec. `phm connectors mesh --json` and `phm connectors tool list --json` show the lane tool view and shared tool registry. The older `run` verb is still denied pending Security review.
 - [Chief-of-staff intake](COS.md): Durable channel jobs, JSON command contracts and approved result delivery.
 - [Release autonomy audit](RELEASE-AUTONOMY.md): Once wired into the CLI, `phm release autonomy --json` inventories release gates with read-only GitHub calls. Use `--repo locus --md` for a single Markdown report.
 

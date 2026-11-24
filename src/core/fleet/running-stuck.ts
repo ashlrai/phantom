@@ -31,10 +31,13 @@ const STUCK_LEDGER = 'queue/stuck-jobs.jsonl';
 export interface RunningJob {
   job: string;
   lane: string;
+  repo?: string;
   /** Epoch ms of the start (.dispatched, else the .launch file time); null when unknown. */
   startedMs: number | null;
   /** Epoch ms of the last log write; null when there is no log. */
   logMtimeMs: number | null;
+  outputMtimeMs?: number | null;
+  markerMtimeMs?: number | null;
   /** Pid recorded in <J>.launch; null when none is recorded. */
   pid: number | null;
   /** Epoch seconds of the .base file, the key a closing .fin carries; null when absent. */
@@ -101,13 +104,15 @@ const mtime = async (path: string): Promise<number | null> => {
 };
 
 /** Running jobs from queue/run markers. Throws when the marker directory cannot be listed. */
-export async function readRunningJobs(runsDir: string, laneFilter?: string): Promise<RunningJob[]> {
+export async function readRunningJobs(runsDir: string, laneFilter?: string, includeBases = false): Promise<RunningJob[]> {
   const runDir = join(runsDir, 'queue', 'run');
   const names = await readdir(runDir);
-  const lines = names.filter(n => n.endsWith('.line')).map(n => n.slice(0, -5)).filter(j => STRAY_ID_PATTERN.test(j));
+  const lines = [...new Set([...names.filter(n => n.endsWith('.line')).map(n => n.slice(0, -5)),
+    ...(includeBases ? (await readdir(runsDir)).filter(n => n.endsWith('.base')).map(n => n.slice(0, -5)) : [])])].filter(j => STRAY_ID_PATTERN.test(j));
   const finished = new Set(names.filter(n => n.endsWith('.fin')).map(n => n.slice(0, -4)));
   const jobs: RunningJob[] = [];
   for (const job of lines) {
+    if (includeBases && names.includes(`${job}.reaping`)) continue;
     const baseMs = await mtime(join(runsDir, `${job}.base`));
     const baseKey = baseMs === null ? null : String(Math.floor(baseMs / 1000));
     if (finished.has(job)) {
@@ -116,15 +121,19 @@ export async function readRunningJobs(runsDir: string, laneFilter?: string): Pro
       if (baseKey === null || key === baseKey) continue;
     }
     const line = await smallText(join(runDir, `${job}.line`));
-    const lane = line?.split('\t')[2]?.trim() ?? '';
-    if (!STRAY_ID_PATTERN.test(lane) || (laneFilter && lane !== laneFilter)) continue;
+    const rawLane = line?.split('\t')[2]?.trim() ?? (includeBases ? (await smallText(join(runsDir, `${job}.base`)))?.trim().split(/\s+/)[3] : '') ?? '';
+    const lane = STRAY_ID_PATTERN.test(rawLane) ? rawLane : 'unknown';
+    if (laneFilter && lane !== laneFilter) continue;
+    const repo = line?.split('\t')[1]?.trim() ?? '';
     const dispatched = Number((await smallText(join(runDir, `${job}.dispatched`)))?.trim());
     const launchMs = await mtime(join(runsDir, `${job}.launch`));
     const pidMatch = /\bpid\s+(\d+)\b/.exec((await smallText(join(runsDir, `${job}.launch`))) ?? '');
     jobs.push({
-      job, lane,
+      job, lane, repo: /^[\w./-]{1,120}$/.test(repo) ? scrubSecrets(repo) : 'unknown',
       startedMs: Number.isFinite(dispatched) && dispatched > 0 ? dispatched * 1000 : launchMs,
       logMtimeMs: await mtime(join(runsDir, `${job}.log`)),
+      outputMtimeMs: launchMs,
+      markerMtimeMs: baseMs ?? await mtime(join(runDir, `${job}.line`)),
       pid: pidMatch ? Number(pidMatch[1]) : null,
       baseKey,
     });

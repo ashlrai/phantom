@@ -6,6 +6,7 @@
  * and folds their parsed reports into one run report. Only one self-tick runs
  * per runs dir; a step that fails or throws never stops the later ones.
  */
+import { takeLoadSnapshot } from '../core/fleet/load-history.js';
 import { isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { cmdFleetResetRelease } from './fleet-reset-release.js';
@@ -38,6 +39,7 @@ import { readMeterDrop } from './fleet-meter-drop.js';
 import { postMeterIncidents } from '../core/fleet/meter-incident.js';
 import { awakeEnabled, holdKeepAwake, type AwakeDeps } from '../core/fleet/keep-awake.js';
 import { recordClockSample } from '../core/fleet/sleep-gaps.js';
+import { orderReadyFile } from '../core/fleet/ready-yield.js';
 import { recordDiskSample } from '../core/fleet/host-disk.js';
 
 const usage = `Usage: ashlr fleet self-tick [--json] [--runs-dir <abs>] [--apply] [--last] [--status]
@@ -63,7 +65,7 @@ throws never stops the later ones. Each completed pass records itself to
 queue/self-tick-last.json while the lock is still held; --last prints that
 recorded run (or 'no recorded run') without running a step or taking the
 lock, combines only with --json and --runs-dir, and exits 0 even when
-nothing is recorded. --status is the plain-words twin of --last: when the self-tick last ran and how many items each hook produced (autofill, gaps, reap, stranded-requeue), or 'no self-tick run recorded'; it reads the same file, takes no lock, combines only with --json and --runs-dir (schema fleet.self-tick-status.v1). Exit 0 when every step is ok or the run is busy, 1
+nothing is recorded. --status is the plain-words twin of --last: when the self-tick last ran and how many items each hook produced (autofill, gaps, reap, stranded-requeue), or 'no self-tick run recorded'; it reads the same file, takes no lock, combines only with --json and --runs-dir (schema fleet.self-tick-status.v1). Exit 0 when every step is ok/skipped or the run is busy, 1
 when any step failed, 2 on usage.`;
 
 interface Dependencies {
@@ -79,6 +81,8 @@ interface Dependencies {
   error?: (text: string) => void;
   /** Per-step overrides for tests; unlisted steps run the real verbs. */
   steps?: Partial<SelfTickSteps>;
+  /** Best-effort, rate-limited host-load evidence after an applied tick. */
+  loadSnapshot?: (runsDir: string) => Promise<unknown>;
   /** Lock seam forwarded to runSelfTick. */
   acquireLock?: RunSelfTickOptions['acquireLock'];
   /** planner-tick spawn seam; tests fake it, never a shell. */
@@ -104,6 +108,7 @@ interface Dependencies {
   claudeFindCommand?: () => string | null;
   /** Autofill seams for tests (lane read, kill switch, fill); production reads the real lanes and config. */
   autofill?: Partial<Pick<import('../core/fleet/autofill-run.js').AutofillTickOptions, 'readLanes' | 'readOff' | 'fill'>>;
+  masonDigest?: Partial<Pick<import('../core/comms/mason-digest.js').MasonDigestTickOptions, 'readOff' | 'readers' | 'post' | 'owner'>>;
   /** Terminal seam for the PHM_SELF_TICK_APPLY rule; production reads process.stdout.isTTY. */
   isTty?: boolean;
   /** Environment seam for tests; production reads process.env. */
@@ -118,6 +123,8 @@ interface Dependencies {
   worktreeReap?: import('../core/fleet/worktrees.js').WorktreesDeps;
   /** Stranded-requeue seam for tests; production plans over the real runs dir. */
   strandedRequeue?: typeof import('../core/fleet/stranded-requeue.js').planStrandedRequeue;
+  /** Ready ordering seam; called once inside the planner stage. */
+  orderReady?: typeof orderReadyFile;
   /** Asks sync seam for tests; production syncs the real needs-you ledger. */
   asksSync?: typeof import('../core/fleet/asks-sync.js').syncAsks;
 }
@@ -126,7 +133,6 @@ interface Dependencies {
 const safe = (value: unknown): string => JSON.stringify(sanitizePublicJson(value))
   .replace(/[\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 
-/** A short per-step summary for human output, read defensively. */
 /** Why a failed step failed, in plain words: the step's own `reason`, else the thrown error, else a note that nothing was reported. */
 function failureReason(report: unknown, error: string | undefined): string {
   const reason = typeof report === 'object' && report !== null ? (report as Record<string, unknown>)['reason'] : undefined;
@@ -134,9 +140,11 @@ function failureReason(report: unknown, error: string | undefined): string {
   return error ? `error: ${error}` : 'no reason reported';
 }
 
+/** A short per-step summary for human output, read defensively. */
 function summary(step: string, report: unknown): string {
   if (typeof report !== 'object' || report === null) return '';
   const row = report as Record<string, unknown>;
+  if (typeof row['skippedReason'] === 'string' && row['skippedReason'].trim()) return `skipped: ${row['skippedReason']}`;
   const count = (value: unknown): number => Array.isArray(value) ? value.length : 0;
   if (step === 'cos-work') {
     return row['mode'] === 'dry-run' ? `pending=${row['pending']}` : `outcome=${row['outcome']}`;
@@ -170,7 +178,8 @@ function summary(step: string, report: unknown): string {
   }
   if (step === 'order-notices') {
     const n = (value: unknown): number => typeof value === 'number' ? value : 0;
-    return `sent=${n(row['sent'])} planned=${count(row['notices'])}`;
+    const digest = row['masonDigest'] as Record<string, unknown> | undefined;
+    return `sent=${n(row['sent'])} planned=${count(row['notices'])}${typeof digest?.['state'] === 'string' ? ` digest=${digest['state']}` : ''}`;
   }
   if (step === 'board-notify') {
     const n = (value: unknown): number => typeof value === 'number' ? value : 0;
@@ -276,11 +285,16 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     try {
       const { runAutofillTick } = await import('../core/fleet/autofill-run.js');
       const { HELP_ENTRIES } = await import('./help.js');
-      return await runAutofillTick({
+      const options = {
         runsDir: root, apply, now, root: process.cwd(), entries: HELP_ENTRIES,
         readLanes: async () => (await import('../core/fleet/live-lane-facts.js')).readLiveLaneFacts(root),
         ...deps.autofill,
-      });
+      };
+      const view = await options.readLanes().catch(() => null);
+      const supply = await (await import('../core/fleet/supply-floor.js')).runSupplyFloor(options, view);
+      for (const row of supply) if (!json) output(row.line);
+      return { ...await runAutofillTick({ ...options, readLanes: async () => view && ({ lanes: view.lanes.map(f => ({ ...f,
+        queued: f.queued === null ? null : f.queued + (supply.find(row => row.lane === f.lane)?.added ?? 0) })) }) }), supply };
     } catch (error) {
       return { reason: 'autofill failed', error: error instanceof Error ? error.message.slice(0, 120) : 'unknown error' };
     }
@@ -319,6 +333,23 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       const { landedReposFromEnv, readLandedFromGit } = await import('../core/fleet/landed-from-git.js');
       return await (deps.strandedRequeue ?? planStrandedRequeue)(root, { apply, limit: 3, now: now(), ghSlots: readGhLaneSlots, landed: () => readLandedFromGit({ sinceHours: 168, repos: landedReposFromEnv() }) });
     } catch (error) { return { error: error instanceof Error ? error.message.slice(0, 120) : 'unknown error' }; }
+  };
+  const runMasonDigestStage = async (): Promise<unknown> => {
+    // The owner thread lives on the real account root; a sandbox runs dir never posts unless a test injects the seams.
+    if (!deps.masonDigest && root !== join(homedir(), '.ashlr-runs')) return { reason: 'custom-runs-dir-no-owner-thread' };
+    try {
+      const { tickMasonDigest } = await import('../core/comms/mason-digest.js');
+      const { fixedOwnerConfigDir, loadOwnerThreadSettings } = await import('../core/comms/owner-channel.js');
+      const at = now();
+      const report = await tickMasonDigest({
+        runsDir: root, now: at, apply,
+        owner: { runsDir: root, now: () => at, settings: loadOwnerThreadSettings(fixedOwnerConfigDir()) },
+        ...deps.masonDigest,
+      });
+      return { ...report, digest: report.digest === null ? null : { has_news: report.digest.has_news, lines: report.digest.lines } };
+    } catch (error) {
+      return { reason: `mason digest failed: ${error instanceof Error ? error.message.slice(0, 120) : 'unknown error'}` };
+    }
   };
   const defaults: SelfTickSteps = {
     // The quota refresh runs first inside this step, so the reading reset-release
@@ -377,19 +408,21 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       return { exitCode: posted.some(row => !['posted', 'duplicate'].includes(row.status)) ? 1 : 0,
         output: JSON.stringify({ report, posted, reason: apply ? 'observed' : 'dry-run' }) };
     },
-    // Autofill runs first inside this step, so the planner sees the bets it just queued. Like the quota
+    // Empty stops precede autofill, so refill sees the new holds. Like the quota
     // refresh above it is a sub-stage, not a new step name, so the fixed order and report shape stay as they are.
     'planner-tick': async (argv) => {
-      const autofill = await runAutofillStage();
       const emptyStop = await runEmptyStopStage();
+      const autofill = await runAutofillStage();
       const worktreeReap = await runWorktreeReapStage();
       const asksSync = await runAsksSyncStage();
       const strandedRequeue = await runStrandedRequeueStage();
+      const order = await (deps.orderReady ?? orderReadyFile)(root, apply, now())
+        .catch(() => ({ line: 'order: unknown (queue unavailable or busy)' }));
       const run = await bind(cmdFleetPlannerTick, { now, spawn: deps.spawn })(argv);
       try {
         const parsed: unknown = JSON.parse(run.output);
         if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          return { ...run, output: JSON.stringify({ ...parsed, autofill, emptyStop, worktreeReap, asksSync, strandedRequeue }) };
+          return { ...run, output: JSON.stringify({ ...parsed, autofill, emptyStop, familyStops: (emptyStop as { familyStops?: unknown }).familyStops ?? null, worktreeReap, asksSync, strandedRequeue, order }) };
         }
       } catch { /* the verb's own output stands untouched */ }
       return run;
@@ -404,7 +437,17 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       return bind(cmdFleetOwnerLive,
         deps.ownerOptions === undefined ? {} : { options: deps.ownerOptions })(argv);
     },
-    'order-notices': bind(cmdFleetOrderNotices, { now, senders: deps.noticeSenders }),
+    'order-notices': async (argv) => {
+      const run = await bind(cmdFleetOrderNotices, { now, senders: deps.noticeSenders })(argv);
+      const masonDigest = await runMasonDigestStage();
+      try {
+        const parsed: unknown = JSON.parse(run.output);
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return { ...run, output: JSON.stringify({ ...parsed, masonDigest }) };
+        }
+      } catch { /* the verb's own output stands untouched */ }
+      return run;
+    },
     'board-notify': async () => {
       // The verb prints with console.log and has no output seam, so capture
       // its stdout here. Steps run one at a time under the run lock.
@@ -486,6 +529,9 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     steps,
     ...(deps.acquireLock === undefined ? {} : { acquireLock: deps.acquireLock }),
   }).finally(() => hold?.release());
+  if (apply && report.state === 'ran') {
+    try { await (deps.loadSnapshot ?? ((dir: string) => takeLoadSnapshot(dir, { now })))(root); } catch { /* Best-effort. */ }
+  }
   if (json) {
     output(JSON.stringify(sanitizePublicJson({ ...report, logCap: { state: logCap.state } })));
   } else if (report.state === 'busy') {
@@ -494,8 +540,10 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       : 'the run lock could not be taken'}; no step ran`);
   } else {
     const lines = [`fleet self-tick: ${apply ? 'APPLIED' : 'DRY-RUN — no changes made'}`];
+    const order = report.steps.find(s => s.step === 'planner-tick')?.report as { order?: { line: string } } | null;
+    if (order?.order?.line) lines.push(order.order.line);
     for (const step of report.steps) {
-      const detail = step.state === 'ok' ? summary(step.step, step.report) : failureReason(step.report, step.error);
+      const detail = step.state === 'failed' ? failureReason(step.report, step.error) : summary(step.step, step.report);
       lines.push(`  ${step.step}  ${step.state}  exit=${step.exitCode}${detail ? `  ${safe(detail)}` : ''}`);
     }
     output(lines.join('\n'));

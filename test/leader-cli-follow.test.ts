@@ -45,7 +45,7 @@ describe('leader thread CLI', () => {
     expect(log.mock.calls.map(([line]) => JSON.parse(String(line)))).toEqual(state.messages);
   });
 
-  it('prints the one-shot owner chat JSON without reading the follow stream', async () => {
+  it('preserves the legacy owner chat JSON without reading the follow stream', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     state.messages = [message('a')];
     const chat: Awaited<ReturnType<typeof readLeaderChat>> = {
@@ -54,7 +54,7 @@ describe('leader thread CLI', () => {
       skipped: { malformedInbox: 0 }, sources: { inbox: 'ok', replies: 'missing' },
     };
     state.readChat.mockResolvedValue(chat);
-    expect(await runLeaderCli(['thread', '--json'])).toBe(0);
+    expect(await runLeaderCli(['thread', '--legacy', '--json'])).toBe(0);
     expect(state.readChat).toHaveBeenCalledExactlyOnceWith({ limit: 50 });
     expect(log).toHaveBeenCalledExactlyOnceWith(JSON.stringify(chat, null, 2));
   });

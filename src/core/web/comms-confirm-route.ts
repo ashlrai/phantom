@@ -17,7 +17,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
-import { confirmCommsLimits, readCommsLimits } from '../comms/comms-confirm.js';
+import { confirmCommsLimits, readCommsLimits, type CommsConfirmResult } from '../comms/comms-confirm.js';
 import { realHome } from '../real-home.js';
 import { passesMutationGate, readBody, sendJson } from './api.js';
 import { headerValue } from './read-session.js';
@@ -39,6 +39,18 @@ const REFUSED: Record<string, [number, string]> = {
   changed: [409, 'comms.toml changed while confirming. Reload and review it again.'],
   'io-error': [500, 'Could not write comms.toml.'],
 };
+
+/**
+ * Handler-level confirm for an owner proof that is not an HTTP request: a YES from one of
+ * Mason's own iMessage handles (src/core/comms/owner-pair.ts, RQ-PAIRMULTIN22ZQ8). It reads
+ * the limits as they are on disk and confirms that digest, so the route stays the only
+ * file that calls confirmCommsLimits.
+ */
+export function confirmCommsForOwnerProof(configDir: string, at: Date): CommsConfirmResult {
+  const digest = readCommsLimits(configDir).digest;
+  if (digest === null) return { ok: false, reason: 'missing' };
+  return confirmCommsLimits(configDir, { limitsDigest: digest, confirmedAt: at.toISOString() });
+}
 
 function configDirOf(ctx: CommsConfirmRouteContext): string | null {
   if (ctx.configDir) return ctx.configDir;

@@ -65,12 +65,10 @@ export async function cmdOwnerPair(args: string[], deps: OwnerPairCliDeps = {}):
     }
     const started = await startOwnerPair(live, handle === undefined ? {} : { handle });
     if (started.status === 'pending') {
-      emit({ status: 'pending', since: new Date(started.since).toISOString() }, `Sent a text to ${'**' + started.handle.slice(-2)}. Reply YES on your phone. It waits 24 hours.`);
+      const n = started.handles.length;
+      emit({ status: 'pending', sent: n, since: new Date(started.since).toISOString() },
+        `Sent a text to ${n} handle${n === 1 ? '' : 's'} (${started.handles.map(h => '**' + h.slice(-2)).join(', ')}). Reply YES on your phone. It waits 24 hours.`);
       return 0;
-    }
-    if (started.status === 'several') {
-      emit({ status: 'several', handles: started.handles }, `Found ${started.handles.length} iMessage accounts: ${started.handles.join(', ')}\nPick one: phm owner pair imessage --handle <handle>`);
-      return 1;
     }
     emit({ status: started.status }, MESSAGES[started.status] ?? started.status);
     return started.status === 'already-paired' || started.status === 'already-pending' || started.status === 'too-soon' ? 0 : 1;

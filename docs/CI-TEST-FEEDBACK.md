@@ -51,3 +51,44 @@ analysis report](https://claude.com/resources/articles/agentic-coding-is-straini
 Its distributed storage architecture is not required for this local metadata step.
 Future test omission needs independently established dependency coverage; this
 component changes no omission or release policy.
+
+## Duration-weighted partition hints
+
+The same sequencer can balance Mac partitions by historical duration. Like
+failure-first ordering, it is a maintainer option; contributors never need it.
+
+Duration-weighted Mac partition calibration is disabled by default. An explicit
+`ASHLR_TEST_CI_WEIGHTED_PARTITION=1` plus `ASHLR_TEST_CI_WEIGHTED_HINTS` pointing
+to a local `phantom-partition-hints/v1` JSON file enables the sequencer for
+general shards in a clean checkout at its committed source revision. The original
+sharder handles absent, invalid or incompatible
+hints; isolated acceptance always ignores these settings. No timing file is
+downloaded or supplied by default. Hints must retain their original successful
+run, source, runtime/config digest and observation time. Reporter spans are
+historical costs, not CPU measurements or promised wall time. New files remain
+included; hints cannot replace complete fresh tests or release qualification.
+To convert an independently accepted original capture into advisory hints, run:
+
+```sh
+node .github/scripts/ci-report-weight-hints.mjs CONVERSION-REQUEST.json > timing-hints.json
+```
+
+The request uses schema `phantom-original-report-conversion/v1`: absolute
+`root` and `bundle` paths, exact `source` (`revision`, `tree`), original `run`
+(`id`, `attempt`), `manifestSha256`, `qualificationSha256`, and
+`githubSnapshot` (`path`, `sha256`). The pinned snapshot uses
+`phantom-recorded-github-api/v1`, with a canonical `observedAt` timestamp and
+an endpoint-keyed `responses` object containing the previously accepted
+original run, all required jobs, commits and six artifact records. It makes no
+network requests and executes no code from the capture. Saved JSON is not
+authenticated by this command and grants no release admission; obtain and
+accept the original evidence through the existing qualification workflow.
+
+Conversion requires the complete successful original run/attempt and raw
+case inventory, and hashes calibration inputs from that exact clean source.
+Older captures lacking those inputs refuse instead of acquiring the current
+configuration digest. Output retains historical reporter spans, module hashes,
+original observation time and report provenance. Unknown runner image and
+hardware remain unknown. Source/transitive changes are not proof of fresh
+timings; review compatibility diagnostics before any explicit local experiment.
+No hint file is checked in, downloaded, or activated by this conversion.

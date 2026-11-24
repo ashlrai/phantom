@@ -3389,6 +3389,11 @@ async function main(): Promise<void> {
       }
 
       case 'owner': {
+        if (rest[0] === 'reply') {
+          const { cmdOwnerReply } = await import('./owner-reply.js');
+          process.exitCode = await cmdOwnerReply(rest.slice(1));
+          break;
+        }
         // Pair Mason's iMessage handle with one YES reply (src/cli/owner-pair.ts).
         const { cmdOwnerPair } = await import('./owner-pair.js');
         process.exitCode = await cmdOwnerPair(rest);

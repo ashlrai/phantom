@@ -9,7 +9,7 @@
  */
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { open as openFile, readdir, readFile, stat, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -29,12 +29,14 @@ import type { LaneFacts } from './autofill-lanes.js';
 import { gapLaneRoom, GAP_LANE_ORDER, pickPacedLane, type GapLaneRoom } from './gap-lane-room.js';
 import { aheadWords, type PaceVerdict } from './pace-verdict.js';
 import { readFleetQueue } from './runs-parked-queue.js';
+import { readSupplyRank } from './supply-floor.js';
+import { jobFamily } from './slot-yield.js';
 
 export const JOB_GAPS_SCHEMA = 'jobs.gaps.v1';
 export const MAX_GAPS_PER_JOB = 12;
-/** Most gaps one tick proposes for a single repo. */
-export const MAX_PROPOSED_PER_REPO = 3;
-/** Most new drop jobs one tick writes in all (env ASHLR_GAPS_MAX, or `--max`). */
+/** Most new gaps queued across repos in a rolling hour. */
+export const MAX_GAPS_PER_HOUR = 3;
+/** Fallback per-call limit when lane readings are unavailable and no explicit max is set. */
 export const DEFAULT_MAX_NEW_DROPS = 3;
 /** Log lines read from the end of a published job's log. */
 export const PUBLISHED_LOG_TAIL_LINES = 80;
@@ -48,7 +50,7 @@ const WHY_MAX = 240;
 const SAME_WORK = 0.6;
 const MERGE_WINDOW_DAYS = 14;
 
-export type GapDropReason = 'open-idea' | 'queued' | 'ingested' | 'recent-merge' | 'duplicate-gap' | 'proposed-24h';
+export type GapDropReason = 'open-idea' | 'queued' | 'ingested' | 'recent-merge' | 'duplicate-gap' | 'proposed-24h' | 'not-actionable' | 'likely-done' | 'stopped-family';
 /** Where a gap came from: a no-change job, or a job that finished with a PR. */
 export type GapSource = 'no-change' | 'published';
 export interface GapCandidate { title: string; repo: string | null; sourceJob: string; why: string; /** Absent on reports written before published jobs were read: no-change. */ source?: GapSource }
@@ -72,12 +74,15 @@ export interface GapQueueInputs {
 export async function readGapQueueInputs(runsDir: string, room: GapLaneRoom | null): Promise<GapQueueInputs> {
   const q = await readFleetQueue({ runsDir }).catch(() => null);
   const readyRows = q && q.sources.ready !== 'degraded' ? q.ready : null;
-  const parkedRows = room?.stuck ?? 0;
+  const deadRows = room?.live && q ? q.byLane.filter(row => !room.live!.has(row.lane)).reduce((sum, row) => sum + row.ready, 0) : 0;
+  const parkedRows = (room?.stuck ?? 0) + deadRows;
   const launchableRows = readyRows === null ? null : Math.max(0, readyRows - parkedRows);
   return { readyRows, parkedRows, launchableRows, limit: DROP_JOB_QUEUE_LIMIT, lanesSource: room ? 'lane readings' : 'unavailable', full: launchableRows !== null && launchableRows >= DROP_JOB_QUEUE_LIMIT };
 }
 
 export interface JobGapsReport {
+  /** Per-call ceiling before the independent rolling-hour guard; set with `propose`. */
+  proposalLimit?: number;
   /** Count inputs for the queue-full check; set with `propose`. */
   queue?: GapQueueInputs;
   /** Ready rows that cannot launch now (lane held, pool spent or every slot busy); set with `propose` and lane readings. They do not make the queue full. */
@@ -99,6 +104,31 @@ export interface JobGapsReport {
   paceNotes?: string[];
 }
 
+const HEDGE = /\b(?:i (?:didn['’]t|did not)|not verified|not audited|could not run|may|might|unknown)\b/i;
+const TARGET = /(?:[\w.-]+\/)+[\w.-]+|[\w.-]+\.(?:tsx?|jsx?|mjs|py|json|md|sh|ya?ml|toml|rs|swift|css|html)\b|\b[a-z]\w*[A-Z_]\w*\b|\b[a-z]\w*(?=\(\))|--[a-z][\w-]*|\b(?:phm|ashlr|gh|npm)\s+[a-z][\w-]*(?:\s+[a-z][\w-]*)?/g;
+const targetsOf = (text: string): string[] => [...new Set((text.match(TARGET) ?? []).map(t => t.replace(/[.,;:]+$/, '')))];
+/** Pure admission rule shared by notes and final-message gaps. */
+export function gapIsActionable(text: string): boolean {
+  return !HEDGE.test(text) && targetsOf(text).some(t => !t.startsWith('--'));
+}
+
+/** Check committed master, never the worker's files. Cache each small git lookup per scan. */
+function masterTargets(cwd: string): (target: string) => Promise<boolean> {
+  const cache = new Map<string, Promise<boolean>>();
+  let ref: Promise<string> | undefined;
+  return target => {
+    ref ??= git('git', ['rev-parse', '--verify', 'origin/master'], { cwd, timeout: 5000 })
+      .catch(() => git('git', ['rev-parse', '--verify', 'master'], { cwd, timeout: 5000 })).then(r => r.stdout.trim());
+    if (!cache.has(target)) cache.set(target, ref.then(async master => {
+      try {
+        await git('git', (target.includes('/') || target.includes('.')) ? ['cat-file', '-e', `${master}:${target}`] : ['grep', '-q', '-F', '-w', '-e', target, master, '--', 'src', 'test'], { cwd, timeout: 5000, maxBuffer: 4096 });
+        return true;
+      } catch (e) { if ((e as { code?: number }).code === 1 || (e as { code?: number }).code === 128) return false; throw e; }
+    }));
+    return cache.get(target)!;
+  };
+}
+
 const HEADING = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
 const GAP_HEADING = /\b(?:remaining\s+gaps?|gaps?|follow[- ]?ups?|not\s+done|still\s+missing|left\s+to\s+do|unfinished|open\s+items?)\b/i;
 /** A line that is only bold text ("**Remaining gaps**"), the way workers end a log. */
@@ -107,7 +137,7 @@ const BULLET = /^\s*(?:[-*+]|\d{1,3}[.)])\s+(.*)$/;
 const NOTHING = /^(?:none|n\/a|nothing|no gaps?|no remaining gaps?|nil|-)\.?$/i;
 
 const plain = (text: string): string => text
-  .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[`*_~]/g, '').replace(/\s+/g, ' ').trim();
+  .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[`*~]/g, '').replace(/(?<!\w)_|_(?!\w)/g, '').replace(/\s+/g, ' ').trim();
 
 /** Short title: the text before the first " - ", ": " or sentence end, clipped. The full text stays as the why. */
 function titleOf(text: string): string {
@@ -239,12 +269,13 @@ export interface JobGapsDeps {
   ingestedTitles?: (runsDir: string) => Promise<string[]>;
   /** Titles this proposer queued in the last 24 h (metrics/gap-proposed.jsonl). Unreadable = unknown, not empty. */
   proposedTitles?: (runsDir: string) => Promise<string[]>;
-  /** Most new drop jobs this call writes. Defaults to ASHLR_GAPS_MAX, then 3. */
+  /** Most new drop jobs this call writes. Overrides ASHLR_GAPS_MAX; otherwise uses measured lane capacity (up to 40), or 3 without readings. */
   maxNew?: number;
   /** Lane readings. With them a gap goes to a lane with room, and rows that cannot launch do not count as a full queue. Without them: claude, or codex-personal for gh work. */
   lanes?: readonly LaneFacts[];
   /** Pace per pool, from readPaceByPool. An ahead pool gets no new rows; a behind pool goes first; unknown changes nothing. */
   pace?: ReadonlyMap<string, PaceVerdict>;
+  masterHasTarget?: (target: string) => Promise<boolean>;
   write?: (root: string, input: DropJobInput) => Promise<unknown>;
 }
 
@@ -366,7 +397,16 @@ export async function readJobGaps(hours: number, opts: { propose?: boolean } & J
     settle(report.unknownSources, 'proposed in 24 h', () => (opts.proposedTitles ?? defaultProposed)(runsDir, now)),
   ]);
   const checks: { reason: GapDropReason; titles: string[] }[] = [{ reason: 'open-idea', titles: open }, { reason: 'queued', titles: queued }, { reason: 'ingested', titles: ingested }, { reason: 'recent-merge', titles: merged }, { reason: 'proposed-24h', titles: proposedBefore }];
+  const exists = opts.masterHasTarget ?? masterTargets(opts.repoDir ?? process.cwd());
   for (const gap of raw) {
+    const text = `${gap.title} ${gap.why}`;
+    if (!gapIsActionable(text)) { report.dropped.push({ ...gap, reason: 'not-actionable', matched: HEDGE.test(text) ? 'caveat or uncertainty' : 'no file, command, function or test named' }); continue; }
+    const targets = targetsOf(text);
+    if ((gap.repo ?? 'phantom') === 'phantom' && /\b(?:add|missing)\b/i.test(text) && targets.length) {
+      try {
+        if ((await Promise.all(targets.map(exists))).every(Boolean)) { report.dropped.push({ ...gap, reason: 'likely-done', matched: 'all named targets already exist on master' }); continue; }
+      } catch { if (!report.unknownSources.includes('master targets')) report.unknownSources.push('master targets'); }
+    }
     let hit: DroppedGap | null = null;
     for (const { reason, titles } of checks) {
       const match = titles.find(title => sameWork(gap.title, title));
@@ -377,12 +417,27 @@ export async function readJobGaps(hours: number, opts: { propose?: boolean } & J
     else if (twin) report.dropped.push({ ...gap, reason: 'duplicate-gap', matched: twin.title });
     else report.candidates.push(gap);
   }
+  if (opts.propose) {
+    const rank = await readSupplyRank(runsDir, now);
+    const score = (g: GapCandidate) => rank({ id: `RQ-PHX-${gapJobId(g.title)}`, family: jobFamily(g.sourceJob) });
+    report.candidates = report.candidates.filter(g => {
+      if (score(g) !== null) return true;
+      report.dropped.push({ ...g, reason: 'stopped-family', matched: 'stopped, retired or family yield below 25%' }); return false;
+    }).sort((a, b) => score(b)! - score(a)!);
+  }
   for (const c of report.candidates) report.bySource[c.source ?? 'no-change']++;
   if (opts.propose) {
     const room = opts.lanes ? gapLaneRoom(opts.lanes, now) : opts.pace?.size ? unboundedRoom() : null;
     const paceNotes: string[] = [];
     report.queue = await readGapQueueInputs(runsDir, room);
-    report.proposed = await proposeGaps(report.candidates, runsDir, opts.write, opts.maxNew ?? maxNewFromEnv(), now, room, opts.pace, paceNotes, report.queue);
+    report.proposalLimit = opts.maxNew ?? maxNewFromEnv(process.env, opts.lanes ? DROP_JOB_QUEUE_LIMIT : DEFAULT_MAX_NEW_DROPS);
+    const lockPath = join(runsDir, 'metrics', 'gap-propose.lock');
+    const lock = await openFile(lockPath, 'wx', 0o600).catch(() => null);
+    try {
+      const history = lock ? await readGapProposals(runsDir, now) : null;
+      const hourly = history?.state === 'known' ? history.proposals.filter(p => now - Date.parse(p.at) < 3_600_000).length : history?.why === 'missing' ? 0 : null;
+      report.proposed = await proposeGaps(report.candidates, runsDir, opts.write, report.proposalLimit, now, room, opts.pace, paceNotes, report.queue, hourly);
+    } finally { if (lock) { await lock.close(); await unlink(lockPath); } }
     if (paceNotes.length) report.paceNotes = paceNotes;
     if (room) report.parked = room.stuck;
   }
@@ -392,30 +447,30 @@ export async function readJobGaps(hours: number, opts: { propose?: boolean } & J
 /** Repos that have a drop queue: every repo key the drop job header allows. */
 export const DROP_QUEUE_REPOS: readonly string[] = DROP_JOB_REPOS;
 
-/**
- * Writes each survivor as a drop job (the queue `phm ideas queue` writes to) with its own repo in the header.
- * Unknown repos are listed as skipped with the reason; each repo gets at most MAX_PROPOSED_PER_REPO per tick.
- * A gap with no known repo goes to phantom, as before.
- */
-export function maxNewFromEnv(env: NodeJS.ProcessEnv = process.env): number {
+/** Valid environment limits override the measured-capacity or unavailable-readings fallback. */
+export function maxNewFromEnv(env: NodeJS.ProcessEnv = process.env, fallback = DEFAULT_MAX_NEW_DROPS): number {
   const n = Number(env.ASHLR_GAPS_MAX);
-  return Number.isInteger(n) && n >= 0 && n <= 40 && env.ASHLR_GAPS_MAX?.trim() ? n : DEFAULT_MAX_NEW_DROPS;
+  return Number.isInteger(n) && n >= 0 && n <= 40 && env.ASHLR_GAPS_MAX?.trim() ? n : fallback;
 }
 
-async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: JobGapsDeps['write'], maxNew: number, now: number, room: GapLaneRoom | null, pace: ReadonlyMap<string, PaceVerdict> | undefined, paceNotes: string[], queue: GapQueueInputs): Promise<ProposedGap[]> {
+/**
+ * Writes each survivor as a drop job (the queue `phm ideas queue` writes to) with its own repo in the header.
+ * Unknown repos are listed as skipped with the reason; all repos share the rolling hourly cap.
+ * A gap with no known repo goes to phantom, as before.
+ */
+async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: JobGapsDeps['write'], maxNew: number, now: number, room: GapLaneRoom | null, pace: ReadonlyMap<string, PaceVerdict> | undefined, paceNotes: string[], queue: GapQueueInputs, hourly: number | null): Promise<ProposedGap[]> {
   let launchable = queue.launchableRows;
   const moved = new Map<string, number>();
   const held = new Map<string, number>();
   const root = resolveDropJobRoot(runsDir);
   const out: ProposedGap[] = [];
-  const perRepo = new Map<string, number>();
   let newDrops = 0;
   for (const gap of candidates) {
     const row: ProposedGap = { ...gap, jobId: null, queued: false, skipped: null, path: null, refused: null };
     out.push(row);
+    if (hourly === null || hourly + newDrops >= MAX_GAPS_PER_HOUR) { row.skipped = hourly === null ? 'hourly count unavailable; held' : `held: already ${MAX_GAPS_PER_HOUR} new gap jobs in the last hour`; continue; }
     const repo = gap.repo ?? DROP_JOB_DEFAULT_REPO;
     if (!DROP_QUEUE_REPOS.includes(repo)) { row.skipped = `repo ${repo} is not a known repo`; continue; }
-    if ((perRepo.get(repo) ?? 0) >= MAX_PROPOSED_PER_REPO) { row.skipped = `already ${MAX_PROPOSED_PER_REPO} proposed for ${repo} this tick`; continue; }
     if (newDrops >= maxNew) { row.skipped = `already ${maxNew} new ${maxNew === 1 ? 'job' : 'jobs'} this tick`; continue; }
     const pick = room ? pickPacedLane(room, needsGh(gap), pace) : { lane: needsGh(gap) ? 'codex-personal' : 'claude', heldWhy: null, from: null };
     const lane = pick.lane;
@@ -439,7 +494,6 @@ async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: J
       // The proposer's own record: feeds the 24 h dedupe and the doctor's Self-supply line. Losing it must not undo the queued job.
       await recordGapProposal(runsDir, { at: new Date(now).toISOString(), id: job.id, title: gap.title, repo }).catch(() => undefined);
       newDrops++;
-      perRepo.set(repo, (perRepo.get(repo) ?? 0) + 1);
     } catch (e) {
       row.skipped = e instanceof DropJobExistsError ? 'already queued' : e instanceof DropJobValidationError ? (row.refused = explainDropJobReasons(e.reasons)) : 'could not write the job';
     }
@@ -457,9 +511,10 @@ async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: J
 export function jobGapsLines(report: JobGapsReport): string[] {
   if (!report.known) return ['Gaps: unknown. The job metrics file cannot be read.'];
   const lines = [`${report.candidates.length} new ${report.candidates.length === 1 ? 'gap' : 'gaps'} from ${report.jobsScanned} no-change ${report.jobsScanned === 1 ? 'job' : 'jobs'} and ${report.publishedScanned} published ${report.publishedScanned === 1 ? 'job' : 'jobs'} in the last ${report.sinceHours} hours` +
-    (report.dropped.length ? `; ${report.dropped.length} already covered` : '') + (report.jobsWithoutGaps.length ? `; ${report.jobsWithoutGaps.length} listed no gaps` : '')];
+    (report.dropped.length ? `; ${report.dropped.length} skipped` : '') + (report.jobsWithoutGaps.length ? `; ${report.jobsWithoutGaps.length} listed no gaps` : '')];
+  for (const gap of report.dropped) lines.push(`Skipped: ${gap.title}: ${gap.reason.replaceAll('-', ' ')}${gap.matched ? `; ${gap.matched}` : ''}.`);
   report.candidates.forEach((gap, i) => {
-    lines.push(`${i + 1}. ${gap.title} (${gap.repo ?? 'repo unknown'}, from ${gap.sourceJob})`, `   Why: ${gap.why}`);
+    lines.push(`${i + 1}. Kept: ${gap.title} (${gap.repo ?? 'repo unknown'}, from ${gap.sourceJob}): concrete target named; no caveat or uncertainty.`);
   });
   for (const note of report.paceNotes ?? []) lines.push(note);
   for (const row of report.proposed ?? []) lines.push(row.queued ? `Queued ${row.title} as RQ-PHX-${row.jobId}.` : `Not queued: ${row.title} (${row.skipped}).`);

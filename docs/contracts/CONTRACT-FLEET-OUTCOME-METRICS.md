@@ -65,7 +65,11 @@ emits policy. Plain output is Markdown. Nothing schedules or sends a brief.
   stays unknown. `claim` rows pair with their `launch` (`launch_dedupe`) and
   never open attempts. `RQ-BATCH-*` session ids are dispatch infrastructure:
   their launch/finish rows never form attempts, matching the agent-activity
-  verified-completion convention.
+  verified-completion convention. Node-pool producer rows
+  (`fleet.session-pool.v1`, `phm-node-runner.v1`) are a different jobs-ledger
+  dialect — `job` is a per-attempt/claim id and `jobId` the logical `ready:*`
+  queue id, with no attempt fields — so they never form attempts either; the
+  router outcome fold consumes them keyed on `jobId`.
 - `byLane` and `byModelTier` contain `{jobs, finished, finishRate, prRate,
   emptyRate, medianDuration, estCost, samples, evidenceRefs}`. Model-tier names
   are JSON tuples; absent metadata stays null (lane bucket `unknown`).
@@ -257,6 +261,16 @@ Families of one job id are listed under `single`.
 - Stop rows: one per `stop` family, `<anchored ERE>\t<until epoch s, now + 24 h>\t<reason>`,
   in the job stop file format; `phm jobs yield --stop-file` keeps hand-pasted rows.
 - An unreadable file is `known: false` with null totals.
+
+`empty_recommendations` lists recurring job kinds with at least three explicit
+empty launches, most empties first. Run `phm fleet yield --json` to read the typed
+`EmptyFamilyRecommendation[]`: family, `review_family` action, launches, empty,
+merged and missing-outcome counts, reason, and `last_successful_pr` (job, URL,
+merge time). It uses `jobKind` grouping, including recurring `N<day><letter>Q8`
+ids. Success means a non-reverted merge within the launch cohort and window;
+open PRs and missing outcomes never count as empty or successful. The last PR
+is null without success or usable merge ordering; an unrecorded URL stays null.
+These recommendations are advisory and do not change dispatch or family stops.
 
 `src/core/fleet/family-yield.ts` exports `collapseFamily(id)`, `familyVerdict(row)`,
 the pure `familyYield(lines, now, hours)`, `familyYieldFromRuns(runs, now, hours, lanesTiers?)`,

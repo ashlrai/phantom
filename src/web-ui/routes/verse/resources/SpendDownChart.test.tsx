@@ -129,9 +129,10 @@ describe('pace verdict under each row (fleet.pace.v1)', () => {
     render(<SpendDownChart data={FIXTURE} pace={pace} />);
     const lines = screen.getAllByTestId('pace-sentence');
     expect(lines.map(el => el.getAttribute('data-pace'))).toEqual(['ahead', 'on-pace', 'behind', 'unknown']);
-    expect(lines.map(el => el.querySelector('strong')!.textContent)).toEqual(['ahead', 'on pace', 'behind', 'unknown']);
-    expect(lines[0]!.textContent).toMatch(/Claude: 64%, empty about .*, resets .*\. Ahead of pace\.$/u);
-    expect(lines[3]!.textContent).toBe('unknown Grok: unknown, no usable reading.');
+    expect(lines.map(el => el.querySelector('strong')!.textContent)).toEqual(['over', 'over', 'ok', 'unknown']);
+    expect(lines[0]).toHaveTextContent('Claude: 64% used, 100 h left, spending 2/h, safe is 0.31/h. Over pace, empty in about 18 h.');
+    expect(lines[0]).toHaveAttribute('data-over', 'true');
+    expect(lines[3]!.textContent).toBe('unknown Grok: unknown% used, unknown h left, spending unknown/h, safe is unknown/h. Pace unknown, empty time unknown.');
   });
 
   it('shows no verdict line when the pace read is missing', () => {
@@ -142,8 +143,8 @@ describe('pace verdict under each row (fleet.pace.v1)', () => {
   it('phone card shows the same sentences from GET /api/fleet/pace', async () => {
     stubFetch({ 'GET /api/app/pools/spenddown': FIXTURE, 'GET /api/fleet/pace': pace });
     renderMobile(<SpendDownCard />);
-    expect(await screen.findByText(/Claude: 64%, empty about/u)).toBeVisible();
-    expect(screen.getByText(/Zai: 30%, resets .*Behind pace, room left over\./u)).toBeVisible();
-    expect(screen.getByText(/Grok: unknown, no usable reading\./u)).toBeVisible();
+    expect(await screen.findByText(/Claude: 64% used.*Over pace/u)).toHaveAttribute('data-over', 'true');
+    expect(screen.getByText(/Zai: 30% used.*On pace/u)).toBeVisible();
+    expect(screen.getByText(/Grok: unknown% used.*Pace unknown/u)).toBeVisible();
   });
 });

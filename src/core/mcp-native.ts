@@ -51,6 +51,7 @@ import { EVIDENCE_SCHEMAS, recordEvidence, validEvidenceArgs } from './intent/mc
 import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 import { desktopOperatorTools } from './desktop/operator-mcp.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, type OwnerThreadSettings } from './comms/owner-channel.js';
+import type { OwnerThreadReadFilter } from './comms/owner-thread.js';
 
 // Handler-only dependencies are imported lazily inside each handler so
 // `tools/list` pays for schemas and the safety gate only — not the ~300-file
@@ -1424,14 +1425,65 @@ const TOOLS: NativeToolImpl[] = [
 
   {
     name: 'ashlr_comms_thread',
-    description: 'Read the single owner thread (desktop, Telegram, email, iMessage, Slack) with per-channel delivery receipts. No credentials. Read-only.',
-    inputSchema: { type: 'object', properties: { limit: { type: 'number' } } },
+    description: 'Read the single owner thread (desktop, Telegram, email, iMessage, Slack) with per-channel delivery receipts. channel keeps one channel\'s lines; direction keeps inbound or outbound lines; since keeps messages at or after 15m, 2h, 1d, epoch ms or an ISO time; beforeAt keeps messages strictly before that cutoff — the exclusive ceiling that pairs with since; contains keeps only messages whose text carries the needle as a case-insensitive substring — the only text search, since iMessage bodies are redacted on the bus mirror; replyTo keeps only the exchange rooted at one message key — the message carrying that idempotency key plus every reply citing it, the same key comms send-owner --reply-to takes. No credentials. Read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number' },
+        channel: { type: 'string', enum: ['desktop', 'telegram', 'email', 'imessage', 'slack'] },
+        direction: { type: 'string', enum: ['inbound', 'outbound'] },
+        since: { type: 'string' },
+        beforeAt: { type: 'string' },
+        contains: { type: 'string' },
+        replyTo: { type: 'string' },
+      },
+    },
     safety: 'read',
     handler: async args => {
-      const { readOwnerThread } = await import('./comms/owner-thread.js');
+      const { OWNER_THREAD_CONTAINS_MAX, isOwnerThreadKey, readOwnerThread } = await import('./comms/owner-thread.js');
       const { loadOwnerThreadSettings } = await import('./comms/owner-channel.js');
+      const { isOwnerChannel } = await import('./comms/leader-mailbox.js');
+      const { parseSince } = await import('./fleet/agent-messages.js');
       const limit = typeof args.limit === 'number' ? args.limit : 50;
-      return readOwnerThread(ownerThreadRuntime(loadOwnerThreadSettings(fixedOwnerConfigDir())), limit);
+      const filter: OwnerThreadReadFilter = {};
+      if (args.channel !== undefined) {
+        if (typeof args.channel !== 'string' || !isOwnerChannel(args.channel)) {
+          return { error: 'invalid channel — must be one of: desktop, telegram, email, imessage, slack' };
+        }
+        filter.channel = args.channel;
+      }
+      if (args.direction !== undefined) {
+        if (args.direction !== 'inbound' && args.direction !== 'outbound') {
+          return { error: 'invalid direction — must be inbound or outbound' };
+        }
+        filter.direction = args.direction;
+      }
+      if (args.since !== undefined) {
+        if (typeof args.since !== 'string') return { error: 'invalid since — takes 15m, 2h, 1d, epoch ms or an ISO time' };
+        const since = parseSince(args.since);
+        if (since === null) return { error: 'invalid since — takes 15m, 2h, 1d, epoch ms or an ISO time' };
+        filter.since = since;
+      }
+      if (args.beforeAt !== undefined) {
+        if (typeof args.beforeAt !== 'string') return { error: 'invalid beforeAt — takes 15m, 2h, 1d, epoch ms or an ISO time' };
+        const beforeAt = parseSince(args.beforeAt);
+        if (beforeAt === null) return { error: 'invalid beforeAt — takes 15m, 2h, 1d, epoch ms or an ISO time' };
+        filter.beforeAt = beforeAt;
+      }
+      if (args.contains !== undefined) {
+        if (typeof args.contains !== 'string' || args.contains.trim() === '' || args.contains.length > OWNER_THREAD_CONTAINS_MAX) {
+          return { error: `invalid contains — takes a non-empty search text of at most ${OWNER_THREAD_CONTAINS_MAX} characters` };
+        }
+        filter.contains = args.contains;
+      }
+      if (args.replyTo !== undefined) {
+        if (typeof args.replyTo !== 'string' || !isOwnerThreadKey(args.replyTo)) {
+          return { error: 'invalid replyTo — takes an owner-thread message key' };
+        }
+        filter.replyTo = args.replyTo;
+      }
+      return readOwnerThread(ownerThreadRuntime(loadOwnerThreadSettings(fixedOwnerConfigDir())), limit,
+        filter.channel === undefined && filter.direction === undefined && filter.since === undefined && filter.beforeAt === undefined && filter.contains === undefined && filter.replyTo === undefined ? undefined : filter);
     },
   },
   {
