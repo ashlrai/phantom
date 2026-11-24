@@ -516,11 +516,17 @@ own exit/empty measures since a walled run can exit cleanly and
 still produce nothing publishable — and `quota-exhausted`, the
 pending-job verdict dispatchd writes to work-market.jsonl when the
 job's lane measured zero quota, carrying the market's chosen lane as
-`target` (that market-side copy is a different ledger's row — the
-same decision's rejection evidence already folds through the
-route_decision joins — while this fold keeps the producer's full
-vocabulary so a quota-exhausted row landing in the jobs window still
-joins under the same rules). The row counts only on the exact
+`target`. That market-side copy joins back through the
+`foldMarketHandoffAdvisories` read under the `market_state` health:
+each job's newest recorded advisory supersedes the jobs-ledger
+triple only when its recorded `ts` is strictly newer than the
+standing jobs-ledger advisory's parseable timestamp — no jobs
+advisory means the market verdict fills the triple, an unorderable
+jobs advisory leaves the jobs verdict standing, and market rows
+naming jobs outside the jobs window join nothing. This fold keeps
+the producer's full vocabulary so a quota-exhausted row landing in
+the jobs window still joins under the same rules. The row counts
+only on the exact
 schema and event name (the `event`/`type`/`kind` alias set) with a
 `trigger` inside the producer's closed vocabulary; lane and target
 join independently in the bounded lane-identifier shape — a

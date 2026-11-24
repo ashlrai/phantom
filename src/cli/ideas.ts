@@ -7,7 +7,8 @@ const USAGE = `Usage: phm ideas [--json|--text]
   (no verb)     Ranked next bets from local fleet signals, VISION and requests.
   list          What the fleet should fix next, ranked from local signals
                 (empty launches, main-guardian fixups, disk trend, idle lanes,
-                unspent usage, self-awareness loop diagnosis). JSON by default;
+                unspent usage, self-awareness loop diagnosis, pre-launch
+                dupcheck precision). JSON by default;
                 --text (or --human) for plain lines.
                 A signal that cannot be read is listed as unknown.
   queue <id>    Queue one idea from the list as a job (the desktop "Queue it").`;

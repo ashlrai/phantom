@@ -578,7 +578,12 @@ function awaitingReplyIds(state: ThreadState): string[] {
 /** Longest `--contains` needle the thread read accepts; the message text it matches is already bounded far shorter. */
 export const OWNER_THREAD_CONTAINS_MAX = 512;
 
-/** Optional read slice for `readOwnerThread`: one channel, one direction, a recorded-time floor and/or a text needle. */
+/** The idempotency-key grammar every stored message key — and every `replyTo` citation of one — satisfies. */
+export function isOwnerThreadKey(value: string): boolean {
+  return KEY.test(value);
+}
+
+/** Optional read slice for `readOwnerThread`: one channel, one direction, a recorded-time window, a text needle and/or one reply exchange. */
 export interface OwnerThreadReadFilter {
   /** Keep only messages recorded on this channel. */
   channel?: OwnerChannel;
@@ -587,6 +592,15 @@ export interface OwnerThreadReadFilter {
   /** Epoch ms; keeps messages whose `at` parses at or after it. An unparseable `at` never satisfies a `since` filter. */
   since?: number;
   /**
+   * Epoch ms; keeps messages whose `at` parses strictly before it — the
+   * exclusive recorded-time ceiling that pairs with `since`'s inclusive
+   * floor, the same `[since, before)` window every other comms and bus
+   * read applies. Named `beforeAt` rather than `before` because the
+   * archive page already spends `before` on its seq cursor. An
+   * unparseable `at` never satisfies a `beforeAt` filter.
+   */
+  beforeAt?: number;
+  /**
    * Case-insensitive substring over the stored message text, whitespace
    * collapsed on both sides — the same `--contains` rule every other comms
    * and bus read applies. This is the only text search the thread offers:
@@ -594,6 +608,51 @@ export interface OwnerThreadReadFilter {
    * the one place they can be found.
    */
   contains?: string;
+  /**
+   * Keep only the exchange rooted at one message key: the message carrying
+   * that `idempotencyKey` plus every recorded reply whose `replyTo` cites it —
+   * the same key `send-owner --reply-to` takes, so "what did we already say
+   * about this inbound" is one filtered read across every channel the reply
+   * fanned out to. An outbound key matches only the message carrying it (no
+   * `replyTo` ever cites an outbound key), and a key nothing carries is an
+   * honest empty slice.
+   */
+  replyTo?: string;
+}
+
+/**
+ * The one slice predicate the live `readOwnerThread` view and the archive
+ * `readOwnerThreadHistory` read share: a message stays when it passes every
+ * supplied dimension — its recorded channel, its direction, the `since`
+ * recorded-time floor and `beforeAt` recorded-time ceiling (an unparseable
+ * `at` never satisfies either bound) and the
+ * `contains` needle as a case-insensitive substring over the stored text
+ * with whitespace collapsed on both sides, and `replyTo` the one-key
+ * exchange — the message carrying that `idempotencyKey` plus every reply
+ * citing it. Exported so the archived pages
+ * `phm fleet owner-history` and `fleet_owner_history` apply the identical
+ * rule `phm comms thread` does — the two reads can never disagree about
+ * what a filter keeps.
+ */
+export function ownerThreadViewPredicate(filter?: OwnerThreadReadFilter): (message: OwnerThreadMessage) => boolean {
+  const needle = filter?.contains === undefined ? undefined
+    : filter.contains.toLowerCase().replace(/\s+/g, ' ').trim();
+  return message => {
+    if (filter?.channel !== undefined && message.channel !== filter.channel) return false;
+    if (filter?.direction !== undefined && message.direction !== filter.direction) return false;
+    if (filter?.replyTo !== undefined && message.idempotencyKey !== filter.replyTo && message.replyTo !== filter.replyTo) return false;
+    if (filter?.since !== undefined) {
+      const at = Date.parse(message.at);
+      if (!Number.isFinite(at) || at < filter.since) return false;
+    }
+    if (filter?.beforeAt !== undefined) {
+      const at = Date.parse(message.at);
+      if (!Number.isFinite(at) || at >= filter.beforeAt) return false;
+    }
+    if (needle !== undefined && needle !== '' &&
+        !message.text.toLowerCase().replace(/\s+/g, ' ').includes(needle)) return false;
+    return true;
+  };
 }
 
 /**
@@ -606,7 +665,10 @@ export interface OwnerThreadReadFilter {
  * only messages whose stored text carries the needle as a case-insensitive
  * substring with whitespace collapsed on both sides — intake already refuses
  * secret-shaped text, so the match runs over the same scrubbed content the
- * row prints. An unreadable thread still reports `unavailable` with
+ * row prints. `replyTo` keeps only the exchange rooted at one message key —
+ * the message carrying that `idempotencyKey` plus every reply citing it —
+ * across every channel the reply fanned out to. An unreadable thread still
+ * reports `unavailable` with
  * `awaitingReply: null` — unknown stays unknown, never an empty filtered
  * list passed off as fact.
  */
@@ -614,19 +676,7 @@ export function readOwnerThread(options: OwnerThreadOptions, limit = 200, filter
   | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: OwnerThreadMessage[]; receipts: OwnerThreadReceipts; awaitingReply: string[] }
   | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: []; receipts: OwnerThreadReceipts; awaitingReply: null; unavailable: true } {
   const cap = Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 200) : 200;
-  const needle = filter?.contains === undefined ? undefined
-    : filter.contains.toLowerCase().replace(/\s+/g, ' ').trim();
-  const inView = (message: OwnerThreadMessage): boolean => {
-    if (filter?.channel !== undefined && message.channel !== filter.channel) return false;
-    if (filter?.direction !== undefined && message.direction !== filter.direction) return false;
-    if (filter?.since !== undefined) {
-      const at = Date.parse(message.at);
-      if (!Number.isFinite(at) || at < filter.since) return false;
-    }
-    if (needle !== undefined && needle !== '' &&
-        !message.text.toLowerCase().replace(/\s+/g, ' ').includes(needle)) return false;
-    return true;
-  };
+  const inView = ownerThreadViewPredicate(filter);
   try {
     const state = readState(options);
     const messages = state.messages.filter(inView).slice(-cap);
@@ -817,7 +867,14 @@ export async function pullOwnerChannel(channel: OwnerChannel, options: OwnerThre
   return results;
 }
 
-/** Record a local-only notice in the owner thread, without invoking transports. */
+/**
+ * Record a local-only notice in the owner thread, without invoking transports.
+ * The record lands on the desktop surface — the channel `postOwnerNotice`
+ * already uses for leader-originated local posts — never a phone channel it
+ * was not delivered on: an `imessage` (or any remote) outbound here would
+ * claim a send that never happened and read as proof that channel already
+ * carried an outbound.
+ */
 export async function postOwnerThreadNotice(text: string, idempotencyKey: string, options: OwnerThreadOptions): Promise<OwnerThreadResult> {
   const clean = cleanText(text);
   if (!clean || !KEY.test(idempotencyKey)) return { status: 'refused' };
@@ -826,7 +883,7 @@ export async function postOwnerThreadNotice(text: string, idempotencyKey: string
       if (state.archivedKeys?.includes(keyDigest(idempotencyKey)) || state.messages.some(m => m.idempotencyKey === idempotencyKey)) {
         return { status: 'duplicate' as const };
       }
-      const stored = appendMessage(state, { idempotencyKey, channel: 'imessage', senderId: 'leader', direction: 'outbound', at: new Date(clock(options)).toISOString(), text: clean });
+      const stored = appendMessage(state, { idempotencyKey, channel: 'desktop', senderId: 'leader', direction: 'outbound', at: new Date(clock(options)).toISOString(), text: clean, fanout: ['desktop'] });
       return { status: 'accepted' as const, seq: stored.seq };
     });
   } catch { return { status: 'unavailable' }; }

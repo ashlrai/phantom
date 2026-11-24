@@ -59,6 +59,17 @@ const TSBUILDINFO_FILE = /\.tsbuildinfo$/;
 const DETACHED_SCRIPT_TREE = /^(?:src\/raycast|examples\/universe-site)\//;
 const DETACHED_SCRIPT_FILE = /\.(?:[cm]?[jt]sx?)$/;
 
+/**
+ * Shipped .html pages embed three grammars no other check reads: classic and
+ * module <script> bodies, JSON script payloads (ld+json, importmap,
+ * speculationrules) and <style> rules. ESLint never looks inside markup, the
+ * shebang buckets need a dotless basename, and the site's own tests parse the
+ * DOM without running scripts — a syntax error ships silently until a
+ * browser drops the block. test/fixtures/ payloads are exempt like the
+ * conflict scan's: fixtures may intentionally embed broken markup as input.
+ */
+const HTML_FILE = /\.html?$/i;
+
 /** Pure selection: keep deleted paths for the web decision, but never lint them. */
 export function selectChangedFiles(changedPaths, existingPaths) {
   const changed = [...new Set(changedPaths)].filter(Boolean).sort();
@@ -83,6 +94,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     cssFiles: changed.filter((path) => existing.has(path) && /\.css$/i.test(path)),
     snapFiles: changed.filter((path) => existing.has(path) && /\.snap$/i.test(path)),
     patchFiles: changed.filter((path) => existing.has(path) && /\.(?:patch|diff)$/i.test(path)),
+    htmlFiles: changed.filter((path) => existing.has(path) && HTML_FILE.test(path) && !path.startsWith('test/fixtures/')),
     detachedScriptFiles: changed.filter((path) => existing.has(path) && DETACHED_SCRIPT_TREE.test(path) && DETACHED_SCRIPT_FILE.test(path)),
   };
 }
@@ -980,6 +992,144 @@ export function runPatchSyntaxCheck(root, files, spawn = spawnSync) {
   return true;
 }
 
+/** Preflight check that the HTML parser used for embedded payloads is installed. */
+export function htmlPayloadPreflight(root, exists = existsSync) {
+  return parserPackagePreflight(root, 'jsdom', exists);
+}
+
+/**
+ * Changed .html/.htm files are parsed by the bundled jsdom package — the same
+ * spec-compliant HTML5 parser browsers apply — and every embedded payload is
+ * checked under the grammar its consumer enforces. Classic and module
+ * <script> bodies go through node:vm's Script and SourceTextModule, the
+ * exact parse goals the HTML standard assigns them (the child runs with
+ * --experimental-vm-modules so the module constructor exists on Node 22);
+ * JSON script types (importmap, speculationrules, application/json and any
+ * +json suffix such as ld+json) go through JSON.parse; <style> rules go
+ * through the same lightningcss transform the .css check uses, resolved
+ * through vite's dependency closure and skipped with a WARN when it cannot
+ * be resolved. External src scripts, inert type values, empty bodies and
+ * scripts inside <noscript> (inert markup, never executed) are skipped;
+ * <template> content is walked because cloned payloads do execute. Each
+ * file reports at most 8 payload errors.
+ */
+const HTML_PAYLOAD_CHECK = `import { readFileSync, realpathSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
+import { Script, SourceTextModule } from 'node:vm';
+import jsdomPkg from 'jsdom';
+const JSDOM = jsdomPkg.JSDOM ?? jsdomPkg.default?.JSDOM;
+
+// The HTML standard's "JavaScript MIME type essence match" list: the only
+// type values that make a classic script executable. Parameters after ';'
+// are ignored, matching the essence comparison.
+const JS_MIME = new Set([
+  'application/ecmascript', 'application/javascript', 'application/x-ecmascript',
+  'application/x-javascript', 'text/ecmascript', 'text/javascript',
+  'text/javascript1.0', 'text/javascript1.1', 'text/javascript1.2',
+  'text/javascript1.3', 'text/javascript1.4', 'text/javascript1.5',
+  'text/jscript', 'text/livescript', 'text/x-ecmascript', 'text/x-javascript',
+]);
+
+function payloadKind(type) {
+  const t = String(type ?? '').split(';', 1)[0].trim().toLowerCase();
+  if (t === '' || JS_MIME.has(t)) return 'script';
+  if (t === 'module') return 'module';
+  if (t === 'importmap' || t === 'speculationrules' || t === 'application/json' || t.endsWith('+json')) return 'json';
+  return null;
+}
+
+// querySelectorAll does not descend into <template> content, but payloads
+// cloned out of a template do execute, so template fragments are walked too.
+function* payloadElements(root) {
+  for (const el of root.querySelectorAll('script, style')) yield el;
+  for (const t of root.querySelectorAll('template')) yield* payloadElements(t.content);
+}
+
+let transform = null;
+try {
+  const req = createRequire(realpathSync(resolve('node_modules/vite/package.json')));
+  transform = req('lightningcss').transform;
+} catch { /* style payloads warn-skip below */ }
+
+const firstLine = (error) => String(error && error.message ? error.message : error).split('\\n')[0];
+
+function scriptError(error, path, label, n, kind) {
+  const stack = typeof error?.stack === 'string' ? error.stack.split('\\n') : [];
+  const where = stack[0] && stack[0].startsWith(label + ':') ? ' line ' + stack[0].slice(label.length + 1) : '';
+  return path + ' ' + kind + ' block ' + n + where + ': ' + firstLine(error);
+}
+
+let failed = false;
+for (const path of process.argv.slice(1)) {
+  const errors = [];
+  let doc = null;
+  try {
+    doc = new JSDOM(readFileSync(path, 'utf8'), { url: 'https://verify.invalid/' }).window.document;
+  } catch (error) {
+    errors.push(path + ': ' + firstLine(error));
+  }
+  if (doc) {
+    let scriptN = 0, moduleN = 0, jsonN = 0, styleN = 0, styleWarned = false;
+    for (const el of payloadElements(doc)) {
+      const code = el.textContent ?? '';
+      if (!code.trim()) continue;
+      if (el.tagName.toLowerCase() === 'style') {
+        styleN += 1;
+        if (!transform) {
+          if (!styleWarned) {
+            console.log('WARN ' + path + ': style payloads skipped, lightningcss is not resolvable through vite');
+            styleWarned = true;
+          }
+          continue;
+        }
+        try {
+          await transform({ filename: path + '#style-' + styleN, code: new TextEncoder().encode(code), errorRecovery: false });
+        } catch (error) {
+          const loc = error && error.loc && Number.isInteger(error.loc.line)
+            ? error.loc.line + ':' + error.loc.column
+            : '';
+          errors.push(path + ' style block ' + styleN + (loc ? ' at ' + loc : '') + ': ' + firstLine(error));
+        }
+        continue;
+      }
+      if (el.hasAttribute('src') || el.closest('noscript')) continue;
+      const kind = payloadKind(el.getAttribute('type'));
+      if (kind === null) continue;
+      const n = kind === 'json' ? ++jsonN : kind === 'module' ? ++moduleN : ++scriptN;
+      const label = path + '#' + kind + '-' + n;
+      try {
+        if (kind === 'json') JSON.parse(code);
+        else if (kind === 'module') new SourceTextModule(code, { identifier: label });
+        else new Script(code, { filename: label });
+      } catch (error) {
+        errors.push(scriptError(error, path, label, n, kind === 'json' ? 'json' : kind === 'module' ? 'module script' : 'script'));
+      }
+    }
+  }
+  for (const e of errors.slice(0, 8)) console.error(e);
+  if (errors.length > 8) console.error(path + ': ' + (errors.length - 8) + ' more payload errors');
+  if (errors.length) failed = true;
+}
+process.exit(failed ? 1 : 0);
+`;
+
+/** Parse embedded <script>, JSON-script and <style> payloads in changed html files; false on any payload error. */
+export function runHtmlPayloadCheck(root, files, spawn = spawnSync) {
+  const result = spawn(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '-e', HTML_PAYLOAD_CHECK, ...files], {
+    cwd: root, encoding: 'utf8', timeout: 120000,
+  });
+  if (result.status !== 0) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL html payload syntax check');
+    return false;
+  }
+  console.log('PASS html payload syntax check');
+  return true;
+}
+
 /**
  * Scripts under src/raycast and examples/universe-site are authored code no
  * other check reads: eslint.config.js ignores both trees (each owns its
@@ -1653,6 +1803,16 @@ function main() {
     console.log('PASS patch syntax check skipped: no patch or diff change');
   } else if (!runPatchSyntaxCheck(root, selection.patchFiles)) {
     process.exitCode = 1;
+  }
+  if (selection.htmlFiles.length === 0) {
+    console.log('PASS html payload syntax check skipped: no html change');
+  } else {
+    const html = htmlPayloadPreflight(root);
+    if (!html.ok) {
+      console.log(`SKIP html payload syntax check: ${html.reason}`);
+    } else if (!runHtmlPayloadCheck(root, selection.htmlFiles)) {
+      process.exitCode = 1;
+    }
   }
   if (conflictFiles.length === 0) {
     console.log('PASS conflict marker check skipped: no changed file to scan');

@@ -76,7 +76,7 @@ Outside contributors and their agents follow the same path as the fleet: one foc
 - [Full copy-paste reference](llms-full.txt): Install, JSON commands, and MCP setup for Claude, Cursor, and Codex.
 - [Fleet MCP onramp](FLEET-MCP-ONRAMP.md): Read-only fleet MCP server. Add the stdio entry to a client config.
 - [Companions](COMPANIONS.md): Phantom Secrets, Locus, and Lexicon are installed separately. They are not bundled.
-- [Agent toolchain](AGENT-TOOLCHAIN.md): Companion MCP servers declared for agents working in this repo.
+- [Agent toolchain](AGENT-TOOLCHAIN.md): Companion MCP servers declared for agents working in this repo; all optional for outside contributors.
 - [Agent-native quickstart](AGENT-NATIVE-QUICKSTART.md): Use the desktop `/verse/` console as the visibility surface.
 - [Plugins](PLUGINS.md): Extend Phantom without forking.
 

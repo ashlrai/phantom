@@ -136,6 +136,11 @@ with a randomized holdout, not with hit counts:
 * `phm improve lessons [--json]` compares the landed rate (merged and not
   reverted) with and without lessons, overall and per note, with a 95%
   interval. Below three finished runs in either arm the effect is unknown.
+  The same read is joined into the Lessons view state (`buildLessonsState`)
+  at read time — per note on each approved note and as an all-notes summary
+  on the Approved knowledge card — so the causal verdict sits next to the
+  decision it informs; a degraded task store or ledger withholds it rather
+  than reporting a verdict.
 
 ### Nightly ONE-TEAM proposals
 

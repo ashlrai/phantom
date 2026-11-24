@@ -132,9 +132,12 @@ phm channels status --json
 `phm comms setup-telegram` still discovers the chat id. `status` reports each
 channel's `configured`/`credential`/`paired` state plus `received`,
 `pendingOutbound`, and `lastSeenAt` — measured numbers, or `"unknown"` when a
-source cannot be read. `cli`, `desktop`, and `page` need no setup and always
-report ready; `mobile` needs the `~/.ashlr/verse-remote.json` gateway file
-([REMOTE-PHONE.md](REMOTE-PHONE.md)).
+source cannot be read. Pairing stores follow the same rule: a missing
+`queue/telegram-pair.json` or `queue/email-paired.json` is a measured
+unpaired/zero, while an unreadable or malformed record reports `"unknown"` —
+never a guessed "not paired". `cli`, `desktop`, and `page` need no setup and
+always report ready; `mobile` needs the `~/.ashlr/verse-remote.json` gateway
+file ([REMOTE-PHONE.md](REMOTE-PHONE.md)).
 
 ## Where to watch it
 
@@ -215,7 +218,7 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 
 ## Unified inbox
 
-`phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--json]`
+`phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]`
 ([`unified-inbox.ts`](../src/core/comms/unified-inbox.ts)) is the read-only
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
@@ -260,7 +263,10 @@ live `worker-handoff` envelopes (`isWorkerHandoffBody`, the exact contract
 until its TTL ends or the addressee answers it, claims are evidence only,
 never a gate; an assignment the recipient already answered drops out once a
 live reply routed recipient -> sender cites the handoff id through
-`inReplyTo`/`replyTo`, the same durable evidence `agents conversations`
+`inReplyTo`/`replyTo` — resolved through the identity registry, so any
+label of the two identities (or a member of the addressed channel) counts,
+with an unreadable registry keeping literal-label matching —
+the same durable evidence `agents conversations`
 credits when it marks the thread answered), and
 open agent-bus v2 work-feed jobs (queued or rescheduled
 `work.post` announcements with at least one claim key not fully held, plus
@@ -300,8 +306,9 @@ EVERY peer (`phm bus thread`/`task`/`board`,
 [docs/BUS-THREADS.md](BUS-THREADS.md)): the fleet-wide
 `BusBoard.pendingAll` digest — the same locked snapshot and queue read
 `pendingFor` serves per label set, where `work mine`'s board section still
-needs the agent's labels ahead of time and `phm bus board pending` takes
-one `--peer` at a time — lists every unacknowledged delivery (board mail
+needs the agent's labels ahead of time and `phm bus board pending` reads
+one `--peer`'s view or, with `--all`, this same fleet-wide digest — lists
+every unacknowledged delivery (board mail
 awaiting `thread ack`; the wire TTL bounds live observers only, so `since`
 is the delivery's recorded `createdAt` and `expiresAt` stays null) and
 every task whose observed hold is not `held` — `open` is claimable work,
@@ -418,9 +425,14 @@ seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job) or a
 peer-dispatch receipt's job —
 and `--since <15m|2h|1d|ISO>` only items whose recorded `since` appearance
 time reaches the cutoff, the same inclusive `>=` match every bus read
-`--since` applies; an item whose store keeps no timestamp (`since` null) or
+`--since` applies; `--before <15m|2h|1d|ISO>` is the exclusive upper bound
+keeping only items whose recorded appearance time is strictly before its
+cutoff, the same `<` match every bus read `--before` applies — the two
+compose into one `[since, before)` window and an item exactly on either
+boundary stays out of the excluded side; an item whose store keeps no
+timestamp (`since` null) or
 whose recorded time cannot be parsed never matches, so unknown never counts
-as new; and `--contains <text>` only items whose scrubbed `title` or
+as new or old; and `--contains <text>` only items whose scrubbed `title` or
 `detail` carries the text as a case-insensitive substring with whitespace
 collapsed — the same text the row shows, so a match is always visible in
 the row it selects, while the `act` deep links (commands, never item
@@ -432,7 +444,7 @@ could not be read, never a fabricated 0 — a filtered view never
 reports a busy or degraded source as empty. `GET /api/verse/comms/inbox` —
 the desktop and agent read of the same report — accepts the same dimensions
 as query parameters (`source`, `kind`, `severity`, `blocking=true|false`,
-`job`, `since`, `contains`, each at most once, plus `limit` 1–200 default
+`job`, `since`, `before`, `contains`, each at most once, plus `limit` 1–200 default
 50), validated by `parseUnifiedInboxQuery` — the same value rules `phm
 comms inbox` and `fleet_comms_inbox` apply — and echoes the applied
 `filter` on the response exactly like

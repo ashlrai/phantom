@@ -100,8 +100,8 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // in aggregate. jobs.jsonl `session_handoff_advisory` rows — dispatchd's
 // session-failover.v1 provider-wall receipts (rate-limit verdicts land
 // here through metric(); the producer's quota-exhausted verdicts land in
-// work-market.jsonl through market_metric(), where the same decision's
-// rejection evidence already folds through the route_decision joins) —
+// work-market.jsonl through market_metric(), where the read joins them
+// back newest-ts-wins against the standing jobs-ledger advisory) —
 // fold as
 // handoff_trigger/handoff_lane/handoff_target: the fleet's recorded
 // verdict that a run attempt died on a usage-limit wall or that a
@@ -793,12 +793,20 @@ export interface RouterOutcome {
    * produce nothing publishable; and `quota-exhausted`, the
    * pending-job verdict dispatchd writes through `market_metric()` to
    * metrics/work-market.jsonl when the job's lane measured zero quota,
-   * carrying the market's chosen lane as `target` — that market-side
-   * copy is a different ledger's row (the same decision's rejection
-   * evidence already folds through the route_decision joins), while
-   * this fold keeps the producer's full vocabulary so a
-   * quota-exhausted row that lands in the jobs window still joins
-   * under the same rules. `handoff_trigger` joins only in the producer's closed
+   * carrying the market's chosen lane as `target`. That market-side
+   * copy lives in a different ledger, so `readRouterOutcomes` joins it
+   * back under the same `market_state` health as the route_decision
+   * verdicts: `foldMarketHandoffAdvisories` collapses the market
+   * tail's advisory rows to each job's newest recorded verdict, and a
+   * market advisory supersedes the jobs-ledger triple only when its
+   * recorded `ts` is strictly newer than the standing jobs-ledger
+   * advisory's — no jobs advisory means the market verdict fills the
+   * triple, an unorderable jobs advisory (no parseable `ts`) leaves
+   * the jobs verdict standing, and market rows naming jobs outside
+   * the jobs window join nothing. This fold keeps the producer's
+   * full vocabulary so a quota-exhausted row that lands in the jobs
+   * window still joins under the same rules. `handoff_trigger` joins
+   * only in the producer's closed
    * vocabulary (`rate-limit`, `quota-exhausted`); `handoff_lane` the
    * advisory's lane in the bounded lane-id shape and `handoff_target`
    * its target lane when one was recorded (the market's chosen lane
@@ -1430,6 +1438,30 @@ const HANDOFF_EVENT = 'session_handoff_advisory';
 const HANDOFF_TRIGGERS: ReadonlySet<string> = new Set(['rate-limit', 'quota-exhausted']);
 
 /**
+ * One validated session-handoff advisory row's recorded verdict. The
+ * producer's closed trigger vocabulary gates the whole row — a
+ * malformed trigger skips it entirely — while lane and target join
+ * independently in the bounded lane-id shape, so a malformed value
+ * drops to null rather than discarding the recorded trigger. Shared
+ * by the jobs-ledger fold, the market-ledger advisory fold and the
+ * jobs-side ordering scan so all three apply the producer's contract
+ * identically.
+ */
+const handoffAdvisory = (r: Row): { trigger: string; lane: string | null; target: string | null } | null => {
+  if (r['schema'] !== HANDOFF_SCHEMA) return null;
+  if (str(r, ...EVENT_NAME_KEYS)?.toLowerCase() !== HANDOFF_EVENT) return null;
+  const trigger = str(r, 'trigger');
+  if (trigger === null || !HANDOFF_TRIGGERS.has(trigger)) return null;
+  const lane = str(r, 'lane');
+  const target = str(r, 'target');
+  return {
+    trigger,
+    lane: lane !== null && LANE_BLOCKED_HINT.test(lane) ? lane : null,
+    target: target !== null && LANE_BLOCKED_HINT.test(target) ? target : null,
+  };
+};
+
+/**
  * The autobackoff lane-hold receipt's event name and the producer's
  * pattern-id tables, mirrored from contrib/mac/dispatchd.py: the
  * usage/quota scanner's `AB_RX` ids classify `usage-limit` walls and
@@ -2032,16 +2064,11 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     // independently in the bounded lane-id shape, so a malformed value
     // drops to null rather than skipping the recorded trigger, and a
     // malformed trigger skips the row entirely — never recorded raw.
-    if (r['schema'] === HANDOFF_SCHEMA &&
-        str(r, ...EVENT_NAME_KEYS)?.toLowerCase() === HANDOFF_EVENT) {
-      const trigger = str(r, 'trigger');
-      if (trigger !== null && HANDOFF_TRIGGERS.has(trigger)) {
-        const lane = str(r, 'lane');
-        const target = str(r, 'target');
-        o.handoff_trigger = trigger;
-        o.handoff_lane = lane !== null && LANE_BLOCKED_HINT.test(lane) ? lane : null;
-        o.handoff_target = target !== null && LANE_BLOCKED_HINT.test(target) ? target : null;
-      }
+    const advisory = handoffAdvisory(r);
+    if (advisory !== null) {
+      o.handoff_trigger = advisory.trigger;
+      o.handoff_lane = advisory.lane;
+      o.handoff_target = advisory.target;
     }
     // The autobackoff lane-hold receipt is the fleet's confirmed
     // provider-wall verdict for the job — the usage/quota and auth
@@ -2370,6 +2397,95 @@ export function foldRouteDecisions(text: string): Map<string, MarketRouteDecisio
     });
   }
   return new Map([...latest].map(([job, entry]) => [job, entry.decision]));
+}
+
+/**
+ * One job's newest recorded market-side session-handoff advisory —
+ * dispatchd's `quota-exhausted` verdicts, which `market_metric()`
+ * appends to work-market.jsonl beside the route decisions (the
+ * rate-limit verdicts take the jobs.jsonl `metric()` path instead).
+ * `ts` is the advisory row's recorded epoch-seconds timestamp,
+ * carried only so the read can order it against the jobs-ledger
+ * advisory's own timestamp — it never becomes an outcome field.
+ */
+export interface MarketHandoffAdvisory {
+  trigger: string;
+  lane: string | null;
+  target: string | null;
+  ts: number;
+}
+
+/**
+ * Folds work-market.jsonl `session_handoff_advisory` rows into each
+ * job's newest recorded advisory verdict. The dispatcher re-evaluates
+ * every waiting job's quota each tick, so rows collapse to the newest
+ * timestamp per job under the same latest-decision rule
+ * foldRouteDecisions applies. Row recognition, trigger vocabulary and
+ * lane/target bounding are the producer contract `handoffAdvisory`
+ * mirrors — shared with the jobs-ledger fold so the two ledgers can
+ * never disagree on what counts as a recorded advisory. Rows with a
+ * missing or non-finite `ts`, a wrong schema/event, an out-of-vocabulary
+ * trigger, or a malformed job id are skipped, never guessed; a job
+ * absent from the map keeps whatever the jobs-ledger fold recorded.
+ */
+export function foldMarketHandoffAdvisories(text: string): Map<string, MarketHandoffAdvisory> {
+  const latest = new Map<string, { ts: number; advisory: MarketHandoffAdvisory }>();
+  for (const line of text.split('\n')) {
+    // Cheap prefilter: the advisory value string appears under whichever
+    // event-alias key the row carries.
+    if (!line.includes('"session_handoff_advisory"')) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const row = value as Row;
+    const job = row['job'];
+    if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
+    const ts = row['ts'];
+    if (typeof ts !== 'number' || !Number.isFinite(ts)) continue;
+    const advisory = handoffAdvisory(row);
+    if (advisory === null) continue;
+    const prev = latest.get(job);
+    if (prev !== undefined && prev.ts >= ts) continue;
+    latest.set(job, { ts, advisory: { ...advisory, ts } });
+  }
+  return new Map([...latest].map(([job, entry]) => [job, entry.advisory]));
+}
+
+/**
+ * The parseable timestamp of each job's standing jobs-ledger
+ * session-handoff advisory — the last recognized advisory row in
+ * append order, the same row the fold's wholesale-replace rule keeps,
+ * with its `ts` read through the shared ledger timestamp keys. The
+ * market-side advisory join orders against this: a market advisory
+ * supersedes the jobs-ledger triple only when its recorded ts is
+ * strictly newer. A job whose standing advisory carries no parseable
+ * timestamp maps to null — ordering evidence that does not exist —
+ * and the jobs-ledger verdict then stands rather than a guessed
+ * ordering. A job absent from the map recorded no advisory at all.
+ */
+function latestJobsHandoffAdvisoryMs(text: string): Map<string, number | null> {
+  const latest = new Map<string, number | null>();
+  for (const line of text.split('\n')) {
+    if (!line.includes('"session_handoff_advisory"')) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const row = value as Row;
+    if (handoffAdvisory(row) === null) continue;
+    const job = str(row, 'job', 'job_id', 'jobId', 'id');
+    if (job === null) continue;
+    const at = Date.parse(str(row, ...LEDGER_TS_KEYS) ?? '');
+    latest.set(job, Number.isFinite(at) ? at : null);
+  }
+  return latest;
 }
 
 /**
@@ -3087,7 +3203,16 @@ function unionRevertKeys(authority: ReadonlySet<string> | undefined, scan: Reado
  * market_rejected verdict fields under the same market_state health
  * and newest-decision rule
  * work_class follows — decision rows naming jobs outside the jobs
- * window never create outcomes. The merge-events tail folds through
+ * window never create outcomes. The market ledger's
+ * session_handoff_advisory rows join the same way through
+ * `foldMarketHandoffAdvisories`: each job's newest recorded advisory
+ * supersedes the jobs-ledger handoff_trigger/handoff_lane/
+ * handoff_target triple only when its recorded `ts` is strictly newer
+ * than the standing jobs-ledger advisory's parseable timestamp — a
+ * market advisory fills the triple when no jobs advisory exists, an
+ * unorderable jobs advisory leaves the jobs verdict standing, and
+ * advisory rows naming jobs outside the jobs window join nothing.
+ * The merge-events tail folds through
  * `foldMergeEvents` into per-PR `owner/repo#n` evidence and joins each
  * outcome's `merge_queue` through the job's newest unambiguous
  * canonical PR claim under the same claim rule the authority revert
@@ -3308,14 +3433,32 @@ export async function readRouterOutcomes(opts: {
   }
   if (marketRead.state === 'read') {
     const decisions = foldRouteDecisions(marketRead.text);
+    const advisories = foldMarketHandoffAdvisories(marketRead.text);
+    const jobsAdvisoryAt = latestJobsHandoffAdvisoryMs(read.text);
     for (const o of folded.outcomes) {
       const decision = decisions.get(o.job_id);
-      if (decision === undefined) continue;
-      o.market_lane = decision.lane;
-      o.market_preferred = decision.preferred;
-      o.market_override = decision.override;
-      o.market_reasons = decision.reasons;
-      o.market_rejected = decision.rejected;
+      if (decision !== undefined) {
+        o.market_lane = decision.lane;
+        o.market_preferred = decision.preferred;
+        o.market_override = decision.override;
+        o.market_reasons = decision.reasons;
+        o.market_rejected = decision.rejected;
+      }
+      // The market-side session-handoff advisory is the same recorded
+      // verdict stream's quota-exhausted copy: it supersedes the
+      // jobs-ledger triple only when its recorded ts is strictly newer
+      // than the standing jobs-ledger advisory's — a market advisory
+      // for a job with no jobs-ledger advisory fills the triple, one
+      // that cannot be ordered against a standing jobs verdict (no
+      // parseable jobs ts) leaves the jobs verdict standing, and rows
+      // naming jobs outside the jobs window join nothing.
+      const advisory = advisories.get(o.job_id);
+      if (advisory === undefined) continue;
+      const jobsAt = jobsAdvisoryAt.get(o.job_id);
+      if (jobsAt === null || (jobsAt !== undefined && advisory.ts * 1000 <= jobsAt)) continue;
+      o.handoff_trigger = advisory.trigger;
+      o.handoff_lane = advisory.lane;
+      o.handoff_target = advisory.target;
     }
   }
   const outcomes = opts.lane === undefined ? folded.outcomes : folded.outcomes.filter(o => o.lane === opts.lane);
