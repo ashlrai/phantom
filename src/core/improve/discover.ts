@@ -395,6 +395,7 @@ import { incidentGateBacklogItems } from './incident-gate-backlog.js';
 import { jevBacklogItems } from './jev-backlog.js';
 import { worktreeReapBacklogItems } from './worktree-reap-backlog.js';
 import { gapProposalBacklogItems } from './gap-proposal-backlog.js';
+import { recutLoopBacklogItems } from './recut-loop-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -912,6 +913,29 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // only the fleet's own repository inherits the items since the
   // proposer and its dedupe are this install's machinery.
   items.push(...await gapProposalBacklogItems({ repo }));
+
+  // Merge-bottleneck recut-loop journals: the standing recut loop's own
+  // records — PR numbers it keeps publishing recut jobs for across
+  // distinct UTC days inside the window (every repeat means the conflict
+  // regenerated or earlier recuts never held, each burning a launch slot),
+  // and expired pre-publication reservations that never produced a
+  // matching published-job row (failed publishes, dead ticks or lost
+  // ledger appends the ledger-keyed guards cannot see) — become backlog
+  // items too. Until now the journals' only readers were the in-tick
+  // guards (the 24 h same-head window, the in-flight scan, the
+  // empty-yield streak, the caps) and the last-tick outcome kept in
+  // module state for the health endpoint and Verse model, so recurring
+  // re-cuts and unverifiable publishes never became work. Same bounded
+  // tail reads; a PR emits only at the recurring bars of recorded writes
+  // across distinct UTC days, the reservation signal emits only while
+  // the write tail is whole (a truncated write journal could hide the
+  // matching row and mint false orphans) and only counts expired
+  // leases, the jobs-ledger join degrades to unknown rather than
+  // suppressing the journal evidence or zero-filling it, truncated
+  // tails are stated as lower bounds, and only the fleet's own
+  // repository inherits the items since the loop is hardcoded to this
+  // install's repository.
+  items.push(...await recutLoopBacklogItems({ repo }));
   return { items, errors };
 }
 
