@@ -214,6 +214,39 @@ describe('Comms role and triage', () => {
     expect(calls).toHaveLength(1);
   });
 
+  it('a send-log store failure cannot rewrite a completed send into a resend', async () => {
+    const runsDir = temp();
+    const message = { id: 'person-1', transport: 'email' as const, from: 'ada@example.com', subject: 'Question', body: 'Can you look?' };
+    await writeInbox(runsDir, [message]);
+    // A symlinked send log refuses the audit append while the draft, inbox
+    // and archive stores stay writable.
+    symlinkSync(join(runsDir, 'send-log-target'), join(runsDir, 'comms-agent', 'send-log.jsonl'));
+    const calls: string[] = [];
+    const options = {
+      runsDir,
+      lanes: [],
+      teamIdentities: [],
+      approvalsSource: 'injected' as const,
+      approvals: [{ transport: 'email' as const, recipient: 'ada@example.com' }],
+      kill: () => 'inactive' as const,
+      paused: () => false,
+      deliver: async () => { calls.push('sent'); return { status: 'sent' as const, reason: 'accepted by adapter' }; },
+    };
+    const first = await runCommsAgent(options);
+    expect(first.sends).toEqual([expect.objectContaining({ status: 'sent' })]);
+    expect(calls).toHaveLength(1);
+    // The reply still resolves: the sent mark landed before the refused audit append.
+    expect((await readInbox(runsDir)).messages).toEqual([]);
+    expect((await listDrafts(runsDir)).some(draft => draft.status === 'sent')).toBe(true);
+    await expect(readSendLog(runsDir)).rejects.toThrow('Refusing a symlink.');
+    // A re-delivered copy resolves on the sent mark — the broken audit log never resends.
+    await writeInbox(runsDir, [message]);
+    const second = await runCommsAgent(options);
+    expect(second.sends).toEqual([expect.objectContaining({ status: 'sent', reason: expect.stringContaining('already delivered') })]);
+    expect(calls).toHaveLength(1);
+    expect((await readInbox(runsDir)).messages).toEqual([]);
+  });
+
   it('keeps an unanswered message pending until its reply is delivered', async () => {
     const runsDir = temp();
     await writeInbox(runsDir, [
