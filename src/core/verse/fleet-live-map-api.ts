@@ -7,9 +7,11 @@
  * and callers that arrive while a build is running share it, so the map costs
  * at most one fleet read per 5 s however many panes or agents poll it.
  *
- * GET /api/verse/fleet/control/map-edges[?since=10m&before=1h] is `phm map edges --json`
- * (fleet.map-edges.v1): who messaged whom, for the map's message lines. The
- * default window is throttled the same way; 503 carries the typed "unknown" body.
+ * GET /api/verse/fleet/control/map-edges[?since=10m&before=1h&job=RQ-1&…] is `phm map edges --json`
+ * (fleet.map-edges.v1): who messaged whom, for the map's message lines. Every
+ * `phm messages` filter is a param of the same name (camelCase where the flag
+ * is dashed); the bare read's default window is throttled the same way and
+ * 503 carries the typed "unknown" body.
  *
  * GET /api/verse/fleet/control/agent-messages[?since=1h&before=2h&limit=50&kind=ask&from=claude] is
  * `phm agents messages --json` (agents.messages.v1): the recent messages with
@@ -27,7 +29,7 @@
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { buildFleetLiveMap, LIVE_MAP_WINDOW_MINUTES, type FleetLiveMap } from '../fleet/live-map.js';
-import { MAP_EDGES_DEFAULT_SINCE, readMapEdges, type MapEdges } from '../fleet/map-edges.js';
+import { MAP_EDGES_DEFAULT_SINCE, MAP_EDGES_QUERY_KEYS, readMapEdges, type MapEdgesFlags } from '../fleet/map-edges.js';
 import { readAgentsMessages } from '../fleet/agents-messages.js';
 import { parseSince } from '../fleet/agent-messages.js';
 import { readAgentConversations } from '../fleet/agent-conversations.js';
@@ -78,9 +80,9 @@ export function throttledLiveMap<T = FleetLiveMap>(read: () => Promise<T>, clock
 }
 
 export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = throttledLiveMap(() => readFleetLiveMap()),
-  edges: (since: string, options?: { before?: string }) => MapEdges | null = readMapEdges, messages: typeof readAgentsMessages = readAgentsMessages,
+  edges: typeof readMapEdges = readMapEdges, messages: typeof readAgentsMessages = readAgentsMessages,
   conversations: typeof readAgentConversations = readAgentConversations, replay: typeof readMapReplay = readMapReplay): ApiModule {
-  const defaultEdges = throttledLiveMap(async () => edges(MAP_EDGES_DEFAULT_SINCE));
+  const defaultEdges = throttledLiveMap(async () => edges({ since: MAP_EDGES_DEFAULT_SINCE }));
   return async (ctx, req, res, path, method) => {
     if (path !== LIVE_MAP_PATH && path !== MAP_EDGES_PATH && path !== AGENT_MESSAGES_PATH && path !== AGENT_CONVERSATIONS_PATH && path !== MAP_REPLAY_PATH) return false;
     if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
@@ -150,15 +152,27 @@ export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = thrott
       return true;
     }
     if (path === MAP_EDGES_PATH) {
-      if ([...params.keys()].some(key => key !== 'since' && key !== 'before') || params.getAll('since').length > 1 || params.getAll('before').length > 1) {
-        sendJson(res, 400, { error: 'Use since and before only, once each.' }); return true;
+      // The same filter vocabulary `phm map edges` and `phm messages` share;
+      // dashed flags arrive camelCase, each param once.
+      const keys: readonly string[] = MAP_EDGES_QUERY_KEYS;
+      if ([...params.keys()].some(key => !keys.includes(key)) || keys.some(key => params.getAll(key).length > 1)) {
+        sendJson(res, 400, { error: `Use each filter at most once: ${keys.join(', ')}.` }); return true;
       }
-      const rawBefore = params.get('before');
-      if (rawBefore !== null && parseSince(rawBefore) === null) { sendJson(res, 400, { error: 'before takes 10m, 2h, 1d, epoch ms or an ISO time.' }); return true; }
       try {
-        const since = params.get('since'), result = since === null && rawBefore === null ? await defaultEdges() : edges(since ?? MAP_EDGES_DEFAULT_SINCE, { before: rawBefore ?? undefined });
-        if (!result) sendJson(res, 400, { error: 'since takes 10m, 2h, 1d, epoch ms or an ISO time.' });
-        else sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
+        if (params.size === 0) {
+          const read = await defaultEdges();
+          if (!read.ok) sendJson(res, 400, { error: read.error });
+          else sendJson(res, read.result.source === 'unavailable' ? 503 : 200, read.result);
+          return true;
+        }
+        const input: MapEdgesFlags = {};
+        for (const key of keys) {
+          const value = params.get(key);
+          if (value !== null) (input as Record<string, string>)[key] = value;
+        }
+        const read = edges(input);
+        if (!read.ok) sendJson(res, 400, { error: read.error });
+        else sendJson(res, read.result.source === 'unavailable' ? 503 : 200, read.result);
       } catch { sendJson(res, 503, { error: 'Map edges unavailable.' }); }
       return true;
     }

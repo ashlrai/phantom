@@ -172,7 +172,7 @@ describe('phm agents messages', () => {
 
   it('the API serves the same read and refuses unknown params', async () => {
     const root = store(chat);
-    const api = createFleetLiveMapApi(async () => { throw new Error('unused'); }, () => null, input => readAgentsMessages(input, { root, now: () => NOW }));
+    const api = createFleetLiveMapApi(async () => { throw new Error('unused'); }, () => ({ ok: false as const, error: 'unused' }), input => readAgentsMessages(input, { root, now: () => NOW }));
     const call = async (url: string) => {
       let status = 0, body = '';
       const res = { writeHead: (code: number) => { status = code; return res; }, setHeader: () => res, end: (text?: string) => { body = text ?? ''; }, statusCode: 0 };

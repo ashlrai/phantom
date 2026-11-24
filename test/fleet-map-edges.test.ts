@@ -6,7 +6,7 @@ import { cmdMap } from '../src/cli/map.js';
 import { parseAgentMessagesQuery, readAgentMessages } from '../src/core/fleet/agent-messages.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { projectFleetEdges } from '../src/core/fleet/fleet-edges.js';
-import { buildMapEdges, formatMapEdgesText, readMapEdges, type MapEdges } from '../src/core/fleet/map-edges.js';
+import { buildMapEdges, formatMapEdgesText, readMapEdges, type MapEdges, type MapEdgesFlags } from '../src/core/fleet/map-edges.js';
 import { createFleetLiveMapApi, MAP_EDGES_PATH } from '../src/core/verse/fleet-live-map-api.js';
 
 const T0 = Date.UTC(2026, 10, 18, 12, 0, 0), NOW = T0 + 60_000;
@@ -18,7 +18,8 @@ function store(messages: [at: number, from: string, to: string, text: string][] 
     { root, now: () => at }).status).toBe('posted'));
   return root;
 }
-const read = (root: string, since?: string, before?: string) => readMapEdges(since, { root, now: () => NOW, before })!;
+const read = (root: string, since?: string, before?: string, filters: Omit<MapEdgesFlags, 'since' | 'before'> = {}) =>
+  readMapEdges({ ...filters, ...(since === undefined ? {} : { since }), ...(before === undefined ? {} : { before }) }, { root, now: () => NOW }).result;
 const chat: Parameters<typeof store>[0] = [
   [T0, 'leader', 'claude', 'please look at the build'], [T0 + 1_000, 'claude', 'leader', 'on it'], [T0 + 2_000, 'leader', 'claude', 'thanks, next the docs']];
 const fan: Parameters<typeof store>[0] = ['RQ-ONE', 'RQ-TWO', 'RQ-THREE', 'RQ-FOUR', 'RQ-FIVE'].map((job, i) => [T0 + i * 1_000, 'claude', job, `start ${job}`]);
@@ -48,8 +49,8 @@ describe('phm map edges', () => {
       '  leader (leader) -> claude (lane): 2, last 12:00:02Z "thanks, next the docs"', '  claude (lane) -> leader (leader): 1, last 12:00:01Z "on it"',
       'By role: leader: leader · lane: claude · worker: none · unknown: none']);
     // --since narrows the window, and the pair read behind the edge click returns that talk only.
-    expect(readMapEdges(String(T0 + 1_500), { root, now: () => NOW })!.edges!.map(edge => [edge.id, edge.count])).toEqual([['leader->claude', 1]]);
-    expect(readMapEdges('soon', { root })).toBeNull();
+    expect(readMapEdges({ since: String(T0 + 1_500) }, { root, now: () => NOW }).result.edges!.map(edge => [edge.id, edge.count])).toEqual([['leader->claude', 1]]);
+    expect(readMapEdges({ since: 'soon' }, { root })).toEqual({ ok: false, error: '--since takes 10m, 2h, 1d, epoch ms or an ISO time.' });
     expect(readAgentMessages({ agent: 'claude', with: 'leader', limit: 20 }, { root, now: () => NOW }).matched).toBe(3);
     expect(readAgentMessages({ agent: 'claude', with: 'devin', limit: 20 }, { root, now: () => NOW }).matched).toBe(0);
     expect(parseAgentMessagesQuery({ agent: 'claude', with: 'leader', limit: '20' })).toEqual({ ok: true, query: { agent: 'claude', with: 'leader', limit: 20 } });
@@ -59,13 +60,49 @@ describe('phm map edges', () => {
   it('--before is an exclusive upper bound: the [since, before) window counts each message once', () => {
     const root = store(chat), at = (ms: number) => new Date(ms).toISOString();
     // chat: leader->claude at T0 and T0+2000, claude->leader at T0+1000.
-    const bounded = (since: string | undefined, before: string | undefined) => readMapEdges(since, { root, now: () => NOW, before });
-    expect(bounded(undefined, at(T0 + 2_000))!.messages).toBe(2);
-    expect(bounded(undefined, at(T0 + 2_001))!.messages).toBe(3);
-    expect(bounded(at(T0 + 500), at(T0 + 1_500))!.edges!.map(edge => [edge.id, edge.count, edge.lastAt]))
+    const bounded = (since: string | undefined, before: string | undefined) => readMapEdges({ ...(since === undefined ? {} : { since }), ...(before === undefined ? {} : { before }) }, { root, now: () => NOW });
+    expect(bounded(undefined, at(T0 + 2_000)).result.messages).toBe(2);
+    expect(bounded(undefined, at(T0 + 2_001)).result.messages).toBe(3);
+    expect(bounded(at(T0 + 500), at(T0 + 1_500)).result.edges!.map(edge => [edge.id, edge.count, edge.lastAt]))
       .toEqual([['claude->leader', 1, '2026-11-18T12:00:01.000Z']]);
-    expect(bounded(at(T0 + 2_500), at(T0 + 1_000))!).toMatchObject({ source: 'available', edges: [], messages: 0 });
-    expect(bounded(undefined, 'soon')).toBeNull();
+    expect(bounded(at(T0 + 2_500), at(T0 + 1_000)).result).toMatchObject({ source: 'available', edges: [], messages: 0 });
+    expect(bounded(undefined, 'soon')).toEqual({ ok: false, error: '--before takes 15m, 2h, 1d, epoch ms or an ISO time.' });
+  });
+
+  it('the shared phm messages filters narrow which messages the edges count', () => {
+    const root = store([...chat, [T0 + 3_000, 'claude', 'codex', 'review the RQ-ONE patch'],
+      [T0 + 4_000, 'codex', 'claude', 'RQ-ONE looks fine'], [T0 + 5_000, 'devin', 'claude', 'unrelated ping?']]);
+    // --from keeps only one sender's traffic: claude's two sends fold into one edge each, newest first.
+    const fromClaude = read(root, undefined, undefined, { from: 'claude' });
+    expect(fromClaude.edges!.map(edge => [edge.id, edge.count])).toEqual([['claude->codex', 1], ['claude->leader', 1]]);
+    expect(fromClaude.messages).toBe(2);
+    // --exclude-from drops that sender's rows while every other sender's stay.
+    const noClaude = read(root, undefined, undefined, { excludeFrom: 'claude' });
+    expect(noClaude.edges!.map(edge => edge.id).sort()).toEqual(['codex->claude', 'devin->claude', 'leader->claude']);
+    // --agent with --with keeps only the pair's two-way talk.
+    const pair = read(root, undefined, undefined, { agent: 'claude', with: 'codex' });
+    expect(pair.edges!.map(edge => [edge.id, edge.count])).toEqual([['codex->claude', 1], ['claude->codex', 1]]);
+    expect(pair.messages).toBe(2);
+    // --contains matches the scrubbed summary the edge's lastSummary shows.
+    const docs = read(root, undefined, undefined, { contains: 'docs' });
+    expect(docs.edges!.map(edge => [edge.id, edge.count])).toEqual([['leader->claude', 1]]);
+    // --job keeps the traffic naming one job: the RQ-ONE exchange plus nothing else.
+    const job = read(root, undefined, undefined, { job: 'RQ-ONE' });
+    expect(job.edges!.map(edge => [edge.id, edge.count])).toEqual([['codex->claude', 1], ['claude->codex', 1]]);
+    expect(job.messages).toBe(2);
+    // --kind ask keeps only messages the shared classifier calls asks.
+    const asks = read(root, undefined, undefined, { kind: 'ask' });
+    expect(asks.edges!.map(edge => [edge.id, edge.count])).toEqual([['devin->claude', 1]]);
+    expect(asks.messages).toBe(1);
+    // --id keeps the one envelope whose wire id matches; every other row drops.
+    const one = read(root, undefined, undefined, { id: 'm3' });
+    expect(one.edges!.map(edge => [edge.id, edge.count])).toEqual([['claude->codex', 1]]);
+    expect(one.messages).toBe(1);
+    // A filter that matches nothing is an empty page, never an error.
+    expect(read(root, undefined, undefined, { from: 'nobody' })).toMatchObject({ source: 'available', edges: [], messages: 0 });
+    // A malformed filter value is a usage error naming the flag.
+    expect(readMapEdges({ kind: 'bogus' }, { root, now: () => NOW })).toEqual({ ok: false, error: '--kind takes one of ask, reply, handoff, status, blocker.' });
+    expect(readMapEdges({ with: 'codex' }, { root, now: () => NOW })).toEqual({ ok: false, error: '--with takes the other agent and needs --agent.' });
   });
 
   it('one agent fanning out to five: five edges to workers on map job nodes, matching the map line counts', () => {
@@ -101,10 +138,11 @@ describe('phm map edges', () => {
     expect(log.mock.calls[1]![0]).toMatch(/^0 agent messages on 0 lines since /);
     expect(await cmdMap(['edges', '--json', '--before', '1h'])).toBe(0);
     expect(JSON.parse(log.mock.calls[2]![0] as string)).toMatchObject({ schema: 'fleet.map-edges.v1', version: 1, source: 'missing' });
-    for (const bad of [['edges', '--since'], ['edges', '--since', 'soon'], ['edges', '--minutes', '0'], ['edges', '--json', '--json'], ['edges', '--before'], ['edges', '--before', 'soon']]) expect(await cmdMap(bad)).toBe(2);
-    expect(err).toHaveBeenCalledTimes(6);
+    for (const bad of [['edges', '--since'], ['edges', '--since', 'soon'], ['edges', '--minutes', '0'], ['edges', '--json', '--json'], ['edges', '--before'], ['edges', '--before', 'soon'],
+      ['edges', '--kind', 'bogus'], ['edges', '--with', 'leader'], ['edges', '--agent']]) expect(await cmdMap(bad)).toBe(2);
+    expect(err).toHaveBeenCalledTimes(9);
     expect(await cmdMap(['--help'])).toBe(0);
-    expect(log.mock.calls[3]![0]).toContain('phm map edges [--json] [--since <10m|2h|1d|ISO> | --minutes <n>] [--before <10m|2h|1d|ISO|epoch>]');
+    expect(log.mock.calls[3]![0]).toContain('phm map edges [--json] [--since <10m|2h|1d|ISO|epoch> | --minutes <n>] [--before <10m|2h|1d|ISO|epoch>]');
   });
 });
 
@@ -116,10 +154,10 @@ describe('GET /api/verse/fleet/control/map-edges', () => {
     return { handled, status: status || (res as { statusCode: number }).statusCode, body: body ? JSON.parse(body) as Record<string, unknown> : null };
   };
 
-  it('serves the same edges as the CLI, behind a read session, with since and an exclusive before', async () => {
+  it('serves the same edges as the CLI, behind a read session, with the shared filters', async () => {
     const root = store(chat), calls: string[] = [];
     const api = createFleetLiveMapApi(async () => { throw new Error('not the map'); },
-      (since, options) => { calls.push(`${since}${options?.before ? `+${options.before}` : ''}`); return readMapEdges(since, { root, now: () => NOW, ...options }); });
+      (input, options) => { calls.push(JSON.stringify(input)); return readMapEdges(input, { root, now: () => NOW, ...options }); });
     const ok = await send(api, MAP_EDGES_PATH);
     expect(ok).toMatchObject({ handled: true, status: 200 });
     expect(ok.body).toEqual(JSON.parse(JSON.stringify(read(root))));
@@ -127,11 +165,20 @@ describe('GET /api/verse/fleet/control/map-edges', () => {
     // A bare before keeps the default window's floor and adds the exclusive ceiling.
     expect((await send(api, `${MAP_EDGES_PATH}?before=${T0 + 1_500}`)).body).toMatchObject({ messages: 2 });
     expect((await send(api, `${MAP_EDGES_PATH}?since=${T0}&before=${T0 + 1_500}`)).body).toMatchObject({ messages: 2 });
-    // The default window is built once per 5 s; an explicit window is read each time.
+    // The shared phm messages filters narrow the counted edges the same way the CLI does.
+    expect((await send(api, `${MAP_EDGES_PATH}?from=claude`)).body).toMatchObject({ messages: 1 });
+    expect((await send(api, `${MAP_EDGES_PATH}?agent=claude&with=leader`)).body).toMatchObject({ messages: 3 });
+    expect((await send(api, `${MAP_EDGES_PATH}?contains=docs`)).body).toMatchObject({ messages: 1 });
+    expect((await send(api, `${MAP_EDGES_PATH}?id=m1`)).body).toMatchObject({ messages: 1 });
+    // The default window is built once per 5 s; an explicit window or filter is read each time.
     await send(api, MAP_EDGES_PATH);
-    expect(calls).toEqual(['15m', '1d', `15m+${T0 + 1_500}`, `${T0}+${T0 + 1_500}`]);
+    expect(calls).toEqual([JSON.stringify({ since: '15m' }), JSON.stringify({ since: '1d' }), JSON.stringify({ before: String(T0 + 1_500) }),
+      JSON.stringify({ since: String(T0), before: String(T0 + 1_500) }), JSON.stringify({ from: 'claude' }),
+      JSON.stringify({ agent: 'claude', with: 'leader' }), JSON.stringify({ contains: 'docs' }), JSON.stringify({ id: 'm1' })]);
     expect((await send(api, `${MAP_EDGES_PATH}?since=soon`)).status).toBe(400);
     expect((await send(api, `${MAP_EDGES_PATH}?before=soon`)).status).toBe(400);
+    expect((await send(api, `${MAP_EDGES_PATH}?kind=bogus`)).status).toBe(400);
+    expect((await send(api, `${MAP_EDGES_PATH}?with=leader`)).status).toBe(400);
     expect((await send(api, `${MAP_EDGES_PATH}?limit=5`)).status).toBe(400);
     expect((await send(api, `${MAP_EDGES_PATH}?since=1d&since=2d`)).status).toBe(400);
     expect((await send(api, `${MAP_EDGES_PATH}?before=1d&before=2d`)).status).toBe(400);
@@ -141,7 +188,7 @@ describe('GET /api/verse/fleet/control/map-edges', () => {
   });
 
   it('answers 503 with the typed unknown body when the bus cannot be read', async () => {
-    const down = await send(createFleetLiveMapApi(undefined, () => buildMapEdges({ source: 'unavailable', rows: [] }, T0, NOW)), `${MAP_EDGES_PATH}?since=10m`);
+    const down = await send(createFleetLiveMapApi(undefined, () => ({ ok: true as const, result: buildMapEdges({ source: 'unavailable', rows: [] }, T0, NOW) })), `${MAP_EDGES_PATH}?since=10m`);
     expect(down.status).toBe(503);
     expect(down.body).toMatchObject({ schema: 'fleet.map-edges.v1', version: 1, source: 'unavailable', edges: null });
   });
