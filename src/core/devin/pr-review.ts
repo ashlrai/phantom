@@ -7,7 +7,7 @@ import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-sto
 import { untrustedText, type HostMergeDeps } from '../fleet/host-merge.js';
 import { DevinApiError, type DevinPrReview } from './client.js';
 import { connectedClient, devinEnabled, recordDevinApiOutcome } from './service.js';
-import { devinHome } from './store.js';
+import { devinHome, PR_REVIEW_JOURNAL_MAX_BYTES } from './store.js';
 import { DEVIN_KEYCHAIN_ACCOUNT, DEVIN_KEYCHAIN_SERVICE } from './secret.js';
 import { readPublishedDevinWeekly } from './weekly-capacity.js';
 
@@ -44,7 +44,7 @@ function journalRows(path: string): ReviewRow[] {
   try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
   try {
-    if (fstatSync(fd).size > 8 * 1024 * 1024) throw new Error('Review journal exceeds read limit.');
+    if (fstatSync(fd).size > PR_REVIEW_JOURNAL_MAX_BYTES) throw new Error('Review journal exceeds read limit.');
     return readFileSync(fd, 'utf8').split('\n').flatMap(line => {
       try { const r = JSON.parse(line) as ReviewRow; return r.v === 1 && typeof r.key === 'string' && typeof r.day === 'string' ? [r] : []; } catch { return []; }
     });
