@@ -341,7 +341,7 @@ a channel. `phm agents bus channel read <name> [--topic <t>]
 [--job <id>]
 [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
 [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--matched]
-[--after <cursor>] [--limit <n>]` pages the room's posts
+[--after <cursor>] [--limit <n>] [--frame <cli>]` pages the room's posts
 oldest-first — every live envelope addressed to `group:<name>:*` (or one
 `--topic`), minus `group.presence` heartbeats, which are observations with
 their own read, not messages; `--from` narrows by sender through the same
@@ -419,8 +419,13 @@ validation, so an MCP-connected agent reads a room's transcript, its
 presence-free posts, sender handles and live hold/job annotations without
 shelling out to `phm`; it accepts no caller root or path, needs no
 identity or membership, and passes a refused or unavailable page through
-untouched.
-Because channel addresses are bus-group addresses, existing `subscribeGroup`
+untouched. `--frame <cli>` prints the page as the same bounded block the
+inbox `--frame` produces — identical markers, scrub, clip bound and
+held/holder/job bracket evidence for every CLI — with each post's bracket
+naming its `#<channel>:<topic>` so a multi-topic transcript keeps per-topic
+context; it is a CLI-only rendering, so `fleet_bus_channel` takes no
+`frame` argument. Because channel addresses are bus-group addresses,
+existing `subscribeGroup`
 readers see the same posts.
 
 **Label posts.** `phm agents bus post --to <label> --text <text> [--kind
