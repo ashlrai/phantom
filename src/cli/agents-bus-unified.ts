@@ -56,7 +56,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
-ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>]
+ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
@@ -363,7 +363,23 @@ message never lists), the thread sections keep threads whose latest
 message is addressed to the room, and wakes and inbox pass the name to
 their own reads' channel filters; board, channels and seats carry no
 per-item room and stay unfiltered, and every count stays the filtered
-total. work next claims the next claimable
+total. --from on work mine keeps only pending items provably sent by the
+named agent — the same sender rule every bus read's --from applies, so
+"what is pending for me from X" is one filtered digest: feed jobs and
+announced jobs keep announcements whose owner resolves to the ref, next,
+handoffs and mailbox keep envelopes whose from the identity-label
+matcher accepts, claims keep only message claims whose resolved leased
+envelope's from matches (a claim naming no resolved message never
+lists), the thread sections pass the ref into the shared conversations
+read's own from filter, and wakes and inbox pass it to their own reads'
+sender filters; board deliveries keep only posts whose sender label
+matches while board tasks — which record no author — never match, and
+seats and channels carry no per-record sender and stay unfiltered, and
+every count stays the filtered total. --exclude-from inverts the same
+match — a section keeps an item unless its sender evidence resolves to
+the excluded ref, so a sender that cannot be proven excluded is never
+dropped while board tasks stay listed under it; the two compose so a
+sender both included and excluded matches nothing. work next claims the next claimable
 work envelope addressed to the agent — the same kind:'work'/protocol-task
 receipts work mine's next section lists, walked in bus-next order
 (priority band, then cursor) under the same addressed-to rule: any label
@@ -948,13 +964,24 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (channel !== undefined && !agentChannelNameSchema.safeParse(channel).success) {
         throw new UsageError('--channel takes a bus channel name (a-z, 0-9, _ -; 1-32 chars).');
       }
+      const senderArg = (flag: '--from' | '--exclude-from'): string | undefined => {
+        const value = one(flag);
+        if (value !== undefined && !/^[\x21-\x7e]{1,128}(?![\s\S])/.test(value)) {
+          throw new UsageError(`${flag} must be a printable routing label of 1-128 characters.`);
+        }
+        return value;
+      };
+      const from = senderArg('--from');
+      const excludeFrom = senderArg('--exclude-from');
       const result = await readBusWorkMineWithSeats(agent,
         { ...options, ...(job === undefined ? {} : { job }),
           ...(contains === undefined ? {} : { contains }),
           ...(since === undefined ? {} : { since }),
           ...(before === undefined ? {} : { before }),
           ...(priority === undefined ? {} : { priority }),
-          ...(channel === undefined ? {} : { channel }) });
+          ...(channel === undefined ? {} : { channel }),
+          ...(from === undefined ? {} : { from }),
+          ...(excludeFrom === undefined ? {} : { excludeFrom }) });
       if (result.status !== 'ok') {
         out(json ? JSON.stringify(result) : `${result.status}: ${result.reason}`);
         return 2;

@@ -111,6 +111,18 @@ describe('fleet_agent_work argument parsing', () => {
     }
   });
 
+  it('maps the shared sender filters onto the read options', () => {
+    for (const ref of ['ghost', 'agent:ghost', 'agt_123', 'ops-lead']) {
+      expect(parseFleetAgentWorkArgs({ agent: 'a', from: ref })).toEqual({ agent: 'a', from: ref });
+      expect(parseFleetAgentWorkArgs({ agent: 'a', excludeFrom: ref }))
+        .toEqual({ agent: 'a', excludeFrom: ref });
+    }
+    for (const ref of ['has space', 'café', 'x'.repeat(129), '', 5, null, true]) {
+      expect(parseFleetAgentWorkArgs({ agent: 'a', from: ref })).toBeNull();
+      expect(parseFleetAgentWorkArgs({ agent: 'a', excludeFrom: ref })).toBeNull();
+    }
+  });
+
   it('accepts the shared since and before grammar and rejects the rest', () => {
     for (const bound of ['15m', '2h', '1d', '1800000000000', '2026-01-01T00:00:00.000Z']) {
       const parsedSince = parseFleetAgentWorkArgs({ agent: 'a', since: bound });
@@ -141,6 +153,8 @@ describe('fleet_agent_work argument parsing', () => {
       { agent: 'a', priority: 'P9' }, { agent: 'a', priority: 'urgent' }, { agent: 'a', priority: 5 },
       { agent: 'a', channel: 'Eng' }, { agent: 'a', channel: 'has space' },
       { agent: 'a', channel: 'a'.repeat(33) }, { agent: 'a', channel: '' }, { agent: 'a', channel: 5 },
+      { agent: 'a', from: 'has space' }, { agent: 'a', from: '' }, { agent: 'a', from: 5 },
+      { agent: 'a', excludeFrom: 'has space' }, { agent: 'a', excludeFrom: '' }, { agent: 'a', excludeFrom: 5 },
       { agent: 'a', limit: 10 }, { agent: 'a', after: 0 }, { agent: 'a', matched: true },
     ]) expect(parseFleetAgentWorkArgs(bad)).toBeNull();
   });
@@ -221,6 +235,10 @@ describe('fleet_agent_work MCP tool', () => {
       .toMatchObject({ type: 'string', enum: ['P0', 'P1', 'P2', 'P3'] });
     expect(tool?.inputSchema.properties?.['channel'])
       .toMatchObject({ type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$' });
+    expect(tool?.inputSchema.properties?.['from'])
+      .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    expect(tool?.inputSchema.properties?.['excludeFrom'])
+      .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
   });
 
   it.each([
@@ -232,6 +250,8 @@ describe('fleet_agent_work MCP tool', () => {
     [{ agent: 'a', contains: '' }], [{ agent: 'a', contains: 'x'.repeat(513) }],
     [{ agent: 'a', priority: 'P9' }], [{ agent: 'a', priority: 'urgent' }],
     [{ agent: 'a', channel: 'Eng' }], [{ agent: 'a', channel: 'has space' }], [{ agent: 'a', channel: 5 }],
+    [{ agent: 'a', from: 'has space' }], [{ agent: 'a', from: '' }], [{ agent: 'a', from: 5 }],
+    [{ agent: 'a', excludeFrom: 'has space' }], [{ agent: 'a', excludeFrom: '' }], [{ agent: 'a', excludeFrom: 5 }],
     [{ agent: 'a', limit: 10 }], [{ agent: 'a', after: 0 }], [{ agent: 'a', matched: true }],
     [{ agent: 'a', extra: 1 }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
@@ -246,10 +266,10 @@ describe('fleet_agent_work MCP tool', () => {
     const payload = digest({ job: 'RQ-9', contains: 'parser fix' });
     const agentWork = vi.fn(async () => payload);
     const client = await connect({ status: async () => ({}), loop: async () => ({}), agentWork });
-    const { parsed } = await callWork(client, { agent: 'planner', job: 'RQ-9', contains: 'Parser Fix', since: '1800000000000', before: '1900000000000', priority: 'P2', channel: 'eng' });
+    const { parsed } = await callWork(client, { agent: 'planner', job: 'RQ-9', contains: 'Parser Fix', since: '1800000000000', before: '1900000000000', priority: 'P2', channel: 'eng', from: 'ghost', excludeFrom: 'agent:bots' });
     expect(agentWork).toHaveBeenCalledWith(expect.objectContaining({
       agent: 'planner', job: 'RQ-9', contains: 'parser fix', since: 1800000000000, before: 1900000000000,
-      priority: 'P2', channel: 'eng',
+      priority: 'P2', channel: 'eng', from: 'ghost', excludeFrom: 'agent:bots',
     }));
     expect(parsed).toEqual(payload);
   });

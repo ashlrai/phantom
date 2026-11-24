@@ -2888,19 +2888,21 @@ while reuse on another key cannot relocate it. Claims coordinate only and grant
 no execution authority; the token returns only to its acquirer.
 
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
-`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>]`. `readBusWorkMine(agent, options?)`
-(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `contains?`, `since?`, `before?`, `priority?`, `channel?`, `now?: () => number` frozen once
+`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>]`. `readBusWorkMine(agent, options?)`
+(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `contains?`, `since?`, `before?`, `priority?`, `channel?`, `from?`, `excludeFrom?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, job?, contains?, since?, before?, priority?, channel?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
+asOf, job?, contains?, since?, before?, priority?, channel?, from?, excludeFrom?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule, a `job` outside the same rule
 (`invalid-job`), a `contains` outside the shared bounded free-text
 rule every bus `--contains` read applies (`invalid-contains`), a
 `since` or `before` that is not a safe non-negative epoch-ms integer
 (`invalid-since`/`invalid-before`), a `priority` outside the P0..P3 band
-(`invalid-priority`), or a `channel` outside the strict channel-name
-grammar every bus `--channel` read validates (`invalid-channel`).
-`job`, `contains`, `since`/`before` (as ISO), `priority` and `channel` echo the applied
+(`invalid-priority`), a `channel` outside the strict channel-name
+grammar every bus `--channel` read validates (`invalid-channel`), or a
+`from`/`excludeFrom` outside the same printable-label bound every bus
+sender filter shares (`invalid-from`/`invalid-exclude-from`).
+`job`, `contains`, `since`/`before` (as ISO), `priority`, `channel`, `from` and `excludeFrom` echo the applied
 filters and are absent on an
 unfiltered read. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
@@ -3141,11 +3143,11 @@ proven, not fabricated) and an unreadable one reports
 `{status:'unavailable', reason}`.
 `board` is the digest's window into the shared task board
 (`src/core/fleet/bus-board.ts`, the store `phm bus board pending` reads)
-that the unified bus never carried: `BusBoard.pendingFor(labels, now, jobId?, contains?, sinceMs?, beforeMs?)` runs
+that the unified bus never carried: `BusBoard.pendingFor(labels, now, jobId?, contains?, sinceMs?, beforeMs?, sender?)` runs
 the board's own locked snapshot plus one shared-queue claim-index read under
 the union of every label the agent answers to, so an agent on the board no
 longer needs a separate `--peer` read per label. Its fleet-wide form,
-`BusBoard.pendingAll(now?, jobId?, contains?, sinceMs?, beforeMs?)`, takes the same
+`BusBoard.pendingAll(now?, jobId?, contains?, sinceMs?, beforeMs?, sender?)`, takes the same
 optional filters over every thread member as the label set — the digest
 `phm comms inbox`'s board source and `fleet_bus_board` project through the
 shared `readBusBoardPending` read, which reports `missing` for a
@@ -3403,6 +3405,51 @@ predicate. `board`, `channels` and `seats` carry no per-item room in
 their projections and stay unfiltered, like they do under `priority`.
 Every count stays the filtered total, and a row whose room cannot be
 proven never matches.
+
+`options.from` narrows the whole digest to pending items provably sent
+by the named agent — the same sender rule every bus `--from` read
+applies, validated by the printable-label bound and matched through
+`agentRefAddressMatcher` identity-label matching (an unresolvable ref
+or unreadable registry keeps exact-label matching, never widened):
+`jobs`/`announced` keep announcements whose `owner` resolves to the
+ref — the announcer is the sender of a `work.post`, matched by the
+same `busWorkFeedOwnerMatcher` the feed `--owner` filter applies —
+`next`/`handoffs` keep envelopes whose `from` the matcher accepts
+inside the shared pending-work walk, `mailbox` ANDs the `from` match
+into `BusMailbox.pendingFor`'s `match` predicate on the envelope's own
+`from`, `claims` keep only message claims whose resolved leased
+envelope's `from` matches — a claim with no resolved message, a
+scope-key claim or an unresolvable/unreadable lease names no provable
+sender and never lists, the same "unknown stays out" rule `priority`
+applies — `threads`/`awaiting`/`blocked` pass `from` into the shared
+`readAgentConversations` query's own member-message sender filter so a
+thread survives on any member message the matcher accepts, `wakes`
+passes it to `readAgentWakes`' `filter.from` and `inbox` to
+`readAgentInbox`'s `from`, and `board` passes a `BusBoardSenderFilter`
+to `BusBoard.pendingFor`/`pendingAll`'s new trailing `sender` argument
+— deliveries keep only posts whose `sender` peer label the matcher
+accepts while tasks, which record no author, never match under `from`
+and thread rollups keep only while a surviving delivery or task
+remains. `seats` handoff records and `channels` carry no per-record
+sender in their projections and stay unfiltered, like they do under
+`priority`. Every count stays the filtered total, the result echoes
+`from`, and a row whose sender cannot be proven never matches.
+`options.excludeFrom` inverts the same match — a section keeps an item
+unless its sender evidence resolves to the excluded ref, so a sender
+that cannot be proven excluded is never dropped: `jobs`/`announced`
+keep announcements whose `owner` does not resolve to the ref,
+`next`/`handoffs`/`mailbox` keep envelopes whose `from` the matcher
+does not accept for the excluded ref, `claims` keep only resolved
+message claims whose leased envelope's `from` does not match (the same
+"unknown stays out" rule — a claim with no provable sender never
+lists), the thread sections pass `excludeFrom` into the shared
+conversations read, `wakes`/`inbox` pass it to their own reads, and
+`board` deliveries drop posts whose `sender` resolves to the excluded
+ref while board tasks stay listed — nothing proves a task came from
+the excluded sender. The two compose in the same include-then-exclude
+order every bus read applies — a sender both included and excluded
+matches nothing; every count stays the filtered total, and the result
+echoes `excludeFrom`.
 
 ### Unified agent bus (RQ-BUS-UNIFY-1)
 
