@@ -297,7 +297,7 @@ def repair_target(job, repo):
     """Only producer-shaped identities name repair targets; prose is not evidence."""
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", repo): return None
     return re.fullmatch(r"RQ-(FIXUP|REBASE|RECUT)-" + re.escape(repo)
-                        + r"-([1-9][0-9]*)(?:-([0-9a-f]{7}))?", job)
+                        + r"-([1-9][0-9]*)(?:-([0-9a-f]{7}))?", job.removesuffix('-CR1'))
 
 
 def repair_freshness(job, repo, prompt, home, runner=run):
@@ -600,6 +600,42 @@ def classify_empty_failure(empty, exit_code, pool_error=None):
     if pool_error:
         return "provider_" + re.sub(r"[^a-z0-9]+", "_", str(pool_error).lower()).strip("_")[:32]
     return "agent_exit_nonzero" if kind == EMPTY_ERROR else "exit_status_missing"
+
+
+def claude_recoveries(rows, now):
+    """Two measured exit-1 empties on distinct attempts; never infer from prose.
+
+    Unknown/auth/quota failures, clean no-ops, live attempts and published work
+    cannot authorize recovery. A separate attempt id preserves original evidence.
+    """
+    failures, pending, repos, resolved, seen, starts = {}, set(), {}, set(), set(), {}
+    for row in rows:
+        job = row.get('job')
+        if not isinstance(job, str) or not re.fullmatch(r'[A-Za-z0-9._-]{1,90}', job): continue
+        event = row.get('event')
+        if event in ('claim', 'launch'):
+            pending.add(job)
+            repos[job] = row.get('repo')
+            starts[job] = row.get('ts')
+        if event == 'publish' or (event == 'outcome' and row.get('state') == 'MERGED'): resolved.add(job)
+        if event != 'finish' or job not in pending: continue
+        receipt = (job, str(row.get('ts')))
+        if receipt in seen: continue
+        seen.add(receipt)
+        try:
+            at = datetime.fromisoformat(str(row['ts']).replace('Z', '+00:00'))
+            start = datetime.fromisoformat(str(starts[job]).replace('Z', '+00:00'))
+            if not at.tzinfo or not start.tzinfo or at < start: continue
+            pending.discard(job)
+            fresh = at.tzinfo is not None and 0 <= now - at.timestamp() < 86400
+        except (KeyError, ValueError, TypeError): fresh = False
+        if (fresh and row.get('lane') == 'claude' and row.get('empty') is True
+                and type(row.get('exit_code')) is int and row['exit_code'] == 1 and not row.get('pool_error')):
+            evidence = dict(ts=row['ts'], lane='claude', exit_code=1, empty=True, repo=repos.get(job))
+            failures[job] = (failures.get(job, []) + [evidence])[-2:]
+        else: failures.pop(job, None)
+    return {j: ev for j, ev in failures.items() if len(ev) == 2 and j not in pending | resolved
+            and not j.endswith('-CR1') and ev[0]['repo'] == ev[1]['repo']}
 
 
 def launch_hold(state, job, key, now):
