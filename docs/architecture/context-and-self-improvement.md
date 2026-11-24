@@ -111,6 +111,21 @@ A proposal earns credit only from a metric it declares up front:
   else is refused with reasons, and every decision is recorded in the ledger.
   Without `--queue-merge` it only reports the decision. CONSTITUTION.md v3's
   self-improvement section admits exactly this gate and nothing wider.
+* `phm improve observe --repo <dir>` records what happened after the PR:
+  the merge commit once it reaches the default branch, a later
+  default-branch commit that reverts it (git's "This reverts commit" or
+  GitHub's "Reverts owner/repo#n"), and a revert of that revert re-landing
+  the change. A standing revert turns the outcome into a regression, so a
+  change that measured well but did not hold stops earning credit. The
+  cloud scheduler's hourly improve tick runs the same observation
+  automatically (`syncImproveObservations` in
+  `src/core/improve/observe-sync.ts`) against the fleet's enrolled mirrors
+  — the clones under `~/.ashlr/fleet/mirrors` — for every repository the
+  ledger or the cloud task store has candidates for; a repository without
+  a valid mirror keeps its observations unknown, and the pass never
+  creates a mirror. Merged cloud tasks get the same revert check
+  (`outcome.revertedBy`), which is what `phm improve observe` wrote by
+  hand before.
 
 ### Lessons from matched outcomes (`src/core/improve/lesson-trial.ts`)
 
@@ -127,7 +142,8 @@ with a randomized holdout, not with hit counts:
   (`CloudTaskV1.outcome`). A failed read leaves it absent, which is unknown,
   never green.
 * `phm improve observe --repo <dir>` also checks merged cloud tasks for a
-  later default-branch revert and records it (`outcome.revertedBy`).
+  later default-branch revert and records it (`outcome.revertedBy`); the
+  scheduler's observation pass above does the same on its hourly tick.
 * Cloud retros cite that evidence: a PR closed with failing checks becomes a
   lesson candidate naming the checks and `owner/repo#n @sha`; a review that
   asked for changes or a revert is cited as the cause. Candidates still need

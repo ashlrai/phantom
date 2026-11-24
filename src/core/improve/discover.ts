@@ -1158,9 +1158,9 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // now the digest-chained ledger only ever reached `phm improve
   // outcomes` (a report someone had to run), the north-star vision read
   // and the backlog's own area-leverage ranking, so the loop's measured
-  // verdicts never became work even though registration is automated and
-  // measurement, promotion and observation are manual verbs no scheduled
-  // pass runs. Same bounded verified-ledger read and the same scoreOutcomes
+  // verdicts never became work even though registration and post-merge
+  // observation are automated — measurement and promotion remain manual
+  // verbs no scheduled pass runs. Same bounded verified-ledger read and the same scoreOutcomes
   // fold `phm improve outcomes` prints; each signal emits only at the
   // recurring bar of distinct proposals — event-recency signals inside
   // the 7-day window, the measurement stall as a current-state tally past
