@@ -1,3 +1,4 @@
+import { summarizeAdmission } from './admission-summary.js';
 /** Bounded, local-only first read for a leader pass. Unknown readings stay null. */
 import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
@@ -81,7 +82,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     return cache.get(file)!;
   };
   const quiet = async <T>(p: Promise<T>): Promise<T | null> => p.catch(() => null);
-  const [snapshot, tail, pace, guardian, liveText, stopText, ready, hostLoad, log, slotsText, prsText, familyStopText] = await Promise.all([
+  const [snapshot, tail, pace, guardian, liveText, stopText, ready, hostLoad, log, slotsText, prsText, familyStopText, admissionText] = await Promise.all([
     quiet(readChiefOfStaffSnapshot('auto', { runsDir, now: () => new Date(now), read })),
     readTail(join(runsDir, 'metrics/jobs.jsonl'), 8 * 1024 * 1024),
     quiet(readFleetPace({ runsDir, now: () => now })), quiet(readGuardianGlance(runsDir, now)),
@@ -91,6 +92,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     readTail(join(runsDir, 'dispatchd.log'), 256 * 1024),
     quiet(read(join(runsDir, 'queue/slots.json'))), quiet(read(join(runsDir, 'fleet/open-prs.json'))),
     quiet(read(join(runsDir, 'queue/family-stop.tsv'))),
+    quiet(read(join(runsDir, 'queue/admission-ctl.json'))),
   ]);
   for (const [name, state] of Object.entries(snapshot?.sources ?? {})) if (state !== 'unavailable') sourceState(name, state,
     state === 'healthy' ? 'parsed local snapshot' : name === 'queue/status.json' ? 'last_tick missing, invalid or older than 60s'
@@ -183,7 +185,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
       commitsSinceTag: r.mergedCommits, state: r.verdict, reason: r.git?.reason ?? null, source: r.git?.source ?? (r.git ? 'local git' : 'GitHub cache') })),
     schema: 'leader.compact-brief.v1', at: new Date(now).toISOString(), headline, hostLoadWarning,
     state: openPrs !== null || lanes.length || tail || hasPace || guardian?.length ? 'ready' : 'no data', sources,
-    windowHours: 2, emptyWindowHours: 24, lanes,
+    windowHours: 2, emptyWindowHours: 24, lanes, admission: summarizeAdmission(admissionText, log?.text ?? null, now, slots),
     tickWallP95: parseTickCost(log?.text ?? null, now, 2, log?.truncated ?? false).tickWallP95,
     pools: (pace?.pools ?? []).map(p => ({ pool: clean(p.pool), usedPct: p.usedPct, hoursToReset: p.hoursToReset,
       burnPerHour: p.recentPerHour, safeBurn: p.safeBurnPerHour ?? null, verdict: p.verdict === 'stale' || p.verdict === 'spent' || p.verdict === 'free' ? p.line ?? p.verdict : p.verdict ?? 'unknown',
@@ -200,7 +202,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     idleEvidence, whyIdle: idleReasons.map(clean),
   };
   // Drop the lowest-priority rows, explicitly counting omissions, until the entire wire payload fits.
-  const lists = [brief.families, brief.stopped, brief.main, brief.pools, brief.lanes, brief.attention, brief.mergedPrs];
+  const lists = [brief.families, brief.stopped, brief.main, brief.pools, brief.lanes, brief.attention, brief.mergedPrs, brief.admission.perLane];
   while (Buffer.byteLength(JSON.stringify(brief)) >= 8191) {
     const list = lists.find(a => a.length > 1) ?? lists.find(a => a.length);
     if (list) { list.pop(); brief.omitted++; continue; }
@@ -219,7 +221,7 @@ export async function writeCompactBrief(runsDir: string, now = Date.now(), file 
   return brief;
 }
 export function compactBriefLines(b: CompactLeaderBrief): string[] {
-  const lines = [b.headline, ...(b.hostLoadWarning ? [b.hostLoadWarning] : []), `Leader: ${b.state} (${b.at}); lanes: ${b.lanes.length}; pools: ${b.pools.length}`,
+  const lines = [b.headline, ...(b.hostLoadWarning ? [b.hostLoadWarning] : []), b.admission.answer, `Leader: ${b.state} (${b.at}); lanes: ${b.lanes.length}; pools: ${b.pools.length}`,
     ...b.whyIdle,
     ...b.lanes.slice(0, 3 - b.whyIdle.length).map(l => `${l.lane}: ${l.running ?? '?'}/${l.target ?? '?'}, ${l.ghosts ?? '?'} ghosts, ${l.queued ?? '?'} queued, held ${l.held ?? '?'}, empty ${l.emptyRate === null ? '?' : Math.round(l.emptyRate * 100) + '%'}`),
     ...b.pools.slice(0, 2).map(p => `${p.pool}: ${p.usedPct ?? '?'}%, reset ${p.hoursToReset ?? '?'}h, burn ${p.burnPerHour ?? '?'}/h, safe ${p.safeBurn ?? '?'}/h, ${p.verdict}`),

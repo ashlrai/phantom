@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import { settleAdvice } from '../src/core/fleet/settle-advice.js';
+import { summarizeAdmission } from '../src/core/fleet/admission-summary.js';
 import {
   cmdFleetAdmission,
   explainFleetAdmission,
@@ -61,7 +62,7 @@ async function run(contents: unknown, args: string[]) {
   const file = await fixture(contents);
   const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   const code = await cmdFleetAdmission([...args, '--details'], file.reader);
-  expect(file.reader.mock.calls.map(([path]) => path)).toEqual(['queue/status.json', 'queue/admission-ctl.json', 'metrics/fleet-controller.jsonl'].map(path => join(homedir(), '.ashlr-runs', path)));
+  expect(file.reader.mock.calls.map(([path]) => path)).toEqual(['queue/status.json', 'queue/admission-ctl.json', 'metrics/fleet-controller.jsonl', 'dispatchd.log'].map(path => join(homedir(), '.ashlr-runs', path)));
   expect(await readFile(file.path, 'utf8')).toBe(file.text);
   const printed = String(output.mock.calls[0]?.[0] ?? '');
   expect(printed).not.toContain(SECRET);
@@ -209,6 +210,7 @@ describe('ashlr fleet admission', () => {
       status: 'red',
       launchGuard: { state: 'unknown', why: null, settleSeconds: null, load1: null, ownedLoad1: null },
       settleAdvice: settleAdvice(null, Date.now()),
+      admission: summarizeAdmission(null, null, Date.now(), { codex: { target: 4 }, devin: { target: 2 }, held: { target: 2 } }),
       global: { cap: 8, running: 8, load1: 3.25, admit_reason: 'at_cap running 8 >= cap 8', at_cap: true, closed: true, non_cap_closed: false },
       lanes: [
         { lane: 'codex', running: 1, target: 4, queued: 6, held: false, reason: 'blocked by the global cap', status: 'red' },
@@ -224,6 +226,7 @@ describe('ashlr fleet admission', () => {
     }), []);
     expect(code).toBe(0);
     expect(printed).toBe([
+      summarizeAdmission(null, null, Date.now()).answer,
       'Admission: ok',
       'Global cap 8, running 3 (under the cap), load 12.5, admit reason: none',
       'Launch guard: unknown; reason: unknown; settle: unknown seconds; host load: unknown; owned load: unknown.',

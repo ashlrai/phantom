@@ -84,15 +84,21 @@ describe('fleet_agent_conversations argument parsing', () => {
       job: 'RQ-9', waitingOn: 'agent:leader', since: '1800000000000',
       before: '1800000001000', contains: '  Build   OK ',
       inReplyTo: 'env-7', channel: 'dev', priority: 'P0', from: 'agent:bot',
-      excludeFrom: 'agent:spam', limit: 25,
+      excludeFrom: 'agent:spam', with: 'agent:peer', limit: 25,
     });
     expect(parsed).toEqual({
       agent: 'agent:claude', waiting: true, blocked: true, state: 'waiting',
       job: 'RQ-9', waitingOn: 'agent:leader', since: 1800000000000,
       before: 1800000001000, contains: 'build ok',
       inReplyTo: 'env-7', channel: 'dev', priority: 'P0', from: 'agent:bot',
-      excludeFrom: 'agent:spam', limit: 25,
+      excludeFrom: 'agent:spam', with: 'agent:peer', limit: 25,
     });
+  });
+
+  it('refuses with without agent — the same needs-agent rule the CLI flag shares', () => {
+    expect(parseFleetAgentConversationsArgs({ with: 'agent:peer' })).toBeNull();
+    expect(parseFleetAgentConversationsArgs({ agent: 'agent:claude', with: 'agent:peer' }))
+      .toMatchObject({ agent: 'agent:claude', with: 'agent:peer' });
   });
 
   it('treats waiting:false and blocked:false as absent, like the API\'s ?waiting=0', () => {
@@ -147,6 +153,7 @@ describe('fleet_agent_conversations argument parsing', () => {
       { priority: 'P4' }, { priority: 'p0' }, { priority: 0 }, { priority: null },
       { from: 'has space' }, { from: '' }, { from: 5 },
       { excludeFrom: 'has space' }, { excludeFrom: '' }, { excludeFrom: 5 },
+      { with: 'has space' }, { with: '' }, { with: 5 }, { with: 'x'.repeat(129) },
       { limit: 0 }, { limit: 1025 }, { limit: 1.5 }, { limit: '50' },
     ]) expect(parseFleetAgentConversationsArgs(bad)).toBeNull();
   });
@@ -163,13 +170,13 @@ describe('fleet_agent_conversations reader', () => {
       parseFleetAgentConversationsArgs({
         agent: 'agent:claude', waiting: true, blocked: true, state: 'waiting',
         job: 'RQ-9', waitingOn: 'agent:leader', since: '1800000000000',
-        before: '1800000001000', contains: 'Build OK', limit: 10,
+        before: '1800000001000', contains: 'Build OK', with: 'agent:peer', limit: 10,
       })!,
       { read });
     expect(seen).toEqual([{
       agent: 'agent:claude', waitingOnly: true, blockedOnly: true, state: 'waiting',
       job: 'RQ-9', waitingOn: 'agent:leader', since: 1800000000000,
-      before: 1800000001000, contains: 'build ok', limit: 10,
+      before: 1800000001000, contains: 'build ok', with: 'agent:peer', limit: 10,
     }]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',

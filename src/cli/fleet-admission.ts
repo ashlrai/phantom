@@ -1,3 +1,5 @@
+import { readTail } from '../core/metrics/loop-collect.js';
+import { summarizeAdmission } from '../core/fleet/admission-summary.js';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -41,6 +43,7 @@ export interface FleetAdmissionLane {
 }
 
 export interface FleetAdmissionReport {
+  admission?: ReturnType<typeof summarizeAdmission>;
   schema: typeof FLEET_ADMISSION_SCHEMA;
   readOnly: true;
   status: FleetAdmissionStatus;
@@ -175,6 +178,7 @@ function formatFleetAdmission(report: FleetAdmissionReport): string {
   const global = report.global;
   const guard = report.launchGuard, advice = report.settleAdvice;
   const lines = [
+    ...(report.admission ? [report.admission.answer] : []),
     `Admission: ${report.status}`,
     `Global cap ${global.cap}, running ${global.running} (${global.at_cap ? 'at the cap' : 'under the cap'})${global.non_cap_closed ? ', admission closed' : ''}, load ${global.load1}, admit reason: ${global.admit_reason ?? 'none'}`,
     `Launch guard: ${guard.state}; reason: ${guard.why ?? 'unknown'}; settle: ${guard.settleSeconds ?? 'unknown'} seconds; host load: ${guard.load1 ?? 'unknown'}; owned load: ${guard.ownedLoad1 ?? 'unknown'}.`,
@@ -192,7 +196,16 @@ export async function cmdFleetAdmission(
   args: string[],
   reader?: FleetAdmissionReader,
   now = Date.now(),
+  tailReader: typeof readTail = readTail,
 ): Promise<number> {
+  const read = reader ?? (async (path: string) => {
+    if (path.endsWith('dispatchd.log')) {
+      const tail = await tailReader(path, 256 * 1024);
+      if (!tail) throw new Error('Log unavailable');
+      return tail.text;
+    }
+    return path.endsWith('fleet-controller.jsonl') ? (await readJobsTail(path)).text ?? '' : readFile(path, 'utf8');
+  });
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
     console.log(USAGE);
     return 0;
@@ -207,15 +220,16 @@ export async function cmdFleetAdmission(
     return report.state === 'unknown' ? 2 : report.state === 'open' ? 0 : 1;
   }
   try {
-    const read = reader ?? (async (path: string) => path.endsWith('fleet-controller.jsonl')
-      ? (await readJobsTail(path)).text ?? '' : readFile(path, 'utf8'));
     const root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
     const optional = (path: string) => read(join(root, path)).catch(() => null);
-    const [status, guard, history] = await Promise.all([
-      read(join(root, 'queue/status.json')), optional('queue/admission-ctl.json'), optional('metrics/fleet-controller.jsonl'),
+    const [status, guard, history, log] = await Promise.all([
+      read(join(root, 'queue/status.json')), optional('queue/admission-ctl.json'), optional('metrics/fleet-controller.jsonl'), optional('dispatchd.log'),
     ]);
-    const report = sanitizePublicJson(explainFleetAdmission(JSON.parse(status), guard, history, now)) as FleetAdmissionReport;
-    console.log(args.includes('--json') ? JSON.stringify(report) : formatFleetAdmission(report));
+    const report = explainFleetAdmission(JSON.parse(status), guard, history, now);
+    const targets = Object.fromEntries(report.lanes.map(lane => [lane.lane, { target: lane.target }]));
+    report.admission = summarizeAdmission(guard, log, now, targets);
+    const safeReport = sanitizePublicJson(report) as FleetAdmissionReport;
+    console.log(args.includes('--json') ? JSON.stringify(safeReport) : formatFleetAdmission(safeReport));
     return report.status === 'red' ? 1 : 0;
   } catch {
     const body = { schema: FLEET_ADMISSION_SCHEMA, readOnly: true, error: UNREADABLE };
