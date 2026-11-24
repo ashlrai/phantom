@@ -364,7 +364,11 @@ and a stale or untimestamped snapshot is still reported — flagged, never
 hidden — as the dispatcher's last published state. Text output prints the same
 caveat after the utilization summary.
 It exits 1 when any lane is unfed now and 2 when status.json is unreadable. It
-is read-only: no writes, no child processes, no network.
+is read-only: no writes, no child processes, no network. The isolated fleet
+MCP server's `fleet_unfed` tool serves the same `fleet.unfed.v1` assembly —
+the same `readUnfedReport` read this command and the tool share — with
+`windowHours` taking the `--window` bound; see
+[the fleet tool catalog](MCP-TOOLS.md#phantom-fleet--isolated-fleet-server-phm-mcp-fleet).
 
 ## Dispatch-neutral queue snapshot
 

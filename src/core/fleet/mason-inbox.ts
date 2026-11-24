@@ -248,8 +248,8 @@ export function addInboxSource(entryId: string, channel: string, opts: { runsDir
   }
 }
 
-/** Channel-line entries from the last `sinceMs` before `nowMs`, with all attributed sources. senderId is left for the caller to prove. */
-export function readRecentChannelEntries(runsDir: string, nowMs: number, sinceMs: number): RecentInboxEntry[] {
+/** Channel-line entries from the last `sinceMs` before `nowMs`, with all attributed sources. senderId is left for the caller to prove. `untilMs`, when given, is the exclusive recorded-time ceiling — entries at or after it never list, so a caller can read one `[since, until)` window instead of everything up to now. */
+export function readRecentChannelEntries(runsDir: string, nowMs: number, sinceMs: number, untilMs?: number): RecentInboxEntry[] {
   let markdown: string;
   try {
     const buffer = readFileSync(join(runsDir, 'leader', 'MASON-INBOX.md'));
@@ -265,7 +265,7 @@ export function readRecentChannelEntries(runsDir: string, nowMs: number, sinceMs
     if (m) {
       flush();
       const receivedAt = Date.parse(m[1]!);
-      if (!Number.isFinite(receivedAt) || nowMs - receivedAt >= sinceMs) continue;
+      if (!Number.isFinite(receivedAt) || nowMs - receivedAt >= sinceMs || (untilMs !== undefined && receivedAt >= untilMs)) continue;
       const also = ALSO_TAG.exec(m[4]!);
       current = {
         entry: { id: m[3]!, text: '', receivedAt, channels: [m[2]!, ...(also?.[1]?.split(',') ?? [])] },

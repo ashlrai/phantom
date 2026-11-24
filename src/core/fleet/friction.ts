@@ -488,6 +488,21 @@ export function mineFriction(input: FrictionInput): FrictionReport {
     }, items };
 }
 
+/**
+ * Whether this scan's own evidence opened the item: the catalog's primary
+ * signal counted something, or a declared supplementary signal (openOn)
+ * did. Operator notes never open an item — they annotate or suppress one —
+ * so callers ranking "friction is firing" read this predicate instead of
+ * status, which a note can overwrite to in-progress/fixed/wontfix.
+ */
+export function frictionItemFires(item: FrictionItem): boolean {
+  const spec = CATALOG[item.id];
+  if (spec === undefined) return false;
+  const primary = item.signals[spec.primary];
+  if (typeof primary === 'number' && primary > 0) return true;
+  return (spec.openOn ?? []).some((signal) => (item.signals[signal] ?? 0) > 0);
+}
+
 const TAIL = 8 * 1024 * 1024, SMALL = 256 * 1024;
 /** Bounded reads of every friction source under a runs dir. */
 export async function readFrictionInput(runsDir: string): Promise<FrictionInput> {

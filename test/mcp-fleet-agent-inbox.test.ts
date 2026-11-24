@@ -91,14 +91,16 @@ describe('fleet_agent_inbox argument parsing', () => {
       agent: 'agent:planner', after: 3, limit: 10, matched: true,
       thread: 't-1', from: 'agent:sender', excludeFrom: 'agent:bot',
       priority: 'P1', kind: 'handoff', job: 'RQ-9',
-      since: '1800000000000', channel: 'ops', contains: '  Parser   Fix ',
+      since: '1800000000000', before: '1700000000000', channel: 'ops', contains: '  Parser   Fix ',
+      inReplyTo: 'm-0', id: 'm-9',
     });
     expect(parsed).toMatchObject({
       agent: 'agent:planner', after: 3, limit: 10, matched: true,
       filters: {
         thread: 't-1', from: 'agent:sender', excludeFrom: 'agent:bot',
         priority: 'P1', kind: 'handoff', job: 'RQ-9',
-        since: 1800000000000, channel: 'ops', contains: 'parser fix',
+        since: 1800000000000, before: 1700000000000, channel: 'ops', contains: 'parser fix',
+        inReplyTo: 'm-0', id: 'm-9',
       },
     });
   });
@@ -109,11 +111,15 @@ describe('fleet_agent_inbox argument parsing', () => {
       { agent: 'a', cwd: '/tmp' }, { agent: 'a', runsDir: '/tmp' }, { agent: 'a', home: '/tmp' },
       { agent: 'a', thread: 'has space' }, { agent: 'a', thread: '' }, { agent: 'a', thread: 5 },
       { agent: 'a', from: 5 }, { agent: 'a', excludeFrom: null }, { agent: 'a', job: 'has space' },
+      { agent: 'a', inReplyTo: 'has space' }, { agent: 'a', inReplyTo: '' }, { agent: 'a', inReplyTo: 5 },
+      { agent: 'a', id: 'has space' }, { agent: 'a', id: '' }, { agent: 'a', id: 5 }, { agent: 'a', id: 'x'.repeat(129) },
       { agent: 'a', priority: 'P9' }, { agent: 'a', priority: 1 }, { agent: 'a', priority: 'p0' },
       { agent: 'a', kind: 'bogus' }, { agent: 'a', kind: 'work' }, { agent: 'a', kind: 3 },
       { agent: 'a', channel: 'Bad Channel!' }, { agent: 'a', channel: 'x'.repeat(33) },
       { agent: 'a', channel: 7 },
       { agent: 'a', since: 'never' }, { agent: 'a', since: 5 }, { agent: 'a', since: '' },
+      { agent: 'a', before: 'never' }, { agent: 'a', before: 5 }, { agent: 'a', before: '' },
+      { agent: 'a', before: '1960-01-01T00:00:00.000Z' },
       { agent: 'a', contains: '' }, { agent: 'a', contains: '   ' },
       { agent: 'a', contains: 'x'.repeat(513) }, { agent: 'a', contains: 42 },
     ]) expect(parseFleetAgentInboxArgs(bad)).toBeNull();
@@ -125,7 +131,7 @@ describe('fleet_agent_inbox reader', () => {
     const seen: Array<[string, unknown]> = [];
     const read: typeof readAgentInbox = (ref, page) => {
       seen.push([ref, page]);
-      return okPage({ matched: 3 });
+      return okPage({ matched: 1 });
     };
     const result = await readFleetAgentInbox(
       parseFleetAgentInboxArgs({ agent: 'planner', after: 4, limit: 10, matched: true, kind: 'handoff' })!,
@@ -133,10 +139,35 @@ describe('fleet_agent_inbox reader', () => {
     expect(seen).toEqual([['planner', { after: 4, limit: 10, matched: true, kind: 'handoff' }]]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
-      agent: 'planner', status: 'ok', nextCursor: 9, matched: 3,
+      agent: 'planner', status: 'ok', nextCursor: 9, matched: 1,
     });
     expect(result.messages).toHaveLength(1);
     expect(result.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('reports the newest shown cursor as nextCursor when matched hides rows', async () => {
+    // A matched page scans the whole store, so the core nextCursor is the
+    // store's end — resuming there would skip the unshown matches. The
+    // adapter reports the same honest resume point the CLI does.
+    const read: typeof readAgentInbox = () => okPage({
+      matched: 3,
+      messages: [message({ cursor: 4 }), message({ cursor: 7 })],
+      nextCursor: 9,
+    });
+    const result = await readFleetAgentInbox(
+      parseFleetAgentInboxArgs({ agent: 'planner', matched: true })!, { read });
+    expect(result).toMatchObject({ status: 'ok', matched: 3, nextCursor: 7 });
+    expect(result.messages).toHaveLength(2);
+  });
+
+  it('keeps the store-end cursor when every match fits the page', async () => {
+    const read: typeof readAgentInbox = () => okPage({
+      matched: 2,
+      messages: [message({ cursor: 4 }), message({ cursor: 7 })],
+    });
+    const result = await readFleetAgentInbox(
+      parseFleetAgentInboxArgs({ agent: 'planner', matched: true })!, { read });
+    expect(result).toMatchObject({ status: 'ok', matched: 2, nextCursor: 9 });
   });
 
   it('omits matched when the page did not count the whole store', async () => {
@@ -154,14 +185,14 @@ describe('fleet_agent_inbox reader', () => {
       return okPage({ messages: [] });
     };
     await readFleetAgentInbox(parseFleetAgentInboxArgs({
-      agent: 'a', since: '1800000000000', contains: 'Parser Fix', channel: 'ops',
+      agent: 'a', since: '1800000000000', before: '1700000000000', contains: 'Parser Fix', channel: 'ops',
       thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot',
-      priority: 'P0', kind: 'channel', job: 'RQ-1',
+      priority: 'P0', kind: 'channel', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9',
     })!, { read });
     expect(seenPage).toMatchObject({
-      since: 1800000000000, contains: 'parser fix', channel: 'ops',
+      since: 1800000000000, before: 1700000000000, contains: 'parser fix', channel: 'ops',
       thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot',
-      priority: 'P0', kind: 'channel', job: 'RQ-1',
+      priority: 'P0', kind: 'channel', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9',
     });
   });
 
@@ -198,6 +229,11 @@ describe('fleet_agent_inbox MCP tool', () => {
     expect(tool?.inputSchema.properties?.['priority'])
       .toMatchObject({ type: 'string', enum: expect.arrayContaining(['P0', 'P3']) });
     expect(tool?.inputSchema.properties?.['matched']).toMatchObject({ type: 'boolean' });
+    expect(tool?.inputSchema.properties?.['before']).toMatchObject({ type: 'string' });
+    expect(tool?.inputSchema.properties?.['inReplyTo'])
+      .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    expect(tool?.inputSchema.properties?.['id'])
+      .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
   });
 
   it.each([
@@ -206,7 +242,7 @@ describe('fleet_agent_inbox MCP tool', () => {
     [{ agent: 'a', limit: 0 }], [{ agent: 'a', limit: 101 }], [{ agent: 'a', limit: '5' }],
     [{ agent: 'a', after: -1 }], [{ agent: 'a', matched: 'yes' }],
     [{ agent: 'a', kind: 'bogus' }], [{ agent: 'a', priority: 'P9' }],
-    [{ agent: 'a', channel: 'Bad Channel!' }], [{ agent: 'a', since: 'never' }],
+    [{ agent: 'a', channel: 'Bad Channel!' }], [{ agent: 'a', since: 'never' }], [{ agent: 'a', before: 'never' }],
     [{ agent: 'a', contains: '' }], [{ agent: 'a', extra: 1 }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const agentInbox = vi.fn();

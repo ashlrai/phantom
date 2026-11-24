@@ -14,7 +14,7 @@
  * 3.14 — talk to the Leader (vision/leader-thread.ts; the same thread Verse
  * and Telegram use):
  *   ashlr leader say "<text>" [--text]        send through the verified inbox writer; prints the id
- *   ashlr leader thread [--since hours|time] [--limit n] [--json]  merged conversation, oldest first
+ *   ashlr leader thread [--since hours|time] [--before hours|time] [--limit n] [--json]  merged conversation, oldest first
  *   ashlr leader answer <questionId> "<text>" answer one of the memo's questions
  *   ashlr leader approve <actionId>           approve a pending action (class B
  *                                            applies now only if the grant
@@ -64,7 +64,7 @@ Usage:
   phm leader say "<text>" [--text]   send to the leader; prints its id (JSON, or one line with --text)
   phm leader replies [--json] [--limit n] [--file PATH]  show the last 10 (or n) PLAN-LOG replies, one line each, newest first (JSON: leader.replies.v1; path from comms.leaderPlanLogPath)
   phm leader replies sync [--json]  copy new PLAN-LOG replies to the Leader thread
-  phm leader thread [--since <hours|time>] [--limit <n>] [--json|--text]  the whole conversation, inbox + outbox + plan-log replies, with channel and PR refs of each message
+  phm leader thread [--since <hours|time>] [--before <hours|time>] [--limit <n>] [--json|--text]  the whole conversation, inbox + outbox + plan-log replies, with channel and PR refs of each message
   phm leader thread --legacy [--limit n] [--json|--text]  chat with ids and received/answered state (JSON default)
   phm leader thread --follow [--since messageId] [--json]  stream the in-process Leader conversation
   phm leader answer <questionId> "<text>"

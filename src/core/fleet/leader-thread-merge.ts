@@ -3,11 +3,17 @@
  * both entry forms), the Leader's answers (MASON-OUTBOX) and the "Reply for
  * Mason" paragraphs in the PLAN-LOG. `mergeLeaderThread` is pure text in, list
  * out; `readLeaderThread` is the read-only file reader behind `phm leader
- * thread --since` and GET /api/verse/leader/thread/merged. Nothing is written.
+ * thread --since/--before` and GET /api/verse/leader/thread/merged. Nothing is written.
  *
  * Rules: a reply in both the outbox and the plan log shows once; an entry with
  * no readable date stays, with `at: null` ("time unknown"), sorted last; bare
  * flag lines such as "--help" are skipped, never shown as messages.
+ *
+ * `since` keeps entries at or after its cutoff and `before` keeps entries
+ * strictly before its own — together they read one `[since, before)` window,
+ * the same bound pair every other comms read applies. An entry with no
+ * readable date cannot be placed inside or outside the window, so like
+ * `since` the `before` ceiling never drops it.
  */
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -40,7 +46,17 @@ export function prRefs(text: string): number[] {
 }
 
 export interface LeaderThreadTexts { inbox: string; outbox: string; planLog: string }
-export interface LeaderThreadOptions { nowMs?: number; sinceHours?: number; /** ISO instant; entries older than this are dropped. */ sinceAt?: string; /** Keep only the newest n entries. */ limit?: number }
+export interface LeaderThreadOptions {
+  nowMs?: number;
+  sinceHours?: number;
+  /** ISO instant; entries older than this are dropped. */
+  sinceAt?: string;
+  beforeHours?: number;
+  /** ISO instant; entries at or after this are dropped (exclusive ceiling). */
+  beforeAt?: string;
+  /** Keep only the newest n entries. */
+  limit?: number;
+}
 
 const CHANNEL_LINE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2}))\s+\[src:([a-z0-9._-]{1,32})(?:\s+id:[A-Za-z0-9._:-]{1,64})?\]\s+(.+)$/;
 const DATED_HEADING = /^## (\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}))?/;
@@ -119,27 +135,43 @@ export function mergeLeaderThread(texts: LeaderThreadTexts, opts: LeaderThreadOp
   const byHours = opts.sinceHours !== undefined && Number.isFinite(opts.sinceHours) ? (opts.nowMs ?? Date.now()) - opts.sinceHours * 3_600_000 : null;
   const byTime = opts.sinceAt !== undefined && Number.isFinite(Date.parse(opts.sinceAt)) ? Date.parse(opts.sinceAt) : null;
   const sinceMs = byHours === null ? byTime : byTime === null ? byHours : Math.max(byHours, byTime);
+  const beforeByHours = opts.beforeHours !== undefined && Number.isFinite(opts.beforeHours) ? (opts.nowMs ?? Date.now()) - opts.beforeHours * 3_600_000 : null;
+  const beforeByTime = opts.beforeAt !== undefined && Number.isFinite(Date.parse(opts.beforeAt)) ? Date.parse(opts.beforeAt) : null;
+  const beforeMs = beforeByHours === null ? beforeByTime : beforeByTime === null ? beforeByHours : Math.min(beforeByHours, beforeByTime);
   const sorted = all
-    .filter(row => sinceMs === null || row.ms === null || row.ms >= sinceMs)
+    .filter(row => (sinceMs === null || row.ms === null || row.ms >= sinceMs) && (beforeMs === null || row.ms === null || row.ms < beforeMs))
     .sort((a, b) => (a.ms === null ? 1 : 0) - (b.ms === null ? 1 : 0) || (a.ms ?? 0) - (b.ms ?? 0) || a.order - b.order)
     .map(row => row.entry);
   return opts.limit !== undefined && opts.limit >= 0 && Number.isFinite(opts.limit) ? sorted.slice(Math.max(0, sorted.length - Math.floor(opts.limit))) : sorted;
 }
 
-/** `--since` is hours (a number) or a time Date can read; `--limit` is a whole number of newest messages. Null = unusable. */
-export function parseThreadWindow(since: string | undefined, limit: string | undefined): { sinceHours?: number; sinceAt?: string; limit?: number } | null {
-  const out: { sinceHours?: number; sinceAt?: string; limit?: number } = {};
-  if (since !== undefined) {
-    if (/^\d+(?:\.\d+)?$/.test(since)) {
-      const hours = Number(since);
-      if (!(hours > 0 && hours <= 24 * 365)) return null;
-      out.sinceHours = hours;
-    } else {
-      const ms = /\d{4}-\d{2}-\d{2}/.test(since) ? Date.parse(since) : NaN;
-      if (!Number.isFinite(ms)) return null;
-      out.sinceAt = new Date(ms).toISOString();
-    }
+/** One `--since`/`--before` value: hours above 0 (at most a year) or a time Date can read; null = unusable. */
+function parseWhen(raw: string | undefined): { hours?: number; at?: string } | null {
+  if (raw === undefined) return {};
+  if (/^\d+(?:\.\d+)?$/.test(raw)) {
+    const hours = Number(raw);
+    if (!(hours > 0 && hours <= 24 * 365)) return null;
+    return { hours };
   }
+  const ms = /\d{4}-\d{2}-\d{2}/.test(raw) ? Date.parse(raw) : NaN;
+  if (!Number.isFinite(ms)) return null;
+  return { at: new Date(ms).toISOString() };
+}
+
+/** `--since`/`--before` are hours (a number) or a time Date can read; `--limit` is a whole number of newest messages. Null = unusable. */
+export function parseThreadWindow(
+  since: string | undefined,
+  limit: string | undefined,
+  before?: string,
+): { sinceHours?: number; sinceAt?: string; beforeHours?: number; beforeAt?: string; limit?: number } | null {
+  const lower = parseWhen(since);
+  const upper = parseWhen(before);
+  if (lower === null || upper === null) return null;
+  const out: { sinceHours?: number; sinceAt?: string; beforeHours?: number; beforeAt?: string; limit?: number } = {};
+  if (lower.hours !== undefined) out.sinceHours = lower.hours;
+  if (lower.at !== undefined) out.sinceAt = lower.at;
+  if (upper.hours !== undefined) out.beforeHours = upper.hours;
+  if (upper.at !== undefined) out.beforeAt = upper.at;
   if (limit !== undefined) {
     if (!/^\d{1,4}$/.test(limit) || Number(limit) < 1) return null;
     out.limit = Number(limit);
