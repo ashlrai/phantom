@@ -11,7 +11,7 @@ export async function cmdFleetCapsRoute(args: string[]): Promise<number> {
   let error: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === '--help' && args.length === 1) {
+    if ((arg === '--help' || arg === '-h') && args.length === 1) {
       console.log(usage);
       return 0;
     }
