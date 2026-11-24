@@ -641,6 +641,7 @@
 /test/improve-runtime-journal-backlog.test.ts @masonwyatt23
 /test/improve-self-tick-backlog.test.ts @masonwyatt23
 /test/improve-skill-outcome-backlog.test.ts @masonwyatt23
+/test/improve-source-heal-backlog.test.ts @masonwyatt23
 /test/improve-source-yield-backlog.test.ts @masonwyatt23
 /test/improve-stuck-job-backlog.test.ts @masonwyatt23
 /test/improve-tick-health-backlog.test.ts @masonwyatt23

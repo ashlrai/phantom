@@ -155,6 +155,10 @@ process.env.USERPROFILE = workerHome;
 process.env.ASHLR_HOME = join(workerHome, '.ashlr');
 // Hermetic: fleet-truth never shells out to the real `gh` from a test (tests inject a runner).
 process.env.ASHLR_FLEET_TRUTH_GH = 'off';
+// Hermetic: the bridge source-heal journal lives in the real checkout's .git,
+// outside HOME — pin it under the worker home (absent = the writer's first-run
+// state) so discoverBacklog tests never fold the developer's live journal.
+process.env.ASHLR_BRIDGE_HEAL_LOG = join(workerHome, 'bridge-source-repair.jsonl');
 // Reassert per module like HOME: a child that inherits this env gets the
 // worker-private compile cache; an explicit NODE_DISABLE_COMPILE_CACHE in a
 // child's own env still wins (Node gives the disable flag priority).
