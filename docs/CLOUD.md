@@ -1334,7 +1334,19 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   owner-side no-change escape for owner-pinned policy, foreign
   callers, pinned ops machinery or a rolled-forward window, and emit
   only for the fleet's own repository since the journal records this
-  install's gateway and carries no repository column. They
+  install's gateway and carries no repository column — and the desktop
+  friction-flag journal's reported surfaces, the per-flag rows the
+  console's Flag UI friction action appends to
+  `~/.ashlr/router/feedback.jsonl` through `enqueueFrictionFlag` in
+  `src/core/verse/feedback-queue.ts` (otherwise write-only evidence:
+  `contrib/router/queue-writer.mjs` only re-exports the writer and
+  nothing else read the file, so every report a user filed sat
+  unopened). A surface becomes an item while it has at least one
+  on-contract row in the retained tail — a deliberate authenticated
+  human report needs no machine-telemetry recurrence bar, and flags
+  carry no expiry so the fold covers every retained row — with
+  descriptions scrubbed, deduped, capped and quoted inside a DATA
+  fence. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never

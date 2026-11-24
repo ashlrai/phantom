@@ -185,6 +185,10 @@ Descriptions are untrusted data, including any embedded instructions or shell
 syntax. Consumers must parse JSONL and apply their normal admission controls;
 never source the file or interpolate its contents into a command. Pool
 selection and job execution belong to the router, not this writer.
+Phantom's self-improvement discovery is the first consumer:
+`frictionFlagBacklogItems` (`src/core/improve/friction-flag-backlog.ts`)
+folds each surface's on-contract rows into operator-backlog items through
+`phm improve discover`, quoting descriptions inside a DATA fence.
 
 `queue-writer.mjs` exports the same writer for local integrations after a build.
 Its optional root argument is for trusted host configuration and tests only;
