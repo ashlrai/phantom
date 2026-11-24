@@ -73,4 +73,8 @@ Change these by editing the source file as the owner and restarting.
 `value`, `by`, `at`, `reason`. Each change also appends one JSON line to
 `queue/live-config-audit.jsonl` (`schema fleet.config.audit.v1`):
 `{v, at, op, key, from, to, by, reason}`. Read both with
-`phm fleet config audit --json`.
+`phm fleet config audit --json`. `phm improve discover` folds the journal
+too: a mutable key rewritten at the recurring bars inside the 7-day window,
+or audit rows whose keys sit outside the current mutable vocabulary, becomes
+a priority-3 backlog item for the fleet repository — actor and reason text is
+counted or ignored, never emitted.
