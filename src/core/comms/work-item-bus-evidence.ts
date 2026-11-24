@@ -122,6 +122,7 @@ export function deriveBusWorkItemEvidence(
 ): BusWorkItemDerived {
   const evidence: WorkItemEvidence = { id };
   const request = receipts.find(row => row.envelope.id === id);
+  let verifiedCursor = -Infinity, blockerCursor = -Infinity;
   for (const row of receipts) {
     if (!request || row.cursor <= request.cursor || row.receivedAt < request.receivedAt) continue;
     // Match the classifier's private five-minute future-skew boundary; it has
@@ -129,11 +130,17 @@ export function deriveBusWorkItemEvidence(
     if (!Number.isFinite(new Date(row.receivedAt).getTime()) ||
       !(row.receivedAt - now <= 5 * 60 * 1000)) continue;
     const verified = replyVerifiedEvidence(row, id);
-    if (verified) evidence.verified = verified;
+    if (verified && row.cursor > verifiedCursor) {
+      evidence.verified = verified;
+      verifiedCursor = row.cursor;
+    }
     // Newest blocked reply wins; a later reply without `blocked` does not
     // clear it (no "unblocked" semantics yet).
     const blocker = replyBlockedEvidence(row, id);
-    if (blocker) evidence.blocker = blocker;
+    if (blocker && row.cursor > blockerCursor) {
+      evidence.blocker = blocker;
+      blockerCursor = row.cursor;
+    }
   }
   if (request) {
     evidence.receivedAt = new Date(request.receivedAt).toISOString();
